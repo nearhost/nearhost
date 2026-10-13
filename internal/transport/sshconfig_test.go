@@ -140,3 +140,16 @@ func TestDefaultHostsSelfIncludeTerminates(t *testing.T) {
 		t.Fatalf("got %v, %v", hosts, err)
 	}
 }
+
+func TestDefaultHostsIncludeQuotedPathWithSpaces(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include \"conf d/my hosts\" plain\nHost mini\n")
+	writeSSHFile(t, home, "conf d/my hosts", "Host spaced\n")
+	writeSSHFile(t, home, "plain", "Host simple\n")
+	t.Setenv("HOME", home)
+	hosts, err := DefaultHosts()
+	want := []string{"spaced", "simple", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}

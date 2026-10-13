@@ -138,13 +138,34 @@ func includeArgs(line string) ([]string, bool) {
 		return nil, false
 	}
 	rest := strings.TrimLeft(line[7:], " \t=")
-	if i := strings.Index(rest, "#"); i >= 0 {
-		rest = rest[:i]
-	}
 	var args []string
-	for _, a := range strings.Fields(rest) {
-		args = append(args, strings.Trim(a, `"`))
+	var tok strings.Builder
+	inQuote, have := false, false
+	end := func() {
+		if have {
+			args = append(args, tok.String())
+		}
+		tok.Reset()
+		have = false
 	}
+loop:
+	for _, c := range rest {
+		switch {
+		case c == '"':
+			inQuote = !inQuote
+			have = true
+		case inQuote:
+			tok.WriteRune(c)
+		case c == '#':
+			break loop
+		case c == ' ' || c == '\t':
+			end()
+		default:
+			tok.WriteRune(c)
+			have = true
+		}
+	}
+	end()
 	return args, true
 }
 
