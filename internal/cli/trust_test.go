@@ -21,12 +21,12 @@ type fakeTrust struct {
 	ensured, rootDirs   []string
 	installs, uninstall int
 
-	// firefox is consulted on every call, so a test can model the state
-	// before and after an install by flipping it from the hooks below.
-	firefox    proxy.FirefoxStatus
-	fxInstalls int
-	fxErr      error
-	fxChecks   int
+	// nss is what the fake reports for the NSS browser stores (Firefox, and on
+	// Linux the shared database); nssChecks counts how often it was read.
+	nss         proxy.NSSStatus
+	nssInstalls int
+	nssErr      error
+	nssChecks   int
 }
 
 func (f *fakeTrust) backend() trustBackend {
@@ -41,12 +41,12 @@ func (f *fakeTrust) backend() trustBackend {
 		},
 		isTrusted: func(*x509.Certificate) bool { return f.trusted },
 		install:   func(*x509.Certificate) error { f.installs++; return f.instErr },
-		firefox: func(*x509.Certificate) proxy.FirefoxStatus {
-			f.fxChecks++
-			return f.firefox
+		nss: func(*x509.Certificate) proxy.NSSStatus {
+			f.nssChecks++
+			return f.nss
 		},
-		installFirefox: func(*x509.Certificate) error { f.fxInstalls++; return f.fxErr },
-		uninstall:      func(*x509.Certificate) error { f.uninstall++; return f.uninstErr },
+		installNSS: func(*x509.Certificate) error { f.nssInstalls++; return f.nssErr },
+		uninstall:  func(*x509.Certificate) error { f.uninstall++; return f.uninstErr },
 	}
 }
 
@@ -78,85 +78,85 @@ func TestTrustInstallsAndReports(t *testing.T) {
 	}
 }
 
-func TestTrustSkipsInstallWhenSystemAndFirefoxCovered(t *testing.T) {
+func TestTrustSkipsInstallWhenSystemAndNSSCovered(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
 	f.trusted = true
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxCovered}
+	f.nss = proxy.NSSStatus{State: proxy.NSSCovered}
 	out, err := run(t, newTrustCmd(f.backend()), "trust")
-	if err != nil || f.installs != 0 || f.fxInstalls != 0 {
-		t.Fatalf("err=%v installs=%d fxInstalls=%d", err, f.installs, f.fxInstalls)
+	if err != nil || f.installs != 0 || f.nssInstalls != 0 || f.nssChecks != 1 {
+		t.Fatalf("err=%v installs=%d nssInstalls=%d nssChecks=%d", err, f.installs, f.nssInstalls, f.nssChecks)
 	}
-	if !strings.Contains(out, "system") || !strings.Contains(out, "Firefox") || !strings.Contains(out, "already trusted") {
+	if !strings.Contains(out, "system") || !strings.Contains(out, "NSS") || !strings.Contains(out, "already trust") || strings.Contains(out, "Firefox already") {
 		t.Fatalf("output %q", out)
 	}
 }
 
-func TestTrustInstallsFirefoxOnlyWhenSystemAlreadyTrusted(t *testing.T) {
+func TestTrustInstallsNSSOnlyWhenSystemAlreadyTrusted(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
 	f.trusted = true
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxMissing}
+	f.nss = proxy.NSSStatus{State: proxy.NSSMissing}
 	out, err := run(t, newTrustCmd(f.backend()), "trust")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.installs != 0 || f.fxInstalls != 1 {
-		t.Fatalf("installs=%d fxInstalls=%d, want system untouched and Firefox installed once", f.installs, f.fxInstalls)
+	if f.installs != 0 || f.nssInstalls != 1 {
+		t.Fatalf("installs=%d nssInstalls=%d, want system untouched and Firefox installed once", f.installs, f.nssInstalls)
 	}
-	if !strings.Contains(out, "Firefox") || strings.Contains(out, "password") {
+	if !strings.Contains(out, "NSS") || !strings.Contains(out, "Chromium") || strings.Contains(out, "password") {
 		t.Fatalf("output %q", out)
 	}
 }
 
-func TestTrustFirefoxOnlyInstallErrorFailsWithHint(t *testing.T) {
+func TestTrustNSSOnlyInstallErrorFailsWithHint(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
 	f.trusted = true
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxMissing}
-	f.fxErr = errors.New("install CA in Firefox: nope")
+	f.nss = proxy.NSSStatus{State: proxy.NSSMissing}
+	f.nssErr = errors.New("install CA in NSS stores: nope")
 	_, err := run(t, newTrustCmd(f.backend()), "trust")
 	if err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestTrustSystemTrustedFirefoxUnavailableSucceedsAndSaysSo(t *testing.T) {
+func TestTrustSystemTrustedNSSUnavailableSucceedsAndSaysSo(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
 	f.trusted = true
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxUnavailable, Detail: "certutil not found"}
+	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, Detail: "certutil not found"}
 	out, err := run(t, newTrustCmd(f.backend()), "trust")
-	if err != nil || f.installs != 0 || f.fxInstalls != 0 {
-		t.Fatalf("err=%v installs=%d fxInstalls=%d", err, f.installs, f.fxInstalls)
+	if err != nil || f.installs != 0 || f.nssInstalls != 0 {
+		t.Fatalf("err=%v installs=%d nssInstalls=%d", err, f.installs, f.nssInstalls)
 	}
-	if !strings.Contains(out, "certutil not found") || !strings.Contains(out, "Firefox") || strings.Contains(out, "Firefox already") {
+	if !strings.Contains(out, "certutil not found") || !strings.Contains(out, "not configured") || strings.Contains(out, "Firefox already") {
 		t.Fatalf("output %q", out)
 	}
 }
 
-func TestTrustFullInstallReportsFirefoxUnavailable(t *testing.T) {
+func TestTrustFullInstallReportsNSSUnavailable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxUnavailable, Detail: "no Firefox profile found"}
+	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, Detail: "no NSS database found"}
 	out, err := run(t, newTrustCmd(f.backend()), "trust")
-	if err != nil || f.installs != 1 || f.fxInstalls != 0 {
-		t.Fatalf("err=%v installs=%d fxInstalls=%d", err, f.installs, f.fxInstalls)
+	if err != nil || f.installs != 1 || f.nssInstalls != 0 {
+		t.Fatalf("err=%v installs=%d nssInstalls=%d", err, f.installs, f.nssInstalls)
 	}
-	if !strings.Contains(out, "no Firefox profile found") || strings.Contains(out, "Browsers now trust") {
+	if !strings.Contains(out, "no NSS database found") || strings.Contains(out, "Browsers now trust") || strings.Contains(out, "Firefox trusts") {
 		t.Fatalf("output %q", out)
 	}
 }
 
-func TestTrustFullInstallReportsFirefoxCovered(t *testing.T) {
+func TestTrustFullInstallReportsNSSCovered(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
-	f.firefox = proxy.FirefoxStatus{State: proxy.FirefoxCovered}
+	f.nss = proxy.NSSStatus{State: proxy.NSSCovered}
 	out, err := run(t, newTrustCmd(f.backend()), "trust")
-	if err != nil || f.installs != 1 || f.fxInstalls != 0 {
-		t.Fatalf("err=%v installs=%d fxInstalls=%d", err, f.installs, f.fxInstalls)
+	if err != nil || f.installs != 1 || f.nssInstalls != 0 {
+		t.Fatalf("err=%v installs=%d nssInstalls=%d", err, f.installs, f.nssInstalls)
 	}
-	if !strings.Contains(out, "Firefox") || !strings.Contains(out, "Done") {
+	if !strings.Contains(out, "NSS") || !strings.Contains(out, "Chromium") || !strings.Contains(out, "Done") {
 		t.Fatalf("output %q", out)
 	}
 }
