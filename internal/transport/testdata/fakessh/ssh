@@ -38,6 +38,17 @@ if [ -n "$FAKE_SSH_HOSTKEY_FAIL" ]; then echo "Host key verification failed." >&
 # BatchMode connectivity check: ssh ... host true
 if [ "$last" = "true" ]; then exit 0; fi
 
+# FAKE_SSH_ALTERNATE makes master launches alternate between an authentication
+# failure and a plain connection failure, starting with the former.
+if [ -n "$FAKE_SSH_ALTERNATE" ] && [ "$last" != "sftp" ]; then
+  if [ -e "$sock.odd" ]; then
+    rm -f "$sock.odd"
+    echo "ssh: connect to host mini port 22: Connection refused" >&2; exit 255
+  fi
+  : > "$sock.odd"
+  echo "user@host: Permission denied (publickey)." >&2; exit 255
+fi
+
 # SFTP subsystem is not simulated.
 if [ "$last" = "sftp" ]; then echo "fake ssh: sftp not supported" >&2; exit 1; fi
 

@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -80,9 +81,27 @@ func NewSession(name, host, runDir string) *Session {
 	}
 }
 
-// SocketPath is the ControlMaster socket for this session.
+// SocketPath is the ControlMaster socket for this session. It is always a
+// file directly inside the run directory.
 func (s *Session) SocketPath() string {
-	return filepath.Join(s.runDir, s.Name+".sock")
+	return filepath.Join(s.runDir, socketName(s.Name)+".sock")
+}
+
+// socketName returns name when it is a plain file name ssh takes literally.
+// Anything else (path separators, "%" tokens, an empty name) is replaced by a
+// hash so the socket cannot land outside the run directory.
+func socketName(name string) string {
+	plain := name != ""
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return name
+	}
+	return fmt.Sprintf("h-%x", sha256.Sum256([]byte(name)))[:18]
 }
 
 func (s *Session) command(ctx context.Context, args ...string) *exec.Cmd {
@@ -242,8 +261,21 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		var stderr bytes.Buffer
 		master.Stderr = &stderr
 		if err := master.Start(); err != nil {
-			s.setStatus(StatusAuthFailed, "start ssh: "+err.Error())
-			return
+			// Usually a missing binary, occasionally a passing fork failure:
+			// retry, but give up after the same number of attempts.
+			msg := "start ssh: " + err.Error()
+			authFails++
+			if authFails >= s.maxAuthFailures {
+				s.setStatus(StatusAuthFailed, msg)
+				return
+			}
+			s.setStatus(StatusReconnecting, msg)
+			if !s.sleep(ctx, backoff) {
+				s.setStatus(StatusDisconnected, "")
+				return
+			}
+			backoff = s.nextBackoff(backoff)
+			continue
 		}
 		s.mu.Lock()
 		s.launches++
@@ -265,6 +297,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.Logf("%s: connect timed out after %s", s.Name, s.connectTimeout)
 			master.Process.Kill()
 			<-exited
+			authFails = 0
 			s.setStatus(StatusReconnecting, "connect timed out")
 			if !s.sleep(ctx, backoff) {
 				s.setStatus(StatusDisconnected, "")
@@ -290,6 +323,8 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 					s.setStatus(StatusAuthFailed, msg)
 					return
 				}
+			} else {
+				authFails = 0 // only consecutive fatal failures count
 			}
 			s.setStatus(StatusReconnecting, msg)
 		}

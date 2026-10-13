@@ -291,3 +291,67 @@ func TestOrphanedLiveSocketIsReplacedByOwnMaster(t *testing.T) {
 	os.Remove(s.SocketPath())
 	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect after master death")
 }
+
+func TestAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_ALTERNATE=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 8 || s.Status() == StatusAuthFailed }, "eight launches")
+	if s.Status() == StatusAuthFailed {
+		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", s.Launches())
+	}
+}
+
+func TestStartRetriesWhenSSHCannotBeLaunched(t *testing.T) {
+	s, _ := newFakeSession(t)
+	fake := s.SSHPath
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.baseBackoff = 150 * time.Millisecond
+	s.maxBackoff = 300 * time.Millisecond
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusReconnecting || s.Status() == StatusAuthFailed }, "first launch failure")
+	if s.Status() == StatusAuthFailed {
+		t.Fatalf("one launch failure ended supervision: %q", s.LastError())
+	}
+	if !strings.Contains(s.LastError(), "start ssh") {
+		t.Fatalf("LastError = %q", s.LastError())
+	}
+	if err := os.Symlink(fake, s.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatalf("WaitConnected after ssh became launchable: %v", err)
+	}
+}
+
+func TestStartGivesUpWhenSSHNeverLaunches(t *testing.T) {
+	s, _ := newFakeSession(t)
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "terminal status")
+	if s.Launches() != 0 || !strings.Contains(s.LastError(), "start ssh") {
+		t.Fatalf("launches=%d lastErr=%q", s.Launches(), s.LastError())
+	}
+}
+
+func TestSocketPathStaysInsideRunDir(t *testing.T) {
+	dir := t.TempDir()
+	if got := NewSession("mini", "mini", dir).SocketPath(); got != filepath.Join(dir, "mini.sock") {
+		t.Fatalf("plain name should be kept: %q", got)
+	}
+	paths := map[string]string{}
+	for _, name := range []string{"../escape", "a/b", "a_b", "pct%h", "..", ""} {
+		p := NewSession(name, "mini", dir).SocketPath()
+		if filepath.Dir(p) != dir {
+			t.Errorf("name %q: socket %q is outside %q", name, p, dir)
+		}
+		if strings.Contains(filepath.Base(p), "%") {
+			t.Errorf("name %q: socket file name %q is not safe to pass to ssh -S", name, filepath.Base(p))
+		}
+		if other, dup := paths[p]; dup {
+			t.Errorf("names %q and %q share socket %q", other, name, p)
+		}
+		paths[p] = name
+	}
+}
