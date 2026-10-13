@@ -97,11 +97,11 @@ func TestPortHolderFindsThisProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	got := portHolder(context.Background(), l.Addr().(*net.TCPAddr).Port)
+	got := PortHolder(context.Background(), l.Addr().(*net.TCPAddr).Port)
 	if got == "" {
 		t.Skip("no lsof or ss that can name the listener on this machine")
 	}
 	if !strings.Contains(got, fmt.Sprintf("pid %d", os.Getpid())) {
-		t.Fatalf("portHolder = %q, want this process (pid %d)", got, os.Getpid())
+		t.Fatalf("PortHolder = %q, want this process (pid %d)", got, os.Getpid())
 	}
 }

@@ -1,0 +1,229 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hosts"
+)
+
+const (
+	// eventBuffer is how many engine events may wait to be printed; the bus
+	// drops what does not fit rather than hold the engine up.
+	eventBuffer = 1024
+	// shutdownTimeout bounds stopping every project and ssh master.
+	shutdownTimeout = 30 * time.Second
+)
+
+// upBackend is the seam between `up` and the machine.
+type upBackend struct {
+	ssh sshClient
+	// ensureHosts makes the aliases resolve to this machine and gives up when
+	// ctx ends. It is not used with --no-hosts.
+	ensureHosts func(ctx context.Context, aliases []string) error
+	// notify returns a context that ends when the process is asked to stop,
+	// and a function that releases whatever it holds.
+	notify func(parent context.Context) (context.Context, context.CancelFunc)
+}
+
+// systemUp is the production backend. Only NewRoot wires it in.
+func systemUp() upBackend {
+	return upBackend{
+		ensureHosts: func(ctx context.Context, aliases []string) error {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			// The applier ends sudo when ctx does, so an interrupt during
+			// the password prompt shuts down instead of waiting for it.
+			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.SudoApplierContext(ctx, exe, hosts.DefaultPath))
+			return err
+		},
+		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
+			return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+		},
+	}
+}
+
+func newUpCmd(b upBackend) *cobra.Command {
+	var flags serveFlags
+	cmd := &cobra.Command{
+		Use:   "up [project...]",
+		Short: "Start projects and serve them until interrupted",
+		Long: "Start the named projects, or every enabled project when none is named,\n" +
+			"and serve them at https://<alias> until interrupted (Ctrl-C).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUp(cmd, b, flags, args)
+		},
+	}
+	flags.bind(cmd)
+	return cmd
+}
+
+func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) error {
+	if err := flags.validate(); err != nil {
+		return err
+	}
+	cfg, _, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+	names, err := upTargets(cfg, args)
+	if err != nil {
+		return err
+	}
+	opts, err := engineOptions(b, flags)
+	if err != nil {
+		return err
+	}
+	eng := engine.New(cfg, opts)
+	p := &upPrinter{out: cmd.OutOrStdout(), eng: eng, cfg: cfg}
+
+	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
+	defer unsubscribe()
+	ctx, release := b.notify(cmd.Context())
+	defer release()
+	if err := eng.Start(ctx); err != nil {
+		return err
+	}
+
+	// Projects start side by side: one whose server is slow to answer does
+	// not hold the others up, and a failure stays with its project.
+	startErrs := make([]error, len(names))
+	var starts sync.WaitGroup
+	for i, name := range names {
+		starts.Add(1)
+		go func() {
+			defer starts.Done()
+			startErrs[i] = eng.StartProject(ctx, name)
+		}()
+	}
+	started := make(chan struct{})
+	go func() {
+		starts.Wait()
+		close(started)
+	}()
+
+	// Everything is printed from this goroutine, so lines never interleave.
+	allStarted := started
+	for interrupted := false; !interrupted; {
+		select {
+		case ev := <-events:
+			p.event(ev)
+		case <-allStarted:
+			allStarted = nil
+			p.buffered(events) // the state changes the summary sums up
+			p.summary(names, startErrs)
+			p.advise = true // from here a state change is news, and so is its fix
+		case <-ctx.Done():
+			interrupted = true
+		}
+	}
+
+	release()        // a second Ctrl-C now ends the process at once
+	p.advise = false // what goes wrong while stopping is not for the user to fix
+	fmt.Fprintln(p.out, "shutting down")
+	stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- eng.Shutdown(stopCtx) }()
+	var stopErr error
+	for stopping := true; stopping; {
+		select {
+		case ev := <-events:
+			p.event(ev)
+		case stopErr = <-stopped:
+			stopping = false
+		}
+	}
+	<-started // Shutdown interrupted any start still in flight
+	unsubscribe()
+	for ev := range events {
+		p.event(ev)
+	}
+	if stopErr != nil {
+		return fmt.Errorf("shut down: %w", stopErr)
+	}
+	fmt.Fprintln(p.out, "stopped")
+	return nil
+}
+
+// upTargets is the projects to start: those named, or every enabled one.
+func upTargets(cfg *config.Config, args []string) ([]string, error) {
+	if len(cfg.Projects) == 0 {
+		return nil, errors.New("no projects to start; add one with `nearhost add <path>`")
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range args {
+		if _, ok := cfg.Project(name); !ok {
+			return nil, fmt.Errorf("unknown project %q; `nearhost ls` lists the configured projects", name)
+		}
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(args) > 0 {
+		return names, nil
+	}
+	for _, p := range cfg.Projects {
+		if p.Enabled {
+			names = append(names, p.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no enabled projects to start; name one, like `nearhost up %s`", cfg.Projects[0].Name)
+	}
+	return names, nil
+}
+
+// engineOptions builds the engine's options from the standard directories.
+func engineOptions(b upBackend, f serveFlags) (engine.Options, error) {
+	runDir, err := config.RunDir()
+	if err != nil {
+		return engine.Options{}, err
+	}
+	storage, err := config.CaddyDir()
+	if err != nil {
+		return engine.Options{}, err
+	}
+	opts := engine.Options{
+		RunDir: runDir, StorageRoot: storage,
+		SSHPath: b.ssh.path, SSHEnv: b.ssh.env,
+		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort,
+	}
+	if !f.noHosts {
+		opts.EnsureHosts = askOnce(b.ensureHosts)
+	}
+	return opts, nil
+}
+
+// askOnce wraps a hosts function so that a refusal stands for the rest of the
+// run. The engine asks again for every project it starts; without this, a
+// declined password prompt would come back once per project. An update that
+// was interrupted (its context ended) is not a refusal and is not remembered.
+// The engine never makes two calls at the same time.
+func askOnce(ensure func(context.Context, []string) error) func(context.Context, []string) error {
+	var refused error
+	return func(ctx context.Context, aliases []string) error {
+		if refused != nil {
+			return refused
+		}
+		err := ensure(ctx, aliases)
+		if err != nil && ctx.Err() == nil {
+			refused = err
+		}
+		return err
+	}
+}

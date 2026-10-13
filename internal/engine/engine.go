@@ -141,7 +141,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		runs:        map[string]*projectRun{},
 		byAlias:     map[string]string{},
 		connectWait: 30 * time.Second,
-		holderOf:    portHolder,
+		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},

@@ -42,11 +42,11 @@ var (
 	}
 )
 
-// portHolder names the process listening on a local TCP port, like
+// PortHolder names the process listening on a local TCP port, like
 // "node (pid 4242)". It is best effort: it returns "" when no tool is
 // installed, the tool is slow or fails, or the process belongs to another
 // user and the tool will not name it. It gives up when ctx ends.
-func portHolder(ctx context.Context, port int) string {
+func PortHolder(ctx context.Context, port int) string {
 	tools := []holderTool{lsofTool}
 	if runtime.GOOS == "linux" {
 		tools = []holderTool{ssTool, lsofTool}

@@ -7,12 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -43,14 +41,7 @@ func TestMain(m *testing.M) {
 // fakeSSH is the fake OpenSSH client shared with the transport tests.
 func fakeSSH(t *testing.T) string {
 	t.Helper()
-	fake, err := filepath.Abs("../transport/testdata/fakessh/ssh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(fake, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return fake
+	return testutil.FakeSSH(t)
 }
 
 // authWrapper writes an ssh stand-in that fails authentication for the host
@@ -144,37 +135,16 @@ func newHarness(t *testing.T, cfg *config.Config, sshEnv ...string) *harness {
 	return h
 }
 
-// proxyPort returns a port free for both TCP and UDP: the proxy also listens
-// for HTTP/3 on the UDP port matching its HTTPS port.
+// proxyPort returns a port free for both TCP and UDP.
 func proxyPort(t *testing.T) int {
 	t.Helper()
-	for i := 0; i < 50; i++ {
-		port := testutil.FreePort(t)
-		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
-		if err != nil {
-			continue
-		}
-		pc.Close()
-		return port
-	}
-	t.Fatal("no port free for both TCP and UDP")
-	return 0
+	return testutil.ProxyPort(t)
 }
 
-// tempDir is t.TempDir with a short path that pgrep can take as a pattern
-// (for control sockets) and a patient removal: Caddy issues certificates in
-// the background and can still be writing one into its storage for a moment
-// after it has stopped, which makes a single RemoveAll fail.
+// tempDir is a short temporary directory with a patient removal.
 func tempDir(t *testing.T, prefix string) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		testutil.WaitUntil(t, 10*time.Second, func() bool { return os.RemoveAll(dir) == nil }, "removal of "+dir)
-	})
-	return dir
+	return testutil.TempDir(t, prefix)
 }
 
 // assertNothingLeft checks that after Shutdown no engine or session goroutine,
@@ -286,19 +256,7 @@ func (h *harness) getEventually(t *testing.T, alias, path string) (int, string) 
 // its port.
 func upstream(t *testing.T, name string) int {
 	t.Helper()
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, name+":"+r.Host)
-	}))
-	t.Cleanup(up.Close)
-	_, portStr, err := net.SplitHostPort(strings.TrimPrefix(up.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return port
+	return testutil.Upstream(t, name)
 }
 
 func localProject(name string, port int) config.Project {

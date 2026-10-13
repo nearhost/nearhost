@@ -255,11 +255,11 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	h := newHarness(t, remoteConfig(lb))
 	// The real lookup, or a stand-in where this machine has no tool for it.
 	holder := fmt.Sprintf("pid %d", os.Getpid())
-	if !strings.Contains(portHolder(bg, lb), holder) {
+	if !strings.Contains(PortHolder(bg, lb), holder) {
 		holder = "vite (pid 4242)"
 		h.eng.holderOf = func(context.Context, int) string { return holder }
 	} else {
-		h.eng.holderOf = portHolder
+		h.eng.holderOf = PortHolder
 	}
 
 	err = h.eng.StartProject(bg, "myapp")
