@@ -134,9 +134,12 @@ func (s *Session) CheckSocketPath() error {
 
 // socketName returns name when it is a plain file name ssh takes literally.
 // Anything else (path separators, "%" tokens, an empty name) is replaced by a
-// hash so the socket cannot land outside the run directory.
+// hash so the socket cannot land outside the run directory. So is a name that
+// has the form of a hashed name itself, in either letter case: every socket
+// named like that then comes from a hash, and a server called that cannot be
+// given the socket of the name the hash stands for.
 func socketName(name string) string {
-	plain := name != ""
+	plain := name != "" && !looksHashed(name)
 	for _, c := range name {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
 			plain = false
@@ -147,6 +150,20 @@ func socketName(name string) string {
 		return name
 	}
 	return hashedName(name)
+}
+
+// looksHashed reports whether name has the form hashedName produces, in either
+// letter case (the file system may not tell the two apart).
+func looksHashed(name string) bool {
+	if len(name) != hashedNameChars || name[0] != 'h' && name[0] != 'H' || name[1] != '-' {
+		return false
+	}
+	for _, c := range name[2:] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // hashedName is a short plain file name that stands for name.

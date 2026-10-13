@@ -547,3 +547,26 @@ func TestStartFailsAtOnceWhenTheRunDirectoryIsTooLong(t *testing.T) {
 		t.Fatalf("second Start: status %s, log %q", s.Status(), readLog(t, logPath))
 	}
 }
+
+// A long name is replaced by "h-" and 16 hex digits. A server that is itself
+// named like that must not get the socket of the long name it stands for.
+func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
+	dir := "/tmp/nh-run"
+	long := strings.Repeat("a", 70)
+	hashed := strings.TrimSuffix(filepath.Base(NewSession(long, "mini", dir).SocketPath()), ".sock")
+	for _, literal := range []string{hashed, strings.ToUpper(hashed)} {
+		got := NewSession(literal, "mini", dir).SocketPath()
+		if strings.EqualFold(got, filepath.Join(dir, hashed+".sock")) {
+			t.Errorf("the server named %q shares the socket %q with the long name", literal, got)
+		}
+		if filepath.Dir(got) != dir || NewSession(literal, "other-host", dir).SocketPath() != got {
+			t.Errorf("socket of %q: %q", literal, got)
+		}
+	}
+	// Only the exact hashed form is replaced.
+	for _, plain := range []string{"h-mini", "h-0123456789abcdeg", "h-0123456789abcde", "h-0123456789abcdef0"} {
+		if got := NewSession(plain, "mini", dir).SocketPath(); got != filepath.Join(dir, plain+".sock") {
+			t.Errorf("the plain name %q was not kept: %q", plain, got)
+		}
+	}
+}
