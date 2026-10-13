@@ -1,0 +1,19 @@
+internal/engine/events_test.go
+  s_bc1b64a774a0d8::t_925cad79e1548f 43-44,47-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6de82b90cc90fb797f5a20721bfe61672c85fb4c",
+  "prompts": {},
+  "sessions": {
+    "s_bc1b64a774a0d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86f9435c-3c18-4446-ba9e-9ef8b8e9312e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
