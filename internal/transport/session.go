@@ -181,7 +181,17 @@ func (s *Session) longLived(ctx context.Context, args ...string) *exec.Cmd {
 //
 // The control commands (-O check, forward, cancel, exit) take none of these.
 // They only talk to the running master over its socket, and
-// ClearAllForwardings would drop the very -L a forward or cancel names.
+// ClearAllForwardings would drop the very -L a forward or cancel names. They
+// do not read the configuration at all (see control).
+
+// control is command for one request to the running master over its socket:
+// -O check, forward, cancel or exit. It reads no configuration file. The
+// socket is named by -S and the host is only a label there, but a mux client
+// sends the master every LocalForward and RemoteForward the configuration
+// lists for the host along with the forward it was asked for.
+func (s *Session) control(ctx context.Context, args ...string) *exec.Cmd {
+	return s.command(ctx, append([]string{"-F", "/dev/null", "-S", s.SocketPath()}, args...)...)
+}
 
 // Check verifies that ssh can reach the host without prompting. It makes a
 // connection of its own: one borrowed from a master the user already has open
@@ -482,7 +492,7 @@ func (s *Session) waitForSocket(ctx context.Context, exited <-chan struct{}) boo
 			return false
 		case <-time.After(s.pollInterval):
 		}
-		check := s.command(ctx, "-S", s.SocketPath(), "-O", "check", s.Host)
+		check := s.control(ctx, "-O", "check", s.Host)
 		if check.Run() == nil {
 			return true
 		}
@@ -496,13 +506,13 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 	if _, err := os.Stat(s.SocketPath()); err != nil {
 		return
 	}
-	check := s.command(ctx, "-S", s.SocketPath(), "-O", "check", s.Host)
+	check := s.control(ctx, "-O", "check", s.Host)
 	if check.Run() == nil {
 		// A master from a crashed run is still alive on this socket. Ask it
 		// to exit so the new master is the one we supervise.
 		exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.command(exitCtx, "-S", s.SocketPath(), "-O", "exit", s.Host).Run()
+		s.control(exitCtx, "-O", "exit", s.Host).Run()
 	}
 	os.Remove(s.SocketPath())
 }
@@ -511,7 +521,7 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 func (s *Session) exitMaster(master *exec.Cmd, exited <-chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s.command(ctx, "-S", s.SocketPath(), "-O", "exit", s.Host).Run()
+	s.control(ctx, "-O", "exit", s.Host).Run()
 	select {
 	case <-exited:
 	case <-time.After(3 * time.Second):

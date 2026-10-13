@@ -424,7 +424,10 @@ func TestSFTPIsNotDivertedByUserConfig(t *testing.T) {
 
 // ClearAllForwardings on the master must not reach the forwards nearhost
 // asks for: those go to the running master over its control socket, and a
-// control command that carried the option would drop its own -L.
+// control command that carried the option would drop its own -L. A control
+// command must not read the user's configuration either: a mux client sends
+// the LocalForward and RemoteForward entries listed for the host to the
+// master along with the forward it was asked for.
 func TestControlCommandsCarryNoOptions(t *testing.T) {
 	s, logPath := newFakeSession(t)
 	connected(t, s)
@@ -445,15 +448,18 @@ func TestControlCommandsCarryNoOptions(t *testing.T) {
 			continue
 		}
 		seen[l] = true
+		if !strings.HasPrefix(l, "-F /dev/null -S "+sock+" -O ") {
+			t.Errorf("control command reads the user's configuration: %q", l)
+		}
 		if strings.Contains(l, " -o ") {
 			t.Errorf("control command carries options: %q", l)
 		}
 	}
 	for _, want := range []string{
-		"-S " + sock + " -O check mini",
-		"-S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
-		"-S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
-		"-S " + sock + " -O exit mini",
+		"-F /dev/null -S " + sock + " -O check mini",
+		"-F /dev/null -S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O exit mini",
 	} {
 		if !seen[want] {
 			t.Errorf("control command %q was not run; got %v", want, seen)
