@@ -145,6 +145,13 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				"servers": map[string]any{
 					"nearhost": map[string]any{
 						"listen": []string{fmt.Sprintf(":%d", httpsPort)},
+						// The only policy is for loopback clients, so a
+						// handshake from anywhere else matches none and
+						// fails before a certificate is shown: it cannot
+						// tell a served alias from any other name.
+						"tls_connection_policies": []any{map[string]any{
+							"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+						}},
 						"routes": routes,
 						"logs":   map[string]any{"logger_names": loggerNames},
 					},

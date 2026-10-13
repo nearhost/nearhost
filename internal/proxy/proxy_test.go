@@ -19,6 +19,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	"github.com/coder/websocket"
 )
 
@@ -532,6 +533,48 @@ func TestLoopbackMatcherAcceptsOnlyLoopbackClients(t *testing.T) {
 	}
 }
 
+type addrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c addrConn) RemoteAddr() net.Addr { return c.remote }
+
+// The same ranges decide who gets a TLS handshake at all. This matcher reads
+// the address of the connection itself.
+func TestLoopbackHandshakeMatcherAcceptsOnlyLoopbackClients(t *testing.T) {
+	m := &caddytls.MatchRemoteIP{Ranges: loopbackRanges}
+	ctx, cancel := caddy.NewContext(caddy.Context{Context: context.Background()})
+	defer cancel()
+	if err := m.Provision(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		ip   string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"127.8.9.10", true},
+		{"::1", true},
+		{"::ffff:127.0.0.1", true},
+		{"192.168.1.20", false},
+		{"10.0.0.1", false},
+		{"128.0.0.1", false},
+		{"::ffff:10.0.0.1", false},
+		{"::2", false},
+		{"2001:db8::1", false},
+	} {
+		remote := &net.TCPAddr{IP: net.ParseIP(c.ip), Port: 5000}
+		if got := m.Match(&tls.ClientHelloInfo{ServerName: "a.test", Conn: addrConn{remote: remote}}); got != c.want {
+			t.Errorf("handshake from %s accepted = %v, want %v", remote, got, c.want)
+		}
+	}
+	zoned := &net.TCPAddr{IP: net.ParseIP("fe80::1"), Port: 5000, Zone: "en0"}
+	if m.Match(&tls.ClientHelloInfo{Conn: addrConn{remote: zoned}}) {
+		t.Errorf("handshake from %s accepted", zoned)
+	}
+}
+
 // nonLoopbackAddrs lists the addresses of this machine that are neither
 // loopback nor link-local. A connection made to one of them from this machine
 // has that address as its source too.
@@ -600,6 +643,27 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 		return true, r.StatusCode, string(b), nil
 	}
 
+	// handshake reports whether a TLS handshake for sni from ip went through,
+	// and whether the proxy showed a certificate on the way.
+	handshake := func(ip net.IP, sni string) (ok, sawCert bool) {
+		raw, err := (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(h.httpsPort)))
+		if err != nil {
+			t.Errorf("%s: second connection: %v", ip, err)
+			return false, false
+		}
+		defer raw.Close()
+		raw.SetDeadline(time.Now().Add(10 * time.Second))
+		conn := tls.Client(raw, &tls.Config{
+			ServerName:         sni,
+			InsecureSkipVerify: true, // any certificate at all is what is looked for
+			VerifyPeerCertificate: func(certs [][]byte, _ [][]*x509.Certificate) error {
+				sawCert = sawCert || len(certs) > 0
+				return nil
+			},
+		})
+		return conn.Handshake() == nil, sawCert
+	}
+
 	tried := 0
 	for _, ip := range nonLoopbackAddrs(t) {
 		reached, status, body, err := request(ip, "a.test")
@@ -608,6 +672,13 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 			continue
 		}
 		tried++
+		// The refusal comes in the handshake, before any certificate: a
+		// served name and an unknown one look the same from outside.
+		for _, sni := range []string{"a.test", "nothing.test"} {
+			if ok, sawCert := handshake(ip, sni); ok || sawCert {
+				t.Errorf("client from %s asking for %s: handshake completed = %v, certificate shown = %v, want neither", ip, sni, ok, sawCert)
+			}
+		}
 		if err == nil {
 			t.Errorf("client from %s got an answer (status %d, body %q), want the connection dropped", ip, status, body)
 		}
@@ -632,6 +703,15 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 	// And the site is still served to loopback afterwards.
 	if resp, body := h.getEventually(h.client("a.test", false), "a.test", "/"); resp.StatusCode != 200 || body != "secret dev page" {
 		t.Errorf("loopback client after the refusals: status=%d body=%q", resp.StatusCode, body)
+	}
+	// So is a client on the IPv6 loopback address, when this machine has one.
+	if raw, err := net.DialTimeout("tcp", net.JoinHostPort("::1", fmt.Sprint(h.httpsPort)), 5*time.Second); err != nil {
+		t.Logf("::1 is not dialable, not checking the IPv6 loopback client: %v", err)
+	} else {
+		raw.Close()
+		if ok, sawCert := handshake(net.IPv6loopback, "a.test"); !ok || !sawCert {
+			t.Errorf("client from ::1: handshake completed = %v, certificate shown = %v, want both", ok, sawCert)
+		}
 	}
 	// Only the non-loopback part could not run; the loopback checks above did.
 	if tried == 0 {

@@ -278,6 +278,25 @@ func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
 			}
 		}
 	}
+	// The handshake is refused first: the only TLS connection policy is for
+	// loopback clients, so anyone else is shown no certificate.
+	policies, _ := dig(t, cfg, "apps", "http", "servers", "nearhost", "tls_connection_policies").([]any)
+	if len(policies) != 1 {
+		t.Fatalf("got %d TLS connection policies, want one", len(policies))
+	}
+	policy, _ := policies[0].(map[string]any)
+	if match, _ := policy["match"].(map[string]any); len(policy) != 1 || len(match) != 1 {
+		t.Errorf("the TLS connection policy must hold the client address matcher and nothing else, got %v", policy)
+	}
+	tlsRanges, _ := dig(t, policy, "match", "remote_ip", "ranges").([]any)
+	if len(tlsRanges) != len(loopbackRanges) {
+		t.Fatalf("TLS connection policy ranges = %v, want %v", tlsRanges, loopbackRanges)
+	}
+	for j, r := range tlsRanges {
+		if r != loopbackRanges[j] {
+			t.Errorf("TLS connection policy range %d = %v, want %s", j, r, loopbackRanges[j])
+		}
+	}
 	last := routes[2].(map[string]any)
 	if m, ok := last["match"]; ok {
 		t.Errorf("the final route must match every request, got match %v", m)
