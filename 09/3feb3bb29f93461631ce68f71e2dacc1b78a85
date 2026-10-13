@@ -1,0 +1,21 @@
+.gitignore
+  s_bea2b299df9898::t_7882d16dbd213b 1-6
+LICENSE
+  s_bea2b299df9898::t_bd9452471d8026 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "093feb3bb29f93461631ce68f71e2dacc1b78a85",
+  "prompts": {},
+  "sessions": {
+    "s_bea2b299df9898": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c1a2487-be78-4f26-bdb9-f265ef8e2afc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
