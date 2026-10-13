@@ -1,3 +1,6 @@
 # Build output
 /dist/
 /nearhost
+
+# Test and build artefacts
+coverage.out
