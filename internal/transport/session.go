@@ -36,6 +36,7 @@ func (e *CheckError) Error() string {
 
 type forward struct {
 	local, remote int
+	appliedGen    int // value of Session.launches when last applied; 0 if never
 }
 
 // Session supervises one OpenSSH ControlMaster connection to a server.
@@ -59,6 +60,7 @@ type Session struct {
 	lastErr   string
 	launches  int
 	forwards  map[string]forward
+	fwdMu     sync.Mutex // serialises forward changes; taken before mu, may be held across ssh calls
 	cancel    context.CancelFunc
 	done      chan struct{}
 }
@@ -415,7 +417,3 @@ func (s *Session) exitMaster(master *exec.Cmd, exited <-chan struct{}) {
 		<-exited
 	}
 }
-
-// reapplyForwards re-adds desired forwards after (re)connecting.
-// Filled in by forward.go.
-func (s *Session) reapplyForwards(ctx context.Context) {}
