@@ -142,11 +142,11 @@ func (e *Engine) lookupHolder(run *projectRun, port int, lookup uint64) {
 	e.announceLocked(run)
 }
 
-// lostLocked is the set of local ports whose forward a running project has
-// lost on a connected session.
+// lostLocked is the set of local ports whose forward a project that follows
+// its session has lost on a connected session.
 func (e *Engine) lostLocked(run *projectRun) map[int]bool {
 	c := e.servers[run.server]
-	if run.state != StateRunning || c == nil {
+	if !run.followsSession() || c == nil {
 		return nil
 	}
 	status, states := c.sess.ForwardStates()

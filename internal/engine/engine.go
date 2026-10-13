@@ -23,8 +23,9 @@ const (
 	StateStarting State = "starting"
 	StateRunning  State = "running"
 	StateError    State = "error"
-	// StateDegraded is a running project whose server's SSH connection is
-	// down. It returns to running when the server reconnects.
+	// StateDegraded is a project with a published site whose server's SSH
+	// connection is down. It returns to the state it had (running, or the
+	// error it started with) when the server reconnects.
 	StateDegraded State = "degraded"
 )
 

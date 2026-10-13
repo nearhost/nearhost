@@ -8,20 +8,30 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
+// followsSession reports whether what run shows depends on its server's
+// session: a running project, and one in error whose site is published all
+// the same (a loopback port could not be forwarded when it started, say).
+// Both have routes that are served only while the session carries them.
+func (run *projectRun) followsSession() bool {
+	return run.state == StateRunning || run.state == StateError && run.site
+}
+
 // effectiveLocked is the state to show for run. It is the recorded state,
-// except for a running project on a remote server: that is degraded while the
-// server's session is not connected, and in error while the session is
-// connected but lacks one of the project's forwards. Both are derived from
-// the session each time, so Status and the events always agree, and both end
-// by themselves when a reconnect restores what was missing. The error names
-// the process holding a port once lookupHolder has found it.
+// except for a project on a remote server that follows its session (see
+// followsSession): that is degraded while the server's session is not
+// connected, and in error while the session is connected but lacks one of
+// the project's forwards. Both are derived from the session each time, so
+// Status and the events always agree, and both end by themselves when a
+// reconnect restores what was missing. The error names the process holding a
+// port once lookupHolder has found it. A project recorded in error keeps the
+// reason for that in whatever it shows, and shows it alone again afterwards.
 func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if run.tearing && run.announced != "" {
 		// Being torn down: the last announced state stands until the state
 		// the teardown leads to is recorded.
 		return run.announced, run.shownMsg
 	}
-	if run.state != StateRunning {
+	if !run.followsSession() {
 		return run.state, run.message
 	}
 	c := e.servers[run.server]
@@ -33,6 +43,9 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 		msg := fmt.Sprintf("server %s is %s", run.server, status)
 		if last := c.sess.LastError(); last != "" {
 			msg += ": " + last
+		}
+		if run.state == StateError {
+			msg += "; " + run.message
 		}
 		return StateDegraded, msg
 	}
@@ -51,7 +64,10 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	}
 	// The session is connected, so its re-apply pass is over and each of
 	// these was refused by ssh: the local port could not be bound.
-	problems := make([]string, 0, len(dead))
+	problems := make([]string, 0, len(dead)+1)
+	if run.state == StateError {
+		problems = append(problems, run.message)
+	}
 	for _, f := range dead {
 		what := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", f.local)
 		if f.local == run.webLocal {

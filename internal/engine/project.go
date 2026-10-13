@@ -77,10 +77,12 @@ type heldPort struct {
 // showing degraded. When the session reconnects the project becomes running,
 // or error naming the port of a forward that could not be applied.
 //
-// The same holds for a running project later on: after every reconnect a
-// forward the new master refused puts the project in error naming the port,
-// with its other routes still served, until a later reconnect or a new start
-// restores the forward. The process holding the port is looked up in the
+// The same holds later on for a running project, and for one that started in
+// error with its web route served: while the server is away it shows
+// degraded, and after every reconnect a forward the new master refused puts
+// the project in error naming the port, with its other routes still served,
+// until a later reconnect or a new start restores the forward. The error a
+// project started with is kept in each of these messages. The process holding the port is looked up in the
 // background and added to the message, in a second announcement, when it is
 // found.
 //

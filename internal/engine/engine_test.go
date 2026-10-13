@@ -1950,3 +1950,86 @@ func TestStartInterruptedDuringTheProxyApplyLeavesNoSite(t *testing.T) {
 		}
 	}
 }
+
+// A project that came up in error because one loopback port could not be
+// forwarded still serves its web route. What happens to that route later
+// must show: the server dropping, and a forward the new master refuses. The
+// error of the start stays, and stands alone again once the rest is back.
+func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	lb := l.Addr().(*net.TCPAddr).Port
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+
+	if err := h.eng.StartProject(bg, "myapp"); err == nil {
+		t.Fatal("the start succeeded although its loopback port is taken")
+	}
+	started := h.eng.Status("myapp")
+	if started.State != StateError || !strings.Contains(started.Message, strconv.Itoa(lb)) || started.WebLocalPort == 0 || len(h.eng.Sites()) != 1 {
+		t.Fatalf("status after the start = %+v, sites %v", started, h.eng.Sites())
+	}
+	// agrees checks that the events said what Status says now.
+	agrees := func(when string, want []State) {
+		t.Helper()
+		st := h.eng.Status("myapp")
+		states, last := stateEvents(events, "myapp")
+		if fmt.Sprint(states) != fmt.Sprint(want) {
+			t.Fatalf("%s: state events = %v, want %v", when, states, want)
+		}
+		if last[st.State] != "state: "+string(st.State)+": "+st.Message {
+			t.Fatalf("%s: the event said %q, Status says %+v", when, last[st.State], st)
+		}
+	}
+	agrees("after the start", []State{StateStarting, StateError})
+
+	// The server drops: the web route is down with it.
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateDegraded }, "the project to show its server reconnecting")
+	degraded := h.eng.Status("myapp")
+	if !strings.Contains(degraded.Message, "server mini is ") || !strings.Contains(degraded.Message, started.Message) {
+		t.Fatalf("degraded message %q must name the server and keep the error of the start %q", degraded.Message, started.Message)
+	}
+	// Reconnected: the error of the start, word for word.
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp") == started }, "the error of the start to return")
+	agrees("after the reconnect", []State{StateDegraded, StateError})
+
+	// The next master cannot bind the web forward's local port.
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(started.WebLocalPort)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	lost := fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", started.WebLocalPort)
+	testutil.WaitUntil(t, 15*time.Second, func() bool {
+		st := h.eng.Status("myapp")
+		return st.State == StateError && strings.Contains(st.Message, lost)
+	}, "the lost web forward to show")
+	if st := h.eng.Status("myapp"); !strings.HasPrefix(st.Message, started.Message+"; ") {
+		t.Fatalf("message %q lost the error of the start %q", st.Message, started.Message)
+	}
+	agrees("after the web forward was lost", []State{StateDegraded, StateError})
+
+	// And a reconnect that restores it leaves the error of the start alone.
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool {
+		return h.eng.Status("myapp") == started && len(h.unapplied("mini")) == 0
+	}, "the web forward to be restored")
+	agrees("after the web forward was restored", []State{StateDegraded, StateError})
+
+	// Starting again with the port free is a full start, as before.
+	l.Close()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatalf("StartProject after freeing the port: %v", err)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateRunning || st.Message != "" {
+		t.Fatalf("status = %+v", st)
+	}
+}
