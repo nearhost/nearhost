@@ -165,6 +165,22 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 // binds a master at its control path plus a 17-byte temporary suffix. The
 // run directory of `add` must leave room whatever the server is called and
 // wherever the system keeps temporary files.
+// `add` does not handle signals: Ctrl-C ends it at once. Its master and SFTP
+// process therefore stay in its process group and end with it.
+func TestPrivateSessionStaysInTheForegroundProcessGroup(t *testing.T) {
+	sess, end, err := sshClient{}.privateSession(config.Server{Name: "mini", SSHHost: "host.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer end()
+	if !sess.Foreground {
+		t.Fatal("the session of a remote add would outlive an interrupted add")
+	}
+	if up := (sshClient{}).session(config.Server{Name: "mini", SSHHost: "host.example"}, "/tmp/nh-run"); up.Foreground {
+		t.Fatal("only the private session of add is a foreground one")
+	}
+}
+
 func TestPrivateSessionSocketPathIsShort(t *testing.T) {
 	const sunPath, sshSuffix, margin = 104, 17, 20
 	for _, name := range []string{"mini", strings.Repeat("build-server-", 6), "deploy@build host"} {

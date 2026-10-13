@@ -67,6 +67,9 @@ func (c sshClient) privateSession(srv config.Server) (*transport.Session, func()
 		return nil, nil, fmt.Errorf("create run directory: %w", err)
 	}
 	sess := c.session(config.Server{Name: "add", SSHHost: srv.SSHHost}, runDir)
+	// `add` does not handle signals, so Ctrl-C ends it on the spot. Its ssh
+	// stays in its process group and ends with it.
+	sess.Foreground = true
 	return sess, func() error {
 		sess.Stop()
 		return os.RemoveAll(runDir)
