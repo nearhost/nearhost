@@ -19,7 +19,7 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd(), newHostsCmd())
+	root.AddCommand(newVersionCmd(), newHostsCmd(), newTrustCmd(systemTrust()), newUntrustCmd(systemTrust()))
 	return root
 }
 

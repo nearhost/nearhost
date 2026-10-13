@@ -8,6 +8,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/pkg/sftp v1.13.11
+	github.com/smallstep/truststore v0.13.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -113,7 +114,6 @@ require (
 	github.com/smallstep/nosql v0.8.0 // indirect
 	github.com/smallstep/pkcs7 v0.2.3 // indirect
 	github.com/smallstep/scep v0.0.0-20260331191114-261f960a40d1 // indirect
-	github.com/smallstep/truststore v0.13.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect

@@ -88,8 +88,8 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	}
 }
 
-func TestBuildConfigDefaultsPortsAndAllowsNoSites(t *testing.T) {
-	raw, err := BuildConfig(nil, Options{StorageRoot: "/tmp/store"})
+func TestBuildConfigDefaultsPorts(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +98,24 @@ func TestBuildConfigDefaultsPortsAndAllowsNoSites(t *testing.T) {
 	if dig(t, cfg, "apps", "http", "https_port") != float64(443) || dig(t, cfg, "apps", "http", "http_port") != float64(80) {
 		t.Error("default ports wrong")
 	}
-	if routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any); len(routes) != 0 {
-		t.Errorf("expected no routes, got %v", routes)
+}
+
+func TestBuildConfigNoSitesHasNoListenersButKeepsCA(t *testing.T) {
+	raw, err := BuildConfig(nil, Options{StorageRoot: "/tmp/store"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	json.Unmarshal(raw, &cfg)
+	apps := dig(t, cfg, "apps").(map[string]any)
+	if _, ok := apps["http"]; ok {
+		t.Error("zero-site config must not include the http app")
+	}
+	if dig(t, cfg, "apps", "pki", "certificate_authorities", "local", "name") != CAName {
+		t.Error("zero-site config must still configure the local CA")
+	}
+	if dig(t, cfg, "admin", "disabled") != true || dig(t, cfg, "apps", "tls", "disable_storage_clean") != true {
+		t.Error("zero-site config must keep admin disabled and storage clean off")
 	}
 }
 
@@ -154,7 +170,7 @@ func TestBuildConfigSetsForwardingHeaders(t *testing.T) {
 }
 
 func TestBuildConfigKeepsAutomaticHTTPSRedirect(t *testing.T) {
-	cfg := build(t, nil)
+	cfg := build(t, []Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}})
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost").(map[string]any)
 	if a, ok := srv["automatic_https"]; ok {
 		t.Errorf("automatic_https must stay default so port 80 redirects: %v", a)
