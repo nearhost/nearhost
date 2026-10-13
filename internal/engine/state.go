@@ -13,7 +13,8 @@ import (
 // server's session is not connected, and in error while the session is
 // connected but lacks one of the project's forwards. Both are derived from
 // the session each time, so Status and the events always agree, and both end
-// by themselves when a reconnect restores what was missing.
+// by themselves when a reconnect restores what was missing. The error names
+// the process holding a port once lookupHolder has found it.
 func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if run.tearing && run.announced != "" {
 		// Being torn down: the last announced state stands until the state
@@ -39,14 +40,6 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if len(dead) == 0 {
 		return run.state, run.message
 	}
-	for _, f := range dead {
-		if _, reviewed := run.holders[f.local]; !reviewed && run.announced != "" {
-			// Just lost: reviewServer is still finding out who holds the
-			// port. Until it announces the error, the last announced state
-			// stands, so Status never runs ahead of the events.
-			return run.announced, run.shownMsg
-		}
-	}
 	// The session is connected, so its re-apply pass is over and each of
 	// these was refused by ssh: the local port could not be bound.
 	problems := make([]string, 0, len(dead))
@@ -55,7 +48,7 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 		if f.local == run.webLocal {
 			what = fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", f.local)
 		}
-		if holder := run.holders[f.local]; holder != "" {
+		if holder := run.holders[f.local].holder; holder != "" {
 			what += " (in use by " + holder + ")"
 		}
 		problems = append(problems, what)
@@ -80,7 +73,7 @@ func lostForwards(run *projectRun, states []transport.ForwardState) []forward {
 }
 
 // changeLocked records a project's state and reports whether it changed. The
-// caller announces it, with announceLocked or reviewServer.
+// caller announces it, with announceLocked or reviewServerLocked.
 func (e *Engine) changeLocked(run *projectRun, st State, msg string) bool {
 	run.tearing = false // a teardown ends with the state it leads to
 	if run.state == st && run.message == msg {

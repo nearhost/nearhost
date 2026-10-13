@@ -211,9 +211,9 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	h := newHarness(t, remoteConfig(lb))
 	// The real lookup, or a stand-in where this machine has no tool for it.
 	holder := fmt.Sprintf("pid %d", os.Getpid())
-	if !strings.Contains(portHolder(lb), holder) {
+	if !strings.Contains(portHolder(bg, lb), holder) {
 		holder = "vite (pid 4242)"
-		h.eng.holderOf = func(int) string { return holder }
+		h.eng.holderOf = func(context.Context, int) string { return holder }
 	} else {
 		h.eng.holderOf = portHolder
 	}
@@ -593,7 +593,7 @@ func TestForwardLostOnReconnectPutsOnlyThatProjectInError(t *testing.T) {
 		Projects: []config.Project{remoteProject("one", "mini", lb1), remoteProject("two", "mini", lb2)},
 	}
 	h := newHarness(t, cfg, "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
-	h.eng.holderOf = func(port int) string {
+	h.eng.holderOf = func(_ context.Context, port int) string {
 		if port == lb1 {
 			return "vite (pid 4242)"
 		}
@@ -613,7 +613,11 @@ func TestForwardLostOnReconnectPutsOnlyThatProjectInError(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.dropMaster(t, "mini")
-	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("one").State == StateError }, "project one to show the lost forward")
+	// The error names the port at once and the process once it is found.
+	testutil.WaitUntil(t, 15*time.Second, func() bool {
+		st := h.eng.Status("one")
+		return st.State == StateError && strings.Contains(st.Message, "in use by")
+	}, "project one to show the lost forward and who holds its port")
 	one := h.eng.Status("one")
 	for _, want := range []string{strconv.Itoa(lb1), "not forwarded", "vite (pid 4242)"} {
 		if !strings.Contains(one.Message, want) {
@@ -659,7 +663,7 @@ func TestMasterDyingDuringReapplyIsNotALostForward(t *testing.T) {
 	flag := filepath.Join(t.TempDir(), "forward-kills-master")
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_FORWARD_KILLS_MASTER="+flag)
 	var lookups atomic.Int32
-	h.eng.holderOf = func(int) string { lookups.Add(1); return "" }
+	h.eng.holderOf = func(context.Context, int) string { lookups.Add(1); return "" }
 	events, unsub := h.eng.Events().Subscribe(1024)
 	defer unsub()
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
@@ -830,7 +834,7 @@ func TestFailedCancelAfterALostForwardEndsInErrorNamingTheCancel(t *testing.T) {
 func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
 	var lookups atomic.Int32
-	h.eng.holderOf = func(int) string { lookups.Add(1); return "" }
+	h.eng.holderOf = func(context.Context, int) string { lookups.Add(1); return "" }
 	events, unsub := h.eng.Events().Subscribe(1024)
 	defer unsub()
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
@@ -848,29 +852,40 @@ func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	}
 }
 
-func TestStatusDoesNotRunAheadOfTheLostForwardEvent(t *testing.T) {
-	flag := filepath.Join(t.TempDir(), "forward-fails")
-	lb := testutil.FreePort(t)
-	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
-	asked, answer := make(chan struct{}, 8), make(chan struct{})
-	h.eng.holderOf = func(int) string {
+// slowLookup replaces the engine's process lookup with one that reports each
+// call on asked and answers "vite (pid 4242)" once answer has been called.
+func slowLookup(t *testing.T, h *harness) (asked chan struct{}, answer func()) {
+	t.Helper()
+	asked = make(chan struct{}, 8)
+	release := make(chan struct{})
+	h.eng.holderOf = func(context.Context, int) string {
 		asked <- struct{}{}
-		<-answer // the lookup is slow
+		<-release // the lookup is slow
 		return "vite (pid 4242)"
 	}
-	t.Cleanup(func() {
-		select {
-		case <-answer:
-		default:
-			close(answer)
-		}
-	})
+	var once sync.Once
+	answer = func() { once.Do(func() { close(release) }) }
+	t.Cleanup(answer) // before the harness shuts down: never leave a lookup waiting
+	return asked, answer
+}
+
+func TestLostForwardIsAnnouncedWhileItsHolderIsStillLookedUp(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	lb1, lb2 := testutil.FreePort(t), testutil.FreePort(t)
+	cfg := &config.Config{
+		Servers:  []config.Server{{Name: "mini", SSHHost: "mini"}},
+		Projects: []config.Project{remoteProject("one", "mini", lb1), remoteProject("two", "mini", lb2)},
+	}
+	h := newHarness(t, cfg, "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	asked, answer := slowLookup(t, h)
 	events, unsub := h.eng.Events().Subscribe(1024)
 	defer unsub()
-	if err := h.eng.StartProject(bg, "myapp"); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"one", "two"} {
+		if err := h.eng.StartProject(bg, name); err != nil {
+			t.Fatalf("StartProject %s: %v", name, err)
+		}
 	}
-	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb)), 0o644); err != nil {
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h.dropMaster(t, "mini")
@@ -879,20 +894,110 @@ func TestStatusDoesNotRunAheadOfTheLostForwardEvent(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the holder of the lost port was never looked up")
 	}
-	// The forward is known to be lost, but nothing has been announced yet.
-	if st := h.eng.Status("myapp"); st.State != StateDegraded {
-		t.Fatalf("status while the lookup runs = %+v, want the last announced state (degraded)", st)
+
+	// The lookup has not answered. The error is out all the same, naming the
+	// port, and Status says what the event said.
+	portOnly := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", lb1)
+	waitStateEvent(t, events, "one", "state: error: "+portOnly)
+	if st := h.eng.Status("one"); st.State != StateError || st.Message != portOnly {
+		t.Fatalf("status while the lookup runs = %+v, want the announced error %q", st, portOnly)
 	}
-	if states, _ := stateEvents(events, "myapp"); fmt.Sprint(states) != fmt.Sprint([]State{StateStarting, StateRunning, StateDegraded}) {
-		t.Fatalf("state events while the lookup runs = %v", states)
+
+	// Nothing on the server waits for the lookup either: another project
+	// cancels its forwards on the same session.
+	stopped := make(chan error, 1)
+	go func() { stopped <- h.eng.StopProject(bg, "two") }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopping another project on the server waited for the process lookup")
 	}
-	close(answer)
-	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "the error")
-	st := h.eng.Status("myapp")
-	states, last := stateEvents(events, "myapp")
-	if fmt.Sprint(states) != fmt.Sprint([]State{StateError}) || last[StateError] != "state: error: "+st.Message || !strings.Contains(st.Message, "vite (pid 4242)") {
-		t.Fatalf("events %v (%q), status %+v", states, last[StateError], st)
+
+	// The holder is added when it is found, in an event of its own; Status
+	// changes with that event, not before it.
+	answer()
+	waitStateEvent(t, events, "one", "state: error: "+portOnly+" (in use by vite (pid 4242))")
+	if st := h.eng.Status("one"); st.State != StateError || st.Message != portOnly+" (in use by vite (pid 4242))" {
+		t.Fatalf("status after the lookup = %+v", st)
 	}
+	if states, _ := stateEvents(events, "one"); len(states) != 0 {
+		t.Fatalf("state events after the holder was announced: %v", states)
+	}
+}
+
+func TestHolderFoundTooLateIsDropped(t *testing.T) {
+	for _, variant := range []string{"project stopped", "forward restored"} {
+		t.Run(variant, func(t *testing.T) {
+			flag := filepath.Join(t.TempDir(), "forward-fails")
+			lb := testutil.FreePort(t)
+			h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+			asked, answer := slowLookup(t, h)
+			events, unsub := h.eng.Events().Subscribe(1024)
+			defer unsub()
+			loseLoopbackForward(t, h, flag, lb)
+			select {
+			case <-asked:
+			case <-time.After(15 * time.Second):
+				t.Fatal("the holder of the lost port was never looked up")
+			}
+			// While the lookup runs, what it is about goes away.
+			if err := os.Remove(flag); err != nil {
+				t.Fatal(err)
+			}
+			want := ProjectStatus{State: StateStopped, Alias: "myapp.test"}
+			if variant == "project stopped" {
+				if err := h.eng.StopProject(bg, "myapp"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				h.dropMaster(t, "mini")
+				testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateRunning }, "the forward to be restored")
+				want = h.eng.Status("myapp")
+			}
+			stateEvents(events, "myapp") // drop what led here
+
+			answer()
+			testutil.WaitUntil(t, 10*time.Second, func() bool { return !strings.Contains(engineGoroutines(), "lookupHolder") }, "the lookup to finish")
+			if st := h.eng.Status("myapp"); st != want {
+				t.Fatalf("status = %+v after a late answer, want it unchanged: %+v", st, want)
+			}
+			if states, last := stateEvents(events, "myapp"); len(states) != 0 {
+				t.Fatalf("state events after a late answer: %v %q", states, last)
+			}
+		})
+	}
+}
+
+func TestShutdownEndsARunningHolderLookup(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	lb := testutil.FreePort(t)
+	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	asked := make(chan struct{}, 8)
+	h.eng.holderOf = func(ctx context.Context, _ int) string {
+		asked <- struct{}{}
+		<-ctx.Done() // as slow as it is allowed to be
+		return ""
+	}
+	loseLoopbackForward(t, h, flag, lb)
+	select {
+	case <-asked:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the holder of the lost port was never looked up")
+	}
+	done := make(chan error, 1)
+	go func() { done <- h.eng.Shutdown(bg) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Shutdown waited for a process lookup")
+	}
+	h.assertNothingLeft(t)
 }
 
 func TestStartRetriesAProjectWhoseForwardWasLost(t *testing.T) {
@@ -1156,7 +1261,7 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 				}
 			})
 			h.httpsPort, h.httpPort = h.opts.HTTPSPort, h.opts.HTTPPort
-			h.eng.holderOf = func(port int) string { return fmt.Sprintf("holder-of-%d", port) }
+			h.eng.holderOf = func(_ context.Context, port int) string { return fmt.Sprintf("holder-of-%d", port) }
 			err := h.eng.Start(bg)
 			if err == nil || !strings.Contains(err.Error(), strconv.Itoa(held)) {
 				t.Fatalf("expected an error naming port %d, got %v", held, err)

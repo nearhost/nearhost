@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -60,7 +61,7 @@ func TestFindHolderFallsBackWhenToolsAreMissingSlowOrSilent(t *testing.T) {
 	slow := holderTool{name: "sleep", args: func(int) []string { return []string{"30"} }, parse: never}
 	silent := holderTool{name: "true", args: func(int) []string { return nil }, parse: func(string, int) string { return "" }}
 	begin := time.Now()
-	if got := findHolder([]holderTool{missing, slow, silent}, 5174, 200*time.Millisecond); got != "" {
+	if got := findHolder(context.Background(), []holderTool{missing, slow, silent}, 5174, 200*time.Millisecond); got != "" {
 		t.Fatalf("findHolder = %q, want nothing", got)
 	}
 	if d := time.Since(begin); d > 5*time.Second {
@@ -69,7 +70,7 @@ func TestFindHolderFallsBackWhenToolsAreMissingSlowOrSilent(t *testing.T) {
 	// The first tool that names a holder wins.
 	echo := holderTool{name: "echo", args: func(port int) []string { return []string{fmt.Sprint(port)} },
 		parse: func(out string, port int) string { return "found " + strings.TrimSpace(out) }}
-	if got := findHolder([]holderTool{missing, silent, echo}, 5174, time.Second); got != "found 5174" {
+	if got := findHolder(context.Background(), []holderTool{missing, silent, echo}, 5174, time.Second); got != "found 5174" {
 		t.Fatalf("findHolder = %q", got)
 	}
 }
@@ -82,7 +83,7 @@ func TestFindHolderSharesOneDeadlineAcrossTools(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "second-tool-ran")
 	slow := holderTool{name: "sleep", args: func(int) []string { return []string{"30"} }, parse: never}
 	second := holderTool{name: "touch", args: func(int) []string { return []string{marker} }, parse: never}
-	if got := findHolder([]holderTool{slow, second}, 5174, 300*time.Millisecond); got != "" {
+	if got := findHolder(context.Background(), []holderTool{slow, second}, 5174, 300*time.Millisecond); got != "" {
 		t.Fatalf("findHolder = %q, want nothing", got)
 	}
 	if _, err := os.Stat(marker); err == nil {
@@ -96,7 +97,7 @@ func TestPortHolderFindsThisProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	got := portHolder(l.Addr().(*net.TCPAddr).Port)
+	got := portHolder(context.Background(), l.Addr().(*net.TCPAddr).Port)
 	if got == "" {
 		t.Skip("no lsof or ss that can name the listener on this machine")
 	}

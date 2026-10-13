@@ -73,22 +73,19 @@ func (c *serverConn) stop() {
 // each status change after making it, and reports itself connected only once
 // its forwards have been re-applied, so this is also where the projects of
 // the server are found to have become degraded, to have lost a forward, or to
-// have recovered.
+// have recovered. The session may hold its forward lock while it logs:
+// nothing here may block.
 func (e *Engine) serverLog(server, msg string) {
 	e.bus.Publish(Event{Server: server, Message: msg})
-	e.reviewServer(server)
+	e.mu.Lock()
+	e.reviewServerLocked(server)
+	e.mu.Unlock()
 }
 
-// reviewServer announces the effective state of every project on server. For
-// a forward that has just been found lost it first asks which process holds
-// the local port, outside mu, so the announcement can name it.
-func (e *Engine) reviewServer(server string) {
-	type lookup struct {
-		run  *projectRun
-		port int
-	}
-	var lookups []lookup
-	e.mu.Lock()
+// reviewServerLocked announces the effective state of every project on
+// server. A forward found lost is announced at once, naming its port; who
+// holds that port is asked in the background.
+func (e *Engine) reviewServerLocked(server string) {
 	for _, name := range e.order {
 		run := e.runs[name]
 		if run.server != server {
@@ -101,31 +98,40 @@ func (e *Engine) reviewServer(server string) {
 			}
 		}
 		for port := range lost {
-			if _, known := run.holders[port]; !known {
-				lookups = append(lookups, lookup{run, port})
+			if _, asked := run.holders[port]; asked || e.closed {
+				continue
 			}
+			if run.holders == nil {
+				run.holders = map[int]heldPort{}
+			}
+			e.lookup++
+			run.holders[port] = heldPort{lookup: e.lookup}
+			e.lookups.Add(1) // under mu and before closed is set, so before Shutdown waits
+			go e.lookupHolder(run, port, e.lookup)
 		}
+		e.announceLocked(run)
 	}
-	e.mu.Unlock()
+}
 
-	holders := make([]string, len(lookups))
-	for i, l := range lookups {
-		holders[i] = e.holderOf(l.port)
+// lookupHolder asks which process holds the local port of a forward run has
+// lost, and announces the project's error again with the answer. It runs on
+// its own goroutine and holds no lock while it asks. By the time the answer
+// is there the forward may have been restored or the project stopped, so the
+// answer is only used if this lookup is still the one the port waits for and
+// the forward is still lost.
+func (e *Engine) lookupHolder(run *projectRun, port int, lookup uint64) {
+	defer e.lookups.Done()
+	holder := e.holderOf(e.ctx, port)
+	if holder == "" {
+		return
 	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for i, l := range lookups {
-		if l.run.holders == nil {
-			l.run.holders = map[int]string{}
-		}
-		l.run.holders[l.port] = holders[i] // "" too: do not ask again
+	if run.holders[port].lookup != lookup || !e.lostLocked(run)[port] {
+		return
 	}
-	for _, name := range e.order {
-		if run := e.runs[name]; run.server == server {
-			e.announceLocked(run)
-		}
-	}
+	run.holders[port] = heldPort{lookup: lookup, holder: holder}
+	e.announceLocked(run)
 }
 
 // lostLocked is the set of local ports whose forward a running project has

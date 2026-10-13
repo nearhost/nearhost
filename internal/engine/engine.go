@@ -79,12 +79,16 @@ type ProjectStatus struct {
 // A session calls back into the engine through Logf, from its supervisor and
 // from AddForward and CancelForward, in each case while it may hold its
 // forward lock (fwdMu) but never its state lock. The callback (serverLog)
-// takes mu, reads the session's status and forward states, and between two
-// short holds of mu may look up the process holding a port; it holds no
-// engine lock during that lookup and never calls AddForward or CancelForward.
-// The engine in turn never calls a session method that runs ssh while holding
-// mu. So the only orders that exist are fwdMu -> mu -> session state lock, and
-// they cannot deadlock.
+// takes mu, reads the session's status and forward states and publishes. It
+// starts no process and never calls AddForward or CancelForward, so it never
+// holds up the session. The engine in turn never calls a session method that
+// runs ssh while holding mu. So the only orders that exist are fwdMu -> mu ->
+// session state lock, and they cannot deadlock.
+//
+// Which process holds the port of a lost forward is asked by a goroutine of
+// its own (lookupHolder). It holds no lock while it asks, and takes mu
+// afterwards to check that the answer still applies before publishing it.
+// Shutdown ends these lookups and waits for them.
 type Engine struct {
 	cfg     *config.Config // private copy, never changed after New
 	opts    Options
@@ -97,8 +101,13 @@ type Engine struct {
 
 	connectWait time.Duration // how long a start waits for its server
 	// holderOf names the process listening on a local TCP port, or returns ""
-	// when it cannot tell. Tests replace it.
-	holderOf func(port int) string
+	// when it cannot tell or ctx ends first. Tests replace it.
+	holderOf func(ctx context.Context, port int) string
+	// ctx ends at Shutdown; the lookups started for lost forwards run under
+	// it and are counted in lookups.
+	ctx     context.Context
+	stop    context.CancelFunc
+	lookups sync.WaitGroup
 
 	lifeMu  sync.Mutex
 	hostsMu sync.Mutex
@@ -107,6 +116,7 @@ type Engine struct {
 	mu      sync.Mutex
 	started bool
 	closed  bool
+	lookup  uint64 // number of the last holder lookup started
 	servers map[string]*serverConn
 	ports   map[int]string // local port held by a forward -> project
 }
@@ -126,6 +136,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},
 	}
+	e.ctx, e.stop = context.WithCancel(context.Background())
 	for _, p := range e.cfg.Projects {
 		if _, dup := e.runs[p.Name]; dup {
 			continue // like config.Project, the first of a name wins
@@ -195,10 +206,10 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	// With no sites the proxy opens no listeners, so a port conflict would
 	// only show when the first project starts. Find it now.
-	if err := e.probePort("HTTPS", e.opts.HTTPSPort, 443); err != nil {
+	if err := e.probePort(ctx, "HTTPS", e.opts.HTTPSPort, 443); err != nil {
 		return err
 	}
-	if err := e.probePort("HTTP", e.opts.HTTPPort, 80); err != nil {
+	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
@@ -218,14 +229,14 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // probePort reports whether the proxy could listen on port (def when 0): on
 // TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3.
-func (e *Engine) probePort(what string, port, def int) error {
+func (e *Engine) probePort(ctx context.Context, what string, port, def int) error {
 	if port == 0 {
 		port = def
 	}
 	addr := fmt.Sprintf(":%d", port)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("%s port %d is in use%s: %w", what, port, e.heldBy(port), err)
+		return fmt.Errorf("%s port %d is in use%s: %w", what, port, e.heldBy(ctx, port), err)
 	}
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("%s port %d: %w", what, port, err)
@@ -268,6 +279,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	e.closed = true // from here no project start gets past its first check
 	started := e.started
 	e.mu.Unlock()
+	e.stop() // no holder lookup begins once closed is set; end the running ones
 
 	var errs []error
 	for _, name := range e.order {
@@ -292,6 +304,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	e.lookups.Wait()
 	// Caddy and its log sink are process-global. If another engine has taken
 	// the proxy over since Start, both are that engine's now: leave them.
 	if started && e.proxy.Running() {

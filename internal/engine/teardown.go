@@ -51,10 +51,13 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 	e.applyMu.Unlock()
 
 	// The forwards leave the record before they are cancelled, so a forward
-	// the engine is removing is not taken for one the project lost.
+	// the engine is removing is not taken for one the project lost. What was
+	// known about lost ones goes with them; a lookup still running finds
+	// nothing to add its answer to.
 	e.mu.Lock()
 	forwards := run.forwards
 	run.forwards = nil
+	run.holders = nil
 	c := e.servers[run.server]
 	e.mu.Unlock()
 	var kept []forward

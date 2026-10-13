@@ -125,7 +125,7 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 	}
 	h.eng = New(cfg, h.opts)
 	// Tests that care about the holder of a port set their own lookup.
-	h.eng.holderOf = func(int) string { return "" }
+	h.eng.holderOf = func(context.Context, int) string { return "" }
 	t.Cleanup(func() {
 		if err := h.eng.Shutdown(context.Background()); err != nil {
 			t.Errorf("Shutdown: %v", err)
@@ -382,6 +382,28 @@ func stateEvents(events <-chan Event, project string) (states []State, last map[
 			}
 		default:
 			return states, last
+		}
+	}
+}
+
+// waitStateEvent waits for a state event of project carrying exactly message
+// and fails the test if none arrives. Earlier events are dropped.
+func waitStateEvent(t *testing.T, events <-chan Event, project, message string) {
+	t.Helper()
+	var seen []string
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project != project || ev.State == "" {
+				continue
+			}
+			if ev.Message == message {
+				return
+			}
+			seen = append(seen, ev.Message)
+		case <-deadline:
+			t.Fatalf("no state event %q for %s; got %q", message, project, seen)
 		}
 	}
 }

@@ -45,28 +45,29 @@ var (
 // portHolder names the process listening on a local TCP port, like
 // "node (pid 4242)". It is best effort: it returns "" when no tool is
 // installed, the tool is slow or fails, or the process belongs to another
-// user and the tool will not name it.
-func portHolder(port int) string {
+// user and the tool will not name it. It gives up when ctx ends.
+func portHolder(ctx context.Context, port int) string {
 	tools := []holderTool{lsofTool}
 	if runtime.GOOS == "linux" {
 		tools = []holderTool{ssTool, lsofTool}
 	}
-	return findHolder(tools, port, holderTimeout)
+	return findHolder(ctx, tools, port, holderTimeout)
 }
 
 // heldBy is the clause naming the process that listens on port: " by node
 // (pid 4242)", or nothing when it is not known.
-func (e *Engine) heldBy(port int) string {
-	if holder := e.holderOf(port); holder != "" {
+func (e *Engine) heldBy(ctx context.Context, port int) string {
+	if holder := e.holderOf(ctx, port); holder != "" {
 		return " by " + holder
 	}
 	return ""
 }
 
 // findHolder asks each tool in turn and returns the first answer. All tools
-// together get at most timeout: one that uses it up leaves none for the next.
-func findHolder(tools []holderTool, port int, timeout time.Duration) string {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// together get at most timeout, and less when ctx ends first: one that uses
+// the time up leaves none for the next.
+func findHolder(ctx context.Context, tools []holderTool, port int, timeout time.Duration) string {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for _, tool := range tools {
 		if ctx.Err() != nil {

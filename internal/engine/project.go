@@ -37,7 +37,13 @@ type projectRun struct {
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
-	holders   map[int]string     // local port of a lost forward -> process holding it ("" if unknown)
+	holders   map[int]heldPort   // local port of each forward found lost -> what is known of its holder
+}
+
+// heldPort is what is known about the local port of a lost forward.
+type heldPort struct {
+	lookup uint64 // the lookup that may still name the holder
+	holder string // the process holding the port; empty while not known
 }
 
 // StartProject brings a project up: it connects the project's server, makes
@@ -71,9 +77,11 @@ type projectRun struct {
 // or error naming the port of a forward that could not be applied.
 //
 // The same holds for a running project later on: after every reconnect a
-// forward the new master refused puts the project in error naming the port
-// (and the process holding it, when that can be found), with its other routes
-// still served, until a later reconnect or a new start restores the forward.
+// forward the new master refused puts the project in error naming the port,
+// with its other routes still served, until a later reconnect or a new start
+// restores the forward. The process holding the port is looked up in the
+// background and added to the message, in a second announcement, when it is
+// found.
 //
 // A failure never changes another project.
 func (e *Engine) StartProject(ctx context.Context, name string) error {
@@ -123,22 +131,16 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 		msg = err.Error()
 	}
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	run.cancel = nil
-	// Announce through reviewServer: the forwards may have been queued on a
-	// session that dropped, or lost again since, and the review names the
-	// process holding a port. "starting" stays the last announced state until
-	// then; the outcome is never "starting", so it is always announced.
-	announced := run.announced
+	// Announce through the review: the forwards may have been queued on a
+	// session that dropped, or lost again since.
 	e.changeLocked(run, st, msg)
-	run.announced = announced
-	e.mu.Unlock()
-	e.reviewServer(run.server)
+	e.reviewServerLocked(run.server)
 	if err == nil {
-		e.mu.Lock()
 		if shown, why := e.effectiveLocked(run); shown == StateError {
 			err = errors.New(why)
 		}
-		e.mu.Unlock()
 	}
 	return err
 }
@@ -319,7 +321,7 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	}
 	if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
 		e.releasePort(port)
-		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(port), err)
+		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
 	} else if err := l.Close(); err != nil {
 		e.releasePort(port)
 		return fmt.Errorf("loopback port %d: %w", port, err)
