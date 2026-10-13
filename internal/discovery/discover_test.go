@@ -259,3 +259,37 @@ func TestAdviseNoViteDefaultPortWhenConfigSetsPort(t *testing.T) {
 		t.Fatal("server.port is set, so no vite-default-port advisory")
 	}
 }
+
+func TestAdviseViteDefaultPortSnippetMatchesProjectKind(t *testing.T) {
+	plain, err := Discover(memReader{
+		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
+		"vite.config.ts": "export default defineConfig({})",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, a := range Advise(plain, "x.test", nil) {
+		if a.Code != "vite-default-port" {
+			continue
+		}
+		found = true
+		if !strings.Contains(a.Snippet, "port: 5173") || strings.Contains(a.Snippet, "VITE_PORT") || strings.Contains(a.Message, "VITE_PORT") {
+			t.Fatalf("plain Vite advisory should name server.port only: %+v", a)
+		}
+	}
+	if !found {
+		t.Fatal("expected vite-default-port advisory")
+	}
+
+	sail, _ := Discover(DirReader{Root: "testdata/sail-defaults"})
+	for _, a := range Advise(sail, "defaults.test", nil) {
+		if a.Code == "vite-default-port" {
+			if a.Snippet != "VITE_PORT=5174" || strings.Contains(a.Message, "server.port") {
+				t.Fatalf("Sail advisory should keep VITE_PORT only: %+v", a)
+			}
+			return
+		}
+	}
+	t.Fatal("expected Sail vite-default-port advisory")
+}
