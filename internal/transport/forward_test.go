@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,14 +56,25 @@ func TestAddForwardReportsBindFailure(t *testing.T) {
 }
 
 func TestForwardsAreReappliedAfterReconnect(t *testing.T) {
-	s, logPath := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.3")
+	s, logPath := newFakeSession(t)
+	const spec = "-O forward -L 127.0.0.1:8080:localhost:80"
 	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
 		t.Fatalf("queueing a forward before connect should succeed: %v", err)
 	}
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool {
+		return s.Status() == StatusConnected && strings.Count(readLog(t, logPath), spec) >= 1
+	}, "forward issued on the first master")
+	if s.Launches() != 1 {
+		t.Fatalf("Launches = %d before the drop, want 1", s.Launches())
+	}
+	// The fake master exits once its socket file disappears: drop it on demand.
+	if err := os.Remove(s.SocketPath()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool {
 		return s.Launches() >= 2 && s.Status() == StatusConnected &&
-			strings.Count(readLog(t, logPath), "-O forward -L 127.0.0.1:8080:localhost:80") >= 2
+			strings.Count(readLog(t, logPath), spec) >= 2
 	}, "forward reapplied after reconnect")
 }
 
