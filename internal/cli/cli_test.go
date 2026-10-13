@@ -75,10 +75,13 @@ func executeInto(ctx context.Context, out *syncBuffer, cmd *cobra.Command, args 
 }
 
 // configHome gives the test its own short config directory (config file, run
-// directory and Caddy storage live under it) and returns the config path.
+// directory and Caddy storage live under it) and returns the config path. The
+// prefix is as short as it is because a control socket path may be 86 bytes
+// at most, and on macOS the temporary directory alone takes 49 of them and
+// "/nearhost/run/mini.sock" another 23.
 func configHome(t *testing.T) string {
 	t.Helper()
-	dir := testutil.TempDir(t, "nh-cli-")
+	dir := testutil.TempDir(t, "nh")
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	return filepath.Join(dir, "nearhost", "config.yaml")
 }

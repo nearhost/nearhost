@@ -55,12 +55,15 @@ func noAddLeftovers(t *testing.T, log string) {
 	}
 }
 
+// checkArgv is how the connectivity check runs ssh for the host mini.lan.
+const checkArgv = "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none mini.lan true"
+
 func TestCheckServerRunsTheBatchModeCheck(t *testing.T) {
 	c, log := fakeClient(t)
 	if err := c.check(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(sshLog(t, log)); got != "-o BatchMode=yes -o ConnectTimeout=10 mini.lan true" {
+	if got := strings.TrimSpace(sshLog(t, log)); got != checkArgv {
 		t.Fatalf("ssh was run as %q", got)
 	}
 
@@ -84,7 +87,7 @@ func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 		}
 	}
 	// Only the check ran: no master was started for a server that refuses us.
-	if got := strings.TrimSpace(sshLog(t, log)); got != "-o BatchMode=yes -o ConnectTimeout=10 mini.lan true" {
+	if got := strings.TrimSpace(sshLog(t, log)); got != checkArgv {
 		t.Fatalf("ssh was run as:\n%s", got)
 	}
 }
