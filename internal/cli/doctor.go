@@ -133,6 +133,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 		}
 		return append(checks, unread("servers"))
 	}
+	checks = append(checks, checkAliases(cfg, path)...)
 	if !flags.noHosts {
 		checks = append(checks, checkHosts(b, cfg))
 	}
@@ -260,6 +261,23 @@ func checkCA(b trustBackend) []check {
 		nss.fix = "only Firefox (and on Linux Chromium-family browsers) need this; set them up, then " + fix
 	}
 	return []check{ca, nss}
+}
+
+// checkAliases reports the projects whose alias is not a valid .test name,
+// which `nearhost up` does not start. It adds no line when every alias is
+// valid; the hosts check leaves the invalid ones out.
+func checkAliases(cfg *config.Config, path string) []check {
+	var invalid []string
+	for _, p := range cfg.Projects {
+		if _, err := hosts.Rewrite("", []string{p.Alias}); err != nil {
+			invalid = append(invalid, fmt.Sprintf("project %q: %v", p.Name, err))
+		}
+	}
+	if len(invalid) == 0 {
+		return nil
+	}
+	return []check{{"aliases", levelFail, strings.Join(invalid, "\n"),
+		"correct the alias in " + path + "; `nearhost up` does not start a project with such an alias"}}
 }
 
 // checkHosts compares the managed block with the aliases `nearhost up` would

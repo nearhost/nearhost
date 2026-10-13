@@ -320,3 +320,31 @@ func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 		t.Error("doctor must reject positional arguments")
 	}
 }
+
+// `nearhost up` does not start a project whose alias is not a valid .test
+// name. doctor must say so rather than leave the alias out and report the
+// hosts block as fine.
+func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
+	path := configHome(t)
+	bad := localProject("legacy", 8001, true)
+	bad.Alias = "Legacy.example"
+	saveConfig(t, path, &config.Config{Projects: []config.Project{bad}})
+	f := healthy()
+	f.hosts = "127.0.0.1 localhost\n"
+	for _, args := range [][]string{{"doctor"}, {"doctor", "--no-hosts"}} {
+		out, err := execute(t, newDoctorCmd(f.backend()), args...)
+		if err == nil || err.Error() != "1 check failed" {
+			t.Errorf("%v: err = %v\n%s", args, err, out)
+		}
+		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias \"Legacy.example\": must be a lowercase hostname ending in .test\n"+
+			"      fix: correct the alias in "+path+"; `nearhost up` does not start a project with such an alias\n")
+	}
+
+	// The hosts block is still compared with the aliases that are valid.
+	saveConfig(t, path, &config.Config{Projects: []config.Project{bad, localProject("web", 8000, true)}})
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+	if err == nil || err.Error() != "2 checks failed" {
+		t.Errorf("err = %v\n%s", err, out)
+	}
+	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias", "FAIL  hosts block      missing web.test\n")
+}
