@@ -7,14 +7,12 @@ import (
 	"net"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
-	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // State is a project's lifecycle state.
@@ -340,108 +338,4 @@ func (e *Engine) Status(name string) ProjectStatus {
 	defer e.mu.Unlock()
 	st, msg := e.effectiveLocked(run)
 	return ProjectStatus{State: st, Message: msg, Alias: run.alias, WebLocalPort: run.webLocal}
-}
-
-// effectiveLocked is the state to show for run. It is the recorded state,
-// except for a running project on a remote server: that is degraded while the
-// server's session is not connected, and in error while the session is
-// connected but lacks one of the project's forwards. Both are derived from
-// the session each time, so Status and the events always agree, and both end
-// by themselves when a reconnect restores what was missing.
-func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
-	if run.state != StateRunning {
-		return run.state, run.message
-	}
-	c := e.servers[run.server]
-	if c == nil {
-		return run.state, run.message
-	}
-	status, states := c.sess.ForwardStates()
-	if status != transport.StatusConnected {
-		msg := fmt.Sprintf("server %s is %s", run.server, status)
-		if last := c.sess.LastError(); last != "" {
-			msg += ": " + last
-		}
-		return StateDegraded, msg
-	}
-	dead := lostForwards(run, states)
-	if len(dead) == 0 {
-		return run.state, run.message
-	}
-	// The session is connected, so its re-apply pass is over and each of
-	// these was refused by ssh: the local port could not be bound.
-	problems := make([]string, 0, len(dead))
-	for _, f := range dead {
-		what := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", f.local)
-		if f.local == run.webLocal {
-			what = fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", f.local)
-		}
-		if holder := run.holders[f.local]; holder != "" {
-			what += " (in use by " + holder + ")"
-		}
-		problems = append(problems, what)
-	}
-	return StateError, strings.Join(problems, "; ")
-}
-
-// lostForwards lists the forwards of run that are missing from states or not
-// applied there.
-func lostForwards(run *projectRun, states []transport.ForwardState) []forward {
-	applied := make(map[forward]bool, len(states))
-	for _, st := range states {
-		applied[forward{st.Local, st.Remote}] = st.Applied
-	}
-	var lost []forward
-	for _, f := range run.forwards {
-		if !applied[f] {
-			lost = append(lost, f)
-		}
-	}
-	return lost
-}
-
-// changeLocked records a project's state and reports whether it changed. The
-// caller announces it, with announceLocked or reviewServer.
-func (e *Engine) changeLocked(run *projectRun, st State, msg string) bool {
-	if run.state == st && run.message == msg {
-		return false
-	}
-	run.state, run.message = st, msg
-	run.announced = "" // an explicit change is always announced
-	return true
-}
-
-// setStateLocked records a project's state and announces it.
-func (e *Engine) setStateLocked(run *projectRun, st State, msg string) {
-	if e.changeLocked(run, st, msg) {
-		e.announceLocked(run)
-	}
-}
-
-// announceLocked publishes run's effective state if it differs from the last
-// one published. It is published under mu so events arrive in state order.
-func (e *Engine) announceLocked(run *projectRun) {
-	st, msg := e.effectiveLocked(run)
-	if st == run.announced {
-		return
-	}
-	run.announced = st
-	text := "state: " + string(st)
-	if msg != "" {
-		text += ": " + msg
-	}
-	ev := Event{Project: run.name, State: st, Message: text}
-	if run.server != config.LocalServer {
-		ev.Server = run.server
-	}
-	e.bus.Publish(ev)
-}
-
-// logProject publishes a log line of a project.
-func (e *Engine) logProject(run *projectRun, format string, args ...any) {
-	ev := Event{Project: run.name, Message: fmt.Sprintf(format, args...)}
-	if run.server != config.LocalServer {
-		ev.Server = run.server
-	}
-	e.bus.Publish(ev)
 }

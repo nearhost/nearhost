@@ -31,6 +31,8 @@ type projectRun struct {
 	state     State
 	message   string
 	announced State              // effective state last published
+	shownMsg  string             // its message
+	tearing   bool               // a teardown has begun; cleared by the state change that follows it
 	webLocal  int                // local port the proxy sends the alias to; 0 when none
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
@@ -122,11 +124,14 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	}
 	e.mu.Lock()
 	run.cancel = nil
-	e.changeLocked(run, st, msg)
-	e.mu.Unlock()
 	// Announce through reviewServer: the forwards may have been queued on a
 	// session that dropped, or lost again since, and the review names the
-	// process holding a port.
+	// process holding a port. "starting" stays the last announced state until
+	// then; the outcome is never "starting", so it is always announced.
+	announced := run.announced
+	e.changeLocked(run, st, msg)
+	run.announced = announced
+	e.mu.Unlock()
 	e.reviewServer(run.server)
 	if err == nil {
 		e.mu.Lock()
@@ -344,98 +349,5 @@ func (e *Engine) publishSite(run *projectRun, webLocal int) error {
 		e.mu.Unlock()
 		return err
 	}
-	return nil
-}
-
-// rollBack undoes a start that failed part way. It runs even when the start's
-// own context has ended, because forwards must still be cancelled.
-func (e *Engine) rollBack(ctx context.Context, run *projectRun) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-	defer cancel()
-	if err := e.tearDown(ctx, run); err != nil {
-		return fmt.Errorf("undo start: %w", err)
-	}
-	return nil
-}
-
-// tearDown removes run's site from the proxy and cancels its forwards. It
-// attempts every step and returns the failures joined. What could not be
-// removed stays recorded on run, so calling it again retries exactly that.
-// The caller holds run.op.
-func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
-	var errs []error
-
-	e.applyMu.Lock()
-	e.mu.Lock()
-	published := run.site
-	sites := e.sitesLocked(run)
-	e.mu.Unlock()
-	if published {
-		if err := e.proxy.Apply(sites); err != nil {
-			errs = append(errs, fmt.Errorf("remove site: %w", err))
-		} else {
-			e.mu.Lock()
-			run.site = false
-			e.mu.Unlock()
-		}
-	}
-	e.applyMu.Unlock()
-
-	// The forwards leave the record before they are cancelled, so a forward
-	// the engine is removing is not taken for one the project lost.
-	e.mu.Lock()
-	forwards := run.forwards
-	run.forwards = nil
-	c := e.servers[run.server]
-	e.mu.Unlock()
-	var kept []forward
-	for _, f := range forwards {
-		if err := c.sess.CancelForward(ctx, f.local, f.remote); err != nil {
-			kept = append(kept, f)
-			errs = append(errs, err)
-			e.logProject(run, "cancel forward: %v", err)
-			continue
-		}
-		e.releasePort(f.local)
-	}
-	e.mu.Lock()
-	run.forwards = kept
-	if !run.site {
-		run.webLocal = 0
-	}
-	e.mu.Unlock()
-	return errors.Join(errs...)
-}
-
-// StopProject removes a project's site from the proxy and cancels its
-// forwards; other projects keep serving and the server's SSH connection stays
-// up. A start in progress is interrupted first. Stopping a stopped project
-// does nothing.
-//
-// If a step fails the project ends in the error state and the error is
-// returned; what could not be removed is remembered, and stopping (or
-// starting) the project again retries it.
-func (e *Engine) StopProject(ctx context.Context, name string) error {
-	run, ok := e.runs[name]
-	if !ok {
-		return fmt.Errorf("unknown project %q", name)
-	}
-	e.mu.Lock()
-	if run.cancel != nil {
-		run.cancel()
-	}
-	e.mu.Unlock()
-	run.op.Lock()
-	defer run.op.Unlock()
-
-	err := e.tearDown(ctx, run)
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err != nil {
-		err = fmt.Errorf("stop %s: %w", name, err)
-		e.setStateLocked(run, StateError, err.Error())
-		return err
-	}
-	e.setStateLocked(run, StateStopped, "")
 	return nil
 }

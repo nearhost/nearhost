@@ -621,6 +621,146 @@ func TestMasterDyingDuringReapplyIsNotALostForward(t *testing.T) {
 	}
 }
 
+// loseLoopbackForward starts myapp and makes its loopback forward fail to
+// re-apply after a dropped connection, leaving the project in the error
+// state. The harness must have FAKE_SSH_FORWARD_FAIL_FILE set to flag.
+func loseLoopbackForward(t *testing.T, h *harness, flag string, lb int) ProjectStatus {
+	t.Helper()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "the lost forward to show")
+	return h.eng.Status("myapp")
+}
+
+func TestStopAfterALostForwardGoesFromErrorToStopped(t *testing.T) {
+	for _, how := range []string{"StopProject", "Shutdown"} {
+		t.Run(how, func(t *testing.T) {
+			flag := filepath.Join(t.TempDir(), "forward-fails")
+			lb := testutil.FreePort(t)
+			h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+			events, unsub := h.eng.Events().Subscribe(1024)
+			defer unsub()
+			loseLoopbackForward(t, h, flag, lb)
+			if states, _ := stateEvents(events, "myapp"); fmt.Sprint(states) != fmt.Sprint([]State{StateStarting, StateRunning, StateDegraded, StateError}) {
+				t.Fatalf("state events before the stop = %v", states)
+			}
+			var err error
+			if how == "Shutdown" {
+				err = h.eng.Shutdown(bg)
+			} else {
+				err = h.eng.StopProject(bg, "myapp")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			states, _ := stateEvents(events, "myapp")
+			if want := []State{StateStopped}; fmt.Sprint(states) != fmt.Sprint(want) {
+				t.Fatalf("state events of the stop = %v, want %v", states, want)
+			}
+			if st := h.eng.Status("myapp"); st.State != StateStopped || st.Message != "" {
+				t.Fatalf("status = %+v", st)
+			}
+		})
+	}
+}
+
+func TestStatusDuringTeardownKeepsTheAnnouncedState(t *testing.T) {
+	for _, variant := range []string{"healthy", "after a lost forward"} {
+		t.Run(variant, func(t *testing.T) {
+			dir := t.TempDir()
+			flag, wait := filepath.Join(dir, "forward-fails"), filepath.Join(dir, "cancel-waits")
+			lb := testutil.FreePort(t)
+			h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag, "FAKE_SSH_CANCEL_WAIT="+wait)
+			t.Cleanup(func() { os.Remove(wait) }) // never leave a cancel waiting
+			events, unsub := h.eng.Events().Subscribe(1024)
+			defer unsub()
+			var before ProjectStatus
+			if variant == "healthy" {
+				if err := h.eng.StartProject(bg, "myapp"); err != nil {
+					t.Fatal(err)
+				}
+				before = h.eng.Status("myapp")
+			} else {
+				before = loseLoopbackForward(t, h, flag, lb)
+			}
+			stateEvents(events, "myapp") // drop what led here
+
+			// The teardown stops inside its first forward cancel.
+			if err := os.WriteFile(wait, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stopped := make(chan error, 1)
+			go func() { stopped <- h.eng.StopProject(bg, "myapp") }()
+			testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the teardown to reach a cancel")
+			for i := 0; i < 20; i++ {
+				during := h.eng.Status("myapp")
+				if during.State != before.State || during.Message != before.Message {
+					t.Fatalf("status during the teardown = %+v, want what was last announced: %+v", during, before)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if states, _ := stateEvents(events, "myapp"); len(states) != 0 {
+				t.Fatalf("state events during the teardown: %v", states)
+			}
+
+			if err := os.Remove(wait); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-stopped; err != nil {
+				t.Fatal(err)
+			}
+			if st := h.eng.Status("myapp"); st.State != StateStopped {
+				t.Fatalf("status = %+v", st)
+			}
+			if states, _ := stateEvents(events, "myapp"); fmt.Sprint(states) != fmt.Sprint([]State{StateStopped}) {
+				t.Fatalf("state events of the stop = %v, want [stopped]", states)
+			}
+		})
+	}
+}
+
+func TestFailedCancelAfterALostForwardEndsInErrorNamingTheCancel(t *testing.T) {
+	dir := t.TempDir()
+	flag, block := filepath.Join(dir, "forward-fails"), filepath.Join(dir, "cancel-fails")
+	lb := testutil.FreePort(t)
+	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag, "FAKE_SSH_CANCEL_FAIL="+block)
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	loseLoopbackForward(t, h, flag, lb)
+	stateEvents(events, "myapp")
+	if err := os.WriteFile(block, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err == nil {
+		t.Fatal("expected the stop to report the failed cancel")
+	}
+	st := h.eng.Status("myapp")
+	if st.State != StateError || !strings.Contains(st.Message, "stop myapp") || !strings.Contains(st.Message, "cancel") {
+		t.Fatalf("status = %+v, want the failed stop", st)
+	}
+	states, last := stateEvents(events, "myapp")
+	if fmt.Sprint(states) != fmt.Sprint([]State{StateError}) || last[StateError] != "state: error: "+st.Message {
+		t.Fatalf("state events = %v (%q), want one error carrying %q", states, last[StateError], st.Message)
+	}
+	if f := h.forwards("mini"); len(f) != 1 {
+		t.Fatalf("forwards = %v, want the web forward kept for a retry", f)
+	}
+	if err := os.Remove(block); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateStopped || len(h.forwards("mini")) != 0 {
+		t.Fatalf("status = %+v, forwards %v", st, h.forwards("mini"))
+	}
+}
+
 func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
 	var lookups atomic.Int32
@@ -639,6 +779,53 @@ func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	}
 	if n := lookups.Load(); n != 0 {
 		t.Fatalf("%d process lookups for forwards the engine cancelled itself", n)
+	}
+}
+
+func TestStatusDoesNotRunAheadOfTheLostForwardEvent(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	lb := testutil.FreePort(t)
+	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	asked, answer := make(chan struct{}, 8), make(chan struct{})
+	h.eng.holderOf = func(int) string {
+		asked <- struct{}{}
+		<-answer // the lookup is slow
+		return "vite (pid 4242)"
+	}
+	t.Cleanup(func() {
+		select {
+		case <-answer:
+		default:
+			close(answer)
+		}
+	})
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	select {
+	case <-asked:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the holder of the lost port was never looked up")
+	}
+	// The forward is known to be lost, but nothing has been announced yet.
+	if st := h.eng.Status("myapp"); st.State != StateDegraded {
+		t.Fatalf("status while the lookup runs = %+v, want the last announced state (degraded)", st)
+	}
+	if states, _ := stateEvents(events, "myapp"); fmt.Sprint(states) != fmt.Sprint([]State{StateStarting, StateRunning, StateDegraded}) {
+		t.Fatalf("state events while the lookup runs = %v", states)
+	}
+	close(answer)
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "the error")
+	st := h.eng.Status("myapp")
+	states, last := stateEvents(events, "myapp")
+	if fmt.Sprint(states) != fmt.Sprint([]State{StateError}) || last[StateError] != "state: error: "+st.Message || !strings.Contains(st.Message, "vite (pid 4242)") {
+		t.Fatalf("events %v (%q), status %+v", states, last[StateError], st)
 	}
 }
 
