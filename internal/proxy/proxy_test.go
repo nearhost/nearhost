@@ -361,12 +361,20 @@ func TestApplyAndStopAreSafeConcurrently(t *testing.T) {
 	h := startProxy(t, nil)
 	sites := []Site{{Alias: "a.test", Upstream: addr(up.Server)}}
 	var wg sync.WaitGroup
+	errs := make(chan error, 12)
 	for i := 0; i < 4; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); h.p.Apply(sites) }()
-		go func() { defer wg.Done(); h.p.Apply(nil) }()
+		wg.Add(3)
+		go func() { defer wg.Done(); errs <- h.p.Apply(sites) }()
+		go func() { defer wg.Done(); errs <- h.p.Apply(nil) }()
+		go func() { defer wg.Done(); errs <- h.p.Stop() }()
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent Apply or Stop: %v", err)
+		}
+	}
 	// Settle on a known final state and let certificate issuance finish, so
 	// nothing is still writing to storage when the test directory is removed.
 	if err := h.p.Apply(sites); err != nil {
