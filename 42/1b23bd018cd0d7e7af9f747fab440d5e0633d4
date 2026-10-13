@@ -1,0 +1,24 @@
+internal/transport/testdata/fakessh/ssh
+  s_67428b1da1b8e6::t_550f4651bf7b6b 32,44-50
+  s_67428b1da1b8e6::t_fa2f11860d5a00 51
+internal/transport/session_test.go
+  s_67428b1da1b8e6::t_550f4651bf7b6b 6,10,186-241
+internal/transport/session.go
+  s_67428b1da1b8e6::t_550f4651bf7b6b 55-62,146-147,163-164,248-260,283,287-315,317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "421b23bd018cd0d7e7af9f747fab440d5e0633d4",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
