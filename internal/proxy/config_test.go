@@ -197,3 +197,11 @@ func TestBuildConfigNoSitesHasNoEmptyTLSPolicy(t *testing.T) {
 		t.Error("CA must be configured even with zero sites")
 	}
 }
+
+func TestBuildConfigRejectsAliasesDifferingOnlyByCase(t *testing.T) {
+	// "B.test" sorts between the two spellings, so they are not adjacent.
+	sites := []Site{{"a.test", "127.0.0.1:1"}, {"B.test", "127.0.0.1:2"}, {"A.TEST", "127.0.0.1:3"}}
+	if _, err := BuildConfig(sites, Options{StorageRoot: "/x"}); err == nil {
+		t.Error("aliases naming the same host should fail")
+	}
+}

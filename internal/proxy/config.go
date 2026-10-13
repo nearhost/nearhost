@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // CAName is the display name of the local certificate authority.
@@ -64,13 +65,16 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		},
 	}
 	subjects := make([]string, 0, len(sites))
+	seen := map[string]bool{} // lower-cased: host names match without case
 	for _, s := range sites {
 		if s.Alias == "" || s.Upstream == "" {
 			return nil, fmt.Errorf("proxy: site needs alias and upstream, got %+v", s)
 		}
-		if len(subjects) > 0 && subjects[len(subjects)-1] == s.Alias {
+		key := strings.ToLower(s.Alias)
+		if seen[key] {
 			return nil, fmt.Errorf("proxy: duplicate alias %q", s.Alias)
 		}
+		seen[key] = true
 		routes = append(routes, map[string]any{
 			"match": []any{map[string]any{"host": []string{s.Alias}}},
 			"handle": []any{map[string]any{
