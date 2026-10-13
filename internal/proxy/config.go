@@ -81,6 +81,10 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				"handler":        "reverse_proxy",
 				"upstreams":      []any{map[string]any{"dial": s.Upstream}},
 				"flush_interval": -1,
+				// Without this Caddy closes upgraded streams (WebSockets) on every
+				// config reload, dropping dev-server HMR sockets whenever the site
+				// set changes.
+				"stream_close_delay": "24h",
 				"headers": map[string]any{"request": map[string]any{"set": map[string]any{
 					"X-Forwarded-Proto": []string{"https"},
 					"X-Forwarded-For":   []string{"{http.request.remote.host}"},
