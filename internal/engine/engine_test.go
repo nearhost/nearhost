@@ -2075,3 +2075,39 @@ func TestStatusNeverRunsAheadOfTheEvents(t *testing.T) {
 		}
 	}
 }
+
+// Nothing is announced for a project while it is torn down. When the
+// teardown then ends in the state and reason recorded before it, what the
+// server did in the meantime must still be announced, or Status, which
+// reports what was announced, would keep the old state.
+func TestTeardownEndingInTheRecordedStateAnnouncesWhatChangedMeanwhile(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	h := newHarness(t, remoteConfig(l.Addr().(*net.TCPAddr).Port))
+	if err := h.eng.StartProject(bg, "myapp"); err == nil {
+		t.Fatal("the start succeeded although its loopback port is taken")
+	}
+	started := h.eng.Status("myapp")
+	if started.State != StateError || len(h.eng.Sites()) != 1 {
+		t.Fatalf("status = %+v", started)
+	}
+	run := h.eng.runs["myapp"]
+	h.eng.mu.Lock()
+	run.tearing = true // a teardown begins
+	sess := h.eng.servers["mini"].sess
+	h.eng.mu.Unlock()
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return sess.Status() == transport.StatusReconnecting }, "the server to drop")
+	if st := h.eng.Status("myapp"); st != started {
+		t.Fatalf("status changed during the teardown: %+v", st)
+	}
+	h.eng.mu.Lock()
+	h.eng.setStateLocked(run, started.State, started.Message) // and fails, leaving everything as it was
+	h.eng.mu.Unlock()
+	if st := h.eng.Status("myapp"); st.State != StateDegraded && sess.Status() != transport.StatusConnected {
+		t.Fatalf("status = %+v while the server is %s", st, sess.Status())
+	}
+}
