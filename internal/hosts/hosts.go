@@ -181,7 +181,8 @@ var renameFile = os.Rename
 // same directory and renamed over the target, so the path always holds either
 // the complete old content or the complete new content. A symlink at path (or
 // in its parents) is resolved first and the file it points to is replaced.
-// A rename-replace does not carry over extended attributes or ACLs.
+// On Linux the SELinux label and POSIX ACL are carried over; macOS ACLs and
+// other extended attributes are not.
 func Apply(path string, aliases []string) error {
 	existing, err := read(path)
 	if err != nil {
@@ -227,12 +228,18 @@ func replaceFile(path, content string) (err error) {
 	if _, err = tmp.WriteString(content); err != nil {
 		return fmt.Errorf("write %s: %w", tmpName, err)
 	}
-	if err = tmp.Chmod(mode); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
 	if info != nil && os.Geteuid() == 0 {
 		if err = chownLike(tmp, info); err != nil {
 			return fmt.Errorf("write %s: %w", tmpName, err)
+		}
+	}
+	// Mode before the ACL: setting the ACL then fixes the mask the copy carries.
+	if err = tmp.Chmod(mode); err != nil {
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if info != nil {
+		if err = copyLabels(target, tmpName); err != nil {
+			return fmt.Errorf("write %s: keep label or ACL: %w", path, err)
 		}
 	}
 	if err = tmp.Sync(); err != nil {
