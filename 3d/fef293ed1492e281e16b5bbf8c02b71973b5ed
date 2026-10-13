@@ -1,0 +1,32 @@
+internal/hosts/hosts.go
+  s_67428b1da1b8e6::t_26e4291ce17b53 1-68,80-89,97-118,121-143,145-162,164-171,174,176-185,187-189
+  s_67428b1da1b8e6::t_47ddac7879d34d 69-79,90-96,119-120,144,163,172-173,175,186
+internal/hosts/hosts_test.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-3,5-168
+  s_67428b1da1b8e6::t_f00f01f3866f21 4
+internal/cli/hosts_test.go
+  s_67428b1da1b8e6::t_f00f01f3866f21 9-10
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-8,11-53
+internal/cli/root.go
+  s_67428b1da1b8e6::t_26e4291ce17b53 22
+internal/cli/hosts.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-13,17-50,52-66
+  s_67428b1da1b8e6::t_47ddac7879d34d 15
+  s_67428b1da1b8e6::t_26e4291ce17b53 14,16,51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3dfef293ed1492e281e16b5bbf8c02b71973b5ed",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
