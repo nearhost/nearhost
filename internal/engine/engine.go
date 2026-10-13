@@ -350,7 +350,14 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run == skip || !run.site {
 			continue
 		}
-		sites = append(sites, proxy.Site{Alias: run.alias, Upstream: fmt.Sprintf("127.0.0.1:%d", run.webLocal)})
+		// A forward listens on 127.0.0.1 exactly. A local dev server may
+		// listen on either loopback family (Vite's default host gives ::1
+		// only), so the proxy dials it by name and tries both.
+		host := "127.0.0.1"
+		if run.server == config.LocalServer {
+			host = "localhost"
+		}
+		sites = append(sites, proxy.Site{Alias: run.alias, Upstream: fmt.Sprintf("%s:%d", host, run.webLocal)})
 	}
 	return sites
 }

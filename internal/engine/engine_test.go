@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,7 +52,7 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	if code, body := h.getEventually(t, "web.test", "/"); code != 200 || !strings.HasPrefix(body, "ok:web.test") {
 		t.Fatalf("through proxy: %d %q", code, body)
 	}
-	if sites := h.eng.Sites(); len(sites) != 1 || sites[0].Alias != "web.test" || sites[0].Upstream != "127.0.0.1:"+strconv.Itoa(upPort) {
+	if sites := h.eng.Sites(); len(sites) != 1 || sites[0].Alias != "web.test" || sites[0].Upstream != "localhost:"+strconv.Itoa(upPort) {
 		t.Fatalf("Sites = %+v", sites)
 	}
 	if log := h.log(); log != "" {
@@ -67,6 +70,46 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	}
 	if portOpen(h.httpsPort) || portOpen(h.httpPort) {
 		t.Fatal("stopping the last project must leave the proxy with no listeners")
+	}
+}
+
+// A dev server started on "localhost" (Vite's default) listens on ::1 only.
+func TestLocalProjectListeningOnIPv6LoopbackOnlyIsServed(t *testing.T) {
+	l, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("this machine has no IPv6 loopback: %v", err)
+	}
+	defer l.Close() // harmless once the server below owns it
+	// The proxy reaches a local project by the name localhost, as the dev
+	// server did when it chose where to listen.
+	named := false
+	addrs, _ := net.DefaultResolver.LookupIPAddr(bg, "localhost")
+	for _, a := range addrs {
+		named = named || (a.IP.To4() == nil && a.IP.IsLoopback())
+	}
+	if !named {
+		t.Skipf("localhost does not name ::1 on this machine (it resolves to %v)", addrs)
+	}
+	up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "six:"+r.Host)
+	}))
+	up.Listener.Close()
+	up.Listener = l
+	up.Start()
+	t.Cleanup(up.Close)
+	port := l.Addr().(*net.TCPAddr).Port
+	// Nothing may answer on the IPv4 side, or the test proves nothing.
+	if c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second); err == nil {
+		c.Close()
+		t.Skipf("port %d is also open on 127.0.0.1", port)
+	}
+
+	h := newHarness(t, &config.Config{Projects: []config.Project{localProject("web", port)}})
+	if err := h.eng.StartProject(bg, "web"); err != nil {
+		t.Fatalf("StartProject: %v", err)
+	}
+	if code, body := h.getEventually(t, "web.test", "/"); code != 200 || !strings.HasPrefix(body, "six:web.test") {
+		t.Fatalf("through proxy: %d %q", code, body)
 	}
 }
 
