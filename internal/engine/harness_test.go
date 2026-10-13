@@ -112,6 +112,8 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 		mutate(&h.opts)
 	}
 	h.eng = New(cfg, h.opts)
+	// Tests that care about the holder of a port set their own lookup.
+	h.eng.holderOf = func(int) string { return "" }
 	t.Cleanup(func() {
 		if err := h.eng.Shutdown(context.Background()); err != nil {
 			t.Errorf("Shutdown: %v", err)

@@ -208,6 +208,14 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	defer l.Close()
 	lb := l.Addr().(*net.TCPAddr).Port
 	h := newHarness(t, remoteConfig(lb))
+	// The real lookup, or a stand-in where this machine has no tool for it.
+	holder := fmt.Sprintf("pid %d", os.Getpid())
+	if !strings.Contains(portHolder(lb), holder) {
+		holder = "vite (pid 4242)"
+		h.eng.holderOf = func(int) string { return holder }
+	} else {
+		h.eng.holderOf = portHolder
+	}
 
 	err = h.eng.StartProject(bg, "myapp")
 	if err == nil || !strings.Contains(err.Error(), strconv.Itoa(lb)) {
@@ -216,6 +224,9 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	st := h.eng.Status("myapp")
 	if st.State != StateError || !strings.Contains(st.Message, strconv.Itoa(lb)) || !strings.Contains(st.Message, "in use") {
 		t.Fatalf("status = %+v", st)
+	}
+	if !strings.Contains(st.Message, "in use on this machine by ") || !strings.Contains(st.Message, holder) {
+		t.Fatalf("message %q does not name the process holding the port (%s)", st.Message, holder)
 	}
 	if len(h.eng.Sites()) != 1 || st.WebLocalPort == 0 {
 		t.Fatal("web route should still be proxied")
@@ -239,6 +250,23 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	}
 	if n := strings.Count(h.log(), "-O cancel"); n != 1 {
 		t.Fatalf("%d cancels, want 1 (the first web forward):\n%s", n, h.log())
+	}
+}
+
+func TestLoopbackPortInUseByAnUnknownProcess(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	lb := l.Addr().(*net.TCPAddr).Port
+	h := newHarness(t, remoteConfig(lb)) // the harness lookup finds nothing
+	if err := h.eng.StartProject(bg, "myapp"); err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := h.eng.Status("myapp").Message
+	if !strings.Contains(msg, fmt.Sprintf("loopback port %d is already in use on this machine: ", lb)) {
+		t.Fatalf("message %q should fall back to naming the port alone", msg)
 	}
 }
 
@@ -666,9 +694,14 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 				}
 			})
 			h.httpsPort, h.httpPort = h.opts.HTTPSPort, h.opts.HTTPPort
+			h.eng.holderOf = func(port int) string { return fmt.Sprintf("holder-of-%d", port) }
 			err := h.eng.Start(bg)
 			if err == nil || !strings.Contains(err.Error(), strconv.Itoa(held)) {
 				t.Fatalf("expected an error naming port %d, got %v", held, err)
+			}
+			// The lookup covers TCP listeners only.
+			if named := strings.Contains(err.Error(), fmt.Sprintf("holder-of-%d", held)); named != (which != "https-udp") {
+				t.Fatalf("error %q: holder named = %v", err, named)
 			}
 			if err := h.eng.StartProject(bg, "web"); err == nil {
 				t.Fatal("no project may start when the engine failed to start")

@@ -1,0 +1,146 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// holderTimeout bounds one lookup tool. The lookup only adds detail to an
+// error that is reported anyway, so it gives up quickly.
+const holderTimeout = 2 * time.Second
+
+// holderTool is one way of asking the system which process listens on a port.
+type holderTool struct {
+	name  string
+	args  func(port int) []string
+	parse func(out string, port int) string
+}
+
+var (
+	lsofTool = holderTool{
+		name: "lsof",
+		args: func(port int) []string {
+			return []string{"-nP", "-iTCP:" + strconv.Itoa(port), "-sTCP:LISTEN", "-Fpc"}
+		},
+		parse: parseLsof,
+	}
+	ssTool = holderTool{
+		name:  "ss",
+		args:  func(int) []string { return []string{"-H", "-ltnp"} },
+		parse: parseSS,
+	}
+)
+
+// portHolder names the process listening on a local TCP port, like
+// "node (pid 4242)". It is best effort: it returns "" when no tool is
+// installed, the tool is slow or fails, or the process belongs to another
+// user and the tool will not name it.
+func portHolder(port int) string {
+	tools := []holderTool{lsofTool}
+	if runtime.GOOS == "linux" {
+		tools = []holderTool{ssTool, lsofTool}
+	}
+	return findHolder(tools, port, holderTimeout)
+}
+
+// heldBy is the clause naming the process that listens on port: " by node
+// (pid 4242)", or nothing when it is not known.
+func (e *Engine) heldBy(port int) string {
+	if holder := e.holderOf(port); holder != "" {
+		return " by " + holder
+	}
+	return ""
+}
+
+// findHolder asks each tool in turn, giving each at most timeout, and returns
+// the first answer.
+func findHolder(tools []holderTool, port int, timeout time.Duration) string {
+	for _, tool := range tools {
+		path, err := exec.LookPath(tool.name)
+		if err != nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		cmd := exec.CommandContext(ctx, path, tool.args(port)...)
+		cmd.WaitDelay = timeout // do not wait on a child that keeps the pipe open
+		// lsof exits non-zero when it finds nothing; what it printed decides.
+		out, _ := cmd.Output()
+		timedOut := ctx.Err() != nil
+		cancel()
+		if timedOut || len(out) == 0 {
+			continue
+		}
+		if holder := tool.parse(string(out), port); holder != "" {
+			return holder
+		}
+	}
+	return ""
+}
+
+func describeHolder(command string, pid int) string {
+	if command == "" {
+		return fmt.Sprintf("pid %d", pid)
+	}
+	return fmt.Sprintf("%s (pid %d)", command, pid)
+}
+
+// parseLsof reads `lsof -Fpc` output: one field per line, "p<pid>" starting a
+// process and "c<command>" naming it. It reports the first process.
+func parseLsof(out string, _ int) string {
+	pid, command := 0, ""
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			if pid != 0 {
+				return describeHolder(command, pid) // a second process begins
+			}
+			n, err := strconv.Atoi(line[1:])
+			if err != nil || n <= 0 {
+				return ""
+			}
+			pid = n
+		case 'c':
+			if pid != 0 && command == "" {
+				command = line[1:]
+			}
+		}
+	}
+	if pid == 0 {
+		return ""
+	}
+	return describeHolder(command, pid)
+}
+
+var ssUser = regexp.MustCompile(`users:\(\("([^"]*)",pid=(\d+)`)
+
+// parseSS reads `ss -H -ltnp` output and reports the first process of the
+// line whose local address ends in ":<port>". ss leaves the process out for
+// sockets of other users.
+func parseSS(out string, port int) string {
+	suffix := ":" + strconv.Itoa(port)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || !strings.HasSuffix(fields[3], suffix) {
+			continue
+		}
+		m := ssUser.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		pid, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		return describeHolder(m[1], pid)
+	}
+	return ""
+}

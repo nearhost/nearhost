@@ -91,6 +91,9 @@ type Engine struct {
 	aliases []string               // valid aliases of all projects, sorted
 
 	connectWait time.Duration // how long a start waits for its server
+	// holderOf names the process listening on a local TCP port, or returns ""
+	// when it cannot tell. Tests replace it.
+	holderOf func(port int) string
 
 	lifeMu  sync.Mutex
 	hostsMu sync.Mutex
@@ -114,6 +117,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		runs:        map[string]*projectRun{},
 		byAlias:     map[string]string{},
 		connectWait: 30 * time.Second,
+		holderOf:    portHolder,
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},
 	}
@@ -186,10 +190,10 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	// With no sites the proxy opens no listeners, so a port conflict would
 	// only show when the first project starts. Find it now.
-	if err := probePort("HTTPS", e.opts.HTTPSPort, 443); err != nil {
+	if err := e.probePort("HTTPS", e.opts.HTTPSPort, 443); err != nil {
 		return err
 	}
-	if err := probePort("HTTP", e.opts.HTTPPort, 80); err != nil {
+	if err := e.probePort("HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
@@ -209,14 +213,14 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // probePort reports whether the proxy could listen on port (def when 0): on
 // TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3.
-func probePort(what string, port, def int) error {
+func (e *Engine) probePort(what string, port, def int) error {
 	if port == 0 {
 		port = def
 	}
 	addr := fmt.Sprintf(":%d", port)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("%s port %d is not available: %w", what, port, err)
+		return fmt.Errorf("%s port %d is in use%s: %w", what, port, e.heldBy(port), err)
 	}
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("%s port %d: %w", what, port, err)

@@ -276,7 +276,7 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	}
 	if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
 		e.releasePort(port)
-		return fmt.Errorf("loopback port %d is already in use on this machine: %w", port, err)
+		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(port), err)
 	} else if err := l.Close(); err != nil {
 		e.releasePort(port)
 		return fmt.Errorf("loopback port %d: %w", port, err)
