@@ -15,6 +15,14 @@ const CAName = "Nearhost Local CA"
 // writerModule is the Caddy log writer module name registered in logwriter.go.
 const writerModule = "nearhost"
 
+// loopbackRanges are the client addresses sites are served to. The proxy
+// listens on every interface (a non-root process on macOS can bind a low port
+// only on the wildcard address) while every alias resolves to loopback, so no
+// legitimate client comes from anywhere else. Caddy compares the remote
+// address as written and does not unmap, so the IPv4-mapped form of the
+// loopback network is listed too.
+var loopbackRanges = []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
+
 // Site is one alias proxied to one upstream.
 type Site struct {
 	Alias    string // e.g. myapp.test
@@ -76,7 +84,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		}
 		seen[key] = true
 		routes = append(routes, map[string]any{
-			"match": []any{map[string]any{"host": []string{s.Alias}}},
+			// One match set, so both must hold: the host is this alias and
+			// the client is on this machine.
+			"match": []any{map[string]any{
+				"host":      []string{s.Alias},
+				"remote_ip": map[string]any{"ranges": loopbackRanges},
+			}},
 			"handle": []any{map[string]any{
 				"handler":        "reverse_proxy",
 				"upstreams":      []any{map[string]any{"dial": s.Upstream}},
@@ -101,6 +114,13 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		}
 		subjects = append(subjects, s.Alias)
 	}
+
+	// Whatever matched no site (a client from another machine, or a host that
+	// is not served) gets the connection dropped without an answer, which
+	// tells it nothing about the aliases.
+	routes = append(routes, map[string]any{
+		"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
+	})
 
 	// An empty-subject policy would match every name, so only add one when
 	// there are sites.

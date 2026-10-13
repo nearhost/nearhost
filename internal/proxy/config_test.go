@@ -252,3 +252,52 @@ func TestBuildConfigDisablesStorageClean(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
+	cfg := build(t, []Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}, {Alias: "b.test", Upstream: "127.0.0.1:2"}})
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	if len(routes) != 3 {
+		t.Fatalf("got %d routes, want one per site and a final catch-all", len(routes))
+	}
+	for i, alias := range []string{"a.test", "b.test"} {
+		sets := dig(t, routes[i], "match").([]any)
+		// One set: its matchers must all hold. Two sets would be alternatives.
+		if len(sets) != 1 {
+			t.Fatalf("route %d has %d match sets, want one holding both host and remote_ip", i, len(sets))
+		}
+		if dig(t, sets[0], "host", 0) != alias {
+			t.Errorf("route %d host = %v, want %s", i, dig(t, sets[0], "host"), alias)
+		}
+		ranges, _ := dig(t, sets[0], "remote_ip", "ranges").([]any)
+		if len(ranges) != len(loopbackRanges) {
+			t.Fatalf("route %d remote_ip ranges = %v, want %v", i, ranges, loopbackRanges)
+		}
+		for j, r := range ranges {
+			if r != loopbackRanges[j] {
+				t.Errorf("route %d range %d = %v, want %s", i, j, r, loopbackRanges[j])
+			}
+		}
+	}
+	last := routes[2].(map[string]any)
+	if m, ok := last["match"]; ok {
+		t.Errorf("the final route must match every request, got match %v", m)
+	}
+	if dig(t, last, "handle", 0, "handler") != "static_response" || dig(t, last, "handle", 0, "abort") != true {
+		t.Errorf("the final route must abort the connection, got %v", last["handle"])
+	}
+	if h := last["handle"].([]any); len(h) != 1 {
+		t.Errorf("the final route has %d handlers, want one", len(h))
+	}
+}
+
+func TestLoopbackRangesAreExactlyLoopback(t *testing.T) {
+	want := []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
+	if len(loopbackRanges) != len(want) {
+		t.Fatalf("loopbackRanges = %v, want %v", loopbackRanges, want)
+	}
+	for i := range want {
+		if loopbackRanges[i] != want[i] {
+			t.Fatalf("loopbackRanges = %v, want %v", loopbackRanges, want)
+		}
+	}
+}

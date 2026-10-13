@@ -13,9 +13,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/coder/websocket"
 )
 
@@ -492,5 +495,145 @@ func TestApplyWritesNothingOutsideStorage(t *testing.T) {
 		for _, e := range entries {
 			t.Errorf("unexpected entry %q written under %s", e.Name(), dir)
 		}
+	}
+}
+
+// The proxy has to listen on every interface, so the routes themselves keep
+// other machines out. Caddy's matcher compares the textual remote address and
+// does not unmap IPv4-mapped IPv6 addresses, hence the third range.
+func TestLoopbackMatcherAcceptsOnlyLoopbackClients(t *testing.T) {
+	m := &caddyhttp.MatchRemoteIP{Ranges: loopbackRanges}
+	ctx, cancel := caddy.NewContext(caddy.Context{Context: context.Background()})
+	defer cancel()
+	if err := m.Provision(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for addr, want := range map[string]bool{
+		"127.0.0.1:5000":          true,
+		"127.8.9.10:5000":         true,
+		"[::1]:5000":              true,
+		"[::ffff:127.0.0.1]:5000": true,
+		"[::ffff:127.9.9.9]:5000": true,
+		"192.168.1.20:5000":       false,
+		"10.0.0.1:5000":           false,
+		"128.0.0.1:5000":          false,
+		"[::ffff:10.0.0.1]:5000":  false,
+		"[::2]:5000":              false,
+		"[fe80::1%en0]:5000":      false,
+		"[2001:db8::1]:5000":      false,
+	} {
+		got, err := m.MatchWithError(&http.Request{RemoteAddr: addr})
+		if err != nil {
+			t.Fatalf("%s: %v", addr, err)
+		}
+		if got != want {
+			t.Errorf("client %s accepted = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// nonLoopbackAddrs lists the addresses of this machine that are neither
+// loopback nor link-local. A connection made to one of them from this machine
+// has that address as its source too.
+func nonLoopbackAddrs(t *testing.T) []net.IP {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []net.IP
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok || n.IP.IsLoopback() || n.IP.IsLinkLocalUnicast() || n.IP.IsLinkLocalMulticast() || n.IP.IsUnspecified() {
+			continue
+		}
+		out = append(out, n.IP)
+	}
+	return out
+}
+
+func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
+	var hits atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, "secret dev page")
+	}))
+	t.Cleanup(up.Close)
+	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up)}})
+
+	// A loopback client is served, which also means the certificate exists.
+	resp, body := h.getEventually(h.client("a.test", false), "a.test", "/")
+	if resp.StatusCode != 200 || body != "secret dev page" {
+		t.Fatalf("loopback client: status=%d body=%q", resp.StatusCode, body)
+	}
+	served := hits.Load()
+
+	// request sends one GET for host over a fresh TLS connection to ip and
+	// reports whether the proxy was reached, and what came back.
+	request := func(ip net.IP, host string) (reached bool, status int, body string, err error) {
+		d := &net.Dialer{Timeout: 5 * time.Second}
+		raw, err := d.Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(h.httpsPort)))
+		if err != nil {
+			return false, 0, "", err
+		}
+		defer raw.Close()
+		raw.SetDeadline(time.Now().Add(10 * time.Second))
+		if got := raw.RemoteAddr().(*net.TCPAddr).IP; got.IsLoopback() {
+			t.Fatalf("connection to %s arrived at loopback address %s", ip, got)
+		}
+		if got := raw.LocalAddr().(*net.TCPAddr).IP; got.IsLoopback() {
+			t.Fatalf("connection to %s left from loopback address %s", ip, got)
+		}
+		conn := tls.Client(raw, &tls.Config{RootCAs: h.pool, ServerName: "a.test"})
+		if err := conn.Handshake(); err != nil {
+			return true, 0, "", err
+		}
+		if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host); err != nil {
+			return true, 0, "", err
+		}
+		r, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			return true, 0, "", err
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return true, r.StatusCode, string(b), nil
+	}
+
+	tried := 0
+	for _, ip := range nonLoopbackAddrs(t) {
+		reached, status, body, err := request(ip, "a.test")
+		if !reached {
+			t.Logf("%s: not dialable, skipping it: %v", ip, err)
+			continue
+		}
+		tried++
+		if err == nil {
+			t.Errorf("client from %s got an answer (status %d, body %q), want the connection dropped", ip, status, body)
+		}
+		// A name the proxy does not serve is dropped the same way, so the
+		// answer does not tell which aliases exist.
+		if _, status, body, err := request(ip, "nothing.test"); err == nil {
+			t.Errorf("client from %s asking for an unknown host got status %d body %q, want the connection dropped", ip, status, body)
+		}
+	}
+	if tried == 0 {
+		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
+	}
+	if got := hits.Load(); got != served {
+		t.Errorf("the upstream received %d request(s) from non-loopback clients", got-served)
+	}
+
+	// A loopback client asking for a host that is not served is dropped too.
+	c := h.client("a.test", false)
+	req, _ := http.NewRequest("GET", h.url("a.test", "/"), nil)
+	req.Host = "nothing.test"
+	if r, err := c.Do(req); err == nil {
+		r.Body.Close()
+		t.Errorf("unknown host from loopback got status %d, want the connection dropped", r.StatusCode)
+	}
+	// And the site is still served to loopback afterwards.
+	if resp, body := h.getEventually(h.client("a.test", false), "a.test", "/"); resp.StatusCode != 200 || body != "secret dev page" {
+		t.Errorf("loopback client after the refusals: status=%d body=%q", resp.StatusCode, body)
 	}
 }
