@@ -3,9 +3,11 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -179,5 +181,61 @@ func TestIsFatalSSHError(t *testing.T) {
 		if isFatalSSHError(m) {
 			t.Errorf("%q should be retried", m)
 		}
+	}
+}
+
+func TestConnectTimeoutKillsStuckMasterAndRetries(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_HANG=1")
+	s.connectTimeout = 150 * time.Millisecond
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 }, "second launch after connect timeout")
+	if s.Status() == StatusConnected {
+		t.Fatalf("status = %s", s.Status())
+	}
+}
+
+func TestStartDuringStopWaitsForOldSupervisor(t *testing.T) {
+	s, _ := newFakeSession(t)
+	var mu sync.Mutex
+	var events []string
+	s.Logf = func(format string, args ...any) {
+		mu.Lock()
+		events = append(events, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	// Start as soon as Stop has detached the running supervisor.
+	waitFor(t, 2*time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.cancel == nil
+	}, "stop to begin")
+	s.Start()
+	<-stopped
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	disc, conn := -1, -1
+	for i, e := range events {
+		if e == "mini: disconnected" && disc < 0 {
+			disc = i
+		}
+		if e == "mini: connecting" && i > 0 && conn < 0 && disc < 0 {
+			conn = i // a second "connecting" before the first disconnect
+		}
+	}
+	if conn >= 0 {
+		t.Fatalf("new supervisor started before old one exited: %v", events)
 	}
 }

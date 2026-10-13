@@ -52,13 +52,14 @@ type Session struct {
 	maxBackoff      time.Duration
 	maxAuthFailures int
 
-	mu       sync.Mutex
-	status   Status
-	lastErr  string
-	launches int
-	forwards map[string]forward
-	cancel   context.CancelFunc
-	done     chan struct{}
+	lifecycle sync.Mutex // serialises Start and Stop; held while Stop waits for the supervisor
+	mu        sync.Mutex
+	status    Status
+	lastErr   string
+	launches  int
+	forwards  map[string]forward
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // NewSession creates an idle session. Call Start to connect.
@@ -142,6 +143,8 @@ func (s *Session) setStatus(st Status, errText string) {
 
 // Start launches the supervisor. It is a no-op if already running.
 func (s *Session) Start() {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.mu.Unlock()
@@ -157,6 +160,8 @@ func (s *Session) Start() {
 
 // Stop ends the master connection and waits for the supervisor to exit.
 func (s *Session) Stop() {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
 	cancel, done := s.cancel, s.done
 	s.cancel, s.done = nil, nil
@@ -240,6 +245,19 @@ func (s *Session) run(ctx context.Context, done chan struct{}) {
 			backoff = s.baseBackoff
 			authFails = 0
 			s.reapplyForwards(ctx)
+		} else if ctx.Err() == nil && !hasExited(exited) {
+			// Connect timeout: the master is alive but never produced a
+			// working socket. Kill it so the loop below retries.
+			s.Logf("%s: connect timed out after %s", s.Name, s.connectTimeout)
+			master.Process.Kill()
+			<-exited
+			s.setStatus(StatusReconnecting, "connect timed out")
+			if !s.sleep(ctx, backoff) {
+				s.setStatus(StatusDisconnected, "")
+				return
+			}
+			backoff = s.nextBackoff(backoff)
+			continue
 		}
 
 		select {
@@ -262,17 +280,41 @@ func (s *Session) run(ctx context.Context, done chan struct{}) {
 			s.setStatus(StatusReconnecting, msg)
 		}
 
-		select {
-		case <-ctx.Done():
+		if !s.sleep(ctx, backoff) {
 			s.setStatus(StatusDisconnected, "")
 			return
-		case <-time.After(backoff):
 		}
-		backoff *= 2
-		if backoff > s.maxBackoff {
-			backoff = s.maxBackoff
-		}
+		backoff = s.nextBackoff(backoff)
 	}
+}
+
+func hasExited(exited <-chan struct{}) bool {
+	select {
+	case <-exited:
+		return true
+	default:
+		return false
+	}
+}
+
+// sleep waits d or until ctx ends; it reports whether the full wait elapsed.
+func (s *Session) sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func (s *Session) nextBackoff(b time.Duration) time.Duration {
+	b *= 2
+	if b > s.maxBackoff {
+		b = s.maxBackoff
+	}
+	return b
 }
 
 // waitForSocket polls `ssh -O check` until the master answers, the process
