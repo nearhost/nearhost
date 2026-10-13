@@ -76,17 +76,38 @@ func (c sshClient) privateSession(srv config.Server) (*transport.Session, func()
 	}, nil
 }
 
+// connectOnce waits for sess, which has just been started, to connect. A
+// session keeps trying after a failure; a one-off command has no use for
+// that, so this returns what ssh printed on the first attempt that failed, as
+// a *transport.CheckError.
+func connectOnce(ctx context.Context, sess *transport.Session) error {
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if sess.Status() == transport.StatusConnected {
+			return nil
+		}
+		// A new session has no last error until an attempt fails.
+		if msg := sess.LastError(); msg != "" {
+			return &transport.CheckError{Host: sess.Host, Stderr: msg}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
 // openRemote opens projectPath on srv for reading over SFTP, on an SSH
 // connection of its own that the returned function ends. It runs no command
-// on the server and writes nothing there.
+// on the server, not even to test the connection (an account may be allowed
+// SFTP and nothing else), and writes nothing there.
 //
 // The connection uses a private run directory. A session takes over whatever
 // master it finds on its control socket, so sharing the directory of a
 // running `nearhost up` would cut that one off.
 func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error) {
-	if err := c.check(ctx, srv); err != nil {
-		return nil, nil, fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, "add the project again"))
-	}
 	sess, end, err := c.privateSession(srv)
 	if err != nil {
 		return nil, nil, err
@@ -98,12 +119,12 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	sess.Start()
 	ctx, cancel := context.WithTimeout(ctx, remoteOpenTimeout)
 	defer cancel()
-	if err := sess.WaitConnected(ctx); err != nil {
-		err = fmt.Errorf("connect to %s: %w", srv.SSHHost, err)
-		if last := sess.LastError(); last != "" && errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("%w: %s", err, last)
+	if err := connectOnce(ctx, sess); err != nil {
+		var refused *transport.CheckError
+		if errors.As(err, &refused) {
+			return fail(fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, "add the project again")))
 		}
-		return fail(err)
+		return fail(fmt.Errorf("connect to %s: %w", srv.SSHHost, err))
 	}
 	client, err := sess.OpenSFTP(ctx)
 	if err != nil {

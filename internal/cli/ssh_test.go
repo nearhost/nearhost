@@ -86,10 +86,13 @@ func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
 	}
-	// Only the check ran: no master was started for a server that refuses us.
-	if got := strings.TrimSpace(sshLog(t, log)); got != checkArgv {
-		t.Fatalf("ssh was run as:\n%s", got)
+	// One connection attempt and nothing else: no command was run on the
+	// server to test it, and a server that refuses is not tried again.
+	lines := strings.Split(strings.TrimSpace(sshLog(t, log)), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "-N -M ") || !strings.HasSuffix(lines[0], " mini.lan") {
+		t.Fatalf("ssh was run as:\n%s", strings.Join(lines, "\n"))
 	}
+	noAddLeftovers(t, log)
 }
 
 func TestOpenRemoteStopsTheMasterWhenSFTPIsUnavailable(t *testing.T) {
@@ -114,13 +117,15 @@ func sftpServer(t *testing.T) string {
 	return ""
 }
 
-// TestAddRemoteOverSFTP runs the real remote path of `add`: the batch-mode
-// check, a master connection (the fake ssh) and the SFTP subsystem on it (a
-// local sftp-server reading the fixture directory).
+// TestAddRemoteOverSFTP runs the real remote path of `add`: a master
+// connection (the fake ssh) and the SFTP subsystem on it (a local sftp-server
+// reading the fixture directory). The account is one that may use SFTP only:
+// asked to run a command, the server refuses.
 func TestAddRemoteOverSFTP(t *testing.T) {
 	server := sftpServer(t)
 	wrapper := filepath.Join(t.TempDir(), "ssh")
 	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
+		"if [ \"$last\" = true ]; then printf '%s\\n' \"$*\" >> \"$FAKE_SSH_LOG\"; echo 'This service allows sftp connections only.' >&2; exit 1; fi\n" +
 		"if [ \"$last\" = sftp ]; then printf '%s\\n' \"$*\" >> \"$FAKE_SSH_LOG\"; exec '" + server + "' -R; fi\n" +
 		"exec '" + testutil.FakeSSH(t) + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
@@ -142,12 +147,12 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	if web, _ := p.WebRoute(); web.Port != 8080 {
 		t.Fatalf("routes = %+v", p.Routes)
 	}
-	// Nothing but the check, the master, its control commands and the SFTP
-	// subsystem ran: no remote shell command.
+	// Nothing but the master, its control commands and the SFTP subsystem
+	// ran: no command on the server, not even to test the connection.
 	for _, line := range strings.Split(strings.TrimSpace(sshLog(t, log)), "\n") {
 		switch {
-		case strings.HasSuffix(line, " mini.lan true"), strings.HasSuffix(line, " -s mini.lan sftp"),
-			strings.Contains(line, " -O "), strings.HasPrefix(line, "-N -M "):
+		case strings.HasSuffix(line, " -s mini.lan sftp"),
+			strings.Contains(line, " -O "), strings.HasPrefix(line, "-N -M ") && strings.HasSuffix(line, " mini.lan"):
 		default:
 			t.Errorf("unexpected ssh invocation: %s", line)
 		}
