@@ -73,3 +73,52 @@ func IsTrusted(cert *x509.Certificate) bool {
 	_, err := cert.Verify(x509.VerifyOptions{})
 	return err == nil
 }
+
+// NSSState is what is known about the NSS stores (Firefox profiles, and on Linux the shared ~/.pki/nssdb).
+type NSSState int
+
+const (
+	// NSSUnavailable means NSS trust cannot be checked or installed
+	// here: no certutil, no Firefox profile, or an unsupported platform. This
+	// is the zero value so an unset status never claims coverage.
+	NSSUnavailable NSSState = iota
+	// NSSCovered means every NSS database found has the root.
+	NSSCovered
+	// NSSMissing means NSS can be configured and lacks the root.
+	NSSMissing
+)
+
+// NSSStatus is a NSSState with a human-readable reason when unavailable.
+type NSSStatus struct {
+	State  NSSState
+	Detail string
+}
+
+// CheckNSS reports whether the NSS stores already have cert. It only
+// reads: it never installs anything.
+func CheckNSS(cert *x509.Certificate) NSSStatus {
+	t, err := truststore.NewNSSTrust()
+	if err != nil {
+		detail := "NSS support is not available on this platform"
+		if truststore.CertutilInstallHelp != "" {
+			detail = `"certutil" not found (install it with "` + truststore.CertutilInstallHelp + `")`
+		}
+		return NSSStatus{State: NSSUnavailable, Detail: detail}
+	}
+	if err := t.PreCheck(); err != nil {
+		return NSSStatus{State: NSSUnavailable, Detail: "no NSS database found"}
+	}
+	if t.Exists(cert) {
+		return NSSStatus{State: NSSCovered}
+	}
+	return NSSStatus{State: NSSMissing}
+}
+
+// InstallNSS adds the root to the NSS stores only, leaving the system
+// store alone, so it never prompts for a password.
+func InstallNSS(cert *x509.Certificate) error {
+	if err := truststore.Install(cert, truststore.WithFirefox(), truststore.WithNoSystem()); err != nil {
+		return fmt.Errorf("install CA in NSS stores: %w", err)
+	}
+	return nil
+}
