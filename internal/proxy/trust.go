@@ -73,3 +73,52 @@ func IsTrusted(cert *x509.Certificate) bool {
 	_, err := cert.Verify(x509.VerifyOptions{})
 	return err == nil
 }
+
+// FirefoxState is what is known about Firefox's separate NSS trust store.
+type FirefoxState int
+
+const (
+	// FirefoxUnavailable means Firefox trust cannot be checked or installed
+	// here: no certutil, no Firefox profile, or an unsupported platform. This
+	// is the zero value so an unset status never claims coverage.
+	FirefoxUnavailable FirefoxState = iota
+	// FirefoxCovered means every Firefox profile found has the root.
+	FirefoxCovered
+	// FirefoxMissing means Firefox can be configured and does not have the root.
+	FirefoxMissing
+)
+
+// FirefoxStatus is a FirefoxState with a human-readable reason when unavailable.
+type FirefoxStatus struct {
+	State  FirefoxState
+	Detail string
+}
+
+// CheckFirefox reports whether Firefox's NSS store already has cert. It only
+// reads: it never installs anything.
+func CheckFirefox(cert *x509.Certificate) FirefoxStatus {
+	t, err := truststore.NewNSSTrust()
+	if err != nil {
+		detail := "NSS support is not available on this platform"
+		if truststore.CertutilInstallHelp != "" {
+			detail = `"certutil" not found (install it with "` + truststore.CertutilInstallHelp + `")`
+		}
+		return FirefoxStatus{State: FirefoxUnavailable, Detail: detail}
+	}
+	if err := t.PreCheck(); err != nil {
+		return FirefoxStatus{State: FirefoxUnavailable, Detail: "no Firefox profile found"}
+	}
+	if t.Exists(cert) {
+		return FirefoxStatus{State: FirefoxCovered}
+	}
+	return FirefoxStatus{State: FirefoxMissing}
+}
+
+// InstallFirefox adds the root to Firefox's NSS store only, leaving the system
+// store alone, so it never prompts for a password.
+func InstallFirefox(cert *x509.Certificate) error {
+	if err := truststore.Install(cert, truststore.WithFirefox(), truststore.WithNoSystem()); err != nil {
+		return fmt.Errorf("install CA in Firefox: %w", err)
+	}
+	return nil
+}
