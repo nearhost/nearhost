@@ -29,9 +29,7 @@ func TestBusSlowOrAbsentSubscriberNeverBlocksPublish(t *testing.T) {
 	b := NewBus()
 	b.Publish(Event{Message: "nobody listening"})
 	slow, unsub := b.Subscribe(1) // never read while publishing
-	defer unsub()
 	unbuffered, unsub2 := b.Subscribe(0)
-	defer unsub2()
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 1000; i++ {
@@ -42,8 +40,13 @@ func TestBusSlowOrAbsentSubscriberNeverBlocksPublish(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
+		// A blocked Publish holds the bus lock, which unsubscribing needs:
+		// fail without unsubscribing.
 		t.Fatal("Publish blocked on a slow subscriber")
 	}
+	// Publishing is over, so nothing holds the bus lock any more.
+	defer unsub()
+	defer unsub2()
 	if len(slow) != 1 {
 		t.Fatalf("slow subscriber buffered %d events, want its buffer of 1", len(slow))
 	}
