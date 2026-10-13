@@ -39,7 +39,7 @@ func writer(alias string) map[string]any {
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
-// config. Output is deterministic: sites are ordered by alias.
+// config, which declares no listeners. Output is deterministic: sites are ordered by alias.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -149,6 +149,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				},
 			},
 		},
+	}
+	// With no sites there is nothing to serve, so leave the HTTP app out and
+	// Caddy opens no listeners. The PKI app still creates the local CA root,
+	// which is how EnsureCA makes the CA without binding ports 80/443.
+	if len(sites) == 0 {
+		delete(cfg["apps"].(map[string]any), "http")
 	}
 	return json.Marshal(cfg)
 }
