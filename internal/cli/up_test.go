@@ -72,8 +72,8 @@ func TestUpSaysWhenTheLocalCAIsNotTrusted(t *testing.T) {
 	if n := strings.Count(out, "nearhost trust"); n != 1 {
 		t.Errorf("the trust hint was printed %d times:\n%s", n, out)
 	}
-	if strings.Index(out, untrustedLine) < strings.Index(out, "\nweb: running at https://web.test\n") {
-		t.Errorf("the trust hint came before the summary:\n%s", out)
+	if summary := strings.Index(out, "\nweb: running at https://web.test\n"); summary < 0 || strings.Index(out, untrustedLine) < summary {
+		t.Errorf("the summary is missing, or the trust hint came before it:\n%s", out)
 	}
 	// Only the system store is asked, and nothing is installed.
 	if u.trust.nssChecks != 0 || u.trust.installs != 0 || u.trust.nssInstalls != 0 || len(u.trust.ensured) != 0 {
@@ -299,13 +299,15 @@ func TestUpFollowsARemoteProjectThroughAReconnect(t *testing.T) {
 	u.waitFor("Serving until interrupted")
 	wantContains(t, u.out.String(), "[server mini] connected\n", "[api] state: running\n", "\napi: running at https://api.test\n")
 
+	// Counted before the connection is lost: the reconnect may be over by
+	// the time the lines about the loss have been seen.
+	before := strings.Count(u.out.String(), "[api] state: running\n")
 	// The master leaves when its socket disappears, as a lost connection.
 	if err := os.Remove(filepath.Join(filepath.Dir(u.cfgPath), "run", "mini.sock")); err != nil {
 		t.Fatal(err)
 	}
 	u.waitFor("[api] state: degraded: server mini is reconnecting")
 	u.waitFor("  fix: none needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n")
-	before := strings.Count(u.out.String(), "[api] state: running\n")
 	testutil.WaitUntil(t, 30*time.Second, func() bool {
 		return strings.Count(u.out.String(), "[api] state: running\n") > before
 	}, "the project to return to running")

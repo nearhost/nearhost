@@ -52,7 +52,12 @@ func TestLsFailsOnAnInvalidConfig(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("expected a parse error naming the file, got %v\n%s", err, out)
 	}
-	if _, err := execute(t, newLsCmd(), "--config", path, "ls", "extra"); err == nil {
-		t.Fatal("ls must reject positional arguments")
+}
+
+func TestLsRejectsPositionalArguments(t *testing.T) {
+	// No config file, which ls accepts: only the argument can be at fault.
+	path := filepath.Join(t.TempDir(), "none.yaml")
+	if out, err := execute(t, newLsCmd(), "--config", path, "ls", "extra"); err == nil {
+		t.Fatalf("ls must reject positional arguments; it printed:\n%s", out)
 	}
 }
