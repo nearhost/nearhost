@@ -2033,3 +2033,45 @@ func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
 		t.Fatalf("status = %+v", st)
 	}
 }
+
+// Whatever Status reports has been announced: a caller that sees a state and
+// then reads its events finds that state there. That holds on the way back
+// from a lost connection too, where the session is connected a moment before
+// the engine hears of it.
+func TestStatusNeverRunsAheadOfTheEvents(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	events, unsub := h.eng.Events().Subscribe(4096)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	announced := State("")
+	// check compares one Status with the events published up to it.
+	check := func() State {
+		st := h.eng.Status("myapp")
+		if states, _ := stateEvents(events, "myapp"); len(states) > 0 {
+			announced = states[len(states)-1]
+		}
+		if st.State != announced {
+			t.Fatalf("Status says %s, the last state event said %s", st.State, announced)
+		}
+		return st.State
+	}
+	for round := 0; round < 3; round++ {
+		if check() != StateRunning {
+			t.Fatalf("round %d does not start from running", round)
+		}
+		h.dropMaster(t, "mini")
+		deadline := time.Now().Add(20 * time.Second)
+		for check() != StateDegraded {
+			if time.Now().After(deadline) {
+				t.Fatal("the project never showed degraded")
+			}
+		}
+		for check() != StateRunning {
+			if time.Now().After(deadline) {
+				t.Fatal("the project never returned to running")
+			}
+		}
+	}
+}
