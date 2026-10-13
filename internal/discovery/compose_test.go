@@ -130,3 +130,26 @@ func TestParseComposeDashDefaultOnlyWhenUnset(t *testing.T) {
 		t.Fatalf("unset should use both defaults: %+v", ports)
 	}
 }
+
+func TestParseComposeSkipsTargetRanges(t *testing.T) {
+	data := []byte("services:\n  app:\n    ports:\n      - '8080:80-81'\n      - target: 90-91\n        published: 9090\n      - '7000:70'\n")
+	ports, err := ParseCompose(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 1 || ports[0].Published != 7000 || ports[0].Target != 70 {
+		t.Fatalf("ranged targets should be skipped, got %+v", ports)
+	}
+}
+
+func TestParseComposeShortSyntaxWithIPv6HostAddress(t *testing.T) {
+	data := []byte("services:\n  ws:\n    ports:\n      - '[::1]:6001:6002'\n      - '[::]:${WS_PORT:-7001}:7002/tcp'\n")
+	ports, err := ParseCompose(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := portsByPublished(ports)
+	if len(ports) != 2 || m[6001].Target != 6002 || m[7001].Target != 7002 || m[7001].Var != "WS_PORT" {
+		t.Fatalf("IPv6 host addresses should keep their ports, got %+v", ports)
+	}
+}

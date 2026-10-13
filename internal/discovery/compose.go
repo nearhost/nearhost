@@ -135,6 +135,9 @@ func ParseCompose(data []byte, env map[string]string) ([]ComposePort, error) {
 				if !ok || pub < 1 || pub > 65535 {
 					continue
 				}
+				if t, isStr := lp.Target.(string); isStr && strings.Contains(t, "-") {
+					continue // target range
+				}
 				target, _ := toInt(lp.Target)
 				out = append(out, ComposePort{Service: service, Published: pub, Target: target, Var: varName})
 			}
@@ -169,18 +172,28 @@ func parseShortPort(spec string, env map[string]string) (ComposePort, bool) {
 	}
 	target := 0
 	if resolvedTarget, _, tok := resolve(targetPart, env); tok {
+		if strings.Contains(resolvedTarget, "-") {
+			return ComposePort{}, false // target range
+		}
 		target, _ = strconv.Atoi(strings.TrimSpace(resolvedTarget))
 	}
 	return ComposePort{Published: published, Target: target, Var: varName}, true
 }
 
-// splitOutsideBraces splits on ":" except inside ${...}, so defaults such as
-// ${APP_PORT:-80} stay in one piece.
+// splitOutsideBraces splits on ":" except inside ${...} and [...], so defaults
+// such as ${APP_PORT:-80} and IPv6 host addresses such as [::1] stay in one
+// piece.
 func splitOutsideBraces(s string) []string {
 	var parts []string
 	depth, start := 0, 0
+	inBrackets := false
 	for i := 0; i < len(s); i++ {
 		switch {
+		case s[i] == '[' && depth == 0:
+			inBrackets = true
+		case s[i] == ']' && depth == 0:
+			inBrackets = false
+		case inBrackets:
 		case s[i] == '$' && i+1 < len(s) && s[i+1] == '{':
 			depth++
 			i++
