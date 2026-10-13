@@ -1,0 +1,23 @@
+.gitignore
+  s_bea2b299df9898::t_7882d16dbd213b 1-7
+LICENSE
+  s_bea2b299df9898::t_bd9452471d8026 1-21
+docs/superpowers/specs/2026-10-13-nearhost-design.md
+  s_bea2b299df9898::t_c6274f08caa2b8 1-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f95dd86197f87b8911c335ac0493a7b5b642c7d0",
+  "prompts": {},
+  "sessions": {
+    "s_bea2b299df9898": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c1a2487-be78-4f26-bdb9-f265ef8e2afc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
