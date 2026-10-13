@@ -160,7 +160,7 @@ func (e *Engine) Events() *Bus { return e.bus }
 func (e *Engine) Config() *config.Config { return cloneConfig(e.cfg) }
 
 // Start prepares the engine: it creates the run directory, checks that the
-// proxy's HTTPS and HTTP ports can be bound, and loads the proxy with no
+// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well), and loads the proxy with no
 // sites, which creates the local CA and opens no listeners. If a port is
 // taken it returns an error naming the port and the engine stays unstarted;
 // Start can then be called again. Starting a started engine does nothing.
@@ -207,17 +207,29 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// probePort reports whether the proxy could listen on port (def when 0).
+// probePort reports whether the proxy could listen on port (def when 0): on
+// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3.
 func probePort(what string, port, def int) error {
 	if port == 0 {
 		port = def
 	}
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	addr := fmt.Sprintf(":%d", port)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("%s port %d is not available: %w", what, port, err)
 	}
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("%s port %d: %w", what, port, err)
+	}
+	if what != "HTTPS" {
+		return nil
+	}
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return fmt.Errorf("%s port %d (UDP, for HTTP/3) is not available: %w", what, port, err)
+	}
+	if err := pc.Close(); err != nil {
+		return fmt.Errorf("%s port %d (UDP): %w", what, port, err)
 	}
 	return nil
 }
@@ -271,7 +283,9 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
-	if started {
+	// Caddy and its log sink are process-global. If another engine has taken
+	// the proxy over since Start, both are that engine's now: leave them.
+	if started && e.proxy.Running() {
 		e.applyMu.Lock()
 		err := e.proxy.Stop()
 		e.applyMu.Unlock()

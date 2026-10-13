@@ -88,8 +88,8 @@ type harness struct {
 func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEnv ...string) *harness {
 	t.Helper()
 	h := &harness{
-		httpsPort: testutil.FreePort(t),
-		httpPort:  testutil.FreePort(t),
+		httpsPort: proxyPort(t),
+		httpPort:  proxyPort(t),
 		storage:   tempDir(t, "nh-caddy-"),
 		runDir:    tempDir(t, "nh-run-"),
 		sshLog:    filepath.Join(t.TempDir(), "ssh.log"),
@@ -128,6 +128,23 @@ func newHarness(t *testing.T, cfg *config.Config, sshEnv ...string) *harness {
 		t.Fatalf("Start: %v", err)
 	}
 	return h
+}
+
+// proxyPort returns a port free for both TCP and UDP: the proxy also listens
+// for HTTP/3 on the UDP port matching its HTTPS port.
+func proxyPort(t *testing.T) int {
+	t.Helper()
+	for i := 0; i < 50; i++ {
+		port := testutil.FreePort(t)
+		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			continue
+		}
+		pc.Close()
+		return port
+	}
+	t.Fatal("no port free for both TCP and UDP")
+	return 0
 }
 
 // tempDir is t.TempDir with a short path that pgrep can take as a pattern

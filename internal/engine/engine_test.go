@@ -638,23 +638,35 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 }
 
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
-	for _, which := range []string{"https", "http"} {
+	// The proxy listens on TCP for HTTPS and HTTP, and on UDP at the HTTPS
+	// port for HTTP/3.
+	for _, which := range []string{"https", "http", "https-udp"} {
 		t.Run(which, func(t *testing.T) {
-			l, err := net.Listen("tcp", ":0")
-			if err != nil {
-				t.Fatal(err)
+			var holder interface{ Close() error }
+			var held int
+			if which == "https-udp" {
+				pc, err := net.ListenPacket("udp", ":0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				holder, held = pc, pc.LocalAddr().(*net.UDPAddr).Port
+			} else {
+				l, err := net.Listen("tcp", ":0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				holder, held = l, l.Addr().(*net.TCPAddr).Port
 			}
-			defer l.Close()
-			held := l.Addr().(*net.TCPAddr).Port
+			defer holder.Close()
 			h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, func(o *Options) {
-				if which == "https" {
-					o.HTTPSPort = held
-				} else {
+				if which == "http" {
 					o.HTTPPort = held
+				} else {
+					o.HTTPSPort = held
 				}
 			})
 			h.httpsPort, h.httpPort = h.opts.HTTPSPort, h.opts.HTTPPort
-			err = h.eng.Start(bg)
+			err := h.eng.Start(bg)
 			if err == nil || !strings.Contains(err.Error(), strconv.Itoa(held)) {
 				t.Fatalf("expected an error naming port %d, got %v", held, err)
 			}
@@ -664,7 +676,7 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			if st := h.eng.Status("web"); st.State != StateStopped || len(h.eng.Sites()) != 0 || len(h.ensureCalls()) != 0 {
 				t.Fatalf("status = %+v", st)
 			}
-			l.Close()
+			holder.Close()
 			// The conflict gone, the same engine starts.
 			if err := h.eng.Start(bg); err != nil {
 				t.Fatalf("Start after the port was freed: %v", err)
