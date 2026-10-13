@@ -22,9 +22,8 @@ func newFakeSession(t *testing.T, env ...string) (*Session, string) {
 	if err := os.Chmod(ssh, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "ssh.log")
-	s := NewSession("mini", "mini", dir)
+	logPath := filepath.Join(t.TempDir(), "ssh.log")
+	s := NewSession("mini", "mini", shortDir(t))
 	s.SSHPath = ssh
 	s.Env = append([]string{"FAKE_SSH_LOG=" + logPath}, env...)
 	s.pollInterval = 20 * time.Millisecond
@@ -33,6 +32,18 @@ func newFakeSession(t *testing.T, env ...string) (*Session, string) {
 	s.maxBackoff = 50 * time.Millisecond
 	t.Cleanup(s.Stop)
 	return s, logPath
+}
+
+// shortDir is a run directory whose path leaves room for a control socket.
+// t.TempDir carries the test's name and is too long for one on macOS.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "nh-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 func readLog(t *testing.T, path string) string {
@@ -336,7 +347,7 @@ func TestStartGivesUpWhenSSHNeverLaunches(t *testing.T) {
 }
 
 func TestSocketPathStaysInsideRunDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := "/tmp/nh-run" // only named, never created
 	if got := NewSession("mini", "mini", dir).SocketPath(); got != filepath.Join(dir, "mini.sock") {
 		t.Fatalf("plain name should be kept: %q", got)
 	}
@@ -447,5 +458,86 @@ func TestControlCommandsCarryNoOptions(t *testing.T) {
 		if !seen[want] {
 			t.Errorf("control command %q was not run; got %v", want, seen)
 		}
+	}
+}
+
+// OpenSSH binds a control socket at its path plus a 17-byte temporary suffix,
+// and a socket address holds 104 bytes on macOS including the final NUL. So a
+// socket path may be at most 86 bytes long.
+func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
+	dir := "/tmp/nh-run"
+	// "/tmp/nh-run/" is 12 bytes and ".sock" 5: a 69-byte name gives 86.
+	fits, tooLong := strings.Repeat("a", 69), strings.Repeat("a", 70)
+	s := NewSession(fits, "mini", dir)
+	if got := s.SocketPath(); got != filepath.Join(dir, fits+".sock") || len(got) != 86 {
+		t.Fatalf("a name that still fits must be kept: %q (%d bytes)", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath for a path of 86 bytes: %v", err)
+	}
+
+	s = NewSession(tooLong, "mini", dir)
+	got := s.SocketPath()
+	if filepath.Dir(got) != dir || !strings.HasPrefix(filepath.Base(got), "h-") || len(filepath.Base(got)) != len("h-0123456789abcdef.sock") {
+		t.Fatalf("a name that does not fit must become the hashed name, got %q", got)
+	}
+	if len(got)+17 >= 104 {
+		t.Fatalf("hashed socket path %q (%d bytes) does not fit either", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath: %v", err)
+	}
+	if again := NewSession(tooLong, "other-host", dir).SocketPath(); again != got {
+		t.Fatalf("the socket of one name changed: %q then %q", got, again)
+	}
+	if other := NewSession(tooLong+"b", "mini", dir).SocketPath(); other == got {
+		t.Fatalf("two long names share the socket %q", got)
+	}
+}
+
+func TestStartFailsAtOnceWhenTheRunDirectoryIsTooLong(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	long := filepath.Join(shortDir(t), strings.Repeat("d", 70))
+	s.runDir = long
+	s.connectTimeout = time.Minute // a wait for ssh would outlast the test
+
+	err := s.CheckSocketPath()
+	if err == nil {
+		t.Fatalf("CheckSocketPath accepted %q", s.SocketPath())
+	}
+	for _, want := range []string{s.SocketPath(), "86 bytes", "XDG_CONFIG_HOME"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := time.Now()
+	werr := s.WaitConnected(ctx)
+	if werr == nil || !strings.Contains(werr.Error(), "XDG_CONFIG_HOME") {
+		t.Fatalf("WaitConnected = %v, want the socket path error", werr)
+	}
+	if took := time.Since(begin); took > 2*time.Second {
+		t.Fatalf("the failure took %s", took)
+	}
+	if log := readLog(t, logPath); log != "" {
+		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)
+	}
+	if s.Launches() != 0 {
+		t.Fatalf("launches = %d", s.Launches())
+	}
+	if _, err := os.Stat(long); err == nil {
+		t.Fatal("the unusable run directory was created")
+	}
+	// Stop and a second Start behave as after any start that gave up.
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after Stop = %s", s.Status())
+	}
+	s.Start()
+	if s.Status() != StatusAuthFailed || readLog(t, logPath) != "" {
+		t.Fatalf("second Start: status %s, log %q", s.Status(), readLog(t, logPath))
 	}
 }

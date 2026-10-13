@@ -94,10 +94,42 @@ func NewSession(name, host, runDir string) *Session {
 	}
 }
 
+// A Unix socket address holds 104 bytes on macOS (108 on Linux), the final NUL
+// included, and OpenSSH binds a control socket at its path plus a 17-byte
+// temporary suffix before renaming it. The macOS figure is used everywhere so
+// that a path is judged the same on every system.
+const (
+	socketAddrSize  = 104
+	sshBindSuffix   = 17
+	maxSocketPath   = socketAddrSize - sshBindSuffix - 1
+	hashedNameChars = 18 // "h-" and 16 hex digits
+)
+
 // SocketPath is the ControlMaster socket for this session. It is always a
-// file directly inside the run directory.
+// file directly inside the run directory. A name whose socket path would be
+// too long for ssh to bind is replaced by its short hashed form; whether the
+// result is usable at all (the run directory itself may be too long) is what
+// CheckSocketPath reports.
 func (s *Session) SocketPath() string {
-	return filepath.Join(s.runDir, socketName(s.Name)+".sock")
+	path := filepath.Join(s.runDir, socketName(s.Name)+".sock")
+	if len(path) > maxSocketPath {
+		if short := filepath.Join(s.runDir, hashedName(s.Name)+".sock"); len(short) < len(path) {
+			return short
+		}
+	}
+	return path
+}
+
+// CheckSocketPath reports whether ssh can bind this session's control socket.
+// It fails when the run directory is so long that even the shortest socket
+// name does not fit. Start refuses to launch ssh in that case.
+func (s *Session) CheckSocketPath() error {
+	path := s.SocketPath()
+	if len(path) <= maxSocketPath {
+		return nil
+	}
+	return fmt.Errorf("control socket path %s is too long for ssh: it is %d bytes and at most %d bytes fit; "+
+		"the run directory %s is too long, set a shorter XDG_CONFIG_HOME", path, len(path), maxSocketPath, s.runDir)
 }
 
 // socketName returns name when it is a plain file name ssh takes literally.
@@ -114,7 +146,12 @@ func socketName(name string) string {
 	if plain {
 		return name
 	}
-	return fmt.Sprintf("h-%x", sha256.Sum256([]byte(name)))[:18]
+	return hashedName(name)
+}
+
+// hashedName is a short plain file name that stands for name.
+func hashedName(name string) string {
+	return fmt.Sprintf("h-%x", sha256.Sum256([]byte(name)))[:hashedNameChars]
 }
 
 func (s *Session) command(ctx context.Context, args ...string) *exec.Cmd {
@@ -204,15 +241,27 @@ func (s *Session) setStatus(st Status, errText string) {
 }
 
 // Start launches the supervisor. It is a no-op while a supervisor is running;
-// after the supervisor has given up, Start launches a fresh one.
+// after the supervisor has given up, Start launches a fresh one. When the
+// control socket path is too long (see CheckSocketPath) it launches nothing
+// and the session is at once in the state of a supervisor that gave up, with
+// that error as its last one.
 func (s *Session) Start() {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	s.mu.Lock()
-	if s.cancel != nil {
-		s.mu.Unlock()
+	running := s.cancel != nil
+	s.mu.Unlock()
+	if running {
 		return
 	}
+	// ssh would fail on such a path every time, and say so only after it
+	// had connected. Give up here, as the supervisor does on an error that
+	// retrying cannot fix.
+	if err := s.CheckSocketPath(); err != nil {
+		s.setStatus(StatusAuthFailed, err.Error())
+		return
+	}
+	s.mu.Lock()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel = cancel

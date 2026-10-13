@@ -1610,6 +1610,29 @@ func TestShutdownReturnsTeardownErrorsAndStillStopsTheRest(t *testing.T) {
 	h.assertNothingLeft(t)
 }
 
+func TestRunDirectoryTooLongForAControlSocketFailsTheStartAtOnce(t *testing.T) {
+	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) {
+		o.RunDir = filepath.Join(o.RunDir, strings.Repeat("d", 80))
+	})
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatal(err)
+	}
+	begin := time.Now()
+	err := h.eng.StartProject(bg, "myapp")
+	if err == nil || !strings.Contains(err.Error(), "too long") || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
+		t.Fatalf("StartProject = %v, want the socket path error", err)
+	}
+	if took := time.Since(begin); took > 5*time.Second {
+		t.Fatalf("the failure took %s; it must not wait for a connection", took)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateError || !strings.Contains(st.Message, "too long") {
+		t.Fatalf("status = %+v", st)
+	}
+	if log := h.log(); log != "" {
+		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)
+	}
+}
+
 // The masters run outside nearhost's process group, so nothing but the engine
 // ends them. A shutdown that is itself cut short (a second Ctrl-C) may fail to
 // cancel forwards, but it must not leave a master behind.

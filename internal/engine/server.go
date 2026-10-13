@@ -58,6 +58,11 @@ func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
 		// the new supervisor has made its first attempt.
 		c.sess.Stop()
 	}
+	// A run directory too long for a control socket fails the start with
+	// that reason, not after a wait for a connection that cannot come.
+	if err := c.sess.CheckSocketPath(); err != nil {
+		return nil, err
+	}
 	c.sess.Start()
 	return c.sess, nil
 }
