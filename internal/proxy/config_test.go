@@ -205,3 +205,34 @@ func TestBuildConfigRejectsAliasesDifferingOnlyByCase(t *testing.T) {
 		t.Error("aliases naming the same host should fail")
 	}
 }
+
+func TestBuildConfigKeepsUpgradedStreamsAcrossReloads(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	handler := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0, "handle", 0)
+	if dig(t, handler, "stream_close_delay") != "24h" {
+		t.Errorf("stream_close_delay = %v, want 24h so WebSockets survive a reload", dig(t, handler, "stream_close_delay"))
+	}
+}
+
+func TestBuildConfigDisablesStorageClean(t *testing.T) {
+	for _, sites := range [][]Site{nil, {{Alias: "a.test", Upstream: "127.0.0.1:1"}}} {
+		raw, err := BuildConfig(sites, Options{StorageRoot: "/tmp/store"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if dig(t, cfg, "apps", "tls", "disable_storage_clean") != true {
+			t.Errorf("disable_storage_clean not true with %d sites", len(sites))
+		}
+	}
+}

@@ -81,6 +81,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				"handler":        "reverse_proxy",
 				"upstreams":      []any{map[string]any{"dial": s.Upstream}},
 				"flush_interval": -1,
+				// By default Caddy closes upgraded streams (WebSockets) on every config
+				// reload, dropping dev-server HMR sockets whenever the site set
+				// changes. With this delay, upgraded connections of a removed site, and
+				// connections open when the proxy stops, stay open until either end
+				// closes or the delay elapses.
+				"stream_close_delay": "24h",
 				"headers": map[string]any{"request": map[string]any{"set": map[string]any{
 					"X-Forwarded-Proto": []string{"https"},
 					"X-Forwarded-For":   []string{"{http.request.remote.host}"},
@@ -125,6 +131,11 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				},
 			},
 			"tls": map[string]any{
+				// Storage cleaning calls caddy.InstanceID, which writes instance.uuid
+				// into Caddy's default data dir (the user's own Caddy directory),
+				// outside our storage root. Internal-issuer certs are overwritten in
+				// place, so nothing accumulates without the cleaner.
+				"disable_storage_clean": true,
 				"automation": map[string]any{
 					"policies": policies,
 				},
