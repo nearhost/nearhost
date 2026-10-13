@@ -157,3 +157,31 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 		t.Fatalf("expected a missing-path error, got %v", err)
 	}
 }
+
+// A Unix socket path holds 104 bytes on macOS (108 on Linux), and OpenSSH
+// binds a master at its control path plus a 17-byte temporary suffix. The
+// run directory of `add` must leave room whatever the server is called and
+// wherever the system keeps temporary files.
+func TestPrivateSessionSocketPathIsShort(t *testing.T) {
+	const sunPath, sshSuffix, margin = 104, 17, 20
+	for _, name := range []string{"mini", strings.Repeat("build-server-", 6), "deploy@build host"} {
+		sess, end, err := sshClient{}.privateSession(config.Server{Name: name, SSHHost: "host.example"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sock := sess.SocketPath()
+		dir := filepath.Dir(sock)
+		if n := len(sock) + sshSuffix; n > sunPath-margin {
+			t.Errorf("server %q: ssh would bind %d bytes (%s plus its suffix); the limit is %d", name, n, sock, sunPath)
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Errorf("server %q: run directory %s is not a private directory: %v %v", name, dir, info, err)
+		}
+		if err := end(); err != nil {
+			t.Errorf("server %q: %v", name, err)
+		}
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf("server %q: run directory %s was left behind", name, dir)
+		}
+	}
+}

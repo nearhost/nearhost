@@ -49,6 +49,30 @@ func sshHint(host, then string) string {
 	return fmt.Sprintf("run `ssh %s` once in a terminal to fix access, then %s", host, then)
 }
 
+// shortTempDir is where a private run directory goes. A Unix socket path
+// holds 104 bytes on macOS, of which OpenSSH needs 17 beyond the control
+// path while it binds, and the usual temporary directory there
+// (/var/folders/...) already takes about fifty. /tmp exists on macOS and
+// Linux alike.
+const shortTempDir = "/tmp"
+
+// privateSession returns a session to srv with a run directory of its own,
+// and a function that stops the session and removes the directory. The
+// directory is created for this one session, readable by this user only, and
+// its socket has a fixed short name: the path does not grow with the
+// server's name.
+func (c sshClient) privateSession(srv config.Server) (*transport.Session, func() error, error) {
+	runDir, err := os.MkdirTemp(shortTempDir, "nh-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create run directory: %w", err)
+	}
+	sess := c.session(config.Server{Name: "add", SSHHost: srv.SSHHost}, runDir)
+	return sess, func() error {
+		sess.Stop()
+		return os.RemoveAll(runDir)
+	}, nil
+}
+
 // openRemote opens projectPath on srv for reading over SFTP, on an SSH
 // connection of its own that the returned function ends. It runs no command
 // on the server and writes nothing there.
@@ -60,14 +84,9 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	if err := c.check(ctx, srv); err != nil {
 		return nil, nil, fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, "add the project again"))
 	}
-	runDir, err := os.MkdirTemp("", "nh-add-")
+	sess, end, err := c.privateSession(srv)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create run directory: %w", err)
-	}
-	sess := c.session(srv, runDir)
-	end := func() error {
-		sess.Stop()
-		return os.RemoveAll(runDir)
+		return nil, nil, err
 	}
 	fail := func(err error) (discovery.FileReader, func() error, error) {
 		return nil, nil, errors.Join(err, end())
