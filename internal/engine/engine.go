@@ -205,6 +205,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := differentProxyPorts(e.opts.HTTPSPort, e.opts.HTTPPort); err != nil {
+		return err
+	}
 	if e.opts.RunDir != "" {
 		if err := os.MkdirAll(e.opts.RunDir, 0o700); err != nil {
 			return fmt.Errorf("create run directory: %w", err)
@@ -230,6 +233,22 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.started = true
 	e.mu.Unlock()
 	e.bus.Publish(Event{Message: "proxy ready"})
+	return nil
+}
+
+// differentProxyPorts refuses the same port for HTTPS and HTTP (0 standing
+// for 443 and 80). Each can be bound by itself, so the probes would pass, but
+// the proxy cannot serve both on one port and no site could be published.
+func differentProxyPorts(httpsPort, httpPort int) error {
+	if httpsPort == 0 {
+		httpsPort = 443
+	}
+	if httpPort == 0 {
+		httpPort = 80
+	}
+	if httpsPort == httpPort {
+		return fmt.Errorf("the HTTPS and HTTP ports must differ (both are %d)", httpPort)
+	}
 	return nil
 }
 

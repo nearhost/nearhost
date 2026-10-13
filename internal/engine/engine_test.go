@@ -1881,3 +1881,32 @@ func TestConcurrentUse(t *testing.T) {
 		}
 	}
 }
+
+// Each proxy port can be bound by itself, so the probes pass, but the proxy
+// cannot serve HTTPS and HTTP on one port: every project would then fail.
+func TestStartRefusesEqualProxyPorts(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}
+	h := buildHarness(t, cfg, func(o *Options) { o.HTTPPort = o.HTTPSPort })
+	h.httpPort = h.httpsPort
+	err := h.eng.Start(bg)
+	if err == nil || !strings.Contains(err.Error(), "must differ") || !strings.Contains(err.Error(), strconv.Itoa(h.httpsPort)) {
+		t.Fatalf("Start with both ports %d returned %v", h.httpsPort, err)
+	}
+	if err := h.eng.StartProject(bg, "web"); err == nil {
+		t.Fatal("no project may start when the engine failed to start")
+	}
+	if _, statErr := os.Stat(filepath.Join(h.storage, "pki")); statErr == nil {
+		t.Error("the proxy was started")
+	}
+
+	// Equal only once the defaults are filled in. Asked of the check alone:
+	// a Start that got past it would bind the real ports.
+	for ports, equal := range map[[2]int]bool{
+		{80, 0}: true, {0, 443}: true, {8443, 8443}: true,
+		{0, 0}: false, {8443, 0}: false, {8443, 8080}: false,
+	} {
+		if err := differentProxyPorts(ports[0], ports[1]); (err != nil) != equal {
+			t.Errorf("HTTPS port %d and HTTP port %d: %v", ports[0], ports[1], err)
+		}
+	}
+}
