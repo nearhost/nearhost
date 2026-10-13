@@ -439,6 +439,41 @@ func TestStopOnlyAffectsTheOwningProxy(t *testing.T) {
 // Caddy resolves its app data dir (instance.uuid) from XDG_DATA_HOME at call
 // time, so fresh dirs here prove the proxy never writes into them, whatever
 // earlier tests in the process did.
+func TestApplyIfRunningLeavesAnotherOwnersProxyAlone(t *testing.T) {
+	up := upstream(t, "a")
+	sites := []Site{{Alias: "a.test", Upstream: addr(up.Server)}}
+	h := startProxy(t, sites)
+	// The owner changes its own configuration as with Apply.
+	if applied, err := h.p.ApplyIfRunning(sites); err != nil || !applied {
+		t.Fatalf("ApplyIfRunning on the owner = %v, %v", applied, err)
+	}
+	// A Proxy that never applied owns nothing: it loads nothing.
+	other := New(Options{StorageRoot: t.TempDir(), HTTPSPort: h.httpsPort, HTTPPort: h.httpPort})
+	if applied, err := other.ApplyIfRunning(nil); err != nil || applied {
+		t.Fatalf("ApplyIfRunning on a Proxy that never applied = %v, %v", applied, err)
+	}
+	if !h.p.Running() || other.Running() {
+		t.Fatalf("ownership wrong: first=%v second=%v", h.p.Running(), other.Running())
+	}
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+
+	// Once another Proxy has taken over, the first one cannot take Caddy
+	// back this way, and the newer configuration stays.
+	if err := other.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { other.Stop() })
+	if applied, err := h.p.ApplyIfRunning(sites); err != nil || applied {
+		t.Fatalf("ApplyIfRunning on a replaced Proxy = %v, %v", applied, err)
+	}
+	if h.p.Running() || !other.Running() {
+		t.Fatalf("ownership wrong after a stale ApplyIfRunning: first=%v second=%v", h.p.Running(), other.Running())
+	}
+	if _, err := h.client("a.test", false).Get(h.url("a.test", "/hello")); err == nil {
+		t.Fatal("the replaced Proxy's site is served again")
+	}
+}
+
 func TestApplyWritesNothingOutsideStorage(t *testing.T) {
 	dataHome, configHome := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_DATA_HOME", dataHome)

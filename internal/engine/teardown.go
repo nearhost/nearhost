@@ -17,8 +17,8 @@ func (e *Engine) rollBack(ctx context.Context, run *projectRun) error {
 	return nil
 }
 
-// tearDown removes run's site from the proxy and cancels its forwards. It
-// attempts every step and returns the failures joined. What could not be
+// tearDown removes run's site from the proxy, unless the proxy has passed to
+// another engine, and cancels its forwards. It attempts every step and returns the failures joined. What could not be
 // removed stays recorded on run, so calling it again retries exactly that.
 // The caller holds run.op and must record the resulting state afterwards
 // (changeLocked or setStateLocked), which is what ends the teardown for
@@ -40,7 +40,11 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 	sites := e.sitesLocked(run)
 	e.mu.Unlock()
 	if published {
-		if err := e.proxy.Apply(sites); err != nil {
+		// Caddy is process-global. If another engine has taken the proxy
+		// over, this engine's sites are already gone from it, and applying
+		// here would take it back from that engine: then there is nothing to
+		// remove, and ApplyIfRunning does nothing.
+		if _, err := e.proxy.ApplyIfRunning(sites); err != nil {
 			errs = append(errs, fmt.Errorf("remove site: %w", err))
 		} else {
 			e.mu.Lock()

@@ -1617,6 +1617,70 @@ func TestShutdownLeavesAProxyTakenOverByAnotherEngine(t *testing.T) {
 	}
 }
 
+func TestShutdownOfAReplacedEngineWithSitesLeavesTheNewerProxy(t *testing.T) {
+	oldCfg := remoteConfig(testutil.FreePort(t))
+	oldCfg.Projects = append(oldCfg.Projects, localProject("web", upstream(t, "old")))
+	old := newHarness(t, oldCfg)
+	for _, name := range []string{"myapp", "web"} {
+		if err := old.eng.StartProject(bg, name); err != nil {
+			t.Fatalf("StartProject %s on the older engine: %v", name, err)
+		}
+	}
+	if code, body := old.getEventually(t, "web.test", "/"); code != 200 || !strings.HasPrefix(body, "old:") {
+		t.Fatalf("through the older engine's proxy: %d %q", code, body)
+	}
+
+	// A newer engine takes over the process-wide proxy and its log sink while
+	// the older one still has sites published.
+	h := newHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "new"))}})
+	if err := h.eng.StartProject(bg, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := h.getEventually(t, "web.test", "/"); code != 200 || !strings.HasPrefix(body, "new:") {
+		t.Fatalf("through the newer engine's proxy: %d %q", code, body)
+	}
+	events, unsub := h.eng.Events().Subscribe(256)
+	defer unsub()
+
+	// The older engine lets go of everything that is its own.
+	if err := old.eng.Shutdown(bg); err != nil {
+		t.Fatalf("Shutdown of the replaced engine: %v", err)
+	}
+	for _, name := range []string{"myapp", "web"} {
+		if st := old.eng.Status(name); st.State != StateStopped || st.WebLocalPort != 0 {
+			t.Fatalf("%s on the older engine = %+v", name, st)
+		}
+	}
+	if len(old.eng.Sites()) != 0 || len(old.forwards("mini")) != 0 {
+		t.Fatalf("the older engine kept sites %v, forwards %v", old.eng.Sites(), old.forwards("mini"))
+	}
+	if log := old.log(); strings.Count(log, "-O cancel") != 2 || !strings.Contains(log, "-O exit mini") {
+		t.Fatalf("the older engine must cancel its forwards and end its master:\n%s", log)
+	}
+
+	// And nothing that is the newer engine's.
+	if !h.eng.proxy.Running() {
+		t.Fatal("the older engine took the proxy back from the newer one, or stopped it")
+	}
+	if code, body := h.get(t, "web.test", "/after"); code != 200 || !strings.HasPrefix(body, "new:") {
+		t.Fatalf("the newer engine's site after the older one shut down: %d %q", code, body)
+	}
+	if st := h.eng.Status("web"); st.State != StateRunning {
+		t.Fatalf("web on the newer engine = %+v", st)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project == "web" && strings.Contains(ev.Message, "/after") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the newer engine lost its proxy log lines when the older one shut down")
+		}
+	}
+}
+
 func TestProjectsBeforeStartAreRefused(t *testing.T) {
 	h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, nil)
 	if err := h.eng.StartProject(bg, "web"); err == nil {

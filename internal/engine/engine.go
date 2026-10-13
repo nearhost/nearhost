@@ -269,8 +269,10 @@ func (e *Engine) proxyLog(alias, line string) {
 	e.bus.Publish(Event{Project: project, Message: line})
 }
 
-// Shutdown stops every project, ends every SSH master and stops the proxy. A
-// start in progress is interrupted. It attempts every step even when one
+// Shutdown stops every project, ends every SSH master and stops the proxy. If
+// another engine has taken the proxy over, the proxy is left to it untouched;
+// this engine still cancels its forwards and ends its SSH masters. A start in
+// progress is interrupted. It attempts every step even when one
 // fails and returns all failures joined. The hosts file is left as it is.
 // After Shutdown the engine cannot be started again; calling Shutdown again
 // does nothing.
