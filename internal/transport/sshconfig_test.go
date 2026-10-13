@@ -187,3 +187,44 @@ func TestDefaultHostsIncludeSkipsUnreadableFile(t *testing.T) {
 		t.Fatalf("got %v, %v; want %v", hosts, err, want)
 	}
 }
+
+func TestListHostsIgnoresMatchBlocks(t *testing.T) {
+	cfg := "Host first\n  User a\n\nMatch user deploy\n  IdentityFile ~/.ssh/deploy\n\nmatch exec \"test -f /tmp/vpn\"\n  ProxyJump bastion\n\nMatch host special\n  User b\n\nHost last\n  User c\n"
+	hosts, err := ListHosts(strings.NewReader(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"first", "last"}; !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, want %v", hosts, want)
+	}
+}
+
+func TestListHostsKeepsAliasWithInnerExclamationMark(t *testing.T) {
+	hosts, err := ListHosts(strings.NewReader("Host build!prod !skipped plain\n  User a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"build!prod", "plain"}; !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, want %v", hosts, want)
+	}
+}
+
+func TestListHostsRejectsHomeRelativeIncludeWithoutHome(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "extra"), []byte("Host from-cwd\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("HOME", "")
+	for _, cfg := range []string{"Include extra\n", "Include ~/extra\n"} {
+		hosts, err := ListHosts(strings.NewReader(cfg))
+		if err == nil {
+			t.Fatalf("%q: expected an error without a home directory, got hosts %v", cfg, hosts)
+		}
+	}
+	abs := filepath.Join(dir, "extra")
+	hosts, err := ListHosts(strings.NewReader("Include " + abs + "\n"))
+	if err != nil || !reflect.DeepEqual(hosts, []string{"from-cwd"}) {
+		t.Fatalf("absolute include needs no home directory: %v, %v", hosts, err)
+	}
+}

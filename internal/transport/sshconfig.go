@@ -20,7 +20,8 @@ const maxIncludeDepth = 16
 // ListHosts returns concrete Host aliases from an ssh_config, in file order,
 // without wildcard or negated patterns and without duplicates. Include
 // directives are followed; relative paths resolve against ~/.ssh, and missing
-// targets are ignored.
+// targets are ignored. Match blocks are conditions, not aliases, and are
+// skipped.
 func ListHosts(r io.Reader) ([]string, error) {
 	l := &hostLister{seen: map[string]bool{}}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -57,6 +58,11 @@ func (l *hostLister) read(r io.Reader, chain []string) error {
 		return l.add(text)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
+		if isMatchLine(line) {
+			// The parser rejects most Match criteria. Dropping the line folds
+			// its options into the block above, which changes no Host name.
+			continue
+		}
 		args, ok := includeArgs(line)
 		if !ok {
 			chunk = append(chunk, line)
@@ -80,7 +86,7 @@ func (l *hostLister) add(text string) error {
 	for _, h := range cfg.Hosts {
 		for _, p := range h.Patterns {
 			name := p.String()
-			if name == "" || strings.ContainsAny(name, "*?!") || l.seen[name] {
+			if name == "" || strings.HasPrefix(name, "!") || strings.ContainsAny(name, "*?") || l.seen[name] {
 				continue
 			}
 			l.seen[name] = true
@@ -97,9 +103,15 @@ func (l *hostLister) include(args, chain []string) error {
 	for _, arg := range args {
 		path := arg
 		switch {
-		case strings.HasPrefix(path, "~/") && l.home != "":
+		case strings.HasPrefix(path, "~/"):
+			if l.home == "" {
+				return fmt.Errorf("ssh config include %q: home directory is unknown", arg)
+			}
 			path = filepath.Join(l.home, path[2:])
-		case !filepath.IsAbs(path) && l.sshDir != "":
+		case !filepath.IsAbs(path):
+			if l.sshDir == "" {
+				return fmt.Errorf("ssh config include %q: home directory is unknown", arg)
+			}
 			path = filepath.Join(l.sshDir, path)
 		}
 		matches, err := filepath.Glob(path)
@@ -128,6 +140,16 @@ func (l *hostLister) include(args, chain []string) error {
 		}
 	}
 	return nil
+}
+
+// isMatchLine reports whether line opens a Match block.
+func isMatchLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if len(line) < 6 || !strings.EqualFold(line[:5], "match") {
+		return false
+	}
+	c := line[5]
+	return c == ' ' || c == '\t' || c == '='
 }
 
 // includeArgs reports whether line is an Include directive and returns its
