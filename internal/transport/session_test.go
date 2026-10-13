@@ -355,3 +355,97 @@ func TestSocketPathStaysInsideRunDir(t *testing.T) {
 		paths[p] = name
 	}
 }
+
+// logLines returns the argv lines the fake ssh recorded.
+func logLines(t *testing.T, path string) []string {
+	t.Helper()
+	return strings.Split(strings.TrimSpace(readLog(t, path)), "\n")
+}
+
+// The user's ssh_config applies to every ssh nearhost runs. These pin the
+// options that keep it from changing what each invocation does; an option on
+// the command line wins over the configuration files.
+func TestCheckIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	if err := s.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none mini true"
+	if got := logLines(t, logPath); len(got) != 1 || got[0] != want {
+		t.Fatalf("check ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestMasterIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	want := "-N -M -S " + s.SocketPath() +
+		" -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3" +
+		" -o ControlPersist=no -o ClearAllForwardings=yes -o RemoteCommand=none mini"
+	var masters []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasPrefix(l, "-N -M ") {
+			masters = append(masters, l)
+		}
+	}
+	if len(masters) != 1 || masters[0] != want {
+		t.Fatalf("master ran\n  %q\nwant\n  %q", masters, want)
+	}
+}
+
+func TestSFTPIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if f, err := s.OpenSFTP(t.Context()); err == nil {
+		f.Close()
+	}
+	want := "-S " + s.SocketPath() + " -o BatchMode=yes -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -s mini sftp"
+	var got []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasSuffix(l, " sftp") {
+			got = append(got, l)
+		}
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("sftp ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// ClearAllForwardings on the master must not reach the forwards nearhost
+// asks for: those go to the running master over its control socket, and a
+// control command that carried the option would drop its own -L.
+func TestControlCommandsCarryNoOptions(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if err := s.AddForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+	sock := s.SocketPath()
+	seen := map[string]bool{}
+	for _, l := range logLines(t, logPath) {
+		if !strings.Contains(l, " -O ") {
+			if strings.Contains(l, "-L ") {
+				t.Errorf("a forward was given outside a control command: %q", l)
+			}
+			continue
+		}
+		seen[l] = true
+		if strings.Contains(l, " -o ") {
+			t.Errorf("control command carries options: %q", l)
+		}
+	}
+	for _, want := range []string{
+		"-S " + sock + " -O check mini",
+		"-S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
+		"-S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
+		"-S " + sock + " -O exit mini",
+	} {
+		if !seen[want] {
+			t.Errorf("control command %q was not run; got %v", want, seen)
+		}
+	}
+}

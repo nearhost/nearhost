@@ -116,9 +116,26 @@ func (s *Session) command(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// Check verifies that ssh can reach the host without prompting.
+// The user's ssh_config applies to every ssh started here, and an option given
+// on the command line wins over it. Each kind of invocation therefore switches
+// off what would change its job: a RemoteCommand (ssh refuses to combine one
+// with a command or subsystem of ours), forwards listed for the host, and
+// connection sharing the user has set up.
+//
+// The control commands (-O check, forward, cancel, exit) take none of these.
+// They only talk to the running master over its socket, and
+// ClearAllForwardings would drop the very -L a forward or cancel names.
+
+// Check verifies that ssh can reach the host without prompting. It makes a
+// connection of its own: one borrowed from a master the user already has open
+// would say nothing about whether nearhost's master can log in.
 func (s *Session) Check(ctx context.Context) error {
-	cmd := s.command(ctx, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", s.Host, "true")
+	cmd := s.command(ctx, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+		"-o", "RemoteCommand=none",
+		"-o", "ClearAllForwardings=yes",
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		s.Host, "true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -263,6 +280,14 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"-o", "ExitOnForwardFailure=yes",
 			"-o", "ServerAliveInterval=15",
 			"-o", "ServerAliveCountMax=3",
+			// ControlPersist would put the master in the background, where
+			// it cannot be supervised. The forwards nearhost wants are asked
+			// for later over the control socket, so clearing the ones in the
+			// user's configuration loses nothing and keeps a port that is
+			// already taken from ending the master.
+			"-o", "ControlPersist=no",
+			"-o", "ClearAllForwardings=yes",
+			"-o", "RemoteCommand=none",
 			s.Host)
 		var stderr bytes.Buffer
 		master.Stderr = &stderr
