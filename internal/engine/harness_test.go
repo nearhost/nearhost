@@ -54,19 +54,21 @@ func fakeSSH(t *testing.T) string {
 }
 
 // authWrapper writes an ssh stand-in that fails authentication for the host
-// "badhost", and for every host while the returned flag file exists, and
-// otherwise behaves like the fake ssh.
-func authWrapper(t *testing.T) (path, flag string) {
+// "badhost", and for every host while the flag file exists, and otherwise
+// behaves like the fake ssh. While the hold file exists, a master for
+// "badhost" waits before it fails, so a test decides when the failure comes.
+func authWrapper(t *testing.T) (path, flag, hold string) {
 	t.Helper()
 	dir := t.TempDir()
-	path, flag = filepath.Join(dir, "ssh"), filepath.Join(dir, "auth-fails")
-	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
+	path, flag, hold = filepath.Join(dir, "ssh"), filepath.Join(dir, "auth-fails"), filepath.Join(dir, "auth-waits")
+	script := "#!/bin/sh\nmaster=\nfor a in \"$@\"; do last=\"$a\"; [ \"$a\" = -M ] && master=1; done\n" +
+		"if [ \"$last\" = badhost ] && [ -n \"$master\" ]; then while [ -e '" + hold + "' ]; do sleep 0.05; done; fi\n" +
 		"if [ \"$last\" = badhost ] || [ -e '" + flag + "' ]; then FAKE_SSH_AUTH_FAIL=1; export FAKE_SSH_AUTH_FAIL; fi\n" +
 		"exec '" + fakeSSH(t) + "' \"$@\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return path, flag
+	return path, flag, hold
 }
 
 type harness struct {

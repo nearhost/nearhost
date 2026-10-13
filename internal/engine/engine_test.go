@@ -347,7 +347,12 @@ func TestAuthFailureMarksProjectError(t *testing.T) {
 }
 
 func TestAuthFailureOnOneServerDoesNotBlockOthers(t *testing.T) {
-	wrapper, _ := authWrapper(t)
+	wrapper, _, hold := authWrapper(t)
+	// The bad server's ssh does not fail before the other projects are up,
+	// however slow this machine is.
+	if err := os.WriteFile(hold, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	upPort := upstream(t, "ok")
 	cfg := &config.Config{
 		Servers: []config.Server{{Name: "bad", SSHHost: "badhost"}, {Name: "mini", SSHHost: "mini"}},
@@ -358,14 +363,17 @@ func TestAuthFailureOnOneServerDoesNotBlockOthers(t *testing.T) {
 		},
 	}
 	h := buildHarness(t, cfg, func(o *Options) { o.SSHPath = wrapper })
+	t.Cleanup(func() { os.Remove(hold) }) // before the harness shuts down: never leave ssh waiting
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
 	brokenErr := make(chan error, 1)
 	go func() { brokenErr <- h.eng.StartProject(bg, "broken") }()
-	testutil.WaitUntil(t, 5*time.Second, func() bool { return h.eng.Status("broken").State == StateStarting }, "broken to be starting")
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		return h.eng.Status("broken").State == StateStarting && strings.Contains(h.log(), "badhost")
+	}, "broken to be waiting for its server")
 
-	// While the bad server is still retrying, the others start normally.
+	// While the bad server is still connecting, the others start normally.
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
 		t.Fatalf("StartProject myapp: %v", err)
 	}
@@ -381,6 +389,9 @@ func TestAuthFailureOnOneServerDoesNotBlockOthers(t *testing.T) {
 		t.Fatalf("web through proxy: %d %q", code, body)
 	}
 
+	if err := os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
 	if err := <-brokenErr; err == nil || !strings.Contains(err.Error(), "Permission denied") {
 		t.Fatalf("expected auth error for broken, got %v", err)
 	}
@@ -404,7 +415,7 @@ func TestAuthFailureOnOneServerDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestStartAfterAuthFailureTriesAgain(t *testing.T) {
-	wrapper, flag := authWrapper(t)
+	wrapper, flag, _ := authWrapper(t)
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +438,7 @@ func TestStartAfterAuthFailureTriesAgain(t *testing.T) {
 }
 
 func TestStartRevivesAServerThatGaveUpUnderARunningProject(t *testing.T) {
-	wrapper, flag := authWrapper(t)
+	wrapper, flag, _ := authWrapper(t)
 	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) { o.SSHPath = wrapper })
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
