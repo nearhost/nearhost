@@ -215,6 +215,10 @@ func (e *Engine) bringUp(ctx context.Context, p *config.Project, run *projectRun
 	if err == nil {
 		if err = e.publishSite(run, webLocal); err != nil {
 			err = fmt.Errorf("proxy: %w", err)
+		} else {
+			// Interrupted while the proxy took the site: the start did not
+			// happen, and the site goes again with the rest.
+			err = ctx.Err()
 		}
 	}
 	if err != nil {
@@ -357,7 +361,7 @@ func (e *Engine) publishSite(run *projectRun, webLocal int) error {
 	run.webLocal, run.site = webLocal, true
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
-	if err := e.proxy.Apply(sites); err != nil {
+	if err := e.applySites(sites); err != nil {
 		// The proxy keeps its previous configuration, which lacks this site.
 		e.mu.Lock()
 		run.site = false

@@ -108,6 +108,9 @@ type Engine struct {
 	// holderOf names the process listening on a local TCP port, or returns ""
 	// when it cannot tell or ctx ends first. Tests replace it.
 	holderOf func(ctx context.Context, port int) string
+	// applySites gives the proxy the set of sites that includes a project
+	// being started. It is the proxy's Apply; tests wrap it.
+	applySites func(sites []proxy.Site) error
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
 	ctx     context.Context
@@ -142,6 +145,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},
 	}
+	e.applySites = e.proxy.Apply
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	for _, p := range e.cfg.Projects {
 		if _, dup := e.runs[p.Name]; dup {

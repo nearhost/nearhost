@@ -20,6 +20,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -1907,6 +1908,45 @@ func TestStartRefusesEqualProxyPorts(t *testing.T) {
 	} {
 		if err := differentProxyPorts(ports[0], ports[1]); (err != nil) != equal {
 			t.Errorf("HTTPS port %d and HTTP port %d: %v", ports[0], ports[1], err)
+		}
+	}
+}
+
+// A start interrupted while the proxy is taking its site has not started: the
+// site must be removed again, as for an interruption a moment earlier.
+func TestStartInterruptedDuringTheProxyApplyLeavesNoSite(t *testing.T) {
+	cfg := remoteConfig(testutil.FreePort(t))
+	cfg.Projects = append(cfg.Projects, localProject("web", upstream(t, "ok")))
+	h := newHarness(t, cfg)
+	for _, name := range []string{"web", "myapp"} {
+		ctx, cancel := context.WithCancel(bg)
+		apply := h.eng.applySites
+		h.eng.applySites = func(sites []proxy.Site) error {
+			err := apply(sites)
+			cancel() // lands while the apply runs; the apply itself succeeds
+			return err
+		}
+		err := h.eng.StartProject(ctx, name)
+		h.eng.applySites = apply
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s: StartProject interrupted during the apply returned %v", name, err)
+		}
+		if st := h.eng.Status(name); st.State != StateError || st.WebLocalPort != 0 {
+			t.Errorf("%s: status = %+v", name, st)
+		}
+		if sites := h.eng.Sites(); len(sites) != 0 {
+			t.Errorf("%s: the site was left published: %v", name, sites)
+		}
+		if f := h.forwards("mini"); len(f) != 0 {
+			t.Errorf("%s: forwards left behind: %v", name, f)
+		}
+		// Nothing of it is in the way of the next start.
+		if err := h.eng.StartProject(bg, name); err != nil {
+			t.Fatalf("%s: StartProject afterwards: %v", name, err)
+		}
+		if err := h.eng.StopProject(bg, name); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
