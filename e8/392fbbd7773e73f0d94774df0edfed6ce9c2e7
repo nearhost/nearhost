@@ -6,6 +6,7 @@ internal/cli/ls_test.go
 internal/cli/up.go
   s_67428b1da1b8e6::t_7c2bb3a87c5a7f 90,127,133-134
   s_67428b1da1b8e6::t_4c52651a73eefc 1-30,34-41,43-46,50-89,91-126,128-132,135-213,218,222,228-229
+  s_67428b1da1b8e6::t_e36766d03ae162 31-33,42,47-49,214-217,219-221,223-227
 internal/cli/ssh_test.go
   s_67428b1da1b8e6::t_5ef43720ddcc7b 1-159
 internal/engine/harness_test.go
@@ -15,26 +16,37 @@ internal/cli/add_test.go
   s_67428b1da1b8e6::t_fd763c2a0a846e 39-44,90
 internal/cli/up_print.go
   s_67428b1da1b8e6::t_bd76b9c7dc097a 1-20,23-37,49-127
+  s_67428b1da1b8e6::t_e36766d03ae162 21-22,38-48
 internal/engine/holder.go
   s_67428b1da1b8e6::t_ffe12414380b9a 45
+  s_67428b1da1b8e6::t_e36766d03ae162 49
 internal/engine/engine_test.go
   s_67428b1da1b8e6::t_ffe12414380b9a 218
+  s_67428b1da1b8e6::t_e36766d03ae162 214
 internal/testutil/testutil.go
   s_67428b1da1b8e6::t_ffe12414380b9a 10,13-18,64-81,97-147
+  s_67428b1da1b8e6::t_1c416286ea34da 82-96
 internal/cli/doctor.go
   s_67428b1da1b8e6::t_ad1745fcdb4dcc 1-11,13-52,54-116,119-131,133-178,180-193,195-196,199,201-260,265-317
   s_67428b1da1b8e6::t_2dd648cafe3267 12,197-198,200,261-264
+  s_67428b1da1b8e6::t_e36766d03ae162 53,117-118,132,179,194
 internal/cli/ls.go
   s_67428b1da1b8e6::t_4c52651a73eefc 1-49
 internal/cli/up_harness_test.go
   s_67428b1da1b8e6::t_bd76b9c7dc097a 1-30,34-44,47-53,55,56,64-200
+  s_67428b1da1b8e6::t_e36766d03ae162 31-32,54,57-63
+  s_67428b1da1b8e6::t_2fc5b1264b16bf 33
+  s_67428b1da1b8e6::t_1c416286ea34da 45-46
 internal/engine/engine.go
   s_67428b1da1b8e6::t_ffe12414380b9a 140
 internal/cli/up_test.go
   s_67428b1da1b8e6::t_7c2bb3a87c5a7f 171-176,192,199-200,222,248-249,263
   s_67428b1da1b8e6::t_6e731affbdf1d6 1-114,116-170,177-191,193-198,201-221,223-247,250-262,264-266
+  s_67428b1da1b8e6::t_c2242dd3660520 307-308
+  s_67428b1da1b8e6::t_e36766d03ae162 115,267-306
 internal/engine/holder_test.go
   s_67428b1da1b8e6::t_ffe12414380b9a 105
+  s_67428b1da1b8e6::t_e36766d03ae162 100
 internal/cli/add.go
   s_67428b1da1b8e6::t_f235039774612a 1-243
 internal/cli/doctor_system.go
@@ -49,10 +61,13 @@ internal/cli/ssh.go
 internal/cli/doctor_test.go
   s_67428b1da1b8e6::t_5ef43720ddcc7b 1-57,59-220,222-350
   s_67428b1da1b8e6::t_fd763c2a0a846e 221
+  s_67428b1da1b8e6::t_e36766d03ae162 58
 internal/cli/up_log.go
   s_67428b1da1b8e6::t_5a9552466770dc 1-49
 internal/cli/up_log_test.go
   s_67428b1da1b8e6::t_7cc2ce07df8fbd 1-24
+internal/cli/up_print_test.go
+  s_67428b1da1b8e6::t_e36766d03ae162 1-47
 ---
 {
   "schema_version": "authorship/3.0.0",
