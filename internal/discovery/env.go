@@ -58,9 +58,6 @@ func ParseEnv(data []byte) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse env: %w", err)
 	}
-	for k, v := range env {
-		env[k] = strings.TrimSpace(v)
-	}
 	return env, nil
 }
 
