@@ -141,7 +141,8 @@ func (s *Session) setStatus(st Status, errText string) {
 	}
 }
 
-// Start launches the supervisor. It is a no-op if already running.
+// Start launches the supervisor. It is a no-op while a supervisor is running;
+// after the supervisor has given up, Start launches a fresh one.
 func (s *Session) Start() {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
@@ -155,7 +156,7 @@ func (s *Session) Start() {
 	s.cancel = cancel
 	s.done = done
 	s.mu.Unlock()
-	go s.run(ctx, done)
+	go s.run(ctx, cancel, done)
 }
 
 // Stop ends the master connection and waits for the supervisor to exit.
@@ -166,11 +167,14 @@ func (s *Session) Stop() {
 	cancel, done := s.cancel, s.done
 	s.cancel, s.done = nil, nil
 	s.mu.Unlock()
-	if cancel == nil {
-		return
+	if cancel != nil {
+		cancel()
+		<-done
 	}
-	cancel()
-	<-done
+	// Also covers a supervisor that already gave up (auth failed).
+	if s.Status() != StatusDisconnected {
+		s.setStatus(StatusDisconnected, "")
+	}
 }
 
 // WaitConnected blocks until the session is connected, has failed
@@ -206,8 +210,18 @@ func isFatalSSHError(msg string) bool {
 	return false
 }
 
-func (s *Session) run(ctx context.Context, done chan struct{}) {
-	defer close(done)
+func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan struct{}) {
+	defer func() {
+		// On self-exit, release the slot so a later Start can relaunch.
+		// If Stop already took it, s.done differs and nothing is touched.
+		s.mu.Lock()
+		if s.done == done {
+			s.cancel, s.done = nil, nil
+		}
+		s.mu.Unlock()
+		cancel()
+		close(done)
+	}()
 	os.MkdirAll(s.runDir, 0o700)
 	backoff := s.baseBackoff
 	authFails := 0
@@ -337,15 +351,21 @@ func (s *Session) waitForSocket(ctx context.Context, exited <-chan struct{}) boo
 	return false
 }
 
-// cleanStaleSocket removes a socket left by a previous crashed run.
+// cleanStaleSocket clears any socket left by a previous crashed run, exiting
+// a master that is still alive on it.
 func (s *Session) cleanStaleSocket(ctx context.Context) {
 	if _, err := os.Stat(s.SocketPath()); err != nil {
 		return
 	}
 	check := s.command(ctx, "-S", s.SocketPath(), "-O", "check", s.Host)
-	if check.Run() != nil {
-		os.Remove(s.SocketPath())
+	if check.Run() == nil {
+		// A master from a crashed run is still alive on this socket. Ask it
+		// to exit so the new master is the one we supervise.
+		exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.command(exitCtx, "-S", s.SocketPath(), "-O", "exit", s.Host).Run()
 	}
+	os.Remove(s.SocketPath())
 }
 
 // exitMaster asks the master to exit politely, then kills it.

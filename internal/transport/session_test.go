@@ -239,3 +239,55 @@ func TestStartDuringStopWaitsForOldSupervisor(t *testing.T) {
 		t.Fatalf("new supervisor started before old one exited: %v", events)
 	}
 }
+
+func TestStartAfterSupervisorGaveUpRestarts(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	if s.Launches() != 3 {
+		t.Fatalf("launches = %d, want 3", s.Launches())
+	}
+	// Status and error stay visible until the next Start.
+	time.Sleep(50 * time.Millisecond)
+	if s.Status() != StatusAuthFailed || !strings.Contains(s.LastError(), "Permission denied") {
+		t.Fatalf("status=%s err=%q", s.Status(), s.LastError())
+	}
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() > 3 }, "launches to grow after restart")
+}
+
+func TestStopAfterSupervisorGaveUpReportsDisconnected(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after stop = %s", s.Status())
+	}
+}
+
+func TestOrphanedLiveSocketIsReplacedByOwnMaster(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	// A live socket left behind by a crashed run.
+	if err := os.WriteFile(s.SocketPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	exitAt := strings.Index(log, "-O exit")
+	masterAt := strings.Index(log, "-N -M -S "+s.SocketPath())
+	if exitAt < 0 || masterAt < 0 || exitAt > masterAt {
+		t.Fatalf("orphan must be told to exit before the new master launches: %q", log)
+	}
+	if s.Launches() != 1 {
+		t.Fatalf("launches = %d", s.Launches())
+	}
+	// Death of the supervised master is noticed.
+	os.Remove(s.SocketPath())
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect after master death")
+}
