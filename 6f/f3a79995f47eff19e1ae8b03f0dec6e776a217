@@ -6,6 +6,7 @@ internal/cli/doctor_system_test.go
   s_67428b1da1b8e6::t_a066058563eb78 1-73
 internal/cli/doctor.go
   s_67428b1da1b8e6::t_bfe1be26ce6683 49-51,179-181,184-186,188-193,195-199,202-205,207-216,218-220
+  s_67428b1da1b8e6::t_a35af8ec71c065 206
 ---
 {
   "schema_version": "authorship/3.0.0",
