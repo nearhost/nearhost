@@ -255,11 +255,11 @@ func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	h := newHarness(t, remoteConfig(lb))
 	// The real lookup, or a stand-in where this machine has no tool for it.
 	holder := fmt.Sprintf("pid %d", os.Getpid())
-	if !strings.Contains(portHolder(bg, lb), holder) {
+	if !strings.Contains(PortHolder(bg, lb), holder) {
 		holder = "vite (pid 4242)"
 		h.eng.holderOf = func(context.Context, int) string { return holder }
 	} else {
-		h.eng.holderOf = portHolder
+		h.eng.holderOf = PortHolder
 	}
 
 	err = h.eng.StartProject(bg, "myapp")
@@ -2031,5 +2031,83 @@ func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
 	}
 	if st := h.eng.Status("myapp"); st.State != StateRunning || st.Message != "" {
 		t.Fatalf("status = %+v", st)
+	}
+}
+
+// Whatever Status reports has been announced: a caller that sees a state and
+// then reads its events finds that state there. That holds on the way back
+// from a lost connection too, where the session is connected a moment before
+// the engine hears of it.
+func TestStatusNeverRunsAheadOfTheEvents(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	events, unsub := h.eng.Events().Subscribe(4096)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	announced := State("")
+	// check compares one Status with the events published up to it.
+	check := func() State {
+		st := h.eng.Status("myapp")
+		if states, _ := stateEvents(events, "myapp"); len(states) > 0 {
+			announced = states[len(states)-1]
+		}
+		if st.State != announced {
+			t.Fatalf("Status says %s, the last state event said %s", st.State, announced)
+		}
+		return st.State
+	}
+	for round := 0; round < 3; round++ {
+		if check() != StateRunning {
+			t.Fatalf("round %d does not start from running", round)
+		}
+		h.dropMaster(t, "mini")
+		deadline := time.Now().Add(20 * time.Second)
+		for check() != StateDegraded {
+			if time.Now().After(deadline) {
+				t.Fatal("the project never showed degraded")
+			}
+		}
+		for check() != StateRunning {
+			if time.Now().After(deadline) {
+				t.Fatal("the project never returned to running")
+			}
+		}
+	}
+}
+
+// Nothing is announced for a project while it is torn down. When the
+// teardown then ends in the state and reason recorded before it, what the
+// server did in the meantime must still be announced, or Status, which
+// reports what was announced, would keep the old state.
+func TestTeardownEndingInTheRecordedStateAnnouncesWhatChangedMeanwhile(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	h := newHarness(t, remoteConfig(l.Addr().(*net.TCPAddr).Port))
+	if err := h.eng.StartProject(bg, "myapp"); err == nil {
+		t.Fatal("the start succeeded although its loopback port is taken")
+	}
+	started := h.eng.Status("myapp")
+	if started.State != StateError || len(h.eng.Sites()) != 1 {
+		t.Fatalf("status = %+v", started)
+	}
+	run := h.eng.runs["myapp"]
+	h.eng.mu.Lock()
+	run.tearing = true // a teardown begins
+	sess := h.eng.servers["mini"].sess
+	h.eng.mu.Unlock()
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return sess.Status() == transport.StatusReconnecting }, "the server to drop")
+	if st := h.eng.Status("myapp"); st != started {
+		t.Fatalf("status changed during the teardown: %+v", st)
+	}
+	h.eng.mu.Lock()
+	h.eng.setStateLocked(run, started.State, started.Message) // and fails, leaving everything as it was
+	h.eng.mu.Unlock()
+	if st := h.eng.Status("myapp"); st.State != StateDegraded && sess.Status() != transport.StatusConnected {
+		t.Fatalf("status = %+v while the server is %s", st, sess.Status())
 	}
 }

@@ -141,7 +141,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		runs:        map[string]*projectRun{},
 		byAlias:     map[string]string{},
 		connectWait: 30 * time.Second,
-		holderOf:    portHolder,
+		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},
@@ -390,7 +390,10 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 
 // Status reports a project's state. A running project whose server is not
 // connected is reported as degraded, with the server's last error. An unknown
-// project is reported as stopped with no alias.
+// project is reported as stopped with no alias. The state is the one
+// announced last: the session of a server reports every change, and the
+// engine announces what follows from it, so a state Status returns has
+// always been published as an event first.
 func (e *Engine) Status(name string) ProjectStatus {
 	run, ok := e.runs[name]
 	if !ok {
@@ -398,6 +401,11 @@ func (e *Engine) Status(name string) ProjectStatus {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	st, msg := e.effectiveLocked(run)
+	st, msg := run.announced, run.shownMsg
+	if st == "" {
+		// Recorded and not announced yet: only inside a start or stop, which
+		// announces before it lets go of the lock.
+		st, msg = e.effectiveLocked(run)
+	}
 	return ProjectStatus{State: st, Message: msg, Alias: run.alias, WebLocalPort: run.webLocal}
 }

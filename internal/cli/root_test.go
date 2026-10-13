@@ -37,3 +37,13 @@ func TestVersionCommandRejectsArguments(t *testing.T) {
 		t.Fatalf("expected an error for unexpected arguments, got output %q", out.String())
 	}
 }
+
+// With XDG_CONFIG_HOME unset or relative the config is under ~/.config.
+func TestConfigFlagHelpNamesBothDefaultLocations(t *testing.T) {
+	usage := newRootCmd().PersistentFlags().Lookup("config").Usage
+	for _, want := range []string{"$XDG_CONFIG_HOME/nearhost/config.yaml", "~/.config/nearhost/config.yaml"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("--config help %q does not name %s", usage, want)
+		}
+	}
+}

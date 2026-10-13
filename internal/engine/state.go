@@ -109,11 +109,14 @@ func (e *Engine) changeLocked(run *projectRun, st State, msg string) bool {
 	return true
 }
 
-// setStateLocked records a project's state and announces it.
+// setStateLocked records a project's state and announces it. It announces
+// also when the record did not change: this may be the end of a teardown,
+// during which nothing was announced, and what the project shows can have
+// changed with its server in the meantime. announceLocked publishes nothing
+// when it has not.
 func (e *Engine) setStateLocked(run *projectRun, st State, msg string) {
-	if e.changeLocked(run, st, msg) {
-		e.announceLocked(run)
-	}
+	e.changeLocked(run, st, msg)
+	e.announceLocked(run)
 }
 
 // announceLocked publishes run's effective state if the state or its reason
