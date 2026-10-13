@@ -28,7 +28,12 @@ case "$mode" in
       esac
     fi
     exit 0;;
-  cancel) exit 0;;
+  cancel)
+    # Fail while the file named by $FAKE_SSH_CANCEL_FAIL exists.
+    if [ -n "$FAKE_SSH_CANCEL_FAIL" ] && [ -e "$FAKE_SSH_CANCEL_FAIL" ]; then
+      echo "mux_client_forward: forwarding request failed" >&2; exit 255
+    fi
+    exit 0;;
   exit) rm -f "$sock"; : > "$sock.exit"; exit 0;;
 esac
 
