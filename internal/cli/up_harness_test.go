@@ -32,8 +32,9 @@ type upRun struct {
 	hostsBlocks bool
 	noHosts     bool
 
-	mu      sync.Mutex
-	ensured [][]string
+	mu       sync.Mutex
+	ensured  [][]string
+	notified []context.CancelFunc // one per context the command asked notify for
 
 	out    syncBuffer
 	cancel context.CancelFunc
@@ -62,7 +63,15 @@ func (u *upRun) backend() upBackend {
 			}
 			return hostsErr
 		},
-		notify: context.WithCancel,
+		// The first context stands for the first signal and ends with the
+		// command's own; each later one is ended by interruptAgain.
+		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(parent)
+			u.mu.Lock()
+			u.notified = append(u.notified, cancel)
+			u.mu.Unlock()
+			return ctx, cancel
+		},
 	}
 }
 
@@ -114,6 +123,22 @@ func (u *upRun) stop() error {
 	}
 	testutil.WaitUntil(u.t, 5*time.Second, func() bool { return leftoverGoroutines() == "" }, "engine, session and up goroutines to end")
 	return err
+}
+
+// interruptAgain stands for a second signal, sent while up is shutting down.
+func (u *upRun) interruptAgain() {
+	u.t.Helper()
+	var again context.CancelFunc
+	testutil.WaitUntil(u.t, 10*time.Second, func() bool {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		if len(u.notified) < 2 {
+			return false
+		}
+		again = u.notified[1]
+		return true
+	}, "up to listen for a second signal")
+	again()
 }
 
 // leftoverGoroutines returns the stacks of goroutines still running engine,

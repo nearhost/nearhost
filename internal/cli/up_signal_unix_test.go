@@ -1,0 +1,36 @@
+//go:build unix
+
+package cli
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// Closing the terminal hangs up nearhost but not its ssh masters, which run
+// in process groups of their own. up must shut down on it as on Ctrl-C.
+func TestSystemUpShutsDownOnHangup(t *testing.T) {
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Skip("SIGHUP is ignored in this process (nohup), and stays so")
+	}
+	// If notify did not catch the signal it would end the test binary, so
+	// catch it here as well for the length of the test.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGHUP)
+	defer signal.Stop(guard)
+
+	ctx, release := systemUp().notify(context.Background())
+	defer release()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hangup did not end the context up waits on")
+	}
+}

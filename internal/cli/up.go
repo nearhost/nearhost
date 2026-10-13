@@ -31,8 +31,10 @@ type upBackend struct {
 	// ensureHosts makes the aliases resolve to this machine and gives up when
 	// ctx ends. It is not used with --no-hosts.
 	ensureHosts func(ctx context.Context, aliases []string) error
-	// notify returns a context that ends when the process is asked to stop,
-	// and a function that releases whatever it holds.
+	// notify returns a context that ends when the process is next asked to
+	// stop, and a function that releases whatever it holds. up calls it once
+	// to wait for the signal that starts the shutdown, and again for one
+	// that cuts the shutdown short.
 	notify func(parent context.Context) (context.Context, context.CancelFunc)
 }
 
@@ -50,9 +52,21 @@ func systemUp() upBackend {
 			return err
 		},
 		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
-			return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+			return signal.NotifyContext(parent, stopSignals()...)
 		},
 	}
+}
+
+// stopSignals are the signals up shuts down on. The ssh masters run outside
+// this process's group, so nothing ends them when the terminal goes away:
+// a hangup is therefore handled like Ctrl-C, unless it is being ignored
+// (nohup), in which case it stays ignored.
+func stopSignals() []os.Signal {
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	return sigs
 }
 
 func newUpCmd(b upBackend) *cobra.Command {
@@ -130,7 +144,14 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 		}
 	}
 
-	release()        // a second Ctrl-C now ends the process at once
+	// A second signal must not end the process: the ssh masters are outside
+	// its process group and would be left running. It cuts the shutdown
+	// short instead; the engine then gives up on what it was waiting for and
+	// still ends every master. It is listened for before the first listener
+	// is released, so no signal falls in between.
+	again, releaseAgain := b.notify(context.Background())
+	defer releaseAgain()
+	release()
 	p.advise = false // what goes wrong while stopping is not for the user to fix
 	fmt.Fprintln(p.out, "shutting down")
 	stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -138,10 +159,15 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	stopped := make(chan error, 1)
 	go func() { stopped <- eng.Shutdown(stopCtx) }()
 	var stopErr error
+	hurry := again.Done()
 	for stopping := true; stopping; {
 		select {
 		case ev := <-events:
 			p.event(ev)
+		case <-hurry:
+			hurry = nil
+			fmt.Fprintln(p.out, "stopping now")
+			cancel()
 		case stopErr = <-stopped:
 			stopping = false
 		}
