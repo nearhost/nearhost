@@ -83,6 +83,12 @@ func (f *SFTP) Close() error {
 	f.cmd.Process.Kill()
 	err := f.Client.Close()
 	f.cmd.Wait()
+	// The client closes its end of the pipe by itself when it sees ssh go,
+	// which the kill above can make happen first. The pipe is closed either
+	// way.
+	if errors.Is(err, os.ErrClosed) {
+		err = nil
+	}
 	return err
 }
 

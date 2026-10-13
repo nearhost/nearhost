@@ -94,3 +94,39 @@ func TestKillOnCancelKillsStuckHandshake(t *testing.T) {
 		t.Fatal("a handshake still in flight should be killed when ctx ends")
 	}
 }
+
+// Close kills ssh before it closes the client. When the client has noticed
+// ssh going first, it has already closed its end of the pipe, and closing it
+// again is refused. That is not a failure of the close.
+func TestSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
+	var server string
+	for _, p := range []string{"/usr/libexec/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server", "/usr/lib/ssh/sftp-server"} {
+		if _, err := os.Stat(p); err == nil {
+			server = p
+			break
+		}
+	}
+	if server == "" {
+		t.Skip("no sftp-server binary on this machine")
+	}
+	wrapper := filepath.Join(t.TempDir(), "ssh")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec '"+server+"' -R\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession("mini", "mini", t.TempDir())
+	s.SSHPath = wrapper
+	f, err := s.OpenSFTP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Client.Getwd(); err != nil {
+		t.Fatal(err)
+	}
+	// What Close does first, and then the client's reader running to its
+	// end before Close gets to the client.
+	f.cmd.Process.Kill()
+	f.Client.Wait()
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
