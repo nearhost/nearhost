@@ -267,3 +267,17 @@ func TestAddQuotesTheProjectNameInTheStartHint(t *testing.T) {
 		}
 	}
 }
+
+// --web can turn a port that was found as a loopback forward into the web
+// route. The advisories are about the routes the project ends up with.
+func TestAddAdvisesOnTheRolesAfterTheWebFlag(t *testing.T) {
+	cfgPath, _ := existing(t)
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second", "--web", "5174")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "  5174  web   ")
+	if strings.Contains(out, "loopback-clash") {
+		t.Errorf("advised on a loopback clash for a port that is the web route:\n%s", out)
+	}
+}

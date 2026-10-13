@@ -82,6 +82,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	project.Routes = res.ConfigRoutes()
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
+		// The advisories are about the roles the project ends up with.
+		// forceWeb keeps the discovered routes in place and only appends.
+		for i := range res.Routes {
+			res.Routes[i].Role = project.Routes[i].Role
+		}
 	}
 
 	out := cmd.OutOrStdout()
