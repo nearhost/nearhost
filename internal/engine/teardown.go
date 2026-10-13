@@ -18,8 +18,9 @@ func (e *Engine) rollBack(ctx context.Context, run *projectRun) error {
 }
 
 // tearDown removes run's site from the proxy, unless the proxy has passed to
-// another engine, and cancels its forwards. It attempts every step and returns the failures joined. What could not be
-// removed stays recorded on run, so calling it again retries exactly that.
+// another engine, and cancels its forwards. It attempts every step and
+// returns the failures joined. What could not be removed stays recorded on
+// run, so calling it again retries exactly that.
 // The caller holds run.op and must record the resulting state afterwards
 // (changeLocked or setStateLocked), which is what ends the teardown for
 // Status and for announcements.
