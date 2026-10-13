@@ -237,3 +237,13 @@ func TestAddRemoteFailureSavesNothing(t *testing.T) {
 		t.Fatalf("config changed:\n%s", after)
 	}
 }
+
+// pflag takes a back-quoted word in a flag's usage as the name of its value,
+// which turned --disabled into a flag that seemed to want an argument.
+func TestAddHelpShowsDisabledAsASwitch(t *testing.T) {
+	out, err := execute(t, newAddCmd(noRemote(t)), "add", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, out, "      --disabled        ", "      --web int         ", "      --server string   ")
+}

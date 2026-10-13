@@ -57,7 +57,7 @@ func newAddCmd(b addBackend) *cobra.Command {
 	cmd.Flags().StringVar(&flags.name, "name", "", "project name (default: directory name)")
 	cmd.Flags().StringVar(&flags.alias, "alias", "", "hostname (default: <name>.test)")
 	cmd.Flags().IntVar(&flags.web, "web", 0, "force this port to be the web route")
-	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "do not start automatically with `nearhost up`")
+	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "add it disabled: 'nearhost up' starts it only when named")
 	return cmd
 }
 
