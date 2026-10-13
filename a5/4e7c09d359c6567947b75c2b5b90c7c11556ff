@@ -1,0 +1,259 @@
+internal/cli/root.go
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-21,23-29,31-47
+  s_67428b1da1b8e6::t_121aaca2838e25 30
+  s_67428b1da1b8e6::t_c669f93a374144 22
+internal/cli/root_test.go
+  s_67428b1da1b8e6::t_75aab8dd8bdc93 1-9,12-29
+  s_67428b1da1b8e6::t_fd848c35f0c3b3 10-11,30-39
+README.md
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-9
+.github/workflows/ci.yml
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-18
+go.mod
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 15
+  s_67428b1da1b8e6::t_7e261640073352 4,16,74,178
+  s_67428b1da1b8e6::t_a84e6660cc9588 1-2
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 5,12-14
+  s_67428b1da1b8e6::t_9b74893d56ed3d 8
+  s_67428b1da1b8e6::t_27c3fbb6caa838 9
+  s_67428b1da1b8e6::t_5a0aa3424bf518 10
+  s_67428b1da1b8e6::t_590b4e5077f637 81
+  s_67428b1da1b8e6::t_1f2055a39aea20 3,35,37-38,42,69,80,82,87-88,92,97-99,101-103,118,125,157-159,161,164,167-170,176
+  s_67428b1da1b8e6::t_19390233e76816 6-7,17-34,36,39-41,43-68,70-73,75-79,83-86,89-91,93-96,100,104-116,117,119-124,126-156,160,162-163,165-166,171-175,177
+  s_67428b1da1b8e6::t_c669f93a374144 11
+.gitignore
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 4-6
+Makefile
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-10
+cmd/nearhost/main.go
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-11
+go.sum
+  s_67428b1da1b8e6::t_93d30751b6ac61 126,212-213,312,350-351,354,474,586
+  s_67428b1da1b8e6::t_92392157122dde 594-595
+  s_67428b1da1b8e6::t_c0290b112eb345 223-224
+  s_67428b1da1b8e6::t_266ac58326bfe2 225-226
+  s_67428b1da1b8e6::t_1df3b11294527a 130,232-233,285-286,287
+  s_67428b1da1b8e6::t_5b35e814445fac 88-89,93-98,103,105-106,198-199,230-231,248-249,259-262,271-272,290-295,298-299,302-305,355-356,370,390-391,466-471,485-486,505-506,535-536,547-548,559-562,584-585
+  s_67428b1da1b8e6::t_2e68f93537f9e4 1-87,90-92,99-102,104,107-125,127-129,131-197,200-211,214-222,227-229,234-247,250-258,263-270,273-284,288-289,296-297,300-301,306-311,313-349,352-353,357-369,371-389,392-465,472-473,475-484,487-504,507-534,537-546,549-558,563-583,587-593,596-597
+internal/config/paths.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-7,10,12-36
+  s_67428b1da1b8e6::t_637fd61793ba83 8-9,11
+internal/config/config.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-4,6-202,205-206,208-237,244-250,255-256
+  s_67428b1da1b8e6::t_637fd61793ba83 5,203-204,207,238-243,251-253
+  s_67428b1da1b8e6::t_ecc7e3375d9cc6 254
+internal/config/config_test.go
+  s_67428b1da1b8e6::t_00f4b36ca5cd44 1-239
+  s_67428b1da1b8e6::t_9ce08dd0279bc9 240-280
+internal/discovery/testdata/sail-custom/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/testdata/sail-custom/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/testdata/sail-defaults/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/env.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-60,61-101
+internal/discovery/testdata/sail-defaults/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/reader.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-24
+internal/discovery/testdata/sail-defaults/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/sail-custom/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-6
+internal/discovery/testdata/sail-custom/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-3
+internal/discovery/testdata/vite-plain/vite.config.ts
+  s_67428b1da1b8e6::t_6659c479f74b88 1-8
+internal/discovery/testdata/vite-plain/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1
+internal/discovery/testdata/sail-custom/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/compose-literal/compose.yaml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-18
+internal/discovery/env_test.go
+  s_67428b1da1b8e6::t_36e67a920bde3b 1-63,65,67-71,77-95
+  s_67428b1da1b8e6::t_10a6e03876dac9 64,66,72-76
+internal/discovery/compose.go
+  s_67428b1da1b8e6::t_5e156cf5f1230e 1-59,61-69,71-74,78-79,81-123,125-126,129-137,141,143-154,156-174,178-180,208
+  s_67428b1da1b8e6::t_e7632188911fb7 155,181-182,186-188,190-191,197-207
+  s_67428b1da1b8e6::t_a03d29dbcada55 60,70,127,142
+  s_67428b1da1b8e6::t_4783c409af128d 75-77,80,124,128
+  s_67428b1da1b8e6::t_805262a6807f80 138-140,175-177,183-185,189,192-196
+internal/discovery/compose_test.go
+  s_67428b1da1b8e6::t_f0f29d8a542782 1-108
+  s_67428b1da1b8e6::t_48d54ca1d339d7 109-132
+  s_67428b1da1b8e6::t_1b7bc1ce882ed8 133-155
+internal/discovery/discover.go
+  s_67428b1da1b8e6::t_b923faff883659 1-130,132-137,132-136,142-205,212,221-232,234-235,237-263
+  s_67428b1da1b8e6::t_1407d2691fb6de 233,236
+  s_67428b1da1b8e6::t_dc19a6f9b002a2 210-211,213-220
+  s_67428b1da1b8e6::t_07151d50a6ac1d 131,137-141,206-209
+internal/discovery/vite.go
+  s_67428b1da1b8e6::t_b923faff883659 1-3,5-15,17-23,29,32-67,69-88
+  s_67428b1da1b8e6::t_07151d50a6ac1d 4,16,24-28,30-31,68
+internal/discovery/discover_test.go
+  s_67428b1da1b8e6::t_b923faff883659 1-3,5-216
+  s_67428b1da1b8e6::t_6870aa225cb05d 4
+  s_67428b1da1b8e6::t_f5af3bd29073fe 217-231
+  s_67428b1da1b8e6::t_51c307d81a2396 232-261
+  s_67428b1da1b8e6::t_b992fcdeabcaa2 262-295
+  s_67428b1da1b8e6::t_4b88bc1bf27a7a 296-379
+internal/transport/sshconfig_test.go
+  s_67428b1da1b8e6::t_7496101551562d 1-3,6,8-9,11-55,57,64,69,72,77,141-142
+  s_67428b1da1b8e6::t_6129318b65cd13 10,60,63,68,71,73-76,81-140
+  s_67428b1da1b8e6::t_97deeaf526a5e9 4-5,7,56,58-59,61-62,65-67,70,78-80
+  s_67428b1da1b8e6::t_e06844d79c65af 143-155
+  s_67428b1da1b8e6::t_e68a2453d8b60e 156-189
+  s_67428b1da1b8e6::t_2ce7c9478bc0db 190-230
+internal/transport/sshconfig.go
+  s_67428b1da1b8e6::t_519efa3b60a146 11-22,25-60,66-88,90-105,110,115-124,128-129,131-144,155-165,166,192,194-217
+  s_67428b1da1b8e6::t_950eca62475abc 1-10
+  s_67428b1da1b8e6::t_e06844d79c65af 167-191,193
+  s_67428b1da1b8e6::t_27c3fbb6caa838 125-127,130
+  s_67428b1da1b8e6::t_589764e3e9d477 23-24,61-65,89,106-109,111-114,145-152
+  s_67428b1da1b8e6::t_d55cda801dc8a6 153-154
+internal/transport/session.go
+  s_67428b1da1b8e6::t_64e2bec078eb35 1-5,7-38,40-56,66-85,88,107-164,167,170-175,177,179,181-184,187-190,198,199-233,246-249,254-265,281-295,310-327,330-333,335-336,337,348-350,371-390,393-397,404,406-419
+  s_67428b1da1b8e6::t_9913494f9f64fe 176,178,250-253
+  s_67428b1da1b8e6::t_550f4651bf7b6b 57-62,64-65,168-169,185-186,296-301,303-309,334,338-366,368
+  s_67428b1da1b8e6::t_0268e5f086083c 165-166,180,191-197,234-245,391-392,398-403,405
+  s_67428b1da1b8e6::t_dfb8785e9e2379 6,86-87,89-106,266-280,302,328-329
+  s_67428b1da1b8e6::t_4699d42416af69 39,63
+internal/transport/testdata/fakessh/ssh
+  s_67428b1da1b8e6::t_e4e7419b185cf5 1-30,38-45,57-59,68-81
+  s_67428b1da1b8e6::t_550f4651bf7b6b 37,60-66
+  s_67428b1da1b8e6::t_fa2f11860d5a00 67
+  s_67428b1da1b8e6::t_be61afecf7d8bd 46-56
+  s_67428b1da1b8e6::t_5238a0adf4b13b 31-36
+internal/transport/session_test.go
+  s_67428b1da1b8e6::t_f0251765a80cf4 163-185
+  s_67428b1da1b8e6::t_64e2bec078eb35 1-5,7-9,11-162
+  s_67428b1da1b8e6::t_550f4651bf7b6b 6,10,186-241
+  s_67428b1da1b8e6::t_385bc47707d693 242-293
+  s_67428b1da1b8e6::t_dfb8785e9e2379 344,349
+  s_67428b1da1b8e6::t_be61afecf7d8bd 294-343,345-348,350-357
+internal/transport/sftp_test.go
+  s_67428b1da1b8e6::t_4699d42416af69 1-3,5-76
+  s_67428b1da1b8e6::t_5238a0adf4b13b 77-96
+  s_67428b1da1b8e6::t_93a76c5636afb8 4
+internal/transport/sftp.go
+  s_67428b1da1b8e6::t_5a0aa3424bf518 1-40,44-58,73-115
+  s_67428b1da1b8e6::t_93a76c5636afb8 41-43,61-63,69-70
+  s_67428b1da1b8e6::t_edbcfecbaf4cd4 59-60,64-68
+  s_67428b1da1b8e6::t_cd8f063fe8104c 71-72
+internal/transport/forward.go
+  s_67428b1da1b8e6::t_5a0aa3424bf518 1-26,28-29,35-40,46-58,61-66,71,73-74,82-150
+  s_67428b1da1b8e6::t_3ec63a0c9604dd 27,30-34,41-45
+  s_67428b1da1b8e6::t_edbcfecbaf4cd4 59-60,67-70,72,75-81
+internal/transport/forward_test.go
+  s_67428b1da1b8e6::t_4699d42416af69 1-5,7-58,61-64,75-76,78-92,133-143
+  s_67428b1da1b8e6::t_3ec63a0c9604dd 93-132
+  s_67428b1da1b8e6::t_80169ab0502a4c 6,59-60,65-74,77
+  s_67428b1da1b8e6::t_5238a0adf4b13b 144-186
+internal/hosts/hosts.go
+  s_67428b1da1b8e6::t_26e4291ce17b53 1-19,35,41-44,46-47,55-56,65-97,110-111,117-123,131-133,135,137-138,140,142-152,155-176,182-199,205-212,215,217-226,228-230
+  s_67428b1da1b8e6::t_47ddac7879d34d 99-100,102-109,124-130,153-154,181,213-214,216,227
+  s_67428b1da1b8e6::t_3c9cb8598d5ff2 112,139,141,177-180,200-204
+  s_67428b1da1b8e6::t_517a763ae80696 20-34,36-40,45,48-54,57-64,113-116,134,136
+  s_67428b1da1b8e6::t_4af0c589b67fcb 98,101
+internal/hosts/hosts_test.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-3,6-15,17-23,25-34,36-43,45-46,48-52,54-59,62-115,117-127,129-134,136-143,145-169
+  s_67428b1da1b8e6::t_f00f01f3866f21 5
+  s_67428b1da1b8e6::t_3c9cb8598d5ff2 4,16,24,35,44,47,53,60-61,116,128,135,144,170-220
+  s_67428b1da1b8e6::t_3cfb5324eedcbd 221-231
+internal/cli/hosts_test.go
+  s_67428b1da1b8e6::t_f00f01f3866f21 9-10
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-8,11-53
+  s_67428b1da1b8e6::t_3c9cb8598d5ff2 54-69
+  s_67428b1da1b8e6::t_3cfb5324eedcbd 70-92
+internal/cli/hosts.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-13,17-26,28-45,47-52,54-68
+  s_67428b1da1b8e6::t_47ddac7879d34d 15
+  s_67428b1da1b8e6::t_26e4291ce17b53 14,16,53
+  s_67428b1da1b8e6::t_4af0c589b67fcb 27,46
+internal/proxy/config_test.go
+  s_67428b1da1b8e6::t_d29e80b7363096 1-90,93-100,119-172,174-215
+  s_67428b1da1b8e6::t_3933e0c0d03aae 216-223
+  s_67428b1da1b8e6::t_abbf8d58b79b86 216,225-238
+  s_67428b1da1b8e6::t_fec4edcee1f013 224
+  s_67428b1da1b8e6::t_81c0f38afc228b 239-254
+  s_67428b1da1b8e6::t_a680ca786487f4 91-92,101-118
+  s_67428b1da1b8e6::t_33a3f863a7b230 173
+internal/proxy/config.go
+  s_67428b1da1b8e6::t_26f010b6c20999 1-7,10-38,43-54,58-67,69-71,76,78-83,94-102,113-115,119-133,139,141-152,159-160
+  s_67428b1da1b8e6::t_08c154c634cf1d 8,39-41,55-57,72,75,103-112,116-118
+  s_67428b1da1b8e6::t_cf7eea0eb83768 90-93,140
+  s_67428b1da1b8e6::t_874c624a7e925e 9,68,73
+  s_67428b1da1b8e6::t_aa08a5b4f3d138 74,77
+  s_67428b1da1b8e6::t_cafa638a7a0b8c 89
+  s_67428b1da1b8e6::t_3833a7ee969d29 84-88,134-138
+  s_67428b1da1b8e6::t_a680ca786487f4 42,153-157
+  s_67428b1da1b8e6::t_53ed92f2e92dd6 158
+internal/proxy/proxy_test.go
+  s_67428b1da1b8e6::t_5ae05ba3763931 207
+  s_67428b1da1b8e6::t_5d2d593185cf22 1-206,208-363,365,370-371,384-403
+  s_67428b1da1b8e6::t_3dac33afb423f1 378-383
+  s_67428b1da1b8e6::t_c7e16973d6d3fa 404-437
+  s_67428b1da1b8e6::t_81c0f38afc228b 438-461
+  s_67428b1da1b8e6::t_10c4f005feba22 364,366-369,372-377
+internal/proxy/logwriter.go
+  s_67428b1da1b8e6::t_f0856ab01f7f33 1-110
+internal/proxy/proxy.go
+  s_67428b1da1b8e6::t_d8155e6a90f446 1-15,22,26,28-37,38-49,51-53,58,59-60,65-67,69,73-91
+  s_67428b1da1b8e6::t_c7e16973d6d3fa 16-21,23-25,27,50,57,61-64,68,70-72
+  s_67428b1da1b8e6::t_3833a7ee969d29 54-56
+internal/proxy/trust_test.go
+  s_67428b1da1b8e6::t_c9d60ac9317b78 1-3,5-7,11-60,62-65,72,81,84-116
+  s_67428b1da1b8e6::t_c364efba0f4ec5 4,8-10,61,66-71,73-80,82-83
+internal/proxy/trust.go
+  s_67428b1da1b8e6::t_5f0517284a4cf5 1-75
+internal/cli/trust.go
+  s_67428b1da1b8e6::t_0802e6c0a5e676 1-5,7-20,26-34,39-55,57,59,61-63,68-72,107-128
+internal/cli/trust_test.go
+  s_67428b1da1b8e6::t_0802e6c0a5e676 1-11,14-20,22,30-38,40-43,50-80,125-127,129,161-238
+  s_67428b1da1b8e6::t_c669f93a374144 21,39
+internal/testutil/testutil.go
+  s_67428b1da1b8e6::t_8211d32ad2e8ff 1-56
+internal/engine/events_test.go
+  s_67428b1da1b8e6::t_2ecf48ba49d446 1-103
+internal/engine/server.go
+  s_67428b1da1b8e6::t_1baa32117b7ba6 4,12-13,23-25,28,41-43,47-54,62-69
+  s_67428b1da1b8e6::t_2c37dbdb099ba7 1-3,5-11,14-22,26-27,29-40,44-46,55-61,70-100
+internal/engine/harness_test.go
+  s_67428b1da1b8e6::t_cbb34d76674684 1-92,95-132,138,140-142,146-152,160-166,169-309
+  s_67428b1da1b8e6::t_3e05797cec2368 153-159,167-168
+  s_67428b1da1b8e6::t_1bc37f009b6fd9 93-94,133-137,139,143-145
+internal/engine/engine.go
+  s_67428b1da1b8e6::t_2c37dbdb099ba7 228
+  s_67428b1da1b8e6::t_f4b9ef316497bd 1-173,175-227,229-256,259-269,271-377
+  s_67428b1da1b8e6::t_1baa32117b7ba6 174,257-258,270
+internal/engine/engine_test.go
+  s_67428b1da1b8e6::t_6cf5c377809f11 1-399,441-921
+  s_67428b1da1b8e6::t_1baa32117b7ba6 400-440
+internal/engine/events.go
+  s_67428b1da1b8e6::t_c775afe3fbf1d4 1-80
+internal/engine/project.go
+  s_67428b1da1b8e6::t_1baa32117b7ba6 49-53,73,76-82,94,140-143
+  s_67428b1da1b8e6::t_6a2ccdb62f9db4 1-48,54-72,74-75,83-93,95-139,144-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a54e7c09d359c6567947b75c2b5b90c7c11556ff",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
