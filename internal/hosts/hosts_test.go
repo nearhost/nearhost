@@ -494,3 +494,37 @@ func TestApplyUnwritableDirectoryNamesDirectory(t *testing.T) {
 		t.Fatalf("file changed despite error: %q", got)
 	}
 }
+
+// A symlink whose target does not exist must not be replaced by a regular
+// file, which is what renaming over the link itself would do. Apply refuses
+// and says which link points where.
+func TestApplyRefusesADanglingSymlinkAndLeavesIt(t *testing.T) {
+	for _, dest := range []string{"missing", filepath.Join(t.TempDir(), "elsewhere", "hosts")} {
+		dir := t.TempDir()
+		link := filepath.Join(dir, "hosts")
+		if err := os.Symlink(dest, link); err != nil {
+			t.Fatal(err)
+		}
+		err := Apply(link, []string{"a.test"})
+		if err == nil {
+			t.Fatalf("Apply through a link to %s succeeded", dest)
+		}
+		for _, want := range []string{link, dest, "symbolic link", "does not exist"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+		if fi, lerr := os.Lstat(link); lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the link was replaced: %v %v", fi, lerr)
+		}
+		if got, _ := os.Readlink(link); got != dest {
+			t.Errorf("the link now points to %q", got)
+		}
+		if _, serr := os.Stat(link); serr == nil {
+			t.Error("the link's target was created")
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+			t.Errorf("the directory holds %d entries, want the link alone", len(entries))
+		}
+	}
+}

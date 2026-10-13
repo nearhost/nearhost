@@ -180,7 +180,8 @@ var renameFile = os.Rename
 // replaced atomically: the new content is written to a temporary file in the
 // same directory and renamed over the target, so the path always holds either
 // the complete old content or the complete new content. A symlink at path (or
-// in its parents) is resolved first and the file it points to is replaced.
+// in its parents) is resolved first and the file it points to is replaced; a
+// symlink whose target does not exist is refused and left as it is.
 // On Linux the SELinux label and POSIX ACL are carried over; macOS ACLs and
 // other extended attributes are not.
 func Apply(path string, aliases []string) error {
@@ -211,6 +212,12 @@ func replaceFile(path, content string) (err error) {
 		mode = info.Mode().Perm()
 	} else if !errors.Is(rerr, fs.ErrNotExist) {
 		return fmt.Errorf("write %s: %w", path, rerr)
+	} else if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+		// The path is there, as a link to nothing. Renaming a new file over
+		// it would put a regular file where the link was, and writing where
+		// it points would create a file in a place nobody chose.
+		dest, _ := os.Readlink(path)
+		return fmt.Errorf("write %s: it is a symbolic link to %s, which does not exist; create that file or remove the link", path, dest)
 	}
 
 	dir := filepath.Dir(target)
