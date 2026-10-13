@@ -16,11 +16,14 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// FreePort returns a loopback TCP port that was unused a moment ago.
+// FreePort returns a loopback TCP port that was unused a moment ago. The
+// system picks it, so any process may be given the same one next: use it for
+// what is bound at once or may fail to bind, and ProxyPort for a proxy.
 func FreePort(t testing.TB) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -62,30 +65,66 @@ func HTTPSClient(t testing.TB, root *x509.Certificate, alias string, port int) *
 	return &http.Client{Transport: tr, Timeout: 5 * time.Second}
 }
 
-// ProxyPort returns a port free for both TCP and UDP: the proxy also listens
-// for HTTP/3 on the UDP port matching its HTTPS port.
+// Proxy ports come from a block of proxyPortBlock ports that the test process
+// picks by its pid, inside 20000-29999. That range is below the ports the
+// system hands out by itself (Linux 32768-60999, macOS 49152-65535), so
+// neither an outgoing connection nor a ":0" listener of any process can take
+// a port between the moment it is chosen here and the moment the proxy binds
+// it. Test binaries that run side by side have nearby pids and so different
+// blocks.
+const (
+	proxyPortFirst  = 20000
+	proxyPortBlock  = 400
+	proxyPortBlocks = 25
+)
+
+// proxyPortNext counts the ports handed out; it steps through the block.
+var proxyPortNext atomic.Uint32
+
+func proxyPortBase() int {
+	return proxyPortFirst + (os.Getpid()%proxyPortBlocks)*proxyPortBlock
+}
+
+// ProxyPort returns a port for a proxy listener: free for both TCP and UDP
+// on every interface (the proxy also listens for HTTP/3 on the UDP port
+// matching its HTTPS port) and not handed out before by this process, until
+// its block of proxyPortBlock ports has been used up and starts over.
 func ProxyPort(t testing.TB) int {
 	t.Helper()
-	for i := 0; i < 50; i++ {
-		port := FreePort(t)
-		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
-		if err != nil {
-			continue
+	base := proxyPortBase()
+	for i := 0; i < proxyPortBlock; i++ {
+		port := base + int(proxyPortNext.Add(1)-1)%proxyPortBlock
+		if bindable(port) {
+			return port
 		}
-		pc.Close()
-		return port
 	}
-	t.Fatal("no port free for both TCP and UDP")
+	t.Fatalf("no port free for both TCP and UDP in %d-%d", base, base+proxyPortBlock-1)
 	return 0
 }
 
+// bindable reports whether port can be bound right now on TCP and on UDP.
+func bindable(port int) bool {
+	addr := fmt.Sprintf(":%d", port)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	l.Close()
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return false
+	}
+	pc.Close()
+	return true
+}
+
 // ProxyPorts returns two different ports for a proxy's HTTPS and HTTP
-// listeners. ProxyPort releases each port before the next is picked, so the
-// same one can come back.
+// listeners.
 func ProxyPorts(t testing.TB) (httpsPort, httpPort int) {
 	t.Helper()
 	httpsPort = ProxyPort(t)
-	for i := 0; i < 50; i++ {
+	// Only a block with a single usable port left could repeat one.
+	for i := 0; i < 3; i++ {
 		if httpPort = ProxyPort(t); httpPort != httpsPort {
 			return httpsPort, httpPort
 		}

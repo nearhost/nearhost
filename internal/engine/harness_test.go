@@ -80,16 +80,9 @@ type harness struct {
 // directories and a recording hosts function. It does not start the engine.
 func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEnv ...string) *harness {
 	t.Helper()
-	httpsPort := proxyPort(t)
-	httpPort := proxyPort(t)
-	// Each port is released before the next is picked, so the same one can
-	// come back; the proxy needs two different ports.
-	for i := 0; httpPort == httpsPort; i++ {
-		if i == 50 {
-			t.Fatal("no second free port for the proxy")
-		}
-		httpPort = proxyPort(t)
-	}
+	// Two different ports from outside the range the system hands out, so
+	// nothing takes one between here and the engine binding it.
+	httpsPort, httpPort := testutil.ProxyPorts(t)
 	h := &harness{
 		httpsPort: httpsPort,
 		httpPort:  httpPort,
@@ -133,12 +126,6 @@ func newHarness(t *testing.T, cfg *config.Config, sshEnv ...string) *harness {
 		t.Fatalf("Start: %v", err)
 	}
 	return h
-}
-
-// proxyPort returns a port free for both TCP and UDP.
-func proxyPort(t *testing.T) int {
-	t.Helper()
-	return testutil.ProxyPort(t)
 }
 
 // tempDir is a short temporary directory with a patient removal.
