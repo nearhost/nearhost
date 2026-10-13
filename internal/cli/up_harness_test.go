@@ -31,6 +31,9 @@ type upRun struct {
 	// hostsBlocks makes the hosts function wait until its context ends.
 	hostsBlocks bool
 	noHosts     bool
+	// trust stands for the system trust store. It trusts the local CA unless
+	// a test says otherwise.
+	trust *fakeTrust
 
 	mu       sync.Mutex
 	ensured  [][]string
@@ -43,7 +46,8 @@ type upRun struct {
 
 func newUpRun(t *testing.T, cfg *config.Config) *upRun {
 	t.Helper()
-	u := &upRun{t: t, cfgPath: configHome(t)}
+	u := &upRun{t: t, cfgPath: configHome(t), trust: newFake()}
+	u.trust.trusted = true
 	u.httpsPort, u.httpPort = testutil.ProxyPorts(t)
 	saveConfig(t, u.cfgPath, cfg)
 	return u
@@ -63,6 +67,7 @@ func (u *upRun) backend() upBackend {
 			}
 			return hostsErr
 		},
+		trust: u.trust.backend(),
 		// The first context stands for the first signal and ends with the
 		// command's own; each later one is ended by interruptAgain.
 		notify: func(parent context.Context) (context.Context, context.CancelFunc) {

@@ -28,6 +28,9 @@ const (
 // upBackend is the seam between `up` and the machine.
 type upBackend struct {
 	ssh sshClient
+	// trust reads the system trust store, to say when the local CA is not
+	// in it. up never installs anything.
+	trust trustBackend
 	// ensureHosts makes the aliases resolve to this machine and gives up when
 	// ctx ends. It is not used with --no-hosts.
 	ensureHosts func(ctx context.Context, aliases []string) error
@@ -41,6 +44,7 @@ type upBackend struct {
 // systemUp is the production backend. Only NewRoot wires it in.
 func systemUp() upBackend {
 	return upBackend{
+		trust: systemTrust(),
 		ensureHosts: func(ctx context.Context, aliases []string) error {
 			exe, err := os.Executable()
 			if err != nil {
@@ -128,19 +132,33 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 		close(started)
 	}()
 
+	// Whether the system trusts the local CA is asked on the side, so a slow
+	// trust store holds nothing up. The answer is printed once the summary
+	// is out, whichever comes first.
+	trustHint := make(chan string, 1)
+	go func() { trustHint <- untrustedCA(b.trust, opts.StorageRoot) }()
+	hint, summarised := "", false
+
 	// Everything is printed from this goroutine, so lines never interleave.
 	allStarted := started
 	for interrupted := false; !interrupted; {
 		select {
 		case ev := <-events:
 			p.event(ev)
+		case hint = <-trustHint:
+			trustHint = nil
 		case <-allStarted:
 			allStarted = nil
 			p.buffered(events) // the state changes the summary sums up
 			p.summary(names, startErrs)
 			p.advise = true // from here a state change is news, and so is its fix
+			summarised = true
 		case <-ctx.Done():
 			interrupted = true
+		}
+		if summarised && hint != "" {
+			fmt.Fprintln(p.out, hint)
+			hint = ""
 		}
 	}
 
@@ -182,6 +200,22 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	}
 	fmt.Fprintln(p.out, "stopped")
 	return nil
+}
+
+// untrustedCA returns the line to print when the system trust store does not
+// trust the local CA, and "" when it does. Only the system store is asked:
+// the NSS stores of browsers need an external tool and are left to
+// `nearhost trust`. When the root cannot be read there is nothing to say
+// either: the proxy has its own way of reporting a missing CA.
+func untrustedCA(b trustBackend, storageRoot string) string {
+	if b.rootCert == nil || b.isTrusted == nil {
+		return ""
+	}
+	cert, err := b.rootCert(storageRoot)
+	if err != nil || b.isTrusted(cert) {
+		return ""
+	}
+	return "The Nearhost Local CA is not trusted on this machine, so browsers will show a certificate warning. Run `nearhost trust` to fix that."
 }
 
 // upTargets is the projects to start: those named, or every enabled one.

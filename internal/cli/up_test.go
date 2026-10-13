@@ -53,6 +53,66 @@ func TestUpServesEnabledProjectsUntilInterrupted(t *testing.T) {
 	}
 }
 
+const untrustedLine = "\nThe Nearhost Local CA is not trusted on this machine, so browsers will show a certificate warning. Run `nearhost trust` to fix that.\n"
+
+func TestUpSaysWhenTheLocalCAIsNotTrusted(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.trust.trusted = false
+	u.start()
+	u.waitFor("Serving until interrupted")
+	u.waitFor(untrustedLine)
+	// The proxy runs all the same.
+	if got := u.get("web.test"); !strings.HasPrefix(got, "web:web.test") {
+		t.Fatalf("served %q through the proxy", got)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+	out := u.out.String()
+	if n := strings.Count(out, "nearhost trust"); n != 1 {
+		t.Errorf("the trust hint was printed %d times:\n%s", n, out)
+	}
+	if strings.Index(out, untrustedLine) < strings.Index(out, "\nweb: running at https://web.test\n") {
+		t.Errorf("the trust hint came before the summary:\n%s", out)
+	}
+	// Only the system store is asked, and nothing is installed.
+	if u.trust.nssChecks != 0 || u.trust.installs != 0 || u.trust.nssInstalls != 0 || len(u.trust.ensured) != 0 {
+		t.Errorf("up did more than ask the system store: %+v", u.trust)
+	}
+}
+
+func TestUpSaysNothingAboutATrustedCA(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.start()
+	u.waitFor("Serving until interrupted")
+	u.get("web.test")
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+	if out := u.out.String(); strings.Contains(out, "trust") {
+		t.Errorf("a trusted CA was mentioned:\n%s", out)
+	}
+}
+
+// When the root cannot be read, whether it is trusted is unknown: up says
+// nothing about it and serves as usual.
+func TestUpRunsWhenTheTrustCheckFails(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.trust.trusted = false
+	u.trust.rootErr = errors.New("root.crt is not PEM")
+	u.start()
+	u.waitFor("Serving until interrupted")
+	if got := u.get("web.test"); !strings.HasPrefix(got, "web:web.test") {
+		t.Fatalf("served %q through the proxy", got)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+	if out := u.out.String(); strings.Contains(out, "trust") || strings.Contains(out, "root.crt") || !strings.HasSuffix(out, "\nstopped\n") {
+		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
 func TestUpStartsOnlyTheNamedProjects(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{
 		localProject("web", testutil.Upstream(t, "web"), true),
