@@ -617,9 +617,6 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 			t.Errorf("client from %s asking for an unknown host got status %d body %q, want the connection dropped", ip, status, body)
 		}
 	}
-	if tried == 0 {
-		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
-	}
 	if got := hits.Load(); got != served {
 		t.Errorf("the upstream received %d request(s) from non-loopback clients", got-served)
 	}
@@ -635,5 +632,9 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 	// And the site is still served to loopback afterwards.
 	if resp, body := h.getEventually(h.client("a.test", false), "a.test", "/"); resp.StatusCode != 200 || body != "secret dev page" {
 		t.Errorf("loopback client after the refusals: status=%d body=%q", resp.StatusCode, body)
+	}
+	// Only the non-loopback part could not run; the loopback checks above did.
+	if tried == 0 {
+		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
 	}
 }
