@@ -141,3 +141,46 @@ func TestFreePortIsBindable(t *testing.T) {
 	}
 	l.Close()
 }
+
+func TestFailedCancelKeepsForwardTrackedForRetry(t *testing.T) {
+	flag := t.TempDir() + "/cancel-fails"
+	s, logPath := newFakeSession(t, "FAKE_SSH_CANCEL_FAIL="+flag)
+	connected(t, s)
+	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 8080, 80); err == nil {
+		t.Fatal("expected the cancel to fail")
+	}
+	if f := s.Forwards(); len(f) != 1 || f[0] != [2]int{8080, 80} {
+		t.Fatalf("forward still active on the master must stay tracked, got %v", f)
+	}
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 8080, 80); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(s.Forwards()) != 0 {
+		t.Fatal("forward should be forgotten once the cancel succeeds")
+	}
+	if n := strings.Count(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80 mini"); n != 2 {
+		t.Fatalf("expected the retry to reach ssh, saw %d cancel commands", n)
+	}
+}
+
+func TestCancelForwardWhileDisconnectedForgetsWithoutSSH(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Forwards()) != 0 || strings.Contains(readLog(t, logPath), "-O cancel") {
+		t.Fatalf("forwards=%v log=%q", s.Forwards(), readLog(t, logPath))
+	}
+}

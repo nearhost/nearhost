@@ -38,13 +38,9 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		return nil, fmt.Errorf("start sftp: %w", err)
 	}
 	handshakeDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			cmd.Process.Kill() // unblocks the handshake read
-		case <-handshakeDone:
-		}
-	}()
+	go killOnCancel(ctx, handshakeDone, func() {
+		cmd.Process.Kill() // unblocks the handshake read
+	})
 	client, err := sftp.NewClientPipe(stdout, stdin)
 	close(handshakeDone)
 	if err == nil && ctx.Err() != nil {
@@ -58,6 +54,20 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		return nil, fmt.Errorf("sftp handshake with %s: %w", s.Host, err)
 	}
 	return &SFTP{Client: client, cmd: cmd}, nil
+}
+
+// killOnCancel calls kill if ctx ends before done is closed. When both are
+// ready, done wins, so a finished handshake is never killed.
+func killOnCancel(ctx context.Context, done <-chan struct{}, kill func()) {
+	select {
+	case <-ctx.Done():
+		select {
+		case <-done:
+		default:
+			kill()
+		}
+	case <-done:
+	}
 }
 
 // Close ends the SFTP subsystem. It kills ssh first so a stuck ssh cannot

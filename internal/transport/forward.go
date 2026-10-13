@@ -56,19 +56,29 @@ func (s *Session) AddForward(ctx context.Context, localPort, remotePort int) err
 }
 
 // CancelForward removes a forward, cancelling it on the master if connected.
+// A forward that is active on the current master stays tracked until ssh
+// confirms the cancel, so a failed cancel can be retried.
 func (s *Session) CancelForward(ctx context.Context, localPort, remotePort int) error {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
 	key := forwardKey(localPort, remotePort)
 	s.mu.Lock()
 	f, known := s.forwards[key]
-	delete(s.forwards, key)
-	isConnected := s.status == StatusConnected
+	active := known && s.status == StatusConnected && f.appliedGen == s.launches
+	if !active {
+		delete(s.forwards, key)
+	}
 	s.mu.Unlock()
-	if !known || !isConnected || f.appliedGen == 0 {
+	if !active {
 		return nil
 	}
-	return s.controlForward(ctx, "cancel", localPort, remotePort)
+	if err := s.controlForward(ctx, "cancel", localPort, remotePort); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.forwards, key)
+	s.mu.Unlock()
+	return nil
 }
 
 // Forwards lists desired forwards as (local, remote) pairs sorted by local port.

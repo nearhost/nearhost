@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -71,5 +72,25 @@ func TestOpenSFTPFailsCleanlyWhenSubsystemUnavailable(t *testing.T) {
 	if err == nil {
 		f.Close()
 		t.Fatal("fake ssh does not provide sftp; expected an error")
+	}
+}
+
+func TestKillOnCancelNeverKillsAfterHandshake(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		close(done)
+		cancel() // both channels are ready, as when ctx ends right after a good handshake
+		killOnCancel(ctx, done, func() { t.Fatalf("iteration %d: killed a session whose handshake had finished", i) })
+	}
+}
+
+func TestKillOnCancelKillsStuckHandshake(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	killed := false
+	killOnCancel(ctx, make(chan struct{}), func() { killed = true })
+	if !killed {
+		t.Fatal("a handshake still in flight should be killed when ctx ends")
 	}
 }
