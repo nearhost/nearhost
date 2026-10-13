@@ -61,10 +61,17 @@ func TestEnvCandidatesMapSailVariables(t *testing.T) {
 	if len(cands) != len(want) {
 		t.Fatalf("expected %d candidates, got %+v", len(want), cands)
 	}
+	seen := map[int]int{}
 	for _, c := range cands {
+		seen[c.Port]++
 		w, ok := want[c.Port]
 		if !ok || c.Role != w.role || c.Label != w.label || c.Source != "env:"+c.Var {
 			t.Errorf("unexpected candidate %+v", c)
+		}
+	}
+	for port := range want {
+		if seen[port] != 1 {
+			t.Errorf("port %d appeared %d times, want exactly once: %+v", port, seen[port], cands)
 		}
 	}
 }
