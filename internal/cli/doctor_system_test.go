@@ -58,6 +58,9 @@ func TestLinuxLowPorts(t *testing.T) {
 		detail string
 	}{
 		{"root", 0, nil, levelOK, "running as root"},
+		{"root with every capability", 0, map[string]string{status: "CapEff:\t000001ffffffffff\n", start: "1024\n"}, levelOK, "running as root"},
+		{"root without the capability", 0, map[string]string{status: "CapEff:\t00000000a80401fb\n", start: "1024\n"}, levelFail, "running as root, but cap_net_bind_service has been dropped (as a container can do)"},
+		{"root without the capability, sysctl lowered", 0, map[string]string{status: "CapEff:\t00000000a80401fb\n", start: "80\n"}, levelOK, "this system lets any user bind ports from 80 up"},
 		{"capability", 1000, map[string]string{status: "Name:\tnearhost\nCapPrm:\t0\nCapEff:\t0000000000000400\n", start: "1024\n"}, levelOK, "the binary has cap_net_bind_service"},
 		{"other capabilities only", 1000, map[string]string{status: "CapEff:\t0000000000000300\n", start: "1024\n"}, levelFail, "not root and the binary lacks cap_net_bind_service"},
 		{"nothing", 1000, map[string]string{status: plain, start: "1024\n"}, levelFail, "not root and the binary lacks cap_net_bind_service"},
