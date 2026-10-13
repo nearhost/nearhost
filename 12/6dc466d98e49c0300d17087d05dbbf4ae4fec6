@@ -1,0 +1,14 @@
+internal/transport/forward_test.go
+  h_13c4e797d6e9d2 308-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "126dc466d98e49c0300d17087d05dbbf4ae4fec6",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
