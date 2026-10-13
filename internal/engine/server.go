@@ -98,7 +98,7 @@ func (e *Engine) reviewServerLocked(server string) {
 			}
 		}
 		for port := range lost {
-			if _, asked := run.holders[port]; asked || e.closed {
+			if _, reviewed := run.holders[port]; reviewed {
 				continue
 			}
 			if run.holders == nil {
@@ -106,6 +106,9 @@ func (e *Engine) reviewServerLocked(server string) {
 			}
 			e.lookup++
 			run.holders[port] = heldPort{lookup: e.lookup}
+			if e.closed {
+				continue // shutting down: the loss is shown, its holder not asked for
+			}
 			e.lookups.Add(1) // under mu and before closed is set, so before Shutdown waits
 			go e.lookupHolder(run, port, e.lookup)
 		}

@@ -40,6 +40,15 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if len(dead) == 0 {
 		return run.state, run.message
 	}
+	for _, f := range dead {
+		if _, reviewed := run.holders[f.local]; !reviewed && run.announced != "" {
+			// Just lost: the session has changed but its message has not
+			// reached reviewServerLocked yet. Until that announces the
+			// error, the last announced state stands, so Status never runs
+			// ahead of the events.
+			return run.announced, run.shownMsg
+		}
+	}
 	// The session is connected, so its re-apply pass is over and each of
 	// these was refused by ssh: the local port could not be bound.
 	problems := make([]string, 0, len(dead))

@@ -906,6 +906,43 @@ func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	}
 }
 
+func TestStatusDoesNotRunAheadOfTheLostForwardEvent(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	before := h.eng.Status("myapp")
+	stateEvents(events, "myapp") // drop what led here
+
+	// The session changes first and tells the engine afterwards. Stand
+	// between the two: the project has a forward its connected session does
+	// not have, and the session has not said anything yet.
+	lost := testutil.FreePort(t)
+	h.eng.mu.Lock()
+	run := h.eng.runs["myapp"]
+	run.forwards = append(run.forwards, forward{lost, lost})
+	h.eng.mu.Unlock()
+	if st := h.eng.Status("myapp"); st != before {
+		t.Fatalf("status before the session reported = %+v, want what was last announced: %+v", st, before)
+	}
+	if states, _ := stateEvents(events, "myapp"); len(states) != 0 {
+		t.Fatalf("state events before the session reported: %v", states)
+	}
+
+	// Its message arrives: the event and Status change together.
+	h.eng.serverLog("mini", "mini: connected")
+	st := h.eng.Status("myapp")
+	if st.State != StateError || !strings.Contains(st.Message, strconv.Itoa(lost)) {
+		t.Fatalf("status = %+v, want the error naming port %d", st, lost)
+	}
+	states, last := stateEvents(events, "myapp")
+	if fmt.Sprint(states) != fmt.Sprint([]State{StateError}) || last[StateError] != "state: error: "+st.Message {
+		t.Fatalf("events %v (%q), status %+v", states, last[StateError], st)
+	}
+}
+
 // slowLookup replaces the engine's process lookup with one that reports each
 // call on asked and answers "vite (pid 4242)" once answer has been called.
 func slowLookup(t *testing.T, h *harness) (asked chan struct{}, answer func()) {

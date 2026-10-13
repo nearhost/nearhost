@@ -37,7 +37,7 @@ type projectRun struct {
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
-	holders   map[int]heldPort   // local port of each forward found lost -> what is known of its holder
+	holders   map[int]heldPort   // local port of each lost forward that was announced -> what is known of its holder
 }
 
 // heldPort is what is known about the local port of a lost forward.
