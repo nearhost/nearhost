@@ -106,3 +106,27 @@ func TestIsSail(t *testing.T) {
 		t.Fatal("IsSail misclassified")
 	}
 }
+
+func TestParseComposeLongSyntaxKeepsVariableName(t *testing.T) {
+	data := []byte("services:\n  web:\n    ports:\n      - target: 80\n        published: \"${APP_PORT}\"\n")
+	ports, err := ParseCompose(data, map[string]string{"APP_PORT": " 8080 "})
+	if err != nil || len(ports) != 1 || ports[0].Published != 8080 || ports[0].Var != "APP_PORT" {
+		t.Fatalf("got %+v err=%v", ports, err)
+	}
+}
+
+func TestParseComposeDashDefaultOnlyWhenUnset(t *testing.T) {
+	data := []byte("services:\n  a:\n    ports:\n      - \"${P-80}:80\"\n  b:\n    ports:\n      - \"${Q:-81}:81\"\n")
+	ports, err := ParseCompose(data, map[string]string{"P": "", "Q": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := portsByPublished(ports)
+	if len(ports) != 1 || m[81].Service != "b" {
+		t.Fatalf("got %+v", ports)
+	}
+	ports, _ = ParseCompose(data, map[string]string{})
+	if len(ports) != 2 {
+		t.Fatalf("unset should use both defaults: %+v", ports)
+	}
+}
