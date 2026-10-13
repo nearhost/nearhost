@@ -60,9 +60,13 @@ type Session struct {
 	lastErr   string
 	launches  int
 	forwards  map[string]forward
-	fwdMu     sync.Mutex // serialises forward changes; taken before mu, may be held across ssh calls
-	cancel    context.CancelFunc
-	done      chan struct{}
+	// fwdMu serialises forward changes and the re-apply pass after a
+	// (re)connect. It is taken before mu and may be held across ssh calls.
+	// Logf is called with it held, so a Logf callback must not call
+	// AddForward or CancelForward; Status and ForwardStates are fine.
+	fwdMu  sync.Mutex
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewSession creates an idle session. Call Start to connect.
@@ -289,10 +293,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		}()
 
 		if s.waitForSocket(ctx, exited) {
-			s.setStatus(StatusConnected, "")
+			s.markConnected(ctx)
 			backoff = s.baseBackoff
 			authFails = 0
-			s.reapplyForwards(ctx)
 		} else if ctx.Err() == nil && !hasExited(exited) {
 			// Connect timeout: the master is alive but never produced a
 			// working socket. Kill it so the loop below retries.

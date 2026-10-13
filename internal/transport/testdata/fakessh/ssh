@@ -27,6 +27,15 @@ case "$mode" in
           echo "bind [127.0.0.1]:$FAKE_SSH_FORWARD_FAIL: Address already in use" >&2; exit 255;;
       esac
     fi
+    # While the file named by $FAKE_SSH_FORWARD_FAIL_FILE exists, fail the
+    # forward whose local port is the file's content.
+    if [ -n "$FAKE_SSH_FORWARD_FAIL_FILE" ] && [ -e "$FAKE_SSH_FORWARD_FAIL_FILE" ]; then
+      port=$(cat "$FAKE_SSH_FORWARD_FAIL_FILE")
+      case "$larg" in
+        127.0.0.1:$port:*)
+          echo "bind [127.0.0.1]:$port: Address already in use" >&2; exit 255;;
+      esac
+    fi
     exit 0;;
   cancel)
     # Fail while the file named by $FAKE_SSH_CANCEL_FAIL exists.

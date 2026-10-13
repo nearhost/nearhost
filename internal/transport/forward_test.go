@@ -184,3 +184,82 @@ func TestCancelForwardWhileDisconnectedForgetsWithoutSSH(t *testing.T) {
 		t.Fatalf("forwards=%v log=%q", s.Forwards(), readLog(t, logPath))
 	}
 }
+
+// applied reports the Applied flag of the single tracked forward 8080:80.
+func applied(t *testing.T, s *Session) bool {
+	t.Helper()
+	st := s.ForwardStates()
+	if len(st) != 1 || st[0].Local != 8080 || st[0].Remote != 80 {
+		t.Fatalf("ForwardStates = %+v, want the one forward 8080:80", st)
+	}
+	return st[0].Applied
+}
+
+func TestForwardStatesAppliedAfterAdd(t *testing.T) {
+	s, _ := newFakeSession(t)
+	connected(t, s)
+	if len(s.ForwardStates()) != 0 {
+		t.Fatalf("ForwardStates = %+v before any forward", s.ForwardStates())
+	}
+	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if !applied(t, s) {
+		t.Fatal("a forward added on a connected session must be applied")
+	}
+	s.Stop()
+	if applied(t, s) {
+		t.Fatal("no forward is applied on a stopped session")
+	}
+}
+
+func TestForwardStatesNotAppliedWhileDisconnected(t *testing.T) {
+	s, _ := newFakeSession(t)
+	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if applied(t, s) {
+		t.Fatal("a forward queued while disconnected is tracked, not applied")
+	}
+	connected(t, s)
+	if !applied(t, s) {
+		t.Fatal("WaitConnected returned before the queued forward was applied")
+	}
+}
+
+func TestForwardStatesFollowReapplyAcrossReconnects(t *testing.T) {
+	flag := t.TempDir() + "/forward-fails"
+	s, _ := newFakeSession(t, "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	connected(t, s)
+	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	reconnect := func() {
+		t.Helper()
+		before := s.Launches()
+		if err := os.Remove(s.SocketPath()); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, 5*time.Second, func() bool { return s.Launches() > before && s.Status() == StatusConnected }, "reconnect")
+	}
+
+	// The re-apply fails on the new master: tracked, connected, not applied.
+	if err := os.WriteFile(flag, []byte("8080"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reconnect()
+	// Connected is only reported once the re-apply pass is over, so there is
+	// nothing to wait for here.
+	if applied(t, s) {
+		t.Fatal("a forward whose re-apply failed must not be reported applied")
+	}
+
+	// A later re-apply succeeds.
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	reconnect()
+	if !applied(t, s) {
+		t.Fatal("the forward must be applied again once a re-apply succeeds")
+	}
+}

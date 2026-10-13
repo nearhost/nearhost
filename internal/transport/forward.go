@@ -93,6 +93,36 @@ func (s *Session) Forwards() [][2]int {
 	return out
 }
 
+// ForwardState is one desired forward and whether the current master has it.
+type ForwardState struct {
+	Local, Remote int
+	// Applied is true when the session is connected and ssh confirmed this
+	// forward on the master that is running now. A forward that is only
+	// tracked (added while disconnected, or whose re-apply failed after a
+	// reconnect) is not applied.
+	Applied bool
+}
+
+// ForwardStates lists desired forwards sorted by local port, each with
+// whether it is applied on the current master. While the session is connected
+// every forward is settled: the status only becomes connected after the
+// re-apply pass, so a forward that is not applied then has failed, and stays
+// that way until the next reconnect.
+func (s *Session) ForwardStates() []ForwardState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ForwardState, 0, len(s.forwards))
+	for _, f := range s.forwards {
+		out = append(out, ForwardState{
+			Local:   f.local,
+			Remote:  f.remote,
+			Applied: s.status == StatusConnected && f.appliedGen == s.launches,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
+	return out
+}
+
 // controlForward runs one `ssh -O forward|cancel`. It holds no session lock.
 func (s *Session) controlForward(ctx context.Context, op string, local, remote int) error {
 	cmd := s.command(ctx, "-S", s.SocketPath(), "-O", op, "-L", forwardSpec(local, remote), s.Host)
@@ -109,11 +139,29 @@ func (s *Session) controlForward(ctx context.Context, op string, local, remote i
 	return nil
 }
 
+// markConnected re-applies the desired forwards on the new master and then
+// reports the session connected. Both happen under fwdMu, so AddForward and
+// CancelForward run either wholly before (and are covered by the re-apply) or
+// wholly after (and talk to the master themselves), and whoever sees the
+// connected status sees every forward settled.
+func (s *Session) markConnected(ctx context.Context) {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	s.reapplyLocked(ctx)
+	s.setStatus(StatusConnected, "")
+}
+
 // reapplyForwards adds desired forwards that the current master does not yet
-// have. The supervisor calls it after each (re)connect.
+// have.
 func (s *Session) reapplyForwards(ctx context.Context) {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
+	s.reapplyLocked(ctx)
+}
+
+// reapplyLocked does the work of reapplyForwards. The caller holds fwdMu. A
+// forward that fails is logged and stays tracked but unapplied.
+func (s *Session) reapplyLocked(ctx context.Context) {
 	s.mu.Lock()
 	gen := s.launches
 	var todo []forward
