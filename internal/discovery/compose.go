@@ -57,7 +57,7 @@ type composeLongPort struct {
 }
 
 // composeVar matches ${VAR}, ${VAR:-default}, ${VAR-default} and $VAR.
-var composeVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+var composeVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
 // resolve substitutes variables in s. It returns the first variable name
 // seen and ok=false when a variable has no value and no default.
@@ -67,16 +67,17 @@ func resolve(s string, env map[string]string) (value, varName string, ok bool) {
 		sub := composeVar.FindStringSubmatch(m)
 		name := sub[1]
 		if name == "" {
-			name = sub[3]
+			name = sub[4]
 		}
 		if varName == "" {
 			varName = name
 		}
-		if v, set := env[name]; set && v != "" {
-			return v
+		v, set := env[name]
+		if set && (v != "" || sub[2] == "-") {
+			return v // "-" keeps an explicitly empty value
 		}
 		if sub[2] != "" {
-			return sub[2]
+			return sub[3]
 		}
 		ok = false
 		return ""
@@ -120,9 +121,11 @@ func ParseCompose(data []byte, env map[string]string) ([]ComposePort, error) {
 					continue
 				}
 				pub, ok := toInt(lp.Published)
+				varName := ""
 				if !ok {
 					if s, isStr := lp.Published.(string); isStr {
-						resolved, _, rok := resolve(s, env)
+						resolved, vn, rok := resolve(s, env)
+						varName = vn
 						if !rok {
 							continue
 						}
@@ -133,7 +136,7 @@ func ParseCompose(data []byte, env map[string]string) ([]ComposePort, error) {
 					continue
 				}
 				target, _ := toInt(lp.Target)
-				out = append(out, ComposePort{Service: service, Published: pub, Target: target})
+				out = append(out, ComposePort{Service: service, Published: pub, Target: target, Var: varName})
 			}
 		}
 	}
