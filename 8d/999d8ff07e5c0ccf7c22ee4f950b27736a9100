@@ -1,0 +1,61 @@
+go.mod
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 5,7-9
+  s_67428b1da1b8e6::t_9b74893d56ed3d 6
+internal/config/paths.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-7,10,12-36
+internal/config/config.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-4,6-202,205-206,208-237,244-250,255-256
+internal/config/config_test.go
+  s_67428b1da1b8e6::t_00f4b36ca5cd44 1-239
+go.sum
+  s_67428b1da1b8e6::t_92392157122dde 12,14-15
+  s_67428b1da1b8e6::t_c0290b112eb345 4-5
+internal/discovery/testdata/sail-custom/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/testdata/sail-custom/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/testdata/sail-defaults/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/env.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-104
+internal/discovery/testdata/sail-defaults/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/reader.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-24
+internal/discovery/testdata/sail-defaults/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/sail-custom/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-6
+internal/discovery/testdata/sail-custom/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-3
+internal/discovery/testdata/vite-plain/vite.config.ts
+  s_67428b1da1b8e6::t_6659c479f74b88 1-8
+internal/discovery/testdata/vite-plain/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1
+internal/discovery/testdata/sail-custom/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/compose-literal/compose.yaml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-18
+internal/discovery/env_test.go
+  s_67428b1da1b8e6::t_36e67a920bde3b 1-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d999d8ff07e5c0ccf7c22ee4f950b27736a9100",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
