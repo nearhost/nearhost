@@ -214,3 +214,18 @@ func TestAdviseAppURLTrimsWhitespace(t *testing.T) {
 		t.Fatal("surrounding whitespace in APP_URL should not trigger an advisory")
 	}
 }
+
+func TestDiscoverLoneLoopbackRouteStaysLoopback(t *testing.T) {
+	res, err := Discover(memReader{"compose.yaml": "services:\n  vite:\n    ports:\n      - '${VITE_PORT:-5173}:5173'\n"})
+	if err != nil || len(res.Routes) != 1 || res.Routes[0].Role != config.RoleLoopback {
+		t.Fatalf("lone Vite port must not become web: %+v %v", res, err)
+	}
+}
+
+func TestAdviseAppURLMessageUsesTrimmedValue(t *testing.T) {
+	res := &Result{HasLaravel: true, Env: map[string]string{"APP_URL": " http://x.test "}}
+	advs := Advise(res, "myapp.test", nil)
+	if len(advs) != 1 || !strings.Contains(advs[0].Message, `"http://x.test"`) {
+		t.Fatalf("unexpected: %+v", advs)
+	}
+}

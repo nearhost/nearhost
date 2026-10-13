@@ -134,7 +134,7 @@ func assignWeb(routes []Candidate, res *Result) []Candidate {
 			}
 		}
 	}
-	if pick < 0 && len(routes) == 1 {
+	if pick < 0 && len(routes) == 1 && routes[0].Role != config.RoleLoopback {
 		pick = 0
 	}
 	if pick >= 0 {
@@ -218,10 +218,10 @@ func Advise(res *Result, alias string, others []config.Project) []Advisory {
 
 	if res.HasLaravel {
 		want := "https://" + alias
-		if strings.TrimSpace(res.Env["APP_URL"]) != want {
+		if appURL := strings.TrimSpace(res.Env["APP_URL"]); appURL != want {
 			advs = append(advs, Advisory{
 				Code:    "app-url",
-				Message: fmt.Sprintf("APP_URL is %q. Generated links will use it, so set it to the alias.", res.Env["APP_URL"]),
+				Message: fmt.Sprintf("APP_URL is %q. Generated links will use it, so set it to the alias.", appURL),
 				Snippet: "APP_URL=" + want,
 			})
 		}
