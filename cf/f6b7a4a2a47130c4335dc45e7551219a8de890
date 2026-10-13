@@ -1,0 +1,138 @@
+go.mod
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 5,9-11
+  s_67428b1da1b8e6::t_9b74893d56ed3d 6
+  s_67428b1da1b8e6::t_27c3fbb6caa838 7
+  s_67428b1da1b8e6::t_5a0aa3424bf518 8
+  s_67428b1da1b8e6::t_590b4e5077f637 15,17-18
+internal/config/paths.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-7,10,12-36
+internal/config/config.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-4,6-202,205-206,208-237,244-250,255-256
+internal/config/config_test.go
+  s_67428b1da1b8e6::t_00f4b36ca5cd44 1-239
+go.sum
+  s_67428b1da1b8e6::t_92392157122dde 30,32-33
+  s_67428b1da1b8e6::t_c0290b112eb345 6-7
+  s_67428b1da1b8e6::t_266ac58326bfe2 8-9
+  s_67428b1da1b8e6::t_1df3b11294527a 2-3,10-15,21-22,24-29
+internal/discovery/testdata/sail-custom/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/testdata/sail-custom/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/testdata/sail-defaults/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/env.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-60,61-101
+internal/discovery/testdata/sail-defaults/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/reader.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-24
+internal/discovery/testdata/sail-defaults/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/sail-custom/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-6
+internal/discovery/testdata/sail-custom/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-3
+internal/discovery/testdata/vite-plain/vite.config.ts
+  s_67428b1da1b8e6::t_6659c479f74b88 1-8
+internal/discovery/testdata/vite-plain/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1
+internal/discovery/testdata/sail-custom/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/compose-literal/compose.yaml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-18
+internal/discovery/env_test.go
+  s_67428b1da1b8e6::t_36e67a920bde3b 1-63,65,67-71,77-95
+internal/discovery/compose.go
+  s_67428b1da1b8e6::t_5e156cf5f1230e 1-59,61-69,71-74,78-79,81-123,125-126,129-137,141,143-154,156-174,178-180,208
+  s_67428b1da1b8e6::t_e7632188911fb7 155,181-182,186-188,190-191,197-207
+  s_67428b1da1b8e6::t_a03d29dbcada55 60,70,127,142
+  s_67428b1da1b8e6::t_4783c409af128d 75-77,80,124,128
+internal/discovery/compose_test.go
+  s_67428b1da1b8e6::t_f0f29d8a542782 1-108
+  s_67428b1da1b8e6::t_48d54ca1d339d7 109-132
+internal/discovery/discover.go
+  s_67428b1da1b8e6::t_b923faff883659 1-130,132-136,142-205,212,221-232,234-235,237-263
+  s_67428b1da1b8e6::t_1407d2691fb6de 233,236
+  s_67428b1da1b8e6::t_dc19a6f9b002a2 210-211,213-220
+internal/discovery/vite.go
+  s_67428b1da1b8e6::t_b923faff883659 1-3,5-15,17-23,29,32-67,69-88
+internal/discovery/discover_test.go
+  s_67428b1da1b8e6::t_b923faff883659 1-3,5-216
+  s_67428b1da1b8e6::t_6870aa225cb05d 4
+  s_67428b1da1b8e6::t_f5af3bd29073fe 217-231
+  s_67428b1da1b8e6::t_51c307d81a2396 232-261
+  s_67428b1da1b8e6::t_b992fcdeabcaa2 262-295
+internal/transport/sshconfig_test.go
+  s_67428b1da1b8e6::t_7496101551562d 1-3,6,8-9,11-55,57,64,69,72,77,141-142
+  s_67428b1da1b8e6::t_6129318b65cd13 10,60,63,68,71,73-76,81-140
+  s_67428b1da1b8e6::t_97deeaf526a5e9 4-5,7,56,58-59,61-62,65-67,70,78-80
+  s_67428b1da1b8e6::t_e06844d79c65af 143-155
+  s_67428b1da1b8e6::t_e68a2453d8b60e 156-189
+internal/transport/sshconfig.go
+  s_67428b1da1b8e6::t_519efa3b60a146 11-22,25-60,66-88,90-105,110,115-124,128-129,131-144,155-165,166,192,194-217
+  s_67428b1da1b8e6::t_950eca62475abc 1-10
+  s_67428b1da1b8e6::t_e06844d79c65af 167-191,193
+  s_67428b1da1b8e6::t_27c3fbb6caa838 125-127,130
+internal/transport/session.go
+  s_67428b1da1b8e6::t_64e2bec078eb35 1-5,7-38,40-56,66-85,88,107-164,167,170-175,177,179,181-184,187-190,198,199-233,246-249,254-265,281-295,310-327,330-333,335-336,337,348-350,371-390,393-397,404,406-419
+  s_67428b1da1b8e6::t_9913494f9f64fe 176,178,250-253
+  s_67428b1da1b8e6::t_550f4651bf7b6b 57-62,64-65,168-169,185-186,296-301,303-309,334,338-366,368
+  s_67428b1da1b8e6::t_0268e5f086083c 165-166,180,191-197,234-245,391-392,398-403,405
+  s_67428b1da1b8e6::t_4699d42416af69 39,63
+internal/transport/testdata/fakessh/ssh
+  s_67428b1da1b8e6::t_e4e7419b185cf5 1-30,38-45,57-59,68-81
+  s_67428b1da1b8e6::t_550f4651bf7b6b 37,60-66
+  s_67428b1da1b8e6::t_fa2f11860d5a00 67
+internal/transport/session_test.go
+  s_67428b1da1b8e6::t_f0251765a80cf4 163-185
+  s_67428b1da1b8e6::t_64e2bec078eb35 1-5,7-9,11-162
+  s_67428b1da1b8e6::t_550f4651bf7b6b 6,10,186-241
+  s_67428b1da1b8e6::t_385bc47707d693 242-293
+internal/transport/sftp_test.go
+  s_67428b1da1b8e6::t_4699d42416af69 1-3,5-76
+internal/transport/sftp.go
+  s_67428b1da1b8e6::t_5a0aa3424bf518 1-40,44-58,73-115
+internal/transport/forward.go
+  s_67428b1da1b8e6::t_5a0aa3424bf518 1-26,28-29,35-40,46-58,61-66,71,73-74,82-150
+  s_67428b1da1b8e6::t_3ec63a0c9604dd 27,30-34,41-45
+internal/transport/forward_test.go
+  s_67428b1da1b8e6::t_4699d42416af69 1-5,7-58,61-64,75-76,78-92,133-143
+  s_67428b1da1b8e6::t_3ec63a0c9604dd 93-132
+  s_67428b1da1b8e6::t_80169ab0502a4c 6,59-60,65-74,77
+internal/hosts/hosts.go
+  s_67428b1da1b8e6::t_26e4291ce17b53 1-68,80-89,97-118,121-143,145-162,164-171,174,176-185,187-189
+  s_67428b1da1b8e6::t_47ddac7879d34d 69-79,90-96,119-120,144,163,172-173,175,186
+internal/hosts/hosts_test.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-3,5-168
+  s_67428b1da1b8e6::t_f00f01f3866f21 4
+internal/cli/hosts_test.go
+  s_67428b1da1b8e6::t_f00f01f3866f21 9-10
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-8,11-53
+internal/cli/root.go
+  s_67428b1da1b8e6::t_26e4291ce17b53 22
+internal/cli/hosts.go
+  s_67428b1da1b8e6::t_8cabb2ab7d3e05 1-13,17-50,52-66
+  s_67428b1da1b8e6::t_47ddac7879d34d 15
+  s_67428b1da1b8e6::t_26e4291ce17b53 14,16,51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cff6b7a4a2a47130c4335dc45e7551219a8de890",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
