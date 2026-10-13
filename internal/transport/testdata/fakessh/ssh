@@ -1,0 +1,76 @@
+#!/bin/sh
+# Fake OpenSSH client for nearhost tests. Records argv to $FAKE_SSH_LOG and
+# simulates the flags nearhost uses. Behaviour is controlled by FAKE_SSH_*.
+printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
+sock=""; mode=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    -S) sock="$a";;
+    -O) mode="$a";;
+  esac
+  prev="$a"
+done
+last=""
+for a in "$@"; do last="$a"; done
+
+case "$mode" in
+  check)
+    [ -e "$sock" ] && exit 0
+    echo "Control socket connect($sock): No such file or directory" >&2; exit 255;;
+  forward)
+    # Fail only the forward whose local port equals $FAKE_SSH_FORWARD_FAIL.
+    larg=""; prev=""
+    for a in "$@"; do [ "$prev" = "-L" ] && larg="$a"; prev="$a"; done
+    if [ -n "$FAKE_SSH_FORWARD_FAIL" ]; then
+      case "$larg" in
+        127.0.0.1:$FAKE_SSH_FORWARD_FAIL:*)
+          echo "bind [127.0.0.1]:$FAKE_SSH_FORWARD_FAIL: Address already in use" >&2; exit 255;;
+      esac
+    fi
+    exit 0;;
+  cancel) exit 0;;
+  exit) rm -f "$sock"; : > "$sock.exit"; exit 0;;
+esac
+
+if [ -n "$FAKE_SSH_AUTH_FAIL" ]; then echo "user@host: Permission denied (publickey)." >&2; exit 255; fi
+if [ -n "$FAKE_SSH_HOSTKEY_FAIL" ]; then echo "Host key verification failed." >&2; exit 255; fi
+
+# BatchMode connectivity check: ssh ... host true
+if [ "$last" = "true" ]; then exit 0; fi
+
+# FAKE_SSH_ALTERNATE makes master launches alternate between an authentication
+# failure and a plain connection failure, starting with the former.
+if [ -n "$FAKE_SSH_ALTERNATE" ] && [ "$last" != "sftp" ]; then
+  if [ -e "$sock.odd" ]; then
+    rm -f "$sock.odd"
+    echo "ssh: connect to host mini port 22: Connection refused" >&2; exit 255
+  fi
+  : > "$sock.odd"
+  echo "user@host: Permission denied (publickey)." >&2; exit 255
+fi
+
+# SFTP subsystem is not simulated.
+if [ "$last" = "sftp" ]; then echo "fake ssh: sftp not supported" >&2; exit 1; fi
+
+# FAKE_SSH_HANG makes the master stall without ever creating its socket; it
+# leaves when asked to exit (-O exit drops $sock.exit) or when killed.
+if [ -n "$FAKE_SSH_HANG" ]; then
+  rm -f "$sock.exit"
+  while [ ! -e "$sock.exit" ]; do sleep 0.1; done
+  exit 0
+fi
+
+# Master mode (-N -M -S sock host): create the socket and stay up until it is removed.
+# FAKE_SSH_FLAKY_ONCE=<seconds> makes the first master die after that long.
+if [ -n "$FAKE_SSH_FLAKY_ONCE" ] && [ ! -e "$sock.flaked" ]; then
+  : > "$sock.flaked"
+  : > "$sock"
+  sleep "$FAKE_SSH_FLAKY_ONCE"
+  rm -f "$sock"
+  echo "client_loop: send disconnect: Broken pipe" >&2
+  exit 255
+fi
+: > "$sock"
+trap 'rm -f "$sock"; exit 0' TERM INT
+while [ -e "$sock" ]; do sleep 0.1; done
+exit 0
