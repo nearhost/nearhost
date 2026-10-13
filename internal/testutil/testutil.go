@@ -70,12 +70,14 @@ func HTTPSClient(t testing.TB, root *x509.Certificate, alias string, port int) *
 // system hands out by itself (Linux 32768-60999, macOS 49152-65535), so
 // neither an outgoing connection nor a ":0" listener of any process can take
 // a port between the moment it is chosen here and the moment the proxy binds
-// it. Test binaries that run side by side have nearby pids and so different
-// blocks.
+// it. Test binaries that run side by side share a block only when their pids
+// are a multiple of proxyPortBlocks apart, and then still clash only if both
+// are handed the same port within the moment before one of them binds it:
+// ProxyPort hands out no port that is bound.
 const (
 	proxyPortFirst  = 20000
-	proxyPortBlock  = 400
-	proxyPortBlocks = 25
+	proxyPortBlock  = 100
+	proxyPortBlocks = 100
 )
 
 // proxyPortNext counts the ports handed out; it steps through the block.
