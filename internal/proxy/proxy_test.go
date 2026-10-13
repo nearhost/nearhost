@@ -393,3 +393,37 @@ func TestRootCertMissingReturnsError(t *testing.T) {
 		t.Fatal("expected error for missing root")
 	}
 }
+
+func TestStopOnlyAffectsTheOwningProxy(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	other := New(Options{StorageRoot: t.TempDir(), HTTPSPort: h.httpsPort, HTTPPort: h.httpPort})
+	if other.Running() {
+		t.Fatal("a Proxy that never applied must not report Running")
+	}
+	if err := other.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if !h.p.Running() {
+		t.Fatal("Stop on another Proxy stopped the owner")
+	}
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+
+	// A second Proxy that applies takes ownership; the first can no longer
+	// stop it.
+	if err := other.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	if h.p.Running() || !other.Running() {
+		t.Fatalf("ownership wrong: first=%v second=%v", h.p.Running(), other.Running())
+	}
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if !other.Running() {
+		t.Fatal("stale Proxy.Stop shut down the current owner")
+	}
+	if err := other.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}

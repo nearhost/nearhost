@@ -13,15 +13,18 @@ import (
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
 )
 
-// caddyMu serialises every call into Caddy's process-global Load/Stop, across
-// all Proxy values.
-var caddyMu sync.Mutex
+// caddyMu serialises every call into Caddy's process-global Load/Stop, and
+// guards owner: the Proxy whose configuration Caddy is currently running.
+var (
+	caddyMu sync.Mutex
+	owner   *Proxy
+)
 
-// Proxy is the embedded Caddy instance. Only one may run per process.
+// Proxy is the embedded Caddy instance. Caddy is process-global, so only one
+// Proxy can own it at a time: Apply on a second Proxy takes ownership, after
+// which the first one is no longer Running and its Stop does nothing.
 type Proxy struct {
-	opts    Options
-	mu      sync.Mutex
-	running bool
+	opts Options
 }
 
 // New prepares a proxy. Nothing listens until Apply is called.
@@ -32,8 +35,6 @@ func New(opts Options) *Proxy {
 // Apply loads a configuration serving exactly the given sites. Existing
 // connections survive; it is safe to call repeatedly and concurrently.
 func (p *Proxy) Apply(sites []Site) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	cfg, err := BuildConfig(sites, p.opts)
 	if err != nil {
 		return err
@@ -46,28 +47,27 @@ func (p *Proxy) Apply(sites []Site) error {
 	if err := caddy.Load(cfg, false); err != nil {
 		return fmt.Errorf("load proxy config: %w", err)
 	}
-	p.running = true
+	owner = p
 	return nil
 }
 
-// Stop shuts Caddy down and releases its ports. Calling it again is a no-op.
+// Stop shuts Caddy down and releases its ports if this Proxy owns it. Calling
+// it again, or on a Proxy that never applied or lost ownership, is a no-op.
 func (p *Proxy) Stop() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.running {
-		return nil
-	}
-	p.running = false
 	caddyMu.Lock()
 	defer caddyMu.Unlock()
+	if owner != p {
+		return nil
+	}
+	owner = nil
 	return caddy.Stop()
 }
 
-// Running reports whether a configuration has been loaded.
+// Running reports whether this Proxy's configuration is the one running.
 func (p *Proxy) Running() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.running
+	caddyMu.Lock()
+	defer caddyMu.Unlock()
+	return owner == p
 }
 
 // RootCertPath is where Caddy stores the local CA's root certificate.
