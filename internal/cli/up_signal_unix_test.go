@@ -11,6 +11,32 @@ import (
 	"time"
 )
 
+// installSignals sets up signal handling as the real `up` does and undoes it
+// when the test ends, so that no test sees what another one left: the
+// subscription to the stop signals is released (which gives them back their
+// former handling once the test's own guard is gone too), and SIGPIPE, which
+// the production setup leaves ignored for good, is ignored afterwards only if
+// it was before.
+func installSignals(t *testing.T, parent context.Context) (ctx context.Context, again <-chan struct{}, release func()) {
+	t.Helper()
+	pipeIgnored := signal.Ignored(syscall.SIGPIPE)
+	ctx, again, release = systemUp().notify(parent)
+	t.Cleanup(func() {
+		release()
+		if !pipeIgnored {
+			// signal.Reset does not undo signal.Ignore; subscribing does,
+			// and unsubscribing then leaves the signal as it is by default.
+			c := make(chan os.Signal, 1)
+			signal.Notify(c, syscall.SIGPIPE)
+			signal.Stop(c)
+		}
+		if got := signal.Ignored(syscall.SIGPIPE); got != pipeIgnored {
+			t.Errorf("SIGPIPE ignored = %v after the test, %v before it", got, pipeIgnored)
+		}
+	})
+	return ctx, again, release
+}
+
 // Closing the terminal hangs up nearhost but not its ssh masters, which run
 // in process groups of their own. up must shut down on it as on Ctrl-C.
 func TestSystemUpShutsDownOnHangup(t *testing.T) {
@@ -23,8 +49,7 @@ func TestSystemUpShutsDownOnHangup(t *testing.T) {
 	signal.Notify(guard, syscall.SIGHUP)
 	defer signal.Stop(guard)
 
-	ctx, _, release := systemUp().notify(context.Background())
-	defer release()
+	ctx, _, _ := installSignals(t, context.Background())
 	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +65,10 @@ func TestSystemUpShutsDownOnHangup(t *testing.T) {
 // the ssh masters. With the signal ignored the write just fails.
 func TestSystemUpIgnoresBrokenPipes(t *testing.T) {
 	if signal.Ignored(syscall.SIGPIPE) {
-		t.Skip("SIGPIPE is already ignored in this process")
+		t.Skip("SIGPIPE was already ignored when this process started, and stays so")
 	}
-	defer signal.Reset(syscall.SIGPIPE) // the other tests keep the default
 
-	_, _, release := systemUp().notify(context.Background())
+	_, _, release := installSignals(t, context.Background())
 	if !signal.Ignored(syscall.SIGPIPE) {
 		t.Error("SIGPIPE is not ignored while up runs")
 	}
@@ -65,9 +89,7 @@ func TestSystemUpCountsASecondSignalRightAfterTheFirst(t *testing.T) {
 	signal.Notify(guard, syscall.SIGTERM)
 	defer signal.Stop(guard)
 
-	ctx, again, release := systemUp().notify(context.Background())
-	defer signal.Reset(syscall.SIGPIPE)
-	defer release()
+	ctx, again, release := installSignals(t, context.Background())
 	select {
 	case <-again:
 		t.Fatal("a second signal was reported before any was sent")
@@ -106,9 +128,7 @@ func TestSystemUpHurriesOnTheFirstSignalAfterItsContextEnded(t *testing.T) {
 	defer signal.Stop(guard)
 
 	parent, cancel := context.WithCancel(context.Background())
-	ctx, again, release := systemUp().notify(parent)
-	defer signal.Reset(syscall.SIGPIPE)
-	defer release()
+	ctx, again, _ := installSignals(t, parent)
 	cancel()
 	<-ctx.Done()
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
