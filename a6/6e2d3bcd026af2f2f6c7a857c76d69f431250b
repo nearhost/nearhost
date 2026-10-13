@@ -1,0 +1,22 @@
+internal/cli/ssh_test.go
+  s_67428b1da1b8e6::t_19d89c2fca7cfd 160-187
+internal/cli/ssh.go
+  s_67428b1da1b8e6::t_36f710adae50c6 52-58,60-63,65,69
+  s_67428b1da1b8e6::t_19d89c2fca7cfd 59,64,66-68,70-75,87,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a66e2d3bcd026af2f2f6c7a857c76d69f431250b",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
