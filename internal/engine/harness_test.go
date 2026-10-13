@@ -367,14 +367,17 @@ func (h *harness) unapplied(server string) []int {
 }
 
 // stateEvents drains what is buffered on events and returns the states
-// announced for a project, in order, with the last message of each.
+// announced for a project, in order, with the last message of each. A state
+// announced again because its reason changed is listed once.
 func stateEvents(events <-chan Event, project string) (states []State, last map[State]string) {
 	last = map[State]string{}
 	for {
 		select {
 		case ev := <-events:
 			if ev.Project == project && ev.State != "" {
-				states = append(states, ev.State)
+				if len(states) == 0 || states[len(states)-1] != ev.State {
+					states = append(states, ev.State)
+				}
 				last[ev.State] = ev.Message
 			}
 		default:

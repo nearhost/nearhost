@@ -98,14 +98,18 @@ func (e *Engine) setStateLocked(run *projectRun, st State, msg string) {
 	}
 }
 
-// announceLocked publishes run's effective state if it differs from the last
-// one published. It is published under mu so events arrive in state order.
+// announceLocked publishes run's effective state if the state or its reason
+// differs from what was published last, so the events always carry what
+// Status reports. A reason only changes when the server's session changes
+// status or a forward is lost or restored, so this is at most one event per
+// message of the session. It is published under mu so events arrive in state
+// order.
 func (e *Engine) announceLocked(run *projectRun) {
 	if run.tearing {
 		return
 	}
 	st, msg := e.effectiveLocked(run)
-	if st == run.announced {
+	if st == run.announced && msg == run.shownMsg {
 		return
 	}
 	run.announced, run.shownMsg = st, msg

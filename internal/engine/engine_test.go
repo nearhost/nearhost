@@ -478,6 +478,60 @@ func TestStartRevivesAServerThatGaveUpUnderARunningProject(t *testing.T) {
 	}
 }
 
+func TestDegradedProjectAnnouncesEachNewReason(t *testing.T) {
+	wrapper, flag, _ := authWrapper(t)
+	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) { o.SSHPath = wrapper })
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	// The connection drops and the key is no longer accepted: the server goes
+	// through reconnecting and connecting, and gives up in the end.
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool {
+		st, _ := h.eng.ServerStatus("mini")
+		return st == transport.StatusAuthFailed
+	}, "the server to give up")
+	st := h.eng.Status("myapp")
+	if st.State != StateDegraded || !strings.Contains(st.Message, "auth failed") {
+		t.Fatalf("status = %+v", st)
+	}
+	// The supervisor logs after it changed the status; its last line is what
+	// announces the final reason.
+	var got []Event
+	deadline := time.After(5 * time.Second)
+	for len(got) == 0 || got[len(got)-1].Message != "state: degraded: "+st.Message {
+		select {
+		case ev := <-events:
+			if ev.Project == "myapp" && ev.State != "" {
+				got = append(got, ev)
+			}
+		case <-deadline:
+			t.Fatalf("the last state event does not carry the reason Status reports (%q):\n%+v", st.Message, got)
+		}
+	}
+	// One event per distinct reason, and no more than the server said itself.
+	serverLines := strings.Count(h.log(), "-N -M")*2 + 2
+	if len(got) > serverLines {
+		t.Fatalf("%d state events for a server that changed status at most %d times", len(got), serverLines)
+	}
+	for i, ev := range got {
+		if ev.State != StateDegraded {
+			t.Fatalf("event %d = %+v, want degraded throughout", i, ev)
+		}
+		if i > 0 && ev.Message == got[i-1].Message {
+			t.Fatalf("the same state and reason were announced twice in a row: %q", ev.Message)
+		}
+	}
+}
+
 func TestRunningProjectBecomesDegradedWhenServerDrops(t *testing.T) {
 	upPort := upstream(t, "ok")
 	cfg := remoteConfig(testutil.FreePort(t))
@@ -512,7 +566,8 @@ func TestRunningProjectBecomesDegradedWhenServerDrops(t *testing.T) {
 	for len(states) < 4 || !sawSupervisor {
 		select {
 		case ev := <-events:
-			if ev.Project == "myapp" && ev.State != "" {
+			// Degraded is announced once per reason; count the state once.
+			if ev.Project == "myapp" && ev.State != "" && (len(states) == 0 || states[len(states)-1] != ev.State) {
 				states = append(states, ev.State)
 			}
 			if ev.Server == "mini" && ev.Project == "" && strings.Contains(ev.Message, "reconnecting") {
