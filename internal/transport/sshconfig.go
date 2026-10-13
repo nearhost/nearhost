@@ -110,9 +110,12 @@ func (l *hostLister) include(args, chain []string) error {
 			if slices.Contains(chain, m) {
 				continue
 			}
+			if fi, err := os.Stat(m); err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
 			f, err := os.Open(m)
 			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 					continue
 				}
 				return err

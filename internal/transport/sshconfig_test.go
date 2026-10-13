@@ -153,3 +153,37 @@ func TestDefaultHostsIncludeQuotedPathWithSpaces(t *testing.T) {
 		t.Fatalf("got %v, %v; want %v", hosts, err, want)
 	}
 }
+
+func TestDefaultHostsIncludeGlobSkipsDirectories(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include conf.d/*\nHost mini\n")
+	writeSSHFile(t, home, "conf.d/real", "Host vps\n")
+	if err := os.MkdirAll(filepath.Join(home, ".ssh", "conf.d", "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	hosts, err := DefaultHosts()
+	want := []string{"vps", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
+
+func TestDefaultHostsIncludeSkipsUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include conf.d/*\nHost mini\n")
+	writeSSHFile(t, home, "conf.d/a-locked", "Host secret\n")
+	writeSSHFile(t, home, "conf.d/b-real", "Host vps\n")
+	if err := os.Chmod(filepath.Join(home, ".ssh", "conf.d", "a-locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	hosts, err := DefaultHosts()
+	want := []string{"vps", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
