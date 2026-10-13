@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 type ViteInfo struct {
 	Found         bool
 	Port          int
+	ReadsVitePort bool // the config mentions VITE_PORT, so .env can set the port
 	AllowedHosts  []string
 	AllowAllHosts bool
 	HTTPS         bool
@@ -19,9 +21,14 @@ type ViteInfo struct {
 
 var viteFiles = []string{"vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts", "vite.config.cjs"}
 
+// viteServerKey matches up to a key written directly inside the `server: {`
+// block. Nested objects up to two levels deep (hmr, proxy entries) are stepped
+// over, so `preview.port` and `server.hmr.port` are not taken for `server.port`.
+const viteServerKey = `\bserver\s*:\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?\b`
+
 var (
-	vitePortRe         = regexp.MustCompile(`\bport\s*:\s*(\d+)`)
-	viteAllowedHostsRe = regexp.MustCompile(`allowedHosts\s*:\s*(true|\[([^\]]*)\])`)
+	vitePortRe         = regexp.MustCompile(viteServerKey + `port\s*:\s*(\d+)`)
+	viteAllowedHostsRe = regexp.MustCompile(viteServerKey + `allowedHosts\s*:\s*(true|\[([^\]]*)\])`)
 	viteQuotedRe       = regexp.MustCompile(`['"]([^'"]+)['"]`)
 	viteHTTPSRe        = regexp.MustCompile(`\bhttps\s*:\s*(true|\{)`)
 )
@@ -58,6 +65,7 @@ func ScanVite(data []byte) ViteInfo {
 		}
 	}
 	info.HTTPS = viteHTTPSRe.Match(data)
+	info.ReadsVitePort = bytes.Contains(data, []byte("VITE_PORT"))
 	return info
 }
 

@@ -293,3 +293,87 @@ func TestAdviseViteDefaultPortSnippetMatchesProjectKind(t *testing.T) {
 	}
 	t.Fatal("expected Sail vite-default-port advisory")
 }
+
+func TestScanViteReadsOnlyServerBlock(t *testing.T) {
+	cases := []struct {
+		name, src string
+		port      int
+		allowAll  bool
+	}{
+		{"preview only", `export default defineConfig({ preview: { port: 4173, allowedHosts: true } })`, 0, false},
+		{"preview before server", `export default { preview: { port: 4173 }, server: { port: 3000 } }`, 3000, false},
+		{"hmr port only", `export default { server: { hmr: { port: 24678 } } }`, 0, false},
+		{"nested blocks before port", `export default { server: { hmr: { port: 24678 }, proxy: { '/api': { target: 'http://x' } }, port: 3001, allowedHosts: true } }`, 3001, true},
+		{"strictPort is not port", `export default { server: { strictPort: true } }`, 0, false},
+	}
+	for _, c := range cases {
+		info := ScanVite([]byte(c.src))
+		if info.Port != c.port || info.AllowAllHosts != c.allowAll {
+			t.Errorf("%s: got port=%d allowAll=%v, want port=%d allowAll=%v", c.name, info.Port, info.AllowAllHosts, c.port, c.allowAll)
+		}
+	}
+	hosts := ScanVite([]byte(`export default { preview: { allowedHosts: ['p.test'] }, server: { allowedHosts: ['s.test'] } }`))
+	if len(hosts.AllowedHosts) != 1 || hosts.AllowedHosts[0] != "s.test" {
+		t.Errorf("expected only server.allowedHosts, got %+v", hosts.AllowedHosts)
+	}
+}
+
+func TestDiscoverVitePortMatchDoesNotPromoteLoopback(t *testing.T) {
+	res, err := Discover(memReader{
+		".env":           "VITE_PORT=5180\n",
+		"vite.config.js": "export default { server: { port: 5180 } }",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleLoopback {
+		t.Fatalf("VITE_PORT loopback must not become web: %+v", res.Routes)
+	}
+}
+
+func TestDiscoverLoneKnownServicePortIsNotWeb(t *testing.T) {
+	res, err := Discover(memReader{"compose.yaml": "services:\n  mysql:\n    ports:\n      - '${FORWARD_DB_PORT:-3306}:3306'\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleIgnore {
+		t.Fatalf("lone database port must stay ignored: %+v", res.Routes)
+	}
+}
+
+func TestAdviseViteDefaultPortIgnoresUnwiredEnvOutsideSail(t *testing.T) {
+	files := memReader{
+		".env":           "VITE_PORT=5180\n",
+		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
+		"vite.config.ts": "export default defineConfig({})",
+	}
+	res, err := Discover(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
+		t.Fatalf("VITE_PORT that the Vite config never reads should not hide the advisory, got %q", codes(Advise(res, "x.test", nil)))
+	}
+
+	files["vite.config.ts"] = "export default defineConfig({ server: { port: Number(process.env.VITE_PORT) } })"
+	wired, err := Discover(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(codes(Advise(wired, "x.test", nil)), "vite-default-port") {
+		t.Fatal("VITE_PORT wired into the Vite config sets the port, so no advisory")
+	}
+
+	sail, err := Discover(memReader{
+		".env":               "VITE_PORT=5180\n",
+		"docker-compose.yml": "services:\n  laravel.test:\n    image: sail-8.3/app\n    ports:\n      - '${APP_PORT:-80}:80'\n      - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'\n",
+		"package.json":       `{"devDependencies":{"vite":"^5"}}`,
+		"vite.config.js":     "export default defineConfig({})",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(codes(Advise(sail, "x.test", nil)), "vite-default-port") {
+		t.Fatal("Sail honours VITE_PORT from .env, so no advisory")
+	}
+}

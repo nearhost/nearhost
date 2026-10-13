@@ -128,14 +128,17 @@ func assignWeb(routes []Candidate, res *Result) []Candidate {
 	}
 	if pick < 0 && res.Vite.Port > 0 {
 		for i, c := range routes {
-			if c.Port == res.Vite.Port {
+			if c.Port == res.Vite.Port && c.Role != config.RoleLoopback {
 				pick = i
 				break
 			}
 		}
 	}
-	if pick < 0 && len(routes) == 1 && routes[0].Role != config.RoleLoopback {
-		pick = 0
+	if pick < 0 && len(routes) == 1 {
+		// A lone port is the web app only when nothing says what it is.
+		if _, known := sailVarByName(routes[0].Var); !known {
+			pick = 0
+		}
 	}
 	if pick >= 0 {
 		routes[pick].Role = config.RoleWeb
@@ -200,7 +203,10 @@ func Advise(res *Result, alias string, others []config.Project) []Advisory {
 	}
 
 	if res.HasVite {
-		if res.Vite.Port == 0 && strings.TrimSpace(res.Env["VITE_PORT"]) == "" {
+		// Sail passes VITE_PORT through; elsewhere it only counts when the
+		// Vite config reads it.
+		envPort := strings.TrimSpace(res.Env["VITE_PORT"]) != "" && (res.Sail || res.Vite.ReadsVitePort)
+		if res.Vite.Port == 0 && !envPort {
 			port := suggestPort(taken)
 			adv := Advisory{
 				Code:    "vite-default-port",
