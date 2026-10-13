@@ -24,6 +24,7 @@ func newHostsCmd() *cobra.Command {
 
 	apply := &cobra.Command{
 		Use:   "apply",
+		Args:  cobra.NoArgs,
 		Short: "Set the managed block to the aliases read from stdin (one per line)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var aliases []string
@@ -42,6 +43,7 @@ func newHostsCmd() *cobra.Command {
 
 	clean := &cobra.Command{
 		Use:   "clean",
+		Args:  cobra.NoArgs,
 		Short: "Remove the managed block (prompts for sudo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			exe, err := os.Executable()

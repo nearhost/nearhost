@@ -95,9 +95,10 @@ func findBlock(lines []string) (start, end int) {
 	return start, -1
 }
 
+// isEntry reports whether line is a row nearhost would have written.
 func isEntry(line string) bool {
 	f := strings.Fields(line)
-	return len(f) == 2 && f[0] == "127.0.0.1"
+	return len(f) == 2 && f[0] == "127.0.0.1" && validAlias(f[1])
 }
 
 // unchanged reports whether updated differs from existing at most by a

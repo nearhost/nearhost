@@ -218,3 +218,14 @@ func TestApplyAndEnsureRejectInvalidWithoutWriting(t *testing.T) {
 		t.Fatalf("file modified:\n%s", data)
 	}
 }
+
+func TestRewriteUnterminatedBlockKeepsForeignLoopbackEntries(t *testing.T) {
+	existing := "# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 localhost\n127.0.0.1 b.test\n"
+	got, err := Rewrite(existing, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "127.0.0.1 localhost\n127.0.0.1 b.test\n"; got != want {
+		t.Fatalf("only .test entries directly after the marker belong to the block:\n%q\nwant\n%q", got, want)
+	}
+}

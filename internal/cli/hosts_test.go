@@ -67,3 +67,26 @@ func TestHostsApplyRejectsInvalidAliasAndWritesNothing(t *testing.T) {
 		t.Fatalf("file modified:\n%s", data)
 	}
 }
+
+func TestHostsSubcommandsRejectPositionalArguments(t *testing.T) {
+	orig := newSudoApplier
+	t.Cleanup(func() { newSudoApplier = orig })
+	newSudoApplier = func(exe, p string) hosts.Applier {
+		return func(aliases []string) error { return hosts.Apply(p, aliases) }
+	}
+	for _, sub := range []string{"apply", "clean"} {
+		path := filepath.Join(t.TempDir(), "hosts")
+		content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n# nearhost:end\n"
+		os.WriteFile(path, []byte(content), 0o644)
+		root := NewRoot()
+		root.SetIn(strings.NewReader(""))
+		root.SetOut(&bytes.Buffer{})
+		root.SetArgs([]string{"hosts", sub, "--file", path, "/tmp/other-hosts"})
+		if err := root.Execute(); err == nil {
+			t.Errorf("hosts %s: expected an error for a positional argument", sub)
+		}
+		if data, _ := os.ReadFile(path); string(data) != content {
+			t.Errorf("hosts %s: file modified:\n%s", sub, data)
+		}
+	}
+}
