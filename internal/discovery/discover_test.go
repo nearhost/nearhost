@@ -229,3 +229,33 @@ func TestAdviseAppURLMessageUsesTrimmedValue(t *testing.T) {
 		t.Fatalf("unexpected: %+v", advs)
 	}
 }
+
+func TestAdviseViteDefaultPortPlainVite(t *testing.T) {
+	res, err := Discover(memReader{
+		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
+		"vite.config.ts": "export default defineConfig({ server: { allowedHosts: ['x.test'] } })",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
+		t.Fatalf("plain Vite without a port should get vite-default-port, got %s", codes(Advise(res, "x.test", nil)))
+	}
+}
+
+func TestAdviseNoViteDefaultPortWhenConfigSetsPort(t *testing.T) {
+	res, err := Discover(memReader{
+		"docker-compose.yml": "services:\n  laravel.test:\n    image: sail-8.3/app\n    ports:\n      - '${APP_PORT:-80}:80'\n",
+		"package.json":       `{"devDependencies":{"vite":"^5"}}`,
+		"vite.config.js":     "export default { server: { port: 5199 } }",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Sail {
+		t.Fatal("fixture should be Sail")
+	}
+	if strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
+		t.Fatal("server.port is set, so no vite-default-port advisory")
+	}
+}

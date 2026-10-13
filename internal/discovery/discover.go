@@ -200,10 +200,10 @@ func Advise(res *Result, alias string, others []config.Project) []Advisory {
 	}
 
 	if res.HasVite {
-		if res.Sail && strings.TrimSpace(res.Env["VITE_PORT"]) == "" {
+		if res.Vite.Port == 0 && strings.TrimSpace(res.Env["VITE_PORT"]) == "" {
 			advs = append(advs, Advisory{
 				Code:    "vite-default-port",
-				Message: "Vite will use the default port 5173, which every other Sail project also uses. Set VITE_PORT in .env so projects can run side by side.",
+				Message: "Vite will use the default port 5173, which other Vite projects also use. Set VITE_PORT in .env (Sail) or server.port in the Vite config so projects can run side by side.",
 				Snippet: fmt.Sprintf("VITE_PORT=%d", suggestPort(taken)),
 			})
 		}
