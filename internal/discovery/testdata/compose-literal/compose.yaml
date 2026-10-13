@@ -1,0 +1,18 @@
+services:
+  web:
+    image: nginx
+    ports:
+      - "8080:80"
+  api:
+    image: example/api
+    ports:
+      - "9000:9000"
+      - "5353:5353/udp"
+      - target: 443
+        published: 8443
+        protocol: tcp
+  worker:
+    image: example/worker
+    ports:
+      - "${UNSET_PORT}:7000"
+      - "7001"
