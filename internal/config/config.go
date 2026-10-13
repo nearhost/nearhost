@@ -2,6 +2,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -199,10 +200,11 @@ func (c *Config) Validate() error {
 		if p.Alias == "" {
 			return fmt.Errorf("project %q has no alias", p.Name)
 		}
-		if other, dup := aliases[p.Alias]; dup {
+		aliasKey := strings.ToLower(p.Alias) // hostnames are case-insensitive
+		if other, dup := aliases[aliasKey]; dup {
 			return fmt.Errorf("alias %q used by both %q and %q", p.Alias, other, p.Name)
 		}
-		aliases[p.Alias] = p.Name
+		aliases[aliasKey] = p.Name
 
 		webCount := 0
 		for _, r := range p.Routes {
@@ -233,13 +235,22 @@ func (c *Config) Validate() error {
 
 var nonAlias = regexp.MustCompile(`[^a-z0-9]+`)
 
-// AliasFor derives a .test hostname from a project name.
+// maxLabel is the longest DNS label.
+const maxLabel = 63
+
+// AliasFor derives a .test hostname from a project name. A slug longer than
+// one DNS label is cut short and given a hash suffix so distinct names stay
+// distinct.
 func AliasFor(name string) string {
 	s := strings.ToLower(strings.TrimSpace(name))
 	s = nonAlias.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
 		s = "project"
+	}
+	if len(s) > maxLabel {
+		sum := fmt.Sprintf("%x", sha256.Sum256([]byte(s)))[:8]
+		s = strings.TrimRight(s[:maxLabel-len(sum)-1], "-") + "-" + sum
 	}
 	return s + ".test"
 }

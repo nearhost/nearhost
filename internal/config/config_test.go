@@ -237,3 +237,44 @@ func TestSaveIsAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestPathsIgnoreRelativeXDGConfigHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative/xdg")
+	home, _ := os.UserHomeDir()
+	d, err := Dir()
+	if err != nil || d != filepath.Join(home, ".config", "nearhost") {
+		t.Fatalf("Dir = %q, %v", d, err)
+	}
+}
+
+func TestAliasForKeepsLabelWithinDNSLimit(t *testing.T) {
+	long := strings.Repeat("a", 70)
+	a, b := AliasFor(long+"-one"), AliasFor(long+"-two")
+	for _, alias := range []string{a, b} {
+		label := strings.TrimSuffix(alias, ".test")
+		if len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			t.Fatalf("label %q (%d chars) is not a valid DNS label", label, len(label))
+		}
+	}
+	if a == b {
+		t.Fatalf("distinct long names share alias %q", a)
+	}
+	if AliasFor(long+"-one") != a {
+		t.Fatal("alias should be stable for the same name")
+	}
+	exact := strings.Repeat("b", 63)
+	if got := AliasFor(exact); got != exact+".test" {
+		t.Fatalf("a 63 character name should be kept whole, got %q", got)
+	}
+}
+
+func TestValidateRejectsAliasesDifferingOnlyByCase(t *testing.T) {
+	c := sample()
+	p := c.Projects[0]
+	p.Name, p.Alias, p.Enabled = "other", "MyApp.test", false
+	c.Projects = append(c.Projects, p)
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "alias") {
+		t.Fatalf("expected alias error, got %v", err)
+	}
+}

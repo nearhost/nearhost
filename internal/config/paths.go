@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 )
 
-// Dir is the nearhost configuration directory.
+// Dir is the nearhost configuration directory. A relative XDG_CONFIG_HOME is
+// ignored, as the XDG base directory specification requires.
 func Dir() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "nearhost"), nil
 	}
 	home, err := os.UserHomeDir()
