@@ -171,6 +171,9 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 	}{
 		{"no projects", &config.Config{}, "", nil, []string{"no projects to start", "nearhost add <path>"}},
 		{"none enabled", &config.Config{Projects: []config.Project{localProject("off", 8000, false)}}, "", nil, []string{"no enabled projects", "nearhost up off"}},
+		{"none enabled, a name of two words", &config.Config{Projects: []config.Project{{
+			Name: "my app", Server: config.LocalServer, Path: "/tmp/my app", Alias: "my-app.test", Routes: []config.Route{{Port: 8000, Role: config.RoleWeb}},
+		}}}, "", nil, []string{"no enabled projects", "`nearhost up 'my app'`"}},
 		{"unknown name", &config.Config{Projects: []config.Project{web}}, "", []string{"web", "nope"}, []string{`unknown project "nope"`, "nearhost ls"}},
 		{"invalid yaml", nil, "projects: [oops\n", nil, []string{"parse", "config.yaml"}},
 		{"invalid config", &config.Config{Projects: []config.Project{web, dup}}, "", nil, []string{"config.yaml", "alias", `"web"`, `"dup"`}},

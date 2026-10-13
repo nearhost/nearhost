@@ -247,3 +247,23 @@ func TestAddHelpShowsDisabledAsASwitch(t *testing.T) {
 	}
 	wantContains(t, out, "      --disabled        ", "      --web int         ", "      --server string   ")
 }
+
+// The hint is a command to copy: a name that is not one plain word is quoted,
+// and one that starts with a dash is kept from reading as a flag.
+func TestAddQuotesTheProjectNameInTheStartHint(t *testing.T) {
+	for name, want := range map[string]string{
+		"my app":  "Start it with `nearhost up 'my app'`.\n",
+		"it's":    `Start it with ` + "`" + `nearhost up 'it'\''s'` + "`.\n",
+		"-x":      "Start it with `nearhost up -- -x`.\n",
+		"shop.v2": "Start it with `nearhost up shop.v2`.\n",
+	} {
+		cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+		out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name="+name, "--alias", "x.test", "--disabled")
+		if err != nil {
+			t.Fatalf("add %q: %v\n%s", name, err, out)
+		}
+		if !strings.HasSuffix(out, want) {
+			t.Errorf("add %q printed\n%s\nwant it to end with %s", name, out, want)
+		}
+	}
+}

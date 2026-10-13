@@ -108,7 +108,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	fmt.Fprintf(out, "\nAdded %s on %s at https://%s\n", project.Name, project.Server, project.Alias)
 	start := "nearhost up"
 	if !project.Enabled {
-		start += " " + project.Name
+		start = upCommand(project.Name)
 	}
 	_, err = fmt.Fprintf(out, "Start it with `%s`.\n", start)
 	return err
