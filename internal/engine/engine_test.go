@@ -1131,7 +1131,7 @@ func TestMasterDroppingBeforeForwardsAreAdded(t *testing.T) {
 			// The hosts step sits between connecting and adding forwards:
 			// lose the master exactly there.
 			h = buildHarness(t, remoteConfig(lb), func(o *Options) {
-				o.EnsureHosts = func([]string) error {
+				o.EnsureHosts = func(context.Context, []string) error {
 					h.dropMaster(t, "mini")
 					testutil.WaitUntil(t, 10*time.Second, func() bool {
 						st, _ := h.eng.ServerStatus("mini")
@@ -1261,13 +1261,88 @@ func TestHostsFailureLeavesProjectStopped(t *testing.T) {
 	}
 }
 
+func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
+	for _, how := range []string{"StopProject", "Shutdown"} {
+		t.Run(how, func(t *testing.T) {
+			cfg := &config.Config{Projects: []config.Project{
+				localProject("alpha", upstream(t, "alpha")),
+				localProject("beta", upstream(t, "beta")),
+			}}
+			entered := make(chan struct{}, 8)
+			h := buildHarness(t, cfg, func(o *Options) {
+				// Like sudo waiting for a password: it only ends when told to.
+				o.EnsureHosts = func(ctx context.Context, _ []string) error {
+					entered <- struct{}{}
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			})
+			if err := h.eng.Start(bg); err != nil {
+				t.Fatal(err)
+			}
+			alpha, beta := make(chan error, 1), make(chan error, 1)
+			go func() { alpha <- h.eng.StartProject(bg, "alpha") }()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the hosts update never began")
+			}
+			// beta waits for its turn behind alpha's update.
+			go func() { beta <- h.eng.StartProject(bg, "beta") }()
+			testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.Status("beta").State == StateStarting }, "beta to be starting")
+
+			done := make(chan error, 1)
+			go func() {
+				if how == "Shutdown" {
+					done <- h.eng.Shutdown(bg)
+					return
+				}
+				// The one that waits for its turn first: it must not have to
+				// wait for the other's update to end.
+				if err := h.eng.StopProject(bg, "beta"); err != nil {
+					done <- err
+					return
+				}
+				done <- h.eng.StopProject(bg, "alpha")
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(15 * time.Second):
+				t.Fatalf("%s hung behind a hosts update that was waiting", how)
+			}
+			for name, started := range map[string]chan error{"alpha": alpha, "beta": beta} {
+				select {
+				case err := <-started:
+					if err == nil {
+						t.Fatalf("the interrupted start of %s must report an error", name)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatalf("the start of %s never returned", name)
+				}
+				if st := h.eng.Status(name); st.State != StateStopped || st.Message != "" {
+					t.Fatalf("%s = %+v", name, st)
+				}
+			}
+			if len(entered) != 0 {
+				t.Fatal("a hosts update began for a start that had already been interrupted")
+			}
+			if len(h.eng.Sites()) != 0 {
+				t.Fatalf("Sites = %+v", h.eng.Sites())
+			}
+		})
+	}
+}
+
 func TestInvalidAliasFailsOnlyItsOwnProject(t *testing.T) {
 	bad := localProject("bad", upstream(t, "bad"))
 	bad.Alias = "Bad_Alias.dev"
 	cfg := &config.Config{Projects: []config.Project{bad, localProject("web", upstream(t, "ok"))}}
 	hostsFile := filepath.Join(t.TempDir(), "hosts")
 	h := buildHarness(t, cfg, func(o *Options) {
-		o.EnsureHosts = func(aliases []string) error {
+		o.EnsureHosts = func(_ context.Context, aliases []string) error {
 			_, err := hosts.Ensure(hostsFile, aliases, func(a []string) error { return hosts.Apply(hostsFile, a) })
 			return err
 		}
@@ -1417,7 +1492,7 @@ func TestShutdownStopsEverythingAndKeepsHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := buildHarness(t, cfg, func(o *Options) {
-		o.EnsureHosts = func(aliases []string) error {
+		o.EnsureHosts = func(_ context.Context, aliases []string) error {
 			_, err := hosts.Ensure(hostsFile, aliases, func(a []string) error { return hosts.Apply(hostsFile, a) })
 			return err
 		}

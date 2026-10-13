@@ -1,6 +1,8 @@
 package hosts
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const base = "127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1             localhost\n"
@@ -157,7 +160,7 @@ func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 }
 
 func TestSudoCommandCarriesFilePathAndAliases(t *testing.T) {
-	cmd := sudoCommand("/bin/nearhost", "/tmp/other-hosts", []string{"a.test", "b.test"})
+	cmd := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", []string{"a.test", "b.test"})
 	args := strings.Join(cmd.Args, " ")
 	if !strings.HasSuffix(args, "/bin/nearhost hosts apply --file /tmp/other-hosts") {
 		t.Fatalf("args: %s", args)
@@ -227,5 +230,63 @@ func TestRewriteUnterminatedBlockKeepsForeignLoopbackEntries(t *testing.T) {
 	}
 	if want := "127.0.0.1 localhost\n127.0.0.1 b.test\n"; got != want {
 		t.Fatalf("only .test entries directly after the marker belong to the block:\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestSudoApplierContextStopsSudoWhenCancelled(t *testing.T) {
+	// A stand-in for sudo that, like sudo at its password prompt, does not
+	// finish by itself.
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- SudoApplierContext(ctx, "/bin/nearhost", filepath.Join(dir, "hosts"))([]string{"a.test"})
+	}()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stand-in for sudo never started")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("applier returned %v, want the context's error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the applier kept waiting for sudo after its context was cancelled")
+	}
+}
+
+func TestSudoApplierContextDoesNotStartSudoWhenAlreadyCancelled(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := SudoApplierContext(ctx, "/bin/nearhost", filepath.Join(dir, "hosts"))([]string{"a.test"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("applier returned %v, want the context's error", err)
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Fatal("sudo was started for a cancelled context")
 	}
 }

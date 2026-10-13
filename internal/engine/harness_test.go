@@ -113,7 +113,7 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 		SSHEnv:      append([]string{"FAKE_SSH_LOG=" + h.sshLog}, sshEnv...),
 		HTTPSPort:   h.httpsPort,
 		HTTPPort:    h.httpPort,
-		EnsureHosts: func(aliases []string) error {
+		EnsureHosts: func(_ context.Context, aliases []string) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.ensured = append(h.ensured, append([]string(nil), aliases...))

@@ -2,6 +2,7 @@
 package hosts
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const (
@@ -210,21 +213,45 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 	return true, nil
 }
 
+// sudoPath is the sudo binary. Tests replace it.
+var sudoPath = "sudo"
+
+// sudoStopDelay is how long sudo gets to leave after it was asked to
+// terminate before it is killed.
+const sudoStopDelay = 2 * time.Second
+
 // SudoApplier runs `sudo <executable> hosts apply --file <path>` with aliases on stdin.
+// Nothing interrupts it while sudo waits for a password; a caller that must
+// be able to give up uses SudoApplierContext.
 func SudoApplier(executable, path string) Applier {
+	return SudoApplierContext(context.Background(), executable, path)
+}
+
+// SudoApplierContext is SudoApplier bound to ctx. When ctx ends while sudo
+// runs, which includes sudo waiting for a password, sudo is asked to
+// terminate (and killed if it stays), and the applier returns ctx's error.
+// When ctx has already ended sudo is not started.
+func SudoApplierContext(ctx context.Context, executable, path string) Applier {
 	return func(aliases []string) error {
-		cmd := sudoCommand(executable, path, aliases)
+		cmd := sudoCommand(ctx, executable, path, aliases)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+			}
 			return fmt.Errorf("sudo hosts apply: %w", err)
 		}
 		return nil
 	}
 }
 
-func sudoCommand(executable, path string, aliases []string) *exec.Cmd {
-	cmd := exec.Command("sudo", "-p", "nearhost needs your password to update /etc/hosts: ", executable, "hosts", "apply", "--file", path)
+func sudoCommand(ctx context.Context, executable, path string, aliases []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, sudoPath, "-p", "nearhost needs your password to update /etc/hosts: ", executable, "hosts", "apply", "--file", path)
 	cmd.Stdin = strings.NewReader(strings.Join(aliases, "\n") + "\n")
+	// Terminate rather than kill: at its password prompt sudo then puts the
+	// terminal back the way it was.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = sudoStopDelay
 	return cmd
 }

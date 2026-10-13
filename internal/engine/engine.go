@@ -38,8 +38,11 @@ type Options struct {
 	HTTPPort    int      // 0 means 80
 	// EnsureHosts makes every given alias resolve to 127.0.0.1. It gets the
 	// valid aliases of all configured projects, sorted, each time a project
-	// starts; calls are never concurrent. nil disables hosts management.
-	EnsureHosts func(aliases []string) error
+	// starts; calls are never concurrent. ctx ends when that start is
+	// interrupted (StopProject, Shutdown, or the context given to
+	// StartProject); the function must then give up and return, including
+	// when it is waiting for a password. nil disables hosts management.
+	EnsureHosts func(ctx context.Context, aliases []string) error
 }
 
 // ProjectStatus is a snapshot of one project.
@@ -60,7 +63,7 @@ type ProjectStatus struct {
 // Locks are taken in this order; a later one may be taken while holding an
 // earlier one, never the reverse:
 //
-//	lifeMu -> projectRun.op -> serverConn.ensure, hostsMu, applyMu -> mu -> Bus.mu
+//	lifeMu -> projectRun.op -> serverConn.ensure, hostsTurn, applyMu -> mu -> Bus.mu
 //
 // mu guards all state and is the only lock readers (Status, Sites,
 // ServerStatus) take. It is never held across anything that can block: no ssh
@@ -71,10 +74,12 @@ type ProjectStatus struct {
 // The other locks exist to serialise one kind of slow operation each, and are
 // held across it on purpose: lifeMu covers Start and Shutdown, a project's op
 // covers its start and stop, a server's ensure covers (re)starting its
-// session, hostsMu covers a hosts update, and applyMu covers changing the set
-// of published sites together with applying it to the proxy, so the proxy
-// always ends up with the latest set. serverConn.ensure, hostsMu and applyMu
-// are never held together.
+// session, hostsTurn covers a hosts update, and applyMu covers changing the
+// set of published sites together with applying it to the proxy, so the proxy
+// always ends up with the latest set. serverConn.ensure, hostsTurn and
+// applyMu are never held together. hostsTurn is a channel rather than a
+// mutex because a hosts update can wait for a person: a start that is
+// interrupted while it waits for its turn gives up instead of queueing.
 //
 // A session calls back into the engine through Logf, from its supervisor and
 // from AddForward and CancelForward, in each case while it may hold its
@@ -109,9 +114,9 @@ type Engine struct {
 	stop    context.CancelFunc
 	lookups sync.WaitGroup
 
-	lifeMu  sync.Mutex
-	hostsMu sync.Mutex
-	applyMu sync.Mutex
+	lifeMu    sync.Mutex
+	hostsTurn chan struct{} // holds one token while a hosts update runs
+	applyMu   sync.Mutex
 
 	mu      sync.Mutex
 	started bool
@@ -133,6 +138,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		byAlias:     map[string]string{},
 		connectWait: 30 * time.Second,
 		holderOf:    portHolder,
+		hostsTurn:   make(chan struct{}, 1),
 		servers:     map[string]*serverConn{},
 		ports:       map[int]string{},
 	}
@@ -278,6 +284,14 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	}
 	e.closed = true // from here no project start gets past its first check
 	started := e.started
+	// Interrupt every start now rather than one by one as the projects are
+	// stopped below, so that none goes on to a hosts update (and a password
+	// prompt) in the meantime.
+	for _, run := range e.runs {
+		if run.cancel != nil {
+			run.cancel()
+		}
+	}
 	e.mu.Unlock()
 	e.stop() // no holder lookup begins once closed is set; end the running ones
 

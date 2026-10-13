@@ -198,7 +198,7 @@ func (e *Engine) bringUp(ctx context.Context, p *config.Project, run *projectRun
 	if err := ctx.Err(); err != nil {
 		return StateError, err
 	}
-	if err := e.ensureHosts(); err != nil {
+	if err := e.ensureHosts(ctx); err != nil {
 		return StateStopped, fmt.Errorf("alias %s is not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Alias, err)
 	}
 
@@ -241,14 +241,22 @@ func (e *Engine) waitConnected(ctx context.Context, sess *transport.Session) err
 }
 
 // ensureHosts asks for every valid alias to resolve. Calls are serialised so
-// two starting projects never prompt for a password at the same time.
-func (e *Engine) ensureHosts() error {
+// two starting projects never prompt for a password at the same time. Both
+// the wait for the turn and the update itself end when ctx does.
+func (e *Engine) ensureHosts(ctx context.Context) error {
 	if e.opts.EnsureHosts == nil {
 		return nil
 	}
-	e.hostsMu.Lock()
-	defer e.hostsMu.Unlock()
-	return e.opts.EnsureHosts(append([]string(nil), e.aliases...))
+	select {
+	case e.hostsTurn <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-e.hostsTurn }()
+	if err := ctx.Err(); err != nil {
+		return err // interrupted just as its turn came
+	}
+	return e.opts.EnsureHosts(ctx, append([]string(nil), e.aliases...))
 }
 
 // claimPort reserves a local port for a forward of run. It returns the name
