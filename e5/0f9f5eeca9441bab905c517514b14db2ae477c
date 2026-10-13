@@ -1,0 +1,21 @@
+internal/testutil/testutil_test.go
+  s_67428b1da1b8e6::t_6fc5434e8d506a 34-38,40-42,46-48,50-52,54-60
+internal/testutil/testutil.go
+  s_67428b1da1b8e6::t_6fc5434e8d506a 73-76,79-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e50f9f5eeca9441bab905c517514b14db2ae477c",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
