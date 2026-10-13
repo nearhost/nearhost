@@ -38,7 +38,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("config", "", "config file (default $XDG_CONFIG_HOME/nearhost/config.yaml)")
+	root.PersistentFlags().String("config", "", "config file (default $XDG_CONFIG_HOME/nearhost/config.yaml, or ~/.config/nearhost/config.yaml when XDG_CONFIG_HOME is not an absolute path)")
 	return root
 }
 
