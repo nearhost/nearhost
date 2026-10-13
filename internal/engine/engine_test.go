@@ -811,6 +811,34 @@ func TestShutdownInterruptsAStartInProgress(t *testing.T) {
 	}
 }
 
+func TestShutdownLeavesAProxyTakenOverByAnotherEngine(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}
+	old := newHarness(t, cfg)
+	h := newHarness(t, cfg) // takes over the process-wide proxy and its log sink
+	events, unsub := h.eng.Events().Subscribe(256)
+	defer unsub()
+	if err := old.eng.Shutdown(bg); err != nil {
+		t.Fatalf("Shutdown of the replaced engine: %v", err)
+	}
+	if err := h.eng.StartProject(bg, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := h.getEventually(t, "web.test", "/hello"); code != 200 {
+		t.Fatalf("status %d through the newer engine's proxy", code)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project == "web" && strings.Contains(ev.Message, "/hello") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the newer engine lost its proxy log lines when the older one shut down")
+		}
+	}
+}
+
 func TestProjectsBeforeStartAreRefused(t *testing.T) {
 	h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, nil)
 	if err := h.eng.StartProject(bg, "web"); err == nil {
