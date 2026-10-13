@@ -103,12 +103,13 @@ type ForwardState struct {
 	Applied bool
 }
 
-// ForwardStates lists desired forwards sorted by local port, each with
-// whether it is applied on the current master. While the session is connected
-// every forward is settled: the status only becomes connected after the
-// re-apply pass, so a forward that is not applied then has failed, and stays
-// that way until the next reconnect.
-func (s *Session) ForwardStates() []ForwardState {
+// ForwardStates returns the connection status together with the desired
+// forwards, sorted by local port, each with whether it is applied on the
+// current master. Both come from one consistent snapshot. When the status is
+// connected every forward is settled: the status only becomes connected after
+// the re-apply pass, so a forward that is not applied then has failed, and
+// stays that way until the next reconnect.
+func (s *Session) ForwardStates() (Status, []ForwardState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]ForwardState, 0, len(s.forwards))
@@ -120,7 +121,7 @@ func (s *Session) ForwardStates() []ForwardState {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
-	return out
+	return s.status, out
 }
 
 // controlForward runs one `ssh -O forward|cancel`. It holds no session lock.

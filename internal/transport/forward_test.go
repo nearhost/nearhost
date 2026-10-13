@@ -188,9 +188,12 @@ func TestCancelForwardWhileDisconnectedForgetsWithoutSSH(t *testing.T) {
 // applied reports the Applied flag of the single tracked forward 8080:80.
 func applied(t *testing.T, s *Session) bool {
 	t.Helper()
-	st := s.ForwardStates()
+	status, st := s.ForwardStates()
 	if len(st) != 1 || st[0].Local != 8080 || st[0].Remote != 80 {
 		t.Fatalf("ForwardStates = %+v, want the one forward 8080:80", st)
+	}
+	if st[0].Applied && status != StatusConnected {
+		t.Fatalf("forward reported applied with status %s", status)
 	}
 	return st[0].Applied
 }
@@ -198,8 +201,8 @@ func applied(t *testing.T, s *Session) bool {
 func TestForwardStatesAppliedAfterAdd(t *testing.T) {
 	s, _ := newFakeSession(t)
 	connected(t, s)
-	if len(s.ForwardStates()) != 0 {
-		t.Fatalf("ForwardStates = %+v before any forward", s.ForwardStates())
+	if status, st := s.ForwardStates(); status != StatusConnected || len(st) != 0 {
+		t.Fatalf("ForwardStates = %s %+v before any forward", status, st)
 	}
 	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
 		t.Fatal(err)
@@ -210,6 +213,9 @@ func TestForwardStatesAppliedAfterAdd(t *testing.T) {
 	s.Stop()
 	if applied(t, s) {
 		t.Fatal("no forward is applied on a stopped session")
+	}
+	if status, _ := s.ForwardStates(); status != StatusDisconnected {
+		t.Fatalf("status in the snapshot = %s after Stop", status)
 	}
 }
 
