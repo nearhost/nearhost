@@ -46,6 +46,13 @@ type Session struct {
 	SSHPath string   // ssh binary, default "ssh"
 	Env     []string // extra environment for ssh (tests)
 	Logf    func(format string, args ...any)
+	// Foreground keeps the master and the SFTP process in this process's
+	// group, so the terminal's Ctrl-C reaches them as it reaches nearhost.
+	// By default each runs in a process group of its own and only this
+	// session ends it; that is for a caller that handles interrupts and
+	// stops the session itself. A caller that simply dies on Ctrl-C sets
+	// Foreground, or its master would outlive it.
+	Foreground bool
 
 	runDir          string
 	pollInterval    time.Duration
@@ -113,6 +120,19 @@ func socketName(name string) string {
 func (s *Session) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, s.SSHPath, args...)
 	cmd.Env = append(os.Environ(), s.Env...)
+	return cmd
+}
+
+// longLived is command for the two ssh processes that stay up: the master and
+// the SFTP subsystem. Unless the session is a foreground one they get a
+// process group of their own, so a Ctrl-C in the terminal reaches nearhost
+// only and the session ends them in its own time (Stop, or Close for SFTP).
+// The check and the control commands are short and stay in nearhost's group.
+func (s *Session) longLived(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := s.command(ctx, args...)
+	if !s.Foreground {
+		ownGroup(cmd)
+	}
 	return cmd
 }
 
@@ -274,7 +294,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		}
 		s.setStatus(StatusConnecting, "")
 		s.cleanStaleSocket(ctx)
-		master := s.command(context.Background(), // not tied to ctx: we stop it ourselves
+		master := s.longLived(context.Background(), // not tied to ctx: we stop it ourselves
 			"-N", "-M", "-S", s.SocketPath(),
 			"-o", "BatchMode=yes",
 			"-o", "ExitOnForwardFailure=yes",

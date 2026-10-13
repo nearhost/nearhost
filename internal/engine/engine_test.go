@@ -1610,6 +1610,32 @@ func TestShutdownReturnsTeardownErrorsAndStillStopsTheRest(t *testing.T) {
 	h.assertNothingLeft(t)
 }
 
+// The masters run outside nearhost's process group, so nothing but the engine
+// ends them. A shutdown that is itself cut short (a second Ctrl-C) may fail to
+// cancel forwards, but it must not leave a master behind.
+func TestShutdownWithAnEndedContextStillEndsEveryMaster(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	ended, cancel := context.WithCancel(bg)
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.eng.Shutdown(ended) }()
+	select {
+	case <-done: // what it returns is the forwards it could not cancel
+	case <-time.After(15 * time.Second):
+		t.Fatal("Shutdown with an ended context did not return")
+	}
+	if !strings.Contains(h.log(), "-O exit mini") {
+		t.Fatalf("the master was not asked to exit:\n%s", h.log())
+	}
+	if st, _ := h.eng.ServerStatus("mini"); st != transport.StatusDisconnected {
+		t.Fatalf("server = %s", st)
+	}
+	h.assertNothingLeft(t)
+}
+
 func TestShutdownInterruptsAStartInProgress(t *testing.T) {
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_HANG=1")
 	started := make(chan error, 1)

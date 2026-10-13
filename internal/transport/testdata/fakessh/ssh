@@ -2,6 +2,10 @@
 # Fake OpenSSH client for nearhost tests. Records argv to $FAKE_SSH_LOG and
 # simulates the flags nearhost uses. Behaviour is controlled by FAKE_SSH_*.
 printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
+# $FAKE_SSH_PGID_LOG gets one line per invocation: this process's group, then argv.
+if [ -n "$FAKE_SSH_PGID_LOG" ]; then
+  printf '%s %s\n' "$(ps -o pgid= -p $$ | tr -d ' ')" "$*" >> "$FAKE_SSH_PGID_LOG"
+fi
 sock=""; mode=""; prev=""
 for a in "$@"; do
   case "$prev" in

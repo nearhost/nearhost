@@ -27,7 +27,7 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 	// A session opened through the master also asks it for the forwards in
 	// the user's configuration unless they are cleared, and with ControlMaster
 	// set there it could take the master's place on a socket that has died.
-	cmd := s.command(context.Background(), "-S", s.SocketPath(), "-o", "BatchMode=yes",
+	cmd := s.longLived(context.Background(), "-S", s.SocketPath(), "-o", "BatchMode=yes",
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
