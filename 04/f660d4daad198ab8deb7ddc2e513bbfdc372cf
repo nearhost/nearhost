@@ -1,0 +1,27 @@
+internal/engine/teardown.go
+  s_67428b1da1b8e6::t_1e247f0ea5c723 1-110
+internal/engine/project.go
+  s_67428b1da1b8e6::t_573b585a3323ba 34-35
+  s_67428b1da1b8e6::t_ce0df6ab5adb1c 129-134
+internal/engine/state.go
+  s_67428b1da1b8e6::t_ce0df6ab5adb1c 1-130
+internal/engine/engine_test.go
+  s_67428b1da1b8e6::t_1e247f0ea5c723 785-831
+  s_67428b1da1b8e6::t_4fef65390cd857 624-763
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04f660d4daad198ab8deb7ddc2e513bbfdc372cf",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
