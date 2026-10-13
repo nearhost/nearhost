@@ -195,9 +195,9 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 			}
 			b := upBackend{
 				ensureHosts: func(context.Context, []string) error { touched("the hosts function"); return nil },
-				notify: func(ctx context.Context) (context.Context, context.CancelFunc) {
+				notify: func(ctx context.Context) (context.Context, <-chan struct{}, func()) {
 					touched("signal handling")
-					return context.WithCancel(ctx)
+					return ctx, nil, func() {}
 				},
 			}
 			out, err := execute(t, newUpCmd(b), append([]string{"up"}, tc.args...)...)

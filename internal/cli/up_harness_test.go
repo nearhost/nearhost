@@ -35,9 +35,9 @@ type upRun struct {
 	// a test says otherwise.
 	trust *fakeTrust
 
-	mu       sync.Mutex
-	ensured  [][]string
-	notified []context.CancelFunc // one per context the command asked notify for
+	mu      sync.Mutex
+	ensured [][]string
+	again   chan struct{} // closed for the second signal; set once up listens
 
 	out    syncBuffer
 	cancel context.CancelFunc
@@ -68,14 +68,15 @@ func (u *upRun) backend() upBackend {
 			return hostsErr
 		},
 		trust: u.trust.backend(),
-		// The first context stands for the first signal and ends with the
-		// command's own; each later one is ended by interruptAgain.
-		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
+		// The command's own context stands for the first signal;
+		// interruptAgain sends the second.
+		notify: func(parent context.Context) (context.Context, <-chan struct{}, func()) {
 			ctx, cancel := context.WithCancel(parent)
+			again := make(chan struct{})
 			u.mu.Lock()
-			u.notified = append(u.notified, cancel)
+			u.again = again
 			u.mu.Unlock()
-			return ctx, cancel
+			return ctx, again, cancel
 		},
 	}
 }
@@ -133,17 +134,14 @@ func (u *upRun) stop() error {
 // interruptAgain stands for a second signal, sent while up is shutting down.
 func (u *upRun) interruptAgain() {
 	u.t.Helper()
-	var again context.CancelFunc
+	var again chan struct{}
 	testutil.WaitUntil(u.t, 10*time.Second, func() bool {
 		u.mu.Lock()
 		defer u.mu.Unlock()
-		if len(u.notified) < 2 {
-			return false
-		}
-		again = u.notified[1]
-		return true
-	}, "up to listen for a second signal")
-	again()
+		again = u.again
+		return again != nil
+	}, "up to listen for signals")
+	close(again)
 }
 
 // leftoverGoroutines returns the stacks of goroutines still running engine,

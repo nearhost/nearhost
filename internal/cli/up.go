@@ -34,11 +34,12 @@ type upBackend struct {
 	// ensureHosts makes the aliases resolve to this machine and gives up when
 	// ctx ends. It is not used with --no-hosts.
 	ensureHosts func(ctx context.Context, aliases []string) error
-	// notify returns a context that ends when the process is next asked to
-	// stop, and a function that releases whatever it holds. up calls it once
-	// to wait for the signal that starts the shutdown, and again for one
-	// that cuts the shutdown short.
-	notify func(parent context.Context) (context.Context, context.CancelFunc)
+	// notify listens, from the call until the release, for the signals that
+	// ask the process to stop. The context ends at the first of them (or
+	// with parent) and starts the shutdown; the channel is closed at the
+	// next one, which cuts the shutdown short. It is one subscription, so
+	// no signal falls between the two.
+	notify func(parent context.Context) (ctx context.Context, again <-chan struct{}, release func())
 }
 
 // systemUp is the production backend. Only NewRoot wires it in.
@@ -55,15 +56,50 @@ func systemUp() upBackend {
 			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.SudoApplierContext(ctx, exe, hosts.DefaultPath))
 			return err
 		},
-		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
-			// When the output is a pipe whose reader has gone (`up | tee`,
-			// then Ctrl-C), the next line written would end the process on
-			// the spot and leave the ssh masters running. Ignored, the write
-			// fails instead and the shutdown runs to its end. It stays
-			// ignored after the release: the last lines are written then.
-			signal.Ignore(syscall.SIGPIPE)
-			return signal.NotifyContext(parent, stopSignals()...)
-		},
+		notify: notifyStop,
+	}
+}
+
+// notifyStop is the notify of the production backend.
+func notifyStop(parent context.Context) (context.Context, <-chan struct{}, func()) {
+	// When the output is a pipe whose reader has gone (`up | tee`, then
+	// Ctrl-C), the next line written would end the process on the spot and
+	// leave the ssh masters running. Ignored, the write fails instead and
+	// the shutdown runs to its end. It stays ignored after the release: the
+	// last lines are written then.
+	signal.Ignore(syscall.SIGPIPE)
+	// While this is registered no stop signal ends the process, however many
+	// arrive: those beyond the second are dropped.
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, stopSignals()...)
+	ctx, cancel := context.WithCancel(parent)
+	again := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		select {
+		case <-sigs:
+			if ctx.Err() != nil { // the shutdown had begun; this one hurries it
+				close(again)
+				return
+			}
+			cancel()
+		case <-ctx.Done():
+		case <-released:
+			return
+		}
+		select {
+		case <-sigs:
+			close(again)
+		case <-released:
+		}
+	}()
+	var once sync.Once
+	return ctx, again, func() {
+		once.Do(func() {
+			signal.Stop(sigs)
+			close(released)
+			cancel()
+		})
 	}
 }
 
@@ -115,7 +151,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()
-	ctx, release := b.notify(cmd.Context())
+	ctx, again, release := b.notify(cmd.Context())
 	defer release()
 	if err := eng.Start(ctx); err != nil {
 		return err
@@ -171,11 +207,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	// A second signal must not end the process: the ssh masters are outside
 	// its process group and would be left running. It cuts the shutdown
 	// short instead; the engine then gives up on what it was waiting for and
-	// still ends every master. It is listened for before the first listener
-	// is released, so no signal falls in between.
-	again, releaseAgain := b.notify(context.Background())
-	defer releaseAgain()
-	release()
+	// still ends every master.
 	p.advise = false // what goes wrong while stopping is not for the user to fix
 	fmt.Fprintln(p.out, "shutting down")
 	stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -183,7 +215,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	stopped := make(chan error, 1)
 	go func() { stopped <- eng.Shutdown(stopCtx) }()
 	var stopErr error
-	hurry := again.Done()
+	hurry := again
 	for stopping := true; stopping; {
 		select {
 		case ev := <-events:
