@@ -305,7 +305,26 @@ func TestMasterDyingDuringReapplyIsNotReportedConnected(t *testing.T) {
 	if err := os.Remove(s.SocketPath()); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 10*time.Second, func() bool { return s.Launches() >= 3 && s.Status() == StatusConnected }, "the third master to connect")
+	// The status changes before the supervisor logs it, so the status alone
+	// does not say the line is there: wait for the supervisor to log the
+	// third master (the third "connecting") as connected.
+	thirdLogged := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		launches := 0
+		for _, l := range lines {
+			switch {
+			case l == "mini: connecting":
+				launches++
+			case l == "mini: connected" && launches >= 3:
+				return true
+			}
+		}
+		return false
+	}
+	waitFor(t, 10*time.Second, func() bool {
+		return s.Launches() >= 3 && s.Status() == StatusConnected && thirdLogged()
+	}, "the third master to connect and be logged")
 	if n := connectedLines(); n != 2 {
 		mu.Lock()
 		defer mu.Unlock()
