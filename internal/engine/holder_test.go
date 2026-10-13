@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,22 @@ func TestFindHolderFallsBackWhenToolsAreMissingSlowOrSilent(t *testing.T) {
 		parse: func(out string, port int) string { return "found " + strings.TrimSpace(out) }}
 	if got := findHolder([]holderTool{missing, silent, echo}, 5174, time.Second); got != "found 5174" {
 		t.Fatalf("findHolder = %q", got)
+	}
+}
+
+func TestFindHolderSharesOneDeadlineAcrossTools(t *testing.T) {
+	never := func(string, int) string {
+		t.Error("parser called for a tool that produced nothing")
+		return ""
+	}
+	marker := filepath.Join(t.TempDir(), "second-tool-ran")
+	slow := holderTool{name: "sleep", args: func(int) []string { return []string{"30"} }, parse: never}
+	second := holderTool{name: "touch", args: func(int) []string { return []string{marker} }, parse: never}
+	if got := findHolder([]holderTool{slow, second}, 5174, 300*time.Millisecond); got != "" {
+		t.Fatalf("findHolder = %q, want nothing", got)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a second tool was started after the first had used up the lookup's time")
 	}
 }
 

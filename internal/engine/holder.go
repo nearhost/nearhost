@@ -11,9 +11,14 @@ import (
 	"time"
 )
 
-// holderTimeout bounds one lookup tool. The lookup only adds detail to an
-// error that is reported anyway, so it gives up quickly.
+// holderTimeout bounds one lookup, however many tools it tries. The lookup
+// only adds detail to an error that is reported anyway, so it gives up
+// quickly.
 const holderTimeout = 2 * time.Second
+
+// holderGrace is how long a tool that was killed at the deadline may keep its
+// output pipe open before the lookup stops waiting for it.
+const holderGrace = 250 * time.Millisecond
 
 // holderTool is one way of asking the system which process listens on a port.
 type holderTool struct {
@@ -58,22 +63,24 @@ func (e *Engine) heldBy(port int) string {
 	return ""
 }
 
-// findHolder asks each tool in turn, giving each at most timeout, and returns
-// the first answer.
+// findHolder asks each tool in turn and returns the first answer. All tools
+// together get at most timeout: one that uses it up leaves none for the next.
 func findHolder(tools []holderTool, port int, timeout time.Duration) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	for _, tool := range tools {
+		if ctx.Err() != nil {
+			break
+		}
 		path, err := exec.LookPath(tool.name)
 		if err != nil {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		cmd := exec.CommandContext(ctx, path, tool.args(port)...)
-		cmd.WaitDelay = timeout // do not wait on a child that keeps the pipe open
+		cmd.WaitDelay = holderGrace // do not wait on a child that keeps the pipe open
 		// lsof exits non-zero when it finds nothing; what it printed decides.
 		out, _ := cmd.Output()
-		timedOut := ctx.Err() != nil
-		cancel()
-		if timedOut || len(out) == 0 {
+		if ctx.Err() != nil || len(out) == 0 {
 			continue
 		}
 		if holder := tool.parse(string(out), port); holder != "" {
