@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,9 +66,9 @@ type ProjectStatus struct {
 //
 // mu guards all state and is the only lock readers (Status, Sites,
 // ServerStatus) take. It is never held across anything that can block: no ssh
-// subprocess, proxy apply or hosts update runs under it. While holding it the
-// engine only publishes events (which never blocks) and reads a session's
-// status (a short mutex inside transport).
+// subprocess, proxy apply, hosts update or process lookup runs under it. While
+// holding it the engine only publishes events (which never blocks) and reads a
+// session's status and forward states (a short mutex inside transport).
 //
 // The other locks exist to serialise one kind of slow operation each, and are
 // held across it on purpose: lifeMu covers Start and Shutdown, a project's op
@@ -77,9 +78,15 @@ type ProjectStatus struct {
 // always ends up with the latest set. serverConn.ensure, hostsMu and applyMu
 // are never held together.
 //
-// A session calls back into the engine through Logf, sometimes while holding
-// its own forward lock. The callback takes only mu, and the engine never calls
-// a session method that runs ssh while holding mu, so the two cannot deadlock.
+// A session calls back into the engine through Logf, from its supervisor and
+// from AddForward and CancelForward, in each case while it may hold its
+// forward lock (fwdMu) but never its state lock. The callback (serverLog)
+// takes mu, reads the session's status and forward states, and between two
+// short holds of mu may look up the process holding a port; it holds no
+// engine lock during that lookup and never calls AddForward or CancelForward.
+// The engine in turn never calls a session method that runs ssh while holding
+// mu. So the only orders that exist are fwdMu -> mu -> session state lock, and
+// they cannot deadlock.
 type Engine struct {
 	cfg     *config.Config // private copy, never changed after New
 	opts    Options
@@ -335,8 +342,12 @@ func (e *Engine) Status(name string) ProjectStatus {
 	return ProjectStatus{State: st, Message: msg, Alias: run.alias, WebLocalPort: run.webLocal}
 }
 
-// effectiveLocked is the state to show for run: its own, or degraded when it
-// is running and its server's session is not connected.
+// effectiveLocked is the state to show for run. It is the recorded state,
+// except for a running project on a remote server: that is degraded while the
+// server's session is not connected, and in error while the session is
+// connected but lacks one of the project's forwards. Both are derived from
+// the session each time, so Status and the events always agree, and both end
+// by themselves when a reconnect restores what was missing.
 func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if run.state != StateRunning {
 		return run.state, run.message
@@ -345,25 +356,66 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if c == nil {
 		return run.state, run.message
 	}
-	status := c.sess.Status()
-	if status == transport.StatusConnected {
+	status, states := c.sess.ForwardStates()
+	if status != transport.StatusConnected {
+		msg := fmt.Sprintf("server %s is %s", run.server, status)
+		if last := c.sess.LastError(); last != "" {
+			msg += ": " + last
+		}
+		return StateDegraded, msg
+	}
+	dead := lostForwards(run, states)
+	if len(dead) == 0 {
 		return run.state, run.message
 	}
-	msg := fmt.Sprintf("server %s is %s", run.server, status)
-	if last := c.sess.LastError(); last != "" {
-		msg += ": " + last
+	// The session is connected, so its re-apply pass is over and each of
+	// these was refused by ssh: the local port could not be bound.
+	problems := make([]string, 0, len(dead))
+	for _, f := range dead {
+		what := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", f.local)
+		if f.local == run.webLocal {
+			what = fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", f.local)
+		}
+		if holder := run.holders[f.local]; holder != "" {
+			what += " (in use by " + holder + ")"
+		}
+		problems = append(problems, what)
 	}
-	return StateDegraded, msg
+	return StateError, strings.Join(problems, "; ")
+}
+
+// lostForwards lists the forwards of run that are missing from states or not
+// applied there.
+func lostForwards(run *projectRun, states []transport.ForwardState) []forward {
+	applied := make(map[forward]bool, len(states))
+	for _, st := range states {
+		applied[forward{st.Local, st.Remote}] = st.Applied
+	}
+	var lost []forward
+	for _, f := range run.forwards {
+		if !applied[f] {
+			lost = append(lost, f)
+		}
+	}
+	return lost
+}
+
+// changeLocked records a project's state and reports whether it changed. The
+// caller announces it, with announceLocked or reviewServer.
+func (e *Engine) changeLocked(run *projectRun, st State, msg string) bool {
+	if run.state == st && run.message == msg {
+		return false
+	}
+	run.state, run.message = st, msg
+	run.announced = "" // an explicit change is always announced
+	return true
 }
 
 // setStateLocked records a project's state and announces it.
 func (e *Engine) setStateLocked(run *projectRun, st State, msg string) {
-	if run.state == st && run.message == msg {
-		return
+	if e.changeLocked(run, st, msg) {
+		e.announceLocked(run)
 	}
-	run.state, run.message = st, msg
-	run.announced = "" // an explicit change is always announced
-	e.announceLocked(run)
 }
 
 // announceLocked publishes run's effective state if it differs from the last

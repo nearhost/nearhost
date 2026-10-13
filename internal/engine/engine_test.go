@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -515,6 +516,182 @@ func TestRunningProjectBecomesDegradedWhenServerDrops(t *testing.T) {
 		if states[i] != want[i] {
 			t.Fatalf("state events = %v, want %v", states, want)
 		}
+	}
+}
+
+func TestForwardLostOnReconnectPutsOnlyThatProjectInError(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	lb1, lb2 := testutil.FreePort(t), testutil.FreePort(t)
+	cfg := &config.Config{
+		Servers:  []config.Server{{Name: "mini", SSHHost: "mini"}},
+		Projects: []config.Project{remoteProject("one", "mini", lb1), remoteProject("two", "mini", lb2)},
+	}
+	h := newHarness(t, cfg, "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	h.eng.holderOf = func(port int) string {
+		if port == lb1 {
+			return "vite (pid 4242)"
+		}
+		return ""
+	}
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	for _, name := range []string{"one", "two"} {
+		if err := h.eng.StartProject(bg, name); err != nil {
+			t.Fatalf("StartProject %s: %v", name, err)
+		}
+	}
+
+	// The master drops; while it is away something takes one's loopback port,
+	// so the forward cannot be re-applied on the new master.
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("one").State == StateError }, "project one to show the lost forward")
+	one := h.eng.Status("one")
+	for _, want := range []string{strconv.Itoa(lb1), "not forwarded", "vite (pid 4242)"} {
+		if !strings.Contains(one.Message, want) {
+			t.Fatalf("message %q does not contain %q", one.Message, want)
+		}
+	}
+	if one.WebLocalPort == 0 || len(h.eng.Sites()) != 2 {
+		t.Fatalf("one's web route must stay served: %+v, sites %v", one, h.eng.Sites())
+	}
+	if two := h.eng.Status("two"); two.State != StateRunning || two.Message != "" {
+		t.Fatalf("two shares the server but lost nothing: %+v", two)
+	}
+	if got := h.unapplied("mini"); len(got) != 1 || got[0] != lb1 {
+		t.Fatalf("unapplied forwards = %v, want only %d", got, lb1)
+	}
+	states, last := stateEvents(events, "one")
+	if want := []State{StateStarting, StateRunning, StateDegraded, StateError}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events of one = %v, want %v", states, want)
+	}
+	if last[StateError] != "state: error: "+one.Message {
+		t.Fatalf("event said %q, Status says %q", last[StateError], one.Message)
+	}
+
+	// The port is free again; the next reconnect restores the forward.
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("one").State == StateRunning }, "project one to recover")
+	if st := h.eng.Status("one"); st.Message != "" || len(h.unapplied("mini")) != 0 {
+		t.Fatalf("status = %+v, unapplied %v", st, h.unapplied("mini"))
+	}
+	if st := h.eng.Status("two"); st.State != StateRunning {
+		t.Fatalf("two = %+v", st)
+	}
+	states, _ = stateEvents(events, "one")
+	if want := []State{StateDegraded, StateRunning}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events of one during recovery = %v, want %v", states, want)
+	}
+}
+
+func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	var lookups atomic.Int32
+	h.eng.holderOf = func(int) string { lookups.Add(1); return "" }
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	states, _ := stateEvents(events, "myapp")
+	if want := []State{StateStarting, StateRunning, StateStopped}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events = %v, want %v", states, want)
+	}
+	if n := lookups.Load(); n != 0 {
+		t.Fatalf("%d process lookups for forwards the engine cancelled itself", n)
+	}
+}
+
+func TestStartRetriesAProjectWhoseForwardWasLost(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	lb := testutil.FreePort(t)
+	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(lb)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "the lost forward to show")
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	// Starting is not a no-op here: it replaces the broken set of forwards.
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatalf("StartProject: %v", err)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateRunning || st.Message != "" {
+		t.Fatalf("status = %+v", st)
+	}
+	if f := h.forwards("mini"); len(f) != 2 || len(h.unapplied("mini")) != 0 {
+		t.Fatalf("forwards = %v, unapplied %v", f, h.unapplied("mini"))
+	}
+}
+
+func TestMasterDroppingBeforeForwardsAreAdded(t *testing.T) {
+	for _, variant := range []string{"forwards apply on reconnect", "a forward fails on reconnect"} {
+		t.Run(variant, func(t *testing.T) {
+			fails := variant == "a forward fails on reconnect"
+			lb := testutil.FreePort(t)
+			var env []string
+			if fails {
+				env = append(env, "FAKE_SSH_FORWARD_FAIL="+strconv.Itoa(lb))
+			}
+			var h *harness
+			// The hosts step sits between connecting and adding forwards:
+			// lose the master exactly there.
+			h = buildHarness(t, remoteConfig(lb), func(o *Options) {
+				o.EnsureHosts = func([]string) error {
+					h.dropMaster(t, "mini")
+					testutil.WaitUntil(t, 10*time.Second, func() bool {
+						st, _ := h.eng.ServerStatus("mini")
+						return st != transport.StatusConnected
+					}, "the drop to be noticed")
+					return nil
+				}
+			}, env...)
+			if err := h.eng.Start(bg); err != nil {
+				t.Fatal(err)
+			}
+			events, unsub := h.eng.Events().Subscribe(1024)
+			defer unsub()
+			err := h.eng.StartProject(bg, "myapp")
+			// The forwards were only queued. Whatever the project shows now,
+			// it must not be running on forwards that do not exist.
+			if st := h.eng.Status("myapp"); st.State == StateRunning && len(h.unapplied("mini")) != 0 {
+				t.Fatalf("running with unapplied forwards %v (StartProject returned %v)", h.unapplied("mini"), err)
+			}
+			if !fails {
+				testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateRunning }, "running once the master is back")
+				if got := h.unapplied("mini"); len(got) != 0 {
+					t.Fatalf("running with unapplied forwards %v", got)
+				}
+				return
+			}
+			testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "error once the master is back")
+			st := h.eng.Status("myapp")
+			if !strings.Contains(st.Message, strconv.Itoa(lb)) || st.WebLocalPort == 0 || len(h.eng.Sites()) != 1 {
+				t.Fatalf("status = %+v, sites %v", st, h.eng.Sites())
+			}
+			if got := h.unapplied("mini"); len(got) != 1 || got[0] != lb {
+				t.Fatalf("unapplied = %v, want only the loopback port %d", got, lb)
+			}
+			states, _ := stateEvents(events, "myapp")
+			for _, s := range states {
+				if s == StateRunning {
+					t.Fatalf("the project was announced running without its forward: %v", states)
+				}
+			}
+		})
 	}
 }
 

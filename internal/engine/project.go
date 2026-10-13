@@ -35,6 +35,7 @@ type projectRun struct {
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
+	holders   map[int]string     // local port of a lost forward -> process holding it ("" if unknown)
 }
 
 // StartProject brings a project up: it connects the project's server, makes
@@ -50,7 +51,8 @@ type projectRun struct {
 // exception: when the project's server gave up connecting (authentication
 // failed), the connection is tried again, and the project leaves the degraded
 // state once it is back. Starting a project in the error state first removes
-// whatever its last attempt left.
+// whatever its last attempt left; that includes a running project that lost
+// a forward.
 //
 // Outcomes other than running, each returned as an error as well:
 //   - the server cannot be reached, the web forward fails, or the proxy
@@ -61,6 +63,16 @@ type projectRun struct {
 //   - the hosts file could not be updated: state stopped with a message
 //     saying the alias is not resolvable, nothing started for the project.
 //
+// If the server's connection drops while the forwards are being added, they
+// are queued on the session and StartProject returns nil with the project
+// showing degraded. When the session reconnects the project becomes running,
+// or error naming the port of a forward that could not be applied.
+//
+// The same holds for a running project later on: after every reconnect a
+// forward the new master refused puts the project in error naming the port
+// (and the process holding it, when that can be found), with its other routes
+// still served, until a later reconnect or a new start restores the forward.
+//
 // A failure never changes another project.
 func (e *Engine) StartProject(ctx context.Context, name string) error {
 	p, ok := e.cfg.Project(name)
@@ -69,7 +81,7 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	}
 	run := e.runs[name]
 	e.mu.Lock()
-	busy := run.state == StateStarting || run.state == StateRunning
+	busy := e.busyLocked(run)
 	c := e.servers[run.server]
 	e.mu.Unlock()
 	if busy {
@@ -95,7 +107,7 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	case !e.started:
 		e.mu.Unlock()
 		return errors.New("engine is not started")
-	case run.state == StateRunning: // another start finished while this one waited
+	case e.busyLocked(run): // another start finished while this one waited
 		e.mu.Unlock()
 		return nil
 	}
@@ -110,9 +122,35 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	}
 	e.mu.Lock()
 	run.cancel = nil
-	e.setStateLocked(run, st, msg)
+	e.changeLocked(run, st, msg)
 	e.mu.Unlock()
+	// Announce through reviewServer: the forwards may have been queued on a
+	// session that dropped, or lost again since, and the review names the
+	// process holding a port.
+	e.reviewServer(run.server)
+	if err == nil {
+		e.mu.Lock()
+		if shown, why := e.effectiveLocked(run); shown == StateError {
+			err = errors.New(why)
+		}
+		e.mu.Unlock()
+	}
 	return err
+}
+
+// busyLocked reports whether a start has nothing to do: the project is
+// starting, or running with nothing lost. A running project that shows an
+// error because a forward is gone is not busy; starting it replaces its
+// forwards.
+func (e *Engine) busyLocked(run *projectRun) bool {
+	switch run.state {
+	case StateStarting:
+		return true
+	case StateRunning:
+		shown, _ := e.effectiveLocked(run)
+		return shown != StateError
+	}
+	return false
 }
 
 // bringUp does the work of StartProject and returns the state the project
@@ -343,8 +381,11 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 	}
 	e.applyMu.Unlock()
 
+	// The forwards leave the record before they are cancelled, so a forward
+	// the engine is removing is not taken for one the project lost.
 	e.mu.Lock()
-	forwards := append([]forward(nil), run.forwards...)
+	forwards := run.forwards
+	run.forwards = nil
 	c := e.servers[run.server]
 	e.mu.Unlock()
 	var kept []forward

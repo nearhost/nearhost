@@ -70,17 +70,80 @@ func (c *serverConn) stop() {
 }
 
 // serverLog receives every message of a server's session. The session logs
-// each status change after making it, so this is also where the projects of
-// the server are found to have become degraded or to have recovered.
+// each status change after making it, and reports itself connected only once
+// its forwards have been re-applied, so this is also where the projects of
+// the server are found to have become degraded, to have lost a forward, or to
+// have recovered.
 func (e *Engine) serverLog(server, msg string) {
+	e.bus.Publish(Event{Server: server, Message: msg})
+	e.reviewServer(server)
+}
+
+// reviewServer announces the effective state of every project on server. For
+// a forward that has just been found lost it first asks which process holds
+// the local port, outside mu, so the announcement can name it.
+func (e *Engine) reviewServer(server string) {
+	type lookup struct {
+		run  *projectRun
+		port int
+	}
+	var lookups []lookup
+	e.mu.Lock()
+	for _, name := range e.order {
+		run := e.runs[name]
+		if run.server != server {
+			continue
+		}
+		lost := e.lostLocked(run)
+		for port := range run.holders {
+			if !lost[port] {
+				delete(run.holders, port) // forwarded again, or gone
+			}
+		}
+		for port := range lost {
+			if _, known := run.holders[port]; !known {
+				lookups = append(lookups, lookup{run, port})
+			}
+		}
+	}
+	e.mu.Unlock()
+
+	holders := make([]string, len(lookups))
+	for i, l := range lookups {
+		holders[i] = e.holderOf(l.port)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.bus.Publish(Event{Server: server, Message: msg})
+	for i, l := range lookups {
+		if l.run.holders == nil {
+			l.run.holders = map[int]string{}
+		}
+		l.run.holders[l.port] = holders[i] // "" too: do not ask again
+	}
 	for _, name := range e.order {
 		if run := e.runs[name]; run.server == server {
 			e.announceLocked(run)
 		}
 	}
+}
+
+// lostLocked is the set of local ports whose forward a running project has
+// lost on a connected session.
+func (e *Engine) lostLocked(run *projectRun) map[int]bool {
+	c := e.servers[run.server]
+	if run.state != StateRunning || c == nil {
+		return nil
+	}
+	status, states := c.sess.ForwardStates()
+	if status != transport.StatusConnected {
+		return nil
+	}
+	lost := map[int]bool{}
+	for _, f := range lostForwards(run, states) {
+		lost[f.local] = true
+	}
+	return lost
 }
 
 // ServerStatus reports a server's connection state and its last ssh error.

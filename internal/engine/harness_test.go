@@ -326,3 +326,47 @@ func (h *harness) forwards(server string) [][2]int {
 	}
 	return c.sess.Forwards()
 }
+
+// dropMaster makes the fake ssh master of a server exit, as a lost connection
+// would: it leaves when its socket file disappears.
+func (h *harness) dropMaster(t *testing.T, server string) {
+	t.Helper()
+	h.eng.mu.Lock()
+	sock := h.eng.servers[server].sess.SocketPath()
+	h.eng.mu.Unlock()
+	if err := os.Remove(sock); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// unapplied lists the forwards of a server that its current master lacks.
+func (h *harness) unapplied(server string) []int {
+	h.eng.mu.Lock()
+	c := h.eng.servers[server]
+	h.eng.mu.Unlock()
+	var out []int
+	_, states := c.sess.ForwardStates()
+	for _, f := range states {
+		if !f.Applied {
+			out = append(out, f.Local)
+		}
+	}
+	return out
+}
+
+// stateEvents drains what is buffered on events and returns the states
+// announced for a project, in order, with the last message of each.
+func stateEvents(events <-chan Event, project string) (states []State, last map[State]string) {
+	last = map[State]string{}
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project == project && ev.State != "" {
+				states = append(states, ev.State)
+				last[ev.State] = ev.Message
+			}
+		default:
+			return states, last
+		}
+	}
+}
