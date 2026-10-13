@@ -110,9 +110,6 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 	default:
 		checks = append(checks, check{name: "config", detail: path})
 	}
-	if cfg == nil {
-		cfg = &config.Config{} // the checks that do not need it still run
-	}
 
 	ctx := cmd.Context()
 	checks = append(checks, checkPort(ctx, b, flags.httpsPort, "--https-port", true), checkPort(ctx, b, flags.httpPort, "--http-port", false))
@@ -125,6 +122,17 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 		checks = append(checks, c)
 	}
 	checks = append(checks, checkCA(b.trust)...)
+	if cfg == nil {
+		// The checks above do not need the config. These do, and comparing
+		// with an empty one would report what is there as wrong.
+		unread := func(name string) check {
+			return check{name, levelWarn, "not checked: the config could not be read", "correct the config (see above), then run `nearhost doctor` again"}
+		}
+		if !flags.noHosts {
+			checks = append(checks, unread("hosts block"))
+		}
+		return append(checks, unread("servers"))
+	}
 	if !flags.noHosts {
 		checks = append(checks, checkHosts(b, cfg))
 	}

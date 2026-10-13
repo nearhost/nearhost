@@ -288,14 +288,34 @@ func TestDoctorShowsTheSSHErrorVerbatimWithTheHint(t *testing.T) {
 func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 	path := configHome(t)
 	saveConfig(t, path, &config.Config{Projects: []config.Project{{Name: "broken", Server: "gone", Alias: "broken.test"}}})
-	f := healthy()
-	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--no-hosts")
+	f := healthy() // its hosts file has a block, which nothing can be compared with
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
 	if err == nil || err.Error() != "1 check failed" {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
-	wantContains(t, out,
-		"FAIL  config           "+path+": project \"broken\" uses unknown server \"gone\"\n      fix: edit "+path+"\n",
-		"ok    port 443         free\n", "ok    local CA ")
+	const unread = "not checked: the config could not be read\n      fix: correct the config (see above), then run `nearhost doctor` again\n"
+	want := "" +
+		"FAIL  config           " + path + ": project \"broken\" uses unknown server \"gone\"\n      fix: edit " + path + "\n" +
+		"ok    port 443         free\n" +
+		"ok    port 80          free\n" +
+		"ok    local CA         trusted by the system trust store\n" +
+		"ok    browser stores   the NSS stores trust the CA\n" +
+		"warn  hosts block      " + unread +
+		"warn  servers          " + unread +
+		"\n" +
+		"1 check failed.\n"
+	if out != want {
+		t.Fatalf("doctor printed:\n%s\nwant:\n%s", out, want)
+	}
+	if f.hostsReads != 0 || len(f.serverCalls) != 0 {
+		t.Errorf("checked the hosts file %d times and servers %v without a config", f.hostsReads, f.serverCalls)
+	}
+
+	// --no-hosts still leaves the hosts block out altogether.
+	out, err = execute(t, newDoctorCmd(f.backend()), "doctor", "--no-hosts")
+	if err == nil || strings.Contains(out, "hosts block") || !strings.Contains(out, "warn  servers          not checked") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
 	if _, err := execute(t, newDoctorCmd(f.backend()), "doctor", "extra"); err == nil {
 		t.Error("doctor must reject positional arguments")
 	}
