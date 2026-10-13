@@ -78,6 +78,46 @@ func TestForwardAddedWhileConnectedIsNotIssuedTwice(t *testing.T) {
 	}
 }
 
+func TestAddForwardTwiceKeepsForwardTracked(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	for i := 0; i < 2; i++ {
+		if err := s.AddForward(context.Background(), 8080, 80); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(readLog(t, logPath), "-O forward -L 127.0.0.1:8080:localhost:80"); n != 1 {
+		t.Fatalf("duplicate add re-issued the forward %d times", n)
+	}
+	if err := s.CancelForward(context.Background(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80") {
+		t.Fatal("forward no longer cancellable")
+	}
+}
+
+func TestFailedReAddRestoresTrackedForward(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_FORWARD_FAIL=5174")
+	// Queued while disconnected, so tracked but not yet applied.
+	if err := s.AddForward(context.Background(), 5174, 5174); err != nil {
+		t.Fatal(err)
+	}
+	connectedNoReapply := func() {
+		s.mu.Lock()
+		s.status = StatusConnected
+		s.launches = 1
+		s.mu.Unlock()
+	}
+	connectedNoReapply()
+	if err := s.AddForward(context.Background(), 5174, 5174); err == nil {
+		t.Fatal("expected bind error")
+	}
+	if len(s.Forwards()) != 1 {
+		t.Fatalf("pre-existing forward dropped after failed re-add: %v", s.Forwards())
+	}
+}
+
 func TestFreePortIsBindable(t *testing.T) {
 	p, err := FreePort()
 	if err != nil || p < 1024 || p > 65535 {

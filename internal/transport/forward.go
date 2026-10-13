@@ -24,16 +24,25 @@ func (s *Session) AddForward(ctx context.Context, localPort, remotePort int) err
 	defer s.fwdMu.Unlock()
 	key := forwardKey(localPort, remotePort)
 	s.mu.Lock()
-	s.forwards[key] = forward{local: localPort, remote: remotePort}
+	prev, existed := s.forwards[key]
 	isConnected := s.status == StatusConnected
 	gen := s.launches
+	if existed && isConnected && prev.appliedGen == gen {
+		s.mu.Unlock()
+		return nil // already active on this master; asking again would be rejected
+	}
+	s.forwards[key] = forward{local: localPort, remote: remotePort}
 	s.mu.Unlock()
 	if !isConnected {
 		return nil
 	}
 	if err := s.controlForward(ctx, "forward", localPort, remotePort); err != nil {
 		s.mu.Lock()
-		delete(s.forwards, key)
+		if existed {
+			s.forwards[key] = prev
+		} else {
+			delete(s.forwards, key)
+		}
 		s.mu.Unlock()
 		return err
 	}
