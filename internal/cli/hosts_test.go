@@ -51,3 +51,19 @@ func TestHostsCleanPassesFilePathToApplier(t *testing.T) {
 		t.Fatalf("unexpected hosts:\n%s", data)
 	}
 }
+
+func TestHostsApplyRejectsInvalidAliasAndWritesNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644)
+	root := NewRoot()
+	root.SetIn(strings.NewReader("a.test\nx.test bank.com\n"))
+	root.SetOut(&bytes.Buffer{})
+	root.SetArgs([]string{"hosts", "apply", "--file", path})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "x.test bank.com") {
+		t.Fatalf("err=%v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "127.0.0.1 localhost\n" {
+		t.Fatalf("file modified:\n%s", data)
+	}
+}
