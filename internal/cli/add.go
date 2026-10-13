@@ -161,7 +161,9 @@ func newProject(cfg *config.Config, cfgPath string, flags addFlags, args []strin
 	if other, ok := cfg.Project(name); ok {
 		return fail("project %q already exists (%s:%s); pass --name to add this one under another name, or remove the old one from %s", name, other.Server, other.Path, cfgPath)
 	}
-	alias := flags.alias
+	// The hosts file gets the alias without blanks around it; the config
+	// must hold the same, as the proxy serves the alias as configured.
+	alias := strings.TrimSpace(flags.alias)
 	if alias == "" {
 		alias = config.AliasFor(name)
 	}

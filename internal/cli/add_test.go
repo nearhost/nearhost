@@ -281,3 +281,23 @@ func TestAddAdvisesOnTheRolesAfterTheWebFlag(t *testing.T) {
 		t.Errorf("advised on a loopback clash for a port that is the web route:\n%s", out)
 	}
 }
+
+// The hosts file gets an alias without the blanks around it, so the config
+// must hold the same: the proxy serves the alias exactly as configured.
+func TestAddTrimsTheAlias(t *testing.T) {
+	cfgPath, _ := existing(t)
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "padded", "--alias", " padded.test\t")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if p, _ := loadSaved(t, cfgPath).Project("padded"); p.Alias != "padded.test" {
+		t.Errorf("saved the alias %q", p.Alias)
+	}
+	wantContains(t, out, "at https://padded.test\n")
+
+	// Blanks do not hide a duplicate either.
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "again", "--alias", "shop.test ")
+	if err == nil || !strings.Contains(err.Error(), `already used by project "shop"`) {
+		t.Errorf("a padded duplicate alias: %v\n%s", err, out)
+	}
+}
