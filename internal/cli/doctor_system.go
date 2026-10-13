@@ -7,26 +7,22 @@ import (
 	"strings"
 )
 
-// probePort reports whether the proxy could listen on port: on TCP, and with
-// udp also on UDP, where the proxy serves HTTP/3 next to its HTTPS port. It
+// probePort reports whether port can be bound on network ("tcp" or "udp"). It
 // binds every interface, as the proxy does, and lets go at once.
-func probePort(port int, udp bool) error {
+func probePort(network string, port int) error {
 	addr := fmt.Sprintf(":%d", port)
-	l, err := net.Listen("tcp", addr)
+	if network == "udp" {
+		pc, err := net.ListenPacket(network, addr)
+		if err != nil {
+			return err
+		}
+		return pc.Close()
+	}
+	l, err := net.Listen(network, addr)
 	if err != nil {
 		return err
 	}
-	if err := l.Close(); err != nil {
-		return err
-	}
-	if !udp {
-		return nil
-	}
-	pc, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		return fmt.Errorf("UDP (for HTTP/3): %w", err)
-	}
-	return pc.Close()
+	return l.Close()
 }
 
 // capNetBindService is the bit of CAP_NET_BIND_SERVICE in a capability set.

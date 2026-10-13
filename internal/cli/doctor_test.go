@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
-	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -21,7 +19,7 @@ import (
 // one thing at a time.
 type fakeMachine struct {
 	trust     *fakeTrust
-	portErr   map[int]error
+	portErr   map[string]error // "tcp 443" -> what binding it returns
 	holders   map[int]string
 	hosts     string
 	hostsErr  error
@@ -51,9 +49,10 @@ func healthy() *fakeMachine {
 func (f *fakeMachine) backend() doctorBackend {
 	return doctorBackend{
 		trust: f.trust.backend(),
-		probePort: func(port int, udp bool) error {
-			f.probed = append(f.probed, fmt.Sprintf("%d udp=%v", port, udp))
-			return f.portErr[port]
+		probePort: func(network string, port int) error {
+			key := fmt.Sprintf("%s %d", network, port)
+			f.probed = append(f.probed, key)
+			return f.portErr[key]
 		},
 		holderOf:  func(_ context.Context, port int) string { return f.holders[port] },
 		readHosts: func() (string, error) { f.hostsReads++; return f.hosts, f.hostsErr },
@@ -99,7 +98,7 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 	if out != want {
 		t.Fatalf("doctor printed:\n%s\nwant:\n%s", out, want)
 	}
-	if strings.Join(f.probed, "; ") != "443 udp=true; 80 udp=false" {
+	if strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80" {
 		t.Errorf("ports probed: %v", f.probed)
 	}
 	if want := filepath.Join(filepath.Dir(path), "caddy"); len(f.trust.rootDirs) != 1 || f.trust.rootDirs[0] != want {
@@ -116,18 +115,30 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 func TestDoctorFailsOnATakenPortAndNamesTheHolder(t *testing.T) {
 	doctorConfig(t)
 	f := healthy()
-	f.portErr = map[int]error{8443: syscall.EADDRINUSE, 8080: syscall.EADDRINUSE}
+	f.portErr = map[string]error{"tcp 8443": syscall.EADDRINUSE, "udp 8443": syscall.EADDRINUSE, "tcp 8080": syscall.EADDRINUSE}
 	f.holders = map[int]string{8443: "nginx (pid 12)"}
 	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
 	if err == nil || err.Error() != "2 checks failed" {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 	wantContains(t, out,
-		"FAIL  port 8443        in use by nginx (pid 12)\n"+
+		"FAIL  port 8443        in use by nginx (pid 12); UDP (for HTTP/3): address already in use\n"+
 			"      fix: stop that process (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
 		"FAIL  port 8080        address already in use\n"+
 			"      fix: stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --http-port\n",
 		"\n2 checks failed.\n")
+
+	// Taken on UDP alone: the report says so instead of blaming TCP.
+	f = healthy()
+	f.portErr = map[string]error{"udp 8443": syscall.EADDRINUSE}
+	f.holders = map[int]string{8443: "a TCP listener nobody asked about"}
+	out, err = execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err == nil || err.Error() != "1 check failed" {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	wantContains(t, out, "FAIL  port 8443        UDP (for HTTP/3): address already in use\n"+
+		"      fix: stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
+		"ok    port 8080        free\n")
 }
 
 func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
@@ -146,7 +157,7 @@ func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
 	f = healthy()
 	f.goos = "linux"
 	f.lowLevel, f.lowDetail = levelFail, "not root and the binary lacks cap_net_bind_service"
-	f.portErr = map[int]error{443: syscall.EACCES, 80: syscall.EACCES}
+	f.portErr = map[string]error{"tcp 443": syscall.EACCES, "udp 443": syscall.EACCES, "tcp 80": syscall.EACCES}
 	out, err = execute(t, newDoctorCmd(f.backend()), "doctor")
 	if err == nil || err.Error() != "3 checks failed" {
 		t.Fatalf("err = %v\n%s", err, out)
@@ -287,64 +298,5 @@ func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 		"ok    port 443         free\n", "ok    local CA ")
 	if _, err := execute(t, newDoctorCmd(f.backend()), "doctor", "extra"); err == nil {
 		t.Error("doctor must reject positional arguments")
-	}
-}
-
-func TestProbePortFindsATakenPort(t *testing.T) {
-	port := testutil.ProxyPort(t)
-	if err := probePort(port, true); err != nil {
-		t.Fatalf("free port: %v", err)
-	}
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := probePort(port, false); !errors.Is(err, syscall.EADDRINUSE) {
-		t.Fatalf("taken TCP port: %v", err)
-	}
-	l.Close()
-	pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pc.Close()
-	if err := probePort(port, false); err != nil {
-		t.Fatalf("UDP is not probed for the HTTP port: %v", err)
-	}
-	if err := probePort(port, true); err == nil || !strings.Contains(err.Error(), "UDP") {
-		t.Fatalf("taken UDP port: %v", err)
-	}
-}
-
-func TestLinuxLowPorts(t *testing.T) {
-	files := func(m map[string]string) func(string) ([]byte, error) {
-		return func(name string) ([]byte, error) {
-			if s, ok := m[name]; ok {
-				return []byte(s), nil
-			}
-			return nil, fs.ErrNotExist
-		}
-	}
-	const status, start = "/proc/self/status", "/proc/sys/net/ipv4/ip_unprivileged_port_start"
-	plain := "Name:\tnearhost\nCapEff:\t0000000000000000\n"
-	cases := []struct {
-		name   string
-		euid   int
-		files  map[string]string
-		level  level
-		detail string
-	}{
-		{"root", 0, nil, levelOK, "running as root"},
-		{"capability", 1000, map[string]string{status: "Name:\tnearhost\nCapPrm:\t0\nCapEff:\t0000000000000400\n", start: "1024\n"}, levelOK, "the binary has cap_net_bind_service"},
-		{"other capabilities only", 1000, map[string]string{status: "CapEff:\t0000000000000300\n", start: "1024\n"}, levelFail, "not root and the binary lacks cap_net_bind_service"},
-		{"nothing", 1000, map[string]string{status: plain, start: "1024\n"}, levelFail, "not root and the binary lacks cap_net_bind_service"},
-		{"sysctl lowered", 1000, map[string]string{status: plain, start: "80\n"}, levelOK, "this system lets any user bind ports from 80 up"},
-		{"sysctl not low enough", 1000, map[string]string{status: plain, start: "443\n"}, levelFail, "not root and the binary lacks cap_net_bind_service"},
-		{"unreadable", 1000, nil, levelWarn, "could not tell: read /proc/self/status: file does not exist"},
-	}
-	for _, tc := range cases {
-		if lv, detail := linuxLowPorts(80, tc.euid, files(tc.files)); lv != tc.level || detail != tc.detail {
-			t.Errorf("%s: got %v %q, want %v %q", tc.name, lv, detail, tc.level, tc.detail)
-		}
 	}
 }

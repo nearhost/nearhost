@@ -46,9 +46,9 @@ type check struct {
 // substitute every function, so no test probes the real system.
 type doctorBackend struct {
 	trust trustBackend
-	// probePort reports whether the proxy could listen on port: on TCP, and
-	// with udp also on UDP.
-	probePort func(port int, udp bool) error
+	// probePort reports whether port can be bound on every interface of the
+	// given network, "tcp" or "udp".
+	probePort func(network string, port int) error
 	// holderOf names the process listening on a port, or returns "".
 	holderOf func(ctx context.Context, port int) string
 	// readHosts returns the content of the hosts file.
@@ -176,31 +176,49 @@ func plural(n int, noun string) string {
 
 const setcapFix = `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`
 
+// checkPort reports whether the proxy could listen on port: on TCP, and with
+// udp also on UDP. The two are probed separately, so a port taken on both is
+// reported for both.
 func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp bool) check {
 	c := check{name: fmt.Sprintf("port %d", port), detail: "free"}
-	err := b.probePort(port, udp)
-	if err == nil {
-		return c
+	networks := []string{"tcp"}
+	if udp {
+		networks = append(networks, "udp")
 	}
-	c.level = levelFail
-	if errors.Is(err, fs.ErrPermission) {
-		c.detail, c.fix = "permission denied", "run nearhost as a user that may bind this port, or pass another "+flag
+	var problems []string
+	denied, who := false, "the process using it"
+	for _, network := range networks {
+		err := b.probePort(network, port)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			denied = true
+			continue
+		}
+		what := err.Error()
+		var errno syscall.Errno
+		if errors.As(err, &errno) {
+			what = errno.Error() // "address already in use", without the listen address
+		}
+		if network == "udp" {
+			what = "UDP (for HTTP/3): " + what
+		} else if holder := b.holderOf(ctx, port); holder != "" {
+			what, who = "in use by "+holder, "that process"
+		}
+		problems = append(problems, what)
+	}
+	switch {
+	case denied:
+		c.level, c.detail = levelFail, "permission denied"
+		c.fix = "run nearhost as a user that may bind this port, or pass another " + flag
 		if b.goos == "linux" {
 			c.fix = setcapFix
 		}
-		return c
+	case len(problems) > 0:
+		c.level, c.detail = levelFail, strings.Join(problems, "; ")
+		c.fix = fmt.Sprintf("stop %s (expected while `nearhost up` is running), or give `nearhost up` another %s", who, flag)
 	}
-	who := "the process using it"
-	if holder := b.holderOf(ctx, port); holder != "" {
-		c.detail, who = "in use by "+holder, "that process"
-	} else {
-		c.detail = err.Error()
-		var errno syscall.Errno
-		if errors.As(err, &errno) {
-			c.detail = errno.Error() // "address already in use", without the listen address
-		}
-	}
-	c.fix = fmt.Sprintf("stop %s (expected while `nearhost up` is running), or give `nearhost up` another %s", who, flag)
 	return c
 }
 
