@@ -1,0 +1,103 @@
+internal/cli/root.go
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-29,31-47
+  s_67428b1da1b8e6::t_121aaca2838e25 30
+internal/cli/root_test.go
+  s_67428b1da1b8e6::t_75aab8dd8bdc93 1-9,12-29
+  s_67428b1da1b8e6::t_fd848c35f0c3b3 10-11,30-39
+README.md
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-9
+.github/workflows/ci.yml
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-18
+go.mod
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 10
+  s_67428b1da1b8e6::t_7e261640073352 3-4,11-14
+  s_67428b1da1b8e6::t_a84e6660cc9588 1-2
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 5,7-9
+  s_67428b1da1b8e6::t_9b74893d56ed3d 6
+.gitignore
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 4-6
+Makefile
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-10
+cmd/nearhost/main.go
+  s_67428b1da1b8e6::t_8a7fff122e3f7b 1-11
+go.sum
+  s_67428b1da1b8e6::t_93d30751b6ac61 1-3,6-11,13
+  s_67428b1da1b8e6::t_92392157122dde 12,14-15
+  s_67428b1da1b8e6::t_c0290b112eb345 4-5
+internal/config/paths.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-7,10,12-36
+  s_67428b1da1b8e6::t_637fd61793ba83 8-9,11
+internal/config/config.go
+  s_67428b1da1b8e6::t_6b721b80ca6ed0 1-4,6-202,205-206,208-237,244-250,255-256
+  s_67428b1da1b8e6::t_637fd61793ba83 5,203-204,207,238-243,251-253
+  s_67428b1da1b8e6::t_ecc7e3375d9cc6 254
+internal/config/config_test.go
+  s_67428b1da1b8e6::t_00f4b36ca5cd44 1-239
+  s_67428b1da1b8e6::t_9ce08dd0279bc9 240-280
+internal/discovery/testdata/sail-custom/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/testdata/sail-custom/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/testdata/sail-defaults/docker-compose.yml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-25
+internal/discovery/env.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-60,61-101
+internal/discovery/testdata/sail-defaults/vite.config.js
+  s_67428b1da1b8e6::t_6659c479f74b88 1-11
+internal/discovery/reader.go
+  s_67428b1da1b8e6::t_9b74893d56ed3d 1-24
+internal/discovery/testdata/sail-defaults/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/sail-custom/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-6
+internal/discovery/testdata/sail-custom/artisan
+  s_67428b1da1b8e6::t_6659c479f74b88 1-2
+internal/discovery/testdata/sail-defaults/.env
+  s_67428b1da1b8e6::t_6659c479f74b88 1-3
+internal/discovery/testdata/vite-plain/vite.config.ts
+  s_67428b1da1b8e6::t_6659c479f74b88 1-8
+internal/discovery/testdata/vite-plain/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1
+internal/discovery/testdata/sail-custom/package.json
+  s_67428b1da1b8e6::t_6659c479f74b88 1-7
+internal/discovery/testdata/compose-literal/compose.yaml
+  s_67428b1da1b8e6::t_6659c479f74b88 1-18
+internal/discovery/env_test.go
+  s_67428b1da1b8e6::t_36e67a920bde3b 1-63,65,67-71,77-95
+  s_67428b1da1b8e6::t_10a6e03876dac9 64,66,72-76
+internal/discovery/compose.go
+  s_67428b1da1b8e6::t_5e156cf5f1230e 1-59,61-69,71-74,78-79,81-123,125-126,129-137,141,143-154,156-174,178-180,208
+  s_67428b1da1b8e6::t_e7632188911fb7 155,181-182,186-188,190-191,197-207
+  s_67428b1da1b8e6::t_a03d29dbcada55 60,70,127,142
+  s_67428b1da1b8e6::t_4783c409af128d 75-77,80,124,128
+  s_67428b1da1b8e6::t_805262a6807f80 138-140,175-177,183-185,189,192-196
+internal/discovery/compose_test.go
+  s_67428b1da1b8e6::t_f0f29d8a542782 1-108
+  s_67428b1da1b8e6::t_48d54ca1d339d7 109-132
+  s_67428b1da1b8e6::t_1b7bc1ce882ed8 133-155
+internal/discovery/discover.go
+  s_67428b1da1b8e6::t_b923faff883659 1-251
+internal/discovery/vite.go
+  s_67428b1da1b8e6::t_b923faff883659 1-80
+internal/discovery/discover_test.go
+  s_67428b1da1b8e6::t_b923faff883659 1-3,5-216
+  s_67428b1da1b8e6::t_6870aa225cb05d 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b10ff9e367cdc6ca5ba5b3a175561e62b9db722",
+  "prompts": {},
+  "sessions": {
+    "s_67428b1da1b8e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bb00568-cf63-4d91-8897-4b7e510f9e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
