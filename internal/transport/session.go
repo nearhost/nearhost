@@ -293,9 +293,14 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		}()
 
 		if s.waitForSocket(ctx, exited) {
-			s.markConnected(ctx)
-			backoff = s.baseBackoff
-			authFails = 0
+			if s.markConnected(ctx, exited) {
+				backoff = s.baseBackoff
+				authFails = 0
+			} else if ctx.Err() == nil && !hasExited(exited) {
+				// The master stopped answering during the re-apply pass
+				// without exiting. Kill it so the code below retries.
+				master.Process.Kill()
+			}
 		} else if ctx.Err() == nil && !hasExited(exited) {
 			// Connect timeout: the master is alive but never produced a
 			// working socket. Kill it so the loop below retries.

@@ -145,11 +145,26 @@ func (s *Session) controlForward(ctx context.Context, op string, local, remote i
 // CancelForward run either wholly before (and are covered by the re-apply) or
 // wholly after (and talk to the master themselves), and whoever sees the
 // connected status sees every forward settled.
-func (s *Session) markConnected(ctx context.Context) {
+//
+// It reports false, and leaves the status alone, when the pass does not count:
+// the session is being stopped, or the master is gone (it has exited, or a
+// re-apply failed and it no longer answers on its socket). Failures of such a
+// pass say nothing about the forwards, so they must not be seen with a
+// connected status.
+func (s *Session) markConnected(ctx context.Context, exited <-chan struct{}) bool {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
-	s.reapplyLocked(ctx)
+	failed := s.reapplyLocked(ctx)
+	if ctx.Err() != nil || hasExited(exited) {
+		return false
+	}
+	// A dying master is often noticed here first, a moment before its
+	// process is reaped.
+	if failed > 0 && s.command(ctx, "-S", s.SocketPath(), "-O", "check", s.Host).Run() != nil {
+		return false
+	}
 	s.setStatus(StatusConnected, "")
+	return true
 }
 
 // reapplyForwards adds desired forwards that the current master does not yet
@@ -160,9 +175,10 @@ func (s *Session) reapplyForwards(ctx context.Context) {
 	s.reapplyLocked(ctx)
 }
 
-// reapplyLocked does the work of reapplyForwards. The caller holds fwdMu. A
-// forward that fails is logged and stays tracked but unapplied.
-func (s *Session) reapplyLocked(ctx context.Context) {
+// reapplyLocked does the work of reapplyForwards and returns how many forwards
+// failed. The caller holds fwdMu. A forward that fails is logged and stays
+// tracked but unapplied.
+func (s *Session) reapplyLocked(ctx context.Context) (failed int) {
 	s.mu.Lock()
 	gen := s.launches
 	var todo []forward
@@ -176,6 +192,7 @@ func (s *Session) reapplyLocked(ctx context.Context) {
 	for _, f := range todo {
 		if err := s.controlForward(ctx, "forward", f.local, f.remote); err != nil {
 			s.Logf("%s: reapply failed: %v", s.Name, err)
+			failed++
 			continue
 		}
 		s.mu.Lock()
@@ -186,6 +203,7 @@ func (s *Session) reapplyLocked(ctx context.Context) {
 		}
 		s.mu.Unlock()
 	}
+	return failed
 }
 
 // FreePort returns a currently unused loopback TCP port.

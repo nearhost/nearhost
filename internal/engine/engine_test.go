@@ -589,6 +589,38 @@ func TestForwardLostOnReconnectPutsOnlyThatProjectInError(t *testing.T) {
 	}
 }
 
+func TestMasterDyingDuringReapplyIsNotALostForward(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "forward-kills-master")
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_FORWARD_KILLS_MASTER="+flag)
+	var lookups atomic.Int32
+	h.eng.holderOf = func(int) string { lookups.Add(1); return "" }
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	// The connection drops, and the next master dies while the forwards are
+	// being re-applied on it. The one after that is fine.
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.dropMaster(t, "mini")
+	testutil.WaitUntil(t, 20*time.Second, func() bool {
+		_, err := os.Stat(flag)
+		return os.IsNotExist(err) && h.eng.Status("myapp").State == StateRunning
+	}, "the project to be running on the third master")
+	states, _ := stateEvents(events, "myapp")
+	if want := []State{StateStarting, StateRunning, StateDegraded, StateRunning}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events = %v, want %v: a master that died is not a port that could not be bound", states, want)
+	}
+	if n := lookups.Load(); n != 0 {
+		t.Fatalf("%d process lookups for forwards that only failed because the master died", n)
+	}
+	if got := h.unapplied("mini"); len(got) != 0 {
+		t.Fatalf("unapplied forwards = %v", got)
+	}
+}
+
 func TestStoppingDoesNotLookLikeLosingForwards(t *testing.T) {
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
 	var lookups atomic.Int32
