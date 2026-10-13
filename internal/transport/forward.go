@@ -93,9 +93,40 @@ func (s *Session) Forwards() [][2]int {
 	return out
 }
 
+// ForwardState is one desired forward and whether the current master has it.
+type ForwardState struct {
+	Local, Remote int
+	// Applied is true when the session is connected and ssh confirmed this
+	// forward on the master that is running now. A forward that is only
+	// tracked (added while disconnected, or whose re-apply failed after a
+	// reconnect) is not applied.
+	Applied bool
+}
+
+// ForwardStates returns the connection status together with the desired
+// forwards, sorted by local port, each with whether it is applied on the
+// current master. Both come from one consistent snapshot. When the status is
+// connected every forward is settled: the status only becomes connected after
+// the re-apply pass, so a forward that is not applied then has failed, and
+// stays that way until the next reconnect.
+func (s *Session) ForwardStates() (Status, []ForwardState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ForwardState, 0, len(s.forwards))
+	for _, f := range s.forwards {
+		out = append(out, ForwardState{
+			Local:   f.local,
+			Remote:  f.remote,
+			Applied: s.status == StatusConnected && f.appliedGen == s.launches,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
+	return s.status, out
+}
+
 // controlForward runs one `ssh -O forward|cancel`. It holds no session lock.
 func (s *Session) controlForward(ctx context.Context, op string, local, remote int) error {
-	cmd := s.command(ctx, "-S", s.SocketPath(), "-O", op, "-L", forwardSpec(local, remote), s.Host)
+	cmd := s.control(ctx, "-O", op, "-L", forwardSpec(local, remote), s.Host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -109,11 +140,45 @@ func (s *Session) controlForward(ctx context.Context, op string, local, remote i
 	return nil
 }
 
+// markConnected re-applies the desired forwards on the new master and then
+// reports the session connected. Both happen under fwdMu, so AddForward and
+// CancelForward run either wholly before (and are covered by the re-apply) or
+// wholly after (and talk to the master themselves), and whoever sees the
+// connected status sees every forward settled.
+//
+// It reports false, and leaves the status alone, when the pass does not count:
+// the session is being stopped, or the master is gone (it has exited, or a
+// re-apply failed and it no longer answers on its socket). Failures of such a
+// pass say nothing about the forwards, so they must not be seen with a
+// connected status.
+func (s *Session) markConnected(ctx context.Context, exited <-chan struct{}) bool {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	failed := s.reapplyLocked(ctx)
+	if ctx.Err() != nil || hasExited(exited) {
+		return false
+	}
+	// A dying master is often noticed here first, a moment before its
+	// process is reaped.
+	if failed > 0 && s.control(ctx, "-O", "check", s.Host).Run() != nil {
+		return false
+	}
+	s.setStatus(StatusConnected, "")
+	return true
+}
+
 // reapplyForwards adds desired forwards that the current master does not yet
-// have. The supervisor calls it after each (re)connect.
+// have.
 func (s *Session) reapplyForwards(ctx context.Context) {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
+	s.reapplyLocked(ctx)
+}
+
+// reapplyLocked does the work of reapplyForwards and returns how many forwards
+// failed. The caller holds fwdMu. A forward that fails is logged and stays
+// tracked but unapplied.
+func (s *Session) reapplyLocked(ctx context.Context) (failed int) {
 	s.mu.Lock()
 	gen := s.launches
 	var todo []forward
@@ -127,6 +192,7 @@ func (s *Session) reapplyForwards(ctx context.Context) {
 	for _, f := range todo {
 		if err := s.controlForward(ctx, "forward", f.local, f.remote); err != nil {
 			s.Logf("%s: reapply failed: %v", s.Name, err)
+			failed++
 			continue
 		}
 		s.mu.Lock()
@@ -137,6 +203,7 @@ func (s *Session) reapplyForwards(ctx context.Context) {
 		}
 		s.mu.Unlock()
 	}
+	return failed
 }
 
 // FreePort returns a currently unused loopback TCP port.

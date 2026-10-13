@@ -22,9 +22,8 @@ func newFakeSession(t *testing.T, env ...string) (*Session, string) {
 	if err := os.Chmod(ssh, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "ssh.log")
-	s := NewSession("mini", "mini", dir)
+	logPath := filepath.Join(t.TempDir(), "ssh.log")
+	s := NewSession("mini", "mini", shortDir(t))
 	s.SSHPath = ssh
 	s.Env = append([]string{"FAKE_SSH_LOG=" + logPath}, env...)
 	s.pollInterval = 20 * time.Millisecond
@@ -33,6 +32,18 @@ func newFakeSession(t *testing.T, env ...string) (*Session, string) {
 	s.maxBackoff = 50 * time.Millisecond
 	t.Cleanup(s.Stop)
 	return s, logPath
+}
+
+// shortDir is a run directory whose path leaves room for a control socket.
+// t.TempDir carries the test's name and is too long for one on macOS.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "nh-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }
 
 func readLog(t *testing.T, path string) string {
@@ -336,7 +347,7 @@ func TestStartGivesUpWhenSSHNeverLaunches(t *testing.T) {
 }
 
 func TestSocketPathStaysInsideRunDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := "/tmp/nh-run" // only named, never created
 	if got := NewSession("mini", "mini", dir).SocketPath(); got != filepath.Join(dir, "mini.sock") {
 		t.Fatalf("plain name should be kept: %q", got)
 	}
@@ -353,5 +364,209 @@ func TestSocketPathStaysInsideRunDir(t *testing.T) {
 			t.Errorf("names %q and %q share socket %q", other, name, p)
 		}
 		paths[p] = name
+	}
+}
+
+// logLines returns the argv lines the fake ssh recorded.
+func logLines(t *testing.T, path string) []string {
+	t.Helper()
+	return strings.Split(strings.TrimSpace(readLog(t, path)), "\n")
+}
+
+// The user's ssh_config applies to every ssh nearhost runs. These pin the
+// options that keep it from changing what each invocation does; an option on
+// the command line wins over the configuration files.
+func TestCheckIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	if err := s.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none mini true"
+	if got := logLines(t, logPath); len(got) != 1 || got[0] != want {
+		t.Fatalf("check ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestMasterIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	want := "-N -M -S " + s.SocketPath() +
+		" -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3" +
+		" -o ControlPersist=no -o ClearAllForwardings=yes -o RemoteCommand=none mini"
+	var masters []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasPrefix(l, "-N -M ") {
+			masters = append(masters, l)
+		}
+	}
+	if len(masters) != 1 || masters[0] != want {
+		t.Fatalf("master ran\n  %q\nwant\n  %q", masters, want)
+	}
+}
+
+func TestSFTPIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if f, err := s.OpenSFTP(t.Context()); err == nil {
+		f.Close()
+	}
+	want := "-S " + s.SocketPath() + " -o BatchMode=yes -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -s mini sftp"
+	var got []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasSuffix(l, " sftp") {
+			got = append(got, l)
+		}
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("sftp ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// ClearAllForwardings on the master must not reach the forwards nearhost
+// asks for: those go to the running master over its control socket, and a
+// control command that carried the option would drop its own -L. A control
+// command must not read the user's configuration either: a mux client sends
+// the LocalForward and RemoteForward entries listed for the host to the
+// master along with the forward it was asked for.
+func TestControlCommandsCarryNoOptions(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if err := s.AddForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+	sock := s.SocketPath()
+	seen := map[string]bool{}
+	for _, l := range logLines(t, logPath) {
+		if !strings.Contains(l, " -O ") {
+			if strings.Contains(l, "-L ") {
+				t.Errorf("a forward was given outside a control command: %q", l)
+			}
+			continue
+		}
+		seen[l] = true
+		if !strings.HasPrefix(l, "-F /dev/null -S "+sock+" -O ") {
+			t.Errorf("control command reads the user's configuration: %q", l)
+		}
+		if strings.Contains(l, " -o ") {
+			t.Errorf("control command carries options: %q", l)
+		}
+	}
+	for _, want := range []string{
+		"-F /dev/null -S " + sock + " -O check mini",
+		"-F /dev/null -S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O exit mini",
+	} {
+		if !seen[want] {
+			t.Errorf("control command %q was not run; got %v", want, seen)
+		}
+	}
+}
+
+// OpenSSH binds a control socket at its path plus a 17-byte temporary suffix,
+// and a socket address holds 104 bytes on macOS including the final NUL. So a
+// socket path may be at most 86 bytes long.
+func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
+	dir := "/tmp/nh-run"
+	// "/tmp/nh-run/" is 12 bytes and ".sock" 5: a 69-byte name gives 86.
+	fits, tooLong := strings.Repeat("a", 69), strings.Repeat("a", 70)
+	s := NewSession(fits, "mini", dir)
+	if got := s.SocketPath(); got != filepath.Join(dir, fits+".sock") || len(got) != 86 {
+		t.Fatalf("a name that still fits must be kept: %q (%d bytes)", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath for a path of 86 bytes: %v", err)
+	}
+
+	s = NewSession(tooLong, "mini", dir)
+	got := s.SocketPath()
+	if filepath.Dir(got) != dir || !strings.HasPrefix(filepath.Base(got), "h-") || len(filepath.Base(got)) != len("h-0123456789abcdef.sock") {
+		t.Fatalf("a name that does not fit must become the hashed name, got %q", got)
+	}
+	if len(got)+17 >= 104 {
+		t.Fatalf("hashed socket path %q (%d bytes) does not fit either", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath: %v", err)
+	}
+	if again := NewSession(tooLong, "other-host", dir).SocketPath(); again != got {
+		t.Fatalf("the socket of one name changed: %q then %q", got, again)
+	}
+	if other := NewSession(tooLong+"b", "mini", dir).SocketPath(); other == got {
+		t.Fatalf("two long names share the socket %q", got)
+	}
+}
+
+func TestStartFailsAtOnceWhenTheRunDirectoryIsTooLong(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	long := filepath.Join(shortDir(t), strings.Repeat("d", 70))
+	s.runDir = long
+	s.connectTimeout = time.Minute // a wait for ssh would outlast the test
+
+	err := s.CheckSocketPath()
+	if err == nil {
+		t.Fatalf("CheckSocketPath accepted %q", s.SocketPath())
+	}
+	for _, want := range []string{s.SocketPath(), "86 bytes", "XDG_CONFIG_HOME"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := time.Now()
+	werr := s.WaitConnected(ctx)
+	if werr == nil || !strings.Contains(werr.Error(), "XDG_CONFIG_HOME") {
+		t.Fatalf("WaitConnected = %v, want the socket path error", werr)
+	}
+	if took := time.Since(begin); took > 2*time.Second {
+		t.Fatalf("the failure took %s", took)
+	}
+	if log := readLog(t, logPath); log != "" {
+		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)
+	}
+	if s.Launches() != 0 {
+		t.Fatalf("launches = %d", s.Launches())
+	}
+	if _, err := os.Stat(long); err == nil {
+		t.Fatal("the unusable run directory was created")
+	}
+	// Stop and a second Start behave as after any start that gave up.
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after Stop = %s", s.Status())
+	}
+	s.Start()
+	if s.Status() != StatusAuthFailed || readLog(t, logPath) != "" {
+		t.Fatalf("second Start: status %s, log %q", s.Status(), readLog(t, logPath))
+	}
+}
+
+// A long name is replaced by "h-" and 16 hex digits. A server that is itself
+// named like that must not get the socket of the long name it stands for.
+func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
+	dir := "/tmp/nh-run"
+	long := strings.Repeat("a", 70)
+	hashed := strings.TrimSuffix(filepath.Base(NewSession(long, "mini", dir).SocketPath()), ".sock")
+	for _, literal := range []string{hashed, strings.ToUpper(hashed)} {
+		got := NewSession(literal, "mini", dir).SocketPath()
+		if strings.EqualFold(got, filepath.Join(dir, hashed+".sock")) {
+			t.Errorf("the server named %q shares the socket %q with the long name", literal, got)
+		}
+		if filepath.Dir(got) != dir || NewSession(literal, "other-host", dir).SocketPath() != got {
+			t.Errorf("socket of %q: %q", literal, got)
+		}
+	}
+	// Only the exact hashed form is replaced.
+	for _, plain := range []string{"h-mini", "h-0123456789abcdeg", "h-0123456789abcde", "h-0123456789abcdef0"} {
+		if got := NewSession(plain, "mini", dir).SocketPath(); got != filepath.Join(dir, plain+".sock") {
+			t.Errorf("the plain name %q was not kept: %q", plain, got)
+		}
 	}
 }

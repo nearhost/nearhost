@@ -2,6 +2,10 @@
 # Fake OpenSSH client for nearhost tests. Records argv to $FAKE_SSH_LOG and
 # simulates the flags nearhost uses. Behaviour is controlled by FAKE_SSH_*.
 printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
+# $FAKE_SSH_PGID_LOG gets one line per invocation: this process's group, then argv.
+if [ -n "$FAKE_SSH_PGID_LOG" ]; then
+  printf '%s %s\n' "$(ps -o pgid= -p $$ | tr -d ' ')" "$*" >> "$FAKE_SSH_PGID_LOG"
+fi
 sock=""; mode=""; prev=""
 for a in "$@"; do
   case "$prev" in
@@ -27,8 +31,28 @@ case "$mode" in
           echo "bind [127.0.0.1]:$FAKE_SSH_FORWARD_FAIL: Address already in use" >&2; exit 255;;
       esac
     fi
+    # If the file named by $FAKE_SSH_FORWARD_KILLS_MASTER exists, the master
+    # dies under this request: remove the file (so it happens once) and the
+    # socket (the master exits when it is gone), and fail.
+    if [ -n "$FAKE_SSH_FORWARD_KILLS_MASTER" ] && [ -e "$FAKE_SSH_FORWARD_KILLS_MASTER" ]; then
+      rm -f "$FAKE_SSH_FORWARD_KILLS_MASTER" "$sock"
+      echo "mux_client_forward: read from master failed: Broken pipe" >&2; exit 255
+    fi
+    # While the file named by $FAKE_SSH_FORWARD_FAIL_FILE exists, fail the
+    # forward whose local port is the file's content.
+    if [ -n "$FAKE_SSH_FORWARD_FAIL_FILE" ] && [ -e "$FAKE_SSH_FORWARD_FAIL_FILE" ]; then
+      port=$(cat "$FAKE_SSH_FORWARD_FAIL_FILE")
+      case "$larg" in
+        127.0.0.1:$port:*)
+          echo "bind [127.0.0.1]:$port: Address already in use" >&2; exit 255;;
+      esac
+    fi
     exit 0;;
   cancel)
+    # Wait for as long as the file named by $FAKE_SSH_CANCEL_WAIT exists.
+    if [ -n "$FAKE_SSH_CANCEL_WAIT" ]; then
+      while [ -e "$FAKE_SSH_CANCEL_WAIT" ]; do sleep 0.05; done
+    fi
     # Fail while the file named by $FAKE_SSH_CANCEL_FAIL exists.
     if [ -n "$FAKE_SSH_CANCEL_FAIL" ] && [ -e "$FAKE_SSH_CANCEL_FAIL" ]; then
       echo "mux_client_forward: forwarding request failed" >&2; exit 255

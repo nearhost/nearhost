@@ -2,13 +2,17 @@
 package hosts
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const (
@@ -168,7 +172,18 @@ func read(path string) (string, error) {
 	return string(data), nil
 }
 
-// Apply rewrites the file in place. It needs write permission on path.
+// renameFile replaces the target with the finished temporary file. Tests
+// replace it to fail or hold the final step.
+var renameFile = os.Rename
+
+// Apply rewrites the managed block in the hosts file at path. The file is
+// replaced atomically: the new content is written to a temporary file in the
+// same directory and renamed over the target, so the path always holds either
+// the complete old content or the complete new content. A symlink at path (or
+// in its parents) is resolved first and the file it points to is replaced; a
+// symlink whose target does not exist is refused and left as it is.
+// On Linux the SELinux label and POSIX ACL are carried over; macOS ACLs and
+// other extended attributes are not.
 func Apply(path string, aliases []string) error {
 	existing, err := read(path)
 	if err != nil {
@@ -181,8 +196,72 @@ func Apply(path string, aliases []string) error {
 	if unchanged(existing, updated) {
 		return nil
 	}
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	return replaceFile(path, updated)
+}
+
+// replaceFile atomically replaces the file path resolves to with content.
+func replaceFile(path, content string) (err error) {
+	target := path
+	mode := os.FileMode(0o644)
+	var info fs.FileInfo
+	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+		target = resolved
+		if info, err = os.Stat(target); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+		mode = info.Mode().Perm()
+	} else if !errors.Is(rerr, fs.ErrNotExist) {
+		return fmt.Errorf("write %s: %w", path, rerr)
+	} else if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+		// The path is there, as a link to nothing. Renaming a new file over
+		// it would put a regular file where the link was, and writing where
+		// it points would create a file in a place nobody chose.
+		dest, _ := os.Readlink(path)
+		return fmt.Errorf("write %s: it is a symbolic link to %s, which does not exist; create that file or remove the link", path, dest)
+	}
+
+	dir := filepath.Dir(target)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(target)+".nearhost-*")
+	if err != nil {
+		return fmt.Errorf("write %s: cannot create a temporary file in directory %s: %w", path, dir, err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.WriteString(content); err != nil {
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if info != nil && os.Geteuid() == 0 {
+		if err = chownLike(tmp, info); err != nil {
+			return fmt.Errorf("write %s: %w", tmpName, err)
+		}
+	}
+	// Mode before the ACL: setting the ACL then fixes the mask the copy carries.
+	if err = tmp.Chmod(mode); err != nil {
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if info != nil {
+		if err = copyLabels(target, tmpName); err != nil {
+			return fmt.Errorf("write %s: keep label or ACL: %w", path, err)
+		}
+	}
+	if err = tmp.Sync(); err != nil {
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if err = renameFile(tmpName, target); err != nil {
+		return fmt.Errorf("replace %s: %w", target, err)
+	}
+	// Best effort: make the rename itself durable.
+	if d, derr := os.Open(dir); derr == nil {
+		d.Sync()
+		d.Close()
 	}
 	return nil
 }
@@ -210,21 +289,45 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 	return true, nil
 }
 
+// sudoPath is the sudo binary. Tests replace it.
+var sudoPath = "sudo"
+
+// sudoStopDelay is how long sudo gets to leave after it was asked to
+// terminate before it is killed.
+const sudoStopDelay = 2 * time.Second
+
 // SudoApplier runs `sudo <executable> hosts apply --file <path>` with aliases on stdin.
+// Nothing interrupts it while sudo waits for a password; a caller that must
+// be able to give up uses SudoApplierContext.
 func SudoApplier(executable, path string) Applier {
+	return SudoApplierContext(context.Background(), executable, path)
+}
+
+// SudoApplierContext is SudoApplier bound to ctx. When ctx ends while sudo
+// runs, which includes sudo waiting for a password, sudo is asked to
+// terminate (and killed if it stays), and the applier returns ctx's error.
+// When ctx has already ended sudo is not started.
+func SudoApplierContext(ctx context.Context, executable, path string) Applier {
 	return func(aliases []string) error {
-		cmd := sudoCommand(executable, path, aliases)
+		cmd := sudoCommand(ctx, executable, path, aliases)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+			}
 			return fmt.Errorf("sudo hosts apply: %w", err)
 		}
 		return nil
 	}
 }
 
-func sudoCommand(executable, path string, aliases []string) *exec.Cmd {
-	cmd := exec.Command("sudo", "-p", "nearhost needs your password to update /etc/hosts: ", executable, "hosts", "apply", "--file", path)
+func sudoCommand(ctx context.Context, executable, path string, aliases []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, sudoPath, "-p", "nearhost needs your password to update /etc/hosts: ", executable, "hosts", "apply", "--file", path)
 	cmd.Stdin = strings.NewReader(strings.Join(aliases, "\n") + "\n")
+	// Terminate rather than kill: at its password prompt sudo then puts the
+	// terminal back the way it was.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = sudoStopDelay
 	return cmd
 }

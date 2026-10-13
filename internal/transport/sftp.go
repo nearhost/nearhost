@@ -24,7 +24,14 @@ type SFTP struct {
 // OpenSFTP starts `ssh -s sftp` multiplexed over the control socket. ctx
 // bounds the handshake only; the subsystem lives until Close.
 func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
-	cmd := s.command(context.Background(), "-S", s.SocketPath(), "-o", "BatchMode=yes", "-s", s.Host, "sftp")
+	// A session opened through the master also asks it for the forwards in
+	// the user's configuration unless they are cleared, and with ControlMaster
+	// set there it could take the master's place on a socket that has died.
+	cmd := s.longLived(context.Background(), "-S", s.SocketPath(), "-o", "BatchMode=yes",
+		"-o", "RemoteCommand=none",
+		"-o", "ClearAllForwardings=yes",
+		"-o", "ControlMaster=no",
+		"-s", s.Host, "sftp")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -76,6 +83,12 @@ func (f *SFTP) Close() error {
 	f.cmd.Process.Kill()
 	err := f.Client.Close()
 	f.cmd.Wait()
+	// The client closes its end of the pipe by itself when it sees ssh go,
+	// which the kill above can make happen first. The pipe is closed either
+	// way.
+	if errors.Is(err, os.ErrClosed) {
+		err = nil
+	}
 	return err
 }
 

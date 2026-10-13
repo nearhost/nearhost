@@ -35,20 +35,37 @@ func New(opts Options) *Proxy {
 // Apply loads a configuration serving exactly the given sites. Existing
 // connections survive; it is safe to call repeatedly and concurrently.
 func (p *Proxy) Apply(sites []Site) error {
+	_, err := p.apply(sites, false)
+	return err
+}
+
+// ApplyIfRunning is Apply for a Proxy that only means to change what it is
+// already running. If this Proxy does not own Caddy (another one has taken
+// over, or this one never applied or has stopped) it loads nothing, takes
+// nothing over and reports false. The check and the load are one step, so a
+// Proxy cannot take Caddy back from a newer owner this way.
+func (p *Proxy) ApplyIfRunning(sites []Site) (bool, error) {
+	return p.apply(sites, true)
+}
+
+func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	cfg, err := BuildConfig(sites, p.opts)
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
-		return fmt.Errorf("create storage: %w", err)
+		return false, err
 	}
 	caddyMu.Lock()
 	defer caddyMu.Unlock()
+	if onlyIfOwner && owner != p {
+		return false, nil
+	}
+	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
+		return false, fmt.Errorf("create storage: %w", err)
+	}
 	if err := caddy.Load(cfg, false); err != nil {
-		return fmt.Errorf("load proxy config: %w", err)
+		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
-	return nil
+	return true, nil
 }
 
 // Stop shuts Caddy down and releases its listening ports if this Proxy owns

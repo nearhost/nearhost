@@ -1,6 +1,8 @@
 package hosts
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const base = "127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1             localhost\n"
@@ -157,7 +160,7 @@ func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 }
 
 func TestSudoCommandCarriesFilePathAndAliases(t *testing.T) {
-	cmd := sudoCommand("/bin/nearhost", "/tmp/other-hosts", []string{"a.test", "b.test"})
+	cmd := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", []string{"a.test", "b.test"})
 	args := strings.Join(cmd.Args, " ")
 	if !strings.HasSuffix(args, "/bin/nearhost hosts apply --file /tmp/other-hosts") {
 		t.Fatalf("args: %s", args)
@@ -227,5 +230,301 @@ func TestRewriteUnterminatedBlockKeepsForeignLoopbackEntries(t *testing.T) {
 	}
 	if want := "127.0.0.1 localhost\n127.0.0.1 b.test\n"; got != want {
 		t.Fatalf("only .test entries directly after the marker belong to the block:\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestSudoApplierContextStopsSudoWhenCancelled(t *testing.T) {
+	// A stand-in for sudo that, like sudo at its password prompt, does not
+	// finish by itself.
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- SudoApplierContext(ctx, "/bin/nearhost", filepath.Join(dir, "hosts"))([]string{"a.test"})
+	}()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stand-in for sudo never started")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("applier returned %v, want the context's error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the applier kept waiting for sudo after its context was cancelled")
+	}
+}
+
+func TestSudoApplierContextDoesNotStartSudoWhenAlreadyCancelled(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := SudoApplierContext(ctx, "/bin/nearhost", filepath.Join(dir, "hosts"))([]string{"a.test"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("applier returned %v, want the context's error", err)
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Fatal("sudo was started for a cancelled context")
+	}
+}
+
+func tempLeftovers(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("directory holds %v, want %v", got, want)
+	}
+}
+
+func TestApplyWritesCorrectContentAndLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(path, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(path, []string{"b.test", "a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 b.test\n# nearhost:end\n"
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	tempLeftovers(t, dir, "hosts")
+}
+
+func TestApplyPreservesMode(t *testing.T) {
+	for _, mode := range []os.FileMode{0o644, 0o600} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "hosts")
+		if err := os.WriteFile(path, []byte(base), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := Apply(path, []string{"a.test"}); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != mode {
+			t.Fatalf("mode %v, want %v", fi.Mode().Perm(), mode)
+		}
+	}
+}
+
+func TestApplyCreatesMissingFileWith0644(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("mode %v, want 0644", fi.Mode().Perm())
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "# nearhost:start\n127.0.0.1 a.test\n# nearhost:end\n" {
+		t.Fatalf("got %q", got)
+	}
+	tempLeftovers(t, dir, "hosts")
+}
+
+func TestApplyThroughSymlinkedFileKeepsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	link := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(real, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(link, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink replaced: %v %v", fi, err)
+	}
+	got, _ := os.ReadFile(real)
+	if !strings.Contains(string(got), "127.0.0.1 a.test") {
+		t.Fatalf("target not updated:\n%s", got)
+	}
+	viaLink, _ := os.ReadFile(link)
+	if string(viaLink) != string(got) {
+		t.Fatal("link does not show updated content")
+	}
+	tempLeftovers(t, dir, "hosts", "real")
+}
+
+func TestApplyThroughSymlinkedParentDirectory(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "private")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("private", filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "hosts"), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(filepath.Join(root, "etc", "hosts"), []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, "etc")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("parent symlink replaced: %v %v", fi, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(realDir, "hosts"))
+	if !strings.Contains(string(got), "127.0.0.1 a.test") {
+		t.Fatalf("target not updated:\n%s", got)
+	}
+	tempLeftovers(t, realDir, "hosts")
+}
+
+func TestApplyFailedRenameLeavesOriginalIntactAndNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(path, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := renameFile
+	t.Cleanup(func() { renameFile = orig })
+	renameFile = func(oldpath, newpath string) error {
+		// The original must be whole while the new content waits in the temp file.
+		if got, _ := os.ReadFile(path); string(got) != base {
+			t.Errorf("original changed before rename: %q", got)
+		}
+		return errors.New("boom")
+	}
+	err := Apply(path, []string{"a.test"})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want rename failure", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != base {
+		t.Fatalf("original changed: %q", got)
+	}
+	tempLeftovers(t, dir, "hosts")
+}
+
+func TestApplyNothingToDoWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(path)
+	orig := renameFile
+	t.Cleanup(func() { renameFile = orig })
+	renameFile = func(string, string) error {
+		t.Error("rename called on the fast path")
+		return nil
+	}
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(path)
+	if !fi.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("mtime changed: %v, was %v", fi.ModTime(), before.ModTime())
+	}
+	tempLeftovers(t, dir, "hosts")
+}
+
+func TestApplyUnwritableDirectoryNamesDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(path, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	err := Apply(path, []string{"a.test"})
+	if err == nil || !strings.Contains(err.Error(), dir) {
+		t.Fatalf("err = %v, want one naming %s", err, dir)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != base {
+		t.Fatalf("file changed despite error: %q", got)
+	}
+}
+
+// A symlink whose target does not exist must not be replaced by a regular
+// file, which is what renaming over the link itself would do. Apply refuses
+// and says which link points where.
+func TestApplyRefusesADanglingSymlinkAndLeavesIt(t *testing.T) {
+	for _, dest := range []string{"missing", filepath.Join(t.TempDir(), "elsewhere", "hosts")} {
+		dir := t.TempDir()
+		link := filepath.Join(dir, "hosts")
+		if err := os.Symlink(dest, link); err != nil {
+			t.Fatal(err)
+		}
+		err := Apply(link, []string{"a.test"})
+		if err == nil {
+			t.Fatalf("Apply through a link to %s succeeded", dest)
+		}
+		for _, want := range []string{link, dest, "symbolic link", "does not exist"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+		if fi, lerr := os.Lstat(link); lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the link was replaced: %v %v", fi, lerr)
+		}
+		if got, _ := os.Readlink(link); got != dest {
+			t.Errorf("the link now points to %q", got)
+		}
+		if _, serr := os.Stat(link); serr == nil {
+			t.Error("the link's target was created")
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+			t.Errorf("the directory holds %d entries, want the link alone", len(entries))
+		}
 	}
 }
