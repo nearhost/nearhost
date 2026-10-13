@@ -87,9 +87,19 @@ type harness struct {
 // directories and a recording hosts function. It does not start the engine.
 func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEnv ...string) *harness {
 	t.Helper()
+	httpsPort := proxyPort(t)
+	httpPort := proxyPort(t)
+	// Each port is released before the next is picked, so the same one can
+	// come back; the proxy needs two different ports.
+	for i := 0; httpPort == httpsPort; i++ {
+		if i == 50 {
+			t.Fatal("no second free port for the proxy")
+		}
+		httpPort = proxyPort(t)
+	}
 	h := &harness{
-		httpsPort: proxyPort(t),
-		httpPort:  proxyPort(t),
+		httpsPort: httpsPort,
+		httpPort:  httpPort,
 		storage:   tempDir(t, "nh-caddy-"),
 		runDir:    tempDir(t, "nh-run-"),
 		sshLog:    filepath.Join(t.TempDir(), "ssh.log"),
