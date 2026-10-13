@@ -34,3 +34,23 @@ func TestSystemUpShutsDownOnHangup(t *testing.T) {
 		t.Fatal("a hangup did not end the context up waits on")
 	}
 }
+
+// A write to a closed pipe on standard output would otherwise end the process
+// at once (`nearhost up | tee`, then Ctrl-C), before the shutdown has ended
+// the ssh masters. With the signal ignored the write just fails.
+func TestSystemUpIgnoresBrokenPipes(t *testing.T) {
+	if signal.Ignored(syscall.SIGPIPE) {
+		t.Skip("SIGPIPE is already ignored in this process")
+	}
+	defer signal.Reset(syscall.SIGPIPE) // the other tests keep the default
+
+	_, release := systemUp().notify(context.Background())
+	if !signal.Ignored(syscall.SIGPIPE) {
+		t.Error("SIGPIPE is not ignored while up runs")
+	}
+	release()
+	// The shutdown and the last lines come after the release.
+	if !signal.Ignored(syscall.SIGPIPE) {
+		t.Error("SIGPIPE is no longer ignored once up stops listening for signals")
+	}
+}

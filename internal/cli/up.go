@@ -56,6 +56,12 @@ func systemUp() upBackend {
 			return err
 		},
 		notify: func(parent context.Context) (context.Context, context.CancelFunc) {
+			// When the output is a pipe whose reader has gone (`up | tee`,
+			// then Ctrl-C), the next line written would end the process on
+			// the spot and leave the ssh masters running. Ignored, the write
+			// fails instead and the shutdown runs to its end. It stays
+			// ignored after the release: the last lines are written then.
+			signal.Ignore(syscall.SIGPIPE)
 			return signal.NotifyContext(parent, stopSignals()...)
 		},
 	}

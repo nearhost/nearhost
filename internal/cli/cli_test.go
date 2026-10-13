@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -40,12 +41,23 @@ func TestMain(m *testing.M) {
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
+	// broken makes every write fail, as writes to a pipe whose reader is gone.
+	broken bool
 }
 
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.broken {
+		return 0, syscall.EPIPE
+	}
 	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) breakPipe() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.broken = true
 }
 
 func (b *syncBuffer) String() string {

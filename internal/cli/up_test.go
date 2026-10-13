@@ -136,6 +136,28 @@ func TestUpStartsOnlyTheNamedProjects(t *testing.T) {
 	}
 }
 
+// With `nearhost up | tee up.log`, Ctrl-C ends tee as well and every later
+// write fails. The shutdown must run to its end all the same.
+func TestUpShutsDownCleanlyWhenItsOutputIsGone(t *testing.T) {
+	u := newUpRun(t, &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}})
+	u.noHosts = true
+	u.start()
+	u.waitFor("Serving until interrupted")
+	before := u.out.String()
+
+	u.out.breakPipe()
+	if err := u.stop(); err != nil { // also checks that no ssh process, listener or goroutine is left
+		t.Errorf("up with its output gone returned %v, want a clean stop", err)
+	}
+	if out := u.out.String(); out != before {
+		t.Errorf("the output was written to after it broke:\n%s", out[len(before):])
+	}
+	log := sshLog(t, filepath.Join(filepath.Dir(u.cfgPath), "ssh.log"))
+	if !strings.Contains(log, "-O cancel") || !strings.Contains(log, "-O exit mini.lan") {
+		t.Errorf("the shutdown did not cancel the forward and end the master:\n%s", log)
+	}
+}
+
 func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 	web := localProject("web", 8000, true)
 	dup := localProject("dup", 8001, true)
