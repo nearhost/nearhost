@@ -51,7 +51,9 @@ func (p *Proxy) Apply(sites []Site) error {
 	return nil
 }
 
-// Stop shuts Caddy down and releases its ports if this Proxy owns it. Calling
+// Stop shuts Caddy down and releases its listening ports if this Proxy owns
+// it. Already-upgraded connections (WebSockets) are not force-closed; they stay
+// open until either end closes or the stream close delay elapses. Calling
 // it again, or on a Proxy that never applied or lost ownership, is a no-op.
 func (p *Proxy) Stop() error {
 	caddyMu.Lock()

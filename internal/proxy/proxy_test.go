@@ -427,3 +427,27 @@ func TestStopOnlyAffectsTheOwningProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Caddy resolves its app data dir (instance.uuid) from XDG_DATA_HOME at call
+// time, so fresh dirs here prove the proxy never writes into them, whatever
+// earlier tests in the process did.
+func TestApplyWritesNothingOutsideStorage(t *testing.T) {
+	dataHome, configHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{dataHome, configHome} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			t.Errorf("unexpected entry %q written under %s", e.Name(), dir)
+		}
+	}
+}
