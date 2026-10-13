@@ -794,6 +794,60 @@ func TestStatusDuringTeardownKeepsTheAnnouncedState(t *testing.T) {
 	}
 }
 
+func TestStartDuringAStopWaitsForItAndThenStarts(t *testing.T) {
+	wait := filepath.Join(t.TempDir(), "cancel-waits")
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_CANCEL_WAIT="+wait)
+	t.Cleanup(func() { os.Remove(wait) }) // never leave a cancel waiting
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	stateEvents(events, "myapp") // drop what led here
+
+	// The stop is held inside its first forward cancel.
+	if err := os.WriteFile(wait, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- h.eng.StopProject(bg, "myapp") }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the teardown to reach a cancel")
+
+	started := make(chan error, 1)
+	go func() { started <- h.eng.StartProject(bg, "myapp") }()
+	// It has nothing to report while the stop is under way. (A start that
+	// only gets going after this pause is caught by what follows.)
+	select {
+	case err := <-started:
+		t.Fatalf("StartProject returned %v while the project was being stopped", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := os.Remove(wait); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-started:
+		if err != nil {
+			t.Fatalf("StartProject after the stop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the start never finished")
+	}
+	if st := h.eng.Status("myapp"); st.State != StateRunning || st.WebLocalPort == 0 {
+		t.Fatalf("status = %+v: the start requested during the stop was lost", st)
+	}
+	if f := h.forwards("mini"); len(f) != 2 || len(h.unapplied("mini")) != 0 || len(h.eng.Sites()) != 1 {
+		t.Fatalf("forwards = %v, unapplied %v, sites %v", f, h.unapplied("mini"), h.eng.Sites())
+	}
+	states, _ := stateEvents(events, "myapp")
+	if want := []State{StateStopped, StateStarting, StateRunning}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events = %v, want %v", states, want)
+	}
+}
+
 func TestFailedCancelAfterALostForwardEndsInErrorNamingTheCancel(t *testing.T) {
 	dir := t.TempDir()
 	flag, block := filepath.Join(dir, "forward-fails"), filepath.Join(dir, "cancel-fails")

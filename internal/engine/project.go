@@ -60,7 +60,8 @@ type heldPort struct {
 // failed), the connection is tried again, and the project leaves the degraded
 // state once it is back. Starting a project in the error state first removes
 // whatever its last attempt left; that includes a running project that lost
-// a forward.
+// a forward. Starting a project that is being stopped waits for the stop and
+// then starts it.
 //
 // Outcomes other than running, each returned as an error as well:
 //   - the server cannot be reached, the web forward fails, or the proxy
@@ -148,12 +149,16 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 // busyLocked reports whether a start has nothing to do: the project is
 // starting, or running with nothing lost. A running project that shows an
 // error because a forward is gone is not busy; starting it replaces its
-// forwards.
+// forwards. Nor is one that is being stopped, although it still shows its
+// last state: the start waits for the stop (on op) and runs after it.
 func (e *Engine) busyLocked(run *projectRun) bool {
 	switch run.state {
 	case StateStarting:
 		return true
 	case StateRunning:
+		if run.tearing {
+			return false // only a stop tears down a running project
+		}
 		shown, _ := e.effectiveLocked(run)
 		return shown != StateError
 	}
