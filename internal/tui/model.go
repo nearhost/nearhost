@@ -230,8 +230,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.applyNow())
 	case projectAddedMsg:
 		m.form = nil
-		m.sel, m.scroll = rowKey(rowProject, msg.name), 0
-		m.logs.noteOn(m.sel, "Added "+msg.name+".")
+		m.selectRow(rowKey(rowProject, msg.name))
+		verb := "Added "
+		if msg.edited {
+			verb = "Saved "
+		}
+		m.logs.noteOn(m.sel, verb+msg.name+".")
+		return m, m.applyNow()
+	case changedMsg:
+		m.form = nil
+		m.selectRow(msg.sel)
+		m.logs.noteOn(m.sel, msg.note)
 		return m, m.applyNow()
 	case tea.KeyPressMsg:
 		return m, m.key(msg)

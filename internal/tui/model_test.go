@@ -86,7 +86,7 @@ func TestProjectPanel(t *testing.T) {
 	wantScreen(t, m, "myapp", "https://myapp.test  o to open", "server    mini (ssh mini.lan)", "path      /srv/myapp",
 		"state     ● error", "loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
 		"80     web       web", ":52114", "5173   loopback  vite (VITE_PORT)         :5173", "3306   ignore    db",
-		"enter start/stop · o open · tab routes · h home · / filter · s server · n add · q quit")
+		"enter start/stop · o open · tab routes · e edit · d remove · / filter · s server · n add · q quit")
 }
 
 func TestFixFor(t *testing.T) {

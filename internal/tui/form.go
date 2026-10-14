@@ -31,7 +31,10 @@ type (
 	// serverAddedMsg is a server the add-server form saved.
 	serverAddedMsg struct{ srv config.Server }
 	// projectAddedMsg is a project the add-project form saved.
-	projectAddedMsg struct{ name string }
+	projectAddedMsg struct {
+		name   string
+		edited bool // saved over an existing project
+	}
 )
 
 func closeForm() tea.Msg { return formClosedMsg{} }
