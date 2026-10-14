@@ -238,6 +238,7 @@ func (p *Preset) validate(name string) []error {
 			bad("suppress[%d]: an id is required", i)
 		}
 	}
+	p.checkExpressions(bad)
 	return errs
 }
 
