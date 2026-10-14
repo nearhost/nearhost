@@ -262,14 +262,9 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 				passed[o.Name] = true
 				continue
 			}
-			_, _, err := b.presets.enable(ctx, cfg, cfgPath, o.Name, false)
-			if err == nil {
-				err = config.Save(cfgPath, cfg)
-			}
-			if err != nil {
-				// A preset that cannot be installed must not stop the add.
+			if note := enableOffered(ctx, b.presets, cfg, cfgPath, o.Name); note != "" {
 				passed[o.Name] = true
-				notes = append(notes, fmt.Sprintf("the %s preset was not enabled: %v", o.Name, err))
+				notes = append(notes, note)
 				continue
 			}
 			enabled = true
@@ -297,20 +292,11 @@ func askToTrust(ctx context.Context, out io.Writer, answers *bufio.Reader, b pre
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "", "y", "yes":
-			if _, err := b.trust(ctx, out, cfg, cfgPath, officialRepo, ""); err != nil {
-				var unread *unreadableRegistryError
-				if errors.As(err, &unread) {
-					return unread.problem + ", so it was not trusted.", nil
-				}
-				return strings.TrimRight(err.Error(), ".") + ".", nil
-			}
-			return "", nil
+			return answerRegistry(ctx, out, b, cfg, cfgPath, registryYes)
 		case "n", "no":
-			return "", nil
+			return answerRegistry(ctx, out, b, cfg, cfgPath, registryNo)
 		case "d", "don't", "dont":
-			off := false
-			cfg.RegistryPrompt = &off
-			return "", config.Save(cfgPath, cfg)
+			return answerRegistry(ctx, out, b, cfg, cfgPath, registryNever)
 		}
 	}
 }
