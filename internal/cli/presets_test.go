@@ -51,3 +51,20 @@ func TestPresetsLiveBesideTheConfigInUse(t *testing.T) {
 		t.Errorf("presetPath = %q", got)
 	}
 }
+
+func TestPrintable(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Test stack", "Test stack"},
+		{"Café Ünïcode 日本語", "Café Ünïcode 日本語"},
+		{"a\nb", "a b"},
+		{"a\tb", "a b"},
+		{"a\rb", "a b"},
+		{"\x1b[31mred\x1b[0m", "[31mred[0m"},
+		{"  padded \n", "padded"},
+	}
+	for _, tc := range cases {
+		if got := printable(tc.in); got != tc.want {
+			t.Errorf("printable(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
