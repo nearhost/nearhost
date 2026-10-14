@@ -34,7 +34,9 @@ func TestAddDiscoversLocalProjectAndSavesConfig(t *testing.T) {
 	if web, ok := p.WebRoute(); !ok || web.Port != 8080 {
 		t.Fatalf("web route = %+v %v", web, ok)
 	}
-	want := "Routes found for myapp (local:" + dir + "):\n" +
+	want := "No preset registries are trusted. To use the official presets: nearhost preset registry add nearhost/presets\n" +
+		"\n" +
+		"Routes found for myapp (local:" + dir + "):\n" +
 		"  PORT  ROLE    LABEL\n" +
 		"  1025  ignore  mailpit (FORWARD_MAILPIT_PORT)\n" +
 		"  3307  ignore  mysql (FORWARD_DB_PORT)\n" +

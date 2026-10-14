@@ -131,7 +131,7 @@ func (c *Client) cachePath() string { return filepath.Join(c.Dir, "index.yaml") 
 // Index returns the registry index: the cached copy while it is under a day
 // old, else a fresh one, else the stale copy.
 func (c *Client) Index(ctx context.Context) (*Index, error) {
-	cached, age, cacheErr := c.cached()
+	cached, age, cacheErr := c.Cached()
 	if cacheErr == nil && age >= 0 && age < maxAge {
 		return cached, nil
 	}
@@ -165,7 +165,9 @@ func (c *Client) Refresh(ctx context.Context) (*Index, error) {
 	return idx, nil
 }
 
-func (c *Client) cached() (*Index, time.Duration, error) {
+// Cached returns the saved copy of the index and how old it is. It makes no
+// request.
+func (c *Client) Cached() (*Index, time.Duration, error) {
 	info, err := os.Stat(c.cachePath())
 	if err != nil {
 		return nil, 0, err

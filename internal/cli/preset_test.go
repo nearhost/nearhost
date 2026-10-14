@@ -99,7 +99,7 @@ func TestPresetEnableRefusesWhatItCannotUse(t *testing.T) {
 func TestPresetList(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "list")
-	if err != nil || out != "No presets are enabled.\n" {
+	if err != nil || out != "No presets are enabled.\n\n"+hint {
 		t.Fatalf("empty list: %q %v", out, err)
 	}
 

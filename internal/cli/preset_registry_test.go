@@ -455,7 +455,7 @@ func TestNoRegistryMeansNoRequest(t *testing.T) {
 	f, b := newFakeRegistries(t)
 	f.publish(testReg.Repo, refOne, "stack", "bundler")
 	enablePresets(t, cfgPath, "stack")
-	for _, args := range [][]string{{"preset", "list"}, {"preset", "update"}, {"preset", "enable", "bundler"}, {"preset", "enable", "test/bundler"}, {"preset", "disable", "stack"}} {
+	for _, args := range [][]string{{"preset", "list"}, {"preset", "update"}, {"preset", "enable", "bundler"}, {"preset", "enable", "test/bundler"}, {"preset", "disable", "stack"}, {"preset", "registry", "list"}, {"preset", "registry", "remove", "test"}} {
 		execute(t, newPresetCmd(b), append([]string{"--config", cfgPath}, args...)...)
 	}
 	add := noRemote(t)
