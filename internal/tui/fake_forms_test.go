@@ -15,6 +15,7 @@ import (
 type formFake struct {
 	hosts       []string
 	checkErr    error
+	checkBlocks bool // CheckServer waits for its context to end
 	checked     []config.Server
 	addedSrv    []config.Server
 	openErr     error
@@ -101,11 +102,16 @@ func (f *fakeFiles) Close() error { f.closed++; return nil }
 
 func (f *fakeBackend) SSHHosts() []string { return f.forms.hosts }
 
-func (f *fakeBackend) CheckServer(_ context.Context, srv config.Server) error {
+func (f *fakeBackend) CheckServer(ctx context.Context, srv config.Server) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.forms.checked = append(f.forms.checked, srv)
-	return f.forms.checkErr
+	blocks, err := f.forms.checkBlocks, f.forms.checkErr
+	f.mu.Unlock()
+	if blocks {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return err
 }
 
 func (f *fakeBackend) AddServer(srv config.Server) error {

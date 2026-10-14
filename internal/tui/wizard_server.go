@@ -30,6 +30,7 @@ type serverForm struct {
 	busy  bool
 	fail  string // why the check failed
 	seq   int    // the background step whose answer is awaited
+	w     *worker
 }
 
 // serverCheckedMsg is the outcome of checking a server, and serverSavedMsg
@@ -48,8 +49,8 @@ type (
 	}
 )
 
-func newServerForm(b Backend, cfg *config.Config) *serverForm {
-	f := &serverForm{b: b, cfg: cfg, pick: -1}
+func newServerForm(b Backend, cfg *config.Config, w *worker) *serverForm {
+	f := &serverForm{b: b, cfg: cfg, pick: -1, w: w}
 	configured := map[string]bool{}
 	for _, s := range cfg.Servers {
 		configured[s.SSHHost] = true
@@ -98,7 +99,7 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		seq, srv, b := f.seq, msg.srv, f.b
-		return func() tea.Msg { return serverSavedMsg{seq, srv, b.AddServer(srv)} }
+		return f.w.do(func(context.Context) tea.Msg { return serverSavedMsg{seq, srv, b.AddServer(srv)} })
 	case serverSavedMsg:
 		if msg.seq != f.seq {
 			return nil
@@ -112,6 +113,15 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 		return func() tea.Msg { return serverAddedMsg{srv} }
 	case tea.KeyPressMsg:
 		return f.key(msg)
+	case tea.PasteMsg:
+		switch f.step {
+		case serverStepHost:
+			f.host.paste(msg.Content)
+			f.pick, f.err = -1, ""
+		case serverStepName:
+			f.name.paste(msg.Content)
+			f.err = ""
+		}
 	}
 	return nil
 }
@@ -176,13 +186,13 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 
 // check connects to the server; the answer saves it when that worked.
 func (f *serverForm) check() tea.Cmd {
-	f.seq++
+	f.seq = nextSeq()
 	f.busy, f.fail = true, ""
 	seq, b := f.seq, f.b
 	srv := config.Server{Name: f.name.value, SSHHost: f.host.value}
-	return func() tea.Msg {
-		return serverCheckedMsg{seq, srv, b.CheckServer(context.Background(), srv)}
-	}
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		return serverCheckedMsg{seq, srv, b.CheckServer(ctx, srv)}
+	})
 }
 
 // back goes back a step, or closes the form from the first.
@@ -194,7 +204,7 @@ func (f *serverForm) back() tea.Cmd {
 	case serverStepName:
 		f.step = serverStepHost
 	case serverStepCheck:
-		f.seq++ // what the check says now is not wanted
+		f.seq = nextSeq() // what the check says now is not wanted
 		f.busy, f.fail = false, ""
 		f.step = serverStepName
 	}

@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -91,4 +94,70 @@ func sentence(s string) string {
 		return s
 	}
 	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+// lastSeq numbers the forms' background steps. One count serves every form,
+// so the answer of a step in a form that has closed never matches a step of
+// the next one.
+var lastSeq atomic.Int64
+
+func nextSeq() int { return int(lastSeq.Add(1)) }
+
+// worker runs the forms' background steps under a context that quitting
+// ends, and lets quitting wait for those that are running.
+type worker struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	mu      sync.Mutex
+	running sync.WaitGroup
+	stopped bool
+}
+
+func newWorker() *worker {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &worker{ctx: ctx, cancel: cancel}
+}
+
+// releaser is an answer holding something that must be let go of when
+// nobody takes the answer, such as a connection.
+type releaser interface{ release() }
+
+// do runs fn as a background step. A step that begins after stop does
+// nothing, and what a step returns after stop is released, since the
+// interface is going and will not take it.
+func (w *worker) do(fn func(ctx context.Context) tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		w.mu.Lock()
+		if w.stopped {
+			w.mu.Unlock()
+			return nil
+		}
+		w.running.Add(1)
+		w.mu.Unlock()
+		defer w.running.Done()
+		msg := fn(w.ctx)
+		w.mu.Lock()
+		stopped := w.stopped
+		w.mu.Unlock()
+		if r, ok := msg.(releaser); ok && stopped {
+			r.release()
+			return nil
+		}
+		return msg
+	}
+}
+
+// stop ends the running steps and waits for them.
+func (w *worker) stop() {
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
+	w.cancel()
+	w.running.Wait()
+}
+
+// paste adds pasted text to the field, without line breaks or control
+// characters.
+func (f *textField) paste(s string) {
+	f.key(tea.KeyPressMsg{Text: s})
 }
