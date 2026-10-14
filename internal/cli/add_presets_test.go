@@ -58,11 +58,11 @@ func TestAddDeclinedPresetsAreNotUsed(t *testing.T) {
 	for name, input := range map[string]string{"typed n": "n\nno\n", "no answer at all": ""} {
 		t.Run(name, func(t *testing.T) {
 			cfgPath, f, b := suggesting(t, true, "stack", "bundler")
-			out, err := executeWithInput(t, input, newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+			out, err := executeWithInput(t, input, newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}
-			wantContains(t, out, askStack, askBundler, "  8080  web     laravel.test (APP_PORT)\n", "Added myapp on local")
+			wantContains(t, out, askStack, askBundler, "  8080  web     app (APP_PORT)\n", "Added myapp on local")
 			if strings.Count(out, askStack) != 1 {
 				t.Errorf("a declined preset must not be offered again in the same run:\n%s", out)
 			}
@@ -79,7 +79,7 @@ func TestAddDeclinedPresetsAreNotUsed(t *testing.T) {
 // A project no registry preset matches is asked nothing.
 func TestAddAsksOnlyAboutPresetsThatMatch(t *testing.T) {
 	cfgPath, _, b := suggesting(t, true, "stack", "bundler")
-	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain")
+	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -91,14 +91,14 @@ func TestAddAsksOnlyAboutPresetsThatMatch(t *testing.T) {
 func TestAddWithoutATerminalOnlyPrintsSuggestions(t *testing.T) {
 	cfgPath, f, b := suggesting(t, false, "stack", "bundler")
 	// Input is waiting, and must not be read as an answer.
-	out, err := executeWithInput(t, "y\ny\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := executeWithInput(t, "y\ny\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	wantContains(t, out,
 		"This looks like a Test stack project. Pass `--preset test/stack` to `nearhost add` to use its preset.\n",
 		"This looks like a Test bundler project. Pass `--preset test/bundler` to `nearhost add` to use its preset.\n",
-		"  8080  web     laravel.test (APP_PORT)\n",
+		"  8080  web     app (APP_PORT)\n",
 		"Added myapp on local",
 	)
 	if strings.Contains(out, "[Y/n]") {
@@ -146,11 +146,11 @@ func TestAddPresetFlagFailsForAnUnknownPreset(t *testing.T) {
 func TestAddNoPresetsRunsCoreDiscoveryOnly(t *testing.T) {
 	cfgPath, f, b := suggesting(t, true, "stack", "bundler")
 	enablePresets(t, cfgPath, "stack")
-	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--no-presets")
+	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--no-presets", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "  8080  web     laravel.test (APP_PORT)\n")
+	wantContains(t, out, "  8080  web     app (APP_PORT)\n")
 	if strings.Contains(out, "[Y/n]") || strings.Contains(out, "This looks like") || f.total() != 0 {
 		t.Errorf("--no-presets should neither suggest nor contact a registry (%v):\n%s", f.hits, out)
 	}
@@ -163,7 +163,7 @@ func TestAddNoPresetsRunsCoreDiscoveryOnly(t *testing.T) {
 func TestAddSaysWhenARegistryCannotBeRead(t *testing.T) {
 	cfgPath, f, b := suggesting(t, true, "stack")
 	f.down[testReg.Repo] = true
-	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("a registry being down must not stop add: %v\n%s", err, out)
 	}
@@ -176,7 +176,7 @@ func TestAddSaysWhenARegistryCannotBeRead(t *testing.T) {
 func TestAddSaysWhenARegistryNeedsANewerNearhost(t *testing.T) {
 	cfgPath, f, b := suggesting(t, true, "stack")
 	f.files["/test/presets/HEAD/index.yaml"] = "schema: 2\nref: " + refOne + "\n"
-	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("a newer registry must not stop add: %v\n%s", err, out)
 	}
@@ -209,7 +209,7 @@ func TestAddReadsEveryRegistryAtOnce(t *testing.T) {
 	f.publish(acmeReg.Repo, refTwo, "stack")
 	trust(t, cfgPath, acmeReg)
 	f.hold(testReg.Repo, acmeReg.Repo)
-	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -247,11 +247,11 @@ func TestAddOffersTheSameNameFromEachRegistry(t *testing.T) {
 func TestAddCarriesOnWhenAnAcceptedPresetCannotBeInstalled(t *testing.T) {
 	cfgPath, f, b := suggesting(t, true, "stack")
 	f.files["/test/presets/"+refOne+"/presets/stack.yaml"] += "\n# tampered\n"
-	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "Warning: the test/stack preset was not enabled:", "does not match the registry index", "  8080  web     laravel.test (APP_PORT)\n", "Added myapp on local")
+	wantContains(t, out, "Warning: the test/stack preset was not enabled:", "does not match the registry index", "  8080  web     app (APP_PORT)\n", "Added myapp on local")
 	if strings.Count(out, askStack) != 1 {
 		t.Errorf("a preset that failed to install must not be offered again:\n%s", out)
 	}
@@ -273,7 +273,7 @@ func TestAddMakesSuggestedTitlesSafeToPrint(t *testing.T) {
 			// The index refuses control characters, so what is left to strip
 			// is other unprintable text, such as a right-to-left override.
 			f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", `title: "Evil‮ der​dro"`, 1)
-			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}
@@ -292,7 +292,7 @@ func TestAddNamesThePresetWhenItsTitleIsEmpty(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfgPath, f, b := suggesting(t, terminal, "stack")
 			f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", `title: ""`, 1)
-			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}

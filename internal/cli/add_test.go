@@ -23,7 +23,7 @@ func noRemote(t *testing.T) addBackend {
 func TestAddDiscoversLocalProjectAndSavesConfig(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	dir := fixture(t, "sail-custom")
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "myapp")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -38,12 +38,9 @@ func TestAddDiscoversLocalProjectAndSavesConfig(t *testing.T) {
 		"\n" +
 		"Routes found for myapp (local:" + dir + "):\n" +
 		"  PORT  ROLE    LABEL\n" +
-		"  1025  ignore  mailpit (FORWARD_MAILPIT_PORT)\n" +
-		"  3307  ignore  mysql (FORWARD_DB_PORT)\n" +
-		"  5174  ignore  laravel.test (VITE_PORT)\n" +
-		"  6379  ignore  redis (FORWARD_REDIS_PORT)\n" +
-		"  8025  ignore  mailpit (FORWARD_MAILPIT_DASHBOARD_PORT)\n" +
-		"  8080  web     laravel.test (APP_PORT)\n" +
+		"  3307  ignore  forward-db (FORWARD_DB_PORT)\n" +
+		"  5174  ignore  vite (VITE_PORT)\n" +
+		"  8080  web     app (APP_PORT)\n" +
 		"\n" +
 		"Added myapp on local at https://myapp.test\n" +
 		"Start it with `nearhost up`.\n"
@@ -56,7 +53,7 @@ func TestAddDefaultsToTheCurrentDirectoryAndItsName(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	dir := fixture(t, "sail-custom")
 	t.Chdir(dir)
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", "--disabled")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", "--disabled", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -86,7 +83,7 @@ func TestAddWebFlagOverridesPick(t *testing.T) {
 	if web, _ := p.WebRoute(); web.Port != 9000 || webs != 1 {
 		t.Fatalf("expected 9000 as the only web route, got %+v", p.Routes)
 	}
-	wantContains(t, out, "  8080  ignore  laravel.test (APP_PORT)\n", "  9000  web     web (--web)\n")
+	wantContains(t, out, "  8080  ignore  app (APP_PORT)\n", "  9000  web     web (--web)\n")
 
 	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "bad", "--web", "70000")
 	if err == nil || !strings.Contains(err.Error(), "--web") {
@@ -175,11 +172,11 @@ func TestAddUsesEnabledPresets(t *testing.T) {
 func TestAddCarriesOnPastABrokenPreset(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	saveConfig(t, cfgPath, &config.Config{Presets: []config.PresetRef{{Name: "gone"}}})
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, `Warning: preset "gone" is enabled but`, "  8080  web     laravel.test (APP_PORT)\n", "Added myapp on local")
+	wantContains(t, out, `Warning: preset "gone" is enabled but`, "  8080  web     app (APP_PORT)\n", "Added myapp on local")
 }
 
 func TestAddRefusesALoopbackClashAndSavesNothing(t *testing.T) {
@@ -365,7 +362,7 @@ func TestAddQuotesTheProjectNameInTheStartHint(t *testing.T) {
 		"shop.v2": "Start it with `nearhost up shop.v2`.\n",
 	} {
 		cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-		out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name="+name, "--alias", "x.test", "--disabled")
+		out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name="+name, "--alias", "x.test", "--disabled", "--web", "8080")
 		if err != nil {
 			t.Fatalf("add %q: %v\n%s", name, err, out)
 		}
@@ -394,7 +391,7 @@ func TestAddAdvisesOnTheRolesAfterTheWebFlag(t *testing.T) {
 // must hold the same: the proxy serves the alias exactly as configured.
 func TestAddTrimsTheAlias(t *testing.T) {
 	cfgPath, _ := existing(t)
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "padded", "--alias", " padded.test\t")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "padded", "--alias", " padded.test\t", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -404,7 +401,7 @@ func TestAddTrimsTheAlias(t *testing.T) {
 	wantContains(t, out, "at https://padded.test\n")
 
 	// Blanks do not hide a duplicate either.
-	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "again", "--alias", "shop.test ")
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "again", "--alias", "shop.test ", "--web", "8080")
 	if err == nil || !strings.Contains(err.Error(), `already used by project "shop"`) {
 		t.Errorf("a padded duplicate alias: %v\n%s", err, out)
 	}
@@ -461,4 +458,20 @@ func TestAddProposesEnvPortsWithoutPresets(t *testing.T) {
 	if len(p.Routes) != 1 || p.Routes[0].Label != "app (APP_PORT, FORWARD_APP_PORT)" {
 		t.Fatalf("routes = %+v", p.Routes)
 	}
+}
+
+// A project with only a Compose file has no routes until a preset asks for
+// its published ports.
+func TestAddReadsComposeOnlyThroughAPreset(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain")
+	if err == nil || !strings.Contains(out, "No ports found") {
+		t.Fatalf("expected no routes without a preset, got %v\n%s", err, out)
+	}
+	enablePresets(t, cfgPath, "compose")
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "  8080  web     web\n", "  8443  ignore  api\n", "  9000  ignore  api\n")
 }

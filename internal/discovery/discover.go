@@ -40,8 +40,8 @@ type Result struct {
 }
 
 // Discover reads the project's files and proposes routes. On its own it
-// knows Compose published ports and the port variables in .env; presets
-// supply the rest.
+// knows the port variables in .env. It reads Compose published ports only
+// when an active preset asks for them; presets supply the rest.
 func Discover(r FileReader, opts Options) (*Result, error) {
 	files := newMemo(r)
 	env, err := readEnv(files)
@@ -52,27 +52,6 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	var composePorts []ComposePort
-	if hasCompose {
-		composePorts, err = ParseCompose(composeData, env)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// ParseCompose returns ports in map order; sort so "first wins" is stable.
-	sort.Slice(composePorts, func(i, j int) bool {
-		a, b := composePorts[i], composePorts[j]
-		if a.Published != b.Published {
-			return a.Published < b.Published
-		}
-		if a.Service != b.Service {
-			return a.Service < b.Service
-		}
-		if a.Target != b.Target {
-			return a.Target < b.Target
-		}
-		return a.Var < b.Var
-	})
 
 	res := &Result{
 		Env:     env,
@@ -80,19 +59,13 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		files:   files,
 		facts:   map[string]map[string]any{},
 	}
-	byPort := map[int]*Candidate{}
-	for _, p := range composePorts {
-		if _, dup := byPort[p.Published]; dup {
-			continue
-		}
-		c := &Candidate{Port: p.Published, Target: p.Target, Role: config.RoleIgnore, Label: p.Service, Source: "compose:" + p.Service, Var: p.Var}
-		if p.Var != "" {
-			c.Label = fmt.Sprintf("%s (%s)", p.Service, p.Var)
-		}
-		byPort[c.Port] = c
-	}
-
 	res.activate(opts.Presets)
+	byPort := map[int]*Candidate{}
+	if hasCompose && res.wantsCompose() {
+		if byPort, err = composeCandidates(composeData, env); err != nil {
+			return nil, err
+		}
+	}
 	for _, p := range res.active {
 		res.apply(p, byPort)
 	}
@@ -122,6 +95,52 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Port < routes[j].Port })
 	res.Routes = assignWeb(routes)
 	return res, nil
+}
+
+// wantsCompose reports whether an active preset asks for the Compose
+// file's published ports.
+func (res *Result) wantsCompose() bool {
+	for _, p := range res.active {
+		if p.Compose == preset.ComposePorts {
+			return true
+		}
+	}
+	return false
+}
+
+// composeCandidates proposes a candidate for each port the Compose file
+// publishes, the first service in a stable order winning a shared port.
+func composeCandidates(data []byte, env map[string]string) (map[int]*Candidate, error) {
+	composePorts, err := ParseCompose(data, env)
+	if err != nil {
+		return nil, err
+	}
+	// ParseCompose returns ports in map order; sort so "first wins" is stable.
+	sort.Slice(composePorts, func(i, j int) bool {
+		a, b := composePorts[i], composePorts[j]
+		if a.Published != b.Published {
+			return a.Published < b.Published
+		}
+		if a.Service != b.Service {
+			return a.Service < b.Service
+		}
+		if a.Target != b.Target {
+			return a.Target < b.Target
+		}
+		return a.Var < b.Var
+	})
+	byPort := map[int]*Candidate{}
+	for _, p := range composePorts {
+		if _, dup := byPort[p.Published]; dup {
+			continue
+		}
+		c := &Candidate{Port: p.Published, Target: p.Target, Role: config.RoleIgnore, Label: p.Service, Source: "compose:" + p.Service, Var: p.Var}
+		if p.Var != "" {
+			c.Label = fmt.Sprintf("%s (%s)", p.Service, p.Var)
+		}
+		byPort[c.Port] = c
+	}
+	return byPort, nil
 }
 
 func (res *Result) warn(format string, a ...any) {
@@ -228,7 +247,10 @@ func assignWeb(routes []Candidate) []Candidate {
 	}
 	pick := first(func(c Candidate) bool { return c.web == preset.WebPreferred })
 	if pick < 0 {
-		pick = first(func(c Candidate) bool { return c.Target == 80 || (c.Target == 0 && c.Port == 80) })
+		// Only a Compose candidate knows its container port.
+		pick = first(func(c Candidate) bool {
+			return strings.HasPrefix(c.Source, "compose:") && (c.Target == 80 || (c.Target == 0 && c.Port == 80))
+		})
 	}
 	if pick < 0 {
 		pick = first(func(c Candidate) bool { return c.web == preset.WebFallback && c.Role != config.RoleLoopback })

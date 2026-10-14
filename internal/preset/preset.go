@@ -37,6 +37,10 @@ const (
 	WebFallback WebHint = "fallback"
 )
 
+// ComposePorts is the one value of a preset's compose field: while the
+// preset is active, discovery proposes the Compose file's published ports.
+const ComposePorts = "ports"
+
 // Preset is one parsed preset file.
 type Preset struct {
 	Schema      int             `yaml:"schema"`
@@ -45,6 +49,7 @@ type Preset struct {
 	Description string          `yaml:"description"`
 	After       []string        `yaml:"after"`
 	Detect      string          `yaml:"detect"`
+	Compose     string          `yaml:"compose"`
 	Ports       []Port          `yaml:"ports"`
 	Facts       map[string]Fact `yaml:"facts"`
 	Routes      []Route         `yaml:"routes"`
@@ -196,6 +201,11 @@ func (p *Preset) validate(name string) []error {
 	checkText("description", p.Description, "", bad)
 	if strings.TrimSpace(p.Detect) == "" {
 		bad("detect is required")
+	}
+	switch p.Compose {
+	case "", ComposePorts:
+	default:
+		bad("compose %q must be %s", p.Compose, ComposePorts)
 	}
 	for _, a := range p.After {
 		if !validRef(a) || a == p.Name {

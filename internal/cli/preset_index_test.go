@@ -21,14 +21,14 @@ func TestPresetIndexDescribesEveryPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the index does not load: %v\n%s", err, out)
 	}
-	if idx.Schema != registry.IndexSchema || idx.Ref != "3f2c1ab9d0e4" || len(idx.Presets) != 2 {
+	if idx.Schema != registry.IndexSchema || idx.Ref != "3f2c1ab9d0e4" || len(idx.Presets) != 3 {
 		t.Fatalf("index = %+v", idx)
 	}
-	if idx.Presets[0].Name != "bundler" || idx.Presets[1].Name != "stack" {
+	if idx.Presets[0].Name != "bundler" || idx.Presets[1].Name != "compose" || idx.Presets[2].Name != "stack" {
 		t.Errorf("entries should be in name order: %+v", idx.Presets)
 	}
 	data, _ := os.ReadFile(filepath.Join(testPresetsDir(), "stack.yaml"))
-	e := idx.Presets[1]
+	e := idx.Presets[2]
 	if e.Title != "Test stack" || e.PresetSchema != 1 || e.Detect != `compose.contains("LARAVEL_SAIL")` || e.SHA256 != registry.Sum(data) {
 		t.Errorf("stack entry = %+v", e)
 	}

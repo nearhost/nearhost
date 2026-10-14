@@ -1,0 +1,6 @@
+schema: 1
+name: compose
+title: Docker Compose
+description: Routes for the published ports in compose.yaml
+detect: compose != ""
+compose: ports

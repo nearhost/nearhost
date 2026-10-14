@@ -1,4 +1,4 @@
-presets: []
+presets: [compose]
 routes:
   - port: 8080
     role: web
