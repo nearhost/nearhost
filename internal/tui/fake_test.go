@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,7 +39,6 @@ type fakeBackend struct {
 	stopped  []string
 	applied  []*config.Config
 	opened   []string
-	addDirs  []string
 	shutdown []context.Context
 }
 
@@ -139,12 +137,6 @@ func (f *fakeBackend) Open(url string) error {
 	defer f.mu.Unlock()
 	f.opened = append(f.opened, url)
 	return f.openErr
-}
-func (f *fakeBackend) AddCommand(dir string) tea.ExecCommand {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.addDirs = append(f.addDirs, dir)
-	return &funcCommand{fn: func(io.Reader, io.Writer) error { return nil }}
 }
 
 func (f *fakeBackend) setState(name string, st engine.ProjectStatus) {

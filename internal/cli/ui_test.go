@@ -134,64 +134,6 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	}
 }
 
-// asCLI makes the interface run this test binary as nearhost.
-func asCLI(t *testing.T) uiBackend {
-	t.Helper()
-	return uiBackend{
-		self:     os.Executable,
-		childEnv: []string{"NEARHOST_TEST_AS_CLI=1"},
-	}
-}
-
-func TestAddCommandAsksAndWaitsForEnter(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	dir := envProject(t, "APP_PORT=8080\n")
-	u := &uiEngine{b: asCLI(t), path: cfgPath}
-	cmd := u.AddCommand(dir)
-	var out bytes.Buffer
-	cmd.SetStdin(strings.NewReader("\nnot read"))
-	cmd.SetStdout(&out)
-	cmd.SetStderr(&out)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("add: %v\n%s", err, out.String())
-	}
-	wantContains(t, out.String(), "Added "+filepath.Base(dir)+" on local", "Press enter to return to Nearhost.")
-	if _, ok := loadSaved(t, cfgPath).Project(filepath.Base(dir)); !ok {
-		t.Error("the project was not saved")
-	}
-
-	// A failed add is shown, and still waits.
-	out.Reset()
-	cmd = u.AddCommand(filepath.Join(dir, "missing"))
-	cmd.SetStdin(strings.NewReader("\n"))
-	cmd.SetStdout(&out)
-	cmd.SetStderr(&out)
-	if err := cmd.Run(); err == nil || !strings.Contains(err.Error(), "did not add a project") {
-		t.Fatalf("expected the add to fail, got %v", err)
-	}
-	wantContains(t, out.String(), "nearhost: ", "Press enter to return to Nearhost.")
-}
-
-// The add questions run in a child process, so ctrl+c, which the interface
-// ignores while it has handed over the terminal, ends them.
-func TestAddCommandRunsNearhostAsAChild(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "nearhost")
-	script := "#!/bin/sh\necho \"child: $*\"\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	u := &uiEngine{b: uiBackend{self: func() (string, error) { return bin, nil }}, path: "/cfg/config.yaml"}
-	cmd := u.AddCommand("/code/blog")
-	var out bytes.Buffer
-	cmd.SetStdin(strings.NewReader("\n"))
-	cmd.SetStdout(&out)
-	cmd.SetStderr(&out)
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	wantContains(t, out.String(), "child: --config /cfg/config.yaml add /code/blog\n")
-}
-
 func TestHostsState(t *testing.T) {
 	u := &uiEngine{flags: serveFlags{noHosts: true}}
 	if got := u.HostsState(); got != "not managed (--no-hosts)" {

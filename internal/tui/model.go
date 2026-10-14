@@ -83,7 +83,6 @@ type (
 	eventMsg       engine.Event
 	tickMsg        time.Time
 	appliedMsg     struct{ err error }
-	addedMsg       struct{ err error }
 	resumedMsg     struct{}
 	shutdownMsg    struct{ err error }
 	projectDoneMsg struct {
@@ -160,16 +159,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.err.Error(), ".") + ". Save the file again to apply it.")
 		}
 		m.setConfig(m.b.Config())
-	case addedMsg:
-		if msg.err != nil {
-			m.logs.note("Adding a project failed: " + msg.err.Error())
-		}
-		// Apply what the add saved at once, unless it saved nothing or an
-		// Apply is running; the clock picks the change up after that one.
-		if m.applying || stampOf(m.b.ConfigPath()) == m.stamp {
-			return m, nil
-		}
-		return m, m.reloadConfig()
 	case openedMsg:
 		if msg.err != nil {
 			m.logs.note("Open " + msg.url + " in your browser.")
@@ -191,15 +180,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unsubscribe()
 		return m, tea.Quit
 	case formClosedMsg:
+		if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
+			return m, pf.update(msg) // the add-server form opened from it
+		}
 		m.form = nil
 	case serverAddedMsg:
-		m.form = nil
-		m.sel, m.scroll = rowKey(rowServer, msg.srv.Name), 0
-		m.logs.noteOn(m.sel, "Added server "+msg.srv.Name+".")
-		if m.applying {
-			return m, nil // the clock picks the change up after this Apply
+		key := rowKey(rowServer, msg.srv.Name)
+		m.logs.noteOn(key, "Added server "+msg.srv.Name+".")
+		var cmd tea.Cmd
+		if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
+			cmd = pf.update(msg) // back to adding the project, on this server
+		} else {
+			m.form = nil
+			m.sel, m.scroll = key, 0
 		}
-		return m, m.reloadConfig()
+		return m, tea.Batch(cmd, m.applyNow())
+	case projectAddedMsg:
+		m.form = nil
+		m.sel, m.scroll = rowKey(rowProject, msg.name), 0
+		m.logs.noteOn(m.sel, "Added "+msg.name+".")
+		return m, m.applyNow()
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
 	case tea.MouseClickMsg:
@@ -405,6 +405,15 @@ func (m *Model) checkConfig() tea.Cmd {
 	if now.exists && now.size == 0 {
 		m.stamp = now
 		m.logs.note("Ignored a change to " + path + ": the file is empty")
+		return nil
+	}
+	return m.reloadConfig()
+}
+
+// applyNow applies the config file now, after a form saved to it, unless an
+// Apply is running; the clock picks the change up after that one.
+func (m *Model) applyNow() tea.Cmd {
+	if m.applying {
 		return nil
 	}
 	return m.reloadConfig()

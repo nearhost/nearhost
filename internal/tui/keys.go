@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 )
 
@@ -121,7 +122,16 @@ func (m *Model) action(s string) tea.Cmd {
 	case "/":
 		m.filtering = true
 	case "n":
-		return tea.Exec(m.b.AddCommand(m.dir), func(err error) tea.Msg { return addedMsg{err} })
+		server := config.LocalServer
+		switch kind, name := m.selected(); kind {
+		case rowServer:
+			server = name
+		case rowProject:
+			if p, ok := m.cfg.Project(name); ok {
+				server = p.Server
+			}
+		}
+		m.form = newProjectForm(m.b, m.cfg, m.dir, server)
 	case "s":
 		m.form = newServerForm(m.b, m.cfg)
 	case "enter":

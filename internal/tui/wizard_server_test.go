@@ -126,7 +126,7 @@ func TestFormTakesTheKeys(t *testing.T) {
 	m, f := serverFormModel(t)
 	typeText(m, "qnhs/o")
 	wantScreen(t, m, "host      qnhs/o▏")
-	if m.quitting || len(f.addDirs) != 0 {
+	if m.quitting || len(f.forms.opened) != 0 || len(f.forms.checked) != 0 {
 		t.Error("a shortcut ran while the form was open")
 	}
 	m.Update(tea.MouseClickMsg{X: 3, Y: 2, Button: tea.MouseLeft})

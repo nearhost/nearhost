@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,10 +36,6 @@ type uiBackend struct {
 	open func(url string) error
 	// workDir is the directory nearhost was started in.
 	workDir func() (string, error)
-	// self is the nearhost binary, which runs the add questions as a child.
-	self func() (string, error)
-	// childEnv is added to that child's environment.
-	childEnv []string
 	// presets reaches the trusted preset registries.
 	presets presetBackend
 	// sshConfig returns the user's OpenSSH client config.
@@ -75,7 +70,6 @@ func systemUI() uiBackend {
 		},
 		open:    openBrowser,
 		workDir: os.Getwd,
-		self:    os.Executable,
 		presets: systemPresets(),
 		sshConfig: func() ([]byte, error) {
 			home, err := os.UserHomeDir()
@@ -182,48 +176,6 @@ func (u *uiEngine) HostsState() string {
 }
 
 func (u *uiEngine) Open(url string) error { return u.b.open(url) }
-
-// errNotAdded is AddCommand's error when the add did not add a project; its
-// own output, still on the screen, says why.
-var errNotAdded = errors.New("nearhost add did not add a project; its output says why")
-
-// AddCommand runs `nearhost add` for dir in the plain terminal, then waits
-// for enter so the outcome can be read before the interface returns. The
-// add runs as a child process: the interface ignores ctrl+c while it has
-// handed over the terminal, and the child does not, so ctrl+c ends the
-// questions.
-func (u *uiEngine) AddCommand(dir string) tea.ExecCommand {
-	return tui.Command(func(in io.Reader, out io.Writer) error {
-		var err error
-		if exe, selfErr := u.b.self(); selfErr != nil {
-			err = selfErr
-			fmt.Fprintln(out, "nearhost:", err)
-		} else {
-			cmd := exec.Command(exe, "--config", u.path, "add", dir)
-			cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, out
-			cmd.Env = append(os.Environ(), u.b.childEnv...)
-			var exit *exec.ExitError
-			if err = cmd.Run(); errors.As(err, &exit) {
-				err = errNotAdded
-			}
-		}
-		fmt.Fprint(out, "\nPress enter to return to Nearhost.")
-		waitForEnter(in)
-		return err
-	})
-}
-
-// waitForEnter reads in up to the end of a line or of the input. It reads a
-// byte at a time, so nothing typed after the line is taken from the
-// interface.
-func waitForEnter(in io.Reader) {
-	b := make([]byte, 1)
-	for {
-		if n, err := in.Read(b); err != nil || (n == 1 && b[0] == '\n') {
-			return
-		}
-	}
-}
 
 // uiEngine must satisfy the interface's backend.
 var _ tui.Backend = (*uiEngine)(nil)

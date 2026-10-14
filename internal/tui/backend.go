@@ -44,10 +44,6 @@ type Backend interface {
 	HostsState() string
 	// Open opens url in the browser.
 	Open(url string) error
-	// AddCommand is the command that asks the add questions for the project
-	// in dir, in the plain terminal while the interface is suspended.
-	AddCommand(dir string) tea.ExecCommand
-
 	// SSHHosts lists the hosts named in the user's OpenSSH config.
 	SSHHosts() []string
 	// CheckServer connects to srv as adding a project there would, and
@@ -156,12 +152,6 @@ func (s *Suspender) Run(ctx context.Context, fn func(in io.Reader, out io.Writer
 type suspendMsg struct {
 	fn   func(in io.Reader, out io.Writer) error
 	done chan<- error
-}
-
-// Command makes fn a command the interface can hand the terminal to, as
-// AddCommand returns.
-func Command(fn func(in io.Reader, out io.Writer) error) tea.ExecCommand {
-	return &funcCommand{fn: fn}
 }
 
 // funcCommand runs a function as a tea.ExecCommand.

@@ -20,31 +20,21 @@ import (
 
 func TestEmptyStateLeadsToAdding(t *testing.T) {
 	f := newFake(t, &config.Config{})
+	f.forms.files = &fakeFiles{dirs: map[string]bool{"/work/here": true}, drafts: map[string]Draft{
+		"/work/here": {Routes: []config.Route{{Port: 3000, Role: config.RoleWeb, Label: "port (PORT)"}}},
+	}}
 	m := sized(f)
 	wantScreen(t, m, "Nearhost", "▾ Local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · q quit")
-
-	cmd := press(m, "n")
-	if cmd == nil || len(f.addDirs) != 1 || f.addDirs[0] != "/work/here" {
-		t.Fatalf("n: cmd %v, add asked for %v", cmd != nil, f.addDirs)
+	press(m, "n")
+	settle(m, press(m, "enter")) // Local
+	wantScreen(t, m, "path      /work/here▏")
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	settle(m, press(m, "enter"))
+	if len(f.forms.saved) != 1 || f.forms.saved[0].Name != "here" || m.form != nil {
+		t.Fatalf("saved %+v, form %T", f.forms.saved, m.form)
 	}
-	// The add questions ran and saved a project; the interface reloads the
-	// config file and gives it to the engine.
-	if err := os.WriteFile(f.path, []byte("projects:\n  - {name: blog, server: local, path: /code/blog, alias: blog.test, enabled: true, routes: [{port: 3000, role: web}]}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	next := run(m, func() tea.Msg { return addedMsg{} })
-	run(m, next)
-	if len(f.applied) != 1 || len(f.applied[0].Projects) != 1 {
-		t.Fatalf("applied %+v", f.applied)
-	}
-	wantScreen(t, m, "blog", "https://blog.test")
-}
-
-func TestFailedAddIsLoggedOnHome(t *testing.T) {
-	f := newFake(t, &config.Config{})
-	m := sized(f)
-	run(m, run(m, func() tea.Msg { return addedMsg{errBoom} }))
-	wantScreen(t, m, "Adding a project failed: boom")
 }
 
 func TestSidebarShowsServersProjectsAndStates(t *testing.T) {
@@ -417,41 +407,6 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		m := sized(f)
 		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
 		wantScreen(t, m, "down: HTTPS port 443 is in use by nginx (pid 12)", "fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
-	}
-}
-
-// An add that failed without touching the config applies nothing, so its
-// error stays the last line of the log.
-func TestFailedAddWithNoChangeAppliesNothing(t *testing.T) {
-	f := newFake(t, sampleConfig())
-	m := sized(f)
-	run(m, run(m, func() tea.Msg { return addedMsg{errBoom} }))
-	if n := f.appliedCount(); n != 0 {
-		t.Fatalf("applied %d times", n)
-	}
-	log := m.logs.lines(homeKey, "")
-	if last := log[len(log)-1]; !strings.HasSuffix(last, "Adding a project failed: boom") {
-		t.Errorf("last line %q", last)
-	}
-}
-
-// An add that finishes while an Apply runs leaves its change to the clock,
-// so only one Apply runs at a time.
-func TestAddWhileApplyingWaitsForTheClock(t *testing.T) {
-	f := newFake(t, sampleConfig())
-	m := sized(f)
-	m.applying = true
-	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if cmd := run(m, func() tea.Msg { return addedMsg{} }); cmd != nil {
-		t.Fatal("a second Apply began while one was running")
-	}
-	m.Update(appliedMsg{})
-	m.checkConfig()
-	run(m, m.checkConfig())
-	if n := f.appliedCount(); n != 1 {
-		t.Errorf("the added change was applied %d times", n)
 	}
 }
 
