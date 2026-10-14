@@ -104,6 +104,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return errors.Join(err, done())
 	}
 	project.Routes = res.ConfigRoutes()
+	// Labels come from presets and the project's own files, and are both
+	// printed and saved.
+	for i := range project.Routes {
+		project.Routes[i].Label = printable(project.Routes[i].Label)
+	}
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
 		// The advisories are about the roles the project ends up with.
@@ -128,9 +133,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return fmt.Errorf("could not tell which port serves %s; nothing was saved. Run it again with --web <port>", project.Name)
 	}
 	for _, a := range advisories {
-		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, a.Message)
-		if a.Snippet != "" {
-			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(a.Snippet, "\n", "\n  "))
+		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, printableLines(a.Message))
+		if snippet := printableLines(a.Snippet); snippet != "" {
+			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(snippet, "\n", "\n  "))
 		}
 	}
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
@@ -205,14 +210,14 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 		found = append(found, res.Warnings...)
 		if !interactive {
 			for _, o := range res.Suggested {
-				fmt.Fprintf(out, "This looks like a %s project. Pass `--preset %s` to `nearhost add` to use its preset.\n", printable(o.Title), o.Name)
+				fmt.Fprintf(out, "This looks like a %s project. Pass `--preset %s` to `nearhost add` to use its preset.\n", offerTitle(o), o.Name)
 			}
 			return res, append(notes, found...), nil
 		}
 
 		enabled := false
 		for _, o := range res.Suggested {
-			fmt.Fprintf(out, "This looks like a %s project. Enable the %s preset? [Y/n] ", printable(o.Title), o.Name)
+			fmt.Fprintf(out, "This looks like a %s project. Enable the %s preset? [Y/n] ", offerTitle(o), o.Name)
 			if !saidYes(answers, out) {
 				passed[o.Name] = true
 				continue
@@ -233,6 +238,15 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 			return res, append(notes, found...), nil
 		}
 	}
+}
+
+// offerTitle is what a suggestion calls the project: the preset's title, or
+// its name when the title has nothing printable in it.
+func offerTitle(o discovery.Offer) string {
+	if title := printable(o.Title); title != "" {
+		return title
+	}
+	return o.Name
 }
 
 // saidYes reads one line as the answer to a yes-or-no question whose default

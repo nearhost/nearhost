@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -139,6 +140,8 @@ func (p *Preset) validate(name string) []error {
 	if strings.TrimSpace(p.Title) == "" {
 		bad("title is required")
 	}
+	checkText("title", p.Title, "", bad)
+	checkText("description", p.Description, "", bad)
 	if strings.TrimSpace(p.Detect) == "" {
 		bad("detect is required")
 	}
@@ -167,6 +170,7 @@ func (p *Preset) validate(name string) []error {
 		if strings.TrimSpace(e.Label) == "" {
 			bad("%s: label is required", at)
 		}
+		checkText(at+": label", e.Label, "", bad)
 		checkRole(&e.Role, at, bad)
 		checkWeb(e.Web, at, bad)
 	}
@@ -216,6 +220,7 @@ func (p *Preset) validate(name string) []error {
 		if strings.TrimSpace(r.Label) == "" {
 			bad("%s: label is required", at)
 		}
+		checkText(at+": label", r.Label, "", bad)
 		checkRole(&r.Role, at, bad)
 		checkWeb(r.Web, at, bad)
 	}
@@ -232,6 +237,8 @@ func (p *Preset) validate(name string) []error {
 		if strings.TrimSpace(a.Message) == "" {
 			bad("%s: message is required", at)
 		}
+		checkText(at+": message", a.Message, "\n\t", bad)
+		checkText(at+": snippet", a.Snippet, "\n\t", bad)
 	}
 	for i, id := range p.Suppress {
 		if strings.TrimSpace(id) == "" {
@@ -240,6 +247,14 @@ func (p *Preset) validate(name string) []error {
 	}
 	p.checkExpressions(bad)
 	return errs
+}
+
+// checkText refuses control characters, other than those in allow, in text
+// that is printed or saved. A template is checked as written.
+func checkText(field, text, allow string, bad func(string, ...any)) {
+	if strings.IndexFunc(text, func(r rune) bool { return unicode.IsControl(r) && !strings.ContainsRune(allow, r) }) >= 0 {
+		bad("%s must not contain control characters", field)
+	}
 }
 
 func checkRole(role *config.Role, at string, bad func(string, ...any)) {

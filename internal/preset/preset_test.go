@@ -104,6 +104,12 @@ func TestParseRejectsInvalidPresets(t *testing.T) {
 		{"advisory message", minimal("advisories:\n  - {id: a, when: 'true'}\n"), "message is required"},
 		{"id used twice", minimal("routes:\n  - {id: a, port: '1', label: A}\nadvisories:\n  - {id: a, when: 'true', message: M}\n"), `id "a" is used twice`},
 		{"empty suppress", minimal("suppress: ['']\n"), "suppress"},
+		{"control in title", "schema: 1\nname: x\ntitle: \"X\\e[2J\"\ndetect: 'true'\n", "title must not contain control characters"},
+		{"control in description", minimal("description: \"A\\nB\"\n"), "description must not contain control characters"},
+		{"control in port label", minimal("ports:\n  - {var: A, label: \"App\\e[31m\"}\n"), "ports[0]: label must not contain control characters"},
+		{"control in route label", minimal("routes:\n  - {id: a, port: '1', label: \"A\\rB\"}\n"), "routes[0]: label must not contain control characters"},
+		{"control in message", minimal("advisories:\n  - {id: a, when: 'true', message: \"M\\e[2J\"}\n"), "advisories[0]: message must not contain control characters"},
+		{"control in snippet", minimal("advisories:\n  - {id: a, when: 'true', message: M, snippet: \"S\\e]0;x\\a\"}\n"), "advisories[0]: snippet must not contain control characters"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,6 +124,17 @@ func TestParseRejectsInvalidPresets(t *testing.T) {
 				t.Errorf("error %q should start with the file name", err)
 			}
 		})
+	}
+}
+
+// Advice is shown on several lines and may be indented.
+func TestParseAcceptsLineBreaksAndTabsInAdvice(t *testing.T) {
+	p, err := Parse("x", []byte(minimal("advisories:\n  - {id: a, when: 'true', message: \"One.\\nTwo.\", snippet: \"a:\\n\\tb: 1\"}\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := p.Advisories[0]; a.Message != "One.\nTwo." || a.Snippet != "a:\n\tb: 1" {
+		t.Errorf("advisory = %+v", a)
 	}
 }
 

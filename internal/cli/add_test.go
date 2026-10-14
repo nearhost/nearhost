@@ -407,3 +407,31 @@ func TestAddTrimsTheAlias(t *testing.T) {
 		t.Errorf("a padded duplicate alias: %v\n%s", err, out)
 	}
 }
+
+// Advice can carry values from the project, such as its .env, and those
+// must not reach the terminal as control characters.
+func TestAddMakesRenderedAdviceSafeToPrint(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{Presets: []config.PresetRef{{Name: "echo"}}})
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "schema: 1\nname: echo\ntitle: Echo\ndetect: 'true'\nadvisories:\n" +
+		"  - {id: echo, when: 'true', message: \"Name is {{ env.NAME }}.\\nSecond line.\", snippet: \"NAME={{ env.NAME }}\\n\\tindented\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "echo.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("NAME=a\x1b[2Jb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", project, "--name", "echo", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("output carries an escape character: %q", out)
+	}
+	wantContains(t, out, "Advisory (echo): Name is a[2Jb.\nSecond line.\n  NAME=a[2Jb\n  \tindented\n")
+}

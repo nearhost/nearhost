@@ -265,16 +265,18 @@ func TestPresetUpdateRefusals(t *testing.T) {
 func TestPresetListMakesRegistryTitlesSafeToPrint(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	f, b := newFakeRegistry(t, refOne, "stack")
-	f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\n  forged line\e[31mred"`, 1)
+	// The index refuses control characters, so what is left to strip is
+	// other unprintable text, such as a right-to-left override.
+	f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\u202e der\u200bdro"`, 1)
 
 	out, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "\x1b") {
-		t.Errorf("output carries an escape character: %q", out)
+	if strings.ContainsAny(out, "\u202e\u200b") {
+		t.Errorf("output carries unprintable text: %q", out)
 	}
-	if !strings.Contains(out, "  stack  Evil   forged line[31mred\n") {
-		t.Errorf("the title should sit on one line:\n%q", out)
+	if !strings.Contains(out, "  stack  Evil derdro\n") {
+		t.Errorf("the title should be printable:\n%q", out)
 	}
 }

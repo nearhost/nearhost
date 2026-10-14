@@ -221,15 +221,34 @@ func TestAddMakesSuggestedTitlesSafeToPrint(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 			f, b := suggesting(t, terminal, "stack")
-			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\n  forged line\e[31mred"`, 1)
+			// The index refuses control characters, so what is left to strip
+			// is other unprintable text, such as a right-to-left override.
+			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\u202e der\u200bdro"`, 1)
 			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}
-			if strings.Contains(out, "\x1b") {
-				t.Errorf("output carries an escape character: %q", out)
+			if strings.ContainsAny(out, "\u202e\u200b") {
+				t.Errorf("output carries unprintable text: %q", out)
 			}
-			wantContains(t, out, "This looks like a Evil   forged line[31mred project. ")
+			wantContains(t, out, "This looks like a Evil derdro project. ")
+		})
+	}
+}
+
+// A title with nothing printable in it leaves the preset's name to say
+// what the project looks like.
+func TestAddNamesThePresetWhenItsTitleIsEmpty(t *testing.T) {
+	for name, terminal := range map[string]bool{"with a terminal": true, "without a terminal": false} {
+		t.Run(name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+			f, b := suggesting(t, terminal, "stack")
+			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: ""`, 1)
+			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+			if err != nil {
+				t.Fatalf("add: %v\n%s", err, out)
+			}
+			wantContains(t, out, "This looks like a stack project. ")
 		})
 	}
 }

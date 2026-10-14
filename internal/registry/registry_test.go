@@ -170,15 +170,17 @@ func TestParseIndexRejectsWhatCouldMislead(t *testing.T) {
 		return "schema: 1\nref: " + ref + "\npresets:\n  - {name: '" + name + "', title: T, preset_schema: 1, detect: 'true', sha256: '" + sha + "'}\n"
 	}
 	for name, doc := range map[string]string{
-		"not yaml":        "{",
-		"no schema":       "ref: " + ref + "\n",
-		"newer schema":    "schema: 2\nref: " + ref + "\n",
-		"ref with a path": "schema: 1\nref: ../main\n",
-		"name with path":  entry("../../etc/passwd", sum),
-		"upper case name": entry("Stack", sum),
-		"short hash":      entry("stack", "abc"),
-		"no detect":       "schema: 1\nref: " + ref + "\npresets:\n  - {name: stack, title: T, sha256: " + sum + "}\n",
-		"listed twice":    "schema: 1\nref: " + ref + "\npresets:\n  - {name: a, detect: 'true', sha256: " + sum + "}\n  - {name: a, detect: 'true', sha256: " + sum + "}\n",
+		"not yaml":               "{",
+		"no schema":              "ref: " + ref + "\n",
+		"newer schema":           "schema: 2\nref: " + ref + "\n",
+		"ref with a path":        "schema: 1\nref: ../main\n",
+		"name with path":         entry("../../etc/passwd", sum),
+		"upper case name":        entry("Stack", sum),
+		"short hash":             entry("stack", "abc"),
+		"no detect":              "schema: 1\nref: " + ref + "\npresets:\n  - {name: stack, title: T, sha256: " + sum + "}\n",
+		"listed twice":           "schema: 1\nref: " + ref + "\npresets:\n  - {name: a, detect: 'true', sha256: " + sum + "}\n  - {name: a, detect: 'true', sha256: " + sum + "}\n",
+		"control in title":       "schema: 1\nref: " + ref + "\npresets:\n  - {name: a, title: \"A\\e[2J\", detect: 'true', sha256: " + sum + "}\n",
+		"control in description": "schema: 1\nref: " + ref + "\npresets:\n  - {name: a, title: A, description: \"B\\nC\", detect: 'true', sha256: " + sum + "}\n",
 	} {
 		if _, err := ParseIndex([]byte(doc)); err == nil {
 			t.Errorf("%s: ParseIndex accepted it", name)

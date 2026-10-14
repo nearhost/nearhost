@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -90,12 +92,18 @@ func ParseIndex(data []byte) (*Index, error) {
 	}
 	seen := map[string]bool{}
 	for _, e := range idx.Presets {
-		if !nameRe.MatchString(e.Name) || !sumRe.MatchString(e.SHA256) || e.Detect == "" || seen[e.Name] {
+		if !nameRe.MatchString(e.Name) || !sumRe.MatchString(e.SHA256) || e.Detect == "" || seen[e.Name] || hasControl(e.Title) || hasControl(e.Description) {
 			return nil, fmt.Errorf("registry index: the entry for %q is not valid", e.Name)
 		}
 		seen[e.Name] = true
 	}
 	return &idx, nil
+}
+
+// hasControl reports whether s holds a control character, which a title or
+// description must not carry to the terminal.
+func hasControl(s string) bool {
+	return strings.IndexFunc(s, unicode.IsControl) >= 0
 }
 
 // Client talks to one registry and caches its index in Dir.

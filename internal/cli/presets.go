@@ -169,3 +169,15 @@ func printable(s string) string {
 		return r
 	}, s))
 }
+
+// printableLines makes advice safe to print. Unlike printable it keeps line
+// breaks, tabs and indentation, which a snippet may need, and drops the
+// other characters printable would.
+func printableLines(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
