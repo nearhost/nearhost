@@ -464,9 +464,13 @@ func TestAddProposesEnvPortsWithoutPresets(t *testing.T) {
 // its published ports.
 func TestAddReadsComposeOnlyThroughAPreset(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain")
-	if err == nil || !strings.Contains(out, "No ports found") {
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain", "--no-presets")
+	if err == nil || !strings.Contains(err.Error(), "--web <port>") {
 		t.Fatalf("expected no routes without a preset, got %v\n%s", err, out)
+	}
+	wantContains(t, out, "No port variables found in the .env files of plain (local:", ").\nIts Compose file is read only when a preset asks for it with compose: ports.\n")
+	if strings.Contains(out, "No ports found") {
+		t.Errorf("a Compose-only project is not one without ports:\n%s", out)
 	}
 	enablePresets(t, cfgPath, "compose")
 	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain")

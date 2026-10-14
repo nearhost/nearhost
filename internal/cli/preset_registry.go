@@ -64,6 +64,13 @@ func newRegistryAddCmd(b presetBackend) *cobra.Command {
 	return cmd
 }
 
+// unreadableRegistryError is a registry whose index could not be fetched or
+// checked. Problem is the bare description, for callers that word the
+// consequence themselves.
+type unreadableRegistryError struct{ problem string }
+
+func (e *unreadableRegistryError) Error() string { return e.problem + "; nothing was saved" }
+
 // trust is `registry add`: it fetches and checks the index of the registry
 // in repo and, if it is valid, saves the registry in the config under alias,
 // or under the owner in lower case when alias is empty, and says what was
@@ -75,7 +82,7 @@ func (b presetBackend) trust(ctx context.Context, out io.Writer, cfg *config.Con
 	}
 	idx, err := b.client(cfgPath, reg).Refresh(ctx)
 	if err != nil {
-		return config.Registry{}, fmt.Errorf("%s; nothing was saved", registryProblem(reg, err))
+		return config.Registry{}, &unreadableRegistryError{problem: registryProblem(reg, err)}
 	}
 	cfg.Registries = append(cfg.Registries, reg)
 	if err := config.Save(cfgPath, cfg); err != nil {
