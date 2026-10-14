@@ -32,6 +32,8 @@ type fakeBackend struct {
 	openErr   error
 	applyErr  error
 	trusted   bool
+	// applyBlocks makes Apply wait for its context to end.
+	applyBlocks bool
 
 	started  []string
 	stopped  []string
@@ -63,7 +65,14 @@ func (f *fakeBackend) Config() *config.Config {
 	return f.cfg
 }
 func (f *fakeBackend) ConfigPath() string { return f.path }
-func (f *fakeBackend) Apply(_ context.Context, cfg *config.Config) error {
+func (f *fakeBackend) Apply(ctx context.Context, cfg *config.Config) error {
+	f.mu.Lock()
+	blocks := f.applyBlocks
+	f.mu.Unlock()
+	if blocks {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applied = append(f.applied, cfg)
@@ -217,3 +226,9 @@ func wantScreen(t *testing.T, m *Model, subs ...string) {
 }
 
 var errBoom = errors.New("boom")
+
+func (f *fakeBackend) appliedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.applied)
+}

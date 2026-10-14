@@ -418,3 +418,70 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		wantScreen(t, m, "down: HTTPS port 443 is in use by nginx (pid 12)", "fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
 	}
 }
+
+// An add that failed without touching the config applies nothing, so its
+// error stays the last line of the log.
+func TestFailedAddWithNoChangeAppliesNothing(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	run(m, run(m, func() tea.Msg { return addedMsg{errBoom} }))
+	if n := f.appliedCount(); n != 0 {
+		t.Fatalf("applied %d times", n)
+	}
+	log := m.logs.lines(homeKey, "")
+	if last := log[len(log)-1]; !strings.HasSuffix(last, "Adding a project failed: boom") {
+		t.Errorf("last line %q", last)
+	}
+}
+
+// An add that finishes while an Apply runs leaves its change to the clock,
+// so only one Apply runs at a time.
+func TestAddWhileApplyingWaitsForTheClock(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	m.applying = true
+	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cmd := run(m, func() tea.Msg { return addedMsg{} }); cmd != nil {
+		t.Fatal("a second Apply began while one was running")
+	}
+	m.Update(appliedMsg{})
+	m.checkConfig()
+	run(m, m.checkConfig())
+	if n := f.appliedCount(); n != 1 {
+		t.Errorf("the added change was applied %d times", n)
+	}
+}
+
+// A change that could not be applied says how to try again.
+func TestIgnoredChangeSaysHowToRetry(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.path = "/etc/nh.yaml" // short enough for the line not to wrap
+	m := sized(f)
+	m.Update(appliedMsg{errBoom})
+	wantScreen(t, m, "Ignored a change to /etc/nh.yaml: boom. Save the file again to apply", "│ it.")
+}
+
+// Quitting while an Apply runs ends it, so the shutdown does not wait for
+// the projects it is stopping.
+func TestQuitEndsAnApplyInFlight(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.applyBlocks = true
+	m := sized(f)
+	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := m.reloadConfig()
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	press(m, "q")
+	select {
+	case msg := <-done:
+		if am, ok := msg.(appliedMsg); !ok || am.err == nil {
+			t.Errorf("Apply ended with %#v", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the Apply kept running after q")
+	}
+}
