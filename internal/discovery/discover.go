@@ -93,12 +93,15 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	for _, p := range res.active {
 		res.apply(p, byPort)
 	}
+	// Offers are not enabled presets: a read error they hit must not fail the run.
+	enabledErr := files.err
 	for _, o := range opts.Offers {
 		// An offer whose expression fails is simply not suggested.
 		if ok, err := preset.DetectExpr(o.Detect, res.project); err == nil && ok {
 			res.Suggested = append(res.Suggested, o)
 		}
 	}
+	files.err = enabledErr
 	if files.err != nil {
 		return nil, files.err
 	}

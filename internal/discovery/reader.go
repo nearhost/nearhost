@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // FileReader reads files relative to a project root. Paths are slash
@@ -51,8 +52,14 @@ func (m *memo) ReadFile(name string) ([]byte, error) {
 	}
 	data, err := m.r.ReadFile(name)
 	m.files[name] = memoFile{data, err}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) && m.err == nil {
+	if err != nil && !isAbsent(err) && m.err == nil {
 		m.err = fmt.Errorf("read %s: %w", name, err)
 	}
 	return data, err
+}
+
+// isAbsent reports whether err means the file is not there: missing, a
+// directory, or under a parent that is a regular file.
+func isAbsent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.ENOTDIR)
 }

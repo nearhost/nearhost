@@ -309,6 +309,43 @@ func TestDiscoverFailsWhenAPresetFileCannotBeRead(t *testing.T) {
 	}
 }
 
+// An offer's expression failing to read a file never fails discovery.
+func TestDiscoverOfferReadErrorsAreNotFatal(t *testing.T) {
+	r := failReader{memReader: memReader{"x": "1"}, fail: "other.config.js"}
+	offers := []Offer{{Name: "o", Title: "O", Detect: `file("other.config.js")`}}
+	res, err := Discover(r, Options{Offers: offers})
+	if err != nil {
+		t.Fatalf("an offer must not fail discovery: %v", err)
+	}
+	if len(res.Suggested) != 0 {
+		t.Fatalf("Suggested = %+v", res.Suggested)
+	}
+}
+
+func TestDiscoverDetectOnADirectoryIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := inline(t, "d", "detect: 'file(\"vendor\")'\n")
+	res := discover(t, DirReader{Root: dir}, Options{Presets: []*preset.Preset{p}})
+	if len(res.Applied) != 0 {
+		t.Fatalf("Applied = %v", res.Applied)
+	}
+}
+
+func TestDiscoverDetectUnderAFileIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := inline(t, "d", "detect: 'file(\"bin/console\")'\n")
+	res := discover(t, DirReader{Root: dir}, Options{Presets: []*preset.Preset{p}})
+	if len(res.Applied) != 0 {
+		t.Fatalf("Applied = %v", res.Applied)
+	}
+}
+
 // countReader counts reads per file.
 type countReader struct {
 	memReader
