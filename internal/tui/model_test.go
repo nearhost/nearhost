@@ -395,6 +395,7 @@ func TestHomeReadsTheMachineOnTheTick(t *testing.T) {
 		t.Errorf("redrawing read the machine %d times", after-before)
 	}
 	f.trusted = false
+	m.firstRunShown = true // this test is about Home, not the first-run screen
 	wantScreen(t, m, "local CA  trusted")
 	run(m, m.readMachine())
 	wantScreen(t, m, "local CA  not trusted")

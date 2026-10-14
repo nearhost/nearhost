@@ -66,6 +66,8 @@ type Model struct {
 	hostsState string
 
 	work *worker // runs the forms' background steps
+
+	firstRunShown bool // the first-run screen was offered this session
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
@@ -177,6 +179,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
 	case machineMsg:
 		m.caTrusted, m.hostsState = msg.caTrusted, msg.hostsState
+		m.offerFirstRun()
+	case caTrustedMsg:
+		m.form = nil
+		m.selectRow(homeKey)
+		m.logs.note("The local CA is now trusted.")
+		return m, m.readMachine()
 	case projectDoneMsg:
 		// A start or stop the engine refused outright changed no state, so
 		// the refusal is the only sign of it.
