@@ -1,0 +1,57 @@
+internal/cli/add.go
+  s_7abd3634f4eb80::t_db2e459cedad8b 62-64
+internal/cli/add_presets_test.go
+  s_4318937e268074::t_4917ce0faab6b9 61,65,82,94,101,149,153,166,179,212,250,254,276,295
+internal/cli/add_test.go
+  s_4318937e268074::t_5cd3520bceb767 26,41-43,56,86,175,179,267,365,394,404
+internal/cli/preset_index_test.go
+  s_4318937e268074::t_88dde35a617d92 24,27,31
+internal/cli/preset_registry_cmd_test.go
+  s_4318937e268074::t_2f74108016cf04 203,217,226,233
+internal/cli/preset_registry_test.go
+  s_4318937e268074::t_39f400f0329516 467
+internal/cli/ssh_test.go
+  s_4318937e268074::t_eee586ab3c57e7 138
+internal/cli/testdata/fixtures-bad/wrong/expected.yaml
+  s_4318937e268074::t_4418a0c312ce68 1
+internal/discovery/discover.go
+  s_4318937e268074::t_8cd72943d78648 43-45,63,65-67,96-140
+internal/discovery/discover_test.go
+  s_4318937e268074::t_77a0db0c0b7def 61,64-95,108-109,119,137,144,153,223,235-238,243,249,257,287,310
+internal/discovery/testdata/env-single/.env
+  s_4318937e268074::t_1acbb38df5ac2c 1
+internal/discovery/testdata/presets/compose.yaml
+  s_4318937e268074::t_33e1b9e6f08853 1-5
+internal/discovery/testdata/presets/stack.yaml
+  s_4318937e268074::t_cdd2ddee7deb02 6
+internal/preset/preset.go
+  s_4318937e268074::t_196ec958be648e 48,98-104,208-210
+internal/preset/preset_test.go
+  s_4318937e268074::t_1bc7cf145215ca 109,133-145
+internal/transport/sftp_test.go
+  s_4318937e268074::t_0c91c3c4203231 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07e4dbaebd2da67e26919f806e4d701141f23dc2",
+  "prompts": {},
+  "sessions": {
+    "s_4318937e268074": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e58675d-fc6e-4a8c-a3d7-7013c171baf1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
