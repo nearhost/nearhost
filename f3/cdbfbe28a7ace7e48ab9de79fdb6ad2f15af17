@@ -1,0 +1,19 @@
+.github/workflows/ci.yml
+  s_4318937e268074::t_8744d3aa907594 19-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3cdbfbe28a7ace7e48ab9de79fdb6ad2f15af17",
+  "prompts": {},
+  "sessions": {
+    "s_4318937e268074": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e58675d-fc6e-4a8c-a3d7-7013c171baf1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
