@@ -174,6 +174,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logs.note("Open " + msg.url + " in your browser.")
 		}
 	case suspendMsg:
+		if m.quitting {
+			msg.done <- errQuitting // nothing needs the terminal now
+			return m, nil
+		}
 		done := msg.done
 		return m, tea.Exec(&funcCommand{fn: msg.fn}, func(err error) tea.Msg {
 			done <- err

@@ -485,3 +485,22 @@ func TestQuitEndsAnApplyInFlight(t *testing.T) {
 		t.Fatal("the Apply kept running after q")
 	}
 }
+
+// A password request that arrives while the interface is quitting is
+// answered at once, without taking the terminal.
+func TestSuspendWhileQuittingIsRefused(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	press(m, "q")
+	done := make(chan error, 1)
+	if _, cmd := m.Update(suspendMsg{fn: func(io.Reader, io.Writer) error { return nil }, done: done}); cmd != nil {
+		t.Fatal("took the terminal while quitting")
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("the request was answered with no error")
+		}
+	default:
+		t.Fatal("the request was not answered")
+	}
+}
