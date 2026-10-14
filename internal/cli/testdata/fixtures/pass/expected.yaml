@@ -1,0 +1,20 @@
+presets: [stack]
+alias: myapp.test
+others:
+  - name: shop
+    loopback: [5174]
+routes:
+  - port: 5174
+    role: loopback
+    label: Assets (VITE_PORT)
+  - port: 6379
+    role: ignore
+    label: cache
+  - port: 8080
+    role: web
+    label: App (APP_PORT)
+advisories:
+  - id: loopback-clash
+    snippet: VITE_PORT=5175
+  - id: app-url
+    message: APP_URL should be https://myapp.test.

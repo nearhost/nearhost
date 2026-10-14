@@ -1,0 +1,7 @@
+presets: []
+routes:
+  - port: 8080
+    role: web
+    label: Not the label
+advisories:
+  - id: app-url
