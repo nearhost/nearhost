@@ -263,6 +263,9 @@ func updateTargets(cfg *config.Config, args []string) ([]config.PresetRef, error
 	}
 	ref, ok := cfg.Preset(name)
 	switch alias, _ := config.SplitPreset(name); {
+	case !ok && strings.Contains(name, "/"):
+		// An alias never holds a slash, so no registry could be meant.
+		return nil, fmt.Errorf("preset %q is not enabled", name)
 	case !ok:
 		return nil, fmt.Errorf("no preset named %q is enabled and no registry is trusted as %q", name, name)
 	case alias == "":

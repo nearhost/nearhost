@@ -17,7 +17,7 @@ type Candidate struct {
 	Target int         // container port when known, else 0
 	Role   config.Role // proposed role
 	Label  string      // human label: the Compose service, or a preset's label and variable
-	Source string      // where it came from: "compose:<service>", "env:<variable>", "preset:<name>"
+	Source string      // where it came from: "compose:<service>", "env:<variable>", "preset:<key>"
 	Var    string      // environment variable that sets it, if any
 	Preset string      // key of the preset that identified it, if any
 

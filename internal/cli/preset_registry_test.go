@@ -391,6 +391,9 @@ func TestPresetUpdateRefusals(t *testing.T) {
 	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "nope"); err == nil || !strings.Contains(err.Error(), `no preset named "nope" is enabled and no registry is trusted as "nope"`) {
 		t.Errorf("expected a not-enabled error, got %v", err)
 	}
+	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "acme/stack"); err == nil || err.Error() != `preset "acme/stack" is not enabled` {
+		t.Errorf("expected a plain not-enabled error for a qualified name, got %v", err)
+	}
 
 	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "enable", "test/stack"); err != nil {
 		t.Fatal(err)

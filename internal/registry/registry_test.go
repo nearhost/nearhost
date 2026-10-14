@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -240,5 +241,93 @@ func TestCachedReadsOnlyTheSavedCopy(t *testing.T) {
 	}
 	if s.hits["/HEAD/index.yaml"] != 1 {
 		t.Errorf("Cached must not fetch: %v", s.hits)
+	}
+}
+
+// otherRepo returns a client for another repository that shares c's cache
+// directory, as when an alias in the config is pointed at a different repo.
+func otherRepo(t *testing.T, c *Client) (*site, *Client) {
+	t.Helper()
+	s, other := serve(t)
+	other.Dir = c.Dir
+	return s, other
+}
+
+func TestCachedIgnoresAnotherReposIndex(t *testing.T) {
+	a, ca := serve(t)
+	a.publish(ref, map[string]string{"stack": "one"})
+	if _, err := ca.Index(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, cb := otherRepo(t, ca)
+	if _, _, err := cb.Cached(); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Cached for another repo = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestIndexFetchesWhenTheCacheBelongsToAnotherRepo(t *testing.T) {
+	a, ca := serve(t)
+	a.publish(ref, map[string]string{"stack": "one"})
+	if _, err := ca.Index(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, cb := otherRepo(t, ca)
+	b.publish("bbbbbbb", map[string]string{"other": "two"})
+	idx, err := cb.Index(context.Background())
+	if err != nil || idx.Ref != "bbbbbbb" {
+		t.Fatalf("Index = %+v %v, want B's index", idx, err)
+	}
+	if b.hits["/HEAD/index.yaml"] != 1 {
+		t.Errorf("B was asked %d times, want once", b.hits["/HEAD/index.yaml"])
+	}
+}
+
+func TestIndexDoesNotFallBackToAnotherReposCopy(t *testing.T) {
+	a, ca := serve(t)
+	a.publish(ref, map[string]string{"stack": "one"})
+	if _, err := ca.Index(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, cb := otherRepo(t, ca)
+	b.down = true
+	idx, err := cb.Index(context.Background())
+	if !errors.Is(err, ErrUnavailable) || idx != nil {
+		t.Fatalf("Index = %+v %v, want ErrUnavailable", idx, err)
+	}
+}
+
+func TestCachedAcceptsTheSourceInAnyCase(t *testing.T) {
+	s, c := serve(t)
+	s.publish(ref, map[string]string{"stack": "one"})
+	c.BaseURL += "/Acme/Presets"
+	s.files["/Acme/Presets/HEAD/index.yaml"] = s.files["/HEAD/index.yaml"]
+	if _, err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.BaseURL = strings.TrimSuffix(c.BaseURL, "/Acme/Presets") + "/acme/presets"
+	if _, _, err := c.Cached(); err != nil {
+		t.Fatalf("a cache for acme/Presets should serve acme/presets: %v", err)
+	}
+}
+
+func TestStoredIndexStartsWithItsSource(t *testing.T) {
+	s, c := serve(t)
+	s.publish(ref, map[string]string{"stack": "one"})
+	if _, err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(c.Dir, "index.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, rest, _ := strings.Cut(string(data), "\n")
+	if first != "# source: "+c.BaseURL {
+		t.Errorf("first line = %q", first)
+	}
+	if rest != s.files["/HEAD/index.yaml"] {
+		t.Errorf("the index bytes were changed: %q", rest)
+	}
+	if _, err := ParseIndex([]byte(rest)); err != nil {
+		t.Error(err)
 	}
 }
