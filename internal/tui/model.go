@@ -40,7 +40,8 @@ type Model struct {
 	logs      *logs
 	filter    string
 	filtering bool
-	scroll    int // log lines scrolled back from the newest
+	form      form // the open add form; nil when none is
+	scroll    int  // log lines scrolled back from the newest
 
 	started  bool  // the engine started
 	proxyErr error // why the engine could not start
@@ -189,12 +190,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.unsubscribe()
 		return m, tea.Quit
+	case formClosedMsg:
+		m.form = nil
+	case serverAddedMsg:
+		m.form = nil
+		m.sel, m.scroll = rowKey(rowServer, msg.srv.Name), 0
+		m.logs.noteOn(m.sel, "Added server "+msg.srv.Name+".")
+		if m.applying {
+			return m, nil // the clock picks the change up after this Apply
+		}
+		return m, m.reloadConfig()
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
 	case tea.MouseClickMsg:
 		return m, m.click(msg.Mouse())
 	case tea.MouseWheelMsg:
 		m.wheel(msg.Mouse())
+	default:
+		// The answers of a form's background steps.
+		if m.form != nil {
+			return m, m.form.update(msg)
+		}
 	}
 	return m, nil
 }
@@ -284,6 +300,19 @@ func (m *Model) View() tea.View {
 // main draws the main panel: the selected item's details, then its log,
 // exactly height lines of width cells.
 func (m *Model) main(width, height int) []string {
+	if m.form != nil {
+		lines := make([]string, 0, height)
+		for _, l := range m.form.lines(width) {
+			if len(lines) == height {
+				break
+			}
+			lines = append(lines, fit(l, width))
+		}
+		for len(lines) < height {
+			lines = append(lines, strings.Repeat(" ", width))
+		}
+		return lines
+	}
 	var details []string
 	kind, name := m.selected()
 	switch kind {

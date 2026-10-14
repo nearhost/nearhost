@@ -17,6 +17,9 @@ func (m *Model) footerItems() []footerItem {
 	if m.quitting {
 		return nil
 	}
+	if m.form != nil {
+		return m.form.keys()
+	}
 	if m.filtering {
 		return []footerItem{{"enter", "keep filter"}, {"esc", "clear filter"}}
 	}
@@ -31,7 +34,7 @@ func (m *Model) footerItems() []footerItem {
 	if kind != rowHome {
 		items = append(items, footerItem{"h", "home"})
 	}
-	return append(items, footerItem{"/", "filter"}, footerItem{"n", "add"}, footerItem{"q", "quit"})
+	return append(items, footerItem{"/", "filter"}, footerItem{"s", "server"}, footerItem{"n", "add"}, footerItem{"q", "quit"})
 }
 
 const footerSep = " · "
@@ -76,6 +79,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.form != nil {
+		return m.form.update(k)
+	}
 	if m.filtering {
 		switch s {
 		case "enter":
@@ -116,6 +122,8 @@ func (m *Model) action(s string) tea.Cmd {
 		m.filtering = true
 	case "n":
 		return tea.Exec(m.b.AddCommand(m.dir), func(err error) tea.Msg { return addedMsg{err} })
+	case "s":
+		m.form = newServerForm(m.b, m.cfg)
 	case "enter":
 		return m.enter()
 	case "o":
@@ -168,7 +176,7 @@ func (m *Model) enter() tea.Cmd {
 // click handles a mouse click: a sidebar row selects it, a footer action
 // runs it.
 func (m *Model) click(mouse tea.Mouse) tea.Cmd {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.width < minWidth || m.height < minHeight {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.width < minWidth || m.height < minHeight {
 		return nil
 	}
 	if mouse.Y == m.height-1 {
@@ -188,7 +196,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
-	if mouse.X < sidebarWidth {
+	if mouse.X < sidebarWidth || m.form != nil {
 		return
 	}
 	switch mouse.Button {
