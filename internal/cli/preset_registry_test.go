@@ -452,7 +452,8 @@ func TestPresetListMakesRegistryTitlesSafeToPrint(t *testing.T) {
 	}
 }
 
-// With no registry trusted, no command makes a request.
+// With no registry trusted, no command makes a request, and add makes none
+// when the answer to trusting the official registry is no.
 func TestNoRegistryMeansNoRequest(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	f, b := newFakeRegistries(t)
@@ -464,7 +465,7 @@ func TestNoRegistryMeansNoRequest(t *testing.T) {
 	add := noRemote(t)
 	add.presets = b
 	add.interactive = func() bool { return true }
-	if out, err := executeWithInput(t, "y\n", newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080"); err != nil {
+	if out, err := executeWithInput(t, "n\n", newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080"); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	if f.total() != 0 {

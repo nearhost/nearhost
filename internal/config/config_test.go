@@ -463,3 +463,43 @@ func TestValidateRejectsARefOnALocalPreset(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryPromptIsOffOnlyWhenFalse(t *testing.T) {
+	dir := t.TempDir()
+	for body, want := range map[string]bool{"": false, "registry_prompt: true\n": false, "registry_prompt: false\n": true} {
+		path := filepath.Join(dir, "config.yaml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load %q: %v", body, err)
+		}
+		if c.RegistryPromptOff() != want {
+			t.Errorf("%q: RegistryPromptOff = %v, want %v", body, !want, want)
+		}
+	}
+}
+
+func TestRegistryPromptRoundTripsAndStaysOutOfAnEmptyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, sample()); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "registry_prompt") {
+		t.Errorf("an unset registry_prompt was written:\n%s", raw)
+	}
+	c := sample()
+	off := false
+	c.RegistryPrompt = &off
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), "registry_prompt: false\n") {
+		t.Errorf("registry_prompt was not written:\n%s", raw)
+	}
+	got, err := Load(path)
+	if err != nil || !got.RegistryPromptOff() {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+}

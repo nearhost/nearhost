@@ -63,7 +63,8 @@ func newAddCmd(b addBackend) *cobra.Command {
 			"with routes proposed from the port variables in its .env and from the\n" +
 			"presets that are enabled, which can also ask for Compose published ports.\n" +
 			"When a preset from a trusted registry suits the project and is not\n" +
-			"enabled, add offers to enable it. With --server the path is on that\n" +
+			"enabled, add offers to enable it; while no registry is trusted, it first\n" +
+			"asks whether to trust the official one. With --server the path is on that\n" +
 			"server and its files are read over SFTP. Nothing is started and no\n" +
 			"project file is changed.",
 		Args: cobra.MaximumNArgs(1),
@@ -204,6 +205,17 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 	// notes last for the whole command. What one discovery pass finds is
 	// replaced by the next pass.
 	var notes []string
+	asked := false
+	if answers != nil && len(flags.presets) == 0 && len(cfg.Registries) == 0 && !cfg.RegistryPromptOff() {
+		asked = true
+		note, err := askToTrust(ctx, out, answers, b.presets, cfg, cfgPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if note != "" {
+			notes = append(notes, note)
+		}
+	}
 	sources := b.presets.indexes(ctx, cfg, cfgPath)
 	for _, s := range sources {
 		if s.err != nil {
@@ -234,7 +246,7 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 			return nil, nil, err
 		}
 		found = append(found, res.Warnings...)
-		if len(cfg.Registries) == 0 && len(res.Applied) == 0 {
+		if !asked && len(cfg.Registries) == 0 && len(res.Applied) == 0 && !cfg.RegistryPromptOff() {
 			fmt.Fprintf(out, "%s\n\n", noRegistriesHint)
 		}
 		if !interactive {
@@ -267,6 +279,37 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 		}
 		if !enabled {
 			return res, append(notes, found...), nil
+		}
+	}
+}
+
+// askToTrust asks whether to trust the official registry and does what the
+// answer says. An answer it does not know is asked again; the end of input
+// is a no. It returns a note when the registry could not be trusted, and an
+// error only when "don't ask again" could not be saved.
+func askToTrust(ctx context.Context, out io.Writer, answers *bufio.Reader, b presetBackend, cfg *config.Config, cfgPath string) (string, error) {
+	fmt.Fprintf(out, "No preset registries are trusted, so Nearhost will read ports from .env.\n"+
+		"You can also set routes yourself in the config.\n"+
+		"Trust the official presets (%s) for framework-specific setups?\n", officialRepo)
+	for {
+		fmt.Fprint(out, "[Y]es / [n]o / [d]on't ask again: ")
+		line, err := answers.ReadString('\n')
+		if err != nil && line == "" {
+			fmt.Fprintln(out)
+			return "", nil
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "", "y", "yes":
+			if _, err := b.trust(ctx, out, cfg, cfgPath, officialRepo, ""); err != nil {
+				return err.Error(), nil
+			}
+			return "", nil
+		case "n", "no":
+			return "", nil
+		case "d", "don't", "dont":
+			off := false
+			cfg.RegistryPrompt = &off
+			return "", config.Save(cfgPath, cfg)
 		}
 	}
 }

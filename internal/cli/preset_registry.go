@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +15,11 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 )
+
+// officialRepo is the registry `add` offers to trust while none is. It is
+// only text and an argument to presetBackend.trust: nothing else treats it
+// differently from any other registry.
+const officialRepo = "nearhost/presets"
 
 // noRegistriesHint is shown where registry presets would be while no
 // registry is trusted. It is local text: nothing is sent anywhere.
@@ -44,26 +51,40 @@ func newRegistryAddCmd(b presetBackend) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			reg, err := newRegistry(cfg, args[0], as)
+			out := cmd.OutOrStdout()
+			reg, err := b.trust(cmd.Context(), out, cfg, cfgPath, args[0], as)
 			if err != nil {
 				return err
 			}
-			idx, err := b.client(cfgPath, reg).Refresh(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("%s; nothing was saved", registryProblem(reg, err))
-			}
-			cfg.Registries = append(cfg.Registries, reg)
-			if err := config.Save(cfgPath, cfg); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Trusted registry %s (%s). Its index at %s offers %s.\n"+
-				"Enable one with `nearhost preset enable %s/<name>`; `nearhost preset list` shows them.\n",
-				reg.Alias, reg.Repo, shortRef(idx.Ref), plural(len(idx.Presets), "preset"), reg.Alias)
+			_, err = fmt.Fprintf(out, "Enable one with `nearhost preset enable %s/<name>`; `nearhost preset list` shows them.\n", reg.Alias)
 			return err
 		},
 	}
 	cmd.Flags().StringVar(&as, "as", "", "the alias its presets are named under (default: the owner in lower case)")
 	return cmd
+}
+
+// trust is `registry add`: it fetches and checks the index of the registry
+// in repo and, if it is valid, saves the registry in the config under alias,
+// or under the owner in lower case when alias is empty, and says what was
+// trusted. On an error nothing is saved.
+func (b presetBackend) trust(ctx context.Context, out io.Writer, cfg *config.Config, cfgPath, repo, alias string) (config.Registry, error) {
+	reg, err := newRegistry(cfg, repo, alias)
+	if err != nil {
+		return config.Registry{}, err
+	}
+	idx, err := b.client(cfgPath, reg).Refresh(ctx)
+	if err != nil {
+		return config.Registry{}, fmt.Errorf("%s; nothing was saved", registryProblem(reg, err))
+	}
+	cfg.Registries = append(cfg.Registries, reg)
+	if err := config.Save(cfgPath, cfg); err != nil {
+		cfg.Registries = cfg.Registries[:len(cfg.Registries)-1]
+		return config.Registry{}, err
+	}
+	_, err = fmt.Fprintf(out, "Trusted registry %s (%s). Its index at %s offers %s.\n",
+		reg.Alias, reg.Repo, shortRef(idx.Ref), plural(len(idx.Presets), "preset"))
+	return reg, err
 }
 
 // newRegistry checks a repo and alias given to `registry add` and returns the
