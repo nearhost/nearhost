@@ -1,0 +1,199 @@
+package tui
+
+import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/nearhost/nearhost/internal/engine"
+)
+
+// footerItem is one action shown in the footer: the key and what it does.
+type footerItem struct{ key, label string }
+
+// footerItems are the actions that work in the current context.
+func (m *Model) footerItems() []footerItem {
+	if m.quitting {
+		return nil
+	}
+	if m.filtering {
+		return []footerItem{{"enter", "keep filter"}, {"esc", "clear filter"}}
+	}
+	kind, _ := m.selected()
+	var items []footerItem
+	switch kind {
+	case rowProject:
+		items = []footerItem{{"enter", "start/stop"}, {"o", "open"}}
+	case rowServer:
+		items = []footerItem{{"enter", "collapse"}}
+	}
+	if kind != rowHome {
+		items = append(items, footerItem{"h", "home"})
+	}
+	return append(items, footerItem{"/", "filter"}, footerItem{"n", "add"}, footerItem{"q", "quit"})
+}
+
+const footerSep = " · "
+
+// footer draws the footer line.
+func (m *Model) footer() string {
+	if m.quitting {
+		return styleAmber.Render(fit("Stopping…", m.width))
+	}
+	parts := make([]string, 0, len(m.footerItems()))
+	for _, it := range m.footerItems() {
+		parts = append(parts, styleBeacon.Render(it.key)+" "+styleDim.Render(it.label))
+	}
+	return fit(strings.Join(parts, styleDim.Render(footerSep)), m.width)
+}
+
+// footerKeyAt is the key of the footer action at column x, or "".
+func (m *Model) footerKeyAt(x int) string {
+	at := 0
+	for i, it := range m.footerItems() {
+		if i > 0 {
+			at += ansi.StringWidth(footerSep)
+		}
+		w := ansi.StringWidth(it.key + " " + it.label)
+		if x >= at && x < at+w {
+			return it.key
+		}
+		at += w
+	}
+	return ""
+}
+
+// key handles a key press.
+func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
+	s := k.String()
+	if s == "ctrl+c" {
+		return m.quit()
+	}
+	if m.quitting {
+		if s == "q" {
+			return m.quit()
+		}
+		return nil
+	}
+	if m.filtering {
+		switch s {
+		case "enter":
+			m.filtering = false
+		case "esc":
+			m.filtering, m.filter = false, ""
+		case "backspace":
+			if r := []rune(m.filter); len(r) > 0 {
+				m.filter = string(r[:len(r)-1])
+			}
+		default:
+			if k.Text != "" {
+				m.filter += clean(k.Text)
+			}
+		}
+		m.scroll = 0
+		return nil
+	}
+	return m.action(s)
+}
+
+// action runs what the key or footer action s does.
+func (m *Model) action(s string) tea.Cmd {
+	switch s {
+	case "q":
+		return m.quit()
+	case "up", "k":
+		m.move(-1)
+	case "down", "j":
+		m.move(1)
+	case "h", "esc":
+		if m.filter != "" && s == "esc" {
+			m.filter = ""
+			return nil
+		}
+		m.sel, m.scroll = homeKey, 0
+	case "/":
+		m.filtering = true
+	case "n":
+		return tea.Exec(m.b.AddCommand(m.dir), func(err error) tea.Msg { return addedMsg{err} })
+	case "enter":
+		return m.enter()
+	case "o":
+		kind, name := m.selected()
+		if kind != rowProject {
+			return nil
+		}
+		p, _ := m.cfg.Project(name)
+		url := "https://" + p.Alias
+		return func() tea.Msg { return openedMsg{url, m.b.Open(url)} }
+	}
+	return nil
+}
+
+// move moves the selection by delta rows, stopping at either end.
+func (m *Model) move(delta int) {
+	all := rows(m.cfg, m.collapsed)
+	at := 0
+	for i, r := range all {
+		if r.key() == m.sel {
+			at = i
+		}
+	}
+	at = min(max(at+delta, 0), len(all)-1)
+	m.sel, m.scroll = all[at].key(), 0
+}
+
+// enter starts or stops the selected project, or collapses or expands the
+// selected server.
+func (m *Model) enter() tea.Cmd {
+	kind, name := m.selected()
+	switch kind {
+	case rowServer:
+		m.collapsed[name] = !m.collapsed[name]
+	case rowProject:
+		switch m.b.Status(name).State {
+		case engine.StateStopped:
+			return m.startProject(name)
+		case engine.StateError:
+			// A project in error may still serve some routes; enter tries
+			// again, as starting it removes what its last attempt left.
+			return m.startProject(name)
+		default:
+			return m.stopProject(name)
+		}
+	}
+	return nil
+}
+
+// click handles a mouse click: a sidebar row selects it, a footer action
+// runs it.
+func (m *Model) click(mouse tea.Mouse) tea.Cmd {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.width < minWidth || m.height < minHeight {
+		return nil
+	}
+	if mouse.Y == m.height-1 {
+		if key := m.footerKeyAt(mouse.X); key != "" {
+			return m.action(key)
+		}
+		return nil
+	}
+	if mouse.X < sidebarWidth {
+		if all := rows(m.cfg, m.collapsed); mouse.Y < len(all) {
+			m.sel, m.scroll = all[mouse.Y].key(), 0
+		}
+	}
+	return nil
+}
+
+// wheel scrolls the log when the pointer is over the main panel.
+func (m *Model) wheel(mouse tea.Mouse) {
+	if mouse.X < sidebarWidth {
+		return
+	}
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		m.scroll = min(m.scroll+3, len(m.logs.lines(m.sel, m.filter)))
+	case tea.MouseWheelDown:
+		m.scroll = max(m.scroll-3, 0)
+	}
+}

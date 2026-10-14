@@ -1,0 +1,336 @@
+package tui
+
+import (
+	"context"
+	"os"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
+)
+
+const (
+	// minWidth and minHeight are the smallest window the interface draws in.
+	minWidth, minHeight = 80, 20
+	// eventBuffer is how many engine events may wait for the interface; the
+	// bus drops what does not fit, and the next tick redraws from Status.
+	eventBuffer = 1024
+	// tickEvery is how often the config file is checked and the screen
+	// redrawn from the engine's state.
+	tickEvery = time.Second
+	// shutdownTimeout bounds stopping everything on quit.
+	shutdownTimeout = 30 * time.Second
+)
+
+// Model is the interface's state. Create it with New and run it with
+// tea.NewProgram.
+type Model struct {
+	b   Backend
+	dir string // where nearhost was started; n adds the project there
+
+	cfg       *config.Config
+	width     int
+	height    int
+	sel       string // key of the selected row
+	collapsed map[string]bool
+	logs      *logs
+	filter    string
+	filtering bool
+	scroll    int // log lines scrolled back from the newest
+
+	started  bool  // the engine started
+	proxyErr error // why the engine could not start
+	quitting bool
+	cutShort context.CancelFunc // ends the shutdown's context
+
+	events      <-chan engine.Event
+	unsubscribe func()
+	stamp       fileStamp // the config file as last seen
+	applying    bool      // an Apply is running
+}
+
+// New creates the interface for b. dir is where `nearhost` was started.
+func New(b Backend, dir string) *Model {
+	events, unsubscribe := b.Events().Subscribe(eventBuffer)
+	return &Model{
+		b: b, dir: dir,
+		cfg:       b.Config(),
+		sel:       homeKey,
+		collapsed: map[string]bool{},
+		logs:      newLogs(),
+		events:    events, unsubscribe: unsubscribe,
+		stamp: stampOf(b.ConfigPath()),
+	}
+}
+
+// Messages the model sends itself.
+type (
+	startedMsg     struct{ err error }
+	eventMsg       engine.Event
+	tickMsg        time.Time
+	appliedMsg     struct{ err error }
+	addedMsg       struct{ err error }
+	resumedMsg     struct{}
+	shutdownMsg    struct{ err error }
+	projectDoneMsg struct{}
+	openedMsg      struct {
+		url string
+		err error
+	}
+)
+
+// Init starts the engine, listens for its events and starts the clock.
+func (m *Model) Init() tea.Cmd {
+	return tea.Batch(func() tea.Msg {
+		return startedMsg{m.b.Start(context.Background())}
+	}, m.listen(), tick())
+}
+
+func (m *Model) listen() tea.Cmd {
+	events := m.events
+	return func() tea.Msg {
+		ev, ok := <-events
+		if !ok {
+			return nil
+		}
+		return eventMsg(ev)
+	}
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(tickEvery, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// Update handles a message.
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+	case startedMsg:
+		if msg.err != nil {
+			m.proxyErr = msg.err
+			m.logs.note("The proxy could not start: " + msg.err.Error())
+			return m, nil
+		}
+		m.started = true
+		var cmds []tea.Cmd
+		for _, p := range m.cfg.Projects {
+			if p.Enabled {
+				cmds = append(cmds, m.startProject(p.Name))
+			}
+		}
+		return m, tea.Batch(cmds...)
+	case eventMsg:
+		m.logs.event(engine.Event(msg), m.cfg)
+		return m, m.listen()
+	case tickMsg:
+		return m, tea.Batch(tick(), m.checkConfig())
+	case appliedMsg:
+		m.applying = false
+		if msg.err != nil {
+			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + msg.err.Error())
+		}
+		m.setConfig(m.b.Config())
+	case addedMsg:
+		if msg.err != nil {
+			m.logs.note("Adding a project failed: " + msg.err.Error())
+		}
+		return m, m.reloadConfig()
+	case openedMsg:
+		if msg.err != nil {
+			m.logs.note("Open " + msg.url + " in your browser.")
+		}
+	case suspendMsg:
+		done := msg.done
+		return m, tea.Exec(&funcCommand{fn: msg.fn}, func(err error) tea.Msg {
+			done <- err
+			return resumedMsg{}
+		})
+	case shutdownMsg:
+		if msg.err != nil {
+			m.logs.note("Stopping: " + msg.err.Error())
+		}
+		m.unsubscribe()
+		return m, tea.Quit
+	case tea.KeyPressMsg:
+		return m, m.key(msg)
+	case tea.MouseClickMsg:
+		return m, m.click(msg.Mouse())
+	case tea.MouseWheelMsg:
+		m.wheel(msg.Mouse())
+	}
+	return m, nil
+}
+
+// setConfig takes in the engine's configuration after a change, keeping the
+// selection when its row is still there and selecting a project that is new.
+func (m *Model) setConfig(cfg *config.Config) {
+	old := m.cfg
+	m.cfg = cfg
+	for _, p := range cfg.Projects {
+		if _, existed := old.Project(p.Name); !existed {
+			m.sel = rowKey(rowProject, p.Name)
+			m.scroll = 0
+			return
+		}
+	}
+	for _, r := range rows(cfg, m.collapsed) {
+		if r.key() == m.sel {
+			return
+		}
+	}
+	m.sel, m.scroll = homeKey, 0
+}
+
+func (m *Model) startProject(name string) tea.Cmd {
+	return func() tea.Msg {
+		_ = m.b.StartProject(context.Background(), name) // the outcome shows as the project's state
+		return projectDoneMsg{}
+	}
+}
+
+func (m *Model) stopProject(name string) tea.Cmd {
+	return func() tea.Msg {
+		_ = m.b.StopProject(context.Background(), name)
+		return projectDoneMsg{}
+	}
+}
+
+// quit stops everything, then ends the program. Asked again while stopping,
+// it cuts the shutdown short.
+func (m *Model) quit() tea.Cmd {
+	if m.quitting {
+		m.cutShort()
+		return nil
+	}
+	m.quitting = true
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	m.cutShort = cancel
+	return func() tea.Msg {
+		defer cancel()
+		return shutdownMsg{m.b.Shutdown(ctx)}
+	}
+}
+
+// View draws the screen.
+func (m *Model) View() tea.View {
+	var content string
+	if m.width < minWidth || m.height < minHeight {
+		content = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+			"Make the window larger (80×20 or more).")
+	} else {
+		body := m.height - 1
+		side := strings.Join(m.sidebar(body), "\n")
+		side = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderRight(true).
+			BorderForeground(colourDim).Render(side)
+		main := strings.Join(m.main(m.width-sidebarWidth-1, body), "\n")
+		content = lipgloss.JoinHorizontal(lipgloss.Top, side, " ", main) + "\n" + m.footer()
+	}
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// main draws the main panel: the selected item's details, then its log,
+// exactly height lines of width cells.
+func (m *Model) main(width, height int) []string {
+	var details []string
+	kind, name := m.selected()
+	switch kind {
+	case rowServer:
+		details = m.serverPanel(name, width)
+	case rowProject:
+		details = m.projectPanel(name, width)
+	default:
+		details = m.home(width)
+	}
+	if len(details) > height-3 {
+		details = details[:height-3]
+	}
+	lines := make([]string, 0, height)
+	for _, d := range details {
+		lines = append(lines, fit(d, width))
+	}
+	header := "log"
+	if m.filtering || m.filter != "" {
+		header = "log · filter: " + m.filter
+		if m.filtering {
+			header += "▏"
+		}
+	}
+	lines = append(lines, "", styleDim.Render(fit(header, width)))
+	// The newest lines that fit, each wrapped, counted back from the end
+	// less what is scrolled.
+	room := height - len(lines)
+	log := m.logs.lines(m.sel, m.filter)
+	var shown []string
+	for i := len(log) - 1 - m.scroll; i >= 0 && len(shown) < room; i-- {
+		shown = append(wrap(log[i], width), shown...)
+	}
+	if len(shown) > room {
+		shown = shown[len(shown)-room:]
+	}
+	for _, l := range shown {
+		lines = append(lines, fit(l, width))
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return lines
+}
+
+// selected is the kind and name of the selected row.
+func (m *Model) selected() (rowKind, string) {
+	for _, r := range rows(m.cfg, m.collapsed) {
+		if r.key() == m.sel {
+			return r.kind, r.name
+		}
+	}
+	return rowHome, ""
+}
+
+// fileStamp is what is checked to notice a change to the config file.
+type fileStamp struct {
+	exists bool
+	mod    time.Time
+	size   int64
+}
+
+func stampOf(path string) fileStamp {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{exists: true, mod: info.ModTime(), size: info.Size()}
+}
+
+// checkConfig applies the config file when it has changed since it was last
+// seen and no Apply is running.
+func (m *Model) checkConfig() tea.Cmd {
+	if m.applying || m.quitting {
+		return nil
+	}
+	if stampOf(m.b.ConfigPath()) == m.stamp {
+		return nil
+	}
+	return m.reloadConfig()
+}
+
+// reloadConfig reads the config file and gives it to the engine.
+func (m *Model) reloadConfig() tea.Cmd {
+	path := m.b.ConfigPath()
+	m.stamp = stampOf(path)
+	m.applying = true
+	return func() tea.Msg {
+		cfg, err := config.Load(path)
+		if err == nil {
+			err = m.b.Apply(context.Background(), cfg)
+		}
+		return appliedMsg{err}
+	}
+}
