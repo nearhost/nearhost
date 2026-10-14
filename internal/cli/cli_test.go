@@ -123,6 +123,28 @@ func fixture(t *testing.T, name string) string {
 	return dir
 }
 
+// enablePresets copies the named test presets beside the config and enables
+// them, as local presets.
+func enablePresets(t *testing.T, cfgPath string, names ...string) {
+	t.Helper()
+	cfg := loadSaved(t, cfgPath)
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join("..", "discovery", "testdata", "presets", name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+".yaml"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg.UpsertPreset(config.PresetRef{Name: name})
+	}
+	saveConfig(t, cfgPath, cfg)
+}
+
 func wantContains(t *testing.T, out string, subs ...string) {
 	t.Helper()
 	for _, sub := range subs {

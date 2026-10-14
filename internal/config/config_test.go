@@ -278,3 +278,63 @@ func TestValidateRejectsAliasesDifferingOnlyByCase(t *testing.T) {
 		t.Fatalf("expected alias error, got %v", err)
 	}
 }
+
+func TestPresetsRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	c := sample()
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "presets") || strings.Contains(string(data), "registry") {
+		t.Fatalf("a config without presets should not mention them:\n%s", data)
+	}
+
+	off := false
+	c.Registry = &off
+	c.UpsertPreset(PresetRef{Name: "stack", Ref: "3f2c1ab9", SHA256: "9a41"})
+	c.UpsertPreset(PresetRef{Name: "mine"})
+	c.UpsertPreset(PresetRef{Name: "stack", Ref: "aaaaaaa", SHA256: "bbbb"})
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RegistryEnabled() || len(got.Presets) != 2 {
+		t.Fatalf("loaded %+v", got)
+	}
+	if p, ok := got.Preset("stack"); !ok || p.Ref != "aaaaaaa" || p.SHA256 != "bbbb" {
+		t.Errorf("stack = %+v %v", p, ok)
+	}
+	if p, ok := got.Preset("mine"); !ok || p.Ref != "" {
+		t.Errorf("mine = %+v %v", p, ok)
+	}
+	if !got.RemovePreset("mine") || got.RemovePreset("mine") || len(got.Presets) != 1 {
+		t.Errorf("RemovePreset left %+v", got.Presets)
+	}
+}
+
+func TestRegistryIsOnUnlessSwitchedOff(t *testing.T) {
+	if !(&Config{}).RegistryEnabled() {
+		t.Error("the registry should be on by default")
+	}
+	on := true
+	if !(&Config{Registry: &on}).RegistryEnabled() {
+		t.Error("registry: true should be on")
+	}
+}
+
+func TestValidateRejectsBadPresets(t *testing.T) {
+	c := sample()
+	c.Presets = []PresetRef{{Name: "stack"}, {Name: "stack"}}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `duplicate preset "stack"`) {
+		t.Errorf("expected a duplicate error, got %v", err)
+	}
+	for _, name := range []string{"", "../etc", "My Preset", "a/b"} {
+		c.Presets = []PresetRef{{Name: name}}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "preset name") {
+			t.Errorf("name %q: expected a name error, got %v", name, err)
+		}
+	}
+}
