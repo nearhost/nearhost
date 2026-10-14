@@ -68,6 +68,14 @@ type Model struct {
 	work *worker // runs the forms' background steps
 
 	firstRunShown bool // the first-run screen was offered this session
+	// editing holds role changes back from when one is saved until the
+	// config with it is applied, so each starts from the project as it is.
+	editing bool
+	// reloadAfter applies the config again once the running Apply is done:
+	// a change was saved after it had read the file.
+	reloadAfter bool
+
+	now func() time.Time // the clock; tests set their own
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
@@ -81,6 +89,7 @@ func New(b Backend, dir string) *Model {
 		collapsed: map[string]bool{},
 		logs:      newLogs(),
 		advice:    map[string]advice{},
+		now:       time.Now,
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
@@ -149,13 +158,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case editedMsg:
 		if msg.err != nil {
+			m.editing = false
 			m.panelErr = msg.err.Error()
 			return m, nil
 		}
 		if msg.note != "" {
 			m.logs.note(msg.note)
 		}
-		return m, m.applyNow()
+		if m.applying {
+			m.reloadAfter = true
+			return m, nil
+		}
+		return m, m.reloadConfig()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case startedMsg:
@@ -193,6 +207,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case appliedMsg:
 		m.applying, m.endApply = false, nil
+		if m.reloadAfter {
+			// A change was saved while that Apply ran: apply it too.
+			m.reloadAfter = false
+			m.setConfig(m.b.Config())
+			return m, m.reloadConfig()
+		}
+		m.editing = false
 		if msg.err != nil {
 			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.err.Error(), ".") + ". Save the file again to apply it.")
 		}

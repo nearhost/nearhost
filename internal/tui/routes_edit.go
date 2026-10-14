@@ -94,7 +94,10 @@ func (m *Model) makeWeb(p config.Project) tea.Cmd {
 // setRole saves the role of a project's route on port. A route made web
 // takes the place of the one that was.
 func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
-	m.panelErr = ""
+	if m.editing {
+		return nil // the last change is not applied yet
+	}
+	m.editing, m.panelErr = true, ""
 	return m.editConfig("", func(cfg *config.Config) error {
 		q, ok := cfg.Project(name)
 		if !ok {

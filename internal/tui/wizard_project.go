@@ -73,7 +73,8 @@ type projectForm struct {
 	nameErr, aliasErr string
 	advice            []Advisory // for the routes and alias chosen, shown at the end
 
-	edit *config.Project // the project being edited; nil when adding
+	edit    *config.Project // the project being edited; nil when adding
+	missing map[int]bool    // saved routes no longer found, by port; shown, not saved
 
 	notes []string // what the registry, discovery and presets had to say
 	busy  string   // what a background step is doing; empty when none is
@@ -352,6 +353,16 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		if s == "ctrl+r" && f.srv.Name != config.LocalServer {
 			return tea.Batch(f.closeFiles(), f.connect()) // the connection dropped
 		}
+		if f.edit != nil {
+			// The path is the project's: this step only reads it again.
+			switch {
+			case f.files == nil && s == "r":
+				return f.connect()
+			case f.files != nil && s == "enter":
+				return f.discover()
+			}
+			return nil
+		}
 		if f.files == nil { // connecting failed
 			if s == "r" {
 				return f.connect()
@@ -482,7 +493,7 @@ func (f *projectForm) paste(s string) {
 	}
 	switch f.step {
 	case projectStepPath:
-		if f.files != nil {
+		if f.files != nil && f.edit == nil {
 			f.path.paste(s)
 			f.err, f.matches, f.listNote = "", nil, ""
 		}
@@ -705,9 +716,10 @@ func (f *projectForm) toRoutes() {
 				f.routes[i].Role = config.RoleIgnore
 			}
 		}
+		f.missing = map[int]bool{}
 		for _, r := range f.edit.Routes {
 			if _, gone := saved[r.Port]; gone {
-				r.Label = strings.TrimSpace(r.Label + " (not found now)")
+				f.missing[r.Port] = true
 				f.routes = append(f.routes, r)
 			}
 		}
@@ -717,6 +729,15 @@ func (f *projectForm) toRoutes() {
 		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
 	}
 	f.step, f.err = projectStepRoutes, ""
+}
+
+// routeLabel is how a route's label is shown: a saved route no longer found
+// says so.
+func (f *projectForm) routeLabel(r config.Route) string {
+	if f.missing[r.Port] {
+		return strings.TrimSpace(r.Label + " (not found now)")
+	}
+	return r.Label
 }
 
 // project is the project the form adds.
@@ -878,7 +899,7 @@ func (f *projectForm) lines(width int) []string {
 			if i == 0 {
 				label = "routes"
 			}
-			lines = append(lines, field(label, fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, clean(r.Label)), width)...)
+			lines = append(lines, field(label, fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, clean(f.routeLabel(r))), width)...)
 		}
 		lines = append(lines, adviceLines(f.advice, width)...)
 	}
@@ -912,7 +933,7 @@ func (f *projectForm) routeLines(width int) []string {
 		if i == f.routeRow {
 			mark = styleBeacon.Render("▸ ")
 		}
-		lines = append(lines, mark+fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, fit(clean(r.Label), width-20)))
+		lines = append(lines, mark+fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, fit(clean(f.routeLabel(r)), width-20)))
 	}
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
 }
@@ -947,6 +968,13 @@ func (f *projectForm) keys() []footerItem {
 	case projectStepPath:
 		if f.files == nil {
 			return []footerItem{{"r", "connect again"}, {"esc", "back"}}
+		}
+		if f.edit != nil {
+			items := []footerItem{{"enter", "read again"}}
+			if f.srv.Name != config.LocalServer {
+				items = append(items, footerItem{"ctrl+r", "reconnect"})
+			}
+			return append(items, footerItem{"esc", "back"})
 		}
 		items := []footerItem{{"tab", "complete"}, {"enter", "next"}}
 		if f.srv.Name != config.LocalServer {
