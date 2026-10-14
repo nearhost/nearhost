@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path"
 	"strconv"
 	"strings"
 
@@ -538,19 +537,20 @@ func (f *projectForm) connect() tea.Cmd {
 }
 
 // listDirs lists the directories to complete the path's last part from.
+// What comes before the last slash is kept as it was typed. ~, . and ..
+// are directories already, and only gain their slash.
 func (f *projectForm) listDirs() tea.Cmd {
 	v := f.path.value
-	parent, prefix := path.Dir(v), path.Base(v)
-	switch {
-	case v == "" || v == "~":
-		parent, prefix = v, ""
-		if v == "~" {
-			parent = "~/"
+	parent, prefix := "", v
+	if i := strings.LastIndex(v, "/"); i >= 0 {
+		parent, prefix = v[:i+1], v[i+1:]
+	}
+	switch prefix {
+	case "~", ".", "..":
+		if parent == "" || prefix != "~" {
+			f.path.value = v + "/"
+			return nil
 		}
-	case strings.HasSuffix(v, "/"):
-		parent, prefix = v, ""
-	case !strings.Contains(v, "/"):
-		parent = ""
 	}
 	f.seq = nextSeq()
 	f.busy, f.matches, f.listNote = "Listing…", nil, ""
@@ -577,27 +577,30 @@ func (f *projectForm) complete(msg completedMsg) {
 			found = append(found, d)
 		}
 	}
-	join := func(name string) string {
-		if msg.parent == "" || strings.HasSuffix(msg.parent, "/") {
-			return msg.parent + name
-		}
-		return msg.parent + "/" + name
-	}
 	switch len(found) {
 	case 0:
 		f.listNote = "no directories match"
 	case 1:
-		f.path.value = join(found[0]) + "/"
+		f.path.value = msg.parent + found[0] + "/"
 	default:
-		common := found[0]
-		for _, d := range found[1:] {
-			for !strings.HasPrefix(d, common) {
-				common = common[:len(common)-1]
-			}
-		}
-		f.path.value = join(common)
+		f.path.value = msg.parent + commonPrefix(found)
 		f.matches = found
 	}
+}
+
+// commonPrefix is the longest start all of names share, in whole
+// characters.
+func commonPrefix(names []string) string {
+	common := []rune(names[0])
+	for _, n := range names[1:] {
+		r := []rune(n)
+		i := 0
+		for i < len(common) && i < len(r) && common[i] == r[i] {
+			i++
+		}
+		common = common[:i]
+	}
+	return string(common)
 }
 
 // discover reads the project.

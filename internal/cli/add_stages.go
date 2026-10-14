@@ -103,9 +103,18 @@ func (f *sftpFiles) resolve(p string) (string, error) {
 		return err == nil && info.IsDir()
 	}
 	resolved, err := projectPathOn(p, f.localHome, f.client.Client.Getwd, isDir)
+	if err == nil && !path.IsAbs(resolved) {
+		// Relative to the home directory, where the SFTP server starts.
+		// `nearhost add` refuses relative paths before they get here.
+		var home string
+		if home, err = f.client.Client.Getwd(); err == nil {
+			resolved = path.Join(home, resolved)
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("find the home directory on server %s: %w", f.server, err)
 	}
+	resolved = path.Clean(resolved)
 	if info, err := f.client.Client.Stat(resolved); err != nil || !info.IsDir() {
 		if err == nil {
 			err = errors.New("not a directory")
