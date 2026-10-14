@@ -31,6 +31,7 @@ type fakeBackend struct {
 	reads     int   // calls to CATrusted and HostsState
 	openErr   error
 	applyErr  error
+	forms     formFake
 	trusted   bool
 	// applyBlocks makes Apply wait for its context to end.
 	applyBlocks bool

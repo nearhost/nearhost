@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -306,4 +307,49 @@ func addServer(cfg *config.Config, cfgPath string, srv config.Server) error {
 		return err
 	}
 	return config.Save(cfgPath, cfg)
+}
+
+// registryAnswer is an answer to whether to trust the official registry.
+type registryAnswer int
+
+const (
+	registryYes registryAnswer = iota
+	registryNo
+	registryNever // don't ask again
+)
+
+// answerRegistry does what an answer to the registry question says: trust
+// the official registry, saying so on out; nothing; or never ask again. It
+// returns a note when the registry could not be trusted, and an error only
+// when "don't ask again" could not be saved.
+func answerRegistry(ctx context.Context, out io.Writer, b presetBackend, cfg *config.Config, cfgPath string, answer registryAnswer) (string, error) {
+	switch answer {
+	case registryYes:
+		if _, err := b.trust(ctx, out, cfg, cfgPath, officialRepo, ""); err != nil {
+			var unread *unreadableRegistryError
+			if errors.As(err, &unread) {
+				return unread.problem + ", so it was not trusted.", nil
+			}
+			return strings.TrimRight(err.Error(), ".") + ".", nil
+		}
+	case registryNever:
+		off := false
+		cfg.RegistryPrompt = &off
+		return "", config.Save(cfgPath, cfg)
+	}
+	return "", nil
+}
+
+// enableOffered enables a preset a registry suggested and saves the config.
+// On an error it returns the note to show; a preset that cannot be enabled
+// must not stop the add.
+func enableOffered(ctx context.Context, b presetBackend, cfg *config.Config, cfgPath, name string) string {
+	_, _, err := b.enable(ctx, cfg, cfgPath, name, false)
+	if err == nil {
+		err = config.Save(cfgPath, cfg)
+	}
+	if err != nil {
+		return fmt.Sprintf("the %s preset was not enabled: %v", name, err)
+	}
+	return ""
 }

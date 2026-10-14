@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -40,6 +41,10 @@ type uiBackend struct {
 	self func() (string, error)
 	// childEnv is added to that child's environment.
 	childEnv []string
+	// presets reaches the trusted preset registries.
+	presets presetBackend
+	// sshConfig returns the user's OpenSSH client config.
+	sshConfig func() ([]byte, error)
 }
 
 // systemUI is the production backend. Only NewRoot wires it in.
@@ -71,6 +76,14 @@ func systemUI() uiBackend {
 		open:    openBrowser,
 		workDir: os.Getwd,
 		self:    os.Executable,
+		presets: systemPresets(),
+		sshConfig: func() ([]byte, error) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			return os.ReadFile(filepath.Join(home, ".ssh", "config"))
+		},
 	}
 }
 

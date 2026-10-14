@@ -47,7 +47,76 @@ type Backend interface {
 	// AddCommand is the command that asks the add questions for the project
 	// in dir, in the plain terminal while the interface is suspended.
 	AddCommand(dir string) tea.ExecCommand
+
+	// SSHHosts lists the hosts named in the user's OpenSSH config.
+	SSHHosts() []string
+	// CheckServer connects to srv as adding a project there would, and
+	// disconnects. Its error says how to fix access.
+	CheckServer(ctx context.Context, srv config.Server) error
+	// AddServer saves srv.
+	AddServer(srv config.Server) error
+	// OpenServer opens srv's files, for adding a project there.
+	OpenServer(ctx context.Context, srv config.Server) (ServerFiles, error)
+	// RegistryQuestion reports whether to ask about trusting the official
+	// preset registry: none is trusted and the question is not turned off.
+	RegistryQuestion() bool
+	// AnswerRegistry does what the answer says. It returns a note when the
+	// registry could not be trusted, and an error only when the answer could
+	// not be saved.
+	AnswerRegistry(ctx context.Context, answer RegistryAnswer) (string, error)
+	// EnablePresets enables presets a registry suggested, returning a note
+	// for each that could not be.
+	EnablePresets(ctx context.Context, names []string) []string
+	// CheckNames says what is wrong with a new project's name and alias, nil
+	// for each that is fine.
+	CheckNames(name, alias string) (nameErr, aliasErr error)
+	// SaveProject saves a new project.
+	SaveProject(p config.Project) error
 }
+
+// ServerFiles is the files of a server, open while a project there is being
+// added. Close ends it.
+type ServerFiles interface {
+	// ListDirs lists the directories in dir, which may start with ~.
+	ListDirs(ctx context.Context, dir string) ([]string, error)
+	// Resolve works out the directory a path means and checks it is one.
+	Resolve(ctx context.Context, path string) (string, error)
+	// Discover reads the project in the directory path means.
+	Discover(ctx context.Context, path string) (Draft, error)
+	Close() error
+}
+
+// Draft is what discovery found for a project being added.
+type Draft struct {
+	Server      config.Server
+	Path        string // resolved
+	Name, Alias string // defaults
+	Routes      []config.Route
+	Presets     []SuggestedPreset
+	Advisories  []Advisory
+	Notes       []string
+}
+
+// SuggestedPreset is a preset a trusted registry offers for the project.
+type SuggestedPreset struct {
+	Name  string // <registry>/<name>
+	Title string
+	Repo  string // the registry's repository
+}
+
+// Advisory is advice about the project's setup.
+type Advisory struct {
+	Code, Message, Snippet string
+}
+
+// RegistryAnswer answers whether to trust the official preset registry.
+type RegistryAnswer int
+
+const (
+	RegistryYes RegistryAnswer = iota
+	RegistryNo
+	RegistryNever // don't ask again
+)
 
 // Suspender runs functions that need the terminal, such as sudo asking for a
 // password, while the interface is suspended. Attach it to the running
