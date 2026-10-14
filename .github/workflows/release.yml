@@ -1,0 +1,35 @@
+name: release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/create-github-app-token@v3
+        id: tap-token
+        with:
+          client-id: ${{ vars.NH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NH_APP_PRIVATE_KEY }}
+          repositories: homebrew-tap
+          permission-contents: write
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}

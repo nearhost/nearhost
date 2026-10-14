@@ -1,0 +1,52 @@
+# Builds the binaries for a release that release-please has already published,
+# and attaches them to it. nearhost.dev/install.sh expects these asset names.
+version: 2
+project_name: nearhost
+
+builds:
+  - main: ./cmd/nearhost
+    binary: nearhost
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/nearhost/nearhost/internal/cli.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# release-please writes the notes; keep them and only add the assets.
+changelog:
+  disable: true
+release:
+  mode: keep-existing
+
+homebrew_casks:
+  - name: nearhost
+    repository:
+      owner: nearhost
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://nearhost.dev
+    description: Reach local and remote development servers at https://<name>.test
+    license: MIT
+    commit_msg_template: "feat: update nearhost to {{ .Tag }}"
+    hooks:
+      post:
+        # The binary is not notarised, so lift the quarantine flag Gatekeeper
+        # would otherwise refuse it on.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nearhost"]
+          end
