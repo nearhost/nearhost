@@ -59,6 +59,8 @@ type Model struct {
 	// store, /etc/hosts), so it is read on the clock, not on every redraw.
 	caTrusted  bool
 	hostsState string
+
+	work *worker // runs the forms' background steps
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
@@ -74,6 +76,7 @@ func New(b Backend, dir string) *Model {
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
+		work: newWorker(),
 	}
 }
 
@@ -179,6 +182,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.unsubscribe()
 		return m, tea.Quit
+	case connectedMsg:
+		// Only the add-project form, waiting on its own, takes a
+		// connection. Any other is closed: its form is gone or going.
+		if pf, ok := m.form.(*projectForm); ok && pf.sub == nil && !m.quitting {
+			return m, pf.update(msg)
+		}
+		msg.release()
 	case formClosedMsg:
 		if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
 			return m, pf.update(msg) // the add-server form opened from it
@@ -269,10 +279,21 @@ func (m *Model) quit() tea.Cmd {
 	if m.endApply != nil {
 		m.endApply() // the shutdown would otherwise wait for it
 	}
+	// The open form's connection, and those its running steps are opening,
+	// go before the engine does.
+	var files ServerFiles
+	if pf, ok := m.form.(*projectForm); ok {
+		files, pf.files = pf.files, nil
+	}
+	work := m.work
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	m.cutShort = cancel
 	return func() tea.Msg {
 		defer cancel()
+		work.stop()
+		if files != nil {
+			files.Close()
+		}
 		return shutdownMsg{m.b.Shutdown(ctx)}
 	}
 }

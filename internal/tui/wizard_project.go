@@ -76,6 +76,7 @@ type projectForm struct {
 	busy  string   // what a background step is doing; empty when none is
 	err   string   // the current step's error
 	seq   int      // the background step whose answer is awaited
+	w     *worker
 }
 
 // Answers of the add-project form's background steps.
@@ -124,8 +125,8 @@ type (
 
 // newProjectForm opens the add-project form with the cursor on the server
 // called selected.
-func newProjectForm(b Backend, cfg *config.Config, dir, selected string) *projectForm {
-	f := &projectForm{b: b, cfg: cfg, dir: dir, offered: map[string]bool{}}
+func newProjectForm(b Backend, cfg *config.Config, dir, selected string, w *worker) *projectForm {
+	f := &projectForm{b: b, cfg: cfg, dir: dir, offered: map[string]bool{}, w: w}
 	f.servers = append([]config.Server{{Name: config.LocalServer}}, cfg.Servers...)
 	for i, s := range f.servers {
 		if s.Name == selected {
@@ -152,6 +153,8 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return f.key(msg)
+	case tea.PasteMsg:
+		f.paste(msg.Content)
 	case connectedMsg:
 		if msg.seq != f.seq {
 			if msg.files != nil {
@@ -258,6 +261,13 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// release closes a connection nobody took.
+func (m connectedMsg) release() {
+	if m.files != nil {
+		m.files.Close()
+	}
+}
+
 func errText(err error) string {
 	if err == nil {
 		return ""
@@ -300,12 +310,15 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.cursor = min(f.cursor+1, len(f.servers))
 		case "enter":
 			if f.cursor == len(f.servers) {
-				f.sub = newServerForm(f.b, f.cfg)
+				f.sub = newServerForm(f.b, f.cfg, f.w)
 				return nil
 			}
 			return f.pick(f.servers[f.cursor])
 		}
 	case projectStepPath:
+		if s == "ctrl+r" && f.srv.Name != config.LocalServer {
+			return tea.Batch(f.closeFiles(), f.connect()) // the connection dropped
+		}
 		if f.files == nil { // connecting failed
 			if s == "r" {
 				return f.connect()
@@ -316,13 +329,13 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "tab":
 			return f.listDirs()
 		case "enter":
-			f.seq++
+			f.seq = nextSeq()
 			f.busy, f.err, f.matches, f.listNote = "Checking "+clean(f.path.value)+"…", "", nil, ""
 			seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
-			return func() tea.Msg {
-				resolved, err := files.Resolve(context.Background(), p)
+			return f.w.do(func(ctx context.Context) tea.Msg {
+				resolved, err := files.Resolve(ctx, p)
 				return resolvedMsg{seq, resolved, err == nil && b.RegistryQuestion(), err}
-			}
+			})
 		}
 		if f.path.key(k) {
 			f.err, f.matches, f.listNote = "", nil, ""
@@ -334,16 +347,16 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "down":
 			f.choice = min(f.choice+1, len(registryChoices)-1)
 		case "enter":
-			f.seq++
+			f.seq = nextSeq()
 			f.busy, f.err = "Answering…", ""
 			seq, b, answer := f.seq, f.b, registryChoices[f.choice].answer
 			if answer == RegistryYes {
 				f.busy = "Trusting the official presets…"
 			}
-			return func() tea.Msg {
-				note, err := b.AnswerRegistry(context.Background(), answer)
+			return f.w.do(func(ctx context.Context) tea.Msg {
+				note, err := b.AnswerRegistry(ctx, answer)
 				return registryAnsweredMsg{seq, note, err}
-			}
+			})
 		}
 	case projectStepPresets:
 		switch s {
@@ -364,12 +377,12 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 				f.toRoutes()
 				return nil
 			}
-			f.seq++
+			f.seq = nextSeq()
 			f.busy = "Enabling " + strings.Join(names, ", ") + "…"
 			seq, b := f.seq, f.b
-			return func() tea.Msg {
-				return presetsEnabledMsg{seq, b.EnablePresets(context.Background(), names)}
-			}
+			return f.w.do(func(ctx context.Context) tea.Msg {
+				return presetsEnabledMsg{seq, b.EnablePresets(ctx, names)}
+			})
 		}
 	case projectStepRoutes:
 		return f.routesKey(k)
@@ -378,14 +391,14 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "tab", "up", "down":
 			f.focus = 1 - f.focus
 		case "enter":
-			f.seq++
+			f.seq = nextSeq()
 			f.busy, f.nameErr, f.aliasErr = "Checking…", "", ""
 			f.name.value, f.alias.value = strings.TrimSpace(f.name.value), strings.TrimSpace(f.alias.value)
 			seq, b, name, alias := f.seq, f.b, f.name.value, f.alias.value
-			return func() tea.Msg {
+			return f.w.do(func(context.Context) tea.Msg {
 				nameErr, aliasErr := b.CheckNames(name, alias)
 				return namesCheckedMsg{seq, nameErr, aliasErr}
-			}
+			})
 		default:
 			fld := &f.name
 			if f.focus == 1 {
@@ -397,13 +410,39 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case projectStepConfirm:
 		if s == "enter" {
-			f.seq++
+			f.seq = nextSeq()
 			f.busy, f.err = "Saving…", ""
 			seq, b, p := f.seq, f.b, f.project()
-			return func() tea.Msg { return projectSavedMsg{seq, p.Name, b.SaveProject(p)} }
+			return f.w.do(func(context.Context) tea.Msg { return projectSavedMsg{seq, p.Name, b.SaveProject(p)} })
 		}
 	}
 	return nil
+}
+
+// paste puts pasted text in the field of the current step, if it has one.
+func (f *projectForm) paste(s string) {
+	if f.busy != "" {
+		return
+	}
+	switch f.step {
+	case projectStepPath:
+		if f.files != nil {
+			f.path.paste(s)
+			f.err, f.matches, f.listNote = "", nil, ""
+		}
+	case projectStepRoutes:
+		if len(f.routes) == 0 && strings.Trim(s, "0123456789") == "" {
+			f.webPort.paste(s)
+			f.err = ""
+		}
+	case projectStepDetails:
+		fld := &f.name
+		if f.focus == 1 {
+			fld = &f.alias
+		}
+		fld.paste(s)
+		f.nameErr, f.aliasErr = "", ""
+	}
 }
 
 // routesKey handles a key on the routes step.
@@ -486,16 +525,16 @@ func (f *projectForm) pick(srv config.Server) tea.Cmd {
 
 // connect opens the server's files.
 func (f *projectForm) connect() tea.Cmd {
-	f.seq++
+	f.seq = nextSeq()
 	f.busy, f.err = "Connecting to "+clean(f.srv.Name)+"…", ""
 	if f.srv.Name == config.LocalServer {
 		f.busy = "Opening this machine…"
 	}
 	seq, b, srv := f.seq, f.b, f.srv
-	return func() tea.Msg {
-		files, err := b.OpenServer(context.Background(), srv)
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		files, err := b.OpenServer(ctx, srv)
 		return connectedMsg{seq, files, err}
-	}
+	})
 }
 
 // listDirs lists the directories to complete the path's last part from.
@@ -513,16 +552,16 @@ func (f *projectForm) listDirs() tea.Cmd {
 	case !strings.Contains(v, "/"):
 		parent = ""
 	}
-	f.seq++
+	f.seq = nextSeq()
 	f.busy, f.matches, f.listNote = "Listing…", nil, ""
 	seq, files, list := f.seq, f.files, parent
 	if list == "" {
 		list = "."
 	}
-	return func() tea.Msg {
-		dirs, err := files.ListDirs(context.Background(), list)
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		dirs, err := files.ListDirs(ctx, list)
 		return completedMsg{seq, parent, prefix, dirs, err}
-	}
+	})
 }
 
 // complete fills in what the directories listed make certain.
@@ -563,17 +602,17 @@ func (f *projectForm) complete(msg completedMsg) {
 
 // discover reads the project.
 func (f *projectForm) discover() tea.Cmd {
-	f.seq++
+	f.seq = nextSeq()
 	where := "on " + clean(f.srv.Name)
 	if f.srv.Name == config.LocalServer {
 		where = "on this machine"
 	}
 	f.busy, f.err = "Reading "+clean(f.resolved)+" "+where+"…", ""
 	seq, files, p := f.seq, f.files, f.resolved
-	return func() tea.Msg {
-		d, err := files.Discover(context.Background(), p)
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		d, err := files.Discover(ctx, p)
 		return discoveredMsg{seq, d, err}
-	}
+	})
 }
 
 // toRoutes goes on to the routes step with what discovery found.
@@ -597,7 +636,7 @@ func (f *projectForm) project() config.Project {
 // back goes back a step: from the first it closes the form, and a step that
 // was waiting stops waiting.
 func (f *projectForm) back() tea.Cmd {
-	f.seq++ // what a background step says now is not wanted
+	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
 	f.busy, f.err, f.matches, f.listNote = "", "", nil, ""
 	switch f.step {
@@ -784,7 +823,11 @@ func (f *projectForm) keys() []footerItem {
 		if f.files == nil {
 			return []footerItem{{"r", "connect again"}, {"esc", "back"}}
 		}
-		return []footerItem{{"tab", "complete"}, {"enter", "next"}, {"esc", "back"}}
+		items := []footerItem{{"tab", "complete"}, {"enter", "next"}}
+		if f.srv.Name != config.LocalServer {
+			items = append(items, footerItem{"ctrl+r", "reconnect"})
+		}
+		return append(items, footerItem{"esc", "back"})
 	case projectStepRegistry:
 		return []footerItem{{"enter", "answer"}, {"↑↓", "choose"}, {"esc", "back"}}
 	case projectStepPresets:

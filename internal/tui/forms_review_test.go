@@ -1,0 +1,120 @@
+package tui
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// An answer meant for a form that has been closed is not taken by the next
+// form, even one of the same kind at the same step.
+func TestAnswerForAClosedFormIsIgnored(t *testing.T) {
+	m, f := serverFormModel(t)
+	typeText(m, "first")
+	press(m, "enter")
+	stale := press(m, "enter") // checking "first"; not run yet
+	for i := 0; i < 3; i++ {
+		settle(m, press(m, "esc"))
+	}
+	press(m, "s")
+	typeText(m, "second")
+	press(m, "enter")
+	press(m, "enter") // checking "second"
+	settle(m, stale)
+	if len(f.forms.addedSrv) != 0 {
+		t.Fatalf("the closed form's server was saved: %+v", f.forms.addedSrv)
+	}
+	wantScreen(t, m, "◐ Connecting to second…")
+}
+
+// A connection that arrives after its form closed is closed, not leaked.
+func TestConnectionForAClosedFormIsClosed(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	press(m, "n")
+	m.form.(*projectForm).cursor = 1
+	connect := press(m, "enter") // connecting to mini; not run yet
+	settle(m, press(m, "esc"))
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatal("the form is still open")
+	}
+	settle(m, connect)
+	if files.closed != 1 {
+		t.Errorf("the late connection was closed %d times", files.closed)
+	}
+}
+
+// Quitting closes the open form's connection before nearhost stops.
+func TestQuitClosesTheFormsConnection(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	toPath(t, m, 1)
+	cmd := press(m, "ctrl+c")
+	if !m.quitting {
+		t.Fatal("ctrl+c did not quit")
+	}
+	cmd()
+	if files.closed != 1 || len(f.shutdown) != 1 {
+		t.Errorf("files closed %d times, shut down %d times", files.closed, len(f.shutdown))
+	}
+}
+
+// Quitting ends a server check that is still running and waits for it, so
+// its connection is gone before nearhost is.
+func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
+	m, f := serverFormModel(t)
+	f.forms.checkBlocks = true
+	typeText(m, "box")
+	press(m, "enter")
+	check := press(m, "enter")
+	ended := make(chan error, 1)
+	go func() {
+		check()
+		ended <- nil
+	}()
+	time.Sleep(50 * time.Millisecond) // the check is running
+	quit := press(m, "ctrl+c")
+	done := make(chan struct{})
+	go func() {
+		quit()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("quitting did not end the check")
+	}
+	select {
+	case <-ended:
+	default:
+		t.Error("the shutdown did not wait for the check")
+	}
+}
+
+// Text pasted into a field arrives in it, without control characters.
+func TestPasteIntoFields(t *testing.T) {
+	m, _ := serverFormModel(t)
+	m.Update(tea.PasteMsg{Content: "dev@box\x1b[2J\n.lan‮"})
+	wantScreen(t, m, "host      dev@box[2J.lan▏")
+
+	m, _, _ = projectFormModel(t)
+	toPath(t, m, 1)
+	m.Update(tea.PasteMsg{Content: "code/blog"})
+	wantScreen(t, m, "path      ~/code/blog▏")
+}
+
+// After a dropped connection, ctrl+r on the path step connects again.
+func TestReconnectAfterADroppedConnection(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	toPath(t, m, 1)
+	files.listErr = errors.New("connection lost")
+	settle(m, press(m, "tab"))
+	wantScreen(t, m, "Connection lost", "ctrl+r reconnect")
+	files.listErr = nil
+	settle(m, press(m, "ctrl+r"))
+	if len(f.forms.opened) != 2 || files.closed != 1 {
+		t.Errorf("opened %d times, closed %d times", len(f.forms.opened), files.closed)
+	}
+	wantScreen(t, m, "path      ~/▏")
+}

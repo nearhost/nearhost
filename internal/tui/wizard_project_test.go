@@ -88,7 +88,7 @@ func TestProjectFormCompletesPaths(t *testing.T) {
 	if f.forms.opened[0].Name != "mini" {
 		t.Fatalf("opened %+v", f.forms.opened)
 	}
-	wantScreen(t, m, "path      ~/▏", "tab complete · enter next · esc back")
+	wantScreen(t, m, "path      ~/▏", "tab complete · enter next · ctrl+r reconnect · esc back")
 	settle(m, press(m, "tab")) // ~/ holds code and .cache; dot names wait for a dot
 	wantScreen(t, m, "path      ~/code/▏")
 	typeText(m, "b")
