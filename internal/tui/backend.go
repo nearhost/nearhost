@@ -62,6 +62,9 @@ func (s *Suspender) Attach(p *tea.Program) { s.p.Store(p) }
 // errNotRunning is returned by Run before the interface runs.
 var errNotRunning = errors.New("the interface is not running")
 
+// errQuitting answers a request for the terminal made while quitting.
+var errQuitting = errors.New("nearhost is quitting")
+
 // Run suspends the interface, runs fn with the terminal's input and output,
 // and resumes the interface. It returns fn's error, or ctx's when ctx ends
 // first; fn then still runs and is expected to notice ctx itself.

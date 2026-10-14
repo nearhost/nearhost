@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +36,10 @@ type uiBackend struct {
 	open func(url string) error
 	// workDir is the directory nearhost was started in.
 	workDir func() (string, error)
+	// self is the nearhost binary, which runs the add questions as a child.
+	self func() (string, error)
+	// childEnv is added to that child's environment.
+	childEnv []string
 }
 
 // systemUI is the production backend. Only NewRoot wires it in.
@@ -65,6 +70,7 @@ func systemUI() uiBackend {
 		},
 		open:    openBrowser,
 		workDir: os.Getwd,
+		self:    os.Executable,
 	}
 }
 
@@ -122,7 +128,14 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 func hostsThrough(suspend func(context.Context, func(io.Reader, io.Writer) error) error, path string, applier func(context.Context) hosts.Applier) func(context.Context, []string) error {
 	return func(ctx context.Context, aliases []string) error {
 		_, err := hosts.Ensure(path, aliases, func(want []string) error {
+			// A start that has ended since it asked needs no password.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			return suspend(ctx, func(_ io.Reader, out io.Writer) error {
+				if err := ctx.Err(); err != nil {
+					return err // ended while the request waited its turn
+				}
 				fmt.Fprintf(out, "Nearhost needs your password to add %s to %s.\n", strings.Join(want, ", "), path)
 				return applier(ctx)(want)
 			})
@@ -157,19 +170,29 @@ func (u *uiEngine) HostsState() string {
 
 func (u *uiEngine) Open(url string) error { return u.b.open(url) }
 
-// AddCommand runs the add questions for dir in the plain terminal, then
-// waits for enter so the outcome can be read before the interface returns.
+// errNotAdded is AddCommand's error when the add did not add a project; its
+// own output, still on the screen, says why.
+var errNotAdded = errors.New("nearhost add did not add a project; its output says why")
+
+// AddCommand runs `nearhost add` for dir in the plain terminal, then waits
+// for enter so the outcome can be read before the interface returns. The
+// add runs as a child process: the interface ignores ctrl+c while it has
+// handed over the terminal, and the child does not, so ctrl+c ends the
+// questions.
 func (u *uiEngine) AddCommand(dir string) tea.ExecCommand {
 	return tui.Command(func(in io.Reader, out io.Writer) error {
-		root := newRootCmd()
-		root.AddCommand(newAddCmd(systemAdd()))
-		root.SetArgs([]string{"--config", u.path, "add", dir})
-		root.SetIn(in)
-		root.SetOut(out)
-		root.SetErr(out)
-		err := root.Execute()
-		if err != nil {
+		var err error
+		if exe, selfErr := u.b.self(); selfErr != nil {
+			err = selfErr
 			fmt.Fprintln(out, "nearhost:", err)
+		} else {
+			cmd := exec.Command(exe, "--config", u.path, "add", dir)
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, out
+			cmd.Env = append(os.Environ(), u.b.childEnv...)
+			var exit *exec.ExitError
+			if err = cmd.Run(); errors.As(err, &exit) {
+				err = errNotAdded
+			}
 		}
 		fmt.Fprint(out, "\nPress enter to return to Nearhost.")
 		waitForEnter(in)

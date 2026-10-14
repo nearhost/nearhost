@@ -30,6 +30,11 @@ import (
 // touch at a throwaway location before any test runs, so tests never read or
 // write the real user's directories.
 func TestMain(m *testing.M) {
+	// The interface runs `nearhost add` as a child process. Tests point it
+	// at this test binary, which then acts as nearhost.
+	if os.Getenv("NEARHOST_TEST_AS_CLI") == "1" {
+		os.Exit(Main(os.Args[1:]))
+	}
 	dir, err := os.MkdirTemp("", "nh-cli-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -115,6 +115,17 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	if want := "Nearhost needs your password to add a.test, b.test to " + path + ".\n"; said.String() != want {
 		t.Errorf("said %q, want %q", said.String(), want)
 	}
+	// A start that has ended by the time the block needs changing does not
+	// take the terminal.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := suspended
+	if err := ensure(ctx, []string{"d.test"}); err == nil {
+		t.Error("an ended start updated the hosts block")
+	}
+	if suspended != before {
+		t.Error("an ended start took the terminal")
+	}
 	refused := hostsThrough(func(context.Context, func(io.Reader, io.Writer) error) error {
 		return errors.New("sudo: a password is required")
 	}, path, applier)
@@ -123,10 +134,19 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	}
 }
 
+// asCLI makes the interface run this test binary as nearhost.
+func asCLI(t *testing.T) uiBackend {
+	t.Helper()
+	return uiBackend{
+		self:     os.Executable,
+		childEnv: []string{"NEARHOST_TEST_AS_CLI=1"},
+	}
+}
+
 func TestAddCommandAsksAndWaitsForEnter(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	dir := envProject(t, "APP_PORT=8080\n")
-	u := &uiEngine{path: cfgPath}
+	u := &uiEngine{b: asCLI(t), path: cfgPath}
 	cmd := u.AddCommand(dir)
 	var out bytes.Buffer
 	cmd.SetStdin(strings.NewReader("\nnot read"))
@@ -145,10 +165,31 @@ func TestAddCommandAsksAndWaitsForEnter(t *testing.T) {
 	cmd = u.AddCommand(filepath.Join(dir, "missing"))
 	cmd.SetStdin(strings.NewReader("\n"))
 	cmd.SetStdout(&out)
-	if err := cmd.Run(); err == nil {
-		t.Fatal("expected the add to fail")
+	cmd.SetStderr(&out)
+	if err := cmd.Run(); err == nil || !strings.Contains(err.Error(), "did not add a project") {
+		t.Fatalf("expected the add to fail, got %v", err)
 	}
 	wantContains(t, out.String(), "nearhost: ", "Press enter to return to Nearhost.")
+}
+
+// The add questions run in a child process, so ctrl+c, which the interface
+// ignores while it has handed over the terminal, ends them.
+func TestAddCommandRunsNearhostAsAChild(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "nearhost")
+	script := "#!/bin/sh\necho \"child: $*\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	u := &uiEngine{b: uiBackend{self: func() (string, error) { return bin, nil }}, path: "/cfg/config.yaml"}
+	cmd := u.AddCommand("/code/blog")
+	var out bytes.Buffer
+	cmd.SetStdin(strings.NewReader("\n"))
+	cmd.SetStdout(&out)
+	cmd.SetStderr(&out)
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, out.String(), "child: --config /cfg/config.yaml add /code/blog\n")
 }
 
 func TestHostsState(t *testing.T) {
