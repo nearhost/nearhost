@@ -77,7 +77,7 @@ func TestCheckServerRunsTheBatchModeCheck(t *testing.T) {
 
 func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 	c, log := fakeClient(t, "FAKE_SSH_AUTH_FAIL=1")
-	_, _, err := c.openRemote(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"}, "/srv/app")
+	_, _, _, err := c.openRemote(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"}, "/srv/app")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -97,7 +97,7 @@ func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 
 func TestOpenRemoteStopsTheMasterWhenSFTPIsUnavailable(t *testing.T) {
 	c, log := fakeClient(t) // the fake ssh has no sftp subsystem
-	_, _, err := c.openRemote(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"}, "/srv/app")
+	_, _, _, err := c.openRemote(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"}, "/srv/app")
 	if err == nil || !strings.Contains(err.Error(), "sftp") {
 		t.Fatalf("expected an sftp error, got %v", err)
 	}
@@ -207,5 +207,77 @@ func TestPrivateSessionSocketPathIsShort(t *testing.T) {
 		if _, err := os.Stat(dir); err == nil {
 			t.Errorf("server %q: run directory %s was left behind", name, dir)
 		}
+	}
+}
+
+func TestProjectPathOn(t *testing.T) {
+	dirs := map[string]bool{"/home/dev": true, "/home/dev/code/blog": true, "/Users/dev/code/shop": true}
+	isDir := func(p string) bool { return dirs[p] }
+	home := func() (string, error) { return "/home/dev", nil }
+	for _, c := range []struct{ given, localHome, want string }{
+		{"~", "/Users/dev", "/home/dev"},
+		{"~/code/blog", "/Users/dev", "/home/dev/code/blog"},
+		// The shell expanded ~ to this machine's home before add saw it.
+		{"/Users/dev/code/blog", "/Users/dev", "/home/dev/code/blog"},
+		// A path under this machine's home that is there on the server too
+		// is taken as it is.
+		{"/Users/dev/code/shop", "/Users/dev", "/Users/dev/code/shop"},
+		// Neither is there: the path is reported as given.
+		{"/Users/dev/code/none", "/Users/dev", "/Users/dev/code/none"},
+		{"/srv/www", "/Users/dev", "/srv/www"},
+		// A home with no slash after it is another directory.
+		{"/Users/devops/code/blog", "/Users/dev", "/Users/devops/code/blog"},
+		{"/Users/dev/code/blog", "", "/Users/dev/code/blog"},
+	} {
+		got, err := projectPathOn(c.given, c.localHome, home, isDir)
+		if err != nil || got != c.want {
+			t.Errorf("projectPathOn(%q, %q) = %q, %v; want %q", c.given, c.localHome, got, err, c.want)
+		}
+	}
+	if _, err := projectPathOn("~/code", "/Users/dev", func() (string, error) { return "", errors.New("no realpath") }, isDir); err == nil || !strings.Contains(err.Error(), "no realpath") {
+		t.Errorf("a home that cannot be found gave %v", err)
+	}
+}
+
+// TestAddRemoteResolvesPathsUnderTheServerHome reads ~/blog, and the same
+// path as the shell expands it on this machine, from the home directory of
+// the account on the server.
+func TestAddRemoteResolvesPathsUnderTheServerHome(t *testing.T) {
+	server := sftpServer(t)
+	remoteHome := t.TempDir()
+	project := filepath.Join(remoteHome, "blog")
+	if err := os.CopyFS(project, os.DirFS(fixture(t, "compose-literal"))); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
+		"if [ \"$last\" = sftp ]; then exec '" + server + "' -R -d '" + remoteHome + "'; fi\n" +
+		"exec '" + testutil.FakeSSH(t) + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "ssh.log")
+	c := sshClient{path: wrapper, env: []string{"FAKE_SSH_LOG=" + log}}
+	localHome := "/nonexistent/home/dev"
+	t.Setenv("HOME", localHome)
+
+	for name, given := range map[string]string{"tilde": "~/blog", "expanded": localHome + "/blog"} {
+		t.Run(name, func(t *testing.T) {
+			cfgPath, _ := existing(t)
+			out, err := execute(t, newAddCmd(addBackend{openRemote: c.openRemote}), "--config", cfgPath, "add", given, "--server", "mini", "--web", "8080")
+			if err != nil {
+				t.Fatalf("add: %v\n%s", err, out)
+			}
+			// sftp-server reports the real path, which on macOS is under
+			// /private.
+			p, ok := loadSaved(t, cfgPath).Project("blog")
+			if real, _ := filepath.EvalSymlinks(project); !ok || p.Path != real {
+				t.Fatalf("project = %+v %v, want path %s", p, ok, real)
+			}
+			wantContains(t, out, "Routes found for blog (mini:"+p.Path+"):")
+			if note := "Read " + given + " as " + p.Path + " on mini"; (name == "expanded") != strings.Contains(out, note) {
+				t.Errorf("note %q shown wrongly:\n%s", note, out)
+			}
+		})
 	}
 }

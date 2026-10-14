@@ -14,9 +14,9 @@ import (
 
 // noRemote is an add backend for tests that must stay on this machine.
 func noRemote(t *testing.T) addBackend {
-	return addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
+	return addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, string, func() error, error) {
 		t.Error("a local add opened a remote session")
-		return nil, nil, errors.New("unexpected")
+		return nil, "", nil, errors.New("unexpected")
 	}}
 }
 
@@ -262,9 +262,9 @@ func TestAddRemoteReadsTheProjectThroughTheServerSession(t *testing.T) {
 	var gotServer config.Server
 	var gotPath string
 	closed := 0
-	b := addBackend{openRemote: func(_ context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error) {
+	b := addBackend{openRemote: func(_ context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
 		gotServer, gotPath = srv, projectPath
-		return discovery.DirReader{Root: fixture(t, "compose-literal")}, func() error { closed++; return nil }, nil
+		return discovery.DirReader{Root: fixture(t, "compose-literal")}, projectPath, func() error { closed++; return nil }, nil
 	}}
 	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini", "--web", "9000")
 	if err != nil {
@@ -315,8 +315,8 @@ func TestAddRemoteAdvisoryReadsThroughAnOpenSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &sessionReader{files: map[string]string{"marker": "1"}}
-	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
-		return r, func() error { r.closed = true; return nil }, nil
+	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, string, func() error, error) {
+		return r, "/srv/www/blog", func() error { r.closed = true; return nil }, nil
 	}}
 	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini", "--web", "9000")
 	if err != nil {
@@ -330,8 +330,8 @@ func TestAddRemoteAdvisoryReadsThroughAnOpenSession(t *testing.T) {
 
 func TestAddRemoteFailureSavesNothing(t *testing.T) {
 	cfgPath, before := existing(t)
-	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
-		return nil, nil, errors.New("ssh mini.lan failed: Permission denied (publickey).")
+	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, string, func() error, error) {
+		return nil, "", nil, errors.New("ssh mini.lan failed: Permission denied (publickey).")
 	}}
 	_, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini")
 	if err == nil || !strings.Contains(err.Error(), "Permission denied (publickey).") {
@@ -478,4 +478,34 @@ func TestAddReadsComposeOnlyThroughAPreset(t *testing.T) {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	wantContains(t, out, "  8080  web     web\n", "  8443  ignore  api\n", "  9000  ignore  api\n")
+}
+
+func TestAddRemoteNamesAProjectUnderTheServerHome(t *testing.T) {
+	cfgPath, _ := existing(t)
+	var gotPath string
+	b := addBackend{openRemote: func(_ context.Context, _ config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+		gotPath = projectPath
+		return discovery.DirReader{Root: fixture(t, "compose-literal")}, "/home/dev/code/blog", func() error { return nil }, nil
+	}}
+	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "~/code/blog/", "--server", "mini", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if gotPath != "~/code/blog" {
+		t.Errorf("opened %q", gotPath)
+	}
+	if p, ok := loadSaved(t, cfgPath).Project("blog"); !ok || p.Path != "/home/dev/code/blog" {
+		t.Fatalf("project = %+v %v", p, ok)
+	}
+
+	// The home directory itself has no name to give the project.
+	_, err = execute(t, newAddCmd(b), "--config", cfgPath, "add", "~", "--server", "mini")
+	if err == nil || !strings.Contains(err.Error(), "pass --name") {
+		t.Fatalf("expected to be asked for a name, got %v", err)
+	}
+	// Other relative paths are still refused.
+	_, err = execute(t, newAddCmd(b), "--config", cfgPath, "add", "code/blog", "--server", "mini")
+	if err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("expected a relative path to be refused, got %v", err)
+	}
 }

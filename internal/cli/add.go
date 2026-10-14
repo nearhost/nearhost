@@ -26,9 +26,10 @@ import (
 // addBackend is the seam between `add` and what lies outside the process:
 // a remote server, the trusted preset registries and the terminal.
 type addBackend struct {
-	// openRemote opens the project directory on a server for reading. The
-	// returned function ends the connection.
-	openRemote func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error)
+	// openRemote opens the project directory on a server for reading, and
+	// returns the directory it opened: a path under ~ is resolved on the
+	// server. The returned function ends the connection.
+	openRemote func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error)
 	// presets reaches the trusted preset registries.
 	presets presetBackend
 	// interactive reports whether a person can be asked a question. Nil
@@ -127,10 +128,14 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		srv.SSHHost = host
 	}
 
-	reader, done, err := openProject(cmd.Context(), b, srv, project.Path)
+	reader, opened, done, err := openProject(cmd.Context(), b, srv, project.Path)
 	if err != nil {
 		return err
 	}
+	if opened != project.Path && !strings.HasPrefix(project.Path, "~") {
+		fmt.Fprintf(out, "Read %s as %s on %s, since the shell turned ~ into this machine's home.\n\n", project.Path, opened, srv.Name)
+	}
+	project.Path = opened
 	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader, answers)
 	if err != nil {
 		return errors.Join(err, done())
@@ -447,15 +452,15 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			name = filepath.Base(projectPath)
 		}
 	} else {
-		if !path.IsAbs(projectPath) {
-			return fail("a project on a server needs its absolute path there: nearhost add /path/on/server --server %s", srv.Name)
+		if !path.IsAbs(projectPath) && projectPath != "~" && !strings.HasPrefix(projectPath, "~/") {
+			return fail("a project on a server needs its absolute path there, or one under ~/: nearhost add /path/on/server --server %s", srv.Name)
 		}
 		projectPath = path.Clean(projectPath)
 		if name == "" {
 			name = path.Base(projectPath)
 		}
 	}
-	if name == "" || strings.ContainsAny(name, `/\`) || name == "." {
+	if name == "" || strings.ContainsAny(name, `/\`) || name == "." || name == "~" {
 		return fail("cannot name a project after %s; pass --name", projectPath)
 	}
 	if other, ok := cfg.Project(name); ok {
@@ -480,18 +485,18 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 
 // openProject returns a reader for the project's files and a function to call
 // when done with it.
-func openProject(ctx context.Context, b addBackend, srv config.Server, projectPath string) (discovery.FileReader, func() error, error) {
+func openProject(ctx context.Context, b addBackend, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
 	if srv.Name != config.LocalServer {
 		return b.openRemote(ctx, srv, projectPath)
 	}
 	info, err := os.Stat(projectPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	if !info.IsDir() {
-		return nil, nil, fmt.Errorf("%s is not a directory", projectPath)
+		return nil, "", nil, fmt.Errorf("%s is not a directory", projectPath)
 	}
-	return discovery.DirReader{Root: projectPath}, func() error { return nil }, nil
+	return discovery.DirReader{Root: projectPath}, projectPath, func() error { return nil }, nil
 }
 
 // forceWeb makes port the only web route, adding it if it was not discovered.

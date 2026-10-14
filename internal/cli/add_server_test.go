@@ -27,9 +27,9 @@ func serverAsking(t *testing.T, terminal bool, opened *config.Server) (string, [
 		t.Fatal(err)
 	}
 	b := addBackend{
-		openRemote: func(_ context.Context, srv config.Server, _ string) (discovery.FileReader, func() error, error) {
+		openRemote: func(_ context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
 			*opened = srv
-			return discovery.DirReader{Root: fixture(t, "compose-literal")}, func() error { return nil }, nil
+			return discovery.DirReader{Root: fixture(t, "compose-literal")}, projectPath, func() error { return nil }, nil
 		},
 		interactive: func() bool { return terminal },
 	}
@@ -117,8 +117,8 @@ func TestAddSavesANewServerOnlyWithTheProject(t *testing.T) {
 	t.Run("unreachable", func(t *testing.T) {
 		var opened config.Server
 		cfgPath, before, b := serverAsking(t, true, &opened)
-		b.openRemote = func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
-			return nil, nil, errors.New("ssh apollo failed: Permission denied (publickey).")
+		b.openRemote = func(context.Context, config.Server, string) (discovery.FileReader, string, func() error, error) {
+			return nil, "", nil, errors.New("ssh apollo failed: Permission denied (publickey).")
 		}
 		_, err := executeWithInput(t, "\n\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo")
 		if err == nil || !strings.Contains(err.Error(), "Permission denied") {
