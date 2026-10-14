@@ -82,6 +82,8 @@ func TestParseRejectsInvalidPresets(t *testing.T) {
 		{"missing title", "schema: 1\nname: x\ndetect: 'true'\n", "title is required"},
 		{"missing detect", "schema: 1\nname: x\ntitle: X\n", "detect is required"},
 		{"after itself", minimal("after: [x]\n"), "after"},
+		{"after a path", minimal("after: [a/b/c]\n"), "after"},
+		{"after a bad alias", minimal("after: [Acme/x]\n"), "after"},
 		{"port var", minimal("ports:\n  - {var: '8080', label: App}\n"), "not a variable name"},
 		{"port label", minimal("ports:\n  - {var: APP_PORT}\n"), "label is required"},
 		{"port listed twice", minimal("ports:\n  - {var: A, label: One}\n  - {var: A, label: Two}\n"), "listed twice"},

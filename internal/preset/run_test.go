@@ -126,3 +126,104 @@ func TestAdvice(t *testing.T) {
 		t.Errorf("errs = %v, want the broken and bad-message advisories", errs)
 	}
 }
+
+// from is a test preset that came from the registry with the given alias.
+func from(t *testing.T, source, name, extra string) *Preset {
+	t.Helper()
+	p := named(t, name, extra)
+	p.Source = source
+	return p
+}
+
+func keys(ps []*Preset) string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, p.Key())
+	}
+	return strings.Join(out, ",")
+}
+
+func TestKeyAndResolve(t *testing.T) {
+	local := named(t, "mine", "")
+	remote := from(t, "acme", "stack", "")
+	if local.Key() != "mine" || remote.Key() != "acme/stack" {
+		t.Errorf("keys = %q, %q", local.Key(), remote.Key())
+	}
+	for _, tc := range []struct {
+		p          *Preset
+		name, want string
+	}{
+		{local, "other", "other"},
+		{local, "acme/other", "acme/other"},
+		{remote, "other", "acme/other"},
+		{remote, "team/other", ""},
+	} {
+		if got := tc.p.Resolve(tc.name); got != tc.want {
+			t.Errorf("%s.Resolve(%q) = %q, want %q", tc.p.Key(), tc.name, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		p, other *Preset
+		want     string
+		ok       bool
+	}{
+		{local, named(t, "other", ""), "other", true},
+		{local, from(t, "team", "other", ""), "team/other", true},
+		{remote, from(t, "acme", "other", ""), "other", true},
+		{remote, from(t, "team", "other", ""), "", false},
+		{remote, named(t, "other", ""), "", false},
+	} {
+		if got, ok := tc.p.NameOf(tc.other); got != tc.want || ok != tc.ok {
+			t.Errorf("%s.NameOf(%s) = %q %v, want %q %v", tc.p.Key(), tc.other.Key(), got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestParseAcceptsAQualifiedAfter(t *testing.T) {
+	p := named(t, "mine", "after: [acme/stack, bundler]\n")
+	if len(p.After) != 2 {
+		t.Fatalf("After = %v", p.After)
+	}
+}
+
+// In a registry preset a plain name means the same registry, and a qualified
+// name means nothing. In a local preset a qualified name means that
+// registry's preset. Ties are broken by the qualified name.
+func TestOrderResolvesNamesWithinTheirSource(t *testing.T) {
+	first := from(t, "a", "first", "after: [second]\n")
+	second := from(t, "a", "second", "after: [b/third]\n")
+	third := from(t, "b", "third", "after: [first]\n")
+	other := from(t, "b", "second", "")
+	mine := named(t, "aaa", "after: [b/third, second]\n")
+	got, err := Order([]*Preset{mine, third, other, second, first})
+	if err != nil || keys(got) != "a/second,a/first,b/second,b/third,aaa" {
+		t.Fatalf("Order = %s %v", keys(got), err)
+	}
+}
+
+func TestOrderNamesACycleByQualifiedName(t *testing.T) {
+	a := from(t, "acme", "a", "after: [b]\n")
+	b := from(t, "acme", "b", "after: [a]\n")
+	_, err := Order([]*Preset{a, b})
+	if err == nil || !strings.Contains(err.Error(), "acme/a, acme/b") {
+		t.Errorf("error %v should name acme/a and acme/b", err)
+	}
+}
+
+func TestOwnersAreQualified(t *testing.T) {
+	first := named(t, "first", "routes:\n  - {id: r1, port: '1', label: R}\n")
+	second := from(t, "acme", "first", "routes:\n  - {id: r2, port: '2', label: R}\n")
+	got := Owners([]*Preset{first, second})
+	want := map[string]string{"r1": "first", "r2": "acme/first"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Owners = %v, want %v", got, want)
+	}
+}
+
+func TestErrorsNameThePresetByItsQualifiedName(t *testing.T) {
+	p := from(t, "acme", "x", "routes:\n  - {id: broken, port: facts.missing, label: Broken}\n")
+	_, errs := p.EvalRoutes(Context{Project: &Project{}}, all)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "preset acme/x: route broken") {
+		t.Errorf("errs = %v", errs)
+	}
+}

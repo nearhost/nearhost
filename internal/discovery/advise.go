@@ -27,7 +27,7 @@ func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []s
 		res.files.err = nil
 	}
 	for _, p := range res.active {
-		keep := func(id string) bool { return res.owners[id] == p.Name }
+		keep := func(id string) bool { return res.owners[id] == p.Key() }
 		out, errs := p.EvalAdvice(res.context(p), alias, free, keep)
 		for _, err := range errs {
 			warnings = append(warnings, err.Error())

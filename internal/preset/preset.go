@@ -50,6 +50,48 @@ type Preset struct {
 	Routes      []Route         `yaml:"routes"`
 	Suppress    []string        `yaml:"suppress"`
 	Advisories  []Advisory      `yaml:"advisories"`
+
+	// Source is the alias of the registry the preset was installed from, and
+	// empty for a local file. Whoever loads the preset sets it; a preset file
+	// cannot.
+	Source string `yaml:"-"`
+}
+
+// Key is the preset's name among all enabled presets: its own name for a
+// local file, <alias>/<name> for a preset from a registry.
+func (p *Preset) Key() string {
+	if p.Source == "" {
+		return p.Name
+	}
+	return p.Source + "/" + p.Name
+}
+
+// Resolve returns the key of the preset that p means by name in `after`,
+// `active()` or `presets[]`. In a preset from a registry a plain name is a
+// preset from the same registry, and a qualified name means nothing, so the
+// result is empty. In a local preset a plain name is a local preset and a
+// qualified name is that registry's preset.
+func (p *Preset) Resolve(name string) string {
+	switch {
+	case p.Source == "":
+		return name
+	case strings.Contains(name, "/"):
+		return ""
+	}
+	return p.Source + "/" + name
+}
+
+// NameOf is how p refers to other, the reverse of Resolve. ok is false when
+// p cannot refer to other at all: a preset from a registry sees only the
+// presets of its own registry.
+func (p *Preset) NameOf(other *Preset) (name string, ok bool) {
+	switch {
+	case p.Source == "":
+		return other.Key(), true
+	case other.Source == p.Source:
+		return other.Name, true
+	}
+	return "", false
 }
 
 // Port maps a variable that names a port to a label and role. Its id is Var.
@@ -96,6 +138,16 @@ var (
 
 // ValidName reports whether s can name a preset.
 func ValidName(s string) bool { return nameRe.MatchString(s) }
+
+// validRef reports whether s can refer to another preset: a plain name, or
+// <alias>/<name> for a local preset that waits on a registry preset.
+func validRef(s string) bool {
+	alias, name, qualified := strings.Cut(s, "/")
+	if !qualified {
+		return ValidName(s)
+	}
+	return ValidName(alias) && ValidName(name)
+}
 
 // Parse reads one preset. name is the file name without ".yaml", and the
 // preset must carry the same name. Every problem found is reported.
@@ -146,7 +198,7 @@ func (p *Preset) validate(name string) []error {
 		bad("detect is required")
 	}
 	for _, a := range p.After {
-		if !ValidName(a) || a == p.Name {
+		if !validRef(a) || a == p.Name {
 			bad("after: %q is not another preset's name", a)
 		}
 	}

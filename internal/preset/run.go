@@ -9,53 +9,56 @@ import (
 )
 
 // Order sorts presets so that each runs after those it names in After, with
-// ties broken by name. A name in After that is not among ps is ignored.
-// Presets that wait on each other are left out and named in the error.
+// ties broken by key. A name in After is resolved with Resolve, and one that
+// is not among ps is ignored. Presets that wait on each other are left out
+// and named in the error.
 func Order(ps []*Preset) ([]*Preset, error) {
-	byName := make(map[string]*Preset, len(ps))
+	byKey := make(map[string]*Preset, len(ps))
 	for _, p := range ps {
-		byName[p.Name] = p
+		byKey[p.Key()] = p
 	}
 	done := map[string]bool{}
-	out := make([]*Preset, 0, len(byName))
-	for len(out) < len(byName) {
+	out := make([]*Preset, 0, len(byKey))
+	for len(out) < len(byKey) {
 		next := ""
-		for name, p := range byName {
-			if done[name] || (next != "" && name > next) {
+		for key, p := range byKey {
+			if done[key] || (next != "" && key > next) {
 				continue
 			}
 			ready := true
 			for _, a := range p.After {
-				if _, present := byName[a]; present && !done[a] {
+				dep := p.Resolve(a)
+				if _, present := byKey[dep]; present && !done[dep] {
 					ready = false
 				}
 			}
 			if ready {
-				next = name
+				next = key
 			}
 		}
 		if next == "" {
 			break
 		}
 		done[next] = true
-		out = append(out, byName[next])
+		out = append(out, byKey[next])
 	}
-	if len(out) == len(byName) {
+	if len(out) == len(byKey) {
 		return out, nil
 	}
 	var stuck []string
-	for name := range byName {
-		if !done[name] {
-			stuck = append(stuck, name)
+	for key := range byKey {
+		if !done[key] {
+			stuck = append(stuck, key)
 		}
 	}
 	sort.Strings(stuck)
 	return out, fmt.Errorf("presets %s wait on each other through `after`, so none of them ran", strings.Join(stuck, ", "))
 }
 
-// Owners maps each route and advisory id to the preset that has the last
-// word on it: a later preset replaces an id by declaring it again and
-// removes one by suppressing it. ps must be in run order.
+// Owners maps each route and advisory id to the key of the preset that has
+// the last word on it: a later preset replaces an id by declaring it again
+// and removes one by suppressing it, whichever registry it came from. ps
+// must be in run order.
 func Owners(ps []*Preset) map[string]string {
 	owners := map[string]string{}
 	for _, p := range ps {
@@ -63,13 +66,13 @@ func Owners(ps []*Preset) map[string]string {
 			delete(owners, id)
 		}
 		for _, e := range p.Ports {
-			owners[e.Var] = p.Name
+			owners[e.Var] = p.Key()
 		}
 		for _, r := range p.Routes {
-			owners[r.ID] = p.Name
+			owners[r.ID] = p.Key()
 		}
 		for _, a := range p.Advisories {
-			owners[a.ID] = p.Name
+			owners[a.ID] = p.Key()
 		}
 	}
 	return owners
@@ -79,8 +82,8 @@ func Owners(ps []*Preset) map[string]string {
 type Context struct {
 	Project *Project
 	Facts   map[string]any            // this preset's facts
-	Earlier map[string]map[string]any // facts of active presets that ran before it
-	Active  func(name string) bool
+	Earlier map[string]map[string]any // facts of active presets that ran before it, by the names this preset uses for them
+	Active  func(name string) bool    // whether the preset this preset calls name is active
 }
 
 func (c Context) vars() map[string]any {
@@ -127,7 +130,7 @@ func (p *Preset) EvalRoutes(c Context, keep func(id string) bool) ([]RouteOut, [
 		if r.When != "" {
 			ok, err := evalBool(env, r.When, vars)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("preset %s: route %s: when: %w", p.Name, r.ID, err))
+				errs = append(errs, fmt.Errorf("preset %s: route %s: when: %w", p.Key(), r.ID, err))
 				continue
 			}
 			if !ok {
@@ -136,7 +139,7 @@ func (p *Preset) EvalRoutes(c Context, keep func(id string) bool) ([]RouteOut, [
 		}
 		port, err := evalInt(env, r.Port, vars)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("preset %s: route %s: port: %w", p.Name, r.ID, err))
+			errs = append(errs, fmt.Errorf("preset %s: route %s: port: %w", p.Key(), r.ID, err))
 			continue
 		}
 		if port < 1 || port > 65535 {
@@ -172,7 +175,7 @@ func (p *Preset) EvalAdvice(c Context, alias string, freePort func(from int) int
 			continue
 		}
 		fail := func(part string, err error) {
-			errs = append(errs, fmt.Errorf("preset %s: advisory %s: %s: %w", p.Name, a.ID, part, err))
+			errs = append(errs, fmt.Errorf("preset %s: advisory %s: %s: %w", p.Key(), a.ID, part, err))
 		}
 		ok, err := evalBool(env, a.When, vars)
 		if err != nil {

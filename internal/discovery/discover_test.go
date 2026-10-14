@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -397,4 +398,65 @@ func codes(advs []Advisory) string {
 		cs = append(cs, a.Code)
 	}
 	return strings.Join(cs, ",")
+}
+
+// sourced parses a preset written in the test as one installed from the
+// registry with the given alias.
+func sourced(t *testing.T, source, name, body string) *preset.Preset {
+	t.Helper()
+	p := inline(t, name, body)
+	p.Source = source
+	return p
+}
+
+// A plain name in a registry preset means the preset of that name from the
+// same registry; a local preset reaches a registry preset by its qualified
+// name.
+func TestDiscoverResolvesReferencesWithinTheirSource(t *testing.T) {
+	base := "detect: 'true'\nfacts:\n  port: {scan: [%s], regex: '(\\d+)', as: int}\n"
+	aBase := sourced(t, "a", "base", fmt.Sprintf(base, "a.txt"))
+	bBase := sourced(t, "b", "base", fmt.Sprintf(base, "b.txt"))
+	aUser := sourced(t, "a", "user", "detect: 'true'\nafter: [base]\nroutes:\n"+
+		"  - {id: a-user, when: 'active(\"base\")', port: 'presets[\"base\"].port + 1', label: A user}\n")
+	lonely := sourced(t, "c", "lonely", "detect: 'true'\nroutes:\n"+
+		"  - {id: lonely, when: '!active(\"base\") && !(\"base\" in presets) && !active(\"a/base\")', port: '7100', label: Lonely}\n")
+	mine := inline(t, "mine", "detect: 'true'\nafter: [b/base]\nroutes:\n"+
+		"  - {id: mine, when: 'active(\"b/base\")', port: 'presets[\"b/base\"].port + 2', label: Mine}\n"+
+		"  - {id: mine-plain, when: 'active(\"base\")', port: '7200', label: Plain}\n")
+	res := discover(t, memReader{"a.txt": "7000", "b.txt": "9000"}, Options{Presets: []*preset.Preset{mine, lonely, aUser, bBase, aBase}})
+	if got := strings.Join(res.Applied, ","); got != "a/base,a/user,b/base,c/lonely,mine" {
+		t.Errorf("Applied = %s", got)
+	}
+	m := routeMap(res)
+	if m[7001].Label != "A user" || m[7100].Label != "Lonely" || m[9002].Label != "Mine" || m[9002].Preset != "mine" || m[7001].Preset != "a/user" {
+		t.Errorf("routes = %+v", res.Routes)
+	}
+	if _, ok := m[9001]; ok {
+		t.Error("a/user saw b/base")
+	}
+	if _, ok := m[7200]; ok {
+		t.Error("a plain name in a local preset reached a registry preset")
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %q", res.Warnings)
+	}
+}
+
+// Route ids share one namespace across registries: a later preset replaces
+// an id, whichever registry it came from.
+func TestDiscoverIdsAreSharedAcrossRegistries(t *testing.T) {
+	first := sourced(t, "a", "web", "detect: 'true'\nroutes:\n  - {id: app, port: '7000', label: First}\n")
+	second := sourced(t, "b", "web", "detect: 'true'\nroutes:\n  - {id: app, port: '7001', label: Second}\n")
+	res := discover(t, memReader{}, Options{Presets: []*preset.Preset{second, first}})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 7001 || res.Routes[0].Preset != "b/web" {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+func TestDiscoverWarningsNameRegistryPresetsInFull(t *testing.T) {
+	bad := sourced(t, "acme", "bad", "detect: env[\"MISSING\"] == \"x\"\n")
+	res := discover(t, memReader{}, Options{Presets: []*preset.Preset{bad}})
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "preset acme/bad: detect") {
+		t.Fatalf("warnings = %q", res.Warnings)
+	}
 }
