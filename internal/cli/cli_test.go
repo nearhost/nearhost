@@ -279,3 +279,17 @@ func (f *fakeRegistry) total() int {
 	}
 	return n
 }
+
+// executeWithInput runs a command with input waiting on its standard input.
+func executeWithInput(t *testing.T, input string, cmd *cobra.Command, args ...string) (string, error) {
+	t.Helper()
+	var out syncBuffer
+	root := newRootCmd()
+	root.AddCommand(cmd)
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader(input))
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	return out.String(), err
+}

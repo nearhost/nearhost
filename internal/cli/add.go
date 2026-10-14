@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -12,28 +13,44 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/preset"
 )
 
-// addBackend is the seam between `add` and a remote server.
+// addBackend is the seam between `add` and what lies outside the process:
+// a remote server, the preset registry and the terminal.
 type addBackend struct {
 	// openRemote opens the project directory on a server for reading. The
 	// returned function ends the connection.
 	openRemote func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error)
+	// presets reaches the preset registry.
+	presets presetBackend
+	// interactive reports whether a person can be asked a question. Nil
+	// means no.
+	interactive func() bool
 }
 
 // systemAdd is the production backend. Only NewRoot wires it in.
 func systemAdd() addBackend {
-	return addBackend{openRemote: sshClient{}.openRemote}
+	return addBackend{
+		openRemote: sshClient{}.openRemote,
+		presets:    systemPresets(),
+		interactive: func() bool {
+			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+		},
+	}
 }
 
 type addFlags struct {
 	server, name, alias string
 	web                 int
 	disabled            bool
+	presets             []string
+	noPresets           bool
 }
 
 func newAddCmd(b addBackend) *cobra.Command {
@@ -43,12 +60,17 @@ func newAddCmd(b addBackend) *cobra.Command {
 		Short: "Add a project, discovering its ports from its files",
 		Long: "Add the project in path (default: the current directory) to the config,\n" +
 			"with routes proposed from its .env and Compose files and from the presets\n" +
-			"that are enabled. With --server the path is on that server and its files are\n" +
-			"read over SFTP. Nothing is started and no project file is changed.",
+			"that are enabled. When a preset from the registry suits the project and is\n" +
+			"not enabled, add offers to enable it. With --server the path is on that\n" +
+			"server and its files are read over SFTP. Nothing is started and no project\n" +
+			"file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
 				return fmt.Errorf("--web must be a port between 1 and 65535, not %d", flags.web)
+			}
+			if flags.noPresets && len(flags.presets) > 0 {
+				return errors.New("--no-presets and --preset contradict each other; pass one of them")
 			}
 			return runAdd(cmd, b, flags, args)
 		},
@@ -58,6 +80,8 @@ func newAddCmd(b addBackend) *cobra.Command {
 	cmd.Flags().StringVar(&flags.alias, "alias", "", "hostname (default: <name>.test)")
 	cmd.Flags().IntVar(&flags.web, "web", 0, "force this port to be the web route")
 	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "add it disabled: 'nearhost up' starts it only when named")
+	cmd.Flags().StringArrayVar(&flags.presets, "preset", nil, "enable this preset first, without asking (repeatable)")
+	cmd.Flags().BoolVar(&flags.noPresets, "no-presets", false, "use no presets and suggest none")
 	return cmd
 }
 
@@ -75,12 +99,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	presets, warnings := loadEnabled(cfg, cfgPath)
-	res, err := discovery.Discover(reader, discovery.Options{Presets: presets})
+	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader)
 	if err := errors.Join(err, done()); err != nil {
 		return err
 	}
-	printWarnings(cmd.ErrOrStderr(), append(warnings, res.Warnings...))
+	printWarnings(cmd.ErrOrStderr(), warnings)
 	project.Routes = res.ConfigRoutes()
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
@@ -124,6 +147,103 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	_, err = fmt.Fprintf(out, "Start it with `%s`.\n", start)
 	return err
+}
+
+// discoverWithPresets runs discovery with the enabled presets, then offers
+// the registry presets that suit the project and runs it again with those
+// the user takes. A preset is enabled, and the config saved, the moment the
+// user says yes, so the answer holds even if the project is not added.
+func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *config.Config, cfgPath string, reader discovery.FileReader) (*discovery.Result, []string, error) {
+	if flags.noPresets {
+		res, err := discovery.Discover(reader, discovery.Options{})
+		return res, nil, err
+	}
+	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
+	for _, name := range flags.presets {
+		_, changed, err := b.presets.enable(ctx, cfg, cfgPath, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if changed {
+			if err := config.Save(cfgPath, cfg); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	// notes last for the whole command. What one discovery pass finds is
+	// replaced by the next pass.
+	var notes []string
+	idx, err := b.presets.index(ctx, cfg, cfgPath)
+	if err != nil && !errors.Is(err, errRegistryOff) {
+		notes = append(notes, "preset suggestions are unavailable because the registry could not be reached.")
+	}
+	interactive := b.interactive != nil && b.interactive()
+	answers := bufio.NewReader(cmd.InOrStdin())
+	passed := map[string]bool{} // presets declined, or accepted and not installable
+	for {
+		var offers []discovery.Offer
+		if idx != nil {
+			for _, e := range idx.Presets {
+				_, enabled := cfg.Preset(e.Name)
+				if !enabled && !passed[e.Name] && e.PresetSchema <= preset.SchemaVersion {
+					offers = append(offers, discovery.Offer{Name: e.Name, Title: e.Title, Detect: e.Detect})
+				}
+			}
+		}
+		presets, found := loadEnabled(cfg, cfgPath)
+		res, err := discovery.Discover(reader, discovery.Options{Presets: presets, Offers: offers})
+		if err != nil {
+			return nil, nil, err
+		}
+		found = append(found, res.Warnings...)
+		if !interactive {
+			for _, o := range res.Suggested {
+				fmt.Fprintf(out, "This looks like a %s project. Pass `--preset %s` to `nearhost add` to use its preset.\n", printable(o.Title), o.Name)
+			}
+			return res, append(notes, found...), nil
+		}
+
+		enabled := false
+		for _, o := range res.Suggested {
+			fmt.Fprintf(out, "This looks like a %s project. Enable the %s preset? [Y/n] ", printable(o.Title), o.Name)
+			if !saidYes(answers, out) {
+				passed[o.Name] = true
+				continue
+			}
+			_, _, err := b.presets.enable(ctx, cfg, cfgPath, o.Name)
+			if err == nil {
+				err = config.Save(cfgPath, cfg)
+			}
+			if err != nil {
+				// A preset that cannot be installed must not stop the add.
+				passed[o.Name] = true
+				notes = append(notes, fmt.Sprintf("the %s preset was not enabled: %v", o.Name, err))
+				continue
+			}
+			enabled = true
+		}
+		if !enabled {
+			return res, append(notes, found...), nil
+		}
+	}
+}
+
+// saidYes reads one line as the answer to a yes-or-no question whose default
+// is yes. No answer at all, as when input ends, is a no: a preset is only
+// enabled when someone agreed to it.
+func saidYes(answers *bufio.Reader, out io.Writer) bool {
+	line, err := answers.ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Fprintln(out)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+		return true
+	}
+	return false
 }
 
 // newProject works out the project's server, path, name and alias, and
