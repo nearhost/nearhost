@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -126,7 +127,14 @@ func ForRepo(repo, dir string) *Client {
 	return &Client{BaseURL: githubRaw + repo, Dir: dir, HTTP: http.DefaultClient, Now: time.Now}
 }
 
+// cachePath is where the index is saved. The file starts with a comment
+// naming the repository it came from, because Dir belongs to an alias and an
+// alias can be pointed at another repository by editing the config; without
+// the line the old repository's index would be shown as the new one's.
 func (c *Client) cachePath() string { return filepath.Join(c.Dir, "index.yaml") }
+
+// sourceLine is the first line of a cached index.
+func (c *Client) sourceLine() string { return "# source: " + c.BaseURL }
 
 // Index returns the registry index: the cached copy while it is under a day
 // old, else a fresh one, else the stale copy.
@@ -166,7 +174,7 @@ func (c *Client) Refresh(ctx context.Context) (*Index, error) {
 }
 
 // Cached returns the saved copy of the index and how old it is. It makes no
-// request.
+// request. A copy saved for another repository counts as no copy.
 func (c *Client) Cached() (*Index, time.Duration, error) {
 	info, err := os.Stat(c.cachePath())
 	if err != nil {
@@ -176,13 +184,19 @@ func (c *Client) Cached() (*Index, time.Duration, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	idx, err := ParseIndex(data)
+	// GitHub repository names are case-insensitive.
+	first, rest, _ := strings.Cut(string(data), "\n")
+	if !strings.EqualFold(first, c.sourceLine()) {
+		return nil, 0, fmt.Errorf("the saved index is for another repository: %w", fs.ErrNotExist)
+	}
+	idx, err := ParseIndex([]byte(rest))
 	if err != nil {
 		return nil, 0, err
 	}
 	return idx, c.Now().Sub(info.ModTime()), nil
 }
 
+// store saves the index, with the source line first (see cachePath).
 func (c *Client) store(data []byte) error {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
 		return err
@@ -191,7 +205,7 @@ func (c *Client) store(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := tmp.Write(append([]byte(c.sourceLine()+"\n"), data...)); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return err
