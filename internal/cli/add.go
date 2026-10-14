@@ -75,10 +75,12 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	res, err := discovery.Discover(reader, discovery.Options{})
+	presets, warnings := loadEnabled(cfg, cfgPath)
+	res, err := discovery.Discover(reader, discovery.Options{Presets: presets})
 	if err := errors.Join(err, done()); err != nil {
 		return err
 	}
+	printWarnings(cmd.ErrOrStderr(), append(warnings, res.Warnings...))
 	project.Routes = res.ConfigRoutes()
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
@@ -96,13 +98,14 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if _, ok := project.WebRoute(); !ok {
 		return fmt.Errorf("could not tell which port serves %s; nothing was saved. Run it again with --web <port>", project.Name)
 	}
-	advisories, _ := discovery.Advise(res, project.Alias, cfg.Projects)
+	advisories, advisoryWarnings := discovery.Advise(res, project.Alias, cfg.Projects)
 	for _, a := range advisories {
 		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, a.Message)
 		if a.Snippet != "" {
 			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(a.Snippet, "\n", "\n  "))
 		}
 	}
+	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
 	if err := loopbackClash(cfg, project); err != nil {
 		return err

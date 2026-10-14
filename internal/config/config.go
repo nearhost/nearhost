@@ -66,10 +66,58 @@ type Server struct {
 	SSHHost string `yaml:"ssh_host"`
 }
 
+// PresetRef is an enabled preset. Ref and SHA256 are set for a preset
+// installed from the registry and empty for a local file.
+type PresetRef struct {
+	Name   string `yaml:"name"`
+	Ref    string `yaml:"ref,omitempty"`
+	SHA256 string `yaml:"sha256,omitempty"`
+}
+
 // Config is the whole configuration file.
 type Config struct {
 	Servers  []Server  `yaml:"servers"`
 	Projects []Project `yaml:"projects"`
+	// Registry set to false stops every request to the preset registry.
+	Registry *bool       `yaml:"registry,omitempty"`
+	Presets  []PresetRef `yaml:"presets,omitempty"`
+}
+
+// RegistryEnabled reports whether the preset registry may be contacted.
+func (c *Config) RegistryEnabled() bool {
+	return c.Registry == nil || *c.Registry
+}
+
+// Preset finds an enabled preset by name.
+func (c *Config) Preset(name string) (PresetRef, bool) {
+	for _, p := range c.Presets {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return PresetRef{}, false
+}
+
+// UpsertPreset replaces the enabled preset with the same name or appends it.
+func (c *Config) UpsertPreset(p PresetRef) {
+	for i := range c.Presets {
+		if c.Presets[i].Name == p.Name {
+			c.Presets[i] = p
+			return
+		}
+	}
+	c.Presets = append(c.Presets, p)
+}
+
+// RemovePreset disables the named preset and reports whether it was enabled.
+func (c *Config) RemovePreset(name string) bool {
+	for i := range c.Presets {
+		if c.Presets[i].Name == name {
+			c.Presets = append(c.Presets[:i], c.Presets[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Load reads the config at path. A missing file yields an empty config.
@@ -230,8 +278,22 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("project %q must have exactly one web route, has %d", p.Name, webCount)
 		}
 	}
+
+	presets := map[string]bool{}
+	for _, p := range c.Presets {
+		// The name becomes a file name, so it must be a plain word.
+		if !presetName.MatchString(p.Name) {
+			return fmt.Errorf("preset name %q must be lowercase letters, digits and hyphens", p.Name)
+		}
+		if presets[p.Name] {
+			return fmt.Errorf("duplicate preset %q", p.Name)
+		}
+		presets[p.Name] = true
+	}
 	return nil
 }
+
+var presetName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 var nonAlias = regexp.MustCompile(`[^a-z0-9]+`)
 

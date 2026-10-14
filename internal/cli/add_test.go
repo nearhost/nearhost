@@ -138,6 +138,66 @@ func existing(t *testing.T) (path string, before []byte) {
 	return path, before
 }
 
+func TestAddUsesEnabledPresets(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	enablePresets(t, cfgPath, "stack", "bundler")
+	dir := fixture(t, "sail-custom")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "myapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	want := "Routes found for myapp (local:" + dir + "):\n" +
+		"  PORT  ROLE      LABEL\n" +
+		"  1025  ignore    mailpit (FORWARD_MAILPIT_PORT)\n" +
+		"  3307  ignore    Database (FORWARD_DB_PORT)\n" +
+		"  5174  loopback  Assets (VITE_PORT)\n" +
+		"  6379  ignore    redis (FORWARD_REDIS_PORT)\n" +
+		"  8025  ignore    mailpit (FORWARD_MAILPIT_DASHBOARD_PORT)\n" +
+		"  8080  web       App (APP_PORT)\n" +
+		"\n" +
+		"Advisory (app-url): APP_URL should be https://myapp.test.\n" +
+		"  APP_URL=https://myapp.test\n" +
+		"\n" +
+		"Added myapp on local at https://myapp.test\n" +
+		"Start it with `nearhost up`.\n"
+	if out != want {
+		t.Fatalf("add printed:\n%s\nwant:\n%s", out, want)
+	}
+	saved := loadSaved(t, cfgPath)
+	if len(saved.Presets) != 2 {
+		t.Errorf("adding a project lost the enabled presets: %+v", saved.Presets)
+	}
+}
+
+// A preset that cannot be used is reported and the project is still added.
+func TestAddCarriesOnPastABrokenPreset(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{Presets: []config.PresetRef{{Name: "gone"}}})
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, `Warning: preset "gone" is enabled but`, "  8080  web     laravel.test (APP_PORT)\n", "Added myapp on local")
+}
+
+func TestAddRefusesALoopbackClashAndSavesNothing(t *testing.T) {
+	cfgPath, _ := existing(t)
+	enablePresets(t, cfgPath, "stack", "bundler")
+	before, _ := os.ReadFile(cfgPath)
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second")
+	if err == nil {
+		t.Fatalf("add succeeded:\n%s", out)
+	}
+	for _, want := range []string{"loopback port 5174", `"shop"`, "--disabled"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
+		t.Errorf("config changed:\n%s", after)
+	}
+}
+
 func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 	dir := fixture(t, "compose-literal")
 	cases := []struct {
@@ -149,8 +209,6 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		{"duplicate alias", []string{"add", dir, "--name", "Shop", "--web", "9000"}, []string{"shop.test", `"shop"`, "--alias"}},
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
 		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", ".test"}},
-		// restored in Task 6
-		// {"loopback clash", []string{"add", fixture(t, "sail-custom"), "--name", "second"}, []string{"loopback port 5174", `"shop"`, "--disabled"}},
 		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`unknown server "nas"`, "servers:"}},
 		{"remote without a path", []string{"add", "--server", "mini", "--name", "x"}, []string{"path"}},
 		{"remote with a relative path", []string{"add", "code/x", "--server", "mini", "--name", "x"}, []string{"absolute path"}},
@@ -175,13 +233,13 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 }
 
 func TestAddLoopbackClashIsAllowedWhenDisabled(t *testing.T) {
-	t.Skip("needs enabled presets; restored in Task 6")
 	cfgPath, _ := existing(t)
+	enablePresets(t, cfgPath, "stack", "bundler")
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second", "--disabled")
 	if err != nil {
 		t.Fatalf("add --disabled: %v\n%s", err, out)
 	}
-	wantContains(t, out, "Advisory (loopback-clash): Port 5174 is also forwarded to this machine by project \"shop\".", "  VITE_PORT=5173\n")
+	wantContains(t, out, "Advisory (loopback-clash): Port 5174 is also forwarded to this machine by project \"shop\".", "  VITE_PORT=5175\n")
 	if p, ok := loadSaved(t, cfgPath).Project("second"); !ok || p.Enabled {
 		t.Fatalf("project = %+v %v", p, ok)
 	}
@@ -270,8 +328,8 @@ func TestAddQuotesTheProjectNameInTheStartHint(t *testing.T) {
 // --web can turn a port that was found as a loopback forward into the web
 // route. The advisories are about the routes the project ends up with.
 func TestAddAdvisesOnTheRolesAfterTheWebFlag(t *testing.T) {
-	t.Skip("needs enabled presets; restored in Task 6")
 	cfgPath, _ := existing(t)
+	enablePresets(t, cfgPath, "stack", "bundler")
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second", "--web", "5174")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
