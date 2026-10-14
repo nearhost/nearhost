@@ -1,0 +1,19 @@
+internal/discovery/env.go
+  s_7abd3634f4eb80::t_369ef6f8c25d52 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e3156f98f49058535431baf0e5acf87e1004089",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
