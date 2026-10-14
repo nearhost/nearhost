@@ -1,0 +1,23 @@
+internal/cli/add_test.go
+  s_7abd3634f4eb80::t_28d007d2603f68 440-464
+internal/discovery/envports.go
+  s_7abd3634f4eb80::t_bf0915c2da453c 1-77
+internal/discovery/envports_test.go
+  s_7abd3634f4eb80::t_d711bf96d0d050 1-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a9e948562dff60396288c1597136c512368ee92",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
