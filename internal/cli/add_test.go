@@ -281,6 +281,54 @@ func TestAddRemoteReadsTheProjectThroughTheServerSession(t *testing.T) {
 	wantContains(t, out, "Routes found for blog (mini:/srv/www/blog):", "Added blog on mini at https://blog.test")
 }
 
+// sessionReader reads from memory until its session is closed, as an SFTP
+// client does.
+type sessionReader struct {
+	files  map[string]string
+	closed bool
+}
+
+func (s *sessionReader) ReadFile(name string) ([]byte, error) {
+	if s.closed {
+		return nil, errors.New("use of closed network connection")
+	}
+	data, ok := s.files[name]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return []byte(data), nil
+}
+
+// An advisory may read a file that discovery never did. The session must
+// still be open when it does.
+func TestAddRemoteAdvisoryReadsThroughAnOpenSession(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{
+		Servers: []config.Server{{Name: "mini", SSHHost: "mini.lan"}},
+		Presets: []config.PresetRef{{Name: "marker"}},
+	})
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "schema: 1\nname: marker\ntitle: Marker\ndetect: 'true'\nadvisories:\n  - {id: marker, when: 'file(\"marker\")', message: The marker is there.}\n"
+	if err := os.WriteFile(filepath.Join(dir, "marker.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &sessionReader{files: map[string]string{"marker": "1"}}
+	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
+		return r, func() error { r.closed = true; return nil }, nil
+	}}
+	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "Advisory (marker): The marker is there.\n")
+	if !r.closed {
+		t.Error("the session was left open")
+	}
+}
+
 func TestAddRemoteFailureSavesNothing(t *testing.T) {
 	cfgPath, before := existing(t)
 	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {

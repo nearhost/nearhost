@@ -33,6 +33,7 @@ type Result struct {
 	Warnings  []string // presets, or parts of them, that were skipped
 
 	project *preset.Project
+	files   *memo // the reader under project, which Advise reads through too
 	active  []*preset.Preset
 	facts   map[string]map[string]any
 	owners  map[string]string
@@ -75,6 +76,7 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	res := &Result{
 		Env:     env,
 		project: &preset.Project{Env: env, Compose: string(composeData), Files: files},
+		files:   files,
 		facts:   map[string]map[string]any{},
 	}
 	byPort := map[int]*Candidate{}

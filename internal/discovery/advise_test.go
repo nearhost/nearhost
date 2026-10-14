@@ -119,6 +119,23 @@ func TestAdviseFreePortSkipsOtherProjects(t *testing.T) {
 	}
 }
 
+// A file only an advisory reads may fail to be read. The advisory cannot be
+// worked out, and saying nothing would look like it does not apply.
+func TestAdviseWarnsWhenAnAdvisoryCannotReadAFile(t *testing.T) {
+	p := inline(t, "x", "detect: 'true'\nadvisories:\n  - {id: marker, when: 'file(\"marker\")', message: Found}\n")
+	r := failReader{memReader: memReader{"marker": "1"}, fail: "marker"}
+	res := discover(t, r, Options{Presets: []*preset.Preset{p}})
+	for i := 0; i < 2; i++ {
+		advs, warnings := Advise(res, "x.test", nil)
+		if len(advs) != 0 {
+			t.Errorf("advisories = %+v", advs)
+		}
+		if len(warnings) != 1 || warnings[0] != "advisories could not read marker: permission denied" {
+			t.Errorf("call %d: warnings = %q", i+1, warnings)
+		}
+	}
+}
+
 func TestAdviseWarnsAndCarriesOnWhenAnAdvisoryFails(t *testing.T) {
 	p := inline(t, "x", "detect: 'true'\nadvisories:\n  - {id: broken, when: facts.nope, message: Broken}\n  - {id: fine, when: 'true', message: Fine}\n")
 	res := discover(t, memReader{}, Options{Presets: []*preset.Preset{p}})

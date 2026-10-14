@@ -100,10 +100,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return err
 	}
 	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader)
-	if err := errors.Join(err, done()); err != nil {
-		return err
+	if err != nil {
+		return errors.Join(err, done())
 	}
-	printWarnings(cmd.ErrOrStderr(), warnings)
 	project.Routes = res.ConfigRoutes()
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
@@ -113,6 +112,13 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 			res.Routes[i].Role = project.Routes[i].Role
 		}
 	}
+	// Advisories may read the project's files, so they are worked out
+	// before the reader is closed.
+	advisories, advisoryWarnings := discovery.Advise(res, project.Alias, cfg.Projects)
+	if err := done(); err != nil {
+		return err
+	}
+	printWarnings(cmd.ErrOrStderr(), warnings)
 
 	out := cmd.OutOrStdout()
 	if err := printRoutes(out, project); err != nil {
@@ -121,7 +127,6 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if _, ok := project.WebRoute(); !ok {
 		return fmt.Errorf("could not tell which port serves %s; nothing was saved. Run it again with --web <port>", project.Name)
 	}
-	advisories, advisoryWarnings := discovery.Advise(res, project.Alias, cfg.Projects)
 	for _, a := range advisories {
 		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, a.Message)
 		if a.Snippet != "" {

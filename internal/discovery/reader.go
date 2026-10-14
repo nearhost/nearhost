@@ -29,7 +29,8 @@ func (d DirReader) ReadFile(name string) ([]byte, error) {
 
 // memo reads each file once per discovery run. It remembers the first
 // failure that was not a missing file, so that a file a preset could not
-// read fails the run instead of looking absent.
+// read fails the run instead of looking absent. A failure is remembered
+// again when a cached failed read is asked for once more.
 type memo struct {
 	r     FileReader
 	files map[string]memoFile
@@ -47,15 +48,16 @@ func newMemo(r FileReader) *memo {
 
 // ReadFile implements FileReader.
 func (m *memo) ReadFile(name string) ([]byte, error) {
-	if f, ok := m.files[name]; ok {
-		return f.data, f.err
+	f, ok := m.files[name]
+	if !ok {
+		data, err := m.r.ReadFile(name)
+		f = memoFile{data, err}
+		m.files[name] = f
 	}
-	data, err := m.r.ReadFile(name)
-	m.files[name] = memoFile{data, err}
-	if err != nil && !isAbsent(err) && m.err == nil {
-		m.err = fmt.Errorf("read %s: %w", name, err)
+	if f.err != nil && !isAbsent(f.err) && m.err == nil {
+		m.err = fmt.Errorf("read %s: %w", name, f.err)
 	}
-	return data, err
+	return f.data, f.err
 }
 
 // isAbsent reports whether err means the file is not there: missing, a
