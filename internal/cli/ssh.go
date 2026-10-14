@@ -103,20 +103,35 @@ func connectOnce(ctx context.Context, sess *transport.Session) error {
 
 // openRemote opens projectPath on srv for reading over SFTP, on an SSH
 // connection of its own that the returned function ends. It also returns the
-// directory it opened, as projectPathOn finds it. It runs no command
-// on the server, not even to test the connection (an account may be allowed
-// SFTP and nothing else), and writes nothing there.
+// directory it opened, as projectPathOn finds it.
+func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+	files, err := c.openServer(ctx, srv, "add the project again")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	resolved, err := files.resolve(projectPath)
+	if err != nil {
+		return nil, "", nil, errors.Join(err, files.close())
+	}
+	return files.reader(resolved), resolved, files.close, nil
+}
+
+// openServer opens srv's files over SFTP, on an SSH connection of its own
+// that closing the handle ends. When the server refuses the connection, the
+// error says how to fix access and then what to do, as then says. It runs no command on the server, not even
+// to test the connection (an account may be allowed SFTP and nothing else),
+// and writes nothing there.
 //
 // The connection uses a private run directory. A session takes over whatever
 // master it finds on its control socket, so sharing the directory of a
 // running `nearhost up` would cut that one off.
-func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+func (c sshClient) openServer(ctx context.Context, srv config.Server, then string) (*sftpFiles, error) {
 	sess, end, err := c.privateSession(srv)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, err
 	}
-	fail := func(err error) (discovery.FileReader, string, func() error, error) {
-		return nil, "", nil, errors.Join(err, end())
+	fail := func(err error) (*sftpFiles, error) {
+		return nil, errors.Join(err, end())
 	}
 
 	sess.Start()
@@ -125,7 +140,7 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	if err := connectOnce(ctx, sess); err != nil {
 		var refused *transport.CheckError
 		if errors.As(err, &refused) {
-			return fail(fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, "add the project again")))
+			return fail(fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, then)))
 		}
 		return fail(fmt.Errorf("connect to %s: %w", srv.SSHHost, err))
 	}
@@ -135,23 +150,7 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	}
 	// The home directory is where the SFTP server starts.
 	localHome, _ := os.UserHomeDir()
-	isDir := func(p string) bool {
-		info, err := client.Client.Stat(p)
-		return err == nil && info.IsDir()
-	}
-	projectPath, err = projectPathOn(projectPath, localHome, client.Client.Getwd, isDir)
-	if err != nil {
-		return fail(errors.Join(fmt.Errorf("find the home directory on server %s: %w", srv.Name, err), client.Close()))
-	}
-	if info, err := client.Client.Stat(projectPath); err != nil || !info.IsDir() {
-		if err == nil {
-			err = errors.New("not a directory")
-		}
-		return fail(errors.Join(fmt.Errorf("%s on server %s: %w", projectPath, srv.Name, err), client.Close()))
-	}
-	return client.Reader(projectPath), projectPath, func() error {
-		return errors.Join(client.Close(), end())
-	}, nil
+	return &sftpFiles{client: client, end: end, server: srv.Name, localHome: localHome}, nil
 }
 
 // projectPathOn works out which directory on a server the path given to add

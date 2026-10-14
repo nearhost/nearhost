@@ -12,15 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"unicode"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
-	"github.com/nearhost/nearhost/internal/hosts"
-	"github.com/nearhost/nearhost/internal/preset"
 )
 
 // addBackend is the seam between `add` and what lies outside the process:
@@ -140,12 +137,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err != nil {
 		return errors.Join(err, done())
 	}
-	project.Routes = res.ConfigRoutes()
-	// Labels come from presets and the project's own files, and are both
-	// printed and saved.
-	for i := range project.Routes {
-		project.Routes[i].Label = printable(project.Routes[i].Label)
-	}
+	project.Routes = discoveredRoutes(res)
 	// Several routes were found and none says it is the web route: ask,
 	// when someone can answer. Otherwise the error below says how to choose.
 	if _, found := project.WebRoute(); !found && flags.web == 0 && len(project.Routes) > 1 && answers != nil {
@@ -183,17 +175,10 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
-	if err := loopbackClash(cfg, project); err != nil {
-		return err
-	}
 	if newServer {
 		cfg.Servers = append(cfg.Servers, srv)
 	}
-	cfg.Projects = append(cfg.Projects, project)
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("%w; nothing was saved", err)
-	}
-	if err := config.Save(cfgPath, cfg); err != nil {
+	if err := saveProject(cfg, cfgPath, project); err != nil {
 		return err
 	}
 	fmt.Fprintln(out)
@@ -250,35 +235,14 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 		}
 	}
 	sources := b.presets.indexes(ctx, cfg, cfgPath)
-	for _, s := range sources {
-		if s.err != nil {
-			notes = append(notes, registryProblem(s.reg, s.err)+".")
-		}
-	}
+	notes = append(notes, registryNotes(sources)...)
 	interactive := answers != nil
 	passed := map[string]bool{} // presets declined, or accepted and not installable
 	for {
-		// Every registry's presets are offered, so two registries that offer
-		// the same name are both offered.
-		var offers []discovery.Offer
-		for _, s := range sources {
-			if s.idx == nil {
-				continue
-			}
-			for _, e := range s.idx.Presets {
-				name := s.reg.Alias + "/" + e.Name
-				_, enabled := cfg.Preset(name)
-				if !enabled && !passed[name] && e.PresetSchema <= preset.SchemaVersion {
-					offers = append(offers, discovery.Offer{Name: name, Title: e.Title, Detect: e.Detect})
-				}
-			}
-		}
-		presets, found := loadEnabled(cfg, cfgPath)
-		res, err := discovery.Discover(reader, discovery.Options{Presets: presets, Offers: offers})
+		res, found, err := discoverOnce(cfg, cfgPath, reader, sources, passed)
 		if err != nil {
 			return nil, nil, err
 		}
-		found = append(found, res.Warnings...)
 		if !asked && len(cfg.Registries) == 0 && len(res.Applied) == 0 && !cfg.RegistryPromptOff() {
 			fmt.Fprintf(out, "%s\n\n", noRegistriesHint)
 		}
@@ -420,7 +384,7 @@ func askToAddServer(answers *bufio.Reader, out io.Writer, name string) (string, 
 		if host == "" {
 			host = name
 		}
-		if strings.HasPrefix(host, "-") || strings.IndexFunc(host, unicode.IsSpace) >= 0 {
+		if hostProblem(host) != nil {
 			fmt.Fprintln(out, "An SSH host cannot start with - or contain spaces.")
 			continue
 		}
@@ -460,11 +424,12 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			name = path.Base(projectPath)
 		}
 	}
-	if name == "" || strings.ContainsAny(name, `/\`) || name == "." || name == "~" {
+	var taken *nameTakenError
+	switch err := nameProblem(cfg, name); {
+	case errors.As(err, &taken):
+		return fail("project %q already exists (%s:%s); pass --name to add this one under another name, or remove the old one from %s", name, taken.other.Server, taken.other.Path, cfgPath)
+	case err != nil:
 		return fail("cannot name a project after %s; pass --name", projectPath)
-	}
-	if other, ok := cfg.Project(name); ok {
-		return fail("project %q already exists (%s:%s); pass --name to add this one under another name, or remove the old one from %s", name, other.Server, other.Path, cfgPath)
 	}
 	// The hosts file gets the alias without blanks around it; the config
 	// must hold the same, as the proxy serves the alias as configured.
@@ -472,13 +437,12 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 	if alias == "" {
 		alias = config.AliasFor(name)
 	}
-	if _, err := hosts.Rewrite("", []string{alias}); err != nil {
+	var aliasTaken *aliasTakenError
+	switch err := aliasProblem(cfg, alias); {
+	case errors.As(err, &aliasTaken):
+		return fail("alias %s is already used by project %q; pass another --alias", alias, aliasTaken.other.Name)
+	case err != nil:
 		return fail("%w; pass another --alias", err)
-	}
-	for _, other := range cfg.Projects {
-		if strings.EqualFold(other.Alias, alias) {
-			return fail("alias %s is already used by project %q; pass another --alias", alias, other.Name)
-		}
 	}
 	return config.Project{Name: name, Server: srv.Name, Path: projectPath, Alias: alias, Enabled: !flags.disabled}, nil
 }
