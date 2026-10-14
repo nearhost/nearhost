@@ -143,7 +143,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	opts, err := engineOptions(b, flags)
+	opts, err := engineOptions(b.ssh, flags, b.ensureHosts)
 	if err != nil {
 		return err
 	}
@@ -308,7 +308,8 @@ func upCommand(name string) string {
 }
 
 // engineOptions builds the engine's options from the standard directories.
-func engineOptions(b upBackend, f serveFlags) (engine.Options, error) {
+// ensureHosts updates the hosts block; it is not used with --no-hosts.
+func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context, []string) error) (engine.Options, error) {
 	runDir, err := config.RunDir()
 	if err != nil {
 		return engine.Options{}, err
@@ -319,11 +320,11 @@ func engineOptions(b upBackend, f serveFlags) (engine.Options, error) {
 	}
 	opts := engine.Options{
 		RunDir: runDir, StorageRoot: storage,
-		SSHPath: b.ssh.path, SSHEnv: b.ssh.env,
+		SSHPath: ssh.path, SSHEnv: ssh.env,
 		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort,
 	}
 	if !f.noHosts {
-		opts.EnsureHosts = askOnce(b.ensureHosts)
+		opts.EnsureHosts = askOnce(ensureHosts)
 	}
 	return opts, nil
 }

@@ -89,11 +89,15 @@ Start it with `nearhost up`.
 
 When more than one port could be the web app, `add` asks which one it is. Pass `--web <port>` to choose up front.
 
-Start serving, then open `https://myapp.test`:
+Then start Nearhost and open `https://myapp.test`:
 
 ```sh
-nearhost up
+nearhost
 ```
+
+`nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add the project in the current directory without leaving it, `enter` to start or stop the selected project and `o` to open it in your browser. With no projects yet it opens empty and asks you to add one.
+
+For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
 
 ### A project on another machine
 
@@ -105,10 +109,10 @@ Server mini is not in the config. Add it? [Y/n]: y
 SSH host for mini [mini]:
 ```
 
-`~` is the home directory on the server, even when your shell has already expanded it to the one on your laptop. The files are read over SFTP, and nothing is installed or changed on the server. Then start it as before:
+`~` is the home directory on the server, even when your shell has already expanded it to the one on your laptop. The files are read over SFTP, and nothing is installed or changed on the server. Then start Nearhost as before:
 
 ```sh
-nearhost up myapp
+nearhost
 ```
 
 Servers are kept under `servers:` in the config, as a name and an `ssh_host`, if you would rather add them by hand.
@@ -129,8 +133,9 @@ From then on, `add` suggests presets that suit the project and asks before enabl
 
 | Command | What it does |
 | --- | --- |
+| `nearhost` | Open the full-screen view and serve every enabled project |
 | `nearhost ls` | List the configured projects and their routes |
-| `nearhost up [project...]` | Serve the named projects, or every enabled one |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the full-screen view |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block and server access |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
 | `nearhost untrust` | Remove the certificate authority from the trust store |
@@ -161,6 +166,8 @@ export XDG_CONFIG_HOME="$PWD/.dev"
 ./nearhost add --web 8080 ~/code/myapp
 ./nearhost up --no-hosts --https-port 18443 --http-port 18080
 ```
+
+`./nearhost --no-hosts --https-port 18443 --http-port 18080` opens the full-screen view with the same settings.
 
 Without the hosts block, `myapp.test` does not resolve, so ask for it by address:
 
