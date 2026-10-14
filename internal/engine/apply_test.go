@@ -229,3 +229,19 @@ func TestApplyIsSafeAlongsideOtherCalls(t *testing.T) {
 	}
 	<-done
 }
+
+// A start on a run Apply has replaced is refused even when the project is
+// busy, where it could otherwise revive the server's session with the
+// configuration the run came from.
+func TestStartOnAReplacedRunIsRefusedEvenWhenBusy(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.mu.Lock()
+	h.eng.runs["myapp"].gone = true // as Apply marks it before stopping it
+	h.eng.mu.Unlock()
+	if err := h.eng.StartProject(bg, "myapp"); err == nil || !strings.Contains(err.Error(), "changed while it was waiting to start") {
+		t.Fatalf("StartProject on a replaced, running project = %v", err)
+	}
+}
