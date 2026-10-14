@@ -21,6 +21,9 @@ func (m *Model) footerItems() []footerItem {
 	if m.form != nil {
 		return m.form.keys()
 	}
+	if m.routeFocus {
+		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
+	}
 	if m.filtering {
 		return []footerItem{{"enter", "keep filter"}, {"esc", "clear filter"}}
 	}
@@ -28,7 +31,7 @@ func (m *Model) footerItems() []footerItem {
 	var items []footerItem
 	switch kind {
 	case rowProject:
-		items = []footerItem{{"enter", "start/stop"}, {"o", "open"}}
+		items = []footerItem{{"enter", "start/stop"}, {"o", "open"}, {"tab", "routes"}}
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
 	}
@@ -83,6 +86,11 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.form != nil {
 		return m.form.update(k)
 	}
+	if m.routeFocus && !m.filtering {
+		if cmd, ok := m.routesKey(s); ok {
+			return cmd
+		}
+	}
 	if m.filtering {
 		switch s {
 		case "enter":
@@ -107,6 +115,14 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 // action runs what the key or footer action s does.
 func (m *Model) action(s string) tea.Cmd {
 	switch s {
+	case "tab":
+		if kind, _ := m.selected(); kind == rowProject {
+			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
+		}
+	case "y":
+		if kind, name := m.selected(); kind == rowProject {
+			return m.copyAdvice(name)
+		}
 	case "q":
 		return m.quit()
 	case "up", "k":
@@ -118,7 +134,7 @@ func (m *Model) action(s string) tea.Cmd {
 			m.filter = ""
 			return nil
 		}
-		m.sel, m.scroll = homeKey, 0
+		m.selectRow(homeKey)
 	case "/":
 		m.filtering = true
 	case "n":
@@ -150,6 +166,15 @@ func (m *Model) action(s string) tea.Cmd {
 	return nil
 }
 
+// selectRow selects the row with key. The focus on a project's routes, and
+// what the panel said about the last change made there, end with it.
+func (m *Model) selectRow(key string) {
+	if key != m.sel {
+		m.routeFocus, m.panelErr = false, ""
+	}
+	m.sel, m.scroll = key, 0
+}
+
 // move moves the selection by delta rows, stopping at either end.
 func (m *Model) move(delta int) {
 	all := rows(m.cfg, m.collapsed)
@@ -160,7 +185,7 @@ func (m *Model) move(delta int) {
 		}
 	}
 	at = min(max(at+delta, 0), len(all)-1)
-	m.sel, m.scroll = all[at].key(), 0
+	m.selectRow(all[at].key())
 }
 
 // enter starts or stops the selected project, or collapses or expands the
@@ -200,7 +225,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 	if mouse.X < sidebarWidth {
 		all := rows(m.cfg, m.collapsed)
 		if i := sidebarTop(all, m.sel, m.height-1) + mouse.Y; i < len(all) {
-			m.sel, m.scroll = all[i].key(), 0
+			m.selectRow(all[i].key())
 		}
 	}
 	return nil

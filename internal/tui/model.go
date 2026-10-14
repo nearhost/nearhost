@@ -41,7 +41,12 @@ type Model struct {
 	filter    string
 	filtering bool
 	form      form // the open add form; nil when none is
-	scroll    int  // log lines scrolled back from the newest
+
+	routeFocus bool              // the project panel's routes have the keys
+	routeRow   int               // the route selected there
+	panelErr   string            // why the last change made in the panel was refused
+	advice     map[string]advice // by project name
+	scroll     int               // log lines scrolled back from the newest
 
 	started  bool  // the engine started
 	proxyErr error // why the engine could not start
@@ -73,6 +78,7 @@ func New(b Backend, dir string) *Model {
 		sel:       homeKey,
 		collapsed: map[string]bool{},
 		logs:      newLogs(),
+		advice:    map[string]advice{},
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
@@ -126,7 +132,24 @@ func tick() tea.Cmd {
 
 // Update handles a message.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	// The advice of the selected project is read when it is not known.
+	return model, tea.Batch(cmd, m.readAdvice())
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case adviceMsg:
+		m.gotAdvice(msg)
+	case editedMsg:
+		if msg.err != nil {
+			m.panelErr = msg.err.Error()
+			return m, nil
+		}
+		if msg.note != "" {
+			m.logs.note(msg.note)
+		}
+		return m, m.applyNow()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case startedMsg:
@@ -243,7 +266,7 @@ func (m *Model) setConfig(cfg *config.Config) {
 			return
 		}
 	}
-	m.sel, m.scroll = homeKey, 0
+	m.selectRow(homeKey)
 }
 
 // startProject starts a project. A start that fails shows as the project's

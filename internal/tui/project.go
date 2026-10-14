@@ -46,11 +46,25 @@ func (m *Model) projectPanel(name string, width int) []string {
 	if fix := fixFor(st.State, st.Message, serverUp, host); fix != "" {
 		lines = append(lines, field("fix", fix, width)...)
 	}
-	lines = append(lines, "", styleDim.Render(fmt.Sprintf("%-6s %-9s %-24s %s", "PORT", "ROLE", "LABEL", "LOCAL")))
-	for _, r := range p.Routes {
-		lines = append(lines, fmt.Sprintf("%-6d %-9s %-24s %s", r.Port, r.Role, fit(clean(r.Label), 24), localPort(*p, r, st)))
+	// With the focus on the routes, a mark shows the selected one.
+	lead := func(i int) string {
+		switch {
+		case !m.routeFocus:
+			return ""
+		case i == m.routeRow:
+			return styleBeacon.Render("▸ ")
+		}
+		return "  "
 	}
-	return lines
+	lines = append(lines, "", lead(-1)+styleDim.Render(fmt.Sprintf("%-6s %-9s %-24s %s", "PORT", "ROLE", "LABEL", "LOCAL")))
+	for i, r := range p.Routes {
+		lines = append(lines, lead(i)+fmt.Sprintf("%-6d %-9s %-24s %s", r.Port, r.Role, fit(clean(r.Label), 24), localPort(*p, r, st)))
+	}
+	if m.panelErr != "" {
+		lines = append(lines, "")
+		lines = append(lines, errorLines(m.panelErr, width)...)
+	}
+	return append(lines, m.adviceLinesFor(name, width)...)
 }
 
 // localPort is where a route can be reached on this machine, or "" when it

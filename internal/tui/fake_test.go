@@ -208,12 +208,21 @@ func press(m *Model, key string) tea.Cmd {
 	return cmd
 }
 
-// run runs cmd and feeds its message back to the model, once.
+// run runs cmd and feeds its message back to the model, once. A batch has
+// each of its commands run so, and what they lead to is batched.
 func run(m *Model, cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return nil
 	}
-	_, next := m.Update(cmd())
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var next []tea.Cmd
+		for _, c := range batch {
+			next = append(next, run(m, c))
+		}
+		return tea.Batch(next...)
+	}
+	_, next := m.Update(msg)
 	return next
 }
 
