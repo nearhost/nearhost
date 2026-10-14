@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -502,5 +503,62 @@ func TestSuspendWhileQuittingIsRefused(t *testing.T) {
 		}
 	default:
 		t.Fatal("the request was not answered")
+	}
+}
+
+// manyProjects is a config with more local projects than the sidebar shows.
+func manyProjects(n int) *config.Config {
+	cfg := &config.Config{}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("p%02d", i)
+		cfg.Projects = append(cfg.Projects, config.Project{Name: name, Server: config.LocalServer, Path: "/" + name,
+			Alias: name + ".test", Enabled: true, Routes: []config.Route{{Port: 3000 + i, Role: config.RoleWeb}}})
+	}
+	return cfg
+}
+
+// The sidebar scrolls to keep the selected row in view, and a click picks
+// the row drawn under the pointer.
+func TestSidebarKeepsTheSelectionInView(t *testing.T) {
+	m := sized(newFake(t, manyProjects(40)))
+	for i := 0; i < 41; i++ {
+		press(m, "down")
+	}
+	if m.sel != rowKey(rowProject, "p39") {
+		t.Fatalf("selected %q", m.sel)
+	}
+	lines := strings.Split(screen(m), "\n")
+	if !strings.Contains(lines[28], "p39") {
+		t.Errorf("the selected row is not on the last sidebar line:\n%s", screen(m))
+	}
+	m.Update(tea.MouseClickMsg{X: 3, Y: 27, Button: tea.MouseLeft})
+	if m.sel != rowKey(rowProject, "p38") {
+		t.Errorf("click selected %q, want the row drawn there", m.sel)
+	}
+}
+
+// A project added under a collapsed server is selected and shown: its
+// server opens.
+func TestNewProjectUnderACollapsedServerIsShown(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	m.collapsed["mini"] = true
+	cfg := sampleConfig()
+	cfg.Projects = append(cfg.Projects, config.Project{Name: "fresh", Server: "mini", Path: "/srv/fresh", Alias: "fresh.test", Enabled: true,
+		Routes: []config.Route{{Port: 80, Role: config.RoleWeb}}})
+	f.cfg = cfg
+	m.Update(appliedMsg{})
+	wantScreen(t, m, "▾ mini", "https://fresh.test")
+}
+
+// Invisible format characters, such as a right-to-left override, cannot
+// change how a name reads.
+func TestFormatCharactersAreRemoved(t *testing.T) {
+	cfg := sampleConfig()
+	cfg.Projects[0].Routes[0].Label = "abc‮def​"
+	m := sized(newFake(t, cfg))
+	m.sel = rowKey(rowProject, "website")
+	if s := screen(m); strings.ContainsAny(s, "‮​") || !strings.Contains(s, "abcdef") {
+		t.Errorf("format characters reached the screen:\n%s", s)
 	}
 }
