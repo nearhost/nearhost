@@ -19,7 +19,7 @@ type Candidate struct {
 	Label  string      // human label: the Compose service, or a preset's label and variable
 	Source string      // where it came from: "compose:<service>", "env:<variable>", "preset:<name>"
 	Var    string      // environment variable that sets it, if any
-	Preset string      // preset that identified it, if any
+	Preset string      // key of the preset that identified it, if any
 
 	web preset.WebHint
 }

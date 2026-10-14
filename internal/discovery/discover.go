@@ -28,15 +28,15 @@ type Options struct {
 type Result struct {
 	Routes    []Candidate
 	Env       map[string]string
-	Applied   []string // presets that ran, in order
+	Applied   []string // keys of the presets that ran, in order
 	Suggested []Offer  // offers that match the project
 	Warnings  []string // presets, or parts of them, that were skipped
 
 	project *preset.Project
 	files   *memo // the reader under project, which Advise reads through too
 	active  []*preset.Preset
-	facts   map[string]map[string]any
-	owners  map[string]string
+	facts   map[string]map[string]any // by preset key
+	owners  map[string]string         // id to preset key
 }
 
 // Discover reads the project's files and proposes routes. On its own it
@@ -127,7 +127,7 @@ func (res *Result) activate(presets []*preset.Preset) {
 	for _, p := range presets {
 		ok, err := p.Detected(res.project)
 		if err != nil {
-			res.warn("preset %s: detect: %v", p.Name, err)
+			res.warn("preset %s: detect: %v", p.Key(), err)
 			continue
 		}
 		if ok {
@@ -141,13 +141,13 @@ func (res *Result) activate(presets []*preset.Preset) {
 	res.active = active
 	res.owners = preset.Owners(active)
 	for _, p := range active {
-		res.Applied = append(res.Applied, p.Name)
+		res.Applied = append(res.Applied, p.Key())
 	}
 }
 
-func (res *Result) isActive(name string) bool {
+func (res *Result) isActive(key string) bool {
 	for _, p := range res.active {
-		if p.Name == name {
+		if p.Key() == key {
 			return true
 		}
 	}
@@ -155,21 +155,24 @@ func (res *Result) isActive(name string) bool {
 }
 
 // context is what p's expressions can see: its own facts and those of the
-// active presets that ran before it.
+// active presets that ran before it, under the names p uses for them.
 func (res *Result) context(p *preset.Preset) preset.Context {
 	earlier := map[string]map[string]any{}
 	for _, a := range res.active {
 		if a == p {
 			break
 		}
-		earlier[a.Name] = res.facts[a.Name]
+		if name, ok := p.NameOf(a); ok {
+			earlier[name] = res.facts[a.Key()]
+		}
 	}
-	return preset.Context{Project: res.project, Facts: res.facts[p.Name], Earlier: earlier, Active: res.isActive}
+	active := func(name string) bool { return res.isActive(p.Resolve(name)) }
+	return preset.Context{Project: res.project, Facts: res.facts[p.Key()], Earlier: earlier, Active: active}
 }
 
 // apply lets one preset label, add and hint at routes.
 func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
-	keep := func(id string) bool { return res.owners[id] == p.Name }
+	keep := func(id string) bool { return res.owners[id] == p.Key() }
 	for _, e := range p.Ports {
 		if !keep(e.Var) {
 			continue
@@ -177,7 +180,7 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 		label := fmt.Sprintf("%s (%s)", e.Label, e.Var)
 		for _, c := range byPort {
 			if c.Var == e.Var && strings.HasPrefix(c.Source, "compose:") {
-				c.Label, c.Role, c.web, c.Preset = label, e.Role, e.Web, p.Name
+				c.Label, c.Role, c.web, c.Preset = label, e.Role, e.Web, p.Key()
 			}
 		}
 		port, err := strconv.Atoi(strings.TrimSpace(res.Env[e.Var]))
@@ -185,11 +188,11 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 			continue
 		}
 		if _, claimed := byPort[port]; !claimed {
-			byPort[port] = &Candidate{Port: port, Role: e.Role, Label: label, Source: "env:" + e.Var, Var: e.Var, Preset: p.Name, web: e.Web}
+			byPort[port] = &Candidate{Port: port, Role: e.Role, Label: label, Source: "env:" + e.Var, Var: e.Var, Preset: p.Key(), web: e.Web}
 		}
 	}
 
-	res.facts[p.Name] = p.EvalFacts(res.project)
+	res.facts[p.Key()] = p.EvalFacts(res.project)
 	routes, errs := p.EvalRoutes(res.context(p), keep)
 	for _, err := range errs {
 		res.warn("%v", err)
@@ -201,7 +204,7 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 			}
 			continue
 		}
-		byPort[r.Port] = &Candidate{Port: r.Port, Role: r.Role, Label: r.Label, Source: "preset:" + p.Name, Preset: p.Name, web: r.Web}
+		byPort[r.Port] = &Candidate{Port: r.Port, Role: r.Role, Label: r.Label, Source: "preset:" + p.Key(), Preset: p.Key(), web: r.Web}
 	}
 }
 
