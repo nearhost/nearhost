@@ -97,6 +97,13 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 		e.mu.Unlock()
 		return fmt.Errorf("unknown project %q", name)
 	}
+	if run.gone {
+		// Apply is replacing the project. Checked before the busy path,
+		// which could otherwise revive the server's session with the
+		// configuration this run came from.
+		e.mu.Unlock()
+		return errChanged(name)
+	}
 	busy := e.busyLocked(run)
 	c := e.servers[run.server]
 	e.mu.Unlock()
@@ -125,7 +132,7 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 		return errors.New("engine is not started")
 	case run.gone: // Apply changed the project while this start waited
 		e.mu.Unlock()
-		return fmt.Errorf("project %q changed while it was waiting to start; start it again", name)
+		return errChanged(name)
 	case e.busyLocked(run): // another start finished while this one waited
 		e.mu.Unlock()
 		return nil
@@ -152,6 +159,11 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 		}
 	}
 	return err
+}
+
+// errChanged is the error of a start on a project Apply replaced.
+func errChanged(name string) error {
+	return fmt.Errorf("project %q changed while it was waiting to start; start it again", name)
 }
 
 // busyLocked reports whether a start has nothing to do: the project is
