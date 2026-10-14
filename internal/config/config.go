@@ -85,8 +85,8 @@ type PresetRef struct {
 type Config struct {
 	Servers  []Server  `yaml:"servers"`
 	Projects []Project `yaml:"projects"`
-	// Registry set to false stops every request to the preset registry.
-	Registry   *bool       `yaml:"registry,omitempty"`
+	// Registries are the preset registries the user trusts. With none, no
+	// request for presets is ever made.
 	Registries []Registry  `yaml:"registries,omitempty"`
 	Presets    []PresetRef `yaml:"presets,omitempty"`
 }
@@ -99,11 +99,6 @@ func (c *Config) Trusted(alias string) (Registry, bool) {
 		}
 	}
 	return Registry{}, false
-}
-
-// RegistryEnabled reports whether the preset registry may be contacted.
-func (c *Config) RegistryEnabled() bool {
-	return c.Registry == nil || *c.Registry
 }
 
 // Preset finds an enabled preset by name.
@@ -330,6 +325,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("preset %q comes from registry %q, which is not in registries; add the registry back under registries or remove the preset from presets", p.Name, alias)
 		case alias != "" && (p.Ref == "" || p.SHA256 == ""):
 			return fmt.Errorf("preset %q comes from a registry, so it needs a ref and a sha256", p.Name)
+		case alias == "" && (p.Ref != "" || p.SHA256 != ""):
+			return fmt.Errorf("preset %q is a local file, so it has no ref or sha256; a preset from a registry is named <registry>/<name>", p.Name)
 		}
 		if presets[p.Name] {
 			return fmt.Errorf("duplicate preset %q", p.Name)

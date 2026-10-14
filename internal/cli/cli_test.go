@@ -217,38 +217,84 @@ func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
 	}
 }
 
-// fakeRegistry is a preset registry served from memory. It serves the test
-// presets of the discovery package.
-type fakeRegistry struct {
+// Registries the tests trust. The fake serves each at its repo.
+var (
+	testReg = config.Registry{Alias: "test", Repo: "test/presets"}
+	acmeReg = config.Registry{Alias: "acme", Repo: "Acme/web-presets"}
+)
+
+// fakeRegistries serves preset registries from memory, each at /<repo>/ as
+// raw.githubusercontent.com does, with the test presets of the discovery
+// package. It counts requests by path and is safe for registries read at the
+// same time.
+type fakeRegistries struct {
 	t     *testing.T
-	files map[string]string
+	mu    sync.Mutex
+	files map[string]string // by path; change only while no command runs
 	hits  map[string]int
 	extra map[string]string // text added to the named preset when it is published
-	down  bool
+	down  map[string]bool   // repos that answer nothing
+	held  map[string]string // repo whose answers wait for a request to another repo
+	seen  map[string]chan struct{}
 }
 
-func newFakeRegistry(t *testing.T, ref string, names ...string) (*fakeRegistry, presetBackend) {
+func newFakeRegistries(t *testing.T) (*fakeRegistries, presetBackend) {
 	t.Helper()
-	f := &fakeRegistry{t: t, files: map[string]string{}, hits: map[string]int{}, extra: map[string]string{}}
+	f := &fakeRegistries{t: t, files: map[string]string{}, hits: map[string]int{}, extra: map[string]string{}, down: map[string]bool{}, held: map[string]string{}, seen: map[string]chan struct{}{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		repo := strings.Join(strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)[:2], "/")
+		f.mu.Lock()
 		f.hits[r.URL.Path]++
+		arrived := f.arrival(repo)
+		select {
+		case <-arrived:
+		default:
+			close(arrived)
+		}
+		var wait chan struct{}
+		if other, ok := f.held[repo]; ok {
+			wait = f.arrival(other)
+		}
 		body, ok := f.files[r.URL.Path]
-		if f.down || !ok {
+		down := f.down[repo]
+		f.mu.Unlock()
+		if wait != nil {
+			select {
+			case <-wait:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		if down || !ok {
 			http.Error(w, "nope", http.StatusNotFound)
 			return
 		}
 		io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	f.publish(ref, names...)
-	return f, presetBackend{registry: func(cfgPath string) *registry.Client {
-		return &registry.Client{BaseURL: srv.URL, Dir: filepath.Join(filepath.Dir(cfgPath), "registry"), HTTP: srv.Client(), Now: time.Now}
+	return f, presetBackend{registry: func(reg config.Registry, dir string) *registry.Client {
+		return &registry.Client{BaseURL: srv.URL + "/" + reg.Repo, Dir: dir, HTTP: srv.Client(), Now: time.Now}
 	}}
 }
 
-// publish replaces what the registry serves with the named test presets at
-// ref.
-func (f *fakeRegistry) publish(ref string, names ...string) {
+// arrival is closed once a request for repo has arrived. f.mu must be held.
+func (f *fakeRegistries) arrival(repo string) chan struct{} {
+	if f.seen[repo] == nil {
+		f.seen[repo] = make(chan struct{})
+	}
+	return f.seen[repo]
+}
+
+// hold makes the answers of repo wait until a request for other has arrived,
+// or until the client gives up.
+func (f *fakeRegistries) hold(repo, other string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held[repo] = other
+}
+
+// publish replaces what repo serves with the named test presets at ref.
+func (f *fakeRegistries) publish(repo, ref string, names ...string) {
 	f.t.Helper()
 	idx := registry.Index{Schema: registry.IndexSchema, Ref: ref}
 	for _, name := range names {
@@ -261,23 +307,53 @@ func (f *fakeRegistry) publish(ref string, names ...string) {
 		if err != nil {
 			f.t.Fatal(err)
 		}
-		f.files["/"+ref+"/presets/"+name+".yaml"] = string(data)
+		f.files["/"+repo+"/"+ref+"/presets/"+name+".yaml"] = string(data)
 		idx.Presets = append(idx.Presets, registry.Entry{Name: name, Title: p.Title, PresetSchema: p.Schema, Detect: p.Detect, SHA256: registry.Sum(data)})
 	}
 	out, err := yaml.Marshal(idx)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.files["/main/index.yaml"] = string(out)
+	f.files["/"+repo+"/HEAD/index.yaml"] = string(out)
 }
 
-// total is how many requests the registry has served.
-func (f *fakeRegistry) total() int {
+// hit is how many requests path has had.
+func (f *fakeRegistries) hit(path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hits[path]
+}
+
+// requests is how many requests repo has had.
+func (f *fakeRegistries) requests(repo string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for path, hits := range f.hits {
+		if strings.HasPrefix(path, "/"+repo+"/") {
+			n += hits
+		}
+	}
+	return n
+}
+
+// total is how many requests every registry has had together.
+func (f *fakeRegistries) total() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	n := 0
 	for _, hits := range f.hits {
 		n += hits
 	}
 	return n
+}
+
+// trust adds registries to the config at cfgPath.
+func trust(t *testing.T, cfgPath string, regs ...config.Registry) {
+	t.Helper()
+	cfg := loadSaved(t, cfgPath)
+	cfg.Registries = append(cfg.Registries, regs...)
+	saveConfig(t, cfgPath, cfg)
 }
 
 // executeWithInput runs a command with input waiting on its standard input.

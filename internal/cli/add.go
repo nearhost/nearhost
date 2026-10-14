@@ -22,12 +22,12 @@ import (
 )
 
 // addBackend is the seam between `add` and what lies outside the process:
-// a remote server, the preset registry and the terminal.
+// a remote server, the trusted preset registries and the terminal.
 type addBackend struct {
 	// openRemote opens the project directory on a server for reading. The
 	// returned function ends the connection.
 	openRemote func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error)
-	// presets reaches the preset registry.
+	// presets reaches the trusted preset registries.
 	presets presetBackend
 	// interactive reports whether a person can be asked a question. Nil
 	// means no.
@@ -60,10 +60,10 @@ func newAddCmd(b addBackend) *cobra.Command {
 		Short: "Add a project, discovering its ports from its files",
 		Long: "Add the project in path (default: the current directory) to the config,\n" +
 			"with routes proposed from its .env and Compose files and from the presets\n" +
-			"that are enabled. When a preset from the registry suits the project and is\n" +
-			"not enabled, add offers to enable it. With --server the path is on that\n" +
-			"server and its files are read over SFTP. Nothing is started and no project\n" +
-			"file is changed.",
+			"that are enabled. When a preset from a trusted registry suits the project\n" +
+			"and is not enabled, add offers to enable it. With --server the path is on\n" +
+			"that server and its files are read over SFTP. Nothing is started and no\n" +
+			"project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
@@ -160,9 +160,10 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 }
 
 // discoverWithPresets runs discovery with the enabled presets, then offers
-// the registry presets that suit the project and runs it again with those
-// the user takes. A preset is enabled, and the config saved, the moment the
-// user says yes, so the answer holds even if the project is not added.
+// the presets of the trusted registries that suit the project and runs it
+// again with those the user takes. A preset is enabled, and the config
+// saved, the moment the user says yes, so the answer holds even if the
+// project is not added.
 func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *config.Config, cfgPath string, reader discovery.FileReader) (*discovery.Result, []string, error) {
 	if flags.noPresets {
 		res, err := discovery.Discover(reader, discovery.Options{})
@@ -171,7 +172,7 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	for _, name := range flags.presets {
-		_, changed, err := b.presets.enable(ctx, cfg, cfgPath, name)
+		_, changed, err := b.presets.enable(ctx, cfg, cfgPath, name, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -185,20 +186,28 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 	// notes last for the whole command. What one discovery pass finds is
 	// replaced by the next pass.
 	var notes []string
-	idx, err := b.presets.index(ctx, cfg, cfgPath)
-	if err != nil && !errors.Is(err, errRegistryOff) {
-		notes = append(notes, fmt.Sprintf("preset suggestions are unavailable because the %s.", registryNote(err)))
+	sources := b.presets.indexes(ctx, cfg, cfgPath)
+	for _, s := range sources {
+		if s.err != nil {
+			notes = append(notes, registryProblem(s.reg, s.err)+".")
+		}
 	}
 	interactive := b.interactive != nil && b.interactive()
 	answers := bufio.NewReader(cmd.InOrStdin())
 	passed := map[string]bool{} // presets declined, or accepted and not installable
 	for {
+		// Every registry's presets are offered, so two registries that offer
+		// the same name are both offered.
 		var offers []discovery.Offer
-		if idx != nil {
-			for _, e := range idx.Presets {
-				_, enabled := cfg.Preset(e.Name)
-				if !enabled && !passed[e.Name] && e.PresetSchema <= preset.SchemaVersion {
-					offers = append(offers, discovery.Offer{Name: e.Name, Title: e.Title, Detect: e.Detect})
+		for _, s := range sources {
+			if s.idx == nil {
+				continue
+			}
+			for _, e := range s.idx.Presets {
+				name := s.reg.Alias + "/" + e.Name
+				_, enabled := cfg.Preset(name)
+				if !enabled && !passed[name] && e.PresetSchema <= preset.SchemaVersion {
+					offers = append(offers, discovery.Offer{Name: name, Title: e.Title, Detect: e.Detect})
 				}
 			}
 		}
@@ -217,12 +226,14 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 
 		enabled := false
 		for _, o := range res.Suggested {
-			fmt.Fprintf(out, "This looks like a %s project. Enable the %s preset? [Y/n] ", offerTitle(o), o.Name)
+			alias, _ := config.SplitPreset(o.Name)
+			reg, _ := cfg.Trusted(alias)
+			fmt.Fprintf(out, "This looks like a %s project. Enable %s from %s? [Y/n] ", offerTitle(o), o.Name, reg.Repo)
 			if !saidYes(answers, out) {
 				passed[o.Name] = true
 				continue
 			}
-			_, _, err := b.presets.enable(ctx, cfg, cfgPath, o.Name)
+			_, _, err := b.presets.enable(ctx, cfg, cfgPath, o.Name, false)
 			if err == nil {
 				err = config.Save(cfgPath, cfg)
 			}
