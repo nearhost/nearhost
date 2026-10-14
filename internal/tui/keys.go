@@ -178,8 +178,9 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		return nil
 	}
 	if mouse.X < sidebarWidth {
-		if all := rows(m.cfg, m.collapsed); mouse.Y < len(all) {
-			m.sel, m.scroll = all[mouse.Y].key(), 0
+		all := rows(m.cfg, m.collapsed)
+		if i := sidebarTop(all, m.sel, m.height-1) + mouse.Y; i < len(all) {
+			m.sel, m.scroll = all[i].key(), 0
 		}
 	}
 	return nil

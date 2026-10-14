@@ -67,7 +67,7 @@ func (m *Model) sidebar(height int) []string {
 	width := sidebarWidth - 1
 	all := rows(m.cfg, m.collapsed)
 	lines := make([]string, 0, height)
-	for _, r := range all {
+	for _, r := range all[sidebarTop(all, m.sel, height):] {
 		if len(lines) == height {
 			break
 		}
@@ -81,6 +81,17 @@ func (m *Model) sidebar(height int) []string {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return lines
+}
+
+// sidebarTop is the first row drawn in a sidebar height rows tall: the
+// first, unless the selected row would then be below the last line.
+func sidebarTop(all []row, sel string, height int) int {
+	for i, r := range all {
+		if r.key() == sel {
+			return max(0, i-height+1)
+		}
+	}
+	return 0
 }
 
 // rowText is one sidebar row, exactly width cells wide.

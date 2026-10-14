@@ -63,12 +63,17 @@ func serverDot(st transport.Status) string {
 }
 
 // clean makes text from outside, such as a log line or a label, safe to
-// draw: escape sequences are removed and control characters become spaces,
-// so nothing can move the cursor or break the layout.
+// draw: escape sequences are removed, control characters become spaces and
+// invisible format characters (such as a right-to-left override) are
+// dropped, so nothing can move the cursor, break the layout or change how
+// the text reads.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		switch {
+		case unicode.IsControl(r):
 			return ' '
+		case unicode.Is(unicode.Cf, r):
+			return -1
 		}
 		return r
 	}, ansi.Strip(s))
