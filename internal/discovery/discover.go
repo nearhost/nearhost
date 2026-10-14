@@ -40,7 +40,8 @@ type Result struct {
 }
 
 // Discover reads the project's files and proposes routes. On its own it
-// knows .env files and Compose published ports; presets supply the rest.
+// knows Compose published ports and the port variables in .env; presets
+// supply the rest.
 func Discover(r FileReader, opts Options) (*Result, error) {
 	files := newMemo(r)
 	env, err := readEnv(files)
@@ -94,6 +95,12 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	res.activate(opts.Presets)
 	for _, p := range res.active {
 		res.apply(p, byPort)
+	}
+	// The core's own .env rule comes last, for ports nothing else claimed.
+	for _, c := range envPorts(env) {
+		if _, claimed := byPort[c.Port]; !claimed {
+			byPort[c.Port] = &c
+		}
 	}
 	// Offers are not enabled presets: a read error they hit must not fail the run.
 	enabledErr := files.err

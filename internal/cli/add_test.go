@@ -437,3 +437,28 @@ func TestAddMakesRenderedAdviceSafeToPrint(t *testing.T) {
 	}
 	wantContains(t, out, "Advisory (echo): Name is a[2Jb.\nSecond line.\n  NAME=a[2Jb\n  \tindented\n")
 }
+
+// envProject is a project directory holding only the given .env.
+func envProject(t *testing.T, env string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// With no preset and no registry, the port variables in .env are routes.
+func TestAddProposesEnvPortsWithoutPresets(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	dir := envProject(t, "APP_PORT=8080\nFORWARD_APP_PORT=8080\nREPORT_LIMIT=50\n")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "envapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "  8080  web   app (APP_PORT, FORWARD_APP_PORT)\n", "Added envapp on local")
+	p, _ := loadSaved(t, cfgPath).Project("envapp")
+	if len(p.Routes) != 1 || p.Routes[0].Label != "app (APP_PORT, FORWARD_APP_PORT)" {
+		t.Fatalf("routes = %+v", p.Routes)
+	}
+}

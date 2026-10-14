@@ -83,14 +83,6 @@ func TestDiscoverWithoutPresetsKnowsOnlyCompose(t *testing.T) {
 	}
 }
 
-// A variable in .env means nothing until a preset says what it is.
-func TestDiscoverWithoutPresetsIgnoresEnvPorts(t *testing.T) {
-	res := discover(t, memReader{".env": "APP_PORT=3000\nVITE_PORT=5174\n"}, Options{})
-	if len(res.Routes) != 0 {
-		t.Fatalf("expected no routes, got %+v", res.Routes)
-	}
-}
-
 func TestDiscoverComposeLiteral(t *testing.T) {
 	res := discover(t, DirReader{Root: "testdata/compose-literal"}, Options{})
 	m := routeMap(res)
