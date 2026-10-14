@@ -37,6 +37,7 @@ type projectRun struct {
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
+	gone      bool               // Apply replaced or removed the project; this run is never started again
 	holders   map[int]heldPort   // local port of each lost forward that was announced -> what is known of its holder
 }
 
@@ -88,12 +89,14 @@ type heldPort struct {
 //
 // A failure never changes another project.
 func (e *Engine) StartProject(ctx context.Context, name string) error {
-	p, ok := e.cfg.Project(name)
+	e.mu.Lock()
+	cfg := e.cfg
+	run := e.runs[name]
+	p, ok := cfg.Project(name)
 	if !ok {
+		e.mu.Unlock()
 		return fmt.Errorf("unknown project %q", name)
 	}
-	run := e.runs[name]
-	e.mu.Lock()
 	busy := e.busyLocked(run)
 	c := e.servers[run.server]
 	e.mu.Unlock()
@@ -101,7 +104,7 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 		// Nothing to add. The one thing worth doing for a running project is
 		// reviving a server connection that gave up; the session re-applies
 		// the project's forwards when it connects.
-		if srv, ok := e.cfg.Server(p.Server); ok && c != nil && c.sess.Status() == transport.StatusAuthFailed {
+		if srv, ok := cfg.Server(p.Server); ok && c != nil && c.sess.Status() == transport.StatusAuthFailed {
 			_, err := e.ensureSession(srv)
 			return err
 		}
@@ -120,6 +123,9 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	case !e.started:
 		e.mu.Unlock()
 		return errors.New("engine is not started")
+	case run.gone: // Apply changed the project while this start waited
+		e.mu.Unlock()
+		return fmt.Errorf("project %q changed while it was waiting to start; start it again", name)
 	case e.busyLocked(run): // another start finished while this one waited
 		e.mu.Unlock()
 		return nil
@@ -128,7 +134,7 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	e.setStateLocked(run, StateStarting, "")
 	e.mu.Unlock()
 
-	st, err := e.bringUp(ctx, p, run)
+	st, err := e.bringUp(ctx, cfg, p, run)
 	msg := ""
 	if err != nil {
 		msg = err.Error()
@@ -168,13 +174,13 @@ func (e *Engine) busyLocked(run *projectRun) bool {
 }
 
 // bringUp does the work of StartProject and returns the state the project
-// ends in. The caller holds run.op.
-func (e *Engine) bringUp(ctx context.Context, p *config.Project, run *projectRun) (State, error) {
+// ends in. cfg is the configuration p comes from. The caller holds run.op.
+func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Project, run *projectRun) (State, error) {
 	web, ok := p.WebRoute()
 	if !ok {
 		return StateError, fmt.Errorf("project %q has no web route", p.Name)
 	}
-	srv, ok := e.cfg.Server(p.Server)
+	srv, ok := cfg.Server(p.Server)
 	if !ok {
 		return StateError, fmt.Errorf("project %q uses unknown server %q", p.Name, p.Server)
 	}
@@ -262,7 +268,10 @@ func (e *Engine) ensureHosts(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err // interrupted just as its turn came
 	}
-	return e.opts.EnsureHosts(ctx, append([]string(nil), e.aliases...))
+	e.mu.Lock()
+	aliases := append([]string(nil), e.aliases...)
+	e.mu.Unlock()
+	return e.opts.EnsureHosts(ctx, aliases)
 }
 
 // claimPort reserves a local port for a forward of run. It returns the name
