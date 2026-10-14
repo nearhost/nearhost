@@ -1,0 +1,40 @@
+internal/discovery/env.go
+  s_7abd3634f4eb80::t_98c4274273f344 11,19-20,22,24
+internal/discovery/testdata/presets/stack.yaml
+  s_7abd3634f4eb80::t_2f1bae1cbf8a68 1-27
+internal/discovery/discover_test.go
+  s_7abd3634f4eb80::t_59f2700fa2583d 4-7,12,23-36,38,41-44,48-55,57-61,63-64,66-67,69-70,72-76,85-89,94,105-107,112-114,118-121,125-131,135-138,140-142,144-145,147-148,150-151,153-154,158-162,166-173,177-180,182-183,185-187,191-201,205-208,210-212,215-217,219-223,227-231,233-235,237-245,249-253,255-257,259-260,262-263,267-272,274-275,279-284,286-287,291-299,301,304-308,310-330,332-333,335,337-342,344-345,347,349-353,355-360,362
+internal/discovery/discover.go
+  s_7abd3634f4eb80::t_e4e2b02d686091 6,10,13-26,29-38,41-45,49,75-80,82-83,85-87,89,91-94,96-99,102-104,108,111,115-126,128-129,132-134,136-139,143-147,149,152-158,160,162-169,172-175,178-179,182-183,187-190,192-197,199,203-210,212,214-228,231-235,237
+internal/cli/add.go
+  s_7abd3634f4eb80::t_f69f134c641c23 43,45-47,78,99-104,220
+internal/cli/add_test.go
+  s_7abd3634f4eb80::t_2e1ac538fe88b8 38-44,87,152-153,178,273
+internal/discovery/reader.go
+  s_7abd3634f4eb80::t_2f1bae1cbf8a68 28-58
+  s_7abd3634f4eb80::t_98c4274273f344 5-7
+internal/discovery/compose.go
+  s_7abd3634f4eb80::t_98c4274273f344 178
+internal/discovery/testdata/presets/bundler.yaml
+  s_7abd3634f4eb80::t_2f1bae1cbf8a68 1-30
+internal/discovery/advise.go
+  s_7abd3634f4eb80::t_620b8cf6378d66 1-80
+internal/transport/sftp_test.go
+  s_7abd3634f4eb80::t_2e1ac538fe88b8 61-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94dcde66ef1c70a6d552a5d6c4196c8754b4c90a",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
