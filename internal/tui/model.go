@@ -49,9 +49,10 @@ type Model struct {
 
 	events      <-chan engine.Event
 	unsubscribe func()
-	stamp       fileStamp // the config file as last applied, or refused
-	seen        fileStamp // the config file at the last tick
-	applying    bool      // an Apply is running
+	stamp       fileStamp          // the config file as last applied, or refused
+	seen        fileStamp          // the config file at the last tick
+	applying    bool               // an Apply is running
+	endApply    context.CancelFunc // ends the running Apply; quitting calls it
 
 	// What Home shows about the machine. Reading it can be slow (the trust
 	// store, /etc/hosts), so it is read on the clock, not on every redraw.
@@ -153,14 +154,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logs.project(msg.name, time.Now(), msg.err.Error())
 		}
 	case appliedMsg:
-		m.applying = false
+		m.applying, m.endApply = false, nil
 		if msg.err != nil {
-			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + msg.err.Error())
+			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.err.Error(), ".") + ". Save the file again to apply it.")
 		}
 		m.setConfig(m.b.Config())
 	case addedMsg:
 		if msg.err != nil {
 			m.logs.note("Adding a project failed: " + msg.err.Error())
+		}
+		// Apply what the add saved at once, unless it saved nothing or an
+		// Apply is running; the clock picks the change up after that one.
+		if m.applying || stampOf(m.b.ConfigPath()) == m.stamp {
+			return m, nil
 		}
 		return m, m.reloadConfig()
 	case openedMsg:
@@ -239,6 +245,9 @@ func (m *Model) quit() tea.Cmd {
 		return nil
 	}
 	m.quitting = true
+	if m.endApply != nil {
+		m.endApply() // the shutdown would otherwise wait for it
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	m.cutShort = cancel
 	return func() tea.Msg {
@@ -372,10 +381,13 @@ func (m *Model) reloadConfig() tea.Cmd {
 	path := m.b.ConfigPath()
 	m.stamp = stampOf(path)
 	m.applying = true
+	ctx, cancel := context.WithCancel(context.Background())
+	m.endApply = cancel
 	return func() tea.Msg {
+		defer cancel()
 		cfg, err := config.Load(path)
 		if err == nil {
-			err = m.b.Apply(context.Background(), cfg)
+			err = m.b.Apply(ctx, cfg)
 		}
 		return appliedMsg{err}
 	}
