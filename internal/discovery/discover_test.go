@@ -1,11 +1,15 @@
 package discovery
 
 import (
-	"reflect"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/preset"
 )
 
 func routeMap(res *Result) map[int]Candidate {
@@ -16,41 +20,60 @@ func routeMap(res *Result) map[int]Candidate {
 	return m
 }
 
-func TestScanVite(t *testing.T) {
-	info := ScanVite([]byte(`export default defineConfig({ server: { port: 3000, https: true, allowedHosts: ['a.test', "b.test"] } })`))
-	if !info.Found || info.Port != 3000 || !info.HTTPS || len(info.AllowedHosts) != 2 || info.AllowedHosts[1] != "b.test" {
-		t.Fatalf("unexpected: %+v", info)
+// testPresets loads the named presets from testdata/presets.
+func testPresets(t *testing.T, names ...string) []*preset.Preset {
+	t.Helper()
+	var out []*preset.Preset
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join("testdata", "presets", name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := preset.Parse(name, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, p)
 	}
-	all := ScanVite([]byte(`server: { allowedHosts: true }`))
-	if !all.AllowAllHosts {
-		t.Fatalf("expected AllowAllHosts, got %+v", all)
-	}
-	none := ScanVite([]byte(`export default defineConfig({ plugins: [laravel()] })`))
-	if none.Port != 0 || none.HTTPS || none.AllowAllHosts || len(none.AllowedHosts) != 0 {
-		t.Fatalf("expected empty info, got %+v", none)
-	}
+	return out
 }
 
-func TestDiscoverSailCustom(t *testing.T) {
-	res, err := Discover(DirReader{Root: "testdata/sail-custom"})
+// inline parses a preset written in the test.
+func inline(t *testing.T, name, body string) *preset.Preset {
+	t.Helper()
+	p, err := preset.Parse(name, []byte("schema: 1\nname: "+name+"\ntitle: T\n"+body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.HasLaravel || !res.HasVite || !res.Sail {
-		t.Fatalf("flags wrong: %+v", res)
+	return p
+}
+
+func discover(t *testing.T, r FileReader, opts Options) *Result {
+	t.Helper()
+	res, err := Discover(r, opts)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return res
+}
+
+func TestDiscoverWithoutPresetsKnowsOnlyCompose(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{})
 	m := routeMap(res)
-	if m[8080].Role != config.RoleWeb || m[8080].Label != "Laravel (APP_PORT)" {
-		t.Errorf("web route wrong: %+v", m[8080])
+	if len(res.Routes) != 6 {
+		t.Fatalf("expected the six Compose ports, got %+v", res.Routes)
 	}
-	if m[5174].Role != config.RoleLoopback || m[5174].Label != "Vite (VITE_PORT)" {
-		t.Errorf("vite route wrong: %+v", m[5174])
+	if m[8080].Role != config.RoleWeb || m[8080].Label != "laravel.test (APP_PORT)" || m[8080].Preset != "" {
+		t.Errorf("container port 80 should be web with a plain label: %+v", m[8080])
 	}
-	if m[3307].Role != config.RoleIgnore || m[3307].Label != "Database (FORWARD_DB_PORT)" {
-		t.Errorf("db route wrong: %+v", m[3307])
+	if m[5174].Role != config.RoleIgnore || m[5174].Label != "laravel.test (VITE_PORT)" {
+		t.Errorf("nothing but a preset makes a loopback route: %+v", m[5174])
 	}
-	if m[6379].Role != config.RoleIgnore || m[8025].Label != "Mailpit dashboard (FORWARD_MAILPIT_DASHBOARD_PORT)" {
-		t.Errorf("other routes wrong: %+v", res.Routes)
+	if m[6379].Label != "redis (FORWARD_REDIS_PORT)" {
+		t.Errorf("label = %q", m[6379].Label)
+	}
+	if len(res.Applied) != 0 || len(res.Suggested) != 0 || len(res.Warnings) != 0 {
+		t.Errorf("nothing should apply: %+v", res)
 	}
 	for i := 1; i < len(res.Routes); i++ {
 		if res.Routes[i-1].Port > res.Routes[i].Port {
@@ -59,36 +82,16 @@ func TestDiscoverSailCustom(t *testing.T) {
 	}
 }
 
-func TestDiscoverSailDefaults(t *testing.T) {
-	res, err := Discover(DirReader{Root: "testdata/sail-defaults"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := routeMap(res)
-	if m[80].Role != config.RoleWeb || m[5173].Role != config.RoleLoopback {
-		t.Fatalf("defaults wrong: %+v", res.Routes)
-	}
-}
-
-func TestDiscoverPlainVite(t *testing.T) {
-	res, err := Discover(DirReader{Root: "testdata/vite-plain"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.HasLaravel || !res.HasVite || res.Sail {
-		t.Fatalf("flags wrong: %+v", res)
-	}
-	m := routeMap(res)
-	if len(res.Routes) != 1 || m[3000].Role != config.RoleWeb || m[3000].Source != "vite" {
-		t.Fatalf("expected single web route on 3000, got %+v", res.Routes)
+// A variable in .env means nothing until a preset says what it is.
+func TestDiscoverWithoutPresetsIgnoresEnvPorts(t *testing.T) {
+	res := discover(t, memReader{".env": "APP_PORT=3000\nVITE_PORT=5174\n"}, Options{})
+	if len(res.Routes) != 0 {
+		t.Fatalf("expected no routes, got %+v", res.Routes)
 	}
 }
 
 func TestDiscoverComposeLiteral(t *testing.T) {
-	res, err := Discover(DirReader{Root: "testdata/compose-literal"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := discover(t, DirReader{Root: "testdata/compose-literal"}, Options{})
 	m := routeMap(res)
 	if m[8080].Role != config.RoleWeb || m[8080].Label != "web" {
 		t.Errorf("port 80 target should become web: %+v", m[8080])
@@ -99,21 +102,252 @@ func TestDiscoverComposeLiteral(t *testing.T) {
 }
 
 func TestDiscoverEmptyProject(t *testing.T) {
-	res, err := Discover(DirReader{Root: "testdata/empty"})
-	if err != nil || len(res.Routes) != 0 || res.HasVite || res.HasLaravel {
-		t.Fatalf("expected empty result, got %+v %v", res, err)
+	res := discover(t, DirReader{Root: "testdata/empty"}, Options{Presets: testPresets(t, "stack", "bundler")})
+	if len(res.Routes) != 0 || len(res.Applied) != 0 {
+		t.Fatalf("expected an empty result, got %+v", res)
 	}
 }
 
 func TestDiscoverSingleUnknownPortBecomesWeb(t *testing.T) {
-	res, err := Discover(memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"})
-	if err != nil || len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb {
-		t.Fatalf("expected lone port to be web: %+v %v", res, err)
+	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{})
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb {
+		t.Fatalf("expected the lone port to be web: %+v", res.Routes)
+	}
+}
+
+func TestDiscoverPublishedPort80IsWebWhenTheTargetIsUnknown(t *testing.T) {
+	res := discover(t, memReader{"compose.yaml": "services:\n  a:\n    ports:\n      - published: 80\n  b:\n    ports:\n      - '9000:9000'\n"}, Options{})
+	if m := routeMap(res); m[80].Role != config.RoleWeb || m[9000].Role != config.RoleIgnore {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+func TestDiscoverDeterministicWithDuplicatePorts(t *testing.T) {
+	r := memReader{"compose.yaml": "services:\n  b:\n    ports:\n      - '8080:80'\n  a:\n    ports:\n      - '8080:8080'\n"}
+	for i := 0; i < 20; i++ {
+		res := discover(t, r, Options{})
+		if len(res.Routes) != 1 || res.Routes[0].Label != "a" {
+			t.Fatalf("run %d: routes = %+v, want the one from service a", i, res.Routes)
+		}
+	}
+}
+
+func TestDiscoverAppliesPresetPorts(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{Presets: testPresets(t, "stack", "bundler")})
+	if got := strings.Join(res.Applied, ","); got != "bundler,stack" {
+		t.Fatalf("Applied = %s, want bundler,stack", got)
+	}
+	m := routeMap(res)
+	if m[8080].Role != config.RoleWeb || m[8080].Label != "App (APP_PORT)" || m[8080].Preset != "stack" {
+		t.Errorf("web route wrong: %+v", m[8080])
+	}
+	if m[5174].Role != config.RoleLoopback || m[5174].Label != "Assets (VITE_PORT)" {
+		t.Errorf("loopback route wrong: %+v", m[5174])
+	}
+	if m[3307].Role != config.RoleIgnore || m[3307].Label != "Database (FORWARD_DB_PORT)" {
+		t.Errorf("database route wrong: %+v", m[3307])
+	}
+	if m[6379].Label != "redis (FORWARD_REDIS_PORT)" || m[6379].Preset != "" {
+		t.Errorf("a variable no preset knows keeps its plain label: %+v", m[6379])
+	}
+	if len(res.Routes) != 6 || len(res.Warnings) != 0 {
+		t.Errorf("routes = %+v, warnings = %v", res.Routes, res.Warnings)
+	}
+}
+
+func TestDiscoverUsesComposeDefaultsWhenEnvIsSilent(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/sail-defaults"}, Options{Presets: testPresets(t, "stack", "bundler")})
+	m := routeMap(res)
+	if m[80].Role != config.RoleWeb || m[5173].Role != config.RoleLoopback || m[3306].Label != "Database (FORWARD_DB_PORT)" {
+		t.Fatalf("defaults wrong: %+v", res.Routes)
+	}
+}
+
+// A preset variable set in .env becomes a route when Compose publishes
+// nothing through it.
+func TestDiscoverAddsPresetPortsFromEnv(t *testing.T) {
+	p := inline(t, "x", "detect: 'true'\nports:\n  - {var: APP_PORT, label: App, web: preferred}\n  - {var: ASSET_PORT, label: Assets, role: loopback}\n  - {var: WORDS, label: Words}\n  - {var: HUGE, label: Huge}\n")
+	res := discover(t, memReader{".env": "APP_PORT= 3000 \nASSET_PORT=5174\nWORDS=eighty\nHUGE=70000\n"}, Options{Presets: []*preset.Preset{p}})
+	m := routeMap(res)
+	if len(res.Routes) != 2 || m[3000].Role != config.RoleWeb || m[3000].Label != "App (APP_PORT)" || m[3000].Source != "env:APP_PORT" || m[5174].Role != config.RoleLoopback {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+func TestDiscoverPresetRouteFromFacts(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/vite-plain"}, Options{Presets: testPresets(t, "stack", "bundler")})
+	if got := strings.Join(res.Applied, ","); got != "bundler" {
+		t.Fatalf("Applied = %s, want only bundler", got)
+	}
+	if len(res.Routes) != 1 {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+	c := res.Routes[0]
+	if c.Port != 3000 || c.Role != config.RoleWeb || c.Label != "Bundler (config)" || c.Source != "preset:bundler" || c.Preset != "bundler" {
+		t.Fatalf("route = %+v", c)
+	}
+}
+
+// A port Compose already publishes keeps its label when a preset names the
+// same port, and takes the preset's web hint.
+func TestDiscoverPresetHintOnAClaimedPort(t *testing.T) {
+	r := memReader{
+		"compose.yaml":   "services:\n  dev:\n    ports:\n      - '3000:3000'\n  db:\n    ports:\n      - '5432:5432'\n",
+		"vite.config.js": "server: { port: 3000 }",
+	}
+	res := discover(t, r, Options{Presets: testPresets(t, "bundler")})
+	m := routeMap(res)
+	if m[3000].Role != config.RoleWeb || m[3000].Label != "dev" || m[5432].Role != config.RoleIgnore {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+func TestDiscoverWebOrder(t *testing.T) {
+	preferred := inline(t, "p", "detect: 'true'\nports:\n  - {var: MAIN, label: Main, web: preferred}\n")
+	fallback := inline(t, "f", "detect: 'true'\nports:\n  - {var: DEV, label: Dev, web: fallback}\n  - {var: HOT, label: Hot, web: fallback, role: loopback}\n")
+	compose := "services:\n  a:\n    ports:\n      - '8080:80'\n      - '${MAIN:-7000}:7000'\n      - '${DEV:-6000}:6000'\n      - '${HOT:-5000}:5000'\n"
+
+	res := discover(t, memReader{"compose.yaml": compose}, Options{Presets: []*preset.Preset{preferred, fallback}})
+	if m := routeMap(res); m[7000].Role != config.RoleWeb || m[8080].Role != config.RoleIgnore {
+		t.Errorf("a preferred hint beats container port 80: %+v", res.Routes)
+	}
+
+	res = discover(t, memReader{"compose.yaml": compose}, Options{Presets: []*preset.Preset{fallback}})
+	if m := routeMap(res); m[8080].Role != config.RoleWeb {
+		t.Errorf("container port 80 beats a fallback hint: %+v", res.Routes)
+	}
+
+	noEighty := "services:\n  a:\n    ports:\n      - '${DEV:-6000}:6000'\n      - '${HOT:-5000}:5000'\n      - '9000:9000'\n"
+	res = discover(t, memReader{"compose.yaml": noEighty}, Options{Presets: []*preset.Preset{fallback}})
+	if m := routeMap(res); m[6000].Role != config.RoleWeb || m[5000].Role != config.RoleLoopback {
+		t.Errorf("the fallback hint picks the route that is not a loopback: %+v", res.Routes)
+	}
+}
+
+func TestDiscoverLoneKnownPortIsNotWeb(t *testing.T) {
+	p := inline(t, "x", "detect: 'true'\nports:\n  - {var: DB_PORT, label: Database}\n  - {var: HOT, label: Hot, role: loopback}\n")
+	res := discover(t, memReader{"compose.yaml": "services:\n  db:\n    ports:\n      - '${DB_PORT:-5432}:5432'\n"}, Options{Presets: []*preset.Preset{p}})
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleIgnore {
+		t.Fatalf("a lone port a preset identified is not the web app: %+v", res.Routes)
+	}
+	res = discover(t, memReader{".env": "HOT=5174\n"}, Options{Presets: []*preset.Preset{p}})
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleLoopback {
+		t.Fatalf("a lone loopback route stays a loopback: %+v", res.Routes)
+	}
+}
+
+func TestDiscoverSuppressAndReplace(t *testing.T) {
+	first := inline(t, "first", "detect: 'true'\nports:\n  - {var: A_PORT, label: First}\nroutes:\n  - {id: gone, port: '7000', label: Gone}\n  - {id: kept, port: '7001', label: Kept}\n  - {id: swapped, port: '7002', label: Old}\n")
+	second := inline(t, "second", "detect: 'true'\nafter: [first]\nsuppress: [gone]\nports:\n  - {var: A_PORT, label: Second, role: loopback}\nroutes:\n  - {id: swapped, port: '7003', label: New}\n")
+	res := discover(t, memReader{".env": "A_PORT=7004\n"}, Options{Presets: []*preset.Preset{second, first}})
+	m := routeMap(res)
+	if len(res.Routes) != 3 || m[7001].Label != "Kept" || m[7003].Label != "New" || m[7004].Label != "Second (A_PORT)" || m[7004].Role != config.RoleLoopback {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+func TestDiscoverSuggestsOffersThatMatch(t *testing.T) {
+	offers := []Offer{
+		{Name: "stack", Title: "Test stack", Detect: `compose.contains("LARAVEL_SAIL")`},
+		{Name: "other", Title: "Other", Detect: `file("other.config.js")`},
+		{Name: "broken", Title: "Broken", Detect: `file(`},
+	}
+	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{Offers: offers})
+	if len(res.Suggested) != 1 || res.Suggested[0].Name != "stack" {
+		t.Fatalf("Suggested = %+v", res.Suggested)
+	}
+	if len(res.Applied) != 0 || routeMap(res)[8080].Label != "laravel.test (APP_PORT)" {
+		t.Errorf("a suggestion must not change the routes: %+v", res.Routes)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("a broken index entry is not the user's problem: %v", res.Warnings)
+	}
+}
+
+func TestDiscoverWarnsAndCarriesOnWhenAPresetFails(t *testing.T) {
+	bad := inline(t, "bad", "detect: env[\"MISSING\"] == \"x\"\n")
+	half := inline(t, "half", "detect: 'true'\nroutes:\n  - {id: broken, port: facts.nope, label: Broken}\n  - {id: fine, port: '7000', label: Fine}\n")
+	res := discover(t, memReader{}, Options{Presets: []*preset.Preset{bad, half}})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 7000 {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+	if len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "preset bad: detect") || !strings.Contains(res.Warnings[1], "preset half: route broken") {
+		t.Fatalf("warnings = %q", res.Warnings)
+	}
+}
+
+func TestDiscoverSkipsPresetsInACycle(t *testing.T) {
+	a := inline(t, "a", "detect: 'true'\nafter: [b]\nroutes:\n  - {id: ra, port: '7000', label: A}\n")
+	b := inline(t, "b", "detect: 'true'\nafter: [a]\nroutes:\n  - {id: rb, port: '7001', label: B}\n")
+	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{Presets: []*preset.Preset{a, b}})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 4000 || res.Routes[0].Role != config.RoleWeb {
+		t.Fatalf("the core routes should survive: %+v", res.Routes)
+	}
+	if len(res.Applied) != 0 || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "a, b") {
+		t.Fatalf("Applied = %v, Warnings = %q", res.Applied, res.Warnings)
+	}
+}
+
+// failReader fails to read one file that exists.
+type failReader struct {
+	memReader
+	fail string
+}
+
+func (f failReader) ReadFile(name string) ([]byte, error) {
+	if name == f.fail {
+		return nil, errors.New("permission denied")
+	}
+	return f.memReader.ReadFile(name)
+}
+
+func TestDiscoverFailsWhenAPresetFileCannotBeRead(t *testing.T) {
+	r := failReader{memReader: memReader{"package.json": `{"devDependencies":{"vite":"1"}}`}, fail: "vite.config.js"}
+	_, err := Discover(r, Options{Presets: testPresets(t, "bundler")})
+	if err == nil || !strings.Contains(err.Error(), "read vite.config.js: permission denied") {
+		t.Fatalf("expected the read error, got %v", err)
+	}
+}
+
+// countReader counts reads per file.
+type countReader struct {
+	memReader
+	reads map[string]int
+}
+
+func (c countReader) ReadFile(name string) ([]byte, error) {
+	c.reads[name]++
+	return c.memReader.ReadFile(name)
+}
+
+func TestDiscoverReadsEachFileOnce(t *testing.T) {
+	r := countReader{memReader: memReader{"vite.config.js": "server: { port: 3000 }", "package.json": "{}"}, reads: map[string]int{}}
+	offers := []Offer{{Name: "o", Title: "O", Detect: `file("vite.config.js") && pkg("vite")`}}
+	discover(t, r, Options{Presets: testPresets(t, "bundler"), Offers: offers})
+	for name, n := range r.reads {
+		if n != 1 {
+			t.Errorf("%s was read %d times", name, n)
+		}
+	}
+	if r.reads["vite.config.js"] != 1 {
+		t.Errorf("vite.config.js should have been read: %v", r.reads)
+	}
+}
+
+func TestMemoKeepsMissingFilesMissing(t *testing.T) {
+	m := newMemo(memReader{})
+	for i := 0; i < 2; i++ {
+		if _, err := m.ReadFile("nope"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("expected fs.ErrNotExist, got %v", err)
+		}
+	}
+	if m.err != nil {
+		t.Errorf("a missing file is not a failure: %v", m.err)
 	}
 }
 
 func TestConfigRoutes(t *testing.T) {
-	res, _ := Discover(DirReader{Root: "testdata/sail-custom"})
+	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{})
 	routes := res.ConfigRoutes()
 	if len(routes) != len(res.Routes) || routes[0].Port != res.Routes[0].Port || routes[0].Label == "" {
 		t.Fatalf("ConfigRoutes mismatch: %+v", routes)
@@ -126,254 +360,4 @@ func codes(advs []Advisory) string {
 		cs = append(cs, a.Code)
 	}
 	return strings.Join(cs, ",")
-}
-
-func TestAdviseSailCustomAppURL(t *testing.T) {
-	res, _ := Discover(DirReader{Root: "testdata/sail-custom"})
-	advs := Advise(res, "myapp.test", nil)
-	if codes(advs) != "app-url" {
-		t.Fatalf("expected only app-url, got %s", codes(advs))
-	}
-	if advs[0].Snippet != "APP_URL=https://myapp.test" {
-		t.Fatalf("snippet: %q", advs[0].Snippet)
-	}
-}
-
-func TestAdviseLoopbackClash(t *testing.T) {
-	res, _ := Discover(DirReader{Root: "testdata/sail-custom"})
-	others := []config.Project{{Name: "other", Enabled: true, Routes: []config.Route{{Port: 5174, Role: config.RoleLoopback}}}}
-	advs := Advise(res, "myapp.test", others)
-	if !strings.Contains(codes(advs), "loopback-clash") {
-		t.Fatalf("expected clash, got %s", codes(advs))
-	}
-	for _, a := range advs {
-		if a.Code == "loopback-clash" {
-			if !strings.Contains(a.Message, "other") || a.Snippet != "VITE_PORT=5173" {
-				t.Fatalf("clash advisory wrong: %+v", a)
-			}
-		}
-	}
-	others[0].Enabled = false
-	if strings.Contains(codes(Advise(res, "myapp.test", others)), "loopback-clash") {
-		t.Fatal("disabled projects should not clash")
-	}
-}
-
-func TestAdviseViteDefaultPort(t *testing.T) {
-	res, _ := Discover(DirReader{Root: "testdata/sail-defaults"})
-	advs := Advise(res, "defaults.test", nil)
-	if !strings.Contains(codes(advs), "vite-default-port") {
-		t.Fatalf("expected vite-default-port, got %s", codes(advs))
-	}
-}
-
-func TestAdviseAllowedHosts(t *testing.T) {
-	res, _ := Discover(DirReader{Root: "testdata/vite-plain"})
-	advs := Advise(res, "bar.test", nil)
-	if codes(advs) != "allowed-hosts" || !strings.Contains(advs[0].Snippet, "allowedHosts: ['bar.test']") {
-		t.Fatalf("expected allowed-hosts advisory, got %+v", advs)
-	}
-	if len(Advise(res, "foo.test", nil)) != 0 {
-		t.Fatal("alias already allowed should produce no advisory")
-	}
-}
-
-func TestAdviseAllowedHostsHonoursWildcardSuffix(t *testing.T) {
-	res := &Result{HasVite: true, Vite: ViteInfo{Found: true, Port: 3000, AllowedHosts: []string{".test"}}}
-	if len(Advise(res, "any.test", nil)) != 0 {
-		t.Fatal("leading-dot entry should allow subdomains")
-	}
-}
-
-func TestDiscoverDeterministicWithDuplicatePorts(t *testing.T) {
-	compose := "services:\n"
-	for _, s := range []string{"zeta", "alpha", "mid", "beta", "omega"} {
-		compose += "  " + s + ":\n    ports:\n      - '9000:9000'\n      - '9001:9001'\n"
-	}
-	first, err := Discover(memReader{"compose.yaml": compose})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := routeMap(first)[9000].Label; got != "alpha" {
-		t.Fatalf("expected lowest service name to win, got %q", got)
-	}
-	for i := 0; i < 50; i++ {
-		again, err := Discover(memReader{"compose.yaml": compose})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(first.Routes, again.Routes) {
-			t.Fatalf("run %d differs:\n%+v\n%+v", i, first.Routes, again.Routes)
-		}
-	}
-}
-
-func TestAdviseAppURLTrimsWhitespace(t *testing.T) {
-	res := &Result{HasLaravel: true, Env: map[string]string{"APP_URL": " https://myapp.test "}}
-	if len(Advise(res, "myapp.test", nil)) != 0 {
-		t.Fatal("surrounding whitespace in APP_URL should not trigger an advisory")
-	}
-}
-
-func TestDiscoverLoneLoopbackRouteStaysLoopback(t *testing.T) {
-	res, err := Discover(memReader{"compose.yaml": "services:\n  vite:\n    ports:\n      - '${VITE_PORT:-5173}:5173'\n"})
-	if err != nil || len(res.Routes) != 1 || res.Routes[0].Role != config.RoleLoopback {
-		t.Fatalf("lone Vite port must not become web: %+v %v", res, err)
-	}
-}
-
-func TestAdviseAppURLMessageUsesTrimmedValue(t *testing.T) {
-	res := &Result{HasLaravel: true, Env: map[string]string{"APP_URL": " http://x.test "}}
-	advs := Advise(res, "myapp.test", nil)
-	if len(advs) != 1 || !strings.Contains(advs[0].Message, `"http://x.test"`) {
-		t.Fatalf("unexpected: %+v", advs)
-	}
-}
-
-func TestAdviseViteDefaultPortPlainVite(t *testing.T) {
-	res, err := Discover(memReader{
-		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
-		"vite.config.ts": "export default defineConfig({ server: { allowedHosts: ['x.test'] } })",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
-		t.Fatalf("plain Vite without a port should get vite-default-port, got %s", codes(Advise(res, "x.test", nil)))
-	}
-}
-
-func TestAdviseNoViteDefaultPortWhenConfigSetsPort(t *testing.T) {
-	res, err := Discover(memReader{
-		"docker-compose.yml": "services:\n  laravel.test:\n    image: sail-8.3/app\n    ports:\n      - '${APP_PORT:-80}:80'\n",
-		"package.json":       `{"devDependencies":{"vite":"^5"}}`,
-		"vite.config.js":     "export default { server: { port: 5199 } }",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Sail {
-		t.Fatal("fixture should be Sail")
-	}
-	if strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
-		t.Fatal("server.port is set, so no vite-default-port advisory")
-	}
-}
-
-func TestAdviseViteDefaultPortSnippetMatchesProjectKind(t *testing.T) {
-	plain, err := Discover(memReader{
-		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
-		"vite.config.ts": "export default defineConfig({})",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var found bool
-	for _, a := range Advise(plain, "x.test", nil) {
-		if a.Code != "vite-default-port" {
-			continue
-		}
-		found = true
-		if !strings.Contains(a.Snippet, "port: 5173") || strings.Contains(a.Snippet, "VITE_PORT") || strings.Contains(a.Message, "VITE_PORT") {
-			t.Fatalf("plain Vite advisory should name server.port only: %+v", a)
-		}
-	}
-	if !found {
-		t.Fatal("expected vite-default-port advisory")
-	}
-
-	sail, _ := Discover(DirReader{Root: "testdata/sail-defaults"})
-	for _, a := range Advise(sail, "defaults.test", nil) {
-		if a.Code == "vite-default-port" {
-			if a.Snippet != "VITE_PORT=5174" || strings.Contains(a.Message, "server.port") {
-				t.Fatalf("Sail advisory should keep VITE_PORT only: %+v", a)
-			}
-			return
-		}
-	}
-	t.Fatal("expected Sail vite-default-port advisory")
-}
-
-func TestScanViteReadsOnlyServerBlock(t *testing.T) {
-	cases := []struct {
-		name, src string
-		port      int
-		allowAll  bool
-	}{
-		{"preview only", `export default defineConfig({ preview: { port: 4173, allowedHosts: true } })`, 0, false},
-		{"preview before server", `export default { preview: { port: 4173 }, server: { port: 3000 } }`, 3000, false},
-		{"hmr port only", `export default { server: { hmr: { port: 24678 } } }`, 0, false},
-		{"nested blocks before port", `export default { server: { hmr: { port: 24678 }, proxy: { '/api': { target: 'http://x' } }, port: 3001, allowedHosts: true } }`, 3001, true},
-		{"strictPort is not port", `export default { server: { strictPort: true } }`, 0, false},
-	}
-	for _, c := range cases {
-		info := ScanVite([]byte(c.src))
-		if info.Port != c.port || info.AllowAllHosts != c.allowAll {
-			t.Errorf("%s: got port=%d allowAll=%v, want port=%d allowAll=%v", c.name, info.Port, info.AllowAllHosts, c.port, c.allowAll)
-		}
-	}
-	hosts := ScanVite([]byte(`export default { preview: { allowedHosts: ['p.test'] }, server: { allowedHosts: ['s.test'] } }`))
-	if len(hosts.AllowedHosts) != 1 || hosts.AllowedHosts[0] != "s.test" {
-		t.Errorf("expected only server.allowedHosts, got %+v", hosts.AllowedHosts)
-	}
-}
-
-func TestDiscoverVitePortMatchDoesNotPromoteLoopback(t *testing.T) {
-	res, err := Discover(memReader{
-		".env":           "VITE_PORT=5180\n",
-		"vite.config.js": "export default { server: { port: 5180 } }",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleLoopback {
-		t.Fatalf("VITE_PORT loopback must not become web: %+v", res.Routes)
-	}
-}
-
-func TestDiscoverLoneKnownServicePortIsNotWeb(t *testing.T) {
-	res, err := Discover(memReader{"compose.yaml": "services:\n  mysql:\n    ports:\n      - '${FORWARD_DB_PORT:-3306}:3306'\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleIgnore {
-		t.Fatalf("lone database port must stay ignored: %+v", res.Routes)
-	}
-}
-
-func TestAdviseViteDefaultPortIgnoresUnwiredEnvOutsideSail(t *testing.T) {
-	files := memReader{
-		".env":           "VITE_PORT=5180\n",
-		"package.json":   `{"devDependencies":{"vite":"^5"}}`,
-		"vite.config.ts": "export default defineConfig({})",
-	}
-	res, err := Discover(files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(codes(Advise(res, "x.test", nil)), "vite-default-port") {
-		t.Fatalf("VITE_PORT that the Vite config never reads should not hide the advisory, got %q", codes(Advise(res, "x.test", nil)))
-	}
-
-	files["vite.config.ts"] = "export default defineConfig({ server: { port: Number(process.env.VITE_PORT) } })"
-	wired, err := Discover(files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(codes(Advise(wired, "x.test", nil)), "vite-default-port") {
-		t.Fatal("VITE_PORT wired into the Vite config sets the port, so no advisory")
-	}
-
-	sail, err := Discover(memReader{
-		".env":               "VITE_PORT=5180\n",
-		"docker-compose.yml": "services:\n  laravel.test:\n    image: sail-8.3/app\n    ports:\n      - '${APP_PORT:-80}:80'\n      - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'\n",
-		"package.json":       `{"devDependencies":{"vite":"^5"}}`,
-		"vite.config.js":     "export default defineConfig({})",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(codes(Advise(sail, "x.test", nil)), "vite-default-port") {
-		t.Fatal("Sail honours VITE_PORT from .env, so no advisory")
-	}
 }

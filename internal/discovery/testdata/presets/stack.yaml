@@ -1,0 +1,27 @@
+schema: 1
+name: stack
+title: Test stack
+after: [bundler]
+detect: compose.contains("LARAVEL_SAIL")
+
+ports:
+  - var: APP_PORT
+    label: App
+    web: preferred
+  - var: VITE_PORT
+    label: Assets
+    role: loopback
+  - var: FORWARD_DB_PORT
+    label: Database
+
+suppress: [config-port, allowed-hosts]
+
+advisories:
+  - id: app-url
+    when: '!("APP_URL" in env) || env["APP_URL"].trim() != "https://" + alias'
+    message: APP_URL should be https://{{ alias }}.
+    snippet: APP_URL=https://{{ alias }}
+  - id: default-port
+    when: active("bundler") && presets["bundler"].port == 0 && !("VITE_PORT" in env)
+    message: Set VITE_PORT in .env.
+    snippet: VITE_PORT={{ free_port(5173) }}

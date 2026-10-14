@@ -99,14 +99,6 @@ func TestReadComposeFindsAnyStandardName(t *testing.T) {
 	}
 }
 
-func TestIsSail(t *testing.T) {
-	sail, _ := os.ReadFile("testdata/sail-custom/docker-compose.yml")
-	plain, _ := os.ReadFile("testdata/compose-literal/compose.yaml")
-	if !IsSail(sail) || IsSail(plain) {
-		t.Fatal("IsSail misclassified")
-	}
-}
-
 func TestParseComposeLongSyntaxKeepsVariableName(t *testing.T) {
 	data := []byte("services:\n  web:\n    ports:\n      - target: 80\n        published: \"${APP_PORT}\"\n")
 	ports, err := ParseCompose(data, map[string]string{"APP_PORT": " 8080 "})

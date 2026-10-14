@@ -1,0 +1,30 @@
+schema: 1
+name: bundler
+title: Test bundler
+detect: file("vite.config.js", "vite.config.ts") || pkg("vite")
+
+facts:
+  port:
+    scan: [vite.config.js, vite.config.ts]
+    regex: 'port:\s*(\d+)'
+    as: int
+  hosts:
+    scan: [vite.config.js, vite.config.ts]
+    regex: 'allowedHosts:\s*\[([^\]]*)\]'
+    as: quoted_list
+
+routes:
+  - id: config-port
+    when: facts.port > 0
+    port: facts.port
+    label: Bundler (config)
+    web: fallback
+
+advisories:
+  - id: default-port
+    when: facts.port == 0
+    message: Set a port in the bundler config.
+    snippet: "port: {{ free_port(5173) }}"
+  - id: allowed-hosts
+    when: '!host_in(alias, facts.hosts)'
+    message: Add {{ alias }} to allowedHosts.

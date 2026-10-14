@@ -40,11 +40,11 @@ func newAddCmd(b addBackend) *cobra.Command {
 	var flags addFlags
 	cmd := &cobra.Command{
 		Use:   "add [path]",
-		Short: "Add a project, discovering its ports from .env, Compose and Vite config",
+		Short: "Add a project, discovering its ports from its files",
 		Long: "Add the project in path (default: the current directory) to the config,\n" +
-			"with routes proposed from its .env, Compose and Vite files. With --server the\n" +
-			"path is on that server and its files are read over SFTP. Nothing is started\n" +
-			"and nothing outside the config file is changed.",
+			"with routes proposed from its .env and Compose files and from the presets\n" +
+			"that are enabled. With --server the path is on that server and its files are\n" +
+			"read over SFTP. Nothing is started and no project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
@@ -75,7 +75,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	res, err := discovery.Discover(reader)
+	res, err := discovery.Discover(reader, discovery.Options{})
 	if err := errors.Join(err, done()); err != nil {
 		return err
 	}
@@ -96,8 +96,12 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if _, ok := project.WebRoute(); !ok {
 		return fmt.Errorf("could not tell which port serves %s; nothing was saved. Run it again with --web <port>", project.Name)
 	}
-	for _, a := range discovery.Advise(res, project.Alias, cfg.Projects) {
-		fmt.Fprintf(out, "\nAdvisory (%s): %s\n  %s\n", a.Code, a.Message, strings.ReplaceAll(a.Snippet, "\n", "\n  "))
+	advisories, _ := discovery.Advise(res, project.Alias, cfg.Projects)
+	for _, a := range advisories {
+		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, a.Message)
+		if a.Snippet != "" {
+			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(a.Snippet, "\n", "\n  "))
+		}
 	}
 
 	if err := loopbackClash(cfg, project); err != nil {
@@ -213,7 +217,7 @@ func forceWeb(routes []config.Route, port int) []config.Route {
 
 func printRoutes(out io.Writer, p config.Project) error {
 	if len(p.Routes) == 0 {
-		_, err := fmt.Fprintf(out, "No ports found in the .env, Compose or Vite files of %s (%s:%s).\n", p.Name, p.Server, p.Path)
+		_, err := fmt.Fprintf(out, "No ports found in the files of %s (%s:%s).\n", p.Name, p.Server, p.Path)
 		return err
 	}
 	fmt.Fprintf(out, "Routes found for %s (%s:%s):\n", p.Name, p.Server, p.Path)
