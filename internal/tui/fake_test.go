@@ -199,6 +199,12 @@ func press(m *Model, key string) tea.Cmd {
 		k = tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case "ctrl+c":
 		k = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case "ctrl+u":
+		k = tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}
+	case "tab":
+		k = tea.KeyPressMsg{Code: tea.KeyTab}
+	case "space":
+		k = tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	default:
 		r := []rune(key)[0]
 		k = tea.KeyPressMsg{Code: r, Text: key}

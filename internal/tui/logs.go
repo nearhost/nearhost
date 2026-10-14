@@ -54,6 +54,14 @@ func (l *logs) note(line string) {
 	l.all.add(clean(line))
 }
 
+// noteOn adds a line of the interface's own to the combined log and to the
+// log of the row with key.
+func (l *logs) noteOn(key, line string) {
+	line = clean(line)
+	l.all.add(line)
+	l.addTo(key, line)
+}
+
 // project adds a line of the interface's own about a project to its log and
 // the combined log.
 func (l *logs) project(name string, at time.Time, msg string) {
