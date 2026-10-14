@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -96,11 +97,18 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return err
 	}
 
+	// Every question reads its answer from the same input, so that lines
+	// typed ahead reach the questions in the order they are asked.
+	var answers *bufio.Reader
+	if b.interactive != nil && b.interactive() {
+		answers = bufio.NewReader(cmd.InOrStdin())
+	}
+
 	reader, done, err := openProject(cmd.Context(), b, srv, project.Path)
 	if err != nil {
 		return err
 	}
-	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader)
+	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader, answers)
 	if err != nil {
 		return errors.Join(err, done())
 	}
@@ -109,6 +117,14 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// printed and saved.
 	for i := range project.Routes {
 		project.Routes[i].Label = printable(project.Routes[i].Label)
+	}
+	out := cmd.OutOrStdout()
+	// Several routes were found and none says it is the web route: ask,
+	// when someone can answer. Otherwise the error below says how to choose.
+	if _, found := project.WebRoute(); !found && flags.web == 0 && len(project.Routes) > 1 && answers != nil {
+		if i := chooseWeb(answers, out, project.Routes); i >= 0 {
+			flags.web = project.Routes[i].Port
+		}
 	}
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
@@ -126,7 +142,6 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	printWarnings(cmd.ErrOrStderr(), warnings)
 
-	out := cmd.OutOrStdout()
 	if err := printRoutes(out, project); err != nil {
 		return err
 	}
@@ -165,7 +180,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // again with those the user takes. A preset is enabled, and the config
 // saved, the moment the user says yes, so the answer holds even if the
 // project is not added.
-func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *config.Config, cfgPath string, reader discovery.FileReader) (*discovery.Result, []string, error) {
+//
+// answers is nil when no one can be asked.
+func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *config.Config, cfgPath string, reader discovery.FileReader, answers *bufio.Reader) (*discovery.Result, []string, error) {
 	if flags.noPresets {
 		res, err := discovery.Discover(reader, discovery.Options{})
 		return res, nil, err
@@ -193,8 +210,7 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 			notes = append(notes, registryProblem(s.reg, s.err)+".")
 		}
 	}
-	interactive := b.interactive != nil && b.interactive()
-	answers := bufio.NewReader(cmd.InOrStdin())
+	interactive := answers != nil
 	passed := map[string]bool{} // presets declined, or accepted and not installable
 	for {
 		// Every registry's presets are offered, so two registries that offer
@@ -278,6 +294,30 @@ func saidYes(answers *bufio.Reader, out io.Writer) bool {
 		return true
 	}
 	return false
+}
+
+// chooseWeb lists the routes and asks which one is the web app. It returns
+// the index of the route chosen, or -1 for none. An answer out of range is
+// asked again; the end of input means none.
+func chooseWeb(answers *bufio.Reader, out io.Writer, routes []config.Route) int {
+	fmt.Fprintln(out, "Which one is the web app?")
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for i, r := range routes {
+		fmt.Fprintf(tw, "  %d) %s\t%d\n", i+1, r.Label, r.Port)
+	}
+	tw.Flush()
+	fmt.Fprintln(out, "  0) none")
+	for {
+		fmt.Fprintf(out, "Choose [1-%d, 0]: ", len(routes))
+		line, err := answers.ReadString('\n')
+		if err != nil && line == "" {
+			fmt.Fprintln(out)
+			return -1
+		}
+		if n, convErr := strconv.Atoi(strings.TrimSpace(line)); convErr == nil && n >= 0 && n <= len(routes) {
+			return n - 1
+		}
+	}
 }
 
 // newProject works out the project's server, path, name and alias, and
