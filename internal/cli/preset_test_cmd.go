@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,10 +66,9 @@ func runPresetTest(out io.Writer, dir, from string) error {
 	}
 	var fixtures []string
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, e.Name(), "expected.yaml")); err == nil {
+		// Every directory is a fixture, so that one whose expected.yaml is
+		// missing or misnamed fails instead of passing unnoticed.
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			fixtures = append(fixtures, e.Name())
 		}
 	}
@@ -104,7 +104,9 @@ func runPresetTest(out io.Writer, dir, from string) error {
 // Presets are read from the directory from.
 func runFixture(dir, name, from string) []string {
 	data, err := os.ReadFile(filepath.Join(dir, "expected.yaml"))
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{"no expected.yaml"}
+	} else if err != nil {
 		return []string{err.Error()}
 	}
 	var want expectation

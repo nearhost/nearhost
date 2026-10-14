@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +34,10 @@ const (
 // ErrUnavailable reports that the index could not be fetched and no copy of
 // it is cached.
 var ErrUnavailable = errors.New("the preset registry could not be reached and no copy of its index is saved")
+
+// ErrNewerIndex reports an index written in a format newer than this build
+// understands.
+var ErrNewerIndex = errors.New("the preset registry's index needs a newer nearhost; upgrade nearhost to use it")
 
 // Index lists the presets the registry holds.
 type Index struct {
@@ -82,7 +88,7 @@ func ParseIndex(data []byte) (*Index, error) {
 	}
 	switch {
 	case idx.Schema > IndexSchema:
-		return nil, fmt.Errorf("registry index: schema %d needs a newer nearhost", idx.Schema)
+		return nil, fmt.Errorf("registry index: schema %d: %w", idx.Schema, ErrNewerIndex)
 	case idx.Schema < 1:
 		return nil, errors.New("registry index: schema is missing")
 	case !refRe.MatchString(idx.Ref):
@@ -90,12 +96,18 @@ func ParseIndex(data []byte) (*Index, error) {
 	}
 	seen := map[string]bool{}
 	for _, e := range idx.Presets {
-		if !nameRe.MatchString(e.Name) || !sumRe.MatchString(e.SHA256) || e.Detect == "" || seen[e.Name] {
+		if !nameRe.MatchString(e.Name) || !sumRe.MatchString(e.SHA256) || e.Detect == "" || seen[e.Name] || hasControl(e.Title) || hasControl(e.Description) {
 			return nil, fmt.Errorf("registry index: the entry for %q is not valid", e.Name)
 		}
 		seen[e.Name] = true
 	}
 	return &idx, nil
+}
+
+// hasControl reports whether s holds a control character, which a title or
+// description must not carry to the terminal.
+func hasControl(s string) bool {
+	return strings.IndexFunc(s, unicode.IsControl) >= 0
 }
 
 // Client talks to one registry and caches its index in Dir.
@@ -127,7 +139,11 @@ func (c *Client) Index(ctx context.Context) (*Index, error) {
 	if cacheErr == nil {
 		return cached, nil
 	}
-	return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	if errors.Is(err, ErrNewerIndex) {
+		// The registry was reached; this build is too old to read it.
+		return nil, err
+	}
+	return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
 // Refresh fetches the index now and caches it.

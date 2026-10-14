@@ -191,6 +191,20 @@ func TestAddSaysWhenSuggestionsAreUnavailable(t *testing.T) {
 	}
 }
 
+func TestAddSaysWhenTheRegistryNeedsANewerNearhost(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	f, b := suggesting(t, true, "stack")
+	f.files["/main/index.yaml"] = "schema: 2\nref: " + refOne + "\n"
+	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	if err != nil {
+		t.Fatalf("a newer registry must not stop add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "Warning: preset suggestions are unavailable because the registry needs a newer nearhost than this one (upgrade nearhost to use it).\n", "Added myapp on local")
+	if strings.Contains(out, "could not be reached") {
+		t.Errorf("the registry was reached:\n%s", out)
+	}
+}
+
 // A preset that cannot be installed is reported, and the project is added
 // with what discovery knows without it.
 func TestAddCarriesOnWhenAnAcceptedPresetCannotBeInstalled(t *testing.T) {
@@ -221,15 +235,34 @@ func TestAddMakesSuggestedTitlesSafeToPrint(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 			f, b := suggesting(t, terminal, "stack")
-			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\n  forged line\e[31mred"`, 1)
+			// The index refuses control characters, so what is left to strip
+			// is other unprintable text, such as a right-to-left override.
+			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\u202e der\u200bdro"`, 1)
 			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}
-			if strings.Contains(out, "\x1b") {
-				t.Errorf("output carries an escape character: %q", out)
+			if strings.ContainsAny(out, "\u202e\u200b") {
+				t.Errorf("output carries unprintable text: %q", out)
 			}
-			wantContains(t, out, "This looks like a Evil   forged line[31mred project. ")
+			wantContains(t, out, "This looks like a Evil derdro project. ")
+		})
+	}
+}
+
+// A title with nothing printable in it leaves the preset's name to say
+// what the project looks like.
+func TestAddNamesThePresetWhenItsTitleIsEmpty(t *testing.T) {
+	for name, terminal := range map[string]bool{"with a terminal": true, "without a terminal": false} {
+		t.Run(name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+			f, b := suggesting(t, terminal, "stack")
+			f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: ""`, 1)
+			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+			if err != nil {
+				t.Fatalf("add: %v\n%s", err, out)
+			}
+			wantContains(t, out, "This looks like a stack project. ")
 		})
 	}
 }

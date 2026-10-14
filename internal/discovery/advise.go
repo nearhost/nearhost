@@ -20,6 +20,12 @@ func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []s
 	advs := clashAdvisories(res, others, taken)
 	free := func(from int) int { return freeFrom(taken, from) }
 	var warnings []string
+	// Advisories may read files discovery did not. A file that could not be
+	// read looks absent to them, so say so rather than stay quiet.
+	if res.files != nil {
+		defer func(before error) { res.files.err = before }(res.files.err)
+		res.files.err = nil
+	}
 	for _, p := range res.active {
 		keep := func(id string) bool { return res.owners[id] == p.Name }
 		out, errs := p.EvalAdvice(res.context(p), alias, free, keep)
@@ -29,6 +35,10 @@ func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []s
 		for _, a := range out {
 			advs = append(advs, Advisory{Code: a.ID, Message: a.Message, Snippet: a.Snippet})
 		}
+	}
+	if res.files != nil && res.files.err != nil {
+		// The memo's error reads "read <file>: <cause>".
+		warnings = append(warnings, fmt.Sprintf("advisories could not %v", res.files.err))
 	}
 	return advs, warnings
 }

@@ -281,6 +281,54 @@ func TestAddRemoteReadsTheProjectThroughTheServerSession(t *testing.T) {
 	wantContains(t, out, "Routes found for blog (mini:/srv/www/blog):", "Added blog on mini at https://blog.test")
 }
 
+// sessionReader reads from memory until its session is closed, as an SFTP
+// client does.
+type sessionReader struct {
+	files  map[string]string
+	closed bool
+}
+
+func (s *sessionReader) ReadFile(name string) ([]byte, error) {
+	if s.closed {
+		return nil, errors.New("use of closed network connection")
+	}
+	data, ok := s.files[name]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return []byte(data), nil
+}
+
+// An advisory may read a file that discovery never did. The session must
+// still be open when it does.
+func TestAddRemoteAdvisoryReadsThroughAnOpenSession(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{
+		Servers: []config.Server{{Name: "mini", SSHHost: "mini.lan"}},
+		Presets: []config.PresetRef{{Name: "marker"}},
+	})
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "schema: 1\nname: marker\ntitle: Marker\ndetect: 'true'\nadvisories:\n  - {id: marker, when: 'file(\"marker\")', message: The marker is there.}\n"
+	if err := os.WriteFile(filepath.Join(dir, "marker.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &sessionReader{files: map[string]string{"marker": "1"}}
+	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
+		return r, func() error { r.closed = true; return nil }, nil
+	}}
+	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "Advisory (marker): The marker is there.\n")
+	if !r.closed {
+		t.Error("the session was left open")
+	}
+}
+
 func TestAddRemoteFailureSavesNothing(t *testing.T) {
 	cfgPath, before := existing(t)
 	b := addBackend{openRemote: func(context.Context, config.Server, string) (discovery.FileReader, func() error, error) {
@@ -358,4 +406,32 @@ func TestAddTrimsTheAlias(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `already used by project "shop"`) {
 		t.Errorf("a padded duplicate alias: %v\n%s", err, out)
 	}
+}
+
+// Advice can carry values from the project, such as its .env, and those
+// must not reach the terminal as control characters.
+func TestAddMakesRenderedAdviceSafeToPrint(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{Presets: []config.PresetRef{{Name: "echo"}}})
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "schema: 1\nname: echo\ntitle: Echo\ndetect: 'true'\nadvisories:\n" +
+		"  - {id: echo, when: 'true', message: \"Name is {{ env.NAME }}.\\nSecond line.\", snippet: \"NAME={{ env.NAME }}\\n\\tindented\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "echo.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("NAME=a\x1b[2Jb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", project, "--name", "echo", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("output carries an escape character: %q", out)
+	}
+	wantContains(t, out, "Advisory (echo): Name is a[2Jb.\nSecond line.\n  NAME=a[2Jb\n  \tindented\n")
 }
