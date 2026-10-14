@@ -4,3 +4,6 @@
 
 # Test and build artefacts
 coverage.out
+
+# Scratch config for running from source
+/.dev/
