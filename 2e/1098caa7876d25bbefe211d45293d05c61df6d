@@ -1,0 +1,21 @@
+internal/discovery/advise_test.go
+  s_7abd3634f4eb80::t_1b831326db1d63 1-132
+internal/discovery/advise.go
+  s_7abd3634f4eb80::t_aea5c1b674ad58 20-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e1098caa7876d25bbefe211d45293d05c61df6d",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
