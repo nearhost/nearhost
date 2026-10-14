@@ -2046,14 +2046,22 @@ func TestStatusNeverRunsAheadOfTheEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	announced := State("")
-	// check compares one Status with the events published up to it.
+	// check compares one Status with the events published up to it. The
+	// events are read after Status, so they can include some published
+	// after it: what Status says must be the state announced before it, or
+	// one announced since, never one not announced yet.
 	check := func() State {
 		st := h.eng.Status("myapp")
-		if states, _ := stateEvents(events, "myapp"); len(states) > 0 {
-			announced = states[len(states)-1]
+		states, _ := stateEvents(events, "myapp")
+		published := st.State == announced
+		for _, s := range states {
+			published = published || s == st.State
 		}
-		if st.State != announced {
-			t.Fatalf("Status says %s, the last state event said %s", st.State, announced)
+		if !published {
+			t.Fatalf("Status says %s, but the state events since %s were %v", st.State, announced, states)
+		}
+		if len(states) > 0 {
+			announced = states[len(states)-1]
 		}
 		return st.State
 	}
