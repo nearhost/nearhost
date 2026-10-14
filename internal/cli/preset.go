@@ -23,7 +23,7 @@ func newPresetCmd() *cobra.Command {
 			"and gives advice about them. No preset is used until it is enabled. Preset\n" +
 			"files live in the presets directory beside the config file.",
 	}
-	cmd.AddCommand(newPresetListCmd(), newPresetEnableCmd(), newPresetDisableCmd(), newPresetValidateCmd())
+	cmd.AddCommand(newPresetListCmd(), newPresetEnableCmd(), newPresetDisableCmd(), newPresetValidateCmd(), newPresetTestCmd())
 	return cmd
 }
 
