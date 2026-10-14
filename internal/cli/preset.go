@@ -26,7 +26,7 @@ func newPresetCmd(b presetBackend) *cobra.Command {
 			"files live in the presets directory beside the config file. A preset that\n" +
 			"is not there is installed from the registry when it is enabled.",
 	}
-	cmd.AddCommand(newPresetListCmd(b), newPresetEnableCmd(b), newPresetDisableCmd(), newPresetUpdateCmd(b), newPresetValidateCmd(), newPresetTestCmd())
+	cmd.AddCommand(newPresetListCmd(b), newPresetEnableCmd(b), newPresetDisableCmd(), newPresetUpdateCmd(b), newPresetValidateCmd(), newPresetTestCmd(), newPresetIndexCmd())
 	return cmd
 }
 
