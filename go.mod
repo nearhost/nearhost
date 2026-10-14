@@ -3,6 +3,7 @@ module github.com/nearhost/nearhost
 go 1.26.0
 
 require (
+	cel.dev/cel-go v0.32.0
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	cel.dev/cel-go v0.32.0 // indirect
 	cel.dev/expr v0.25.3 // indirect
 	cloud.google.com/go/auth v0.23.3 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
