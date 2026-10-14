@@ -62,8 +62,8 @@ func TestLocalFiles(t *testing.T) {
 	if _, err := f.resolve("~/code/notes.txt"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 		t.Errorf("resolve of a file = %v", err)
 	}
-	if _, err := f.resolve("~/code/missing"); err == nil {
-		t.Error("resolve of a missing directory succeeded")
+	if _, err := f.resolve("~/code/missing"); err == nil || err.Error() != filepath.Join(home, "code", "missing")+" on this machine: no such directory" {
+		t.Errorf("resolve of a missing directory = %v", err)
 	}
 	got, err := f.listDirs(filepath.Join(home, "code"))
 	if want := []string{".hidden", "blog", "linked", "shop"}; err != nil || !reflect.DeepEqual(got, want) {

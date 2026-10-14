@@ -241,7 +241,7 @@ func TestProjectFormAddsANewServerOnTheWay(t *testing.T) {
 	press(m, "n")
 	pf := m.form.(*projectForm)
 	pf.cursor = len(pf.servers) // New server…
-	press(m, "enter")
+	settle(m, press(m, "enter")) // the hosts are read in the background
 	wantScreen(t, m, "Add server", "  apollo")
 	press(m, "down")
 	press(m, "enter")

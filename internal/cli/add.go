@@ -485,6 +485,17 @@ func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
 	return tw.Flush()
 }
 
+// loopbackClashError is a loopback port another enabled project forwards.
+// Its text is the one `nearhost add` prints.
+type loopbackClashError struct {
+	port  int
+	other string
+}
+
+func (e *loopbackClashError) Error() string {
+	return fmt.Sprintf("loopback port %d is already forwarded for project %q, and only one project can bind it; nothing was saved. Give this project its own port (see the advisory above) or add it with --disabled", e.port, e.other)
+}
+
 // loopbackClash refuses an enabled project that forwards a loopback port an
 // enabled project already forwards: only one of them could bind it.
 func loopbackClash(cfg *config.Config, p config.Project) error {
@@ -501,7 +512,7 @@ func loopbackClash(cfg *config.Config, p config.Project) error {
 			}
 			for _, o := range other.Routes {
 				if o.Role == config.RoleLoopback && o.Port == r.Port {
-					return fmt.Errorf("loopback port %d is already forwarded for project %q, and only one project can bind it; nothing was saved. Give this project its own port (see the advisory above) or add it with --disabled", r.Port, other.Name)
+					return &loopbackClashError{port: r.Port, other: other.Name}
 				}
 			}
 		}

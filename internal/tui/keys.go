@@ -133,7 +133,9 @@ func (m *Model) action(s string) tea.Cmd {
 		}
 		m.form = newProjectForm(m.b, m.cfg, m.dir, server, m.work)
 	case "s":
-		m.form = newServerForm(m.b, m.cfg, m.work)
+		f, load := newServerForm(m.b, m.cfg, m.work)
+		m.form = f
+		return load
 	case "enter":
 		return m.enter()
 	case "o":

@@ -26,8 +26,12 @@ func (u *uiEngine) current() (*config.Config, error) {
 	return cfg, nil
 }
 
-// checkThen is what to do after fixing access, in the interface's words.
-const checkThen = "press r to try again"
+// What to do after fixing access, in the words of the forms: the add-server
+// form checks again, the add-project form connects again.
+const (
+	checkAgain   = "press r to check again"
+	connectAgain = "press r to connect again"
+)
 
 func (u *uiEngine) SSHHosts() []string {
 	if u.b.sshConfig == nil {
@@ -41,7 +45,7 @@ func (u *uiEngine) SSHHosts() []string {
 }
 
 func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
-	files, err := u.b.up.ssh.openServer(ctx, srv, checkThen)
+	files, err := u.b.up.ssh.openServer(ctx, srv, checkAgain)
 	if err != nil {
 		return err
 	}
@@ -57,7 +61,7 @@ func (u *uiEngine) AddServer(srv config.Server) error {
 }
 
 func (u *uiEngine) OpenServer(ctx context.Context, srv config.Server) (tui.ServerFiles, error) {
-	files, err := openFiles(ctx, u.b.up.ssh, srv, checkThen)
+	files, err := openFiles(ctx, u.b.up.ssh, srv, connectAgain)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +118,12 @@ func (u *uiEngine) SaveProject(p config.Project) error {
 	if err := errors.Join(formNameProblem(cfg, p.Name), aliasProblem(cfg, p.Alias)); err != nil {
 		return err
 	}
-	return saveProject(cfg, u.path, p)
+	err = saveProject(cfg, u.path, p)
+	var clash *loopbackClashError
+	if errors.As(err, &clash) {
+		return fmt.Errorf("loopback port %d is already forwarded for project %q, and only one project can bind it; set this route to ignore, or give the project another port", clash.port, clash.other)
+	}
+	return err
 }
 
 // formNameProblem is nameProblem in the words of the add form.

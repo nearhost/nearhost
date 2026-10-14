@@ -53,6 +53,9 @@ func (localFiles) resolve(p string) (string, error) {
 		return "", fmt.Errorf("resolve %s: %w", p, err)
 	}
 	info, err := os.Stat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%s on this machine: no such directory", abs)
+	}
 	if err != nil {
 		return "", err
 	}

@@ -315,8 +315,9 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.cursor = min(f.cursor+1, len(f.servers))
 		case "enter":
 			if f.cursor == len(f.servers) {
-				f.sub = newServerForm(f.b, f.cfg, f.w)
-				return nil
+				var load tea.Cmd
+				f.sub, load = newServerForm(f.b, f.cfg, f.w)
+				return load
 			}
 			return f.pick(f.servers[f.cursor])
 		}
