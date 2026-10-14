@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -51,6 +52,14 @@ func (l *logs) addTo(key, line string) {
 // note adds a line of the interface's own to the combined log.
 func (l *logs) note(line string) {
 	l.all.add(clean(line))
+}
+
+// project adds a line of the interface's own about a project to its log and
+// the combined log.
+func (l *logs) project(name string, at time.Time, msg string) {
+	line := at.Format("15:04:05") + " [" + clean(name) + "] " + clean(msg)
+	l.all.add(line)
+	l.addTo(rowKey(rowProject, name), line)
 }
 
 // event files an engine event. A project's log gets its own lines and those

@@ -19,17 +19,19 @@ import (
 
 // fakeBackend records what the interface asks of it.
 type fakeBackend struct {
-	mu       sync.Mutex
-	cfg      *config.Config
-	path     string
-	bus      *engine.Bus
-	states   map[string]engine.ProjectStatus
-	servers  map[string]transport.Status
-	srvErrs  map[string]string
-	startErr error
-	openErr  error
-	applyErr error
-	trusted  bool
+	mu        sync.Mutex
+	cfg       *config.Config
+	path      string
+	bus       *engine.Bus
+	states    map[string]engine.ProjectStatus
+	servers   map[string]transport.Status
+	srvErrs   map[string]string
+	startErr  error
+	startErr2 error // what StartProject returns
+	reads     int   // calls to CATrusted and HostsState
+	openErr   error
+	applyErr  error
+	trusted   bool
 
 	started  []string
 	stopped  []string
@@ -96,7 +98,7 @@ func (f *fakeBackend) StartProject(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started = append(f.started, name)
-	return nil
+	return f.startErr2
 }
 func (f *fakeBackend) StopProject(_ context.Context, name string) error {
 	f.mu.Lock()
@@ -104,9 +106,24 @@ func (f *fakeBackend) StopProject(_ context.Context, name string) error {
 	f.stopped = append(f.stopped, name)
 	return nil
 }
-func (f *fakeBackend) Ports() (int, int)  { return 443, 80 }
-func (f *fakeBackend) CATrusted() bool    { return f.trusted }
-func (f *fakeBackend) HostsState() string { return "2 aliases" }
+func (f *fakeBackend) Ports() (int, int) { return 443, 80 }
+func (f *fakeBackend) CATrusted() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	return f.trusted
+}
+func (f *fakeBackend) HostsState() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	return "2 aliases"
+}
+func (f *fakeBackend) machineReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
+}
 func (f *fakeBackend) Open(url string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
