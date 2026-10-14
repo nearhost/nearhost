@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/config"
 )
 
 const askWeb = "Which one is the web app?\n" +
@@ -15,9 +17,13 @@ const askWeb = "Which one is the web app?\n" +
 
 // webAsking is an add backend with a terminal, a config path and a project
 // whose .env holds three port variables and nothing that says which is web.
+// The config says not to ask about registries, so the web question is the
+// only one.
 func webAsking(t *testing.T, terminal bool) (string, string, addBackend) {
 	t.Helper()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	off := false
+	saveConfig(t, cfgPath, &config.Config{RegistryPrompt: &off})
 	b := noRemote(t)
 	b.interactive = func() bool { return terminal }
 	return cfgPath, envProject(t, "APP_PORT=8080\nFORWARD_DB_PORT=3306\nVITE_PORT=5173\n"), b

@@ -87,8 +87,17 @@ type Config struct {
 	Projects []Project `yaml:"projects"`
 	// Registries are the preset registries the user trusts. With none, no
 	// request for presets is ever made.
-	Registries []Registry  `yaml:"registries,omitempty"`
-	Presets    []PresetRef `yaml:"presets,omitempty"`
+	Registries []Registry `yaml:"registries,omitempty"`
+	// RegistryPrompt false stops `add` asking whether to trust the official
+	// registry, and showing the hint about it, while no registry is trusted.
+	// Absent means ask; true is the same as absent.
+	RegistryPrompt *bool       `yaml:"registry_prompt,omitempty"`
+	Presets        []PresetRef `yaml:"presets,omitempty"`
+}
+
+// RegistryPromptOff reports whether the config holds registry_prompt: false.
+func (c *Config) RegistryPromptOff() bool {
+	return c.RegistryPrompt != nil && !*c.RegistryPrompt
 }
 
 // Trusted finds a trusted registry by alias.
