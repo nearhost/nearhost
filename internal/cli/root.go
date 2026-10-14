@@ -28,6 +28,7 @@ func NewRoot() *cobra.Command {
 		newPresetCmd(systemPresets()),
 		newDoctorCmd(systemDoctor()),
 	)
+	bindUI(root, systemUI())
 	return root
 }
 
