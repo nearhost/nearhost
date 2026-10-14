@@ -169,3 +169,70 @@ func (f *fakeFiles) Advise(_ context.Context, _ string, routes []config.Route, a
 	f.advised = append(f.advised, alias)
 	return []Advisory{{Code: "app-url", Message: "APP_URL should be https://" + alias + "."}}, nil, nil
 }
+
+// editFake is the part of the fake backend the editing tests use.
+type editFake struct {
+	editErr      error
+	edits        int
+	reconnected  []string
+	reconnectErr error
+	advice       map[string][]Advisory
+	adviceErr    error
+	adviceAsked  []string
+	trustErr     error
+	trusts       int
+}
+
+func (f *fakeBackend) EditConfig(fn func(cfg *config.Config) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.edit.editErr != nil {
+		return f.edit.editErr
+	}
+	cfg := cloneForTest(f.cfg)
+	if err := fn(cfg); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	f.cfg = cfg
+	f.edit.edits++
+	return nil
+}
+
+func (f *fakeBackend) ReconnectServer(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edit.reconnected = append(f.edit.reconnected, name)
+	return f.edit.reconnectErr
+}
+
+func (f *fakeBackend) Advice(_ context.Context, project string) ([]Advisory, []string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edit.adviceAsked = append(f.edit.adviceAsked, project)
+	return f.edit.advice[project], nil, f.edit.adviceErr
+}
+
+func (f *fakeBackend) Trust(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edit.trusts++
+	if f.edit.trustErr == nil {
+		f.trusted = true
+	}
+	return f.edit.trustErr
+}
+
+// cloneForTest copies a config deeply enough for an edit to leave the
+// original as it was.
+func cloneForTest(cfg *config.Config) *config.Config {
+	out := *cfg
+	out.Servers = append([]config.Server(nil), cfg.Servers...)
+	out.Projects = append([]config.Project(nil), cfg.Projects...)
+	for i := range out.Projects {
+		out.Projects[i].Routes = append([]config.Route(nil), out.Projects[i].Routes...)
+	}
+	return &out
+}

@@ -31,6 +31,7 @@ type fakeBackend struct {
 	openErr   error
 	applyErr  error
 	forms     formFake
+	edit      editFake
 	trusted   bool
 	// applyBlocks makes Apply wait for its context to end.
 	applyBlocks bool

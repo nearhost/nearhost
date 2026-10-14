@@ -125,7 +125,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way.
 	defer eng.Shutdown(context.Background())
-	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot}
+	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, suspend: suspender.Run}
 	return b.run(tui.New(back, dir), &suspender)
 }
 
@@ -159,6 +159,8 @@ type uiEngine struct {
 	path    string
 	flags   serveFlags
 	storage string
+	// suspend runs a function with the terminal, the interface suspended.
+	suspend func(ctx context.Context, fn func(io.Reader, io.Writer) error) error
 }
 
 func (u *uiEngine) ConfigPath() string { return u.path }
