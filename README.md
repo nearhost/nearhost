@@ -95,7 +95,7 @@ Then start Nearhost and open `https://myapp.test`:
 nearhost
 ```
 
-`nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add the project in the current directory without leaving it, `enter` to start or stop the selected project and `o` to open it in your browser. With no projects yet it opens empty and asks you to add one.
+`nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found and their roles, and the name, without leaving the view. With no projects yet it opens empty and asks you to add one.
 
 For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
 
