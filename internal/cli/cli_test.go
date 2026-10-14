@@ -171,7 +171,7 @@ func TestNewRootRegistersEveryCommandAndTheConfigFlag(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\n  add ", "\n  doctor ", "\n  hosts ", "\n  ls ", "\n  trust ", "\n  untrust ", "\n  up ", "\n  version ", "--config string"} {
+	for _, want := range []string{"\n  add ", "\n  doctor ", "\n  hosts ", "\n  ls ", "\n  preset ", "\n  trust ", "\n  untrust ", "\n  up ", "\n  version ", "--config string"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("help lacks %q:\n%s", want, out.String())
 		}
