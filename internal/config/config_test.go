@@ -331,10 +331,137 @@ func TestValidateRejectsBadPresets(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `duplicate preset "stack"`) {
 		t.Errorf("expected a duplicate error, got %v", err)
 	}
-	for _, name := range []string{"", "../etc", "My Preset", "a/b"} {
+	for _, name := range []string{"", "../etc", "My Preset", "a/b/c", "/stack", "acme/", "acme/../etc", "Acme/stack"} {
 		c.Presets = []PresetRef{{Name: name}}
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "preset name") {
 			t.Errorf("name %q: expected a name error, got %v", name, err)
 		}
+	}
+}
+
+// trusting is the sample config with two registries.
+func trusting() *Config {
+	c := sample()
+	c.Registries = []Registry{{Alias: "acme", Repo: "acme/presets"}, {Alias: "team-web", Repo: "Team/web.presets"}}
+	return c
+}
+
+func TestValidateAcceptsRegistriesAndTheirPresets(t *testing.T) {
+	c := trusting()
+	c.Presets = []PresetRef{
+		{Name: "acme/stack", Ref: "3f2c1ab", SHA256: "9a41"},
+		{Name: "team-web/stack", Ref: "3f2c1ab", SHA256: "9a41"},
+		{Name: "stack"},
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if r, ok := c.Trusted("team-web"); !ok || r.Repo != "Team/web.presets" {
+		t.Errorf("Trusted(team-web) = %+v %v", r, ok)
+	}
+	if _, ok := c.Trusted("nope"); ok {
+		t.Error("Trusted found a registry that is not listed")
+	}
+}
+
+func TestValidateRejectsBadRegistries(t *testing.T) {
+	cases := map[string]struct {
+		registries []Registry
+		want       string
+	}{
+		"alias in capitals":   {[]Registry{{Alias: "Acme", Repo: "acme/presets"}}, `registry alias "Acme"`},
+		"empty alias":         {[]Registry{{Alias: "", Repo: "acme/presets"}}, `registry alias ""`},
+		"alias with a slash":  {[]Registry{{Alias: "a/b", Repo: "acme/presets"}}, `registry alias "a/b"`},
+		"repo without owner":  {[]Registry{{Alias: "acme", Repo: "presets"}}, `repo "presets"`},
+		"repo with a path":    {[]Registry{{Alias: "acme", Repo: "acme/presets/main"}}, `repo "acme/presets/main"`},
+		"repo of dots":        {[]Registry{{Alias: "acme", Repo: "acme/.."}}, `repo "acme/.."`},
+		"owner with a dot":    {[]Registry{{Alias: "acme", Repo: "ac.me/presets"}}, `repo "ac.me/presets"`},
+		"owner with a hyphen": {[]Registry{{Alias: "acme", Repo: "-acme/presets"}}, `repo "-acme/presets"`},
+		"owner too long":      {[]Registry{{Alias: "acme", Repo: strings.Repeat("a", 40) + "/presets"}}, "is not a GitHub repository"},
+		"name too long":       {[]Registry{{Alias: "acme", Repo: "acme/" + strings.Repeat("a", 101)}}, "is not a GitHub repository"},
+		"alias twice":         {[]Registry{{Alias: "acme", Repo: "acme/one"}, {Alias: "acme", Repo: "acme/two"}}, `duplicate registry alias "acme"`},
+		"repo twice":          {[]Registry{{Alias: "one", Repo: "acme/presets"}, {Alias: "two", Repo: "Acme/Presets"}}, `trusted twice, as "one" and "two"`},
+	}
+	for name, tc := range cases {
+		c := sample()
+		c.Registries = tc.registries
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: expected an error with %q, got %v", name, tc.want, err)
+		}
+	}
+	c := sample()
+	c.Registries = []Registry{{Alias: "acme", Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("b", 100)}}
+	if err := c.Validate(); err != nil {
+		t.Errorf("the longest owner and name GitHub allows should pass: %v", err)
+	}
+}
+
+// A config edited by hand can name a preset whose registry is gone. The
+// error names both and says how to recover.
+func TestValidateRejectsAPresetFromARegistryThatIsNotTrusted(t *testing.T) {
+	c := trusting()
+	c.Presets = []PresetRef{{Name: "gone/stack", Ref: "3f2c1ab", SHA256: "9a41"}}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a preset from an untrusted registry")
+	}
+	for _, want := range []string{`"gone/stack"`, `registry "gone"`, "add the registry back under registries or remove the preset from presets"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+}
+
+func TestValidateRequiresARefAndHashForRegistryPresets(t *testing.T) {
+	for _, p := range []PresetRef{{Name: "acme/stack"}, {Name: "acme/stack", Ref: "3f2c1ab"}, {Name: "acme/stack", SHA256: "9a41"}} {
+		c := trusting()
+		c.Presets = []PresetRef{p}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "needs a ref and a sha256") {
+			t.Errorf("%+v: expected a ref error, got %v", p, err)
+		}
+	}
+}
+
+func TestSplitPreset(t *testing.T) {
+	for name, want := range map[string][2]string{
+		"stack":      {"", "stack"},
+		"acme/stack": {"acme", "stack"},
+	} {
+		if alias, plain := SplitPreset(name); alias != want[0] || plain != want[1] {
+			t.Errorf("SplitPreset(%q) = %q, %q", name, alias, plain)
+		}
+	}
+}
+
+func TestValidAlias(t *testing.T) {
+	for _, s := range []string{"acme", "team-web", "a1"} {
+		if !ValidAlias(s) {
+			t.Errorf("ValidAlias(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"", "Acme", "team--web", "-acme", "acme-", "a_b", "a/b", "a.b"} {
+		if ValidAlias(s) {
+			t.Errorf("ValidAlias(%q) = true", s)
+		}
+	}
+}
+
+func TestRegistriesRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, sample()); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "registries") {
+		t.Fatalf("a config without registries should not mention them:\n%s", data)
+	}
+	if err := Save(path, trusting()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Registries) != 2 || got.Registries[1] != (Registry{Alias: "team-web", Repo: "Team/web.presets"}) {
+		t.Errorf("registries = %+v", got.Registries)
 	}
 }
