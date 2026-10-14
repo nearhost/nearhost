@@ -301,3 +301,23 @@ func TestFieldsDropControlCharacters(t *testing.T) {
 	}
 	wantScreen(t, m, "path      ~/[2Jcode▏")
 }
+
+// Completion keeps what was typed before the last slash as it is, completes
+// . and .. to directories, and never splits a character.
+func TestProjectFormCompletionEdgeCases(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	files.dirs["/home/dev/code/café"] = true
+	files.dirs["/home/dev/code/cafè"] = true
+	toPath(t, m, 1)
+	for _, c := range []struct{ typed, want string }{
+		{"~/code/..", "~/code/../"},
+		{"~/code/../code/sh", "~/code/../code/shop/"},
+		{"~/code/caf", "~/code/caf"},
+	} {
+		press(m, "ctrl+u")
+		typeText(m, c.typed)
+		settle(m, press(m, "tab"))
+		wantScreen(t, m, "path      "+c.want+"▏")
+	}
+	wantScreen(t, m, "cafè  café") // listed in byte order
+}

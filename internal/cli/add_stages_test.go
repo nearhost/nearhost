@@ -176,3 +176,24 @@ func TestAddServer(t *testing.T) {
 		t.Errorf("saved %+v %v", srv, ok)
 	}
 }
+
+// A path on a server is made absolute against the home directory there and
+// tidied, as the add form gives it with completion's trailing slash.
+func TestServerFilesCleanPaths(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "code", "blog"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files, err := openFiles(context.Background(), sftpOnly(t, home), config.Server{Name: "mini", SSHHost: "mini.lan"}, "add the project again")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.close()
+	real, _ := filepath.EvalSymlinks(home)
+	want := filepath.Join(real, "code", "blog")
+	for _, p := range []string{"~/code/blog/", "code/blog", "code//blog/./", want + "/"} {
+		if got, err := files.resolve(p); err != nil || got != want {
+			t.Errorf("resolve(%q) = %q, %v; want %q", p, got, err, want)
+		}
+	}
+}
