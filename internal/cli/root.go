@@ -25,7 +25,7 @@ func NewRoot() *cobra.Command {
 		newUpCmd(systemUp()),
 		newAddCmd(systemAdd()),
 		newLsCmd(),
-		newPresetCmd(),
+		newPresetCmd(systemPresets()),
 		newDoctorCmd(systemDoctor()),
 	)
 	return root

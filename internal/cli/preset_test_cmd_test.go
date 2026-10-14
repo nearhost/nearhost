@@ -11,7 +11,7 @@ func testPresetsDir() string {
 }
 
 func TestPresetTestPassesGoodFixtures(t *testing.T) {
-	out, err := execute(t, newPresetCmd(), "preset", "test", filepath.Join("testdata", "fixtures"), "--presets", testPresetsDir())
+	out, err := execute(t, newPresetCmd(presetBackend{}), "preset", "test", filepath.Join("testdata", "fixtures"), "--presets", testPresetsDir())
 	if err != nil {
 		t.Fatalf("preset test: %v\n%s", err, out)
 	}
@@ -21,7 +21,7 @@ func TestPresetTestPassesGoodFixtures(t *testing.T) {
 }
 
 func TestPresetTestReportsEveryFailure(t *testing.T) {
-	out, err := execute(t, newPresetCmd(), "preset", "test", filepath.Join("testdata", "fixtures-bad"), "--presets", testPresetsDir())
+	out, err := execute(t, newPresetCmd(presetBackend{}), "preset", "test", filepath.Join("testdata", "fixtures-bad"), "--presets", testPresetsDir())
 	if err == nil || !strings.Contains(err.Error(), "2 of 2 fixtures failed") {
 		t.Fatalf("expected both fixtures to fail, got %v\n%s", err, out)
 	}
@@ -39,7 +39,7 @@ func TestPresetTestReportsEveryFailure(t *testing.T) {
 }
 
 func TestPresetTestNeedsFixtures(t *testing.T) {
-	_, err := execute(t, newPresetCmd(), "preset", "test", t.TempDir(), "--presets", testPresetsDir())
+	_, err := execute(t, newPresetCmd(presetBackend{}), "preset", "test", t.TempDir(), "--presets", testPresetsDir())
 	if err == nil || !strings.Contains(err.Error(), "no fixtures") {
 		t.Fatalf("expected an error about no fixtures, got %v", err)
 	}
@@ -49,7 +49,7 @@ func TestPresetTestNeedsFixtures(t *testing.T) {
 func TestPresetTestDefaultsToTheInstalledPresets(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	putPreset(t, cfgPath, "stack")
-	out, err := execute(t, newPresetCmd(), "--config", cfgPath, "preset", "test", filepath.Join("testdata", "fixtures"))
+	out, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "test", filepath.Join("testdata", "fixtures"))
 	if err != nil {
 		t.Fatalf("preset test: %v\n%s", err, out)
 	}

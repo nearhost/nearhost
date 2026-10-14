@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,8 +18,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/preset"
+	"github.com/nearhost/nearhost/internal/registry"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -209,4 +215,67 @@ func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
 	if systemDoctor().goos == "" {
 		t.Error("doctor backend: goos is not set")
 	}
+}
+
+// fakeRegistry is a preset registry served from memory. It serves the test
+// presets of the discovery package.
+type fakeRegistry struct {
+	t     *testing.T
+	files map[string]string
+	hits  map[string]int
+	extra map[string]string // text added to the named preset when it is published
+	down  bool
+}
+
+func newFakeRegistry(t *testing.T, ref string, names ...string) (*fakeRegistry, presetBackend) {
+	t.Helper()
+	f := &fakeRegistry{t: t, files: map[string]string{}, hits: map[string]int{}, extra: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.hits[r.URL.Path]++
+		body, ok := f.files[r.URL.Path]
+		if f.down || !ok {
+			http.Error(w, "nope", http.StatusNotFound)
+			return
+		}
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	f.publish(ref, names...)
+	return f, presetBackend{registry: func(cfgPath string) *registry.Client {
+		return &registry.Client{BaseURL: srv.URL, Dir: filepath.Join(filepath.Dir(cfgPath), "registry"), HTTP: srv.Client(), Now: time.Now}
+	}}
+}
+
+// publish replaces what the registry serves with the named test presets at
+// ref.
+func (f *fakeRegistry) publish(ref string, names ...string) {
+	f.t.Helper()
+	idx := registry.Index{Schema: registry.IndexSchema, Ref: ref}
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join("..", "discovery", "testdata", "presets", name+".yaml"))
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		data = append(data, f.extra[name]...)
+		p, err := preset.Parse(name, data)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		f.files["/"+ref+"/presets/"+name+".yaml"] = string(data)
+		idx.Presets = append(idx.Presets, registry.Entry{Name: name, Title: p.Title, PresetSchema: p.Schema, Detect: p.Detect, SHA256: registry.Sum(data)})
+	}
+	out, err := yaml.Marshal(idx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.files["/main/index.yaml"] = string(out)
+}
+
+// total is how many requests the registry has served.
+func (f *fakeRegistry) total() int {
+	n := 0
+	for _, hits := range f.hits {
+		n += hits
+	}
+	return n
 }

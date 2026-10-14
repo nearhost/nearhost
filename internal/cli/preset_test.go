@@ -29,7 +29,7 @@ func TestPresetEnableAndDisableALocalFile(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	putPreset(t, cfgPath, "stack")
 
-	out, err := execute(t, newPresetCmd(), "--config", cfgPath, "preset", "enable", "stack")
+	out, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "enable", "stack")
 	if err != nil {
 		t.Fatalf("enable: %v\n%s", err, out)
 	}
@@ -40,12 +40,12 @@ func TestPresetEnableAndDisableALocalFile(t *testing.T) {
 		t.Fatalf("preset = %+v %v", p, ok)
 	}
 
-	out, err = execute(t, newPresetCmd(), "--config", cfgPath, "preset", "enable", "stack")
+	out, err = execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "enable", "stack")
 	if err != nil || out != "Preset stack is already enabled.\n" {
 		t.Errorf("second enable: %q %v", out, err)
 	}
 
-	out, err = execute(t, newPresetCmd(), "--config", cfgPath, "preset", "disable", "stack")
+	out, err = execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "disable", "stack")
 	if err != nil {
 		t.Fatalf("disable: %v\n%s", err, out)
 	}
@@ -59,7 +59,7 @@ func TestPresetEnableAndDisableALocalFile(t *testing.T) {
 		t.Errorf("disable removed the file: %v", err)
 	}
 
-	if _, err := execute(t, newPresetCmd(), "--config", cfgPath, "preset", "disable", "stack"); err == nil || !strings.Contains(err.Error(), `preset "stack" is not enabled`) {
+	if _, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "disable", "stack"); err == nil || !strings.Contains(err.Error(), `preset "stack" is not enabled`) {
 		t.Errorf("second disable: %v", err)
 	}
 }
@@ -81,7 +81,7 @@ func TestPresetEnableRefusesWhatItCannotUse(t *testing.T) {
 		{"../etc", []string{"lowercase letters, digits and hyphens"}},
 	}
 	for _, tc := range cases {
-		_, err := execute(t, newPresetCmd(), "--config", cfgPath, "preset", "enable", tc.name)
+		_, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "enable", tc.name)
 		if err == nil {
 			t.Fatalf("enable %s succeeded", tc.name)
 		}
@@ -98,7 +98,7 @@ func TestPresetEnableRefusesWhatItCannotUse(t *testing.T) {
 
 func TestPresetList(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	out, err := execute(t, newPresetCmd(), "--config", cfgPath, "preset", "list")
+	out, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "list")
 	if err != nil || out != "No presets are enabled.\n" {
 		t.Fatalf("empty list: %q %v", out, err)
 	}
@@ -109,7 +109,7 @@ func TestPresetList(t *testing.T) {
 	cfg.UpsertPreset(config.PresetRef{Name: "gone"})
 	saveConfig(t, cfgPath, cfg)
 
-	out, err = execute(t, newPresetCmd(), "--config", cfgPath, "preset", "list")
+	out, err = execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
@@ -125,7 +125,7 @@ func TestPresetList(t *testing.T) {
 
 func TestPresetValidate(t *testing.T) {
 	good := filepath.Join("..", "discovery", "testdata", "presets", "stack.yaml")
-	out, err := execute(t, newPresetCmd(), "preset", "validate", good)
+	out, err := execute(t, newPresetCmd(presetBackend{}), "preset", "validate", good)
 	if err != nil || out != good+" is valid.\n" {
 		t.Fatalf("validate: %q %v", out, err)
 	}
@@ -135,7 +135,7 @@ func TestPresetValidate(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("schema: 1\nname: other\ndetect: 'file('\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = execute(t, newPresetCmd(), "preset", "validate", bad)
+	_, err = execute(t, newPresetCmd(presetBackend{}), "preset", "validate", bad)
 	if err == nil {
 		t.Fatal("validate accepted a bad preset")
 	}
@@ -145,10 +145,10 @@ func TestPresetValidate(t *testing.T) {
 		}
 	}
 
-	if _, err := execute(t, newPresetCmd(), "preset", "validate", filepath.Join(dir, "notes.txt")); err == nil || !strings.Contains(err.Error(), ".yaml") {
+	if _, err := execute(t, newPresetCmd(presetBackend{}), "preset", "validate", filepath.Join(dir, "notes.txt")); err == nil || !strings.Contains(err.Error(), ".yaml") {
 		t.Errorf("expected an error about the extension, got %v", err)
 	}
-	if _, err := execute(t, newPresetCmd(), "preset", "validate", filepath.Join(dir, "nope.yaml")); err == nil {
+	if _, err := execute(t, newPresetCmd(presetBackend{}), "preset", "validate", filepath.Join(dir, "nope.yaml")); err == nil {
 		t.Error("expected an error for a missing file")
 	}
 }
