@@ -1,9 +1,208 @@
-# Nearhost
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/nearhost-mark-on-dark.svg">
+    <img src=".github/assets/nearhost-mark-on-light.svg" alt="Nearhost" width="96" height="96">
+  </picture>
+</p>
 
-Reach local and remote development servers in your browser at `https://<name>.test`, as if everything ran on your laptop.
+<h1 align="center">Nearhost</h1>
 
-Early development. Not yet usable.
+<p align="center">
+  Reach local and remote dev servers in your browser at <code>https://&lt;name&gt;.test</code>, as if everything ran on your laptop.
+</p>
+
+<p align="center">
+  <a href="https://nearhost.dev">Website</a> ·
+  <a href="https://nearhost.dev/docs/">Docs</a> ·
+  <a href="https://github.com/nearhost/nearhost/releases">Releases</a>
+</p>
+
+---
+
+You write code on a laptop and run it somewhere else: a desktop under the desk, a home server, a VPS, or a container on this machine. The app listens on `localhost` over there, and your browser is over here. That usually means an `ssh -L` per port, a certificate warning and a hot reload socket that fails to connect.
+
+Nearhost gives each project a name, a certificate your browser trusts and forwards that look after themselves. Add a project once and it is at `https://myapp.test` today, tomorrow and after a reboot.
+
+## Why Nearhost
+
+- **One address per project.** Every project gets a stable `.test` alias, so bookmarks, cookies and OAuth callbacks keep working.
+- **Real HTTPS.** A local certificate authority signs a certificate for each alias. Secure cookies, service workers and anything else that needs a secure context behave as they do in production.
+- **Remote servers over the SSH you already have.** Nearhost runs your own `ssh`, so your `~/.ssh/config`, agent and jump hosts all apply. Nothing is installed or changed on the server, and no ports are opened there.
+- **Hot reload and WebSockets pass through.** Upgrades travel through the same connection as the page.
+- **Works with any stack.** If it listens on a port, Nearhost can serve it. It reads the port variables in your `.env` and proposes routes with no framework knowledge at all.
+- **Presets when you want them.** Framework-specific setups, such as Docker Compose, Laravel Sail or Vite, come from preset registries. No registry is trusted until you add one, and you can publish and trust your own.
+- **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts`, asks for `sudo` only when that block changes, and removes it again with `nearhost hosts clean`.
+- **Runs in the foreground.** `nearhost up` serves until you press Ctrl-C, and the forwards close with it. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
+
+## Install
+
+Nearhost is a single binary for macOS and Linux, on Intel and ARM.
+
+**Homebrew**
+
+```sh
+brew install nearhost/tap/nearhost
+```
+
+**Shell installer**
+
+```sh
+curl -fsSL https://nearhost.dev/install.sh | sh
+```
+
+The script downloads the matching release from GitHub, checks it against the published checksums and installs to `/usr/local/bin` when that is writable, otherwise to `~/.local/bin`. It never runs `sudo` itself.
+
+**From source**, with Go 1.26 or later:
+
+```sh
+go install github.com/nearhost/nearhost/cmd/nearhost@latest
+```
+
+On Linux, allow the binary to bind ports 80 and 443. Run this again after each upgrade:
+
+```sh
+sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
+```
+
+## Quick start
+
+Trust the local certificate authority. This asks for your password once:
+
+```sh
+nearhost trust
+```
+
+Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml`. Nothing in the project is changed.
+
+```text
+$ cd /home/dev/code/myapp
+$ nearhost add
+Routes found for myapp (local:/home/dev/code/myapp):
+  PORT  ROLE    LABEL
+  5173  ignore  vite (VITE_PORT)
+  5432  ignore  db (DB_PORT)
+  8080  web     app (APP_PORT)
+
+Added myapp on local at https://myapp.test
+Start it with `nearhost up`.
+```
+
+When more than one port could be the web app, `add` asks which one it is. Pass `--web <port>` to choose up front.
+
+Start serving, then open `https://myapp.test`:
+
+```sh
+nearhost up
+```
+
+### A project on another machine
+
+Add the server to `~/.config/nearhost/config.yaml`, using any host that `ssh` can reach without prompting:
+
+```yaml
+servers:
+  - name: mini
+    ssh_host: mini
+```
+
+Then add the project by its path on that server. Its files are read over SFTP:
+
+```sh
+nearhost add --server mini ~/code/myapp
+nearhost up myapp
+```
+
+### Presets
+
+The first time you run `nearhost add` at a terminal, it offers to trust the official preset registry. You can also trust it, or any other public GitHub repository of presets, yourself:
+
+```sh
+nearhost preset registry add nearhost/presets
+nearhost preset list
+nearhost preset enable nearhost/compose
+```
+
+From then on, `add` suggests presets that suit the project and asks before enabling them.
+
+### Useful commands
+
+| Command | What it does |
+| --- | --- |
+| `nearhost ls` | List the configured projects and their routes |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one |
+| `nearhost doctor` | Check ports, the certificate authority, the hosts block and server access |
+| `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
+| `nearhost untrust` | Remove the certificate authority from the trust store |
+
+Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.
+
+## Development
+
+You need Git and Go 1.26 or later (the exact version is in `go.mod`). Make is optional; each target is one Go command.
+
+### Check out and build
+
+```sh
+git clone https://github.com/nearhost/nearhost.git
+cd nearhost
+make build        # go build -o nearhost ./cmd/nearhost
+./nearhost version
+```
+
+A source build reports its version as `dev`.
+
+### Run from source
+
+Point Nearhost at a scratch config directory so a development build leaves your real config, certificate authority and `/etc/hosts` alone. Unprivileged ports avoid needing `setcap` on Linux:
+
+```sh
+export XDG_CONFIG_HOME="$PWD/.dev"
+./nearhost add --web 8080 ~/code/myapp
+./nearhost up --no-hosts --https-port 18443 --http-port 18080
+```
+
+Without the hosts block, `myapp.test` does not resolve, so ask for it by address:
+
+```sh
+curl -k --resolve myapp.test:18443:127.0.0.1 https://myapp.test:18443/
+```
+
+Drop `-k` after running `./nearhost trust` with the same `XDG_CONFIG_HOME`, and remember to run `./nearhost untrust` when you are done.
+
+### Test
+
+```sh
+make test         # go test ./...
+make vet          # go vet ./...
+```
+
+The tests need no network, Docker or SSH server. SSH is exercised through a fake `ssh` in `internal/transport/testdata`.
+
+CI also runs the official presets' fixtures against each build. To do the same locally, check out [nearhost/presets](https://github.com/nearhost/presets) beside this repository:
+
+```sh
+make build
+make -C ../presets check NEARHOST="$PWD/nearhost"
+```
+
+### Layout
+
+| Path | Contents |
+| --- | --- |
+| `cmd/nearhost` | The entry point |
+| `internal/cli` | Commands, flags and prompts |
+| `internal/config` | The config file and its validation |
+| `internal/discovery` | Reading `.env` and Compose files to propose routes |
+| `internal/preset`, `internal/registry` | The preset language and preset registries |
+| `internal/engine` | Starting and stopping projects |
+| `internal/transport` | SSH connections and port forwards |
+| `internal/proxy` | The HTTPS proxy and local certificate authority |
+| `internal/hosts` | The managed block in `/etc/hosts` |
+
+### Contributing
+
+Open a pull request against `main`. Pull requests are squash merged, and the title becomes the commit message, so write it as a [Conventional Commit](https://www.conventionalcommits.org/) such as `feat: read ports from .env.local` or `fix: keep the hosts block when up fails`. Releases are cut by [release-please](https://github.com/googleapis/release-please) from those messages, and GoReleaser attaches the binaries to each GitHub Release.
 
 ## Licence
 
-MIT
+[MIT](LICENSE)
