@@ -1,0 +1,53 @@
+internal/cli/add_presets_test.go
+  s_7abd3634f4eb80::t_0efec0ff7e46c2 61,65,82,94,101,149,153,166,179,212,250,254,276,295
+internal/cli/add_test.go
+  s_7abd3634f4eb80::t_06c68218a28958 26,41-43,56,86,175,179,365,394,404,462-477
+internal/cli/preset_index_test.go
+  s_7abd3634f4eb80::t_fb1b5aa49273ba 24,27,31
+internal/cli/preset_registry_cmd_test.go
+  s_7abd3634f4eb80::t_b5b8285afecaf2 203,217,226,233
+internal/cli/preset_registry_test.go
+  s_7abd3634f4eb80::t_efcc8a18e32de1 467
+internal/cli/ssh_test.go
+  s_7abd3634f4eb80::t_b2886ef1c829f8 139
+internal/cli/testdata/fixtures-bad/wrong/expected.yaml
+  s_7abd3634f4eb80::t_f650e87844b84e 1
+internal/discovery/discover.go
+  s_7abd3634f4eb80::t_d02a51ede1402f 43-44,62,64-66,100-145,250-253
+internal/discovery/discover_test.go
+  s_7abd3634f4eb80::t_bfd529d6865013 61-63,65-82,87,96-97,106,108-111,113-114,121-149,158,165,174,244,252-253,274,305,328
+internal/discovery/testdata/presets/compose.yaml
+  s_7abd3634f4eb80::t_0d4a5182b3604c 1-6
+internal/discovery/testdata/presets/stack.yaml
+  s_7abd3634f4eb80::t_a5dd8e38ad7463 6
+internal/preset/preset.go
+  s_7abd3634f4eb80::t_e6bfa78e27ec79 40-43,52,205-209
+internal/preset/preset_test.go
+  s_bc1b64a774a0d8::t_fcafaa94ce5bc8 84,133-146
+internal/transport/sftp_test.go
+  s_7abd3634f4eb80::t_5fcd8b1a1e7b02 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0dab7d914c5632814ccbfad7c2e7eac193be79d3",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
+    "s_bc1b64a774a0d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86f9435c-3c18-4446-ba9e-9ef8b8e9312e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
