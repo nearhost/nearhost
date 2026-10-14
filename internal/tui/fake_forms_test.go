@@ -41,7 +41,8 @@ type fakeFiles struct {
 	drafts  map[string]Draft
 	listErr error
 	closed  int
-	presets bool // EnablePresets has run
+	presets bool     // EnablePresets has run
+	advised []string // the aliases Advise was asked about
 }
 
 func (f *fakeFiles) abs(p string) string {
@@ -162,4 +163,9 @@ func (f *fakeBackend) SaveProject(p config.Project) error {
 	}
 	f.forms.saved = append(f.forms.saved, p)
 	return nil
+}
+
+func (f *fakeFiles) Advise(_ context.Context, _ string, routes []config.Route, alias string) ([]Advisory, []string, error) {
+	f.advised = append(f.advised, alias)
+	return []Advisory{{Code: "app-url", Message: "APP_URL should be https://" + alias + "."}}, nil, nil
 }

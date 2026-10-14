@@ -188,4 +188,37 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 	return d, nil
 }
 
+// Advise works out the advice for the project in path as it will be saved:
+// discovery runs again with the enabled presets, each route found takes the
+// role the form gave it, and the advice is for the alias chosen.
+func (f *uiFiles) Advise(ctx context.Context, path string, routes []config.Route, alias string) ([]tui.Advisory, []string, error) {
+	cfg, err := f.u.current()
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err := f.files.resolve(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	res, _, err := discoverOnce(cfg, f.u.path, f.files.reader(dir), nil, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	roles := map[int]config.Role{}
+	for _, r := range routes {
+		roles[r.Port] = r.Role
+	}
+	for i := range res.Routes {
+		if role, ok := roles[res.Routes[i].Port]; ok {
+			res.Routes[i].Role = role
+		}
+	}
+	advisories, notes := discovery.Advise(res, alias, cfg.Projects)
+	var out []tui.Advisory
+	for _, a := range advisories {
+		out = append(out, tui.Advisory{Code: a.Code, Message: printableLines(a.Message), Snippet: printableLines(a.Snippet)})
+	}
+	return out, notes, nil
+}
+
 func (f *uiFiles) Close() error { return f.files.close() }

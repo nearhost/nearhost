@@ -19,18 +19,19 @@ const (
 // serverForm adds a server: its SSH host, a name, then a check that it can
 // be reached before it is saved.
 type serverForm struct {
-	b     Backend
-	cfg   *config.Config
-	step  int
-	host  textField
-	name  textField
-	known []string // hosts from the SSH config not yet configured
-	pick  int      // index into the shown hosts; -1 for the typed text
-	err   string
-	busy  bool
-	fail  string // why the check failed
-	seq   int    // the background step whose answer is awaited
-	w     *worker
+	b      Backend
+	cfg    *config.Config
+	step   int
+	host   textField
+	name   textField
+	known  []string // hosts from the SSH config not yet configured
+	pick   int      // index into the shown hosts; -1 for the typed text
+	err    string
+	busy   bool
+	fail   string // why the check failed
+	saving bool   // the check passed and the server is being saved
+	seq    int    // the background step whose answer is awaited
+	w      *worker
 }
 
 // serverCheckedMsg is the outcome of checking a server, and serverSavedMsg
@@ -98,13 +99,14 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 			f.busy, f.fail = false, msg.err.Error()
 			return nil
 		}
+		f.saving = true
 		seq, srv, b := f.seq, msg.srv, f.b
 		return f.w.do(func(context.Context) tea.Msg { return serverSavedMsg{seq, srv, b.AddServer(srv)} })
 	case serverSavedMsg:
 		if msg.seq != f.seq {
 			return nil
 		}
-		f.busy = false
+		f.busy, f.saving = false, false
 		if msg.err != nil {
 			f.fail = msg.err.Error()
 			return nil
@@ -197,6 +199,9 @@ func (f *serverForm) check() tea.Cmd {
 
 // back goes back a step, or closes the form from the first.
 func (f *serverForm) back() tea.Cmd {
+	if f.saving {
+		return nil // a save runs to its end
+	}
 	f.err = ""
 	switch f.step {
 	case serverStepHost:
@@ -231,6 +236,8 @@ func (f *serverForm) lines(width int) []string {
 	if f.step == serverStepCheck {
 		lines = append(lines, "")
 		switch {
+		case f.saving:
+			lines = append(lines, busyLine("Saving "+clean(f.name.value)+"…"))
 		case f.busy:
 			lines = append(lines, busyLine("Connecting to "+clean(f.host.value)+"…"))
 		case f.fail != "":

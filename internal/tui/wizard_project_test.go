@@ -321,3 +321,84 @@ func TestProjectFormCompletionEdgeCases(t *testing.T) {
 	}
 	wantScreen(t, m, "cafè  café") // listed in byte order
 }
+
+// A step that saves something runs to its end: esc while it runs is not
+// taken, so what is saved is what the form shows.
+func TestFormSavesRunToTheEnd(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	press(m, "down")
+	press(m, "space")
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	save := press(m, "enter")
+	press(m, "esc")
+	wantScreen(t, m, "Add project · confirm", "◐ Saving…")
+	settle(m, save)
+	if len(f.forms.saved) != 1 || m.form != nil {
+		t.Errorf("saved %d, form %T", len(f.forms.saved), m.form)
+	}
+
+	m, f, _ = projectFormModel(t)
+	f.forms.askRegistry = true
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	answer := press(m, "enter")
+	press(m, "esc")
+	wantScreen(t, m, "◐ Trusting the official presets…")
+	settle(m, answer)
+	wantScreen(t, m, "Add project · routes")
+
+	sm, sf := serverFormModel(t)
+	typeText(sm, "box")
+	press(sm, "enter")
+	check := press(sm, "enter")
+	saved := run(sm, check) // the check passed; saving begins
+	press(sm, "esc")
+	wantScreen(t, sm, "◐ Saving box…")
+	settle(sm, saved)
+	if len(sf.forms.addedSrv) != 1 || sm.form != nil {
+		t.Errorf("server saved %d, form %T", len(sf.forms.addedSrv), sm.form)
+	}
+}
+
+// The alias follows the name until it is edited itself.
+func TestAliasFollowsTheName(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	toPath(t, m, 1)
+	press(m, "ctrl+u")
+	typeText(m, "~/code/blog")
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	typeText(m, "2")
+	wantScreen(t, m, "name      blog2▏", "alias     blog2.test")
+	press(m, "tab")
+	press(m, "backspace")
+	press(m, "backspace")
+	press(m, "backspace")
+	press(m, "backspace")
+	press(m, "backspace")
+	typeText(m, "site.test")
+	press(m, "tab")
+	typeText(m, "3")
+	wantScreen(t, m, "name      blog23▏", "alias     blog2site.test")
+}
+
+// The last step shows advice for the roles and alias chosen.
+func TestConfirmShowsAdviceForTheFinalChoices(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	press(m, "ctrl+u")
+	typeText(m, "~/code/blog")
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	press(m, "tab")
+	press(m, "ctrl+u")
+	typeText(m, "site.test")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · confirm", "Advisory (app-url): APP_URL should be https://site.test.")
+	if len(files.advised) != 1 || files.advised[0] != "site.test" {
+		t.Errorf("advised for %v", files.advised)
+	}
+}
