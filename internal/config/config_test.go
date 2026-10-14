@@ -289,11 +289,9 @@ func TestPresetsRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
 		t.Fatalf("a config without presets should not mention them:\n%s", data)
 	}
 
-	off := false
-	c.Registry = &off
-	c.UpsertPreset(PresetRef{Name: "stack", Ref: "3f2c1ab9", SHA256: "9a41"})
+	c.UpsertPreset(PresetRef{Name: "acme/stack", Ref: "3f2c1ab9", SHA256: "9a41"})
 	c.UpsertPreset(PresetRef{Name: "mine"})
-	c.UpsertPreset(PresetRef{Name: "stack", Ref: "aaaaaaa", SHA256: "bbbb"})
+	c.UpsertPreset(PresetRef{Name: "acme/stack", Ref: "aaaaaaa", SHA256: "bbbb"})
 	if err := Save(path, c); err != nil {
 		t.Fatal(err)
 	}
@@ -301,10 +299,10 @@ func TestPresetsRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RegistryEnabled() || len(got.Presets) != 2 {
+	if len(got.Presets) != 2 {
 		t.Fatalf("loaded %+v", got)
 	}
-	if p, ok := got.Preset("stack"); !ok || p.Ref != "aaaaaaa" || p.SHA256 != "bbbb" {
+	if p, ok := got.Preset("acme/stack"); !ok || p.Ref != "aaaaaaa" || p.SHA256 != "bbbb" {
 		t.Errorf("stack = %+v %v", p, ok)
 	}
 	if p, ok := got.Preset("mine"); !ok || p.Ref != "" {
@@ -312,16 +310,6 @@ func TestPresetsRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
 	}
 	if !got.RemovePreset("mine") || got.RemovePreset("mine") || len(got.Presets) != 1 {
 		t.Errorf("RemovePreset left %+v", got.Presets)
-	}
-}
-
-func TestRegistryIsOnUnlessSwitchedOff(t *testing.T) {
-	if !(&Config{}).RegistryEnabled() {
-		t.Error("the registry should be on by default")
-	}
-	on := true
-	if !(&Config{Registry: &on}).RegistryEnabled() {
-		t.Error("registry: true should be on")
 	}
 }
 
@@ -463,5 +451,15 @@ func TestRegistriesRoundTripAndStayOutOfAnEmptyConfig(t *testing.T) {
 	}
 	if len(got.Registries) != 2 || got.Registries[1] != (Registry{Alias: "team-web", Repo: "Team/web.presets"}) {
 		t.Errorf("registries = %+v", got.Registries)
+	}
+}
+
+func TestValidateRejectsARefOnALocalPreset(t *testing.T) {
+	for _, p := range []PresetRef{{Name: "stack", Ref: "3f2c1ab"}, {Name: "stack", SHA256: "9a41"}} {
+		c := trusting()
+		c.Presets = []PresetRef{p}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "is a local file") {
+			t.Errorf("%+v: expected a local file error, got %v", p, err)
+		}
 	}
 }

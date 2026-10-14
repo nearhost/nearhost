@@ -104,21 +104,31 @@ func TestPresetList(t *testing.T) {
 	}
 
 	enablePresets(t, cfgPath, "stack", "bundler")
+	if err := os.MkdirAll(filepath.Join(presetsDir(cfgPath), "test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(presetPath(cfgPath, "bundler"), presetPath(cfgPath, "test/bundler")); err != nil {
+		t.Fatal(err)
+	}
 	cfg := loadSaved(t, cfgPath)
-	cfg.UpsertPreset(config.PresetRef{Name: "bundler", Ref: "3f2c1ab9d0e4", SHA256: "9a41"})
+	cfg.RemovePreset("bundler")
+	cfg.Registries = []config.Registry{testReg}
+	cfg.UpsertPreset(config.PresetRef{Name: "test/bundler", Ref: "3f2c1ab9d0e4", SHA256: "9a41"})
 	cfg.UpsertPreset(config.PresetRef{Name: "gone"})
 	saveConfig(t, cfgPath, cfg)
 
-	out, err = execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "list")
+	f, b := newFakeRegistries(t)
+	f.down[testReg.Repo] = true
+	out, err = execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
 	wantContains(t, out,
 		"Enabled presets:\n",
-		"  NAME     SOURCE            TITLE\n",
-		"  stack    local             Test stack\n",
-		"  bundler  registry 3f2c1ab  Test bundler\n",
-		"  gone     local             (cannot be used)\n",
+		"  NAME          SOURCE          TITLE\n",
+		"  stack         local           Test stack\n",
+		"  test/bundler  test @ 3f2c1ab  Test bundler\n",
+		"  gone          local           (cannot be used)\n",
 		`Warning: preset "gone" is enabled but`,
 	)
 }

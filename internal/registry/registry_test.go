@@ -48,7 +48,7 @@ func (s *site) publish(ref string, presets map[string]string) {
 		s.files["/"+ref+"/presets/"+name+".yaml"] = body
 		fmt.Fprintf(&b, "  - name: %s\n    title: %s title\n    preset_schema: 1\n    detect: file(\"%s.config\")\n    sha256: '%s'\n", name, name, name, Sum([]byte(body)))
 	}
-	s.files["/main/index.yaml"] = b.String()
+	s.files["/HEAD/index.yaml"] = b.String()
 }
 
 func TestIndexIsFetchedOnceThenServedFromTheCache(t *testing.T) {
@@ -64,8 +64,8 @@ func TestIndexIsFetchedOnceThenServedFromTheCache(t *testing.T) {
 			t.Fatalf("index = %+v", idx)
 		}
 	}
-	if s.hits["/main/index.yaml"] != 1 {
-		t.Errorf("the index was fetched %d times, want once", s.hits["/main/index.yaml"])
+	if s.hits["/HEAD/index.yaml"] != 1 {
+		t.Errorf("the index was fetched %d times, want once", s.hits["/HEAD/index.yaml"])
 	}
 	if _, err := os.Stat(filepath.Join(c.Dir, "index.yaml")); err != nil {
 		t.Errorf("the index was not cached: %v", err)
@@ -103,7 +103,7 @@ func TestIndexFallsBackToAStaleCopy(t *testing.T) {
 		t.Fatalf("with the registry down the stale copy should serve: %+v %v", idx, err)
 	}
 	s.down = false
-	s.files["/main/index.yaml"] = "schema: 1\nref: not a commit\n"
+	s.files["/HEAD/index.yaml"] = "schema: 1\nref: not a commit\n"
 	if idx, err := c.Index(context.Background()); err != nil || idx.Ref != ref {
 		t.Fatalf("a bad index must not replace a good copy: %+v %v", idx, err)
 	}
@@ -128,7 +128,7 @@ func TestIndexUnavailableWithNoCopy(t *testing.T) {
 // the reason it cannot be used is that nearhost is too old.
 func TestIndexNewerThanThisBuildWithNoCopy(t *testing.T) {
 	s, c := serve(t)
-	s.files["/main/index.yaml"] = "schema: 2\nref: " + ref + "\n"
+	s.files["/HEAD/index.yaml"] = "schema: 2\nref: " + ref + "\n"
 	_, err := c.Index(context.Background())
 	if !errors.Is(err, ErrNewerIndex) || errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrNewerIndex and not ErrUnavailable, got %v", err)
@@ -217,9 +217,9 @@ func TestParseIndexRejectsWhatCouldMislead(t *testing.T) {
 	}
 }
 
-func TestNewPointsAtTheOfficialRegistry(t *testing.T) {
-	c := New("/tmp/x")
-	if c.BaseURL != "https://raw.githubusercontent.com/nearhost/presets" || c.Dir != "/tmp/x" || c.HTTP == nil || c.Now == nil {
-		t.Errorf("New = %+v", c)
+func TestForRepoReadsFromGitHub(t *testing.T) {
+	c := ForRepo("Acme/web.presets", "/tmp/x")
+	if c.BaseURL != "https://raw.githubusercontent.com/Acme/web.presets" || c.Dir != "/tmp/x" || c.HTTP == nil || c.Now == nil {
+		t.Errorf("ForRepo = %+v", c)
 	}
 }

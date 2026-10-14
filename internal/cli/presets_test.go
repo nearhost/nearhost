@@ -19,14 +19,21 @@ func TestLoadEnabledSkipsWhatItCannotUse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "future.yaml"), []byte("schema: 9\nname: future\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test", "bundler.yaml"), []byte("schema: 1\nname: bundler\ntitle: B\ndetect: 'true'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := loadSaved(t, cfgPath)
 	cfg.UpsertPreset(config.PresetRef{Name: "broken"})
 	cfg.UpsertPreset(config.PresetRef{Name: "future"})
 	cfg.UpsertPreset(config.PresetRef{Name: "gone"})
-	cfg.UpsertPreset(config.PresetRef{Name: "fetched", Ref: "3f2c1ab"})
+	cfg.UpsertPreset(config.PresetRef{Name: "test/fetched", Ref: "3f2c1ab", SHA256: "9a41"})
+	cfg.UpsertPreset(config.PresetRef{Name: "test/bundler", Ref: "3f2c1ab", SHA256: "9a41"})
 
 	presets, warnings := loadEnabled(cfg, cfgPath)
-	if len(presets) != 1 || presets[0].Name != "stack" {
+	if len(presets) != 2 || presets[0].Key() != "stack" || presets[1].Key() != "test/bundler" {
 		t.Fatalf("presets = %+v", presets)
 	}
 	joined := strings.Join(warnings, "\n")
@@ -35,7 +42,7 @@ func TestLoadEnabledSkipsWhatItCannotUse(t *testing.T) {
 		`preset "future" skipped: future.yaml: schema 9`,
 		"upgrade nearhost",
 		`preset "gone" is enabled but ` + filepath.Join(dir, "gone.yaml") + " is missing; put the file back or run `nearhost preset disable gone`",
-		`preset "fetched" is enabled but ` + filepath.Join(dir, "fetched.yaml") + " is missing; run `nearhost preset enable fetched` to install it again",
+		`preset "test/fetched" is enabled but ` + filepath.Join(dir, "test", "fetched.yaml") + " is missing; run `nearhost preset enable test/fetched` to install it again",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
@@ -49,6 +56,12 @@ func TestLoadEnabledSkipsWhatItCannotUse(t *testing.T) {
 func TestPresetsLiveBesideTheConfigInUse(t *testing.T) {
 	if got := presetPath("/tmp/elsewhere/config.yaml", "stack"); got != filepath.Join("/tmp/elsewhere", "presets", "stack.yaml") {
 		t.Errorf("presetPath = %q", got)
+	}
+	if got := presetPath("/tmp/elsewhere/config.yaml", "acme/stack"); got != filepath.Join("/tmp/elsewhere", "presets", "acme", "stack.yaml") {
+		t.Errorf("presetPath of a registry preset = %q", got)
+	}
+	if got := registryDir("/tmp/elsewhere/config.yaml", "acme"); got != filepath.Join("/tmp/elsewhere", "registry", "acme") {
+		t.Errorf("registryDir = %q", got)
 	}
 }
 

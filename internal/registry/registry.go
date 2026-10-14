@@ -1,5 +1,6 @@
-// Package registry fetches presets from the public preset registry: an
-// index that says which presets exist, and the preset files it names.
+// Package registry fetches presets from a preset registry, a public GitHub
+// repository: an index that says which presets exist, and the preset files
+// it names.
 package registry
 
 import (
@@ -21,8 +22,8 @@ import (
 )
 
 const (
-	// DefaultBaseURL is the official registry.
-	DefaultBaseURL = "https://raw.githubusercontent.com/nearhost/presets"
+	// githubRaw serves the files of public GitHub repositories.
+	githubRaw = "https://raw.githubusercontent.com/"
 	// IndexSchema is the newest index format this build understands.
 	IndexSchema = 1
 
@@ -33,7 +34,7 @@ const (
 
 // ErrUnavailable reports that the index could not be fetched and no copy of
 // it is cached.
-var ErrUnavailable = errors.New("the preset registry could not be reached and no copy of its index is saved")
+var ErrUnavailable = errors.New("its index could not be fetched and no copy of it is saved")
 
 // ErrNewerIndex reports an index written in a format newer than this build
 // understands.
@@ -118,9 +119,11 @@ type Client struct {
 	Now     func() time.Time
 }
 
-// New returns a client for the official registry.
-func New(dir string) *Client {
-	return &Client{BaseURL: DefaultBaseURL, Dir: dir, HTTP: http.DefaultClient, Now: time.Now}
+// ForRepo returns a client for the registry in the public GitHub repository
+// repo, written owner/name, with its index cached in dir. repo must already
+// be valid.
+func ForRepo(repo, dir string) *Client {
+	return &Client{BaseURL: githubRaw + repo, Dir: dir, HTTP: http.DefaultClient, Now: time.Now}
 }
 
 func (c *Client) cachePath() string { return filepath.Join(c.Dir, "index.yaml") }
@@ -146,9 +149,10 @@ func (c *Client) Index(ctx context.Context) (*Index, error) {
 	return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
-// Refresh fetches the index now and caches it.
+// Refresh fetches the index now and caches it. The index is read from HEAD,
+// the repository's default branch, whatever it is called.
 func (c *Client) Refresh(ctx context.Context) (*Index, error) {
-	data, err := c.get(ctx, c.BaseURL+"/main/index.yaml")
+	data, err := c.get(ctx, c.BaseURL+"/HEAD/index.yaml")
 	if err != nil {
 		return nil, err
 	}
