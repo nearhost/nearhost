@@ -24,7 +24,7 @@ func serverFormModel(t *testing.T) (*Model, *fakeBackend) {
 	f := newFake(t, sampleConfig())
 	f.forms.hosts = []string{"mini.lan", "apollo", "vps", "app.internal"}
 	m := sized(f)
-	press(m, "s")
+	settle(m, press(m, "s"))
 	if _, ok := m.form.(*serverForm); !ok {
 		t.Fatalf("s opened %T", m.form)
 	}
@@ -137,4 +137,26 @@ func TestFormTakesTheKeys(t *testing.T) {
 	if !m.quitting {
 		t.Error("ctrl+c did not quit")
 	}
+}
+
+// The hosts of the SSH config are read in the background, not while the
+// interface is drawing.
+func TestServerFormReadsHostsInTheBackground(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.forms.hosts = []string{"apollo"}
+	m := sized(f)
+	load := press(m, "s")
+	if load == nil || strings.Contains(screen(m), "apollo") {
+		t.Fatal("the hosts were read while opening the form")
+	}
+	settle(m, load)
+	wantScreen(t, m, "  apollo")
+}
+
+// A host with any kind of space in it is refused, as nearhost add refuses it.
+func TestServerFormRefusesAnySpace(t *testing.T) {
+	m, _ := serverFormModel(t)
+	typeText(m, "box\u00a0lan")
+	press(m, "enter")
+	wantScreen(t, m, "An SSH host cannot be empty, start with - or contain spaces")
 }

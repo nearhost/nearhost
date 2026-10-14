@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -32,6 +33,8 @@ type serverForm struct {
 	saving bool   // the check passed and the server is being saved
 	seq    int    // the background step whose answer is awaited
 	w      *worker
+	// hostsSeq is the reading of the SSH config whose answer is awaited.
+	hostsSeq int
 }
 
 // serverCheckedMsg is the outcome of checking a server, and serverSavedMsg
@@ -50,19 +53,18 @@ type (
 	}
 )
 
-func newServerForm(b Backend, cfg *config.Config, w *worker) *serverForm {
-	f := &serverForm{b: b, cfg: cfg, pick: -1, w: w}
-	configured := map[string]bool{}
-	for _, s := range cfg.Servers {
-		configured[s.SSHHost] = true
-		configured[s.Name] = true
-	}
-	for _, h := range b.SSHHosts() {
-		if !configured[h] {
-			f.known = append(f.known, h)
-		}
-	}
-	return f
+// hostsReadMsg is the hosts of the SSH config.
+type hostsReadMsg struct {
+	seq   int
+	hosts []string
+}
+
+// newServerForm opens the add-server form. Run the command it returns: it
+// reads the hosts of the SSH config in the background.
+func newServerForm(b Backend, cfg *config.Config, w *worker) (*serverForm, tea.Cmd) {
+	f := &serverForm{b: b, cfg: cfg, pick: -1, w: w, hostsSeq: nextSeq()}
+	seq := f.hostsSeq
+	return f, w.do(func(context.Context) tea.Msg { return hostsReadMsg{seq, b.SSHHosts()} })
 }
 
 // shown is the known hosts that match what is typed.
@@ -91,6 +93,20 @@ func hostName(host string) string {
 
 func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
+	case hostsReadMsg:
+		if msg.seq != f.hostsSeq {
+			return nil
+		}
+		configured := map[string]bool{}
+		for _, s := range f.cfg.Servers {
+			configured[s.SSHHost] = true
+			configured[s.Name] = true
+		}
+		for _, h := range msg.hosts {
+			if !configured[h] {
+				f.known = append(f.known, h)
+			}
+		}
 	case serverCheckedMsg:
 		if msg.seq != f.seq {
 			return nil // the step was left
@@ -146,7 +162,8 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 			if shown := f.shown(); f.pick >= 0 && f.pick < len(shown) {
 				host = shown[f.pick]
 			}
-			if host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t") {
+			// The rule nearhost add applies.
+			if host == "" || strings.HasPrefix(host, "-") || strings.IndexFunc(host, unicode.IsSpace) >= 0 {
 				f.err = "an SSH host cannot be empty, start with - or contain spaces"
 				return nil
 			}

@@ -167,8 +167,12 @@ func TestFormCheckServer(t *testing.T) {
 	}
 	u.b.up.ssh, _ = fakeClient(t, "FAKE_SSH_AUTH_FAIL=1")
 	err := u.CheckServer(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"})
-	if err == nil || !strings.Contains(err.Error(), "Permission denied") || !strings.Contains(err.Error(), "run `ssh mini.lan` once in a terminal to fix access, then press r to try again") {
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") || !strings.Contains(err.Error(), "run `ssh mini.lan` once in a terminal to fix access, then press r to check again") {
 		t.Errorf("refused check = %v", err)
+	}
+	_, err = u.OpenServer(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"})
+	if err == nil || !strings.Contains(err.Error(), "then press r to connect again") {
+		t.Errorf("refused connection = %v", err)
 	}
 }
 
@@ -201,5 +205,26 @@ func TestFormAdvisesForTheFinalChoices(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no app-url advisory for other.test: %+v", advisories)
+	}
+}
+
+// A loopback port another project forwards is refused in the form's words,
+// without the hints for `nearhost add`.
+func TestFormSaveRefusesALoopbackClashInItsWords(t *testing.T) {
+	u := formEngine(t)
+	lb := config.Route{Port: 5173, Role: config.RoleLoopback}
+	if err := u.AddServer(config.Server{Name: "mini", SSHHost: "mini"}); err != nil {
+		t.Fatal(err)
+	}
+	a := config.Project{Name: "a", Server: "mini", Path: "/a", Alias: "a.test", Enabled: true, Routes: []config.Route{{Port: 80, Role: config.RoleWeb}, lb}}
+	if err := u.SaveProject(a); err != nil {
+		t.Fatal(err)
+	}
+	b := a
+	b.Name, b.Path, b.Alias = "b", "/b", "b.test"
+	err := u.SaveProject(b)
+	if err == nil || strings.Contains(err.Error(), "--disabled") || strings.Contains(err.Error(), "advisory above") ||
+		!strings.Contains(err.Error(), `loopback port 5173 is already forwarded for project "a"`) || !strings.Contains(err.Error(), "set this route to ignore") {
+		t.Errorf("SaveProject = %v", err)
 	}
 }
