@@ -73,7 +73,7 @@ type ProjectStatus struct {
 // session's status and forward states (a short mutex inside transport).
 //
 // The other locks exist to serialise one kind of slow operation each, and are
-// held across it on purpose: lifeMu covers Start and Shutdown, a project's op
+// held across it on purpose: lifeMu covers Start, Shutdown and Apply, a project's op
 // covers its start and stop, a server's ensure covers (re)starting its
 // session, hostsTurn covers a hosts update, and applyMu covers changing the
 // set of published sites together with applying it to the proxy, so the proxy
@@ -96,14 +96,9 @@ type ProjectStatus struct {
 // afterwards to check that the answer still applies before publishing it.
 // Shutdown ends these lookups and waits for them.
 type Engine struct {
-	cfg     *config.Config // private copy, never changed after New
-	opts    Options
-	bus     *Bus
-	proxy   *proxy.Proxy
-	order   []string               // project names in config order, without duplicates
-	runs    map[string]*projectRun // fixed set of keys after New
-	byAlias map[string]string      // alias -> project name
-	aliases []string               // valid aliases of all projects, sorted
+	opts  Options
+	bus   *Bus
+	proxy *proxy.Proxy
 
 	connectWait time.Duration // how long a start waits for its server
 	// holderOf names the process listening on a local TCP port, or returns ""
@@ -117,12 +112,24 @@ type Engine struct {
 	ctx     context.Context
 	stop    context.CancelFunc
 	lookups sync.WaitGroup
+	// starts counts the project starts Apply has begun. Shutdown waits for
+	// them; each returns at once when it finds the engine closed.
+	starts sync.WaitGroup
 
 	lifeMu    sync.Mutex
 	hostsTurn chan struct{} // holds one token while a hosts update runs
 	applyMu   sync.Mutex
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// The configuration and what is derived from it. Apply replaces all of
+	// them together, under mu; a *config.Config is never changed once it is
+	// here, so a copy of the pointer taken under mu can be read without it.
+	cfg     *config.Config
+	order   []string               // project names in config order, without duplicates
+	runs    map[string]*projectRun // one per name in order
+	byAlias map[string]string      // alias -> project name
+	aliases []string               // valid aliases of all projects, sorted
+
 	started bool
 	closed  bool
 	lookup  uint64 // number of the last holder lookup started
@@ -131,15 +138,12 @@ type Engine struct {
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
-// seen. Call Start before starting projects.
+// seen until they are given to Apply. Call Start before starting projects.
 func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
-		cfg:         cloneConfig(cfg),
 		opts:        opts,
 		bus:         NewBus(),
 		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort}),
-		runs:        map[string]*projectRun{},
-		byAlias:     map[string]string{},
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
@@ -148,21 +152,41 @@ func New(cfg *config.Config, opts Options) *Engine {
 	}
 	e.applySites = e.proxy.Apply
 	e.ctx, e.stop = context.WithCancel(context.Background())
-	for _, p := range e.cfg.Projects {
-		if _, dup := e.runs[p.Name]; dup {
+	e.setConfigLocked(cloneConfig(cfg), nil)
+	return e
+}
+
+// setConfigLocked makes next the engine's configuration. A project keeps its
+// run unless its name is in replace; a project new to the engine, or in
+// replace, gets a fresh stopped one. A run that is left out is marked gone.
+func (e *Engine) setConfigLocked(next *config.Config, replace map[string]bool) {
+	runs := map[string]*projectRun{}
+	byAlias := map[string]string{}
+	var order, aliases []string
+	for _, p := range next.Projects {
+		if _, dup := runs[p.Name]; dup {
 			continue // like config.Project, the first of a name wins
 		}
-		e.order = append(e.order, p.Name)
-		e.runs[p.Name] = &projectRun{name: p.Name, alias: p.Alias, server: p.Server, state: StateStopped, announced: StateStopped}
-		if _, taken := e.byAlias[p.Alias]; !taken {
-			e.byAlias[p.Alias] = p.Name
+		order = append(order, p.Name)
+		run := e.runs[p.Name]
+		if run == nil || replace[p.Name] {
+			run = &projectRun{name: p.Name, alias: p.Alias, server: p.Server, state: StateStopped, announced: StateStopped}
+		}
+		runs[p.Name] = run
+		if _, taken := byAlias[p.Alias]; !taken {
+			byAlias[p.Alias] = p.Name
 		}
 		if validAlias(p.Alias) == nil {
-			e.aliases = append(e.aliases, p.Alias)
+			aliases = append(aliases, p.Alias)
 		}
 	}
-	sort.Strings(e.aliases)
-	return e
+	for name, run := range e.runs {
+		if runs[name] != run {
+			run.gone = true
+		}
+	}
+	sort.Strings(aliases)
+	e.cfg, e.order, e.runs, e.byAlias, e.aliases = next, order, runs, byAlias, aliases
 }
 
 // validAlias applies the hosts package's rules to one alias.
@@ -187,8 +211,12 @@ func cloneConfig(cfg *config.Config) *config.Config {
 // Events returns the event bus.
 func (e *Engine) Events() *Bus { return e.bus }
 
-// Config returns a copy of the configuration the engine was built with.
-func (e *Engine) Config() *config.Config { return cloneConfig(e.cfg) }
+// Config returns a copy of the engine's configuration.
+func (e *Engine) Config() *config.Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return cloneConfig(e.cfg)
+}
 
 // Start prepares the engine: it creates the run directory, checks that the
 // proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well), and loads the proxy with no
@@ -287,9 +315,11 @@ func (e *Engine) probePort(ctx context.Context, what string, port, def int) erro
 // proxyLog receives the proxy's log lines; alias is empty for its own logs.
 func (e *Engine) proxyLog(alias, line string) {
 	project := alias
+	e.mu.Lock()
 	if name, ok := e.byAlias[alias]; ok && alias != "" {
 		project = name
 	}
+	e.mu.Unlock()
 	e.bus.Publish(Event{Project: project, Message: line})
 }
 
@@ -320,15 +350,17 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 			run.cancel()
 		}
 	}
+	order := e.order
 	e.mu.Unlock()
 	e.stop() // no holder lookup begins once closed is set; end the running ones
 
 	var errs []error
-	for _, name := range e.order {
+	for _, name := range order {
 		if err := e.StopProject(ctx, name); err != nil {
 			errs = append(errs, err)
 		}
 	}
+	e.starts.Wait() // starts Apply began: each finds the engine closed
 	// Every start has returned and none can begin; ensureSession creates and
 	// starts nothing once closed is set.
 	e.mu.Lock()
@@ -395,12 +427,12 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 // engine announces what follows from it, so a state Status returns has
 // always been published as an event first.
 func (e *Engine) Status(name string) ProjectStatus {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	run, ok := e.runs[name]
 	if !ok {
 		return ProjectStatus{State: StateStopped}
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	st, msg := run.announced, run.shownMsg
 	if st == "" {
 		// Recorded and not announced yet: only inside a start or stop, which

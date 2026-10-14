@@ -93,11 +93,12 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 // returned; what could not be removed is remembered, and stopping (or
 // starting) the project again retries it.
 func (e *Engine) StopProject(ctx context.Context, name string) error {
+	e.mu.Lock()
 	run, ok := e.runs[name]
 	if !ok {
+		e.mu.Unlock()
 		return fmt.Errorf("unknown project %q", name)
 	}
-	e.mu.Lock()
 	if run.cancel != nil {
 		run.cancel()
 	}
