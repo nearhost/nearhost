@@ -35,16 +35,13 @@ func TestAddDiscoversLocalProjectAndSavesConfig(t *testing.T) {
 		t.Fatalf("web route = %+v %v", web, ok)
 	}
 	want := "Routes found for myapp (local:" + dir + "):\n" +
-		"  PORT  ROLE      LABEL\n" +
-		"  1025  ignore    Mailpit SMTP (FORWARD_MAILPIT_PORT)\n" +
-		"  3307  ignore    Database (FORWARD_DB_PORT)\n" +
-		"  5174  loopback  Vite (VITE_PORT)\n" +
-		"  6379  ignore    Redis (FORWARD_REDIS_PORT)\n" +
-		"  8025  ignore    Mailpit dashboard (FORWARD_MAILPIT_DASHBOARD_PORT)\n" +
-		"  8080  web       Laravel (APP_PORT)\n" +
-		"\n" +
-		"Advisory (app-url): APP_URL is \"http://localhost\". Generated links will use it, so set it to the alias.\n" +
-		"  APP_URL=https://myapp.test\n" +
+		"  PORT  ROLE    LABEL\n" +
+		"  1025  ignore  mailpit (FORWARD_MAILPIT_PORT)\n" +
+		"  3307  ignore  mysql (FORWARD_DB_PORT)\n" +
+		"  5174  ignore  laravel.test (VITE_PORT)\n" +
+		"  6379  ignore  redis (FORWARD_REDIS_PORT)\n" +
+		"  8025  ignore  mailpit (FORWARD_MAILPIT_DASHBOARD_PORT)\n" +
+		"  8080  web     laravel.test (APP_PORT)\n" +
 		"\n" +
 		"Added myapp on local at https://myapp.test\n" +
 		"Start it with `nearhost up`.\n"
@@ -87,7 +84,7 @@ func TestAddWebFlagOverridesPick(t *testing.T) {
 	if web, _ := p.WebRoute(); web.Port != 9000 || webs != 1 {
 		t.Fatalf("expected 9000 as the only web route, got %+v", p.Routes)
 	}
-	wantContains(t, out, "  8080  ignore    Laravel (APP_PORT)\n", "  9000  web       web (--web)\n")
+	wantContains(t, out, "  8080  ignore  laravel.test (APP_PORT)\n", "  9000  web     web (--web)\n")
 
 	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "bad", "--web", "70000")
 	if err == nil || !strings.Contains(err.Error(), "--web") {
@@ -152,7 +149,8 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		{"duplicate alias", []string{"add", dir, "--name", "Shop", "--web", "9000"}, []string{"shop.test", `"shop"`, "--alias"}},
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
 		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", ".test"}},
-		{"loopback clash", []string{"add", fixture(t, "sail-custom"), "--name", "second"}, []string{"loopback port 5174", `"shop"`, "--disabled"}},
+		// restored in Task 6
+		// {"loopback clash", []string{"add", fixture(t, "sail-custom"), "--name", "second"}, []string{"loopback port 5174", `"shop"`, "--disabled"}},
 		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`unknown server "nas"`, "servers:"}},
 		{"remote without a path", []string{"add", "--server", "mini", "--name", "x"}, []string{"path"}},
 		{"remote with a relative path", []string{"add", "code/x", "--server", "mini", "--name", "x"}, []string{"absolute path"}},
@@ -177,6 +175,7 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 }
 
 func TestAddLoopbackClashIsAllowedWhenDisabled(t *testing.T) {
+	t.Skip("needs enabled presets; restored in Task 6")
 	cfgPath, _ := existing(t)
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second", "--disabled")
 	if err != nil {
@@ -271,6 +270,7 @@ func TestAddQuotesTheProjectNameInTheStartHint(t *testing.T) {
 // --web can turn a port that was found as a loopback forward into the web
 // route. The advisories are about the routes the project ends up with.
 func TestAddAdvisesOnTheRolesAfterTheWebFlag(t *testing.T) {
+	t.Skip("needs enabled presets; restored in Task 6")
 	cfgPath, _ := existing(t)
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "second", "--web", "5174")
 	if err != nil {

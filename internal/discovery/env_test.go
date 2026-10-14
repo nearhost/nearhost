@@ -4,8 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"testing"
-
-	"github.com/nearhost/nearhost/internal/config"
 )
 
 func TestDirReaderReturnsNotExistForMissingFile(t *testing.T) {
@@ -44,42 +42,6 @@ func TestReadEnvWithNoFilesIsEmpty(t *testing.T) {
 	env, err := readEnv(DirReader{Root: "testdata/empty"})
 	if err != nil || len(env) != 0 {
 		t.Fatalf("expected empty env, got %+v %v", env, err)
-	}
-}
-
-func TestEnvCandidatesMapSailVariables(t *testing.T) {
-	env, _ := readEnv(DirReader{Root: "testdata/sail-custom"})
-	cands := envCandidates(env)
-	want := map[int]struct {
-		role  config.Role
-		label string
-	}{
-		8080: {config.RoleWeb, "Laravel (APP_PORT)"},
-		5174: {config.RoleLoopback, "Vite (VITE_PORT)"},
-		3307: {config.RoleIgnore, "Database (FORWARD_DB_PORT)"},
-	}
-	if len(cands) != len(want) {
-		t.Fatalf("expected %d candidates, got %+v", len(want), cands)
-	}
-	seen := map[int]int{}
-	for _, c := range cands {
-		seen[c.Port]++
-		w, ok := want[c.Port]
-		if !ok || c.Role != w.role || c.Label != w.label || c.Source != "env:"+c.Var {
-			t.Errorf("unexpected candidate %+v", c)
-		}
-	}
-	for port := range want {
-		if seen[port] != 1 {
-			t.Errorf("port %d appeared %d times, want exactly once: %+v", port, seen[port], cands)
-		}
-	}
-}
-
-func TestEnvCandidatesSkipNonNumeric(t *testing.T) {
-	cands := envCandidates(map[string]string{"APP_PORT": "eighty", "VITE_PORT": ""})
-	if len(cands) != 0 {
-		t.Fatalf("expected none, got %+v", cands)
 	}
 }
 

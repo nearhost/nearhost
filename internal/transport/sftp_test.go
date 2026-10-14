@@ -58,8 +58,8 @@ func TestSFTPReaderReadsAndReportsNotExist(t *testing.T) {
 
 func TestDiscoveryWorksOverSFTP(t *testing.T) {
 	client, root := inProcessSFTP(t)
-	os.WriteFile(filepath.Join(root, ".env"), []byte("APP_PORT=8080\nVITE_PORT=5174\n"), 0o644)
-	res, err := discovery.Discover(NewSFTPReader(client, root))
+	os.WriteFile(filepath.Join(root, "compose.yaml"), []byte("services:\n  app:\n    ports:\n      - '8080:80'\n      - '5174:5174'\n"), 0o644)
+	res, err := discovery.Discover(NewSFTPReader(client, root), discovery.Options{})
 	if err != nil || len(res.Routes) != 2 {
 		t.Fatalf("Discover over sftp: %+v %v", res, err)
 	}
