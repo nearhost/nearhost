@@ -79,6 +79,9 @@ type ServerFiles interface {
 	Resolve(ctx context.Context, path string) (string, error)
 	// Discover reads the project in the directory path means.
 	Discover(ctx context.Context, path string) (Draft, error)
+	// Advise is the advice for the project in path with the routes and
+	// alias it will be saved with, and notes about working it out.
+	Advise(ctx context.Context, path string, routes []config.Route, alias string) ([]Advisory, []string, error)
 	Close() error
 }
 

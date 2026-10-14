@@ -171,3 +171,35 @@ func TestFormCheckServer(t *testing.T) {
 		t.Errorf("refused check = %v", err)
 	}
 }
+
+// Advice is worked out again for the roles and alias the form ends with.
+func TestFormAdvisesForTheFinalChoices(t *testing.T) {
+	u := formEngine(t)
+	ctx := context.Background()
+	if notes := u.EnablePresets(ctx, []string{"test/stack"}); len(notes) != 0 {
+		t.Fatal(notes)
+	}
+	files, err := u.OpenServer(ctx, config.Server{Name: config.LocalServer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	dir := fixture(t, "sail-custom")
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advisories, _, err := files.Advise(ctx, dir, d.Routes, "other.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range advisories {
+		if a.Code == "app-url" {
+			found = strings.Contains(a.Message, "https://other.test")
+		}
+	}
+	if !found {
+		t.Errorf("no app-url advisory for other.test: %+v", advisories)
+	}
+}

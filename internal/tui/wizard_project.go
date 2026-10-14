@@ -68,8 +68,10 @@ type projectForm struct {
 	webPort  textField // asked for when discovery found no routes
 
 	name, alias       textField
-	focus             int // 0 name, 1 alias
+	aliasEdited       bool // the alias was typed, so it no longer follows the name
+	focus             int  // 0 name, 1 alias
 	nameErr, aliasErr string
+	advice            []Advisory // for the routes and alias chosen, shown at the end
 
 	notes []string // what the registry, discovery and presets had to say
 	busy  string   // what a background step is doing; empty when none is
@@ -114,6 +116,8 @@ type (
 	namesCheckedMsg struct {
 		seq               int
 		nameErr, aliasErr error
+		advice            []Advisory
+		notes             []string
 	}
 	projectSavedMsg struct {
 		seq  int
@@ -243,6 +247,8 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 		f.busy = ""
 		f.nameErr, f.aliasErr = errText(msg.nameErr), errText(msg.aliasErr)
 		if f.nameErr == "" && f.aliasErr == "" {
+			f.advice = msg.advice
+			f.notes = append(f.notes, msg.notes...)
 			f.step = projectStepConfirm
 		}
 	case projectSavedMsg:
@@ -394,17 +400,25 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.busy, f.nameErr, f.aliasErr = "Checking…", "", ""
 			f.name.value, f.alias.value = strings.TrimSpace(f.name.value), strings.TrimSpace(f.alias.value)
 			seq, b, name, alias := f.seq, f.b, f.name.value, f.alias.value
-			return f.w.do(func(context.Context) tea.Msg {
+			files, dir, routes := f.files, f.resolved, append([]config.Route(nil), f.routes...)
+			return f.w.do(func(ctx context.Context) tea.Msg {
 				nameErr, aliasErr := b.CheckNames(name, alias)
-				return namesCheckedMsg{seq, nameErr, aliasErr}
+				msg := namesCheckedMsg{seq: seq, nameErr: nameErr, aliasErr: aliasErr}
+				if nameErr == nil && aliasErr == nil && files != nil {
+					var err error
+					if msg.advice, msg.notes, err = files.Advise(ctx, dir, routes, alias); err != nil {
+						msg.notes = append(msg.notes, err.Error())
+					}
+				}
+				return msg
 			})
 		default:
-			fld := &f.name
 			if f.focus == 1 {
-				fld = &f.alias
-			}
-			if fld.key(k) {
-				f.nameErr, f.aliasErr = "", ""
+				if f.alias.key(k) {
+					f.aliasEdited, f.nameErr, f.aliasErr = true, "", ""
+				}
+			} else if f.name.key(k) {
+				f.nameChanged()
 			}
 		}
 	case projectStepConfirm:
@@ -435,12 +449,21 @@ func (f *projectForm) paste(s string) {
 			f.err = ""
 		}
 	case projectStepDetails:
-		fld := &f.name
 		if f.focus == 1 {
-			fld = &f.alias
+			f.alias.paste(s)
+			f.aliasEdited, f.nameErr, f.aliasErr = true, "", ""
+		} else {
+			f.name.paste(s)
+			f.nameChanged()
 		}
-		fld.paste(s)
-		f.nameErr, f.aliasErr = "", ""
+	}
+}
+
+// nameChanged keeps the alias following the name until it is edited.
+func (f *projectForm) nameChanged() {
+	f.nameErr, f.aliasErr = "", ""
+	if !f.aliasEdited {
+		f.alias.value = config.AliasFor(strings.TrimSpace(f.name.value))
 	}
 }
 
@@ -639,6 +662,11 @@ func (f *projectForm) project() config.Project {
 // back goes back a step: from the first it closes the form, and a step that
 // was waiting stops waiting.
 func (f *projectForm) back() tea.Cmd {
+	// A step that saves runs to its end, so what is saved is what the form
+	// shows: answering the registry, enabling presets, saving the project.
+	if f.busy != "" && (f.step == projectStepRegistry || f.step == projectStepPresets || f.step == projectStepConfirm) {
+		return nil
+	}
 	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
 	f.busy, f.err, f.matches, f.listNote = "", "", nil, ""
@@ -765,6 +793,7 @@ func (f *projectForm) lines(width int) []string {
 			}
 			lines = append(lines, field(label, fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, clean(r.Label)), width)...)
 		}
+		lines = append(lines, adviceLines(f.advice, width)...)
 	}
 	if f.busy != "" {
 		lines = append(lines, "", busyLine(f.busy))
@@ -798,7 +827,13 @@ func (f *projectForm) routeLines(width int) []string {
 		}
 		lines = append(lines, mark+fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, fit(clean(r.Label), width-20)))
 	}
-	for _, a := range f.draft.Advisories {
+	return append(lines, adviceLines(f.draft.Advisories, width)...)
+}
+
+// adviceLines draws advisories, each with its snippet.
+func adviceLines(advice []Advisory, width int) []string {
+	var lines []string
+	for _, a := range advice {
 		lines = append(lines, "")
 		for _, l := range wrap(clean("Advisory ("+a.Code+"): "+a.Message), width) {
 			lines = append(lines, styleAmber.Render(l))
