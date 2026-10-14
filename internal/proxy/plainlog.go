@@ -1,4 +1,4 @@
-package cli
+package proxy
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// proxyLine is the part of a Caddy JSON log line that `up` shows.
+// proxyLine is the part of a Caddy JSON log line that PlainLog shows.
 type proxyLine struct {
 	Level   string `json:"level"`
 	Msg     string `json:"msg"`
@@ -20,11 +20,11 @@ type proxyLine struct {
 	Duration float64 `json:"duration"` // seconds
 }
 
-// plainLog turns a log line of the proxy, which writes JSON, into a short
+// PlainLog turns a log line of the proxy, which writes JSON, into a short
 // plain one: "GET /path 200 in 12ms" for a handled request, otherwise
 // "<level>: <message>", followed by the request it is about when there is
 // one. Any other line is returned as it is.
-func plainLog(line string) string {
+func PlainLog(line string) string {
 	if !strings.HasPrefix(line, "{") {
 		return line
 	}

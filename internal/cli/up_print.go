@@ -7,6 +7,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -34,7 +35,7 @@ func (p *upPrinter) event(ev engine.Event) {
 		msg = strings.TrimPrefix(msg, ev.Server+": ") // the session names itself
 	}
 	if ev.State == "" {
-		msg = plainLog(msg)
+		msg = proxy.PlainLog(msg)
 	} else {
 		// The same state comes again when its reason changes (a server that
 		// keeps failing differently, a port whose holder was found): each
