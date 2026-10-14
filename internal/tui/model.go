@@ -49,13 +49,20 @@ type Model struct {
 
 	events      <-chan engine.Event
 	unsubscribe func()
-	stamp       fileStamp // the config file as last seen
+	stamp       fileStamp // the config file as last applied, or refused
+	seen        fileStamp // the config file at the last tick
 	applying    bool      // an Apply is running
+
+	// What Home shows about the machine. Reading it can be slow (the trust
+	// store, /etc/hosts), so it is read on the clock, not on every redraw.
+	caTrusted  bool
+	hostsState string
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
 func New(b Backend, dir string) *Model {
 	events, unsubscribe := b.Events().Subscribe(eventBuffer)
+	stamp := stampOf(b.ConfigPath())
 	return &Model{
 		b: b, dir: dir,
 		cfg:       b.Config(),
@@ -63,7 +70,8 @@ func New(b Backend, dir string) *Model {
 		collapsed: map[string]bool{},
 		logs:      newLogs(),
 		events:    events, unsubscribe: unsubscribe,
-		stamp: stampOf(b.ConfigPath()),
+		stamp: stamp, seen: stamp,
+		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
 	}
 }
 
@@ -76,8 +84,15 @@ type (
 	addedMsg       struct{ err error }
 	resumedMsg     struct{}
 	shutdownMsg    struct{ err error }
-	projectDoneMsg struct{}
-	openedMsg      struct {
+	projectDoneMsg struct {
+		name string
+		err  error
+	}
+	machineMsg struct {
+		caTrusted  bool
+		hostsState string
+	}
+	openedMsg struct {
 		url string
 		err error
 	}
@@ -117,7 +132,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.started = true
-		var cmds []tea.Cmd
+		cmds := []tea.Cmd{m.readMachine()} // the engine has just created the CA
 		for _, p := range m.cfg.Projects {
 			if p.Enabled {
 				cmds = append(cmds, m.startProject(p.Name))
@@ -128,7 +143,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs.event(engine.Event(msg), m.cfg)
 		return m, m.listen()
 	case tickMsg:
-		return m, tea.Batch(tick(), m.checkConfig())
+		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
+	case machineMsg:
+		m.caTrusted, m.hostsState = msg.caTrusted, msg.hostsState
+	case projectDoneMsg:
+		// A start or stop the engine refused outright changed no state, so
+		// the refusal is the only sign of it.
+		if msg.err != nil {
+			m.logs.project(msg.name, time.Now(), msg.err.Error())
+		}
 	case appliedMsg:
 		m.applying = false
 		if msg.err != nil {
@@ -186,17 +209,25 @@ func (m *Model) setConfig(cfg *config.Config) {
 	m.sel, m.scroll = homeKey, 0
 }
 
+// startProject starts a project. A start that fails shows as the project's
+// state; the error is logged as well, since a start refused outright (the
+// proxy is down, the project is being changed) changes no state.
 func (m *Model) startProject(name string) tea.Cmd {
 	return func() tea.Msg {
-		_ = m.b.StartProject(context.Background(), name) // the outcome shows as the project's state
-		return projectDoneMsg{}
+		return projectDoneMsg{name, m.b.StartProject(context.Background(), name)}
 	}
 }
 
 func (m *Model) stopProject(name string) tea.Cmd {
 	return func() tea.Msg {
-		_ = m.b.StopProject(context.Background(), name)
-		return projectDoneMsg{}
+		return projectDoneMsg{name, m.b.StopProject(context.Background(), name)}
+	}
+}
+
+// readMachine reads what Home shows about the machine.
+func (m *Model) readMachine() tea.Cmd {
+	return func() tea.Msg {
+		return machineMsg{m.b.CATrusted(), m.b.HostsState()}
 	}
 }
 
@@ -309,13 +340,28 @@ func stampOf(path string) fileStamp {
 	return fileStamp{exists: true, mod: info.ModTime(), size: info.Size()}
 }
 
-// checkConfig applies the config file when it has changed since it was last
-// seen and no Apply is running.
+// checkConfig applies the config file when it has changed and then stayed
+// the same for a tick, and no Apply is running. Waiting a tick keeps a save
+// caught half way from being applied. An empty file is never applied: an
+// editor that truncates before it writes leaves one for a moment, and
+// applying it would stop every project.
 func (m *Model) checkConfig() tea.Cmd {
 	if m.applying || m.quitting {
 		return nil
 	}
-	if stampOf(m.b.ConfigPath()) == m.stamp {
+	path := m.b.ConfigPath()
+	now := stampOf(path)
+	if now == m.stamp {
+		m.seen = now
+		return nil
+	}
+	if now != m.seen {
+		m.seen = now // changed since the last tick: wait for it to settle
+		return nil
+	}
+	if now.exists && now.size == 0 {
+		m.stamp = now
+		m.logs.note("Ignored a change to " + path + ": the file is empty")
 		return nil
 	}
 	return m.reloadConfig()

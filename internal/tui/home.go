@@ -13,24 +13,21 @@ var markLines = []string{
 	styleBeacon.Render("│") + " ● " + styleBeacon.Render("│"),
 }
 
-// home is the Home panel.
+// home is the Home panel. With no projects it is the empty state, below the
+// proxy's trouble when there is any.
 func (m *Model) home(width int) []string {
 	if len(m.cfg.Projects) == 0 {
-		lines := append([]string{""}, markLines...)
+		var lines []string
+		if m.proxyErr != nil {
+			lines = append(m.proxyLines(width), "")
+		}
+		lines = append(lines, markLines...)
 		return append(lines, "",
 			styleTitle.Render("Nothing to serve yet."),
 			"Press n to add the project in the current directory.")
 	}
-	https, http := m.b.Ports()
-	proxyLine := styleBeacon.Render("●") + fmt.Sprintf(" https :%d · http :%d", https, http)
-	switch {
-	case m.proxyErr != nil:
-		proxyLine = styleRed.Render("● down: ") + clean(m.proxyErr.Error())
-	case !m.started:
-		proxyLine = styleAmber.Render("◐ starting")
-	}
 	ca := styleBeacon.Render("trusted")
-	if !m.b.CATrusted() {
+	if !m.caTrusted {
 		ca = styleAmber.Render("not trusted") + ". Run nearhost trust"
 	}
 	running := 0
@@ -40,9 +37,23 @@ func (m *Model) home(width int) []string {
 		}
 	}
 	lines := []string{styleTitle.Render("Nearhost"), ""}
-	lines = append(lines, field("proxy", proxyLine, width)...)
+	lines = append(lines, m.proxyLines(width)...)
 	lines = append(lines, field("local CA", ca, width)...)
-	lines = append(lines, field("hosts", clean(m.b.HostsState()), width)...)
+	lines = append(lines, field("hosts", clean(m.hostsState), width)...)
 	lines = append(lines, field("config", clean(m.b.ConfigPath()), width)...)
 	return append(lines, field("running", fmt.Sprintf("%d of %d", running, len(m.cfg.Projects)), width)...)
+}
+
+// proxyLines say whether the proxy is up, and how to get round a port that
+// is taken when it is not.
+func (m *Model) proxyLines(width int) []string {
+	https, http := m.b.Ports()
+	switch {
+	case m.proxyErr != nil:
+		lines := field("proxy", styleRed.Render("● down: ")+clean(m.proxyErr.Error()), width)
+		return append(lines, field("fix", "Quit the program using the port, or run nearhost with --https-port and --http-port.", width)...)
+	case !m.started:
+		return field("proxy", styleAmber.Render("◐ starting"), width)
+	}
+	return field("proxy", styleBeacon.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }

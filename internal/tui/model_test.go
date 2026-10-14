@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -219,6 +220,11 @@ func TestChangedConfigFileIsApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.applyErr = errBoom
+	// The file is applied once it has stayed the same for a tick, so a save
+	// caught half way is not.
+	if cmd := m.checkConfig(); cmd != nil {
+		t.Fatal("applied a change on the tick that first saw it")
+	}
 	run(m, m.checkConfig())
 	if len(f.applied) != 1 {
 		t.Fatalf("applied %d times", len(f.applied))
@@ -350,4 +356,65 @@ func TestOutsideTextIsCleaned(t *testing.T) {
 		t.Errorf("escape sequences reached the screen: %q", s)
 	}
 	wantScreen(t, m, "app next", "bad thing")
+}
+
+// An editor that truncates the file before writing it leaves it empty for a
+// moment. An empty file is not applied, so it never stops every project.
+func TestEmptyConfigFileIsIgnored(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := sized(f)
+	if err := os.WriteFile(f.path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.checkConfig()
+	run(m, m.checkConfig())
+	if len(f.applied) != 0 {
+		t.Fatalf("applied an empty file: %+v", f.applied)
+	}
+	wantScreen(t, m, "Ignored a change to", "config.yaml: the file is") // "empty" wraps
+}
+
+// A start or stop the engine refuses outright, such as one while the proxy
+// is down, changes no state; the refusal is shown instead.
+func TestRefusedStartIsShown(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.startErr2 = errors.New("engine is not started")
+	m := sized(f)
+	m.sel = rowKey(rowProject, "website")
+	run(m, press(m, "enter"))
+	wantScreen(t, m, "[website] engine is not started")
+	m.sel = homeKey
+	wantScreen(t, m, "[website] engine is not started")
+}
+
+// Whether the CA is trusted and the state of the hosts block are read on the
+// clock, not on every redraw.
+func TestHomeReadsTheMachineOnTheTick(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{} })
+	before := f.machineReads()
+	for i := 0; i < 20; i++ {
+		m.View()
+	}
+	if after := f.machineReads(); after != before {
+		t.Errorf("redrawing read the machine %d times", after-before)
+	}
+	f.trusted = false
+	wantScreen(t, m, "local CA  trusted")
+	run(m, m.readMachine())
+	wantScreen(t, m, "local CA  not trusted")
+}
+
+// With the proxy down, Home says how to get round it, even with no projects.
+func TestProxyDownSaysHowToFixIt(t *testing.T) {
+	for _, cfg := range []*config.Config{sampleConfig(), {}} {
+		f := newFake(t, cfg)
+		m := sized(f)
+		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
+		wantScreen(t, m, "down: HTTPS port 443 is in use by nginx (pid 12)", "fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
+	}
 }
