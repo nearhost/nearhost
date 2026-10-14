@@ -116,6 +116,16 @@ func TestSystemUpCountsASecondSignalRightAfterTheFirst(t *testing.T) {
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
+	// Wait until the guard has had all three. Nothing waits on the third
+	// otherwise, and a signal still on its way when both subscriptions end
+	// meets the default action and ends the test binary.
+	for range 3 {
+		select {
+		case <-guard:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the guard did not receive every signal sent")
+		}
+	}
 	release()
 	release()
 }
