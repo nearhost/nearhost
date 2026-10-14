@@ -144,9 +144,12 @@ func TestAddCarriesOnWhenTheOfficialRegistryCannotBeRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, askRegistry, "Warning: registry nearhost (nearhost/presets) cannot be read: ", "nothing was saved", "  8080  web     app (APP_PORT)\n", "Added myapp on local")
+	wantContains(t, out, askRegistry, "Warning: registry nearhost (nearhost/presets) cannot be read: ", ", so it was not trusted.\n", "  8080  web     app (APP_PORT)\n", "Added myapp on local")
 	if strings.Count(out, "Warning:") != 1 {
 		t.Errorf("expected one warning:\n%s", out)
+	}
+	if strings.Contains(out, "nothing was saved") {
+		t.Errorf("add saves the project, so the note must not say nothing was saved:\n%s", out)
 	}
 	if cfg := loadSaved(t, cfgPath); len(cfg.Registries) != 0 || cfg.RegistryPromptOff() {
 		t.Errorf("nothing may be saved but the project: %+v", cfg)

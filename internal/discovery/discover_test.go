@@ -505,3 +505,16 @@ func TestDiscoverWarningsNameRegistryPresetsInFull(t *testing.T) {
 		t.Fatalf("warnings = %q", res.Warnings)
 	}
 }
+
+func TestResultComposeUnread(t *testing.T) {
+	compose := DirReader{Root: "testdata/compose-literal"}
+	if !discover(t, compose, Options{}).ComposeUnread() {
+		t.Error("a Compose file no preset asked for is unread")
+	}
+	if discover(t, compose, Options{Presets: testPresets(t, "compose")}).ComposeUnread() {
+		t.Error("a Compose file a preset asked for is read")
+	}
+	if discover(t, DirReader{Root: "testdata/empty"}, Options{}).ComposeUnread() {
+		t.Error("there is no Compose file to leave unread")
+	}
+}

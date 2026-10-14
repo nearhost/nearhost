@@ -63,10 +63,10 @@ func newAddCmd(b addBackend) *cobra.Command {
 			"with routes proposed from the port variables in its .env and from the\n" +
 			"presets that are enabled, which can also ask for Compose published ports.\n" +
 			"When a preset from a trusted registry suits the project and is not\n" +
-			"enabled, add offers to enable it; while no registry is trusted, it first\n" +
-			"asks whether to trust the official one. With --server the path is on that\n" +
-			"server and its files are read over SFTP. Nothing is started and no\n" +
-			"project file is changed.",
+			"enabled, add offers to enable it; while no registry is trusted and add\n" +
+			"runs at a terminal, it first asks whether to trust the official one.\n" +
+			"With --server the path is on that server and its files are read over\n" +
+			"SFTP. Nothing is started and no project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
@@ -143,7 +143,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	printWarnings(cmd.ErrOrStderr(), warnings)
 
-	if err := printRoutes(out, project); err != nil {
+	if err := printRoutes(out, project, res.ComposeUnread()); err != nil {
 		return err
 	}
 	if _, ok := project.WebRoute(); !ok {
@@ -301,7 +301,11 @@ func askToTrust(ctx context.Context, out io.Writer, answers *bufio.Reader, b pre
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "", "y", "yes":
 			if _, err := b.trust(ctx, out, cfg, cfgPath, officialRepo, ""); err != nil {
-				return err.Error(), nil
+				var unread *unreadableRegistryError
+				if errors.As(err, &unread) {
+					return unread.problem + ", so it was not trusted.", nil
+				}
+				return strings.TrimRight(err.Error(), ".") + ".", nil
 			}
 			return "", nil
 		case "n", "no":
@@ -455,7 +459,12 @@ func forceWeb(routes []config.Route, port int) []config.Route {
 	return routes
 }
 
-func printRoutes(out io.Writer, p config.Project) error {
+func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
+	if len(p.Routes) == 0 && composeUnread {
+		_, err := fmt.Fprintf(out, "No port variables found in the .env files of %s (%s:%s).\n"+
+			"Its Compose file is read only when a preset asks for it with compose: ports.\n", p.Name, p.Server, p.Path)
+		return err
+	}
 	if len(p.Routes) == 0 {
 		_, err := fmt.Fprintf(out, "No ports found in the files of %s (%s:%s).\n", p.Name, p.Server, p.Path)
 		return err

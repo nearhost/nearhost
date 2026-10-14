@@ -32,11 +32,12 @@ type Result struct {
 	Suggested []Offer  // offers that match the project
 	Warnings  []string // presets, or parts of them, that were skipped
 
-	project *preset.Project
-	files   *memo // the reader under project, which Advise reads through too
-	active  []*preset.Preset
-	facts   map[string]map[string]any // by preset key
-	owners  map[string]string         // id to preset key
+	project    *preset.Project
+	hasCompose bool
+	files      *memo // the reader under project, which Advise reads through too
+	active     []*preset.Preset
+	facts      map[string]map[string]any // by preset key
+	owners     map[string]string         // id to preset key
 }
 
 // Discover reads the project's files and proposes routes. On its own it
@@ -54,10 +55,11 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	}
 
 	res := &Result{
-		Env:     env,
-		project: &preset.Project{Env: env, Compose: string(composeData), Files: files},
-		files:   files,
-		facts:   map[string]map[string]any{},
+		Env:        env,
+		project:    &preset.Project{Env: env, Compose: string(composeData), Files: files},
+		files:      files,
+		hasCompose: hasCompose,
+		facts:      map[string]map[string]any{},
 	}
 	res.activate(opts.Presets)
 	byPort := map[int]*Candidate{}
@@ -272,4 +274,10 @@ func (res *Result) ConfigRoutes() []config.Route {
 		out = append(out, config.Route{Port: c.Port, Role: c.Role, Label: c.Label})
 	}
 	return out
+}
+
+// ComposeUnread reports whether the project has a Compose file that no
+// active preset asked to read for published ports.
+func (res *Result) ComposeUnread() bool {
+	return res.hasCompose && !res.wantsCompose()
 }
