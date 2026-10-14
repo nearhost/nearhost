@@ -73,7 +73,19 @@ func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 		check()
 		ended <- nil
 	}()
-	time.Sleep(50 * time.Millisecond) // the check is running
+	// Quit once the check is running: a check that has not begun is not
+	// waited for, it never starts.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		running := len(f.forms.checked) > 0
+		f.mu.Unlock()
+		if running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the check never began")
+		}
+	}
 	quit := press(m, "ctrl+c")
 	done := make(chan struct{})
 	go func() {
