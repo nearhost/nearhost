@@ -36,5 +36,10 @@ func (m *Model) serverPanel(name string, width int) []string {
 			lines = append(lines, field("fix", "Run `ssh "+clean(srv.SSHHost)+"` once in a terminal to fix access.", width)...)
 		}
 	}
-	return append(lines, field("projects", strconv.Itoa(projects), width)...)
+	lines = append(lines, field("projects", strconv.Itoa(projects), width)...)
+	if m.panelErr != "" {
+		lines = append(lines, "")
+		lines = append(lines, errorLines(m.panelErr, width)...)
+	}
+	return lines
 }

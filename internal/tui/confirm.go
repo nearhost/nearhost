@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -108,5 +109,45 @@ func (m *Model) removeProject(p config.Project) {
 			return errNoLongerConfigured(name)
 		},
 		note: "Removed " + name + ".", after: rowKey(rowServer, p.Server),
+	}
+}
+
+// removeServer asks before removing a server and every project on it.
+func (m *Model) removeServer(name string) {
+	var on []string
+	for _, p := range m.cfg.Projects {
+		if p.Server == name {
+			on = append(on, p.Name)
+		}
+	}
+	ask := []string{"Remove " + name + "?"}
+	if len(on) > 0 {
+		ask = append(ask, "Its projects go with it and stop now: "+strings.Join(on, ", ")+".")
+	}
+	m.form = &confirmForm{
+		b: m.b, w: m.work, ask: ask,
+		edit: func(cfg *config.Config) error {
+			found := false
+			var servers []config.Server
+			for _, s := range cfg.Servers {
+				if s.Name == name {
+					found = true
+					continue
+				}
+				servers = append(servers, s)
+			}
+			if !found {
+				return errNoLongerConfigured(name)
+			}
+			var projects []config.Project
+			for _, p := range cfg.Projects {
+				if p.Server != name {
+					projects = append(projects, p)
+				}
+			}
+			cfg.Servers, cfg.Projects = servers, projects
+			return nil
+		},
+		note: "Removed " + name + ".", after: homeKey,
 	}
 }
