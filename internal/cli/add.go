@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -66,7 +67,8 @@ func newAddCmd(b addBackend) *cobra.Command {
 			"enabled, add offers to enable it; while no registry is trusted and add\n" +
 			"runs at a terminal, it first asks whether to trust the official one.\n" +
 			"With --server the path is on that server and its files are read over\n" +
-			"SFTP. Nothing is started and no project file is changed.",
+			"SFTP; a server not in the config is offered to be added, at a terminal.\n" +
+			"Nothing is started and no project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
@@ -93,16 +95,36 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err != nil {
 		return fmt.Errorf("%w; fix the config before adding to it", err)
 	}
-	project, srv, err := newProject(cfg, cfgPath, flags, args)
-	if err != nil {
-		return err
-	}
-
 	// Every question reads its answer from the same input, so that lines
 	// typed ahead reach the questions in the order they are asked.
 	var answers *bufio.Reader
 	if b.interactive != nil && b.interactive() {
 		answers = bufio.NewReader(cmd.InOrStdin())
+	}
+	out := cmd.OutOrStdout()
+	// A server the config does not have can be added when someone can
+	// answer, once the project itself is known to be one the config can
+	// hold. It is saved with the project, so that a failure on the way, or a
+	// save made for another reason such as enabling a preset, leaves it out.
+	srv, known := cfg.Server(flags.server)
+	unknown := fmt.Errorf("unknown server %q; add it under `servers:` in %s (a name and an ssh_host) and try again", flags.server, cfgPath)
+	if !known && (answers == nil || strings.TrimSpace(flags.server) == "") {
+		return unknown
+	}
+	if !known {
+		srv = config.Server{Name: flags.server}
+	}
+	project, err := newProject(cfg, cfgPath, srv, flags, args)
+	if err != nil {
+		return err
+	}
+	newServer := !known
+	if newServer {
+		host, ok := askToAddServer(answers, out, srv.Name)
+		if !ok {
+			return unknown
+		}
+		srv.SSHHost = host
 	}
 
 	reader, done, err := openProject(cmd.Context(), b, srv, project.Path)
@@ -119,7 +141,6 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	for i := range project.Routes {
 		project.Routes[i].Label = printable(project.Routes[i].Label)
 	}
-	out := cmd.OutOrStdout()
 	// Several routes were found and none says it is the web route: ask,
 	// when someone can answer. Otherwise the error below says how to choose.
 	if _, found := project.WebRoute(); !found && flags.web == 0 && len(project.Routes) > 1 && answers != nil {
@@ -160,6 +181,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err := loopbackClash(cfg, project); err != nil {
 		return err
 	}
+	if newServer {
+		cfg.Servers = append(cfg.Servers, srv)
+	}
 	cfg.Projects = append(cfg.Projects, project)
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("%w; nothing was saved", err)
@@ -167,7 +191,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err := config.Save(cfgPath, cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nAdded %s on %s at https://%s\n", project.Name, project.Server, project.Alias)
+	fmt.Fprintln(out)
+	if newServer {
+		fmt.Fprintf(out, "Added server %s, reached with `ssh %s`.\n", printable(srv.Name), printable(srv.SSHHost))
+	}
+	fmt.Fprintf(out, "Added %s on %s at https://%s\n", project.Name, project.Server, project.Alias)
 	start := "nearhost up"
 	if !project.Enabled {
 		start = upCommand(project.Name)
@@ -367,15 +395,39 @@ func chooseWeb(answers *bufio.Reader, out io.Writer, routes []config.Route) int 
 	}
 }
 
-// newProject works out the project's server, path, name and alias, and
-// refuses what the config could not hold. Its routes are still to be found.
-func newProject(cfg *config.Config, cfgPath string, flags addFlags, args []string) (config.Project, config.Server, error) {
-	fail := func(format string, a ...any) (config.Project, config.Server, error) {
-		return config.Project{}, config.Server{}, fmt.Errorf(format, a...)
+// askToAddServer offers to add the server called name and asks how ssh
+// reaches it, defaulting to its name. A host that ssh would take for an
+// option, or that is not one word, is asked again. No, or the end of input,
+// means the server is not added.
+func askToAddServer(answers *bufio.Reader, out io.Writer, name string) (string, bool) {
+	fmt.Fprintf(out, "Server %s is not in the config. Add it? [Y/n]: ", printable(name))
+	if !saidYes(answers, out) {
+		return "", false
 	}
-	srv, ok := cfg.Server(flags.server)
-	if !ok {
-		return fail("unknown server %q; add it under `servers:` in %s (a name and an ssh_host) and try again", flags.server, cfgPath)
+	for {
+		fmt.Fprintf(out, "SSH host for %s [%s]: ", printable(name), printable(name))
+		line, err := answers.ReadString('\n')
+		if err != nil && line == "" {
+			fmt.Fprintln(out)
+			return "", false
+		}
+		host := strings.TrimSpace(line)
+		if host == "" {
+			host = name
+		}
+		if strings.HasPrefix(host, "-") || strings.IndexFunc(host, unicode.IsSpace) >= 0 {
+			fmt.Fprintln(out, "An SSH host cannot start with - or contain spaces.")
+			continue
+		}
+		return host, true
+	}
+}
+
+// newProject works out the project's path, name and alias on srv, and
+// refuses what the config could not hold. Its routes are still to be found.
+func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags addFlags, args []string) (config.Project, error) {
+	fail := func(format string, a ...any) (config.Project, error) {
+		return config.Project{}, fmt.Errorf(format, a...)
 	}
 	projectPath := ""
 	if len(args) == 1 {
@@ -423,7 +475,7 @@ func newProject(cfg *config.Config, cfgPath string, flags addFlags, args []strin
 			return fail("alias %s is already used by project %q; pass another --alias", alias, other.Name)
 		}
 	}
-	return config.Project{Name: name, Server: srv.Name, Path: projectPath, Alias: alias, Enabled: !flags.disabled}, srv, nil
+	return config.Project{Name: name, Server: srv.Name, Path: projectPath, Alias: alias, Enabled: !flags.disabled}, nil
 }
 
 // openProject returns a reader for the project's files and a function to call
