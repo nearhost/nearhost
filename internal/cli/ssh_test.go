@@ -136,7 +136,7 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 
 	cfgPath, _ := existing(t)
 	dir := fixture(t, "compose-literal")
-	out, err := execute(t, newAddCmd(addBackend{openRemote: c.openRemote}), "--config", cfgPath, "add", dir, "--server", "mini", "--name", "blog")
+	out, err := execute(t, newAddCmd(addBackend{openRemote: c.openRemote}), "--config", cfgPath, "add", dir, "--server", "mini", "--name", "blog", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}

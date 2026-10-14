@@ -59,10 +59,11 @@ func newAddCmd(b addBackend) *cobra.Command {
 		Use:   "add [path]",
 		Short: "Add a project, discovering its ports from its files",
 		Long: "Add the project in path (default: the current directory) to the config,\n" +
-			"with routes proposed from its .env and Compose files and from the presets\n" +
-			"that are enabled. When a preset from a trusted registry suits the project\n" +
-			"and is not enabled, add offers to enable it. With --server the path is on\n" +
-			"that server and its files are read over SFTP. Nothing is started and no\n" +
+			"with routes proposed from the port variables in its .env and from the\n" +
+			"presets that are enabled, which can also ask for Compose published ports.\n" +
+			"When a preset from a trusted registry suits the project and is not\n" +
+			"enabled, add offers to enable it. With --server the path is on that\n" +
+			"server and its files are read over SFTP. Nothing is started and no\n" +
 			"project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

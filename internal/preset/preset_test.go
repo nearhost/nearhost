@@ -81,6 +81,7 @@ func TestParseRejectsInvalidPresets(t *testing.T) {
 		{"name differs from file", "schema: 1\nname: y\ntitle: X\ndetect: 'true'\n", `must match the file name "x"`},
 		{"missing title", "schema: 1\nname: x\ndetect: 'true'\n", "title is required"},
 		{"missing detect", "schema: 1\nname: x\ntitle: X\n", "detect is required"},
+		{"compose services", minimal("compose: services\n"), `compose "services" must be ports`},
 		{"after itself", minimal("after: [x]\n"), "after"},
 		{"after a path", minimal("after: [a/b/c]\n"), "after"},
 		{"after a bad alias", minimal("after: [Acme/x]\n"), "after"},
@@ -126,6 +127,20 @@ func TestParseRejectsInvalidPresets(t *testing.T) {
 				t.Errorf("error %q should start with the file name", err)
 			}
 		})
+	}
+}
+
+func TestParseAcceptsComposePorts(t *testing.T) {
+	p, err := Parse("x", []byte(minimal("compose: ports\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Compose != ComposePorts {
+		t.Errorf("compose = %q", p.Compose)
+	}
+	p, err = Parse("x", []byte(minimal("")))
+	if err != nil || p.Compose != "" {
+		t.Fatalf("a preset without compose: %+v %v", p, err)
 	}
 }
 

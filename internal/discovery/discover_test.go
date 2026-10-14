@@ -58,13 +58,33 @@ func discover(t *testing.T, r FileReader, opts Options) *Result {
 	return res
 }
 
-func TestDiscoverWithoutPresetsKnowsOnlyCompose(t *testing.T) {
+// Without presets the core reads .env and nothing else, even beside a
+// Compose file.
+func TestDiscoverWithoutPresetsReadsOnlyEnv(t *testing.T) {
 	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{})
+	var got []string
+	for _, c := range res.Routes {
+		got = append(got, fmt.Sprintf("%d %s %s %s", c.Port, c.Role, c.Label, c.Source))
+	}
+	want := "3307 ignore forward-db (FORWARD_DB_PORT) env:FORWARD_DB_PORT\n" +
+		"5174 ignore vite (VITE_PORT) env:VITE_PORT\n" +
+		"8080 ignore app (APP_PORT) env:APP_PORT"
+	if strings.Join(got, "\n") != want {
+		t.Fatalf("routes:\n%s\nwant:\n%s", strings.Join(got, "\n"), want)
+	}
+	if len(res.Applied) != 0 || len(res.Suggested) != 0 || len(res.Warnings) != 0 {
+		t.Errorf("nothing should apply: %+v", res)
+	}
+}
+
+// A preset with `compose: ports` brings back every published port.
+func TestDiscoverComposePortsWithAPreset(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/sail-custom"}, Options{Presets: testPresets(t, "compose")})
 	m := routeMap(res)
 	if len(res.Routes) != 6 {
 		t.Fatalf("expected the six Compose ports, got %+v", res.Routes)
 	}
-	if m[8080].Role != config.RoleWeb || m[8080].Label != "laravel.test (APP_PORT)" || m[8080].Preset != "" {
+	if m[8080].Role != config.RoleWeb || m[8080].Label != "laravel.test (APP_PORT)" || m[8080].Preset != "" || m[8080].Source != "compose:laravel.test" {
 		t.Errorf("container port 80 should be web with a plain label: %+v", m[8080])
 	}
 	if m[5174].Role != config.RoleIgnore || m[5174].Label != "laravel.test (VITE_PORT)" {
@@ -73,8 +93,8 @@ func TestDiscoverWithoutPresetsKnowsOnlyCompose(t *testing.T) {
 	if m[6379].Label != "redis (FORWARD_REDIS_PORT)" {
 		t.Errorf("label = %q", m[6379].Label)
 	}
-	if len(res.Applied) != 0 || len(res.Suggested) != 0 || len(res.Warnings) != 0 {
-		t.Errorf("nothing should apply: %+v", res)
+	if strings.Join(res.Applied, ",") != "compose" || len(res.Warnings) != 0 {
+		t.Errorf("Applied = %v, Warnings = %v", res.Applied, res.Warnings)
 	}
 	for i := 1; i < len(res.Routes); i++ {
 		if res.Routes[i-1].Port > res.Routes[i].Port {
@@ -83,14 +103,47 @@ func TestDiscoverWithoutPresetsKnowsOnlyCompose(t *testing.T) {
 	}
 }
 
-func TestDiscoverComposeLiteral(t *testing.T) {
+func TestDiscoverComposeOnlyProjectNeedsAPreset(t *testing.T) {
 	res := discover(t, DirReader{Root: "testdata/compose-literal"}, Options{})
+	if len(res.Routes) != 0 {
+		t.Fatalf("no preset asked for Compose ports: %+v", res.Routes)
+	}
+	res = discover(t, DirReader{Root: "testdata/compose-literal"}, Options{Presets: testPresets(t, "compose")})
 	m := routeMap(res)
-	if m[8080].Role != config.RoleWeb || m[8080].Label != "web" {
-		t.Errorf("port 80 target should become web: %+v", m[8080])
+	if len(res.Routes) != 3 || m[8080].Role != config.RoleWeb || m[8080].Label != "web" {
+		t.Errorf("port 80 target should become web: %+v", res.Routes)
 	}
 	if m[9000].Role != config.RoleIgnore || m[8443].Role != config.RoleIgnore {
 		t.Errorf("others should be ignore: %+v", res.Routes)
+	}
+}
+
+// A preset that is enabled but does not match asks for nothing.
+func TestDiscoverComposeNeedsTheAskingPresetActive(t *testing.T) {
+	p := inline(t, "x", "detect: 'false'\ncompose: ports\n")
+	res := discover(t, DirReader{Root: "testdata/compose-literal"}, Options{Presets: []*preset.Preset{p}})
+	if len(res.Routes) != 0 {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+// An unparsable Compose file fails discovery only when a preset asks for it.
+func TestDiscoverBadComposeFailsOnlyWhenAskedFor(t *testing.T) {
+	r := memReader{"compose.yaml": "services: [", ".env": "APP_PORT=8080\n"}
+	if res, err := Discover(r, Options{}); err != nil || len(res.Routes) != 1 {
+		t.Fatalf("without a preset the Compose file is not parsed: %+v %v", res, err)
+	}
+	if _, err := Discover(r, Options{Presets: testPresets(t, "compose")}); err == nil {
+		t.Fatal("expected the Compose parse error")
+	}
+}
+
+// A port 80 that is not a Compose candidate has no container port, so the
+// Compose rule does not make it web.
+func TestDiscoverEnvPort80IsNotWebOnItsOwn(t *testing.T) {
+	res := discover(t, memReader{".env": "APP_PORT=80\nDB_PORT=3306\n"}, Options{})
+	if m := routeMap(res); len(res.Routes) != 2 || m[80].Role != config.RoleIgnore || m[3306].Role != config.RoleIgnore {
+		t.Fatalf("routes = %+v", res.Routes)
 	}
 }
 
@@ -102,14 +155,14 @@ func TestDiscoverEmptyProject(t *testing.T) {
 }
 
 func TestDiscoverSingleUnknownPortBecomesWeb(t *testing.T) {
-	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{})
+	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{Presets: testPresets(t, "compose")})
 	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb {
 		t.Fatalf("expected the lone port to be web: %+v", res.Routes)
 	}
 }
 
 func TestDiscoverPublishedPort80IsWebWhenTheTargetIsUnknown(t *testing.T) {
-	res := discover(t, memReader{"compose.yaml": "services:\n  a:\n    ports:\n      - published: 80\n  b:\n    ports:\n      - '9000:9000'\n"}, Options{})
+	res := discover(t, memReader{"compose.yaml": "services:\n  a:\n    ports:\n      - published: 80\n  b:\n    ports:\n      - '9000:9000'\n"}, Options{Presets: testPresets(t, "compose")})
 	if m := routeMap(res); m[80].Role != config.RoleWeb || m[9000].Role != config.RoleIgnore {
 		t.Fatalf("routes = %+v", res.Routes)
 	}
@@ -118,7 +171,7 @@ func TestDiscoverPublishedPort80IsWebWhenTheTargetIsUnknown(t *testing.T) {
 func TestDiscoverDeterministicWithDuplicatePorts(t *testing.T) {
 	r := memReader{"compose.yaml": "services:\n  b:\n    ports:\n      - '8080:80'\n  a:\n    ports:\n      - '8080:8080'\n"}
 	for i := 0; i < 20; i++ {
-		res := discover(t, r, Options{})
+		res := discover(t, r, Options{Presets: testPresets(t, "compose")})
 		if len(res.Routes) != 1 || res.Routes[0].Label != "a" {
 			t.Fatalf("run %d: routes = %+v, want the one from service a", i, res.Routes)
 		}
@@ -188,7 +241,7 @@ func TestDiscoverPresetHintOnAClaimedPort(t *testing.T) {
 		"compose.yaml":   "services:\n  dev:\n    ports:\n      - '3000:3000'\n  db:\n    ports:\n      - '5432:5432'\n",
 		"vite.config.js": "server: { port: 3000 }",
 	}
-	res := discover(t, r, Options{Presets: testPresets(t, "bundler")})
+	res := discover(t, r, Options{Presets: testPresets(t, "compose", "bundler")})
 	m := routeMap(res)
 	if m[3000].Role != config.RoleWeb || m[3000].Label != "dev" || m[5432].Role != config.RoleIgnore {
 		t.Fatalf("routes = %+v", res.Routes)
@@ -196,8 +249,8 @@ func TestDiscoverPresetHintOnAClaimedPort(t *testing.T) {
 }
 
 func TestDiscoverWebOrder(t *testing.T) {
-	preferred := inline(t, "p", "detect: 'true'\nports:\n  - {var: MAIN, label: Main, web: preferred}\n")
-	fallback := inline(t, "f", "detect: 'true'\nports:\n  - {var: DEV, label: Dev, web: fallback}\n  - {var: HOT, label: Hot, web: fallback, role: loopback}\n")
+	preferred := inline(t, "p", "detect: 'true'\ncompose: ports\nports:\n  - {var: MAIN, label: Main, web: preferred}\n")
+	fallback := inline(t, "f", "detect: 'true'\ncompose: ports\nports:\n  - {var: DEV, label: Dev, web: fallback}\n  - {var: HOT, label: Hot, web: fallback, role: loopback}\n")
 	compose := "services:\n  a:\n    ports:\n      - '8080:80'\n      - '${MAIN:-7000}:7000'\n      - '${DEV:-6000}:6000'\n      - '${HOT:-5000}:5000'\n"
 
 	res := discover(t, memReader{"compose.yaml": compose}, Options{Presets: []*preset.Preset{preferred, fallback}})
@@ -218,7 +271,7 @@ func TestDiscoverWebOrder(t *testing.T) {
 }
 
 func TestDiscoverLoneKnownPortIsNotWeb(t *testing.T) {
-	p := inline(t, "x", "detect: 'true'\nports:\n  - {var: DB_PORT, label: Database}\n  - {var: HOT, label: Hot, role: loopback}\n")
+	p := inline(t, "x", "detect: 'true'\ncompose: ports\nports:\n  - {var: DB_PORT, label: Database}\n  - {var: HOT, label: Hot, role: loopback}\n")
 	res := discover(t, memReader{"compose.yaml": "services:\n  db:\n    ports:\n      - '${DB_PORT:-5432}:5432'\n"}, Options{Presets: []*preset.Preset{p}})
 	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleIgnore {
 		t.Fatalf("a lone port a preset identified is not the web app: %+v", res.Routes)
@@ -249,7 +302,7 @@ func TestDiscoverSuggestsOffersThatMatch(t *testing.T) {
 	if len(res.Suggested) != 1 || res.Suggested[0].Name != "stack" {
 		t.Fatalf("Suggested = %+v", res.Suggested)
 	}
-	if len(res.Applied) != 0 || routeMap(res)[8080].Label != "laravel.test (APP_PORT)" {
+	if len(res.Applied) != 0 || routeMap(res)[8080].Label != "app (APP_PORT)" {
 		t.Errorf("a suggestion must not change the routes: %+v", res.Routes)
 	}
 	if len(res.Warnings) != 0 {
@@ -272,7 +325,7 @@ func TestDiscoverWarnsAndCarriesOnWhenAPresetFails(t *testing.T) {
 func TestDiscoverSkipsPresetsInACycle(t *testing.T) {
 	a := inline(t, "a", "detect: 'true'\nafter: [b]\nroutes:\n  - {id: ra, port: '7000', label: A}\n")
 	b := inline(t, "b", "detect: 'true'\nafter: [a]\nroutes:\n  - {id: rb, port: '7001', label: B}\n")
-	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{Presets: []*preset.Preset{a, b}})
+	res := discover(t, memReader{".env": "APP_PORT=4000\n"}, Options{Presets: []*preset.Preset{a, b}})
 	if len(res.Routes) != 1 || res.Routes[0].Port != 4000 || res.Routes[0].Role != config.RoleWeb {
 		t.Fatalf("the core routes should survive: %+v", res.Routes)
 	}

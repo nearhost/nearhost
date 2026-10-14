@@ -464,7 +464,7 @@ func TestNoRegistryMeansNoRequest(t *testing.T) {
 	add := noRemote(t)
 	add.presets = b
 	add.interactive = func() bool { return true }
-	if out, err := executeWithInput(t, "y\n", newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp"); err != nil {
+	if out, err := executeWithInput(t, "y\n", newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080"); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	if f.total() != 0 {

@@ -200,7 +200,7 @@ func TestTheHintShowsOnlyWithoutRegistries(t *testing.T) {
 	}
 	add := noRemote(t)
 	add.presets = b
-	out, err = execute(t, newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "one")
+	out, err = execute(t, newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "one", "--web", "8080")
 	if err != nil || !strings.HasPrefix(out, hint+"\n") {
 		t.Errorf("add: %v\n%s", err, out)
 	}
@@ -214,7 +214,7 @@ func TestTheHintShowsOnlyWithoutRegistries(t *testing.T) {
 			t.Errorf("%v shows the hint with a registry trusted:\n%s", args, out)
 		}
 	}
-	if out, _ := execute(t, newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "two"); strings.Contains(out, "No preset registries") {
+	if out, _ := execute(t, newAddCmd(add), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "two", "--web", "8080"); strings.Contains(out, "No preset registries") {
 		t.Errorf("add shows the hint with a registry trusted:\n%s", out)
 	}
 }
@@ -223,14 +223,14 @@ func TestTheHintShowsOnlyWithoutRegistries(t *testing.T) {
 func TestAddLeavesOutTheHintWhenAPresetApplied(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	enablePresets(t, cfgPath, "stack")
-	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	if strings.Contains(out, "No preset registries") {
 		t.Errorf("a preset applied, so no hint:\n%s", out)
 	}
-	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "other", "--no-presets")
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "other", "--no-presets", "--web", "8080")
 	if err != nil || strings.Contains(out, "No preset registries") {
 		t.Errorf("--no-presets asks for no presets, so no hint: %v\n%s", err, out)
 	}

@@ -3,6 +3,7 @@ name: stack
 title: Test stack
 after: [bundler]
 detect: compose.contains("LARAVEL_SAIL")
+compose: ports
 
 ports:
   - var: APP_PORT
