@@ -97,20 +97,21 @@ nearhost up
 
 ### A project on another machine
 
-Add the server to `~/.config/nearhost/config.yaml`, using any host that `ssh` can reach without prompting:
+Give the server's name and the project's path there. Any host that `ssh` reaches without prompting will do. When the server is new, `add` offers to add it:
 
-```yaml
-servers:
-  - name: mini
-    ssh_host: mini
+```text
+$ nearhost add --server mini ~/code/myapp
+Server mini is not in the config. Add it? [Y/n]: y
+SSH host for mini [mini]:
 ```
 
-Then add the project by its path on that server. Its files are read over SFTP:
+`~` is the home directory on the server, even when your shell has already expanded it to the one on your laptop. The files are read over SFTP, and nothing is installed or changed on the server. Then start it as before:
 
 ```sh
-nearhost add --server mini ~/code/myapp
 nearhost up myapp
 ```
+
+Servers are kept under `servers:` in the config, as a name and an `ssh_host`, if you would rather add them by hand.
 
 ### Presets
 

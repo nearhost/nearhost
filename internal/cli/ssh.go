@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -100,20 +102,21 @@ func connectOnce(ctx context.Context, sess *transport.Session) error {
 }
 
 // openRemote opens projectPath on srv for reading over SFTP, on an SSH
-// connection of its own that the returned function ends. It runs no command
+// connection of its own that the returned function ends. It also returns the
+// directory it opened, as projectPathOn finds it. It runs no command
 // on the server, not even to test the connection (an account may be allowed
 // SFTP and nothing else), and writes nothing there.
 //
 // The connection uses a private run directory. A session takes over whatever
 // master it finds on its control socket, so sharing the directory of a
 // running `nearhost up` would cut that one off.
-func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, func() error, error) {
+func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
 	sess, end, err := c.privateSession(srv)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
-	fail := func(err error) (discovery.FileReader, func() error, error) {
-		return nil, nil, errors.Join(err, end())
+	fail := func(err error) (discovery.FileReader, string, func() error, error) {
+		return nil, "", nil, errors.Join(err, end())
 	}
 
 	sess.Start()
@@ -130,13 +133,48 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	if err != nil {
 		return fail(err)
 	}
+	// The home directory is where the SFTP server starts.
+	localHome, _ := os.UserHomeDir()
+	isDir := func(p string) bool {
+		info, err := client.Client.Stat(p)
+		return err == nil && info.IsDir()
+	}
+	projectPath, err = projectPathOn(projectPath, localHome, client.Client.Getwd, isDir)
+	if err != nil {
+		return fail(errors.Join(fmt.Errorf("find the home directory on server %s: %w", srv.Name, err), client.Close()))
+	}
 	if info, err := client.Client.Stat(projectPath); err != nil || !info.IsDir() {
 		if err == nil {
 			err = errors.New("not a directory")
 		}
 		return fail(errors.Join(fmt.Errorf("%s on server %s: %w", projectPath, srv.Name, err), client.Close()))
 	}
-	return client.Reader(projectPath), func() error {
+	return client.Reader(projectPath), projectPath, func() error {
 		return errors.Join(client.Close(), end())
 	}, nil
+}
+
+// projectPathOn works out which directory on a server the path given to add
+// means. "~" and "~/..." are under the home directory there. An absolute path
+// under this machine's home that is not a directory on the server is taken
+// under the server's home instead, when that is one: the shell expanded an
+// unquoted ~ before add saw it. Otherwise the path is returned as given.
+func projectPathOn(given, localHome string, remoteHome func() (string, error), isDir func(string) bool) (string, error) {
+	if given == "~" || strings.HasPrefix(given, "~/") {
+		home, err := remoteHome()
+		if err != nil {
+			return "", err
+		}
+		return path.Join(home, given[1:]), nil
+	}
+	rel, under := strings.CutPrefix(given, strings.TrimSuffix(localHome, "/")+"/")
+	if localHome == "" || !under || isDir(given) {
+		return given, nil
+	}
+	if home, err := remoteHome(); err == nil {
+		if candidate := path.Join(home, rel); isDir(candidate) {
+			return candidate, nil
+		}
+	}
+	return given, nil
 }
