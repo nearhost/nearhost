@@ -27,7 +27,7 @@ func newPresetCmd(b presetBackend) *cobra.Command {
 			"from a trusted registry is named <registry>/<name> and is installed when it\n" +
 			"is enabled.",
 	}
-	cmd.AddCommand(newPresetListCmd(b), newPresetEnableCmd(b), newPresetDisableCmd(), newPresetUpdateCmd(b), newPresetValidateCmd(), newPresetTestCmd(), newPresetIndexCmd())
+	cmd.AddCommand(newPresetListCmd(b), newPresetEnableCmd(b), newPresetDisableCmd(), newPresetUpdateCmd(b), newPresetRegistryCmd(b), newPresetValidateCmd(), newPresetTestCmd(), newPresetIndexCmd())
 	return cmd
 }
 
@@ -77,6 +77,10 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 				if err := tw.Flush(); err != nil {
 					return err
 				}
+			}
+
+			if len(cfg.Registries) == 0 {
+				fmt.Fprintf(out, "\n%s\n", noRegistriesHint)
 			}
 
 			offered := false

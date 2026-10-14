@@ -223,3 +223,22 @@ func TestForRepoReadsFromGitHub(t *testing.T) {
 		t.Errorf("ForRepo = %+v", c)
 	}
 }
+
+func TestCachedReadsOnlyTheSavedCopy(t *testing.T) {
+	s, c := serve(t)
+	s.publish(ref, map[string]string{"stack": "one"})
+	if _, _, err := c.Cached(); err == nil {
+		t.Fatal("Cached found an index before one was fetched")
+	}
+	if _, err := c.Index(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.Now = func() time.Time { return time.Now().Add(3 * time.Hour) }
+	idx, age, err := c.Cached()
+	if err != nil || idx.Ref != ref || age < 3*time.Hour || age > 4*time.Hour {
+		t.Fatalf("Cached = %+v %v %v", idx, age, err)
+	}
+	if s.hits["/HEAD/index.yaml"] != 1 {
+		t.Errorf("Cached must not fetch: %v", s.hits)
+	}
+}

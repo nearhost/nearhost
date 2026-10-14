@@ -217,6 +217,9 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 			return nil, nil, err
 		}
 		found = append(found, res.Warnings...)
+		if len(cfg.Registries) == 0 && len(res.Applied) == 0 {
+			fmt.Fprintf(out, "%s\n\n", noRegistriesHint)
+		}
 		if !interactive {
 			for _, o := range res.Suggested {
 				fmt.Fprintf(out, "This looks like a %s project. Pass `--preset %s` to `nearhost add` to use its preset.\n", offerTitle(o), o.Name)
