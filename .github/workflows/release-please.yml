@@ -1,0 +1,26 @@
+name: release-please
+on:
+  push:
+    branches: [main]
+permissions: {}
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # The app's token, unlike GITHUB_TOKEN, starts CI on the release PR and
+      # the release workflow on the release it publishes.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.NH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
