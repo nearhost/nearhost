@@ -1,4 +1,4 @@
-package cli
+package proxy
 
 import "testing"
 
@@ -19,8 +19,8 @@ func TestPlainLog(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		if got := plainLog(tc.in); got != tc.want {
-			t.Errorf("plainLog(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := PlainLog(tc.in); got != tc.want {
+			t.Errorf("PlainLog(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
