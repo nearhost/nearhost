@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/preset"
@@ -143,7 +145,7 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 	}
 	p, err := preset.Parse(name, data)
 	if err != nil {
-		return nil, fmt.Errorf("the registry's preset cannot be used: %w", err)
+		return nil, fmt.Errorf("the registry's preset cannot be used: %s", printable(err.Error()))
 	}
 	if err := os.MkdirAll(presetsDir(cfgPath), 0o755); err != nil {
 		return nil, err
@@ -153,4 +155,17 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 	}
 	cfg.UpsertPreset(config.PresetRef{Name: name, Ref: idx.Ref, SHA256: e.SHA256})
 	return p, nil
+}
+
+// printable makes text from a preset or the registry safe to print: one line, no control characters.
+func printable(s string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case !unicode.IsPrint(r):
+			return -1
+		}
+		return r
+	}, s))
 }

@@ -57,7 +57,7 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 				presets, warnings = loadEnabled(cfg, cfgPath)
 				titles := map[string]string{}
 				for _, p := range presets {
-					titles[p.Name] = p.Title
+					titles[p.Name] = printable(p.Title)
 				}
 				fmt.Fprintln(out, "Enabled presets:")
 				tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
@@ -96,7 +96,7 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 					tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 					fmt.Fprintln(tw, "  NAME\tTITLE")
 					for _, e := range offered {
-						fmt.Fprintf(tw, "  %s\t%s\n", e.Name, e.Title)
+						fmt.Fprintf(tw, "  %s\t%s\n", e.Name, printable(e.Title))
 					}
 					if err := tw.Flush(); err != nil {
 						return err
@@ -132,7 +132,7 @@ func newPresetEnableCmd(b presetBackend) *cobra.Command {
 			if err := config.Save(cfgPath, cfg); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Enabled preset %s (%s).\n", name, p.Title)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Enabled preset %s (%s).\n", name, printable(p.Title))
 			return err
 		},
 	}

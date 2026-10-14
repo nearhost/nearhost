@@ -261,3 +261,20 @@ func TestPresetUpdateRefusals(t *testing.T) {
 		t.Error("update needs the registry and should fail when it is down, even with a cached index")
 	}
 }
+
+func TestPresetListMakesRegistryTitlesSafeToPrint(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	f, b := newFakeRegistry(t, refOne, "stack")
+	f.files["/main/index.yaml"] = strings.Replace(f.files["/main/index.yaml"], "title: Test stack", `title: "Evil\n  forged line\e[31mred"`, 1)
+
+	out, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "list")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("output carries an escape character: %q", out)
+	}
+	if !strings.Contains(out, "  stack  Evil   forged line[31mred\n") {
+		t.Errorf("the title should sit on one line:\n%q", out)
+	}
+}
