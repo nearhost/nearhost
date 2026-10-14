@@ -187,7 +187,7 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 	var notes []string
 	idx, err := b.presets.index(ctx, cfg, cfgPath)
 	if err != nil && !errors.Is(err, errRegistryOff) {
-		notes = append(notes, "preset suggestions are unavailable because the registry could not be reached.")
+		notes = append(notes, fmt.Sprintf("preset suggestions are unavailable because the %s.", registryNote(err)))
 	}
 	interactive := b.interactive != nil && b.interactive()
 	answers := bufio.NewReader(cmd.InOrStdin())

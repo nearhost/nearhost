@@ -167,6 +167,22 @@ func TestPresetListShowsWhatTheRegistryOffers(t *testing.T) {
 	wantContains(t, out, "  stack  registry 1111111  Test stack\n", "The registry could not be reached, so the presets it offers are not listed.\n")
 }
 
+// A registry whose index is newer than this build was reached, so the note
+// says to upgrade rather than that it could not be reached.
+func TestPresetListSaysWhenTheRegistryNeedsANewerNearhost(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	f, b := newFakeRegistry(t, refOne, "stack")
+	f.files["/main/index.yaml"] = "schema: 2\nref: " + refOne + "\n"
+	out, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "list")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	wantContains(t, out, "\nThe registry needs a newer nearhost than this one (upgrade nearhost to use it), so the presets it offers are not listed.\n")
+	if strings.Contains(out, "could not be reached") {
+		t.Errorf("the registry was reached:\n%s", out)
+	}
+}
+
 func TestPresetUpdate(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	f, b := newFakeRegistry(t, refOne, "stack", "bundler")

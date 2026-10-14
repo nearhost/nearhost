@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,6 +124,28 @@ func TestIndexUnavailableWithNoCopy(t *testing.T) {
 	}
 }
 
+// A registry that answers with an index this build cannot read was reached;
+// the reason it cannot be used is that nearhost is too old.
+func TestIndexNewerThanThisBuildWithNoCopy(t *testing.T) {
+	s, c := serve(t)
+	s.files["/main/index.yaml"] = "schema: 2\nref: " + ref + "\n"
+	_, err := c.Index(context.Background())
+	if !errors.Is(err, ErrNewerIndex) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected ErrNewerIndex and not ErrUnavailable, got %v", err)
+	}
+}
+
+// The cause of an unavailable registry stays in the error chain.
+func TestIndexUnavailableKeepsTheCause(t *testing.T) {
+	_, c := serve(t)
+	c.BaseURL = "http://127.0.0.1:1"
+	_, err := c.Index(context.Background())
+	var opErr *net.OpError
+	if !errors.Is(err, ErrUnavailable) || !errors.As(err, &opErr) {
+		t.Fatalf("expected ErrUnavailable wrapping the network error, got %v", err)
+	}
+}
+
 func TestFetchChecksTheHash(t *testing.T) {
 	s, c := serve(t)
 	s.publish(ref, map[string]string{"stack": "the preset"})
@@ -189,7 +212,7 @@ func TestParseIndexRejectsWhatCouldMislead(t *testing.T) {
 	if idx, err := ParseIndex([]byte(entry("stack", sum) + "future_key: 1\n")); err != nil || len(idx.Presets) != 1 {
 		t.Errorf("a valid index with a key this build does not know should load: %v", err)
 	}
-	if _, err := ParseIndex([]byte("schema: 2\nref: " + ref + "\n")); err == nil || !strings.Contains(err.Error(), "newer nearhost") {
+	if _, err := ParseIndex([]byte("schema: 2\nref: " + ref + "\n")); !errors.Is(err, ErrNewerIndex) || !strings.Contains(err.Error(), "newer nearhost") {
 		t.Errorf("a newer index should say to upgrade: %v", err)
 	}
 }

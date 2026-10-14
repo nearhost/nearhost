@@ -35,6 +35,10 @@ const (
 // it is cached.
 var ErrUnavailable = errors.New("the preset registry could not be reached and no copy of its index is saved")
 
+// ErrNewerIndex reports an index written in a format newer than this build
+// understands.
+var ErrNewerIndex = errors.New("the preset registry's index needs a newer nearhost; upgrade nearhost to use it")
+
 // Index lists the presets the registry holds.
 type Index struct {
 	Schema  int     `yaml:"schema"`
@@ -84,7 +88,7 @@ func ParseIndex(data []byte) (*Index, error) {
 	}
 	switch {
 	case idx.Schema > IndexSchema:
-		return nil, fmt.Errorf("registry index: schema %d needs a newer nearhost", idx.Schema)
+		return nil, fmt.Errorf("registry index: schema %d: %w", idx.Schema, ErrNewerIndex)
 	case idx.Schema < 1:
 		return nil, errors.New("registry index: schema is missing")
 	case !refRe.MatchString(idx.Ref):
@@ -135,7 +139,11 @@ func (c *Client) Index(ctx context.Context) (*Index, error) {
 	if cacheErr == nil {
 		return cached, nil
 	}
-	return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	if errors.Is(err, ErrNewerIndex) {
+		// The registry was reached; this build is too old to read it.
+		return nil, err
+	}
+	return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
 // Refresh fetches the index now and caches it.

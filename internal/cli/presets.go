@@ -157,6 +157,15 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 	return p, nil
 }
 
+// registryNote says why the registry's presets cannot be offered, as a
+// clause that follows "the": "registry could not be reached".
+func registryNote(err error) string {
+	if errors.Is(err, registry.ErrNewerIndex) {
+		return "registry needs a newer nearhost than this one (upgrade nearhost to use it)"
+	}
+	return "registry could not be reached"
+}
+
 // printable makes text from a preset or the registry safe to print: one line, no control characters.
 func printable(s string) string {
 	return strings.TrimSpace(strings.Map(func(r rune) rune {

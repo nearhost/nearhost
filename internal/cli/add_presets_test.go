@@ -191,6 +191,20 @@ func TestAddSaysWhenSuggestionsAreUnavailable(t *testing.T) {
 	}
 }
 
+func TestAddSaysWhenTheRegistryNeedsANewerNearhost(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	f, b := suggesting(t, true, "stack")
+	f.files["/main/index.yaml"] = "schema: 2\nref: " + refOne + "\n"
+	out, err := executeWithInput(t, "", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
+	if err != nil {
+		t.Fatalf("a newer registry must not stop add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "Warning: preset suggestions are unavailable because the registry needs a newer nearhost than this one (upgrade nearhost to use it).\n", "Added myapp on local")
+	if strings.Contains(out, "could not be reached") {
+		t.Errorf("the registry was reached:\n%s", out)
+	}
+}
+
 // A preset that cannot be installed is reported, and the project is added
 // with what discovery knows without it.
 func TestAddCarriesOnWhenAnAcceptedPresetCannotBeInstalled(t *testing.T) {

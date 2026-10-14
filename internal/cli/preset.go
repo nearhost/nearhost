@@ -83,7 +83,7 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 			case errors.Is(err, errRegistryOff):
 				// Nothing to add: the user knows the registry is off.
 			case err != nil:
-				fmt.Fprintln(out, "\nThe registry could not be reached, so the presets it offers are not listed.")
+				fmt.Fprintf(out, "\nThe %s, so the presets it offers are not listed.\n", registryNote(err))
 			default:
 				var offered []registry.Entry
 				for _, e := range idx.Presets {
