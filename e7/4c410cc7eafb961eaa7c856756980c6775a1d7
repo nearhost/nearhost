@@ -1,0 +1,35 @@
+internal/cli/add_test.go
+  s_7abd3634f4eb80::t_0c1e93ca77951c 19,267,319,334
+  s_7abd3634f4eb80::t_733fb7e43b81b9 17,265,318,333,482-510
+  s_7abd3634f4eb80::t_5ee325c21e40a8 511
+internal/cli/ssh_test.go
+  s_7abd3634f4eb80::t_463f21ec9911d8 80,100
+  s_7abd3634f4eb80::t_733fb7e43b81b9 212-283
+README.md
+  s_7abd3634f4eb80::t_811275928039ea 100,102-105,108,114
+  s_7abd3634f4eb80::t_8816ad0fb2d90c 115
+internal/cli/add.go
+  s_7abd3634f4eb80::t_463f21ec9911d8 29-32,131,135-138,455-456,463,488,494,497,499
+internal/cli/ssh.go
+  s_7abd3634f4eb80::t_463f21ec9911d8 8-9,105-106,113,116,118-119,136-145,152,156-179
+  s_7abd3634f4eb80::t_3becf4c6722ec9 180
+internal/cli/add_server_test.go
+  s_7abd3634f4eb80::t_733fb7e43b81b9 120
+  s_7abd3634f4eb80::t_0c1e93ca77951c 30,32,121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e74c410cc7eafb961eaa7c856756980c6775a1d7",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
