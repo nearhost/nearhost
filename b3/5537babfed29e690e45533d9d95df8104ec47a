@@ -1,0 +1,29 @@
+internal/cli/add_test.go
+  s_7abd3634f4eb80::t_836e1ab2cd39c9 284-331
+internal/discovery/advise.go
+  s_7abd3634f4eb80::t_c19b0b2b536bd9 23-28,39-42
+internal/discovery/reader.go
+  s_7abd3634f4eb80::t_c19b0b2b536bd9 32-33,51-55,57-58,60
+internal/cli/add.go
+  s_7abd3634f4eb80::t_ed8492500338f1 103-104,115-121
+internal/discovery/advise_test.go
+  s_7abd3634f4eb80::t_f81a32cf662566 122-138
+internal/discovery/discover.go
+  s_7abd3634f4eb80::t_c19b0b2b536bd9 36,79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b35537babfed29e690e45533d9d95df8104ec47a",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
