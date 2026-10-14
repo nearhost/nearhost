@@ -66,8 +66,15 @@ type Server struct {
 	SSHHost string `yaml:"ssh_host"`
 }
 
-// PresetRef is an enabled preset. Ref and SHA256 are set for a preset
-// installed from the registry and empty for a local file.
+// Registry is a preset registry the user trusts: a public GitHub repository
+// and the alias its presets are named under.
+type Registry struct {
+	Alias string `yaml:"alias"`
+	Repo  string `yaml:"repo"` // owner/name
+}
+
+// PresetRef is an enabled preset. A preset from a registry is named
+// <alias>/<name> and has Ref and SHA256 set. A local file has a plain name.
 type PresetRef struct {
 	Name   string `yaml:"name"`
 	Ref    string `yaml:"ref,omitempty"`
@@ -79,8 +86,19 @@ type Config struct {
 	Servers  []Server  `yaml:"servers"`
 	Projects []Project `yaml:"projects"`
 	// Registry set to false stops every request to the preset registry.
-	Registry *bool       `yaml:"registry,omitempty"`
-	Presets  []PresetRef `yaml:"presets,omitempty"`
+	Registry   *bool       `yaml:"registry,omitempty"`
+	Registries []Registry  `yaml:"registries,omitempty"`
+	Presets    []PresetRef `yaml:"presets,omitempty"`
+}
+
+// Trusted finds a trusted registry by alias.
+func (c *Config) Trusted(alias string) (Registry, bool) {
+	for _, r := range c.Registries {
+		if r.Alias == alias {
+			return r, true
+		}
+	}
+	return Registry{}, false
 }
 
 // RegistryEnabled reports whether the preset registry may be contacted.
@@ -279,11 +297,39 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	trusted := map[string]bool{}
+	repos := map[string]string{}
+	for _, r := range c.Registries {
+		// The alias becomes a directory name, so it must be a plain word.
+		if !ValidAlias(r.Alias) {
+			return fmt.Errorf("registry alias %q must be lowercase letters and digits, with single hyphens between words", r.Alias)
+		}
+		if !ValidRepo(r.Repo) {
+			return fmt.Errorf("registry %s: repo %q is not a GitHub repository written owner/name", r.Alias, r.Repo)
+		}
+		if trusted[r.Alias] {
+			return fmt.Errorf("duplicate registry alias %q", r.Alias)
+		}
+		trusted[r.Alias] = true
+		repo := strings.ToLower(r.Repo) // GitHub names are case-insensitive
+		if other, dup := repos[repo]; dup {
+			return fmt.Errorf("repo %s is trusted twice, as %q and %q", r.Repo, other, r.Alias)
+		}
+		repos[repo] = r.Alias
+	}
+
 	presets := map[string]bool{}
 	for _, p := range c.Presets {
-		// The name becomes a file name, so it must be a plain word.
-		if !presetName.MatchString(p.Name) {
-			return fmt.Errorf("preset name %q must be lowercase letters, digits and hyphens", p.Name)
+		// The name becomes a file path, so it must be one or two plain words.
+		if !ValidPresetName(p.Name) {
+			return fmt.Errorf("preset name %q must be lowercase letters, digits and hyphens, or <registry>/<name>", p.Name)
+		}
+		alias, _ := SplitPreset(p.Name)
+		switch {
+		case alias != "" && !trusted[alias]:
+			return fmt.Errorf("preset %q comes from registry %q, which is not in registries; add the registry back under registries or remove the preset from presets", p.Name, alias)
+		case alias != "" && (p.Ref == "" || p.SHA256 == ""):
+			return fmt.Errorf("preset %q comes from a registry, so it needs a ref and a sha256", p.Name)
 		}
 		if presets[p.Name] {
 			return fmt.Errorf("duplicate preset %q", p.Name)
@@ -293,7 +339,40 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-var presetName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+var (
+	presetName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	repoOwner  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+	repoName   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+)
+
+// ValidAlias reports whether s can be a registry alias: lowercase letters and
+// digits, with single hyphens between words.
+func ValidAlias(s string) bool { return presetName.MatchString(s) }
+
+// ValidRepo reports whether s names a GitHub repository as owner/name.
+func ValidRepo(s string) bool {
+	owner, name, ok := strings.Cut(s, "/")
+	return ok && repoOwner.MatchString(owner) && repoName.MatchString(name) && name != "." && name != ".."
+}
+
+// ValidPresetName reports whether s can name an enabled preset: a plain name
+// for a local file, or <alias>/<name> for a preset from a registry.
+func ValidPresetName(s string) bool {
+	alias, name, qualified := strings.Cut(s, "/")
+	if !qualified {
+		return presetName.MatchString(s)
+	}
+	return presetName.MatchString(alias) && presetName.MatchString(name)
+}
+
+// SplitPreset splits an enabled preset's name into its registry's alias and
+// its own name. The alias of a local preset is empty.
+func SplitPreset(name string) (alias, plain string) {
+	if alias, plain, ok := strings.Cut(name, "/"); ok {
+		return alias, plain
+	}
+	return "", name
+}
 
 var nonAlias = regexp.MustCompile(`[^a-z0-9]+`)
 
