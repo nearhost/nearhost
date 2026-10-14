@@ -16,3 +16,19 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+
+  # Run the official presets' fixtures through this build, so a change to the
+  # preset engine that breaks a shipped preset fails here before it merges.
+  presets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nearhost/presets
+          path: presets-registry
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o nearhost ./cmd/nearhost
+      - run: make -C presets-registry check NEARHOST="$PWD/nearhost"
