@@ -1,0 +1,21 @@
+internal/tui/password.go
+  s_f390899c03d13b::t_6bddce4163b87b 10,135-136
+internal/tui/password_test.go
+  s_f390899c03d13b::t_b5614bc6352730 259-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92176c9fd4dac4ef1aee65e2b1b0fa48f374de61",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
