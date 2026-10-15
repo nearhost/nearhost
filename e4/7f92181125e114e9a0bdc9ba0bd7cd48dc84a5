@@ -1,0 +1,42 @@
+internal/cli/ui_edit.go
+  h_13c4e797d6e9d2 35-42
+internal/engine/hold.go
+  h_13c4e797d6e9d2 1-108
+internal/engine/reconnect.go
+  h_13c4e797d6e9d2 6-7,9-11,15-19,21
+internal/engine/reconnect_test.go
+  h_13c4e797d6e9d2 10,50-118
+internal/engine/server.go
+  h_13c4e797d6e9d2 19-22,54,59-61,174-175,190-193
+internal/engine/state.go
+  h_13c4e797d6e9d2 44-46
+internal/tui/backend.go
+  h_13c4e797d6e9d2 82-86
+internal/tui/fake_forms_test.go
+  h_13c4e797d6e9d2 178-179,214-227
+internal/tui/help.go
+  h_13c4e797d6e9d2 41
+internal/tui/home.go
+  h_13c4e797d6e9d2 72-73,183-185
+internal/tui/keys.go
+  h_13c4e797d6e9d2 53-57,258-261
+internal/tui/routes_edit.go
+  h_13c4e797d6e9d2 10,136-160
+internal/tui/server.go
+  h_13c4e797d6e9d2 36-39
+internal/tui/server_edit_test.go
+  h_13c4e797d6e9d2 9-10,24,98-125
+internal/tui/sidebar.go
+  h_13c4e797d6e9d2 205-206,212-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e47f92181125e114e9a0bdc9ba0bd7cd48dc84a5",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}

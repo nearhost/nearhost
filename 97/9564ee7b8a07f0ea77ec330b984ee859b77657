@@ -1,0 +1,28 @@
+internal/cli/ui_add.go
+  h_13c4e797d6e9d2 208-209,215,218,222,244
+internal/cli/ui_edit.go
+  h_13c4e797d6e9d2 37,40,44,48,52,55-56
+internal/cli/ui_edit_test.go
+  h_13c4e797d6e9d2 75,79-81,83,92
+internal/tui/advice.go
+  h_13c4e797d6e9d2 22,34,91-92,101
+internal/tui/backend.go
+  h_13c4e797d6e9d2 83,122-131
+internal/tui/fake_forms_test.go
+  h_13c4e797d6e9d2 180,212,216
+internal/tui/project.go
+  h_13c4e797d6e9d2 6,41-46,68-78
+internal/tui/project_test.go
+  h_13c4e797d6e9d2 75-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "979564ee7b8a07f0ea77ec330b984ee859b77657",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}

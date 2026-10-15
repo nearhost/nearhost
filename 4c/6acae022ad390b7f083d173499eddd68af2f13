@@ -1,0 +1,23 @@
+internal/cli/doctor_test.go
+  s_f390899c03d13b::t_9bbc6ebedc03bd 12,352-362
+internal/tui/ca_test.go
+  s_f390899c03d13b::t_9a5449ddc96724 1-50
+internal/tui/fake_test.go
+  s_f390899c03d13b::t_684a280b998cad 10,37,121-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c6acae022ad390b7f083d173499eddd68af2f13",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}

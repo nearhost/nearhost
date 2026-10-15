@@ -1,0 +1,24 @@
+internal/tui/editing_review_test.go
+  h_13c4e797d6e9d2 14
+internal/tui/overlay.go
+  h_13c4e797d6e9d2 12-14,26,44
+internal/tui/overlay_test.go
+  h_13c4e797d6e9d2 75-92
+internal/tui/project_edit_test.go
+  h_13c4e797d6e9d2 31-34
+internal/tui/wizard_project.go
+  h_13c4e797d6e9d2 79-84,425,553-558,568,576-580,582-593,595-616,846,859,920,955-974,980-984,986-996,998-1008,1010,1076
+internal/tui/wizard_project_test.go
+  h_13c4e797d6e9d2 82,131-132,140,159,161-162,165-170,182-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5bdd11ae19e01e41fc4bfd100288e8435f9d4300",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+go.mod
+  h_13c4e797d6e9d2 15,19
+internal/cli/root.go
+  h_13c4e797d6e9d2 64,73-77
+internal/cli/ui.go
+  h_13c4e797d6e9d2 100
+internal/cli/up.go
+  h_13c4e797d6e9d2 131,326
+internal/cli/up_test.go
+  h_13c4e797d6e9d2 434-450
+internal/engine/engine.go
+  h_13c4e797d6e9d2 40-42,149,395,448-453
+internal/proxy/body.go
+  h_13c4e797d6e9d2 1-87
+internal/proxy/body_test.go
+  h_13c4e797d6e9d2 1-43
+internal/proxy/capture.go
+  h_13c4e797d6e9d2 1-221
+internal/proxy/capture_test.go
+  h_13c4e797d6e9d2 1-158
+internal/proxy/config.go
+  h_13c4e797d6e9d2 37-48,105,119
+internal/proxy/plainlog.go
+  h_13c4e797d6e9d2 26,51-53,77
+internal/proxy/plainlog_test.go
+  h_13c4e797d6e9d2 34,40
+internal/proxy/proxy_test.go
+  h_13c4e797d6e9d2 117-122,171-176,181
+internal/tui/backend.go
+  h_13c4e797d6e9d2 17,93-95
+internal/tui/fake_forms_test.go
+  h_13c4e797d6e9d2 11,180,216-222
+internal/tui/logview.go
+  h_13c4e797d6e9d2 5,54,172-177,179-180,350-356,358-359,362-366,369-375,379-380,382-390,396-399,409-419,423-431,438-471,508-542
+internal/tui/logview_test.go
+  h_13c4e797d6e9d2 5,196-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17c8a5b1476db8bc2459ebe2fcec0cc1bc807547",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
