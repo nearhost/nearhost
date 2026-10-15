@@ -152,6 +152,11 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	for _, name := range plan.drop {
 		e.dropServer(name)
+		if _, still := next.Server(name); !still {
+			e.mu.Lock()
+			delete(e.held, name) // a server gone from the config holds nothing
+			e.mu.Unlock()
+		}
 	}
 
 	e.mu.Lock()

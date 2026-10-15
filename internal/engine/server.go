@@ -16,10 +16,6 @@ var errShutDown = errors.New("engine is shut down")
 type serverConn struct {
 	ensure sync.Mutex // serialises (re)starting the session
 	sess   *transport.Session
-	// held is set while the server is disconnected on purpose, so nothing
-	// starts the session behind the user's back. Written under ensure and
-	// mu, read under mu.
-	held bool
 }
 
 // ensureSession returns the server's session with its supervisor running. A
@@ -51,7 +47,7 @@ func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
 	// Shutdown stops each session under its ensure lock after marking the
 	// engine closed, so a session is never started behind its back.
 	e.mu.Lock()
-	closed, held := e.closed, c.held
+	closed, held := e.closed, e.held[srv.Name]
 	e.mu.Unlock()
 	if closed {
 		return nil, errShutDown
@@ -182,14 +178,11 @@ func (e *Engine) ServerHealth(name string) ServerHealth {
 		return ServerHealth{Health: transport.Health{Status: transport.StatusConnected}}
 	}
 	e.mu.Lock()
-	c := e.servers[name]
+	c, held := e.servers[name], e.held[name]
 	e.mu.Unlock()
 	if c == nil {
-		return ServerHealth{Health: transport.Health{Status: transport.StatusDisconnected}}
+		return ServerHealth{Health: transport.Health{Status: transport.StatusDisconnected}, Held: held}
 	}
-	e.mu.Lock()
-	held := c.held
-	e.mu.Unlock()
 	return ServerHealth{Health: c.sess.Health(), Held: held}
 }
 

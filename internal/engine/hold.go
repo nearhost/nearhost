@@ -29,7 +29,7 @@ func (e *Engine) DisconnectServer(name string) error {
 		return err
 	}
 	e.mu.Lock()
-	c.held = true
+	e.held[name] = true
 	e.mu.Unlock()
 	e.serverLog(name, "disconnected, as asked")
 	c.sess.Stop()
@@ -51,6 +51,11 @@ func (e *Engine) ConnectServer(name string) error {
 		return fmt.Errorf("unknown server %q", name)
 	}
 	if c == nil {
+		// A reload replaced the session it was dropped on, or nothing has
+		// connected yet: start one.
+		e.mu.Lock()
+		delete(e.held, name)
+		e.mu.Unlock()
 		_, err := e.ensureSession(srv)
 		return err
 	}
@@ -60,7 +65,7 @@ func (e *Engine) ConnectServer(name string) error {
 		return err
 	}
 	e.mu.Lock()
-	c.held = false
+	delete(e.held, name)
 	e.mu.Unlock()
 	e.serverLog(name, "connecting, as asked")
 	c.sess.Start()
