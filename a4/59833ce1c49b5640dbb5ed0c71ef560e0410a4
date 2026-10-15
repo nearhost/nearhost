@@ -1,0 +1,35 @@
+README.md
+  s_f390899c03d13b::t_fba433fa2bde4c 98-100
+internal/tui/help.go
+  s_f390899c03d13b::t_4c37236b967ba5 42
+internal/tui/help_test.go
+  s_f390899c03d13b::t_521496811e30e0 49,51,59
+internal/tui/home_test.go
+  s_f390899c03d13b::t_7ab798e186046e 33
+internal/tui/keys.go
+  s_f390899c03d13b::t_632bf01087eb7b 57,194-196,276-277,372,398-401
+internal/tui/logview.go
+  s_f390899c03d13b::t_528d8fddd30cd7 1-462
+internal/tui/logview_test.go
+  s_f390899c03d13b::t_5842af2037f639 1-194
+internal/tui/model.go
+  s_f390899c03d13b::t_46600e1bdaee31 49-51,404-406
+internal/tui/model_test.go
+  s_f390899c03d13b::t_d9d6e17d032c07 92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a459833ce1c49b5640dbb5ed0c71ef560e0410a4",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
