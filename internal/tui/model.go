@@ -46,8 +46,9 @@ type Model struct {
 	showHelp  bool            // the footer lists every key
 	help      help.Model      // draws the footer
 	spinner   spinner.Model
-	spinning  bool // the spinner is turning
-	form      form // the open add form; nil when none is
+	spinning  bool     // the spinner is turning
+	form      form     // the open add form; nil when none is
+	logView   *logView // the full-screen log; nil when it is not shown
 
 	routeFocus bool   // the project panel's routes have the keys
 	routeRow   int    // the route selected there
@@ -400,7 +401,9 @@ func (m *Model) View() tea.View {
 	if m.width < minWidth || m.height < minHeight {
 		content = m.tooSmall()
 	} else {
-		if m.empty() {
+		if m.logView != nil {
+			content = m.logScreen()
+		} else if m.empty() {
 			content = m.emptyScreen()
 		} else {
 			content = m.frame(m.columns(), m.footer())
