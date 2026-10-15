@@ -1,23 +1,33 @@
 internal/tui/confirm.go
   h_13c4e797d6e9d2 68-69,81-82
+  s_f390899c03d13b::t_d0da84efd867bd 68-69,81-82
 internal/tui/empty.go
   h_13c4e797d6e9d2 22,24
+  s_f390899c03d13b::t_6062bdf98a1357 22,24
 internal/tui/firstrun.go
   h_13c4e797d6e9d2 77-78
+  s_f390899c03d13b::t_3fea4c7fdb6638 77-78
 internal/tui/form.go
   h_13c4e797d6e9d2 23,25-33
+  s_f390899c03d13b::t_ab5be85ccc1141 23,25-33
 internal/tui/keys.go
   h_13c4e797d6e9d2 118-120
+  s_f390899c03d13b::t_b4b3d9d80dbc33 118-120
 internal/tui/model.go
   h_13c4e797d6e9d2 403-410
+  s_f390899c03d13b::t_11f52f4b7d3e60 403-410
 internal/tui/overlay.go
   h_13c4e797d6e9d2 1-77
+  s_f390899c03d13b::t_3d556e32193fdf 1-77
 internal/tui/overlay_test.go
   h_13c4e797d6e9d2 1-74
+  s_f390899c03d13b::t_9ba6cf02ed5918 1-74
 internal/tui/wizard_project.go
   h_13c4e797d6e9d2 811,954-964
+  s_f390899c03d13b::t_40e7087f65fccc 811,954-964
 internal/tui/wizard_server.go
   h_13c4e797d6e9d2 257,290-300
+  s_f390899c03d13b::t_e57944e844bf64 257,290-300
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -27,6 +37,16 @@ internal/tui/wizard_server.go
   "humans": {
     "h_13c4e797d6e9d2": {
       "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
     }
   }
 }
