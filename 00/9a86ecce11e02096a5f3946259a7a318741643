@@ -1,0 +1,44 @@
+internal/agentapi/script_test.go
+  s_b33b52432eafa1::t_e1ff8403a8082a 31-35,40
+  s_b33b52432eafa1::t_07190e0527db9c 1-30,36-39,41-50,53-54,60-63,65-130,132-141,143-219
+  s_b33b52432eafa1::t_64d4865ed5053c 51-52,55-59,64,142
+  s_b33b52432eafa1::t_c2bb3259049436 131
+.claude-plugin/marketplace.json
+  s_b33b52432eafa1::t_50f6d9c8e27fae 1-12
+agents/nearhost/skills/nearhost/SKILL.md
+  s_b33b52432eafa1::t_024b990691f350 1-43
+agents/nearhost/skills/nearhost/scripts/nearhost.sh
+  s_b33b52432eafa1::t_d197021c94a21d 1-183
+.github/workflows/ci.yml
+  s_b33b52432eafa1::t_50f6d9c8e27fae 20-26
+agents/nearhost/.claude-plugin/plugin.json
+  s_b33b52432eafa1::t_50f6d9c8e27fae 1-10
+release-please-config.json
+  s_b33b52432eafa1::t_50f6d9c8e27fae 9-16
+README.md
+  s_b33b52432eafa1::t_195a255e5ebb12 138-155,163,233-234
+internal/transport/agent.go
+  s_b33b52432eafa1::t_9fad4e008b9e25 126
+internal/transport/agent_test.go
+  s_b33b52432eafa1::t_57cb8c62dd611f 126-134
+internal/tui/proposals.go
+  s_b33b52432eafa1::t_af4210541e1f4a 84-85,87
+internal/tui/proposals_test.go
+  s_b33b52432eafa1::t_af4210541e1f4a 135-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "009a86ecce11e02096a5f3946259a7a318741643",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
