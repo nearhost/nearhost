@@ -89,7 +89,7 @@ func TestProjectPanel(t *testing.T) {
 		"why       loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
 		" port    role        label", "80      web         web", "52114     ○", "5173    loopback    vite (VITE_PORT)", "5173      ○",
 		"3306    ignore      db", "–         –",
-		"enter start · o open · tab routes · e edit · d remove · / filter · s server · ? more", "myapp 2/3")
+		"enter start · o open · tab routes · e edit · d remove · l log · / filter · ? more", "myapp 2/3")
 }
 
 func TestFixFor(t *testing.T) {

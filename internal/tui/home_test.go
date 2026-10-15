@@ -30,7 +30,7 @@ func TestHomeShowsProblems(t *testing.T) {
 	wantScreen(t, m, "problems ───", "○ vps  auth failed", "why       Permission denied (publickey)",
 		"fix       Run ssh deploy@vps.example once in a terminal to fix", "blocks    clientsite",
 		"● website  error", "why       port 8080 is not answering", "r retry now · y copy command",
-		"· 2 problems", " r retry · / filter")
+		"· 2 problems", " r retry · l log · / filter")
 }
 
 // r on Home reconnects every server that cannot connect; y copies the ssh

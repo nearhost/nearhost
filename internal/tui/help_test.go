@@ -46,9 +46,9 @@ func TestFooterFollowsTheSelection(t *testing.T) {
 	m := New(f, "/work/here")
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m.sel = rowKey(rowProject, "website")
-	wantScreen(t, m, " enter stop · o open · tab routes · e edit · d remove · / filter · s server · n add · ? help · q quit", "website 1/3 ")
+	wantScreen(t, m, " enter stop · o open · tab routes · e edit · d remove · l log · / filter · s server · n add · ? more", "website 1/3 ")
 	m.sel = homeKey
-	wantScreen(t, m, " / filter · s server · n add · ? help · q quit", "home ")
+	wantScreen(t, m, " l log · / filter · s server · n add · ? help · q quit", "home ")
 }
 
 // A narrow footer leaves minor keys out, keeps ? and says there is more.
@@ -56,7 +56,7 @@ func TestNarrowFooter(t *testing.T) {
 	m := New(newFake(t, sampleConfig()), "/work/here")
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.sel = rowKey(rowProject, "myapp")
-	wantScreen(t, m, " enter start · o open · tab routes · e edit · d remove · / filter · ? more", "2/3 ")
+	wantScreen(t, m, " enter start · o open · e edit · d remove · l log · / filter · ? more", "2/3 ")
 	if m.footerKeyAt(m.width-5) != "" {
 		t.Error("a click on the place took a key")
 	}
