@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -46,13 +48,15 @@ type logView struct {
 	key       string // the row whose log this is
 	kind      logKind
 	search    textinput.Model
-	searching bool // the search is being typed
-	cursor    int  // the seq of the entry under the cursor
-	open      int  // the seq of the request opened; 0 when none is
-	follow    bool // the cursor stays on the newest entry
-	wrap      bool // entries that are not requests wrap
-	reveal    bool // an opened request shows its cookies and credentials
-	pausedAt  int  // the newest seq when following stopped
+	searching bool   // the search is being typed
+	cursor    int    // the seq of the entry under the cursor
+	open      int    // the seq of the request opened; 0 when none is
+	follow    bool   // the cursor stays on the newest entry
+	wrap      bool   // entries that are not requests wrap
+	reveal    bool   // an opened request shows its cookies and credentials
+	confirm   int    // the seq of the request waiting for y to be sent again; 0 when none is
+	said      string // what the last replay said, shown until the next key
+	pausedAt  int    // the newest seq when following stopped
 	vp        viewport.Model
 }
 
@@ -131,7 +135,24 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	shown := m.shown()
 	at := v.at(shown)
+	v.said = ""
+	if v.confirm != 0 {
+		seq := v.confirm
+		v.confirm = 0
+		if s == "y" {
+			for _, e := range shown {
+				if e.seq == seq {
+					return m.replay(e)
+				}
+			}
+		}
+		return nil // any other key keeps the request unsent
+	}
 	switch s {
+	case "r":
+		if at >= 0 && shown[at].req != nil {
+			return m.askReplay(shown[at])
+		}
 	case "esc", "q":
 		if v.search.Value() != "" && s == "esc" {
 			v.search.SetValue("")
@@ -230,7 +251,7 @@ func (m *Model) logScreen() string {
 			}
 		}
 	}
-	if newer > 0 {
+	if newer > 0 || v.confirm != 0 || v.said != "" {
 		height--
 	}
 	v.vp.SetWidth(width)
@@ -251,7 +272,13 @@ func (m *Model) logScreen() string {
 		}
 		out = append(out, " "+fit(l, width)+bar[i]+" ")
 	}
-	if newer > 0 {
+	switch {
+	case v.confirm != 0:
+		out = append(out, m.bar(styleAmber.Render(m.confirmText()),
+			styleBeacon.Render("y")+" "+styleDim.Render("send · any other key keeps it")))
+	case v.said != "":
+		out = append(out, m.bar(v.said, ""))
+	case newer > 0:
 		out = append(out, m.bar(styleAmber.Render(fmt.Sprintf("▼ %d new lines below", newer)),
 			styleBeacon.Render("G")+" "+styleDim.Render("jump to the end and follow")))
 	}
@@ -261,7 +288,7 @@ func (m *Model) logScreen() string {
 // logViewKeys are the full-screen log's keys.
 var logViewKeys = []footerItem{
 	{"j/k", "scroll"}, {"enter", "expand"}, {"tab", "kind"}, {"/", "search"},
-	{"G", "follow"}, {"w", "wrap"}, {"c", "copy curl"}, {"esc", "back"},
+	{"G", "follow"}, {"w", "wrap"}, {"c", "copy curl"}, {"r", "replay"}, {"esc", "back"},
 }
 
 // logName names the row whose log is shown.
@@ -393,7 +420,15 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 	if len(heads) > 0 {
 		req += styleDim.Render(" · ") + strings.Join(heads, styleDim.Render(" · "))
 	}
-	lines := []string{bar + label("request") + req}
+	// The headers wrap, so none is cut off; cookies are worth seeing whole.
+	var lines []string
+	for i, l := range wrap(req, width-ansi.StringWidth(under)) {
+		lead := under
+		if i == 0 {
+			lead = bar + label("request")
+		}
+		lines = append(lines, lead+l)
+	}
 	if kept && ex.ReqBodySize > 0 {
 		lines = append(lines, bodyLines(bar+label("sent"), under, ex.ReqBody, ex.ReqHeader, ex.ReqBodyCut(), width)...)
 	}
@@ -421,6 +456,9 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 		lines = append(lines, bar+label("route")+route)
 	}
 	keys := styleBeacon.Render("c") + styleDim.Render(" copy as curl · ")
+	if kept && proxy.CanReplay(ex) == nil {
+		keys += styleBeacon.Render("r") + styleDim.Render(" replay · ")
+	}
 	if secrets {
 		verb := " reveal · "
 		if m.logView.reveal {
@@ -586,3 +624,65 @@ func scrollbar(offset, total, height int) []string {
 }
 
 var styleBox = styleDim.Foreground(colourBoxEdge)
+
+// safeMethods are sent again without asking: they change nothing.
+var safeMethods = map[string]bool{"GET": true, "HEAD": true, "OPTIONS": true}
+
+// replayedMsg is the outcome of sending a request again.
+type replayedMsg struct {
+	method, uri string
+	status      int
+	err         error
+}
+
+// askReplay sends a request again at once when it is safe, asks first when
+// it could change something, and says why when it cannot be sent.
+func (m *Model) askReplay(e logEntry) tea.Cmd {
+	v := m.logView
+	ex, kept := m.b.Captured(e.req.ID)
+	switch {
+	case e.req.ID == "" || !kept:
+		v.said = styleAmber.Render("That request is no longer kept, so it cannot be sent again.")
+		return nil
+	case proxy.CanReplay(ex) != nil:
+		v.said = styleAmber.Render(sentence(proxy.CanReplay(ex).Error()) + ", so it cannot be sent again.")
+		return nil
+	case !safeMethods[ex.Method]:
+		v.confirm = e.seq
+		return nil
+	}
+	return m.replay(e)
+}
+
+// confirmText asks whether to send the request waiting for y again.
+func (m *Model) confirmText() string {
+	for _, e := range m.shown() {
+		if e.seq == m.logView.confirm {
+			return "Send " + e.req.Method + " " + clean(e.req.URI) + " again? It may change something."
+		}
+	}
+	return ""
+}
+
+// replay sends a request again in the background.
+func (m *Model) replay(e logEntry) tea.Cmd {
+	b, id, method, uri := m.b, e.req.ID, e.req.Method, e.req.URI
+	return m.work.do(func(ctx context.Context) tea.Msg {
+		status, err := b.Replay(ctx, id)
+		return replayedMsg{method, uri, status, err}
+	})
+}
+
+// replayed says how sending a request again went.
+func (m *Model) replayed(msg replayedMsg) {
+	text := fmt.Sprintf("Sent %s %s again: %d.", msg.method, clean(msg.uri), msg.status)
+	if msg.err != nil {
+		text = fmt.Sprintf("Could not send %s %s again: %s.", msg.method, clean(msg.uri), strings.TrimRight(msg.err.Error(), "."))
+	}
+	if m.logView != nil {
+		m.logView.said = text
+		m.logs.noteOn(m.logView.key, text)
+		return
+	}
+	m.logs.note(text)
+}

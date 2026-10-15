@@ -451,3 +451,14 @@ func (e *Engine) Status(name string) ProjectStatus {
 func (e *Engine) Captured(id string) (proxy.Exchange, bool) {
 	return proxy.Captured(id)
 }
+
+// Replay sends the request the proxy kept under id again, through the
+// proxy, and returns the response's status. The new exchange is logged and
+// kept as usual.
+func (e *Engine) Replay(ctx context.Context, id string) (int, error) {
+	ex, ok := proxy.Captured(id)
+	if !ok {
+		return 0, errors.New("that request is no longer kept")
+	}
+	return proxy.Replay(ctx, ex, e.opts.StorageRoot, e.opts.HTTPSPort)
+}

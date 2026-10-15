@@ -93,6 +93,9 @@ type Backend interface {
 	// Captured is the exchange the proxy kept under id, the ID of a request
 	// in the log, while it is kept.
 	Captured(id string) (proxy.Exchange, bool)
+	// Replay sends the request kept under id again through the proxy and
+	// returns the response's status; the new request is logged as usual.
+	Replay(ctx context.Context, id string) (int, error)
 	// Trust trusts the local CA as `nearhost trust` does, with the
 	// interface suspended so a password can be asked for.
 	Trust(ctx context.Context) error

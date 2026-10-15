@@ -177,6 +177,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case adviceMsg:
 		m.gotAdvice(msg)
+	case replayedMsg:
+		m.replayed(msg)
 	case reconnectedMsg:
 		if msg.err != nil {
 			m.refused(rowKey(rowServer, msg.name), msg.err)

@@ -2129,3 +2129,10 @@ func TestServerHealthOfLocalAndUnusedServers(t *testing.T) {
 		t.Errorf("unused: %+v", got)
 	}
 }
+
+func TestReplayOfARequestNoLongerKept(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if _, err := h.eng.Replay(bg, "nope"); err == nil || err.Error() != "that request is no longer kept" {
+		t.Errorf("Replay = %v", err)
+	}
+}
