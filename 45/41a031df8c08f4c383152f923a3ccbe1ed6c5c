@@ -1,0 +1,24 @@
+internal/tui/empty.go
+  h_13c4e797d6e9d2 1-54
+internal/tui/empty_test.go
+  h_13c4e797d6e9d2 1-65
+internal/tui/home.go
+  h_13c4e797d6e9d2 14
+internal/tui/keys.go
+  h_13c4e797d6e9d2 24-26,131,203-205,209-218,380,390
+internal/tui/model.go
+  h_13c4e797d6e9d2 402-403
+internal/tui/model_test.go
+  h_13c4e797d6e9d2 27-28,407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4541a031df8c08f4c383152f923a3ccbe1ed6c5c",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
