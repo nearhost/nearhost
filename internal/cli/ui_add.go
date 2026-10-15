@@ -205,6 +205,13 @@ func (f *uiFiles) Advise(ctx context.Context, path string, routes []config.Route
 	if err != nil {
 		return nil, nil, err
 	}
+	return f.advise(ctx, cfg, path, routes, alias, "")
+}
+
+// advise is Advise for cfg, leaving out the project called skip when it
+// looks for ports other projects use: a project already configured does not
+// clash with itself.
+func (f *uiFiles) advise(ctx context.Context, cfg *config.Config, path string, routes []config.Route, alias, skip string) ([]tui.Advisory, []string, error) {
 	dir, err := f.files.resolve(path)
 	if err != nil {
 		return nil, nil, err
@@ -222,7 +229,13 @@ func (f *uiFiles) Advise(ctx context.Context, path string, routes []config.Route
 			res.Routes[i].Role = role
 		}
 	}
-	advisories, notes := discovery.Advise(res, alias, cfg.Projects)
+	var others []config.Project
+	for _, p := range cfg.Projects {
+		if p.Name != skip {
+			others = append(others, p)
+		}
+	}
+	advisories, notes := discovery.Advise(res, alias, others)
 	var out []tui.Advisory
 	for _, a := range advisories {
 		out = append(out, tui.Advisory{Code: a.Code, Message: printableLines(a.Message), Snippet: printableLines(a.Snippet)})

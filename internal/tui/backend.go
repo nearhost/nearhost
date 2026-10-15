@@ -68,6 +68,18 @@ type Backend interface {
 	CheckNames(name, alias string) (nameErr, aliasErr error)
 	// SaveProject saves a new project.
 	SaveProject(p config.Project) error
+
+	// EditConfig reads the config file afresh, runs fn on it, checks the
+	// result and saves it. Nothing is saved when fn or the check fails.
+	EditConfig(fn func(cfg *config.Config) error) error
+	// ReconnectServer ends a server's SSH connection and starts it again.
+	ReconnectServer(ctx context.Context, name string) error
+	// Advice is the advice for a configured project, and notes about
+	// working it out.
+	Advice(ctx context.Context, project string) ([]Advisory, []string, error)
+	// Trust trusts the local CA as `nearhost trust` does, with the
+	// interface suspended so a password can be asked for.
+	Trust(ctx context.Context) error
 }
 
 // ServerFiles is the files of a server, open while a project there is being
