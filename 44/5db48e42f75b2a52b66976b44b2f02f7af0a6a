@@ -1,0 +1,27 @@
+internal/agentapi/agentapi_test.go
+  s_b33b52432eafa1::t_a2a10b4d43f1ea 21
+internal/transport/session.go
+  s_b33b52432eafa1::t_17b3ef07019f6f 82-91,96,110-111,284-287,295-296,468,496-498,614
+internal/transport/testdata/fakessh/ssh
+  s_b33b52432eafa1::t_17b3ef07019f6f 26-35
+internal/transport/agent_test.go
+  s_b33b52432eafa1::t_a9f130b5a0d2aa 1-135
+internal/transport/agent.go
+  s_b33b52432eafa1::t_333f813475249b 1-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "445db48e42f75b2a52b66976b44b2f02f7af0a6a",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
