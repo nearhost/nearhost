@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -16,27 +17,31 @@ func (m *Model) projectPanel(name string, width int) []string {
 		return nil
 	}
 	st := m.b.Status(name)
-	server := "this machine"
 	host := ""
+	server := "this machine"
 	if p.Server != config.LocalServer {
 		srv, _ := m.cfg.Server(p.Server)
-		host = srv.SSHHost
-		server = clean(p.Server) + styleDim.Render(" (ssh "+clean(host)+")")
+		host, server = srv.SSHHost, clean(p.Server)
 	}
+	url := "https://" + clean(p.Alias)
+	title := styleTitle.Render(clean(p.Name)) + "  " + styleBeacon.Underline(true).Hyperlink(url).Render(url)
 	state := m.stateDot(st.State).String() + " " + string(st.State)
+	if up := m.uptime(name); up != "" {
+		state += styleDim.Render(" · up " + up)
+	}
 	if !p.Enabled {
 		state += styleDim.Render(" · disabled")
 	}
-	lines := []string{
-		styleTitle.Render(clean(p.Name)),
-		styleBeacon.Render("https://"+clean(p.Alias)) + styleDim.Render("  o to open"),
-		"",
+	sep := styleDim.Render(" · ")
+	var lines []string
+	if m.narrow() {
+		lines = []string{title, state + sep + server + sep + clean(p.Path)}
+	} else {
+		lines = []string{spread(title, state, width), "",
+			styleDim.Render("server") + " " + server + "    " + styleDim.Render("path") + " " + clean(p.Path)}
 	}
-	lines = append(lines, field("server", server, width)...)
-	lines = append(lines, field("path", clean(p.Path), width)...)
-	lines = append(lines, field("state", state, width)...)
 	if st.Message != "" {
-		lines = append(lines, field("", clean(st.Message), width)...)
+		lines = append(lines, field("why", clean(st.Message), width)...)
 	}
 	serverUp := true
 	if p.Server != config.LocalServer {
@@ -46,25 +51,105 @@ func (m *Model) projectPanel(name string, width int) []string {
 	if fix := fixFor(st.State, st.Message, serverUp, host); fix != "" {
 		lines = append(lines, field("fix", fix, width)...)
 	}
-	// With the focus on the routes, a mark shows the selected one.
-	lead := func(i int) string {
-		switch {
-		case !m.routeFocus:
-			return ""
-		case i == m.routeRow:
-			return styleBeacon.Render("▸ ")
-		}
-		return "  "
-	}
-	lines = append(lines, "", lead(-1)+styleDim.Render(fmt.Sprintf("%-6s %-9s %-24s %s", "PORT", "ROLE", "LABEL", "LOCAL")))
-	for i, r := range p.Routes {
-		lines = append(lines, lead(i)+fmt.Sprintf("%-6d %-9s %-24s %s", r.Port, r.Role, fit(clean(r.Label), 24), localPort(*p, r, st)))
-	}
+	lines = append(lines, "")
+	lines = append(lines, m.routeTable(*p, st, width)...)
 	if m.panelErr != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(m.panelErr, width)...)
 	}
 	return append(lines, m.adviceLinesFor(name, width)...)
+}
+
+// routeColumns are the widths of the routes table's columns; label takes
+// what is left, and the compact layout has no label.
+func (m *Model) routeColumns(width int) (port, role, label, local int) {
+	if m.narrow() {
+		return 7, 12, 0, 8
+	}
+	return 8, 12, max(width-8-12-10-7, 8), 10
+}
+
+// routeTable draws a project's routes: a header, then a row each. With the
+// focus on the routes, the selected one is filled.
+func (m *Model) routeTable(p config.Project, st engine.ProjectStatus, width int) []string {
+	port, role, label, local := m.routeColumns(width)
+	head := fit("port", port) + fit("role", role)
+	if label > 0 {
+		head += fit("label", label)
+	}
+	head += fit("local", local) + "status"
+	lines := []string{" " + styleDim.Render(fit(head, width-1))}
+	for i, r := range p.Routes {
+		plain, roleStyle := styleText, styleText
+		switch r.Role {
+		case config.RoleWeb:
+			roleStyle = styleBeacon
+		case config.RoleIgnore:
+			plain, roleStyle = styleDim, styleDim
+		}
+		where := localPort(p, r, st)
+		if where == "" {
+			where = "–"
+		}
+		cells := []seg{{plain, fit(strconv.Itoa(r.Port), port)}, {roleStyle, fit(string(r.Role), role)}}
+		if label > 0 {
+			cells = append(cells, seg{plain, fit(clean(r.Label), label-1) + " "})
+		}
+		cells = append(cells, seg{plain, fit(where, local)}, routeDot(r, st))
+		lines = append(lines, renderRow(cells, nil, width, m.routeFocus && i == m.routeRow))
+	}
+	return lines
+}
+
+// routeDot says whether a route is served: the web route and the loopback
+// routes are while the project runs; an ignored one never is.
+func routeDot(r config.Route, st engine.ProjectStatus) seg {
+	switch {
+	case r.Role == config.RoleIgnore:
+		return seg{styleDim, "–"}
+	case st.State == engine.StateRunning:
+		return seg{styleBeacon, "●"}
+	case st.State == engine.StateStarting, st.State == engine.StateDegraded:
+		return seg{styleAmber, "◐"}
+	}
+	return seg{styleDim, "○"}
+}
+
+// uptime is how long a project has been running, or "" when it is not.
+func (m *Model) uptime(name string) string {
+	since, ok := m.since[name]
+	if !ok {
+		return ""
+	}
+	return formatUptime(m.now().Sub(since))
+}
+
+// formatUptime says how long d is in a few cells: 45s, 14m, 2h 14m, 3d 2h.
+func formatUptime(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd %dh", int(d.Hours())/24, int(d.Hours())%24)
+}
+
+// trackUptime notes when each project started running, and forgets it when
+// a project stops.
+func (m *Model) trackUptime() {
+	for _, p := range m.cfg.Projects {
+		running := m.b.Status(p.Name).State == engine.StateRunning
+		_, known := m.since[p.Name]
+		switch {
+		case running && !known:
+			m.since[p.Name] = m.now()
+		case !running && known:
+			delete(m.since, p.Name)
+		}
+	}
 }
 
 // localPort is where a route can be reached on this machine, or "" when it
@@ -73,11 +158,11 @@ func localPort(p config.Project, r config.Route, st engine.ProjectStatus) string
 	switch r.Role {
 	case config.RoleWeb:
 		if st.WebLocalPort != 0 {
-			return ":" + strconv.Itoa(st.WebLocalPort)
+			return strconv.Itoa(st.WebLocalPort)
 		}
 	case config.RoleLoopback:
 		if p.Server != config.LocalServer {
-			return ":" + strconv.Itoa(r.Port)
+			return strconv.Itoa(r.Port)
 		}
 	}
 	return ""

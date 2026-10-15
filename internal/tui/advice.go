@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -116,7 +118,10 @@ func (m *Model) adviceLinesFor(name string, width int) []string {
 			lines = append(lines, styleDim.Render(l))
 		}
 	}
-	lines = append(lines, adviceLines(a.items, width)...)
+	for _, item := range a.items {
+		lines = append(lines, "")
+		lines = append(lines, adviceBox(item, width)...)
+	}
 	for _, n := range a.notes {
 		for _, l := range wrap(clean(n), width) {
 			lines = append(lines, styleDim.Render(l))
@@ -140,4 +145,37 @@ func (m *Model) copyAdvice(name string) tea.Cmd {
 	}
 	m.logs.noteOn(key, "Copied the advice for "+name+".")
 	return tea.SetClipboard(strings.Join(snippets, "\n\n"))
+}
+
+// colourWarnEdge draws the edge of a piece of advice.
+var colourWarnEdge = lipgloss.Color("#6B5524")
+
+// adviceBox draws a piece of advice in an amber box width wide, saying y
+// copies its fix when it has one.
+func adviceBox(a Advisory, width int) []string {
+	inner := width - 4 // the edges, and a cell of space inside each
+	copyKey := ""
+	if strings.TrimSpace(a.Snippet) != "" {
+		copyKey = styleBeacon.Render("y") + " " + styleDim.Render("copy fix")
+	}
+	text := wrap(clean(a.Message), inner-2)
+	var body []string
+	for i, l := range text {
+		lead := "  "
+		if i == 0 {
+			lead = "▲ "
+		}
+		l = styleAmber.Render(lead + l)
+		if i == len(text)-1 && copyKey != "" {
+			if ansi.StringWidth(l)+2+ansi.StringWidth(copyKey) > inner {
+				body = append(body, l)
+				l = ""
+			}
+			l = spread(l, copyKey, inner)
+		}
+		body = append(body, l)
+	}
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colourWarnEdge).
+		Padding(0, 1).Width(width).Render(strings.Join(body, "\n"))
+	return strings.Split(box, "\n")
 }
