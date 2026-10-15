@@ -156,3 +156,47 @@ func TestNoCapture(t *testing.T) {
 		t.Errorf("no capture handler:\n%s", cfg)
 	}
 }
+
+// A kept request is sent again through the proxy, with its body and real
+// headers, and is kept and logged again.
+func TestReplay(t *testing.T) {
+	ClearCaptured()
+	up := upstream(t, "a")
+	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
+	c := h.client("a.test", false)
+	h.getEventually(c, "a.test", "/hello")
+	r, err := c.Post(h.url("a.test", "/echo"), "text/plain", strings.NewReader("ping"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	first := idOf(t, h, "a.test", "/echo")
+	e, _ := Captured(first)
+	status, err := Replay(context.Background(), e, h.storage, h.httpsPort)
+	if err != nil || status != http.StatusCreated {
+		t.Fatalf("Replay = %d, %v", status, err)
+	}
+	waitUntil(t, 5*time.Second, func() bool {
+		captures.Lock()
+		defer captures.Unlock()
+		return len(captures.order) >= 3
+	}, "the replay kept")
+	captures.Lock()
+	again := *captures.byID[captures.order[len(captures.order)-1]]
+	captures.Unlock()
+	if again.ID == first || string(again.ReqBody) != "ping" || string(again.RespBody) != "got ping" || again.Method != "POST" {
+		t.Errorf("replay kept as %+v", again)
+	}
+}
+
+func TestCanReplay(t *testing.T) {
+	if err := CanReplay(Exchange{Upgraded: true}); err == nil {
+		t.Error("an upgrade can be replayed")
+	}
+	if err := CanReplay(Exchange{ReqBody: []byte("ab"), ReqBodySize: 10}); err == nil || err.Error() != "only the first 2 bytes of its body were kept" {
+		t.Errorf("a cut body: %v", err)
+	}
+	if err := CanReplay(Exchange{ReqBody: []byte("ab"), ReqBodySize: 2}); err != nil {
+		t.Errorf("a whole body: %v", err)
+	}
+}

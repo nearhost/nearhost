@@ -178,6 +178,7 @@ type editFake struct {
 	reconnected  []string
 	dropped      []string
 	captured     map[string]proxy.Exchange
+	replayed     []string
 	connected    []string
 	reconnectErr error
 	advice       map[string][]Advisory
@@ -218,6 +219,13 @@ func (f *fakeBackend) Captured(id string) (proxy.Exchange, bool) {
 	defer f.mu.Unlock()
 	ex, ok := f.edit.captured[id]
 	return ex, ok
+}
+
+func (f *fakeBackend) Replay(_ context.Context, id string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edit.replayed = append(f.edit.replayed, id)
+	return 500, nil
 }
 
 func (f *fakeBackend) DisconnectServer(_ context.Context, name string) error {

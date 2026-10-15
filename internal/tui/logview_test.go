@@ -229,7 +229,7 @@ func TestLogViewShowsKeptBodies(t *testing.T) {
 	press(m, "enter")
 	wantScreen(t, m, "│ request  host: myapp.test · content-type: application/json · cookie: •••",
 		"│ sent     {", `"owner": 1`, "│ body     {", `"message": "SQLSTATE[42S22]: Column not found: owner"`,
-		"c copy as curl · v reveal · enter collapse")
+		"c copy as curl · r replay · v reveal · enter collapse")
 	press(m, "v")
 	wantScreen(t, m, "cookie: session=secret", "v hide")
 	want := `curl -i -X POST 'https://myapp.test/api/projects' -H 'Content-Type: application/json' -H 'Cookie: session=secret' --data-binary '{"owner":1}'`
@@ -243,4 +243,61 @@ func TestLogViewRequestNoLongerKept(t *testing.T) {
 	m := capturedModel(t)
 	press(m, "enter")
 	wantScreen(t, m, "the bodies are no longer kept", "cookie: REDACTED")
+}
+
+// r sends a kept request again: a POST only after y, and the answer shows.
+func TestLogViewReplays(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	press(m, "k") // the kept POST
+	press(m, "r")
+	wantScreen(t, m, "Send POST /api/projects again? It may change something.", "y send · any other key keeps it")
+	press(m, "n")
+	if len(f.edit.replayed) != 0 {
+		t.Fatalf("sent on n: %v", f.edit.replayed)
+	}
+	if s := screen(m); strings.Contains(s, "again?") {
+		t.Errorf("still asking after n:\n%s", s)
+	}
+	press(m, "r")
+	run(m, press(m, "y"))
+	if strings.Join(f.edit.replayed, ",") != "ab12" {
+		t.Errorf("replayed %v", f.edit.replayed)
+	}
+	wantScreen(t, m, "Sent POST /api/projects again: 500.")
+
+	// A GET goes at once; a request no longer kept says it cannot.
+	f.edit.captured["ab12"] = proxy.Exchange{ID: "ab12", Method: "GET", URI: "/api/projects", ReqHeader: http.Header{}}
+	run(m, press(m, "r"))
+	if len(f.edit.replayed) != 2 {
+		t.Errorf("a GET waited: %v", f.edit.replayed)
+	}
+	press(m, "j")
+	press(m, "r")
+	wantScreen(t, m, "That request is no longer kept, so it cannot be sent again.")
+}
+
+// An upgrade, or a request whose body was cut, cannot be sent again.
+func TestLogViewRefusesReplays(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	press(m, "k")
+	f.edit.captured["ab12"] = proxy.Exchange{ID: "ab12", Method: "GET", Upgraded: true}
+	press(m, "r")
+	wantScreen(t, m, "It is an upgraded connection, such as a WebSocket, so it cannot be sent again.")
+	if len(f.edit.replayed) != 0 {
+		t.Errorf("replayed %v", f.edit.replayed)
+	}
+}
+
+// Headers too long for a line wrap under it, so none is cut off.
+func TestLogViewWrapsLongHeaders(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	ex := f.edit.captured["ab12"]
+	ex.ReqHeader.Set("Accept", strings.Repeat("text/html, ", 15)) // before the cookie
+	press(m, "k")
+	press(m, "enter")
+	press(m, "v")
+	wantScreen(t, m, "accept: text/html, ", "cookie: session=secret")
 }
