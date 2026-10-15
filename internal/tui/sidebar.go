@@ -43,13 +43,14 @@ func (r row) key() string { return rowKey(r.kind, r.name) }
 
 // rows lists the sidebar: Home, then Local and each server in config order,
 // each followed by its projects in config order unless it is collapsed.
-func rows(cfg *config.Config, collapsed map[string]bool) []row {
-	out := []row{{kind: rowHome}}
-	servers := []string{config.LocalServer}
-	for _, s := range cfg.Servers {
-		servers = append(servers, s.Name)
+// Filtered by query, it lists the projects whose names hold it, under
+// their servers, and nothing else.
+func rows(cfg *config.Config, collapsed map[string]bool, query string) []row {
+	if query != "" {
+		return filteredRows(cfg, query)
 	}
-	for _, s := range servers {
+	out := []row{{kind: rowHome}}
+	for _, s := range serverNames(cfg) {
 		out = append(out, row{kind: rowServer, name: s})
 		if collapsed[s] {
 			continue
@@ -63,6 +64,36 @@ func rows(cfg *config.Config, collapsed map[string]bool) []row {
 	return out
 }
 
+// filteredRows are the projects whose names hold query, under their
+// servers.
+func filteredRows(cfg *config.Config, query string) []row {
+	var out []row
+	for _, s := range serverNames(cfg) {
+		var on []row
+		for _, p := range cfg.Projects {
+			if p.Server == s && matches(p.Name, query) {
+				on = append(on, row{kind: rowProject, name: p.Name})
+			}
+		}
+		if len(on) > 0 {
+			out = append(append(out, row{kind: rowServer, name: s}), on...)
+		}
+	}
+	return out
+}
+
+// serverNames are Local and then the configured servers, in config order.
+func serverNames(cfg *config.Config) []string {
+	servers := []string{config.LocalServer}
+	for _, s := range cfg.Servers {
+		servers = append(servers, s.Name)
+	}
+	return servers
+}
+
+// rows lists the sidebar as it is drawn now.
+func (m *Model) rows() []row { return rows(m.cfg, m.collapsed, m.query()) }
+
 // sideLine is a line of the sidebar and the row it draws; key is empty
 // for the blank lines between groups.
 type sideLine struct {
@@ -75,7 +106,12 @@ type sideLine struct {
 func (m *Model) sideLines(width int) []sideLine {
 	blank := sideLine{draw: func(bool) string { return strings.Repeat(" ", width) }}
 	lines := []sideLine{blank}
-	for _, r := range rows(m.cfg, m.collapsed) {
+	if m.filtering || m.query() != "" {
+		for _, l := range m.filterLines(width) {
+			lines = append(lines, sideLine{draw: func(bool) string { return l }})
+		}
+	}
+	for _, r := range m.rows() {
 		if r.kind == rowServer {
 			lines = append(lines, blank)
 		}
@@ -151,13 +187,20 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 		}
 		left := []seg{{styleDim, arrow}, {name, clean(r.name)}}
 		if r.name == config.LocalServer {
-			count := 0
+			count, shown := 0, 0
 			for _, p := range m.cfg.Projects {
 				if p.Server == r.name {
 					count++
+					if matches(p.Name, m.query()) {
+						shown++
+					}
 				}
 			}
-			return renderRow(left, []seg{{styleDim, fmt.Sprint(count)}}, width, selected)
+			text := fmt.Sprint(count)
+			if m.query() != "" {
+				text = fmt.Sprintf("%d of %d", shown, count)
+			}
+			return renderRow(left, []seg{{styleDim, text}}, width, selected)
 		}
 		st, _ := m.b.ServerStatus(r.name)
 		dot := m.serverDot(st)
@@ -176,7 +219,7 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 		name = styleDim
 	}
 	dot := m.stateDot(st)
-	left := []seg{{styleText, "  "}, dot, {styleText, " "}, {name, clean(r.name)}}
+	left := append([]seg{{styleText, "  "}, dot, {styleText, " "}}, highlight(clean(r.name), m.query(), seg{style: name})...)
 	if m.narrow() {
 		return renderRow(left, nil, width, selected)
 	}

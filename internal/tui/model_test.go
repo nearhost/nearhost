@@ -172,7 +172,7 @@ func TestOpen(t *testing.T) {
 	wantScreen(t, m, "Open https://myapp.test in your browser.")
 }
 
-func TestEventsFillTheLogsAndFilter(t *testing.T) {
+func TestEventsFillTheLogs(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
 	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
@@ -190,16 +190,6 @@ func TestEventsFillTheLogsAndFilter(t *testing.T) {
 	if s := screen(m); !strings.Contains(s, "mini      connected") || strings.Contains(s, "website   GET") {
 		t.Errorf("myapp's log:\n%s", s)
 	}
-	press(m, "/")
-	for _, k := range []string{"c", "o", "n", "x", "backspace"} {
-		press(m, k)
-	}
-	press(m, "enter")
-	if s := screen(m); !strings.Contains(s, "log · filter: con") || strings.Contains(s, "state: running") || !strings.Contains(s, "mini      connected") {
-		t.Errorf("filtered:\n%s", s)
-	}
-	press(m, "esc")
-	wantScreen(t, m, "state: running")
 }
 
 func TestChangedConfigFileIsApplied(t *testing.T) {
