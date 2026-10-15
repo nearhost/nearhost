@@ -125,7 +125,10 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		return err
 	}
 	var suspender tui.Suspender
-	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run}
+	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run, width: terminalWidth}
+	// Every sudo the interface runs, the CA's included, which cannot be
+	// given a prompt of its own, words its prompt as Nearhost's.
+	os.Setenv("SUDO_PROMPT", terminalPrompt)
 	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(root, hosts.DefaultPath, b.applier))
 	if err != nil {
 		return err
@@ -150,7 +153,7 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 			}
 			names := strings.Join(want, ", ")
 			why := fmt.Sprintf("Nearhost needs your password to add %s to %s.", names, path)
-			err := root.run(ctx, why, func(ctx context.Context, terminal io.Writer) error {
+			err := root.run(ctx, why, "Added to "+path+".", func(ctx context.Context, terminal io.Writer) error {
 				return applier(ctx, terminal != nil)(want)
 			})
 			if errors.Is(err, tui.ErrPasswordCancelled) {

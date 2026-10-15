@@ -73,11 +73,10 @@ func (u *uiEngine) Trust(ctx context.Context) error {
 		return errors.New("the interface is not running")
 	}
 	const why = "Nearhost needs your password to trust its local certificate authority, so browsers accept https://<name>.test."
-	err := u.root.run(ctx, why, func(ctx context.Context, terminal io.Writer) error {
+	// What trust prints goes nowhere: in the terminal, Nearhost's header
+	// says why and what came of it, and sudo's prompt is the only other line.
+	err := u.root.run(ctx, why, "Trusted.", func(ctx context.Context, _ io.Writer) error {
 		out := io.Discard
-		if terminal != nil {
-			out = terminal
-		}
 		root := newRootCmd()
 		root.AddCommand(newTrustCmd(u.b.up.trust))
 		root.SetArgs([]string{"trust"})
