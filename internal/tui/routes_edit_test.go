@@ -150,3 +150,19 @@ func clipboardOf(cmd tea.Cmd) string {
 	}
 	return ""
 }
+
+// A project removed from the config file by hand while it is shown is
+// reported as gone, not edited back into being.
+func TestEditOfAProjectThatHasGone(t *testing.T) {
+	m, f := routesModel(t)
+	// The file changes: myapp and old are gone. The model still shows them.
+	gone := cloneForTest(f.cfg)
+	gone.Projects = gone.Projects[:1]
+	f.cfg = gone
+	press(m, "down")
+	run(m, press(m, "w"))
+	wantScreen(t, m, "Myapp is no longer in the config")
+	if _, back := f.cfg.Project("myapp"); back {
+		t.Error("the edit brought myapp back")
+	}
+}
