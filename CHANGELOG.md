@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.3.0](https://github.com/nearhost/nearhost/compare/v0.2.0...v0.3.0) (2026-10-15)
+
+
+### Features
+
+* count a server's failed attempts and say when it tries next ([#97](https://github.com/nearhost/nearhost/issues/97)) ([c0ae45a](https://github.com/nearhost/nearhost/commit/c0ae45a80014a7a95cae97b798d870221fbc2e0b))
+* draw the first-run screen with the mark in half blocks ([#91](https://github.com/nearhost/nearhost/issues/91)) ([07b6abf](https://github.com/nearhost/nearhost/commit/07b6abfcd1a1a693a6485b556fe2142e306f180f))
+* draw the footer with bubbles help and list every key on ? ([#85](https://github.com/nearhost/nearhost/issues/85)) ([621f366](https://github.com/nearhost/nearhost/commit/621f3665d33f795e8d8beab48bc0d7165cbacb09))
+* draw the header with the mark, rules and the compact layout ([#84](https://github.com/nearhost/nearhost/issues/84)) ([f4f5e8d](https://github.com/nearhost/nearhost/commit/f4f5e8d23cc07463a8ca04fd908afcd5674d9e3a))
+* drop a server's connection and hold it, or connect it again, with c ([#98](https://github.com/nearhost/nearhost/issues/98)) ([e47f921](https://github.com/nearhost/nearhost/commit/e47f92181125e114e9a0bdc9ba0bd7cd48dc84a5))
+* filter the sidebar by name with a text input ([#88](https://github.com/nearhost/nearhost/issues/88)) ([0524baf](https://github.com/nearhost/nearhost/commit/0524bafd7416f9ab3ff6d2dcc4a9d31fd001e31f))
+* group the sidebar under its servers, fill the selected row and spin while starting ([#87](https://github.com/nearhost/nearhost/issues/87)) ([b2a4166](https://github.com/nearhost/nearhost/commit/b2a4166d206533d1f7e7309e6129487842d6bd14))
+* keep each request and response in memory and show their bodies in the log ([#99](https://github.com/nearhost/nearhost/issues/99)) ([17c8a5b](https://github.com/nearhost/nearhost/commit/17c8a5b1476db8bc2459ebe2fcec0cc1bc807547))
+* keep log entries whole and draw them in columns ([#86](https://github.com/nearhost/nearhost/issues/86)) ([9b3c0ff](https://github.com/nearhost/nearhost/commit/9b3c0ff2c98bff0e2295fc8f903eb8942e4c5997))
+* lay out the project panel with its link, uptime, routes table and advice box ([#89](https://github.com/nearhost/nearhost/issues/89)) ([7a1e62b](https://github.com/nearhost/nearhost/commit/7a1e62b6c2b21a91b45d864f2847b439aabe8901))
+* list problems on home with their fixes, and restyle the server panel ([#90](https://github.com/nearhost/nearhost/issues/90)) ([df6dc78](https://github.com/nearhost/nearhost/commit/df6dc789191cb9f8686d032a46dd4f7c3fb61e05))
+* name the presets that apply to a project in its panel ([#96](https://github.com/nearhost/nearhost/issues/96)) ([979564e](https://github.com/nearhost/nearhost/commit/979564ee7b8a07f0ea77ec330b984ee859b77657))
+* open a row's log full screen with kinds, search, follow and opened requests ([#94](https://github.com/nearhost/nearhost/issues/94)) ([934edbd](https://github.com/nearhost/nearhost/commit/934edbd5de2756c7679fec06f798ff5b0cda08de))
+* open forms in a box over the screen drawn faint ([#92](https://github.com/nearhost/nearhost/issues/92)) ([1f7c6e4](https://github.com/nearhost/nearhost/commit/1f7c6e427da7573b8ed08f30440621436e210acb))
+* send a kept request again from the log, asking first unless it is safe ([#100](https://github.com/nearhost/nearhost/issues/100)) ([ab2f294](https://github.com/nearhost/nearhost/commit/ab2f294ed329376892b81e2f410d7c758adba65c))
+* show when the local CA expires, on home and in doctor ([#95](https://github.com/nearhost/nearhost/issues/95)) ([4c6acae](https://github.com/nearhost/nearhost/commit/4c6acae022ad390b7f083d173499eddd68af2f13))
+* tick routes in the add form, choose roles with arrows and show earlier answers ([#93](https://github.com/nearhost/nearhost/issues/93)) ([5bdd11a](https://github.com/nearhost/nearhost/commit/5bdd11ae19e01e41fc4bfd100288e8435f9d4300))
+
+
+### Bug Fixes
+
+* decode zlib deflate, mark bodies decoded in part, and decode an opened request once ([#105](https://github.com/nearhost/nearhost/issues/105)) ([4f75c13](https://github.com/nearhost/nearhost/commit/4f75c1393f7981179b9abb8a46e9207e0f7e3e8b))
+* footer clicks on focused routes, advice once the selection rests, refusals on their row, first-run and rename details ([#82](https://github.com/nearhost/nearhost/issues/82)) ([8dedc21](https://github.com/nearhost/nearhost/commit/8dedc21ced52fcc593cd93f6314c51235c155c0c))
+* keep a request body safely, keep dropped servers dropped across reloads, clean replay errors ([#101](https://github.com/nearhost/nearhost/issues/101)) ([13a3ab7](https://github.com/nearhost/nearhost/commit/13a3ab78b53b4d807ffe6bcdd42b3c915a558a51))
+* keep no exchange after the store is cleared, and count headers and room against its limit ([#104](https://github.com/nearhost/nearhost/issues/104)) ([77f8b40](https://github.com/nearhost/nearhost/commit/77f8b4049a947a5f316021e5cf78d4d5394669fc))
+* replay an absolute-form URI by its path, drop headers its Connection header names, and say OPTIONS goes at once ([#106](https://github.com/nearhost/nearhost/issues/106)) ([a7bd11a](https://github.com/nearhost/nearhost/commit/a7bd11a628a0fdc4e687fe3da56b5de939f31a3e))
+* wait for the proxy's ports to be released when it stops ([#103](https://github.com/nearhost/nearhost/issues/103)) ([d71f950](https://github.com/nearhost/nearhost/commit/d71f9503e7abe34852dd6acff4598af27048c98e))
+
 ## [0.2.0](https://github.com/nearhost/nearhost/compare/v0.1.0...v0.2.0) (2026-10-15)
 
 
