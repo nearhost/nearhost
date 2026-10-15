@@ -61,7 +61,7 @@ func (f *firstRunForm) lines(width int) []string {
 	lines := []string{
 		"Two things ask for your password:",
 		"• now: trusting the local certificate authority,",
-		"  so browsers accept https://<name>.test",
+		"  so browsers accept HTTPS from Nearhost's web server",
 		"• later: adding names to /etc/hosts",
 	}
 	if f.busy {

@@ -11,13 +11,13 @@ import (
 // When a step that needs root has to run in the plain terminal, Nearhost
 // says who is asking and why, from the start of a fresh line.
 func TestAsking(t *testing.T) {
-	got := ansi.Strip(Asking("Nearhost needs your password to trust its local certificate authority, so browsers accept https://<name>.test.", 50))
+	got := ansi.Strip(Asking("Nearhost needs your password to trust its local certificate authority, so browsers accept HTTPS from its web server.", 50))
 	want := "\r\n" +
 		" ∩ nearhost\r\n" +
 		" ────────────────────────────────────────────────\r\n" +
 		" Nearhost needs your password to trust its local\r\n" +
-		" certificate authority, so browsers accept\r\n" +
-		" https://<name>.test.\r\n" +
+		" certificate authority, so browsers accept HTTPS\r\n" +
+		" from its web server.\r\n" +
 		"\r\n"
 	if got != want {
 		t.Errorf("got\n%q\nwant\n%q", got, want)
