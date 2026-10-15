@@ -13,6 +13,8 @@ import (
 // What the interface asks of nearhost to change what is configured.
 
 func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
+	u.editMu.Lock()
+	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return err

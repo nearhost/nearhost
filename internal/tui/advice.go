@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -17,7 +18,12 @@ type advice struct {
 	items   []Advisory
 	notes   []string
 	err     string
+	failed  time.Time // when reading failed; it is tried again adviceRetry later
 }
+
+// adviceRetry is how long advice that could not be read waits before it is
+// read again. Each read of a remote project's advice opens a connection.
+const adviceRetry = 30 * time.Second
 
 // adviceMsg is a project's advice, read in the background.
 type adviceMsg struct {
@@ -45,7 +51,7 @@ func (m *Model) readAdvice() tea.Cmd {
 		return nil
 	}
 	of := entryOf(*p)
-	if a, known := m.advice[name]; known && a.of == of {
+	if a, known := m.advice[name]; known && a.of == of && (a.err == "" || m.now().Sub(a.failed) < adviceRetry) {
 		return nil
 	}
 	m.advice[name] = advice{of: of, loading: true}
@@ -63,7 +69,7 @@ func (m *Model) gotAdvice(msg adviceMsg) {
 	}
 	a := advice{of: msg.of, items: msg.items, notes: msg.notes}
 	if msg.err != nil {
-		a.err = msg.err.Error()
+		a.err, a.failed = msg.err.Error(), m.now()
 	}
 	m.advice[msg.name] = a
 }

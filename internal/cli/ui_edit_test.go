@@ -110,3 +110,30 @@ func TestTrustRunsWithTheTerminal(t *testing.T) {
 		t.Errorf("a refused trust = %v", err)
 	}
 }
+
+// Edits made at the same time are each saved: none overwrites another.
+func TestEditConfigSerialisesEdits(t *testing.T) {
+	u := formEngine(t)
+	const n = 20
+	done := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			done <- u.EditConfig(func(cfg *config.Config) error {
+				p := blogProject("")
+				p.Name = "p" + string(rune('a'+i))
+				p.Alias = p.Name + ".test"
+				p.Routes = []config.Route{{Port: 3000 + i, Role: config.RoleWeb}}
+				cfg.Projects = append(cfg.Projects, p)
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(loadSaved(t, u.path).Projects); got != n {
+		t.Errorf("%d of %d edits saved", got, n)
+	}
+}

@@ -34,9 +34,15 @@ func (e *Engine) ReconnectServer(name string) error {
 	// engine closed, so a session is never started behind its back.
 	e.mu.Lock()
 	closed = e.closed
+	current := e.servers[name] == c
 	e.mu.Unlock()
-	if closed {
+	switch {
+	case closed:
 		return errShutDown
+	case !current:
+		// Apply dropped this session while the reconnect waited for it:
+		// starting it again would leave it running, unknown to the engine.
+		return fmt.Errorf("nothing is connected to %s yet", name)
 	}
 	e.serverLog(name, "reconnecting, as asked")
 	c.sess.Stop()

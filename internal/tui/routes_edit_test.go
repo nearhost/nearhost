@@ -42,6 +42,7 @@ func TestRoutesFocusAndRoles(t *testing.T) {
 	if got := roleOf(f.cfg, "myapp", 5173); got != config.RoleIgnore {
 		t.Errorf("5173 is %s", got)
 	}
+	m.Update(appliedMsg{}) // the first change is applied
 	press(m, "down")
 	run(m, press(m, "w")) // 3306 becomes web, 80 ignore
 	if roleOf(f.cfg, "myapp", 3306) != config.RoleWeb || roleOf(f.cfg, "myapp", 80) != config.RoleIgnore {

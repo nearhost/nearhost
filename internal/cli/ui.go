@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -159,6 +160,9 @@ type uiEngine struct {
 	path    string
 	flags   serveFlags
 	storage string
+	// editMu makes edits of the config file one at a time, so none saves
+	// over another.
+	editMu sync.Mutex
 	// suspend runs a function with the terminal, the interface suspended.
 	suspend func(ctx context.Context, fn func(io.Reader, io.Writer) error) error
 }
