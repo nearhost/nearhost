@@ -317,3 +317,22 @@ func TestLogViewCleansAReplayError(t *testing.T) {
 	}
 	wantScreen(t, m, "Could not send POST /api/projects again: dial tcp: bad host.") // the method of the log line
 }
+
+// An opened request's bodies are decoded once, not on every frame.
+func TestLogViewDecodesBodiesOnce(t *testing.T) {
+	calls := 0
+	defer func(f func([]byte, http.Header, bool) (string, string)) { bodyText = f }(bodyText)
+	bodyText = func(b []byte, h http.Header, cut bool) (string, string) {
+		calls++
+		return proxy.BodyText(b, h, cut)
+	}
+	m := capturedModel(t)
+	press(m, "k")
+	press(m, "enter")
+	for i := 0; i < 5; i++ {
+		m.View()
+	}
+	if calls != 2 { // what was sent, and what came back
+		t.Errorf("decoded the bodies %d times over six frames, want 2", calls)
+	}
+}
