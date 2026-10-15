@@ -33,7 +33,10 @@ func (m *Model) serverPanel(name string, width int) []string {
 	lines = append(lines, field("ssh host", clean(srv.SSHHost), width)...)
 	// The last error stays after the server connects again; it is only
 	// news while the server is not connected.
-	if lastErr != "" && st != transport.StatusConnected {
+	if h.Held {
+		lines = append(lines, field("why", "you dropped the connection; its projects wait", width)...)
+		lines = append(lines, field("fix", "Press c to connect it.", width)...)
+	} else if lastErr != "" && st != transport.StatusConnected {
 		lines = append(lines, field("why", clean(lastErr), width)...)
 		lines = append(lines, field("fix", serverFix(st, srv.SSHHost), width)...)
 	}

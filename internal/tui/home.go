@@ -69,8 +69,8 @@ func (m *Model) problems() []problem {
 	}
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)
-		if h.Status == transport.StatusConnected || h.LastError == "" {
-			continue
+		if h.Status == transport.StatusConnected || h.Held || h.LastError == "" {
+			continue // a server dropped on purpose is no problem
 		}
 		var on []string
 		for _, p := range m.cfg.Projects {
@@ -180,6 +180,9 @@ func (m *Model) caText() string {
 // connectionText says how a server's connection is: its state, how many
 // attempts have failed, and when it tries next.
 func (m *Model) connectionText(h engine.ServerHealth) string {
+	if h.Held {
+		return "dropped"
+	}
 	text := string(h.Status)
 	switch h.Status {
 	case transport.StatusAuthFailed:

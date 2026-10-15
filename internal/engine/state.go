@@ -41,7 +41,9 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	status, states := c.sess.ForwardStates()
 	if status != transport.StatusConnected {
 		msg := fmt.Sprintf("server %s is %s", run.server, status)
-		if last := c.sess.LastError(); last != "" {
+		if c.held {
+			msg = fmt.Sprintf("server %s was disconnected on purpose", run.server)
+		} else if last := c.sess.LastError(); last != "" {
 			msg += ": " + last
 		}
 		if run.state == StateError {

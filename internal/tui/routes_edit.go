@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // errNoLongerConfigured is the error of an edit of a project or server that
@@ -130,6 +131,31 @@ func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
 type reconnectedMsg struct {
 	name string
 	err  error
+}
+
+// connectsOnC reports whether c connects the server called name, rather
+// than dropping its connection.
+func (m *Model) connectsOnC(name string) bool {
+	h := m.b.ServerHealth(name)
+	return h.Held || h.Status == transport.StatusDisconnected || h.Status == transport.StatusAuthFailed
+}
+
+// toggleConnection drops a server's connection and holds it closed, or
+// connects a server that is down.
+func (m *Model) toggleConnection(name string) tea.Cmd {
+	m.panelErr = ""
+	b, connect := m.b, m.connectsOnC(name)
+	note := "Dropping the connection to " + name + "."
+	if connect {
+		note = "Connecting " + name + "."
+	}
+	m.logs.noteOn(rowKey(rowServer, name), note)
+	return m.work.do(func(ctx context.Context) tea.Msg {
+		if connect {
+			return reconnectedMsg{name, b.ConnectServer(ctx, name)}
+		}
+		return reconnectedMsg{name, b.DisconnectServer(ctx, name)}
+	})
 }
 
 // reconnect ends a server's connection and starts it again.

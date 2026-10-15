@@ -50,7 +50,11 @@ func (m *Model) footerItems() []footerItem {
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
 		if name != config.LocalServer {
-			items = append(items, footerItem{"r", "reconnect"},
+			verb := "drop"
+			if m.connectsOnC(name) {
+				verb = "connect"
+			}
+			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb},
 				footerItem{"e", "edit"}, footerItem{"d", "remove"})
 		}
 	}
@@ -250,6 +254,10 @@ func (m *Model) action(s string) tea.Cmd {
 			if name != config.LocalServer {
 				m.removeServer(name)
 			}
+		}
+	case "c":
+		if kind, name := m.selected(); kind == rowServer && name != config.LocalServer {
+			return m.toggleConnection(name)
 		}
 	case "r":
 		switch kind, name := m.selected(); {

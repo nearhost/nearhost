@@ -7,6 +7,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 func TestReconnectServerStartsTheMasterAgain(t *testing.T) {
@@ -44,5 +45,74 @@ func TestReconnectServerRefusals(t *testing.T) {
 	}
 	if err := h.eng.ReconnectServer("mini"); err == nil {
 		t.Error("ReconnectServer after Shutdown succeeded")
+	}
+}
+
+// A server disconnected on purpose stays down, its projects degraded, until
+// it is connected again; then they come back with their forwards.
+func TestDisconnectAndConnectServer(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	masters := func() int { return strings.Count(h.log(), "-N -M ") }
+	if err := h.eng.DisconnectServer("mini"); err != nil {
+		t.Fatalf("DisconnectServer: %v", err)
+	}
+	waitState(t, h, "myapp", StateDegraded)
+	if st := h.eng.Status("myapp"); st.Message != "server mini was disconnected on purpose" {
+		t.Errorf("message %q", st.Message)
+	}
+	if hh := h.eng.ServerHealth("mini"); !hh.Held || hh.Status != transport.StatusDisconnected {
+		t.Errorf("health %+v", hh)
+	}
+	// Nothing starts the session behind the user's back.
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StartProject(bg, "myapp"); err == nil || !strings.Contains(err.Error(), "mini was disconnected; connect it first") {
+		t.Errorf("StartProject while held = %v", err)
+	}
+	if n := masters(); n != 1 {
+		t.Errorf("%d masters while held", n)
+	}
+	if err := h.eng.ConnectServer("mini"); err != nil {
+		t.Fatalf("ConnectServer: %v", err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.ServerHealth("mini").Status == transport.StatusConnected }, "connected")
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, h, "myapp", StateRunning)
+	if hh := h.eng.ServerHealth("mini"); hh.Held {
+		t.Error("still held after connecting")
+	}
+}
+
+// Connecting a server nothing has connected to yet starts its session;
+// reconnecting a held server connects it.
+func TestConnectServerFromNothingAndReconnectAHeldOne(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.ConnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.ServerHealth("mini").Status == transport.StatusConnected }, "connected")
+	if err := h.eng.DisconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.ReconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.ServerHealth("mini").Status == transport.StatusConnected }, "connected again")
+	for name, want := range map[string]string{
+		config.LocalServer: "this machine has no connection to make",
+		"nowhere":          `unknown server "nowhere"`,
+	} {
+		if err := h.eng.ConnectServer(name); err == nil || err.Error() != want {
+			t.Errorf("ConnectServer(%q) = %v, want %q", name, err, want)
+		}
+	}
+	if err := h.eng.DisconnectServer(config.LocalServer); err == nil || err.Error() != "this machine has no connection to drop" {
+		t.Errorf("DisconnectServer(local) = %v", err)
 	}
 }

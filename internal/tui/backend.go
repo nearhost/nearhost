@@ -79,6 +79,11 @@ type Backend interface {
 	// EditConfig reads the config file afresh, runs fn on it, checks the
 	// result and saves it. Nothing is saved when fn or the check fails.
 	EditConfig(fn func(cfg *config.Config) error) error
+	// DisconnectServer ends a server's SSH connection and holds it closed
+	// until ConnectServer or ReconnectServer; its projects show degraded.
+	DisconnectServer(ctx context.Context, name string) error
+	// ConnectServer starts a server's connection again.
+	ConnectServer(ctx context.Context, name string) error
 	// ReconnectServer ends a server's SSH connection and starts it again.
 	ReconnectServer(ctx context.Context, name string) error
 	// Advice is the advice for a configured project, and notes about

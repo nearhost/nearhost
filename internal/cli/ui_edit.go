@@ -32,6 +32,14 @@ func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {
 	return u.Engine.ReconnectServer(name)
 }
 
+func (u *uiEngine) DisconnectServer(_ context.Context, name string) error {
+	return u.Engine.DisconnectServer(name)
+}
+
+func (u *uiEngine) ConnectServer(_ context.Context, name string) error {
+	return u.Engine.ConnectServer(name)
+}
+
 // Advice works out the advice for a configured project, on a connection of
 // its own to the project's server.
 func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvice, error) {

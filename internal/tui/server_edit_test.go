@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // serverRowModel is a model with the server mini selected.
@@ -19,7 +21,7 @@ func serverRowModel(t *testing.T) (*Model, *fakeBackend) {
 
 func TestReconnectAServer(t *testing.T) {
 	m, f := serverRowModel(t)
-	wantScreen(t, m, "enter collapse · r reconnect · e edit · d remove")
+	wantScreen(t, m, "enter collapse · r reconnect · c connect · e edit · d remove")
 	run(m, press(m, "r"))
 	if len(f.edit.reconnected) != 1 || f.edit.reconnected[0] != "mini" {
 		t.Fatalf("reconnected %v", f.edit.reconnected)
@@ -91,5 +93,33 @@ func TestLocalHasNoServerActions(t *testing.T) {
 	}
 	if m.form != nil || len(f.edit.reconnected) != 0 {
 		t.Errorf("form %T, reconnected %v", m.form, f.edit.reconnected)
+	}
+}
+
+// c drops a connected server's connection, and connects one that is down
+// or was dropped.
+func TestConnectOrDropAServer(t *testing.T) {
+	m, f := serverRowModel(t)
+	f.servers["mini"] = transport.StatusConnected
+	wantScreen(t, m, "r reconnect · c drop")
+	run(m, press(m, "c"))
+	if strings.Join(f.edit.dropped, ",") != "mini" {
+		t.Fatalf("dropped %v", f.edit.dropped)
+	}
+	f.servers["mini"] = transport.StatusDisconnected
+	f.health["mini"] = engine.ServerHealth{Held: true}
+	wantScreen(t, m, "○ dropped", "why       you dropped the connection; its projects wait", "fix       Press c to connect it.", "r reconnect · c connect",
+		"Dropping the connection to mini.")
+	if s := screen(m); strings.Contains(s, "problem") {
+		t.Errorf("a dropped server is a problem:\n%s", s)
+	}
+	run(m, press(m, "c"))
+	if strings.Join(f.edit.connected, ",") != "mini" {
+		t.Errorf("connected %v", f.edit.connected)
+	}
+	m.selectRow(rowKey(rowServer, config.LocalServer))
+	press(m, "c")
+	if len(f.edit.dropped)+len(f.edit.connected) != 2 {
+		t.Error("c acted on this machine")
 	}
 }
