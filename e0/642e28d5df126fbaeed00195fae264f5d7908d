@@ -1,13 +1,20 @@
 internal/tui/advice.go
   s_ee2e3c9b547942::t_daf26bd51cdf45 10-11,121-124,149-181
+  s_f390899c03d13b::t_ea0d6a2242d91c 10-11,121-124,149-181
 internal/tui/model.go
   s_ee2e3c9b547942::t_f7ef69e057c85c 58-60,102,213,216
+  s_f390899c03d13b::t_f70663f953f3eb 58-60,102,213,216
 internal/tui/model_test.go
   s_ee2e3c9b547942::t_5632b9cc466f8e 86-89
+  s_f390899c03d13b::t_06ececa3292d7b 86-89
 internal/tui/project.go
   s_ee2e3c9b547942::t_ace8e95ac7b85c 6,21,24,26-27,29-31,35-41,44,54-55,63-154,161,165
+  s_f390899c03d13b::t_1ef3e003c60692 6,21,24,26-27,29-31,35-41,44,54-55,63-154,161,165
 internal/tui/routes_edit_test.go
   s_ee2e3c9b547942::t_634d1eded4b7f8 39,97,129
+  s_f390899c03d13b::t_f9120d7fd89270 39,97,129
+internal/tui/project_test.go
+  s_f390899c03d13b::t_c59f7150e2e8bb 1-74
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -19,6 +26,14 @@ internal/tui/routes_edit_test.go
       "agent_id": {
         "tool": "claude",
         "id": "f11cb878-42d9-4cd3-812a-68a62ebe50c3",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
         "model": "unknown"
       },
       "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
