@@ -256,3 +256,11 @@ func TestPasswordBoxPaste(t *testing.T) {
 		t.Errorf("checked %q", got)
 	}
 }
+
+// The reason wraps between words, never inside a path.
+func TestPasswordBoxWrapsTheReasonBetweenWords(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	askFor(m, "Nearhost needs your password to add ipbar.test, website.test to /etc/hosts.", func(context.Context, string) error { return nil })
+	wantScreen(t, m, "/etc/hosts.")
+}
