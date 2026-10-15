@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -70,4 +71,31 @@ func TestHomeWithManyProblems(t *testing.T) {
 		t.Errorf("drew %d lines", got)
 	}
 	wantScreen(t, m, "· 12 problems", "○ srva  auth failed")
+}
+
+// A server that gave up says how often it tried; one that is reconnecting
+// counts down to its next attempt.
+func TestServerAttemptsAndNextTry(t *testing.T) {
+	m, f := problemModel(t)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3}}
+	wantScreen(t, m, "○ vps  auth failed · tried 3 times", "then press r.")
+	f.servers["vps"] = transport.StatusReconnecting
+	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3, NextAttempt: now.Add(15500 * time.Millisecond)}}
+	wantScreen(t, m, "◐ vps  reconnecting · attempt 4 · next in 16s", "Nearhost tries again by itself.")
+	now = now.Add(20 * time.Second)
+	wantScreen(t, m, "reconnecting · attempt 4 · trying now")
+	m.sel = rowKey(rowServer, "vps")
+	wantScreen(t, m, " reconnecting · attempt 4 · trying now", "why       Permission denied (publickey)") // the dot spins
+}
+
+// A server that connected again does not show its old error.
+func TestConnectedServerHidesItsOldError(t *testing.T) {
+	m, f := problemModel(t)
+	f.servers["vps"] = transport.StatusConnected
+	m.sel = rowKey(rowServer, "vps")
+	if s := screen(m); strings.Contains(s, "Permission denied") || strings.Contains(s, "fix ") {
+		t.Errorf("a connected server shows its old error:\n%s", s)
+	}
 }

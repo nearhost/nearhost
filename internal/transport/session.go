@@ -67,6 +67,11 @@ type Session struct {
 	lastErr   string
 	launches  int
 	forwards  map[string]forward
+	// failures counts the attempts that failed since the session last
+	// connected or was started; nextAttempt is when the supervisor tries
+	// again, zero unless it is waiting to.
+	failures    int
+	nextAttempt time.Time
 	// fwdMu serialises forward changes and the re-apply pass after a
 	// (re)connect. It is taken before mu and may be held across ssh calls.
 	// Logf is called with it held, so a Logf callback must not call
@@ -253,11 +258,36 @@ func (s *Session) Launches() int {
 	return s.launches
 }
 
+// Health is a session's state at one moment.
+type Health struct {
+	Status    Status
+	LastError string
+	// Failures counts the attempts that failed since the session last
+	// connected or was started.
+	Failures int
+	// NextAttempt is when the session tries again; zero unless it is
+	// reconnecting. A session that gave up (auth failed) does not try again
+	// by itself.
+	NextAttempt time.Time
+}
+
+// Health returns the session's state, how many attempts have failed, and
+// when it tries again.
+func (s *Session) Health() Health {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Health{Status: s.status, LastError: s.lastErr, Failures: s.failures, NextAttempt: s.nextAttempt}
+}
+
 func (s *Session) setStatus(st Status, errText string) {
 	s.mu.Lock()
 	s.status = st
 	if errText != "" {
 		s.lastErr = errText
+	}
+	s.nextAttempt = time.Time{}
+	if st == StatusConnected {
+		s.failures = 0
 	}
 	s.mu.Unlock()
 	if errText != "" {
@@ -293,6 +323,7 @@ func (s *Session) Start() {
 	done := make(chan struct{})
 	s.cancel = cancel
 	s.done = done
+	s.failures = 0
 	s.mu.Unlock()
 	go s.run(ctx, cancel, done)
 }
@@ -393,10 +424,10 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			msg := "start ssh: " + err.Error()
 			authFails++
 			if authFails >= s.maxAuthFailures {
-				s.setStatus(StatusAuthFailed, msg)
+				s.giveUp(msg)
 				return
 			}
-			s.setStatus(StatusReconnecting, msg)
+			s.retrying(msg, backoff)
 			if !s.sleep(ctx, backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
@@ -429,7 +460,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			master.Process.Kill()
 			<-exited
 			authFails = 0
-			s.setStatus(StatusReconnecting, "connect timed out")
+			s.retrying("connect timed out", backoff)
 			if !s.sleep(ctx, backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
@@ -451,13 +482,13 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			if isFatalSSHError(msg) {
 				authFails++
 				if authFails >= s.maxAuthFailures {
-					s.setStatus(StatusAuthFailed, msg)
+					s.giveUp(msg)
 					return
 				}
 			} else {
 				authFails = 0 // only consecutive fatal failures count
 			}
-			s.setStatus(StatusReconnecting, msg)
+			s.retrying(msg, backoff)
 		}
 
 		if !s.sleep(ctx, backoff) {
@@ -466,6 +497,27 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		}
 		backoff = s.nextBackoff(backoff)
 	}
+}
+
+// retrying notes a failed attempt, that the session is reconnecting and
+// that the next attempt is in d, all at once, then logs it, so whoever the
+// log tells sees them.
+func (s *Session) retrying(msg string, d time.Duration) {
+	s.mu.Lock()
+	s.status, s.lastErr = StatusReconnecting, msg
+	s.failures++
+	s.nextAttempt = time.Now().Add(d)
+	s.mu.Unlock()
+	s.Logf("%s: %s: %s", s.Name, StatusReconnecting, msg)
+}
+
+// giveUp notes a failed attempt and stops trying: the error is one that
+// trying again will not fix.
+func (s *Session) giveUp(msg string) {
+	s.mu.Lock()
+	s.failures++
+	s.mu.Unlock()
+	s.setStatus(StatusAuthFailed, msg)
 }
 
 func hasExited(exited <-chan struct{}) bool {

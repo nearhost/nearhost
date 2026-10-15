@@ -34,6 +34,9 @@ type Backend interface {
 	Apply(ctx context.Context, cfg *config.Config) error
 	Status(project string) engine.ProjectStatus
 	ServerStatus(server string) (transport.Status, string)
+	// ServerHealth is ServerStatus with the attempts that failed since the
+	// server last connected, and when it tries next.
+	ServerHealth(server string) engine.ServerHealth
 	Events() *engine.Bus
 	StartProject(ctx context.Context, name string) error
 	StopProject(ctx context.Context, name string) error

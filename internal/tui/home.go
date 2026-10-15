@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -67,8 +68,8 @@ func (m *Model) problems() []problem {
 			fix: "Quit the program using the port, or run nearhost with --https-port and --http-port."})
 	}
 	for _, srv := range m.cfg.Servers {
-		st, lastErr := m.b.ServerStatus(srv.Name)
-		if st == transport.StatusConnected || lastErr == "" {
+		h := m.b.ServerHealth(srv.Name)
+		if h.Status == transport.StatusConnected || h.LastError == "" {
 			continue
 		}
 		var on []string
@@ -77,8 +78,8 @@ func (m *Model) problems() []problem {
 				on = append(on, clean(p.Name))
 			}
 		}
-		out = append(out, problem{dot: serverMark(st), title: srv.Name, what: string(st), why: lastErr,
-			fix:    "Run ssh " + clean(srv.SSHHost) + " once in a terminal to fix access, then press r.",
+		out = append(out, problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), why: h.LastError,
+			fix:    serverFix(h.Status, srv.SSHHost),
 			blocks: on, server: srv.Name, host: srv.SSHHost})
 	}
 	for _, p := range m.cfg.Projects {
@@ -174,4 +175,39 @@ func (m *Model) caText() string {
 		return ca + styleAmber.Render(" · expires "+date)
 	}
 	return ca + styleDim.Render(" · expires "+date)
+}
+
+// connectionText says how a server's connection is: its state, how many
+// attempts have failed, and when it tries next.
+func (m *Model) connectionText(h engine.ServerHealth) string {
+	text := string(h.Status)
+	switch h.Status {
+	case transport.StatusAuthFailed:
+		if h.Failures == 1 {
+			text += " · tried once"
+		} else if h.Failures > 1 {
+			text += fmt.Sprintf(" · tried %d times", h.Failures)
+		}
+	case transport.StatusReconnecting:
+		if h.Failures > 0 {
+			text += fmt.Sprintf(" · attempt %d", h.Failures+1)
+		}
+		if !h.NextAttempt.IsZero() {
+			if left := h.NextAttempt.Sub(m.now()); left > 0 {
+				text += fmt.Sprintf(" · next in %ds", int(math.Ceil(left.Seconds())))
+			} else {
+				text += " · trying now"
+			}
+		}
+	}
+	return text
+}
+
+// serverFix says what to do about a server in state st. A server that gave
+// up waits for r; one that is reconnecting tries again by itself.
+func serverFix(st transport.Status, host string) string {
+	if st == transport.StatusReconnecting {
+		return "Nearhost tries again by itself. If it keeps failing, run ssh " + clean(host) + " once in a terminal to check access."
+	}
+	return "Run ssh " + clean(host) + " once in a terminal to fix access, then press r."
 }

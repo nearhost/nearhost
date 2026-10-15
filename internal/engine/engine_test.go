@@ -2119,3 +2119,13 @@ func TestTeardownEndingInTheRecordedStateAnnouncesWhatChangedMeanwhile(t *testin
 		t.Fatalf("status = %+v while the server is %s", st, sess.Status())
 	}
 }
+
+func TestServerHealthOfLocalAndUnusedServers(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if got := h.eng.ServerHealth(config.LocalServer); got.Status != transport.StatusConnected {
+		t.Errorf("local: %+v", got)
+	}
+	if got := h.eng.ServerHealth("mini"); got.Status != transport.StatusDisconnected || got.Failures != 0 {
+		t.Errorf("unused: %+v", got)
+	}
+}

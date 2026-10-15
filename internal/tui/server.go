@@ -20,21 +20,22 @@ func (m *Model) serverPanel(name string, width int) []string {
 	if !ok {
 		return nil
 	}
-	st, lastErr := m.b.ServerStatus(name)
+	h := m.b.ServerHealth(name)
+	st, lastErr := h.Status, h.LastError
 	var on []string
 	for _, p := range m.cfg.Projects {
 		if p.Server == name {
 			on = append(on, clean(p.Name))
 		}
 	}
-	state := m.serverDot(st).String() + " " + string(st)
+	state := m.serverDot(st).String() + " " + m.connectionText(h)
 	lines := []string{spread(styleTitle.Render(clean(name)), state, width), ""}
 	lines = append(lines, field("ssh host", clean(srv.SSHHost), width)...)
-	if lastErr != "" {
+	// The last error stays after the server connects again; it is only
+	// news while the server is not connected.
+	if lastErr != "" && st != transport.StatusConnected {
 		lines = append(lines, field("why", clean(lastErr), width)...)
-		if st != transport.StatusConnected {
-			lines = append(lines, field("fix", "Run ssh "+clean(srv.SSHHost)+" once in a terminal to fix access, then press r.", width)...)
-		}
+		lines = append(lines, field("fix", serverFix(st, srv.SSHHost), width)...)
 	}
 	projects := "none"
 	if len(on) > 0 {
