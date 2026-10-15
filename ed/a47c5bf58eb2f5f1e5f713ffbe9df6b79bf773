@@ -1,0 +1,21 @@
+README.md
+  s_f390899c03d13b::t_d4e51758b06076 104
+internal/sudo/testdata/sudo
+  s_f390899c03d13b::t_edcdc4f89b5acb 27-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eda47c5bf58eb2f5f1e5f713ffbe9df6b79bf773",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
