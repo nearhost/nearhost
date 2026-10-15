@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -172,6 +173,17 @@ func (u *uiEngine) ConfigPath() string { return u.path }
 func (u *uiEngine) Ports() (int, int) { return u.flags.httpsPort, u.flags.httpPort }
 
 func (u *uiEngine) CATrusted() bool { return untrustedCA(u.b.up.trust, u.storage) == "" }
+
+func (u *uiEngine) CAExpires() time.Time {
+	if u.b.up.trust.rootCert == nil {
+		return time.Time{}
+	}
+	cert, err := u.b.up.trust.rootCert(u.storage)
+	if err != nil {
+		return time.Time{}
+	}
+	return cert.NotAfter
+}
 
 func (u *uiEngine) HostsState() string {
 	if u.flags.noHosts {

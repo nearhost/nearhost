@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -347,4 +348,15 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 		t.Errorf("err = %v\n%s", err, out)
 	}
 	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias", "FAIL  hosts block      missing web.test\n")
+}
+
+// doctor says when the local CA expires.
+func TestDoctorSaysWhenTheCAExpires(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.trust.cert.NotAfter = time.Date(2036, 10, 13, 0, 0, 0, 0, time.UTC)
+	out, _ := execute(t, newDoctorCmd(f.backend()), "doctor")
+	if !strings.Contains(out, "ok    local CA         trusted by the system trust store; expires 2036-10-13\n") {
+		t.Errorf("doctor printed:\n%s", out)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -33,6 +34,7 @@ type fakeBackend struct {
 	forms     formFake
 	edit      editFake
 	trusted   bool
+	caExpires time.Time
 	// applyBlocks makes Apply wait for its context to end.
 	applyBlocks bool
 
@@ -116,6 +118,11 @@ func (f *fakeBackend) StopProject(_ context.Context, name string) error {
 	return nil
 }
 func (f *fakeBackend) Ports() (int, int) { return 443, 80 }
+func (f *fakeBackend) CAExpires() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.caExpires
+}
 func (f *fakeBackend) CATrusted() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

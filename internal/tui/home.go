@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -13,10 +14,7 @@ import (
 
 // home is the Home panel.
 func (m *Model) home(width int) []string {
-	ca := styleBeacon.Render("●") + " trusted"
-	if !m.caTrusted {
-		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
-	}
+	ca := m.caText()
 	hostsDot := styleBeacon.Render("●")
 	if _, ok := hostsWord(m.hostsState); !ok {
 		hostsDot = styleAmber.Render("●")
@@ -154,4 +152,26 @@ func (m *Model) copySSH() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// caWarnAhead is how long before the local CA expires Home warns of it.
+const caWarnAhead = 30 * 24 * time.Hour
+
+// caText says whether the local CA is trusted and when it expires.
+func (m *Model) caText() string {
+	ca := styleBeacon.Render("●") + " trusted"
+	if !m.caTrusted {
+		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
+	}
+	if m.caExpires.IsZero() {
+		return ca
+	}
+	date := m.caExpires.Format("2006-01-02")
+	switch left := m.caExpires.Sub(m.now()); {
+	case left <= 0:
+		return styleRed.Render("● expired " + date)
+	case left < caWarnAhead:
+		return ca + styleAmber.Render(" · expires "+date)
+	}
+	return ca + styleDim.Render(" · expires "+date)
 }

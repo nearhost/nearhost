@@ -38,10 +38,7 @@ func (m *Model) emptyScreen() string {
 	lines = append(lines, "", centre(styleTitle.Render("nearhost")), "", "",
 		centre(styleTitle.Render("Nothing to serve yet.")),
 		centre("Press "+styleBeacon.Render("n")+" to add the project in the current directory."), "")
-	ca := styleBeacon.Render("●") + " trusted"
-	if !m.caTrusted {
-		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
-	}
+	ca := m.caText()
 	lines = append(lines, field("directory", clean(m.dir), emptyWidth)...)
 	lines = append(lines, field("local CA", ca, emptyWidth)...)
 	lines = append(lines, m.proxyLines(emptyWidth)...)
