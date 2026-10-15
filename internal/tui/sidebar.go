@@ -202,12 +202,16 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 			}
 			return renderRow(left, []seg{{styleDim, text}}, width, selected)
 		}
-		st, _ := m.b.ServerStatus(r.name)
+		h := m.b.ServerHealth(r.name)
+		st := h.Status
 		dot := m.serverDot(st)
 		if m.narrow() {
 			return renderRow(append(left, seg{styleText, " "}, dot), nil, width, selected)
 		}
 		word := seg{dot.style, " " + string(st)}
+		if h.Held {
+			word.text = " dropped"
+		}
 		if st == transport.StatusConnected {
 			word.style = styleText
 		}

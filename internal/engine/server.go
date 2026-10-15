@@ -16,6 +16,10 @@ var errShutDown = errors.New("engine is shut down")
 type serverConn struct {
 	ensure sync.Mutex // serialises (re)starting the session
 	sess   *transport.Session
+	// held is set while the server is disconnected on purpose, so nothing
+	// starts the session behind the user's back. Written under ensure and
+	// mu, read under mu.
+	held bool
 }
 
 // ensureSession returns the server's session with its supervisor running. A
@@ -47,10 +51,13 @@ func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
 	// Shutdown stops each session under its ensure lock after marking the
 	// engine closed, so a session is never started behind its back.
 	e.mu.Lock()
-	closed := e.closed
+	closed, held := e.closed, c.held
 	e.mu.Unlock()
 	if closed {
 		return nil, errShutDown
+	}
+	if held {
+		return nil, errHeld(srv.Name)
 	}
 	if c.sess.Status() == transport.StatusAuthFailed {
 		// The supervisor has exited, so this returns at once. It clears the
@@ -164,6 +171,8 @@ func (e *Engine) lostLocked(run *projectRun) map[int]bool {
 // many attempts have failed and when the next is.
 type ServerHealth struct {
 	transport.Health
+	// Held is set while the server is disconnected on purpose.
+	Held bool
 }
 
 // ServerHealth reports a server's connection as ServerStatus does, with
@@ -178,7 +187,10 @@ func (e *Engine) ServerHealth(name string) ServerHealth {
 	if c == nil {
 		return ServerHealth{Health: transport.Health{Status: transport.StatusDisconnected}}
 	}
-	return ServerHealth{Health: c.sess.Health()}
+	e.mu.Lock()
+	held := c.held
+	e.mu.Unlock()
+	return ServerHealth{Health: c.sess.Health(), Held: held}
 }
 
 // ServerStatus reports a server's connection state and its last ssh error.

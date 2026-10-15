@@ -38,7 +38,7 @@ type helpGroup struct {
 var helpGroups = []helpGroup{
 	{"move", bindings([]footerItem{{"j/k", "up and down"}, {"h", "home"}, {"tab", "routes"}, {"/", "filter by name"}, {"esc", "clear filter"}})},
 	{"project", bindings([]footerItem{{"enter", "start or stop"}, {"o", "open in browser"}, {"e", "edit"}, {"d", "remove"}, {"y", "copy advice"}})},
-	{"server", bindings([]footerItem{{"s", "add server"}, {"r", "reconnect"}, {"e", "edit"}, {"d", "remove"}})},
+	{"server", bindings([]footerItem{{"s", "add server"}, {"r", "reconnect"}, {"c", "connect or drop"}, {"e", "edit"}, {"d", "remove"}})},
 	{"nearhost", bindings([]footerItem{{"n", "add project"}, {"l", "full-screen log"}, {"?", "close help"}, {"q", "quit"}})},
 }
 
