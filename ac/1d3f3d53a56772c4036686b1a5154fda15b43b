@@ -1,0 +1,21 @@
+internal/tui/filter.go
+  s_f390899c03d13b::t_2e79882b699adc 6,31-53,125,129,131-133
+internal/tui/filter_test.go
+  s_f390899c03d13b::t_6cbb55975727e6 92-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac1d3f3d53a56772c4036686b1a5154fda15b43b",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
