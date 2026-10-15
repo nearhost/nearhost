@@ -1,0 +1,26 @@
+go.mod
+  h_13c4e797d6e9d2 7
+internal/tui/frame.go
+  h_13c4e797d6e9d2 43-48
+internal/tui/help.go
+  h_13c4e797d6e9d2 1-80
+internal/tui/help_test.go
+  h_13c4e797d6e9d2 1-63
+internal/tui/keys.go
+  h_13c4e797d6e9d2 4,30,34-39,42-68,70-92,94,99-100,105-142,144,149-151,153,181-184,254-255
+internal/tui/model.go
+  h_13c4e797d6e9d2 9,43-45,102
+internal/tui/model_test.go
+  h_13c4e797d6e9d2 27,89,368-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "891c80c290bbba88c7c4d19d784ec5eba50c9926",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
