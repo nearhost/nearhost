@@ -128,6 +128,7 @@ func newUpCmd(b upBackend) *cobra.Command {
 		},
 	}
 	flags.bind(cmd)
+	flags.bindCapture(cmd)
 	return cmd
 }
 
@@ -322,6 +323,7 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		RunDir: runDir, StorageRoot: storage,
 		SSHPath: ssh.path, SSHEnv: ssh.env,
 		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort,
+		Capture: !f.noCapture,
 	}
 	if !f.noHosts {
 		opts.EnsureHosts = askOnce(ensureHosts)

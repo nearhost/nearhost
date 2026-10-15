@@ -97,6 +97,7 @@ func openBrowser(url string) error {
 func bindUI(root *cobra.Command, b uiBackend) {
 	var flags serveFlags
 	flags.bind(root)
+	flags.bindCapture(root)
 	root.Args = cobra.NoArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if b.interactive == nil || !b.interactive() {

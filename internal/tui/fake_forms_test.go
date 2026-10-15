@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/proxy"
 )
 
 // formFake is the part of the fake backend the add forms use. Its fields
@@ -176,6 +177,7 @@ type editFake struct {
 	edits        int
 	reconnected  []string
 	dropped      []string
+	captured     map[string]proxy.Exchange
 	connected    []string
 	reconnectErr error
 	advice       map[string][]Advisory
@@ -209,6 +211,13 @@ func (f *fakeBackend) ReconnectServer(_ context.Context, name string) error {
 	defer f.mu.Unlock()
 	f.edit.reconnected = append(f.edit.reconnected, name)
 	return f.edit.reconnectErr
+}
+
+func (f *fakeBackend) Captured(id string) (proxy.Exchange, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ex, ok := f.edit.captured[id]
+	return ex, ok
 }
 
 func (f *fakeBackend) DisconnectServer(_ context.Context, name string) error {

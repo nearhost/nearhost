@@ -31,13 +31,13 @@ func TestPlainLog(t *testing.T) {
 func TestParseAccess(t *testing.T) {
 	line := `{"level":"info","ts":1.5,"logger":"http.log.access.web.test","msg":"handled request",` +
 		`"request":{"method":"POST","host":"myapp.test","uri":"/login","headers":{"Accept":["text/html"],"Cookie":["REDACTED"]}},` +
-		`"duration":0.0634,"size":0,"status":302,"resp_headers":{"Location":["/dashboard"],"Content-Type":["text/html; charset=utf-8"]}}`
+		`"duration":0.0634,"size":0,"status":302,"resp_headers":{"Location":["/dashboard"],"Content-Type":["text/html; charset=utf-8"]},"nearhost_id":"ab12"}`
 	a, ok := ParseAccess(line)
 	if !ok {
 		t.Fatal("not read as an access line")
 	}
 	if a.Method != "POST" || a.Host != "myapp.test" || a.URI != "/login" || a.Status != 302 || a.Took != 63*time.Millisecond ||
-		a.Location != "/dashboard" || a.ContentType != "text/html; charset=utf-8" || a.Headers["Cookie"][0] != "REDACTED" {
+		a.Location != "/dashboard" || a.ContentType != "text/html; charset=utf-8" || a.Headers["Cookie"][0] != "REDACTED" || a.ID != "ab12" {
 		t.Errorf("read %+v", a)
 	}
 	for _, other := range []string{

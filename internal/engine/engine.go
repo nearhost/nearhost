@@ -37,6 +37,9 @@ type Options struct {
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
+	// Capture keeps each request the proxy passes on, and its response, in
+	// memory, for Captured and Replay.
+	Capture bool
 	// EnsureHosts makes every given alias resolve to 127.0.0.1. It gets the
 	// valid aliases of all configured projects, sorted, each time a project
 	// starts; calls are never concurrent. ctx ends when that start is
@@ -143,7 +146,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
 		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort}),
+		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture}),
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
@@ -389,6 +392,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("stop proxy: %w", err))
 		}
 		proxy.SetSink(nil)
+		proxy.ClearCaptured()
 	}
 	return errors.Join(errs...)
 }
@@ -440,4 +444,10 @@ func (e *Engine) Status(name string) ProjectStatus {
 		st, msg = e.effectiveLocked(run)
 	}
 	return ProjectStatus{State: st, Message: msg, Alias: run.alias, WebLocalPort: run.webLocal}
+}
+
+// Captured is the exchange the proxy kept under id, the nearhost_id of its
+// access log line.
+func (e *Engine) Captured(id string) (proxy.Exchange, bool) {
+	return proxy.Captured(id)
 }

@@ -431,3 +431,20 @@ func TestAskOnceRemembersARefusalButNotAnInterruption(t *testing.T) {
 		t.Fatalf("a refusal must stand without asking again: %v then %v after %d calls", first, again, calls)
 	}
 }
+
+// The proxy keeps exchanges unless --no-capture says not to.
+func TestCaptureFollowsTheFlag(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, off := range []bool{false, true} {
+		opts, err := engineOptions(sshClient{}, serveFlags{noCapture: off}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.Capture == off {
+			t.Errorf("--no-capture=%v: Capture = %v", off, opts.Capture)
+		}
+	}
+	if newUpCmd(upBackend{}).Flags().Lookup("no-capture") == nil {
+		t.Error("up has no --no-capture")
+	}
+}

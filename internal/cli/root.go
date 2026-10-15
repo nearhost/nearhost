@@ -61,12 +61,18 @@ type serveFlags struct {
 	httpsPort int
 	httpPort  int
 	noHosts   bool
+	noCapture bool
 }
 
 func (f *serveFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.httpsPort, "https-port", 443, "port for https://<alias>")
 	cmd.Flags().IntVar(&f.httpPort, "http-port", 80, "port that redirects to https")
 	cmd.Flags().BoolVar(&f.noHosts, "no-hosts", false, "do not manage /etc/hosts")
+}
+
+// bindCapture adds --no-capture, for the commands that serve.
+func (f *serveFlags) bindCapture(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&f.noCapture, "no-capture", false, "do not keep requests and responses in memory")
 }
 
 func (f *serveFlags) validate() error {
