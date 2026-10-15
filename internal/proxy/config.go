@@ -34,6 +34,18 @@ type Options struct {
 	StorageRoot string // Caddy storage directory (holds the local CA)
 	HTTPSPort   int    // 0 means 443
 	HTTPPort    int    // 0 means 80
+	// Capture keeps each request and response in memory (see Capture), so
+	// they can be shown and sent again.
+	Capture bool
+}
+
+// captureHandler is the handler that keeps a site's exchanges, before the
+// reverse proxy, or nothing when they are not kept.
+func captureHandler(alias string, on bool) []any {
+	if !on {
+		return nil
+	}
+	return []any{map[string]any{"handler": captureModule, "alias": alias}}
 }
 
 func writer(alias string) map[string]any {
@@ -90,7 +102,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				"host":      []string{s.Alias},
 				"remote_ip": map[string]any{"ranges": loopbackRanges},
 			}},
-			"handle": []any{map[string]any{
+			"handle": append(captureHandler(s.Alias, opts.Capture), map[string]any{
 				"handler":        "reverse_proxy",
 				"upstreams":      []any{map[string]any{"dial": s.Upstream}},
 				"flush_interval": -1,
@@ -104,7 +116,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 					"X-Forwarded-Proto": []string{"https"},
 					"X-Forwarded-For":   []string{"{http.request.remote.host}"},
 				}}},
-			}},
+			}),
 			"terminal": true,
 		})
 		loggerNames[s.Alias] = []string{s.Alias}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -89,6 +90,9 @@ type Backend interface {
 	// Advice is the advice for a configured project, and notes about
 	// working it out.
 	Advice(ctx context.Context, project string) (ProjectAdvice, error)
+	// Captured is the exchange the proxy kept under id, the ID of a request
+	// in the log, while it is kept.
+	Captured(id string) (proxy.Exchange, bool)
 	// Trust trusts the local CA as `nearhost trust` does, with the
 	// interface suspended so a password can be asked for.
 	Trust(ctx context.Context) error

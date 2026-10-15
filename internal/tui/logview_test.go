@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -191,4 +192,55 @@ func TestEmptyLogView(t *testing.T) {
 		press(m, k)
 	}
 	wantScreen(t, m, "nearhost › mini › log", "0 of 0 lines · following")
+}
+
+// capturedModel is logModel whose request page=1 was kept by the proxy, a
+// POST answered with JSON, with its cookie.
+func capturedModel(t *testing.T) *Model {
+	t.Helper()
+	f := newFake(t, sampleConfig())
+	f.servers["mini"] = transport.StatusConnected
+	f.setState("myapp", engine.ProjectStatus{State: engine.StateRunning, WebLocalPort: 52114})
+	f.edit.captured = map[string]proxy.Exchange{"ab12": {
+		ID: "ab12", Method: "POST", Host: "myapp.test", URI: "/api/projects",
+		ReqHeader: http.Header{"Cookie": {"session=secret"}, "Content-Type": {"application/json"}},
+		ReqBody:   []byte(`{"owner":1}`), ReqBodySize: 11, Status: 500,
+		RespHeader: http.Header{"Content-Type": {"application/json"}},
+		RespBody:   []byte(`{"message":"SQLSTATE[42S22]: Column not found: owner"}`), RespBodySize: 54,
+	}}
+	m := New(f, "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	at := time.Date(2026, 10, 15, 12, 4, 0, 0, time.UTC)
+	for _, id := range []string{"ab12", "gone"} {
+		line := `{"level":"error","msg":"handled request","request":{"method":"POST","host":"myapp.test","uri":"/api/projects",` +
+			`"headers":{"Cookie":["REDACTED"]}},"duration":0.2,"size":54,"status":500,"nearhost_id":"` + id + `"}`
+		m.Update(eventMsg(engine.Event{Time: at, Project: "myapp", Server: "mini", Message: line}))
+	}
+	m.sel = rowKey(rowProject, "myapp")
+	press(m, "l")
+	return m
+}
+
+// An opened request the proxy kept shows what was sent and what came back,
+// its cookie hidden until v.
+func TestLogViewShowsKeptBodies(t *testing.T) {
+	m := capturedModel(t)
+	press(m, "k")
+	press(m, "enter")
+	wantScreen(t, m, "│ request  host: myapp.test · content-type: application/json · cookie: •••",
+		"│ sent     {", `"owner": 1`, "│ body     {", `"message": "SQLSTATE[42S22]: Column not found: owner"`,
+		"c copy as curl · v reveal · enter collapse")
+	press(m, "v")
+	wantScreen(t, m, "cookie: session=secret", "v hide")
+	want := `curl -i -X POST 'https://myapp.test/api/projects' -H 'Content-Type: application/json' -H 'Cookie: session=secret' --data-binary '{"owner":1}'`
+	if got := clipboardOf(press(m, "c")); got != want {
+		t.Errorf("copied %s\nwant   %s", got, want)
+	}
+}
+
+// A request whose exchange is no longer kept says so.
+func TestLogViewRequestNoLongerKept(t *testing.T) {
+	m := capturedModel(t)
+	press(m, "enter")
+	wantScreen(t, m, "the bodies are no longer kept", "cookie: REDACTED")
 }

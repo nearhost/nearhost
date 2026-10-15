@@ -23,6 +23,7 @@ type proxyLine struct {
 	Duration    float64             `json:"duration"` // seconds
 	Size        int                 `json:"size"`
 	RespHeaders map[string][]string `json:"resp_headers"`
+	ID          string              `json:"nearhost_id"`
 }
 
 // parse reads a JSON log line of the proxy; ok is false for any other line.
@@ -47,6 +48,9 @@ type Access struct {
 	Headers     map[string][]string
 	ContentType string // the response's
 	Location    string // the response's, for a redirect
+	// ID names the exchange the proxy kept (see Captured); empty when it
+	// keeps none.
+	ID string
 }
 
 // ParseAccess reads a line of the proxy's access log; ok is false for any
@@ -70,6 +74,7 @@ func ParseAccess(line string) (a Access, ok bool) {
 		Headers:     l.Request.Headers,
 		ContentType: first(l.RespHeaders, "Content-Type"),
 		Location:    first(l.RespHeaders, "Location"),
+		ID:          l.ID,
 	}, true
 }
 

@@ -114,6 +114,12 @@ func upstream(t *testing.T, name string) *upstreamSrv {
 		sn.mu.Unlock()
 		fmt.Fprintf(w, "hello from %s", name)
 	})
+	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusCreated)
+		w.Write(append([]byte("got "), b...))
+	})
 	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("one\n"))
 		w.(http.Flusher).Flush()
@@ -163,10 +169,16 @@ type harness struct {
 // storage dir and a recording log sink. It trusts only that storage's root.
 func startProxy(t *testing.T, sites []Site) *harness {
 	t.Helper()
+	return startProxyWith(t, sites, false)
+}
+
+// startProxyWith is startProxy, keeping exchanges when capture is set.
+func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
+	t.Helper()
 	h := &harness{t: t, rec: &recorder{}, storage: t.TempDir(), httpsPort: freePort(t), httpPort: freePort(t)}
 	SetSink(h.rec)
 	t.Cleanup(func() { SetSink(nil) })
-	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort})
+	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort, Capture: capture})
 	if err := h.p.Apply(sites); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

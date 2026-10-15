@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ type logView struct {
 	open      int  // the seq of the request opened; 0 when none is
 	follow    bool // the cursor stays on the newest entry
 	wrap      bool // entries that are not requests wrap
+	reveal    bool // an opened request shows its cookies and credentials
 	pausedAt  int  // the newest seq when following stopped
 	vp        viewport.Model
 }
@@ -167,9 +169,15 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "c":
 		if at >= 0 && shown[at].req != nil {
-			m.logs.noteOn(v.key, "Copied "+shown[at].req.Method+" "+clean(shown[at].req.URI)+" as curl.")
-			return tea.SetClipboard(curlFor(*shown[at].req))
+			a := shown[at].req
+			m.logs.noteOn(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
+			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
+				return tea.SetClipboard(curlForExchange(ex))
+			}
+			return tea.SetClipboard(curlFor(*a))
 		}
+	case "v":
+		v.reveal = !v.reveal
 	}
 	return nil
 }
@@ -339,24 +347,55 @@ func (m *Model) logCount(shown int) string {
 	return styleDim.Render(count + " · " + state)
 }
 
+// secretHeaders are the request headers whose values are hidden until v
+// reveals them. The access log redacts them; a kept exchange has them.
+var secretHeaders = map[string]bool{"cookie": true, "authorization": true, "proxy-authorization": true}
+
+// bodyRows is how many lines of a body an opened request shows.
+const bodyRows = 8
+
 // requestLines are an opened request: what was asked, what came back, the
-// route it took, and what can be done with it.
+// route it took, and what can be done with it. With the exchange kept, the
+// headers are the real ones and the bodies are shown.
 func (m *Model) requestLines(e logEntry, width int) []string {
 	a := e.req
+	var ex proxy.Exchange
+	kept := false
+	if a.ID != "" {
+		ex, kept = m.b.Captured(a.ID)
+	}
 	bar := "   " + styleDim.Render("│") + " "
 	label := func(s string) string { return styleDim.Render(fit(s, 9)) }
-	var heads []string
-	names := make([]string, 0, len(a.Headers))
-	for name := range a.Headers {
+	under := bar + strings.Repeat(" ", 9)
+	headers := http.Header(a.Headers)
+	if kept {
+		headers = ex.ReqHeader
+	}
+	names := make([]string, 0, len(headers))
+	for name := range headers {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	var heads []string
+	secrets := false
 	for _, name := range names {
-		heads = append(heads, strings.ToLower(clean(name))+": "+clean(strings.Join(a.Headers[name], ", ")))
+		value := strings.Join(headers[name], ", ")
+		lower := strings.ToLower(name)
+		if kept && secretHeaders[lower] {
+			secrets = true
+			if !m.logView.reveal {
+				value = "•••"
+			}
+		}
+		heads = append(heads, lower+": "+clean(value))
 	}
 	req := "host: " + clean(a.Host)
 	if len(heads) > 0 {
 		req += styleDim.Render(" · ") + strings.Join(heads, styleDim.Render(" · "))
+	}
+	lines := []string{bar + label("request") + req}
+	if kept && ex.ReqBodySize > 0 {
+		lines = append(lines, bodyLines(bar+label("sent"), under, ex.ReqBody, ex.ReqHeader, ex.ReqBodyCut(), width)...)
 	}
 	resp := statusText(a.Status)
 	for _, part := range []string{clean(a.ContentType), sizeText(a.Size)} {
@@ -367,15 +406,67 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 	if a.Location != "" {
 		resp += styleDim.Render(" → ") + clean(a.Location)
 	}
-	lines := []string{bar + label("request") + req, bar + label("response") + resp}
+	lines = append(lines, bar+label("response")+resp)
+	switch {
+	case kept && ex.Err != "":
+		lines = append(lines, bar+label("why")+styleRed.Render(clean(ex.Err)))
+	case kept && ex.Upgraded:
+		lines = append(lines, under+styleDim.Render("upgraded; what passes over the connection is not kept"))
+	case kept:
+		lines = append(lines, bodyLines(bar+label("body"), under, ex.RespBody, ex.RespHeader, ex.RespBodyCut(), width)...)
+	case a.ID != "":
+		lines = append(lines, under+styleDim.Render("the bodies are no longer kept"))
+	}
 	if route := m.routeOf(e.source); route != "" {
 		lines = append(lines, bar+label("route")+route)
 	}
-	lines = append(lines, bar+styleBeacon.Render("c")+styleDim.Render(" copy as curl · ")+styleBeacon.Render("enter")+styleDim.Render(" collapse"))
+	keys := styleBeacon.Render("c") + styleDim.Render(" copy as curl · ")
+	if secrets {
+		verb := " reveal · "
+		if m.logView.reveal {
+			verb = " hide · "
+		}
+		keys += styleBeacon.Render("v") + styleDim.Render(verb)
+	}
+	lines = append(lines, bar+keys+styleBeacon.Render("enter")+styleDim.Render(" collapse"))
 	for i, l := range lines {
 		lines[i] = fit(l, width)
 	}
 	return lines
+}
+
+// bodyLines draw a kept body: its first bodyRows lines, the first after
+// first and the rest after rest, and what was left out.
+func bodyLines(first, rest string, body []byte, header http.Header, cut bool, width int) []string {
+	text, note := proxy.BodyText(body, header, cut)
+	var rows []string
+	if text != "" {
+		rows = strings.Split(strings.TrimRight(text, "\n"), "\n")
+	}
+	more := 0
+	if len(rows) > bodyRows {
+		more, rows = len(rows)-bodyRows, rows[:bodyRows]
+	}
+	var out []string
+	lead := first
+	for _, r := range rows {
+		out = append(out, fit(lead+clean(r), width))
+		lead = rest
+	}
+	var tail []string
+	if more > 0 {
+		tail = append(tail, fmt.Sprintf("%d more lines", more))
+	}
+	if note != "" {
+		tail = append(tail, note)
+	}
+	if len(tail) > 0 {
+		out = append(out, fit(lead+styleDim.Render(strings.Join(tail, " · ")), width))
+	}
+	if len(out) == 0 {
+		out = append(out, fit(first+styleDim.Render("empty"), width))
+	}
+	return out
 }
 
 // routeOf is the way a project's requests take: its web route, the local
@@ -412,6 +503,41 @@ func sizeText(n int) string {
 		return fmt.Sprintf("%.1f kB", float64(n)/1000)
 	}
 	return fmt.Sprintf("%.1f MB", float64(n)/1000/1000)
+}
+
+// skipInCurl are the headers a curl command leaves out: the URL carries
+// the host, and curl works out the rest itself.
+var skipInCurl = map[string]bool{
+	"host": true, "content-length": true, "connection": true, "keep-alive": true,
+	"transfer-encoding": true, "te": true, "upgrade": true,
+}
+
+// curlForExchange is a curl command that makes a kept request again, with
+// its real headers and, when it was kept whole, its body.
+func curlForExchange(ex proxy.Exchange) string {
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	parts := []string{"curl", "-i"}
+	if ex.Method != "" && ex.Method != "GET" {
+		parts = append(parts, "-X", ex.Method)
+	}
+	parts = append(parts, quote("https://"+ex.Host+ex.URI))
+	names := make([]string, 0, len(ex.ReqHeader))
+	for name := range ex.ReqHeader {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if skipInCurl[strings.ToLower(name)] {
+			continue
+		}
+		for _, value := range ex.ReqHeader[name] {
+			parts = append(parts, "-H", quote(name+": "+value))
+		}
+	}
+	if ex.ReqBodySize > 0 && !ex.ReqBodyCut() {
+		parts = append(parts, "--data-binary", quote(string(ex.ReqBody)))
+	}
+	return strings.Join(parts, " ")
 }
 
 // curlFor is a curl command that makes the request again. Headers whose
