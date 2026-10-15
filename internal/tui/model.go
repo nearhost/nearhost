@@ -49,6 +49,9 @@ type Model struct {
 	spinning  bool     // the spinner is turning
 	form      form     // the open add form; nil when none is
 	logView   *logView // the full-screen log; nil when it is not shown
+	// password asks for the user's password over everything else; nil when
+	// nothing is asking.
+	password *passwordBox
 
 	routeFocus bool   // the project panel's routes have the keys
 	routeRow   int    // the route selected there
@@ -311,6 +314,28 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectRow(msg.sel)
 		m.logs.noteOn(m.sel, msg.note)
 		return m, m.applyNow()
+	case passwordMsg:
+		m.askPassword(msg)
+	case passwordClosedMsg:
+		if m.password == msg.box {
+			m.password = nil
+		}
+	case passwordGoneMsg:
+		if m.password != nil && m.password.done == msg.done {
+			m.password.answer(context.Canceled) // nobody reads it now
+			m.password = nil
+		}
+	case passwordCheckedMsg:
+		if m.password != nil {
+			return m, m.password.update(msg)
+		}
+	case tea.PasteMsg:
+		if m.password != nil {
+			return m, m.password.update(msg)
+		}
+		if m.form != nil {
+			return m, m.form.update(msg)
+		}
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
 	case tea.MouseClickMsg:
@@ -377,6 +402,10 @@ func (m *Model) quit() tea.Cmd {
 		return nil
 	}
 	m.quitting = true
+	if m.password != nil {
+		m.password.answer(ErrPasswordCancelled)
+		m.password = nil
+	}
 	if m.endApply != nil {
 		m.endApply() // the shutdown would otherwise wait for it
 	}
@@ -413,7 +442,10 @@ func (m *Model) View() tea.View {
 			content = m.frame(m.columns(), m.footer())
 		}
 		if m.form != nil {
-			content = m.formBox(content)
+			content = m.formBox(content, m.form)
+		}
+		if m.password != nil {
+			content = m.formBox(content, m.password)
 		}
 	}
 	v := tea.NewView(content)

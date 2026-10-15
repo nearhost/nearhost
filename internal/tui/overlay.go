@@ -20,11 +20,11 @@ var colourBoxEdge = lipgloss.Color("#4A5449")
 
 // formBox draws the open form in a box over base, the screen drawn faint
 // behind it: a terminal has no transparency, so dimming is redrawing.
-func (m *Model) formBox(base string) string {
+func (m *Model) formBox(base string, f form) string {
 	w := min(boxWidth, m.width-4)
 	inner := w - 6 // the edges, and two cells of space inside each
-	body := m.form.lines(inner)
-	hd := m.form.heading()
+	body := f.lines(inner)
+	hd := f.heading()
 	title := styleTitle.Render(hd.title)
 	if hd.step != "" {
 		title += styleDim.Render(" · " + hd.step)
@@ -40,7 +40,7 @@ func (m *Model) formBox(base string) string {
 	top = append(top, "")
 	keys := m.help
 	keys.SetWidth(inner)
-	bottom := []string{"", keys.ShortHelpView(bindings(m.form.keys()))}
+	bottom := []string{"", keys.ShortHelpView(bindings(f.keys()))}
 	h := min(max(boxHeight, len(top)+len(body)+len(bottom)+2), m.height-2)
 	room := h - 2 - len(top) - len(bottom)
 	if len(body) > room {
