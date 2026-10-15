@@ -83,9 +83,10 @@ func TestProjectPanel(t *testing.T) {
 	f.servers["mini"] = transport.StatusConnected
 	m := sized(f)
 	m.sel = rowKey(rowProject, "myapp")
-	wantScreen(t, m, "myapp", "https://myapp.test  o to open", "server    mini (ssh mini.lan)", "path      /srv/myapp",
-		"state     ● error", "loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
-		"80     web       web", ":52114", "5173   loopback  vite (VITE_PORT)         :5173", "3306   ignore    db",
+	wantScreen(t, m, "myapp  https://myapp.test", "● error", "server mini    path /srv/myapp",
+		"why       loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
+		" port    role        label", "80      web         web", "52114     ○", "5173    loopback    vite (VITE_PORT)", "5173      ○",
+		"3306    ignore      db", "–         –",
 		"enter start · o open · tab routes · e edit · d remove · / filter · s server · ? more", "myapp 2/3")
 }
 

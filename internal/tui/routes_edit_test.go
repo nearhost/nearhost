@@ -36,7 +36,7 @@ func roleOf(cfg *config.Config, project string, port int) config.Role {
 
 func TestRoutesFocusAndRoles(t *testing.T) {
 	m, f := routesModel(t)
-	wantScreen(t, m, "▸ 80     web", "  5173   loopback", "↑↓ route · space loopback/ignore · w web · y copy advice · tab done")
+	wantScreen(t, m, "▌80      web", " 5173    loopback", "↑↓ route · space loopback/ignore · w web · y copy advice · tab done")
 	press(m, "down")
 	run(m, press(m, "space")) // 5173: loopback -> ignore
 	if got := roleOf(f.cfg, "myapp", 5173); got != config.RoleIgnore {
@@ -94,7 +94,7 @@ func TestProjectAdvice(t *testing.T) {
 	_, read := m.Update(nil)
 	wantScreen(t, m, "◐ Reading advice…")
 	run(m, run(m, read)) // the wait for the selection to rest, then the read
-	wantScreen(t, m, "Advisory (app-url): APP_URL should be https://myapp.test.", "APP_URL=https://myapp.test", "Advisory (vite-port)")
+	wantScreen(t, m, "▲ APP_URL should be https://myapp.test.", "▲ Set VITE_PORT.", "y copy fix")
 
 	// Read once for an entry; read again when the entry changes.
 	m.Update(nil)
@@ -126,7 +126,7 @@ func TestProjectAdviceThatCannotBeRead(t *testing.T) {
 	m.selectRow(rowKey(rowProject, "myapp"))
 	_, read := m.Update(nil)
 	run(m, run(m, read))
-	wantScreen(t, m, "Advice could not be read: ssh mini.lan failed", "PORT   ROLE")
+	wantScreen(t, m, "Advice could not be read: ssh mini.lan failed", "port    role")
 	press(m, "y")
 	wantScreen(t, m, "myapp has no advice to copy.")
 }

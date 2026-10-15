@@ -55,8 +55,9 @@ type Model struct {
 	// adviceWaiting is the row whose advice is read when the selection has
 	// rested on it; empty when none is.
 	adviceWaiting string
-	advice        map[string]advice // by project name
-	scroll        int               // log lines scrolled back from the newest
+	advice        map[string]advice    // by project name
+	since         map[string]time.Time // when each running project started running
+	scroll        int                  // log lines scrolled back from the newest
 
 	started  bool  // the engine started
 	proxyErr error // why the engine could not start
@@ -98,6 +99,7 @@ func New(b Backend, dir string) *Model {
 		sel:       homeKey,
 		collapsed: map[string]bool{},
 		advice:    map[string]advice{},
+		since:     map[string]time.Time{},
 		now:       time.Now,
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
@@ -208,8 +210,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case eventMsg:
 		m.logs.event(engine.Event(msg), m.cfg)
+		m.trackUptime()
 		return m, m.listen()
 	case tickMsg:
+		m.trackUptime()
 		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
 	case machineMsg:
 		m.caTrusted, m.hostsState = msg.caTrusted, msg.hostsState
