@@ -308,8 +308,19 @@ func SudoApplier(executable, path string) Applier {
 // terminate (and killed if it stays), and the applier returns ctx's error.
 // When ctx has already ended sudo is not started.
 func SudoApplierContext(ctx context.Context, executable, path string) Applier {
+	return SudoApplierWith(ctx, executable, path, sudoPrompt, false)
+}
+
+// sudoPrompt is the password prompt of SudoApplierContext.
+const sudoPrompt = "nearhost needs your password to update /etc/hosts: "
+
+// SudoApplierWith is SudoApplierContext with prompt as sudo's password
+// prompt, or, with noPrompt, never prompting: for credentials sudo has
+// cached, where a prompt could only land on a terminal in use. sudo then
+// fails if it needs a password.
+func SudoApplierWith(ctx context.Context, executable, path, prompt string, noPrompt bool) Applier {
 	return func(aliases []string) error {
-		cmd := sudoCommand(ctx, executable, path, aliases)
+		cmd := sudoCommand(ctx, executable, path, prompt, noPrompt, aliases)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -322,8 +333,12 @@ func SudoApplierContext(ctx context.Context, executable, path string) Applier {
 	}
 }
 
-func sudoCommand(ctx context.Context, executable, path string, aliases []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, sudoPath, "-p", "nearhost needs your password to update /etc/hosts: ", executable, "hosts", "apply", "--file", path)
+func sudoCommand(ctx context.Context, executable, path, prompt string, noPrompt bool, aliases []string) *exec.Cmd {
+	args := []string{"-p", prompt}
+	if noPrompt {
+		args = []string{"-n"}
+	}
+	cmd := exec.CommandContext(ctx, sudoPath, append(args, executable, "hosts", "apply", "--file", path)...)
 	cmd.Stdin = strings.NewReader(strings.Join(aliases, "\n") + "\n")
 	// Terminate rather than kill: at its password prompt sudo then puts the
 	// terminal back the way it was.

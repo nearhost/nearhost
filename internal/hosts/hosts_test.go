@@ -160,7 +160,7 @@ func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 }
 
 func TestSudoCommandCarriesFilePathAndAliases(t *testing.T) {
-	cmd := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", []string{"a.test", "b.test"})
+	cmd := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", sudoPrompt, false, []string{"a.test", "b.test"})
 	args := strings.Join(cmd.Args, " ")
 	if !strings.HasSuffix(args, "/bin/nearhost hosts apply --file /tmp/other-hosts") {
 		t.Fatalf("args: %s", args)
@@ -525,6 +525,36 @@ func TestApplyRefusesADanglingSymlinkAndLeavesIt(t *testing.T) {
 		}
 		if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 			t.Errorf("the directory holds %d entries, want the link alone", len(entries))
+		}
+	}
+}
+
+// The applier can run sudo so it never prompts, for credentials already
+// cached, or prompt with words of the caller's.
+func TestSudoApplierWith(t *testing.T) {
+	dir := t.TempDir()
+	args := filepath.Join(dir, "args")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" > '"+args+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+	ctx := context.Background()
+	for _, c := range []struct {
+		prompt   string
+		noPrompt bool
+		want     string
+	}{
+		{"", true, "-n /bin/nearhost hosts apply --file /etc/hosts\n"},
+		{"Password for %p: ", false, "-p Password for %p:  /bin/nearhost hosts apply --file /etc/hosts\n"},
+	} {
+		if err := SudoApplierWith(ctx, "/bin/nearhost", "/etc/hosts", c.prompt, c.noPrompt)([]string{"a.test"}); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(args); string(got) != c.want {
+			t.Errorf("sudo %q, want %q", got, c.want)
 		}
 	}
 }

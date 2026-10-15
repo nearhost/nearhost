@@ -1,0 +1,48 @@
+#!/bin/sh
+# A stand-in for sudo. FAKE_SUDO_PASSWORD is the password; the credentials
+# are cached while the file FAKE_SUDO_CACHE exists, unless FAKE_SUDO_NOCACHE
+# is set (sudo set to always ask). FAKE_SUDO_LOG gets a line per call.
+# It understands -n, -S, -v, -p PROMPT and a command to run.
+nonint=0 stdin=0 validate=0 prompt="${SUDO_PROMPT:-Password:}"
+[ -n "$FAKE_SUDO_LOG" ] && echo "$*" >> "$FAKE_SUDO_LOG"
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-n) nonint=1 ;;
+	-S) stdin=1 ;;
+	-v) validate=1 ;;
+	-p) shift; prompt="$1" ;;
+	--) shift; break ;;
+	-*) ;;
+	*) break ;;
+	esac
+	shift
+done
+cached() { [ -z "$FAKE_SUDO_NOCACHE" ] && [ -f "$FAKE_SUDO_CACHE" ]; }
+if ! cached; then
+	if [ "$nonint" = 1 ]; then
+		echo "sudo: a password is required" >&2
+		exit 1
+	fi
+	user=$(id -un)
+	if [ "$stdin" = 1 ] || ! [ -r /dev/tty ]; then
+		printf '%s' "$(echo "$prompt" | sed "s/%p/$user/")" >&2
+		IFS= read -r given || given=""
+	else
+		# As sudo does: prompt and read on the terminal, not echoing.
+		printf '%s' "$(echo "$prompt" | sed "s/%p/$user/")" > /dev/tty
+		saved=$(stty -g < /dev/tty)
+		stty -echo < /dev/tty
+		IFS= read -r given < /dev/tty || given=""
+		stty "$saved" < /dev/tty
+		echo > /dev/tty
+	fi
+	if [ "$given" != "$FAKE_SUDO_PASSWORD" ]; then
+		echo "Sorry, try again." >&2
+		echo "sudo: no password was provided" >&2
+		echo "sudo: 1 incorrect password attempt" >&2
+		exit 1
+	fi
+	[ -z "$FAKE_SUDO_NOCACHE" ] && : > "$FAKE_SUDO_CACHE"
+fi
+[ "$validate" = 1 ] && exit 0
+exec "$@"
