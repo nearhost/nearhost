@@ -125,7 +125,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		return err
 	}
 	var suspender tui.Suspender
-	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run, width: terminalWidth}
+	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run, width: terminalWidth, turn: make(chan struct{}, 1)}
 	// Every sudo the interface runs, the CA's included, which cannot be
 	// given a prompt of its own, words its prompt as Nearhost's.
 	os.Setenv("SUDO_PROMPT", terminalPrompt)
