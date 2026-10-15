@@ -212,8 +212,8 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 		}
 		return f.listAhead()
 	case listedMsg:
-		if msg.conn != f.conn || f.files == nil {
-			return nil
+		if msg.conn != f.conn || f.files == nil || f.listings[msg.parent].done {
+			return nil // tab listed it since, or the files closed
 		}
 		f.listings[msg.parent] = listing{true, msg.dirs, msg.err}
 	case completedMsg:
@@ -772,18 +772,15 @@ func (f *projectForm) accept() tea.Cmd {
 }
 
 // tab completes the path: it accepts the suggestion, else gives ~, . and ..
-// their slash, or lists the parent when no listing ahead is there to suggest from.
+// their slash, else lists the parent again, as it may have changed since.
 func (f *projectForm) tab() tea.Cmd {
 	parent, part := splitPath(f.path.value)
-	switch l, ok := f.listings[parent]; {
+	switch {
 	case f.suggestion() != "":
 		return f.accept()
 	case isDirName(parent, part):
 		f.path.value += "/"
 		return f.edited()
-	case ok && l.done && l.err == nil:
-		f.listNote = "no directories match"
-		return nil
 	}
 	f.seq = nextSeq()
 	f.busy, f.listNote = "Listing…", ""

@@ -135,3 +135,34 @@ func TestPathEnterIgnoresTheSuggestion(t *testing.T) {
 	settle(m, press(m, "enter"))
 	wantScreen(t, m, "/home/dev/code/bl: no such directory")
 }
+
+// tab with nothing to accept lists again, so a directory made since the
+// last listing is found.
+func TestPathTabListsAgainWhenNothingMatches(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	typeSettled(m, "new")
+	files.dirs["/home/dev/newapp"] = true
+	settle(m, press(m, "tab"))
+	if got := pathLine(m); got != "path      ~/newapp/▏" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A listing ahead that comes back after tab listed the same directory does
+// not replace what tab found.
+func TestPathLateListingKeepsWhatTabFound(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	var ahead tea.Cmd
+	for _, r := range "code/" {
+		if _, cmd := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)}); cmd != nil {
+			ahead = cmd
+		}
+	}
+	settle(m, press(m, "tab"))
+	wantScreen(t, m, "path      ~/code/▏blob/")
+	files.listErr = errListing
+	settle(m, ahead)
+	wantScreen(t, m, "path      ~/code/▏blob/")
+}
