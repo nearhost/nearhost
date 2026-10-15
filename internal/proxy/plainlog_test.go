@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestPlainLog(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -22,5 +25,36 @@ func TestPlainLog(t *testing.T) {
 		if got := PlainLog(tc.in); got != tc.want {
 			t.Errorf("PlainLog(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestParseAccess(t *testing.T) {
+	line := `{"level":"info","ts":1.5,"logger":"http.log.access.web.test","msg":"handled request",` +
+		`"request":{"method":"POST","host":"myapp.test","uri":"/login","headers":{"Accept":["text/html"],"Cookie":["REDACTED"]}},` +
+		`"duration":0.0634,"size":0,"status":302,"resp_headers":{"Location":["/dashboard"],"Content-Type":["text/html; charset=utf-8"]}}`
+	a, ok := ParseAccess(line)
+	if !ok {
+		t.Fatal("not read as an access line")
+	}
+	if a.Method != "POST" || a.Host != "myapp.test" || a.URI != "/login" || a.Status != 302 || a.Took != 63*time.Millisecond ||
+		a.Location != "/dashboard" || a.ContentType != "text/html; charset=utf-8" || a.Headers["Cookie"][0] != "REDACTED" {
+		t.Errorf("read %+v", a)
+	}
+	for _, other := range []string{
+		`{"level":"error","logger":"http.log.error","msg":"dial tcp: refused","request":{"method":"GET","uri":"/"},"status":502}`,
+		`{"level":"warn","msg":"admin endpoint disabled"}`, "plain text", "",
+	} {
+		if _, ok := ParseAccess(other); ok {
+			t.Errorf("read %q as an access line", other)
+		}
+	}
+}
+
+func TestLevel(t *testing.T) {
+	if got := Level(`{"level":"error","msg":"x"}`); got != "error" {
+		t.Errorf("Level = %q", got)
+	}
+	if got := Level("plain text"); got != "" {
+		t.Errorf("Level of a plain line = %q", got)
 	}
 }

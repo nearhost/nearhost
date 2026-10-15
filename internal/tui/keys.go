@@ -373,7 +373,7 @@ func (m *Model) wheel(mouse tea.Mouse) {
 	}
 	switch mouse.Button {
 	case tea.MouseWheelUp:
-		m.scroll = min(m.scroll+3, len(m.logs.lines(m.sel, m.filter)))
+		m.scroll = min(m.scroll+3, len(m.logs.entries(m.sel, m.filter)))
 	case tea.MouseWheelDown:
 		m.scroll = max(m.scroll-3, 0)
 	}

@@ -243,3 +243,12 @@ func (f *fakeBackend) appliedCount() int {
 	defer f.mu.Unlock()
 	return len(f.applied)
 }
+
+// logText is the log of the row with key, an entry a line.
+func logText(m *Model, key string) string {
+	var lines []string
+	for _, e := range m.logs.entries(key, "") {
+		lines = append(lines, e.plain())
+	}
+	return strings.Join(lines, "\n")
+}

@@ -184,9 +184,10 @@ func TestEventsFillTheLogsAndFilter(t *testing.T) {
 	} {
 		m.Update(eventMsg(ev))
 	}
-	wantScreen(t, m, "12:00:00 [myapp] state: running", "12:00:00 [mini] connected", "12:00:00 [website] GET / 200 in 4ms", "12:00:00 [proxy] proxy ready")
+	wantScreen(t, m, "12:00:00  myapp     state: running", "12:00:00  mini      connected", "12:00:00  website   GET /", "200    4ms",
+		"12:00:00  proxy     proxy ready")
 	m.sel = rowKey(rowProject, "myapp")
-	if s := screen(m); !strings.Contains(s, "[mini] connected") || strings.Contains(s, "[website]") {
+	if s := screen(m); !strings.Contains(s, "mini      connected") || strings.Contains(s, "website   GET") {
 		t.Errorf("myapp's log:\n%s", s)
 	}
 	press(m, "/")
@@ -194,7 +195,7 @@ func TestEventsFillTheLogsAndFilter(t *testing.T) {
 		press(m, k)
 	}
 	press(m, "enter")
-	if s := screen(m); !strings.Contains(s, "log · filter: con") || strings.Contains(s, "state: running") || !strings.Contains(s, "[mini] connected") {
+	if s := screen(m); !strings.Contains(s, "log · filter: con") || strings.Contains(s, "state: running") || !strings.Contains(s, "mini      connected") {
 		t.Errorf("filtered:\n%s", s)
 	}
 	press(m, "esc")
@@ -365,7 +366,7 @@ func TestEmptyConfigFileIsIgnored(t *testing.T) {
 	if len(f.applied) != 0 {
 		t.Fatalf("applied an empty file: %+v", f.applied)
 	}
-	if log := strings.Join(m.logs.lines(homeKey, ""), "\n"); !strings.Contains(log, "Ignored a change to "+f.path+": the file is empty") {
+	if log := logText(m, homeKey); !strings.Contains(log, "Ignored a change to "+f.path+": the file is empty") {
 		t.Errorf("log:\n%s", log)
 	}
 }
@@ -378,9 +379,9 @@ func TestRefusedStartIsShown(t *testing.T) {
 	m := sized(f)
 	m.sel = rowKey(rowProject, "website")
 	run(m, press(m, "enter"))
-	wantScreen(t, m, "[website] engine is not started")
+	wantScreen(t, m, "website   engine is not started")
 	m.sel = homeKey
-	wantScreen(t, m, "[website] engine is not started")
+	wantScreen(t, m, "website   engine is not started")
 }
 
 // Whether the CA is trusted and the state of the hosts block are read on the
@@ -419,7 +420,7 @@ func TestIgnoredChangeSaysHowToRetry(t *testing.T) {
 	f.path = "/etc/nh.yaml" // short enough for the line not to wrap
 	m := sized(f)
 	m.Update(appliedMsg{errBoom})
-	wantScreen(t, m, "Ignored a change to /etc/nh.yaml: boom. Save the file again to apply", "│  it.")
+	wantScreen(t, m, "nearhost  Ignored a change to /etc/nh.yaml: boom. Save the", "file again to apply it.")
 }
 
 // Quitting while an Apply runs ends it, so the shutdown does not wait for

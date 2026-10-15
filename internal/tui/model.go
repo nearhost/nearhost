@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -87,12 +88,11 @@ type Model struct {
 func New(b Backend, dir string) *Model {
 	events, unsubscribe := b.Events().Subscribe(eventBuffer)
 	stamp := stampOf(b.ConfigPath())
-	return &Model{
+	m := &Model{
 		b: b, dir: dir,
 		cfg:       b.Config(),
 		sel:       homeKey,
 		collapsed: map[string]bool{},
-		logs:      newLogs(),
 		advice:    map[string]advice{},
 		now:       time.Now,
 		events:    events, unsubscribe: unsubscribe,
@@ -101,6 +101,8 @@ func New(b Backend, dir string) *Model {
 		work: newWorker(),
 		help: newHelp(),
 	}
+	m.logs = newLogs(func() time.Time { return m.now() })
+	return m
 }
 
 // Messages the model sends itself.
@@ -429,28 +431,33 @@ func (m *Model) main(width, height int) []string {
 	for _, d := range details {
 		lines = append(lines, fit(d, width))
 	}
-	header := "log"
+	label := "log"
+	if kind == rowHome {
+		label = "recent"
+	}
 	if m.filtering || m.filter != "" {
-		header = "log · filter: " + m.filter
+		label += " · filter: " + m.filter
 		if m.filtering {
-			header += "▏"
+			label += "▏"
 		}
 	}
-	lines = append(lines, strings.Repeat(" ", width), styleDim.Render(fit(header, width)))
-	// The newest lines that fit, each wrapped, counted back from the end
-	// less what is scrolled.
+	log := m.logs.entries(m.sel, m.filter)
+	follow := styleDim.Render("following ") + styleBeacon.Render("●")
+	if m.scroll > 0 {
+		follow = styleDim.Render(fmt.Sprintf("%d newer below", m.scroll))
+	}
+	lines = append(lines, strings.Repeat(" ", width), section(label, follow, width))
+	// The newest entries that fit, counted back from the end less what is
+	// scrolled.
 	room := height - len(lines)
-	log := m.logs.lines(m.sel, m.filter)
 	var shown []string
 	for i := len(log) - 1 - m.scroll; i >= 0 && len(shown) < room; i-- {
-		shown = append(wrap(log[i], width), shown...)
+		shown = append(entryLines(log[i], width, kind != rowProject), shown...)
 	}
 	if len(shown) > room {
 		shown = shown[len(shown)-room:]
 	}
-	for _, l := range shown {
-		lines = append(lines, fit(l, width))
-	}
+	lines = append(lines, shown...)
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
