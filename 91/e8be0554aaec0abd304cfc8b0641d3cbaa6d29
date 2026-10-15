@@ -1,0 +1,21 @@
+internal/proxy/capture.go
+  s_f390899c03d13b::t_a3101f17800b00 135-138,140,156-157,159-162,166-170,178-186
+internal/proxy/capture_test.go
+  s_f390899c03d13b::t_114a9c8e483818 203-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91e8be0554aaec0abd304cfc8b0641d3cbaa6d29",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
