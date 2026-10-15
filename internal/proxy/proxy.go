@@ -5,19 +5,26 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
 )
 
 // caddyMu serialises every call into Caddy's process-global Load/Stop, and
-// guards owner: the Proxy whose configuration Caddy is currently running.
+// guards owner, the Proxy whose configuration Caddy is currently running,
+// and listening.
 var (
 	caddyMu sync.Mutex
 	owner   *Proxy
+	// listening reports whether the running config has listeners, which
+	// Stop waits to be released.
+	listening bool
 )
 
 // Proxy is the embedded Caddy instance. Caddy is process-global, so only one
@@ -65,6 +72,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
+	listening = len(sites) > 0 // with no sites the config declares no listeners
 	return true, nil
 }
 
@@ -79,7 +87,58 @@ func (p *Proxy) Stop() error {
 		return nil
 	}
 	owner = nil
-	return caddy.Stop()
+	if err := caddy.Stop(); err != nil {
+		return err
+	}
+	if !listening {
+		return nil
+	}
+	listening = false
+	// Caddy starts its servers' shutdowns in goroutines and returns once
+	// they have started, so a listener can stay open a moment after Stop.
+	// Wait for the ports, so a caller can bind them again at once.
+	return waitReleased(p.ports(), releaseWait)
+}
+
+// releaseWait bounds how long Stop waits for the proxy's ports.
+const releaseWait = 5 * time.Second
+
+// ports are the TCP ports the proxy listens on.
+func (p *Proxy) ports() []int {
+	https, http := p.opts.HTTPSPort, p.opts.HTTPPort
+	if https == 0 {
+		https = 443
+	}
+	if http == 0 {
+		http = 80
+	}
+	return []int{https, http}
+}
+
+// waitReleased waits until no port is in use on TCP, or timeout has passed.
+// A port that cannot be bound for another reason, such as a low port without
+// the right to bind it, is not waited for. Only TCP is waited for: Caddy's
+// HTTP/3 server keeps its UDP socket until its connections end, which
+// nothing here waits for.
+func waitReleased(ports []int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for _, port := range ports {
+		for {
+			l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if err == nil {
+				l.Close()
+				break
+			}
+			if !errors.Is(err, syscall.EADDRINUSE) {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("port %d is still in use after the proxy stopped", port)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	return nil
 }
 
 // Running reports whether this Proxy's configuration is the one running.
