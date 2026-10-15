@@ -12,6 +12,7 @@ internal/tui/sidebar.go
   s_f390899c03d13b::t_ae960b6a88cf4a 4,7-9,11,66-86,90-93,96,98-99,101,104,106-108,115-130,133-146,148,150,152-158,160,162-165,167-243,245
 internal/tui/sidebar_test.go
   s_f390899c03d13b::t_0c8b994c4e9c21 1-130
+  s_f390899c03d13b::t_8b4d5efe73992a 119-130
 internal/tui/spin.go
   s_f390899c03d13b::t_65712c99cba0bd 1-56
 internal/tui/styles.go
