@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/nearhost/nearhost/compare/v0.3.0...v0.4.0) (2026-10-15)
+
+
+### Features
+
+* ask for the password in a box over the interface ([#112](https://github.com/nearhost/nearhost/issues/112)) ([26a1079](https://github.com/nearhost/nearhost/commit/26a1079ba4e4e18e649cf2aaa73d0d68f906df1b))
+* check and cache sudo credentials, and run the hosts update without a prompt ([#111](https://github.com/nearhost/nearhost/issues/111)) ([45349d4](https://github.com/nearhost/nearhost/commit/45349d4fd7d6d28b0de8fea3a3c15f91a41538a2))
+* make the terminal fallback Nearhost's own: a header, one prompt, and how it went ([#114](https://github.com/nearhost/nearhost/issues/114)) ([1341be4](https://github.com/nearhost/nearhost/commit/1341be45d271fa38bb3ae262c8b95ecfc213cede))
+* run the hosts update and trust as root through the password box ([#113](https://github.com/nearhost/nearhost/issues/113)) ([4272e58](https://github.com/nearhost/nearhost/commit/4272e5806f124f614e472eb56db2fe2a2f990aac))
+* suggest directories as the path is typed, on this machine and on servers ([#122](https://github.com/nearhost/nearhost/issues/122)) ([ce56f34](https://github.com/nearhost/nearhost/commit/ce56f3401b49fbc454066d365c8d531b9c0686bf))
+
+
+### Bug Fixes
+
+* answer once, keep sudo off the screen, read any language, take turns, trim pasted passwords ([#115](https://github.com/nearhost/nearhost/issues/115)) ([978fc75](https://github.com/nearhost/nearhost/commit/978fc75ae6bd00ac9bd62f7b535523f7053ec91d))
+* fit the password box and questions to what they say ([#119](https://github.com/nearhost/nearhost/issues/119)) ([a99ad23](https://github.com/nearhost/nearhost/commit/a99ad2331ab6f44ccd72d17358492754be940355))
+* keep Caddy's start from writing to the terminal ([#110](https://github.com/nearhost/nearhost/issues/110)) ([2fe1540](https://github.com/nearhost/nearhost/commit/2fe1540ec01c798256a63bdec53727023e27b236))
+* say the CA is trusted so browsers accept HTTPS from Nearhost's web server ([#120](https://github.com/nearhost/nearhost/issues/120)) ([8baec0e](https://github.com/nearhost/nearhost/commit/8baec0e7e5b761f0b837e055dc229aeea545f459))
+* say the first screen adds projects on this machine or a server ([#121](https://github.com/nearhost/nearhost/issues/121)) ([311ead0](https://github.com/nearhost/nearhost/commit/311ead09cede7d3d458f3d4ed275f26f1f227580))
+* wait for the proxy's ports when its last site goes, as when it stops ([#117](https://github.com/nearhost/nearhost/issues/117)) ([5e183fb](https://github.com/nearhost/nearhost/commit/5e183fbb9c2fdda8f547797678061ee2a6a5513e))
+
 ## [0.3.0](https://github.com/nearhost/nearhost/compare/v0.2.0...v0.3.0) (2026-10-15)
 
 
