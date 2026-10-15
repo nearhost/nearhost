@@ -192,6 +192,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.password != nil {
+		return m.password.update(k)
+	}
 	if m.form != nil {
 		return m.form.update(k)
 	}
@@ -377,7 +380,7 @@ func (m *Model) enter() tea.Cmd {
 // click handles a mouse click: a sidebar row selects it, a footer action
 // runs it.
 func (m *Model) click(mouse tea.Mouse) tea.Cmd {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.logView != nil || m.width < minWidth || m.height < minHeight {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.width < minWidth || m.height < minHeight {
 		return nil
 	}
 	if mouse.Y == m.height-1 {
@@ -403,6 +406,9 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
+	if m.password != nil {
+		return
+	}
 	if m.logView != nil && m.form == nil {
 		m.logWheel(mouse)
 		return

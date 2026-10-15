@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -163,6 +164,32 @@ const (
 // program first; until then Run fails.
 type Suspender struct {
 	p atomic.Pointer[tea.Program]
+	// asking lets one password request at a time reach the interface.
+	asking sync.Mutex
+}
+
+// Password asks the user for their password in the interface's password
+// box, saying why, and gives each one typed to check, until check accepts
+// one (nil), refuses three (ErrWrongPassword each time; then ErrThreeWrong),
+// fails otherwise, or the user cancels (ErrPasswordCancelled). Requests are
+// taken one at a time: a second waits for the first box to close. When ctx
+// ends first, the box is taken away and ctx's error returned.
+func (s *Suspender) Password(ctx context.Context, why string, check func(ctx context.Context, password string) error) error {
+	p := s.p.Load()
+	if p == nil {
+		return errNotRunning
+	}
+	s.asking.Lock()
+	defer s.asking.Unlock()
+	done := make(chan error, 1)
+	p.Send(passwordMsg{why: why, check: check, done: done})
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		p.Send(passwordGoneMsg{done: done})
+		return ctx.Err()
+	}
 }
 
 // Attach makes s suspend p.
