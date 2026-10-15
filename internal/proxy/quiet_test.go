@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -27,6 +28,9 @@ func runHelper(what string) int {
 			fmt.Println(err)
 			return 1
 		}
+		// What a library writes through the standard log package, as
+		// quic-go does when it cannot enlarge its UDP buffers on Linux.
+		log.Print("failed to sufficiently increase receive buffer size")
 		if err := p.Stop(); err != nil {
 			fmt.Println(err)
 			return 1
@@ -36,8 +40,9 @@ func runHelper(what string) int {
 }
 
 // Caddy writes nothing to the terminal: not on its first load, when it
-// would announce that its startup logger was redirected, and not when the
-// proxy serves and stops. Whatever runs under the interface would otherwise
+// would announce that its startup logger was redirected, not when the
+// proxy serves and stops, and not for the libraries it uses, which write
+// through the standard log package that Caddy sends to stderr. Whatever runs under the interface would otherwise
 // print over it.
 func TestCaddyWritesNothingToTheTerminal(t *testing.T) {
 	for _, what := range []string{"ensure-ca", "serve"} {
