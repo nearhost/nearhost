@@ -29,6 +29,9 @@ import (
 // its app data dir, resolved from XDG_DATA_HOME at call time) at a throwaway
 // location so tests never write into the real user's directories.
 func TestMain(m *testing.M) {
+	if helper := os.Getenv("NEARHOST_PROXY_HELPER"); helper != "" {
+		os.Exit(runHelper(helper))
+	}
 	dir, err := os.MkdirTemp("", "nearhost-proxy-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -42,6 +42,7 @@ func EnsureCA(storageRoot string) (*x509.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
+	quietCaddy()
 	if err := caddy.Load(cfg, false); err != nil {
 		return nil, fmt.Errorf("create local CA: %w", err)
 	}
