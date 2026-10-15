@@ -24,7 +24,8 @@ func TestEmptyStateLeadsToAdding(t *testing.T) {
 		"/work/here": {Routes: []config.Route{{Port: 3000, Role: config.RoleWeb, Label: "port (PORT)"}}},
 	}}
 	m := sized(f)
-	wantScreen(t, m, "home", "▾ local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · ? help · q quit")
+	wantScreen(t, m, "nearhost", "Nothing to serve yet.", "Press n to add the project in the current directory.",
+		"directory /work/here", " n add project · s add server · ? help · q quit")
 	press(m, "n")
 	settle(m, press(m, "enter")) // Local
 	wantScreen(t, m, "path      /work/here▏")
@@ -403,7 +404,7 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		m := sized(f)
 		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
 		wantScreen(t, m, "● proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
-			"fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
+			"fix       Quit the program using the port, or run", "http-port.")
 	}
 }
 

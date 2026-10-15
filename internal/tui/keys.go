@@ -21,6 +21,9 @@ func (m *Model) footerItems() []footerItem {
 	if m.form != nil {
 		return m.form.keys()
 	}
+	if m.empty() {
+		return emptyKeys
+	}
 	if m.routeFocus {
 		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
 	}
@@ -125,7 +128,7 @@ func (m *Model) footerRoom() int {
 // footerContext says where the selection is: the project and its place
 // among the projects, the server, or home.
 func (m *Model) footerContext() string {
-	if m.form != nil {
+	if m.form != nil || m.empty() {
 		return ""
 	}
 	kind, name := m.selected()
@@ -197,7 +200,20 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.filtering {
 		return m.filterKey(k)
 	}
+	if m.empty() && !emptyKey(s) {
+		return nil // the rows these act on are not shown
+	}
 	return m.action(s)
+}
+
+// emptyKey reports whether s works on the first-run screen.
+func emptyKey(s string) bool {
+	for _, it := range emptyKeys {
+		if it.key == s {
+			return true
+		}
+	}
+	return s == "esc"
 }
 
 // action runs what the key or footer action s does.
@@ -361,7 +377,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		return m.action(key)
 	}
 	y := mouse.Y - bodyTop
-	if mouse.X < m.sideWidth() && y < m.bodyHeight() {
+	if !m.empty() && mouse.X < m.sideWidth() && y < m.bodyHeight() {
 		if key := m.sidebarKeyAt(y); key != "" {
 			m.selectRow(key)
 		}
@@ -371,7 +387,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
-	if mouse.X < m.mainX() || m.form != nil {
+	if mouse.X < m.mainX() || m.form != nil || m.empty() {
 		return
 	}
 	switch mouse.Button {
