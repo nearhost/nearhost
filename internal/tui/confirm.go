@@ -65,16 +65,8 @@ func (f *confirmForm) update(msg tea.Msg) tea.Cmd {
 
 func (f *confirmForm) lines(width int) []string {
 	var lines []string
-	for i, a := range f.ask {
-		for _, l := range wrap(clean(a), width) {
-			if i == 0 {
-				l = styleTitle.Render(l)
-			}
-			lines = append(lines, l)
-		}
-		if i == 0 {
-			lines = append(lines, "")
-		}
+	for _, a := range f.ask[1:] {
+		lines = append(lines, wrap(clean(a), width)...)
 	}
 	if f.busy {
 		lines = append(lines, "", busyLine("Saving…"))
@@ -85,6 +77,8 @@ func (f *confirmForm) lines(width int) []string {
 	}
 	return lines
 }
+
+func (f *confirmForm) heading() heading { return heading{title: clean(f.ask[0])} }
 
 func (f *confirmForm) keys() []footerItem {
 	if f.busy {

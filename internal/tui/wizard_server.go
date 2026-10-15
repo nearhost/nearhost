@@ -254,12 +254,7 @@ func (f *serverForm) back() tea.Cmd {
 }
 
 func (f *serverForm) lines(width int) []string {
-	title := "Add server"
-	if f.edit != nil {
-		title = "Edit " + clean(f.edit.Name)
-	}
-	lines := []string{styleTitle.Render(title), ""}
-	lines = append(lines, field("host", f.host.view(f.step == serverStepHost), width)...)
+	lines := field("host", f.host.view(f.step == serverStepHost), width)
 	if f.step == serverStepHost {
 		for i, h := range f.shown() {
 			if i == 8 {
@@ -291,6 +286,17 @@ func (f *serverForm) lines(width int) []string {
 	}
 	return lines
 }
+
+func (f *serverForm) heading() heading {
+	title := "Add server"
+	if f.edit != nil {
+		title = "Edit " + clean(f.edit.Name)
+	}
+	return heading{title: title, step: serverStepTitles[f.step], at: f.step + 1, of: serverStepCheck + 1}
+}
+
+// serverStepTitles name the add-server form's steps.
+var serverStepTitles = map[int]string{serverStepHost: "host", serverStepName: "name", serverStepCheck: "check"}
 
 func (f *serverForm) keys() []footerItem {
 	switch f.step {
