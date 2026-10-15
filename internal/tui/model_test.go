@@ -24,7 +24,7 @@ func TestEmptyStateLeadsToAdding(t *testing.T) {
 		"/work/here": {Routes: []config.Route{{Port: 3000, Role: config.RoleWeb, Label: "port (PORT)"}}},
 	}}
 	m := sized(f)
-	wantScreen(t, m, "Nearhost", "▾ Local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · ? help · q quit")
+	wantScreen(t, m, "home", "▾ local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · ? help · q quit")
 	press(m, "n")
 	settle(m, press(m, "enter")) // Local
 	wantScreen(t, m, "path      /work/here▏")
@@ -43,7 +43,7 @@ func TestSidebarShowsServersProjectsAndStates(t *testing.T) {
 	f.setState("myapp", engine.ProjectStatus{State: engine.StateStarting})
 	f.servers["mini"] = transport.StatusAuthFailed
 	m := sized(f)
-	wantScreen(t, m, "▾ Local", "● website", "running", "▾ mini ○ auth failed", "◐ myapp", "starting", "○ old")
+	wantScreen(t, m, "▾ local", "● website", "running", "▾ mini", "○ auth failed", "myapp", "starting", "○ old")
 }
 
 func TestHomeShowsTheMachine(t *testing.T) {
@@ -143,7 +143,7 @@ func TestMovingAndEnter(t *testing.T) {
 	}
 	press(m, "up")
 	press(m, "enter") // collapse Local
-	if s := screen(m); !strings.Contains(s, "▸ Local") || strings.Contains(s, "● website") || strings.Contains(s, "○ website") {
+	if s := screen(m); !strings.Contains(s, "▸ local") || strings.Contains(s, "● website") || strings.Contains(s, "○ website") {
 		t.Errorf("Local not collapsed:\n%s", s)
 	}
 	for i := 0; i < 10; i++ {
@@ -244,7 +244,7 @@ func TestQuitStopsEverythingAndASecondQuitCutsItShort(t *testing.T) {
 func TestMouse(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 2, Button: tea.MouseLeft}) // website
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 4, Button: tea.MouseLeft}) // website, under a blank line, home, a blank line and local
 	if m.sel != rowKey(rowProject, "website") {
 		t.Fatalf("click selected %q", m.sel)
 	}

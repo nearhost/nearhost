@@ -23,7 +23,7 @@ func (m *Model) projectPanel(name string, width int) []string {
 		host = srv.SSHHost
 		server = clean(p.Server) + styleDim.Render(" (ssh "+clean(host)+")")
 	}
-	state := stateDot(st.State) + " " + string(st.State)
+	state := m.stateDot(st.State).String() + " " + string(st.State)
 	if !p.Enabled {
 		state += styleDim.Render(" · disabled")
 	}

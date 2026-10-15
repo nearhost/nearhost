@@ -28,6 +28,7 @@ var (
 
 var (
 	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(colourText)
+	styleText     = lipgloss.NewStyle().Foreground(colourText)
 	styleDim      = lipgloss.NewStyle().Foreground(colourDim)
 	styleBeacon   = lipgloss.NewStyle().Foreground(colourBeacon)
 	styleAmber    = lipgloss.NewStyle().Foreground(colourAmber)
@@ -42,33 +43,51 @@ var (
 // labelWidth is the width of the labels of a panel's fields.
 const labelWidth = 10
 
-// stateDot is the dot and colour for a project state.
-func stateDot(st engine.State) string {
+// stateMark is the dot and colour for a project state.
+func stateMark(st engine.State) seg {
 	switch st {
 	case engine.StateRunning:
-		return styleBeacon.Render("●")
+		return seg{styleBeacon, "●"}
 	case engine.StateStarting, engine.StateDegraded:
-		return styleAmber.Render("◐")
+		return seg{styleAmber, "◐"}
 	case engine.StateError:
-		return styleRed.Render("●")
-	default:
-		return styleDim.Render("○")
+		return seg{styleRed, "●"}
 	}
+	return seg{styleDim, "○"}
 }
 
-// serverDot is the dot and colour for a server's connection.
-func serverDot(st transport.Status) string {
+// serverMark is the dot and colour for a server's connection.
+func serverMark(st transport.Status) seg {
 	switch st {
 	case transport.StatusConnected:
-		return styleBeacon.Render("●")
+		return seg{styleBeacon, "●"}
 	case transport.StatusConnecting, transport.StatusReconnecting:
-		return styleAmber.Render("◐")
+		return seg{styleAmber, "◐"}
 	case transport.StatusAuthFailed:
-		return styleRed.Render("○")
-	default:
-		return styleDim.Render("○")
+		return seg{styleRed, "○"}
 	}
+	return seg{styleDim, "○"}
 }
+
+// stateDot is stateMark, with the spinner for a project that is starting.
+func (m *Model) stateDot(st engine.State) seg {
+	if st == engine.StateStarting {
+		return seg{styleAmber, m.spinner.View()}
+	}
+	return stateMark(st)
+}
+
+// serverDot is serverMark, with the spinner for a server that is
+// connecting.
+func (m *Model) serverDot(st transport.Status) seg {
+	if st == transport.StatusConnecting || st == transport.StatusReconnecting {
+		return seg{styleAmber, m.spinner.View()}
+	}
+	return serverMark(st)
+}
+
+// dot draws a seg on its own.
+func (sg seg) String() string { return sg.style.Render(sg.text) }
 
 // clean makes text from outside, such as a log line or a label, safe to
 // draw: escape sequences are removed, control characters become spaces and

@@ -29,7 +29,7 @@ func (m *Model) serverPanel(name string, width int) []string {
 	}
 	lines := []string{styleTitle.Render(clean(name)), ""}
 	lines = append(lines, field("ssh host", clean(srv.SSHHost), width)...)
-	lines = append(lines, field("state", serverDot(st)+" "+string(st), width)...)
+	lines = append(lines, field("state", m.serverDot(st).String()+" "+string(st), width)...)
 	if lastErr != "" {
 		lines = append(lines, field("error", clean(lastErr), width)...)
 		if st != transport.StatusConnected {
