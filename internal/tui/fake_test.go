@@ -26,6 +26,7 @@ type fakeBackend struct {
 	states    map[string]engine.ProjectStatus
 	servers   map[string]transport.Status
 	srvErrs   map[string]string
+	health    map[string]engine.ServerHealth // failures and next attempts, by server
 	startErr  error
 	startErr2 error // what StartProject returns
 	reads     int   // calls to CATrusted and HostsState
@@ -50,7 +51,7 @@ func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
 	return &fakeBackend{
 		cfg: cfg, path: filepath.Join(t.TempDir(), "config.yaml"), bus: engine.NewBus(),
 		states: map[string]engine.ProjectStatus{}, servers: map[string]transport.Status{},
-		srvErrs: map[string]string{}, trusted: true,
+		srvErrs: map[string]string{}, health: map[string]engine.ServerHealth{}, trusted: true,
 	}
 }
 
@@ -103,6 +104,14 @@ func (f *fakeBackend) ServerStatus(name string) (transport.Status, string) {
 		st = transport.StatusDisconnected
 	}
 	return st, f.srvErrs[name]
+}
+func (f *fakeBackend) ServerHealth(name string) engine.ServerHealth {
+	st, msg := f.ServerStatus(name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h := f.health[name]
+	h.Status, h.LastError = st, msg
+	return h
 }
 func (f *fakeBackend) Events() *engine.Bus { return f.bus }
 func (f *fakeBackend) StartProject(_ context.Context, name string) error {

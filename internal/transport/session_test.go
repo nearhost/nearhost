@@ -570,3 +570,42 @@ func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
 		}
 	}
 }
+
+// A session that gives up says how many attempts failed and that it will
+// not try again by itself.
+func TestHealthCountsFailuresUntilGivingUp(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	h := s.Health()
+	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+		t.Errorf("health %+v", h)
+	}
+	s.Stop()
+	s.Start() // a fresh start counts afresh
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 3 }, "auth failed again")
+}
+
+// A session that is reconnecting says when it tries next; connecting
+// clears the count.
+func TestHealthSaysWhenTheNextAttemptIs(t *testing.T) {
+	s, _ := newFakeSession(t)
+	fake := s.SSHPath
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.baseBackoff = 300 * time.Millisecond
+	s.maxBackoff = 300 * time.Millisecond
+	before := time.Now()
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusReconnecting }, "a failed launch")
+	h := s.Health()
+	if h.Failures != 1 || h.NextAttempt.Before(before.Add(300*time.Millisecond)) || h.NextAttempt.After(time.Now().Add(300*time.Millisecond)) {
+		t.Errorf("health %+v", h)
+	}
+	if err := os.Symlink(fake, s.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	if h := s.Health(); h.Failures != 0 || !h.NextAttempt.IsZero() {
+		t.Errorf("health once connected %+v", h)
+	}
+}

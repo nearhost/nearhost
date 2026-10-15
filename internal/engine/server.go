@@ -160,6 +160,27 @@ func (e *Engine) lostLocked(run *projectRun) map[int]bool {
 	return lost
 }
 
+// ServerHealth is a server's connection: its state and last ssh error, how
+// many attempts have failed and when the next is.
+type ServerHealth struct {
+	transport.Health
+}
+
+// ServerHealth reports a server's connection as ServerStatus does, with
+// the attempts that failed and when the next is.
+func (e *Engine) ServerHealth(name string) ServerHealth {
+	if name == config.LocalServer {
+		return ServerHealth{Health: transport.Health{Status: transport.StatusConnected}}
+	}
+	e.mu.Lock()
+	c := e.servers[name]
+	e.mu.Unlock()
+	if c == nil {
+		return ServerHealth{Health: transport.Health{Status: transport.StatusDisconnected}}
+	}
+	return ServerHealth{Health: c.sess.Health()}
+}
+
 // ServerStatus reports a server's connection state and its last ssh error.
 // The local server is always connected; a server no project has used yet is
 // disconnected.
