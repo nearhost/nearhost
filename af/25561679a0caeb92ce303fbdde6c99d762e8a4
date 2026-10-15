@@ -1,23 +1,33 @@
 go.mod
   s_f390899c03d13b::t_96a187c66babde 23
+  s_f390899c03d13b::t_2f552293a73c13 23
 go.sum
   s_f390899c03d13b::t_03674a6d8ea204 5-6
+  s_f390899c03d13b::t_f24c70de6780bf 5-6
 internal/tui/frame.go
   s_f390899c03d13b::t_a59e556fa0266a 1-131
+  s_f390899c03d13b::t_e014345b3d161b 1-131
 internal/tui/frame_test.go
   s_f390899c03d13b::t_b9c143f4031fc7 1-83
+  s_f390899c03d13b::t_f23bab9175896c 1-83
 internal/tui/keys.go
   s_f390899c03d13b::t_41463267293d37 49,55,60,261-262,264,273
+  s_f390899c03d13b::t_21037484e666df 49,55,60,261-262,264,273
 internal/tui/model.go
   s_f390899c03d13b::t_11790cebe0df22 385,387,435
+  s_f390899c03d13b::t_56c87164a59bb5 385,387,435
 internal/tui/model_test.go
   s_f390899c03d13b::t_cc6c8377db573d 246,250-252,368,420,487,490
+  s_f390899c03d13b::t_8cc9d4dd0310e1 246,250-252,368,420,487,490
 internal/tui/sidebar.go
   s_f390899c03d13b::t_7ff37fa9871904 61-63
+  s_f390899c03d13b::t_eb87b56d02c640 61-63
 internal/tui/styles.go
   s_f390899c03d13b::t_6bb521426c8613 22-26,37-39,125-156
+  s_f390899c03d13b::t_fae791d4b2f541 22-26,37-39,125-156
 internal/tui/wizard_server_test.go
   s_f390899c03d13b::t_68a2cb6c876ddd 132
+  s_f390899c03d13b::t_39471a24fc6d2d 132
 ---
 {
   "schema_version": "authorship/3.0.0",
