@@ -1,0 +1,27 @@
+internal/hosts/hosts.go
+  s_f390899c03d13b::t_7a11cbec0be549 311-321,323,336-341
+internal/hosts/hosts_test.go
+  s_f390899c03d13b::t_7ed4b087899bd4 163,531-560
+internal/sudo/sudo.go
+  s_f390899c03d13b::t_67d99de371a200 1-66
+internal/sudo/sudo_test.go
+  s_f390899c03d13b::t_e3dec9115611f7 1-93
+internal/sudo/testdata/sudo
+  s_f390899c03d13b::t_4325cd431ac072 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7d5dec796bb3539111178152f19350b672e1764",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
