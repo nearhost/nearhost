@@ -25,7 +25,7 @@ func settle(m *Model, cmd tea.Cmd) {
 				settle(m, c)
 			}
 			return
-		case formClosedMsg, serverAddedMsg, projectAddedMsg:
+		case formClosedMsg, serverAddedMsg, projectAddedMsg, changedMsg:
 			if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
 				_, cmd = m.Update(msg)
 				continue // the add-server form inside the project form ended
@@ -281,7 +281,7 @@ func TestProjectFormBackAndCancel(t *testing.T) {
 func TestAddedProjectWaitsForARunningApply(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.applying = true
-	if _, cmd := m.Update(projectAddedMsg{"blog"}); cmd != nil {
+	if _, cmd := m.Update(projectAddedMsg{name: "blog"}); cmd != nil {
 		t.Error("a second Apply began while one was running")
 	}
 	if !strings.Contains(screen(m), "Added blog.") {

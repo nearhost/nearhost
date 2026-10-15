@@ -73,6 +73,8 @@ type projectForm struct {
 	nameErr, aliasErr string
 	advice            []Advisory // for the routes and alias chosen, shown at the end
 
+	edit *config.Project // the project being edited; nil when adding
+
 	notes []string // what the registry, discovery and presets had to say
 	busy  string   // what a background step is doing; empty when none is
 	err   string   // the current step's error
@@ -126,6 +128,19 @@ type (
 	}
 )
 
+// newProjectEditForm opens the form to edit p: its server and path stay,
+// discovery runs again, and its routes, name and alias can change. Run the
+// command it returns: it connects to the server.
+func newProjectEditForm(b Backend, cfg *config.Config, p config.Project, w *worker) (*projectForm, tea.Cmd) {
+	f := newProjectForm(b, cfg, "", p.Server, w)
+	f.edit = &p
+	f.srv, _ = cfg.Server(p.Server)
+	f.step, f.resolved, f.path.value = projectStepPath, p.Path, p.Path
+	f.name.value, f.alias.value = p.Name, p.Alias
+	f.aliasEdited = p.Alias != config.AliasFor(p.Name)
+	return f, f.connect()
+}
+
 // newProjectForm opens the add-project form with the cursor on the server
 // called selected.
 func newProjectForm(b Backend, cfg *config.Config, dir, selected string, w *worker) *projectForm {
@@ -171,6 +186,9 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		f.files = msg.files
+		if f.edit != nil {
+			return f.discover() // the path is the project's
+		}
 	case completedMsg:
 		if msg.seq != f.seq {
 			return nil
@@ -246,6 +264,15 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 		}
 		f.busy = ""
 		f.nameErr, f.aliasErr = errText(msg.nameErr), errText(msg.aliasErr)
+		if f.edit != nil {
+			// The project being edited does not clash with itself.
+			if f.name.value == f.edit.Name {
+				f.nameErr = ""
+			}
+			if strings.EqualFold(f.alias.value, f.edit.Alias) {
+				f.aliasErr = ""
+			}
+		}
 		if f.nameErr == "" && f.aliasErr == "" {
 			f.advice = msg.advice
 			f.notes = append(f.notes, msg.notes...)
@@ -260,8 +287,8 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 			f.err = msg.err.Error()
 			return nil
 		}
-		name := msg.name
-		return tea.Batch(f.closeFiles(), func() tea.Msg { return projectAddedMsg{name} })
+		name, edited := msg.name, f.edit != nil
+		return tea.Batch(f.closeFiles(), func() tea.Msg { return projectAddedMsg{name, edited} })
 	}
 	return nil
 }
@@ -427,6 +454,21 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.seq = nextSeq()
 			f.busy, f.err = "Saving…", ""
 			seq, b, p := f.seq, f.b, f.project()
+			if f.edit != nil {
+				was := f.edit.Name
+				p.Enabled = f.edit.Enabled
+				return f.w.do(func(context.Context) tea.Msg {
+					return projectSavedMsg{seq, p.Name, b.EditConfig(func(cfg *config.Config) error {
+						for i := range cfg.Projects {
+							if cfg.Projects[i].Name == was {
+								cfg.Projects[i] = p
+								return nil
+							}
+						}
+						return errNoLongerConfigured(was)
+					})}
+				})
+			}
 			return f.w.do(func(context.Context) tea.Msg { return projectSavedMsg{seq, p.Name, b.SaveProject(p)} })
 		}
 	}
@@ -642,9 +684,34 @@ func (f *projectForm) discover() tea.Cmd {
 	})
 }
 
-// toRoutes goes on to the routes step with what discovery found.
+// toRoutes goes on to the routes step with what discovery found. When
+// editing, each port still found keeps its saved role and label, a saved
+// route no longer found is kept and marked, and a new port found does not
+// take the web route from the saved one.
 func (f *projectForm) toRoutes() {
 	f.routes = append([]config.Route(nil), f.draft.Routes...)
+	if f.edit != nil {
+		saved := map[int]config.Route{}
+		savedWeb := false
+		for _, r := range f.edit.Routes {
+			saved[r.Port] = r
+			savedWeb = savedWeb || r.Role == config.RoleWeb
+		}
+		for i, r := range f.routes {
+			if s, ok := saved[r.Port]; ok {
+				f.routes[i].Role, f.routes[i].Label = s.Role, s.Label
+				delete(saved, r.Port)
+			} else if r.Role == config.RoleWeb && savedWeb {
+				f.routes[i].Role = config.RoleIgnore
+			}
+		}
+		for _, r := range f.edit.Routes {
+			if _, gone := saved[r.Port]; gone {
+				r.Label = strings.TrimSpace(r.Label + " (not found now)")
+				f.routes = append(f.routes, r)
+			}
+		}
+	}
 	f.routeRow, f.webPort.value = 0, ""
 	if f.name.value == "" {
 		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
@@ -671,6 +738,16 @@ func (f *projectForm) back() tea.Cmd {
 	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
 	f.busy, f.err, f.matches, f.listNote = "", "", nil, ""
+	if f.edit != nil {
+		// Editing starts at discovery: leaving it, or the routes when no
+		// presets were offered, closes the form.
+		switch {
+		case f.step == projectStepPath,
+			f.step == projectStepRoutes && len(f.draft.Presets) == 0,
+			f.step == projectStepPresets && !waiting:
+			return tea.Batch(f.closeFiles(), closeForm)
+		}
+	}
 	switch f.step {
 	case projectStepServer:
 		return closeForm
@@ -710,7 +787,11 @@ func (f *projectForm) lines(width int) []string {
 	if f.sub != nil {
 		return f.sub.lines(width)
 	}
-	lines := []string{styleTitle.Render("Add project") + styleDim.Render(" · "+projectStepTitles[f.step]), ""}
+	title := "Add project"
+	if f.edit != nil {
+		title = "Edit " + clean(f.edit.Name)
+	}
+	lines := []string{styleTitle.Render(title) + styleDim.Render(" · "+projectStepTitles[f.step]), ""}
 	switch f.step {
 	case projectStepServer:
 		for i, s := range f.servers {
@@ -735,6 +816,11 @@ func (f *projectForm) lines(width int) []string {
 		}
 		lines = append(lines, mark+"New server…")
 	case projectStepPath:
+		if f.edit != nil {
+			lines = append(lines, field("server", clean(f.srv.Name), width)...)
+			lines = append(lines, field("path", clean(f.resolved), width)...)
+			break
+		}
 		lines = append(lines, field("path", f.path.view(f.busy == "" && f.files != nil), width)...)
 		if len(f.matches) > 0 {
 			lines = append(lines, field("", styleDim.Render(strings.Join(f.matches, "  ")), width)...)
@@ -878,6 +964,9 @@ func (f *projectForm) keys() []footerItem {
 		return []footerItem{{"space", "role"}, {"enter", "next"}, {"esc", "back"}}
 	case projectStepDetails:
 		return []footerItem{{"tab", "switch"}, {"enter", "next"}, {"esc", "back"}}
+	}
+	if f.edit != nil {
+		return []footerItem{{"enter", "save"}, {"esc", "back"}}
 	}
 	return []footerItem{{"enter", "add"}, {"esc", "back"}}
 }
