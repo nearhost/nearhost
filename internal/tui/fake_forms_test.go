@@ -177,6 +177,7 @@ type editFake struct {
 	reconnected  []string
 	reconnectErr error
 	advice       map[string][]Advisory
+	presets      map[string][]string
 	adviceErr    error
 	adviceAsked  []string
 	trustErr     error
@@ -208,11 +209,11 @@ func (f *fakeBackend) ReconnectServer(_ context.Context, name string) error {
 	return f.edit.reconnectErr
 }
 
-func (f *fakeBackend) Advice(_ context.Context, project string) ([]Advisory, []string, error) {
+func (f *fakeBackend) Advice(_ context.Context, project string) (ProjectAdvice, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.edit.adviceAsked = append(f.edit.adviceAsked, project)
-	return f.edit.advice[project], nil, f.edit.adviceErr
+	return ProjectAdvice{Items: f.edit.advice[project], Presets: f.edit.presets[project]}, f.edit.adviceErr
 }
 
 func (f *fakeBackend) Trust(context.Context) error {

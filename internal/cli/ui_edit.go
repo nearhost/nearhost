@@ -34,26 +34,26 @@ func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {
 
 // Advice works out the advice for a configured project, on a connection of
 // its own to the project's server.
-func (u *uiEngine) Advice(ctx context.Context, project string) ([]tui.Advisory, []string, error) {
+func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvice, error) {
 	cfg, err := u.current()
 	if err != nil {
-		return nil, nil, err
+		return tui.ProjectAdvice{}, err
 	}
 	p, ok := cfg.Project(project)
 	if !ok {
-		return nil, nil, fmt.Errorf("%s is no longer in the config", project)
+		return tui.ProjectAdvice{}, fmt.Errorf("%s is no longer in the config", project)
 	}
 	srv, ok := cfg.Server(p.Server)
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown server %q", p.Server)
+		return tui.ProjectAdvice{}, fmt.Errorf("unknown server %q", p.Server)
 	}
 	files, err := openFiles(ctx, u.b.up.ssh, srv, connectAgain)
 	if err != nil {
-		return nil, nil, err
+		return tui.ProjectAdvice{}, err
 	}
 	uf := &uiFiles{u: u, srv: srv, files: files}
-	advice, notes, err := uf.advise(ctx, cfg, p.Path, p.Routes, p.Alias, p.Name)
-	return advice, notes, errors.Join(err, files.close())
+	advice, err := uf.advise(ctx, cfg, p.Path, p.Routes, p.Alias, p.Name)
+	return advice, errors.Join(err, files.close())
 }
 
 // Trust runs what `nearhost trust` does, in the plain terminal, so the

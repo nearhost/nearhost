@@ -19,6 +19,7 @@ type advice struct {
 	loading bool
 	items   []Advisory
 	notes   []string
+	presets []string // the presets that apply, as the files read then said
 	err     string
 	failed  time.Time // when reading failed; it is tried again adviceRetry later
 }
@@ -30,8 +31,7 @@ const adviceRetry = 30 * time.Second
 // adviceMsg is a project's advice, read in the background.
 type adviceMsg struct {
 	name, of string
-	items    []Advisory
-	notes    []string
+	advice   ProjectAdvice
 	err      error
 }
 
@@ -88,8 +88,8 @@ func (m *Model) readAdvice() tea.Cmd {
 	m.advice[name] = advice{of: of, loading: true}
 	b := m.b
 	return m.work.do(func(ctx context.Context) tea.Msg {
-		items, notes, err := b.Advice(ctx, name)
-		return adviceMsg{name, of, items, notes, err}
+		a, err := b.Advice(ctx, name)
+		return adviceMsg{name, of, a, err}
 	})
 }
 
@@ -98,7 +98,7 @@ func (m *Model) gotAdvice(msg adviceMsg) {
 	if a := m.advice[msg.name]; a.of != msg.of {
 		return // read for an entry that has changed since
 	}
-	a := advice{of: msg.of, items: msg.items, notes: msg.notes}
+	a := advice{of: msg.of, items: msg.advice.Items, notes: msg.advice.Notes, presets: msg.advice.Presets}
 	if msg.err != nil {
 		a.err, a.failed = msg.err.Error(), m.now()
 	}

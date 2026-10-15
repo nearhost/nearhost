@@ -72,3 +72,18 @@ func TestNarrowProjectPanel(t *testing.T) {
 		t.Errorf("the compact panel shows labels:\n%s", s)
 	}
 }
+
+// The panel names the presets that apply to the project, once its advice
+// has been read, without their registries.
+func TestProjectPanelNamesItsPresets(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.edit.presets = map[string][]string{"myapp": {"official/vite", "laravel"}}
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "myapp"))
+	if s := screen(m); strings.Contains(s, "preset") {
+		t.Errorf("presets before the advice was read:\n%s", s)
+	}
+	_, read := m.Update(nil)
+	run(m, run(m, read))
+	wantScreen(t, m, "server mini    preset vite, laravel    path /srv/myapp")
+}

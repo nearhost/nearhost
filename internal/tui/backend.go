@@ -80,7 +80,7 @@ type Backend interface {
 	ReconnectServer(ctx context.Context, name string) error
 	// Advice is the advice for a configured project, and notes about
 	// working it out.
-	Advice(ctx context.Context, project string) ([]Advisory, []string, error)
+	Advice(ctx context.Context, project string) (ProjectAdvice, error)
 	// Trust trusts the local CA as `nearhost trust` does, with the
 	// interface suspended so a password can be asked for.
 	Trust(ctx context.Context) error
@@ -117,6 +117,16 @@ type SuggestedPreset struct {
 	Name  string // <registry>/<name>
 	Title string
 	Repo  string // the registry's repository
+}
+
+// ProjectAdvice is what reading a configured project's files says about
+// it: advice, notes about working it out, and the presets that apply.
+type ProjectAdvice struct {
+	Items []Advisory
+	Notes []string
+	// Presets are the enabled presets whose detection matches the project
+	// now, as <registry>/<name>, or <name> for a local preset.
+	Presets []string
 }
 
 // Advisory is advice about the project's setup.
