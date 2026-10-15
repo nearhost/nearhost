@@ -67,3 +67,36 @@ func TestStopWithoutSitesWaitsForNoPort(t *testing.T) {
 		t.Errorf("Stop took %s waiting for ports it never listened on", took)
 	}
 }
+
+// Reloading with no sites stops the listeners as Stop does, and Caddy's
+// reload has the same moment after it when a listener is still open: the
+// proxy waits for its ports then too, so it never takes for released what
+// Caddy still holds. (The engine reloads with no sites when the last
+// project stops, before it stops the proxy.)
+func TestApplyWithoutSitesWaitsForThePorts(t *testing.T) {
+	var waited [][]int
+	orig := releasePorts
+	releasePorts = func(ports []int, timeout time.Duration) error {
+		waited = append(waited, ports)
+		return orig(ports, timeout)
+	}
+	t.Cleanup(func() { releasePorts = orig })
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+	if err := h.p.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) != 1 || waited[0][0] != h.httpsPort || waited[0][1] != h.httpPort {
+		t.Fatalf("waited for %v after the last site went, want [%d %d]", waited, h.httpsPort, h.httpPort)
+	}
+	if err := h.p.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) != 1 {
+		t.Errorf("waited again for ports nothing listened on: %v", waited)
+	}
+}

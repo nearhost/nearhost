@@ -72,7 +72,16 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
+	was := listening
 	listening = len(sites) > 0 // with no sites the config declares no listeners
+	if was && !listening {
+		// Caddy stops the old listeners as Stop does, in goroutines it
+		// does not wait for: wait for the ports, so the proxy never takes
+		// for released a port Caddy still holds, and Stop, which waits only
+		// while something listens, is not left to race it. The config is
+		// applied either way; a port someone else took meanwhile is theirs.
+		_ = releasePorts(p.ports(), releaseWait)
+	}
 	return true, nil
 }
 
@@ -97,7 +106,7 @@ func (p *Proxy) Stop() error {
 	// Caddy starts its servers' shutdowns in goroutines and returns once
 	// they have started, so a listener can stay open a moment after Stop.
 	// Wait for the ports, so a caller can bind them again at once.
-	return waitReleased(p.ports(), releaseWait)
+	return releasePorts(p.ports(), releaseWait)
 }
 
 // releaseWait bounds how long Stop waits for the proxy's ports.
@@ -114,6 +123,9 @@ func (p *Proxy) ports() []int {
 	}
 	return []int{https, http}
 }
+
+// releasePorts is waitReleased; tests watch it.
+var releasePorts = waitReleased
 
 // waitReleased waits until no port is in use on TCP, or timeout has passed.
 // A port that cannot be bound for another reason, such as a low port without
