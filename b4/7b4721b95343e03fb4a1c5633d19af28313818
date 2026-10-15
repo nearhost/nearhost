@@ -1,0 +1,56 @@
+internal/hosts/hosts.go
+  s_f390899c03d13b::t_a12192fce553b4 311-321,323,336-341
+internal/hosts/hosts_test.go
+  s_f390899c03d13b::t_8ae2947a82b441 163,531-560
+internal/sudo/sudo.go
+  s_f390899c03d13b::t_7f3c820f8cf934 1-66
+internal/sudo/sudo_test.go
+  s_f390899c03d13b::t_6b0b102ad72d8f 1-93
+internal/sudo/testdata/sudo
+  s_f390899c03d13b::t_40c1a6096cda46 1-48
+internal/tui/backend.go
+  s_f390899c03d13b::t_f244c14824d15a 10,167-192
+internal/tui/keys.go
+  s_f390899c03d13b::t_daacb5836aca33 195-197,383,409-411
+internal/tui/model.go
+  s_f390899c03d13b::t_2e723c9789ef4b 52-54,317-338,405-408,445-448
+internal/tui/overlay.go
+  s_f390899c03d13b::t_2346a09377be38 23,26-27,43
+internal/tui/password.go
+  s_f390899c03d13b::t_dabc550ae5289a 1-163
+internal/tui/password_test.go
+  s_f390899c03d13b::t_6271ea18190957 1-213
+internal/cli/ui.go
+  h_13c4e797d6e9d2 5,34-38,64,71,73,128-129,137,142-144,151-154,156-163,180-181
+internal/cli/ui_edit.go
+  h_13c4e797d6e9d2 8,68-70,72,75-80,84,89-92
+internal/cli/ui_edit_test.go
+  h_13c4e797d6e9d2 6,96-98,102-103,107-111,117-120
+internal/cli/ui_root.go
+  h_13c4e797d6e9d2 1-77
+internal/cli/ui_root_test.go
+  h_13c4e797d6e9d2 1-133
+internal/cli/ui_test.go
+  h_13c4e797d6e9d2 44,90,92-93,96,100,107-108,110-111,113-114,120-121,123-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b47b4721b95343e03fb4a1c5633d19af28313818",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
