@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -55,8 +56,10 @@ type projectForm struct {
 	files    ServerFiles // open from the path step on; nil before, or when connecting failed
 	path     textField
 	resolved string
-	matches  []string // what completion found, when it found several
-	listNote string   // why completion found nothing
+	listNote string             // why completion found nothing
+	conn     int                // numbers the files open, so a listing for files since closed is dropped
+	listings map[string]listing // the directories listed, by parent as typed
+	chosen   int                // the suggestion chosen among the candidates
 
 	choice   int             // the registry step's row
 	draft    Draft           // what discovery found last
@@ -84,8 +87,23 @@ type projectForm struct {
 	w       *worker
 }
 
+// listing is a parent directory's listing: out while not done, then its
+// directories or why it failed.
+type listing struct {
+	done bool
+	dirs []string
+	err  error
+}
+
 // Answers of the add-project form's background steps.
 type (
+	// listedMsg is a listing made ahead, as the path is typed.
+	listedMsg struct {
+		conn   int
+		parent string
+		dirs   []string
+		err    error
+	}
 	connectedMsg struct {
 		seq   int
 		files ServerFiles
@@ -174,7 +192,7 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 	case tea.KeyPressMsg:
 		return f.key(msg)
 	case tea.PasteMsg:
-		f.paste(msg.Content)
+		return f.paste(msg.Content)
 	case connectedMsg:
 		if msg.seq != f.seq {
 			if msg.files != nil {
@@ -188,15 +206,22 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		f.files = msg.files
+		f.conn, f.listings = nextSeq(), map[string]listing{}
 		if f.edit != nil {
 			return f.discover() // the path is the project's
 		}
+		return f.listAhead()
+	case listedMsg:
+		if msg.conn != f.conn || f.files == nil {
+			return nil
+		}
+		f.listings[msg.parent] = listing{true, msg.dirs, msg.err}
 	case completedMsg:
 		if msg.seq != f.seq {
 			return nil
 		}
 		f.busy = ""
-		f.complete(msg)
+		return f.complete(msg)
 	case resolvedMsg:
 		if msg.seq != f.seq {
 			return nil
@@ -323,7 +348,7 @@ func (f *projectForm) closeFiles() tea.Cmd {
 		return nil
 	}
 	files := f.files
-	f.files = nil
+	f.files, f.listings = nil, nil
 	return closeFiles(files)
 }
 
@@ -372,10 +397,24 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		switch s {
 		case "tab":
-			return f.listDirs()
+			return f.tab()
+		case "right":
+			if f.suggestion() != "" {
+				return f.accept()
+			}
+			return nil
+		case "down", "up":
+			if n := len(f.candidates()); n > 1 {
+				step := 1
+				if s == "up" {
+					step = n - 1
+				}
+				f.chosen = (f.chosen + step) % n
+			}
+			return nil
 		case "enter":
 			f.seq = nextSeq()
-			f.busy, f.err, f.matches, f.listNote = "Checking "+clean(f.path.value)+"…", "", nil, ""
+			f.busy, f.err, f.listNote = "Checking "+clean(f.path.value)+"…", "", ""
 			seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
 			return f.w.do(func(ctx context.Context) tea.Msg {
 				resolved, err := files.Resolve(ctx, p)
@@ -383,7 +422,7 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			})
 		}
 		if f.path.key(k) {
-			f.err, f.matches, f.listNote = "", nil, ""
+			return f.edited()
 		}
 	case projectStepRegistry:
 		switch s {
@@ -489,15 +528,15 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 }
 
 // paste puts pasted text in the field of the current step, if it has one.
-func (f *projectForm) paste(s string) {
+func (f *projectForm) paste(s string) tea.Cmd {
 	if f.busy != "" {
-		return
+		return nil
 	}
 	switch f.step {
 	case projectStepPath:
 		if f.files != nil && f.edit == nil {
 			f.path.paste(s)
-			f.err, f.matches, f.listNote = "", nil, ""
+			return f.edited()
 		}
 	case projectStepRoutes:
 		if len(f.routes) == 0 && strings.Trim(s, "0123456789") == "" {
@@ -513,6 +552,7 @@ func (f *projectForm) paste(s string) {
 			f.nameChanged()
 		}
 	}
+	return nil
 }
 
 // nameChanged keeps the alias following the name until it is edited.
@@ -648,71 +688,128 @@ func (f *projectForm) connect() tea.Cmd {
 	})
 }
 
-// listDirs lists the directories to complete the path's last part from.
-// What comes before the last slash is kept as it was typed. ~, . and ..
-// are directories already, and only gain their slash.
-func (f *projectForm) listDirs() tea.Cmd {
-	v := f.path.value
-	parent, prefix := "", v
+// splitPath splits a path at its last slash: the parent, kept as typed with
+// its slash, and the part being typed after it.
+func splitPath(v string) (parent, part string) {
 	if i := strings.LastIndex(v, "/"); i >= 0 {
-		parent, prefix = v[:i+1], v[i+1:]
+		return v[:i+1], v[i+1:]
 	}
-	switch prefix {
-	case "~", ".", "..":
-		if parent == "" || prefix != "~" {
-			f.path.value = v + "/"
-			return nil
+	return "", v
+}
+
+// isDirName reports whether part is a directory already: ~ at the start,
+// . or .., which only need their slash.
+func isDirName(parent, part string) bool {
+	switch part {
+	case "~":
+		return parent == ""
+	case ".", "..":
+		return true
+	}
+	return false
+}
+
+// listAhead lists the path's parent in the background, if it has not been
+// already, so suggestions are there as the rest is typed.
+func (f *projectForm) listAhead() tea.Cmd {
+	if f.files == nil || f.edit != nil {
+		return nil
+	}
+	parent, _ := splitPath(f.path.value)
+	if _, ok := f.listings[parent]; ok {
+		return nil
+	}
+	f.listings[parent] = listing{}
+	conn, files, list := f.conn, f.files, parent
+	if list == "" {
+		list = "."
+	}
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		dirs, err := files.ListDirs(ctx, list)
+		return listedMsg{conn, parent, dirs, err}
+	})
+}
+
+// edited follows an edit to the path: what was said about the last one
+// goes, the first candidate is chosen, and the new parent is listed ahead.
+func (f *projectForm) edited() tea.Cmd {
+	f.err, f.listNote, f.chosen = "", "", 0
+	return f.listAhead()
+}
+
+// candidates are the parent's directories that start with the part being
+// typed, in the listing's order. Hidden ones wait for a dot.
+func (f *projectForm) candidates() []string {
+	parent, part := splitPath(f.path.value)
+	l := f.listings[parent]
+	if !l.done || l.err != nil || part == "~" && parent == "" {
+		return nil
+	}
+	var found []string
+	for _, d := range l.dirs {
+		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(part, ".")
+		if strings.HasPrefix(d, part) && !hidden {
+			found = append(found, d)
 		}
 	}
+	return found
+}
+
+// suggestion is the candidate chosen, or "" when there is none.
+func (f *projectForm) suggestion() string {
+	c := f.candidates()
+	if len(c) == 0 {
+		return ""
+	}
+	return c[f.chosen%len(c)]
+}
+
+// accept puts the suggestion in the path, as a directory.
+func (f *projectForm) accept() tea.Cmd {
+	parent, _ := splitPath(f.path.value)
+	f.path.value = parent + f.suggestion() + "/"
+	return f.edited()
+}
+
+// tab completes the path: it accepts the suggestion, else gives ~, . and ..
+// their slash, or lists the parent when no listing ahead is there to suggest from.
+func (f *projectForm) tab() tea.Cmd {
+	parent, part := splitPath(f.path.value)
+	switch l, ok := f.listings[parent]; {
+	case f.suggestion() != "":
+		return f.accept()
+	case isDirName(parent, part):
+		f.path.value += "/"
+		return f.edited()
+	case ok && l.done && l.err == nil:
+		f.listNote = "no directories match"
+		return nil
+	}
 	f.seq = nextSeq()
-	f.busy, f.matches, f.listNote = "Listing…", nil, ""
+	f.busy, f.listNote = "Listing…", ""
 	seq, files, list := f.seq, f.files, parent
 	if list == "" {
 		list = "."
 	}
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		dirs, err := files.ListDirs(ctx, list)
-		return completedMsg{seq, parent, prefix, dirs, err}
+		return completedMsg{seq, parent, part, dirs, err}
 	})
 }
 
-// complete fills in what the directories listed make certain.
-func (f *projectForm) complete(msg completedMsg) {
-	if msg.err != nil {
+// complete follows a listing tab waited for: the only match is taken,
+// several are offered, and none, or a failure, is said.
+func (f *projectForm) complete(msg completedMsg) tea.Cmd {
+	f.listings[msg.parent] = listing{true, msg.dirs, msg.err}
+	switch c := f.candidates(); {
+	case msg.err != nil:
 		f.listNote = msg.err.Error()
-		return
-	}
-	var found []string
-	for _, d := range msg.dirs {
-		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(msg.prefix, ".")
-		if strings.HasPrefix(d, msg.prefix) && !hidden {
-			found = append(found, d)
-		}
-	}
-	switch len(found) {
-	case 0:
+	case len(c) == 0:
 		f.listNote = "no directories match"
-	case 1:
-		f.path.value = msg.parent + found[0] + "/"
-	default:
-		f.path.value = msg.parent + commonPrefix(found)
-		f.matches = found
+	case len(c) == 1:
+		return f.accept()
 	}
-}
-
-// commonPrefix is the longest start all of names share, in whole
-// characters.
-func commonPrefix(names []string) string {
-	common := []rune(names[0])
-	for _, n := range names[1:] {
-		r := []rune(n)
-		i := 0
-		for i < len(common) && i < len(r) && common[i] == r[i] {
-			i++
-		}
-		common = common[:i]
-	}
-	return string(common)
+	return nil
 }
 
 // discover reads the project.
@@ -793,7 +890,7 @@ func (f *projectForm) back() tea.Cmd {
 	}
 	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
-	f.busy, f.err, f.matches, f.listNote = "", "", nil, ""
+	f.busy, f.err, f.listNote = "", "", ""
 	if f.edit != nil {
 		// Editing starts at discovery: leaving it, or the routes when no
 		// presets were offered, closes the form.
@@ -873,9 +970,22 @@ func (f *projectForm) lines(width int) []string {
 			lines = append(lines, field("path", clean(f.resolved), width)...)
 			break
 		}
-		lines = append(lines, field("path", f.path.view(f.busy == "" && f.files != nil), width)...)
-		if len(f.matches) > 0 {
-			lines = append(lines, field("", styleDim.Render(strings.Join(f.matches, "  ")), width)...)
+		focused := f.busy == "" && f.files != nil
+		view := f.path.view(focused)
+		if s := f.suggestion(); focused && s != "" {
+			_, part := splitPath(f.path.value)
+			view += styleDim.Render(clean(s[len(part):] + "/"))
+		}
+		lines = append(lines, field("path", view, width)...)
+		if c := f.candidates(); focused && len(c) > 1 {
+			names := make([]string, len(c))
+			for i, d := range c {
+				names[i] = styleDim.Render(clean(d))
+				if i == f.chosen%len(c) {
+					names[i] = styleBeacon.Render(clean(d))
+				}
+			}
+			lines = append(lines, field("", ansi.Truncate(strings.Join(names, "  "), width-labelWidth, "…"), width)...)
 		}
 		if f.listNote != "" {
 			lines = append(lines, field("", styleDim.Render(clean(sentence(f.listNote))), width)...)
@@ -1060,7 +1170,11 @@ func (f *projectForm) keys() []footerItem {
 			}
 			return append(items, footerItem{"esc", "back"})
 		}
-		items := []footerItem{{"tab", "complete"}, {"enter", "next"}}
+		items := []footerItem{{"tab", "complete"}}
+		if len(f.candidates()) > 1 {
+			items = append(items, footerItem{"↑↓", "choose"})
+		}
+		items = append(items, footerItem{"enter", "next"})
 		if f.srv.Name != config.LocalServer {
 			items = append(items, footerItem{"ctrl+r", "reconnect"})
 		}
