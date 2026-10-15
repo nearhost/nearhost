@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -39,7 +40,9 @@ type Model struct {
 	logs      *logs
 	filter    string
 	filtering bool
-	form      form // the open add form; nil when none is
+	showHelp  bool       // the footer lists every key
+	help      help.Model // draws the footer
+	form      form       // the open add form; nil when none is
 
 	routeFocus bool   // the project panel's routes have the keys
 	routeRow   int    // the route selected there
@@ -96,6 +99,7 @@ func New(b Backend, dir string) *Model {
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
 		work: newWorker(),
+		help: newHelp(),
 	}
 }
 

@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	cel.dev/cel-go v0.32.0
+	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.0
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/caddyserver/caddy/v2 v2.11.7
@@ -20,7 +21,6 @@ require (
 
 require (
 	cel.dev/expr v0.25.3 // indirect
-	charm.land/bubbles/v2 v2.2.1 // indirect
 	cloud.google.com/go/auth v0.23.3 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.1 // indirect

@@ -24,7 +24,7 @@ func TestEmptyStateLeadsToAdding(t *testing.T) {
 		"/work/here": {Routes: []config.Route{{Port: 3000, Role: config.RoleWeb, Label: "port (PORT)"}}},
 	}}
 	m := sized(f)
-	wantScreen(t, m, "Nearhost", "▾ Local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · q quit")
+	wantScreen(t, m, "Nearhost", "▾ Local", "Nothing to serve yet.", "Press n to add the project in the current directory.", "n add · ? help · q quit")
 	press(m, "n")
 	settle(m, press(m, "enter")) // Local
 	wantScreen(t, m, "path      /work/here▏")
@@ -86,7 +86,7 @@ func TestProjectPanel(t *testing.T) {
 	wantScreen(t, m, "myapp", "https://myapp.test  o to open", "server    mini (ssh mini.lan)", "path      /srv/myapp",
 		"state     ● error", "loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
 		"80     web       web", ":52114", "5173   loopback  vite (VITE_PORT)         :5173", "3306   ignore    db",
-		"enter start/stop · o open · tab routes · e edit · d remove · / filter · s server · n add · q quit")
+		"enter start · o open · tab routes · e edit · d remove · / filter · s server · ? more", "myapp 2/3")
 }
 
 func TestFixFor(t *testing.T) {

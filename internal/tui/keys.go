@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"strings"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -27,38 +27,130 @@ func (m *Model) footerItems() []footerItem {
 	if m.filtering {
 		return []footerItem{{"enter", "keep filter"}, {"esc", "clear filter"}}
 	}
-	kind, _ := m.selected()
+	kind, name := m.selected()
 	var items []footerItem
 	switch kind {
 	case rowProject:
-		items = []footerItem{{"enter", "start/stop"}, {"o", "open"}, {"tab", "routes"}, {"e", "edit"}, {"d", "remove"}}
+		verb := "stop"
+		if st := m.b.Status(name).State; st == engine.StateStopped || st == engine.StateError {
+			verb = "start"
+		}
+		items = []footerItem{{"enter", verb}, {"o", "open"},
+			{"tab", "routes"}, {"e", "edit"}, {"d", "remove"}}
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
-		if _, name := m.selected(); name != config.LocalServer {
-			items = append(items, footerItem{"r", "reconnect"}, footerItem{"e", "edit"}, footerItem{"d", "remove"})
+		if name != config.LocalServer {
+			items = append(items, footerItem{"r", "reconnect"},
+				footerItem{"e", "edit"}, footerItem{"d", "remove"})
 		}
 	}
-	return append(items, footerItem{"/", "filter"}, footerItem{"s", "server"}, footerItem{"n", "add"}, footerItem{"q", "quit"})
+	return append(items, footerItem{"/", "filter"}, footerItem{"s", "server"},
+		footerItem{"n", "add"}, footerItem{"?", "help"}, footerItem{"q", "quit"})
+}
+
+// minorKeys are the main screen's actions a narrow footer leaves out, the
+// first first; ? lists them all.
+var minorKeys = []footerItem{
+	{"q", "quit"}, {"n", "add"}, {"s", "server"}, {"enter", "collapse"},
+	{"tab", "routes"}, {"d", "remove"}, {"e", "edit"},
+}
+
+// shownFooterItems are the footer items that fit in width cells: on the
+// main screen minor ones are left out, in order, until the rest fit, and ?
+// then says there is more.
+func (m *Model) shownFooterItems(width int) []footerItem {
+	items := m.footerItems()
+	if m.form != nil || m.routeFocus || m.filtering {
+		return items
+	}
+	for _, minor := range minorKeys {
+		if itemsWidth(items) <= width {
+			return items
+		}
+		var kept []footerItem
+		for _, it := range items {
+			switch {
+			case it == minor:
+			case it.key == "?":
+				kept = append(kept, footerItem{"?", "more"})
+			default:
+				kept = append(kept, it)
+			}
+		}
+		items = kept
+	}
+	return items
+}
+
+// itemsWidth is the width the footer items take in a row.
+func itemsWidth(items []footerItem) int {
+	w := 0
+	for i, it := range items {
+		if i > 0 {
+			w += ansi.StringWidth(footerSep)
+		}
+		w += ansi.StringWidth(it.key + " " + it.label)
+	}
+	return w
 }
 
 const footerSep = " · "
 
-// footer draws the footer line.
+// footer draws the footer: the keys that work now, and where the selection
+// is. With help open it is the full list of keys.
 func (m *Model) footer() string {
 	if m.quitting {
 		return m.bar(styleAmber.Render("Stopping…"), "")
 	}
-	parts := make([]string, 0, len(m.footerItems()))
-	for _, it := range m.footerItems() {
-		parts = append(parts, styleBeacon.Render(it.key)+" "+styleDim.Render(it.label))
+	if m.showHelp {
+		return m.fullHelp()
 	}
-	return m.bar(strings.Join(parts, styleDim.Render(footerSep)), "")
+	right := styleDim.Render(m.footerContext())
+	m.help.SetWidth(m.footerRoom())
+	return m.bar(m.help.ShortHelpView(bindings(m.shownFooterItems(m.footerRoom()))), right)
+}
+
+// footerRoom is the width the footer's keys can take.
+func (m *Model) footerRoom() int {
+	return m.width - 3 - ansi.StringWidth(m.footerContext())
+}
+
+// footerContext says where the selection is: the project and its place
+// among the projects, the server, or home.
+func (m *Model) footerContext() string {
+	if m.form != nil {
+		return ""
+	}
+	kind, name := m.selected()
+	switch kind {
+	case rowProject:
+		at := 0
+		for i, p := range m.cfg.Projects {
+			if p.Name == name {
+				at = i + 1
+			}
+		}
+		place := fmt.Sprintf("%d/%d", at, len(m.cfg.Projects))
+		if m.narrow() {
+			return place
+		}
+		return clean(name) + " " + place
+	case rowServer:
+		if name == config.LocalServer {
+			return "local"
+		}
+		return clean(name)
+	}
+	return "home"
 }
 
 // footerKeyAt is the key of the footer action at column x, or "".
 func (m *Model) footerKeyAt(x int) string {
+	if m.showHelp {
+		return ""
+	}
 	at := 1 // the footer starts a cell in
-	for i, it := range m.footerItems() {
+	for i, it := range m.shownFooterItems(m.footerRoom()) {
 		if i > 0 {
 			at += ansi.StringWidth(footerSep)
 		}
@@ -85,6 +177,10 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.form != nil {
 		return m.form.update(k)
+	}
+	if m.showHelp && (s == "?" || s == "esc") {
+		m.showHelp = false
+		return nil
 	}
 	if m.routeFocus && !m.filtering {
 		if cmd, ok := m.routesKey(s); ok {
@@ -155,6 +251,8 @@ func (m *Model) action(s string) tea.Cmd {
 		}
 	case "q":
 		return m.quit()
+	case "?":
+		m.showHelp = true
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
