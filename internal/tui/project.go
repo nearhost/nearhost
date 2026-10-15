@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -37,8 +38,12 @@ func (m *Model) projectPanel(name string, width int) []string {
 	if m.narrow() {
 		lines = []string{title, state + sep + server + sep + clean(p.Path)}
 	} else {
-		lines = []string{spread(title, state, width), "",
-			styleDim.Render("server") + " " + server + "    " + styleDim.Render("path") + " " + clean(p.Path)}
+		meta := styleDim.Render("server") + " " + server + "    " + styleDim.Render("path") + " " + clean(p.Path)
+		if presets := m.presetNames(name); presets != "" {
+			meta = styleDim.Render("server") + " " + server + "    " + styleDim.Render("preset") + " " + presets +
+				"    " + styleDim.Render("path") + " " + clean(p.Path)
+		}
+		lines = []string{spread(title, state, width), "", fit(meta, width)}
 	}
 	if st.Message != "" {
 		lines = append(lines, field("why", clean(st.Message), width)...)
@@ -58,6 +63,17 @@ func (m *Model) projectPanel(name string, width int) []string {
 		lines = append(lines, errorLines(m.panelErr, width)...)
 	}
 	return append(lines, m.adviceLinesFor(name, width)...)
+}
+
+// presetNames names the presets that apply to a project, without their
+// registries, as its advice last said; "" when none do or it is not known.
+func (m *Model) presetNames(name string) string {
+	var names []string
+	for _, key := range m.advice[name].presets {
+		_, plain := config.SplitPreset(key)
+		names = append(names, clean(plain))
+	}
+	return strings.Join(names, ", ")
 }
 
 // routeColumns are the widths of the routes table's columns; label takes

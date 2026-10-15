@@ -72,12 +72,15 @@ func TestAdviceForAConfiguredProject(t *testing.T) {
 	if err := u.SaveProject(p); err != nil {
 		t.Fatal(err)
 	}
-	advice, _, err := u.Advice(ctx, "shop")
+	advice, err := u.Advice(ctx, "shop")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Join(advice.Presets, ",") != "test/stack" {
+		t.Errorf("presets %v, want test/stack", advice.Presets)
+	}
 	appURL := false
-	for _, a := range advice {
+	for _, a := range advice.Items {
 		appURL = appURL || (a.Code == "app-url" && strings.Contains(a.Message, "https://shop.test"))
 		if a.Code == "loopback-clash" {
 			t.Errorf("the project clashes with itself: %+v", a)
@@ -86,7 +89,7 @@ func TestAdviceForAConfiguredProject(t *testing.T) {
 	if !appURL {
 		t.Errorf("no app-url advice for shop.test: %+v", advice)
 	}
-	if _, _, err := u.Advice(ctx, "gone"); err == nil || err.Error() != "gone is no longer in the config" {
+	if _, err := u.Advice(ctx, "gone"); err == nil || err.Error() != "gone is no longer in the config" {
 		t.Errorf("Advice(gone) = %v", err)
 	}
 }
