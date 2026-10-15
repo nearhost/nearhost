@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -43,7 +44,9 @@ type Model struct {
 	filtering bool
 	showHelp  bool       // the footer lists every key
 	help      help.Model // draws the footer
-	form      form       // the open add form; nil when none is
+	spinner   spinner.Model
+	spinning  bool // the spinner is turning
+	form      form // the open add form; nil when none is
 
 	routeFocus bool   // the project panel's routes have the keys
 	routeRow   int    // the route selected there
@@ -99,7 +102,7 @@ func New(b Backend, dir string) *Model {
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
 		work: newWorker(),
-		help: newHelp(),
+		help: newHelp(), spinner: newSpinner(),
 	}
 	m.logs = newLogs(func() time.Time { return m.now() })
 	return m
@@ -154,11 +157,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	// The advice of the selected project is read when it is not known, once
 	// the selection has rested on it.
-	return model, tea.Batch(cmd, m.waitForAdvice())
+	return model, tea.Batch(cmd, m.waitForAdvice(), m.spin())
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		return m, m.turn(msg)
 	case adviceWaitMsg:
 		m.adviceWaiting = ""
 		if msg.key == m.sel {

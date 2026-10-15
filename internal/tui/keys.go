@@ -357,10 +357,9 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		return m.action(key)
 	}
 	y := mouse.Y - bodyTop
-	if mouse.X < m.sideWidth() && y >= 0 && y < m.bodyHeight() {
-		all := rows(m.cfg, m.collapsed)
-		if i := sidebarTop(all, m.sel, m.bodyHeight()) + y; i < len(all) {
-			m.selectRow(all[i].key())
+	if mouse.X < m.sideWidth() && y < m.bodyHeight() {
+		if key := m.sidebarKeyAt(y); key != "" {
+			m.selectRow(key)
 		}
 	}
 	return nil

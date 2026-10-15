@@ -823,7 +823,7 @@ func (f *projectForm) lines(width int) []string {
 			where := styleDim.Render("this machine")
 			if s.Name != config.LocalServer {
 				st, _ := f.b.ServerStatus(s.Name)
-				where = serverDot(st) + " " + styleDim.Render(clean(s.SSHHost))
+				where = serverMark(st).String() + " " + styleDim.Render(clean(s.SSHHost))
 			}
 			title := "Local"
 			if s.Name != config.LocalServer {
