@@ -1,13 +1,18 @@
 internal/hosts/hosts.go
   s_f390899c03d13b::t_127883e794a0f5 311-321,323,336-341
+  s_f390899c03d13b::t_c0f44e8802b04f 311-321,323,336-341
 internal/hosts/hosts_test.go
   s_f390899c03d13b::t_e70f2b91ce3e72 163,531-560
+  s_f390899c03d13b::t_25c1d193959c66 163,531-560
 internal/sudo/sudo.go
   s_f390899c03d13b::t_0cd59ce2bfc880 1-66
+  s_f390899c03d13b::t_2f16e8b912d1d3 1-18,19-66
 internal/sudo/sudo_test.go
   s_f390899c03d13b::t_4617102eb5e325 1-93
+  s_f390899c03d13b::t_0a342f5a276e52 1-93
 internal/sudo/testdata/sudo
   s_f390899c03d13b::t_d0ebbc07101b73 1-48
+  s_f390899c03d13b::t_e6e2ba5d5ca05f 1-26,39-48
 ---
 {
   "schema_version": "authorship/3.0.0",
