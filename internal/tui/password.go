@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -49,10 +50,13 @@ type passwordBox struct {
 	check func(ctx context.Context, password string) error
 	done  chan<- error
 	busy  bool
-	err   string
-	tries int
-	seq   int
-	w     *worker
+	// answered is set once done has its answer: the box takes nothing more
+	// before it closes, and never answers twice.
+	answered bool
+	err      string
+	tries    int
+	seq      int
+	w        *worker
 }
 
 func newPasswordBox(msg passwordMsg, w *worker) *passwordBox {
@@ -64,9 +68,13 @@ func newPasswordBox(msg passwordMsg, w *worker) *passwordBox {
 	return &passwordBox{why: msg.why, input: in, check: msg.check, done: msg.done, w: w}
 }
 
-// answer ends the box with err.
+// answer ends the box with err, once.
 func (b *passwordBox) answer(err error) {
 	b.input.SetValue("")
+	if b.answered {
+		return
+	}
+	b.answered = true
 	b.done <- err
 }
 
@@ -93,11 +101,12 @@ func (b *passwordBox) update(msg tea.Msg) tea.Cmd {
 		b.answer(msg.err)
 		return b.close()
 	case tea.PasteMsg:
-		if !b.busy {
-			b.input.SetValue(b.input.Value() + msg.Content)
+		if !b.busy && !b.answered {
+			// A password copied with its line break is the password alone.
+			b.input.SetValue(b.input.Value() + strings.TrimRight(msg.Content, "\r\n"))
 		}
 	case tea.KeyPressMsg:
-		if b.busy {
+		if b.busy || b.answered {
 			return nil
 		}
 		switch msg.String() {

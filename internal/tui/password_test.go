@@ -211,3 +211,48 @@ func TestPasswordBoxTakesNoClicks(t *testing.T) {
 		t.Errorf("a click selected %q under the box", m.sel)
 	}
 }
+
+// Once the box has answered, nothing answers again before it closes: not
+// esc, not the request going, not quitting. A second answer would block
+// the interface on a channel nobody reads.
+func TestPasswordBoxAnswersOnce(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	done := make(chan error, 1)
+	m.Update(passwordMsg{why: "Why.", check: func(context.Context, string) error { return nil }, done: done})
+	typeText(m, "pw")
+	checked := press(m, "enter")() // the check, run; its answer not yet taken
+	m.Update(checked)              // the box answers; its close is still to come
+	finished := make(chan struct{})
+	go func() {
+		press(m, "esc")
+		press(m, "enter")
+		m.Update(passwordGoneMsg{done: done})
+		press(m, "ctrl+c")
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the interface blocked answering a second time")
+	}
+	if err := <-done; err != nil {
+		t.Errorf("the answer was %v", err)
+	}
+}
+
+// A password pasted with the line break it was copied with is the password
+// alone.
+func TestPasswordBoxPaste(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	var got string
+	done := askFor(m, "Why.", func(_ context.Context, pw string) error {
+		got = pw
+		return nil
+	})
+	m.Update(tea.PasteMsg{Content: "secret\r\n"})
+	settle(m, press(m, "enter"))
+	<-done
+	if got != "secret" {
+		t.Errorf("checked %q", got)
+	}
+}
