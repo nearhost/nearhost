@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"io"
@@ -51,7 +52,23 @@ func (e Exchange) ReqBodyCut() bool { return int64(len(e.ReqBody)) < e.ReqBodySi
 // kept.
 func (e Exchange) RespBodyCut() bool { return int64(len(e.RespBody)) < e.RespBodySize }
 
-func (e *Exchange) size() int { return len(e.ReqBody) + len(e.RespBody) }
+// size is roughly the memory an exchange holds: its bodies' room and its
+// headers.
+func (e *Exchange) size() int {
+	return cap(e.ReqBody) + cap(e.RespBody) + headerSize(e.ReqHeader) + headerSize(e.RespHeader)
+}
+
+// headerSize is roughly the memory a header holds.
+func headerSize(h http.Header) int {
+	n := 0
+	for name, values := range h {
+		n += len(name)
+		for _, v := range values {
+			n += len(v)
+		}
+	}
+	return n
+}
 
 // captures are the exchanges kept, oldest first. Caddy is process-global,
 // so they are too.
@@ -60,12 +77,25 @@ var captures = struct {
 	order []string
 	byID  map[string]*Exchange
 	total int
+	gen   int // counts the times the store was cleared
 }{byID: map[string]*Exchange{}}
 
-// keep stores e, letting the oldest go past the limits.
-func keep(e *Exchange) {
+// captureGen is the store's generation, taken when an exchange begins: one
+// that ends after the store was cleared is not kept.
+func captureGen() int {
 	captures.Lock()
 	defer captures.Unlock()
+	return captures.gen
+}
+
+// keep stores e, begun in generation gen, letting the oldest go past the
+// limits.
+func keep(e *Exchange, gen int) {
+	captures.Lock()
+	defer captures.Unlock()
+	if gen != captures.gen {
+		return // the store was cleared while e was open
+	}
 	captures.order = append(captures.order, e.ID)
 	captures.byID[e.ID] = e
 	captures.total += e.size()
@@ -93,6 +123,7 @@ func ClearCaptured() {
 	captures.Lock()
 	defer captures.Unlock()
 	captures.order, captures.byID, captures.total = nil, map[string]*Exchange{}, 0
+	captures.gen++
 }
 
 func init() {
@@ -116,7 +147,7 @@ func (Capture) CaddyModule() caddy.ModuleInfo {
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	id := newID()
+	id, gen := newID(), captureGen()
 	if extra, ok := r.Context().Value(caddyhttp.ExtraLogFieldsCtxKey).(*caddyhttp.ExtraLogFields); ok {
 		extra.Set(zap.String("nearhost_id", id))
 	}
@@ -141,7 +172,7 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	if err != nil {
 		e.Err = err.Error()
 	}
-	keep(e)
+	keep(e, gen)
 	return err
 }
 
@@ -181,7 +212,8 @@ func (l *limited) done() ([]byte, int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.closed = true
-	return l.buf, l.n
+	// Kept bodies hold only what they need, not what append grew them to.
+	return bytes.Clone(l.buf), l.n
 }
 
 // teeBody copies what is read from a request body into to.
