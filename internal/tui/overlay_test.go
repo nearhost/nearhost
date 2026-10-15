@@ -72,3 +72,21 @@ func TestConfirmBox(t *testing.T) {
 		t.Errorf("a confirm form shows steps:\n%s", s)
 	}
 }
+
+// A form with more to say than the box holds grows the box, as far as the
+// window allows, and never past it.
+func TestFormBoxGrows(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	ask := []string{"Remove everything?"}
+	for i := 0; i < 40; i++ {
+		ask = append(ask, "A line of the question.")
+	}
+	m.form = &confirmForm{b: m.b, w: m.work, ask: ask}
+	lines := strings.Split(screen(m), "\n")
+	if len(lines) != 30 {
+		t.Fatalf("drew %d lines", len(lines))
+	}
+	if !strings.Contains(lines[1], "╭") || !strings.Contains(lines[28], "╰") {
+		t.Errorf("the box does not fill the window's height:\n%s", screen(m))
+	}
+}

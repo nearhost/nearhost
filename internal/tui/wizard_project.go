@@ -76,11 +76,12 @@ type projectForm struct {
 	edit    *config.Project // the project being edited; nil when adding
 	missing map[int]bool    // saved routes no longer found, by port; shown, not saved
 
-	notes []string // what the registry, discovery and presets had to say
-	busy  string   // what a background step is doing; empty when none is
-	err   string   // the current step's error
-	seq   int      // the background step whose answer is awaited
-	w     *worker
+	enabled []string // the presets enabled here
+	notes   []string // what the registry, discovery and presets had to say
+	busy    string   // what a background step is doing; empty when none is
+	err     string   // the current step's error
+	seq     int      // the background step whose answer is awaited
+	w       *worker
 }
 
 // Answers of the add-project form's background steps.
@@ -421,6 +422,7 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 				f.toRoutes()
 				return nil
 			}
+			f.enabled = names
 			f.seq = nextSeq()
 			f.busy = "Enabling " + strings.Join(names, ", ") + "…"
 			seq, b := f.seq, f.b
@@ -548,7 +550,12 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 	case "down":
 		f.routeRow = min(f.routeRow+1, len(f.routes)-1)
 	case "space":
-		f.cycleRole(f.routeRow)
+		f.toggleRoute(f.routeRow)
+	case "right":
+		f.cycleRole(f.routeRow, 1)
+		f.err = ""
+	case "left":
+		f.cycleRole(f.routeRow, -1)
 		f.err = ""
 	case "enter":
 		web := 0
@@ -558,7 +565,7 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 		if web != 1 {
-			f.err = "choose the web route with space"
+			f.err = "choose the web route with ← or →"
 			return nil
 		}
 		f.err, f.step = "", projectStepDetails
@@ -566,19 +573,47 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// cycleRole moves route i to its next role: web, loopback, ignore. Loopback
-// is skipped on this machine, where it means nothing. A route made web
-// takes the role from the one that was.
-func (f *projectForm) cycleRole(i int) {
-	next := map[config.Role]config.Role{
-		config.RoleWeb:      config.RoleLoopback,
-		config.RoleLoopback: config.RoleIgnore,
-		config.RoleIgnore:   config.RoleWeb,
+// roles are the roles a route can take on the form's server, in the order
+// ← and → move through them. Loopback means nothing on this machine.
+func (f *projectForm) roles() []config.Role {
+	if f.srv.Name == config.LocalServer {
+		return []config.Role{config.RoleWeb, config.RoleIgnore}
 	}
-	role := next[f.routes[i].Role]
-	if role == config.RoleLoopback && f.srv.Name == config.LocalServer {
-		role = config.RoleIgnore
+	return []config.Role{config.RoleWeb, config.RoleLoopback, config.RoleIgnore}
+}
+
+// cycleRole moves route i by step through the roles. A route made web
+// takes the role from the one that was, which is then ignored.
+func (f *projectForm) cycleRole(i, step int) {
+	roles := f.roles()
+	at := 0
+	for j, r := range roles {
+		if r == f.routes[i].Role {
+			at = j
+		}
 	}
+	f.setRole(i, roles[(at+step+len(roles))%len(roles)])
+}
+
+// toggleRoute serves an ignored route, as loopback, or web on this
+// machine, and ignores one that is served. The web route stays: a project
+// needs one, so another is made web first.
+func (f *projectForm) toggleRoute(i int) {
+	switch f.routes[i].Role {
+	case config.RoleWeb:
+		f.err = "a project needs its web route; make another route web with ← or → first"
+		return
+	case config.RoleIgnore:
+		f.setRole(i, f.roles()[len(f.roles())-2]) // loopback, or web on this machine
+	default:
+		f.setRole(i, config.RoleIgnore)
+	}
+	f.err = ""
+}
+
+// setRole gives route i role; a route made web takes the place of the one
+// that was.
+func (f *projectForm) setRole(i int, role config.Role) {
 	if role == config.RoleWeb {
 		for j := range f.routes {
 			if f.routes[j].Role == config.RoleWeb {
@@ -808,7 +843,7 @@ func (f *projectForm) lines(width int) []string {
 	if f.sub != nil {
 		return f.sub.lines(width)
 	}
-	var lines []string
+	lines := f.summary(width)
 	switch f.step {
 	case projectStepServer:
 		for i, s := range f.servers {
@@ -821,7 +856,7 @@ func (f *projectForm) lines(width int) []string {
 				st, _ := f.b.ServerStatus(s.Name)
 				where = serverMark(st).String() + " " + styleDim.Render(clean(s.SSHHost))
 			}
-			title := "Local"
+			title := "local"
 			if s.Name != config.LocalServer {
 				title = clean(s.Name)
 			}
@@ -882,7 +917,7 @@ func (f *projectForm) lines(width int) []string {
 			lines = append(lines, errorLines(f.aliasErr, width)...)
 		}
 	case projectStepConfirm:
-		server := "Local (this machine)"
+		server := "local (this machine)"
 		if f.srv.Name != config.LocalServer {
 			server = clean(f.srv.Name) + styleDim.Render(" (ssh "+clean(f.srv.SSHHost)+")")
 		}
@@ -917,20 +952,62 @@ func (f *projectForm) lines(width int) []string {
 	return lines
 }
 
-// routeLines draws the routes step.
+// summary is what was chosen on the steps before this one, shown above the
+// steps between the path and the last look.
+func (f *projectForm) summary(width int) []string {
+	if f.step <= projectStepPath || f.step == projectStepConfirm {
+		return nil
+	}
+	server := "local"
+	if f.srv.Name != config.LocalServer {
+		server = clean(f.srv.Name)
+	}
+	lines := field("server", server, width)
+	lines = append(lines, field("path", clean(f.resolved), width)...)
+	if f.step > projectStepPresets && len(f.enabled) > 0 {
+		lines = append(lines, field("presets", clean(strings.Join(f.enabled, ", ")), width)...)
+	}
+	return append(lines, "")
+}
+
+// routeLines draws the routes step: a row a route, with a box ticked when
+// it is served and its role between arrows on the selected row.
 func (f *projectForm) routeLines(width int) []string {
 	if len(f.routes) == 0 {
 		lines := []string{"No ports were found in this project's files.", ""}
 		return append(lines, field("web port", f.webPort.view(true), width)...)
 	}
-	lines := []string{styleDim.Render(fmt.Sprintf("  %-6s %-9s %s", "PORT", "ROLE", "LABEL"))}
-	for i, r := range f.routes {
-		mark := "  "
-		if i == f.routeRow {
-			mark = styleBeacon.Render("▸ ")
-		}
-		lines = append(lines, mark+fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, fit(clean(f.routeLabel(r)), width-20)))
+	found := fmt.Sprintf("Found %d ports. Pick what to serve.", len(f.routes))
+	if len(f.routes) == 1 {
+		found = "Found 1 port. Pick what to serve."
 	}
+	lines := []string{found, "", styleDim.Render(fit("      port    role          label", width))}
+	for i, r := range f.routes {
+		selected := i == f.routeRow
+		text, box := styleText, seg{styleBeacon, "[x]"}
+		if r.Role == config.RoleIgnore {
+			text, box = styleDim, seg{styleDim, "[ ]"}
+		}
+		role := seg{text, fit(string(r.Role), 14)}
+		switch {
+		case selected:
+			role = seg{styleBeacon, fit("‹ "+string(r.Role)+" ›", 14)}
+		case r.Role == config.RoleWeb:
+			role.style = styleBeacon
+		}
+		cells := []seg{{text, " "}, box, {text, " " + fit(strconv.Itoa(r.Port), 8)}, role, {text, clean(f.routeLabel(r))}}
+		lines = append(lines, renderRow(cells, nil, width, selected))
+	}
+	alias := f.draft.Alias
+	if alias == "" {
+		alias = f.alias.value
+	}
+	lines = append(lines, "")
+	explain := styleDim.Render("web is what ") + styleBeacon.Render("https://"+clean(alias)) + styleDim.Render(" serves.")
+	if f.srv.Name != config.LocalServer {
+		explain += styleDim.Render(" loopback ports open on 127.0.0.1 here too, so the browser reaches them.")
+	}
+	lines = append(lines, wrap(explain, width)...)
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
 }
 
@@ -996,7 +1073,7 @@ func (f *projectForm) keys() []footerItem {
 		if len(f.routes) == 0 {
 			return []footerItem{{"enter", "next"}, {"esc", "back"}}
 		}
-		return []footerItem{{"space", "role"}, {"enter", "next"}, {"esc", "back"}}
+		return []footerItem{{"space", "toggle"}, {"←/→", "role"}, {"enter", "next"}, {"esc", "back"}}
 	case projectStepDetails:
 		return []footerItem{{"tab", "switch"}, {"enter", "next"}, {"esc", "back"}}
 	}
