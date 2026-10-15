@@ -18,7 +18,7 @@ func (e *Engine) ReconnectServer(name string) error {
 		return err
 	}
 	e.mu.Lock()
-	c.held = false
+	delete(e.held, name)
 	e.mu.Unlock()
 	e.serverLog(name, "reconnecting, as asked")
 	c.sess.Stop()

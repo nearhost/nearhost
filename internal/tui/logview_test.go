@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -300,4 +301,19 @@ func TestLogViewWrapsLongHeaders(t *testing.T) {
 	press(m, "enter")
 	press(m, "v")
 	wantScreen(t, m, "accept: text/html, ", "cookie: session=secret")
+}
+
+// Why a replay failed is text from outside, and is cleaned before it is
+// drawn.
+func TestLogViewCleansAReplayError(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	f.edit.replayErr = errors.New("dial tcp: bad\x1b[2J host")
+	f.edit.captured["ab12"] = proxy.Exchange{ID: "ab12", Method: "GET", URI: "/api/projects", ReqHeader: http.Header{}}
+	press(m, "k")
+	run(m, press(m, "r"))
+	if s := m.View().Content; strings.Contains(s, "\x1b[2J") {
+		t.Errorf("the error's escape sequence reached the screen: %q", s)
+	}
+	wantScreen(t, m, "Could not send POST /api/projects again: dial tcp: bad host.") // the method of the log line
 }

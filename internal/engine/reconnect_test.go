@@ -116,3 +116,48 @@ func TestConnectServerFromNothingAndReconnectAHeldOne(t *testing.T) {
 		t.Errorf("DisconnectServer(local) = %v", err)
 	}
 }
+
+// A reload that changes a dropped server's host does not connect it: the
+// hold outlives the session it was made on. Its project, started afresh by
+// the reload, is refused and says why; connecting brings the server back.
+// A server removed from the config loses its hold.
+func TestAReloadKeepsADroppedServerDropped(t *testing.T) {
+	cfg := remoteConfig(testutil.FreePort(t))
+	h := newHarness(t, cfg)
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	masters := func() int { return strings.Count(h.log(), "-N -M ") }
+	if err := h.eng.DisconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	moved := remoteConfig(cfg.Projects[0].Routes[1].Port)
+	moved.Servers[0].SSHHost = "mini.lan"
+	if err := h.eng.Apply(bg, moved); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, h, "myapp", StateError)
+	if st := h.eng.Status("myapp"); !strings.Contains(st.Message, "mini was disconnected; connect it first") {
+		t.Errorf("message %q", st.Message)
+	}
+	if hh := h.eng.ServerHealth("mini"); !hh.Held {
+		t.Errorf("the hold did not survive the reload: %+v", hh)
+	}
+	if n := masters(); n != 1 {
+		t.Errorf("%d masters after the reload, want the first only", n)
+	}
+	if err := h.eng.ConnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.ServerHealth("mini").Status == transport.StatusConnected }, "connected")
+
+	if err := h.eng.DisconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.Apply(bg, &config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if hh := h.eng.ServerHealth("mini"); hh.Held {
+		t.Errorf("a server gone from the config is still held: %+v", hh)
+	}
+}

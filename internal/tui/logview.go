@@ -675,9 +675,9 @@ func (m *Model) replay(e logEntry) tea.Cmd {
 
 // replayed says how sending a request again went.
 func (m *Model) replayed(msg replayedMsg) {
-	text := fmt.Sprintf("Sent %s %s again: %d.", msg.method, clean(msg.uri), msg.status)
+	text := fmt.Sprintf("Sent %s %s again: %d.", clean(msg.method), clean(msg.uri), msg.status)
 	if msg.err != nil {
-		text = fmt.Sprintf("Could not send %s %s again: %s.", msg.method, clean(msg.uri), strings.TrimRight(msg.err.Error(), "."))
+		text = fmt.Sprintf("Could not send %s %s again: %s.", clean(msg.method), clean(msg.uri), strings.TrimRight(clean(msg.err.Error()), "."))
 	}
 	if m.logView != nil {
 		m.logView.said = text

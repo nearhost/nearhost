@@ -137,7 +137,11 @@ type Engine struct {
 	closed  bool
 	lookup  uint64 // number of the last holder lookup started
 	servers map[string]*serverConn
-	ports   map[int]string // local port held by a forward -> project
+	// held names the servers disconnected on purpose, so nothing starts
+	// their sessions behind the user's back. It is kept by name, not on the
+	// session, so a reload that replaces the session keeps it.
+	held  map[string]bool
+	ports map[int]string // local port held by a forward -> project
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
@@ -151,6 +155,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
 		servers:     map[string]*serverConn{},
+		held:        map[string]bool{},
 		ports:       map[int]string{},
 	}
 	e.applySites = e.proxy.Apply
