@@ -263,3 +263,26 @@ func TestCaptureLimitCountsHeaders(t *testing.T) {
 		t.Error("the newest exchange was let go")
 	}
 }
+
+// The request sent again goes to the proxy for its host, with only the path
+// and query of an absolute-form URI, and without the headers its Connection
+// header names, which were meant for the hop it came on.
+func TestReplayRequest(t *testing.T) {
+	e := Exchange{Method: "GET", Host: "myapp.test", URI: "http://myapp.test/a/b?c=1", ReqHeader: http.Header{
+		"Connection": {"keep-alive, X-Hop"}, "X-Hop": {"1"}, "X-Kept": {"2"}, "Keep-Alive": {"timeout=5"},
+	}}
+	req, err := replayRequest(context.Background(), e, 18443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := req.URL.String(); got != "https://myapp.test:18443/a/b?c=1" {
+		t.Errorf("URL %s", got)
+	}
+	if req.Host != "myapp.test" || req.Header.Get("X-Kept") != "2" || req.Header.Get("X-Hop") != "" || req.Header.Get("Connection") != "" || req.Header.Get("Keep-Alive") != "" {
+		t.Errorf("host %q, headers %v", req.Host, req.Header)
+	}
+	e.URI = "/plain?x=1"
+	if req, _ := replayRequest(context.Background(), e, 443); req.URL.String() != "https://myapp.test/plain?x=1" {
+		t.Errorf("URL %s", req.URL)
+	}
+}
