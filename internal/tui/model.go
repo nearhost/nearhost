@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -383,15 +382,9 @@ func (m *Model) quit() tea.Cmd {
 func (m *Model) View() tea.View {
 	var content string
 	if m.width < minWidth || m.height < minHeight {
-		content = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			"Make the window larger (80×20 or more).")
+		content = m.tooSmall()
 	} else {
-		body := m.height - 1
-		side := strings.Join(m.sidebar(body), "\n")
-		side = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderRight(true).
-			BorderForeground(colourDim).Render(side)
-		main := strings.Join(m.main(m.width-sidebarWidth-1, body), "\n")
-		content = lipgloss.JoinHorizontal(lipgloss.Top, side, " ", main) + "\n" + m.footer()
+		content = m.frame(m.columns(), m.footer())
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -439,7 +432,7 @@ func (m *Model) main(width, height int) []string {
 			header += "▏"
 		}
 	}
-	lines = append(lines, "", styleDim.Render(fit(header, width)))
+	lines = append(lines, strings.Repeat(" ", width), styleDim.Render(fit(header, width)))
 	// The newest lines that fit, each wrapped, counted back from the end
 	// less what is scrolled.
 	room := height - len(lines)

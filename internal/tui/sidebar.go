@@ -7,9 +7,6 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
-// sidebarWidth is the sidebar's width, its right border included.
-const sidebarWidth = 30
-
 type rowKind int
 
 const (
@@ -61,10 +58,9 @@ func rows(cfg *config.Config, collapsed map[string]bool) []row {
 	return out
 }
 
-// sidebar draws the sidebar, height lines tall and sidebarWidth-1 wide
-// (the border is drawn by the caller).
-func (m *Model) sidebar(height int) []string {
-	width := sidebarWidth - 1
+// sidebar draws the sidebar, height lines tall and width wide (the border
+// is drawn by the caller).
+func (m *Model) sidebar(width, height int) []string {
 	all := rows(m.cfg, m.collapsed)
 	lines := make([]string, 0, height)
 	for _, r := range all[sidebarTop(all, m.sel, height):] {
