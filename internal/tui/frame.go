@@ -40,7 +40,12 @@ func (m *Model) mainWidth() int { return m.width - m.mainX() - 1 }
 func (m *Model) bodyHeight() int { return m.height - bodyTop - 1 - m.footerHeight() }
 
 // footerHeight is the number of rows the footer takes.
-func (m *Model) footerHeight() int { return 1 }
+func (m *Model) footerHeight() int {
+	if m.showHelp {
+		return helpRows()
+	}
+	return 1
+}
 
 // bar draws a line of the header or footer: a cell of space at each end,
 // left at the start and right at the end.
