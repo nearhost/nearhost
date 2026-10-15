@@ -34,6 +34,9 @@ func (m *Model) footerItems() []footerItem {
 		items = []footerItem{{"enter", "start/stop"}, {"o", "open"}, {"tab", "routes"}, {"e", "edit"}, {"d", "remove"}}
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
+		if _, name := m.selected(); name != config.LocalServer {
+			items = append(items, footerItem{"r", "reconnect"}, footerItem{"e", "edit"}, footerItem{"d", "remove"})
+		}
 	}
 	return append(items, footerItem{"/", "filter"}, footerItem{"s", "server"}, footerItem{"n", "add"}, footerItem{"q", "quit"})
 }
@@ -113,18 +116,34 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 func (m *Model) action(s string) tea.Cmd {
 	switch s {
 	case "e":
-		if kind, name := m.selected(); kind == rowProject {
+		switch kind, name := m.selected(); kind {
+		case rowProject:
 			if p, ok := m.cfg.Project(name); ok {
 				f, connect := newProjectEditForm(m.b, m.cfg, *p, m.work)
 				m.form = f
 				return connect
 			}
+		case rowServer:
+			if srv, ok := m.cfg.Server(name); ok && name != config.LocalServer {
+				f, load := newServerEditForm(m.b, m.cfg, srv, m.work)
+				m.form = f
+				return load
+			}
 		}
 	case "d":
-		if kind, name := m.selected(); kind == rowProject {
+		switch kind, name := m.selected(); kind {
+		case rowProject:
 			if p, ok := m.cfg.Project(name); ok {
 				m.removeProject(*p)
 			}
+		case rowServer:
+			if name != config.LocalServer {
+				m.removeServer(name)
+			}
+		}
+	case "r":
+		if kind, name := m.selected(); kind == rowServer && name != config.LocalServer {
+			return m.reconnect(name)
 		}
 	case "tab":
 		if kind, _ := m.selected(); kind == rowProject {

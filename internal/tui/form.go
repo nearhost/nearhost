@@ -29,7 +29,10 @@ type (
 	// formClosedMsg closes the open form without adding anything.
 	formClosedMsg struct{}
 	// serverAddedMsg is a server the add-server form saved.
-	serverAddedMsg struct{ srv config.Server }
+	serverAddedMsg struct {
+		srv    config.Server
+		edited bool // saved over an existing server
+	}
 	// projectAddedMsg is a project the add-project form saved.
 	projectAddedMsg struct {
 		name   string

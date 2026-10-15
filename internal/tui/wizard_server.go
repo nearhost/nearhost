@@ -35,6 +35,16 @@ type serverForm struct {
 	w      *worker
 	// hostsSeq is the reading of the SSH config whose answer is awaited.
 	hostsSeq int
+	edit     *config.Server // the server being edited; nil when adding
+}
+
+// newServerEditForm opens the form to edit srv: its host and name, checked
+// again before they are saved. A new name is carried to its projects.
+func newServerEditForm(b Backend, cfg *config.Config, srv config.Server, w *worker) (*serverForm, tea.Cmd) {
+	f, load := newServerForm(b, cfg, w)
+	f.edit = &srv
+	f.host.value, f.name.value = srv.SSHHost, srv.Name
+	return f, load
 }
 
 // serverCheckedMsg is the outcome of checking a server, and serverSavedMsg
@@ -117,6 +127,14 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 		}
 		f.saving = true
 		seq, srv, b := f.seq, msg.srv, f.b
+		if f.edit != nil {
+			was := f.edit.Name
+			return f.w.do(func(context.Context) tea.Msg {
+				return serverSavedMsg{seq, srv, b.EditConfig(func(cfg *config.Config) error {
+					return renameServer(cfg, was, srv)
+				})}
+			})
+		}
 		return f.w.do(func(context.Context) tea.Msg { return serverSavedMsg{seq, srv, b.AddServer(srv)} })
 	case serverSavedMsg:
 		if msg.seq != f.seq {
@@ -127,8 +145,8 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 			f.fail = msg.err.Error()
 			return nil
 		}
-		srv := msg.srv
-		return func() tea.Msg { return serverAddedMsg{srv} }
+		srv, edited := msg.srv, f.edit != nil
+		return func() tea.Msg { return serverAddedMsg{srv, edited} }
 	case tea.KeyPressMsg:
 		return f.key(msg)
 	case tea.PasteMsg:
@@ -168,7 +186,9 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			f.host.value, f.err = host, ""
-			f.name.value = hostName(host)
+			if f.edit == nil {
+				f.name.value = hostName(host) // an edited server keeps its name
+			}
 			f.step = serverStepName
 			return nil
 		}
@@ -183,7 +203,7 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 				f.err = "a server needs a name"
 			case name == config.LocalServer:
 				f.err = "the name local is kept for this machine"
-			case taken:
+			case taken && (f.edit == nil || name != f.edit.Name):
 				f.err = "a server called " + name + " already exists"
 			default:
 				f.name.value, f.err = name, ""
@@ -234,7 +254,11 @@ func (f *serverForm) back() tea.Cmd {
 }
 
 func (f *serverForm) lines(width int) []string {
-	lines := []string{styleTitle.Render("Add server"), ""}
+	title := "Add server"
+	if f.edit != nil {
+		title = "Edit " + clean(f.edit.Name)
+	}
+	lines := []string{styleTitle.Render(title), ""}
 	lines = append(lines, field("host", f.host.view(f.step == serverStepHost), width)...)
 	if f.step == serverStepHost {
 		for i, h := range f.shown() {
@@ -279,4 +303,21 @@ func (f *serverForm) keys() []footerItem {
 		return []footerItem{{"r", "check again"}, {"esc", "back"}}
 	}
 	return []footerItem{{"esc", "back"}}
+}
+
+// renameServer gives the server called was srv's name and host, and carries
+// a new name to its projects.
+func renameServer(cfg *config.Config, was string, srv config.Server) error {
+	for i := range cfg.Servers {
+		if cfg.Servers[i].Name == was {
+			cfg.Servers[i] = srv
+			for j := range cfg.Projects {
+				if cfg.Projects[j].Server == was {
+					cfg.Projects[j].Server = srv.Name
+				}
+			}
+			return nil
+		}
+	}
+	return errNoLongerConfigured(was)
 }

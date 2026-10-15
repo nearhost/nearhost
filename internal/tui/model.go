@@ -141,6 +141,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case adviceMsg:
 		m.gotAdvice(msg)
+	case reconnectedMsg:
+		if msg.err != nil {
+			m.panelErr = msg.err.Error()
+		}
 	case editedMsg:
 		if msg.err != nil {
 			m.panelErr = msg.err.Error()
@@ -219,13 +223,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 	case serverAddedMsg:
 		key := rowKey(rowServer, msg.srv.Name)
-		m.logs.noteOn(key, "Added server "+msg.srv.Name+".")
+		verb := "Added server "
+		if msg.edited {
+			verb = "Saved server "
+		}
+		m.logs.noteOn(key, verb+msg.srv.Name+".")
 		var cmd tea.Cmd
 		if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
 			cmd = pf.update(msg) // back to adding the project, on this server
 		} else {
 			m.form = nil
-			m.sel, m.scroll = key, 0
+			m.selectRow(key)
 		}
 		return m, tea.Batch(cmd, m.applyNow())
 	case projectAddedMsg:

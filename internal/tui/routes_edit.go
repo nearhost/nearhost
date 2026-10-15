@@ -111,3 +111,19 @@ func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
 		return nil
 	})
 }
+
+// reconnectedMsg is the outcome of asking for a server to reconnect.
+type reconnectedMsg struct {
+	name string
+	err  error
+}
+
+// reconnect ends a server's connection and starts it again.
+func (m *Model) reconnect(name string) tea.Cmd {
+	m.panelErr = ""
+	m.logs.noteOn(rowKey(rowServer, name), "Reconnecting "+name+".")
+	b := m.b
+	return m.work.do(func(ctx context.Context) tea.Msg {
+		return reconnectedMsg{name, b.ReconnectServer(ctx, name)}
+	})
+}
