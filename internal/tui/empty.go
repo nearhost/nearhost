@@ -27,6 +27,12 @@ func (m *Model) empty() bool {
 // emptyKeys are the keys that work on the first-run screen.
 var emptyKeys = []footerItem{{"n", "add project"}, {"s", "add server"}, {"?", "help"}, {"q", "quit"}}
 
+// emptyAdding says what the two ways to start do.
+var emptyAdding = []string{
+	"n  add a project on this machine or a server",
+	"s  add a server you reach over SSH",
+}
+
 // emptyScreen is the first-run screen: the mark and the name, what to do,
 // and how the machine is, in the middle of the window over the footer.
 func (m *Model) emptyScreen() string {
@@ -36,8 +42,12 @@ func (m *Model) emptyScreen() string {
 		lines = append(lines, centre(l))
 	}
 	lines = append(lines, "", centre(styleTitle.Render("nearhost")), "", "",
-		centre(styleTitle.Render("Nothing to serve yet.")),
-		centre("Press "+styleBeacon.Render("n")+" to add the project in the current directory."), "")
+		centre(styleTitle.Render("Nothing to serve yet.")), "")
+	// The two keys line up with the fields below.
+	for _, l := range emptyAdding {
+		lines = append(lines, styleBeacon.Render(l[:1])+l[1:])
+	}
+	lines = append(lines, "")
 	ca := m.caText()
 	lines = append(lines, field("directory", clean(m.dir), emptyWidth)...)
 	lines = append(lines, field("local CA", ca, emptyWidth)...)

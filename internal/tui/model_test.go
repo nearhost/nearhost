@@ -24,8 +24,21 @@ func TestEmptyStateLeadsToAdding(t *testing.T) {
 		"/work/here": {Routes: []config.Route{{Port: 3000, Role: config.RoleWeb, Label: "port (PORT)"}}},
 	}}
 	m := sized(f)
-	wantScreen(t, m, "nearhost", "Nothing to serve yet.", "Press n to add the project in the current directory.",
+	wantScreen(t, m, "nearhost", "Nothing to serve yet.",
+		"n  add a project on this machine or a server", "s  add a server you reach over SSH",
 		"directory /work/here", " n add project · s add server · ? help · q quit")
+	// The two keys line up, one under the other.
+	col := func(sub string) int {
+		for _, l := range strings.Split(screen(m), "\n") {
+			if i := strings.Index(l, sub); i >= 0 {
+				return len([]rune(l[:i]))
+			}
+		}
+		return -1
+	}
+	if n, s := col("n  add a project"), col("s  add a server"); n < 0 || n != s {
+		t.Errorf("n at column %d, s at %d", n, s)
+	}
 	press(m, "n")
 	settle(m, press(m, "enter")) // Local
 	wantScreen(t, m, "path      /work/here▏")
