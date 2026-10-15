@@ -59,8 +59,6 @@ func (f *firstRunForm) update(msg tea.Msg) tea.Cmd {
 
 func (f *firstRunForm) lines(width int) []string {
 	lines := []string{
-		styleTitle.Render("Welcome to Nearhost"),
-		"",
 		"Two things ask for your password:",
 		"• now: trusting the local certificate authority,",
 		"  so browsers accept https://<name>.test",
@@ -75,6 +73,8 @@ func (f *firstRunForm) lines(width int) []string {
 	}
 	return lines
 }
+
+func (f *firstRunForm) heading() heading { return heading{title: "Welcome to Nearhost"} }
 
 func (f *firstRunForm) keys() []footerItem {
 	if f.busy {

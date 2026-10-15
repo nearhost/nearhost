@@ -399,10 +399,15 @@ func (m *Model) View() tea.View {
 	var content string
 	if m.width < minWidth || m.height < minHeight {
 		content = m.tooSmall()
-	} else if m.empty() {
-		content = m.emptyScreen()
 	} else {
-		content = m.frame(m.columns(), m.footer())
+		if m.empty() {
+			content = m.emptyScreen()
+		} else {
+			content = m.frame(m.columns(), m.footer())
+		}
+		if m.form != nil {
+			content = m.formBox(content)
+		}
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -413,19 +418,6 @@ func (m *Model) View() tea.View {
 // main draws the main panel: the selected item's details, then its log,
 // exactly height lines of width cells.
 func (m *Model) main(width, height int) []string {
-	if m.form != nil {
-		lines := make([]string, 0, height)
-		for _, l := range m.form.lines(width) {
-			if len(lines) == height {
-				break
-			}
-			lines = append(lines, fit(l, width))
-		}
-		for len(lines) < height {
-			lines = append(lines, strings.Repeat(" ", width))
-		}
-		return lines
-	}
 	var details []string
 	kind, name := m.selected()
 	switch kind {

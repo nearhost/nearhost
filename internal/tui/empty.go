@@ -19,9 +19,9 @@ var markLines = []string{
 const emptyWidth = 56
 
 // empty reports whether the first-run screen is drawn: there is nothing to
-// serve and no form is open.
+// serve. A form opens over it.
 func (m *Model) empty() bool {
-	return len(m.cfg.Projects) == 0 && m.form == nil
+	return len(m.cfg.Projects) == 0
 }
 
 // emptyKeys are the keys that work on the first-run screen.

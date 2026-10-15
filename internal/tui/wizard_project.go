@@ -808,11 +808,7 @@ func (f *projectForm) lines(width int) []string {
 	if f.sub != nil {
 		return f.sub.lines(width)
 	}
-	title := "Add project"
-	if f.edit != nil {
-		title = "Edit " + clean(f.edit.Name)
-	}
-	lines := []string{styleTitle.Render(title) + styleDim.Render(" · "+projectStepTitles[f.step]), ""}
+	var lines []string
 	switch f.step {
 	case projectStepServer:
 		for i, s := range f.servers {
@@ -953,6 +949,17 @@ func adviceLines(advice []Advisory, width int) []string {
 		}
 	}
 	return lines
+}
+
+func (f *projectForm) heading() heading {
+	if f.sub != nil {
+		return f.sub.heading()
+	}
+	title := "Add project"
+	if f.edit != nil {
+		title = "Edit " + clean(f.edit.Name)
+	}
+	return heading{title: title, step: projectStepTitles[f.step], at: f.step + 1, of: projectStepConfirm + 1}
 }
 
 func (f *projectForm) keys() []footerItem {

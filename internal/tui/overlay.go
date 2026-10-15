@@ -1,0 +1,77 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+)
+
+const (
+	// boxWidth and boxHeight are the size of a form's box, in a window that
+	// has room for it.
+	boxWidth, boxHeight = 76, 22
+)
+
+// colourBoxEdge draws the edge of a form's box.
+var colourBoxEdge = lipgloss.Color("#4A5449")
+
+// formBox draws the open form in a box over base, the screen drawn faint
+// behind it: a terminal has no transparency, so dimming is redrawing.
+func (m *Model) formBox(base string) string {
+	w := min(boxWidth, m.width-4)
+	h := min(boxHeight, m.height-2)
+	inner := w - 6 // the edges, and two cells of space inside each
+	hd := m.form.heading()
+	title := styleTitle.Render(hd.title)
+	if hd.step != "" {
+		title += styleDim.Render(" · " + hd.step)
+	}
+	place := ""
+	if hd.of > 0 {
+		place = styleDim.Render(fmt.Sprintf("%d of %d", hd.at, hd.of))
+	}
+	top := []string{spread(title, place, inner)}
+	if hd.of > 0 {
+		top = append(top, progress(hd.at, hd.of, inner))
+	}
+	top = append(top, "")
+	keys := m.help
+	keys.SetWidth(inner)
+	bottom := []string{"", keys.ShortHelpView(bindings(m.form.keys()))}
+	room := h - 2 - len(top) - len(bottom)
+	body := m.form.lines(inner)
+	if len(body) > room {
+		body = body[:room]
+	}
+	for len(body) < room {
+		body = append(body, "")
+	}
+	lines := append(append(top, body...), bottom...)
+	for i, l := range lines {
+		lines[i] = fit(l, inner)
+	}
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colourBoxEdge).
+		Padding(0, 2).Width(w).Render(strings.Join(lines, "\n"))
+	x, y := (m.width-w)/2, max((m.height-h)/2, 1)
+	return lipgloss.NewCompositor(
+		lipgloss.NewLayer(faint(base)),
+		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+	).Render()
+}
+
+// progress is a bar width cells long, filled at of at.
+func progress(at, of, width int) string {
+	filled := width * at / of
+	return styleBeacon.Render(strings.Repeat("━", filled)) + styleFaint.Render(strings.Repeat("━", width-filled))
+}
+
+// faint redraws s in the faint colour, its own colours dropped.
+func faint(s string) string {
+	lines := strings.Split(ansi.Strip(s), "\n")
+	for i, l := range lines {
+		lines[i] = styleFaint.Render(l)
+	}
+	return strings.Join(lines, "\n")
+}

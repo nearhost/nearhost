@@ -20,8 +20,17 @@ type form interface {
 	update(msg tea.Msg) tea.Cmd
 	// lines draws the form, width cells wide.
 	lines(width int) []string
-	// keys are the footer actions of the form's current step.
+	// keys are the actions of the form's current step.
 	keys() []footerItem
+	// heading names the form and its current step.
+	heading() heading
+}
+
+// heading is the top of a form's box: its title, its step, and the step's
+// place among the form's steps (of is 0 for a form without steps).
+type heading struct {
+	title, step string
+	at, of      int
 }
 
 // Messages a form ends with.

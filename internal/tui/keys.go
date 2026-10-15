@@ -115,6 +115,9 @@ func (m *Model) footer() string {
 	if m.showHelp {
 		return m.fullHelp()
 	}
+	if m.form != nil {
+		return m.bar("", "") // the form's box has its keys
+	}
 	right := styleDim.Render(m.footerContext())
 	m.help.SetWidth(m.footerRoom())
 	return m.bar(m.help.ShortHelpView(bindings(m.shownFooterItems(m.footerRoom()))), right)
