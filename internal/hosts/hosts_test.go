@@ -558,3 +558,32 @@ func TestSudoApplierWith(t *testing.T) {
 		}
 	}
 }
+
+// Without a prompt the applier runs under a terminal in use: what sudo or
+// the command says goes into the error, not onto the screen.
+func TestSudoApplierWithoutAPromptKeepsTheTerminalClear(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "sudo")
+	script := "#!/bin/sh\necho 'some output'\necho 'sudo: a password is required' >&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := sudoPath
+	sudoPath = fake
+	t.Cleanup(func() { sudoPath = orig })
+	outR, outW, _ := os.Pipe()
+	errR, errW, _ := os.Pipe()
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	err := SudoApplierWith(context.Background(), "/bin/nearhost", "/etc/hosts", "", true)([]string{"a.test"})
+	os.Stdout, os.Stderr = stdout, stderr
+	outW.Close()
+	errW.Close()
+	shown, _ := io.ReadAll(io.MultiReader(outR, errR))
+	if len(shown) > 0 {
+		t.Errorf("reached the terminal: %q", shown)
+	}
+	if err == nil || !strings.Contains(err.Error(), "a password is required") {
+		t.Errorf("err = %v", err)
+	}
+}
