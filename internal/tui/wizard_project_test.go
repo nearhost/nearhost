@@ -92,9 +92,8 @@ func TestProjectFormCompletesPaths(t *testing.T) {
 	settle(m, press(m, "tab")) // ~/ holds code and .cache; dot names wait for a dot
 	wantScreen(t, m, "path      ~/code/▏")
 	typeText(m, "b")
-	settle(m, press(m, "tab"))
-	wantScreen(t, m, "path      ~/code/blo▏", "blob  blog")
-	typeText(m, "g")
+	wantScreen(t, m, "path      ~/code/b▏lob/", "blob  blog")
+	press(m, "down")
 	settle(m, press(m, "tab"))
 	wantScreen(t, m, "path      ~/code/blog/▏")
 	typeText(m, "x")
@@ -308,23 +307,26 @@ func TestFieldsDropControlCharacters(t *testing.T) {
 }
 
 // Completion keeps what was typed before the last slash as it is, completes
-// . and .. to directories, and never splits a character.
+// . and .. to directories, and when tab has to list, takes the only match
+// or offers several in byte order.
 func TestProjectFormCompletionEdgeCases(t *testing.T) {
 	m, _, files := projectFormModel(t)
 	files.dirs["/home/dev/code/café"] = true
 	files.dirs["/home/dev/code/cafè"] = true
 	toPath(t, m, 1)
 	for _, c := range []struct{ typed, want string }{
-		{"~/code/..", "~/code/../"},
-		{"~/code/../code/sh", "~/code/../code/shop/"},
-		{"~/code/caf", "~/code/caf"},
+		{"~/code/..", "~/code/../▏code/"},
+		{"~/code/../code/sh", "~/code/../code/shop/▏"},
+		{"~/code/caf", "~/code/caf▏è/"},
 	} {
 		press(m, "ctrl+u")
-		typeText(m, c.typed)
+		typeText(m, c.typed) // no listing ahead runs, so tab lists
 		settle(m, press(m, "tab"))
-		wantScreen(t, m, "path      "+c.want+"▏")
+		if got := pathLine(m); got != "path      "+c.want {
+			t.Errorf("%s: got %q, want %q", c.typed, got, "path      "+c.want)
+		}
 	}
-	wantScreen(t, m, "cafè  café") // listed in byte order
+	wantScreen(t, m, "cafè  café")
 }
 
 // A step that saves something runs to its end: esc while it runs is not

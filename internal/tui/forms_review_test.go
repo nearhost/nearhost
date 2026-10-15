@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,12 +122,16 @@ func TestReconnectAfterADroppedConnection(t *testing.T) {
 	m, f, files := projectFormModel(t)
 	toPath(t, m, 1)
 	files.listErr = errors.New("connection lost")
-	settle(m, press(m, "tab"))
+	settle(m, press(m, "tab")) // takes code/ from the listing ahead; listing it fails quietly
+	if strings.Contains(screen(m), "Connection lost") {
+		t.Fatal("a listing ahead said it failed")
+	}
+	settle(m, press(m, "tab")) // lists again, and says why it cannot
 	wantScreen(t, m, "Connection lost", "ctrl+r reconnect")
 	files.listErr = nil
 	settle(m, press(m, "ctrl+r"))
 	if len(f.forms.opened) != 2 || files.closed != 1 {
 		t.Errorf("opened %d times, closed %d times", len(f.forms.opened), files.closed)
 	}
-	wantScreen(t, m, "path      ~/▏")
+	wantScreen(t, m, "path      ~/code/▏blob/")
 }
