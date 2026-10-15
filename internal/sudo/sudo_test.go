@@ -91,3 +91,15 @@ func TestNeededWhenSudoIsThere(t *testing.T) {
 		t.Error("needed without a sudo to run")
 	}
 }
+
+// A sudo that speaks the user's language still has its refusal read as a
+// wrong password: sudo is asked in the C locale.
+func TestValidateReadsATranslatedSudo(t *testing.T) {
+	fake(t, "secret")
+	t.Setenv("FAKE_SUDO_GERMAN", "1")
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	if err := Validate(context.Background(), "wrong"); !errors.Is(err, ErrWrongPassword) {
+		t.Errorf("a wrong password to a German sudo: %v", err)
+	}
+}

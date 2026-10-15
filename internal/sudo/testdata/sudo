@@ -1,7 +1,9 @@
 #!/bin/sh
 # A stand-in for sudo. FAKE_SUDO_PASSWORD is the password; the credentials
 # are cached while the file FAKE_SUDO_CACHE exists, unless FAKE_SUDO_NOCACHE
-# is set (sudo set to always ask). FAKE_SUDO_LOG gets a line per call.
+# is set (sudo set to always ask). FAKE_SUDO_LOG gets a line per call. With
+# FAKE_SUDO_GERMAN set it speaks German, as a translated sudo does, unless
+# LC_ALL is C.
 # It understands -n, -S, -v, -p PROMPT and a command to run.
 nonint=0 stdin=0 validate=0 prompt="${SUDO_PROMPT:-Password:}"
 [ -n "$FAKE_SUDO_LOG" ] && echo "$*" >> "$FAKE_SUDO_LOG"
@@ -37,9 +39,14 @@ if ! cached; then
 		echo > /dev/tty
 	fi
 	if [ "$given" != "$FAKE_SUDO_PASSWORD" ]; then
-		echo "Sorry, try again." >&2
-		echo "sudo: no password was provided" >&2
-		echo "sudo: 1 incorrect password attempt" >&2
+		if [ -n "$FAKE_SUDO_GERMAN" ] && [ "$LC_ALL" != C ]; then
+			echo "Entschuldigung, versuchen Sie es noch einmal." >&2
+			echo "sudo: 1 Fehlversuch bei der Passworteingabe" >&2
+		else
+			echo "Sorry, try again." >&2
+			echo "sudo: no password was provided" >&2
+			echo "sudo: 1 incorrect password attempt" >&2
+		fi
 		exit 1
 	fi
 	[ -z "$FAKE_SUDO_NOCACHE" ] && : > "$FAKE_SUDO_CACHE"

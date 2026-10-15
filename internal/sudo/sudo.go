@@ -41,6 +41,9 @@ func Cached(ctx context.Context) bool {
 // input, never in its arguments.
 func Validate(ctx context.Context, password string) error {
 	cmd := exec.CommandContext(ctx, Path, "-S", "-v", "-p", "")
+	// sudo's messages are translated; in the C locale a refusal reads the
+	// same everywhere.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	cmd.Stdin = strings.NewReader(password + "\n")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
