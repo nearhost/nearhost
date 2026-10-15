@@ -1,10 +1,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
+	"github.com/nearhost/nearhost/internal/tui"
 	"os"
 	"strings"
 	"testing"
@@ -94,23 +93,30 @@ func TestAdviceForAConfiguredProject(t *testing.T) {
 	}
 }
 
-func TestTrustRunsWithTheTerminal(t *testing.T) {
+// Trusting the CA asks for the password in the box when sudo needs it,
+// and runs out of sight: nothing reaches the terminal under the interface.
+func TestTrustAsksInTheBox(t *testing.T) {
 	trust := newFake()
-	var shown bytes.Buffer
 	u := formEngine(t)
 	u.b.up.trust = trust.backend()
-	u.suspend = func(_ context.Context, fn func(io.Reader, io.Writer) error) error {
-		return fn(strings.NewReader(""), &shown)
-	}
+	f := &fakeRoot{needed: true, sticks: true}
+	u.root = f.root()
 	if err := u.Trust(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if trust.installs != 1 || !strings.Contains(shown.String(), "You may be asked for your password.") {
-		t.Errorf("installs %d, shown %q", trust.installs, shown.String())
+	if trust.installs != 1 || len(f.asked) != 1 || f.suspended != 0 || f.said.Len() != 0 {
+		t.Errorf("installs %d, asked %v, suspended %d, said %q", trust.installs, f.asked, f.suspended, f.said.String())
+	}
+	if !strings.Contains(f.asked[0], "trust its local certificate authority") {
+		t.Errorf("asked %q", f.asked[0])
 	}
 	trust.instErr = errors.New("the password was refused")
 	if err := u.Trust(context.Background()); err == nil || !strings.Contains(err.Error(), "the password was refused") {
 		t.Errorf("a refused trust = %v", err)
+	}
+	u.root = (&fakeRoot{needed: true, askErr: tui.ErrPasswordCancelled}).root()
+	if err := u.Trust(context.Background()); err == nil || err.Error() != "you cancelled the password; the CA is not trusted yet" {
+		t.Errorf("cancelled = %v", err)
 	}
 }
 

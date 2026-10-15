@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +41,7 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 			*ran = true
 			return nil
 		},
-		applier:   func(context.Context) hosts.Applier { return func([]string) error { return nil } },
+		applier:   func(context.Context, bool) hosts.Applier { return func([]string) error { return nil } },
 		readHosts: func() (string, error) { return "", nil },
 		open:      func(string) error { return nil },
 		workDir:   func() (string, error) { return t.TempDir(), nil },
@@ -89,48 +87,43 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var said bytes.Buffer
-	suspended := 0
-	suspend := func(_ context.Context, fn func(io.Reader, io.Writer) error) error {
-		suspended++
-		return fn(strings.NewReader(""), &said)
-	}
+	f := &fakeRoot{needed: true, sticks: true}
 	var wrote [][]string
-	applier := func(context.Context) hosts.Applier {
+	var prompted []bool
+	applier := func(_ context.Context, prompt bool) hosts.Applier {
 		return func(aliases []string) error {
 			wrote = append(wrote, aliases)
+			prompted = append(prompted, prompt)
 			return hosts.Apply(path, aliases)
 		}
 	}
-	ensure := hostsThrough(suspend, path, applier)
+	ensure := hostsThrough(f.root(), path, applier)
 	if err := ensure(context.Background(), []string{"a.test", "b.test"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ensure(context.Background(), []string{"a.test", "b.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if suspended != 1 || len(wrote) != 1 {
-		t.Fatalf("suspended %d times, wrote %v", suspended, wrote)
+	if want := "Nearhost needs your password to add a.test, b.test to " + path + "."; strings.Join(f.asked, "|") != want {
+		t.Errorf("asked %q, want %q", f.asked, want)
 	}
-	if want := "Nearhost needs your password to add a.test, b.test to " + path + ".\n"; said.String() != want {
-		t.Errorf("said %q, want %q", said.String(), want)
+	if len(wrote) != 1 || prompted[0] || f.suspended != 0 {
+		t.Fatalf("wrote %v, prompted %v, suspended %d", wrote, prompted, f.suspended)
 	}
-	// A start that has ended by the time the block needs changing does not
-	// take the terminal.
+	// A start that has ended by the time the block needs changing asks
+	// nothing.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	before := suspended
 	if err := ensure(ctx, []string{"d.test"}); err == nil {
 		t.Error("an ended start updated the hosts block")
 	}
-	if suspended != before {
-		t.Error("an ended start took the terminal")
+	if len(f.asked) != 1 {
+		t.Error("an ended start asked for the password")
 	}
-	refused := hostsThrough(func(context.Context, func(io.Reader, io.Writer) error) error {
-		return errors.New("sudo: a password is required")
-	}, path, applier)
-	if err := refused(context.Background(), []string{"c.test"}); err == nil || !strings.Contains(err.Error(), "password") {
-		t.Errorf("refused = %v", err)
+	// A password cancelled says what was not done.
+	cancelled := hostsThrough((&fakeRoot{needed: true, askErr: tui.ErrPasswordCancelled}).root(), path, applier)
+	if err := cancelled(context.Background(), []string{"c.test"}); err == nil || err.Error() != "you cancelled the password, so c.test was not added to "+path {
+		t.Errorf("cancelled = %v", err)
 	}
 }
 

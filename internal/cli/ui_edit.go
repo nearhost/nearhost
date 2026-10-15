@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -64,19 +65,29 @@ func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvic
 	return advice, errors.Join(err, files.close())
 }
 
-// Trust runs what `nearhost trust` does, in the plain terminal, so the
-// system can ask for a password.
+// Trust runs what `nearhost trust` does, as root, asking for the password
+// in the interface when sudo needs it. Its output goes to the terminal only
+// when it runs there.
 func (u *uiEngine) Trust(ctx context.Context) error {
-	if u.suspend == nil {
+	if u.root.ask == nil {
 		return errors.New("the interface is not running")
 	}
-	return u.suspend(ctx, func(in io.Reader, out io.Writer) error {
+	const why = "Nearhost needs your password to trust its local certificate authority, so browsers accept https://<name>.test."
+	err := u.root.run(ctx, why, func(ctx context.Context, terminal io.Writer) error {
+		out := io.Discard
+		if terminal != nil {
+			out = terminal
+		}
 		root := newRootCmd()
 		root.AddCommand(newTrustCmd(u.b.up.trust))
 		root.SetArgs([]string{"trust"})
-		root.SetIn(in)
+		root.SetIn(strings.NewReader(""))
 		root.SetOut(out)
 		root.SetErr(out)
 		return root.ExecuteContext(ctx)
 	})
+	if errors.Is(err, tui.ErrPasswordCancelled) {
+		return errors.New("you cancelled the password; the CA is not trusted yet")
+	}
+	return err
 }

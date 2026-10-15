@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,8 +31,11 @@ type uiBackend struct {
 	// program that runs m.
 	run func(m *tui.Model, s *tui.Suspender) error
 	// applier is the privileged hosts write, given the context of the start
-	// that needs it.
-	applier func(ctx context.Context) hosts.Applier
+	// that needs it; prompt says whether sudo may prompt (only in the
+	// terminal).
+	applier func(ctx context.Context, prompt bool) hosts.Applier
+	// root reaches sudo, for steps that need root.
+	root rootBackend
 	// readHosts returns the content of the hosts file.
 	readHosts func() (string, error)
 	// open opens a URL in the browser.
@@ -57,15 +61,16 @@ func systemUI() uiBackend {
 			_, err := p.Run()
 			return err
 		},
-		applier: func(ctx context.Context) hosts.Applier {
+		applier: func(ctx context.Context, prompt bool) hosts.Applier {
 			exe, err := os.Executable()
 			if err != nil {
 				return func([]string) error { return err }
 			}
 			// The applier ends sudo when ctx does, so a project stopped
 			// during the password prompt stops waiting for it.
-			return hosts.SudoApplierContext(ctx, exe, hosts.DefaultPath)
+			return hosts.SudoApplierWith(ctx, exe, hosts.DefaultPath, terminalPrompt, !prompt)
 		},
+		root: systemRoot(),
 		readHosts: func() (string, error) {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
@@ -120,7 +125,8 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		return err
 	}
 	var suspender tui.Suspender
-	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(suspender.Run, hosts.DefaultPath, b.applier))
+	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run}
+	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(root, hosts.DefaultPath, b.applier))
 	if err != nil {
 		return err
 	}
@@ -128,27 +134,33 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way.
 	defer eng.Shutdown(context.Background())
-	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, suspend: suspender.Run}
+	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
 	return b.run(tui.New(back, dir), &suspender)
 }
 
 // hostsThrough is an EnsureHosts for the interface: when the hosts block has
-// to change, it suspends the interface, says why the password is needed and
-// runs the privileged write in the plain terminal.
-func hostsThrough(suspend func(context.Context, func(io.Reader, io.Writer) error) error, path string, applier func(context.Context) hosts.Applier) func(context.Context, []string) error {
+// to change, it runs the privileged write as root, asking for the password
+// in the interface when sudo needs it.
+func hostsThrough(root asRoot, path string, applier func(ctx context.Context, prompt bool) hosts.Applier) func(context.Context, []string) error {
 	return func(ctx context.Context, aliases []string) error {
 		_, err := hosts.Ensure(path, aliases, func(want []string) error {
 			// A start that has ended since it asked needs no password.
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			return suspend(ctx, func(_ io.Reader, out io.Writer) error {
-				if err := ctx.Err(); err != nil {
-					return err // ended while the request waited its turn
-				}
-				fmt.Fprintf(out, "Nearhost needs your password to add %s to %s.\n", strings.Join(want, ", "), path)
-				return applier(ctx)(want)
+			names := strings.Join(want, ", ")
+			why := fmt.Sprintf("Nearhost needs your password to add %s to %s.", names, path)
+			err := root.run(ctx, why, func(ctx context.Context, terminal io.Writer) error {
+				return applier(ctx, terminal != nil)(want)
 			})
+			if errors.Is(err, tui.ErrPasswordCancelled) {
+				verb := "were"
+				if len(want) == 1 {
+					verb = "was"
+				}
+				return fmt.Errorf("you cancelled the password, so %s %s not added to %s", names, verb, path)
+			}
+			return err
 		})
 		return err
 	}
@@ -165,8 +177,8 @@ type uiEngine struct {
 	// editMu makes edits of the config file one at a time, so none saves
 	// over another.
 	editMu sync.Mutex
-	// suspend runs a function with the terminal, the interface suspended.
-	suspend func(ctx context.Context, fn func(io.Reader, io.Writer) error) error
+	// root runs steps that need root.
+	root asRoot
 }
 
 func (u *uiEngine) ConfigPath() string { return u.path }
