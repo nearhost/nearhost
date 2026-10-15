@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Answers of the password box, beside what the check itself returns.
@@ -131,7 +132,8 @@ func (b *passwordBox) update(msg tea.Msg) tea.Cmd {
 }
 
 func (b *passwordBox) lines(width int) []string {
-	lines := wrap(clean(b.why), width)
+	// Between words only: a reason ends in a path more often than not.
+	lines := strings.Split(ansi.Wrap(clean(b.why), width, ""), "\n")
 	lines = append(lines, "")
 	lines = append(lines, field("password", b.input.View(), width)...)
 	if b.busy {
