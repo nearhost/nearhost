@@ -129,7 +129,7 @@ func TestFormTakesTheKeys(t *testing.T) {
 	if m.quitting || len(f.forms.opened) != 0 || len(f.forms.checked) != 0 {
 		t.Error("a shortcut ran while the form was open")
 	}
-	m.Update(tea.MouseClickMsg{X: 3, Y: 2, Button: tea.MouseLeft})
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 2, Button: tea.MouseLeft})
 	if m.sel != homeKey {
 		t.Errorf("a click in the sidebar selected %q", m.sel)
 	}

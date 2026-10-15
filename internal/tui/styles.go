@@ -19,6 +19,11 @@ var (
 	colourDim    = lipgloss.Color("#7C8479")
 	colourAmber  = lipgloss.Color("#F2B84B")
 	colourRed    = lipgloss.Color("#F26B6B")
+	// colourLine draws rules and borders; colourSelected fills the selected
+	// row; colourFaint is the screen behind an open form.
+	colourLine     = lipgloss.Color("#2A312B")
+	colourSelected = lipgloss.Color("#1F261F")
+	colourFaint    = lipgloss.Color("#3A413B")
 )
 
 var (
@@ -29,6 +34,9 @@ var (
 	styleRed      = lipgloss.NewStyle().Foreground(colourRed)
 	styleSelected = lipgloss.NewStyle().Foreground(colourGround).Background(colourBeacon)
 	styleLabel    = lipgloss.NewStyle().Foreground(colourDim).Width(labelWidth)
+	styleMark     = lipgloss.NewStyle().Bold(true).Foreground(colourBeacon)
+	styleRule     = lipgloss.NewStyle().Foreground(colourLine)
+	styleFaint    = lipgloss.NewStyle().Foreground(colourFaint)
 )
 
 // labelWidth is the width of the labels of a panel's fields.
@@ -113,4 +121,36 @@ func fit(s string, width int) string {
 		s += strings.Repeat(" ", pad)
 	}
 	return s
+}
+
+// spread draws left at the start and right at the end of exactly width
+// cells, cutting left short when both do not fit.
+func spread(left, right string, width int) string {
+	rw := ansi.StringWidth(right)
+	if rw == 0 {
+		return fit(left, width)
+	}
+	if rw >= width {
+		return fit(right, width)
+	}
+	return fit(left, width-rw-1) + " " + right
+}
+
+// rule is a horizontal line width cells long.
+func rule(width int) string {
+	return styleRule.Render(strings.Repeat("─", max(width, 0)))
+}
+
+// section heads a part of a panel: its label, a rule, and what is said on
+// the right, exactly width cells.
+func section(label, right string, width int) string {
+	head := styleDim.Render(label + " ")
+	if right != "" {
+		right = " " + right
+	}
+	gap := width - ansi.StringWidth(head) - ansi.StringWidth(right)
+	if gap < 1 {
+		return fit(head+right, width)
+	}
+	return head + rule(gap) + right
 }

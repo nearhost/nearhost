@@ -243,13 +243,13 @@ func TestQuitStopsEverythingAndASecondQuitCutsItShort(t *testing.T) {
 func TestMouse(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
-	m.Update(tea.MouseClickMsg{X: 3, Y: 2, Button: tea.MouseLeft}) // website
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 2, Button: tea.MouseLeft}) // website
 	if m.sel != rowKey(rowProject, "website") {
 		t.Fatalf("click selected %q", m.sel)
 	}
-	// The footer reads "enter start/stop · o open · ..."; o is at column 19.
-	m.Update(tea.MouseClickMsg{X: 19, Y: 29, Button: tea.MouseLeft})
-	_, cmd := m.Update(tea.MouseClickMsg{X: 19, Y: 29, Button: tea.MouseLeft})
+	// The footer reads " enter start/stop · o open · ..."; o is at column 20.
+	m.Update(tea.MouseClickMsg{X: 20, Y: 29, Button: tea.MouseLeft})
+	_, cmd := m.Update(tea.MouseClickMsg{X: 20, Y: 29, Button: tea.MouseLeft})
 	run(m, cmd)
 	if len(f.opened) == 0 || f.opened[0] != "https://website.test" {
 		t.Errorf("footer click opened %v", f.opened)
@@ -365,7 +365,9 @@ func TestEmptyConfigFileIsIgnored(t *testing.T) {
 	if len(f.applied) != 0 {
 		t.Fatalf("applied an empty file: %+v", f.applied)
 	}
-	wantScreen(t, m, "Ignored a change to", "config.yaml: the file is") // "empty" wraps
+	if log := strings.Join(m.logs.lines(homeKey, ""), "\n"); !strings.Contains(log, "Ignored a change to "+f.path+": the file is empty") {
+		t.Errorf("log:\n%s", log)
+	}
 }
 
 // A start or stop the engine refuses outright, such as one while the proxy
@@ -417,7 +419,7 @@ func TestIgnoredChangeSaysHowToRetry(t *testing.T) {
 	f.path = "/etc/nh.yaml" // short enough for the line not to wrap
 	m := sized(f)
 	m.Update(appliedMsg{errBoom})
-	wantScreen(t, m, "Ignored a change to /etc/nh.yaml: boom. Save the file again to apply", "│ it.")
+	wantScreen(t, m, "Ignored a change to /etc/nh.yaml: boom. Save the file again to apply", "│  it.")
 }
 
 // Quitting while an Apply runs ends it, so the shutdown does not wait for
@@ -484,10 +486,10 @@ func TestSidebarKeepsTheSelectionInView(t *testing.T) {
 		t.Fatalf("selected %q", m.sel)
 	}
 	lines := strings.Split(screen(m), "\n")
-	if !strings.Contains(lines[28], "p39") {
+	if !strings.Contains(lines[bodyTop+m.bodyHeight()-1], "p39") {
 		t.Errorf("the selected row is not on the last sidebar line:\n%s", screen(m))
 	}
-	m.Update(tea.MouseClickMsg{X: 3, Y: 27, Button: tea.MouseLeft})
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + m.bodyHeight() - 2, Button: tea.MouseLeft})
 	if m.sel != rowKey(rowProject, "p38") {
 		t.Errorf("click selected %q, want the row drawn there", m.sel)
 	}

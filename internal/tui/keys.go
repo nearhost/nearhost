@@ -46,18 +46,18 @@ const footerSep = " · "
 // footer draws the footer line.
 func (m *Model) footer() string {
 	if m.quitting {
-		return styleAmber.Render(fit("Stopping…", m.width))
+		return m.bar(styleAmber.Render("Stopping…"), "")
 	}
 	parts := make([]string, 0, len(m.footerItems()))
 	for _, it := range m.footerItems() {
 		parts = append(parts, styleBeacon.Render(it.key)+" "+styleDim.Render(it.label))
 	}
-	return fit(strings.Join(parts, styleDim.Render(footerSep)), m.width)
+	return m.bar(strings.Join(parts, styleDim.Render(footerSep)), "")
 }
 
 // footerKeyAt is the key of the footer action at column x, or "".
 func (m *Model) footerKeyAt(x int) string {
-	at := 0
+	at := 1 // the footer starts a cell in
 	for i, it := range m.footerItems() {
 		if i > 0 {
 			at += ansi.StringWidth(footerSep)
@@ -258,9 +258,10 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		}
 		return m.action(key)
 	}
-	if mouse.X < sidebarWidth {
+	y := mouse.Y - bodyTop
+	if mouse.X < m.sideWidth() && y >= 0 && y < m.bodyHeight() {
 		all := rows(m.cfg, m.collapsed)
-		if i := sidebarTop(all, m.sel, m.height-1) + mouse.Y; i < len(all) {
+		if i := sidebarTop(all, m.sel, m.bodyHeight()) + y; i < len(all) {
 			m.selectRow(all[i].key())
 		}
 	}
@@ -269,7 +270,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
-	if mouse.X < sidebarWidth || m.form != nil {
+	if mouse.X < m.mainX() || m.form != nil {
 		return
 	}
 	switch mouse.Button {
