@@ -1,0 +1,38 @@
+internal/tui/advice.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 42-63,66,70,72,74-83,111
+internal/engine/apply_test.go
+  s_7abd3634f4eb80::t_92f47e4c8f995e 248-263
+internal/tui/editing_minors_test.go
+  s_7abd3634f4eb80::t_a097bcd9caa253 45
+  s_7abd3634f4eb80::t_92f47e4c8f995e 1-44,46-98
+internal/tui/model.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 45-52,150-152,157-161,166,171,206-208
+internal/tui/routes_edit.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 22,25-27,30,34-43,112
+internal/engine/apply.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 29-31,60-69,76,78-82
+internal/tui/keys.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 250-252,254-259
+internal/tui/editing_review_test.go
+  s_7abd3634f4eb80::t_a097bcd9caa253 56,66
+internal/tui/routes_edit_test.go
+  s_7abd3634f4eb80::t_a097bcd9caa253 96,128
+internal/tui/firstrun.go
+  s_7abd3634f4eb80::t_3f03aa9ddcecc2 27-28,54,90-93,95,99-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e37a7a226eb660cd04ca57179a4239f2d36312a",
+  "prompts": {},
+  "sessions": {
+    "s_7abd3634f4eb80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "644f271c-16ab-4e3d-8769-c43fff871f1c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
