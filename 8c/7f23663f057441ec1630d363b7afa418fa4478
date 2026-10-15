@@ -8,6 +8,8 @@ internal/tui/logs.go
   s_f390899c03d13b::t_d3cd54ab58ac66 208-210,214-216
   s_f390899c03d13b::t_a670dc520c1f34 218-220,230-232
   s_f390899c03d13b::t_dba6e38d381ea5 234-236
+internal/tui/logs_test.go
+  s_f390899c03d13b::t_69e9b718af7575 67-75
 ---
 {
   "schema_version": "authorship/3.0.0",
