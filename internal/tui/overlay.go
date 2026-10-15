@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	// boxWidth and boxHeight are the size of a form's box, in a window that
-	// has room for it.
+	// boxWidth is the width of a form's box, and boxHeight its least height,
+	// in a window that has room for them; a form with more to say grows the
+	// box as far as the window allows.
 	boxWidth, boxHeight = 76, 22
 )
 
@@ -21,8 +22,8 @@ var colourBoxEdge = lipgloss.Color("#4A5449")
 // behind it: a terminal has no transparency, so dimming is redrawing.
 func (m *Model) formBox(base string) string {
 	w := min(boxWidth, m.width-4)
-	h := min(boxHeight, m.height-2)
 	inner := w - 6 // the edges, and two cells of space inside each
+	body := m.form.lines(inner)
 	hd := m.form.heading()
 	title := styleTitle.Render(hd.title)
 	if hd.step != "" {
@@ -40,8 +41,8 @@ func (m *Model) formBox(base string) string {
 	keys := m.help
 	keys.SetWidth(inner)
 	bottom := []string{"", keys.ShortHelpView(bindings(m.form.keys()))}
+	h := min(max(boxHeight, len(top)+len(body)+len(bottom)+2), m.height-2)
 	room := h - 2 - len(top) - len(bottom)
-	body := m.form.lines(inner)
 	if len(body) > room {
 		body = body[:room]
 	}

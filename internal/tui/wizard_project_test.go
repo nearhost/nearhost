@@ -79,7 +79,7 @@ func TestProjectFormListsServers(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.sel = rowKey(rowProject, "myapp")
 	press(m, "n")
-	wantScreen(t, m, "Add project · server", "  Local", "▸ mini", "mini.lan", "  New server…", "enter choose · ↑↓ move · esc cancel")
+	wantScreen(t, m, "Add project · server", "  local", "▸ mini", "mini.lan", "  New server…", "enter choose · ↑↓ move · esc cancel")
 }
 
 func TestProjectFormCompletesPaths(t *testing.T) {
@@ -128,7 +128,8 @@ func TestProjectFormAddsAProject(t *testing.T) {
 	if len(f.forms.enabled) != 1 || f.forms.enabled[0][0] != "nearhost/vite" {
 		t.Fatalf("enabled %v", f.forms.enabled)
 	}
-	wantScreen(t, m, "Add project · routes", "8080   web       app (APP_PORT)", "5173   loopback  vite",
+	wantScreen(t, m, "Add project · routes", "server    local", "path      /work/here", "presets   nearhost/vite",
+		"Found 2 ports. Pick what to serve.", "[x] 8080    ‹ web ›       app (APP_PORT)", "[x] 5173    loopback      vite",
 		"Advisory (vite-config-port): Vite reads its port from vite.config.", "server: { port: 5173 }", "registry other (o/p) cannot be read.")
 	press(m, "enter")
 	wantScreen(t, m, "name      here▏", "alias     here.test")
@@ -136,7 +137,7 @@ func TestProjectFormAddsAProject(t *testing.T) {
 	press(m, "ctrl+u")
 	typeText(m, "site.test")
 	settle(m, press(m, "enter"))
-	wantScreen(t, m, "Add project · confirm", "server    Local (this machine)", "path      /work/here", "https://site.test", "8080   web       app (APP_PORT)", "enter add · esc back")
+	wantScreen(t, m, "Add project · confirm", "server    local (this machine)", "path      /work/here", "https://site.test", "8080   web       app (APP_PORT)", "enter add · esc back")
 	settle(m, press(m, "enter"))
 	if len(f.forms.saved) != 1 {
 		t.Fatalf("saved %+v", f.forms.saved)
@@ -155,16 +156,18 @@ func TestProjectFormRoutesNeedOneWebRoute(t *testing.T) {
 	toPath(t, m, 0)
 	settle(m, press(m, "enter")) // /work/here: nothing is web
 	press(m, "enter")
-	wantScreen(t, m, "Choose the web route with space")
+	wantScreen(t, m, "Choose the web route with ← or →")
 	press(m, "down")
-	press(m, "space") // vite: ignore -> web
-	wantScreen(t, m, "5173   web")
+	press(m, "space") // vite: ignore -> web, as loopback means nothing on this machine
+	wantScreen(t, m, "[x] 5173    ‹ web ›")
 	press(m, "up")
 	press(m, "space") // app: ignore -> web, vite back to ignore
-	wantScreen(t, m, "8080   web", "5173   ignore")
-	press(m, "space") // app: web -> ignore; loopback is skipped on this machine
-	wantScreen(t, m, "8080   ignore")
-	press(m, "space")
+	wantScreen(t, m, "[x] 8080    ‹ web ›", "[ ] 5173    ignore")
+	press(m, "space") // the web route stays
+	wantScreen(t, m, "A project needs its web route", "[x] 8080    ‹ web ›")
+	press(m, "right") // app: web -> ignore; loopback is skipped on this machine
+	wantScreen(t, m, "[ ] 8080    ‹ ignore ›")
+	press(m, "right")
 	press(m, "enter")
 	wantScreen(t, m, "Add project · name")
 }
@@ -176,10 +179,12 @@ func TestProjectFormOffersLoopbackOnAServer(t *testing.T) {
 	typeText(m, "~/code/blog")
 	settle(m, press(m, "enter"))
 	press(m, "down")
-	press(m, "space")
-	wantScreen(t, m, "5173   web", "80     ignore")
-	press(m, "space")
-	wantScreen(t, m, "5173   loopback")
+	press(m, "space") // vite: ignore -> loopback
+	wantScreen(t, m, "[x] 5173    ‹ loopback ›", "loopback ports open on 127.0.0.1")
+	press(m, "left") // vite: loopback -> web, which 80 was
+	wantScreen(t, m, "[x] 5173    ‹ web ›", "[ ] 80      ignore")
+	press(m, "right")
+	wantScreen(t, m, "[x] 5173    ‹ loopback ›")
 }
 
 func TestProjectFormAsksForTheWebPortWhenNoneWasFound(t *testing.T) {
