@@ -1,0 +1,21 @@
+internal/tui/overlay.go
+  s_f390899c03d13b::t_6c7ab2d35db809 12-14,44-50
+internal/tui/overlay_test.go
+  s_f390899c03d13b::t_57f68985718fff 4,94-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3fa78ddabdd29785f52ded1db89e9885185d60e",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
