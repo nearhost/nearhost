@@ -245,3 +245,19 @@ func TestStartOnAReplacedRunIsRefusedEvenWhenBusy(t *testing.T) {
 		t.Fatalf("StartProject on a replaced, running project = %v", err)
 	}
 }
+
+// A project renamed in one Apply, at the same server and path, is the same
+// project: it starts only if it was running, as a changed project would.
+func TestPlanApplyTreatsARenameAsTheSameProject(t *testing.T) {
+	old := config.Project{Name: "blog", Server: config.LocalServer, Path: "/p/blog", Alias: "blog.test", Enabled: true,
+		Routes: []config.Route{{Port: 1, Role: config.RoleWeb}}}
+	renamed := old
+	renamed.Name, renamed.Alias = "shop", "shop.test"
+	prev, next := &config.Config{Projects: []config.Project{old}}, &config.Config{Projects: []config.Project{renamed}}
+	if got := planApply(prev, next, func(string) bool { return false }); len(got.start) != 0 {
+		t.Errorf("a stopped project renamed starts: %+v", got)
+	}
+	if got := planApply(prev, next, func(string) bool { return true }); !reflect.DeepEqual(got.start, []string{"shop"}) {
+		t.Errorf("a running project renamed does not start: %+v", got)
+	}
+}

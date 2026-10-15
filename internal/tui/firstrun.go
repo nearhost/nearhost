@@ -24,6 +24,8 @@ type (
 	}
 	// caTrustedMsg closes the first-run screen after the CA was trusted.
 	caTrustedMsg struct{}
+	// firstRunSkippedMsg closes the first-run screen for the session.
+	firstRunSkippedMsg struct{}
 )
 
 func (f *firstRunForm) update(msg tea.Msg) tea.Cmd {
@@ -49,7 +51,7 @@ func (f *firstRunForm) update(msg tea.Msg) tea.Cmd {
 			seq, b := f.seq, f.b
 			return f.w.do(func(ctx context.Context) tea.Msg { return trustedMsg{seq, b.Trust(ctx)} })
 		case "s":
-			return closeForm
+			return func() tea.Msg { return firstRunSkippedMsg{} }
 		}
 	}
 	return nil
@@ -85,12 +87,17 @@ func (f *firstRunForm) keys() []footerItem {
 	return []footerItem{{"enter", label}, {"s", "skip"}}
 }
 
-// offerFirstRun opens the first-run screen when the CA is untrusted, once a
-// session, and not over another form.
+// offerFirstRun opens the first-run screen at the first trust check after
+// the engine started, when the CA is untrusted. It is offered then or not at
+// all: a form open at that moment is not interrupted, and the screen does
+// not open later over what the user is doing; Home's hint says what to do.
 func (m *Model) offerFirstRun() {
-	if m.firstRunShown || m.caTrusted || !m.started || m.form != nil || m.quitting {
+	if m.firstRunShown || !m.started {
 		return
 	}
 	m.firstRunShown = true
+	if m.caTrusted || m.form != nil || m.quitting {
+		return
+	}
 	m.form = &firstRunForm{b: m.b, w: m.work}
 }

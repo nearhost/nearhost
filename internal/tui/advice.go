@@ -39,19 +39,48 @@ func entryOf(p config.Project) string {
 	return fmt.Sprintf("%+v", p)
 }
 
-// readAdvice starts reading the advice of the selected project when it is
-// not known for its current config entry.
-func (m *Model) readAdvice() tea.Cmd {
+// adviceWait is how long the selection rests on a project before its advice
+// is read, so passing over projects reads nothing.
+const adviceWait = 300 * time.Millisecond
+
+// adviceWaitMsg ends the wait for the selection on the row with key to rest.
+type adviceWaitMsg struct{ key string }
+
+// waitForAdvice starts the wait before the selected project's advice is
+// read, when it needs reading and no wait for it is running.
+func (m *Model) waitForAdvice() tea.Cmd {
+	if _, _, need := m.adviceNeeded(); !need || m.adviceWaiting == m.sel {
+		return nil
+	}
+	key := m.sel
+	m.adviceWaiting = key
+	return tea.Tick(adviceWait, func(time.Time) tea.Msg { return adviceWaitMsg{key} })
+}
+
+// adviceNeeded reports whether the selected project's advice must be read:
+// it is not known for the project's current config entry, or reading it
+// failed adviceRetry ago or more.
+func (m *Model) adviceNeeded() (name, of string, need bool) {
 	kind, name := m.selected()
 	if kind != rowProject || m.quitting {
-		return nil
+		return "", "", false
 	}
 	p, ok := m.cfg.Project(name)
 	if !ok {
-		return nil
+		return "", "", false
 	}
-	of := entryOf(*p)
+	of = entryOf(*p)
 	if a, known := m.advice[name]; known && a.of == of && (a.err == "" || m.now().Sub(a.failed) < adviceRetry) {
+		return "", "", false
+	}
+	return name, of, true
+}
+
+// readAdvice starts reading the advice of the selected project when it is
+// needed.
+func (m *Model) readAdvice() tea.Cmd {
+	name, of, need := m.adviceNeeded()
+	if !need {
 		return nil
 	}
 	m.advice[name] = advice{of: of, loading: true}
@@ -79,7 +108,7 @@ func (m *Model) adviceLinesFor(name string, width int) []string {
 	a := m.advice[name]
 	var lines []string
 	switch {
-	case a.loading:
+	case a.loading, m.adviceWaiting == rowKey(rowProject, name):
 		lines = append(lines, "", busyLine("Reading advice…"))
 	case a.err != "":
 		lines = append(lines, "")
