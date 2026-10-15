@@ -1,0 +1,29 @@
+internal/tui/editing_review_test.go
+  s_f390899c03d13b::t_f3abefbac18b2d 14
+internal/tui/overlay.go
+  s_f390899c03d13b::t_49b3edf5979d52 12-14,26,44
+internal/tui/overlay_test.go
+  s_f390899c03d13b::t_fab4a6fa373192 75-92
+internal/tui/project_edit_test.go
+  s_f390899c03d13b::t_87d9a2fcd5596f 31-34
+internal/tui/wizard_project.go
+  s_f390899c03d13b::t_3d06c99ece2b93 79-84,425,553-558,568,576-580,582-593,595-616,846,859,920,955-974,980-984,986-996,998-1008,1010,1076
+internal/tui/wizard_project_test.go
+  s_f390899c03d13b::t_a79f8cfb63d1ec 82,131-132,140,159,161-162,165-170,182-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ce91d187e9588e33ca189404d257a3baf09672e",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
