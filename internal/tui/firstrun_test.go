@@ -52,7 +52,7 @@ func TestFirstRunTrusts(t *testing.T) {
 	}
 	wantScreen(t, m, "The local CA is now trusted.")
 	run(m, next) // Home reads the machine again
-	wantScreen(t, m, "local CA  trusted")
+	wantScreen(t, m, "local CA  ● trusted")
 }
 
 func TestFirstRunSkipsForTheSession(t *testing.T) {
@@ -66,5 +66,5 @@ func TestFirstRunSkipsForTheSession(t *testing.T) {
 	if m.form != nil {
 		t.Error("the first-run screen came back in the same session")
 	}
-	wantScreen(t, m, "local CA  not trusted. Run nearhost trust")
+	wantScreen(t, m, "local CA  ● not trusted. Run nearhost trust")
 }

@@ -53,7 +53,8 @@ func TestHomeShowsTheMachine(t *testing.T) {
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "proxy     ● https :443 · http :80", "local CA  not trusted. Run nearhost trust", "hosts     2 aliases", "config    "+f.path, "running   1 of 3")
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 aliases", "config    "+f.path,
+		"running   1 of 3 projects on 1 of 2 servers")
 }
 
 func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
@@ -62,7 +63,7 @@ func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
 	if cmd := run(m, func() tea.Msg { return startedMsg{errBoom} }); cmd != nil {
 		t.Error("projects were started without a proxy")
 	}
-	wantScreen(t, m, "proxy     ● down: boom", "The proxy could not start: boom")
+	wantScreen(t, m, "proxy     ● down", "● proxy  down", "why       boom", "The proxy could not start: boom")
 }
 
 func TestStartedEngineStartsEveryEnabledProject(t *testing.T) {
@@ -116,8 +117,8 @@ func TestServerPanelShowsTheErrorAndFix(t *testing.T) {
 	f.srvErrs["mini"] = "user@mini.lan: Permission denied (publickey)."
 	m := sized(f)
 	m.sel = rowKey(rowServer, "mini")
-	wantScreen(t, m, "ssh host  mini.lan", "state     ○ auth failed", "error     user@mini.lan: Permission denied (publickey).",
-		"fix       Run `ssh mini.lan` once in a terminal to fix access.", "projects  2", "enter collapse")
+	wantScreen(t, m, "mini", "○ auth failed", "ssh host  mini.lan", "why       user@mini.lan: Permission denied (publickey).",
+		"fix       Run ssh mini.lan once in a terminal to fix access, then", "press r.", "projects  myapp, old", "enter collapse")
 }
 
 func TestTooSmall(t *testing.T) {
@@ -390,9 +391,9 @@ func TestHomeReadsTheMachineOnTheTick(t *testing.T) {
 	}
 	f.trusted = false
 	m.firstRunShown = true // this test is about Home, not the first-run screen
-	wantScreen(t, m, "local CA  trusted")
+	wantScreen(t, m, "local CA  ● trusted")
 	run(m, m.readMachine())
-	wantScreen(t, m, "local CA  not trusted")
+	wantScreen(t, m, "local CA  ● not trusted")
 }
 
 // With the proxy down, Home says how to get round it, even with no projects.
@@ -401,7 +402,8 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		f := newFake(t, cfg)
 		m := sized(f)
 		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
-		wantScreen(t, m, "down: HTTPS port 443 is in use by nginx (pid 12)", "fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
+		wantScreen(t, m, "● proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
+			"fix       Quit the program using the port, or run nearhost with --", "https-port and --http-port.")
 	}
 }
 
