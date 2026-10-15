@@ -42,11 +42,14 @@ type Model struct {
 	filtering bool
 	form      form // the open add form; nil when none is
 
-	routeFocus bool              // the project panel's routes have the keys
-	routeRow   int               // the route selected there
-	panelErr   string            // why the last change made in the panel was refused
-	advice     map[string]advice // by project name
-	scroll     int               // log lines scrolled back from the newest
+	routeFocus bool   // the project panel's routes have the keys
+	routeRow   int    // the route selected there
+	panelErr   string // why the last change made in the panel was refused
+	// adviceWaiting is the row whose advice is read when the selection has
+	// rested on it; empty when none is.
+	adviceWaiting string
+	advice        map[string]advice // by project name
+	scroll        int               // log lines scrolled back from the newest
 
 	started  bool  // the engine started
 	proxyErr error // why the engine could not start
@@ -144,22 +147,28 @@ func tick() tea.Cmd {
 // Update handles a message.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	// The advice of the selected project is read when it is not known.
-	return model, tea.Batch(cmd, m.readAdvice())
+	// The advice of the selected project is read when it is not known, once
+	// the selection has rested on it.
+	return model, tea.Batch(cmd, m.waitForAdvice())
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case adviceWaitMsg:
+		m.adviceWaiting = ""
+		if msg.key == m.sel {
+			return m, m.readAdvice()
+		}
 	case adviceMsg:
 		m.gotAdvice(msg)
 	case reconnectedMsg:
 		if msg.err != nil {
-			m.panelErr = msg.err.Error()
+			m.refused(rowKey(rowServer, msg.name), msg.err)
 		}
 	case editedMsg:
 		if msg.err != nil {
 			m.editing = false
-			m.panelErr = msg.err.Error()
+			m.refused(msg.key, msg.err)
 			return m, nil
 		}
 		if msg.note != "" {
@@ -194,6 +203,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case machineMsg:
 		m.caTrusted, m.hostsState = msg.caTrusted, msg.hostsState
 		m.offerFirstRun()
+	case firstRunSkippedMsg:
+		m.form = nil
+		m.selectRow(homeKey)
 	case caTrustedMsg:
 		m.form = nil
 		m.selectRow(homeKey)

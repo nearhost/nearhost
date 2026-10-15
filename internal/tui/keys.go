@@ -247,10 +247,16 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		return nil
 	}
 	if mouse.Y == m.height-1 {
-		if key := m.footerKeyAt(mouse.X); key != "" {
-			return m.action(key)
+		key := m.footerKeyAt(mouse.X)
+		if key == "" {
+			return nil
 		}
-		return nil
+		if m.routeFocus {
+			if cmd, ok := m.routesKey(key); ok {
+				return cmd // the footer then lists the routes' keys
+			}
+		}
+		return m.action(key)
 	}
 	if mouse.X < sidebarWidth {
 		all := rows(m.cfg, m.collapsed)

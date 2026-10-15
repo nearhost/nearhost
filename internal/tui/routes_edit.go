@@ -19,15 +19,26 @@ func errNoLongerConfigured(name string) error {
 type editedMsg struct {
 	err  error
 	note string // logged when the edit was saved
+	key  string // the row the edit was made from
 }
 
-// editConfig saves an edit of the config file in the background; when it
-// is saved the config is applied.
-func (m *Model) editConfig(note string, fn func(cfg *config.Config) error) tea.Cmd {
+// editConfig saves an edit of the config file, made from the row with key,
+// in the background; when it is saved the config is applied.
+func (m *Model) editConfig(key, note string, fn func(cfg *config.Config) error) tea.Cmd {
 	b := m.b
 	return m.work.do(func(context.Context) tea.Msg {
-		return editedMsg{b.EditConfig(fn), note}
+		return editedMsg{b.EditConfig(fn), note, key}
 	})
+}
+
+// refused shows why a change made from the row with key was refused: in the
+// panel when that row is still selected, otherwise in its log.
+func (m *Model) refused(key string, err error) {
+	if key == m.sel {
+		m.panelErr = err.Error()
+		return
+	}
+	m.logs.noteOn(key, sentence(err.Error()))
 }
 
 // routesKey handles a key while the project panel's routes have the focus,
@@ -98,7 +109,7 @@ func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
 		return nil // the last change is not applied yet
 	}
 	m.editing, m.panelErr = true, ""
-	return m.editConfig("", func(cfg *config.Config) error {
+	return m.editConfig(rowKey(rowProject, name), "", func(cfg *config.Config) error {
 		q, ok := cfg.Project(name)
 		if !ok {
 			return errNoLongerConfigured(name)

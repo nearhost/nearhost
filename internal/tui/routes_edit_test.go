@@ -93,7 +93,7 @@ func TestProjectAdvice(t *testing.T) {
 	m.selectRow(rowKey(rowProject, "myapp"))
 	_, read := m.Update(nil)
 	wantScreen(t, m, "◐ Reading advice…")
-	run(m, read)
+	run(m, run(m, read)) // the wait for the selection to rest, then the read
 	wantScreen(t, m, "Advisory (app-url): APP_URL should be https://myapp.test.", "APP_URL=https://myapp.test", "Advisory (vite-port)")
 
 	// Read once for an entry; read again when the entry changes.
@@ -125,7 +125,7 @@ func TestProjectAdviceThatCannotBeRead(t *testing.T) {
 	m := sized(f)
 	m.selectRow(rowKey(rowProject, "myapp"))
 	_, read := m.Update(nil)
-	run(m, read)
+	run(m, run(m, read))
 	wantScreen(t, m, "Advice could not be read: ssh mini.lan failed", "PORT   ROLE")
 	press(m, "y")
 	wantScreen(t, m, "myapp has no advice to copy.")

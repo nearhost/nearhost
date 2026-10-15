@@ -53,7 +53,7 @@ func TestAdviceIsRetriedAfterAFailure(t *testing.T) {
 	m.now = func() time.Time { return now }
 	m.selectRow(rowKey(rowProject, "myapp"))
 	_, read := m.Update(nil)
-	run(m, read)
+	run(m, run(m, read))
 	if _, again := m.Update(nil); again != nil {
 		t.Fatal("advice was read again at once")
 	}
@@ -63,7 +63,7 @@ func TestAdviceIsRetriedAfterAFailure(t *testing.T) {
 	if again == nil {
 		t.Fatal("advice was not read again")
 	}
-	run(m, again)
+	run(m, run(m, again))
 	if len(f.edit.adviceAsked) != 2 {
 		t.Errorf("asked %d times", len(f.edit.adviceAsked))
 	}

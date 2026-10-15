@@ -26,7 +26,9 @@ type applyPlan struct {
 //     has just been enabled, and is enabled.
 //   - Otherwise a project that was enabled and is now disabled is stopped,
 //     and one that was disabled and is now enabled is started.
-//   - A new project is started when it is enabled.
+//   - A new project is started when it is enabled, unless it takes the
+//     place (server and path) of a project gone from the config: that is a
+//     rename, and it starts only if the old one was active.
 //   - Everything else is left as it is, including a project stopped by hand.
 func planApply(prev, next *config.Config, active func(name string) bool) applyPlan {
 	plan := applyPlan{replace: map[string]bool{}}
@@ -55,13 +57,29 @@ func planApply(prev, next *config.Config, active func(name string) bool) applyPl
 			plan.stop = append(plan.stop, p.Name)
 		}
 	}
+	// A project gone from the config, with a new one at the same server and
+	// path, is taken as renamed: the new one starts only if the old was
+	// active, as a changed project would.
+	type place struct{ server, path string }
+	renamed := map[place]bool{} // place -> the project gone from there was active
+	for _, p := range prev.Projects {
+		if _, kept := next.Project(p.Name); !kept {
+			renamed[place{p.Server, p.Path}] = renamed[place{p.Server, p.Path}] || active(p.Name)
+		}
+	}
 	started := map[string]bool{}
 	for _, q := range next.Projects {
 		if started[q.Name] || !q.Enabled {
 			continue
 		}
 		p, existed := prev.Project(q.Name)
+		wasActive, isRename := renamed[place{q.Server, q.Path}]
 		switch {
+		case !existed && isRename:
+			if wasActive {
+				started[q.Name] = true
+				plan.start = append(plan.start, q.Name)
+			}
 		case !existed,
 			!p.Enabled,
 			plan.replace[q.Name] && active(q.Name):
