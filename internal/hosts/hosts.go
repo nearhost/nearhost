@@ -2,6 +2,7 @@
 package hosts
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -321,16 +322,31 @@ const sudoPrompt = "nearhost needs your password to update /etc/hosts: "
 func SudoApplierWith(ctx context.Context, executable, path, prompt string, noPrompt bool) Applier {
 	return func(aliases []string) error {
 		cmd := sudoCommand(ctx, executable, path, prompt, noPrompt, aliases)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		// Without a prompt the terminal is in use by someone else (the
+		// interface): what sudo and the command say is kept for the error.
+		var said bytes.Buffer
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if noPrompt {
+			cmd.Stdout, cmd.Stderr = &said, &said
+		}
 		if err := cmd.Run(); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				err = ctxErr
+				return fmt.Errorf("sudo hosts apply: %w", ctxErr)
+			}
+			if line := lastLine(said.String()); line != "" {
+				return fmt.Errorf("sudo hosts apply: %s", line)
 			}
 			return fmt.Errorf("sudo hosts apply: %w", err)
 		}
 		return nil
 	}
+}
+
+// lastLine is the last line of what a command said that is not empty: the
+// error it ended with.
+func lastLine(said string) string {
+	lines := strings.Split(strings.TrimSpace(said), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func sudoCommand(ctx context.Context, executable, path, prompt string, noPrompt bool, aliases []string) *exec.Cmd {

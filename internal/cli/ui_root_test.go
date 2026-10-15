@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/sudo"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -155,5 +156,43 @@ func TestTheInterfaceWordsSudosPrompt(t *testing.T) {
 	}
 	if got := os.Getenv("SUDO_PROMPT"); got != " Password for %p: " {
 		t.Errorf("SUDO_PROMPT = %q", got)
+	}
+}
+
+// Root steps take turns: one that waited while the box was open for
+// another finds the credentials cached and asks nothing; one whose start
+// ends while it waits gives up.
+func TestAsRootTakesTurns(t *testing.T) {
+	f := &fakeRoot{needed: true, sticks: true}
+	root := f.root()
+	root.turn = make(chan struct{}, 1)
+	release := make(chan struct{})
+	ask := root.ask
+	root.ask = func(ctx context.Context, why string, check func(context.Context, string) error) error {
+		<-release // the box stays open
+		return ask(ctx, why, check)
+	}
+	var first, second step
+	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+	go func() { firstDone <- root.run(context.Background(), "First.", "Done.", first.run) }()
+	time.Sleep(50 * time.Millisecond)
+	go func() { secondDone <- root.run(context.Background(), "Second.", "Done.", second.run) }()
+	ctx, cancel := context.WithCancel(context.Background())
+	thirdDone := make(chan error, 1)
+	go func() { thirdDone <- root.run(ctx, "Third.", "Done.", (&step{}).run) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-thirdDone; !errors.Is(err, context.Canceled) {
+		t.Errorf("a start that ended while waiting = %v", err)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(f.asked, "|") != "First." || first.runs != 1 || second.runs != 1 {
+		t.Errorf("asked %v; runs %d, %d", f.asked, first.runs, second.runs)
 	}
 }

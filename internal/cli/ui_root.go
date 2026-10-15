@@ -52,6 +52,9 @@ type asRoot struct {
 	suspend func(ctx context.Context, fn func(io.Reader, io.Writer) error) error
 	// width is the terminal's width.
 	width func() int
+	// turn lets one step at a time ask, so a step that waited finds the
+	// credentials the one before it cached. nil: no turns (tests).
+	turn chan struct{}
 }
 
 // terminalPrompt is how sudo's password prompt is worded in the terminal.
@@ -63,7 +66,20 @@ const terminalPrompt = " Password for %p: "
 // saying done when it went well. step is given the terminal when it runs
 // there, where it may prompt; otherwise nil, and it must not prompt.
 func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context.Context, terminal io.Writer) error) error {
-	if !r.sudo.needed() || r.sudo.cached(ctx) {
+	if !r.sudo.needed() {
+		return step(ctx, nil)
+	}
+	if r.turn != nil {
+		select {
+		case r.turn <- struct{}{}:
+			defer func() { <-r.turn }()
+		case <-ctx.Done():
+			return ctx.Err() // the start ended while another step asked
+		}
+	}
+	// Checked with the turn held: a step that waited finds the credentials
+	// the one before it cached.
+	if r.sudo.cached(ctx) {
 		return step(ctx, nil)
 	}
 	if err := r.ask(ctx, why, r.sudo.validate); err != nil {
