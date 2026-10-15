@@ -161,3 +161,37 @@ func TestAReloadKeepsADroppedServerDropped(t *testing.T) {
 		t.Errorf("a server gone from the config is still held: %+v", hh)
 	}
 }
+
+// A project left running while its server is dropped comes back to running
+// when the server is connected again, with its forwards, and is not
+// started afresh.
+func TestConnectBringsARunningProjectBack(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.DisconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, h, "myapp", StateDegraded)
+	events, stop := h.eng.Events().Subscribe(64)
+	defer stop()
+	if err := h.eng.ConnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, h, "myapp", StateRunning)
+	if f := h.forwards("mini"); len(f) != 2 {
+		t.Errorf("forwards after connecting = %v", f)
+	}
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project == "myapp" && ev.State == StateStarting {
+				t.Error("connecting started the project afresh")
+			}
+			continue
+		default:
+		}
+		break
+	}
+}
