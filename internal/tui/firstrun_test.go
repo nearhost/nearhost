@@ -21,7 +21,7 @@ func started(t *testing.T, trusted bool) (*Model, *fakeBackend) {
 func TestFirstRunIsShownWhenTheCAIsUntrusted(t *testing.T) {
 	m, _ := started(t, false)
 	wantScreen(t, m, "Welcome to Nearhost", "Two things ask for your password:",
-		"• now: trusting the local certificate authority,", "so browsers accept https://<name>.test",
+		"• now: trusting the local certificate authority,", "so browsers accept HTTPS from Nearhost's web server",
 		"• later: adding names to /etc/hosts", "enter trust now · s skip")
 	// The main screen's keys wait.
 	press(m, "n")

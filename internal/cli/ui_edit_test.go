@@ -107,7 +107,7 @@ func TestTrustAsksInTheBox(t *testing.T) {
 	if trust.installs != 1 || len(f.asked) != 1 || f.suspended != 0 || f.said.Len() != 0 {
 		t.Errorf("installs %d, asked %v, suspended %d, said %q", trust.installs, f.asked, f.suspended, f.said.String())
 	}
-	if !strings.Contains(f.asked[0], "trust its local certificate authority") {
+	if !strings.Contains(f.asked[0], "trust its local certificate authority, so browsers accept HTTPS from Nearhost's web server.") {
 		t.Errorf("asked %q", f.asked[0])
 	}
 	trust.instErr = errors.New("the password was refused")
