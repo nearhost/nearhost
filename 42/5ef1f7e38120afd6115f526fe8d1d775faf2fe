@@ -1,0 +1,30 @@
+internal/engine/engine_test.go
+  h_13c4e797d6e9d2 2122-2131
+internal/engine/server.go
+  h_13c4e797d6e9d2 163-183
+internal/transport/session.go
+  h_13c4e797d6e9d2 70-74,261-281,288-291,326,427,430,463,485,491,502-522
+internal/transport/session_test.go
+  h_13c4e797d6e9d2 573-611
+internal/tui/backend.go
+  h_13c4e797d6e9d2 37-39
+internal/tui/fake_test.go
+  h_13c4e797d6e9d2 29,54,108-115
+internal/tui/home.go
+  h_13c4e797d6e9d2 5,71-72,81-82,179-213
+internal/tui/home_test.go
+  h_13c4e797d6e9d2 6,75-101
+internal/tui/server.go
+  h_13c4e797d6e9d2 23-24,31,34-36,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "425ef1f7e38120afd6115f526fe8d1d775faf2fe",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
