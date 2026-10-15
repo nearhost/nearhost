@@ -48,15 +48,16 @@ type logView struct {
 	key       string // the row whose log this is
 	kind      logKind
 	search    textinput.Model
-	searching bool   // the search is being typed
-	cursor    int    // the seq of the entry under the cursor
-	open      int    // the seq of the request opened; 0 when none is
-	follow    bool   // the cursor stays on the newest entry
-	wrap      bool   // entries that are not requests wrap
-	reveal    bool   // an opened request shows its cookies and credentials
-	confirm   int    // the seq of the request waiting for y to be sent again; 0 when none is
-	said      string // what the last replay said, shown until the next key
-	pausedAt  int    // the newest seq when following stopped
+	searching bool                 // the search is being typed
+	cursor    int                  // the seq of the entry under the cursor
+	open      int                  // the seq of the request opened; 0 when none is
+	follow    bool                 // the cursor stays on the newest entry
+	wrap      bool                 // entries that are not requests wrap
+	reveal    bool                 // an opened request shows its cookies and credentials
+	bodies    map[string][2]string // kept bodies as text and a note, by exchange and part
+	confirm   int                  // the seq of the request waiting for y to be sent again; 0 when none is
+	said      string               // what the last replay said, shown until the next key
+	pausedAt  int                  // the newest seq when following stopped
 	vp        viewport.Model
 }
 
@@ -430,7 +431,8 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 		lines = append(lines, lead+l)
 	}
 	if kept && ex.ReqBodySize > 0 {
-		lines = append(lines, bodyLines(bar+label("sent"), under, ex.ReqBody, ex.ReqHeader, ex.ReqBodyCut(), width)...)
+		text, note := m.logView.decoded(ex.ID+" sent", ex.ReqBody, ex.ReqHeader, ex.ReqBodyCut())
+		lines = append(lines, bodyLines(bar+label("sent"), under, text, note, width)...)
 	}
 	resp := statusText(a.Status)
 	for _, part := range []string{clean(a.ContentType), sizeText(a.Size)} {
@@ -448,7 +450,8 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 	case kept && ex.Upgraded:
 		lines = append(lines, under+styleDim.Render("upgraded; what passes over the connection is not kept"))
 	case kept:
-		lines = append(lines, bodyLines(bar+label("body"), under, ex.RespBody, ex.RespHeader, ex.RespBodyCut(), width)...)
+		text, note := m.logView.decoded(ex.ID+" body", ex.RespBody, ex.RespHeader, ex.RespBodyCut())
+		lines = append(lines, bodyLines(bar+label("body"), under, text, note, width)...)
 	case a.ID != "":
 		lines = append(lines, under+styleDim.Render("the bodies are no longer kept"))
 	}
@@ -473,10 +476,26 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 	return lines
 }
 
+// bodyText reads a kept body as text; tests count its calls.
+var bodyText = proxy.BodyText
+
+// decoded is a kept body as text, read once for key and remembered while
+// the log is open: decoding and indenting on every frame would be wasted.
+func (v *logView) decoded(key string, body []byte, header http.Header, cut bool) (text, note string) {
+	if d, ok := v.bodies[key]; ok {
+		return d[0], d[1]
+	}
+	text, note = bodyText(body, header, cut)
+	if v.bodies == nil {
+		v.bodies = map[string][2]string{}
+	}
+	v.bodies[key] = [2]string{text, note}
+	return text, note
+}
+
 // bodyLines draw a kept body: its first bodyRows lines, the first after
 // first and the rest after rest, and what was left out.
-func bodyLines(first, rest string, body []byte, header http.Header, cut bool, width int) []string {
-	text, note := proxy.BodyText(body, header, cut)
+func bodyLines(first, rest, text, note string, width int) []string {
 	var rows []string
 	if text != "" {
 		rows = strings.Split(strings.TrimRight(text, "\n"), "\n")

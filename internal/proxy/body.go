@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"compress/zlib"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,11 +28,11 @@ func BodyText(body []byte, header http.Header, cut bool) (text, note string) {
 	switch enc := strings.ToLower(strings.TrimSpace(header.Get("Content-Encoding"))); enc {
 	case "", "identity":
 	case "gzip", "x-gzip", "deflate", "zstd":
-		decoded, err := decode(enc, body)
+		decoded, whole, err := decode(enc, body)
 		if err != nil && len(decoded) == 0 {
 			return "", fmt.Sprintf("%s-encoded, %d bytes kept", enc, len(raw))
 		}
-		body = decoded
+		body, cut = decoded, cut || !whole
 	default:
 		return "", fmt.Sprintf("%s-encoded, %d bytes kept", enc, len(raw))
 	}
@@ -52,27 +53,38 @@ func BodyText(body []byte, header http.Header, cut bool) (text, note string) {
 }
 
 // decode undoes a content encoding, as far as the bytes allow: a body cut
-// short decodes up to where it was cut.
-func decode(enc string, body []byte) ([]byte, error) {
+// short decodes up to where it was cut. At most four times captureBodyMax
+// bytes are decoded. whole reports whether the body decoded to its end.
+func decode(enc string, body []byte) (out []byte, whole bool, err error) {
 	var r io.Reader
 	switch enc {
 	case "gzip", "x-gzip":
 		zr, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		r = zr
 	case "deflate":
-		r = flate.NewReader(bytes.NewReader(body))
+		// HTTP's deflate is zlib-wrapped; some servers send raw DEFLATE.
+		if zr, err := zlib.NewReader(bytes.NewReader(body)); err == nil {
+			r = zr
+		} else {
+			r = flate.NewReader(bytes.NewReader(body))
+		}
 	case "zstd":
 		zr, err := zstd.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		defer zr.Close()
 		r = zr
 	}
-	return io.ReadAll(io.LimitReader(r, int64(captureBodyMax)*4))
+	limit := int64(captureBodyMax) * 4
+	out, err = io.ReadAll(io.LimitReader(r, limit+1))
+	if int64(len(out)) > limit {
+		return out[:limit], false, nil
+	}
+	return out, err == nil, err
 }
 
 // trimPartialRune drops a rune cut in half at the end of b.

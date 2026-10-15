@@ -2,8 +2,11 @@ package proxy
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
+	"compress/zlib"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +42,42 @@ func TestBodyText(t *testing.T) {
 		if text != c.text || note != c.note {
 			t.Errorf("%s: got %q, %q; want %q, %q", c.name, text, note, c.text, c.note)
 		}
+	}
+}
+
+// HTTP's deflate is zlib-wrapped; raw DEFLATE, which some servers send, is
+// read too.
+func TestBodyTextDeflate(t *testing.T) {
+	var z bytes.Buffer
+	zw := zlib.NewWriter(&z)
+	zw.Write([]byte("wrapped"))
+	zw.Close()
+	if text, note := BodyText(z.Bytes(), header("Content-Encoding", "deflate"), false); text != "wrapped" || note != "" {
+		t.Errorf("zlib deflate: %q, %q", text, note)
+	}
+	var raw bytes.Buffer
+	fw, _ := flate.NewWriter(&raw, flate.DefaultCompression)
+	fw.Write([]byte("raw"))
+	fw.Close()
+	if text, note := BodyText(raw.Bytes(), header("Content-Encoding", "deflate"), false); text != "raw" || note != "" {
+		t.Errorf("raw deflate: %q, %q", text, note)
+	}
+}
+
+// A compressed body that decodes to more than is read, or that ends early,
+// says only its start is shown.
+func TestBodyTextDecodedInPart(t *testing.T) {
+	defer func(n int) { captureBodyMax = n }(captureBodyMax)
+	captureBodyMax = 16 // so at most 64 decoded bytes are read
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	w.Write([]byte(strings.Repeat("a", 200)))
+	w.Close()
+	if text, note := BodyText(gz.Bytes(), header("Content-Encoding", "gzip"), false); len(text) != 64 || note != "only the start was kept" {
+		t.Errorf("long body: %d bytes, %q", len(text), note)
+	}
+	half := gz.Bytes()[:len(gz.Bytes())/2]
+	if _, note := BodyText(half, header("Content-Encoding", "gzip"), false); note != "only the start was kept" {
+		t.Errorf("body ending early: %q", note)
 	}
 }
