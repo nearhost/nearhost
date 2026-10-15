@@ -12,6 +12,7 @@ internal/tui/sidebar.go
   h_13c4e797d6e9d2 4,7-9,11,66-86,90-93,96,98-99,101,104,106-108,115-130,133-146,148,150,152-158,160,162-165,167-243,245
 internal/tui/sidebar_test.go
   h_13c4e797d6e9d2 1-130
+  s_f390899c03d13b::t_8b4d5efe73992a 119-130
 internal/tui/spin.go
   h_13c4e797d6e9d2 1-56
 internal/tui/styles.go
@@ -27,6 +28,16 @@ internal/tui/wizard_project.go
   "humans": {
     "h_13c4e797d6e9d2": {
       "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
     }
   }
 }
