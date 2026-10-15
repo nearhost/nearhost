@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"strconv"
+	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -11,7 +11,7 @@ import (
 func (m *Model) serverPanel(name string, width int) []string {
 	if name == config.LocalServer {
 		return []string{
-			styleTitle.Render("Local"),
+			styleTitle.Render("local"),
 			"",
 			"Projects on this machine. There is nothing to connect to.",
 		}
@@ -21,22 +21,26 @@ func (m *Model) serverPanel(name string, width int) []string {
 		return nil
 	}
 	st, lastErr := m.b.ServerStatus(name)
-	projects := 0
+	var on []string
 	for _, p := range m.cfg.Projects {
 		if p.Server == name {
-			projects++
+			on = append(on, clean(p.Name))
 		}
 	}
-	lines := []string{styleTitle.Render(clean(name)), ""}
+	state := m.serverDot(st).String() + " " + string(st)
+	lines := []string{spread(styleTitle.Render(clean(name)), state, width), ""}
 	lines = append(lines, field("ssh host", clean(srv.SSHHost), width)...)
-	lines = append(lines, field("state", m.serverDot(st).String()+" "+string(st), width)...)
 	if lastErr != "" {
-		lines = append(lines, field("error", clean(lastErr), width)...)
+		lines = append(lines, field("why", clean(lastErr), width)...)
 		if st != transport.StatusConnected {
-			lines = append(lines, field("fix", "Run `ssh "+clean(srv.SSHHost)+"` once in a terminal to fix access.", width)...)
+			lines = append(lines, field("fix", "Run ssh "+clean(srv.SSHHost)+" once in a terminal to fix access, then press r.", width)...)
 		}
 	}
-	lines = append(lines, field("projects", strconv.Itoa(projects), width)...)
+	projects := "none"
+	if len(on) > 0 {
+		projects = strings.Join(on, ", ")
+	}
+	lines = append(lines, field("projects", projects, width)...)
 	if m.panelErr != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(m.panelErr, width)...)

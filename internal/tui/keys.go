@@ -37,6 +37,13 @@ func (m *Model) footerItems() []footerItem {
 		}
 		items = []footerItem{{"enter", verb}, {"o", "open"},
 			{"tab", "routes"}, {"e", "edit"}, {"d", "remove"}}
+	case rowHome:
+		for _, p := range m.problems() {
+			if p.server != "" {
+				items = []footerItem{{"r", "retry"}}
+				break
+			}
+		}
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
 		if name != config.LocalServer {
@@ -223,16 +230,22 @@ func (m *Model) action(s string) tea.Cmd {
 			}
 		}
 	case "r":
-		if kind, name := m.selected(); kind == rowServer && name != config.LocalServer {
+		switch kind, name := m.selected(); {
+		case kind == rowServer && name != config.LocalServer:
 			return m.reconnect(name)
+		case kind == rowHome:
+			return m.retryServers()
 		}
 	case "tab":
 		if kind, _ := m.selected(); kind == rowProject {
 			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
 		}
 	case "y":
-		if kind, name := m.selected(); kind == rowProject {
+		switch kind, name := m.selected(); kind {
+		case rowProject:
 			return m.copyAdvice(name)
+		case rowHome:
+			return m.copySSH()
 		}
 	case "q":
 		return m.quit()

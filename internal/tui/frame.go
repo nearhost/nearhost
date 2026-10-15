@@ -77,19 +77,27 @@ func (m *Model) machineSummary() string {
 		ca = styleAmber.Render("not trusted")
 	}
 	hostsText, hostsOK := hostsWord(m.hostsState)
+	problems := len(m.problems())
 	if m.narrow() {
 		dot := styleBeacon.Render("●")
 		switch {
-		case !proxyOK:
+		case !proxyOK || problems > 0:
 			dot = styleRed.Render("●")
 		case !m.started || !m.caTrusted || !hostsOK:
 			dot = styleAmber.Render("●")
 		}
 		return dot + " " + styleDim.Render("proxy · CA · hosts")
 	}
-	return styleDim.Render("proxy") + " " + proxy + sep +
+	summary := styleDim.Render("proxy") + " " + proxy + sep +
 		styleDim.Render("CA") + " " + ca + sep +
 		styleDim.Render("hosts") + " " + hostsText
+	switch {
+	case problems == 1:
+		summary += sep + styleRed.Render("1 problem")
+	case problems > 1:
+		summary += sep + styleRed.Render(fmt.Sprintf("%d problems", problems))
+	}
+	return summary
 }
 
 // hostsWord is what the header says about the hosts block, from what the
