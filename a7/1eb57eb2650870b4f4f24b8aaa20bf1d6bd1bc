@@ -6,6 +6,7 @@ internal/tui/home.go
   h_13c4e797d6e9d2 5,7-9,11,27,34,36-40,42,46,52,54-56,59,64,70-175
 internal/tui/home_test.go
   h_13c4e797d6e9d2 1-73
+  s_f390899c03d13b::t_f76294d6e5a8f8 56-73
 internal/tui/keys.go
   h_13c4e797d6e9d2 40-46,233-234,236-237,244-245,247-248
 internal/tui/model_test.go
@@ -21,6 +22,16 @@ internal/tui/server.go
   "humans": {
     "h_13c4e797d6e9d2": {
       "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
     }
   }
 }
