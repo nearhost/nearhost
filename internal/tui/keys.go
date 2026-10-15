@@ -25,7 +25,7 @@ func (m *Model) footerItems() []footerItem {
 		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
 	}
 	if m.filtering {
-		return []footerItem{{"enter", "keep filter"}, {"esc", "clear filter"}}
+		return []footerItem{{"↑↓", "move"}, {"enter", "keep filter"}, {"esc", "clear filter"}}
 	}
 	kind, name := m.selected()
 	var items []footerItem
@@ -188,22 +188,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	if m.filtering {
-		switch s {
-		case "enter":
-			m.filtering = false
-		case "esc":
-			m.filtering, m.filter = false, ""
-		case "backspace":
-			if r := []rune(m.filter); len(r) > 0 {
-				m.filter = string(r[:len(r)-1])
-			}
-		default:
-			if k.Text != "" {
-				m.filter += clean(k.Text)
-			}
-		}
-		m.scroll = 0
-		return nil
+		return m.filterKey(k)
 	}
 	return m.action(s)
 }
@@ -258,13 +243,16 @@ func (m *Model) action(s string) tea.Cmd {
 	case "down", "j":
 		m.move(1)
 	case "h", "esc":
-		if m.filter != "" && s == "esc" {
-			m.filter = ""
-			return nil
+		if m.query() != "" {
+			m.clearFilter()
+			if s == "esc" {
+				return nil
+			}
 		}
 		m.selectRow(homeKey)
 	case "/":
 		m.filtering = true
+		return m.filter.Focus()
 	case "n":
 		server := config.LocalServer
 		switch kind, name := m.selected(); kind {
@@ -305,7 +293,10 @@ func (m *Model) selectRow(key string) {
 
 // move moves the selection by delta rows, stopping at either end.
 func (m *Model) move(delta int) {
-	all := rows(m.cfg, m.collapsed)
+	all := m.rows()
+	if len(all) == 0 {
+		return
+	}
 	at := 0
 	for i, r := range all {
 		if r.key() == m.sel {
@@ -372,7 +363,7 @@ func (m *Model) wheel(mouse tea.Mouse) {
 	}
 	switch mouse.Button {
 	case tea.MouseWheelUp:
-		m.scroll = min(m.scroll+3, len(m.logs.entries(m.sel, m.filter)))
+		m.scroll = min(m.scroll+3, len(m.logs.entries(m.sel, "")))
 	case tea.MouseWheelDown:
 		m.scroll = max(m.scroll-3, 0)
 	}

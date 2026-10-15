@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -40,10 +41,10 @@ type Model struct {
 	sel       string // key of the selected row
 	collapsed map[string]bool
 	logs      *logs
-	filter    string
-	filtering bool
-	showHelp  bool       // the footer lists every key
-	help      help.Model // draws the footer
+	filter    textinput.Model // the sidebar's filter by name
+	filtering bool            // the filter is being typed
+	showHelp  bool            // the footer lists every key
+	help      help.Model      // draws the footer
 	spinner   spinner.Model
 	spinning  bool // the spinner is turning
 	form      form // the open add form; nil when none is
@@ -102,7 +103,7 @@ func New(b Backend, dir string) *Model {
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
 		work: newWorker(),
-		help: newHelp(), spinner: newSpinner(),
+		help: newHelp(), spinner: newSpinner(), filter: newFilter(),
 	}
 	m.logs = newLogs(func() time.Time { return m.now() })
 	return m
@@ -329,7 +330,7 @@ func (m *Model) setConfig(cfg *config.Config) {
 			return
 		}
 	}
-	for _, r := range rows(cfg, m.collapsed) {
+	for _, r := range rows(cfg, m.collapsed, m.query()) {
 		if r.key() == m.sel {
 			return
 		}
@@ -440,13 +441,7 @@ func (m *Model) main(width, height int) []string {
 	if kind == rowHome {
 		label = "recent"
 	}
-	if m.filtering || m.filter != "" {
-		label += " · filter: " + m.filter
-		if m.filtering {
-			label += "▏"
-		}
-	}
-	log := m.logs.entries(m.sel, m.filter)
+	log := m.logs.entries(m.sel, "")
 	follow := styleDim.Render("following ") + styleBeacon.Render("●")
 	if m.scroll > 0 {
 		follow = styleDim.Render(fmt.Sprintf("%d newer below", m.scroll))
@@ -471,7 +466,7 @@ func (m *Model) main(width, height int) []string {
 
 // selected is the kind and name of the selected row.
 func (m *Model) selected() (rowKind, string) {
-	for _, r := range rows(m.cfg, m.collapsed) {
+	for _, r := range m.rows() {
 		if r.key() == m.sel {
 			return r.kind, r.name
 		}
