@@ -399,6 +399,8 @@ func (m *Model) View() tea.View {
 	var content string
 	if m.width < minWidth || m.height < minHeight {
 		content = m.tooSmall()
+	} else if m.empty() {
+		content = m.emptyScreen()
 	} else {
 		content = m.frame(m.columns(), m.footer())
 	}

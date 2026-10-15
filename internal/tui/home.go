@@ -11,26 +11,8 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
-// markLines draw the Nearhost mark: an arch over a dot.
-var markLines = []string{
-	styleBeacon.Render("╭───╮"),
-	styleBeacon.Render("│") + "   " + styleBeacon.Render("│"),
-	styleBeacon.Render("│") + " ● " + styleBeacon.Render("│"),
-}
-
-// home is the Home panel. With no projects it is the empty state, below the
-// proxy's trouble when there is any.
+// home is the Home panel.
 func (m *Model) home(width int) []string {
-	if len(m.cfg.Projects) == 0 {
-		var lines []string
-		if m.proxyErr != nil {
-			lines = append(append(m.proxyLines(width), m.problemLines(width)...), "")
-		}
-		lines = append(lines, markLines...)
-		return append(lines, "",
-			styleTitle.Render("Nothing to serve yet."),
-			"Press n to add the project in the current directory.")
-	}
 	ca := styleBeacon.Render("●") + " trusted"
 	if !m.caTrusted {
 		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
