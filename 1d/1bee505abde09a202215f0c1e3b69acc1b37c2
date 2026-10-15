@@ -1,0 +1,40 @@
+internal/tui/fake_forms_test.go
+  s_f390899c03d13b::t_74b32f443c04ec 181,224-230
+README.md
+  s_f390899c03d13b::t_e965e23ea8fa1a 100-102
+internal/tui/model.go
+  s_f390899c03d13b::t_616a282c3e2748 180-181
+internal/proxy/capture_test.go
+  s_f390899c03d13b::t_8d4ae67f402efe 159-202
+internal/tui/logview.go
+  s_f390899c03d13b::t_2ba963f5894e69 14,627-629
+  s_f390899c03d13b::t_9a29c8354620c7 4,51-59,138-150,152-155,254,275-281,291,423-431,459-461,630
+  s_f390899c03d13b::t_9e92dc229c882b 631-688
+internal/proxy/replay.go
+  s_f390899c03d13b::t_7be025d67cc06a 1-94
+internal/tui/backend.go
+  s_f390899c03d13b::t_29aed4b0b5202c 96-98
+internal/tui/logview_test.go
+  s_f390899c03d13b::t_c1fdbabdc29475 232,247-291,295-296,299,303
+  s_f390899c03d13b::t_916091763af2ff 292-294,297-298,300-302
+internal/engine/engine.go
+  s_f390899c03d13b::t_3426d230a1ae7c 454-464
+internal/engine/engine_test.go
+  s_f390899c03d13b::t_832099e755f951 2132-2138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d1bee505abde09a202215f0c1e3b69acc1b37c2",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
