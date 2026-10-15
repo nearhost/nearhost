@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -40,6 +41,9 @@ type Backend interface {
 	Ports() (https, http int)
 	// CATrusted reports whether the system trusts the local CA.
 	CATrusted() bool
+	// CAExpires is when the local CA's root certificate expires; zero when
+	// there is none yet, or it cannot be read.
+	CAExpires() time.Time
 	// HostsState describes the nearhost block in /etc/hosts in a few words.
 	HostsState() string
 	// Open opens url in the browser.

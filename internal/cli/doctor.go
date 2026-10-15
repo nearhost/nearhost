@@ -250,6 +250,9 @@ func checkCA(b trustBackend) []check {
 	if !b.isTrusted(cert) {
 		ca = check{name, levelFail, "exists, but the system trust store does not trust it", fix}
 	}
+	if !cert.NotAfter.IsZero() {
+		ca.detail += "; expires " + cert.NotAfter.Format("2006-01-02")
+	}
 	nss := check{name: "browser stores"}
 	switch st := b.nss(cert); st.State {
 	case proxy.NSSCovered:

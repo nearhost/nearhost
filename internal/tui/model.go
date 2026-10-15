@@ -75,6 +75,7 @@ type Model struct {
 	// What Home shows about the machine. Reading it can be slow (the trust
 	// store, /etc/hosts), so it is read on the clock, not on every redraw.
 	caTrusted  bool
+	caExpires  time.Time // zero when the CA is not there yet
 	hostsState string
 
 	work *worker // runs the forms' background steps
@@ -104,7 +105,7 @@ func New(b Backend, dir string) *Model {
 		now:       time.Now,
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
-		caTrusted: b.CATrusted(), hostsState: b.HostsState(),
+		caTrusted: b.CATrusted(), caExpires: b.CAExpires(), hostsState: b.HostsState(),
 		work: newWorker(),
 		help: newHelp(), spinner: newSpinner(), filter: newFilter(),
 	}
@@ -126,6 +127,7 @@ type (
 	}
 	machineMsg struct {
 		caTrusted  bool
+		caExpires  time.Time
 		hostsState string
 	}
 	openedMsg struct {
@@ -217,7 +219,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.trackUptime()
 		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
 	case machineMsg:
-		m.caTrusted, m.hostsState = msg.caTrusted, msg.hostsState
+		m.caTrusted, m.caExpires, m.hostsState = msg.caTrusted, msg.caExpires, msg.hostsState
 		m.offerFirstRun()
 	case firstRunSkippedMsg:
 		m.form = nil
@@ -361,7 +363,7 @@ func (m *Model) stopProject(name string) tea.Cmd {
 // readMachine reads what Home shows about the machine.
 func (m *Model) readMachine() tea.Cmd {
 	return func() tea.Msg {
-		return machineMsg{m.b.CATrusted(), m.b.HostsState()}
+		return machineMsg{m.b.CATrusted(), m.b.CAExpires(), m.b.HostsState()}
 	}
 }
 
