@@ -200,3 +200,27 @@ func TestCanReplay(t *testing.T) {
 		t.Errorf("a whole body: %v", err)
 	}
 }
+
+// An upstream that answers before reading the request body leaves the
+// transport still sending it after the handler has kept the exchange: what
+// is kept is taken once, safely, and nothing is added afterwards. (Through a
+// real proxy the race detector also reports Caddy's own byte count, which
+// races the same way with or without this handler, so this drives the tee
+// directly.)
+func TestRequestBodyStillReadAfterTheExchangeIsKept(t *testing.T) {
+	var kept limited
+	body := &teeBody{ReadCloser: io.NopCloser(strings.NewReader(strings.Repeat("x", 4<<20))), to: &kept}
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		io.Copy(io.Discard, body) // the transport, still sending
+	}()
+	buf, n := kept.done() // the handler, done with the exchange
+	if int64(len(buf)) > n || len(buf) > captureBodyMax {
+		t.Errorf("kept %d bytes of %d", len(buf), n)
+	}
+	<-sent
+	if after, m := kept.done(); len(after) != len(buf) || m != n {
+		t.Errorf("more was kept after done: %d bytes of %d, then %d of %d", len(buf), n, len(after), m)
+	}
+}

@@ -132,9 +132,12 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	cw := &captureWriter{ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w}, e: e}
 	err := next.ServeHTTP(cw, r)
 	if reqBody != nil {
-		e.ReqBody, e.ReqBodySize = reqBody.buf, reqBody.n
+		// The transport may still be sending the request body, when the
+		// upstream answered without reading it: take what was read so far
+		// and keep no more.
+		e.ReqBody, e.ReqBodySize = reqBody.done()
 	}
-	e.RespBody, e.RespBodySize = cw.body.buf, cw.body.n
+	e.RespBody, e.RespBodySize = cw.body.done()
 	if err != nil {
 		e.Err = err.Error()
 	}
@@ -150,18 +153,35 @@ func newID() string {
 }
 
 // limited keeps the first captureBodyMax bytes written to it and counts
-// them all.
+// them all, until done. It is safe for concurrent use: a request body can
+// still be read by the transport after the handler has finished.
 type limited struct {
-	buf []byte
-	n   int64
+	mu     sync.Mutex
+	buf    []byte
+	n      int64
+	closed bool
 }
 
 func (l *limited) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return len(p), nil
+	}
 	if room := captureBodyMax - len(l.buf); room > 0 {
 		l.buf = append(l.buf, p[:min(room, len(p))]...)
 	}
 	l.n += int64(len(p))
 	return len(p), nil
+}
+
+// done returns what was kept and how much was written, and keeps nothing
+// more.
+func (l *limited) done() ([]byte, int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.closed = true
+	return l.buf, l.n
 }
 
 // teeBody copies what is read from a request body into to.
