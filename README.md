@@ -50,7 +50,7 @@ brew install nearhost/tap/nearhost
 curl -fsSL https://nearhost.dev/install.sh | sh
 ```
 
-The script downloads the matching release from GitHub, checks it against the published checksums and installs to `/usr/local/bin` when that is writable, otherwise to `~/.local/bin`. It never runs `sudo` itself.
+The script downloads the matching release from GitHub, checks it against the published checksums and installs to `/usr/local/bin` when that is writable, otherwise to `~/.local/bin`. On Linux it also offers to let the binary bind ports 80 and 443, and runs `sudo setcap` only if you say yes. It asks only when it can read your answer from a terminal, as when you run a downloaded copy; through `curl | sh` it prints the command instead.
 
 **From source**, with Go 1.26 or later:
 
