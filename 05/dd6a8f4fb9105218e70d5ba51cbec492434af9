@@ -10,6 +10,8 @@ internal/tui/model_test.go
   s_ee2e3c9b547942::t_6a11ee0cb68ec4 56-57,66,120-121,394,396,405-406
 internal/tui/server.go
   s_ee2e3c9b547942::t_54bd0b02278f02 4,14,24,27,30-31,34,36,39-43
+internal/tui/home_test.go
+  s_f390899c03d13b::t_f76294d6e5a8f8 56-73
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -21,6 +23,14 @@ internal/tui/server.go
       "agent_id": {
         "tool": "claude",
         "id": "f11cb878-42d9-4cd3-812a-68a62ebe50c3",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
         "model": "unknown"
       },
       "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
