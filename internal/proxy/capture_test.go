@@ -43,6 +43,7 @@ func idOf(t *testing.T, h *harness, alias, path string) string {
 // it in the access log, which stays redacted.
 func TestCaptureKeepsExchanges(t *testing.T) {
 	ClearCaptured()
+	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
 	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", false)
@@ -77,6 +78,7 @@ func TestCaptureKeepsExchanges(t *testing.T) {
 // Bodies are cut at the limit, and the oldest exchanges go first.
 func TestCaptureLimits(t *testing.T) {
 	ClearCaptured()
+	t.Cleanup(ClearCaptured)
 	defer func(body, n int) { captureBodyMax, captureMax = body, n }(captureBodyMax, captureMax)
 	captureBodyMax, captureMax = 4, 2
 	up := upstream(t, "a")
@@ -104,6 +106,7 @@ func TestCaptureLimits(t *testing.T) {
 // Streams still stream, and WebSockets still upgrade, through the capture.
 func TestCaptureLeavesStreamsAndSocketsAlone(t *testing.T) {
 	ClearCaptured()
+	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
 	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", true)
@@ -161,6 +164,7 @@ func TestNoCapture(t *testing.T) {
 // headers, and is kept and logged again.
 func TestReplay(t *testing.T) {
 	ClearCaptured()
+	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
 	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", false)
@@ -222,5 +226,40 @@ func TestRequestBodyStillReadAfterTheExchangeIsKept(t *testing.T) {
 	<-sent
 	if after, m := kept.done(); len(after) != len(buf) || m != n {
 		t.Errorf("more was kept after done: %d bytes of %d, then %d of %d", len(buf), n, len(after), m)
+	}
+}
+
+// An exchange that ends after the store was cleared, such as a WebSocket
+// that outlived the proxy, is not kept.
+func TestCaptureKeepsNothingAfterItIsCleared(t *testing.T) {
+	ClearCaptured()
+	t.Cleanup(ClearCaptured)
+	gen := captureGen()
+	ClearCaptured() // the proxy stopped while the exchange was open
+	keep(&Exchange{ID: "late"}, gen)
+	if _, ok := Captured("late"); ok {
+		t.Error("an exchange from before the store was cleared was kept")
+	}
+	keep(&Exchange{ID: "now"}, captureGen())
+	if _, ok := Captured("now"); !ok {
+		t.Error("a current exchange was not kept")
+	}
+}
+
+// The store's limit counts headers and the room the bodies take, not only
+// the bodies' lengths.
+func TestCaptureLimitCountsHeaders(t *testing.T) {
+	ClearCaptured()
+	t.Cleanup(ClearCaptured)
+	defer func(total int) { captureTotalMax = total }(captureTotalMax)
+	captureTotalMax = 10 << 10
+	big := http.Header{"X-Big": {strings.Repeat("h", 6<<10)}}
+	keep(&Exchange{ID: "one", ReqHeader: big}, captureGen())
+	keep(&Exchange{ID: "two", ReqHeader: big}, captureGen())
+	if _, ok := Captured("one"); ok {
+		t.Error("two exchanges of 6 KiB of headers each were kept under a 10 KiB limit")
+	}
+	if _, ok := Captured("two"); !ok {
+		t.Error("the newest exchange was let go")
 	}
 }
