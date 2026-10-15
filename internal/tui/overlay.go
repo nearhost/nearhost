@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	// boxWidth is the width of a form's box, and boxHeight its least height,
-	// in a window that has room for them; a form with more to say grows the
-	// box as far as the window allows.
+	// boxWidth is the width of a form's box, and boxHeight the least height
+	// of a form with steps, in a window that has room for them; a form with
+	// more to say grows the box as far as the window allows.
 	boxWidth, boxHeight = 76, 22
 )
 
@@ -41,7 +41,13 @@ func (m *Model) formBox(base string, f form) string {
 	keys := m.help
 	keys.SetWidth(inner)
 	bottom := []string{"", keys.ShortHelpView(bindings(f.keys()))}
-	h := min(max(boxHeight, len(top)+len(body)+len(bottom)+2), m.height-2)
+	// A form with steps keeps one height from step to step; a box without,
+	// such as the password box or a question, is as tall as what it says.
+	h := len(top) + len(body) + len(bottom) + 2
+	if hd.of > 0 {
+		h = max(boxHeight, h)
+	}
+	h = min(h, m.height-2)
 	room := h - 2 - len(top) - len(bottom)
 	if len(body) > room {
 		body = body[:room]

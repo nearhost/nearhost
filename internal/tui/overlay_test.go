@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -88,5 +89,51 @@ func TestFormBoxGrows(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "╭") || !strings.Contains(lines[28], "╰") {
 		t.Errorf("the box does not fill the window's height:\n%s", screen(m))
+	}
+}
+
+// boxRows is how many rows the open box takes on screen, its edges
+// included.
+func boxRows(t *testing.T, m *Model) int {
+	t.Helper()
+	top, bottom := -1, -1
+	for i, l := range strings.Split(screen(m), "\n") {
+		if strings.Contains(l, "╭") && top < 0 {
+			top = i
+		}
+		if strings.Contains(l, "╰") {
+			bottom = i
+		}
+	}
+	if top < 0 || bottom < 0 {
+		t.Fatalf("no box:\n%s", screen(m))
+	}
+	return bottom - top + 1
+}
+
+// A box without steps, such as the password box or a question, is as tall
+// as what it says; a form with steps keeps its height from step to step.
+func TestBoxesWithoutStepsFitWhatTheySay(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	askFor(m, "Nearhost needs your password to trust its local certificate authority, so browsers accept https://<name>.test.",
+		func(context.Context, string) error { return nil })
+	// The edges, the title and a blank line, the reason (two lines), a
+	// blank line and the field, and a blank line and the keys.
+	if got := boxRows(t, m); got != 10 {
+		t.Errorf("the password box is %d rows tall, want 10:\n%s", got, screen(m))
+	}
+	settle(m, press(m, "esc"))
+	m.sel = rowKey(rowProject, "myapp")
+	press(m, "d")
+	// The edges, the question and a blank line, its one sentence, and a
+	// blank line and the keys.
+	if got := boxRows(t, m); got != 7 {
+		t.Errorf("the remove question is %d rows tall, want 7:\n%s", got, screen(m))
+	}
+	settle(m, press(m, "esc"))
+	press(m, "n")
+	if got := boxRows(t, m); got != boxHeight {
+		t.Errorf("the add-project form is %d rows tall, want %d", got, boxHeight)
 	}
 }
