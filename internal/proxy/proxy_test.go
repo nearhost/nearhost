@@ -21,6 +21,8 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	"github.com/coder/websocket"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // TestMain points every directory Caddy might touch (instance.uuid lives under
@@ -40,14 +42,13 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// freePort is a port for a proxy listener. It comes from testutil's block,
+// below the ports the system hands out by itself, and is free on every
+// interface for TCP and UDP, as Caddy binds it: a port free on 127.0.0.1
+// alone can still be taken on the wildcard address.
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return testutil.ProxyPort(t)
 }
 
 func waitUntil(t *testing.T, timeout time.Duration, cond func() bool, what string) {
