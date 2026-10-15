@@ -1,5 +1,6 @@
 README.md
   h_13c4e797d6e9d2 98-100
+  s_f390899c03d13b::t_fe6942364a4e29 98-100
 internal/tui/help.go
   h_13c4e797d6e9d2 42
 internal/tui/help_test.go
@@ -25,6 +26,16 @@ internal/tui/model_test.go
   "humans": {
     "h_13c4e797d6e9d2": {
       "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
     }
   }
 }
