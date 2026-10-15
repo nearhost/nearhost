@@ -1,0 +1,24 @@
+internal/cli/ui.go
+  h_13c4e797d6e9d2 5,34-38,64,71,73,128-129,137,142-144,151-154,156-163,180-181
+internal/cli/ui_edit.go
+  h_13c4e797d6e9d2 8,68-70,72,75-80,84,89-92
+internal/cli/ui_edit_test.go
+  h_13c4e797d6e9d2 6,96-98,102-103,107-111,117-120
+internal/cli/ui_root.go
+  h_13c4e797d6e9d2 1-77
+internal/cli/ui_root_test.go
+  h_13c4e797d6e9d2 1-133
+internal/cli/ui_test.go
+  h_13c4e797d6e9d2 44,90,92-93,96,100,107-108,110-111,113-114,120-121,123-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bfc7db863fc85c02718034f58438d886ce59391",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
