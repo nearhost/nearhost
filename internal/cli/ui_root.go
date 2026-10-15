@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"charm.land/lipgloss/v2"
 	"context"
 	"errors"
+	"golang.org/x/term"
 	"io"
+	"os"
 
 	"github.com/nearhost/nearhost/internal/sudo"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -47,6 +50,8 @@ type asRoot struct {
 	ask func(ctx context.Context, why string, check func(context.Context, string) error) error
 	// suspend hands the terminal to a function, the interface suspended.
 	suspend func(ctx context.Context, fn func(io.Reader, io.Writer) error) error
+	// width is the terminal's width.
+	width func() int
 }
 
 // terminalPrompt is how sudo's password prompt is worded in the terminal.
@@ -54,10 +59,10 @@ const terminalPrompt = " Password for %p: "
 
 // run runs step, which needs root, for the reason why: at once when sudo has
 // the user's credentials, after the password box when it does not, and in
-// the terminal when they are not cached even then. step is given the
-// terminal when it runs there, where it may prompt; otherwise nil, and it
-// must not prompt.
-func (r asRoot) run(ctx context.Context, why string, step func(ctx context.Context, terminal io.Writer) error) error {
+// the terminal when they are not cached even then, under Nearhost's header,
+// saying done when it went well. step is given the terminal when it runs
+// there, where it may prompt; otherwise nil, and it must not prompt.
+func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context.Context, terminal io.Writer) error) error {
 	if !r.sudo.needed() || r.sudo.cached(ctx) {
 		return step(ctx, nil)
 	}
@@ -71,7 +76,17 @@ func (r asRoot) run(ctx context.Context, why string, step func(ctx context.Conte
 		if err := ctx.Err(); err != nil {
 			return err // ended while the request waited its turn
 		}
-		io.WriteString(out, why+"\n")
-		return step(ctx, out)
+		lipgloss.Fprint(out, tui.Asking(why, r.width()))
+		err := step(ctx, out)
+		lipgloss.Fprint(out, tui.Told(err, done))
+		return err
 	})
+}
+
+// terminalWidth is the width of the terminal on standard output, or 80.
+func terminalWidth() int {
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		return w
+	}
+	return 80
 }
