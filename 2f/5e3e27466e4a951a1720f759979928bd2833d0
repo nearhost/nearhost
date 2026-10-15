@@ -1,0 +1,29 @@
+internal/tui/backend.go
+  s_f390899c03d13b::t_0fdb687a4d2e87 10,167-192
+internal/tui/keys.go
+  s_f390899c03d13b::t_f3af2dbdd3f686 195-197,383,409-411
+internal/tui/model.go
+  s_f390899c03d13b::t_0fb7bf0070dbc5 52-54,317-338,405-408,445-448
+internal/tui/overlay.go
+  s_f390899c03d13b::t_786b5eb25e8cb5 23,26-27,43
+internal/tui/password.go
+  s_f390899c03d13b::t_27246f784afa85 1-163
+internal/tui/password_test.go
+  s_f390899c03d13b::t_42741f5373143f 1-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f5e3e27466e4a951a1720f759979928bd2833d0",
+  "prompts": {},
+  "sessions": {
+    "s_f390899c03d13b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9de9c2-e0cf-4ec4-9a38-c49c714cb363",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
