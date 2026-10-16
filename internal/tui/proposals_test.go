@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -201,4 +204,67 @@ func TestTheFixSuitsWhyAgentsCannotReachNearhost(t *testing.T) {
 	}
 	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "refused", AgentProblem: transport.AgentRefused}}
 	wantScreen(t, m, "AllowStreamLocalForwarding yes")
+}
+
+func TestAProposalDeclinedAfterAFailedSaveSaysWhy(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
+	press(m, "enter")            // routes -> name
+	settle(m, press(m, "enter")) // name -> confirm
+	f.forms.saveErr = errors.New(`project "blog" uses unknown server "mini"`)
+	settle(m, press(m, "enter")) // the save fails
+	for range 4 {
+		settle(m, press(m, "esc")) // confirm, name, routes, path, then closed
+	}
+	if got := f.proposalAnswers(); !slices.Equal(got, []string{`decline p1 project "blog" uses unknown server "mini"`}) {
+		t.Fatalf("answers %v", got)
+	}
+}
+
+func TestProposalsReachTheInterfaceInTheOrderTheyCame(t *testing.T) {
+	var s Proposals
+	var mu sync.Mutex
+	var got []string
+	done := make(chan struct{})
+	for i := range 20 {
+		s.Propose(Proposal{ID: fmt.Sprint(i)})
+	}
+	s.attach(func(msg tea.Msg) {
+		mu.Lock()
+		got = append(got, msg.(proposalMsg).p.ID)
+		if len(got) == 40 {
+			close(done)
+		}
+		mu.Unlock()
+	})
+	for i := 20; i < 40; i++ {
+		s.Propose(Proposal{ID: fmt.Sprint(i)})
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("not all proposals arrived")
+	}
+	for i, id := range got {
+		if id != fmt.Sprint(i) {
+			t.Fatalf("out of order: %v", got)
+		}
+	}
+}
+
+func TestHomeCountsOnlyProposalsStillWaiting(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "s")
+	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/srv/a", Expires: m.now().Add(time.Minute)})
+	propose(m, Proposal{ID: "p2", Origin: "mini", Path: "/srv/b", Expires: m.now().Add(time.Hour)})
+	m.now = func() time.Time { return time.Now().Add(30 * time.Minute) }
+	m.form = nil
+	m.filtering = true // keeps the proposal from opening, so Home shows the count
+	wantScreen(t, m, "agents    ● 1 proposal waiting · p to review")
+}
+
+func TestHelpListsP(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "?")
+	wantScreen(t, m, "p      review proposal ")
 }

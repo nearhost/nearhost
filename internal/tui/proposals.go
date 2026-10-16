@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,34 +32,52 @@ func (p Proposal) where() string {
 	return "on " + clean(p.Origin)
 }
 
-// Proposals hands the interface the proposals agents make. Attach it to the
-// running program; a proposal made before that waits for it.
+// Proposals hands the interface the proposals agents make, in the order
+// they come. Attach it to the running program; a proposal made before that
+// waits for it.
 type Proposals struct {
-	p       atomic.Pointer[tea.Program]
 	mu      sync.Mutex
 	waiting []Proposal
+	wake    chan struct{} // nil until attached
 }
 
 // Propose gives the interface p. It never blocks.
 func (s *Proposals) Propose(p Proposal) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if prog := s.p.Load(); prog != nil {
-		go prog.Send(proposalMsg{p})
-		return
-	}
 	s.waiting = append(s.waiting, p)
+	if s.wake != nil {
+		select {
+		case s.wake <- struct{}{}:
+		default: // the sender is awake already
+		}
+	}
 }
 
 // Attach makes s give its proposals to prog.
-func (s *Proposals) Attach(prog *tea.Program) {
+func (s *Proposals) Attach(prog *tea.Program) { s.attach(prog.Send) }
+
+// attach starts the one goroutine that sends the proposals, oldest first.
+// Program.Send returns at once once the program has ended.
+func (s *Proposals) attach(send func(tea.Msg)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.p.Store(prog)
-	for _, p := range s.waiting {
-		go prog.Send(proposalMsg{p})
-	}
-	s.waiting = nil
+	s.wake = make(chan struct{}, 1)
+	wake := s.wake
+	s.mu.Unlock()
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.waiting) == 0 {
+				s.mu.Unlock()
+				<-wake
+				continue
+			}
+			p := s.waiting[0]
+			s.waiting = s.waiting[1:]
+			s.mu.Unlock()
+			send(proposalMsg{p})
+		}
+	}()
 }
 
 // proposalMsg is a proposal arriving.
@@ -116,13 +133,22 @@ func (m *Model) endProposal() {
 	}
 	pr := m.proposing
 	m.proposing = nil
-	m.b.DeclineProposal(pr.p.ID, pr.form.err)
+	reason := pr.form.err
+	if reason == "" {
+		reason = pr.form.lastErr
+	}
+	m.b.DeclineProposal(pr.p.ID, reason)
 	m.logs.note(fmt.Sprintf("Declined the proposal to add %s %s.", clean(pr.p.Path), pr.p.where()))
 }
 
 // proposalsWaiting is Home's line about proposals waiting to be reviewed.
 func (m *Model) proposalsWaiting(width int) []string {
-	n := len(m.proposals)
+	n := 0
+	for _, p := range m.proposals {
+		if m.now().Before(p.Expires) {
+			n++
+		}
+	}
 	if n == 0 {
 		return nil
 	}
