@@ -1,0 +1,23 @@
+internal/cli/doctor_test.go
+  s_b33b52432eafa1::t_215f7d891a987d 363-398
+internal/cli/doctor.go
+  s_b33b52432eafa1::t_a112061cb95d9e 58-60,77,91-95,147-151,156-166
+internal/cli/ssh.go
+  s_b33b52432eafa1::t_aa9f85eaf4da43 5,10,83-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cddb5031b6184e07b433f8e4de71b113309d179b",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
