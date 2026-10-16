@@ -955,3 +955,27 @@ func TestPlainHTTPAnswers308ForEveryKindOfHost(t *testing.T) {
 	}
 	h.waitCerts(t, "a.test", "localhost")
 }
+
+// The http port's server is plain HTTP by design, so Caddy's warnings that
+// it gets no automatic HTTPS, HTTP/2 or HTTP/3 say nothing worth reading,
+// and would otherwise come again on every reload.
+func TestHTTPServerLogsNoWarningsOnReload(t *testing.T) {
+	sites := []Site{{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"}}
+	h := startProxy(t, sites)
+	// Caddy skips loading a config identical to the running one, so the
+	// second apply changes the sites.
+	sites = append(sites, Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"})
+	if err := h.p.Apply(sites); err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+	// Caddy issues the certificates in the background; waiting for them
+	// keeps it from writing to storage while the test removes it.
+	h.waitCerts(t, "pro.test", "b.test")
+	h.rec.mu.Lock()
+	defer h.rec.mu.Unlock()
+	for _, l := range h.rec.lines {
+		if strings.Contains(l, "listening only on the HTTP port") || strings.Contains(l, "requires TLS") {
+			t.Errorf("sink got %q", l)
+		}
+	}
+}

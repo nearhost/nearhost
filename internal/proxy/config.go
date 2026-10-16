@@ -270,6 +270,13 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		servers["nearhost_http"] = map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", httpPort)},
 			"routes": redirects,
+			// This server is plain HTTP by design. Saying so stops Caddy
+			// warning on every reload that it cannot have automatic HTTPS
+			// (it logs that at info instead) or HTTP/2 and HTTP/3, which
+			// need TLS. Disabling automatic HTTPS here does not stop Caddy
+			// adding the https server's redirects to this server.
+			"automatic_https": map[string]any{"disable": true},
+			"protocols":       []string{"h1"},
 		}
 	}
 
