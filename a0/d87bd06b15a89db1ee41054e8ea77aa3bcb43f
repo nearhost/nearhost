@@ -1,0 +1,28 @@
+internal/nearhostrc/merge.go
+  s_89a63a3c1fa7d2::t_0a972110861bd8 1-138
+internal/config/config.go
+  s_89a63a3c1fa7d2::t_40b0f38ce29aef 57-67,425-433
+  s_89a63a3c1fa7d2::t_3cb312005850e6 434
+internal/config/config_test.go
+  s_89a63a3c1fa7d2::t_40b0f38ce29aef 613-635
+internal/engine/engine.go
+  s_89a63a3c1fa7d2::t_40b0f38ce29aef 227-247
+internal/nearhostrc/merge_test.go
+  s_89a63a3c1fa7d2::t_40b0f38ce29aef 1-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0d87bd06b15a89db1ee41054e8ea77aa3bcb43f",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
