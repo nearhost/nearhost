@@ -624,3 +624,31 @@ func TestAddRefusesAHostAnotherProjectServes(t *testing.T) {
 		t.Fatalf("config changed:\n%s", after)
 	}
 }
+
+func TestAddHostFlagApprovesAHostTheFileLists(t *testing.T) {
+	dir := rcProject(t, rcRealDomain)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--host", "app.local.dd.io", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Serve these?") {
+		t.Fatalf("asked about a typed host:\n%s", out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("rcapp")
+	if got := p.AllHosts(); strings.Count(strings.Join(got, " "), "app.local.dd.io") != 1 {
+		t.Fatalf("hosts = %v", got)
+	}
+}
+
+func TestAddHostFlagTypedTwiceIsServedOnce(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", envProject(t, ""), "--name", "twice", "--web", "3000", "--host", "a.local.x.io", "--host", "A.local.x.io", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("twice")
+	if web, _ := p.WebRoute(); len(web.Hosts) != 1 || web.Hosts[0] != "a.local.x.io" {
+		t.Fatalf("hosts = %v", web.Hosts)
+	}
+}

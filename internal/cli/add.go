@@ -231,20 +231,41 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 		}
 		*project = merged
 	}
+	// A host typed twice, or already on a route, is served once: it still
+	// counts as typed, so it is approved, but is not added again. Hosts are
+	// matched without regard to case, and typed ones are lower-cased so that
+	// the way they are written cannot make them differ.
 	approved := map[string]bool{}
+	var extra []string
 	for _, h := range typed {
+		h = strings.ToLower(strings.TrimSpace(h))
 		if err := hostname.Valid(h); err != nil {
 			return err
 		}
-		approved[strings.ToLower(h)] = true
+		if !approved[h] {
+			approved[h] = true
+			extra = append(extra, h)
+		}
 	}
-	if len(typed) > 0 {
+	onRoute := map[string]bool{}
+	for _, r := range project.Routes {
+		for _, h := range r.Hosts {
+			onRoute[strings.ToLower(h)] = true
+		}
+	}
+	var add []string
+	for _, h := range extra {
+		if !onRoute[h] {
+			add = append(add, h)
+		}
+	}
+	if len(add) > 0 {
 		// The routes are copied first: they may share an array with the
 		// discovery result.
 		routes := append([]config.Route(nil), project.Routes...)
 		for i := range routes {
 			if routes[i].Role == config.RoleWeb {
-				routes[i].Hosts = append(append([]string(nil), routes[i].Hosts...), typed...)
+				routes[i].Hosts = append(append([]string(nil), routes[i].Hosts...), add...)
 				break
 			}
 		}
