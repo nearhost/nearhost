@@ -36,6 +36,8 @@ type fakeBackend struct {
 	edit      editFake
 	trusted   bool
 	caExpires time.Time
+	// hostsState is what HostsState says; empty means "2 names".
+	hostsState string
 	// applyBlocks makes Apply wait for its context to end.
 	applyBlocks bool
 
@@ -158,6 +160,9 @@ func (f *fakeBackend) HostsState() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
+	if f.hostsState != "" {
+		return f.hostsState
+	}
 	return "2 names"
 }
 func (f *fakeBackend) machineReads() int {

@@ -44,6 +44,22 @@ func TestHeaderShowsTrouble(t *testing.T) {
 	wantScreen(t, m, "proxy ● down · CA not trusted · hosts ok")
 }
 
+// Before the first look at the hosts file, the header says it is checking
+// rather than warning that the block needs an update.
+func TestHeaderWhileCheckingHosts(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.hostsState = "checking"
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{} })
+	wantScreen(t, m, "CA trusted · hosts checking…", "hosts     ● checking…")
+	if s := screen(m); strings.Contains(s, "needs update") {
+		t.Errorf("screen warns while checking:\n%s", s)
+	}
+	if _, ok := hostsWord("checking"); !ok {
+		t.Error("hostsWord(checking) is a warning")
+	}
+}
+
 // A narrow window gets one dot for the machine and a narrower sidebar.
 func TestNarrowHeader(t *testing.T) {
 	f := newFake(t, sampleConfig())
@@ -63,6 +79,7 @@ func TestHostsWord(t *testing.T) {
 	for state, want := range map[string]string{
 		"2 names": "ok", "1 name": "ok", "no names configured": "ok",
 		"not managed (--no-hosts)": "off", "missing a.test": "needs update", "": "…",
+		"checking": "checking…",
 	} {
 		if got, _ := hostsWord(state); ansi.Strip(got) != want {
 			t.Errorf("hostsWord(%q) = %q, want %q", state, ansi.Strip(got), want)

@@ -100,12 +100,20 @@ func (m *Model) machineSummary() string {
 	return summary
 }
 
+// hostsChecking is the hosts state the backend gives before its first look
+// at the hosts file.
+const hostsChecking = "checking"
+
 // hostsWord is what the header says about the hosts block, from what the
 // backend says about it, and whether that is fine.
 func hostsWord(state string) (string, bool) {
 	switch {
 	case state == "":
 		return styleDim.Render("…"), true
+	case state == hostsChecking:
+		// The backend has not looked yet. That is no reason to warn, and
+		// there is nothing to fix.
+		return styleDim.Render("checking…"), true
 	case strings.HasPrefix(state, "not managed"):
 		return styleDim.Render("off"), true
 	case state == "no names configured", strings.HasSuffix(state, " name"), strings.HasSuffix(state, " names"):
