@@ -29,7 +29,7 @@ func TestReadEnvAppliesLocalOverrides(t *testing.T) {
 		".env":       "APP_PORT=80\nVITE_PORT=5173\n",
 		".env.local": "VITE_PORT=5199\n",
 	}
-	env, err := readEnv(r)
+	env, err := ReadEnv(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestReadEnvAppliesLocalOverrides(t *testing.T) {
 }
 
 func TestReadEnvWithNoFilesIsEmpty(t *testing.T) {
-	env, err := readEnv(DirReader{Root: "testdata/empty"})
+	env, err := ReadEnv(DirReader{Root: "testdata/empty"})
 	if err != nil || len(env) != 0 {
 		t.Fatalf("expected empty env, got %+v %v", env, err)
 	}

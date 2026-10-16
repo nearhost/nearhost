@@ -33,8 +33,8 @@ func ParseEnv(data []byte) (map[string]string, error) {
 	return env, nil
 }
 
-// readEnv reads .env then .env.local, later files overriding earlier ones.
-func readEnv(r FileReader) (map[string]string, error) {
+// ReadEnv reads .env then .env.local, later files overriding earlier ones.
+func ReadEnv(r FileReader) (map[string]string, error) {
 	merged := map[string]string{}
 	for _, name := range []string{".env", ".env.local"} {
 		data, err := r.ReadFile(name)
