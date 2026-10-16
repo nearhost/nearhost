@@ -137,21 +137,19 @@ From then on, `add` suggests presets that suit the project and asks before enabl
 
 ### From a coding agent
 
-A coding agent such as Claude Code or Codex can add the project it is working in, whether it runs on this machine or on a server Nearhost is connected to. In Claude Code, install the plugin:
-
-```text
-/plugin install nearhost --marketplace nearhost/nearhost
-```
-
-Then run `/nearhost add` in the project. The agent proposes it, and Nearhost opens the add form over its view with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
-
-For Codex, link the skill from a checkout of this repository into its skills folder on the machine Codex runs on:
+A coding agent can add the project it is working in, whether it runs on this machine or on a server Nearhost is connected to. Install the `nearhost` skill with the [skills](https://skills.sh) CLI, which puts it where your agents look for skills: Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot and many more. Do it on each machine an agent runs on:
 
 ```sh
-ln -s "$PWD/agents/nearhost/skills/nearhost" ~/.agents/skills/nearhost
+npx skills add nearhost/nearhost -g
 ```
 
-Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent whose sandbox blocks Unix sockets needs them allowed; the [documentation](https://nearhost.dev/docs/) shows how for each agent. Set `notifications: false` in the config to keep the terminal quiet.
+`-g` installs it for your user rather than into the current project; `-a codex` and the like pick the agents. In Claude Code you can also install it as a plugin, with `/plugin install nearhost --marketplace nearhost/nearhost`.
+
+[![skills.sh](https://skills.sh/b/nearhost/nearhost)](https://skills.sh/nearhost/nearhost)
+
+Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its view with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
+
+Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs `~/.nearhost/*.sock` allowed; the [documentation](https://nearhost.dev/docs/) shows how for Claude Code and Codex. Set `notifications: false` in the config to keep the terminal quiet.
 
 ### Useful commands
 
