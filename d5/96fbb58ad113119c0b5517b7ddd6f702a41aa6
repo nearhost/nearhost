@@ -1,0 +1,27 @@
+internal/tui/help.go
+  s_b33b52432eafa1::t_02d1aed9e9489d 42
+internal/tui/proposals_test.go
+  s_b33b52432eafa1::t_af938745596c78 4-5,8,208-270
+internal/tui/proposals.go
+  s_b33b52432eafa1::t_02d1aed9e9489d 136-140,146-151
+  s_b33b52432eafa1::t_61faf743cd71e3 35-37,41,49-54,58-62,64-80
+internal/tui/wizard_project.go
+  s_b33b52432eafa1::t_02d1aed9e9489d 84-86,944-946
+  s_b33b52432eafa1::t_86fd156767fa71 87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d596fbb58ad113119c0b5517b7ddd6f702a41aa6",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
