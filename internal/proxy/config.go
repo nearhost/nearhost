@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 // CAName is the display name of the local certificate authority.
@@ -23,9 +25,16 @@ const writerModule = "nearhost"
 // loopback network is listed too.
 var loopbackRanges = []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
 
-// Site is one alias proxied to one upstream.
+// Site is one web route of a project: the hosts it is served at, proxied to
+// one upstream. A project with several web routes is several sites sharing
+// an Alias. No host may be on two sites.
 type Site struct {
-	Alias    string // e.g. myapp.test
+	// Alias is the project's .test alias, e.g. myapp.test. It names the
+	// project in logs and captured exchanges, whichever host was asked for.
+	Alias string
+	// Hosts are the names served, exact or patterns such as
+	// *.local.example.io. There must be at least one.
+	Hosts    []string
 	Upstream string // host:port, e.g. 127.0.0.1:54321
 }
 
@@ -48,6 +57,10 @@ func captureHandler(alias string, on bool) []any {
 	return []any{map[string]any{"handler": captureModule, "alias": alias}}
 }
 
+// accessLogger is the name of the server's one access logger. Caddy logs
+// to http.log.access.<name>.
+const accessLogger = "nearhost"
+
 func writer(alias string) map[string]any {
 	w := map[string]any{"output": writerModule}
 	if alias != "" {
@@ -56,10 +69,51 @@ func writer(alias string) map[string]any {
 	return w
 }
 
+// accessWriter is the writer of the access log, which files each line under
+// the alias the line carries.
+func accessWriter() map[string]any {
+	return map[string]any{"output": writerModule, "access": true}
+}
+
+// siteRoute is the route serving one host of a site: it tags the request
+// with the site's alias, keeps the exchange when capture is on, and proxies
+// to the upstream.
+func siteRoute(s Site, host string, capture bool) map[string]any {
+	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
+	handle = append(handle, captureHandler(s.Alias, capture)...)
+	handle = append(handle, map[string]any{
+		"handler":        "reverse_proxy",
+		"upstreams":      []any{map[string]any{"dial": s.Upstream}},
+		"flush_interval": -1,
+		// By default Caddy closes upgraded streams (WebSockets) on every config
+		// reload, dropping dev-server HMR sockets whenever the site set
+		// changes. With this delay, upgraded connections of a removed site, and
+		// connections open when the proxy stops, stay open until either end
+		// closes or the delay elapses.
+		"stream_close_delay": "24h",
+		"headers": map[string]any{"request": map[string]any{"set": map[string]any{
+			"X-Forwarded-Proto": []string{"https"},
+			"X-Forwarded-For":   []string{"{http.request.remote.host}"},
+		}}},
+	})
+	return map[string]any{
+		// One match set, so both must hold: the host is this one and the
+		// client is on this machine.
+		"match": []any{map[string]any{
+			"host":      []string{host},
+			"remote_ip": map[string]any{"ranges": loopbackRanges},
+		}},
+		"handle":   handle,
+		"terminal": true,
+	}
+}
+
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
-// config, which declares no listeners. Output is deterministic: sites are ordered by alias.
+// config, which declares no listeners. Output is deterministic: there is one
+// route per host, ordered by hostname.Less, so exact hosts win over patterns
+// and more specific patterns over less specific ones.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -72,59 +126,61 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		httpPort = 80
 	}
 
-	sites = append([]Site(nil), sites...)
-	sort.Slice(sites, func(i, j int) bool { return sites[i].Alias < sites[j].Alias })
+	// A host on two sites is reported before any host is validated, so the
+	// error names the clash, whichever way the host is spelled.
+	type served struct {
+		site Site
+		host string
+	}
+	var all []served
+	siteOf := map[string]int{} // lower-cased host to the index of its site: names match without case
+	for i, s := range sites {
+		if s.Alias == "" || s.Upstream == "" || len(s.Hosts) == 0 {
+			return nil, fmt.Errorf("proxy: site needs alias, hosts and upstream, got %+v", s)
+		}
+		for _, h := range s.Hosts {
+			key := strings.ToLower(h)
+			if j, ok := siteOf[key]; ok {
+				if j != i {
+					return nil, fmt.Errorf("proxy: host %q is on two sites", key)
+				}
+				return nil, fmt.Errorf("proxy: host %q is listed twice on site %s", key, s.Alias)
+			}
+			siteOf[key] = i
+			all = append(all, served{s, h})
+		}
+	}
+	for _, sv := range all {
+		if err := hostname.Valid(sv.host); err != nil {
+			return nil, fmt.Errorf("proxy: %w", err)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		a, b := all[i], all[j]
+		if a.host != b.host {
+			return hostname.Less(a.host, b.host)
+		}
+		return a.site.Alias < b.site.Alias
+	})
 
-	routes := make([]any, 0, len(sites))
-	loggerNames := map[string]any{}
+	routes := make([]any, 0, len(all)+1)
+	subjects := make([]string, 0, len(all))
+	for _, sv := range all {
+		routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
+		subjects = append(subjects, sv.host)
+	}
 	logs := map[string]any{
+		// Caddy's own messages, filed under no project.
 		"default": map[string]any{
 			"writer":  writer(""),
 			"level":   "WARN",
 			"exclude": []string{"http.log.access"},
 		},
-	}
-	subjects := make([]string, 0, len(sites))
-	seen := map[string]bool{} // lower-cased: host names match without case
-	for _, s := range sites {
-		if s.Alias == "" || s.Upstream == "" {
-			return nil, fmt.Errorf("proxy: site needs alias and upstream, got %+v", s)
-		}
-		key := strings.ToLower(s.Alias)
-		if seen[key] {
-			return nil, fmt.Errorf("proxy: duplicate alias %q", s.Alias)
-		}
-		seen[key] = true
-		routes = append(routes, map[string]any{
-			// One match set, so both must hold: the host is this alias and
-			// the client is on this machine.
-			"match": []any{map[string]any{
-				"host":      []string{s.Alias},
-				"remote_ip": map[string]any{"ranges": loopbackRanges},
-			}},
-			"handle": append(captureHandler(s.Alias, opts.Capture), map[string]any{
-				"handler":        "reverse_proxy",
-				"upstreams":      []any{map[string]any{"dial": s.Upstream}},
-				"flush_interval": -1,
-				// By default Caddy closes upgraded streams (WebSockets) on every config
-				// reload, dropping dev-server HMR sockets whenever the site set
-				// changes. With this delay, upgraded connections of a removed site, and
-				// connections open when the proxy stops, stay open until either end
-				// closes or the delay elapses.
-				"stream_close_delay": "24h",
-				"headers": map[string]any{"request": map[string]any{"set": map[string]any{
-					"X-Forwarded-Proto": []string{"https"},
-					"X-Forwarded-For":   []string{"{http.request.remote.host}"},
-				}}},
-			}),
-			"terminal": true,
-		})
-		loggerNames[s.Alias] = []string{s.Alias}
-		logs[s.Alias] = map[string]any{
-			"writer":  writer(s.Alias),
-			"include": []string{"http.log.access." + s.Alias},
-		}
-		subjects = append(subjects, s.Alias)
+		// Every site's requests, filed under the alias each line carries.
+		"access": map[string]any{
+			"writer":  accessWriter(),
+			"include": []string{"http.log.access." + accessLogger},
+		},
 	}
 
 	// Whatever matched no site (a client from another machine, or a host that
@@ -165,7 +221,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 							"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 						}},
 						"routes": routes,
-						"logs":   map[string]any{"logger_names": loggerNames},
+						// Requests are logged under one name; the tag handler
+						// on each route says which project the line is for.
+						"logs": map[string]any{"default_logger_name": accessLogger},
 					},
 				},
 			},

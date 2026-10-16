@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"sync"
 
@@ -55,6 +56,10 @@ func init() {
 // Writer is a Caddy log writer module that forwards lines to the sink.
 type Writer struct {
 	Alias string `json:"alias,omitempty"`
+	// Access marks the writer of the access log. Its lines are filed under
+	// the alias each one carries, and a line with none, for a host nobody
+	// serves, is dropped.
+	Access bool `json:"access,omitempty"`
 }
 
 // CaddyModule implements caddy.Module.
@@ -66,20 +71,43 @@ func (Writer) CaddyModule() caddy.ModuleInfo {
 }
 
 // String implements fmt.Stringer for Caddy's writer description.
-func (w Writer) String() string { return "nearhost:" + w.Alias }
+func (w Writer) String() string { return w.WriterKey() }
 
-// WriterKey implements caddy.WriterOpener.
-func (w Writer) WriterKey() string { return "nearhost:" + w.Alias }
+// WriterKey implements caddy.WriterOpener. Caddy shares one open writer
+// between logs with the same key, so the access writer has its own.
+func (w Writer) WriterKey() string {
+	if w.Access {
+		return "nearhost-access:" + w.Alias
+	}
+	return "nearhost:" + w.Alias
+}
 
 // OpenWriter implements caddy.WriterOpener.
 func (w Writer) OpenWriter() (io.WriteCloser, error) {
-	return &lineWriter{alias: w.Alias}, nil
+	return &lineWriter{alias: w.Alias, access: w.Access && w.Alias == ""}, nil
 }
 
 type lineWriter struct {
-	alias string
-	mu    sync.Mutex
-	buf   bytes.Buffer
+	alias  string
+	access bool // file each line under the alias it carries
+	mu     sync.Mutex
+	buf    bytes.Buffer
+}
+
+// send passes one line to the sink, under the alias it carries when this is
+// the access writer.
+func (l *lineWriter) send(line string) {
+	if !l.access {
+		emit(l.alias, line)
+		return
+	}
+	var tagged struct {
+		Alias string `json:"nearhost_alias"`
+	}
+	if json.Unmarshal([]byte(line), &tagged) != nil || tagged.Alias == "" {
+		return // no project served it: a host nobody serves
+	}
+	emit(tagged.Alias, line)
 }
 
 func (l *lineWriter) Write(p []byte) (int, error) {
@@ -92,7 +120,7 @@ func (l *lineWriter) Write(p []byte) (int, error) {
 			l.buf.WriteString(line) // keep the partial line
 			break
 		}
-		emit(l.alias, line[:len(line)-1])
+		l.send(line[:len(line)-1])
 	}
 	return len(p), nil
 }
@@ -101,7 +129,7 @@ func (l *lineWriter) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.buf.Len() > 0 {
-		emit(l.alias, l.buf.String())
+		l.send(l.buf.String())
 		l.buf.Reset()
 	}
 	return nil

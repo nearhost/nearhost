@@ -45,7 +45,7 @@ func TestCaptureKeepsExchanges(t *testing.T) {
 	ClearCaptured()
 	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
-	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
+	h := startProxyWith(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", false)
 	h.getEventually(c, "a.test", "/hello")
 
@@ -82,7 +82,7 @@ func TestCaptureLimits(t *testing.T) {
 	defer func(body, n int) { captureBodyMax, captureMax = body, n }(captureBodyMax, captureMax)
 	captureBodyMax, captureMax = 4, 2
 	up := upstream(t, "a")
-	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
+	h := startProxyWith(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", false)
 	h.getEventually(c, "a.test", "/hello")
 	first := idOf(t, h, "a.test", "/hello")
@@ -108,7 +108,7 @@ func TestCaptureLeavesStreamsAndSocketsAlone(t *testing.T) {
 	ClearCaptured()
 	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
-	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
+	h := startProxyWith(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", true)
 	h.getEventually(c, "a.test", "/hello")
 
@@ -147,14 +147,14 @@ func TestCaptureLeavesStreamsAndSocketsAlone(t *testing.T) {
 
 // Without capture nothing is kept and no handler is added.
 func TestNoCapture(t *testing.T) {
-	cfg, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir()})
+	cfg, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(cfg), captureModule) {
 		t.Error("a capture handler without capture")
 	}
-	cfg, _ = BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir(), Capture: true})
+	cfg, _ = BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir(), Capture: true})
 	if !strings.Contains(string(cfg), `"handler":"`+captureModule+`"`) {
 		t.Errorf("no capture handler:\n%s", cfg)
 	}
@@ -166,7 +166,7 @@ func TestReplay(t *testing.T) {
 	ClearCaptured()
 	t.Cleanup(ClearCaptured)
 	up := upstream(t, "a")
-	h := startProxyWith(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}}, true)
+	h := startProxyWith(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}, true)
 	c := h.client("a.test", false)
 	h.getEventually(c, "a.test", "/hello")
 	r, err := c.Post(h.url("a.test", "/echo"), "text/plain", strings.NewReader("ping"))

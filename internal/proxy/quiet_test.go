@@ -24,7 +24,7 @@ func runHelper(what string) int {
 		https, _ := strconv.Atoi(os.Getenv("NEARHOST_PROXY_HTTPS"))
 		http, _ := strconv.Atoi(os.Getenv("NEARHOST_PROXY_HTTP"))
 		p := New(Options{StorageRoot: dir, HTTPSPort: https, HTTPPort: http})
-		if err := p.Apply([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}); err != nil {
+		if err := p.Apply([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}); err != nil {
 			fmt.Println(err)
 			return 1
 		}

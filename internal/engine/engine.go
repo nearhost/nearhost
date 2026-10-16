@@ -435,7 +435,7 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.server == config.LocalServer {
 			host = "localhost"
 		}
-		sites = append(sites, proxy.Site{Alias: run.alias, Upstream: fmt.Sprintf("%s:%d", host, run.webLocal)})
+		sites = append(sites, proxy.Site{Alias: run.alias, Hosts: []string{run.alias}, Upstream: fmt.Sprintf("%s:%d", host, run.webLocal)})
 	}
 	return sites
 }

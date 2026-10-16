@@ -82,7 +82,7 @@ func TestApplyWithoutSitesWaitsForThePorts(t *testing.T) {
 	}
 	t.Cleanup(func() { releasePorts = orig })
 	up := upstream(t, "a")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 	if err := h.p.Apply(nil); err != nil {
 		t.Fatal(err)
