@@ -1,0 +1,33 @@
+npm/publish.mjs
+  s_c232e8446224ef::t_921d9675d120b5 1-39
+npm/cli/package.json
+  s_c232e8446224ef::t_f98833d1c36a8d 1-22
+npm/cli/bin/nearhost.js
+  s_c232e8446224ef::t_f98833d1c36a8d 1-46
+npm/build.mjs
+  s_c232e8446224ef::t_921d9675d120b5 1-104
+.gitignore
+  s_c232e8446224ef::t_921d9675d120b5 10-12
+npm/cli/README.md
+  s_c232e8446224ef::t_f98833d1c36a8d 1-20
+.github/workflows/release.yml
+  s_c232e8446224ef::t_573ecf00f21f03 36-58
+README.md
+  s_c232e8446224ef::t_d06e7d3f63ce2b 55-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd4785b8d149c4f4d98fd918f72ac57932b0980a",
+  "prompts": {},
+  "sessions": {
+    "s_c232e8446224ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15ab410e-539a-45e5-8bd6-3ee7f0b95031",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
