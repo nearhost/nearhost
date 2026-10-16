@@ -165,9 +165,14 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 
 	routes := make([]any, 0, len(all)+1)
 	subjects := make([]string, 0, len(all))
+	var patterns []string
 	for _, sv := range all {
 		routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
-		subjects = append(subjects, sv.host)
+		if hostname.IsPattern(sv.host) {
+			patterns = append(patterns, sv.host)
+		} else {
+			subjects = append(subjects, sv.host)
+		}
 	}
 	logs := map[string]any{
 		// Caddy's own messages, filed under no project.
@@ -191,13 +196,76 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	})
 
 	// An empty-subject policy would match every name, so only add one when
-	// there are sites.
+	// there are exact hosts.
 	policies := []any{}
 	if len(subjects) > 0 {
 		policies = append(policies, map[string]any{
 			"subjects": subjects,
 			"issuers":  []any{map[string]any{"module": "internal"}},
 		})
+	}
+	automation := map[string]any{"policies": policies}
+	if len(patterns) > 0 {
+		// A certificate's wildcard covers only its leftmost label, so a
+		// pattern cannot be a subject. Each name a pattern serves is issued
+		// its own certificate at its first handshake instead, by this
+		// catch-all policy, and the permission module refuses any name that
+		// matches no pattern, so no one can have certificates issued for
+		// names that are not served.
+		policies = append(policies, map[string]any{
+			"on_demand": true,
+			"issuers":   []any{map[string]any{"module": "internal"}},
+		})
+		automation["policies"] = policies
+		automation["on_demand"] = map[string]any{
+			"permission": map[string]any{"module": permissionModule, "patterns": patterns},
+		}
+	}
+
+	server := map[string]any{
+		"listen": []string{fmt.Sprintf(":%d", httpsPort)},
+		// The only policy is for loopback clients, so a handshake from
+		// anywhere else matches none and fails before a certificate is
+		// shown: it cannot tell a served alias from any other name.
+		"tls_connection_policies": []any{map[string]any{
+			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+		}},
+		"routes": routes,
+		// Requests are logged under one name; the tag handler on each route
+		// says which project the line is for.
+		"logs": map[string]any{"default_logger_name": accessLogger},
+	}
+	servers := map[string]any{"nearhost": server}
+	if len(patterns) > 0 {
+		// Automatic HTTPS would otherwise try to manage the patterns as
+		// subjects. Its redirects stay on for the exact hosts.
+		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
+		// Automatic HTTPS redirects only the names it manages, so the
+		// patterns get their own 308s on the http port, for loopback
+		// clients as on https. Automatic HTTPS finds this server listening
+		// there and adds the exact hosts' redirects to it, after these
+		// routes.
+		redirects := make([]any, 0, len(patterns))
+		for _, p := range patterns {
+			redirects = append(redirects, map[string]any{
+				"match": []any{map[string]any{
+					"host":      []string{p},
+					"remote_ip": map[string]any{"ranges": loopbackRanges},
+				}},
+				"handle": []any{map[string]any{
+					"handler":     "static_response",
+					"status_code": 308,
+					"headers": map[string]any{
+						"Location": []string{"https://{http.request.host}{http.request.uri}"},
+					},
+				}},
+				"terminal": true,
+			})
+		}
+		servers["nearhost_http"] = map[string]any{
+			"listen": []string{fmt.Sprintf(":%d", httpPort)},
+			"routes": redirects,
+		}
 	}
 
 	cfg := map[string]any{
@@ -210,22 +278,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			"http": map[string]any{
 				"https_port": httpsPort,
 				"http_port":  httpPort,
-				"servers": map[string]any{
-					"nearhost": map[string]any{
-						"listen": []string{fmt.Sprintf(":%d", httpsPort)},
-						// The only policy is for loopback clients, so a
-						// handshake from anywhere else matches none and
-						// fails before a certificate is shown: it cannot
-						// tell a served alias from any other name.
-						"tls_connection_policies": []any{map[string]any{
-							"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
-						}},
-						"routes": routes,
-						// Requests are logged under one name; the tag handler
-						// on each route says which project the line is for.
-						"logs": map[string]any{"default_logger_name": accessLogger},
-					},
-				},
+				"servers":    servers,
 			},
 			"tls": map[string]any{
 				// Storage cleaning calls caddy.InstanceID, which writes instance.uuid
@@ -233,9 +286,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				// outside our storage root. Internal-issuer certs are overwritten in
 				// place, so nothing accumulates without the cleaner.
 				"disable_storage_clean": true,
-				"automation": map[string]any{
-					"policies": policies,
-				},
+				"automation":            automation,
 			},
 			"pki": map[string]any{
 				"certificate_authorities": map[string]any{

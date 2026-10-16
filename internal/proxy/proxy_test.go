@@ -7,10 +7,13 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -809,4 +812,128 @@ func TestAccessLinesWithoutTagAreDropped(t *testing.T) {
 			t.Errorf("an access line for an unserved host reached the sink: %q", l)
 		}
 	}
+}
+
+// named is an upstream that answers every request with name alone.
+func named(t *testing.T, name string) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, name)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// body GETs rawURL over https on the proxy's port, with the URL's host as
+// SNI and Host, verifying against the test's CA, and returns the body. It
+// retries until a response comes, as certificates are issued after Apply.
+func (h *harness) body(t *testing.T, rawURL string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, b := h.getEventually(h.client(u.Hostname(), false), u.Hostname(), u.RequestURI())
+	return b
+}
+
+// handshake makes one TLS handshake for sni with the proxy from loopback,
+// verifying against the test's CA.
+func (h *harness) handshake(t *testing.T, sni string) (tls.ConnectionState, error) {
+	t.Helper()
+	raw, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", h.httpsPort), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	raw.SetDeadline(time.Now().Add(10 * time.Second))
+	conn := tls.Client(raw, &tls.Config{RootCAs: h.pool, ServerName: sni})
+	err = conn.Handshake()
+	return conn.ConnectionState(), err
+}
+
+// postHTTP POSTs form to path on the proxy's http port from loopback, with
+// host as Host, and returns the response without following redirects.
+func (h *harness) postHTTP(t *testing.T, host, path, form string) *http.Response {
+	t.Helper()
+	c := &http.Client{
+		Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", h.httpPort))
+		}},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Timeout:       10 * time.Second,
+	}
+	resp, err := c.Post("http://"+host+path, "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatalf("POST http://%s%s: %v", host, path, err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+// waitCerts waits until a handshake for each host succeeds. Caddy issues
+// the exact hosts' certificates in the background after Apply, and goes on
+// writing them to storage after Stop, so a test that never asks for them
+// waits here, or the temporary storage cannot be removed.
+func (h *harness) waitCerts(t *testing.T, hosts ...string) {
+	t.Helper()
+	for _, host := range hosts {
+		waitUntil(t, 10*time.Second, func() bool {
+			_, err := h.handshake(t, host)
+			return err == nil
+		}, "certificate for "+host)
+	}
+}
+
+// certFor reports whether storage holds a certificate directory named host.
+func certFor(storage, host string) bool {
+	found := false
+	filepath.WalkDir(storage, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && d.Name() == host {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
+func TestPatternsGetCertificatesAndExactWins(t *testing.T) {
+	pro, platform := named(t, "pro"), named(t, "platform")
+	h := startProxy(t, []Site{
+		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: addr(pro)},
+		{Alias: "platform.test", Hosts: []string{"platform.test", "auth.local.example.pro"}, Upstream: addr(platform)},
+	})
+	for host, want := range map[string]string{
+		"acme.local.example.pro":          "pro",
+		"internal.acme.local.example.pro": "pro",
+		"auth.local.example.pro":          "platform",
+	} {
+		if got := h.body(t, "https://"+host+"/"); got != want {
+			t.Errorf("%s answered %q, want %q", host, got, want)
+		}
+	}
+}
+
+func TestOnDemandRefusesUnconfiguredName(t *testing.T) {
+	h := startProxy(t, []Site{{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"}})
+	if _, err := h.handshake(t, "evil.example.com"); err == nil {
+		t.Fatal("handshake for an unconfigured name succeeded")
+	}
+	if certFor(h.storage, "evil.example.com") {
+		t.Fatal("a certificate was issued for an unconfigured name")
+	}
+	h.waitCerts(t, "pro.test")
+}
+
+func TestPlainHTTPAnswers308ForEveryKindOfHost(t *testing.T) {
+	h := startProxy(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "localhost", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: "127.0.0.1:1"},
+	})
+	for _, host := range []string{"a.test", "localhost", "acme.local.example.pro", "internal.acme.local.example.pro"} {
+		resp := h.postHTTP(t, host, "/auth/callback", "x=1")
+		if resp.StatusCode != 308 || resp.Header.Get("Location") != "https://"+host+"/auth/callback" {
+			t.Errorf("%s: %d %q, want 308 to https://%s/auth/callback", host, resp.StatusCode, resp.Header.Get("Location"), host)
+		}
+	}
+	h.waitCerts(t, "a.test", "localhost")
 }
