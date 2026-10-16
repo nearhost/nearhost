@@ -77,7 +77,7 @@ func (m *Model) gotProposal(p Proposal) tea.Cmd {
 	text := fmt.Sprintf("Agent %s wants to add %s", p.where(), clean(p.Path))
 	m.logs.note(text + ".")
 	m.proposals = append(m.proposals, p)
-	return nil
+	return m.notify(text)
 }
 
 // nextProposal opens the oldest proposal still waiting, when nothing else
