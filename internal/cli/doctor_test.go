@@ -360,3 +360,39 @@ func TestDoctorSaysWhenTheCAExpires(t *testing.T) {
 		t.Errorf("doctor printed:\n%s", out)
 	}
 }
+
+func TestDoctorChecksThatAgentsReachNearhostFromEachServer(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	b := f.backend()
+	var asked []string
+	refusal := errors.New("the server refused to forward /home/dev/.nearhost/doctor-1.sock: remote port forwarding failed")
+	b.checkAgents = func(_ context.Context, srv config.Server) error {
+		asked = append(asked, srv.Name)
+		return nil
+	}
+	out, err := execute(t, newDoctorCmd(b), "doctor")
+	if err != nil || !strings.Contains(out, "ok    agents on mini   can reach Nearhost through ~/.nearhost\n") {
+		t.Fatalf("err %v:\n%s", err, out)
+	}
+
+	b.checkAgents = func(context.Context, config.Server) error { return refusal }
+	out, err = execute(t, newDoctorCmd(b), "doctor")
+	if err != nil {
+		t.Fatalf("a refusal failed doctor: %v", err)
+	}
+	if !strings.Contains(out, "warn  agents on mini   "+refusal.Error()+"\n") ||
+		!strings.Contains(out, "fix: set AllowStreamLocalForwarding yes in the sshd_config of mini.lan") {
+		t.Fatalf("doctor printed:\n%s", out)
+	}
+
+	// A server ssh cannot reach is not asked about agents.
+	f.serverErr = map[string]error{"mini": errors.New("no route to host")}
+	asked = nil
+	b = f.backend()
+	b.checkAgents = func(_ context.Context, srv config.Server) error { asked = append(asked, srv.Name); return nil }
+	execute(t, newDoctorCmd(b), "doctor")
+	if len(asked) != 0 {
+		t.Fatalf("asked %v", asked)
+	}
+}
