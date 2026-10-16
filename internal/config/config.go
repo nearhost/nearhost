@@ -54,6 +54,17 @@ type Project struct {
 	Alias   string  `yaml:"alias"`
 	Enabled bool    `yaml:"enabled"`
 	Routes  []Route `yaml:"routes"`
+	// Nearhostrc is what was last approved from the project's .nearhostrc,
+	// or nil when the project doesn't use one. Keeping it lets a changed
+	// file be told apart from hosts added by hand.
+	Nearhostrc *RcSnapshot `yaml:"nearhostrc,omitempty"`
+}
+
+// RcSnapshot is the content of a project's .nearhostrc at the time the user
+// approved it.
+type RcSnapshot struct {
+	SHA256 string  `yaml:"sha256"`
+	Routes []Route `yaml:"routes"`
 }
 
 // WebRoute returns the project's primary web route, the first one, if present.
@@ -410,6 +421,16 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("alias %q used by both %q and %q", p.Alias, other, p.Name)
 		}
 		aliases[aliasKey] = p.Name
+
+		if p.Nearhostrc != nil {
+			for _, r := range p.Nearhostrc.Routes {
+				for _, h := range r.Hosts {
+					if err := hostname.Valid(h); err != nil {
+						return fmt.Errorf("project %q approved .nearhostrc port %d: %w", p.Name, r.Port, err)
+					}
+				}
+			}
+		}
 
 		webCount := 0
 		hosts := map[string]bool{strings.ToLower(p.Alias): true}
