@@ -18,7 +18,7 @@ import (
 // t.TempDir gives on macOS is not.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "nh")
+	dir, err := os.MkdirTemp("", "nh-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,8 +23,16 @@ case "$mode" in
     echo "Control socket connect($sock): No such file or directory" >&2; exit 255;;
   forward)
     # Fail only the forward whose local port equals $FAKE_SSH_FORWARD_FAIL.
-    larg=""; prev=""
-    for a in "$@"; do [ "$prev" = "-L" ] && larg="$a"; prev="$a"; done
+    larg=""; rarg=""; prev=""
+    for a in "$@"; do
+      [ "$prev" = "-L" ] && larg="$a"
+      [ "$prev" = "-R" ] && rarg="$a"
+      prev="$a"
+    done
+    # A remote (-R) forward fails with $FAKE_SSH_RFORWARD_FAIL as the message.
+    if [ -n "$rarg" ] && [ -n "$FAKE_SSH_RFORWARD_FAIL" ]; then
+      echo "$FAKE_SSH_RFORWARD_FAIL" >&2; exit 255
+    fi
     if [ -n "$FAKE_SSH_FORWARD_FAIL" ]; then
       case "$larg" in
         127.0.0.1:$FAKE_SSH_FORWARD_FAIL:*)
