@@ -56,8 +56,9 @@ no_nearhost() {
 # find_socket sets SOCK and HELLO, the answer to GET /v1, or exits.
 find_socket() {
 	if [ -n "${NEARHOST_SOCKET:-}" ]; then
-		call "$NEARHOST_SOCKET" 2 http://nearhost/v1 && [ "$STATUS" = 200 ] ||
+		if ! call "$NEARHOST_SOCKET" 2 http://nearhost/v1 || [ "$STATUS" != 200 ]; then
 			die 2 "Nothing answers on NEARHOST_SOCKET ($NEARHOST_SOCKET). Unset it to look in ~/.nearhost."
+		fi
 		SOCK=$NEARHOST_SOCKET
 		HELLO=$BODY
 	else
