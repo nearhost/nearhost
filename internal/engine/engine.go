@@ -48,6 +48,9 @@ type Options struct {
 	// StartProject); the function must then give up and return, including
 	// when it is waiting for a password. nil disables hosts management.
 	EnsureHosts func(ctx context.Context, aliases []string) error
+	// Lookup finds the addresses DNS gives a name, so EnsureHosts is only
+	// asked for names that need a hosts entry. nil keeps every name.
+	Lookup hosts.Lookup
 	// Agent gives the socket each server's session forwards for coding
 	// agents, the first time the session starts; false forwards none. It may
 	// block, and is called once per session, never under the engine's lock.

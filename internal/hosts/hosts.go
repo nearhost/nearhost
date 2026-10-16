@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 const (
@@ -22,23 +24,11 @@ const (
 	DefaultPath = "/etc/hosts"
 )
 
-// validAlias reports whether a is a lowercase DNS hostname ending in .test.
-func validAlias(a string) bool {
-	const suffix = ".test"
-	if len(a) > 253 || !strings.HasSuffix(a, suffix) {
-		return false
-	}
-	for _, label := range strings.Split(strings.TrimSuffix(a, suffix), ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, c := range label {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return false
-			}
-		}
-	}
-	return true
+// validEntry reports whether a is a name nearhost writes to the hosts file:
+// a valid exact host, so neither a wildcard pattern nor localhost, which the
+// system already resolves.
+func validEntry(a string) bool {
+	return hostname.Valid(a) == nil && !hostname.IsPattern(a) && a != "localhost"
 }
 
 // normalize trims, drops blanks, validates, dedupes and sorts aliases.
@@ -50,8 +40,8 @@ func normalize(aliases []string) ([]string, error) {
 		if a == "" {
 			continue
 		}
-		if !validAlias(a) {
-			return nil, fmt.Errorf("invalid alias %q: must be a lowercase hostname ending in .test", a)
+		if !validEntry(a) {
+			return nil, fmt.Errorf("invalid host %q: must be a lowercase host name, not localhost or a wildcard", a)
 		}
 		if !uniq[a] {
 			uniq[a] = true
@@ -103,7 +93,7 @@ func findBlock(lines []string) (start, end int) {
 // isEntry reports whether line is a row nearhost would have written.
 func isEntry(line string) bool {
 	f := strings.Fields(line)
-	return len(f) == 2 && f[0] == "127.0.0.1" && validAlias(f[1])
+	return len(f) == 2 && f[0] == "127.0.0.1" && validEntry(f[1])
 }
 
 // unchanged reports whether updated differs from existing at most by a

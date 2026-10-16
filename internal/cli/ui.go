@@ -235,7 +235,10 @@ func (u *uiEngine) HostsState() string {
 	if u.flags.noHosts {
 		return "not managed (--no-hosts)"
 	}
-	c := checkHosts(doctorBackend{readHosts: u.b.readHosts}, u.Config())
+	// No lookup: the interface asks for this state while it draws, which
+	// must not wait on the network. Only .test aliases reach the hosts file
+	// today, and those are never looked up.
+	c := checkHosts(context.Background(), doctorBackend{readHosts: u.b.readHosts}, u.Config())
 	return c.detail
 }
 

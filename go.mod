@@ -14,6 +14,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/klauspost/compress v1.20.1
+	github.com/miekg/dns v1.1.73
 	github.com/pkg/sftp v1.13.11
 	github.com/smallstep/truststore v0.13.0
 	github.com/spf13/cobra v1.10.2
@@ -102,7 +103,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mholt/acmez/v3 v3.1.7 // indirect
-	github.com/miekg/dns v1.1.73 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect

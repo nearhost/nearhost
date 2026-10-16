@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -264,7 +265,8 @@ func (e *Engine) waitConnected(ctx context.Context, sess *transport.Session) err
 	return err
 }
 
-// ensureHosts asks for every valid alias to resolve. Calls are serialised so
+// ensureHosts asks for every valid alias to resolve, leaving out the names
+// DNS already sends to this machine (see hosts.Wanted). Calls are serialised so
 // two starting projects never prompt for a password at the same time. Both
 // the wait for the turn and the update itself end when ctx does.
 func (e *Engine) ensureHosts(ctx context.Context) error {
@@ -283,7 +285,7 @@ func (e *Engine) ensureHosts(ctx context.Context) error {
 	e.mu.Lock()
 	aliases := append([]string(nil), e.aliases...)
 	e.mu.Unlock()
-	return e.opts.EnsureHosts(ctx, aliases)
+	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, aliases, e.opts.Lookup))
 }
 
 // claimPort reserves a local port for a forward of run. It returns the name

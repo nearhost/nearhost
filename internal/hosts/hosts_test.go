@@ -181,7 +181,7 @@ func mustRewrite(t *testing.T, existing string, aliases []string) string {
 }
 
 func TestRewriteRejectsInvalidAliases(t *testing.T) {
-	bad := []string{"x.test bank.com", "a.test #", "evil.com", "A.test", "-a.test", "a-.test", ".test", "test",
+	bad := []string{"x.test bank.com", "a.test #", "A.test", "-a.test", "a-.test", ".test", "test",
 		"a.test\nb.com", "a\x07.test", "a..test", "a_b.test", strings.Repeat("a", 64) + ".test",
 		strings.Repeat("a.", 130) + "test"}
 	for _, a := range bad {
@@ -214,7 +214,7 @@ func TestApplyAndEnsureRejectInvalidWithoutWriting(t *testing.T) {
 		t.Fatal("Apply accepted invalid alias")
 	}
 	called := false
-	if _, err := Ensure(path, []string{"evil.com"}, func([]string) error { called = true; return nil }); err == nil || called {
+	if _, err := Ensure(path, []string{"Evil.com"}, func([]string) error { called = true; return nil }); err == nil || called {
 		t.Fatalf("Ensure err=%v applier called=%v", err, called)
 	}
 	if data, _ := os.ReadFile(path); string(data) != base {
@@ -585,5 +585,16 @@ func TestSudoApplierWithoutAPromptKeepsTheTerminalClear(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "a password is required") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRewriteAcceptsRealDomainsButNotPatternsOrLocalhost(t *testing.T) {
+	if _, err := Rewrite("", []string{"a.test", "app.local.example.io"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"localhost", "*.local.example.io", "App.example.io"} {
+		if _, err := Rewrite("", []string{bad}); err == nil {
+			t.Errorf("Rewrite accepted %q", bad)
+		}
 	}
 }
