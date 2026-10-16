@@ -182,5 +182,11 @@ func (e *Engine) dropServer(name string) {
 	e.mu.Unlock()
 	if c != nil {
 		c.stop()
+		c.ensure.Lock()
+		asked := c.agentAsked
+		c.ensure.Unlock()
+		if asked && e.opts.AgentDone != nil {
+			e.opts.AgentDone(name)
+		}
 	}
 }
