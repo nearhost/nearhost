@@ -1,0 +1,29 @@
+internal/tui/notify_test.go
+  s_b33b52432eafa1::t_9db038b6757399 1-77
+internal/config/config_test.go
+  s_b33b52432eafa1::t_9db038b6757399 506-516
+internal/config/config.go
+  s_b33b52432eafa1::t_055c0dece26214 96-103
+internal/tui/model.go
+  s_b33b52432eafa1::t_8c4febd66cf96a 99-101,116
+internal/tui/notify.go
+  s_b33b52432eafa1::t_306a486028ff8a 1-55
+internal/tui/proposals.go
+  s_b33b52432eafa1::t_5816f876904dfe 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53a297512b59def192470b5fe1e782456fe7c9eb",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
