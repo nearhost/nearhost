@@ -47,7 +47,7 @@ no_nearhost() {
 		host=$(hostname 2>/dev/null | cut -d. -f1)
 		# Nearhost forwards its socket only while it holds a connection to
 		# the server, which it makes when one of the server's projects starts.
-		die 2 "No Nearhost reaches this server. On your laptop, start nearhost there and connect this server (select it and press c). If this server is not in Nearhost yet, run this on the laptop instead: nearhost add --server ${host:-<server>} $PWD"
+		die 2 "No Nearhost reaches this server. On your laptop, start nearhost there and connect this server (select it and press c). If this server is not in Nearhost yet, run this on the laptop instead: nearhost add --server ${host:-<server>} ${TARGET:-$PWD}"
 	fi
 	if command -v nearhost >/dev/null 2>&1; then
 		die 2 "Nearhost is not running on this machine. Run: nearhost add <path>, then start nearhost to serve it."
@@ -96,14 +96,30 @@ find_socket() {
 	fi
 }
 
-# absolute PATH prints PATH as an absolute directory.
+# absolute PATH prints PATH as an absolute directory, as the shell sees it:
+# a symlink on the way stays.
 absolute() {
-	(cd "$1" 2>/dev/null && pwd -P) || die 1 "$1 is not a directory here."
+	(cd "$1" 2>/dev/null && pwd) || die 1 "$1 is not a directory here."
 }
 
-# quote STRING prints STRING as a JSON string.
+# resolved PATH prints PATH as an absolute directory with its symlinks
+# resolved. The project may be in Nearhost's config either way.
+resolved() {
+	(cd "$1" 2>/dev/null && pwd -P)
+}
+
+# quote STRING prints STRING as a JSON string. awk reads it from the
+# environment, which leaves backslashes as they are.
 quote() {
-	printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	QUOTE=$1 awk 'BEGIN {
+		s = ENVIRON["QUOTE"]
+		gsub(/\\/, "\\\\", s)
+		gsub(/"/, "\\\"", s)
+		gsub(/\t/, "\\t", s)
+		gsub(/\n/, "\\n", s)
+		gsub(/\r/, "\\r", s)
+		printf "\"%s\"", s
+	}'
 }
 
 # answer prints BODY and exits for STATUS: 0 for success, otherwise with the
@@ -135,9 +151,12 @@ status)
 		call "$SOCK" 10 http://nearhost/v1/projects || die 2 "Nearhost stopped answering."
 	else
 		dir=$(absolute "${1:-.}") || exit 1
-		call "$SOCK" 10 -G --data-urlencode "path=$dir" http://nearhost/v1/projects || die 2 "Nearhost stopped answering."
+		call "$SOCK" 10 -G --data-urlencode "path=$dir" --data-urlencode "real=$(resolved "$dir")" http://nearhost/v1/projects ||
+			die 2 "Nearhost stopped answering."
 	fi
 	printf '%s\n' "$BODY"
+	# 404: no project holds the path, so it is not in Nearhost yet.
+	[ "$STATUS" = 200 ] || exit 1
 	;;
 propose)
 	web=0
@@ -159,8 +178,9 @@ propose)
 	'' | *[!0-9]*) die 1 "--web must be a port number, not $web" ;;
 	esac
 	dir=$(absolute "${1:-.}") || exit 1
+	TARGET=$dir
 	find_socket
-	body="{\"path\":$(quote "$dir"),\"web\":$web"
+	body="{\"path\":$(quote "$dir"),\"real\":$(quote "$(resolved "$dir")"),\"web\":$web"
 	[ -n "$name" ] && body="$body,\"name\":$(quote "$name")"
 	call "$SOCK" 10 -X POST -H 'Content-Type: application/json' --data-binary "$body}" http://nearhost/v1/proposals ||
 		die 2 "Nearhost stopped answering."

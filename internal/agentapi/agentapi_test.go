@@ -356,3 +356,26 @@ func TestUnknownCallsSayWhatToDo(t *testing.T) {
 		t.Fatalf("%d %v", status, out)
 	}
 }
+
+func TestTheResolvedPathAlsoFindsTheProject(t *testing.T) {
+	_, r, _, _, remote := newServer(t, true)
+	// The agent stands in a symlinked directory; the config holds the real one.
+	status, out := call(t, remote, "GET", "/v1/projects?path=/home/dev/link/src&real=/home/dev/code/myapp/src", "")
+	if status != 200 || out["name"] != "myapp" {
+		t.Fatalf("status by real path: %d %v", status, out)
+	}
+	status, out = call(t, remote, "POST", "/v1/proposals", `{"path": "/home/dev/link", "real": "/home/dev/code/myapp"}`)
+	if status != 200 || out["state"] != "exists" {
+		t.Fatalf("propose by real path: %d %v", status, out)
+	}
+	if status, _ := call(t, remote, "POST", "/v1/proposals", `{"path": "/srv/app", "real": "srv/app"}`); status != 400 {
+		t.Fatalf("a relative real path: %d", status)
+	}
+	if status, _ := call(t, remote, "GET", "/v1/projects?path=/srv/app&real=srv", ""); status != 400 {
+		t.Fatalf("a relative real path in status: %d", status)
+	}
+	_, out = call(t, remote, "POST", "/v1/proposals", `{"path": "/home/dev/link2", "real": "/srv/elsewhere"}`)
+	if seen := r.all(); len(seen) != 1 || seen[0].Path != "/home/dev/link2" {
+		t.Fatalf("the proposal should carry the path the agent stands in: %+v %v", seen, out)
+	}
+}

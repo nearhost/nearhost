@@ -57,17 +57,31 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, map[string]any{"projects": all})
 		return
 	}
-	p := r.URL.Query().Get("path")
+	p, real := r.URL.Query().Get("path"), r.URL.Query().Get("real")
 	if !path.IsAbs(p) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", p))
 		return
 	}
-	found, ok := holding(all, p)
+	if real != "" && !path.IsAbs(real) {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", real))
+		return
+	}
+	found, ok := holdingEither(all, p, real)
 	if !ok {
 		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s", path.Clean(p)))
 		return
 	}
 	reply(w, http.StatusOK, found)
+}
+
+// holdingEither finds the project holding p, the path as the agent sees
+// it, or else real, the same path with its symlinks resolved, when given.
+// A project may be configured under either.
+func holdingEither(projects []Project, p, real string) (Project, bool) {
+	if found, ok := holding(projects, p); ok || real == "" {
+		return found, ok
+	}
+	return holding(projects, real)
 }
 
 // holding finds the project whose path is p or the nearest parent of it.
@@ -88,6 +102,8 @@ func holding(projects []Project, p string) (Project, bool) {
 
 type proposeRequest struct {
 	Path string `json:"path"`
+	// Real is Path with its symlinks resolved, when the agent can tell.
+	Real string `json:"real"`
 	Name string `json:"name"`
 	Web  int    `json:"web"`
 }
@@ -108,6 +124,9 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	case !path.IsAbs(req.Path):
 		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", req.Path))
 		return
+	case req.Real != "" && !path.IsAbs(req.Real):
+		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", req.Real))
+		return
 	case req.Web < 0 || req.Web > 65535:
 		fail(w, http.StatusBadRequest, fmt.Sprintf("web must be a port between 1 and 65535, not %d", req.Web))
 		return
@@ -116,7 +135,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := origin(r)
-	if found, ok := holding(s.opts.Source.Projects(o), req.Path); ok {
+	if found, ok := holdingEither(s.opts.Source.Projects(o), req.Path, req.Real); ok {
 		reply(w, http.StatusOK, map[string]any{"state": StateExists, "project": found})
 		return
 	}

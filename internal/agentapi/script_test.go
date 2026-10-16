@@ -106,7 +106,7 @@ func TestScriptProposesAndWaitsForTheAnswer(t *testing.T) {
 	s.mu.Lock()
 	p := s.proposals[id]
 	s.mu.Unlock()
-	if real, _ := filepath.EvalSymlinks(app); p.Path != real || p.Web != 5173 || p.Name != `the "app"` {
+	if p.Path != app || p.Web != 5173 || p.Name != `the "app"` {
 		t.Fatalf("proposed %+v", p.Proposal)
 	}
 
@@ -215,6 +215,76 @@ func TestScriptRefusesAnAPIItDoesNotSpeak(t *testing.T) {
 	go srv.Serve(l)
 	defer srv.Close()
 	if r := runScript(t, home, nil, "socket"); r.code != 5 || !strings.Contains(r.stderr, "update the nearhost plugin") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestScriptStatusFailsWhenNoProjectHoldsThePath(t *testing.T) {
+	home := shortDir(t)
+	scriptServer(t, home, "k3f9q2", "mini", true)
+	r := runScript(t, home, nil, "status", home)
+	if r.code != 1 || !strings.Contains(r.stdout, "no project holds") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestScriptFindsAProjectFromASymlinkedDirectory(t *testing.T) {
+	home := shortDir(t)
+	real := filepath.Join(home, "code", "inner")
+	os.MkdirAll(real, 0o755)
+	resolved, _ := filepath.EvalSymlinks(real)
+	link := filepath.Join(home, "link")
+	os.Symlink(real, link)
+	s, _ := scriptServerOf(t, home, "k3f9q2", "mini", true, fakeSource{"mini": {{Name: "inner", Path: resolved, URL: "https://inner.test"}}})
+	if r := runScript(t, home, nil, "status", link); r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
+		t.Fatalf("status from the link: %+v", r)
+	}
+	if r := runScript(t, home, nil, "propose", link); r.code != 0 || !strings.Contains(r.stdout, `"state":"exists"`) {
+		t.Fatalf("propose from the link: %+v", r)
+	}
+	other := filepath.Join(home, "other")
+	os.Mkdir(other, 0o755)
+	os.Symlink(other, filepath.Join(home, "otherlink"))
+	r := runScript(t, home, nil, "propose", filepath.Join(home, "otherlink"))
+	id := proposalID.FindStringSubmatch(r.stdout)
+	if r.code != 0 || id == nil {
+		t.Fatalf("propose a new one from a link: %+v", r)
+	}
+	s.mu.Lock()
+	got := s.proposals[id[1]].Path
+	s.mu.Unlock()
+	if got != filepath.Join(home, "otherlink") {
+		t.Fatalf("proposed %q, want the path as the agent sees it", got)
+	}
+}
+
+func TestScriptProposesAPathWithATab(t *testing.T) {
+	home := shortDir(t)
+	s, _ := scriptServer(t, home, "k3f9q2", "mini", true)
+	dir := filepath.Join(home, "a\tb")
+	os.Mkdir(dir, 0o755)
+	r := runScript(t, home, nil, "propose", dir)
+	id := proposalID.FindStringSubmatch(r.stdout)
+	if r.code != 0 || id == nil {
+		t.Fatalf("%+v", r)
+	}
+	s.mu.Lock()
+	got := s.proposals[id[1]].Path
+	s.mu.Unlock()
+	if !strings.HasSuffix(got, "/a\tb") {
+		t.Fatalf("proposed %q", got)
+	}
+}
+
+func TestScriptNamesTheProposedPathWhenNoNearhostAnswers(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	dir := filepath.Join(home, "proj")
+	os.Mkdir(dir, 0o755)
+	r := runScript(t, home, []string{"SSH_CONNECTION=10.0.0.2 50000 10.0.0.9 22"}, "propose", dir)
+	if r.code != 2 || !strings.Contains(r.stderr, "proj\n") {
 		t.Fatalf("%+v", r)
 	}
 }
