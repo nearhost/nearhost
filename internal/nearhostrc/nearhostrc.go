@@ -48,8 +48,15 @@ type File struct {
 	SHA256 string
 }
 
-// varRef matches a braced variable reference, with or without a default.
-var varRef = regexp.MustCompile(`\$\{[^}]*\}`)
+// varRef matches the braced forms discovery.Expand understands, on one line,
+// so a stray "${" in a comment cannot swallow the YAML after it.
+var varRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}\n]*)?\}`)
+
+var unknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type`)
+
+func newerVersion(v int) error {
+	return fmt.Errorf("%s is version %d; this Nearhost understands version %d, so update Nearhost", FileName, v, Version)
+}
 
 func token(i int) string { return "nhrcvar" + strconv.Itoa(i) + "x" }
 
@@ -89,13 +96,27 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&raw); err != nil {
+		var te *yaml.TypeError
+		if !errors.As(err, &te) {
+			return nil, fmt.Errorf("%s: %w", FileName, err)
+		}
+		// A newer file may use keys this build lacks, so say the version
+		// first; yaml still fills the fields it knows.
+		if raw.Version > Version {
+			return nil, newerVersion(raw.Version)
+		}
+		for _, msg := range te.Errors {
+			if m := unknownField.FindStringSubmatch(msg); m != nil {
+				return nil, fmt.Errorf("%s: line %s: key %q is not understood by this version of Nearhost; update Nearhost, or remove it", FileName, m[1], m[2])
+			}
+		}
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	switch {
 	case raw.Version == 0:
 		return nil, fmt.Errorf("%s needs version: %d", FileName, Version)
 	case raw.Version > Version:
-		return nil, fmt.Errorf("%s is version %d; this Nearhost understands version %d, so update Nearhost", FileName, raw.Version, Version)
+		return nil, newerVersion(raw.Version)
 	case raw.Version != Version:
 		return nil, fmt.Errorf("%s: version %d is not valid", FileName, raw.Version)
 	}

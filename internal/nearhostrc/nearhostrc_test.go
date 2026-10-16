@@ -32,6 +32,7 @@ func TestParseFillsVariablesInPortsAndHosts(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{ // file → substring of the error
 		"version: 2\nroutes: []\n":                                                    "update Nearhost",
+		"version: 2\nroutes: []\nextra: 1\n":                                          "update Nearhost",
 		"version: 1\nroutes: []\nextra: 1\n":                                          "extra",
 		"version: 1\nroutes:\n  - port: ${MISSING}\n":                                 "MISSING",
 		"version: 1\nroutes:\n  - port: ${P}\n":                                       `"P"`, // env P=abc: not a port
@@ -89,5 +90,20 @@ func TestReadUsesEnvLocalOverEnv(t *testing.T) {
 	f, found, err = Read(discovery.DirReader{Root: t.TempDir()})
 	if f != nil || found || err != nil {
 		t.Fatalf("empty dir: %v, %v, %v", f, found, err)
+	}
+}
+
+func TestParseUnknownKeySaysToUpdate(t *testing.T) {
+	_, err := Parse([]byte("version: 1\nroutes: []\nextra: 1\n"), nil)
+	if err == nil || !strings.Contains(err.Error(), `"extra"`) || !strings.Contains(err.Error(), "update Nearhost") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParseUnclosedReferenceInCommentKeepsRoutes(t *testing.T) {
+	data := []byte("version: 1\n# fill ${APP_PORT from .env\nroutes:\n  - port: 3000\n    hosts: [app.${D}]\n")
+	f, err := Parse(data, map[string]string{"D": "x.io"})
+	if err != nil || len(f.Routes) != 1 || f.Routes[0].Hosts[0] != "app.x.io" {
+		t.Fatalf("Parse = %+v, %v", f, err)
 	}
 }
