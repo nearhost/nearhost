@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -59,6 +60,8 @@ type doctorBackend struct {
 	// Nearhost on. nil skips the check.
 	checkAgents func(ctx context.Context, srv config.Server) error
 	goos        string
+	// exe is the path of the running binary, or "" when it is not known.
+	exe string
 	// lowPorts reports whether this process may bind port on Linux.
 	lowPorts func(port int) (level, string)
 }
@@ -76,6 +79,7 @@ func systemDoctor() doctorBackend {
 		checkServer: sshClient{}.check,
 		checkAgents: sshClient{}.checkAgents,
 		goos:        runtime.GOOS,
+		exe:         realExecutable(),
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
 		},
@@ -123,7 +127,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 		lv, detail := b.lowPorts(low)
 		c := check{name: "privileged ports", level: lv, detail: detail}
 		if lv != levelOK {
-			c.fix = setcapFix
+			c.fix = setcapFix(b.exe)
 		}
 		checks = append(checks, c)
 	}
@@ -213,7 +217,28 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-const setcapFix = `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`
+// setcapFix is the command that lets the binary at exe bind ports below 1024.
+// It names the binary itself rather than `command -v nearhost`, which for an
+// npm install is the Node launcher: a capability on a script does nothing.
+func setcapFix(exe string) string {
+	if exe == "" {
+		return `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`
+	}
+	return "sudo setcap cap_net_bind_service=+ep '" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
+}
+
+// realExecutable is the running binary's path with symlinks resolved, since
+// setcap sets the capability on the file it is given, or "".
+func realExecutable() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		return real
+	}
+	return exe
+}
 
 // checkPort reports whether the proxy could listen on port: on TCP, and with
 // udp also on UDP. The two are probed separately, so a port taken on both is
@@ -252,7 +277,7 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		c.level, c.detail = levelFail, "permission denied"
 		c.fix = "run nearhost as a user that may bind this port, or pass another " + flag
 		if b.goos == "linux" {
-			c.fix = setcapFix
+			c.fix = setcapFix(b.exe)
 		}
 	case len(problems) > 0:
 		c.level, c.detail = levelFail, strings.Join(problems, "; ")

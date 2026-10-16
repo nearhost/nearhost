@@ -28,6 +28,7 @@ type fakeMachine struct {
 	goos      string
 	lowLevel  level
 	lowDetail string
+	exe       string
 
 	probed      []string
 	hostsReads  int
@@ -62,6 +63,7 @@ func (f *fakeMachine) backend() doctorBackend {
 			return f.serverErr[srv.Name]
 		},
 		goos: f.goos,
+		exe:  f.exe,
 		lowPorts: func(port int) (level, string) {
 			f.lowAsked = append(f.lowAsked, port)
 			return f.lowLevel, f.lowDetail
@@ -166,6 +168,15 @@ func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
 	wantContains(t, out,
 		"FAIL  port 443         permission denied\n      fix: sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"\n",
 		"FAIL  privileged ports not root and the binary lacks cap_net_bind_service\n      fix: sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"\n")
+
+	// Installed from npm, `command -v nearhost` is the Node launcher, and a
+	// capability on a script does nothing: the fix names the binary itself.
+	f = healthy()
+	f.goos = "linux"
+	f.exe = "/home/me/.npm/_npx/1a2b/node_modules/@nearhost/cli-linux-x64/bin/nearhost"
+	f.lowLevel, f.lowDetail = levelFail, "not root and the binary lacks cap_net_bind_service"
+	out, _ = execute(t, newDoctorCmd(f.backend()), "doctor")
+	wantContains(t, out, "      fix: sudo setcap cap_net_bind_service=+ep '/home/me/.npm/_npx/1a2b/node_modules/@nearhost/cli-linux-x64/bin/nearhost'\n")
 
 	// Ports above 1023 need no privilege, so there is nothing to check.
 	f = healthy()

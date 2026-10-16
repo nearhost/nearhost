@@ -33,3 +33,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
+
+  # Publishes @nearhost/cli and its platform packages from the tarballs
+  # goreleaser just attached. npm trusts this workflow for every package
+  # (trusted publishing), so there is no token and each version gets
+  # provenance.
+  npm:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: node npm/build.mjs "$TAG"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+      - run: node npm/publish.mjs

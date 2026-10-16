@@ -1,0 +1,47 @@
+{
+  "name": "@nearhost/cli",
+  "version": "0.0.0",
+  "description": "Open dev servers on your other machines at trusted https://<name>.test addresses over your own SSH. A terminal app for macOS and Linux.",
+  "keywords": [
+    "dev server",
+    "development server",
+    "localhost",
+    "https",
+    "local https",
+    "ssl certificate",
+    "certificate authority",
+    "ssh",
+    "ssh tunnel",
+    "port forwarding",
+    "remote development",
+    "reverse proxy",
+    ".test domain",
+    "hot reload",
+    "websocket",
+    "vite",
+    "docker compose",
+    "tui",
+    "cli",
+    "macos",
+    "linux"
+  ],
+  "homepage": "https://nearhost.dev",
+  "bugs": "https://github.com/nearhost/nearhost/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearhost/nearhost.git",
+    "directory": "npm/cli"
+  },
+  "license": "MIT",
+  "author": "Nearhost (https://nearhost.dev)",
+  "bin": {
+    "nearhost": "bin/nearhost.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}
