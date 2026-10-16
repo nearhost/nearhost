@@ -1,0 +1,24 @@
+internal/cli/add_stages.go
+  s_89a63a3c1fa7d2::t_9ed6b6d4a12684 274-278
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_047e7ff66feb93 6,528,530,540,558,567,575
+  s_89a63a3c1fa7d2::t_ab7ba5505fd8fd 514-527,529,531-539,541-557,559-566,568-574,576-626
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_9ed6b6d4a12684 21-23,38-41,49,61,96,160-173,217-300,433-448,600-603,605-609,611-615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc0f9df2298a7ef92ad7f55a98c7c70e2a6dc200",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
