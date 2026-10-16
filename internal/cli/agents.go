@@ -96,14 +96,18 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte(server)))[:len("agent-")+12]
 	local := filepath.Join(a.runDir, name+".sock")
 	if err := a.api.Listen(server, local); err != nil {
+		// The session would say nothing: it has no forward to fail.
+		if eng := a.src.eng.Load(); eng != nil {
+			eng.Events().Publish(engine.Event{Server: server, Message: server + ": agents unavailable: " + err.Error()})
+		}
 		return transport.AgentForward{}, false
 	}
 	return transport.AgentForward{Name: a.id + ".sock", Local: local, Own: a.sock}, true
 }
 
-// serveAgents starts the agent API for a run of nearhost and has the
-// engine opts are for forward it to each server. Call attach with the
-// engine once it exists. The note says why agents cannot reach nearhost,
+// serveAgents starts the agent API for a run of nearhost, and sets opts so
+// that the engine forwards it to each server. Call attach with the engine
+// once it exists. The note says why agents cannot reach nearhost,
 // when they cannot; the agents returned are then nil, and their methods do
 // nothing.
 func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPort int) (*agents, string) {
@@ -112,6 +116,7 @@ func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPor
 	if a != nil {
 		a.src = src
 		opts.Agent = a.forward
+		opts.AgentDone = a.api.Unlisten
 	}
 	return a, note
 }

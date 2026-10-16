@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -126,5 +127,44 @@ func TestAgentStatusComesFromTheConfigFile(t *testing.T) {
 	}
 	if siteURL("a.test", 443) != "https://a.test" {
 		t.Fatal(siteURL("a.test", 443))
+	}
+}
+
+func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
+	home := agentHome(t)
+	blocked := filepath.Join(home, "run")
+	os.WriteFile(blocked, []byte("a file where the run directory should be"), 0o600)
+	opts := engine.Options{RunDir: blocked}
+	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443)
+	defer a.close()
+	eng := engine.New(&config.Config{}, engine.Options{})
+	a.attach(eng)
+	events, unsubscribe := eng.Events().Subscribe(8)
+	defer unsubscribe()
+	if _, ok := opts.Agent("mini"); ok {
+		t.Fatal("a forward without a socket to reach")
+	}
+	select {
+	case ev := <-events:
+		if ev.Server != "mini" || !strings.Contains(ev.Message, "mini: agents unavailable: ") {
+			t.Fatalf("event %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("nothing was logged")
+	}
+}
+
+func TestAServerThatIsGoneStopsBeingServed(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443)
+	defer a.close()
+	f, _ := opts.Agent("mini")
+	opts.AgentDone("mini")
+	if a.api.Listening("mini") {
+		t.Fatal("still serving mini")
+	}
+	if _, err := os.Stat(f.Local); !os.IsNotExist(err) {
+		t.Fatalf("mini's socket is still there: %v", err)
 	}
 }

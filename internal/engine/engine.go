@@ -53,6 +53,11 @@ type Options struct {
 	// block, and is called once per session, never under the engine's lock.
 	// nil forwards none.
 	Agent func(server string) (transport.AgentForward, bool)
+	// AgentDone is told a server's session has gone for good, as a reload
+	// that removes the server does, so what Agent set up for it can go
+	// too. It is called once per session Agent was asked about, never under
+	// the engine's lock. nil does nothing.
+	AgentDone func(server string)
 }
 
 // ProjectStatus is a snapshot of one project.

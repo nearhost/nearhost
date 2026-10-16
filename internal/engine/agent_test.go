@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -49,5 +50,34 @@ func TestEachServerIsAskedForItsAgentSocketOnce(t *testing.T) {
 	defer mu.Unlock()
 	if asked["mini"] != 1 || len(asked) != 1 {
 		t.Fatalf("asked %v", asked)
+	}
+}
+
+func TestARemovedServerIsToldItsAgentSocketIsDone(t *testing.T) {
+	var mu sync.Mutex
+	var done []string
+	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) {
+		o.Agent = func(string) (transport.AgentForward, bool) {
+			return transport.AgentForward{Name: "k3f9q2.sock", Local: "/run/nh/agent-mini.sock"}, true
+		}
+		o.AgentDone = func(server string) {
+			mu.Lock()
+			done = append(done, server)
+			mu.Unlock()
+		}
+	})
+	if err := h.eng.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StartProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.Apply(bg, &config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(done) != 1 || done[0] != "mini" {
+		t.Fatalf("done %v", done)
 	}
 }
