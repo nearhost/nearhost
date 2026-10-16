@@ -331,7 +331,7 @@ func checkCA(b trustBackend) []check {
 func checkAliases(cfg *config.Config, path string) []check {
 	var invalid []string
 	for _, p := range cfg.Projects {
-		if _, err := hosts.Rewrite("", []string{p.Alias}); err != nil {
+		if err := config.ValidProjectAlias(p.Alias); err != nil {
 			invalid = append(invalid, fmt.Sprintf("project %q: %v", p.Name, err))
 		}
 	}
@@ -343,17 +343,11 @@ func checkAliases(cfg *config.Config, path string) []check {
 }
 
 // checkHosts compares the managed block with the names `nearhost up` would
-// put there: the valid alias of every configured project, less the names DNS
-// already sends to this machine.
+// put there: the config's hosts file names, less the names DNS already sends
+// to this machine.
 func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check {
 	const name, fix = "hosts block", "run `nearhost up`; it updates the block and asks for your password"
-	var valid []string
-	for _, p := range cfg.Projects {
-		if _, err := hosts.Rewrite("", []string{p.Alias}); err == nil {
-			valid = append(valid, p.Alias)
-		}
-	}
-	want := hosts.Wanted(ctx, valid, b.lookup)
+	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.lookup)
 	existing, err := b.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}

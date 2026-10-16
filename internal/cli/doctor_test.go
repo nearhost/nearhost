@@ -352,7 +352,7 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 		if err == nil || err.Error() != "1 check failed" {
 			t.Errorf("%v: err = %v\n%s", args, err, out)
 		}
-		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid host \"Legacy.example\": must be a lowercase host name, not localhost or a wildcard\n"+
+		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias \"Legacy.example\": must be a lowercase hostname ending in .test\n"+
 			"      fix: correct the alias in "+path+"; `nearhost up` does not start a project with such an alias\n")
 	}
 
@@ -362,7 +362,7 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 	if err == nil || err.Error() != "2 checks failed" {
 		t.Errorf("err = %v\n%s", err, out)
 	}
-	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid host", "FAIL  hosts block      missing web.test\n")
+	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias", "FAIL  hosts block      missing web.test\n")
 }
 
 // doctor says when the local CA expires.
@@ -434,23 +434,24 @@ func TestDoctorsSocketIsAsLongAsAnInstallsAndNeverOne(t *testing.T) {
 	}
 }
 
-// A name DNS already sends to loopback needs no hosts entry, so the check
-// passes on a block that holds only the .test alias, and asks for the entry
-// once DNS stops saying so.
-func TestDoctorHostsCheckLeavesOutNamesDNSSendsToLoopback(t *testing.T) {
+// The hosts check applies hosts.Wanted with the backend's lookup to the
+// config's hosts file names. Those are only .test aliases in this version,
+// which are never looked up and are always expected in the block.
+func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
 	path := configHome(t)
-	real := localProject("app", 8001, true)
-	real.Alias = "app.local.example.io"
-	saveConfig(t, path, &config.Config{Projects: []config.Project{localProject("api", 8000, true), real}})
+	other := localProject("app", 8001, true)
+	other.Alias = "app.local.example.io" // not a valid project alias: never a candidate
+	saveConfig(t, path, &config.Config{Projects: []config.Project{localProject("api", 8000, true), other}})
 	f := healthy()
-	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n"
+	var asked []string
 	f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+		asked = append(asked, name)
 		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
 	}
 	out, _ := execute(t, newDoctorCmd(f.backend()), "doctor")
-	wantContains(t, out, "ok    hosts block      1 alias\n")
-
-	f.lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, nil } // NXDOMAIN
-	out, _ = execute(t, newDoctorCmd(f.backend()), "doctor")
-	wantContains(t, out, "FAIL  hosts block      missing app.local.example.io\n")
+	wantContains(t, out, "FAIL  aliases", "FAIL  hosts block      missing api.test\n")
+	if len(asked) != 0 {
+		t.Errorf("looked up %v; .test names need no lookup", asked)
+	}
 }

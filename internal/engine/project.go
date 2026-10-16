@@ -197,7 +197,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	if !ok {
 		return StateError, fmt.Errorf("project %q uses unknown server %q", p.Name, p.Server)
 	}
-	if err := validAlias(p.Alias); err != nil {
+	if err := config.ValidProjectAlias(p.Alias); err != nil {
 		return StateError, fmt.Errorf("project %q: %w", p.Name, err)
 	}
 	// Leftovers of a start that ended in error go first, so their forwards

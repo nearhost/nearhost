@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -132,5 +135,28 @@ func TestHostsState(t *testing.T) {
 	u := &uiEngine{flags: serveFlags{noHosts: true}}
 	if got := u.HostsState(); got != "not managed (--no-hosts)" {
 		t.Errorf("--no-hosts: %q", got)
+	}
+}
+
+// The first HostsState call happens while the interface is built, and must
+// not wait on DNS; later calls apply the lookup.
+func TestHostsStateFirstCallSkipsTheLookup(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{localProject("web", 8000, true)}}
+	var asked []string
+	u := &uiEngine{
+		Engine: engine.New(cfg, engine.Options{}),
+		b: uiBackend{
+			readHosts: func() (string, error) { return "127.0.0.1 localhost\n", nil },
+			lookup: func(_ context.Context, name string) ([]netip.Addr, error) {
+				asked = append(asked, name)
+				return nil, nil
+			},
+		},
+	}
+	if got := u.HostsState(); got != "checking" || len(asked) != 0 {
+		t.Fatalf("first call = %q, lookups %v", got, asked)
+	}
+	if got := u.HostsState(); got != "missing web.test" {
+		t.Errorf("second call = %q", got)
 	}
 }

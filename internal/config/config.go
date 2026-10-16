@@ -132,6 +132,35 @@ func (c *Config) HostClash(p Project) (host, other string, clash bool) {
 	return "", "", false
 }
 
+// ValidProjectAlias reports why alias cannot be a project's alias, or returns nil.
+// The alias is the project's own name under .test, which no DNS serves, so
+// it must stay a lowercase .test host name; real domains are hosts of a route.
+func ValidProjectAlias(alias string) error {
+	const suffix = ".test"
+	if len(alias) > len(suffix) && strings.HasSuffix(alias, suffix) &&
+		hostname.Valid(alias) == nil && !hostname.IsPattern(alias) {
+		return nil
+	}
+	return fmt.Errorf("invalid alias %q: must be a lowercase hostname ending in .test", alias)
+}
+
+// HostsFileNames lists the names nearhost puts in the hosts file for this
+// config before any DNS filtering: the sorted, de-duplicated valid aliases of
+// all projects. It is the single candidate list the engine, doctor and the
+// interface share, so they cannot disagree about what the file should hold.
+func (c *Config) HostsFileNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range c.Projects {
+		if ValidProjectAlias(p.Alias) == nil && !seen[p.Alias] {
+			seen[p.Alias] = true
+			out = append(out, p.Alias)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ExactHosts lists the exact hosts of every project, sorted and without
 // duplicates, leaving out localhost and wildcard patterns. These are the
 // candidates for the hosts file, which resolves neither of those.

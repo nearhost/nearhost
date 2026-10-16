@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -184,7 +183,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 func (e *Engine) setConfigLocked(next *config.Config, replace map[string]bool) {
 	runs := map[string]*projectRun{}
 	byAlias := map[string]string{}
-	var order, aliases []string
+	var order []string
 	for _, p := range next.Projects {
 		if _, dup := runs[p.Name]; dup {
 			continue // like config.Project, the first of a name wins
@@ -198,23 +197,14 @@ func (e *Engine) setConfigLocked(next *config.Config, replace map[string]bool) {
 		if _, taken := byAlias[p.Alias]; !taken {
 			byAlias[p.Alias] = p.Name
 		}
-		if validAlias(p.Alias) == nil {
-			aliases = append(aliases, p.Alias)
-		}
 	}
 	for name, run := range e.runs {
 		if runs[name] != run {
 			run.gone = true
 		}
 	}
-	sort.Strings(aliases)
+	aliases := next.HostsFileNames()
 	e.cfg, e.order, e.runs, e.byAlias, e.aliases = next, order, runs, byAlias, aliases
-}
-
-// validAlias applies the hosts package's rules to one alias.
-func validAlias(alias string) error {
-	_, err := hosts.Rewrite("", []string{alias})
-	return err
 }
 
 func cloneConfig(cfg *config.Config) *config.Config {
