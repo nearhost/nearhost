@@ -599,3 +599,22 @@ func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
 		t.Fatalf("HostsFileNames() = %v", got)
 	}
 }
+
+// The hosts file names are the valid aliases and the exact hosts of every web
+// route: never localhost, a pattern, an invalid alias or a host of a route
+// that is not a web route.
+func TestHostsFileNamesHoldExactHostsOfWebRoutes(t *testing.T) {
+	c := &Config{Projects: []Project{
+		{Name: "l1", Alias: "l1.test", Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},
+		{Name: "pro", Alias: "pro.test", Routes: []Route{
+			{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro", "X.local.redactr.pro"}},
+			{Port: 8212, Role: RoleWeb, Hosts: []string{"ws.local.redactr.pro", "pro.test"}},
+			{Port: 5432, Role: RoleLoopback, Hosts: []string{"db.local.redactr.pro"}},
+		}},
+		{Name: "bad", Alias: "bad.example.io", Routes: []Route{{Port: 9000, Role: RoleWeb, Hosts: []string{"x.local.redactr.pro"}}}},
+	}}
+	want := []string{"l1.test", "pro.test", "ws.local.redactr.pro", "x.local.redactr.pro"}
+	if got := c.HostsFileNames(); !slices.Equal(got, want) {
+		t.Fatalf("HostsFileNames() = %v, want %v", got, want)
+	}
+}

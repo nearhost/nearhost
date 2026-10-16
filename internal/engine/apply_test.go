@@ -2,6 +2,7 @@ package engine
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,5 +260,28 @@ func TestPlanApplyTreatsARenameAsTheSameProject(t *testing.T) {
 	}
 	if got := planApply(prev, next, func(string) bool { return true }); !reflect.DeepEqual(got.start, []string{"shop"}) {
 		t.Errorf("a running project renamed does not start: %+v", got)
+	}
+}
+
+// A change to the hosts of a web route alone restarts the project, so the
+// proxy serves the new hosts and stops serving the removed ones, and the
+// hosts file is asked for the new names.
+func TestApplyServesTheNewHostsOfARunningProject(t *testing.T) {
+	a := localProjectRoutes("a", config.Route{Port: upstream(t, "a"), Role: config.RoleWeb, Hosts: []string{"old.local.example.io"}})
+	h := newHarness(t, &config.Config{Projects: []config.Project{a}})
+	mustStart(t, h, "a")
+	a.Routes = []config.Route{{Port: a.Routes[0].Port, Role: config.RoleWeb, Hosts: []string{"new.local.example.io"}}}
+	if err := h.eng.Apply(bg, &config.Config{Projects: []config.Project{a}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	want := []string{"a.test", "new.local.example.io"}
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		sites := h.eng.Sites()
+		return len(sites) == 1 && slices.Equal(sites[0].Hosts, want)
+	}, "a served at its new host")
+	waitState(t, h, "a", StateRunning)
+	calls := h.ensureCalls()
+	if last := calls[len(calls)-1]; !slices.Equal(last, want) {
+		t.Errorf("last EnsureHosts = %v, want %v", last, want)
 	}
 }

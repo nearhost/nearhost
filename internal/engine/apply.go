@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -20,10 +21,10 @@ type applyPlan struct {
 // old config is anything but stopped. Projects are matched by name.
 //
 //   - A project that is gone is stopped.
-//   - A project whose server, path, alias or routes (ports and roles) changed,
-//     or whose server's ssh_host changed or whose server is gone, is stopped
-//     and given a fresh run; it is started again if it was active, or if it
-//     has just been enabled, and is enabled.
+//   - A project whose server, path, alias or routes (ports, roles and the
+//     hosts of web routes) changed, or whose server's ssh_host changed or
+//     whose server is gone, is stopped and given a fresh run; it is started
+//     again if it was active, or if it has just been enabled, and is enabled.
 //   - Otherwise a project that was enabled and is now disabled is stopped,
 //     and one that was disabled and is now enabled is started.
 //   - A new project is started when it is enabled, unless it takes the
@@ -91,13 +92,18 @@ func planApply(prev, next *config.Config, active func(name string) bool) applyPl
 }
 
 // sameRoutes reports whether two route lists forward the same ports in the
-// same roles. Labels are only shown, so a new label restarts nothing.
+// same roles, with the same hosts on each web route. The proxy and the hosts
+// file only learn a project's hosts when it starts, so a change to them
+// restarts it. Labels are only shown, so a new label restarts nothing.
 func sameRoutes(a, b []config.Route) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
 		if a[i].Port != b[i].Port || a[i].Role != b[i].Role {
+			return false
+		}
+		if a[i].Role == config.RoleWeb && !slices.Equal(a[i].Hosts, b[i].Hosts) {
 			return false
 		}
 	}

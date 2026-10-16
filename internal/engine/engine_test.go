@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -194,7 +196,7 @@ func TestStartingTwiceIsANoOp(t *testing.T) {
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
 		t.Fatalf("second StartProject: %v", err)
 	}
-	if got := h.eng.Status("myapp"); got != first {
+	if got := h.eng.Status("myapp"); !reflect.DeepEqual(got, first) {
 		t.Fatalf("status changed by a second start: %+v -> %+v", first, got)
 	}
 	want := [][2]int{{first.WebLocalPort, 80}, {lb, lb}}
@@ -968,7 +970,7 @@ func TestStatusDoesNotRunAheadOfTheLostForwardEvent(t *testing.T) {
 	run := h.eng.runs["myapp"]
 	run.forwards = append(run.forwards, forward{lost, lost})
 	h.eng.mu.Unlock()
-	if st := h.eng.Status("myapp"); st != before {
+	if st := h.eng.Status("myapp"); !reflect.DeepEqual(st, before) {
 		t.Fatalf("status before the session reported = %+v, want what was last announced: %+v", st, before)
 	}
 	if states, _ := stateEvents(events, "myapp"); len(states) != 0 {
@@ -1096,7 +1098,7 @@ func TestHolderFoundTooLateIsDropped(t *testing.T) {
 
 			answer()
 			testutil.WaitUntil(t, 10*time.Second, func() bool { return !strings.Contains(engineGoroutines(), "lookupHolder") }, "the lookup to finish")
-			if st := h.eng.Status("myapp"); st != want {
+			if st := h.eng.Status("myapp"); !reflect.DeepEqual(st, want) {
 				t.Fatalf("status = %+v after a late answer, want it unchanged: %+v", st, want)
 			}
 			if states, last := stateEvents(events, "myapp"); len(states) != 0 {
@@ -1996,7 +1998,7 @@ func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
 		t.Fatalf("degraded message %q must name the server and keep the error of the start %q", degraded.Message, started.Message)
 	}
 	// Reconnected: the error of the start, word for word.
-	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp") == started }, "the error of the start to return")
+	testutil.WaitUntil(t, 15*time.Second, func() bool { return reflect.DeepEqual(h.eng.Status("myapp"), started) }, "the error of the start to return")
 	agrees("after the reconnect", []State{StateDegraded, StateError})
 
 	// The next master cannot bind the web forward's local port.
@@ -2004,7 +2006,7 @@ func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.dropMaster(t, "mini")
-	lost := fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", started.WebLocalPort)
+	lost := fmt.Sprintf("the web route for port 80 is not forwarded: ssh could not bind local port %d", started.WebLocalPort)
 	testutil.WaitUntil(t, 15*time.Second, func() bool {
 		st := h.eng.Status("myapp")
 		return st.State == StateError && strings.Contains(st.Message, lost)
@@ -2020,7 +2022,7 @@ func TestProjectInErrorWithItsSiteServedStillFollowsItsServer(t *testing.T) {
 	}
 	h.dropMaster(t, "mini")
 	testutil.WaitUntil(t, 15*time.Second, func() bool {
-		return h.eng.Status("myapp") == started && len(h.unapplied("mini")) == 0
+		return reflect.DeepEqual(h.eng.Status("myapp"), started) && len(h.unapplied("mini")) == 0
 	}, "the web forward to be restored")
 	agrees("after the web forward was restored", []State{StateDegraded, StateError})
 
@@ -2109,7 +2111,7 @@ func TestTeardownEndingInTheRecordedStateAnnouncesWhatChangedMeanwhile(t *testin
 	h.eng.mu.Unlock()
 	h.dropMaster(t, "mini")
 	testutil.WaitUntil(t, 10*time.Second, func() bool { return sess.Status() == transport.StatusReconnecting }, "the server to drop")
-	if st := h.eng.Status("myapp"); st != started {
+	if st := h.eng.Status("myapp"); !reflect.DeepEqual(st, started) {
 		t.Fatalf("status changed during the teardown: %+v", st)
 	}
 	h.eng.mu.Lock()
@@ -2134,5 +2136,147 @@ func TestReplayOfARequestNoLongerKept(t *testing.T) {
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
 	if _, err := h.eng.Replay(bg, "nope"); err == nil || err.Error() != "that request is no longer kept" {
 		t.Errorf("Replay = %v", err)
+	}
+}
+
+func TestLocalProjectWithSeveralWebRoutesPublishesEach(t *testing.T) {
+	cfg := localConfig("dd", config.Route{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io", "*.status.local.dd.io"}},
+		config.Route{Port: 8230, Role: config.RoleWeb, Hosts: []string{"ws.local.dd.io"}})
+	h := newHarness(t, cfg)
+	mustStart(t, h, "dd")
+	want := []proxy.Site{
+		{Alias: "dd.test", Hosts: []string{"dd.test", "app.local.dd.io", "*.status.local.dd.io"}, Upstream: "localhost:8220"},
+		{Alias: "dd.test", Hosts: []string{"ws.local.dd.io"}, Upstream: "localhost:8230"},
+	}
+	if got := h.eng.Sites(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sites() = %+v, want %+v", got, want)
+	}
+	st := h.eng.Status("dd")
+	if st.WebLocalPort != 8220 || !reflect.DeepEqual(st.WebLocalPorts, map[int]int{8220: 8220, 8230: 8230}) {
+		t.Fatalf("status = %+v", st)
+	}
+	if err := h.eng.StopProject(bg, "dd"); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.eng.Status("dd"); st.WebLocalPort != 0 || st.WebLocalPorts != nil || len(h.eng.Sites()) != 0 {
+		t.Fatalf("after stop: status = %+v, sites = %+v", st, h.eng.Sites())
+	}
+}
+
+func TestLegacyProjectPublishesAliasOnly(t *testing.T) {
+	h := newHarness(t, localConfig("a", config.Route{Port: 3000, Role: config.RoleWeb}))
+	mustStart(t, h, "a")
+	if got := h.eng.Sites(); len(got) != 1 || !slices.Equal(got[0].Hosts, []string{"a.test"}) {
+		t.Fatalf("Sites() = %+v", got)
+	}
+}
+
+// remoteTwoWebConfig is remoteConfig with a second web route, on remote port
+// 81, served at ws.local.example.io.
+func remoteTwoWebConfig(loopback int) *config.Config {
+	cfg := remoteConfig(loopback)
+	p := &cfg.Projects[0]
+	p.Routes = append(p.Routes, config.Route{Port: 81, Role: config.RoleWeb, Hosts: []string{"ws.local.example.io"}})
+	return cfg
+}
+
+func TestRemoteProjectForwardsEveryWebRoute(t *testing.T) {
+	lb := testutil.FreePort(t)
+	h := newHarness(t, remoteTwoWebConfig(lb))
+	mustStart(t, h, "myapp")
+	st := h.eng.Status("myapp")
+	l80, l81 := st.WebLocalPorts[80], st.WebLocalPorts[81]
+	if st.State != StateRunning || len(st.WebLocalPorts) != 2 || l80 == 0 || l81 == 0 || l80 == l81 || st.WebLocalPort != l80 {
+		t.Fatalf("status = %+v", st)
+	}
+	log := h.log()
+	for _, f := range [][2]int{{l80, 80}, {l81, 81}} {
+		if !strings.Contains(log, fmt.Sprintf("-O forward -L 127.0.0.1:%d:localhost:%d mini", f[0], f[1])) {
+			t.Fatalf("forward %d -> %d missing:\n%s", f[0], f[1], log)
+		}
+	}
+	want := []proxy.Site{
+		{Alias: "myapp.test", Hosts: []string{"myapp.test"}, Upstream: "127.0.0.1:" + strconv.Itoa(l80)},
+		{Alias: "myapp.test", Hosts: []string{"ws.local.example.io"}, Upstream: "127.0.0.1:" + strconv.Itoa(l81)},
+	}
+	if got := h.eng.Sites(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sites() = %+v, want %+v", got, want)
+	}
+	if f := h.forwards("mini"); len(f) != 3 {
+		t.Fatalf("forwards = %v", f)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.forwards("mini")) != 0 || len(h.eng.Sites()) != 0 {
+		t.Fatalf("after stop: forwards %v, sites %+v", h.forwards("mini"), h.eng.Sites())
+	}
+}
+
+func TestRemoteSecondWebForwardFailureRollsBack(t *testing.T) {
+	h := newHarness(t, remoteTwoWebConfig(testutil.FreePort(t)), "FAKE_SSH_FORWARD_FAIL_REMOTE=81")
+	err := h.eng.StartProject(bg, "myapp")
+	if err == nil || !strings.Contains(err.Error(), "web port 81: ") {
+		t.Fatalf("err = %v", err)
+	}
+	st := h.eng.Status("myapp")
+	if st.State != StateError || !strings.Contains(st.Message, "web port 81: ") || st.WebLocalPort != 0 || st.WebLocalPorts != nil {
+		t.Fatalf("status = %+v", st)
+	}
+	if !strings.Contains(h.log(), "localhost:80 mini") {
+		t.Fatalf("the first web route was never forwarded, so nothing was rolled back:\n%s", h.log())
+	}
+	if got := h.eng.Sites(); len(got) != 0 {
+		t.Fatalf("Sites() = %+v", got)
+	}
+	if f := h.forwards("mini"); len(f) != 0 {
+		t.Fatalf("forwards left: %v", f)
+	}
+}
+
+func TestHostServedByAnotherProjectFailsTheLaterStart(t *testing.T) {
+	cfg := localConfig("one", config.Route{Port: 1001, Role: config.RoleWeb, Hosts: []string{"x.local.example.io", "*.y.example.io"}})
+	cfg.Projects = append(cfg.Projects,
+		localProjectRoutes("two", config.Route{Port: 1002, Role: config.RoleWeb, Hosts: []string{"x.local.example.io"}}),
+		localProjectRoutes("three", config.Route{Port: 1003, Role: config.RoleWeb}, config.Route{Port: 1004, Role: config.RoleWeb, Hosts: []string{"*.y.example.io"}}),
+		localProjectRoutes("four", config.Route{Port: 1005, Role: config.RoleWeb, Hosts: []string{"a.y.example.io"}}))
+	h := newHarness(t, cfg)
+	mustStart(t, h, "one")
+	err := h.eng.StartProject(bg, "two")
+	if err == nil || !strings.Contains(err.Error(), `host x.local.example.io is already served by project "one"`) {
+		t.Fatalf("err = %v", err)
+	}
+	if st := h.eng.Status("two"); st.State != StateError || st.Message != err.Error() {
+		t.Fatalf("two = %+v", st)
+	}
+	// Patterns clash when written the same.
+	err = h.eng.StartProject(bg, "three")
+	if err == nil || !strings.Contains(err.Error(), `host *.y.example.io is already served by project "one"`) {
+		t.Fatalf("err = %v", err)
+	}
+	// An exact host under another project's pattern is the better match: no clash.
+	mustStart(t, h, "four")
+	if st := h.eng.Status("one"); st.State != StateRunning {
+		t.Fatalf("one is %s, want running", st.State)
+	}
+	if got := h.eng.Sites(); len(got) != 2 || got[0].Upstream != "localhost:1001" || got[1].Upstream != "localhost:1005" {
+		t.Fatalf("Sites() = %+v", got)
+	}
+	// Once one is stopped, the host is free.
+	if err := h.eng.StopProject(bg, "one"); err != nil {
+		t.Fatal(err)
+	}
+	mustStart(t, h, "two")
+}
+
+func TestEnsureHostsGetsExactHostsOfEveryProject(t *testing.T) {
+	cfg := localConfig("l1", config.Route{Port: 8242, Role: config.RoleWeb, Hosts: []string{"localhost"}})
+	cfg.Projects = append(cfg.Projects,
+		localProjectRoutes("pro", config.Route{Port: 8211, Role: config.RoleWeb, Hosts: []string{"*.local.example.io", "x.local.example.io"}}))
+	h := newHarness(t, cfg)
+	mustStart(t, h, "l1")
+	want := []string{"l1.test", "pro.test", "x.local.example.io"}
+	if calls := h.ensureCalls(); len(calls) != 1 || !slices.Equal(calls[0], want) {
+		t.Fatalf("EnsureHosts calls = %v, want one with %v", calls, want)
 	}
 }
