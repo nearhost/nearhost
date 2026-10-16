@@ -34,6 +34,7 @@ func (m *Model) home(width int) []string {
 	lines = append(lines, field("config", clean(m.b.ConfigPath()), width)...)
 	lines = append(lines, field("running", fmt.Sprintf("%d of %d projects %s %d of %d servers", running, len(m.cfg.Projects),
 		styleDim.Render("on"), len(serversUsed), len(m.cfg.Servers)+1), width)...)
+	lines = append(lines, m.proposalsWaiting(width)...)
 	return append(lines, m.problemLines(width)...)
 }
 
@@ -69,6 +70,10 @@ func (m *Model) problems() []problem {
 	}
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)
+		if h.Status == transport.StatusConnected && h.AgentErr != "" {
+			out = append(out, problem{dot: seg{styleAmber, "●"}, title: srv.Name, what: "agents unavailable",
+				why: h.AgentErr, fix: agentFix, server: srv.Name})
+		}
 		if h.Status == transport.StatusConnected || h.Held || h.LastError == "" {
 			continue // a server dropped on purpose is no problem
 		}

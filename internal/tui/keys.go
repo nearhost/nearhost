@@ -199,6 +199,10 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.form.update(k)
 	}
 	if m.logView != nil {
+		if s == "p" && len(m.proposals) > 0 {
+			m.logView = nil // the proposal opens over the main screen
+			return m.nextProposal()
+		}
 		return m.logViewKey(k)
 	}
 	if m.showHelp && (s == "?" || s == "esc") {
@@ -316,6 +320,8 @@ func (m *Model) action(s string) tea.Cmd {
 		f, load := newServerForm(m.b, m.cfg, m.work)
 		m.form = f
 		return load
+	case "p":
+		return m.nextProposal()
 	case "enter":
 		return m.enter()
 	case "o":

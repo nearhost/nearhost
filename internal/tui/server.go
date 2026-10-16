@@ -7,6 +7,10 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
+// agentFix is what to do when a server will not forward the socket agents
+// reach Nearhost on.
+const agentFix = "Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r to reconnect."
+
 // serverPanel is the panel of the server called name.
 func (m *Model) serverPanel(name string, width int) []string {
 	if name == config.LocalServer {
@@ -39,6 +43,15 @@ func (m *Model) serverPanel(name string, width int) []string {
 	} else if lastErr != "" && st != transport.StatusConnected {
 		lines = append(lines, field("why", clean(lastErr), width)...)
 		lines = append(lines, field("fix", serverFix(st, srv.SSHHost), width)...)
+	}
+	if st == transport.StatusConnected {
+		switch {
+		case h.AgentPath != "":
+			lines = append(lines, field("agents", styleBeacon.Render("●")+" reach Nearhost at "+clean(h.AgentPath), width)...)
+		case h.AgentErr != "":
+			lines = append(lines, field("agents", styleAmber.Render("● unavailable")+" "+clean(h.AgentErr), width)...)
+			lines = append(lines, field("fix", agentFix, width)...)
+		}
 	}
 	projects := "none"
 	if len(on) > 0 {

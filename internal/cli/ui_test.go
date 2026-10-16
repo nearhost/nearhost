@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -37,7 +38,7 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 	t.Helper()
 	return uiBackend{
 		interactive: func() bool { return terminal },
-		run: func(m *tui.Model, s *tui.Suspender) error {
+		run: func(m *tui.Model, attach func(*tea.Program)) error {
 			*ran = true
 			return nil
 		},

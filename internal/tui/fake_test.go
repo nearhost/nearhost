@@ -44,6 +44,7 @@ type fakeBackend struct {
 	applied  []*config.Config
 	opened   []string
 	shutdown []context.Context
+	answers  []string // "accept <id> <name>" or "decline <id> <reason>"
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -56,6 +57,21 @@ func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
 }
 
 func (f *fakeBackend) Start(context.Context) error { return f.startErr }
+func (f *fakeBackend) AcceptProposal(id, name string) {
+	f.mu.Lock()
+	f.answers = append(f.answers, "accept "+id+" "+name)
+	f.mu.Unlock()
+}
+func (f *fakeBackend) DeclineProposal(id, reason string) {
+	f.mu.Lock()
+	f.answers = append(f.answers, strings.TrimSpace("decline "+id+" "+reason))
+	f.mu.Unlock()
+}
+func (f *fakeBackend) proposalAnswers() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.answers...)
+}
 func (f *fakeBackend) Shutdown(ctx context.Context) error {
 	f.mu.Lock()
 	f.shutdown = append(f.shutdown, ctx)

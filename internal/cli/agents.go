@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
+	"github.com/nearhost/nearhost/internal/tui"
 )
 
 // agentsBackend is the seam between the agent API and the machine. A zero
@@ -119,6 +120,32 @@ func (a *agents) attach(eng *engine.Engine) {
 	if a != nil {
 		a.src.eng.Store(eng)
 	}
+}
+
+// review has the interface review the agents' proposals.
+func (a *agents) review(to *tui.Proposals) {
+	if a != nil {
+		a.api.SetReviewer(reviewer{to})
+	}
+}
+
+func (a *agents) accept(id, name string) {
+	if a != nil {
+		a.api.Accept(id, name)
+	}
+}
+
+func (a *agents) decline(id, reason string) {
+	if a != nil {
+		a.api.Decline(id, reason)
+	}
+}
+
+// reviewer hands the agent API's proposals to the interface.
+type reviewer struct{ to *tui.Proposals }
+
+func (r reviewer) Review(p agentapi.Proposal) {
+	r.to.Propose(tui.Proposal{ID: p.ID, Origin: p.Origin, Path: p.Path, Name: p.Name, Web: p.Web, Expires: p.Expires})
 }
 
 // close stops serving agents and removes the sockets on this machine.
