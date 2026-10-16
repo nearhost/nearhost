@@ -605,15 +605,18 @@ func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
 // that is not a web route.
 func TestHostsFileNamesHoldExactHostsOfWebRoutes(t *testing.T) {
 	c := &Config{Projects: []Project{
-		{Name: "l1", Alias: "l1.test", Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},
-		{Name: "pro", Alias: "pro.test", Routes: []Route{
+		{Name: "l1", Alias: "l1.test", Enabled: true, Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},
+		{Name: "pro", Alias: "pro.test", Enabled: true, Routes: []Route{
 			{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro", "X.local.redactr.pro"}},
 			{Port: 8212, Role: RoleWeb, Hosts: []string{"ws.local.redactr.pro", "pro.test"}},
 			{Port: 5432, Role: RoleLoopback, Hosts: []string{"db.local.redactr.pro"}},
 		}},
-		{Name: "bad", Alias: "bad.example.io", Routes: []Route{{Port: 9000, Role: RoleWeb, Hosts: []string{"x.local.redactr.pro"}}}},
+		{Name: "bad", Alias: "bad.example.io", Enabled: true, Routes: []Route{{Port: 9000, Role: RoleWeb, Hosts: []string{"x.local.redactr.pro"}}}},
+		// A disabled project keeps its alias, as before, but its real-domain
+		// hosts stay out: they would shadow DNS for a site nothing serves.
+		{Name: "off", Alias: "off.test", Routes: []Route{{Port: 80, Role: RoleWeb, Hosts: []string{"staging.example.io"}}}},
 	}}
-	want := []string{"l1.test", "pro.test", "ws.local.redactr.pro", "x.local.redactr.pro"}
+	want := []string{"l1.test", "off.test", "pro.test", "ws.local.redactr.pro", "x.local.redactr.pro"}
 	if got := c.HostsFileNames(); !slices.Equal(got, want) {
 		t.Fatalf("HostsFileNames() = %v, want %v", got, want)
 	}
