@@ -359,12 +359,12 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check 
 	}
 	if updated == existing || updated == existing+"\n" {
 		if len(want) == 0 {
-			return check{name: name, detail: "no aliases configured"}
+			return check{name: name, detail: "no names configured"}
 		}
 		if len(want) == 1 {
-			return check{name: name, detail: "1 alias"}
+			return check{name: name, detail: "1 name"}
 		}
-		return check{name: name, detail: fmt.Sprintf("%d aliases", len(want))}
+		return check{name: name, detail: fmt.Sprintf("%d names", len(want))}
 	}
 	missing, stale := diff(want, hosts.Aliases(existing))
 	var parts []string

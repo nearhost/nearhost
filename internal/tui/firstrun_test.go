@@ -14,7 +14,7 @@ func started(t *testing.T, trusted bool) (*Model, *fakeBackend) {
 	f.trusted = trusted
 	m := sized(f)
 	m.Update(startedMsg{})
-	m.Update(machineMsg{caTrusted: trusted, hostsState: "2 aliases"})
+	m.Update(machineMsg{caTrusted: trusted, hostsState: "2 names"})
 	return m, f
 }
 

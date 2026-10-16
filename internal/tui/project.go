@@ -230,7 +230,7 @@ func fixFor(st engine.State, reason string, serverUp bool, host string) string {
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry.
 		if reason != "" {
-			return "Press enter and approve the password prompt, or add the alias to /etc/hosts yourself and run nearhost with --no-hosts."
+			return "Press enter and approve the password prompt, or add the project's hosts to /etc/hosts yourself and run nearhost with --no-hosts."
 		}
 	case engine.StateError:
 		if !serverUp {

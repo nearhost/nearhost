@@ -279,10 +279,10 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 	out := u.out.String()
 	for _, name := range []string{"one", "two"} {
 		wantContains(t, out,
-			"\n"+name+": stopped: alias "+name+".test is not resolvable: the hosts file was not updated (",
+			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
 			"sudo hosts apply: exit status 1")
 	}
-	if n := strings.Count(out, "  fix: run `nearhost up` again and approve the password prompt, or add the alias to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
+	if n := strings.Count(out, "  fix: run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
 		t.Errorf("expected the fix once under each project, found %d:\n%s", n, out)
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {

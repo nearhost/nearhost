@@ -577,17 +577,6 @@ func TestHostClashIgnoresDisabledAndMatchesPatternsExactly(t *testing.T) {
 	}
 }
 
-func TestExactHosts(t *testing.T) {
-	c := &Config{Projects: []Project{
-		{Name: "l1", Alias: "l1.test", Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},
-		{Name: "pro", Alias: "pro.test", Routes: []Route{{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro", "x.local.redactr.pro"}}}},
-	}}
-	want := []string{"l1.test", "pro.test", "x.local.redactr.pro"}
-	if got := c.ExactHosts(); !slices.Equal(got, want) {
-		t.Fatalf("ExactHosts() = %v, want %v", got, want)
-	}
-}
-
 func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
 	for _, bad := range []string{"app.example.io", "A.test", ".test", "*.test", "a_b.test", "localhost"} {
 		if ValidProjectAlias(bad) == nil {
@@ -601,8 +590,8 @@ func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
 }
 
 // The hosts file names are the valid aliases and the exact hosts of every web
-// route: never localhost, a pattern, an invalid alias or a host of a route
-// that is not a web route.
+// route of an enabled project: never localhost, a pattern, an invalid alias,
+// a host of a route that is not a web route or a disabled project's host.
 func TestHostsFileNamesHoldExactHostsOfWebRoutes(t *testing.T) {
 	c := &Config{Projects: []Project{
 		{Name: "l1", Alias: "l1.test", Enabled: true, Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},

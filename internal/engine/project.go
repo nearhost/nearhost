@@ -75,7 +75,8 @@ type heldPort struct {
 //     state error naming the port, with the web routes and the other
 //     loopback routes still served;
 //   - the hosts file could not be updated: state stopped with a message
-//     saying the alias is not resolvable, nothing started for the project.
+//     saying the project's hosts are not resolvable, nothing started for
+//     the project.
 //
 // If the server's connection drops while the forwards are being added, they
 // are queued on the session and StartProject returns nil with the project
@@ -230,7 +231,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		return StateError, err
 	}
 	if err := e.ensureHosts(ctx); err != nil {
-		return StateStopped, fmt.Errorf("alias %s is not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Alias, err)
+		return StateStopped, fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Name, err)
 	}
 
 	webLocals := make([]int, len(web))

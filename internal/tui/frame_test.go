@@ -61,7 +61,7 @@ func TestNarrowHeader(t *testing.T) {
 
 func TestHostsWord(t *testing.T) {
 	for state, want := range map[string]string{
-		"2 aliases": "ok", "1 alias": "ok", "no aliases configured": "ok",
+		"2 names": "ok", "1 name": "ok", "no names configured": "ok",
 		"not managed (--no-hosts)": "off", "missing a.test": "needs update", "": "…",
 	} {
 		if got, _ := hostsWord(state); ansi.Strip(got) != want {

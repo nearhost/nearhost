@@ -108,7 +108,7 @@ func hostsWord(state string) (string, bool) {
 		return styleDim.Render("…"), true
 	case strings.HasPrefix(state, "not managed"):
 		return styleDim.Render("off"), true
-	case state == "no aliases configured", strings.HasSuffix(state, " alias"), strings.HasSuffix(state, " aliases"):
+	case state == "no names configured", strings.HasSuffix(state, " name"), strings.HasSuffix(state, " names"):
 		return "ok", true
 	}
 	return styleAmber.Render("needs update"), false

@@ -67,7 +67,7 @@ func TestHomeShowsTheMachine(t *testing.T) {
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "proxy     ● https :443 · http :80", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 aliases", "config    "+f.path,
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 names", "config    "+f.path,
 		"running   1 of 3 projects on 1 of 2 servers")
 }
 
@@ -114,7 +114,7 @@ func TestFixFor(t *testing.T) {
 	}{
 		{engine.StateRunning, "", true, ""},
 		{engine.StateStopped, "", true, ""},
-		{engine.StateStopped, "alias not resolvable", true, "Press enter and approve the password prompt"},
+		{engine.StateStopped, "hosts not resolvable", true, "Press enter and approve the password prompt, or add the project's hosts to /etc/hosts yourself"},
 		{engine.StateDegraded, "", false, "run `ssh mini.lan` once"},
 		{engine.StateError, "auth", false, "Run `ssh mini.lan` once in a terminal to fix access, then press enter."},
 		{engine.StateError, "port", true, "Resolve what is named above"},

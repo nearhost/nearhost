@@ -114,7 +114,7 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.
 		if reason != "" {
-			fix = "run `nearhost up` again and approve the password prompt, or add the alias to /etc/hosts yourself and pass --no-hosts"
+			fix = "run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts"
 		}
 	case engine.StateError:
 		fix = "resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again"
