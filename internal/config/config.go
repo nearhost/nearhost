@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
+	"github.com/nearhost/nearhost/internal/hostname"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,7 +19,8 @@ import (
 type Role string
 
 const (
-	// RoleWeb is served at https://<alias>. Exactly one per project.
+	// RoleWeb is served over HTTPS at its hosts. The first is served at the
+	// alias as well.
 	RoleWeb Role = "web"
 	// RoleLoopback is forwarded to 127.0.0.1:<port> on this machine.
 	RoleLoopback Role = "loopback"
@@ -38,6 +41,9 @@ type Route struct {
 	Port  int    `yaml:"port"`
 	Role  Role   `yaml:"role"`
 	Label string `yaml:"label,omitempty"`
+	// Hosts are the exact hosts and wildcard patterns a web route is served
+	// at, besides the alias on the first one. Only web routes have them.
+	Hosts []string `yaml:"hosts,omitempty"`
 }
 
 // Project is one site nearhost can serve.
@@ -50,7 +56,7 @@ type Project struct {
 	Routes  []Route `yaml:"routes"`
 }
 
-// WebRoute returns the project's single web route, if present.
+// WebRoute returns the project's primary web route, the first one, if present.
 func (p Project) WebRoute() (Route, bool) {
 	for _, r := range p.Routes {
 		if r.Role == RoleWeb {
@@ -58,6 +64,92 @@ func (p Project) WebRoute() (Route, bool) {
 		}
 	}
 	return Route{}, false
+}
+
+// WebHosts is one web route and every host it is served at.
+type WebHosts struct {
+	Port  int
+	Label string
+	Hosts []string
+}
+
+// Web lists the project's web routes in route order with their hosts. The
+// primary route is also served at the alias, so the alias comes first among
+// its hosts, and a copy of it written among them is dropped.
+func (p Project) Web() []WebHosts {
+	var out []WebHosts
+	for _, r := range p.Routes {
+		if r.Role != RoleWeb {
+			continue
+		}
+		w := WebHosts{Port: r.Port, Label: r.Label}
+		if len(out) == 0 {
+			w.Hosts = append(w.Hosts, p.Alias)
+		}
+		for _, h := range r.Hosts {
+			if len(out) == 0 && strings.EqualFold(h, p.Alias) {
+				continue
+			}
+			w.Hosts = append(w.Hosts, h)
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// AllHosts lists every host the project's web routes are served at, in order.
+func (p Project) AllHosts() []string {
+	var out []string
+	for _, w := range p.Web() {
+		out = append(out, w.Hosts...)
+	}
+	return out
+}
+
+// HostClash finds the first host of p that another enabled project also
+// serves. Two exact hosts clash when equal and two patterns when written the
+// same, ignoring case. An exact host under another project's pattern does not
+// clash, because the exact host is the more specific match and wins. The
+// project in c named like p is skipped, so a stored project can be checked
+// against its own config.
+func (c *Config) HostClash(p Project) (host, other string, clash bool) {
+	taken := map[string]string{}
+	for _, q := range c.Projects {
+		if q.Name == p.Name || !q.Enabled {
+			continue
+		}
+		for _, h := range q.AllHosts() {
+			if _, seen := taken[strings.ToLower(h)]; !seen {
+				taken[strings.ToLower(h)] = q.Name
+			}
+		}
+	}
+	for _, h := range p.AllHosts() {
+		if name, ok := taken[strings.ToLower(h)]; ok {
+			return h, name, true
+		}
+	}
+	return "", "", false
+}
+
+// ExactHosts lists the exact hosts of every project, sorted and without
+// duplicates, leaving out localhost and wildcard patterns. These are the
+// candidates for the hosts file, which resolves neither of those.
+func (c *Config) ExactHosts() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range c.Projects {
+		for _, h := range p.AllHosts() {
+			h = strings.ToLower(h)
+			if h == "localhost" || hostname.IsPattern(h) || seen[h] {
+				continue
+			}
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Server is a machine reachable over SSH.
@@ -285,6 +377,7 @@ func (c *Config) Validate() error {
 		aliases[aliasKey] = p.Name
 
 		webCount := 0
+		hosts := map[string]bool{strings.ToLower(p.Alias): true}
 		for _, r := range p.Routes {
 			if !r.Role.Valid() {
 				return fmt.Errorf("project %q port %d has unknown role %q", p.Name, r.Port, r.Role)
@@ -292,9 +385,29 @@ func (c *Config) Validate() error {
 			if r.Port < 1 || r.Port > 65535 {
 				return fmt.Errorf("project %q has invalid port %d", p.Name, r.Port)
 			}
+			if r.Role != RoleWeb && len(r.Hosts) > 0 {
+				return fmt.Errorf("project %q port %d: only web routes have hosts", p.Name, r.Port)
+			}
 			switch r.Role {
 			case RoleWeb:
 				webCount++
+				if webCount > 1 && len(r.Hosts) == 0 {
+					return fmt.Errorf("project %q: web route on port %d needs at least one host; only the first web route is served at the alias", p.Name, r.Port)
+				}
+				for _, h := range r.Hosts {
+					if err := hostname.Valid(h); err != nil {
+						return fmt.Errorf("project %q port %d: %w", p.Name, r.Port, err)
+					}
+					// Web() drops the alias from the primary route's own
+					// hosts, so only there is it harmless.
+					if webCount == 1 && strings.EqualFold(h, p.Alias) {
+						continue
+					}
+					if hosts[strings.ToLower(h)] {
+						return fmt.Errorf("project %q serves host %q twice", p.Name, h)
+					}
+					hosts[strings.ToLower(h)] = true
+				}
 			case RoleLoopback:
 				if p.Enabled {
 					if other, clash := loopbacks[r.Port]; clash {
@@ -304,8 +417,8 @@ func (c *Config) Validate() error {
 				}
 			}
 		}
-		if webCount != 1 {
-			return fmt.Errorf("project %q must have exactly one web route, has %d", p.Name, webCount)
+		if webCount == 0 {
+			return fmt.Errorf("project %q must have at least one web route", p.Name)
 		}
 	}
 

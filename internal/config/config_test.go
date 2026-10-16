@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -92,16 +94,16 @@ func TestValidateRejectsDuplicateLoopbackPortAcrossEnabledProjects(t *testing.T)
 	}
 }
 
-func TestValidateRequiresExactlyOneWebRoute(t *testing.T) {
+func TestValidateRequiresAWebRoute(t *testing.T) {
 	c := sample()
 	c.Projects[0].Routes[0].Role = RoleIgnore
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "web") {
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "at least one web route") {
 		t.Fatalf("expected missing web error, got %v", err)
 	}
 	c.Projects[0].Routes[0].Role = RoleWeb
 	c.Projects[0].Routes[1].Role = RoleWeb
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "web") {
-		t.Fatalf("expected multiple web error, got %v", err)
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "needs at least one host") {
+		t.Fatalf("expected second web route without hosts error, got %v", err)
 	}
 }
 
@@ -512,5 +514,76 @@ func TestNotificationsAreOnUnlessTurnedOff(t *testing.T) {
 		if err != nil || cfg.NotificationsOff() != off {
 			t.Errorf("%q: off %v, err %v", content, cfg.NotificationsOff(), err)
 		}
+	}
+}
+
+func TestValidateWebRoutesAndHosts(t *testing.T) {
+	base := func(routes ...Route) *Config {
+		return &Config{Projects: []Project{{Name: "dd", Server: LocalServer, Alias: "dd.test", Enabled: true, Routes: routes}}}
+	}
+	web := func(port int, hosts ...string) Route { return Route{Port: port, Role: RoleWeb, Hosts: hosts} }
+	cases := []struct {
+		name    string
+		cfg     *Config
+		wantErr string // "" means valid
+	}{
+		{"legacy", base(web(8220)), ""},
+		{"several web routes", base(web(8220, "app.local.dd.io", "*.status.local.dd.io"), web(8230, "ws.local.dd.io")), ""},
+		{"no web route", base(Route{Port: 1, Role: RoleLoopback}), "at least one web route"},
+		{"second web route without hosts", base(web(8220), web(8230)), "port 8230 needs at least one host"},
+		{"bad host", base(web(8220, "*.com")), `"*.com"`},
+		{"host twice in project", base(web(8220, "a.dd.io"), web(8230, "a.dd.io")), `"a.dd.io"`},
+		{"host equals alias", base(web(8220), web(8230, "dd.test")), `"dd.test"`},
+		{"alias on the primary route is tolerated", base(web(8220, "dd.test")), ""},
+		{"hosts on a loopback route", base(web(8220), Route{Port: 5432, Role: RoleLoopback, Hosts: []string{"db.dd.io"}}), "only web routes have hosts"},
+	}
+	for _, c := range cases {
+		err := c.cfg.Validate()
+		if c.wantErr == "" && err != nil || c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)) {
+			t.Errorf("%s: Validate() = %v, want %q", c.name, err, c.wantErr)
+		}
+	}
+}
+
+func TestProjectWebPutsAliasOnPrimary(t *testing.T) {
+	p := Project{Alias: "dd.test", Routes: []Route{
+		{Port: 5432, Role: RoleLoopback},
+		{Port: 8220, Role: RoleWeb, Hosts: []string{"app.local.dd.io", "dd.test"}},
+		{Port: 8230, Role: RoleWeb, Label: "reverb", Hosts: []string{"ws.local.dd.io"}},
+	}}
+	want := []WebHosts{
+		{Port: 8220, Hosts: []string{"dd.test", "app.local.dd.io"}},
+		{Port: 8230, Label: "reverb", Hosts: []string{"ws.local.dd.io"}},
+	}
+	if got := p.Web(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Web() = %+v, want %+v", got, want)
+	}
+}
+
+func TestHostClashIgnoresDisabledAndMatchesPatternsExactly(t *testing.T) {
+	pro := Project{Name: "pro", Alias: "pro.test", Enabled: true, Routes: []Route{{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro"}}}}
+	old := Project{Name: "old", Alias: "old.test", Enabled: false, Routes: []Route{{Port: 1, Role: RoleWeb, Hosts: []string{"auth.local.redactr.pro"}}}}
+	c := &Config{Projects: []Project{pro, old}}
+	platform := Project{Name: "platform", Alias: "platform.test", Routes: []Route{{Port: 8210, Role: RoleWeb, Hosts: []string{"auth.local.redactr.pro"}}}}
+	if _, _, clash := c.HostClash(platform); clash {
+		t.Error("an exact host under another project's pattern is not a clash, and disabled projects don't count")
+	}
+	copyPro := Project{Name: "pro2", Alias: "pro2.test", Routes: []Route{{Port: 9, Role: RoleWeb, Hosts: []string{"*.LOCAL.redactr.pro"}}}}
+	if host, other, clash := c.HostClash(copyPro); !clash || other != "pro" || host != "*.LOCAL.redactr.pro" {
+		t.Errorf("HostClash = %q %q %v, want the pattern, pro, true", host, other, clash)
+	}
+	if _, _, clash := c.HostClash(pro); clash {
+		t.Error("a project does not clash with itself")
+	}
+}
+
+func TestExactHosts(t *testing.T) {
+	c := &Config{Projects: []Project{
+		{Name: "l1", Alias: "l1.test", Routes: []Route{{Port: 8242, Role: RoleWeb, Hosts: []string{"localhost"}}}},
+		{Name: "pro", Alias: "pro.test", Routes: []Route{{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro", "x.local.redactr.pro"}}}},
+	}}
+	want := []string{"l1.test", "pro.test", "x.local.redactr.pro"}
+	if got := c.ExactHosts(); !slices.Equal(got, want) {
+		t.Fatalf("ExactHosts() = %v, want %v", got, want)
 	}
 }
