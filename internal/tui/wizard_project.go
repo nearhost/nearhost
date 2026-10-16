@@ -81,7 +81,10 @@ type projectForm struct {
 	// the user opened it. proposed is set once its path has been checked.
 	proposal *Proposal
 	proposed bool
-	missing  map[int]bool // saved routes no longer found, by port; shown, not saved
+	// lastErr is the last error the form showed, kept for the decline:
+	// going back a step clears err.
+	lastErr string
+	missing map[int]bool // saved routes no longer found, by port; shown, not saved
 
 	enabled []string // the presets enabled here
 	notes   []string // what the registry, discovery and presets had to say
@@ -938,6 +941,9 @@ func (f *projectForm) back() tea.Cmd {
 	}
 	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
+	if f.err != "" {
+		f.lastErr = f.err
+	}
 	if f.proposal != nil && f.step == projectStepPath && !(waiting && f.files != nil) {
 		// A proposal starts at its path: leaving it dismisses the
 		// proposal, with what was wrong with the path, if anything.
