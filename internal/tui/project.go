@@ -197,12 +197,20 @@ func (m *Model) trackUptime() {
 }
 
 // localPort is where a route can be reached on this machine, or "" when it
-// is not forwarded.
+// is not forwarded. Each web route has a local port of its own; a status
+// without WebLocalPorts only knows the primary's, so only the primary
+// shows it.
 func localPort(p config.Project, r config.Route, st engine.ProjectStatus) string {
 	switch r.Role {
 	case config.RoleWeb:
-		if st.WebLocalPort != 0 {
-			return strconv.Itoa(st.WebLocalPort)
+		local := st.WebLocalPorts[r.Port]
+		if st.WebLocalPorts == nil {
+			if primary, _ := p.WebRoute(); primary.Port == r.Port {
+				local = st.WebLocalPort
+			}
+		}
+		if local != 0 {
+			return strconv.Itoa(local)
 		}
 	case config.RoleLoopback:
 		if p.Server != config.LocalServer {

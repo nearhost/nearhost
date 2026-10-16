@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -117,4 +118,21 @@ func TestProjectListsEveryURL(t *testing.T) {
 	if s := screen(m); strings.Contains(s, "https://website.test") && strings.Count(s, "https://website.test") > 1 {
 		t.Errorf("the alias is listed twice:\n%s", s)
 	}
+}
+
+// Each web route of a remote project shows the local port it is forwarded
+// to, not the primary's.
+func TestProjectShowsEachWebRoutesLocalPort(t *testing.T) {
+	cfg := sampleConfig()
+	cfg.Projects[1].Routes = []config.Route{
+		{Port: 80, Role: config.RoleWeb, Label: "app"},
+		{Port: 81, Role: config.RoleWeb, Label: "ws", Hosts: []string{"ws.local.myapp.io"}},
+	}
+	f := newFake(t, cfg)
+	f.servers["mini"] = transport.StatusConnected
+	m := sized(f)
+	f.setState("myapp", engine.ProjectStatus{State: engine.StateRunning, WebLocalPort: 52114,
+		WebLocalPorts: map[int]int{80: 52114, 81: 52115}})
+	m.sel = rowKey(rowProject, "myapp")
+	wantScreen(t, m, "80      web         app", "52114     ●", "81      web         ws", "52115     ●")
 }
