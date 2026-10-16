@@ -396,3 +396,25 @@ func TestDoctorChecksThatAgentsReachNearhostFromEachServer(t *testing.T) {
 		t.Fatalf("asked %v", asked)
 	}
 }
+
+func TestDoctorSuitsTheAgentsFixToTheProblem(t *testing.T) {
+	doctorConfig(t)
+	b := healthy().backend()
+	b.checkAgents = func(context.Context, config.Server) error {
+		return &transport.AgentError{Problem: transport.AgentNotReady, Msg: "make /home/dev/.nearhost: permission denied"}
+	}
+	out, _ := execute(t, newDoctorCmd(b), "doctor")
+	if !strings.Contains(out, "warn  agents on mini   make /home/dev/.nearhost: permission denied") ||
+		!strings.Contains(out, "can write ~/.nearhost") || strings.Contains(out, "AllowStreamLocalForwarding") {
+		t.Fatalf("doctor printed:\n%s", out)
+	}
+}
+
+func TestDoctorsSocketIsAsLongAsAnInstallsAndNeverOne(t *testing.T) {
+	for range 20 {
+		name := doctorSocketName()
+		if len(name) != len("k3f9q2.sock") || name[0] != '0' || !strings.HasSuffix(name, ".sock") {
+			t.Fatalf("doctor's socket %q", name)
+		}
+	}
+}

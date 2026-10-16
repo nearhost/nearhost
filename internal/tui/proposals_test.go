@@ -185,3 +185,20 @@ func TestRetryingOnHomeLeavesAServerWhoseAgentsAloneConnected(t *testing.T) {
 	}
 	wantScreen(t, m, "mini  agents unavailable")
 }
+
+func TestTheFixSuitsWhyAgentsCannotReachNearhost(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.servers["mini"] = transport.StatusConnected
+	m := sized(f)
+	m.sel = rowKey(rowServer, "mini")
+	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "make /home/dev/.nearhost: permission denied", AgentProblem: transport.AgentNotReady}}
+	if s := screen(m); !strings.Contains(s, "can write ~/.nearhost") || strings.Contains(s, "AllowStreamLocalForwarding") {
+		t.Fatalf("not ready:\n%s", s)
+	}
+	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "the socket path is 120 bytes", AgentProblem: transport.AgentTooLong}}
+	if s := screen(m); !strings.Contains(s, "home directory is too long") || strings.Contains(s, "AllowStreamLocalForwarding") {
+		t.Fatalf("too long:\n%s", s)
+	}
+	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "refused", AgentProblem: transport.AgentRefused}}
+	wantScreen(t, m, "AllowStreamLocalForwarding yes")
+}

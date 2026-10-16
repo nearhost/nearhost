@@ -158,8 +158,17 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check {
 	name := "agents on " + srv.Name
 	if err := b.checkAgents(ctx, srv); err != nil {
-		return check{name, levelWarn, err.Error(),
-			"set AllowStreamLocalForwarding yes in the sshd_config of " + srv.SSHHost + ", or leave it: only coding agents there need it"}
+		fix := "set AllowStreamLocalForwarding yes in the sshd_config of " + srv.SSHHost + ", or leave it: only coding agents there need it"
+		var agentErr *transport.AgentError
+		if errors.As(err, &agentErr) {
+			switch agentErr.Problem {
+			case transport.AgentNotReady:
+				fix = "check that the account " + srv.SSHHost + " logs in as can write ~/.nearhost, then run `nearhost doctor` again"
+			case transport.AgentTooLong:
+				fix = "use an account with a shorter home directory on " + srv.SSHHost + ", or leave it: only coding agents there need it"
+			}
+		}
+		return check{name, levelWarn, err.Error(), fix}
 	}
 	return check{name: name, detail: "can reach Nearhost through ~/" + transport.AgentDir}
 }
