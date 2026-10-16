@@ -55,6 +55,9 @@ type doctorBackend struct {
 	readHosts func() (string, error)
 	// checkServer reports whether ssh reaches a server without prompting.
 	checkServer func(ctx context.Context, srv config.Server) error
+	// checkAgents reports whether a server forwards the socket agents reach
+	// Nearhost on. nil skips the check.
+	checkAgents func(ctx context.Context, srv config.Server) error
 	goos        string
 	// lowPorts reports whether this process may bind port on Linux.
 	lowPorts func(port int) (level, string)
@@ -71,6 +74,7 @@ func systemDoctor() doctorBackend {
 			return string(data), err
 		},
 		checkServer: sshClient{}.check,
+		checkAgents: sshClient{}.checkAgents,
 		goos:        runtime.GOOS,
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
@@ -84,9 +88,11 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 		Use:   "doctor",
 		Short: "Check ports, the local CA, the hosts block and server access",
 		Long: "Check what `nearhost up` needs: free proxy ports, a trusted local CA, the\n" +
-			"hosts block and access to every configured server. Each check is reported as\n" +
-			"ok, warn or FAIL with what to do about it. Only a FAIL makes the exit status\n" +
-			"non-zero. Nothing is changed.",
+			"hosts block and access to every configured server, and whether coding agents\n" +
+			"there can reach Nearhost. Each check is reported as ok, warn or FAIL with what\n" +
+			"to do about it. Only a FAIL makes the exit status non-zero. Nothing is changed,\n" +
+			"apart from ~/.nearhost on each server, which the agents check creates as\n" +
+			"`nearhost` would.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := flags.validate(); err != nil {
@@ -138,9 +144,24 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 		checks = append(checks, checkHosts(b, cfg))
 	}
 	for _, srv := range cfg.Servers {
-		checks = append(checks, checkServer(ctx, b, srv))
+		c := checkServer(ctx, b, srv)
+		checks = append(checks, c)
+		if c.level == levelOK && b.checkAgents != nil {
+			checks = append(checks, checkAgents(ctx, b, srv))
+		}
 	}
 	return checks
+}
+
+// checkAgents reports whether coding agents on srv can reach Nearhost. They
+// are a convenience, so a server that refuses is a warning.
+func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check {
+	name := "agents on " + srv.Name
+	if err := b.checkAgents(ctx, srv); err != nil {
+		return check{name, levelWarn, err.Error(),
+			"set AllowStreamLocalForwarding yes in the sshd_config of " + srv.SSHHost + ", or leave it: only coding agents there need it"}
+	}
+	return check{name: name, detail: "can reach Nearhost through ~/" + transport.AgentDir}
 }
 
 // report prints the checks and returns an error when one failed.

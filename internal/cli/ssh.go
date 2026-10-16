@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,6 +78,50 @@ func (c sshClient) privateSession(srv config.Server) (*transport.Session, func()
 		sess.Stop()
 		return os.RemoveAll(runDir)
 	}, nil
+}
+
+// checkAgents forwards a socket of its own to ~/.nearhost on srv, as a
+// session of `nearhost` does for coding agents, and takes it down again. It
+// returns why the server refused, when it did. The socket has a name no
+// install uses, so a running `nearhost` keeps its own.
+func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	sess, end, err := c.privateSession(srv)
+	if err != nil {
+		return err
+	}
+	defer end()
+	b := make([]byte, 4)
+	rand.Read(b)
+	name := fmt.Sprintf("doctor-%x.sock", b)
+	sess.SetAgentForward(transport.AgentForward{Name: name, Local: filepath.Join(filepath.Dir(sess.SocketPath()), "agent.sock")})
+	sess.Start()
+	if err := connectOnce(ctx, sess); err != nil {
+		return err
+	}
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		h := sess.Health()
+		switch {
+		case h.AgentErr != "":
+			return errors.New(h.AgentErr)
+		case h.AgentPath != "":
+			// sshd leaves the socket behind when the forward ends: remove it
+			// while the connection is up.
+			if files, err := sess.OpenSFTP(ctx); err == nil {
+				files.Client.Remove(h.AgentPath)
+				files.Close()
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
 }
 
 // connectOnce waits for sess, which has just been started, to connect. A
