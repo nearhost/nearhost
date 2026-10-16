@@ -76,8 +76,12 @@ type projectForm struct {
 	nameErr, aliasErr string
 	advice            []Advisory // for the routes and alias chosen, shown at the end
 
-	edit    *config.Project // the project being edited; nil when adding
-	missing map[int]bool    // saved routes no longer found, by port; shown, not saved
+	edit *config.Project // the project being edited; nil when adding
+	// proposal is the agent's proposal the form was opened with; nil when
+	// the user opened it. proposed is set once its path has been checked.
+	proposal *Proposal
+	proposed bool
+	missing  map[int]bool // saved routes no longer found, by port; shown, not saved
 
 	enabled []string // the presets enabled here
 	notes   []string // what the registry, discovery and presets had to say
@@ -161,6 +165,20 @@ func newProjectEditForm(b Backend, cfg *config.Config, p config.Project, w *work
 	return f, f.connect()
 }
 
+// newProposalForm opens the add-project form with an agent's proposal: on
+// srv, the proposal's origin, at its path, which is checked and read at
+// once. The name and web port it gives are taken when they fit. Run the
+// command it returns: it connects to the server.
+func newProposalForm(b Backend, cfg *config.Config, srv config.Server, p Proposal, w *worker) (*projectForm, tea.Cmd) {
+	f := newProjectForm(b, cfg, "", srv.Name, w)
+	f.proposal = &p
+	f.srv, f.step, f.path.value = srv, projectStepPath, p.Path
+	if p.Name != "" {
+		f.name.value, f.alias.value = p.Name, config.AliasFor(p.Name)
+	}
+	return f, f.connect()
+}
+
 // newProjectForm opens the add-project form with the cursor on the server
 // called selected.
 func newProjectForm(b Backend, cfg *config.Config, dir, selected string, w *worker) *projectForm {
@@ -209,6 +227,10 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 		f.conn, f.listings = nextSeq(), map[string]listing{}
 		if f.edit != nil {
 			return f.discover() // the path is the project's
+		}
+		if f.proposal != nil && !f.proposed {
+			f.proposed = true
+			return f.resolve() // the agent gave the path
 		}
 		return f.listAhead()
 	case listedMsg:
@@ -413,13 +435,7 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			}
 			return nil
 		case "enter":
-			f.seq = nextSeq()
-			f.busy, f.err, f.listNote = "Checking "+clean(f.path.value)+"…", "", ""
-			seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
-			return f.w.do(func(ctx context.Context) tea.Msg {
-				resolved, err := files.Resolve(ctx, p)
-				return resolvedMsg{seq, resolved, err == nil && b.RegistryQuestion(), err}
-			})
+			return f.resolve()
 		}
 		if f.path.key(k) {
 			return f.edited()
@@ -809,6 +825,18 @@ func (f *projectForm) complete(msg completedMsg) tea.Cmd {
 	return nil
 }
 
+// resolve checks the path typed and goes on to the registry question or
+// discovery.
+func (f *projectForm) resolve() tea.Cmd {
+	f.seq = nextSeq()
+	f.busy, f.err, f.listNote = "Checking "+clean(f.path.value)+"…", "", ""
+	seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		resolved, err := files.Resolve(ctx, p)
+		return resolvedMsg{seq, resolved, err == nil && b.RegistryQuestion(), err}
+	})
+}
+
 // discover reads the project.
 func (f *projectForm) discover() tea.Cmd {
 	f.seq = nextSeq()
@@ -853,11 +881,34 @@ func (f *projectForm) toRoutes() {
 			}
 		}
 	}
+	if f.proposal != nil && f.proposal.Web != 0 {
+		f.proposeWeb(f.proposal.Web)
+	}
 	f.routeRow, f.webPort.value = 0, ""
 	if f.name.value == "" {
 		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
 	}
 	f.step, f.err = projectStepRoutes, ""
+}
+
+// proposeWeb makes port the web route, as the agent proposed, when
+// discovery found it; the route that was the web route is then ignored.
+func (f *projectForm) proposeWeb(port int) {
+	at := -1
+	for i, r := range f.routes {
+		if r.Port == port {
+			at = i
+		}
+	}
+	if at < 0 {
+		return
+	}
+	for i := range f.routes {
+		if f.routes[i].Role == config.RoleWeb {
+			f.routes[i].Role = config.RoleIgnore
+		}
+	}
+	f.routes[at].Role = config.RoleWeb
 }
 
 // routeLabel is how a route's label is shown: a saved route no longer found
@@ -887,6 +938,11 @@ func (f *projectForm) back() tea.Cmd {
 	}
 	f.seq = nextSeq() // what a background step says now is not wanted
 	waiting := f.busy != ""
+	if f.proposal != nil && f.step == projectStepPath && !(waiting && f.files != nil) {
+		// A proposal starts at its path: leaving it dismisses the
+		// proposal, with what was wrong with the path, if anything.
+		return tea.Batch(f.closeFiles(), closeForm)
+	}
 	f.busy, f.err, f.listNote = "", "", ""
 	if f.edit != nil {
 		// Editing starts at discovery: leaving it, or the routes when no
@@ -938,6 +994,9 @@ func (f *projectForm) lines(width int) []string {
 		return f.sub.lines(width)
 	}
 	lines := f.summary(width)
+	if f.proposal != nil {
+		lines = append([]string{styleAmber.Render("Proposed by an agent " + f.proposal.where()), ""}, lines...)
+	}
 	switch f.step {
 	case projectStepServer:
 		for i, s := range f.servers {
@@ -1106,8 +1165,8 @@ func (f *projectForm) routeLines(width int) []string {
 		lines = append(lines, renderRow(cells, nil, width, selected))
 	}
 	alias := f.draft.Alias
-	if alias == "" {
-		alias = f.alias.value
+	if alias == "" || f.proposal != nil && f.alias.value != "" {
+		alias = f.alias.value // none found, or the agent named the project
 	}
 	lines = append(lines, "")
 	explain := styleDim.Render("web is what ") + styleBeacon.Render("https://"+clean(alias)) + styleDim.Render(" serves.")

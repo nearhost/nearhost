@@ -52,6 +52,10 @@ type Model struct {
 	// password asks for the user's password over everything else; nil when
 	// nothing is asking.
 	password *passwordBox
+	// proposals are the agents' proposals waiting to be reviewed, oldest
+	// first; proposing is the one whose form is open, nil when none is.
+	proposals []Proposal
+	proposing *proposing
 
 	routeFocus bool   // the project panel's routes have the keys
 	routeRow   int    // the route selected there
@@ -164,9 +168,12 @@ func tick() tea.Cmd {
 // Update handles a message.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	// A proposal's form that has gone without saving declines it, and the
+	// next proposal opens once nothing else is open.
+	m.endProposal()
 	// The advice of the selected project is read when it is not known, once
 	// the selection has rested on it.
-	return model, tea.Batch(cmd, m.waitForAdvice(), m.spin())
+	return model, tea.Batch(cmd, m.nextProposal(), m.waitForAdvice(), m.spin())
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -300,7 +307,14 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectRow(key)
 		}
 		return m, tea.Batch(cmd, m.applyNow())
+	case proposalMsg:
+		return m, m.gotProposal(msg.p)
 	case projectAddedMsg:
+		if m.proposing != nil && m.form == m.proposing.form {
+			m.b.AcceptProposal(m.proposing.p.ID, msg.name)
+			m.logs.note(fmt.Sprintf("Added %s, as an agent %s proposed.", msg.name, m.proposing.p.where()))
+			m.proposing = nil
+		}
 		m.form = nil
 		m.selectRow(rowKey(rowProject, msg.name))
 		verb := "Added "

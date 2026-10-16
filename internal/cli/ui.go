@@ -27,9 +27,9 @@ type uiBackend struct {
 	up upBackend
 	// interactive reports whether standard input and output are terminals.
 	interactive func() bool
-	// run runs the interface until it quits. s must be attached to the
-	// program that runs m.
-	run func(m *tui.Model, s *tui.Suspender) error
+	// run runs the interface until it quits, calling attach with the
+	// program that runs m before it starts.
+	run func(m *tui.Model, attach func(*tea.Program)) error
 	// applier is the privileged hosts write, given the context of the start
 	// that needs it; prompt says whether sudo may prompt (only in the
 	// terminal).
@@ -55,9 +55,9 @@ func systemUI() uiBackend {
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
-		run: func(m *tui.Model, s *tui.Suspender) error {
+		run: func(m *tui.Model, attach func(*tea.Program)) error {
 			p := tea.NewProgram(m)
-			s.Attach(p)
+			attach(p)
 			_, err := p.Run()
 			return err
 		},
@@ -140,12 +140,17 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way.
 	defer eng.Shutdown(context.Background())
-	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
+	var proposals tui.Proposals
+	ag.review(&proposals)
+	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root, agents: ag}
 	m := tui.New(back, dir)
 	if agentNote != "" {
 		eng.Events().Publish(engine.Event{Message: agentNote})
 	}
-	return b.run(m, &suspender)
+	return b.run(m, func(p *tea.Program) {
+		suspender.Attach(p)
+		proposals.Attach(p)
+	})
 }
 
 // hostsThrough is an EnsureHosts for the interface: when the hosts block has
@@ -189,7 +194,14 @@ type uiEngine struct {
 	editMu sync.Mutex
 	// root runs steps that need root.
 	root asRoot
+	// agents answers the agents' proposals; nil when none can reach
+	// nearhost.
+	agents *agents
 }
+
+func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
+
+func (u *uiEngine) DeclineProposal(id, reason string) { u.agents.decline(id, reason) }
 
 func (u *uiEngine) ConfigPath() string { return u.path }
 

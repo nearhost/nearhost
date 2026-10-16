@@ -100,6 +100,13 @@ type Backend interface {
 	// Trust trusts the local CA as `nearhost trust` does, with the
 	// interface suspended so a password can be asked for.
 	Trust(ctx context.Context) error
+
+	// AcceptProposal tells the agent that made proposal id that it was
+	// saved as the project called name.
+	AcceptProposal(id, name string)
+	// DeclineProposal tells the agent that made proposal id that it was
+	// dismissed, for reason when there is one.
+	DeclineProposal(id, reason string)
 }
 
 // ServerFiles is the files of a server, open while a project there is being
