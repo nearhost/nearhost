@@ -10,6 +10,15 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hosts"
+)
+
+// dnsTTL is how long a DNS answer about a host is used, and dnsFailTTL how
+// long a failed lookup is, before the name is looked up again. Failures
+// expire sooner so a nameserver that comes back is noticed.
+const (
+	dnsTTL     = time.Minute
+	dnsFailTTL = 10 * time.Second
 )
 
 // Version is set at build time by the release tooling.
@@ -18,20 +27,24 @@ var Version = "dev"
 // NewRoot builds the root command and all subcommands. It is the only place
 // where the commands are wired to the real machine.
 func NewRoot() *cobra.Command {
+	// One cache of DNS answers serves the engine, the interface's hosts
+	// state and doctor. The interface checks the hosts file every second,
+	// and a cache of its own per caller would still ask DNS that often.
+	lookup := hosts.CachedLookup(hosts.DNSLookup, dnsTTL, dnsFailTTL)
 	root := newRootCmd()
 	root.AddCommand(
 		newVersionCmd(),
 		newHostsCmd(),
 		newTrustCmd(systemTrust()),
 		newUntrustCmd(systemTrust()),
-		newUpCmd(systemUp()),
+		newUpCmd(systemUp(lookup)),
 		newAddCmd(systemAdd()),
 		newLsCmd(),
 		newPresetCmd(systemPresets()),
-		newDoctorCmd(systemDoctor()),
+		newDoctorCmd(systemDoctor(lookup)),
 		newUpdateCmd(systemUpdate()),
 	)
-	bindUI(root, systemUI())
+	bindUI(root, systemUI(lookup))
 	return root
 }
 

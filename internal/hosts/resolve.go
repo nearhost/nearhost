@@ -110,6 +110,54 @@ func query(ctx context.Context, server, name string, qtype uint16) ([]netip.Addr
 	return out, nil
 }
 
+// CachedLookup wraps next so each name is looked up at most once per ttl,
+// or once per failTTL while lookups of it fail. The interface checks the
+// hosts file every second, and asking DNS that often for every host would
+// cost a round trip per name per tick; a minute-old answer is fresh enough,
+// as DNS changes for these names are rare and a stale one only costs a
+// redundant or late hosts entry. Failures expire sooner so a nameserver that
+// comes back is noticed. A lookup cut short by its caller's context says
+// nothing about the name and is not kept. It is safe for concurrent use;
+// two callers missing the same name at once may both ask next.
+func CachedLookup(next Lookup, ttl, failTTL time.Duration) Lookup {
+	return cachedLookup(next, ttl, failTTL, time.Now)
+}
+
+// cachedAnswer is one name's answer and when it stops being used.
+type cachedAnswer struct {
+	addrs   []netip.Addr
+	err     error
+	expires time.Time
+}
+
+// cachedLookup is CachedLookup with a clock tests can move.
+func cachedLookup(next Lookup, ttl, failTTL time.Duration, now func() time.Time) Lookup {
+	var (
+		mu    sync.Mutex
+		cache = map[string]cachedAnswer{}
+	)
+	return func(ctx context.Context, name string) ([]netip.Addr, error) {
+		mu.Lock()
+		a, ok := cache[name]
+		mu.Unlock()
+		if ok && now().Before(a.expires) {
+			return slices.Clone(a.addrs), a.err
+		}
+		addrs, err := next(ctx, name)
+		if ctx.Err() != nil {
+			return addrs, err
+		}
+		keep := ttl
+		if err != nil {
+			keep = failTTL
+		}
+		mu.Lock()
+		cache[name] = cachedAnswer{addrs: slices.Clone(addrs), err: err, expires: now().Add(keep)}
+		mu.Unlock()
+		return addrs, err
+	}
+}
+
 // Wanted returns, sorted, the names the hosts file has to hold. Every .test
 // name stays, as no DNS serves it. Any other name stays unless lookup gives
 // addresses that are all loopback, which means DNS already sends it to this

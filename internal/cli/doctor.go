@@ -69,8 +69,9 @@ type doctorBackend struct {
 	lowPorts func(port int) (level, string)
 }
 
-// systemDoctor is the production backend. Only NewRoot wires it in.
-func systemDoctor() doctorBackend {
+// systemDoctor is the production backend. Only NewRoot wires it in, with
+// the lookup it shares with the engine and the interface.
+func systemDoctor(lookup hosts.Lookup) doctorBackend {
 	return doctorBackend{
 		trust:     systemTrust(),
 		probePort: probePort,
@@ -79,7 +80,7 @@ func systemDoctor() doctorBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
-		lookup:      hosts.DNSLookup,
+		lookup:      lookup,
 		checkServer: sshClient{}.check,
 		checkAgents: sshClient{}.checkAgents,
 		goos:        runtime.GOOS,

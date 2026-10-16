@@ -20,7 +20,7 @@ import (
 func installSignals(t *testing.T, parent context.Context) (ctx context.Context, again <-chan struct{}, release func()) {
 	t.Helper()
 	pipeIgnored := signal.Ignored(syscall.SIGPIPE)
-	ctx, again, release = systemUp().notify(parent)
+	ctx, again, release = systemUp(nil).notify(parent)
 	t.Cleanup(func() {
 		release()
 		if !pipeIgnored {
