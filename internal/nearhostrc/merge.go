@@ -1,6 +1,7 @@
 package nearhostrc
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -16,8 +17,26 @@ import (
 // from discovered (or from p.Routes when discovered is nil) so they stay
 // visible, but any that were web are demoted to ignore, since the file is now
 // the only thing that says what is served. A demoted route loses its hosts,
-// because only web routes may have them.
-func Merge(p config.Project, f *File, discovered []config.Route) config.Project {
+// because only web routes may have them. A manual host the file also lists,
+// on any route, is dropped from the manual ones so it is served once. Merge
+// fails when a route other than the primary lists the project's .test name,
+// which is always served on the first web route.
+func Merge(p config.Project, f *File, discovered []config.Route) (config.Project, error) {
+	inFile := map[string]bool{}
+	primary := true
+	for _, fr := range f.Routes {
+		isPrimary := false
+		if fr.Role == config.RoleWeb && primary {
+			primary, isPrimary = false, true
+		}
+		for _, h := range fr.Hosts {
+			inFile[strings.ToLower(h)] = true
+			if !isPrimary && strings.EqualFold(h, p.Alias) {
+				return p, fmt.Errorf("%s: port %d lists %q, the project's .test name, which is always served on the first web route", FileName, fr.Port, h)
+			}
+		}
+	}
+
 	approved := map[int][]string{}
 	if p.Nearhostrc != nil {
 		for _, r := range p.Nearhostrc.Routes {
@@ -32,8 +51,13 @@ func Merge(p config.Project, f *File, discovered []config.Route) config.Project 
 	routes := make([]config.Route, 0, len(f.Routes))
 	snapshot := make([]config.Route, 0, len(f.Routes))
 	listed := map[int]bool{}
+	firstWeb := true
 	for _, fr := range f.Routes {
 		listed[fr.Port] = true
+		isPrimary := fr.Role == config.RoleWeb && firstWeb
+		if isPrimary {
+			firstWeb = false
+		}
 		r := config.Route{Port: fr.Port, Role: fr.Role, Label: fr.Label}
 		if fr.Role == config.RoleWeb {
 			seen := map[string]bool{}
@@ -47,7 +71,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) config.Project 
 				add(h)
 			}
 			for _, h := range current[fr.Port] {
-				if !containsFold(approved[fr.Port], h) {
+				if !containsFold(approved[fr.Port], h) && !inFile[strings.ToLower(h)] && (isPrimary || !strings.EqualFold(h, p.Alias)) {
 					add(h)
 				}
 			}
@@ -73,7 +97,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) config.Project 
 
 	p.Routes = routes
 	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot}
-	return p
+	return p, nil
 }
 
 func containsFold(list []string, h string) bool {
@@ -115,12 +139,15 @@ func NeedsApproval(old, next config.Project) []Item {
 			continue
 		}
 		for _, h := range r.Hosts {
-			if strings.HasSuffix(strings.ToLower(h), ".test") || had[strings.ToLower(h)] {
+			// A pattern is risky even under .test: it catches every name
+			// below it, not just one the user chose.
+			pattern := hostname.IsPattern(h)
+			if (!pattern && strings.HasSuffix(strings.ToLower(h), ".test")) || had[strings.ToLower(h)] {
 				continue
 			}
 			why := "a real domain"
 			switch {
-			case hostname.IsPattern(h):
+			case pattern:
 				why = "a wildcard"
 			case strings.EqualFold(h, "localhost"):
 				why = "localhost"
