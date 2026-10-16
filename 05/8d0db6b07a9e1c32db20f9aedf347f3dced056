@@ -1,0 +1,21 @@
+README.md
+  s_b33b52432eafa1::t_64e6c71250e7d1 152
+agents/nearhost/skills/nearhost/SKILL.md
+  s_b33b52432eafa1::t_50d4b89c65fd31 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "058d0db6b07a9e1c32db20f9aedf347f3dced056",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
