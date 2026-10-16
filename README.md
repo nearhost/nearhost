@@ -69,6 +69,16 @@ sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
+### Updating
+
+```sh
+nearhost update
+```
+
+updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pnpm add -g`, `bun add -g`, `go install`, or the install script into the same directory. It shows the command and asks first; `--yes` skips the question, and `--check` only reports, exiting 1 when a newer release is out.
+
+Nearhost also asks GitHub for the latest release at most once a day and prints a line when one is out. Set `NEARHOST_NO_UPDATE_CHECK=1` to turn that off.
+
 ## Quick start
 
 Trust the local certificate authority. This asks for your password once:
