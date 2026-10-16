@@ -16,9 +16,12 @@ import (
 // home is the Home panel.
 func (m *Model) home(width int) []string {
 	ca := m.caText()
-	hostsDot := styleBeacon.Render("●")
+	hostsDot, hostsText := styleBeacon.Render("●"), clean(m.hostsState)
 	if _, ok := hostsWord(m.hostsState); !ok {
 		hostsDot = styleAmber.Render("●")
+	}
+	if m.hostsState == hostsChecking {
+		hostsDot, hostsText = styleDim.Render("●"), styleDim.Render("checking…")
 	}
 	running, serversUsed := 0, map[string]bool{}
 	for _, p := range m.cfg.Projects {
@@ -30,7 +33,7 @@ func (m *Model) home(width int) []string {
 	lines := []string{styleTitle.Render("Nearhost"), ""}
 	lines = append(lines, m.proxyLines(width)...)
 	lines = append(lines, field("local CA", ca, width)...)
-	lines = append(lines, field("hosts", hostsDot+" "+clean(m.hostsState), width)...)
+	lines = append(lines, field("hosts", hostsDot+" "+hostsText, width)...)
 	lines = append(lines, field("config", clean(m.b.ConfigPath()), width)...)
 	lines = append(lines, field("running", fmt.Sprintf("%d of %d projects %s %d of %d servers", running, len(m.cfg.Projects),
 		styleDim.Render("on"), len(serversUsed), len(m.cfg.Servers)+1), width)...)
