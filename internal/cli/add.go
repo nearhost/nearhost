@@ -18,6 +18,9 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
 // addBackend is the seam between `add` and what lies outside the process:
@@ -32,6 +35,10 @@ type addBackend struct {
 	// interactive reports whether a person can be asked a question. Nil
 	// means no.
 	interactive func() bool
+	// lookup finds the addresses DNS gives a host, so that approving a real
+	// domain can show where it points today. Nil means no lookup, and no
+	// warning.
+	lookup hosts.Lookup
 }
 
 // systemAdd is the production backend. Only NewRoot wires it in.
@@ -39,6 +46,7 @@ func systemAdd() addBackend {
 	return addBackend{
 		openRemote: sshClient{}.openRemote,
 		presets:    systemPresets(),
+		lookup:     hosts.DNSLookup,
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
@@ -50,6 +58,7 @@ type addFlags struct {
 	web                 int
 	disabled            bool
 	presets             []string
+	hosts               []string
 	noPresets           bool
 }
 
@@ -84,6 +93,7 @@ func newAddCmd(b addBackend) *cobra.Command {
 	cmd.Flags().IntVar(&flags.web, "web", 0, "force this port to be the web route")
 	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "add it disabled: 'nearhost up' starts it only when named")
 	cmd.Flags().StringArrayVar(&flags.presets, "preset", nil, "enable this preset first, without asking (repeatable)")
+	cmd.Flags().StringArrayVar(&flags.hosts, "host", nil, "add this host to the web route (repeatable); typing it approves it")
 	cmd.Flags().BoolVar(&flags.noPresets, "no-presets", false, "use no presets and suggest none")
 	return cmd
 }
@@ -147,10 +157,20 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
-		// The advisories are about the roles the project ends up with.
-		// forceWeb keeps the discovered routes in place and only appends.
-		for i := range res.Routes {
-			res.Routes[i].Role = project.Routes[i].Role
+	}
+	if err := applyNearhostrc(cmd, b, reader, answers, &project, flags.hosts); err != nil {
+		return errors.Join(err, done())
+	}
+	// The advisories are about the roles the project ends up with. Merging
+	// and forceWeb keep the discovered routes' ports, so the roles are
+	// matched by port.
+	roles := map[int]config.Role{}
+	for _, r := range project.Routes {
+		roles[r.Port] = r.Role
+	}
+	for i := range res.Routes {
+		if role, ok := roles[res.Routes[i].Port]; ok {
+			res.Routes[i].Role = role
 		}
 	}
 	// Advisories may read the project's files, so they are worked out
@@ -192,6 +212,90 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	_, err = fmt.Fprintf(out, "Start it with `%s`.\n", start)
 	return err
+}
+
+// applyNearhostrc applies the project's .nearhostrc, if it has one, and the
+// --host flags to project, and asks before serving any host that would take
+// over traffic meant for the internet. A host typed with --host counts as
+// approved by being typed. Nothing is saved here; an error stops the add.
+func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string) error {
+	out := cmd.OutOrStdout()
+	f, found, err := nearhostrc.Read(reader)
+	if err != nil {
+		return err
+	}
+	if found {
+		merged, err := nearhostrc.Merge(*project, f, project.Routes)
+		if err != nil {
+			return err
+		}
+		*project = merged
+	}
+	approved := map[string]bool{}
+	for _, h := range typed {
+		if err := hostname.Valid(h); err != nil {
+			return err
+		}
+		approved[strings.ToLower(h)] = true
+	}
+	if len(typed) > 0 {
+		// The routes are copied first: they may share an array with the
+		// discovery result.
+		routes := append([]config.Route(nil), project.Routes...)
+		for i := range routes {
+			if routes[i].Role == config.RoleWeb {
+				routes[i].Hosts = append(append([]string(nil), routes[i].Hosts...), typed...)
+				break
+			}
+		}
+		project.Routes = routes
+	}
+
+	var items []nearhostrc.Item
+	for _, it := range nearhostrc.NeedsApproval(config.Project{}, *project) {
+		if !approved[strings.ToLower(it.Host)] {
+			items = append(items, it)
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	if answers == nil {
+		names := make([]string, len(items))
+		for i, it := range items {
+			names[i] = it.Host
+		}
+		return fmt.Errorf("not added: .nearhostrc asks for hosts that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
+	}
+	fmt.Fprintln(out, ".nearhostrc asks Nearhost to serve:")
+	for _, it := range items {
+		fmt.Fprintf(out, "  %s on port %d (%s%s)\n", printable(it.Host), it.Port, it.Why, publicAddress(cmd.Context(), b.lookup, it.Host))
+	}
+	fmt.Fprint(out, "Serve these? [y/N] ")
+	if !saidYesDefaultNo(answers, out) {
+		return errors.New("not added: the hosts in .nearhostrc were not approved")
+	}
+	return nil
+}
+
+// publicAddress is ", resolves to <addr> on the internet" when DNS gives host
+// an address that is not loopback, which is what the user most needs to know
+// before shadowing it. It is empty for a pattern, when lookup is nil and
+// when the lookup fails, since the warning is a courtesy.
+func publicAddress(ctx context.Context, lookup hosts.Lookup, host string) string {
+	if lookup == nil || hostname.IsPattern(host) {
+		return ""
+	}
+	addrs, err := lookup(ctx, host)
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		if !a.IsLoopback() {
+			return ", resolves to " + a.String() + " on the internet"
+		}
+	}
+	return ""
 }
 
 // discoverWithPresets runs discovery with the enabled presets, then offers
@@ -321,6 +425,22 @@ func saidYes(answers *bufio.Reader, out io.Writer) bool {
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "", "y", "yes":
+		return true
+	}
+	return false
+}
+
+// saidYesDefaultNo reads one line as the answer to a yes-or-no question whose
+// default is no: serving a host is only approved by saying so. An empty
+// answer and the end of input are both a no.
+func saidYesDefaultNo(answers *bufio.Reader, out io.Writer) bool {
+	line, err := answers.ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Fprintln(out)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
 		return true
 	}
 	return false
@@ -477,10 +597,22 @@ func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
 		return err
 	}
 	fmt.Fprintf(out, "Routes found for %s (%s:%s):\n", p.Name, p.Server, p.Path)
-	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "  PORT\tROLE\tLABEL")
+	withHosts := false
 	for _, r := range p.Routes {
-		fmt.Fprintf(tw, "  %d\t%s\t%s\n", r.Port, r.Role, r.Label)
+		withHosts = withHosts || len(r.Hosts) > 0
+	}
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	if withHosts {
+		fmt.Fprintln(tw, "  PORT\tROLE\tHOSTS\tLABEL")
+	} else {
+		fmt.Fprintln(tw, "  PORT\tROLE\tLABEL")
+	}
+	for _, r := range p.Routes {
+		if withHosts {
+			fmt.Fprintf(tw, "  %d\t%s\t%s\t%s\n", r.Port, r.Role, printable(strings.Join(r.Hosts, ", ")), r.Label)
+		} else {
+			fmt.Fprintf(tw, "  %d\t%s\t%s\n", r.Port, r.Role, r.Label)
+		}
 	}
 	return tw.Flush()
 }
