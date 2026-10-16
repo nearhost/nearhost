@@ -78,7 +78,7 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 	e.mu.Lock()
 	run.forwards = kept
 	if !run.site {
-		run.webLocal = 0
+		run.web, run.webLocals = nil, nil
 	}
 	e.mu.Unlock()
 	return errors.Join(errs...)

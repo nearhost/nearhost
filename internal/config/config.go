@@ -145,16 +145,35 @@ func ValidProjectAlias(alias string) error {
 }
 
 // HostsFileNames lists the names nearhost puts in the hosts file for this
-// config before any DNS filtering: the sorted, de-duplicated valid aliases of
-// all projects. It is the single candidate list the engine, doctor and the
-// interface share, so they cannot disagree about what the file should hold.
+// config before any DNS filtering: the valid aliases of all projects and the
+// exact hosts of their web routes, sorted and without duplicates. localhost
+// and wildcard patterns are left out, as a hosts file resolves neither, and
+// so is an invalid alias, which no project is started with. It is the single
+// candidate list the engine, doctor and the interface share, so they cannot
+// disagree about what the file should hold.
 func (c *Config) HostsFileNames() []string {
 	seen := map[string]bool{}
 	var out []string
+	add := func(h string) {
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
 	for _, p := range c.Projects {
-		if ValidProjectAlias(p.Alias) == nil && !seen[p.Alias] {
-			seen[p.Alias] = true
-			out = append(out, p.Alias)
+		if ValidProjectAlias(p.Alias) == nil {
+			add(p.Alias)
+		}
+		for _, r := range p.Routes {
+			if r.Role != RoleWeb {
+				continue
+			}
+			for _, h := range r.Hosts {
+				h = strings.ToLower(h)
+				if h != "localhost" && !hostname.IsPattern(h) {
+					add(h)
+				}
+			}
 		}
 	}
 	sort.Strings(out)

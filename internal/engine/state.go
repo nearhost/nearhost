@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -72,8 +73,8 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	}
 	for _, f := range dead {
 		what := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", f.local)
-		if f.local == run.webLocal {
-			what = fmt.Sprintf("the web route is not forwarded: ssh could not bind local port %d", f.local)
+		if slices.Contains(run.webLocals, f.local) {
+			what = fmt.Sprintf("the web route for port %d is not forwarded: ssh could not bind local port %d", f.remote, f.local)
 		}
 		if holder := run.holders[f.local].holder; holder != "" {
 			what += " (in use by " + holder + ")"

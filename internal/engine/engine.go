@@ -40,13 +40,15 @@ type Options struct {
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
 	Capture bool
-	// EnsureHosts makes every given alias resolve to 127.0.0.1. It gets the
-	// valid aliases of all configured projects, sorted, each time a project
-	// starts; calls are never concurrent. ctx ends when that start is
-	// interrupted (StopProject, Shutdown, or the context given to
-	// StartProject); the function must then give up and return, including
-	// when it is waiting for a password. nil disables hosts management.
-	EnsureHosts func(ctx context.Context, aliases []string) error
+	// EnsureHosts makes every given name resolve to 127.0.0.1. It gets the
+	// hosts file names of the configuration (config.HostsFileNames: valid
+	// aliases and the exact hosts of web routes), less those Lookup finds DNS
+	// already sends here, sorted, each time a project starts; calls are
+	// never concurrent. ctx ends when that start is interrupted (StopProject,
+	// Shutdown, or the context given to StartProject); the function must
+	// then give up and return, including when it is waiting for a password.
+	// nil disables hosts management.
+	EnsureHosts func(ctx context.Context, names []string) error
 	// Lookup finds the addresses DNS gives a name, so EnsureHosts is only
 	// asked for names that need a hosts entry. nil keeps every name.
 	Lookup hosts.Lookup
@@ -67,9 +69,12 @@ type ProjectStatus struct {
 	State   State
 	Message string // why the project is in State; empty when there is nothing to say
 	Alias   string
-	// WebLocalPort is the local port the proxy sends the alias to; 0 when the
-	// site is not published.
+	// WebLocalPort is the local port the proxy sends the alias to, that of
+	// the primary (first) web route; 0 when the site is not published.
 	WebLocalPort int
+	// WebLocalPorts maps the port of each web route to the local port the
+	// proxy sends that route's hosts to; nil when the site is not published.
+	WebLocalPorts map[int]int
 }
 
 // Engine owns the proxy, one SSH session per server and the runtime state of
@@ -144,7 +149,9 @@ type Engine struct {
 	order   []string               // project names in config order, without duplicates
 	runs    map[string]*projectRun // one per name in order
 	byAlias map[string]string      // alias -> project name
-	aliases []string               // valid aliases of all projects, sorted
+	// hostNames are the names the hosts file is asked to hold, before DNS
+	// filtering: config.HostsFileNames of cfg.
+	hostNames []string
 
 	started bool
 	closed  bool
@@ -203,8 +210,7 @@ func (e *Engine) setConfigLocked(next *config.Config, replace map[string]bool) {
 			run.gone = true
 		}
 	}
-	aliases := next.HostsFileNames()
-	e.cfg, e.order, e.runs, e.byAlias, e.aliases = next, order, runs, byAlias, aliases
+	e.cfg, e.order, e.runs, e.byAlias, e.hostNames = next, order, runs, byAlias, next.HostsFileNames()
 }
 
 func cloneConfig(cfg *config.Config) *config.Config {
@@ -413,7 +419,8 @@ func (e *Engine) Sites() []proxy.Site {
 	return e.sitesLocked(nil)
 }
 
-// sitesLocked lists the published sites, leaving out the one of skip.
+// sitesLocked lists the published sites, one per web route of each project,
+// leaving out those of skip.
 func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 	var sites []proxy.Site
 	for _, name := range e.order {
@@ -428,7 +435,9 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.server == config.LocalServer {
 			host = "localhost"
 		}
-		sites = append(sites, proxy.Site{Alias: run.alias, Hosts: []string{run.alias}, Upstream: fmt.Sprintf("%s:%d", host, run.webLocal)})
+		for i, w := range run.web {
+			sites = append(sites, proxy.Site{Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i])})
+		}
 	}
 	return sites
 }
@@ -452,7 +461,15 @@ func (e *Engine) Status(name string) ProjectStatus {
 		// announces before it lets go of the lock.
 		st, msg = e.effectiveLocked(run)
 	}
-	return ProjectStatus{State: st, Message: msg, Alias: run.alias, WebLocalPort: run.webLocal}
+	status := ProjectStatus{State: st, Message: msg, Alias: run.alias}
+	if len(run.webLocals) > 0 {
+		status.WebLocalPort = run.webLocals[0]
+		status.WebLocalPorts = make(map[int]int, len(run.webLocals))
+		for i, w := range run.web {
+			status.WebLocalPorts[w.Port] = run.webLocals[i]
+		}
+	}
+	return status
 }
 
 // Captured is the exchange the proxy kept under id, the nearhost_id of its

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/netip"
 	"path/filepath"
 	"strings"
@@ -435,8 +436,8 @@ func TestDoctorsSocketIsAsLongAsAnInstallsAndNeverOne(t *testing.T) {
 }
 
 // The hosts check applies hosts.Wanted with the backend's lookup to the
-// config's hosts file names. Those are only .test aliases in this version,
-// which are never looked up and are always expected in the block.
+// config's hosts file names. A .test alias is never looked up and is always
+// expected in the block.
 func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
 	path := configHome(t)
 	other := localProject("app", 8001, true)
@@ -453,5 +454,41 @@ func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
 	wantContains(t, out, "FAIL  aliases", "FAIL  hosts block      missing api.test\n")
 	if len(asked) != 0 {
 		t.Errorf("looked up %v; .test names need no lookup", asked)
+	}
+}
+
+// A real-domain host of a web route is a hosts file name too, but only while
+// DNS does not already send it to this machine.
+func TestDoctorHostsCheckExpectsARouteHostOnlyWhenDNSDoesNotResolveIt(t *testing.T) {
+	const block = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 app.test\n# nearhost:end\n"
+	app := localProject("app", 8001, true)
+	app.Routes[0].Hosts = []string{"app.local.example.io"}
+	for _, tc := range []struct {
+		name   string
+		addrs  []netip.Addr
+		err    error
+		want   string
+		failed bool
+	}{
+		{"resolves to this machine", []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil, "ok    hosts block      1 alias\n", false},
+		{"NXDOMAIN", nil, &net.DNSError{Err: "no such host", Name: "app.local.example.io", IsNotFound: true}, "FAIL  hosts block      missing app.local.example.io\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := configHome(t)
+			saveConfig(t, path, &config.Config{Projects: []config.Project{app}})
+			f := healthy()
+			f.hosts = block
+			f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+				if name != "app.local.example.io" {
+					t.Errorf("looked up %q", name)
+				}
+				return tc.addrs, tc.err
+			}
+			out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+			if (err != nil) != tc.failed {
+				t.Errorf("err = %v", err)
+			}
+			wantContains(t, out, tc.want)
+		})
 	}
 }

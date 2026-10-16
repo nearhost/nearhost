@@ -39,6 +39,13 @@ case "$mode" in
           echo "bind [127.0.0.1]:$FAKE_SSH_FORWARD_FAIL: Address already in use" >&2; exit 255;;
       esac
     fi
+    # Fail every local forward to the remote port $FAKE_SSH_FORWARD_FAIL_REMOTE.
+    if [ -n "$FAKE_SSH_FORWARD_FAIL_REMOTE" ]; then
+      case "$larg" in
+        *:localhost:$FAKE_SSH_FORWARD_FAIL_REMOTE)
+          echo "channel_setup_fwd_listener_tcpip: cannot listen to port: $FAKE_SSH_FORWARD_FAIL_REMOTE" >&2; exit 255;;
+      esac
+    fi
     # If the file named by $FAKE_SSH_FORWARD_KILLS_MASTER exists, the master
     # dies under this request: remove the file (so it happens once) and the
     # socket (the master exits when it is gone), and fail.

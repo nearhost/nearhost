@@ -34,7 +34,8 @@ type projectRun struct {
 	announced State              // effective state last published
 	shownMsg  string             // its message
 	tearing   bool               // a teardown has begun; cleared by the state change that follows it
-	webLocal  int                // local port the proxy sends the alias to; 0 when none
+	web       []config.WebHosts  // the web routes of the published site and their hosts; nil when none
+	webLocals []int              // local port the proxy sends each of web to, aligned with it; nil when none
 	site      bool               // the site is published to the proxy
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
@@ -49,12 +50,13 @@ type heldPort struct {
 }
 
 // StartProject brings a project up: it connects the project's server, makes
-// its alias resolve, adds its forwards and publishes its site.
+// its alias and hosts resolve, adds its forwards and publishes its site, one
+// proxy site per web route.
 //
-// A local project needs no forwards: the proxy sends the alias straight to
-// the web route's port and loopback routes are already local. For a remote
-// project the web route is forwarded to a free local port and each loopback
-// route to the same port number on this machine.
+// A local project needs no forwards: the proxy sends each web route's hosts
+// straight to its port and loopback routes are already local. For a remote
+// project each web route is forwarded to a free local port of its own and
+// each loopback route to the same port number on this machine.
 //
 // Starting a project that is running or already starting is a no-op that
 // returns nil at once; it never adds a second set of forwards. The one
@@ -66,11 +68,12 @@ type heldPort struct {
 // then starts it.
 //
 // Outcomes other than running, each returned as an error as well:
-//   - the server cannot be reached, the web forward fails, or the proxy
-//     rejects the site: state error, nothing left running for the project;
+//   - the server cannot be reached, a web forward fails, a host is already
+//     served by another running project, or the proxy rejects the site:
+//     state error, nothing left running for the project;
 //   - a loopback port is in use on this machine or held by another project:
-//     state error naming the port, with the web route and the other loopback
-//     routes still served;
+//     state error naming the port, with the web routes and the other
+//     loopback routes still served;
 //   - the hosts file could not be updated: state stopped with a message
 //     saying the alias is not resolvable, nothing started for the project.
 //
@@ -80,7 +83,7 @@ type heldPort struct {
 // or error naming the port of a forward that could not be applied.
 //
 // The same holds later on for a running project, and for one that started in
-// error with its web route served: while the server is away it shows
+// error with its web routes served: while the server is away it shows
 // degraded, and after every reconnect a forward the new master refused puts
 // the project in error naming the port, with its other routes still served,
 // until a later reconnect or a new start restores the forward. The error a
@@ -189,8 +192,8 @@ func (e *Engine) busyLocked(run *projectRun) bool {
 // bringUp does the work of StartProject and returns the state the project
 // ends in. cfg is the configuration p comes from. The caller holds run.op.
 func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Project, run *projectRun) (State, error) {
-	web, ok := p.WebRoute()
-	if !ok {
+	web := p.Web()
+	if len(web) == 0 {
 		return StateError, fmt.Errorf("project %q has no web route", p.Name)
 	}
 	srv, ok := cfg.Server(p.Server)
@@ -204,6 +207,13 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	// are cancelled rather than added to.
 	if err := e.tearDown(ctx, run); err != nil {
 		return StateError, fmt.Errorf("remove previous start: %w", err)
+	}
+
+	// Refused before anything is set up, so a doomed start neither connects
+	// nor asks for a password. publishSite checks again, as another project
+	// may take the host in the meantime.
+	if err := e.hostClash(run, web); err != nil {
+		return StateError, err
 	}
 
 	var sess *transport.Session
@@ -223,20 +233,25 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		return StateStopped, fmt.Errorf("alias %s is not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Alias, err)
 	}
 
-	webLocal := web.Port
+	webLocals := make([]int, len(web))
+	for i, w := range web {
+		webLocals[i] = w.Port
+	}
 	var problems []string
 	if sess != nil {
-		var err error
-		if webLocal, err = e.forwardWeb(ctx, sess, run, web.Port); err != nil {
-			return StateError, fmt.Errorf("web port %d: %w", web.Port, err)
+		for i, w := range web {
+			local, err := e.forwardWeb(ctx, sess, run, w.Port)
+			if err != nil {
+				// The web routes forwarded so far go with the rest.
+				return StateError, errors.Join(fmt.Errorf("web port %d: %w", w.Port, err), e.rollBack(ctx, run))
+			}
+			webLocals[i] = local
 		}
 		problems = e.forwardLoopbacks(ctx, sess, run, p)
 	}
 	err := ctx.Err()
 	if err == nil {
-		if err = e.publishSite(run, webLocal); err != nil {
-			err = fmt.Errorf("proxy: %w", err)
-		} else {
+		if err = e.publishSite(run, web, webLocals); err == nil {
 			// Interrupted while the proxy took the site: the start did not
 			// happen, and the site goes again with the rest.
 			err = ctx.Err()
@@ -265,8 +280,9 @@ func (e *Engine) waitConnected(ctx context.Context, sess *transport.Session) err
 	return err
 }
 
-// ensureHosts asks for every valid alias to resolve, leaving out the names
-// DNS already sends to this machine (see hosts.Wanted). Calls are serialised so
+// ensureHosts asks for every hosts file name of the configuration (see
+// config.HostsFileNames) to resolve, leaving out the names DNS already sends
+// to this machine (see hosts.Wanted). Calls are serialised so
 // two starting projects never prompt for a password at the same time. Both
 // the wait for the turn and the update itself end when ctx does.
 func (e *Engine) ensureHosts(ctx context.Context) error {
@@ -283,9 +299,9 @@ func (e *Engine) ensureHosts(ctx context.Context) error {
 		return err // interrupted just as its turn came
 	}
 	e.mu.Lock()
-	aliases := append([]string(nil), e.aliases...)
+	names := append([]string(nil), e.hostNames...)
 	e.mu.Unlock()
-	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, aliases, e.opts.Lookup))
+	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, names, e.opts.Lookup))
 }
 
 // claimPort reserves a local port for a forward of run. It returns the name
@@ -306,8 +322,9 @@ func (e *Engine) releasePort(port int) {
 	e.mu.Unlock()
 }
 
-// forwardWeb forwards the web route to a free local port chosen here and
-// returns that port.
+// forwardWeb forwards a web route's remote port to a free local port chosen
+// here and returns that port. The forward is recorded on run, so a rollback
+// cancels it; the proxy learns the port when the site is published.
 func (e *Engine) forwardWeb(ctx context.Context, sess *transport.Session, run *projectRun, remote int) (int, error) {
 	var last error
 	for attempt := 0; attempt < webPortAttempts && ctx.Err() == nil; attempt++ {
@@ -325,7 +342,6 @@ func (e *Engine) forwardWeb(ctx context.Context, sess *transport.Session, run *p
 			continue
 		}
 		e.mu.Lock()
-		run.webLocal = local
 		run.forwards = append(run.forwards, forward{local, remote})
 		e.mu.Unlock()
 		return local, nil
@@ -378,20 +394,64 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	return nil
 }
 
-// publishSite adds run's site to the proxy. Other sites keep serving.
-func (e *Engine) publishSite(run *projectRun, webLocal int) error {
+// publishSite adds run's site to the proxy: each of web, sent to the local
+// port at the same index of webLocals. Other sites keep serving. It refuses a
+// host another published site serves, checked under applyMu so two starts
+// cannot both take it.
+func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals []int) error {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
 	e.mu.Lock()
-	run.webLocal, run.site = webLocal, true
+	if err := e.hostClashLocked(run, web); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	run.web, run.webLocals, run.site = web, webLocals, true
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
 	if err := e.applySites(sites); err != nil {
 		// The proxy keeps its previous configuration, which lacks this site.
 		e.mu.Lock()
-		run.site = false
+		run.web, run.webLocals, run.site = nil, nil, false
 		e.mu.Unlock()
-		return err
+		return fmt.Errorf("proxy: %w", err)
+	}
+	return nil
+}
+
+// hostClash is hostClashLocked for a caller that does not hold mu.
+func (e *Engine) hostClash(run *projectRun, web []config.WebHosts) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hostClashLocked(run, web)
+}
+
+// hostClashLocked refuses a host of web that another project's published site
+// already serves. Hosts are compared ignoring case, so two exact hosts clash
+// when they are the same name and two patterns when written the same. An
+// exact host under another project's pattern does not clash: the proxy sends
+// it to the more specific match, as config.HostClash allows.
+func (e *Engine) hostClashLocked(run *projectRun, web []config.WebHosts) error {
+	taken := map[string]string{}
+	for _, name := range e.order {
+		other := e.runs[name]
+		if other == run || !other.site {
+			continue
+		}
+		for _, w := range other.web {
+			for _, h := range w.Hosts {
+				if _, seen := taken[strings.ToLower(h)]; !seen {
+					taken[strings.ToLower(h)] = other.name
+				}
+			}
+		}
+	}
+	for _, w := range web {
+		for _, h := range w.Hosts {
+			if owner, ok := taken[strings.ToLower(h)]; ok {
+				return fmt.Errorf("host %s is already served by project %q", h, owner)
+			}
+		}
 	}
 	return nil
 }

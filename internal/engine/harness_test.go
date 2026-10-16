@@ -253,6 +253,27 @@ func localProject(name string, port int) config.Project {
 	}
 }
 
+// localProjectRoutes is a local project with the given routes.
+func localProjectRoutes(name string, routes ...config.Route) config.Project {
+	return config.Project{
+		Name: name, Server: config.LocalServer, Path: "/tmp/" + name, Alias: name + ".test", Enabled: true,
+		Routes: routes,
+	}
+}
+
+// localConfig is one local project with the given routes.
+func localConfig(name string, routes ...config.Route) *config.Config {
+	return &config.Config{Projects: []config.Project{localProjectRoutes(name, routes...)}}
+}
+
+// mustStart starts a project and fails the test if that fails.
+func mustStart(t *testing.T, h *harness, name string) {
+	t.Helper()
+	if err := h.eng.StartProject(context.Background(), name); err != nil {
+		t.Fatalf("StartProject %s: %v", name, err)
+	}
+}
+
 func remoteProject(name, server string, loopback int) config.Project {
 	return config.Project{
 		Name: name, Server: server, Path: "/srv/" + name, Alias: name + ".test", Enabled: true,
