@@ -224,7 +224,27 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	out.Servers = append([]config.Server(nil), cfg.Servers...)
 	out.Projects = append([]config.Project(nil), cfg.Projects...)
 	for i := range out.Projects {
-		out.Projects[i].Routes = append([]config.Route(nil), out.Projects[i].Routes...)
+		out.Projects[i].Routes = cloneRoutes(out.Projects[i].Routes)
+		if rc := out.Projects[i].Nearhostrc; rc != nil {
+			out.Projects[i].Nearhostrc = &config.RcSnapshot{SHA256: rc.SHA256, Routes: cloneRoutes(rc.Routes)}
+		}
+	}
+	return out
+}
+
+// cloneRoutes copies routes along with their hosts, so a copy of the
+// configuration shares no slices with the original.
+func cloneRoutes(routes []config.Route) []config.Route {
+	if routes == nil {
+		return nil
+	}
+	out := make([]config.Route, len(routes))
+	for i, r := range routes {
+		out[i] = r
+		out[i].Hosts = append([]string(nil), r.Hosts...)
+		if r.Hosts == nil {
+			out[i].Hosts = nil
+		}
 	}
 	return out
 }
