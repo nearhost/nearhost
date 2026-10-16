@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/nearhost/nearhost/compare/v0.4.0...v0.5.0) (2026-10-16)
+
+
+### Features
+
+* add the nearhost plugin and skill for coding agents ([#131](https://github.com/nearhost/nearhost/issues/131)) ([412b69a](https://github.com/nearhost/nearhost/commit/412b69a8039aabc59d3e05ab44aa3e1331456ea8))
+* check in doctor that coding agents can reach nearhost from each server ([#130](https://github.com/nearhost/nearhost/issues/130)) ([b57c24c](https://github.com/nearhost/nearhost/commit/b57c24c0c516d49a006d58ff15eb78c1c462bfa7))
+* forward a socket for coding agents to each server ([#125](https://github.com/nearhost/nearhost/issues/125)) ([1ea1c76](https://github.com/nearhost/nearhost/commit/1ea1c76734104ed820dc3371b513e8eaaba41be9))
+* let coding agents reach nearhost from this machine and its servers ([#127](https://github.com/nearhost/nearhost/issues/127)) ([beae57c](https://github.com/nearhost/nearhost/commit/beae57cb7e8beb293fadd504ff62abff5b12c898))
+* notify the terminal when an agent proposes a project ([#129](https://github.com/nearhost/nearhost/issues/129)) ([58d582a](https://github.com/nearhost/nearhost/commit/58d582a9316cff6a6a9656f9b656e592b7ae0e55))
+* open an agent's proposal in the add-project form ([#128](https://github.com/nearhost/nearhost/issues/128)) ([1bb16db](https://github.com/nearhost/nearhost/commit/1bb16db2b3f5482fef83a4b77baf1cb41821ec09))
+* publish @nearhost/cli to npm, so npx @nearhost/cli runs nearhost ([#142](https://github.com/nearhost/nearhost/issues/142)) ([b5a5754](https://github.com/nearhost/nearhost/commit/b5a57544b63bde836a46508b7ae1b2a730b1e2af))
+* serve an API for coding agents on Unix sockets ([#124](https://github.com/nearhost/nearhost/issues/124)) ([edcf1e9](https://github.com/nearhost/nearhost/commit/edcf1e98ee3e5309f4e2d245a61bd53c84057118))
+
+
+### Bug Fixes
+
+* find a project behind a symlink, and fail status for a path no project holds ([#134](https://github.com/nearhost/nearhost/issues/134)) ([a47edfd](https://github.com/nearhost/nearhost/commit/a47edfd1f572db1ada06f325a0e0abd5f6a5a615))
+* give a declined proposal its last error, keep proposals in order and count only live ones ([#138](https://github.com/nearhost/nearhost/issues/138)) ([413b071](https://github.com/nearhost/nearhost/commit/413b0713ad557bcb193a496e650d8d94f06d203d))
+* keep local agents local when a server is this machine, and say how to connect a server ([#132](https://github.com/nearhost/nearhost/issues/132)) ([43e1a00](https://github.com/nearhost/nearhost/commit/43e1a008bd2d02f8859dea6b0bc5f652e18b54e1))
+* log a server's agent socket that cannot be served, and close it when the server goes ([#137](https://github.com/nearhost/nearhost/issues/137)) ([9b4f468](https://github.com/nearhost/nearhost/commit/9b4f4684de858f297bcc9afe678e34c9fefebf08))
+* make a new install id when the config is copied to another machine ([#139](https://github.com/nearhost/nearhost/issues/139)) ([63af230](https://github.com/nearhost/nearhost/commit/63af230ef31bdccb55263d498953912cf5aa8bc8))
+* say why agents cannot reach nearhost from a server, and what fixes it ([#135](https://github.com/nearhost/nearhost/issues/135)) ([115cb94](https://github.com/nearhost/nearhost/commit/115cb940dbd4a9eb5e4d9391e2bc2998ae940dc4))
+
 ## [0.4.0](https://github.com/nearhost/nearhost/compare/v0.3.0...v0.4.0) (2026-10-15)
 
 
