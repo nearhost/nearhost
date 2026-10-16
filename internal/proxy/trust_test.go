@@ -86,7 +86,7 @@ func TestZeroSiteProxyOpensNoListeners(t *testing.T) {
 
 func TestEnsureCAWhileProxyRunningKeepsItServing(t *testing.T) {
 	up := upstream(t, "a")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 
 	// The running proxy already created the root in its own storage.

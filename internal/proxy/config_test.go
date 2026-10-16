@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,8 +30,8 @@ func dig(t *testing.T, v any, path ...any) any {
 
 func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	raw, err := BuildConfig([]Site{
-		{Alias: "a.test", Upstream: "127.0.0.1:8080"},
-		{Alias: "b.test", Upstream: "127.0.0.1:5000"},
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:8080"},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:5000"},
 	}, Options{StorageRoot: "/tmp/store", HTTPSPort: 8443, HTTPPort: 8080})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +56,10 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	if dig(t, srv, "routes", 0, "match", 0, "host", 0) != "a.test" {
 		t.Error("route host mismatch")
 	}
-	handler := dig(t, srv, "routes", 0, "handle", 0)
+	if tag := dig(t, srv, "routes", 0, "handle", 0); dig(t, tag, "handler") != tagModule || dig(t, tag, "alias") != "a.test" {
+		t.Errorf("first handler should tag the route with its alias: %v", tag)
+	}
+	handler := proxyHandler(t, dig(t, srv, "routes", 0))
 	if dig(t, handler, "handler") != "reverse_proxy" || dig(t, handler, "upstreams", 0, "dial") != "127.0.0.1:8080" {
 		t.Errorf("reverse proxy wrong: %v", handler)
 	}
@@ -64,8 +69,8 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	if dig(t, srv, "routes", 1, "match", 0, "host", 0) != "b.test" {
 		t.Error("second route missing")
 	}
-	if dig(t, srv, "logs", "logger_names", "a.test", 0) != "a.test" {
-		t.Error("per-site logger name missing")
+	if logs := dig(t, srv, "logs").(map[string]any); len(logs) != 1 || logs["default_logger_name"] != "nearhost" {
+		t.Errorf("server logs = %v, want only the default logger name", logs)
 	}
 	subjects := dig(t, cfg, "apps", "tls", "automation", "policies", 0, "subjects").([]any)
 	if len(subjects) != 2 || subjects[1] != "b.test" {
@@ -78,9 +83,16 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	if dig(t, ca, "name") != CAName || dig(t, ca, "install_trust") != false {
 		t.Errorf("pki wrong: %v", ca)
 	}
-	siteLog := dig(t, cfg, "logging", "logs", "a.test")
-	if dig(t, siteLog, "writer", "output") != "nearhost" || dig(t, siteLog, "writer", "alias") != "a.test" || dig(t, siteLog, "include", 0) != "http.log.access.a.test" {
-		t.Errorf("site log wrong: %v", siteLog)
+	if logs := dig(t, cfg, "logging", "logs").(map[string]any); len(logs) != 2 {
+		t.Errorf("logs = %v, want default and access only", logs)
+	}
+	access := dig(t, cfg, "logging", "logs", "access")
+	if dig(t, access, "writer", "output") != "nearhost" || dig(t, access, "writer", "access") != true ||
+		dig(t, access, "include", 0) != "http.log.access.nearhost" || len(dig(t, access, "include").([]any)) != 1 {
+		t.Errorf("access log wrong: %v", access)
+	}
+	if _, ok := dig(t, access, "writer").(map[string]any)["alias"]; ok {
+		t.Errorf("the access writer takes the alias from each line, not its config: %v", access)
 	}
 	def := dig(t, cfg, "logging", "logs", "default")
 	if dig(t, def, "writer", "output") != "nearhost" || dig(t, def, "exclude", 0) != "http.log.access" {
@@ -89,7 +101,7 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 }
 
 func TestBuildConfigDefaultsPorts(t *testing.T) {
-	raw, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +135,14 @@ func TestBuildConfigRejectsBadInput(t *testing.T) {
 	if _, err := BuildConfig([]Site{{Alias: "", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/x"}); err == nil {
 		t.Error("empty alias should fail")
 	}
-	if _, err := BuildConfig([]Site{{Alias: "a.test", Upstream: ""}}, Options{StorageRoot: "/x"}); err == nil {
+	if _, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: ""}}, Options{StorageRoot: "/x"}); err == nil {
 		t.Error("empty upstream should fail")
+	}
+	if _, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/x"}); err == nil {
+		t.Error("a site with no hosts should fail")
+	}
+	if _, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test", "*.com"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/x"}); err == nil || !strings.Contains(err.Error(), `"*.com"`) {
+		t.Errorf("an invalid host should fail naming it, got %v", err)
 	}
 	if _, err := BuildConfig(nil, Options{}); err == nil {
 		t.Error("empty storage root should fail")
@@ -155,8 +173,8 @@ func TestBuildConfigDoesNotPersistAutosave(t *testing.T) {
 }
 
 func TestBuildConfigSetsForwardingHeaders(t *testing.T) {
-	cfg := build(t, []Site{{Alias: "a.test", Upstream: "127.0.0.1:8080"}})
-	h := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0, "handle", 0)
+	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:8080"}})
+	h := proxyHandler(t, dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0))
 	set := dig(t, h, "headers", "request", "set").(map[string]any)
 	if dig(t, set, "X-Forwarded-Proto", 0) != "https" {
 		t.Errorf("X-Forwarded-Proto not https: %v", set)
@@ -170,7 +188,7 @@ func TestBuildConfigSetsForwardingHeaders(t *testing.T) {
 }
 
 func TestBuildConfigKeepsAutomaticHTTPSRedirect(t *testing.T) {
-	cfg := build(t, []Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}})
+	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost").(map[string]any)
 	if a, ok := srv["automatic_https"]; ok {
 		t.Errorf("automatic_https must stay default so port 80 redirects: %v", a)
@@ -181,7 +199,7 @@ func TestBuildConfigKeepsAutomaticHTTPSRedirect(t *testing.T) {
 }
 
 func TestBuildConfigIsDeterministicAndSorted(t *testing.T) {
-	a := []Site{{Alias: "b.test", Upstream: "127.0.0.1:2"}, {Alias: "a.test", Upstream: "127.0.0.1:1"}}
+	a := []Site{{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"}, {Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}
 	b := []Site{a[1], a[0]}
 	ra, _ := BuildConfig(a, Options{StorageRoot: "/s"})
 	rb, _ := BuildConfig(b, Options{StorageRoot: "/s"})
@@ -197,10 +215,31 @@ func TestBuildConfigIsDeterministicAndSorted(t *testing.T) {
 	}
 }
 
-func TestBuildConfigRejectsDuplicateAliases(t *testing.T) {
-	_, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "x:1"}, {Alias: "a.test", Upstream: "x:2"}}, Options{StorageRoot: "/s"})
-	if err == nil {
-		t.Error("duplicate alias should fail")
+// One project with several web routes is several sites under one alias,
+// each serving its own hosts.
+func TestBuildConfigAllowsSitesSharingAnAlias(t *testing.T) {
+	cfg := buildJSON(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"},
+		{Alias: "a.test", Hosts: []string{"api.example.io"}, Upstream: "127.0.0.1:2"},
+	})
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "api.example.io"}) {
+		t.Fatalf("route hosts = %v", got)
+	}
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes")
+	for i, dial := range []string{"127.0.0.1:1", "127.0.0.1:2"} {
+		if got := dig(t, proxyHandler(t, dig(t, routes, i)), "upstreams", 0, "dial"); got != dial {
+			t.Errorf("route %d dials %v, want %s", i, got, dial)
+		}
+		if got := dig(t, routes, i, "handle", 0, "alias"); got != "a.test" {
+			t.Errorf("route %d tagged %v, want a.test", i, got)
+		}
+	}
+}
+
+func TestBuildConfigRejectsDuplicateHostOnOneSite(t *testing.T) {
+	_, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test", "a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/s"})
+	if err == nil || !strings.Contains(err.Error(), `"a.test"`) {
+		t.Errorf("err = %v, want one naming the host", err)
 	}
 }
 
@@ -216,14 +255,18 @@ func TestBuildConfigNoSitesHasNoEmptyTLSPolicy(t *testing.T) {
 
 func TestBuildConfigRejectsAliasesDifferingOnlyByCase(t *testing.T) {
 	// "B.test" sorts between the two spellings, so they are not adjacent.
-	sites := []Site{{"a.test", "127.0.0.1:1"}, {"B.test", "127.0.0.1:2"}, {"A.TEST", "127.0.0.1:3"}}
+	sites := []Site{
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"},
+		{Alias: "c.test", Hosts: []string{"c.test", "A.TEST"}, Upstream: "127.0.0.1:3"},
+	}
 	if _, err := BuildConfig(sites, Options{StorageRoot: "/x"}); err == nil {
 		t.Error("aliases naming the same host should fail")
 	}
 }
 
 func TestBuildConfigKeepsUpgradedStreamsAcrossReloads(t *testing.T) {
-	raw, err := BuildConfig([]Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/tmp/store"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +274,14 @@ func TestBuildConfigKeepsUpgradedStreamsAcrossReloads(t *testing.T) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	handler := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0, "handle", 0)
+	handler := proxyHandler(t, dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0))
 	if dig(t, handler, "stream_close_delay") != "24h" {
 		t.Errorf("stream_close_delay = %v, want 24h so WebSockets survive a reload", dig(t, handler, "stream_close_delay"))
 	}
 }
 
 func TestBuildConfigDisablesStorageClean(t *testing.T) {
-	for _, sites := range [][]Site{nil, {{Alias: "a.test", Upstream: "127.0.0.1:1"}}} {
+	for _, sites := range [][]Site{nil, {{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}} {
 		raw, err := BuildConfig(sites, Options{StorageRoot: "/tmp/store"})
 		if err != nil {
 			t.Fatal(err)
@@ -254,7 +297,7 @@ func TestBuildConfigDisablesStorageClean(t *testing.T) {
 }
 
 func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
-	cfg := build(t, []Site{{Alias: "a.test", Upstream: "127.0.0.1:1"}, {Alias: "b.test", Upstream: "127.0.0.1:2"}})
+	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"}})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
 	if len(routes) != 3 {
 		t.Fatalf("got %d routes, want one per site and a final catch-all", len(routes))
@@ -317,6 +360,110 @@ func TestLoopbackRangesAreExactlyLoopback(t *testing.T) {
 	for i := range want {
 		if loopbackRanges[i] != want[i] {
 			t.Fatalf("loopbackRanges = %v, want %v", loopbackRanges, want)
+		}
+	}
+}
+
+// buildJSON is BuildConfig for sites, decoded.
+func buildJSON(t *testing.T, sites []Site) map[string]any {
+	t.Helper()
+	raw, err := BuildConfig(sites, Options{StorageRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// routeHosts is the first host each route matches, in order, leaving out
+// the final route that drops everything else.
+func routeHosts(cfg map[string]any) []string {
+	srv := cfg["apps"].(map[string]any)["http"].(map[string]any)["servers"].(map[string]any)["nearhost"].(map[string]any)
+	var hosts []string
+	for _, r := range srv["routes"].([]any) {
+		m, ok := r.(map[string]any)["match"].([]any)
+		if !ok {
+			continue
+		}
+		hosts = append(hosts, m[0].(map[string]any)["host"].([]any)[0].(string))
+	}
+	return hosts
+}
+
+// tlsSubjects are the names of the first TLS automation policy.
+func tlsSubjects(cfg map[string]any) []string {
+	policies := cfg["apps"].(map[string]any)["tls"].(map[string]any)["automation"].(map[string]any)["policies"].([]any)
+	var subjects []string
+	for _, s := range policies[0].(map[string]any)["subjects"].([]any) {
+		subjects = append(subjects, s.(string))
+	}
+	return subjects
+}
+
+// proxyHandler is the reverse_proxy handler of route.
+func proxyHandler(t *testing.T, route any) any {
+	t.Helper()
+	for _, h := range dig(t, route, "handle").([]any) {
+		if dig(t, h, "handler") == "reverse_proxy" {
+			return h
+		}
+	}
+	t.Fatalf("no reverse_proxy handler in %v", route)
+	return nil
+}
+
+func TestBuildConfigOrdersHostsAcrossSites(t *testing.T) {
+	cfg := buildJSON(t, []Site{
+		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.redactr.pro", "internal.*.local.redactr.pro"}, Upstream: "127.0.0.1:8211"},
+		{Alias: "platform.test", Hosts: []string{"platform.test", "auth.local.redactr.pro"}, Upstream: "127.0.0.1:8210"},
+	})
+	// One Caddy route per host, then the final abort route.
+	want := []string{"auth.local.redactr.pro", "platform.test", "pro.test", "internal.*.local.redactr.pro", "*.local.redactr.pro"}
+	if got := routeHosts(cfg); !slices.Equal(got, want) {
+		t.Fatalf("route hosts = %v, want %v", got, want)
+	}
+}
+
+func TestBuildConfigRejectsHostOnTwoSites(t *testing.T) {
+	_, err := BuildConfig([]Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "x.example.io"}, Upstream: "127.0.0.1:1"},
+		{Alias: "b.test", Hosts: []string{"b.test", "X.example.io"}, Upstream: "127.0.0.1:2"},
+	}, Options{StorageRoot: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), `"x.example.io"`) {
+		t.Fatalf("err = %v, want one naming the host", err)
+	}
+}
+
+func TestBuildConfigLegacySiteServesAliasOnly(t *testing.T) {
+	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test"}) {
+		t.Fatalf("route hosts = %v", got)
+	}
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"a.test"}) {
+		t.Fatalf("subjects = %v", got)
+	}
+}
+
+// The tag comes first, so the alias is on the access log line of every
+// request, including those the capture handler or the upstream fails.
+func TestBuildConfigTagsBeforeCapture(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test", "app.example.io"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir(), Capture: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	for i := range 2 {
+		handle := dig(t, routes[i], "handle").([]any)
+		if len(handle) != 3 || dig(t, handle[0], "handler") != tagModule || dig(t, handle[0], "alias") != "a.test" ||
+			dig(t, handle[1], "handler") != captureModule || dig(t, handle[2], "handler") != "reverse_proxy" {
+			t.Errorf("route %d handlers = %v, want tag, capture, reverse_proxy", i, handle)
 		}
 	}
 }

@@ -118,6 +118,11 @@ func upstream(t *testing.T, name string) *upstreamSrv {
 		sn.mu.Unlock()
 		fmt.Fprintf(w, "hello from %s", name)
 	})
+	// Any other path is a page of the site, so tests can tell their
+	// requests apart in the log by path.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "page from %s", name)
+	})
 	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "text/plain")
@@ -241,7 +246,7 @@ func (h *harness) getEventually(c *http.Client, alias, path string) (*http.Respo
 func TestProxyRuntime(t *testing.T) {
 	upA := upstream(t, "a")
 	upB := upstream(t, "b")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(upA.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}})
 	client := h.client("a.test", true)
 
 	// 1 + 5: body, forwarded headers and certificate chain.
@@ -332,7 +337,7 @@ func TestProxyRuntime(t *testing.T) {
 	}
 
 	// 6: Apply a changed site set: b appears, a goes away, the open socket lives.
-	if err := h.p.Apply([]Site{{Alias: "b.test", Upstream: addr(upB.Server)}}); err != nil {
+	if err := h.p.Apply([]Site{{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}}); err != nil {
 		t.Fatalf("second Apply: %v", err)
 	}
 	bresp, bbody := h.getEventually(h.client("b.test", false), "b.test", "/hello")
@@ -355,7 +360,7 @@ func TestProxyRuntime(t *testing.T) {
 
 func TestStopReleasesPortsAndIsIdempotent(t *testing.T) {
 	up := upstream(t, "a")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 
 	if err := h.p.Stop(); err != nil {
@@ -379,7 +384,7 @@ func TestStopReleasesPortsAndIsIdempotent(t *testing.T) {
 func TestApplyAndStopAreSafeConcurrently(t *testing.T) {
 	up := upstream(t, "a")
 	h := startProxy(t, nil)
-	sites := []Site{{Alias: "a.test", Upstream: addr(up.Server)}}
+	sites := []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}
 	var wg sync.WaitGroup
 	errs := make(chan error, 12)
 	for i := 0; i < 4; i++ {
@@ -424,7 +429,7 @@ func TestRootCertMissingReturnsError(t *testing.T) {
 
 func TestStopOnlyAffectsTheOwningProxy(t *testing.T) {
 	up := upstream(t, "a")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	other := New(Options{StorageRoot: t.TempDir(), HTTPSPort: h.httpsPort, HTTPPort: h.httpPort})
 	if other.Running() {
 		t.Fatal("a Proxy that never applied must not report Running")
@@ -461,7 +466,7 @@ func TestStopOnlyAffectsTheOwningProxy(t *testing.T) {
 // earlier tests in the process did.
 func TestApplyIfRunningLeavesAnotherOwnersProxyAlone(t *testing.T) {
 	up := upstream(t, "a")
-	sites := []Site{{Alias: "a.test", Upstream: addr(up.Server)}}
+	sites := []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}
 	h := startProxy(t, sites)
 	// The owner changes its own configuration as with Apply.
 	if applied, err := h.p.ApplyIfRunning(sites); err != nil || !applied {
@@ -499,7 +504,7 @@ func TestApplyWritesNothingOutsideStorage(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	up := upstream(t, "a")
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up.Server)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 	if err := h.p.Stop(); err != nil {
 		t.Fatal(err)
@@ -618,7 +623,7 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 		io.WriteString(w, "secret dev page")
 	}))
 	t.Cleanup(up.Close)
-	h := startProxy(t, []Site{{Alias: "a.test", Upstream: addr(up)}})
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up)}})
 
 	// A loopback client is served, which also means the certificate exists.
 	resp, body := h.getEventually(h.client("a.test", false), "a.test", "/")
@@ -732,5 +737,76 @@ func TestProxyRefusesClientsThatAreNotLoopback(t *testing.T) {
 	// Only the non-loopback part could not run; the loopback checks above did.
 	if tried == 0 {
 		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
+	}
+}
+
+func TestProxyServesSiteAtEveryHostAndTagsLogs(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "app.local.example.io"}, Upstream: addr(up.Server)}})
+	for _, host := range []string{"a.test", "app.local.example.io"} {
+		// The client dials the proxy on 127.0.0.1 with host as SNI and Host,
+		// and trusts only the test's CA.
+		resp, _ := h.getEventually(h.client(host, false), host, "/p-"+host)
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: status %d", host, resp.StatusCode)
+		}
+		waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/p-"+host) }, "log line for "+host+" tagged a.test")
+	}
+}
+
+func TestProxyMatchesHostCaseInsensitively(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "app.local.example.io"}, Upstream: addr(up.Server)}})
+	c := h.client("app.local.example.io", false)
+	h.getEventually(c, "app.local.example.io", "/hello") // waits for the certificate
+	req, _ := http.NewRequest("GET", h.url("app.local.example.io", "/hello"), nil)
+	req.Host = fmt.Sprintf("APP.Local.Example.IO:%d", h.httpsPort)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("GET with a mixed-case Host: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(b) != "hello from a" {
+		t.Fatalf("mixed-case Host: status=%d body=%q, want the site's upstream", resp.StatusCode, b)
+	}
+}
+
+// Caddy logs requests to hosts nobody serves too, with no project to file
+// them under. They must not reach the sink at all, not even untagged.
+func TestAccessLinesWithoutTagAreDropped(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+
+	plain := &http.Client{
+		Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", h.httpPort))
+		}},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Timeout:       10 * time.Second,
+	}
+	// Over http, Caddy's redirect to https answers any host, and logs it.
+	if r, err := plain.Get(fmt.Sprintf("http://nothing.test:%d/unserved-path", h.httpPort)); err == nil {
+		r.Body.Close()
+	}
+	// Over https the connection is dropped, and logged too.
+	c := h.client("a.test", false)
+	req, _ := http.NewRequest("GET", h.url("a.test", "/unserved-path"), nil)
+	req.Host = "nothing.test"
+	if r, err := c.Do(req); err == nil {
+		r.Body.Close()
+		t.Errorf("unserved host over https got status %d, want the connection dropped", r.StatusCode)
+	}
+	// A request served afterwards is logged after the unserved one would
+	// have been, so once its line is in, the other one would be too.
+	h.getEventually(h.client("a.test", false), "a.test", "/after")
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/after") }, "log line for /after")
+	h.rec.mu.Lock()
+	defer h.rec.mu.Unlock()
+	for _, l := range h.rec.lines {
+		if strings.Contains(l, "/unserved-path") {
+			t.Errorf("an access line for an unserved host reached the sink: %q", l)
+		}
 	}
 }
