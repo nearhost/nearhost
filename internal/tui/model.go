@@ -96,6 +96,9 @@ type Model struct {
 	reloadAfter bool
 
 	now func() time.Time // the clock; tests set their own
+	// getenv reads the environment, to tell which terminal this is; tests
+	// set their own.
+	getenv func(string) string
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
@@ -110,6 +113,7 @@ func New(b Backend, dir string) *Model {
 		advice:    map[string]advice{},
 		since:     map[string]time.Time{},
 		now:       time.Now,
+		getenv:    os.Getenv,
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), caExpires: b.CAExpires(), hostsState: b.HostsState(),

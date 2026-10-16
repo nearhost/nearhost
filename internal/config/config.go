@@ -93,6 +93,14 @@ type Config struct {
 	// Absent means ask; true is the same as absent.
 	RegistryPrompt *bool       `yaml:"registry_prompt,omitempty"`
 	Presets        []PresetRef `yaml:"presets,omitempty"`
+	// Notifications false stops the interface notifying the terminal when a
+	// coding agent proposes a project. Absent means notify.
+	Notifications *bool `yaml:"notifications,omitempty"`
+}
+
+// NotificationsOff reports whether the config holds notifications: false.
+func (c *Config) NotificationsOff() bool {
+	return c.Notifications != nil && !*c.Notifications
 }
 
 // RegistryPromptOff reports whether the config holds registry_prompt: false.

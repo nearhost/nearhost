@@ -503,3 +503,14 @@ func TestRegistryPromptRoundTripsAndStaysOutOfAnEmptyConfig(t *testing.T) {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 }
+
+func TestNotificationsAreOnUnlessTurnedOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	for content, off := range map[string]bool{"": false, "notifications: true\n": false, "notifications: false\n": true} {
+		os.WriteFile(path, []byte(content), 0o600)
+		cfg, err := Load(path)
+		if err != nil || cfg.NotificationsOff() != off {
+			t.Errorf("%q: off %v, err %v", content, cfg.NotificationsOff(), err)
+		}
+	}
+}
