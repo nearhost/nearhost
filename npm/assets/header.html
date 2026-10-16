@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nearhost npm header</title>
+    <!--
+      Source for npm/assets/header.png, the top of the README on npmjs.com. A copy of
+      the organisation header (nearhost/.github) with the npx command. render.sh
+      points LANDING at a checkout of nearhost/landing for the fonts.
+      Render with: sh npm/assets/render.sh
+    -->
+    <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 300 700;
+        src: url('LANDING/node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2')
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'DM Sans';
+        font-weight: 100 1000;
+        src: url('LANDING/node_modules/@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2')
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Mono';
+        font-weight: 400;
+        src: url('LANDING/node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2')
+          format('woff2');
+      }
+      :root {
+        --ground: #0f1210;
+        --surface: #161a17;
+        --line: #2a312b;
+        --text: #ecefe8;
+        --body: #c5ccc6;
+        --faint: #7a837b;
+        --beacon: #d6f26b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+      }
+      .card {
+        position: relative;
+        width: 1280px;
+        height: 460px;
+        overflow: hidden;
+        border-radius: 28px;
+        background: var(--ground);
+        color: var(--text);
+        padding: 52px 64px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        font-family: 'DM Sans', sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .ghost {
+        position: absolute;
+        right: -170px;
+        top: -70px;
+        width: 560px;
+        height: 560px;
+        opacity: 0.09;
+      }
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .word {
+        font-family: 'Space Grotesk', sans-serif;
+        font-weight: 600;
+        font-size: 30px;
+        letter-spacing: -0.02em;
+      }
+      h1 {
+        margin: 0;
+        font-family: 'Space Grotesk', sans-serif;
+        font-weight: 700;
+        font-size: 88px;
+        line-height: 0.95;
+        letter-spacing: -0.045em;
+      }
+      .accent {
+        color: var(--beacon);
+      }
+      .foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+      .cmd {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 18px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 18px;
+      }
+      .cmd span {
+        color: var(--faint);
+      }
+      .sub {
+        font-size: 20px;
+        color: var(--body);
+      }
+      .sub code {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.92em;
+        color: var(--beacon);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <svg class="ghost" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M14 56V32a18 18 0 0 1 36 0v24" fill="none" stroke="#d6f26b" stroke-width="11" stroke-linecap="round" />
+        <circle cx="32" cy="48" r="6" fill="#ecefe8" />
+      </svg>
+      <div class="lockup">
+        <svg width="40" height="40" viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M14 56V32a18 18 0 0 1 36 0v24" fill="none" stroke="#d6f26b" stroke-width="11" stroke-linecap="round" />
+          <circle cx="32" cy="48" r="6" fill="#ecefe8" />
+        </svg>
+        <span class="word">nearhost</span>
+      </div>
+      <h1>Run it anywhere.<br />Open it <span class="accent">here</span>.</h1>
+      <div class="foot">
+        <div class="cmd"><span>$</span> npx @nearhost/cli</div>
+        <div class="sub">Your remote dev server at <code>https://myapp.test</code></div>
+      </div>
+    </div>
+  </body>
+</html>

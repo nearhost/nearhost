@@ -19,10 +19,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // GOOS/GOARCH as goreleaser names the tarballs, and the platform and arch
 // Node reports for them.
 const targets = [
-  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64' },
-  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64' },
-  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64' },
-  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64' },
+  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', label: 'macOS on Intel' },
+  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', label: 'macOS on Apple silicon' },
+  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', label: 'Linux on x64' },
+  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', label: 'Linux on ARM64' },
 ];
 
 const version = (process.argv[2] ?? '').replace(/^v/, '');
@@ -47,6 +47,7 @@ const sums = new Map(
     .map((line) => line.split(/\s+/).reverse()),
 );
 
+const readme = readFileSync(join(here, 'platform', 'README.md'), 'utf8');
 const launcher = JSON.parse(readFileSync(join(here, 'cli', 'package.json'), 'utf8'));
 const shared = {
   version,
@@ -76,7 +77,7 @@ try {
 
     const pkg = {
       name: `@nearhost/${name}`,
-      description: `The nearhost binary for ${t.os} on ${t.cpu}, installed by @nearhost/cli`,
+      description: `The Nearhost binary for ${t.label}, installed by @nearhost/cli`,
       ...shared,
       repository: { ...shared.repository, directory: 'npm' },
       os: [t.os],
@@ -85,10 +86,8 @@ try {
       preferUnplugged: true,
     };
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
-    writeFileSync(
-      join(dir, 'README.md'),
-      `# @nearhost/${name}\n\nThe [Nearhost](https://nearhost.dev) binary for ${t.os} on ${t.cpu}. Install [\`@nearhost/cli\`](https://www.npmjs.com/package/@nearhost/cli) rather than this package; it picks the right one for your machine.\n`,
-    );
+    const fields = { name, label: t.label, version, goos: t.goos, goarch: t.goarch };
+    writeFileSync(join(dir, 'README.md'), readme.replace(/{{(\w+)}}/g, (_, k) => fields[k]));
     launcher.optionalDependencies[pkg.name] = version;
     console.log(`${pkg.name}@${version}`);
   }
