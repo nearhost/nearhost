@@ -79,11 +79,21 @@ type Session struct {
 	fwdMu  sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// agent is the socket forwarded for coding agents; nil for none. Once
+	// the master has connected, agentPath is where the server has it, or
+	// agentErr says why it has not.
+	agent     *AgentForward
+	agentPath string
+	agentErr  string
+	// prepareAgent readies ~/.nearhost on the server and returns the path
+	// of the socket called name there. Tests replace it.
+	prepareAgent func(ctx context.Context, name string) (string, error)
 }
 
 // NewSession creates an idle session. Call Start to connect.
 func NewSession(name, host, runDir string) *Session {
-	return &Session{
+	s := &Session{
 		Name:            name,
 		Host:            host,
 		SSHPath:         "ssh",
@@ -97,6 +107,8 @@ func NewSession(name, host, runDir string) *Session {
 		status:          StatusDisconnected,
 		forwards:        map[string]forward{},
 	}
+	s.prepareAgent = s.prepareAgentOverSFTP
+	return s
 }
 
 // A Unix socket address holds 104 bytes on macOS (108 on Linux), the final NUL
@@ -269,6 +281,10 @@ type Health struct {
 	// reconnecting. A session that gave up (auth failed) does not try again
 	// by itself.
 	NextAttempt time.Time
+	// AgentPath is the socket agents on the server reach nearhost on, while
+	// it is forwarded; AgentErr says why it is not, once that was tried and
+	// failed. Both are empty for a session that forwards none.
+	AgentPath, AgentErr string
 }
 
 // Health returns the session's state, how many attempts have failed, and
@@ -276,7 +292,8 @@ type Health struct {
 func (s *Session) Health() Health {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Health{Status: s.status, LastError: s.lastErr, Failures: s.failures, NextAttempt: s.nextAttempt}
+	return Health{Status: s.status, LastError: s.lastErr, Failures: s.failures, NextAttempt: s.nextAttempt,
+		AgentPath: s.agentPath, AgentErr: s.agentErr}
 }
 
 func (s *Session) setStatus(st Status, errText string) {
@@ -448,6 +465,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			if s.markConnected(ctx, exited) {
 				backoff = s.baseBackoff
 				authFails = 0
+				s.applyAgent(ctx)
 			} else if ctx.Err() == nil && !hasExited(exited) {
 				// The master stopped answering during the re-apply pass
 				// without exiting. Kill it so the code below retries.
@@ -475,6 +493,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.setStatus(StatusDisconnected, "")
 			return
 		case <-exited:
+			s.mu.Lock()
+			s.agentPath = "" // the server dropped it with the master
+			s.mu.Unlock()
 			msg := strings.TrimSpace(stderr.String())
 			if msg == "" {
 				msg = "ssh exited"
@@ -590,6 +611,7 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 func (s *Session) exitMaster(master *exec.Cmd, exited <-chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	s.cancelAgent(ctx)
 	s.control(ctx, "-O", "exit", s.Host).Run()
 	select {
 	case <-exited:
