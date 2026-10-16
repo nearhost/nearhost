@@ -1,0 +1,10 @@
+{
+  "name": "nearhost",
+  "version": "0.4.0",
+  "description": "Add the project you are working in to Nearhost, and read its status, from the laptop or a server Nearhost reaches over SSH.",
+  "author": { "name": "Nearhost", "url": "https://nearhost.dev" },
+  "homepage": "https://nearhost.dev/docs/",
+  "repository": "https://github.com/nearhost/nearhost",
+  "license": "MIT",
+  "keywords": ["nearhost", "dev-server", "https", "ssh"]
+}
