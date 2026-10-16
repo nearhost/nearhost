@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -508,5 +509,146 @@ func TestAddRemoteNamesAProjectUnderTheServerHome(t *testing.T) {
 	_, err = execute(t, newAddCmd(b), "--config", cfgPath, "add", "code/blog", "--server", "mini")
 	if err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Fatalf("expected a relative path to be refused, got %v", err)
+	}
+}
+
+// rcProject is a project directory with APP_PORT=8220 in .env and the given
+// .nearhostrc.
+func rcProject(t *testing.T, rc string) string {
+	t.Helper()
+	dir := envProject(t, "APP_PORT=8220\n")
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+const rcRealDomain = "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.local.dd.io]\n"
+
+// rcBackend is a backend for a project on this machine that can (or cannot) ask
+// questions, and finds no address for any host.
+func rcBackend(t *testing.T, terminal bool) addBackend {
+	b := noRemote(t)
+	b.interactive = func() bool { return terminal }
+	return b
+}
+
+func TestAddReadsNearhostrcAndAsks(t *testing.T) {
+	dir := rcProject(t, rcRealDomain)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, ".nearhostrc asks Nearhost to serve:", "app.local.dd.io on port 8220 (a real domain)", "Serve these? [y/N] ")
+	p, ok := loadSaved(t, cfgPath).Project("rcapp")
+	if !ok || len(p.Routes) == 0 {
+		t.Fatalf("project = %+v %v", p, ok)
+	}
+	if r := p.Routes[0]; r.Port != 8220 || r.Role != config.RoleWeb || len(r.Hosts) != 1 || r.Hosts[0] != "app.local.dd.io" {
+		t.Fatalf("first route = %+v", r)
+	}
+	if p.Nearhostrc == nil || p.Nearhostrc.SHA256 == "" {
+		t.Fatalf("Nearhostrc = %+v", p.Nearhostrc)
+	}
+
+	declined := filepath.Join(t.TempDir(), "config.yaml")
+	for _, answer := range []string{"\n", ""} {
+		out, err = executeWithInput(t, answer, newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
+		if err == nil || err.Error() != "not added: the hosts in .nearhostrc were not approved" {
+			t.Fatalf("answer %q: err = %v\n%s", answer, err, out)
+		}
+	}
+	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
+		t.Fatalf("a declined add wrote the config: %v", statErr)
+	}
+
+	out, err = executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
+	if err == nil || !strings.Contains(err.Error(), "app.local.dd.io") || !strings.Contains(err.Error(), "run nearhost add in a terminal") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+}
+
+func TestAddWarnsWhenAHostResolvesOnTheInternet(t *testing.T) {
+	dir := rcProject(t, rcRealDomain)
+	b := rcBackend(t, true)
+	b.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.7")}, nil
+	}
+	out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--no-presets")
+	if err == nil {
+		t.Fatalf("a declined add succeeded\n%s", out)
+	}
+	wantContains(t, out, "(a real domain, resolves to 203.0.113.7 on the internet)")
+}
+
+func TestAddHostFlagIsApprovedByTyping(t *testing.T) {
+	dir := envProject(t, "APP_PORT=8080\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "typed", "--web", "3000", "--host", "api.local.x.io", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Serve these?") {
+		t.Fatalf("asked about a typed host:\n%s", out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("typed")
+	web, ok := p.WebRoute()
+	if !ok || web.Port != 3000 || len(web.Hosts) != 1 || web.Hosts[0] != "api.local.x.io" {
+		t.Fatalf("web route = %+v %v", web, ok)
+	}
+
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--web", "3000", "--host", "*.com", "--no-presets")
+	if err == nil || !strings.Contains(err.Error(), "*.com") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+}
+
+func TestAddRefusesAHostAnotherProjectServes(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{Projects: []config.Project{{
+		Name: "one", Server: config.LocalServer, Path: "/srv/one", Alias: "one.test", Enabled: true,
+		Routes: []config.Route{{Port: 8000, Role: config.RoleWeb, Hosts: []string{"x.local.example.io"}}},
+	}}})
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", envProject(t, ""), "--web", "3000", "--host", "x.local.example.io", "--no-presets")
+	want := `host x.local.example.io is already served by project "one"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q\n%s", err, want, out)
+	}
+	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
+		t.Fatalf("config changed:\n%s", after)
+	}
+}
+
+func TestAddHostFlagApprovesAHostTheFileLists(t *testing.T) {
+	dir := rcProject(t, rcRealDomain)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--host", "app.local.dd.io", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Serve these?") {
+		t.Fatalf("asked about a typed host:\n%s", out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("rcapp")
+	if got := p.AllHosts(); strings.Count(strings.Join(got, " "), "app.local.dd.io") != 1 {
+		t.Fatalf("hosts = %v", got)
+	}
+}
+
+func TestAddHostFlagTypedTwiceIsServedOnce(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", envProject(t, ""), "--name", "twice", "--web", "3000", "--host", "a.local.x.io", "--host", "A.local.x.io", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("twice")
+	if web, _ := p.WebRoute(); len(web.Hosts) != 1 || web.Hosts[0] != "a.local.x.io" {
+		t.Fatalf("hosts = %v", web.Hosts)
 	}
 }

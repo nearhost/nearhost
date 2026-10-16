@@ -271,6 +271,11 @@ func saveProject(cfg *config.Config, cfgPath string, project config.Project) err
 	if err := loopbackClash(cfg, project); err != nil {
 		return err
 	}
+	// A disabled project serves nothing, so it cannot take a host from
+	// another one; enabling it checks again.
+	if host, other, clash := cfg.HostClash(project); clash && project.Enabled {
+		return fmt.Errorf("host %s is already served by project %q", host, other)
+	}
 	cfg.Projects = append(cfg.Projects, project)
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("%w; nothing was saved", err)
