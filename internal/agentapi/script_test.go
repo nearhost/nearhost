@@ -189,7 +189,8 @@ func TestScriptSaysWhatToDoWhenNoNearhostAnswers(t *testing.T) {
 	}
 	home := shortDir(t)
 	r := runScript(t, home, []string{"SSH_CONNECTION=10.0.0.2 50000 10.0.0.9 22"}, "propose", home)
-	if r.code != 2 || !strings.Contains(r.stderr, "Start nearhost on your laptop") || !strings.Contains(r.stderr, "nearhost add --server ") {
+	if r.code != 2 || !strings.Contains(r.stderr, "start nearhost there and connect this server (select it and press c)") ||
+		!strings.Contains(r.stderr, "nearhost add --server ") {
 		t.Fatalf("on a server: %+v", r)
 	}
 	r = runScript(t, home, nil, "status")

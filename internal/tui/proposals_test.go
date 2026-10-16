@@ -173,3 +173,15 @@ func TestTheServerPanelSaysWhetherAgentsReachNearhost(t *testing.T) {
 	m.sel = homeKey
 	wantScreen(t, m, "mini  agents unavailable", "AllowStreamLocalForwarding yes")
 }
+
+func TestRetryingOnHomeLeavesAServerWhoseAgentsAloneConnected(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.servers["mini"] = transport.StatusConnected
+	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "the server refused to forward it"}}
+	m := sized(f)
+	settle(m, press(m, "r"))
+	if len(f.edit.reconnected) != 0 {
+		t.Fatalf("r on Home reconnected %v, whose projects were serving", f.edit.reconnected)
+	}
+	wantScreen(t, m, "mini  agents unavailable")
+}

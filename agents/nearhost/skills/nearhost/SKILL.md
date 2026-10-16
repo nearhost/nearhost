@@ -33,9 +33,10 @@ Run `sh .../nearhost.sh status` for the project holding this directory, or `stat
 
 ## When the script fails
 
-- **Exit status 2**, no Nearhost answers. Pass on what the script printed.
-  - On a server, it gives the command for the user to run on the laptop.
-  - On the laptop, if it says the `nearhost` command is here: you may run `nearhost add <path>` yourself, since the user asked for the add. If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it.
+- **Exit status 2 from `wait`**: Nearhost stopped while the proposal waited, so the user never answered it. Say so and stop. Do not add the project any other way: the user reviews every add.
+- **Exit status 2 from `propose` or `status`**, no Nearhost answers. Pass on what the script printed.
+  - On a server, it says what to do on the laptop: start `nearhost` and connect this server, or add the server first.
+  - On the laptop, if it says the `nearhost` command is here and nothing was proposed yet: you may run `nearhost add <path>` yourself, since the user asked for the add at this machine. If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it.
 - **Exit status 3**: Nearhost is running as `nearhost up`, which cannot show proposals. Tell the user to open `nearhost` on the laptop and try again.
 - **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API. Pass on which one to update.

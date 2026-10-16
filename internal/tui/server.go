@@ -9,7 +9,7 @@ import (
 
 // agentFix is what to do when a server will not forward the socket agents
 // reach Nearhost on.
-const agentFix = "Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r to reconnect."
+const agentFix = "Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r on the server to reconnect."
 
 // serverPanel is the panel of the server called name.
 func (m *Model) serverPanel(name string, width int) []string {

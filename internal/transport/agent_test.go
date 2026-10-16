@@ -17,10 +17,10 @@ const agentRemote = "/home/dev/.nearhost/k3f9q2.sock"
 // answers agentRemote, or err.
 func withAgent(s *Session, err error) *atomic.Int32 {
 	var n atomic.Int32
-	s.prepareAgent = func(ctx context.Context, name string) (string, error) {
+	s.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
 		n.Add(1)
-		if name != "k3f9q2.sock" {
-			return "", errors.New("wrong name " + name)
+		if f.Name != "k3f9q2.sock" {
+			return "", errors.New("wrong name " + f.Name)
 		}
 		return agentRemote, err
 	}
@@ -104,7 +104,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 	os.WriteFile(other, nil, 0o600)
 	os.WriteFile(filepath.Join(home, AgentDir, "k3f9q2.sock"), nil, 0o600)
 
-	sock, err := PrepareAgentDir(client, home, "k3f9q2.sock")
+	sock, err := PrepareAgentDir(client, home, "k3f9q2.sock", "")
 	if err != nil || sock != filepath.Join(home, AgentDir, "k3f9q2.sock") {
 		t.Fatalf("%q %v", sock, err)
 	}
@@ -118,7 +118,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 		t.Fatalf("mode %v", info.Mode().Perm())
 	}
 	// Again, with nothing to remove.
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock"); err != nil {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -127,18 +127,45 @@ func TestPrepareAgentDirTakesASymlinkToADirectory(t *testing.T) {
 	client, home := inProcessSFTP(t)
 	os.Mkdir(filepath.Join(home, "elsewhere"), 0o700)
 	os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(home, AgentDir))
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock"); err != nil {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestPrepareAgentDirRefusesWhatItCannotUse(t *testing.T) {
 	client, home := inProcessSFTP(t)
-	if _, err := PrepareAgentDir(client, home, "../evil.sock"); err == nil {
+	if _, err := PrepareAgentDir(client, home, "../evil.sock", ""); err == nil {
 		t.Fatal("a name with a slash was taken")
 	}
 	os.WriteFile(filepath.Join(home, AgentDir), []byte("a file"), 0o600)
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock"); err == nil || !strings.Contains(err.Error(), ".nearhost") {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err == nil || !strings.Contains(err.Error(), ".nearhost") {
 		t.Fatalf("a file in the way: %v", err)
+	}
+}
+
+func TestPrepareAgentDirLeavesThisMachinesOwnSocketAlone(t *testing.T) {
+	client, home := inProcessSFTP(t)
+	own := filepath.Join(home, AgentDir, "k3f9q2.sock")
+	os.MkdirAll(filepath.Dir(own), 0o700)
+	os.WriteFile(own, nil, 0o600)
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", own); !errors.Is(err, ErrThisMachine) {
+		t.Fatalf("got %v, want ErrThisMachine", err)
+	}
+	if _, err := os.Stat(own); err != nil {
+		t.Fatalf("this machine's socket was removed: %v", err)
+	}
+}
+
+func TestAServerThatIsThisMachineIsNotForwardedTo(t *testing.T) {
+	s, log := newFakeSession(t)
+	withAgent(s, ErrThisMachine)
+	s.Start()
+	waitFor(t, 3*time.Second, func() bool { return strings.Contains(readLog(t, log), "-O check") && s.Status() == StatusConnected }, "connected")
+	time.Sleep(100 * time.Millisecond)
+	if h := s.Health(); h.AgentErr != "" || h.AgentPath != "" {
+		t.Fatalf("health %+v", h)
+	}
+	if strings.Contains(readLog(t, log), " -R ") {
+		t.Fatalf("forwarded over this machine's own socket:\n%s", readLog(t, log))
 	}
 }

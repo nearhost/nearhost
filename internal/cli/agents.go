@@ -56,6 +56,7 @@ type agents struct {
 	id     string
 	runDir string
 	src    *agentSource
+	sock   string // this machine's own socket
 }
 
 // startAgents serves the agent API on ~/.nearhost/<id>.sock. It returns nil
@@ -77,8 +78,8 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	if b.laptop != nil {
 		laptop = b.laptop()
 	}
-	a := &agents{api: agentapi.New(agentapi.Options{Laptop: laptop, Source: src}), id: id, runDir: runDir}
 	sock := filepath.Join(home, transport.AgentDir, id+".sock")
+	a := &agents{api: agentapi.New(agentapi.Options{Laptop: laptop, Source: src}), id: id, runDir: runDir, sock: sock}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
 		if errors.Is(err, agentapi.ErrInUse) {
 			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
@@ -97,7 +98,7 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	if err := a.api.Listen(server, local); err != nil {
 		return transport.AgentForward{}, false
 	}
-	return transport.AgentForward{Name: a.id + ".sock", Local: local}, true
+	return transport.AgentForward{Name: a.id + ".sock", Local: local, Own: a.sock}, true
 }
 
 // serveAgents starts the agent API for a run of nearhost and has the
