@@ -41,6 +41,8 @@ type upBackend struct {
 	// next one, which cuts the shutdown short. It is one subscription, so
 	// no signal falls between the two.
 	notify func(parent context.Context) (ctx context.Context, again <-chan struct{}, release func())
+	// agents reaches what the agent API needs; a zero one serves no agents.
+	agents agentsBackend
 }
 
 // systemUp is the production backend. Only NewRoot wires it in.
@@ -58,6 +60,7 @@ func systemUp() upBackend {
 			return err
 		},
 		notify: notifyStop,
+		agents: systemAgents(),
 	}
 }
 
@@ -136,7 +139,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err := flags.validate(); err != nil {
 		return err
 	}
-	cfg, _, err := loadConfig(cmd)
+	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err
 	}
@@ -148,11 +151,19 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
+	// Agents can read the projects' status. Without the interface there is
+	// no one to review a proposal, so the API refuses them.
+	ag, agentNote := serveAgents(b.agents, &opts, cfgPath, flags.httpsPort)
+	defer ag.close()
 	eng := engine.New(cfg, opts)
+	ag.attach(eng)
 	p := &upPrinter{out: cmd.OutOrStdout(), eng: eng, cfg: cfg}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()
+	if agentNote != "" {
+		eng.Events().Publish(engine.Event{Message: agentNote})
+	}
 	ctx, again, release := b.notify(cmd.Context())
 	defer release()
 	if err := eng.Start(ctx); err != nil {

@@ -16,6 +16,9 @@ var errShutDown = errors.New("engine is shut down")
 type serverConn struct {
 	ensure sync.Mutex // serialises (re)starting the session
 	sess   *transport.Session
+	// agentAsked is set once Options.Agent has been asked for the
+	// session's agent socket. It is guarded by ensure.
+	agentAsked bool
 }
 
 // ensureSession returns the server's session with its supervisor running. A
@@ -65,6 +68,12 @@ func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
 	// that reason, not after a wait for a connection that cannot come.
 	if err := c.sess.CheckSocketPath(); err != nil {
 		return nil, err
+	}
+	if !c.agentAsked && e.opts.Agent != nil {
+		c.agentAsked = true
+		if f, ok := e.opts.Agent(srv.Name); ok {
+			c.sess.SetAgentForward(f)
+		}
 	}
 	c.sess.Start()
 	return c.sess, nil
