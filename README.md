@@ -52,6 +52,14 @@ curl -fsSL https://nearhost.dev/install.sh | sh
 
 The script downloads the matching release from GitHub, checks it against the published checksums and installs to `/usr/local/bin` when that is writable, otherwise to `~/.local/bin`. On Linux it also offers to let the binary bind ports 80 and 443, and runs `sudo setcap` only if you say yes. It asks only when it can read your answer from a terminal, as when you run a downloaded copy; through `curl | sh` it prints the command instead.
 
+**npm**
+
+```sh
+npx @nearhost/cli
+```
+
+or `npm install -g @nearhost/cli` to keep the `nearhost` command. npm installs the binary for your machine as a platform package, with no install script, so pnpm, bun and `--ignore-scripts` work too.
+
 **From source**, with Go 1.26 or later:
 
 ```sh

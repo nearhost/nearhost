@@ -7,3 +7,6 @@ coverage.out
 
 # Scratch config for running from source
 /.dev/
+
+# npm packages assembled by npm/build.mjs
+/npm/dist/

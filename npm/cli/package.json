@@ -1,0 +1,22 @@
+{
+  "name": "@nearhost/cli",
+  "version": "0.0.0",
+  "description": "Reach local and remote development servers at https://<name>.test",
+  "keywords": ["dev server", "https", "ssh", "tunnel", "localhost", "certificate"],
+  "homepage": "https://nearhost.dev",
+  "bugs": "https://github.com/nearhost/nearhost/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearhost/nearhost.git",
+    "directory": "npm/cli"
+  },
+  "license": "MIT",
+  "bin": {
+    "nearhost": "bin/nearhost.js"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}
