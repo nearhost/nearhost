@@ -1,0 +1,33 @@
+internal/agentapi/script_test.go
+  s_b33b52432eafa1::t_07791faec413de 1-219
+.claude-plugin/marketplace.json
+  s_b33b52432eafa1::t_98e3a6af85172f 1-12
+.github/workflows/ci.yml
+  s_b33b52432eafa1::t_1d6a9350620ff9 20-26
+README.md
+  s_b33b52432eafa1::t_8ce75bdbfb4482 138-155,163,233-234
+agents/nearhost/.claude-plugin/plugin.json
+  s_b33b52432eafa1::t_1c7f12f22c62bf 1-10
+agents/nearhost/skills/nearhost/SKILL.md
+  s_b33b52432eafa1::t_0adcc903f05120 1-43
+agents/nearhost/skills/nearhost/scripts/nearhost.sh
+  s_b33b52432eafa1::t_9b62d1ebda2042 1-183
+release-please-config.json
+  s_b33b52432eafa1::t_9b0f6d937380c6 9-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8fc256dd62d1a1ea7136f160e3721aaaebb1b6a",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
