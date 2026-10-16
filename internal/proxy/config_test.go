@@ -498,9 +498,10 @@ func TestBuildConfigIssuesPatternsOnDemand(t *testing.T) {
 	}
 }
 
-// Automatic HTTPS does not redirect names it does not manage, so each
-// pattern gets its own 308 route on the http port, for loopback clients.
-func TestBuildConfigRedirectsPatternsFromHTTP(t *testing.T) {
+// The http port drops clients that are not on loopback first, then
+// redirects each served host, exact or pattern, for loopback clients, and
+// drops whatever is left, so the routes Caddy adds after ours never answer.
+func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 	raw, err := BuildConfig([]Site{
 		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"},
 	}, Options{StorageRoot: t.TempDir(), HTTPPort: 8080})
@@ -516,27 +517,47 @@ func TestBuildConfigRedirectsPatternsFromHTTP(t *testing.T) {
 		t.Errorf("listen = %v, want :8080", got)
 	}
 	routes := srv["routes"].([]any)
-	if len(routes) != 1 {
-		t.Fatalf("routes = %v, want one", routes)
+	if len(routes) != 4 {
+		t.Fatalf("routes = %v, want four", routes)
 	}
-	if got := strs(dig(t, routes[0], "match", 0, "host")); !slices.Equal(got, []string{"*.local.example.pro"}) {
-		t.Errorf("host = %v", got)
+	aborts := func(r any) bool {
+		h := dig(t, r, "handle", 0).(map[string]any)
+		return h["handler"] == "static_response" && h["abort"] == true
 	}
-	if got := strs(dig(t, routes[0], "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
-		t.Errorf("remote_ip = %v, want loopback", got)
+	if got := strs(dig(t, routes[0], "match", 0, "not", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) || !aborts(routes[0]) {
+		t.Errorf("first route = %v, want an abort for clients not on loopback", routes[0])
 	}
-	h := dig(t, routes[0], "handle", 0).(map[string]any)
-	if h["handler"] != "static_response" || h["status_code"] != float64(308) ||
-		dig(t, h, "headers", "Location", 0) != "https://{http.request.host}{http.request.uri}" {
-		t.Errorf("handler = %v, want a 308 to https", h)
+	for i, host := range []string{"pro.test", "*.local.example.pro"} {
+		r := routes[i+1]
+		if got := strs(dig(t, r, "match", 0, "host")); !slices.Equal(got, []string{host}) {
+			t.Errorf("route %d host = %v, want %s", i+1, got, host)
+		}
+		if got := strs(dig(t, r, "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+			t.Errorf("route %d remote_ip = %v, want loopback", i+1, got)
+		}
+		h := dig(t, r, "handle", 0).(map[string]any)
+		if h["handler"] != "static_response" || h["status_code"] != float64(308) ||
+			dig(t, h, "headers", "Location", 0) != "https://{http.request.host}{http.request.uri}" {
+			t.Errorf("route %d handler = %v, want a 308 to https", i+1, h)
+		}
+	}
+	if last := routes[3].(map[string]any); last["match"] != nil || !aborts(last) {
+		t.Errorf("last route = %v, want an abort with no matchers", last)
+	}
+}
+
+// The http port gets the same server without patterns, as Caddy's own
+// redirect server would answer any client.
+func TestBuildConfigHasHTTPServerWithoutPatterns(t *testing.T) {
+	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
+	if len(routes) != 3 || !slices.Equal(strs(dig(t, routes[1], "match", 0, "host")), []string{"a.test"}) {
+		t.Errorf("routes = %v, want the abort, a.test's redirect and the abort", routes)
 	}
 }
 
 func TestBuildConfigWithoutPatternsHasNoOnDemand(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
-	if _, ok := dig(t, cfg, "apps", "http", "servers").(map[string]any)["nearhost_http"]; ok {
-		t.Error("nearhost_http server present without patterns")
-	}
 	if _, ok := dig(t, cfg, "apps", "tls", "automation").(map[string]any)["on_demand"]; ok {
 		t.Error("on_demand present without patterns")
 	}

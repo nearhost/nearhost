@@ -979,3 +979,77 @@ func TestHTTPServerLogsNoWarningsOnReload(t *testing.T) {
 		}
 	}
 }
+
+// plainHTTP sends one GET for host over a fresh plain-HTTP connection to ip
+// on the http port. It reports whether the connection was made, and the
+// answer, or the error that came instead of one.
+func (h *harness) plainHTTP(t *testing.T, ip net.IP, host string) (dialed bool, status int, err error) {
+	t.Helper()
+	raw, err := (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(h.httpPort)))
+	if err != nil {
+		return false, 0, err
+	}
+	defer raw.Close()
+	raw.SetDeadline(time.Now().Add(10 * time.Second))
+	if !ip.IsLoopback() {
+		if got := raw.LocalAddr().(*net.TCPAddr).IP; got.IsLoopback() {
+			t.Fatalf("connection to %s left from loopback address %s", ip, got)
+		}
+	}
+	if _, err := fmt.Fprintf(raw, "GET /x HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host); err != nil {
+		return true, 0, err
+	}
+	r, err := http.ReadResponse(bufio.NewReader(raw), nil)
+	if err != nil {
+		return true, 0, err
+	}
+	r.Body.Close()
+	return true, r.StatusCode, nil
+}
+
+// The http port, like the https one, answers only loopback clients asking
+// for a host that is served, and drops every other connection without an
+// answer. That holds with patterns and without them, as Caddy arranges its
+// own redirects differently in each case.
+func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
+	for name, sites := range map[string][]Site{
+		"exact hosts only": {{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
+		"with a pattern":   {{Alias: "a.test", Hosts: []string{"a.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := startProxy(t, sites)
+			h.waitCerts(t, "a.test")
+			served := []string{"a.test"}
+			if len(sites[0].Hosts) > 1 {
+				served = append(served, "acme.local.example.pro")
+			}
+			for _, host := range served {
+				if resp := h.postHTTP(t, host, "/cb", "x=1"); resp.StatusCode != 308 {
+					t.Errorf("loopback %s: status %d, want 308", host, resp.StatusCode)
+				}
+			}
+			for _, host := range []string{"nothing.test", "evil.example.com"} {
+				if _, status, err := h.plainHTTP(t, net.IPv4(127, 0, 0, 1), host); err == nil {
+					t.Errorf("loopback asking for unserved %s got status %d, want the connection dropped", host, status)
+				}
+			}
+			tried := 0
+			for _, ip := range nonLoopbackAddrs(t) {
+				for _, host := range append(served, "nothing.test") {
+					dialed, status, err := h.plainHTTP(t, ip, host)
+					if !dialed {
+						t.Logf("%s: not dialable, skipping it: %v", ip, err)
+						break
+					}
+					tried++
+					if err == nil {
+						t.Errorf("client from %s asking for %s got status %d, want the connection dropped", ip, host, status)
+					}
+				}
+			}
+			if tried == 0 {
+				t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
+			}
+		})
+	}
+}

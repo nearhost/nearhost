@@ -108,6 +108,59 @@ func siteRoute(s Site, host string, capture bool) map[string]any {
 	}
 }
 
+// httpServer is the server on the http port. It serves loopback clients
+// asking for a host in hosts a 308 to the same URL over https, and drops
+// every other connection without an answer, as the https server does.
+//
+// Automatic HTTPS adds routes of its own to any server on the http port: a
+// redirect per exact host, with no client matcher, inserted after the last
+// route with a host matcher, or first of all when no route has one, and
+// then a catch-all redirect appended at the end. Unchecked, those would
+// answer clients on other machines and hosts that are not served. So the
+// first route drops a client that is not on loopback, whatever comes after
+// it; every host, exact or pattern, has its own redirect, so there is
+// always a host-matched route and Caddy's redirects land after them, where
+// ours have already answered; and the last of our routes drops what is
+// left, so Caddy's catch-all after it is never reached.
+func httpServer(hosts []string, httpPort int) map[string]any {
+	abort := []any{map[string]any{"handler": "static_response", "abort": true}}
+	routes := make([]any, 0, len(hosts)+2)
+	routes = append(routes, map[string]any{
+		"match": []any{map[string]any{"not": []any{map[string]any{
+			"remote_ip": map[string]any{"ranges": loopbackRanges},
+		}}}},
+		"handle": abort,
+	})
+	for _, h := range hosts {
+		routes = append(routes, map[string]any{
+			"match": []any{map[string]any{
+				"host":      []string{h},
+				"remote_ip": map[string]any{"ranges": loopbackRanges},
+			}},
+			"handle": []any{map[string]any{
+				"handler":     "static_response",
+				"status_code": 308,
+				"headers": map[string]any{
+					"Location": []string{"https://{http.request.host}{http.request.uri}"},
+				},
+			}},
+			"terminal": true,
+		})
+	}
+	routes = append(routes, map[string]any{"handle": abort})
+	return map[string]any{
+		"listen": []string{fmt.Sprintf(":%d", httpPort)},
+		"routes": routes,
+		// This server is plain HTTP by design. Saying so stops Caddy
+		// warning on every reload that it cannot have automatic HTTPS (it
+		// logs that at info instead) or HTTP/2 and HTTP/3, which need TLS.
+		// Disabling automatic HTTPS here does not stop Caddy adding the
+		// https server's redirects to this server.
+		"automatic_https": map[string]any{"disable": true},
+		"protocols":       []string{"h1"},
+	}
+}
+
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
@@ -166,8 +219,10 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	routes := make([]any, 0, len(all)+1)
 	subjects := make([]string, 0, len(all))
 	var patterns []string
+	hosts := make([]string, 0, len(all))
 	for _, sv := range all {
 		routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
+		hosts = append(hosts, sv.host)
 		if hostname.IsPattern(sv.host) {
 			patterns = append(patterns, sv.host)
 		} else {
@@ -240,45 +295,11 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	servers := map[string]any{"nearhost": server}
 	if len(patterns) > 0 {
 		// Automatic HTTPS would otherwise try to manage the patterns as
-		// subjects. Its redirects stay on for the exact hosts.
+		// subjects. Its redirects stay on, but on the http port our own
+		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
-		// Automatic HTTPS redirects only the names it manages, so the
-		// patterns get their own 308s on the http port, for loopback
-		// clients only. Automatic HTTPS finds this server listening there
-		// and appends its own redirects after these routes, ending with a
-		// catch-all that answers any client on the http port, loopback or
-		// not, with a redirect to https at the host the request named. It
-		// shows nothing a request did not already name, and the https
-		// server still refuses the handshake of a client not on loopback.
-		redirects := make([]any, 0, len(patterns))
-		for _, p := range patterns {
-			redirects = append(redirects, map[string]any{
-				"match": []any{map[string]any{
-					"host":      []string{p},
-					"remote_ip": map[string]any{"ranges": loopbackRanges},
-				}},
-				"handle": []any{map[string]any{
-					"handler":     "static_response",
-					"status_code": 308,
-					"headers": map[string]any{
-						"Location": []string{"https://{http.request.host}{http.request.uri}"},
-					},
-				}},
-				"terminal": true,
-			})
-		}
-		servers["nearhost_http"] = map[string]any{
-			"listen": []string{fmt.Sprintf(":%d", httpPort)},
-			"routes": redirects,
-			// This server is plain HTTP by design. Saying so stops Caddy
-			// warning on every reload that it cannot have automatic HTTPS
-			// (it logs that at info instead) or HTTP/2 and HTTP/3, which
-			// need TLS. Disabling automatic HTTPS here does not stop Caddy
-			// adding the https server's redirects to this server.
-			"automatic_https": map[string]any{"disable": true},
-			"protocols":       []string{"h1"},
-		}
 	}
+	servers["nearhost_http"] = httpServer(hosts, httpPort)
 
 	cfg := map[string]any{
 		// persist=false stops Caddy autosaving this config over the user's own
