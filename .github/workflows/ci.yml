@@ -17,6 +17,13 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  # The agent skill's script runs on servers with nothing but sh and curl.
+  skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s sh agents/nearhost/skills/nearhost/scripts/nearhost.sh
+
   # Run the official presets' fixtures through this build, so a change to the
   # preset engine that breaks a shipped preset fails here before it merges.
   presets:

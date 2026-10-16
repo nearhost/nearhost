@@ -1,0 +1,12 @@
+{
+  "name": "nearhost",
+  "owner": { "name": "Nearhost", "url": "https://nearhost.dev" },
+  "description": "The Nearhost plugin for coding agents.",
+  "plugins": [
+    {
+      "name": "nearhost",
+      "source": "./agents/nearhost",
+      "description": "Add the project you are working in to Nearhost, and read its status, from the laptop or a server Nearhost reaches over SSH."
+    }
+  ]
+}

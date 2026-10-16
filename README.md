@@ -135,6 +135,24 @@ nearhost preset enable nearhost/compose
 
 From then on, `add` suggests presets that suit the project and asks before enabling them.
 
+### From a coding agent
+
+A coding agent such as Claude Code or Codex can add the project it is working in, whether it runs on this machine or on a server Nearhost is connected to. In Claude Code, install the plugin:
+
+```text
+/plugin install nearhost --marketplace nearhost/nearhost
+```
+
+Then run `/nearhost add` in the project. The agent proposes it, and Nearhost opens the add form over its view with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
+
+For Codex, link the skill from a checkout of this repository into its skills folder on the machine Codex runs on:
+
+```sh
+ln -s "$PWD/agents/nearhost/skills/nearhost" ~/.agents/skills/nearhost
+```
+
+Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent whose sandbox blocks Unix sockets needs them allowed; the [documentation](https://nearhost.dev/docs/) shows how for each agent. Set `notifications: false` in the config to keep the terminal quiet.
+
 ### Useful commands
 
 | Command | What it does |
@@ -142,7 +160,7 @@ From then on, `add` suggests presets that suit the project and asks before enabl
 | `nearhost` | Open the full-screen view and serve every enabled project |
 | `nearhost ls` | List the configured projects and their routes |
 | `nearhost up [project...]` | Serve the named projects, or every enabled one, without the full-screen view |
-| `nearhost doctor` | Check ports, the certificate authority, the hosts block and server access |
+| `nearhost doctor` | Check ports, the certificate authority, the hosts block, server access and whether agents there reach Nearhost |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
 | `nearhost untrust` | Remove the certificate authority from the trust store |
 
@@ -212,6 +230,8 @@ make -C ../presets check NEARHOST="$PWD/nearhost"
 | `internal/transport` | SSH connections and port forwards |
 | `internal/proxy` | The HTTPS proxy and local certificate authority |
 | `internal/hosts` | The managed block in `/etc/hosts` |
+| `internal/agentapi` | The API coding agents reach Nearhost on |
+| `agents/nearhost` | The plugin and skill for coding agents |
 
 ### Contributing
 
