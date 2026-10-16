@@ -1,0 +1,29 @@
+npm/cli/README.md
+  s_c232e8446224ef::t_91b39f585ff7dd 1
+  s_c232e8446224ef::t_93fff94d5ec278 13
+README.md
+  s_c232e8446224ef::t_97c456178d286b 15
+  s_c232e8446224ef::t_4266509e3cc0cd 247-248
+  s_c232e8446224ef::t_c014ba83f1fcf2 1,3,5,7-9,11-14,22,26,28,70-71,172-179
+  s_c232e8446224ef::t_7163788aaae342 180
+.github/assets/header.html
+  s_c232e8446224ef::t_91b39f585ff7dd 1-141
+.github/assets/render.sh
+  s_c232e8446224ef::t_91b39f585ff7dd 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "469a1ebbc27ebf1895a704fda6d1fddd9dc355c9",
+  "prompts": {},
+  "sessions": {
+    "s_c232e8446224ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15ab410e-539a-45e5-8bd6-3ee7f0b95031",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
