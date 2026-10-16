@@ -25,7 +25,15 @@ type AgentForward struct {
 	Name string
 	// Local is the socket on this machine that it reaches.
 	Local string
+	// Own is this machine's own agent socket. A server whose socket would
+	// be at that path shares this machine's home: it is not forwarded to,
+	// and its agents reach Nearhost on Own as this machine's.
+	Own string
 }
+
+// ErrThisMachine is returned by PrepareAgentDir when the server's socket
+// would be this machine's own.
+var ErrThisMachine = errors.New("the server shares this machine's home")
 
 // SetAgentForward makes the session forward f to the server each time it
 // connects. Call it before Start.
@@ -46,7 +54,14 @@ func (s *Session) applyAgent(ctx context.Context) {
 	if f == nil {
 		return
 	}
-	remote, err := s.prepareAgent(ctx, f.Name)
+	remote, err := s.prepareAgent(ctx, *f)
+	if errors.Is(err, ErrThisMachine) {
+		s.mu.Lock()
+		s.agentPath, s.agentErr = "", ""
+		s.mu.Unlock()
+		s.Logf("%s: agents here reach nearhost on this machine's own socket", s.Name)
+		return
+	}
 	if err == nil {
 		err = s.controlAgent(ctx, "forward", remote, f.Local)
 	}
@@ -98,7 +113,7 @@ func (s *Session) controlAgent(ctx context.Context, op, remote, local string) er
 
 // prepareAgentOverSFTP is the production prepareAgent: over an SFTP session
 // on the master, it finds the home directory and readies the socket there.
-func (s *Session) prepareAgentOverSFTP(ctx context.Context, name string) (string, error) {
+func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	f, err := s.OpenSFTP(ctx)
@@ -110,14 +125,16 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, name string) (string
 	if err != nil {
 		return "", fmt.Errorf("find the home directory on %s: %w", s.Name, err)
 	}
-	return PrepareAgentDir(f.Client, home, name)
+	return PrepareAgentDir(f.Client, home, fwd.Name, fwd.Own)
 }
 
 // PrepareAgentDir makes ~/.nearhost in home with mode 0700 if it is not
 // there, and removes the socket called name in it, left by an earlier run of
 // this install, so that sshd can bind it again. It returns the socket's
 // path. Only that one socket is ever removed: the others are other installs'.
-func PrepareAgentDir(c *sftp.Client, home, name string) (string, error) {
+// When that path is own, this machine's own socket, it is left alone and
+// ErrThisMachine returned.
+func PrepareAgentDir(c *sftp.Client, home, name, own string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
 		return "", fmt.Errorf("agent socket name %q is not a file name", name)
 	}
@@ -132,6 +149,9 @@ func PrepareAgentDir(c *sftp.Client, home, name string) (string, error) {
 		return "", fmt.Errorf("make %s private: %w", dir, err)
 	}
 	sock := path.Join(dir, name)
+	if own != "" && sock == own {
+		return "", ErrThisMachine
+	}
 	if err := c.Remove(sock); err != nil && !isNotExist(err) && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("remove the old socket %s: %w", sock, err)
 	}

@@ -87,8 +87,8 @@ type Session struct {
 	agentPath string
 	agentErr  string
 	// prepareAgent readies ~/.nearhost on the server and returns the path
-	// of the socket called name there. Tests replace it.
-	prepareAgent func(ctx context.Context, name string) (string, error)
+	// of the forward's socket there. Tests replace it.
+	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
 }
 
 // NewSession creates an idle session. Call Start to connect.

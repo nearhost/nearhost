@@ -45,7 +45,9 @@ call() {
 no_nearhost() {
 	if [ -n "${SSH_CONNECTION:-}" ]; then
 		host=$(hostname 2>/dev/null | cut -d. -f1)
-		die 2 "No Nearhost reaches this server. Start nearhost on your laptop. If this server is not in Nearhost yet, run this on the laptop first: nearhost add --server ${host:-<server>} $PWD"
+		# Nearhost forwards its socket only while it holds a connection to
+		# the server, which it makes when one of the server's projects starts.
+		die 2 "No Nearhost reaches this server. On your laptop, start nearhost there and connect this server (select it and press c). If this server is not in Nearhost yet, run this on the laptop instead: nearhost add --server ${host:-<server>} $PWD"
 	fi
 	if command -v nearhost >/dev/null 2>&1; then
 		die 2 "Nearhost is not running on this machine. Run: nearhost add <path>, then start nearhost to serve it."

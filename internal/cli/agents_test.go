@@ -74,7 +74,7 @@ func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 		t.Fatalf("GET /v1: %v", out)
 	}
 	f, ok := opts.Agent("mini")
-	if !ok || f.Name != "k3f9q2.sock" || !strings.HasPrefix(f.Local, opts.RunDir+"/agent-") {
+	if !ok || f.Name != "k3f9q2.sock" || !strings.HasPrefix(f.Local, opts.RunDir+"/agent-") || f.Own != sock {
 		t.Fatalf("forward %+v %v", f, ok)
 	}
 	if out := getJSON(t, f.Local, "/v1"); out["origin"] != "mini" {

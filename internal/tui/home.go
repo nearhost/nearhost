@@ -71,8 +71,10 @@ func (m *Model) problems() []problem {
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)
 		if h.Status == transport.StatusConnected && h.AgentErr != "" {
+			// Not one for r on Home to retry: the server's projects serve,
+			// and reconnecting would drop them for nothing.
 			out = append(out, problem{dot: seg{styleAmber, "●"}, title: srv.Name, what: "agents unavailable",
-				why: h.AgentErr, fix: agentFix, server: srv.Name})
+				why: h.AgentErr, fix: agentFix})
 		}
 		if h.Status == transport.StatusConnected || h.Held || h.LastError == "" {
 			continue // a server dropped on purpose is no problem
