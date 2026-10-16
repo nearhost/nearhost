@@ -8,6 +8,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -45,6 +46,9 @@ func (m *Model) projectPanel(name string, width int) []string {
 		}
 		lines = []string{spread(title, state, width), "", fit(meta, width)}
 	}
+	if urls := otherURLs(*p, width); urls != "" {
+		lines = append(lines, urls)
+	}
 	if st.Message != "" {
 		lines = append(lines, field("why", clean(st.Message), width)...)
 	}
@@ -63,6 +67,30 @@ func (m *Model) projectPanel(name string, width int) []string {
 		lines = append(lines, errorLines(m.panelErr, width)...)
 	}
 	return append(lines, m.adviceLinesFor(name, width)...)
+}
+
+// otherURLs is one line with every URL of the project but the alias, which
+// the title shows: a host is a link and a pattern, which no browser can open,
+// is dim. It is cut to width rather than wrapped, and "" when there are none.
+func otherURLs(p config.Project, width int) string {
+	var parts []string
+	for _, w := range p.Web() {
+		for _, h := range w.Hosts {
+			if strings.EqualFold(h, p.Alias) {
+				continue
+			}
+			url := "https://" + clean(h)
+			if hostname.IsPattern(h) {
+				parts = append(parts, styleDim.Render(url))
+			} else {
+				parts = append(parts, styleBeacon.Underline(true).Hyperlink(url).Render(url))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fit(strings.Join(parts, "  "), width)
 }
 
 // presetNames names the presets that apply to a project, without their

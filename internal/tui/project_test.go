@@ -87,3 +87,34 @@ func TestProjectPanelNamesItsPresets(t *testing.T) {
 	run(m, run(m, read))
 	wantScreen(t, m, "server mini    preset vite, laravel    path /srv/myapp")
 }
+
+// A project with several web routes shows the alias in the title and every
+// other URL on a line below it: hosts are links, patterns dim and unlinked.
+func TestProjectListsEveryURL(t *testing.T) {
+	cfg := sampleConfig()
+	cfg.Projects[1].Routes[0].Hosts = []string{"app.local.myapp.io", "*.status.local.myapp.io"}
+	f := newFake(t, cfg)
+	f.servers["mini"] = transport.StatusConnected
+	m := sized(f)
+	f.setState("myapp", engine.ProjectStatus{State: engine.StateRunning, WebLocalPort: 52114})
+	m.sel = rowKey(rowProject, "myapp")
+	wantScreen(t, m, "https://app.local.myapp.io", "https://*.status.local.myapp.io")
+	raw := m.View().Content
+	if !strings.Contains(raw, "\x1b]8;;https://app.local.myapp.io") {
+		t.Error("an exact host is not a link")
+	}
+	if strings.Contains(raw, "\x1b]8;;https://*.status") {
+		t.Error("a pattern is a link")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 30})
+	for _, line := range strings.Split(screen(m), "\n") {
+		if ansi.StringWidth(line) > 50 {
+			t.Errorf("line wider than the window: %q", line)
+		}
+	}
+	// A project with only the alias has no extra line.
+	m.sel = rowKey(rowProject, "website")
+	if s := screen(m); strings.Contains(s, "https://website.test") && strings.Count(s, "https://website.test") > 1 {
+		t.Errorf("the alias is listed twice:\n%s", s)
+	}
+}
