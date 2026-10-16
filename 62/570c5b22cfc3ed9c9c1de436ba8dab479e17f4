@@ -1,0 +1,22 @@
+internal/config/config_test.go
+  s_89a63a3c1fa7d2::t_f0b57fef1be3fe 608-609,614-617,619
+internal/config/config.go
+  s_89a63a3c1fa7d2::t_ec69411dec2369 149-152,170-171
+  s_89a63a3c1fa7d2::t_96522b10e5abb0 172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62570c5b22cfc3ed9c9c1de436ba8dab479e17f4",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
