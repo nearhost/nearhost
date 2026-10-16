@@ -133,12 +133,19 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
+	ag, agentNote := serveAgents(b.up.agents, &opts, cfgPath, flags.httpsPort)
+	defer ag.close()
 	eng := engine.New(cfg, opts)
+	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way.
 	defer eng.Shutdown(context.Background())
 	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
-	return b.run(tui.New(back, dir), &suspender)
+	m := tui.New(back, dir)
+	if agentNote != "" {
+		eng.Events().Publish(engine.Event{Message: agentNote})
+	}
+	return b.run(m, &suspender)
 }
 
 // hostsThrough is an EnsureHosts for the interface: when the hosts block has

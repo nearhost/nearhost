@@ -13,6 +13,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // State is a project's lifecycle state.
@@ -47,6 +48,11 @@ type Options struct {
 	// StartProject); the function must then give up and return, including
 	// when it is waiting for a password. nil disables hosts management.
 	EnsureHosts func(ctx context.Context, aliases []string) error
+	// Agent gives the socket each server's session forwards for coding
+	// agents, the first time the session starts; false forwards none. It may
+	// block, and is called once per session, never under the engine's lock.
+	// nil forwards none.
+	Agent func(server string) (transport.AgentForward, bool)
 }
 
 // ProjectStatus is a snapshot of one project.
