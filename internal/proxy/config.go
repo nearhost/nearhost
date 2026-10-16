@@ -46,6 +46,9 @@ type Options struct {
 	// Capture keeps each request and response in memory (see Capture), so
 	// they can be shown and sent again.
 	Capture bool
+	// Version is the Nearhost version the home page at https://localhost
+	// shows. Empty means dev.
+	Version string
 }
 
 // captureHandler is the handler that keeps a site's exchanges, before the
@@ -108,6 +111,23 @@ func siteRoute(s Site, host string, capture bool) map[string]any {
 	}
 }
 
+// homeRoute is the route serving Nearhost's own page at localhost to
+// loopback clients. It has no tag: the page is no project's, so its access
+// lines are dropped like any other untagged line.
+func homeRoute(version string) map[string]any {
+	if version == "" {
+		version = "dev"
+	}
+	return map[string]any{
+		"match": []any{map[string]any{
+			"host":      []string{homeHost},
+			"remote_ip": map[string]any{"ranges": loopbackRanges},
+		}},
+		"handle":   []any{map[string]any{"handler": homeModule, "version": version}},
+		"terminal": true,
+	}
+}
+
 // httpServer is the server on the http port. It serves loopback clients
 // asking for a host in hosts a 308 to the same URL over https, and drops
 // every other connection without an answer, as the https server does.
@@ -166,7 +186,9 @@ func httpServer(hosts []string, httpPort int) map[string]any {
 // the config shape is defined; call it with no sites to get just the base
 // config, which declares no listeners. Output is deterministic: there is one
 // route per host, ordered by hostname.Less, so exact hosts win over patterns
-// and more specific patterns over less specific ones.
+// and more specific patterns over less specific ones. While there are sites
+// and none serves localhost, localhost is one more exact host, served
+// Nearhost's own page.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -184,6 +206,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	type served struct {
 		site Site
 		host string
+		home bool // the host is localhost, served the home page
 	}
 	var all []served
 	siteOf := map[string]int{} // lower-cased host to the index of its site: names match without case
@@ -200,8 +223,15 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				return nil, fmt.Errorf("proxy: host %q is listed twice on site %s", key, s.Alias)
 			}
 			siteOf[key] = i
-			all = append(all, served{s, h})
+			all = append(all, served{site: s, host: h})
 		}
+	}
+	// While the proxy serves any project, localhost has Nearhost's own page,
+	// unless a project serves localhost itself: then the page is left out
+	// altogether, so it never has to be decided which of the two wins.
+	// With no sites, nothing is served and nothing listens, as before.
+	if _, claimed := siteOf[homeHost]; len(sites) > 0 && !claimed {
+		all = append(all, served{host: homeHost, home: true})
 	}
 	for _, sv := range all {
 		if err := hostname.Valid(sv.host); err != nil {
@@ -221,7 +251,11 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	var patterns []string
 	hosts := make([]string, 0, len(all))
 	for _, sv := range all {
-		routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
+		if sv.home {
+			routes = append(routes, homeRoute(opts.Version))
+		} else {
+			routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
+		}
 		hosts = append(hosts, sv.host)
 		if hostname.IsPattern(sv.host) {
 			patterns = append(patterns, sv.host)
