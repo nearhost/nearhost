@@ -83,9 +83,10 @@ type Session struct {
 	// agent is the socket forwarded for coding agents; nil for none. Once
 	// the master has connected, agentPath is where the server has it, or
 	// agentErr says why it has not.
-	agent     *AgentForward
-	agentPath string
-	agentErr  string
+	agent        *AgentForward
+	agentPath    string
+	agentErr     string
+	agentProblem AgentProblem
 	// prepareAgent readies ~/.nearhost on the server and returns the path
 	// of the forward's socket there. Tests replace it.
 	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
@@ -285,6 +286,8 @@ type Health struct {
 	// it is forwarded; AgentErr says why it is not, once that was tried and
 	// failed. Both are empty for a session that forwards none.
 	AgentPath, AgentErr string
+	// AgentProblem is the kind of problem AgentErr describes.
+	AgentProblem AgentProblem
 }
 
 // Health returns the session's state, how many attempts have failed, and
@@ -293,7 +296,7 @@ func (s *Session) Health() Health {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Health{Status: s.status, LastError: s.lastErr, Failures: s.failures, NextAttempt: s.nextAttempt,
-		AgentPath: s.agentPath, AgentErr: s.agentErr}
+		AgentPath: s.agentPath, AgentErr: s.agentErr, AgentProblem: s.agentProblem}
 }
 
 func (s *Session) setStatus(st Status, errText string) {

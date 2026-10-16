@@ -92,9 +92,7 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 		return err
 	}
 	defer end()
-	b := make([]byte, 4)
-	rand.Read(b)
-	name := fmt.Sprintf("doctor-%x.sock", b)
+	name := doctorSocketName()
 	sess.SetAgentForward(transport.AgentForward{Name: name, Local: filepath.Join(filepath.Dir(sess.SocketPath()), "agent.sock")})
 	sess.Start()
 	if err := connectOnce(ctx, sess); err != nil {
@@ -106,7 +104,7 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 		h := sess.Health()
 		switch {
 		case h.AgentErr != "":
-			return errors.New(h.AgentErr)
+			return &transport.AgentError{Problem: h.AgentProblem, Msg: h.AgentErr}
 		case h.AgentPath != "":
 			// sshd leaves the socket behind when the forward ends: remove it
 			// while the connection is up.
@@ -122,6 +120,14 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 		case <-tick.C:
 		}
 	}
+}
+
+// doctorSocketName is a socket name as long as an install's, so the check
+// meets the same path limit, that no install has: ids never hold a 0.
+func doctorSocketName() string {
+	b := make([]byte, 3)
+	rand.Read(b)
+	return "0" + fmt.Sprintf("%x", b)[1:] + ".sock"
 }
 
 // connectOnce waits for sess, which has just been started, to connect. A

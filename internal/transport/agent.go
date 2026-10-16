@@ -31,6 +31,36 @@ type AgentForward struct {
 	Own string
 }
 
+// AgentProblem is why agents on a server cannot reach Nearhost.
+type AgentProblem int
+
+const (
+	// AgentOK: none, or not tried yet.
+	AgentOK AgentProblem = iota
+	// AgentNotReady: ~/.nearhost could not be readied over SFTP.
+	AgentNotReady
+	// AgentRefused: sshd refused the forward, as AllowStreamLocalForwarding
+	// no does.
+	AgentRefused
+	// AgentTooLong: sshd refused the forward, and the socket's path is
+	// longer than a Unix socket path can be on most systems.
+	AgentTooLong
+)
+
+// maxRemoteSocket is the longest socket path every common system binds:
+// sun_path holds 104 bytes on macOS and the BSDs and 108 on Linux, the
+// final NUL included.
+const maxRemoteSocket = 103
+
+// AgentError is why agents on a server cannot reach Nearhost, with the
+// kind of problem it is.
+type AgentError struct {
+	Problem AgentProblem
+	Msg     string
+}
+
+func (e *AgentError) Error() string { return e.Msg }
+
 // ErrThisMachine is returned by PrepareAgentDir when the server's socket
 // would be this machine's own.
 var ErrThisMachine = errors.New("the server shares this machine's home")
@@ -57,22 +87,30 @@ func (s *Session) applyAgent(ctx context.Context) {
 	remote, err := s.prepareAgent(ctx, *f)
 	if errors.Is(err, ErrThisMachine) {
 		s.mu.Lock()
-		s.agentPath, s.agentErr = "", ""
+		s.agentPath, s.agentErr, s.agentProblem = "", "", AgentOK
 		s.mu.Unlock()
 		s.Logf("%s: agents here reach nearhost on this machine's own socket", s.Name)
 		return
 	}
+	problem := AgentNotReady
 	if err == nil {
+		problem = AgentRefused
 		err = s.controlAgent(ctx, "forward", remote, f.Local)
+		if err != nil && len(remote) > maxRemoteSocket {
+			// The mux client says only that the forward failed. A path this
+			// long is the likely reason, and one no sshd setting fixes.
+			problem = AgentTooLong
+			err = fmt.Errorf("the socket path %s is %d bytes, longer than a Unix socket path can be on most systems (103 on macOS, 107 on Linux)", remote, len(remote))
+		}
 	}
 	if ctx.Err() != nil {
 		return // stopping: what this pass found says nothing
 	}
 	s.mu.Lock()
 	if err != nil {
-		s.agentPath, s.agentErr = "", err.Error()
+		s.agentPath, s.agentErr, s.agentProblem = "", err.Error(), problem
 	} else {
-		s.agentPath, s.agentErr = remote, ""
+		s.agentPath, s.agentErr, s.agentProblem = remote, "", AgentOK
 	}
 	s.mu.Unlock()
 	if err != nil {

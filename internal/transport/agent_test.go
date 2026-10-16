@@ -16,13 +16,18 @@ const agentRemote = "/home/dev/.nearhost/k3f9q2.sock"
 // withAgent gives s an agent forward whose preparation is counted and
 // answers agentRemote, or err.
 func withAgent(s *Session, err error) *atomic.Int32 {
+	return withAgentAt(s, agentRemote, err)
+}
+
+// withAgentAt is withAgent with the socket at remote.
+func withAgentAt(s *Session, remote string, err error) *atomic.Int32 {
 	var n atomic.Int32
 	s.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
 		n.Add(1)
 		if f.Name != "k3f9q2.sock" {
 			return "", errors.New("wrong name " + f.Name)
 		}
-		return agentRemote, err
+		return remote, err
 	}
 	s.SetAgentForward(AgentForward{Name: "k3f9q2.sock", Local: "/run/nh/agent-mini.sock"})
 	return &n
@@ -167,5 +172,34 @@ func TestAServerThatIsThisMachineIsNotForwardedTo(t *testing.T) {
 	}
 	if strings.Contains(readLog(t, log), " -R ") {
 		t.Fatalf("forwarded over this machine's own socket:\n%s", readLog(t, log))
+	}
+}
+
+func TestAgentProblemsSayWhatKindTheyAre(t *testing.T) {
+	long := "/home/" + strings.Repeat("x", 90) + "/.nearhost/k3f9q2.sock"
+	for name, tc := range map[string]struct {
+		remote, refusal string
+		prepare         error
+		want            AgentProblem
+		says            string
+	}{
+		"refused":   {agentRemote, "remote port forwarding failed for listen path " + agentRemote, nil, AgentRefused, "refused to forward"},
+		"too long":  {long, "remote port forwarding failed for listen path " + long, nil, AgentTooLong, "bytes, longer than a Unix socket path"},
+		"not ready": {agentRemote, "", errors.New("make /home/dev/.nearhost: permission denied"), AgentNotReady, "permission denied"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var env []string
+			if tc.refusal != "" {
+				env = append(env, "FAKE_SSH_RFORWARD_FAIL="+tc.refusal)
+			}
+			s, _ := newFakeSession(t, env...)
+			withAgentAt(s, tc.remote, tc.prepare)
+			s.Start()
+			waitFor(t, 3*time.Second, func() bool { return s.Health().AgentErr != "" }, "the problem")
+			h := s.Health()
+			if h.AgentProblem != tc.want || !strings.Contains(h.AgentErr, tc.says) {
+				t.Fatalf("health %+v", h)
+			}
+		})
 	}
 }
