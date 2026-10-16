@@ -587,3 +587,15 @@ func TestExactHosts(t *testing.T) {
 		t.Fatalf("ExactHosts() = %v, want %v", got, want)
 	}
 }
+
+func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
+	for _, bad := range []string{"app.example.io", "A.test", ".test", "*.test", "a_b.test", "localhost"} {
+		if ValidProjectAlias(bad) == nil {
+			t.Errorf("ValidProjectAlias accepted %q", bad)
+		}
+	}
+	c := &Config{Projects: []Project{{Name: "b", Alias: "b.test"}, {Name: "a", Alias: "a.test"}, {Name: "c", Alias: "b.test"}, {Name: "d", Alias: "d.example.io"}}}
+	if got := c.HostsFileNames(); !slices.Equal(got, []string{"a.test", "b.test"}) {
+		t.Fatalf("HostsFileNames() = %v", got)
+	}
+}

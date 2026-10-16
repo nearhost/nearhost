@@ -15,7 +15,6 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
-	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -196,7 +195,7 @@ func nameProblem(cfg *config.Config, name string) error {
 // aliasProblem says why cfg cannot take a project at alias, or returns nil.
 // alias is as it will be saved, without blanks around it.
 func aliasProblem(cfg *config.Config, alias string) error {
-	if _, err := hosts.Rewrite("", []string{alias}); err != nil {
+	if err := config.ValidProjectAlias(alias); err != nil {
 		return err
 	}
 	for _, other := range cfg.Projects {

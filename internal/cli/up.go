@@ -338,6 +338,9 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 	}
 	if !f.noHosts {
 		opts.EnsureHosts = askOnce(ensureHosts)
+		// Both `nearhost up` and the interface build their options here, so
+		// both skip names whose public DNS already points at this machine.
+		opts.Lookup = hosts.DNSLookup
 	}
 	return opts, nil
 }

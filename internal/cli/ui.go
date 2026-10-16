@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,6 +39,9 @@ type uiBackend struct {
 	root rootBackend
 	// readHosts returns the content of the hosts file.
 	readHosts func() (string, error)
+	// lookup finds the addresses DNS gives a name, for the hosts state; nil
+	// keeps every name.
+	lookup hosts.Lookup
 	// open opens a URL in the browser.
 	open func(url string) error
 	// workDir is the directory nearhost was started in.
@@ -78,6 +82,7 @@ func systemUI() uiBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
+		lookup:  hosts.DNSLookup,
 		open:    openBrowser,
 		workDir: os.Getwd,
 		presets: systemPresets(),
@@ -208,6 +213,8 @@ type uiEngine struct {
 	// agents answers the agents' proposals; nil when none can reach
 	// nearhost.
 	agents *agents
+	// hostsAsked is set by the first HostsState call.
+	hostsAsked atomic.Bool
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
@@ -235,7 +242,15 @@ func (u *uiEngine) HostsState() string {
 	if u.flags.noHosts {
 		return "not managed (--no-hosts)"
 	}
-	c := checkHosts(doctorBackend{readHosts: u.b.readHosts}, u.Config())
+	// The interface asks once while it is built, before anything is drawn.
+	// That call must not wait on DNS; the refresh that follows it does the
+	// lookup and replaces this answer.
+	if !u.hostsAsked.Swap(true) {
+		return "checking"
+	}
+	// The same names doctor checks, filtered the same way, so the interface
+	// and `nearhost doctor` never disagree about what the file should hold.
+	c := checkHosts(context.Background(), doctorBackend{readHosts: u.b.readHosts, lookup: u.b.lookup}, u.Config())
 	return c.detail
 }
 

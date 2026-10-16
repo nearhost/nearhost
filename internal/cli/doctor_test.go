@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -32,6 +34,7 @@ type fakeMachine struct {
 
 	probed      []string
 	hostsReads  int
+	lookup      hosts.Lookup
 	serverCalls []string
 	lowAsked    []int
 }
@@ -56,6 +59,7 @@ func (f *fakeMachine) backend() doctorBackend {
 			f.probed = append(f.probed, key)
 			return f.portErr[key]
 		},
+		lookup:    f.lookup,
 		holderOf:  func(_ context.Context, port int) string { return f.holders[port] },
 		readHosts: func() (string, error) { f.hostsReads++; return f.hosts, f.hostsErr },
 		checkServer: func(_ context.Context, srv config.Server) error {
@@ -427,5 +431,27 @@ func TestDoctorsSocketIsAsLongAsAnInstallsAndNeverOne(t *testing.T) {
 		if len(name) != len("k3f9q2.sock") || name[0] != '0' || !strings.HasSuffix(name, ".sock") {
 			t.Fatalf("doctor's socket %q", name)
 		}
+	}
+}
+
+// The hosts check applies hosts.Wanted with the backend's lookup to the
+// config's hosts file names. Those are only .test aliases in this version,
+// which are never looked up and are always expected in the block.
+func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
+	path := configHome(t)
+	other := localProject("app", 8001, true)
+	other.Alias = "app.local.example.io" // not a valid project alias: never a candidate
+	saveConfig(t, path, &config.Config{Projects: []config.Project{localProject("api", 8000, true), other}})
+	f := healthy()
+	f.hosts = "127.0.0.1 localhost\n"
+	var asked []string
+	f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+		asked = append(asked, name)
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	out, _ := execute(t, newDoctorCmd(f.backend()), "doctor")
+	wantContains(t, out, "FAIL  aliases", "FAIL  hosts block      missing api.test\n")
+	if len(asked) != 0 {
+		t.Errorf("looked up %v; .test names need no lookup", asked)
 	}
 }

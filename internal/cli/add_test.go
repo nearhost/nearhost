@@ -208,6 +208,7 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		{"duplicate alias", []string{"add", dir, "--name", "Shop", "--web", "9000"}, []string{"shop.test", `"shop"`, "--alias"}},
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
 		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", ".test"}},
+		{"alias not under .test", []string{"add", dir, "--name", "other", "--alias", "other.example", "--web", "9000"}, []string{"other.example", ".test"}},
 		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`unknown server "nas"`, "servers:"}},
 		{"remote without a path", []string{"add", "--server", "mini", "--name", "x"}, []string{"path"}},
 		{"remote with a relative path", []string{"add", "code/x", "--server", "mini", "--name", "x"}, []string{"absolute path"}},

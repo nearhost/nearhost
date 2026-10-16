@@ -54,6 +54,9 @@ type doctorBackend struct {
 	holderOf func(ctx context.Context, port int) string
 	// readHosts returns the content of the hosts file.
 	readHosts func() (string, error)
+	// lookup finds the addresses DNS gives a name; nil keeps every name in
+	// the hosts check.
+	lookup hosts.Lookup
 	// checkServer reports whether ssh reaches a server without prompting.
 	checkServer func(ctx context.Context, srv config.Server) error
 	// checkAgents reports whether a server forwards the socket agents reach
@@ -76,6 +79,7 @@ func systemDoctor() doctorBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
+		lookup:      hosts.DNSLookup,
 		checkServer: sshClient{}.check,
 		checkAgents: sshClient{}.checkAgents,
 		goos:        runtime.GOOS,
@@ -145,7 +149,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 	}
 	checks = append(checks, checkAliases(cfg, path)...)
 	if !flags.noHosts {
-		checks = append(checks, checkHosts(b, cfg))
+		checks = append(checks, checkHosts(ctx, b, cfg))
 	}
 	for _, srv := range cfg.Servers {
 		c := checkServer(ctx, b, srv)
@@ -327,7 +331,7 @@ func checkCA(b trustBackend) []check {
 func checkAliases(cfg *config.Config, path string) []check {
 	var invalid []string
 	for _, p := range cfg.Projects {
-		if _, err := hosts.Rewrite("", []string{p.Alias}); err != nil {
+		if err := config.ValidProjectAlias(p.Alias); err != nil {
 			invalid = append(invalid, fmt.Sprintf("project %q: %v", p.Name, err))
 		}
 	}
@@ -338,16 +342,12 @@ func checkAliases(cfg *config.Config, path string) []check {
 		"correct the alias in " + path + "; `nearhost up` does not start a project with such an alias"}}
 }
 
-// checkHosts compares the managed block with the aliases `nearhost up` would
-// put there: the valid alias of every configured project.
-func checkHosts(b doctorBackend, cfg *config.Config) check {
+// checkHosts compares the managed block with the names `nearhost up` would
+// put there: the config's hosts file names, less the names DNS already sends
+// to this machine.
+func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check {
 	const name, fix = "hosts block", "run `nearhost up`; it updates the block and asks for your password"
-	var want []string
-	for _, p := range cfg.Projects {
-		if _, err := hosts.Rewrite("", []string{p.Alias}); err == nil {
-			want = append(want, p.Alias)
-		}
-	}
+	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.lookup)
 	existing, err := b.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}
