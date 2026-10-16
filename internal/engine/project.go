@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -230,7 +232,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	if err := ctx.Err(); err != nil {
 		return StateError, err
 	}
-	if err := e.ensureHosts(ctx); err != nil {
+	if err := e.ensureHosts(ctx, web); err != nil {
 		return StateStopped, fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Name, err)
 	}
 
@@ -282,11 +284,15 @@ func (e *Engine) waitConnected(ctx context.Context, sess *transport.Session) err
 }
 
 // ensureHosts asks for every hosts file name of the configuration (see
-// config.HostsFileNames) to resolve, leaving out the names DNS already sends
-// to this machine (see hosts.Wanted). Calls are serialised so
-// two starting projects never prompt for a password at the same time. Both
-// the wait for the turn and the update itself end when ctx does.
-func (e *Engine) ensureHosts(ctx context.Context) error {
+// config.HostsFileNames) to resolve, plus the exact hosts of web, the routes
+// of the project being started, leaving out the names DNS already sends to
+// this machine (see hosts.Wanted). The configuration's list holds only the
+// route hosts of enabled projects, so a disabled project started by hand
+// brings its own; without them its real-domain hosts would not resolve here.
+// Calls are serialised so two starting projects never prompt for a password
+// at the same time. Both the wait for the turn and the update itself end
+// when ctx does.
+func (e *Engine) ensureHosts(ctx context.Context, web []config.WebHosts) error {
 	if e.opts.EnsureHosts == nil {
 		return nil
 	}
@@ -302,6 +308,16 @@ func (e *Engine) ensureHosts(ctx context.Context) error {
 	e.mu.Lock()
 	names := append([]string(nil), e.hostNames...)
 	e.mu.Unlock()
+	for _, w := range web {
+		for _, h := range w.Hosts {
+			h = strings.ToLower(h)
+			if h != "localhost" && !hostname.IsPattern(h) {
+				names = append(names, h)
+			}
+		}
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
 	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, names, e.opts.Lookup))
 }
 

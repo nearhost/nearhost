@@ -2280,3 +2280,15 @@ func TestEnsureHostsGetsExactHostsOfEveryProject(t *testing.T) {
 		t.Fatalf("EnsureHosts calls = %v, want one with %v", calls, want)
 	}
 }
+
+func TestStartingADisabledProjectAsksForItsOwnHosts(t *testing.T) {
+	p := localProjectRoutes("pro", config.Route{Port: 8211, Role: config.RoleWeb, Hosts: []string{"localhost", "*.local.example.io", "x.local.example.io"}})
+	p.Enabled = false
+	h := newHarness(t, &config.Config{Projects: []config.Project{p}})
+	mustStart(t, h, "pro")
+	want := []string{"pro.test", "x.local.example.io"}
+	calls := h.ensureCalls()
+	if len(calls) == 0 || !slices.Equal(calls[len(calls)-1], want) {
+		t.Fatalf("EnsureHosts calls = %v, want the last with %v", calls, want)
+	}
+}
