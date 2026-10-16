@@ -1,0 +1,40 @@
+internal/cli/ui_test.go
+  s_89a63a3c1fa7d2::t_a5ff05d5acb93f 6,15-16
+  s_89a63a3c1fa7d2::t_d0845dc279819e 140-162
+internal/cli/doctor_test.go
+  s_89a63a3c1fa7d2::t_d0845dc279819e 355,365,437-440,442-444,446-447,449,453-456
+internal/cli/add_stages.go
+  s_89a63a3c1fa7d2::t_0ec09d3c8cc823 198
+internal/cli/ui.go
+  s_89a63a3c1fa7d2::t_6f49ecb4924859 14,42-44,85,216-217,245-253
+internal/config/config.go
+  s_89a63a3c1fa7d2::t_fddbb09c12fa3a 136-137,139-154,156-163
+  s_89a63a3c1fa7d2::t_0ec09d3c8cc823 135,138,155
+internal/engine/engine.go
+  s_89a63a3c1fa7d2::t_fddbb09c12fa3a 186,206
+internal/engine/project.go
+  s_89a63a3c1fa7d2::t_0ec09d3c8cc823 200
+internal/cli/doctor.go
+  s_89a63a3c1fa7d2::t_fddbb09c12fa3a 346-347,350
+  s_89a63a3c1fa7d2::t_0ec09d3c8cc823 334
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_d0845dc279819e 210-211
+internal/config/config_test.go
+  s_89a63a3c1fa7d2::t_13332c0bea4006 590-601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "931fb27487928e24d707dc94f0b2bda41b2885ec",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
