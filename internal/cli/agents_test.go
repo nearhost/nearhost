@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,5 +167,30 @@ func TestAServerThatIsGoneStopsBeingServed(t *testing.T) {
 	}
 	if _, err := os.Stat(f.Local); !os.IsNotExist(err) {
 		t.Fatalf("mini's socket is still there: %v", err)
+	}
+}
+
+func TestAgentProjectsListEveryURL(t *testing.T) {
+	p := config.Project{Name: "dd", Server: config.LocalServer, Path: "/code/dd", Alias: "dd.test", Enabled: true,
+		Routes: []config.Route{
+			{Port: 8220, Role: config.RoleWeb, Label: "app", Hosts: []string{"app.local.dd.io", "*.status.local.dd.io"}},
+			{Port: 8230, Role: config.RoleWeb, Label: "ws", Hosts: []string{"ws.local.dd.io"}},
+			{Port: 5432, Role: config.RoleIgnore},
+		}}
+	st := engine.ProjectStatus{State: engine.StateRunning, WebLocalPort: 8220, WebLocalPorts: map[int]int{8220: 8220, 8230: 8230}}
+	got := agentProject(p, st, 443)
+	wantURLs := []string{"https://dd.test", "https://app.local.dd.io", "https://*.status.local.dd.io", "https://ws.local.dd.io"}
+	if got.URL != "https://dd.test" || !reflect.DeepEqual(got.URLs, wantURLs) {
+		t.Fatalf("url %q urls %v", got.URL, got.URLs)
+	}
+	if len(got.Routes) != 3 || !got.Routes[0].Applied || !got.Routes[1].Applied || got.Routes[2].Applied ||
+		!reflect.DeepEqual(got.Routes[0].Hosts, []string{"dd.test", "app.local.dd.io", "*.status.local.dd.io"}) ||
+		!reflect.DeepEqual(got.Routes[1].Hosts, []string{"ws.local.dd.io"}) || got.Routes[2].Hosts != nil {
+		t.Fatalf("%+v", got.Routes)
+	}
+	// A second web route that is not serving is not applied.
+	st.WebLocalPorts = map[int]int{8220: 8220}
+	if got := agentProject(p, st, 18443); got.Routes[1].Applied || got.URLs[3] != "https://ws.local.dd.io:18443" {
+		t.Fatalf("%+v %v", got.Routes, got.URLs)
 	}
 }

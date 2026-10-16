@@ -185,25 +185,48 @@ func (s *agentSource) Projects(origin string) []agentapi.Project {
 		if eng != nil {
 			st = eng.Status(p.Name)
 		}
-		running := st.State == engine.StateRunning
-		ap := agentapi.Project{
-			Name: p.Name, Path: p.Path, URL: siteURL(p.Alias, s.httpsPort), State: string(st.State),
-			Routes: []agentapi.Route{},
-		}
-		if st.State == engine.StateError || st.State == engine.StateDegraded {
-			ap.Error = st.Message
-		}
-		for _, r := range p.Routes {
-			applied := running && r.Role != config.RoleIgnore
-			if r.Role == config.RoleWeb {
-				ap.Web = r.Port
-				applied = applied && st.WebLocalPort != 0
-			}
-			ap.Routes = append(ap.Routes, agentapi.Route{Port: r.Port, Role: string(r.Role), Label: r.Label, Applied: applied})
-		}
-		out = append(out, ap)
+		out = append(out, agentProject(p, st, s.httpsPort))
 	}
 	return out
+}
+
+// agentProject is p as an agent sees it, given its engine status. A web
+// route is applied only when the engine has a local port for it, since a
+// project with several web routes can serve some and not others.
+func agentProject(p config.Project, st engine.ProjectStatus, httpsPort int) agentapi.Project {
+	running := st.State == engine.StateRunning
+	ap := agentapi.Project{
+		Name: p.Name, Path: p.Path, URL: siteURL(p.Alias, httpsPort), State: string(st.State),
+		URLs: []string{}, Routes: []agentapi.Route{},
+	}
+	if st.State == engine.StateError || st.State == engine.StateDegraded {
+		ap.Error = st.Message
+	}
+	web := p.Web()
+	for _, w := range web {
+		for _, h := range w.Hosts {
+			ap.URLs = append(ap.URLs, siteURL(h, httpsPort))
+		}
+	}
+	for _, r := range p.Routes {
+		applied := running && r.Role != config.RoleIgnore
+		route := agentapi.Route{Port: r.Port, Role: string(r.Role), Label: r.Label}
+		if r.Role == config.RoleWeb {
+			if ap.Web == 0 {
+				ap.Web = r.Port
+			}
+			applied = applied && st.WebLocalPorts[r.Port] != 0
+			for _, w := range web {
+				if w.Port == r.Port {
+					route.Hosts = w.Hosts
+					break
+				}
+			}
+		}
+		route.Applied = applied
+		ap.Routes = append(ap.Routes, route)
+	}
+	return ap
 }
 
 // siteURL is where the browser reaches alias.

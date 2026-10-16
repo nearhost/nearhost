@@ -44,17 +44,22 @@ type Route struct {
 	Role    string `json:"role"`
 	Label   string `json:"label"`
 	Applied bool   `json:"applied"`
+	// Hosts are the hosts a web route is served at, patterns as written.
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // Project is a configured project as an agent sees it.
 type Project struct {
-	Name   string  `json:"name"`
-	Path   string  `json:"path"`
-	URL    string  `json:"url"`
-	State  string  `json:"state"`
-	Web    int     `json:"web"`
-	Routes []Route `json:"routes"`
-	Error  string  `json:"error,omitempty"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	URL  string `json:"url"`
+	// URLs is every URL the project's web routes are served at, the alias
+	// URL first, so an agent can tell a user where each service lives.
+	URLs   []string `json:"urls"`
+	State  string   `json:"state"`
+	Web    int      `json:"web"`
+	Routes []Route  `json:"routes"`
+	Error  string   `json:"error,omitempty"`
 }
 
 // Source answers the status calls.
