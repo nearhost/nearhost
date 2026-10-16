@@ -1,0 +1,21 @@
+npm/cli/README.md
+  s_c232e8446224ef::t_57601fc17cf884 1,13
+README.md
+  s_c232e8446224ef::t_57601fc17cf884 1,13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2327b56cce3d13e85eb201cb14746920684dcc13",
+  "prompts": {},
+  "sessions": {
+    "s_c232e8446224ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15ab410e-539a-45e5-8bd6-3ee7f0b95031",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
