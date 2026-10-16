@@ -206,12 +206,14 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 	automation := map[string]any{"policies": policies}
 	if len(patterns) > 0 {
-		// A certificate's wildcard covers only its leftmost label, so a
-		// pattern cannot be a subject. Each name a pattern serves is issued
-		// its own certificate at its first handshake instead, by this
-		// catch-all policy, and the permission module refuses any name that
-		// matches no pattern, so no one can have certificates issued for
-		// names that are not served.
+		// A certificate's wildcard can only be its leftmost label, so a
+		// pattern with * anywhere else, such as internal.*.local.example.io,
+		// cannot be a subject. Rather than treat *.example.io one way and
+		// the rest another, every pattern goes on demand: each name a
+		// pattern serves is issued its own certificate at its first
+		// handshake, by this catch-all policy, and the permission module
+		// refuses any name that matches no pattern, so no one can have
+		// certificates issued for names that are not served.
 		policies = append(policies, map[string]any{
 			"on_demand": true,
 			"issuers":   []any{map[string]any{"module": "internal"}},
@@ -242,9 +244,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 		// Automatic HTTPS redirects only the names it manages, so the
 		// patterns get their own 308s on the http port, for loopback
-		// clients as on https. Automatic HTTPS finds this server listening
-		// there and adds the exact hosts' redirects to it, after these
-		// routes.
+		// clients only. Automatic HTTPS finds this server listening there
+		// and appends its own redirects after these routes, ending with a
+		// catch-all that answers any client on the http port, loopback or
+		// not, with a redirect to https at the host the request named. It
+		// shows nothing a request did not already name, and the https
+		// server still refuses the handshake of a client not on loopback.
 		redirects := make([]any, 0, len(patterns))
 		for _, p := range patterns {
 			redirects = append(redirects, map[string]any{

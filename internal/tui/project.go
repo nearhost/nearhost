@@ -197,12 +197,20 @@ func (m *Model) trackUptime() {
 }
 
 // localPort is where a route can be reached on this machine, or "" when it
-// is not forwarded.
+// is not forwarded. Each web route has a local port of its own; a status
+// without WebLocalPorts only knows the primary's, so only the primary
+// shows it.
 func localPort(p config.Project, r config.Route, st engine.ProjectStatus) string {
 	switch r.Role {
 	case config.RoleWeb:
-		if st.WebLocalPort != 0 {
-			return strconv.Itoa(st.WebLocalPort)
+		local := st.WebLocalPorts[r.Port]
+		if st.WebLocalPorts == nil {
+			if primary, _ := p.WebRoute(); primary.Port == r.Port {
+				local = st.WebLocalPort
+			}
+		}
+		if local != 0 {
+			return strconv.Itoa(local)
 		}
 	case config.RoleLoopback:
 		if p.Server != config.LocalServer {
@@ -222,7 +230,7 @@ func fixFor(st engine.State, reason string, serverUp bool, host string) string {
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry.
 		if reason != "" {
-			return "Press enter and approve the password prompt, or add the alias to /etc/hosts yourself and run nearhost with --no-hosts."
+			return "Press enter and approve the password prompt, or add the project's hosts to /etc/hosts yourself and run nearhost with --no-hosts."
 		}
 	case engine.StateError:
 		if !serverUp {

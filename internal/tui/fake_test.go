@@ -158,7 +158,7 @@ func (f *fakeBackend) HostsState() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
-	return "2 aliases"
+	return "2 names"
 }
 func (f *fakeBackend) machineReads() int {
 	f.mu.Lock()

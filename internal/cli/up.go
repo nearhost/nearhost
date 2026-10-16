@@ -35,6 +35,9 @@ type upBackend struct {
 	// ensureHosts makes the aliases resolve to this machine and gives up when
 	// ctx ends. It is not used with --no-hosts.
 	ensureHosts func(ctx context.Context, aliases []string) error
+	// lookup finds the addresses DNS gives a name, so the engine leaves out
+	// of the hosts file the names DNS already sends to this machine.
+	lookup hosts.Lookup
 	// notify listens, from the call until the release, for the signals that
 	// ask the process to stop. The context ends at the first of them (or
 	// with parent) and starts the shutdown; the channel is closed at the
@@ -45,10 +48,12 @@ type upBackend struct {
 	agents agentsBackend
 }
 
-// systemUp is the production backend. Only NewRoot wires it in.
-func systemUp() upBackend {
+// systemUp is the production backend. Only NewRoot wires it in, with the
+// lookup it shares with the interface and doctor.
+func systemUp(lookup hosts.Lookup) upBackend {
 	return upBackend{
-		trust: systemTrust(),
+		trust:  systemTrust(),
+		lookup: lookup,
 		ensureHosts: func(ctx context.Context, aliases []string) error {
 			exe, err := os.Executable()
 			if err != nil {
@@ -147,7 +152,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	opts, err := engineOptions(b.ssh, flags, b.ensureHosts)
+	opts, err := engineOptions(b.ssh, flags, b.ensureHosts, b.lookup)
 	if err != nil {
 		return err
 	}
@@ -320,8 +325,9 @@ func upCommand(name string) string {
 }
 
 // engineOptions builds the engine's options from the standard directories.
-// ensureHosts updates the hosts block; it is not used with --no-hosts.
-func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context, []string) error) (engine.Options, error) {
+// ensureHosts updates the hosts block and lookup filters the names it is
+// given; neither is used with --no-hosts.
+func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context, []string) error, lookup hosts.Lookup) (engine.Options, error) {
 	runDir, err := config.RunDir()
 	if err != nil {
 		return engine.Options{}, err
@@ -340,7 +346,7 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		opts.EnsureHosts = askOnce(ensureHosts)
 		// Both `nearhost up` and the interface build their options here, so
 		// both skip names whose public DNS already points at this machine.
-		opts.Lookup = hosts.DNSLookup
+		opts.Lookup = lookup
 	}
 	return opts, nil
 }

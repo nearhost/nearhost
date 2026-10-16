@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/registry"
 	"github.com/nearhost/nearhost/internal/testutil"
@@ -204,7 +205,7 @@ func TestConfigFlagOverridesTheDefaultPath(t *testing.T) {
 // A seam left nil would only show as a panic on a real machine, so check the
 // production backends without calling anything in them.
 func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
-	for name, backend := range map[string]any{"up": systemUp(), "add": systemAdd(), "doctor": systemDoctor(), "trust": systemTrust()} {
+	for name, backend := range map[string]any{"up": systemUp(hosts.DNSLookup), "add": systemAdd(), "doctor": systemDoctor(hosts.DNSLookup), "trust": systemTrust()} {
 		v := reflect.ValueOf(backend)
 		for i := 0; i < v.NumField(); i++ {
 			if f := v.Field(i); f.Kind() == reflect.Func && f.IsNil() {
@@ -212,7 +213,7 @@ func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
 			}
 		}
 	}
-	if systemDoctor().goos == "" {
+	if systemDoctor(hosts.DNSLookup).goos == "" {
 		t.Error("doctor backend: goos is not set")
 	}
 }

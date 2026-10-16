@@ -623,7 +623,9 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 				web++
 			}
 		}
-		if web != 1 {
+		// More than one web route is allowed: a second one is kept when it
+		// has hosts of its own, and Validate on save says what is amiss.
+		if web == 0 {
 			f.err = "choose the web route with ← or →"
 			return nil
 		}
@@ -670,12 +672,14 @@ func (f *projectForm) toggleRoute(i int) {
 	f.err = ""
 }
 
-// setRole gives route i role; a route made web takes the place of the one
-// that was.
+// setRole gives route i role; a route made web takes the place of the web
+// route without hosts. A web route with hosts of its own is a site the user
+// wrote by hand, so it stays web; Validate on save reports a project that
+// ends up inconsistent.
 func (f *projectForm) setRole(i int, role config.Role) {
 	if role == config.RoleWeb {
 		for j := range f.routes {
-			if f.routes[j].Role == config.RoleWeb {
+			if j != i && f.routes[j].Role == config.RoleWeb && len(f.routes[j].Hosts) == 0 {
 				f.routes[j].Role = config.RoleIgnore
 			}
 		}
@@ -856,7 +860,8 @@ func (f *projectForm) discover() tea.Cmd {
 }
 
 // toRoutes goes on to the routes step with what discovery found. When
-// editing, each port still found keeps its saved role and label, a saved
+// editing, each port still found keeps its saved role, label and hosts
+// (discovery never finds hosts, so they would otherwise be lost), a saved
 // route no longer found is kept and marked, and a new port found does not
 // take the web route from the saved one.
 func (f *projectForm) toRoutes() {
@@ -871,6 +876,7 @@ func (f *projectForm) toRoutes() {
 		for i, r := range f.routes {
 			if s, ok := saved[r.Port]; ok {
 				f.routes[i].Role, f.routes[i].Label = s.Role, s.Label
+				f.routes[i].Hosts = append([]string(nil), s.Hosts...)
 				delete(saved, r.Port)
 			} else if r.Role == config.RoleWeb && savedWeb {
 				f.routes[i].Role = config.RoleIgnore

@@ -1288,7 +1288,7 @@ func TestHostsFailureLeavesProjectStopped(t *testing.T) {
 	if st.State != StateStopped || st.WebLocalPort != 0 {
 		t.Fatalf("status = %+v, want stopped", st)
 	}
-	for _, want := range []string{"myapp.test", "not resolvable", "start the project again"} {
+	for _, want := range []string{`project "myapp"'s hosts are not resolvable`, "start the project again"} {
 		if !strings.Contains(st.Message, want) {
 			t.Fatalf("message %q does not contain %q", st.Message, want)
 		}

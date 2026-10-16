@@ -99,7 +99,7 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 		"ok    port 80          free\n" +
 		"ok    local CA         trusted by the system trust store\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
-		"ok    hosts block      2 aliases\n" +
+		"ok    hosts block      2 names\n" +
 		"ok    server mini      ssh mini.lan works without a prompt\n" +
 		"\n" +
 		"All checks passed.\n"
@@ -281,7 +281,7 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 		if err != nil {
 			t.Fatalf("doctor: %v\n%s", err, out)
 		}
-		wantContains(t, out, "ok    hosts block      no aliases configured\n")
+		wantContains(t, out, "ok    hosts block      no names configured\n")
 	})
 }
 
@@ -470,7 +470,7 @@ func TestDoctorHostsCheckExpectsARouteHostOnlyWhenDNSDoesNotResolveIt(t *testing
 		want   string
 		failed bool
 	}{
-		{"resolves to this machine", []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil, "ok    hosts block      1 alias\n", false},
+		{"resolves to this machine", []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil, "ok    hosts block      1 name\n", false},
 		{"NXDOMAIN", nil, &net.DNSError{Err: "no such host", Name: "app.local.example.io", IsNotFound: true}, "FAIL  hosts block      missing app.local.example.io\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

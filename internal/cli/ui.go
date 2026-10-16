@@ -55,10 +55,11 @@ type uiBackend struct {
 	updateNotice func() <-chan string
 }
 
-// systemUI is the production backend. Only NewRoot wires it in.
-func systemUI() uiBackend {
+// systemUI is the production backend. Only NewRoot wires it in, with the
+// lookup the engine, the hosts state and doctor share.
+func systemUI(lookup hosts.Lookup) uiBackend {
 	return uiBackend{
-		up: systemUp(),
+		up: systemUp(lookup),
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
@@ -82,7 +83,7 @@ func systemUI() uiBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
-		lookup:  hosts.DNSLookup,
+		lookup:  lookup,
 		open:    openBrowser,
 		workDir: os.Getwd,
 		presets: systemPresets(),
@@ -138,7 +139,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// Every sudo the interface runs, the CA's included, which cannot be
 	// given a prompt of its own, words its prompt as Nearhost's.
 	os.Setenv("SUDO_PROMPT", terminalPrompt)
-	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(root, hosts.DefaultPath, b.applier))
+	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(root, hosts.DefaultPath, b.applier), b.lookup)
 	if err != nil {
 		return err
 	}

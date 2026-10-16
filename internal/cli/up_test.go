@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -278,10 +279,10 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 	out := u.out.String()
 	for _, name := range []string{"one", "two"} {
 		wantContains(t, out,
-			"\n"+name+": stopped: alias "+name+".test is not resolvable: the hosts file was not updated (",
+			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
 			"sudo hosts apply: exit status 1")
 	}
-	if n := strings.Count(out, "  fix: run `nearhost up` again and approve the password prompt, or add the alias to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
+	if n := strings.Count(out, "  fix: run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
 		t.Errorf("expected the fix once under each project, found %d:\n%s", n, out)
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {
@@ -432,11 +433,35 @@ func TestAskOnceRemembersARefusalButNotAnInterruption(t *testing.T) {
 	}
 }
 
+// The engine filters the hosts file names through the lookup it is given,
+// the one instance the interface and doctor share, and through none with
+// --no-hosts, which writes no hosts file.
+func TestEngineOptionsUseTheGivenLookup(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	calls := 0
+	lookup := func(context.Context, string) ([]netip.Addr, error) { calls++; return nil, nil }
+	opts, err := engineOptions(sshClient{}, serveFlags{}, func(context.Context, []string) error { return nil }, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Lookup == nil {
+		t.Fatal("no lookup")
+	}
+	_, _ = opts.Lookup(context.Background(), "app.example.io")
+	if calls != 1 {
+		t.Errorf("the given lookup was called %d times", calls)
+	}
+	opts, err = engineOptions(sshClient{}, serveFlags{noHosts: true}, nil, lookup)
+	if err != nil || opts.Lookup != nil {
+		t.Errorf("--no-hosts: lookup set (%v)", err)
+	}
+}
+
 // The proxy keeps exchanges unless --no-capture says not to.
 func TestCaptureFollowsTheFlag(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, off := range []bool{false, true} {
-		opts, err := engineOptions(sshClient{}, serveFlags{noCapture: off}, nil)
+		opts, err := engineOptions(sshClient{}, serveFlags{noCapture: off}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

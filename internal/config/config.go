@@ -111,7 +111,8 @@ func (p Project) AllHosts() []string {
 // same, ignoring case. An exact host under another project's pattern does not
 // clash, because the exact host is the more specific match and wins. The
 // project in c named like p is skipped, so a stored project can be checked
-// against its own config.
+// against its own config. The approval and enable flows in later stages
+// will use it to refuse a clash before the config is saved.
 func (c *Config) HostClash(p Project) (host, other string, clash bool) {
 	taken := map[string]string{}
 	for _, q := range c.Projects {
@@ -146,7 +147,10 @@ func ValidProjectAlias(alias string) error {
 
 // HostsFileNames lists the names nearhost puts in the hosts file for this
 // config before any DNS filtering: the valid aliases of all projects and the
-// exact hosts of their web routes, sorted and without duplicates. localhost
+// exact hosts of the web routes of enabled ones, sorted and without
+// duplicates. A disabled project's hosts stay out because, unlike a .test
+// alias, a real domain also has a site elsewhere, and an entry here would
+// hide it for a project nothing serves. localhost
 // and wildcard patterns are left out, as a hosts file resolves neither, and
 // so is an invalid alias, which no project is started with. It is the single
 // candidate list the engine, doctor and the interface share, so they cannot
@@ -164,6 +168,9 @@ func (c *Config) HostsFileNames() []string {
 		if ValidProjectAlias(p.Alias) == nil {
 			add(p.Alias)
 		}
+		if !p.Enabled {
+			continue
+		}
 		for _, r := range p.Routes {
 			if r.Role != RoleWeb {
 				continue
@@ -174,26 +181,6 @@ func (c *Config) HostsFileNames() []string {
 					add(h)
 				}
 			}
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// ExactHosts lists the exact hosts of every project, sorted and without
-// duplicates, leaving out localhost and wildcard patterns. These are the
-// candidates for the hosts file, which resolves neither of those.
-func (c *Config) ExactHosts() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range c.Projects {
-		for _, h := range p.AllHosts() {
-			h = strings.ToLower(h)
-			if h == "localhost" || hostname.IsPattern(h) || seen[h] {
-				continue
-			}
-			seen[h] = true
-			out = append(out, h)
 		}
 	}
 	sort.Strings(out)

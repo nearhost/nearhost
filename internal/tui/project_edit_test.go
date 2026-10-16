@@ -100,3 +100,55 @@ func TestRemoveProject(t *testing.T) {
 	}
 	wantScreen(t, m, "Removed myapp.")
 }
+
+// TestEditProjectKeepsHostsOfEveryWebRoute edits a project with two web
+// routes, each with hand-edited hosts: renaming it must keep both routes
+// web and keep their hosts, since the routes step starts from discovery.
+func TestEditProjectKeepsHostsOfEveryWebRoute(t *testing.T) {
+	cfg := sampleConfig()
+	cfg.Projects[1].Routes = []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Label: "app", Hosts: []string{"app.local.x.io"}},
+		{Port: 8230, Role: config.RoleWeb, Label: "ws", Hosts: []string{"ws.local.x.io"}},
+	}
+	f := newFake(t, cfg)
+	f.forms.files = &fakeFiles{home: "/home/dev", dirs: map[string]bool{"/srv/myapp": true}, drafts: map[string]Draft{
+		"/srv/myapp": {Routes: []config.Route{
+			{Port: 8220, Role: config.RoleWeb, Label: "app"},
+			{Port: 8230, Role: config.RoleIgnore, Label: "ws"},
+		}},
+	}}
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "myapp"))
+	settle(m, press(m, "e"))
+	press(m, "enter") // routes
+	press(m, "ctrl+u")
+	typeText(m, "shop")
+	settle(m, press(m, "enter"))
+	settle(m, press(m, "enter"))
+	p, ok := f.cfg.Project("shop")
+	if !ok || len(p.Routes) != 2 {
+		t.Fatalf("saved %+v %v\n%s", p, ok, screen(m))
+	}
+	want := map[int]string{8220: "app.local.x.io", 8230: "ws.local.x.io"}
+	for _, r := range p.Routes {
+		if r.Role != config.RoleWeb || len(r.Hosts) != 1 || r.Hosts[0] != want[r.Port] {
+			t.Errorf("route %d: role %s, hosts %v; want web, [%s]", r.Port, r.Role, r.Hosts, want[r.Port])
+		}
+	}
+}
+
+// TestMakingARouteWebKeepsWebRoutesWithHosts makes a third route web: the
+// web route with hosts stays web, as a route of its own, and only the one
+// without hosts is demoted.
+func TestMakingARouteWebKeepsWebRoutesWithHosts(t *testing.T) {
+	f := &projectForm{routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8230, Role: config.RoleWeb, Hosts: []string{"ws.local.x.io"}},
+		{Port: 9000, Role: config.RoleIgnore},
+	}}
+	f.setRole(2, config.RoleWeb)
+	got := []config.Role{f.routes[0].Role, f.routes[1].Role, f.routes[2].Role}
+	if got[0] != config.RoleIgnore || got[1] != config.RoleWeb || got[2] != config.RoleWeb {
+		t.Errorf("roles %v; want ignore, web, web", got)
+	}
+}
