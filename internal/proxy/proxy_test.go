@@ -886,14 +886,27 @@ func (h *harness) waitCerts(t *testing.T, hosts ...string) {
 }
 
 // certFor reports whether storage holds a certificate directory named host.
-func certFor(storage, host string) bool {
+// It fails the test when storage itself cannot be read: a walk that sees
+// nothing would otherwise report no certificate, and a check that one was
+// not issued would pass without looking.
+func certFor(t *testing.T, storage, host string) bool {
+	t.Helper()
 	found := false
-	filepath.WalkDir(storage, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() && d.Name() == host {
+	err := filepath.WalkDir(storage, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == storage {
+				return err
+			}
+			return nil
+		}
+		if d.IsDir() && d.Name() == host {
 			found = true
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatalf("reading the certificate storage: %v", err)
+	}
 	return found
 }
 
@@ -919,10 +932,15 @@ func TestOnDemandRefusesUnconfiguredName(t *testing.T) {
 	if _, err := h.handshake(t, "evil.example.com"); err == nil {
 		t.Fatal("handshake for an unconfigured name succeeded")
 	}
-	if certFor(h.storage, "evil.example.com") {
+	if certFor(t, h.storage, "evil.example.com") {
 		t.Fatal("a certificate was issued for an unconfigured name")
 	}
 	h.waitCerts(t, "pro.test")
+	// The control: certFor finds a certificate that was issued, so the
+	// check above looked where certificates are kept.
+	if !certFor(t, h.storage, "pro.test") {
+		t.Fatal("no certificate found for pro.test, which has one")
+	}
 }
 
 func TestPlainHTTPAnswers308ForEveryKindOfHost(t *testing.T) {

@@ -66,7 +66,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		return false, nil
 	}
 	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
-		return false, fmt.Errorf("create storage: %w", err)
+		return false, fmt.Errorf("create proxy storage: %w", err)
 	}
 	quietCaddy()
 	if err := caddy.Load(cfg, false); err != nil {

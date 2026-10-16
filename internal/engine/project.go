@@ -414,7 +414,8 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		e.mu.Lock()
 		run.web, run.webLocals, run.site = nil, nil, false
 		e.mu.Unlock()
-		return fmt.Errorf("proxy: %w", err)
+		// The proxy's errors already say they are the proxy's.
+		return err
 	}
 	return nil
 }

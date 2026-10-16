@@ -20,10 +20,11 @@ func init() {
 
 // Permission decides which names get a certificate on demand. A pattern
 // such as internal.*.local.example.io cannot be a certificate subject (a
-// certificate wildcard covers only the leftmost label), so each name a
-// pattern serves is issued its own certificate at its first handshake. Only
-// names matching a served pattern are allowed, so a client cannot make the
-// proxy issue certificates for names it does not serve.
+// certificate's wildcard can only be its leftmost label), and every pattern
+// is handled alike, so each name any pattern serves is issued its own
+// certificate at its first handshake. Only names matching a served pattern
+// are allowed, so a client cannot make the proxy issue certificates for
+// names it does not serve.
 type Permission struct {
 	Patterns []string `json:"patterns"`
 }
