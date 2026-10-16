@@ -1,0 +1,39 @@
+agents/nearhost/skills/nearhost/SKILL.md
+  s_b33b52432eafa1::t_cc252f349078ce 36-39
+internal/tui/server.go
+  s_b33b52432eafa1::t_9eaa1e1d19d3dd 12
+internal/cli/agents.go
+  s_b33b52432eafa1::t_f86d6c1127beb2 59,82,101
+internal/tui/home.go
+  s_b33b52432eafa1::t_9eaa1e1d19d3dd 74-75,77
+internal/transport/agent.go
+  s_b33b52432eafa1::t_4b94c8ee23f1f6 28-31,34-37,57-64,116,128,135-137,152-154
+internal/transport/session.go
+  s_b33b52432eafa1::t_4b94c8ee23f1f6 90-91
+agents/nearhost/skills/nearhost/scripts/nearhost.sh
+  s_b33b52432eafa1::t_218af8de74296b 48-50
+internal/transport/agent_test.go
+  s_b33b52432eafa1::t_88abd0eece1a0f 20,22-23,107,121,130,137,141,145-171
+internal/cli/agents_test.go
+  s_b33b52432eafa1::t_d158184e9cceed 77
+internal/agentapi/script_test.go
+  s_b33b52432eafa1::t_e98e8103103c9e 192-193
+internal/tui/proposals_test.go
+  s_b33b52432eafa1::t_866d384e146b18 176-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b83c8cf1e74376a53688ebe98e52ecd30fd39d58",
+  "prompts": {},
+  "sessions": {
+    "s_b33b52432eafa1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "134e9450-f2ff-4de4-b4ab-05e5f61b0288",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
