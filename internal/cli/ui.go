@@ -46,6 +46,9 @@ type uiBackend struct {
 	presets presetBackend
 	// sshConfig returns the user's OpenSSH client config.
 	sshConfig func() ([]byte, error)
+	// updateNotice delivers a line saying a new release is out, if one is;
+	// nil means no check.
+	updateNotice func() <-chan string
 }
 
 // systemUI is the production backend. Only NewRoot wires it in.
@@ -85,6 +88,7 @@ func systemUI() uiBackend {
 			}
 			return os.ReadFile(filepath.Join(home, ".ssh", "config"))
 		},
+		updateNotice: func() <-chan string { return updates.wait() },
 	}
 }
 
@@ -146,6 +150,13 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	m := tui.New(back, dir)
 	if agentNote != "" {
 		eng.Events().Publish(engine.Event{Message: agentNote})
+	}
+	if b.updateNotice != nil {
+		go func() {
+			for n := range b.updateNotice() {
+				eng.Events().Publish(engine.Event{Message: n})
+			}
+		}()
 	}
 	return b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)

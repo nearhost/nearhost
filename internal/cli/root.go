@@ -4,8 +4,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -27,6 +29,7 @@ func NewRoot() *cobra.Command {
 		newLsCmd(),
 		newPresetCmd(systemPresets()),
 		newDoctorCmd(systemDoctor()),
+		newUpdateCmd(systemUpdate()),
 	)
 	bindUI(root, systemUI())
 	return root
@@ -121,11 +124,25 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 
 // Main runs the CLI with the given arguments and returns the process exit code.
 func Main(args []string) int {
+	tty := term.IsTerminal(int(os.Stderr.Fd()))
+	if shouldCheckForUpdate(args, os.Getenv, Version, os.Geteuid(), tty) {
+		updates = startBackgroundCheck(Version, cachedLatest)
+	}
 	root := NewRoot()
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
+	err := root.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "nearhost:", err)
+	}
+	if n := updates.notice(500 * time.Millisecond); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
+	if err != nil {
 		return 1
 	}
 	return 0
 }
+
+// updates is this run's check for a new release, or nil when it makes none.
+// Main starts it, so the interface can say so too.
+var updates *backgroundCheck
