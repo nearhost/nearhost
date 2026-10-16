@@ -1,4 +1,4 @@
-<a href="https://nearhost.dev"><img src=".github/assets/header.png" alt="Nearhost. Run it anywhere. Open it here."></a>
+<a href="https://nearhost.dev"><img src="https://raw.githubusercontent.com/nearhost/.github/main/assets/header.png" alt="Nearhost. Run it anywhere. Open it here."></a>
 
 # Nearhost
 
@@ -10,7 +10,7 @@ curl -fsSL https://nearhost.dev/install.sh | sh
 
 [Website](https://nearhost.dev) · [Docs](https://nearhost.dev/docs/getting-started/introduction/) · [Releases](https://github.com/nearhost/nearhost/releases) · [npm](https://www.npmjs.com/package/@nearhost/cli)
 
-![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](.github/assets/tui.png)
+![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](https://raw.githubusercontent.com/nearhost/.github/main/assets/tui.png)
 
 ## Why Nearhost
 
@@ -245,7 +245,6 @@ make -C ../presets check NEARHOST="$PWD/nearhost"
 | `internal/agentapi` | The API coding agents reach Nearhost on |
 | `agents/nearhost` | The plugin and skill for coding agents |
 | `npm` | The `@nearhost/cli` launcher, its README, and the scripts that build and publish the npm packages from a release |
-| `.github/assets` | The mark, the README header (`render.sh` redraws it) and the screenshot |
 
 ### Contributing
 

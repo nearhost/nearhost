@@ -1,4 +1,4 @@
-[![Nearhost. Run it anywhere. Open it here.](https://raw.githubusercontent.com/nearhost/nearhost/main/.github/assets/header-npm.png)](https://nearhost.dev)
+[![Nearhost. Run it anywhere. Open it here.](https://raw.githubusercontent.com/nearhost/.github/main/assets/header-npm.png)](https://nearhost.dev)
 
 # Nearhost
 
@@ -10,7 +10,7 @@ npx @nearhost/cli
 
 [Website](https://nearhost.dev) · [Docs](https://nearhost.dev/docs/getting-started/introduction/) · [GitHub](https://github.com/nearhost/nearhost) · [Releases](https://github.com/nearhost/nearhost/releases)
 
-![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](https://raw.githubusercontent.com/nearhost/nearhost/main/.github/assets/tui.png)
+![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](https://raw.githubusercontent.com/nearhost/.github/main/assets/tui.png)
 
 ## Why Nearhost
 
