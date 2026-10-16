@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -190,7 +191,9 @@ func startProxy(t *testing.T, sites []Site) *harness {
 // startProxyWith is startProxy, keeping exchanges when capture is set.
 func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
 	t.Helper()
-	h := &harness{t: t, rec: &recorder{}, storage: t.TempDir(), httpsPort: freePort(t), httpPort: freePort(t)}
+	// Caddy can go on writing certificates to storage just after Stop, so
+	// the storage is removed with retries, as the engine harness does.
+	h := &harness{t: t, rec: &recorder{}, storage: testutil.TempDir(t, "nh-caddy-"), httpsPort: freePort(t), httpPort: freePort(t)}
 	SetSink(h.rec)
 	t.Cleanup(func() { SetSink(nil) })
 	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort, Capture: capture, Version: testVersion})
@@ -209,7 +212,28 @@ func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
 	}, "root certificate")
 	h.pool = x509.NewCertPool()
 	h.pool.AddCert(root)
+	// The home page makes localhost an exact host of every site set that
+	// does not claim it, and most tests never ask for it, so its certificate
+	// is waited for here, while the proxy is surely running: a wait at
+	// cleanup would hang for tests that stop the proxy or apply no sites
+	// themselves.
+	if servesHome(sites) {
+		h.waitCerts(t, homeHost)
+	}
 	return h
+}
+
+// servesHome reports whether BuildConfig serves the home page for sites.
+func servesHome(sites []Site) bool {
+	if len(sites) == 0 {
+		return false
+	}
+	for _, s := range sites {
+		if slices.Contains(s.Hosts, homeHost) {
+			return false
+		}
+	}
+	return true
 }
 
 // client returns an HTTPS client that dials the proxy's loopback port while
