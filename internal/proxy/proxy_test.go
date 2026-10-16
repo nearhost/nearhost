@@ -167,6 +167,9 @@ func upstream(t *testing.T, name string) *upstreamSrv {
 
 func addr(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
 
+// testVersion is the version the harness's proxy shows on its home page.
+const testVersion = "9.8.7-test"
+
 type harness struct {
 	t         *testing.T
 	p         *Proxy
@@ -190,7 +193,7 @@ func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
 	h := &harness{t: t, rec: &recorder{}, storage: t.TempDir(), httpsPort: freePort(t), httpPort: freePort(t)}
 	SetSink(h.rec)
 	t.Cleanup(func() { SetSink(nil) })
-	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort, Capture: capture})
+	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort, Capture: capture, Version: testVersion})
 	if err := h.p.Apply(sites); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -1052,4 +1055,54 @@ func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
 			}
 		})
 	}
+}
+
+// While no project serves localhost, the proxy answers there with its own
+// page, over https only, and only to GET and HEAD at /.
+func TestHomePageAtLocalhost(t *testing.T) {
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "a"))}})
+	resp, body := h.getEventually(h.client("localhost", false), "localhost", "/")
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("status %d, Content-Type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{"Run it anywhere.", "https://nearhost.dev", "Nearhost " + testVersion} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page does not hold %q", want)
+		}
+	}
+	c := h.client("localhost", false)
+	if r, _ := h.getEventually(c, "localhost", "/nope"); r.StatusCode != 404 {
+		t.Errorf("GET /nope: status %d, want 404", r.StatusCode)
+	}
+	r, err := c.Post(h.url("localhost", "/"), "text/plain", strings.NewReader("x"))
+	if err != nil {
+		t.Fatalf("POST /: %v", err)
+	}
+	r.Body.Close()
+	if r.StatusCode != 405 {
+		t.Errorf("POST /: status %d, want 405", r.StatusCode)
+	}
+	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 308 || r.Header.Get("Location") != "https://localhost/" {
+		t.Errorf("http POST /: %d %q, want 308 to https://localhost/", r.StatusCode, r.Header.Get("Location"))
+	}
+	// The page is no project's, so its access lines are dropped like any
+	// untagged line. A tagged request afterwards is logged after them.
+	h.getEventually(h.client("a.test", false), "a.test", "/after-home")
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/after-home") }, "log line for /after-home")
+	h.rec.mu.Lock()
+	defer h.rec.mu.Unlock()
+	for _, l := range h.rec.lines {
+		if strings.Contains(l, "/nope") {
+			t.Errorf("an access line for the home page reached the sink: %q", l)
+		}
+	}
+}
+
+// A project that serves localhost gets every request for it.
+func TestProjectServingLocalhostReplacesHomePage(t *testing.T) {
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: addr(named(t, "project"))}})
+	if got := h.body(t, "https://localhost/"); got != "project" {
+		t.Errorf("https://localhost/ answered %q, want the project's upstream", got)
+	}
+	h.waitCerts(t, "a.test")
 }

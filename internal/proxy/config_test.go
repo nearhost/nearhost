@@ -73,7 +73,7 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 		t.Errorf("server logs = %v, want only the default logger name", logs)
 	}
 	subjects := dig(t, cfg, "apps", "tls", "automation", "policies", 0, "subjects").([]any)
-	if len(subjects) != 2 || subjects[1] != "b.test" {
+	if !slices.Equal(strs(subjects), []string{"a.test", "b.test", "localhost"}) {
 		t.Errorf("subjects = %v", subjects)
 	}
 	if dig(t, cfg, "apps", "tls", "automation", "policies", 0, "issuers", 0, "module") != "internal" {
@@ -222,7 +222,7 @@ func TestBuildConfigAllowsSitesSharingAnAlias(t *testing.T) {
 		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"},
 		{Alias: "a.test", Hosts: []string{"api.example.io"}, Upstream: "127.0.0.1:2"},
 	})
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "api.example.io"}) {
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "api.example.io", "localhost"}) {
 		t.Fatalf("route hosts = %v", got)
 	}
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes")
@@ -299,8 +299,8 @@ func TestBuildConfigDisablesStorageClean(t *testing.T) {
 func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
 	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"}})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
-	if len(routes) != 3 {
-		t.Fatalf("got %d routes, want one per site and a final catch-all", len(routes))
+	if len(routes) != 4 {
+		t.Fatalf("got %d routes, want one per site, the home page and a final catch-all", len(routes))
 	}
 	for i, alias := range []string{"a.test", "b.test"} {
 		sets := dig(t, routes[i], "match").([]any)
@@ -340,7 +340,7 @@ func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
 			t.Errorf("TLS connection policy range %d = %v, want %s", j, r, loopbackRanges[j])
 		}
 	}
-	last := routes[2].(map[string]any)
+	last := routes[3].(map[string]any)
 	if m, ok := last["match"]; ok {
 		t.Errorf("the final route must match every request, got match %v", m)
 	}
@@ -420,8 +420,9 @@ func TestBuildConfigOrdersHostsAcrossSites(t *testing.T) {
 		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.redactr.pro", "internal.*.local.redactr.pro"}, Upstream: "127.0.0.1:8211"},
 		{Alias: "platform.test", Hosts: []string{"platform.test", "auth.local.redactr.pro"}, Upstream: "127.0.0.1:8210"},
 	})
-	// One Caddy route per host, then the final abort route.
-	want := []string{"auth.local.redactr.pro", "platform.test", "pro.test", "internal.*.local.redactr.pro", "*.local.redactr.pro"}
+	// One Caddy route per host, and the home page at localhost, then the
+	// final abort route.
+	want := []string{"auth.local.redactr.pro", "localhost", "platform.test", "pro.test", "internal.*.local.redactr.pro", "*.local.redactr.pro"}
 	if got := routeHosts(cfg); !slices.Equal(got, want) {
 		t.Fatalf("route hosts = %v, want %v", got, want)
 	}
@@ -439,10 +440,10 @@ func TestBuildConfigRejectsHostOnTwoSites(t *testing.T) {
 
 func TestBuildConfigLegacySiteServesAliasOnly(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test"}) {
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "localhost"}) {
 		t.Fatalf("route hosts = %v", got)
 	}
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"a.test"}) {
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"a.test", "localhost"}) {
 		t.Fatalf("subjects = %v", got)
 	}
 }
@@ -474,8 +475,8 @@ func TestBuildConfigIssuesPatternsOnDemand(t *testing.T) {
 	cfg := buildJSON(t, []Site{
 		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: "127.0.0.1:1"},
 	})
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"pro.test"}) {
-		t.Errorf("first policy subjects = %v, want only the exact host", got)
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost", "pro.test"}) {
+		t.Errorf("first policy subjects = %v, want only the exact hosts", got)
 	}
 	policies := dig(t, cfg, "apps", "tls", "automation", "policies").([]any)
 	if len(policies) != 2 {
@@ -517,8 +518,8 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 		t.Errorf("listen = %v, want :8080", got)
 	}
 	routes := srv["routes"].([]any)
-	if len(routes) != 4 {
-		t.Fatalf("routes = %v, want four", routes)
+	if len(routes) != 5 {
+		t.Fatalf("routes = %v, want five", routes)
 	}
 	aborts := func(r any) bool {
 		h := dig(t, r, "handle", 0).(map[string]any)
@@ -527,7 +528,7 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 	if got := strs(dig(t, routes[0], "match", 0, "not", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) || !aborts(routes[0]) {
 		t.Errorf("first route = %v, want an abort for clients not on loopback", routes[0])
 	}
-	for i, host := range []string{"pro.test", "*.local.example.pro"} {
+	for i, host := range []string{"localhost", "pro.test", "*.local.example.pro"} {
 		r := routes[i+1]
 		if got := strs(dig(t, r, "match", 0, "host")); !slices.Equal(got, []string{host}) {
 			t.Errorf("route %d host = %v, want %s", i+1, got, host)
@@ -541,7 +542,7 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 			t.Errorf("route %d handler = %v, want a 308 to https", i+1, h)
 		}
 	}
-	if last := routes[3].(map[string]any); last["match"] != nil || !aborts(last) {
+	if last := routes[4].(map[string]any); last["match"] != nil || !aborts(last) {
 		t.Errorf("last route = %v, want an abort with no matchers", last)
 	}
 }
@@ -551,8 +552,9 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 func TestBuildConfigHasHTTPServerWithoutPatterns(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
-	if len(routes) != 3 || !slices.Equal(strs(dig(t, routes[1], "match", 0, "host")), []string{"a.test"}) {
-		t.Errorf("routes = %v, want the abort, a.test's redirect and the abort", routes)
+	if len(routes) != 4 || !slices.Equal(strs(dig(t, routes[1], "match", 0, "host")), []string{"a.test"}) ||
+		!slices.Equal(strs(dig(t, routes[2], "match", 0, "host")), []string{"localhost"}) {
+		t.Errorf("routes = %v, want the abort, a.test's and localhost's redirects and the abort", routes)
 	}
 }
 
@@ -573,4 +575,96 @@ func strs(v any) []string {
 		out = append(out, s.(string))
 	}
 	return out
+}
+
+// homeRoutes are the routes of the https server whose handler is the home
+// page.
+func homeRoutes(t *testing.T, cfg map[string]any) []any {
+	t.Helper()
+	var out []any
+	for _, r := range dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any) {
+		for _, h := range dig(t, r, "handle").([]any) {
+			if dig(t, h, "handler") == homeModule {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}
+
+// While no project serves localhost, the proxy serves its own page there,
+// to loopback clients, with a certificate from the internal CA and a
+// redirect from http, like any exact host.
+func TestBuildConfigServesHomePageAtLocalhost(t *testing.T) {
+	raw, err := BuildConfig([]Site{
+		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"},
+	}, Options{StorageRoot: t.TempDir(), Version: "1.2.3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"localhost", "pro.test", "*.local.example.pro"}) {
+		t.Fatalf("route hosts = %v, want localhost among the exact hosts", got)
+	}
+	home := homeRoutes(t, cfg)
+	if len(home) != 1 {
+		t.Fatalf("%d home page routes, want one", len(home))
+	}
+	r := home[0].(map[string]any)
+	if got := strs(dig(t, r, "match", 0, "host")); !slices.Equal(got, []string{"localhost"}) {
+		t.Errorf("home route host = %v, want localhost", got)
+	}
+	if got := strs(dig(t, r, "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+		t.Errorf("home route remote_ip = %v, want loopback", got)
+	}
+	handle := dig(t, r, "handle").([]any)
+	if len(handle) != 1 || dig(t, handle[0], "version") != "1.2.3" {
+		t.Errorf("home route handlers = %v, want the home page alone, with the version", handle)
+	}
+	if r["terminal"] != true {
+		t.Error("home route must be terminal")
+	}
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost", "pro.test"}) {
+		t.Errorf("subjects = %v, want localhost and pro.test", got)
+	}
+	var redirects []string
+	for _, r := range dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any) {
+		if h := r.(map[string]any)["handle"].([]any)[0].(map[string]any); h["status_code"] == float64(308) {
+			redirects = append(redirects, strs(dig(t, r, "match", 0, "host"))...)
+		}
+	}
+	if !slices.Equal(redirects, []string{"localhost", "pro.test", "*.local.example.pro"}) {
+		t.Errorf("http redirects = %v, want localhost among them", redirects)
+	}
+}
+
+func TestBuildConfigHomePageVersionDefaultsToDev(t *testing.T) {
+	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
+	home := homeRoutes(t, cfg)
+	if len(home) != 1 || dig(t, home[0], "handle", 0, "version") != "dev" {
+		t.Errorf("home routes = %v, want one with version dev", home)
+	}
+}
+
+// A project that serves localhost gets it, and the home page is not served
+// at all, so no precedence has to decide.
+func TestBuildConfigLeavesLocalhostToAProjectThatServesIt(t *testing.T) {
+	cfg := buildJSON(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: "127.0.0.1:1"},
+	})
+	if home := homeRoutes(t, cfg); len(home) != 0 {
+		t.Errorf("home page routes = %v, want none", home)
+	}
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	if len(routes) != 3 {
+		t.Fatalf("routes = %v, want a.test, localhost and the final abort", routes)
+	}
+	r := routes[1]
+	if dig(t, r, "match", 0, "host", 0) != "localhost" || dig(t, r, "handle", 0, "alias") != "a.test" ||
+		dig(t, proxyHandler(t, r), "upstreams", 0, "dial") != "127.0.0.1:1" {
+		t.Errorf("localhost route = %v, want it proxied to a.test's upstream", r)
+	}
 }

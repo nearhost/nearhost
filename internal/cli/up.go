@@ -341,6 +341,7 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		SSHPath: ssh.path, SSHEnv: ssh.env,
 		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort,
 		Capture: !f.noCapture,
+		Version: Version,
 	}
 	if !f.noHosts {
 		opts.EnsureHosts = askOnce(ensureHosts)

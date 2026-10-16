@@ -2292,3 +2292,18 @@ func TestStartingADisabledProjectAsksForItsOwnHosts(t *testing.T) {
 		t.Fatalf("EnsureHosts calls = %v, want the last with %v", calls, want)
 	}
 }
+
+// The proxy's page at localhost names the version the engine was given.
+func TestProxyHomePageShowsTheVersion(t *testing.T) {
+	web := localProject("web", upstream(t, "ok"))
+	h := buildHarness(t, &config.Config{Projects: []config.Project{web}}, func(o *Options) { o.Version = "4.5.6-engine" })
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := h.eng.StartProject(bg, "web"); err != nil {
+		t.Fatalf("StartProject: %v", err)
+	}
+	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "Nearhost 4.5.6-engine") {
+		t.Fatalf("https://localhost/: status %d, footer with 4.5.6-engine: %v", code, strings.Contains(body, "4.5.6-engine"))
+	}
+}

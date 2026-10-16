@@ -473,3 +473,15 @@ func TestCaptureFollowsTheFlag(t *testing.T) {
 		t.Error("up has no --no-capture")
 	}
 }
+
+// The proxy's page at localhost shows this build's version.
+func TestEngineOptionsCarryTheVersion(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	opts, err := engineOptions(sshClient{}, serveFlags{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Version != Version {
+		t.Errorf("Version = %q, want %q", opts.Version, Version)
+	}
+}

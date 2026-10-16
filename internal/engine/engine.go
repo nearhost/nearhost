@@ -40,6 +40,9 @@ type Options struct {
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
 	Capture bool
+	// Version is the Nearhost version, shown on the proxy's page at
+	// https://localhost. Empty means dev.
+	Version string
 	// EnsureHosts makes every given name resolve to 127.0.0.1. It gets the
 	// hosts file names of the configuration (config.HostsFileNames: valid
 	// aliases and the exact hosts of web routes), less those Lookup finds DNS
@@ -170,7 +173,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
 		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture}),
+		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version}),
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
