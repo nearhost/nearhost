@@ -41,4 +41,4 @@ Run `sh .../nearhost.sh status` for the project holding this directory, or `stat
 - **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API. Pass on which one to update.
 - **Exit status 1**: Nearhost refused. Pass on its `error`.
-- **A sandbox denies the connection**: the agent's sandbox blocks Unix sockets. Tell the user that Nearhost needs access to `~/.nearhost/*.sock`, and see https://nearhost.dev/docs/ for how to allow it.
+- **A sandbox denies the connection**: your sandbox blocks Unix sockets. If you can ask to run that one command outside the sandbox, do so: approving it opens nothing else. Do not suggest settings that open every socket, such as `allowAllUnixSockets` or full network access, unless the user asks; they also expose sockets like Docker's. Otherwise tell the user that Nearhost needs `~/.nearhost/*.sock`, and point them to https://nearhost.dev/docs/getting-started/use-a-coding-agent/.
