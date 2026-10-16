@@ -467,3 +467,89 @@ func TestBuildConfigTagsBeforeCapture(t *testing.T) {
 		}
 	}
 }
+
+// Patterns cannot be certificate subjects, so their certificates come on
+// demand from a second policy, which only names the permission module allows.
+func TestBuildConfigIssuesPatternsOnDemand(t *testing.T) {
+	cfg := buildJSON(t, []Site{
+		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: "127.0.0.1:1"},
+	})
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"pro.test"}) {
+		t.Errorf("first policy subjects = %v, want only the exact host", got)
+	}
+	policies := dig(t, cfg, "apps", "tls", "automation", "policies").([]any)
+	if len(policies) != 2 {
+		t.Fatalf("policies = %v, want two", policies)
+	}
+	second := policies[1].(map[string]any)
+	if second["on_demand"] != true || second["subjects"] != nil || dig(t, second, "issuers", 0, "module") != "internal" {
+		t.Errorf("second policy = %v, want on_demand with the internal issuer and no subjects", second)
+	}
+	perm := dig(t, cfg, "apps", "tls", "automation", "on_demand", "permission").(map[string]any)
+	if perm["module"] != "nearhost" || !slices.Equal(strs(perm["patterns"]), []string{"internal.*.local.example.pro", "*.local.example.pro"}) {
+		t.Errorf("on_demand permission = %v", perm)
+	}
+	srv := dig(t, cfg, "apps", "http", "servers", "nearhost").(map[string]any)
+	if got := strs(dig(t, srv, "automatic_https", "skip_certificates")); !slices.Equal(got, []string{"internal.*.local.example.pro", "*.local.example.pro"}) {
+		t.Errorf("skip_certificates = %v", got)
+	}
+	if v, ok := srv["automatic_https"].(map[string]any)["disable_redirects"]; ok {
+		t.Errorf("redirects must stay on, got disable_redirects = %v", v)
+	}
+}
+
+// Automatic HTTPS does not redirect names it does not manage, so each
+// pattern gets its own 308 route on the http port, for loopback clients.
+func TestBuildConfigRedirectsPatternsFromHTTP(t *testing.T) {
+	raw, err := BuildConfig([]Site{
+		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"},
+	}, Options{StorageRoot: t.TempDir(), HTTPPort: 8080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	srv := dig(t, cfg, "apps", "http", "servers", "nearhost_http").(map[string]any)
+	if got := strs(srv["listen"]); !slices.Equal(got, []string{":8080"}) {
+		t.Errorf("listen = %v, want :8080", got)
+	}
+	routes := srv["routes"].([]any)
+	if len(routes) != 1 {
+		t.Fatalf("routes = %v, want one", routes)
+	}
+	if got := strs(dig(t, routes[0], "match", 0, "host")); !slices.Equal(got, []string{"*.local.example.pro"}) {
+		t.Errorf("host = %v", got)
+	}
+	if got := strs(dig(t, routes[0], "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+		t.Errorf("remote_ip = %v, want loopback", got)
+	}
+	h := dig(t, routes[0], "handle", 0).(map[string]any)
+	if h["handler"] != "static_response" || h["status_code"] != float64(308) ||
+		dig(t, h, "headers", "Location", 0) != "https://{http.request.host}{http.request.uri}" {
+		t.Errorf("handler = %v, want a 308 to https", h)
+	}
+}
+
+func TestBuildConfigWithoutPatternsHasNoOnDemand(t *testing.T) {
+	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
+	if _, ok := dig(t, cfg, "apps", "http", "servers").(map[string]any)["nearhost_http"]; ok {
+		t.Error("nearhost_http server present without patterns")
+	}
+	if _, ok := dig(t, cfg, "apps", "tls", "automation").(map[string]any)["on_demand"]; ok {
+		t.Error("on_demand present without patterns")
+	}
+	if n := len(dig(t, cfg, "apps", "tls", "automation", "policies").([]any)); n != 1 {
+		t.Errorf("%d policies, want 1", n)
+	}
+}
+
+func strs(v any) []string {
+	var out []string
+	a, _ := v.([]any)
+	for _, s := range a {
+		out = append(out, s.(string))
+	}
+	return out
+}
