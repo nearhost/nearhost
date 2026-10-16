@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0](https://github.com/nearhost/nearhost/compare/v0.5.0...v0.6.0) (2026-10-16)
+
+
+### Features
+
+* add host name patterns with wildcard labels and precedence ([#145](https://github.com/nearhost/nearhost/issues/145)) ([4a5a5b3](https://github.com/nearhost/nearhost/commit/4a5a5b37ed93b09c8f76fcf051776594f3f38225))
+* add nearhost update, and say when a newer release is out ([#143](https://github.com/nearhost/nearhost/issues/143)) ([ac7cffd](https://github.com/nearhost/nearhost/commit/ac7cffd7aed311ef2a6a10a555fe5df18178e2b3))
+* issue certificates for wildcard hosts on demand, and redirect them to https with a 308 ([#149](https://github.com/nearhost/nearhost/issues/149)) ([0af6adf](https://github.com/nearhost/nearhost/commit/0af6adf3dffd4ab4e7b27fa5d62e4abd88b382af))
+* let a project's web routes list hosts, and allow more than one web route ([#146](https://github.com/nearhost/nearhost/issues/146)) ([69a5c6c](https://github.com/nearhost/nearhost/commit/69a5c6c8af9d4c912b8b8874abc1c2b02eedf6b2))
+* put real-domain hosts in the hosts file only when DNS doesn't already send them to this machine ([#151](https://github.com/nearhost/nearhost/issues/151)) ([5b8a2b9](https://github.com/nearhost/nearhost/commit/5b8a2b974ce7892443d0e468b868687ae1a8e6bd))
+* serve a site at several hosts, exact names before wildcards, with logs tagged by project ([#148](https://github.com/nearhost/nearhost/issues/148)) ([df60b38](https://github.com/nearhost/nearhost/commit/df60b3840ed1ec604b2918604d1bb57dd1ae5a96))
+* show a Nearhost page at https://localhost when no project uses it ([#156](https://github.com/nearhost/nearhost/issues/156)) ([97107ac](https://github.com/nearhost/nearhost/commit/97107ac598634d1d5c603fb094ea3906082544ea))
+* show every URL a project serves, to coding agents and in the interface ([#153](https://github.com/nearhost/nearhost/issues/153)) ([ea1076c](https://github.com/nearhost/nearhost/commit/ea1076c40c35ccaf8a5e7921a114e09d6a23a778))
+* start every web route of a project, and refuse a host another project already serves ([#152](https://github.com/nearhost/nearhost/issues/152)) ([0d1dfb2](https://github.com/nearhost/nearhost/commit/0d1dfb230ff8f151783fa69625dacfda3ad41016))
+
+
+### Bug Fixes
+
+* close the multi-host follow-ups: hosts for hand-started projects, quiet reloads, and a port 80 that drops what it doesn't serve ([#155](https://github.com/nearhost/nearhost/issues/155)) ([0eb44ae](https://github.com/nearhost/nearhost/commit/0eb44aea52562773c5911a3ad99acf1d9553f7fe))
+* keep hosts through edits, cache DNS answers, and show each web route's port ([#154](https://github.com/nearhost/nearhost/issues/154)) ([175611a](https://github.com/nearhost/nearhost/commit/175611abb5306d4564c7e59d754b33e1cbf660f9))
+
 ## [0.5.0](https://github.com/nearhost/nearhost/compare/v0.4.0...v0.5.0) (2026-10-16)
 
 
