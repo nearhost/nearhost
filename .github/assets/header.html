@@ -2,12 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Nearhost npm header</title>
+    <title>Nearhost header</title>
     <!--
-      Source for npm/assets/header.png, the top of the README on npmjs.com. A copy of
-      the organisation header (nearhost/.github) with the npx command. render.sh
-      points LANDING at a checkout of nearhost/landing for the fonts.
-      Render with: sh npm/assets/render.sh
+      Source for header.png (README.md, with the curl installer) and header-npm.png
+      (npm/cli/README.md, with npx), after the organisation header in nearhost/.github.
+      render.sh fills in INSTALL and points LANDING at a checkout of nearhost/landing
+      for the fonts. Render with: sh .github/assets/render.sh
     -->
     <style>
       @font-face {
@@ -133,7 +133,7 @@
       </div>
       <h1>Run it anywhere.<br />Open it <span class="accent">here</span>.</h1>
       <div class="foot">
-        <div class="cmd"><span>$</span> npx @nearhost/cli</div>
+        <div class="cmd"><span>$</span> INSTALL</div>
         <div class="sub">Your remote dev server at <code>https://myapp.test</code></div>
       </div>
     </div>

@@ -1,36 +1,31 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/nearhost-mark-on-dark.svg">
-    <img src=".github/assets/nearhost-mark-on-light.svg" alt="Nearhost" width="96" height="96">
-  </picture>
-</p>
+<a href="https://nearhost.dev"><img src=".github/assets/header.png" alt="Nearhost. Run it anywhere. Open it here."></a>
 
-<h1 align="center">Nearhost</h1>
+# Nearhost
 
-<p align="center">
-  Reach local and remote dev servers in your browser at <code>https://&lt;name&gt;.test</code>, as if everything ran on your laptop.
-</p>
+Nearhost is a terminal app that opens a dev server running on one of your other machines at a local `https://myapp.test`, over the SSH config you already have. You install nothing on the server, and cookies, OAuth redirects, WebSockets and hot reload behave as they do on `localhost`.
 
-<p align="center">
-  <a href="https://nearhost.dev">Website</a> ·
-  <a href="https://nearhost.dev/docs/">Docs</a> ·
-  <a href="https://github.com/nearhost/nearhost/releases">Releases</a>
-</p>
+```sh
+curl -fsSL https://nearhost.dev/install.sh | sh
+```
 
----
+[Website](https://nearhost.dev) · [Docs](https://nearhost.dev/docs/getting-started/introduction/) · [Releases](https://github.com/nearhost/nearhost/releases) · [npm](https://www.npmjs.com/package/@nearhost/cli)
+
+![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](.github/assets/tui.png)
+
+## Why Nearhost
 
 You write code on a laptop and run it somewhere else: a desktop under the desk, a home server, a VPS, or a container on this machine. The app listens on `localhost` over there, and your browser is over here. That usually means an `ssh -L` per port, a certificate warning and a hot reload socket that fails to connect.
 
 Nearhost gives each project a name, a certificate your browser trusts and forwards that look after themselves. Add a project once and it is at `https://myapp.test` today, tomorrow and after a reboot.
 
-## Why Nearhost
-
 - **One address per project.** Every project gets a stable `.test` alias, so bookmarks, cookies and OAuth callbacks keep working.
-- **Real HTTPS.** A local certificate authority signs a certificate for each alias. Secure cookies, service workers and anything else that needs a secure context behave as they do in production.
+- **Real HTTPS, trusted once.** Nearhost creates its own local certificate authority on first run, and it signs a certificate for each alias. Secure cookies, service workers and anything else that needs a secure context behave as they do in production. No shared key ships in the binary, so nobody else can mint certificates for your names.
 - **Remote servers over the SSH you already have.** Nearhost runs your own `ssh`, so your `~/.ssh/config`, agent and jump hosts all apply. Nothing is installed or changed on the server, and no ports are opened there.
 - **Hot reload and WebSockets pass through.** Upgrades travel through the same connection as the page.
 - **Works with any stack.** If it listens on a port, Nearhost can serve it. It reads the port variables in your `.env` and proposes routes with no framework knowledge at all.
+- **Local projects too.** The `local` server needs no setup. Projects on your laptop get the same alias and certificate, so one tool covers the laptop and the servers.
 - **Presets when you want them.** Framework-specific setups, such as Docker Compose, Laravel Sail or Vite, come from preset registries. No registry is trusted until you add one, and you can publish and trust your own.
+- **Your traffic stays yours.** No relay, no account and no public URL. Requests travel over your own SSH connection.
 - **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts`, asks for `sudo` only when that block changes, and removes it again with `nearhost hosts clean`.
 - **Runs in the foreground.** `nearhost up` serves until you press Ctrl-C, and the forwards close with it. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
 
@@ -71,6 +66,8 @@ On Linux, allow the binary to bind ports 80 and 443. Run this again after each u
 ```sh
 sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 ```
+
+Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
 ## Quick start
 
@@ -172,6 +169,15 @@ Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this
 
 Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.
 
+## How it compares
+
+Nearhost serves your own machines to your own browser. To show work to someone else, use a public tunnel service instead.
+
+- **`ssh -L` by hand** gives you the same OpenSSH forwards, typed per port and retyped after every dropped connection, with no hostname and no certificate. Nearhost keeps one supervised SSH connection per server, adds and removes forwards while it runs, and puts a trusted `https://name.test` in front.
+- **Editor port forwarding** gives you `localhost:port` URLs while the editor window stays open. Nearhost runs in a terminal, and each project keeps the same HTTPS name every day.
+- **A VPN or mesh network** usually needs an agent on every machine and a dev server that listens beyond `localhost`. Nearhost installs nothing on the server, and the dev server keeps listening on `localhost`.
+- **A public tunnel service** sends your traffic through someone else's relay to a public URL, usually behind an account. Nearhost has no relay, no account and no public URL.
+
 ## Development
 
 You need Git and Go 1.26 or later (the exact version is in `go.mod`). Make is optional; each target is one Go command.
@@ -238,6 +244,8 @@ make -C ../presets check NEARHOST="$PWD/nearhost"
 | `internal/hosts` | The managed block in `/etc/hosts` |
 | `internal/agentapi` | The API coding agents reach Nearhost on |
 | `agents/nearhost` | The plugin and skill for coding agents |
+| `npm` | The `@nearhost/cli` launcher, its README, and the scripts that build and publish the npm packages from a release |
+| `.github/assets` | The mark, the README header (`render.sh` redraws it) and the screenshot |
 
 ### Contributing
 
