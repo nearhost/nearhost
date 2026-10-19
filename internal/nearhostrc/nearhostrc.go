@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"regexp"
 	"strconv"
@@ -96,9 +97,14 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&raw); err != nil {
+		// An empty or comments-only file has no YAML document at all, so
+		// Decode says EOF; what the file is missing is its version line.
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("%s needs version: %d", FileName, Version)
+		}
 		var te *yaml.TypeError
 		if !errors.As(err, &te) {
-			return nil, fmt.Errorf("%s: %w", FileName, err)
+			return nil, yamlError(err, restore)
 		}
 		// A newer file may use keys this build lacks, so say the version
 		// first; yaml still fills the fields it knows.
@@ -110,7 +116,7 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 				return nil, fmt.Errorf("%s: line %s: key %q is not understood by this version of Nearhost; update Nearhost, or remove it", FileName, m[1], m[2])
 			}
 		}
-		return nil, fmt.Errorf("%s: %w", FileName, err)
+		return nil, yamlError(err, restore)
 	}
 	switch {
 	case raw.Version == 0:
@@ -140,6 +146,12 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	}
 	sum := sha256.Sum256(canon)
 	return &File{Routes: routes, SHA256: hex.EncodeToString(sum[:])}, nil
+}
+
+// yamlError wraps a decoding error, putting back the ${VAR} references Parse
+// swapped for tokens, so the message quotes what the user wrote.
+func yamlError(err error, restore *strings.Replacer) error {
+	return fmt.Errorf("%s: %s", FileName, restore.Replace(err.Error()))
 }
 
 // checkRoutes rejects routes that could never become a valid project, so the
@@ -177,7 +189,17 @@ func checkRoutes(routes []Route) error {
 
 // fill turns one raw route into a Route, filling and checking its values.
 func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route, error) {
-	r := Route{Role: rr.Role, Label: rr.Label}
+	// Labels and roles go through the same token swap as ports and hosts,
+	// so put their references back and fill them too.
+	label, name, ok := discovery.Expand(restore.Replace(rr.Label), env)
+	if !ok {
+		return Route{}, unset(name)
+	}
+	role, name, ok := discovery.Expand(restore.Replace(string(rr.Role)), env)
+	if !ok {
+		return Route{}, unset(name)
+	}
+	r := Route{Role: config.Role(role), Label: label}
 	if r.Role == "" {
 		r.Role = config.RoleWeb
 	}

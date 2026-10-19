@@ -13,7 +13,11 @@ import (
 // first, in file order, so its first web route becomes the primary one. Hosts
 // the user added by hand to a port the file still lists are kept after the
 // file's own; a host counts as added by hand when p had it on that port but
-// the last approved snapshot did not. Routes the file doesn't list are kept
+// the last approved snapshot did not. Hand-added hosts on a port the file no
+// longer lists, as when APP_PORT moves, follow that port's approved hosts to
+// the file route that now lists any of them, or go to the primary web route
+// when none does, so a port move never loses them; they were already served,
+// so moving them needs no approval. Routes the file doesn't list are kept
 // from discovered (or from p.Routes when discovered is nil) so they stay
 // visible, but any that were web are demoted to ignore, since the file is now
 // the only thing that says what is served. A demoted route loses its hosts,
@@ -48,6 +52,8 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 		current[r.Port] = r.Hosts
 	}
 
+	moved := movedHosts(p, f, approved)
+
 	routes := make([]config.Route, 0, len(f.Routes))
 	snapshot := make([]config.Route, 0, len(f.Routes))
 	listed := map[int]bool{}
@@ -75,6 +81,11 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 					add(h)
 				}
 			}
+			for _, h := range moved[fr.Port] {
+				if !inFile[strings.ToLower(h)] && (isPrimary || !strings.EqualFold(h, p.Alias)) {
+					add(h)
+				}
+			}
 		}
 		routes = append(routes, r)
 		snapshot = append(snapshot, config.Route{Port: fr.Port, Role: fr.Role, Label: fr.Label, Hosts: append([]string(nil), fr.Hosts...)})
@@ -98,6 +109,50 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 	p.Routes = routes
 	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot}
 	return p, nil
+}
+
+// movedHosts finds the hand-added hosts of p's web routes on ports the file
+// no longer lists and says which file port each should move to, keyed by
+// that port, in p's route order. Only ports the approved snapshot had count:
+// a port the file never listed was not moved by it, so its hosts go with the
+// route when it is demoted, as before. A port's hosts go to the first file web
+// route that lists any host the snapshot approved on the old port, since that
+// is where the file moved the port; otherwise they go to the primary web
+// route.
+func movedHosts(p config.Project, f *File, approved map[int][]string) map[int][]string {
+	listed := map[int]bool{}
+	primary := 0
+	for _, fr := range f.Routes {
+		listed[fr.Port] = true
+		if fr.Role == config.RoleWeb && primary == 0 {
+			primary = fr.Port
+		}
+	}
+	moved := map[int][]string{}
+	for _, r := range p.Routes {
+		if _, inSnapshot := approved[r.Port]; !inSnapshot || listed[r.Port] || r.Role != config.RoleWeb {
+			continue
+		}
+		dest := primary
+	find:
+		for _, fr := range f.Routes {
+			if fr.Role != config.RoleWeb {
+				continue
+			}
+			for _, h := range approved[r.Port] {
+				if containsFold(fr.Hosts, h) {
+					dest = fr.Port
+					break find
+				}
+			}
+		}
+		for _, h := range r.Hosts {
+			if !containsFold(approved[r.Port], h) {
+				moved[dest] = append(moved[dest], h)
+			}
+		}
+	}
+	return moved
 }
 
 func containsFold(list []string, h string) bool {

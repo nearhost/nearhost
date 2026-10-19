@@ -107,3 +107,29 @@ func TestParseUnclosedReferenceInCommentKeepsRoutes(t *testing.T) {
 		t.Fatalf("Parse = %+v, %v", f, err)
 	}
 }
+
+func TestParseFillsVariablesInLabels(t *testing.T) {
+	f, err := Parse([]byte("version: 1\nroutes:\n  - port: 1\n    label: ws-${X}\n"), map[string]string{"X": "reverb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Routes[0].Label; got != "ws-reverb" {
+		t.Fatalf("Label = %q, want ws-reverb", got)
+	}
+}
+
+func TestParseErrorsShowVariablesNotTokens(t *testing.T) {
+	_, err := Parse([]byte("version: 1\nroutes:\n  - port: 1\n    hosts: ${H}\n"), nil)
+	if err == nil || !strings.Contains(err.Error(), "${H}") || strings.Contains(err.Error(), "nhrcvar") {
+		t.Fatalf("err = %v, want the variable ${H} and no placeholder token", err)
+	}
+}
+
+func TestParseEmptyFileAsksForVersion(t *testing.T) {
+	for _, data := range []string{"", "# only a comment\n# and another\n"} {
+		_, err := Parse([]byte(data), nil)
+		if err == nil || err.Error() != ".nearhostrc needs version: 1" {
+			t.Errorf("Parse(%q) = %v, want .nearhostrc needs version: 1", data, err)
+		}
+	}
+}
