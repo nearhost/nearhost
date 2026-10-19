@@ -152,15 +152,21 @@ func driftFindings(in Input, rcFound bool) []Finding {
 }
 
 // unservedHostFindings reports the hosts that the project's settings name for
-// a port it serves, when no web route serves them. A host is served when a web
-// route of the project names it exactly or through a pattern, on any port. A
-// candidate on a port the project does not serve is left to routes.unserved-port.
+// a port it has a route for, when no web route serves them. A host is served
+// when a web route of the project names it exactly or through a pattern, on
+// any port. On a port saved as ignore or loopback, the fix makes it web first,
+// since the edit form adds inferred hosts only to web routes. A candidate on a
+// port the project has no route for is left to routes.unserved-port.
 func unservedHostFindings(p config.Project, web []discovery.Candidate) []Finding {
 	var served []string
 	ports := map[int]bool{}
 	for _, w := range p.Web() {
 		ports[w.Port] = true
 		served = append(served, w.Hosts...)
+	}
+	configured := map[int]bool{}
+	for _, r := range p.Routes {
+		configured[r.Port] = true
 	}
 	isServed := func(h string) bool {
 		for _, s := range served {
@@ -174,7 +180,7 @@ func unservedHostFindings(p config.Project, web []discovery.Candidate) []Finding
 	var out []Finding
 	seen := map[string]bool{}
 	for _, c := range web {
-		if !ports[c.Port] {
+		if !configured[c.Port] {
 			continue
 		}
 		for _, h := range c.Hosts {
@@ -182,12 +188,15 @@ func unservedHostFindings(p config.Project, web []discovery.Candidate) []Finding
 				continue
 			}
 			seen[h] = true
+			fix := fmt.Sprintf("Edit the project in Nearhost: select it and press e. The form adds %s for you to approve.", h)
+			if !ports[c.Port] {
+				fix = fmt.Sprintf("Edit the project in Nearhost: select it and press e, make port %d a web route, and add %s.", c.Port, h)
+			}
 			out = append(out, Finding{
 				ID:       "routes.unserved-host",
 				Severity: SeverityWarning,
 				Message:  fmt.Sprintf("%s is named by the project's settings for port %d, but Nearhost doesn't serve it", h, c.Port),
-				Fix: Fix{Kind: FixNearhost, Text: fmt.Sprintf(
-					"Edit the project in Nearhost: select it and press e. The form adds %s for you to approve.", h)},
+				Fix:      Fix{Kind: FixNearhost, Text: fix},
 			})
 		}
 	}
