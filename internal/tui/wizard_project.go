@@ -1005,26 +1005,52 @@ func (f *projectForm) discover() tea.Cmd {
 }
 
 // toRoutes goes on to the routes step with what discovery found. When
-// editing, each port still found keeps its saved role, label and hosts
-// (discovery never finds hosts, so they would otherwise be lost), a saved
-// route no longer found is kept and marked, and a new port found does not
-// take the web route from the saved one.
+// editing, each port still found keeps its saved role, label and hosts, and
+// a saved web route also gets the hosts discovery infers that are not on any
+// route of the form or the alias yet; a saved route no longer found is kept
+// and marked; and a new port found does not take the web route from the
+// saved one, unless it has hosts, when it is web but after the saved primary.
 func (f *projectForm) toRoutes() {
 	f.routes = append([]config.Route(nil), f.draft.Routes...)
 	if f.edit != nil {
-		saved := map[int]config.Route{}
-		savedWeb := false
+		saved, wasSaved := map[int]config.Route{}, map[int]bool{}
+		savedWeb, primary := false, 0
 		for _, r := range f.edit.Routes {
-			saved[r.Port] = r
-			savedWeb = savedWeb || r.Role == config.RoleWeb
+			saved[r.Port], wasSaved[r.Port] = r, true
+			if r.Role == config.RoleWeb && !savedWeb {
+				savedWeb, primary = true, r.Port
+			}
 		}
+		inferred := make([][]string, len(f.routes))
 		for i, r := range f.routes {
+			inferred[i] = r.Hosts
 			if s, ok := saved[r.Port]; ok {
 				f.routes[i].Role, f.routes[i].Label = s.Role, s.Label
 				f.routes[i].Hosts = append([]string(nil), s.Hosts...)
 				delete(saved, r.Port)
-			} else if r.Role == config.RoleWeb && savedWeb {
+			} else if r.Role == config.RoleWeb && savedWeb && len(r.Hosts) == 0 {
 				f.routes[i].Role = config.RoleIgnore
+			}
+		}
+		// Hosts discovery infers are added to a saved web route, unless
+		// they are already on a route of the form or are the alias.
+		have := map[string]bool{strings.ToLower(strings.TrimSpace(f.alias.value)): true}
+		for _, rs := range [][]config.Route{f.routes, f.edit.Routes} { // saved routes no longer found too
+			for _, r := range rs {
+				for _, h := range r.Hosts {
+					have[strings.ToLower(h)] = true
+				}
+			}
+		}
+		for i, r := range f.routes {
+			if !wasSaved[r.Port] || r.Role != config.RoleWeb {
+				continue
+			}
+			for _, h := range inferred[i] {
+				if !have[strings.ToLower(h)] {
+					have[strings.ToLower(h)] = true
+					f.routes[i].Hosts = append(f.routes[i].Hosts, h)
+				}
 			}
 		}
 		f.missing = map[int]bool{}
@@ -1033,6 +1059,9 @@ func (f *projectForm) toRoutes() {
 				f.missing[r.Port] = true
 				f.routes = append(f.routes, r)
 			}
+		}
+		if savedWeb {
+			f.routes = config.MovePrimary(f.routes, primary)
 		}
 		f.mergeRc()
 	}
