@@ -818,9 +818,9 @@ func (f *projectForm) toggleRoute(i int) {
 }
 
 // setRole gives route i role; a route made web takes the place of the web
-// route without hosts. A web route with hosts of its own is a site the user
-// wrote by hand, so it stays web; Validate on save reports a project that
-// ends up inconsistent.
+// route without hosts, and becomes the primary. A web route with hosts of
+// its own is a site the user wrote by hand, so it stays web; Validate on save
+// reports a project that ends up inconsistent.
 func (f *projectForm) setRole(i int, role config.Role) {
 	if role == config.RoleWeb {
 		for j := range f.routes {
@@ -830,6 +830,21 @@ func (f *projectForm) setRole(i int, role config.Role) {
 		}
 	}
 	f.routes[i].Role = role
+	if role != config.RoleWeb {
+		return
+	}
+	// Left after a hosted web route, it would be a web route other than the
+	// primary, which needs hosts it may not have. The cursor follows it.
+	port := f.routes[i].Port
+	f.routes = config.MovePrimary(f.routes, port)
+	if f.routeRow == i {
+		for j, r := range f.routes {
+			if r.Port == port {
+				f.routeRow = j
+				break
+			}
+		}
+	}
 }
 
 // pick goes on with srv: to the path step, connecting to the server.

@@ -398,10 +398,17 @@ func TestFormDiscoveryNearhostrcBeatsInferredHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	found := false
 	for _, r := range d.Routes {
-		if r.Port == 8220 && !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
-			t.Errorf("route 8220 hosts = %v in %+v", r.Hosts, d.Routes)
+		if r.Port == 8220 {
+			found = true
+			if !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
+				t.Errorf("route 8220 hosts = %v in %+v", r.Hosts, d.Routes)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("no route on 8220: %+v", d.Routes)
 	}
 }
 

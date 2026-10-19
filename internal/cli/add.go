@@ -229,13 +229,13 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // --host flags to project, and asks before serving any host that would take
 // over traffic meant for the internet, whether the file, a preset or the
 // project's files gave it. A port the file lists takes the file's hosts and
-// none inferred; without a file, the inferred hosts stay. A host typed with --host counts as
-// approved by being typed, and so is a main name given with --alias. The
-// file's alias is the project's main name unless --alias gave one: the flag
-// wins, and the snapshot still records the file's, so a later start keeps
-// the flag's until the file moves its alias. An inferred host another
-// project in cfg serves is left out, with a note on stderr. Nothing is saved
-// here; an error stops the add.
+// none inferred; without a file, the inferred hosts stay. A host typed with
+// --host counts as approved by being typed, and so is a main name given with
+// --alias. The file's alias is the project's main name unless --alias gave
+// one: the flag wins, and the snapshot still records the file's, so a later
+// start keeps the flag's until the file moves its alias. An inferred host
+// another project in cfg serves is left out, with a note on stderr. Nothing
+// is saved here; an error stops the add.
 func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
 	out := cmd.OutOrStdout()
 	f, found, err := nearhostrc.Read(reader)

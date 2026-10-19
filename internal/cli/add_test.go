@@ -832,10 +832,17 @@ func TestAddNearhostrcBeatsInferredHosts(t *testing.T) {
 		t.Errorf("the inferred host was asked about:\n%s", out)
 	}
 	p, _ := loadSaved(t, cfgPath).Project("rcapp")
+	found := false
 	for _, r := range p.Routes {
-		if r.Port == 8220 && !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
-			t.Errorf("route 8220 hosts = %v", r.Hosts)
+		if r.Port == 8220 {
+			found = true
+			if !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
+				t.Errorf("route 8220 hosts = %v", r.Hosts)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("no route on 8220: %+v", p.Routes)
 	}
 }
 

@@ -323,3 +323,25 @@ func TestProposeWebKeepsWebRoutesWithHosts(t *testing.T) {
 		t.Fatalf("Validate() = %v", err)
 	}
 }
+
+// A port without hosts made web while a hosted web route comes first would
+// be a second web route without hosts. It becomes the primary instead, and
+// the cursor stays on it.
+func TestMakingAHostlessRouteWebMakesItPrimary(t *testing.T) {
+	f := &projectForm{routeRow: 1, routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 9000, Role: config.RoleIgnore},
+	}}
+	f.setRole(1, config.RoleWeb)
+	want := []config.Route{
+		{Port: 9000, Role: config.RoleWeb},
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}
+	if !reflect.DeepEqual(f.routes, want) || f.routeRow != 0 {
+		t.Fatalf("routes = %+v, row %d; want %+v, row 0", f.routes, f.routeRow, want)
+	}
+	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+}

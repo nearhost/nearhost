@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -697,5 +698,19 @@ func TestEditNewHostedPortNotDuplicated(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("missing routes %v in %+v", want, pf.routes)
+	}
+}
+
+// A newly found port's inferred hosts are asked about on save, as those
+// added to a saved web route are.
+func TestEditNewHostedPortNeedsApproval(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(8220, config.RoleWeb)}, "here.test",
+		Draft{Routes: []config.Route{hosted(8220, config.RoleWeb), hosted(6001, config.RoleWeb, "ws.x.io")}})
+	var got []string
+	for _, it := range pf.needsApproval() {
+		got = append(got, fmt.Sprintf("%s:%d", it.Host, it.Port))
+	}
+	if want := []string{"ws.x.io:6001"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("needsApproval = %v, want %v", got, want)
 	}
 }
