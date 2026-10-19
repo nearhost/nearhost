@@ -18,9 +18,10 @@ import (
 const reviewTimeout = 20 * time.Second
 
 // PendingPrefix begins the log line a start or Recheck publishes for a
-// project whose .nearhostrc asks for hosts that need approval; the hosts
-// follow, separated by commas.
-const PendingPrefix = nearhostrc.FileName + " asks for hosts that need approval: "
+// project whose .nearhostrc asks for changes that need approval; the name
+// of each, a host or an option such as docker_clients, follows, separated
+// by commas.
+const PendingPrefix = nearhostrc.FileName + " asks for changes that need approval: "
 
 // Change is a project's .nearhostrc asking for what was not approved.
 type Change struct {
@@ -79,11 +80,11 @@ func (e *Engine) noteReviewLocked(run *projectRun, r Review) {
 	case r.Pending != nil && r.Pending.SHA256 == run.declined:
 	case r.Pending != nil:
 		run.pending, run.declined = r.Pending, ""
-		hosts := make([]string, len(r.Pending.Items))
+		names := make([]string, len(r.Pending.Items))
 		for i, it := range r.Pending.Items {
-			hosts[i] = it.Name()
+			names[i] = it.Name()
 		}
-		e.logProject(run, "%s%s", PendingPrefix, strings.Join(hosts, ", "))
+		e.logProject(run, "%s%s", PendingPrefix, strings.Join(names, ", "))
 	case r.Problem != "":
 		e.logProject(run, "%s", r.Problem)
 	default:
@@ -111,7 +112,7 @@ func (e *Engine) adoptLocked(run *projectRun, updated config.Project) *config.Pr
 		q.Routes = cloneRoutes(updated.Routes)
 		q.Nearhostrc = updated.Nearhostrc.Clone()
 		e.setConfigLocked(next, nil) // the runs stay as they are
-		e.logProject(run, "%s changed only ports or labels; applied", nearhostrc.FileName)
+		e.logProject(run, "%s changed nothing that needs approval; applied", nearhostrc.FileName)
 		out := *q
 		return &out
 	}

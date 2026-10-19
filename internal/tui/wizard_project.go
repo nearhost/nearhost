@@ -731,8 +731,9 @@ func (f *projectForm) setHosts() {
 	f.editingHosts, f.hostsErr = false, ""
 }
 
-// needsApproval is what saving the project approves: the hosts that need
-// approval and were not served before, leaving out those typed here.
+// needsApproval is what saving the project approves: the hosts and options
+// that need approval and were not approved before, leaving out hosts typed
+// here.
 func (f *projectForm) needsApproval() []nearhostrc.Item {
 	var old config.Project
 	if f.edit != nil {
@@ -1390,8 +1391,9 @@ func (f *projectForm) routeLines(width int) []string {
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
 }
 
-// approvalLines lists the hosts and options saving approves, each with why it needs
-// approval and, for one the internet has, what serving it here hides.
+// approvalLines lists the hosts and options saving approves, each with why
+// it needs approval and, for a host the internet has, what serving it here
+// hides.
 func approvalLines(items []approvalItem, width int) []string {
 	if len(items) == 0 {
 		return nil

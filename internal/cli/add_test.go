@@ -541,7 +541,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, ".nearhostrc asks Nearhost to serve:", "app.local.dd.io on port 8220 (a real domain)", "Serve these? [y/N] ")
+	wantContains(t, out, ".nearhostrc asks for these, which need your approval:", "app.local.dd.io on port 8220 (a real domain)", "Approve these? [y/N] ")
 	p, ok := loadSaved(t, cfgPath).Project("rcapp")
 	if !ok || len(p.Routes) == 0 {
 		t.Fatalf("project = %+v %v", p, ok)
@@ -556,7 +556,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 	declined := filepath.Join(t.TempDir(), "config.yaml")
 	for _, answer := range []string{"\n", ""} {
 		out, err = executeWithInput(t, answer, newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
-		if err == nil || err.Error() != "not added: the hosts in .nearhostrc were not approved" {
+		if err == nil || err.Error() != "not added: what .nearhostrc asks for was not approved" {
 			t.Fatalf("answer %q: err = %v\n%s", answer, err, out)
 		}
 	}
@@ -590,7 +590,7 @@ func TestAddHostFlagIsApprovedByTyping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "Serve these?") {
+	if strings.Contains(out, "Approve these?") {
 		t.Fatalf("asked about a typed host:\n%s", out)
 	}
 	p, _ := loadSaved(t, cfgPath).Project("typed")
@@ -632,7 +632,7 @@ func TestAddHostFlagApprovesAHostTheFileLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "Serve these?") {
+	if strings.Contains(out, "Approve these?") {
 		t.Fatalf("asked about a typed host:\n%s", out)
 	}
 	p, _ := loadSaved(t, cfgPath).Project("rcapp")
@@ -665,7 +665,7 @@ func TestAddAsksBeforeDockerClients(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a declined add succeeded\n%s", out)
 	}
-	wantContains(t, out, "  docker_clients (lets local Docker containers reach this project)\n", "Serve these? [y/N] ")
+	wantContains(t, out, "  docker_clients (lets local Docker containers reach this project)\n", "Approve these? [y/N] ")
 	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
 		t.Fatalf("a declined add wrote the config: %v", statErr)
 	}
@@ -683,7 +683,7 @@ func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
 	dir := rcProject(t, rcDockerClients)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil || !strings.Contains(err.Error(), "docker_clients") || !strings.Contains(err.Error(), "run nearhost add in a terminal") {
+	if err == nil || err.Error() != "not added: .nearhostrc asks for things that need your approval (docker_clients); run nearhost add in a terminal, or open nearhost" {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 }
