@@ -39,6 +39,7 @@ type projectRun struct {
 	web       []config.WebHosts  // the web routes of the published site and their hosts; nil when none
 	webLocals []int              // local port the proxy sends each of web to, aligned with it; nil when none
 	site      bool               // the site is published to the proxy
+	docker    bool               // the published site is served to the Docker networks too (docker_clients)
 	forwards  []forward          // forwards this project added to its server's session
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
 	gone      bool               // Apply replaced or removed the project; this run is never started again
@@ -255,6 +256,14 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	if err := e.ensureHosts(ctx, web); err != nil {
 		return StateStopped, fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Name, err)
 	}
+	docker := p.DockerClients()
+	if docker {
+		// Asked before the site is published, so it is never served to
+		// fewer networks than Docker has, nor to more than it needs.
+		if err := e.dockerStart(ctx, run); err != nil {
+			return StateError, err
+		}
+	}
 
 	webLocals := make([]int, len(web))
 	for i, w := range web {
@@ -274,7 +283,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	}
 	err := ctx.Err()
 	if err == nil {
-		if err = e.publishSite(run, web, webLocals); err == nil {
+		if err = e.publishSite(run, web, webLocals, docker); err == nil {
 			// Interrupted while the proxy took the site: the start did not
 			// happen, and the site goes again with the rest.
 			err = ctx.Err()
@@ -432,10 +441,11 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 }
 
 // publishSite adds run's site to the proxy: each of web, sent to the local
-// port at the same index of webLocals. Other sites keep serving. It refuses a
-// host another published site serves, checked under applyMu so two starts
-// cannot both take it.
-func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals []int) error {
+// port at the same index of webLocals, and served to the Docker networks as
+// well when docker is set. Other sites keep serving. It refuses a host
+// another published site serves, checked under applyMu so two starts cannot
+// both take it. The first site served to Docker starts the refresh loop.
+func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals []int, docker bool) error {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
 	e.mu.Lock()
@@ -443,16 +453,21 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		e.mu.Unlock()
 		return err
 	}
-	run.web, run.webLocals, run.site = web, webLocals, true
+	run.web, run.webLocals, run.site, run.docker = web, webLocals, true, docker
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
 	if err := e.applySites(sites); err != nil {
 		// The proxy keeps its previous configuration, which lacks this site.
 		e.mu.Lock()
-		run.web, run.webLocals, run.site = nil, nil, false
+		run.web, run.webLocals, run.site, run.docker = nil, nil, false, false
 		e.mu.Unlock()
 		// The proxy's errors already say they are the proxy's.
 		return err
+	}
+	if docker {
+		e.mu.Lock()
+		e.startDockerLoopLocked()
+		e.mu.Unlock()
 	}
 	return nil
 }

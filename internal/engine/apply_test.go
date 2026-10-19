@@ -285,3 +285,24 @@ func TestApplyServesTheNewHostsOfARunningProject(t *testing.T) {
 		t.Errorf("last EnsureHosts = %v, want %v", last, want)
 	}
 }
+
+func TestApplyRestartsWhenDockerClientsChanges(t *testing.T) {
+	f := &fakeDocker{answers: []dockerAnswer{{ranges: []string{"10.99.0.0/16"}}}}
+	a := localProject("a", upstream(t, "a"))
+	a.Nearhostrc = &config.RcSnapshot{SHA256: "h"}
+	h := dockerHarness(t, f, 0, a)
+	mustStart(t, h, "a")
+	if got := clientsOf(h, "a.test"); len(got) != 1 || got[0] != nil {
+		t.Fatalf("clients before the opt-in = %q", got)
+	}
+	events, unsubscribe := h.eng.Events().Subscribe(256)
+	defer unsubscribe()
+	next := h.eng.Config()
+	next.Projects[0].Nearhostrc.DockerClients = true
+	if err := h.eng.Apply(bg, next); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	waitStateEvent(t, events, "a", "state: stopped")
+	waitState(t, h, "a", StateRunning)
+	waitClients(t, h, "a.test", []string{"10.99.0.0/16"})
+}
