@@ -92,13 +92,17 @@ func (e *Engine) noteReviewLocked(run *projectRun, r Review) {
 	}
 }
 
-// adoptLocked makes the routes of updated those of run's project in the
-// engine's own configuration, as the saved file has them, so the Apply that
-// follows from that file finds nothing changed and does not restart the
-// project. Only the routes and the approved snapshot are taken: they are all
-// a .nearhostrc changes, and the run's alias and server never change. It
-// returns the project to start with, or nil when Apply has already replaced
-// or removed the project, whose run is then never started again anyway.
+// adoptLocked makes the routes, approved snapshot and alias of updated those
+// of run's project in the engine's own configuration, as the saved file has
+// them, so the Apply that follows from that file finds nothing changed and
+// does not restart the project. They are all a .nearhostrc changes; the
+// server never changes. A new alias becomes the run's here, under mu, before
+// anything is served under it: setConfigLocked rebuilds the alias index the
+// proxy's logs are filed by and the hosts file names from the new
+// configuration, and the start goes on to check clashes and make the hosts
+// resolve with the project returned. It returns the project to start with,
+// or nil when Apply has already replaced or removed the project, whose run is
+// then never started again anyway.
 func (e *Engine) adoptLocked(run *projectRun, updated config.Project) *config.Project {
 	if run.gone || e.runs[run.name] != run {
 		return nil
@@ -111,6 +115,8 @@ func (e *Engine) adoptLocked(run *projectRun, updated config.Project) *config.Pr
 		q := &next.Projects[i]
 		q.Routes = cloneRoutes(updated.Routes)
 		q.Nearhostrc = updated.Nearhostrc.Clone()
+		q.Alias = updated.Alias
+		run.alias = updated.Alias
 		e.setConfigLocked(next, nil) // the runs stay as they are
 		e.logProject(run, "%s changed nothing that needs approval; applied", nearhostrc.FileName)
 		out := *q

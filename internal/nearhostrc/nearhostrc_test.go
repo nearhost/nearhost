@@ -177,3 +177,62 @@ func TestHashWithoutDockerClientsIsUnchanged(t *testing.T) {
 		t.Fatalf("off %s on %s plain %s", off.SHA256, on.SHA256, plain.SHA256)
 	}
 }
+
+func TestParseReadsAlias(t *testing.T) {
+	file := []byte("version: 1\nalias: ${APP_HOST:-app.local.x.io}\nroutes:\n  - port: 80\n")
+	f, err := Parse(file, map[string]string{"APP_HOST": "mine.local.x.io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Alias != "mine.local.x.io" {
+		t.Fatalf("Alias = %q, want the variable's value", f.Alias)
+	}
+	if f, err = Parse(file, nil); err != nil || f.Alias != "app.local.x.io" {
+		t.Fatalf("Alias = %q, %v, want the default", f.Alias, err)
+	}
+	if f, err = Parse([]byte("version: 1\nroutes:\n  - port: 80\n"), nil); err != nil || f.Alias != "" {
+		t.Fatalf("no alias: %+v, %v", f, err)
+	}
+	_, err = Parse([]byte("version: 1\nalias: '*.x.io'\nroutes:\n  - port: 80\n"), nil)
+	want := ".nearhostrc: alias: " + config.ValidProjectAlias("*.x.io").Error()
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	_, err = Parse([]byte("version: 1\nalias: ${NOPE}\nroutes:\n  - port: 80\n"), nil)
+	if err == nil || !strings.Contains(err.Error(), "NOPE") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestHashKeepsOldFormWithoutAlias(t *testing.T) {
+	routes := "routes:\n  - port: 80\n    hosts: [app.local.x.io]\n"
+	plain, err := Parse([]byte("version: 1\n"+routes), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canon, _ := json.Marshal(plain.Routes)
+	sum := sha256.Sum256(canon)
+	if plain.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("SHA256 = %s, want the hash of the routes alone", plain.SHA256)
+	}
+	// Pinned from a stage 3 build, before alias existed, so an approval of a
+	// docker_clients file given then still holds.
+	docker, err := Parse([]byte("version: 1\ndocker_clients: true\n"+routes), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "70d75db33943374862f7bd171e72945e3a7db32198718b937e335be795eedf33"; docker.SHA256 != want {
+		t.Fatalf("docker_clients SHA256 = %s, want %s", docker.SHA256, want)
+	}
+	withAlias, err := Parse([]byte("version: 1\nalias: a.test\n"+routes), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerAlias, err := Parse([]byte("version: 1\nalias: a.test\ndocker_clients: true\n"+routes), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withAlias.SHA256 == plain.SHA256 || dockerAlias.SHA256 == docker.SHA256 || withAlias.SHA256 == dockerAlias.SHA256 {
+		t.Fatal("adding alias must change the hash")
+	}
+}

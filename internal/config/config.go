@@ -69,6 +69,10 @@ type RcSnapshot struct {
 	// DockerClients is whether the approved file asked for the project to be
 	// served to containers on local Docker networks.
 	DockerClients bool `yaml:"docker_clients,omitempty"`
+	// Alias is the main name the approved file asked for; empty when it
+	// asked for none. It is what tells a main name the file moved from one
+	// the user set by hand, which a later read of the same file keeps.
+	Alias string `yaml:"alias,omitempty"`
 }
 
 // Clone returns a deep copy of s, so a caller can hold or change it without

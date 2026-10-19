@@ -80,6 +80,7 @@ type projectForm struct {
 
 	name, alias       textField
 	aliasEdited       bool // the alias was typed, so it no longer follows the name
+	aliasFromRc       bool // the alias is the .nearhostrc's, so it does not follow the name either
 	focus             int  // 0 name, 1 alias
 	nameErr, aliasErr string
 	advice            []Advisory     // for the routes and alias chosen, shown at the end
@@ -613,10 +614,11 @@ func (f *projectForm) paste(s string) tea.Cmd {
 	return nil
 }
 
-// nameChanged keeps the alias following the name until it is edited.
+// nameChanged keeps the alias following the name until it is edited, or
+// while it is the one the project's .nearhostrc gives.
 func (f *projectForm) nameChanged() {
 	f.nameErr, f.aliasErr = "", ""
-	if !f.aliasEdited {
+	if !f.aliasEdited && !f.aliasFromRc {
 		f.alias.value = config.AliasFor(strings.TrimSpace(f.name.value))
 	}
 }
@@ -1041,6 +1043,19 @@ func (f *projectForm) toRoutes() {
 	if f.name.value == "" {
 		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
 	}
+	// When adding, the main name the project's .nearhostrc gives fills the
+	// alias field unless one was typed, as `nearhost add` lets --alias win.
+	// It is not counted as typed, so a real domain is still asked about. An
+	// alias the file gave before and no longer does goes back to following
+	// the name. Editing takes the file's alias in mergeRc instead.
+	if f.edit == nil && !f.aliasEdited {
+		switch rc := f.draft.Nearhostrc; {
+		case rc != nil && rc.Alias != "":
+			f.alias.value, f.aliasFromRc = rc.Alias, true
+		case f.aliasFromRc:
+			f.alias.value, f.aliasFromRc = config.AliasFor(strings.TrimSpace(f.name.value)), false
+		}
+	}
 	f.step, f.err = projectStepRoutes, ""
 }
 
@@ -1055,7 +1070,7 @@ func (f *projectForm) mergeRc() {
 	if snap == nil {
 		return
 	}
-	file := &nearhostrc.File{SHA256: snap.SHA256, DockerClients: snap.DockerClients}
+	file := &nearhostrc.File{SHA256: snap.SHA256, DockerClients: snap.DockerClients, Alias: snap.Alias}
 	for _, r := range snap.Routes {
 		file.Routes = append(file.Routes, nearhostrc.Route{Port: r.Port, Role: r.Role, Label: r.Label, Hosts: r.Hosts})
 	}
@@ -1067,6 +1082,12 @@ func (f *projectForm) mergeRc() {
 	f.routes = merged.Routes
 	for _, r := range snap.Routes {
 		delete(f.missing, r.Port) // the file has it
+	}
+	// A main name the file moved since it was approved is taken, as a
+	// start would take it, unless the field was changed here already. It
+	// came from the file, not from typing, so a real domain is asked about.
+	if merged.Alias != f.edit.Alias && f.alias.value == f.edit.Alias {
+		f.alias.value, f.aliasEdited, f.aliasFromRc = merged.Alias, false, true
 	}
 }
 

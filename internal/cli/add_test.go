@@ -728,3 +728,49 @@ func TestAddRefusesDockerClientsOnAServer(t *testing.T) {
 		t.Fatalf("a refused add changed the config:\n%s", after)
 	}
 }
+
+// A .nearhostrc's alias is the project's main name unless --alias gives one,
+// and a real domain from the file is asked about like the file's hosts.
+func TestAddTakesAliasFromNearhostrc(t *testing.T) {
+	dir := rcProject(t, "version: 1\nalias: ${APP_HOST:-rc.test}\nroutes:\n  - port: ${APP_PORT}\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := execute(t, newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("rcapp")
+	if p.Alias != "rc.test" || p.Nearhostrc == nil || p.Nearhostrc.Alias != "rc.test" {
+		t.Fatalf("saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+	}
+	wantContains(t, out, "at https://rc.test\n")
+
+	flagged := filepath.Join(t.TempDir(), "config.yaml")
+	out, err = execute(t, newAddCmd(rcBackend(t, false)), "--config", flagged, "add", dir, "--name", "rcapp", "--alias", "mine.test", "--no-presets")
+	if err != nil {
+		t.Fatalf("add --alias: %v\n%s", err, out)
+	}
+	p, _ = loadSaved(t, flagged).Project("rcapp")
+	if p.Alias != "mine.test" || p.Nearhostrc.Alias != "rc.test" {
+		t.Fatalf("--alias: saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_PORT=8220\nAPP_HOST=app.local.x.io\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(t.TempDir(), "config.yaml")
+	out, err = executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", real, "add", dir, "--name", "rcapp", "--no-presets")
+	if err != nil {
+		t.Fatalf("add a real domain: %v\n%s", err, out)
+	}
+	wantContains(t, out, ".nearhostrc asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)", "Approve these? [y/N] ")
+	if p, _ := loadSaved(t, real).Project("rcapp"); p.Alias != "app.local.x.io" {
+		t.Fatalf("saved alias %q", p.Alias)
+	}
+
+	// The file's alias must be free, as a typed one must.
+	saveConfig(t, real, &config.Config{Projects: []config.Project{{Name: "other", Server: config.LocalServer, Path: "/o", Alias: "app.local.x.io", Routes: []config.Route{{Port: 9000, Role: config.RoleWeb}}}}})
+	out, err = executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", real, "add", dir, "--name", "rcapp", "--no-presets")
+	if err == nil || !strings.Contains(err.Error(), `already used by project "other"`) {
+		t.Fatalf("a taken file alias: %v\n%s", err, out)
+	}
+}

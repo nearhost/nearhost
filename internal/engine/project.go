@@ -24,10 +24,13 @@ const webPortAttempts = 3
 
 type forward struct{ local, remote int }
 
-// projectRun is the runtime state of one project. name, alias and server
-// never change; everything below op is guarded by Engine.mu.
+// projectRun is the runtime state of one project. name and server never
+// change. alias changes only when a start adopts a main name its .nearhostrc
+// moved without needing approval (adoptLocked), under Engine.mu, so it is
+// read under mu, as everything below op is guarded by Engine.mu.
 type projectRun struct {
-	name, alias, server string
+	name, server string
+	alias        string
 
 	op sync.Mutex // serialises starting and stopping this project
 
@@ -249,6 +252,11 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	}
 	if web = p.Web(); len(web) == 0 {
 		return StateError, fmt.Errorf("project %q has no web route", p.Name)
+	}
+	// The review may have moved the main name, so it is checked again, as
+	// are the clashes and the hosts file below, with the name now served.
+	if err := config.ValidProjectAlias(p.Alias); err != nil {
+		return StateError, fmt.Errorf("project %q: %w", p.Name, err)
 	}
 	if err := e.hostClash(run, web); err != nil {
 		return StateError, err

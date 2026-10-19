@@ -264,3 +264,35 @@ func TestEditKeepsDockerClientsThroughMergeRc(t *testing.T) {
 		t.Fatalf("edits %d, saved %+v", f.edit.edits, p.Nearhostrc)
 	}
 }
+
+// Editing a project whose .nearhostrc moved its main name takes the new
+// one, as a start would; a name given by hand while the file kept its own
+// stays.
+func TestEditTakesTheMainNameTheNearhostrcMoved(t *testing.T) {
+	for _, tc := range []struct {
+		name, alias, snapAlias, want string
+	}{
+		{"file moved it", "a.test", "a.test", "b.test"},
+		{"hand edit kept", "mine.test", "b.test", "mine.test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake(t, sampleConfig())
+			routes := []config.Route{{Port: 8080, Role: config.RoleWeb}}
+			f.cfg.Projects[0].Alias = tc.alias
+			f.cfg.Projects[0].Nearhostrc = &config.RcSnapshot{SHA256: "old", Alias: tc.snapAlias, Routes: routes}
+			f.forms.files = &fakeFiles{home: "/home/dev", dirs: map[string]bool{"/code/website": true}, drafts: map[string]Draft{
+				"/code/website": {Name: "website", Alias: "b.test", Routes: routes, Nearhostrc: &config.RcSnapshot{SHA256: "new", Alias: "b.test", Routes: routes}},
+			}}
+			m := sized(f)
+			m.selectRow(rowKey(rowProject, "website"))
+			settle(m, press(m, "e"))
+			press(m, "enter")
+			wantScreen(t, m, "alias     "+tc.want)
+			settle(m, press(m, "enter"))
+			settle(m, press(m, "enter"))
+			if p, _ := f.cfg.Project("website"); p.Alias != tc.want || p.Nearhostrc.Alias != "b.test" {
+				t.Fatalf("saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+			}
+		})
+	}
+}

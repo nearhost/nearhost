@@ -216,3 +216,75 @@ func TestSaveRcRefusesAHostAnotherProjectServes(t *testing.T) {
 	app := clashSetup(t, u.path)
 	checkClashRefused(t, u.path, u.saveRc, app)
 }
+
+// rcAliasSetup writes a config in which app, approved with alias a.test from
+// its .nearhostrc, now has a file whose alias is next. It returns the
+// project as the engine has it.
+func rcAliasSetup(t *testing.T, path, next string, others ...config.Project) config.Project {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, nearhostrc.FileName), []byte("version: 1\nalias: "+next+"\nroutes:\n  - port: 3000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := config.Project{Name: "app", Server: config.LocalServer, Path: dir, Alias: "a.test", Enabled: true,
+		Routes:     []config.Route{{Port: 3000, Role: config.RoleWeb}},
+		Nearhostrc: &config.RcSnapshot{SHA256: "old", Alias: "a.test", Routes: []config.Route{{Port: 3000, Role: config.RoleWeb}}}}
+	saveConfig(t, path, &config.Config{Projects: append([]config.Project{app}, others...)})
+	return app
+}
+
+// A start's review holds a main name that moves to a real domain for
+// approval, as it does a real-domain host, and saves nothing; accepting it
+// saves the new main name.
+func TestReviewHoldsRealDomainAliasChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	app := rcAliasSetup(t, path, "app.local.x.io")
+	r := reviewProject(saveTo(path))(context.Background(), app, discovery.DirReader{Root: app.Path})
+	want := []nearhostrc.Item{{Port: 3000, Host: "app.local.x.io", Why: "a real domain"}}
+	if r.Pending == nil || r.Updated != nil || r.Problem != "" || !reflect.DeepEqual(r.Pending.Items, want) {
+		t.Fatalf("review = %+v", r)
+	}
+	if r.Pending.Project.Alias != "app.local.x.io" {
+		t.Fatalf("pending project alias %q", r.Pending.Project.Alias)
+	}
+	if p, _ := loadSaved(t, path).Project("app"); p.Alias != "a.test" || p.Nearhostrc.Alias != "a.test" {
+		t.Fatalf("saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+	}
+	cfg := loadSaved(t, path)
+	if err := takeRc(cfg, r.Pending.Project, path); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := cfg.Project("app"); p.Alias != "app.local.x.io" || p.Nearhostrc.Alias != "app.local.x.io" {
+		t.Fatalf("accepted alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+	}
+}
+
+// A main name that moves under .test needs no approval and is saved; one
+// another enabled project serves is refused like a host would be.
+func TestReviewRefusesFileAliasClash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	other := config.Project{Name: "other", Server: config.LocalServer, Path: "/other", Alias: "other.test", Enabled: true,
+		Routes: []config.Route{{Port: 4000, Role: config.RoleWeb, Hosts: []string{"shared.test"}}}}
+	app := rcAliasSetup(t, path, "shared.test", other)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reviewProject(saveTo(path))(context.Background(), app, discovery.DirReader{Root: app.Path})
+	if r.Updated != nil || r.Pending != nil || !strings.Contains(r.Problem, `host shared.test is already served by project "other"`) {
+		t.Fatalf("review = %+v", r)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatalf("a refused change was saved:\n%s", after)
+	}
+
+	moved := filepath.Join(t.TempDir(), "config.yaml")
+	app = rcAliasSetup(t, moved, "b.test", other)
+	r = reviewProject(saveTo(moved))(context.Background(), app, discovery.DirReader{Root: app.Path})
+	if r.Updated == nil || r.Updated.Alias != "b.test" {
+		t.Fatalf("review = %+v", r)
+	}
+	if p, _ := loadSaved(t, moved).Project("app"); p.Alias != "b.test" || p.Nearhostrc.Alias != "b.test" {
+		t.Fatalf("saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
+	}
+}

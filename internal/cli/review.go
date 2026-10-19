@@ -14,10 +14,11 @@ import (
 
 // reviewProject is the engine's Options.Review: it reads a project's
 // .nearhostrc through files and compares it with what was last approved
-// (p.Nearhostrc). A change that only moves ports, relabels routes or adds
-// .test hosts is saved with save and handed back as Updated; one that asks
-// for a host that needs approval is handed back as Pending and saved by no
-// one until the user approves it. A file that cannot be read or merged, one
+// (p.Nearhostrc). A change that only moves ports, relabels routes, adds .test
+// hosts or moves the main name to another .test name is saved with save and
+// handed back as Updated; one that asks for a host or main name that needs
+// approval is handed back as Pending and saved by no one until the user
+// approves it. A file that cannot be read or merged, one
 // that is gone after being approved, or a change save refuses because
 // another enabled project serves one of its hosts, is a Problem: the project keeps
 // serving what was approved, which is still in the config.
@@ -61,10 +62,11 @@ var saveMu sync.Mutex
 // saveTo returns a save for reviewProject that writes a project's routes
 // into the config file at path: it loads the file, sets the routes and the
 // approved snapshot of the project of the same name, validates and saves, as
-// EditConfig does for the interface. Only those two fields are taken from p:
-// p is the engine's copy, which `up` loaded at launch, and anything else
-// changed in the file since (enabled, alias, path) must not be undone. A
-// project no longer in the file is not added back.
+// EditConfig does for the interface. Only those fields, and the alias when
+// the file moved it, are taken from p: p is the engine's copy, which `up`
+// loaded at launch, and anything else changed in the file since (enabled,
+// path, an alias set by hand) must not be undone. A project no longer in the
+// file is not added back.
 func saveTo(path string) func(config.Project) error {
 	return func(p config.Project) error {
 		saveMu.Lock()
@@ -84,23 +86,31 @@ func saveTo(path string) func(config.Project) error {
 }
 
 // takeRc sets the routes and the approved snapshot of the project in cfg
-// called as p is to p's, and leaves the rest of it as cfg has it. A project
-// no longer in cfg, the file at path, is not added back.
+// called as p is to p's, and leaves the rest of it as cfg has it. The alias is
+// taken too when p's snapshot has one that cfg's snapshot does not, which is
+// when Merge moved it to the file's; otherwise it stays as cfg has it, so an
+// alias set by hand is kept. A project no longer in cfg, the file at path, is
+// not added back.
 func takeRc(cfg *config.Config, p config.Project, path string) error {
 	for i := range cfg.Projects {
-		if cfg.Projects[i].Name == p.Name {
-			cfg.Projects[i].Routes = p.Routes
-			cfg.Projects[i].Nearhostrc = p.Nearhostrc
-			return nil
+		q := &cfg.Projects[i]
+		if q.Name != p.Name {
+			continue
 		}
+		if p.Nearhostrc != nil && p.Nearhostrc.Alias != "" && (q.Nearhostrc == nil || q.Nearhostrc.Alias != p.Nearhostrc.Alias) {
+			q.Alias = p.Alias
+		}
+		q.Routes = p.Routes
+		q.Nearhostrc = p.Nearhostrc
+		return nil
 	}
 	return fmt.Errorf("project %q is no longer in %s", p.Name, path)
 }
 
 // takeServedRc is takeRc for a change saved without the user's approval. A
-// .test host needs no approval, but it can be another enabled project's alias
-// or one of its hosts, and two projects cannot serve the same host, so the
-// change is refused and the approved routes keep serving.
+// .test host or main name needs no approval, but it can be another enabled
+// project's alias or one of its hosts, and two projects cannot serve the same
+// host, so the change is refused and the approved routes keep serving.
 func takeServedRc(cfg *config.Config, p config.Project, path string) error {
 	if err := takeRc(cfg, p, path); err != nil {
 		return err
