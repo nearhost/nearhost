@@ -1,0 +1,41 @@
+internal/tui/change_test.go
+  s_89a63a3c1fa7d2::t_661eac78d4c1e1 78,131
+  s_89a63a3c1fa7d2::t_8c6003240f47f9 188-203
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_72bd2882914ddb 539-542,743,1051,1100-1106,1393,1401-1404
+internal/engine/engine.go
+  s_89a63a3c1fa7d2::t_2f46a7cd967557 242
+internal/tui/project_edit_test.go
+  s_89a63a3c1fa7d2::t_8c6003240f47f9 241-266
+internal/engine/review.go
+  s_89a63a3c1fa7d2::t_2f46a7cd967557 112
+  s_89a63a3c1fa7d2::t_72bd2882914ddb 84
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_72bd2882914ddb 277-278,288,294-297
+internal/tui/wizard_project_test.go
+  s_89a63a3c1fa7d2::t_1e9b0ad7333188 435
+  s_89a63a3c1fa7d2::t_8c6003240f47f9 506-527
+  s_89a63a3c1fa7d2::t_8e9a601c69c53b 5
+internal/tui/change.go
+  s_89a63a3c1fa7d2::t_72bd2882914ddb 25,67-70,201,203,205
+internal/engine/review_test.go
+  s_89a63a3c1fa7d2::t_8c6003240f47f9 184-229
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_8c6003240f47f9 655-707
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9245195e7b256b412f0fe24c62c543d7bc5a0c9",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
