@@ -1,0 +1,29 @@
+internal/agentapi/agentapi.go
+  s_89a63a3c1fa7d2::t_200c47c1516da8 355-360,377-383
+internal/agentapi/agentapi_test.go
+  s_89a63a3c1fa7d2::t_52cb245c03fa87 881,885,890-894
+internal/cli/agents_test.go
+  s_89a63a3c1fa7d2::t_126d9e1ec9f05a 641-671
+internal/cli/doctor.go
+  s_89a63a3c1fa7d2::t_e05a3a1c02b2a6 154-155,160-163
+internal/cli/doctor_projects_test.go
+  s_89a63a3c1fa7d2::t_16d2bdb1b61f9d 617-620
+internal/cli/ui_edit.go
+  s_89a63a3c1fa7d2::t_1f87fa12dfa3ff 47-48,50,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "228a6140cd5016b2fa472df7db679a58c041e69f",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
