@@ -186,7 +186,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	// Advisories may read the project's files, so they are worked out
 	// before the reader is closed.
-	advisories, advisoryWarnings := discovery.Advise(res, project.Alias, cfg.Projects)
+	advisories, advisoryWarnings := discovery.Advise(res, project.Alias, project.AllHosts(), cfg.Projects)
 	if err := done(); err != nil {
 		return err
 	}

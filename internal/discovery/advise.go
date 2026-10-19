@@ -14,8 +14,9 @@ type Advisory struct {
 }
 
 // Advise reports configuration the user may want to change on the project.
+// hosts is every name the project will be served at, its alias first.
 // The second value lists advisories that could not be worked out.
-func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []string) {
+func Advise(res *Result, alias string, hosts []string, others []config.Project) ([]Advisory, []string) {
 	taken := takenLoopbacks(res, others)
 	advs := clashAdvisories(res, others, taken)
 	free := func(from int) int { return freeFrom(taken, from) }
@@ -28,7 +29,7 @@ func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []s
 	}
 	for _, p := range res.active {
 		keep := func(id string) bool { return res.owners[id] == p.Key() }
-		out, errs := p.EvalAdvice(res.context(p), alias, nil, free, keep)
+		out, errs := p.EvalAdvice(res.context(p), alias, hosts, free, keep)
 		for _, err := range errs {
 			warnings = append(warnings, err.Error())
 		}

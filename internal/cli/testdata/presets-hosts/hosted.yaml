@@ -1,0 +1,10 @@
+schema: 2
+name: hosted
+title: Hosted
+detect: 'true'
+routes:
+  - id: app
+    port: env_port("APP_PORT", 8000)
+    label: App
+    hosts: '[url_host(env["APP_URL"])]'
+    web: preferred

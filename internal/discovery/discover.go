@@ -2,11 +2,14 @@ package discovery
 
 import (
 	"fmt"
+	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/preset"
 )
 
@@ -38,6 +41,8 @@ type Result struct {
 	active     []*preset.Preset
 	facts      map[string]map[string]any // by preset key
 	owners     map[string]string         // id to preset key
+	hostsSeen  map[string]bool           // hosts some candidate holds
+	hostOwners map[int]string            // port to the key of the preset that gave it hosts
 }
 
 // Discover reads the project's files and proposes routes. On its own it
@@ -61,6 +66,8 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		files:      files,
 		hasCompose: hasCompose,
 		facts:      map[string]map[string]any{},
+		hostsSeen:  map[string]bool{},
+		hostOwners: map[int]string{},
 	}
 	res.activate(opts.Presets)
 	byPort := map[int]*Candidate{}
@@ -96,7 +103,8 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		routes = append(routes, *c)
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Port < routes[j].Port })
-	res.Routes = assignWeb(routes)
+	routes, primary := assignWeb(routes)
+	res.Routes = res.serveHosts(routes, primary)
 	return res, nil
 }
 
@@ -201,6 +209,8 @@ func (res *Result) context(p *preset.Preset) preset.Context {
 
 // apply lets one preset label, add and hint at routes.
 func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
+	// Route expressions read the facts, so they come first.
+	res.facts[p.Key()] = p.EvalFacts(res.project)
 	keep := func(id string) bool { return res.owners[id] == p.Key() }
 	for _, e := range p.Ports {
 		if !keep(e.Var) {
@@ -221,25 +231,90 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 		}
 	}
 
-	res.facts[p.Key()] = p.EvalFacts(res.project)
 	routes, errs := p.EvalRoutes(res.context(p), keep)
 	for _, err := range errs {
 		res.warn("%v", err)
 	}
 	for _, r := range routes {
-		if c, claimed := byPort[r.Port]; claimed {
+		c, claimed := byPort[r.Port]
+		if claimed {
 			if c.web == preset.WebNone {
 				c.web = r.Web
 			}
-			continue
+		} else {
+			c = &Candidate{Port: r.Port, Role: r.Role, Label: r.Label, Source: "preset:" + p.Key(), Preset: p.Key(), web: r.Web}
+			byPort[r.Port] = c
 		}
-		byPort[r.Port] = &Candidate{Port: r.Port, Role: r.Role, Label: r.Label, Source: "preset:" + p.Key(), Preset: p.Key(), web: r.Web}
+		res.inferHosts(p, r.ID, c, r.Hosts)
 	}
 }
 
-// assignWeb picks one web route when a sensible default exists. routes must
-// be sorted by port. Presets only hint; the choice is made here.
-func assignWeb(routes []Candidate) []Candidate {
+// inferHosts gives c the hosts a route of p names, leaving out those that
+// cannot be served: ones that are not names at all are dropped quietly,
+// ones that are malformed with a warning, and ones another candidate holds.
+func (res *Result) inferHosts(p *preset.Preset, id string, c *Candidate, hosts []string) {
+	for _, h := range hosts {
+		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		if _, err := netip.ParseAddr(h); err != nil && h != "" && h != "localhost" && strings.Contains(h, ".") {
+			if hostname.Valid(h) != nil {
+				res.warn("preset %s: route %s: %q is not a host name, so it is left out", p.Key(), id, h)
+				continue
+			}
+			if res.hostsSeen[h] {
+				continue
+			}
+			res.hostsSeen[h] = true
+			c.Hosts = append(c.Hosts, h)
+			if res.hostOwners[c.Port] == "" {
+				res.hostOwners[c.Port] = p.Key()
+			}
+		}
+	}
+}
+
+// serveHosts makes the candidates that have hosts web routes, except for
+// loopback ones, which lose them. The primary web route, the one assignWeb
+// picked (index primary, or -1) or else the first web one, goes just before
+// the other web routes. routes must be sorted by port.
+func (res *Result) serveHosts(routes []Candidate, primary int) []Candidate {
+	for i := range routes {
+		c := &routes[i]
+		if len(c.Hosts) == 0 {
+			continue
+		}
+		if c.Role == config.RoleLoopback {
+			res.warn("preset %s: port %d is forwarded to this machine, so its hosts are left out", res.hostOwners[c.Port], c.Port)
+			c.Hosts = nil
+			continue
+		}
+		c.Role = config.RoleWeb
+	}
+	if primary < 0 {
+		for i, c := range routes {
+			if c.Role == config.RoleWeb {
+				primary = i
+				break
+			}
+		}
+	}
+	if primary < 0 {
+		return routes
+	}
+	for i := 0; i < primary; i++ {
+		if routes[i].Role == config.RoleWeb {
+			moved := routes[primary]
+			copy(routes[i+1:primary+1], routes[i:primary])
+			routes[i] = moved
+			break
+		}
+	}
+	return routes
+}
+
+// assignWeb picks one web route when a sensible default exists, and returns
+// its index, or -1. routes must be sorted by port. Presets only hint; the
+// choice is made here.
+func assignWeb(routes []Candidate) ([]Candidate, int) {
 	first := func(match func(Candidate) bool) int {
 		for i, c := range routes {
 			if match(c) {
@@ -265,14 +340,14 @@ func assignWeb(routes []Candidate) []Candidate {
 	if pick >= 0 {
 		routes[pick].Role = config.RoleWeb
 	}
-	return routes
+	return routes, pick
 }
 
 // ConfigRoutes converts candidates to config routes.
 func (res *Result) ConfigRoutes() []config.Route {
 	out := make([]config.Route, 0, len(res.Routes))
 	for _, c := range res.Routes {
-		out = append(out, config.Route{Port: c.Port, Role: c.Role, Label: c.Label})
+		out = append(out, config.Route{Port: c.Port, Role: c.Role, Label: c.Label, Hosts: slices.Clone(c.Hosts)})
 	}
 	return out
 }

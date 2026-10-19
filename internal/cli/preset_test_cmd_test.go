@@ -76,3 +76,18 @@ func TestPresetTestDefaultsToTheInstalledPresets(t *testing.T) {
 		t.Fatalf("preset test: %v\n%s", err, out)
 	}
 }
+
+// A route's hosts are compared with the fixture's, so a fixture that leaves
+// them out fails.
+func TestPresetTestComparesHosts(t *testing.T) {
+	out, err := execute(t, newPresetCmd(presetBackend{}), "preset", "test", filepath.Join("testdata", "fixtures-hosts"), "--presets", filepath.Join("testdata", "presets-hosts"))
+	if err == nil || !strings.Contains(err.Error(), "1 of 2 fixtures failed") {
+		t.Fatalf("expected one failure, got %v\n%s", err, out)
+	}
+	wantContains(t, out,
+		"FAIL  missing\n",
+		"        want  8220 web App\n",
+		"        got   8220 web App hosts=app.local.x.io\n",
+		"ok    hosted\n",
+	)
+}

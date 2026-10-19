@@ -117,7 +117,7 @@ func doctorInput(env doctorEnv, cfg *config.Config, cfgPath string, p config.Pro
 	} else {
 		in.Discovered = res
 		in.Notes = notes
-		in.Advisories, notes = discovery.Advise(adviceResult(res, p.Routes), p.Alias, in.Others)
+		in.Advisories, notes = discovery.Advise(adviceResult(res, p.Routes), p.Alias, p.AllHosts(), in.Others)
 		in.Notes = append(in.Notes, notes...)
 	}
 
