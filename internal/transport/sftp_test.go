@@ -131,90 +131,158 @@ func TestSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
 	}
 }
 
-// writerCase runs one of three behaviours against a FileWriter, so the
-// local and SFTP writers are held to one contract.
-func writerCase(t *testing.T, name string, newWriter func(t *testing.T, root string) FileWriter) {
-	newRoot := func(t *testing.T) string { return t.TempDir() }
-	switch name {
-	case "CreatesWithMode0644":
-		root := newRoot(t)
-		if err := newWriter(t, root).WriteFile(".nearhostrc", []byte("a\n")); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(filepath.Join(root, ".nearhostrc"))
-		if err != nil || info.Mode().Perm() != 0o644 {
-			t.Fatalf("stat: %v %v", info, err)
-		}
-		if b, _ := os.ReadFile(filepath.Join(root, ".nearhostrc")); string(b) != "a\n" {
-			t.Fatalf("content %q", b)
-		}
-		assertNoStray(t, root, ".nearhostrc")
-	case "ReplacesKeepingMode":
-		root := newRoot(t)
-		p := filepath.Join(root, ".nearhostrc")
-		os.WriteFile(p, []byte("old\n"), 0o600)
-		os.Chmod(p, 0o600)
-		if err := newWriter(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(p)
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("stat: %v %v", info, err)
-		}
-		if b, _ := os.ReadFile(p); string(b) != "new\n" {
-			t.Fatalf("content %q", b)
-		}
-		assertNoStray(t, root, ".nearhostrc")
-	case "LeavesNoTempFileOnFailure":
-		root := newRoot(t)
-		missing := filepath.Join(root, "missing")
-		if err := newWriter(t, missing).WriteFile(".nearhostrc", []byte("x")); err == nil {
-			t.Fatal("expected an error for a root that does not exist")
-		}
-		if _, err := os.Stat(missing); err == nil {
-			t.Fatal("the root must not be created")
-		}
-		assertNoStray(t, root, "")
-	}
-}
-
-func assertNoStray(t *testing.T, root, want string) {
-	t.Helper()
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if e.Name() != want {
-			t.Fatalf("stray file %q in %s", e.Name(), root)
-		}
-	}
-}
+type newWriterFunc func(t *testing.T, root string) FileWriter
 
 func sftpWriterFor(t *testing.T, root string) FileWriter {
 	client, _ := inProcessSFTP(t)
 	return NewSFTPWriter(client, root)
 }
 
+// sftpNoPosixWriterFor is a writer for a server without posix-rename, so the
+// fallback path runs.
+func sftpNoPosixWriterFor(t *testing.T, root string) FileWriter {
+	w := sftpWriterFor(t, root).(sftpWriter)
+	w.posixRename = false
+	return w
+}
+
 func dirWriterFor(_ *testing.T, root string) FileWriter { return DirWriter(root) }
 
-func TestSFTPWriterCreatesWithMode0644(t *testing.T) {
-	writerCase(t, "CreatesWithMode0644", sftpWriterFor)
+// assertOnly fails when root holds anything but the named entries.
+func assertOnly(t *testing.T, root string, want ...string) {
+	t.Helper()
+	entries, _ := os.ReadDir(root)
+	got := map[string]bool{}
+	for _, e := range entries {
+		got[e.Name()] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("entries in %s: %v, want %v", root, got, want)
+	}
+	for _, n := range want {
+		if !got[n] {
+			t.Fatalf("entries in %s: %v, want %v", root, got, want)
+		}
+	}
 }
 
-func TestSFTPWriterReplacesKeepingMode(t *testing.T) {
-	writerCase(t, "ReplacesKeepingMode", sftpWriterFor)
+func checkFile(t *testing.T, p, content string, mode os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(p)
+	if err != nil || info.Mode().Perm() != mode {
+		t.Fatalf("stat %s: %v %v, want mode %v", p, info, err, mode)
+	}
+	if b, _ := os.ReadFile(p); string(b) != content {
+		t.Fatalf("%s content %q, want %q", p, b, content)
+	}
 }
 
+func checkCreatesWithMode0644(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("a\n")); err != nil {
+		t.Fatal(err)
+	}
+	checkFile(t, filepath.Join(root, ".nearhostrc"), "a\n", 0o644)
+	assertOnly(t, root, ".nearhostrc")
+}
+
+func checkReplacesKeepingMode(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	p := filepath.Join(root, ".nearhostrc")
+	os.WriteFile(p, []byte("old\n"), 0o600)
+	os.Chmod(p, 0o600)
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	checkFile(t, p, "new\n", 0o600)
+	assertOnly(t, root, ".nearhostrc")
+}
+
+func checkMissingRoot(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+	if err := nw(t, missing).WriteFile(".nearhostrc", []byte("x")); err == nil {
+		t.Fatal("expected an error for a root that does not exist")
+	}
+	assertOnly(t, root)
+}
+
+// checkDirectoryTarget makes the rename fail after the temporary file exists,
+// so the deferred cleanup is what has to remove it.
+func checkDirectoryTarget(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, ".nearhostrc"), 0o755)
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("x")); err == nil {
+		t.Fatal("expected an error when the target is a directory")
+	}
+	assertOnly(t, root, ".nearhostrc")
+}
+
+func checkSymlinkTarget(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	dest := filepath.Join(root, "real.rc")
+	os.WriteFile(dest, []byte("old\n"), 0o600)
+	os.Chmod(dest, 0o600)
+	if err := os.Symlink("real.rc", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, ".nearhostrc")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", fi, err)
+	}
+	checkFile(t, dest, "new\n", 0o600)
+	assertOnly(t, root, ".nearhostrc", "real.rc")
+}
+
+func TestSFTPWriterCreatesWithMode0644(t *testing.T) { checkCreatesWithMode0644(t, sftpWriterFor) }
+func TestSFTPWriterReplacesKeepingMode(t *testing.T) { checkReplacesKeepingMode(t, sftpWriterFor) }
 func TestSFTPWriterLeavesNoTempFileOnFailure(t *testing.T) {
-	writerCase(t, "LeavesNoTempFileOnFailure", sftpWriterFor)
+	checkMissingRoot(t, sftpWriterFor)
+	checkDirectoryTarget(t, sftpWriterFor)
+}
+func TestSFTPWriterWritesThroughSymlink(t *testing.T) { checkSymlinkTarget(t, sftpWriterFor) }
+
+func TestSFTPWriterWithoutPosixRename(t *testing.T) {
+	checkCreatesWithMode0644(t, sftpNoPosixWriterFor)
+	checkReplacesKeepingMode(t, sftpNoPosixWriterFor)
+	checkMissingRoot(t, sftpNoPosixWriterFor)
+	checkDirectoryTarget(t, sftpNoPosixWriterFor)
+	checkSymlinkTarget(t, sftpNoPosixWriterFor)
 }
 
-func TestDirWriterCreatesWithMode0644(t *testing.T) {
-	writerCase(t, "CreatesWithMode0644", dirWriterFor)
+func TestSFTPWriterRestoresTheOriginalWhenTheSecondRenameFails(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, ".nearhostrc")
+	os.WriteFile(p, []byte("old\n"), 0o600)
+	os.Chmod(p, 0o600)
+	w := sftpNoPosixWriterFor(t, root).(sftpWriter)
+	real := w.c.Rename
+	toTarget := 0
+	w.rename = func(oldname, newname string) error {
+		if newname == p {
+			toTarget++
+			if toTarget == 1 { // a strict server refuses to replace the file
+				return errors.New("file exists")
+			}
+			if toTarget == 2 { // the tmp -> target rename after the original moved aside
+				return errors.New("injected rename failure")
+			}
+		}
+		return real(oldname, newname)
+	}
+	if err := w.WriteFile(".nearhostrc", []byte("new\n")); err == nil {
+		t.Fatal("expected the injected failure")
+	}
+	checkFile(t, p, "old\n", 0o600)
+	assertOnly(t, root, ".nearhostrc")
 }
 
-func TestDirWriterReplacesKeepingMode(t *testing.T) {
-	writerCase(t, "ReplacesKeepingMode", dirWriterFor)
-}
-
+func TestDirWriterCreatesWithMode0644(t *testing.T) { checkCreatesWithMode0644(t, dirWriterFor) }
+func TestDirWriterReplacesKeepingMode(t *testing.T) { checkReplacesKeepingMode(t, dirWriterFor) }
 func TestDirWriterLeavesNoTempFileOnFailure(t *testing.T) {
-	writerCase(t, "LeavesNoTempFileOnFailure", dirWriterFor)
+	checkMissingRoot(t, dirWriterFor)
+	checkDirectoryTarget(t, dirWriterFor)
 }
+func TestDirWriterWritesThroughSymlink(t *testing.T) { checkSymlinkTarget(t, dirWriterFor) }
