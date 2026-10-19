@@ -43,6 +43,9 @@ type projectRun struct {
 	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
 	gone      bool               // Apply replaced or removed the project; this run is never started again
 	holders   map[int]heldPort   // local port of each lost forward that was announced -> what is known of its holder
+	pending   *Change            // what the project's .nearhostrc asks for that waits for approval; nil when nothing does
+	notice    string             // why the .nearhostrc could not be taken into account; empty when it could
+	declined  string             // hash of a .nearhostrc whose change the user declined; empty when none
 }
 
 // heldPort is what is known about the local port of a lost forward.
@@ -54,6 +57,12 @@ type heldPort struct {
 // StartProject brings a project up: it connects the project's server, makes
 // its alias and hosts resolve, adds its forwards and publishes its site, one
 // proxy site per web route.
+//
+// With Options.Review set, the project's .nearhostrc is read again once its
+// server is connected, and the start goes on with the project as the review
+// leaves it: a change that needed no approval is adopted (see Review), while
+// one that waits for approval, or a file that cannot be read, leaves the
+// approved routes serving and shows in the project's status.
 //
 // A local project needs no forwards: the proxy sends each web route's hosts
 // straight to its port and loopback routes are already local. For a remote
@@ -212,15 +221,15 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		return StateError, fmt.Errorf("remove previous start: %w", err)
 	}
 
-	// Refused before anything is set up, so a doomed start neither connects
-	// nor asks for a password. publishSite checks again, as another project
-	// may take the host in the meantime.
-	if err := e.hostClash(run, web); err != nil {
-		return StateError, err
-	}
-
 	var sess *transport.Session
 	if p.Server != config.LocalServer {
+		// Refused before connecting, so a start that is doomed by the hosts
+		// already approved asks for no password. It is checked again below
+		// with the hosts the project's .nearhostrc leaves, and publishSite
+		// checks once more, as another project may take a host meanwhile.
+		if err := e.hostClash(run, web); err != nil {
+			return StateError, err
+		}
 		var err error
 		if sess, err = e.ensureSession(srv); err != nil {
 			return StateError, err
@@ -230,6 +239,17 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		}
 	}
 	if err := ctx.Err(); err != nil {
+		return StateError, err
+	}
+	// Everything from here on uses the project as its .nearhostrc leaves it.
+	p = e.reviewStart(ctx, run, p, sess)
+	if err := ctx.Err(); err != nil {
+		return StateError, err
+	}
+	if web = p.Web(); len(web) == 0 {
+		return StateError, fmt.Errorf("project %q has no web route", p.Name)
+	}
+	if err := e.hostClash(run, web); err != nil {
 		return StateError, err
 	}
 	if err := e.ensureHosts(ctx, web); err != nil {

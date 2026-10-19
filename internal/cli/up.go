@@ -156,6 +156,10 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
+	// Each start re-reads the project's .nearhostrc. up never reloads the
+	// config, so a change that needs no approval is saved for the next run
+	// and served at once; one that does waits for the interface.
+	opts.Review = reviewProject(saveTo(cfgPath))
 	// Agents can read the projects' status. Without the interface there is
 	// no one to review a proposal, so the API refuses them.
 	ag, agentNote := serveAgents(b.agents, &opts, cfgPath, flags.httpsPort)

@@ -49,6 +49,11 @@ func (p *upPrinter) event(ev engine.Event) {
 		p.shown[ev.Project] = msg
 	}
 	fmt.Fprintf(p.out, "%s [%s] %s\n", ev.Time.Format("15:04:05"), source, msg)
+	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
+		// Approving takes the interface, which shows each host and why it
+		// needs approval; up only says where to go.
+		fmt.Fprintln(p.out, "  open nearhost to approve them; nearhost up cannot")
+	}
 	if ev.State != "" && p.advise {
 		// A state change reads "state: <state>" or "state: <state>: <reason>".
 		reason := strings.TrimPrefix(strings.TrimPrefix(msg, "state: "+string(ev.State)), ": ")
