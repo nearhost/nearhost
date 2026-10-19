@@ -3,13 +3,17 @@ package preset
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/ext"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 // scope says which names an expression may use. Each scope adds to the one
@@ -29,6 +33,8 @@ type host struct {
 	pkg      func(name string) bool
 	active   func(name string) bool
 	freePort func(from int) int
+	env      map[string]string // for env_port
+	hosts    []string          // for serves: every name the project is served at
 }
 
 // costLimit stops an expression that would run for too long.
@@ -77,11 +83,33 @@ func newEnv(s scope, h host) (*cel.Env, error) {
 				cel.UnaryBinding(func(v ref.Val) ref.Val {
 					return types.Bool(h.active != nil && h.active(str(v)))
 				}))),
+			cel.Function("url_host", cel.Overload("url_host_string", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(v ref.Val) ref.Val {
+					host, _ := splitURL(str(v))
+					return types.String(host)
+				}))),
+			cel.Function("url_port", cel.Overload("url_port_string", []*cel.Type{cel.StringType}, cel.IntType,
+				cel.UnaryBinding(func(v ref.Val) ref.Val {
+					_, port := splitURL(str(v))
+					return types.Int(port)
+				}))),
+			cel.Function("env_port", cel.Overload("env_port_string_int", []*cel.Type{cel.StringType, cel.IntType}, cel.IntType,
+				cel.BinaryBinding(func(name, def ref.Val) ref.Val {
+					if port := validPort(h.env[str(name)]); port != 0 {
+						return types.Int(port)
+					}
+					return def
+				}))),
 		)
 	}
 	if s >= scopeAdvisory {
 		opts = append(opts,
 			cel.Variable("alias", cel.StringType),
+			cel.Variable("hosts", cel.ListType(cel.StringType)),
+			cel.Function("serves", cel.Overload("serves_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.UnaryBinding(func(v ref.Val) ref.Val {
+					return types.Bool(serves(h.hosts, str(v)))
+				}))),
 			cel.Function("free_port", cel.Overload("free_port_int", []*cel.Type{cel.IntType}, cel.IntType,
 				cel.UnaryBinding(func(v ref.Val) ref.Val {
 					from, _ := v.Value().(int64)
@@ -101,6 +129,44 @@ func newEnv(s scope, h host) (*cel.Env, error) {
 		)
 	}
 	return cel.NewEnv(opts...)
+}
+
+// splitURL returns the lower-case host and the port of a URL, or of a bare
+// host or host:port, which people write as often. Anything it cannot parse
+// gives an empty host and port 0, so a preset treats it as absent.
+func splitURL(s string) (host string, port int) {
+	s = strings.TrimSpace(s)
+	if !strings.Contains(s, "://") {
+		s = "//" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", 0
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), "."), validPort(u.Port())
+}
+
+// validPort reads s as a port from 1 to 65535, and gives 0 for anything else.
+func validPort(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+// serves reports whether name is one of hosts, or matches a pattern in it.
+func serves(hosts []string, name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(name), ".")
+	if name == "" {
+		return false
+	}
+	for _, h := range hosts {
+		if hostname.Match(strings.ToLower(h), name) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostIn reports whether host equals an entry of allowed, or matches an
@@ -129,7 +195,7 @@ func check(env *cel.Env, src string, want *cel.Type) error {
 	return nil
 }
 
-func eval(env *cel.Env, src string, vars map[string]any) (any, error) {
+func run(env *cel.Env, src string, vars map[string]any) (ref.Val, error) {
 	ast, iss := env.Compile(src)
 	if iss != nil && iss.Err() != nil {
 		return nil, iss.Err()
@@ -139,6 +205,11 @@ func eval(env *cel.Env, src string, vars map[string]any) (any, error) {
 		return nil, err
 	}
 	out, _, err := prg.Eval(vars)
+	return out, err
+}
+
+func eval(env *cel.Env, src string, vars map[string]any) (any, error) {
+	out, err := run(env, src, vars)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +238,18 @@ func evalInt(env *cel.Env, src string, vars map[string]any) (int, error) {
 		return 0, fmt.Errorf("%q is not a whole number", src)
 	}
 	return int(n), nil
+}
+
+func evalStrings(env *cel.Env, src string, vars map[string]any) ([]string, error) {
+	out, err := run(env, src, vars)
+	if err != nil {
+		return nil, err
+	}
+	list, err := out.ConvertToNative(stringList)
+	if err != nil {
+		return nil, fmt.Errorf("%q is not a list of text: %w", src, err)
+	}
+	return list.([]string), nil
 }
 
 // part is a piece of a template: literal text or an expression.
@@ -256,6 +339,11 @@ func (p *Preset) checkExpressions(bad func(string, ...any)) {
 		if strings.TrimSpace(r.Port) != "" {
 			if err := check(envs[scopeRoute], r.Port, cel.IntType); err != nil {
 				bad("routes[%d]: port: %w", i, err)
+			}
+		}
+		if strings.TrimSpace(r.Hosts) != "" {
+			if err := check(envs[scopeRoute], r.Hosts, cel.ListType(cel.StringType)); err != nil {
+				bad("routes[%d]: hosts: %w", i, err)
 			}
 		}
 	}

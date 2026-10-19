@@ -168,7 +168,7 @@ func TestParseReportsEveryProblem(t *testing.T) {
 }
 
 func TestParseRefusesANewerSchema(t *testing.T) {
-	_, err := Parse("x", []byte("schema: 2\nname: x\ntitle: X\ndetect: 'true'\nfuture_key: 1\n"))
+	_, err := Parse("x", []byte("schema: 3\nname: x\ntitle: X\ndetect: 'true'\nfuture_key: 1\n"))
 	if !errors.Is(err, ErrNewerSchema) {
 		t.Fatalf("expected ErrNewerSchema, got %v", err)
 	}
@@ -182,5 +182,27 @@ func TestValidName(t *testing.T) {
 		if ValidName(name) != want {
 			t.Errorf("ValidName(%q) = %v, want %v", name, !want, want)
 		}
+	}
+}
+
+func TestParseSchemaTwoFields(t *testing.T) {
+	two := func(route string) string {
+		return "schema: 2\nname: x\ntitle: X\ndetect: 'true'\nroutes:\n  - " + route + "\n"
+	}
+	route := `{id: a, port: "80", label: App, hosts: '[url_host(env["APP_URL"])]'}`
+	if _, err := Parse("x", []byte(two(route))); err != nil {
+		t.Fatalf("schema 2 with hosts: %v", err)
+	}
+	if _, err := Parse("x", []byte(strings.Replace(two(route), "schema: 2", "schema: 1", 1))); err == nil || !strings.Contains(err.Error(), "hosts needs schema: 2") {
+		t.Errorf("schema 1 with hosts: %v", err)
+	}
+	if _, err := Parse("x", []byte(strings.Replace(two(route), "schema: 2", "schema: 3", 1))); !errors.Is(err, ErrNewerSchema) {
+		t.Errorf("schema 3: %v", err)
+	}
+	if _, err := Parse("x", []byte(two(`{id: a, port: "80", label: App, role: loopback, hosts: '["a.test"]'}`))); err == nil || !strings.Contains(err.Error(), "a loopback route cannot have hosts") {
+		t.Errorf("loopback with hosts: %v", err)
+	}
+	if _, err := Parse("x", []byte(two(`{id: a, port: "80", label: App, hosts: '"x"'}`))); err == nil || !strings.Contains(err.Error(), "hosts") || !strings.Contains(err.Error(), "must give list") {
+		t.Errorf("hosts that is not a list: %v", err)
 	}
 }

@@ -28,7 +28,7 @@ func Advise(res *Result, alias string, others []config.Project) ([]Advisory, []s
 	}
 	for _, p := range res.active {
 		keep := func(id string) bool { return res.owners[id] == p.Key() }
-		out, errs := p.EvalAdvice(res.context(p), alias, free, keep)
+		out, errs := p.EvalAdvice(res.context(p), alias, nil, free, keep)
 		for _, err := range errs {
 			warnings = append(warnings, err.Error())
 		}

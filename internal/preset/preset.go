@@ -20,7 +20,7 @@ import (
 )
 
 // SchemaVersion is the newest preset format this build understands.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // ErrNewerSchema reports a preset written for a later nearhost.
 var ErrNewerSchema = errors.New("preset needs a newer nearhost")
@@ -116,11 +116,13 @@ type Fact struct {
 	re *regexp.Regexp
 }
 
-// Route is a route computed from facts. When and Port are expressions.
+// Route is a route computed from facts. When, Port and Hosts are
+// expressions; Hosts gives a list of names and needs schema 2.
 type Route struct {
 	ID    string      `yaml:"id"`
 	When  string      `yaml:"when"`
 	Port  string      `yaml:"port"`
+	Hosts string      `yaml:"hosts"`
 	Label string      `yaml:"label"`
 	Role  config.Role `yaml:"role"`
 	Web   WebHint     `yaml:"web"`
@@ -186,8 +188,8 @@ func (p *Preset) validate(name string) []error {
 	var errs []error
 	bad := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
-	if p.Schema != SchemaVersion {
-		bad("schema must be %d, not %d", SchemaVersion, p.Schema)
+	if p.Schema < 1 || p.Schema > SchemaVersion {
+		bad("schema must be 1 or %d, not %d", SchemaVersion, p.Schema)
 	}
 	if !ValidName(p.Name) {
 		bad("name %q must be lowercase letters, digits and hyphens", p.Name)
@@ -285,6 +287,14 @@ func (p *Preset) validate(name string) []error {
 		checkText(at+": label", r.Label, "", bad)
 		checkRole(&r.Role, at, bad)
 		checkWeb(r.Web, at, bad)
+		if strings.TrimSpace(r.Hosts) != "" {
+			if p.Schema < 2 {
+				bad("%s: hosts needs schema: 2", at)
+			}
+			if r.Role == config.RoleLoopback {
+				bad("%s: a loopback route cannot have hosts", at)
+			}
+		}
 	}
 	for i, a := range p.Advisories {
 		at := fmt.Sprintf("advisories[%d]", i)
