@@ -668,3 +668,148 @@ func TestBuildConfigLeavesLocalhostToAProjectThatServesIt(t *testing.T) {
 		t.Errorf("localhost route = %v, want it proxied to a.test's upstream", r)
 	}
 }
+
+// dockerRanges are the ranges a client range list of 172.16.0.0/12 and
+// fd00:d0c::/64 comes out as: an IPv4 range is listed again in its
+// IPv4-mapped form, as the loopback network is.
+var dockerRanges = []string{"172.16.0.0/12", "::ffff:172.16.0.0/108", "fd00:d0c::/64"}
+
+var dockerClients = []string{"172.16.0.0/12", "fd00:d0c::/64"}
+
+// A site's extra client ranges are served on that site's routes alone,
+// in the same match set as the host.
+func TestBuildConfigAddsSiteClientsToItsRoutesOnly(t *testing.T) {
+	cfg := build(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "*.a.local.x.io"}, Upstream: "127.0.0.1:1", Clients: dockerClients},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"},
+	})
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	seenA, seenB := 0, 0
+	for _, r := range routes {
+		m, ok := dig(t, r, "match").([]any)
+		if !ok {
+			continue
+		}
+		host := strs(dig(t, m[0], "host"))[0]
+		got := strs(dig(t, m[0], "remote_ip", "ranges"))
+		switch host {
+		case "a.test", "*.a.local.x.io":
+			seenA++
+			if want := append(slices.Clone(loopbackRanges), dockerRanges...); !slices.Equal(got, want) {
+				t.Errorf("%s ranges = %v, want %v", host, got, want)
+			}
+		default:
+			if host == "b.test" {
+				seenB++
+			}
+			if !slices.Equal(got, loopbackRanges) {
+				t.Errorf("%s ranges = %v, want loopback only", host, got)
+			}
+		}
+	}
+	if seenA != 2 || seenB != 1 {
+		t.Errorf("saw %d routes of a and %d of b, want 2 and 1", seenA, seenB)
+	}
+}
+
+func tlsPolicies(t *testing.T, cfg map[string]any) []any {
+	t.Helper()
+	return dig(t, cfg, "apps", "http", "servers", "nearhost", "tls_connection_policies").([]any)
+}
+
+// Handshakes from a site's extra ranges are accepted by a policy of their
+// own, after the loopback one, matching the site's hosts as well, so a
+// container cannot learn or reach a project that did not opt in.
+func TestBuildConfigAddsADockerTLSPolicyMatchedByHost(t *testing.T) {
+	a := Site{Alias: "a.test", Hosts: []string{"b.local.x.io", "a.test"}, Upstream: "127.0.0.1:1", Clients: dockerClients}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"}
+
+	policies := tlsPolicies(t, build(t, []Site{a, b}))
+	if len(policies) != 2 {
+		t.Fatalf("policies = %v, want two", policies)
+	}
+	if got := strs(dig(t, policies[0], "match", "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) || len(policies[0].(map[string]any)["match"].(map[string]any)) != 1 {
+		t.Errorf("first policy = %v, want the loopback one unchanged", policies[0])
+	}
+	match := dig(t, policies[1], "match").(map[string]any)
+	if len(match) != 2 {
+		t.Errorf("second policy match = %v, want remote_ip and nearhost_hosts only", match)
+	}
+	if got := strs(dig(t, match, "remote_ip", "ranges")); !slices.Equal(got, dockerRanges) {
+		t.Errorf("second policy ranges = %v, want %v", got, dockerRanges)
+	}
+	if got := strs(dig(t, match, "nearhost_hosts", "hosts")); !slices.Equal(got, []string{"a.test", "b.local.x.io"}) {
+		t.Errorf("second policy hosts = %v, want a's hosts, sorted", got)
+	}
+
+	if n := len(tlsPolicies(t, build(t, []Site{b}))); n != 1 {
+		t.Errorf("%d policies with no site opted in, want 1", n)
+	}
+
+	same := Site{Alias: "c.test", Hosts: []string{"c.test"}, Upstream: "127.0.0.1:3", Clients: dockerClients}
+	policies = tlsPolicies(t, build(t, []Site{a, b, same}))
+	if len(policies) != 2 {
+		t.Fatalf("policies = %v, want two for sites with the same clients", policies)
+	}
+	if got := strs(dig(t, policies[1], "match", "nearhost_hosts", "hosts")); !slices.Equal(got, []string{"a.test", "b.local.x.io", "c.test"}) {
+		t.Errorf("shared policy hosts = %v", got)
+	}
+
+	other := Site{Alias: "d.test", Hosts: []string{"d.test"}, Upstream: "127.0.0.1:4", Clients: []string{"10.0.0.0/8"}}
+	policies = tlsPolicies(t, build(t, []Site{other, a}))
+	if len(policies) != 3 {
+		t.Fatalf("policies = %v, want three for different clients", policies)
+	}
+	if got := strs(dig(t, policies[1], "match", "remote_ip", "ranges")); !slices.Equal(got, []string{"10.0.0.0/8", "::ffff:10.0.0.0/104"}) {
+		t.Errorf("second policy ranges = %v, want the first site's", got)
+	}
+	if got := strs(dig(t, policies[2], "match", "remote_ip", "ranges")); !slices.Equal(got, dockerRanges) {
+		t.Errorf("third policy ranges = %v, want the second site's", got)
+	}
+}
+
+// The http port drops clients outside loopback and every site's extra
+// ranges, and redirects each host only to the clients it is served to.
+func TestBuildConfigRedirectsSiteClientsFromHTTP(t *testing.T) {
+	cfg := build(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1", Clients: dockerClients},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"},
+		{Alias: "c.test", Hosts: []string{"c.test"}, Upstream: "127.0.0.1:3", Clients: []string{"172.16.0.0/12"}},
+	})
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
+	union := append(slices.Clone(loopbackRanges), dockerRanges...)
+	if got := strs(dig(t, routes[0], "match", 0, "not", 0, "remote_ip", "ranges")); !slices.Equal(got, union) {
+		t.Errorf("first route ranges = %v, want %v", got, union)
+	}
+	want := map[string][]string{
+		"a.test":    union,
+		"b.test":    loopbackRanges,
+		"c.test":    append(slices.Clone(loopbackRanges), "172.16.0.0/12", "::ffff:172.16.0.0/108"),
+		"localhost": loopbackRanges,
+	}
+	// Before the last route, which drops the rest, a route with every
+	// host and no client matcher drops clients a host is not served to, ahead
+	// of the redirects Caddy adds.
+	drop := routes[len(routes)-2]
+	if got := strs(dig(t, drop, "match", 0, "host")); !slices.Equal(got, []string{"a.test", "b.test", "c.test", "localhost"}) || dig(t, drop, "match", 0, "remote_ip") != nil || dig(t, drop, "handle", 0, "abort") != true {
+		t.Errorf("route before the last = %v, want an abort for every host", drop)
+	}
+	for _, r := range routes[1 : len(routes)-2] {
+		host := strs(dig(t, r, "match", 0, "host"))[0]
+		if got := strs(dig(t, r, "match", 0, "remote_ip", "ranges")); !slices.Equal(got, want[host]) {
+			t.Errorf("redirect for %s ranges = %v, want %v", host, got, want[host])
+		}
+	}
+	last := routes[len(routes)-1].(map[string]any)
+	if h := dig(t, last, "handle", 0).(map[string]any); last["match"] != nil || h["abort"] != true {
+		t.Errorf("last route = %v, want an abort", last)
+	}
+}
+
+func TestBuildConfigRejectsBadClientRange(t *testing.T) {
+	_, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1", Clients: []string{"not-a-cidr"}}}, Options{StorageRoot: t.TempDir()})
+	const want = `proxy: site a.test: client range "not-a-cidr" is not a CIDR`
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %s", err, want)
+	}
+}

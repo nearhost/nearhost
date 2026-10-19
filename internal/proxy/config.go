@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,6 +38,39 @@ type Site struct {
 	// *.local.example.io. There must be at least one.
 	Hosts    []string
 	Upstream string // host:port, e.g. 127.0.0.1:54321
+	// Clients are extra client ranges, in CIDR form (IPv4 or IPv6), the
+	// site's hosts are served to besides loopback, such as the networks
+	// of local Docker containers. nil means loopback only.
+	Clients []string
+}
+
+// clientRanges are the ranges for a site's extra clients: each as written
+// and, for an IPv4 one, in its IPv4-mapped form, as Caddy does not unmap
+// the remote address (see loopbackRanges).
+func clientRanges(clients []string) ([]string, error) {
+	var out []string
+	for _, c := range clients {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			return nil, fmt.Errorf("client range %q is not a CIDR", c)
+		}
+		out = append(out, c)
+		if p.Addr().Is4() {
+			mapped := netip.PrefixFrom(netip.AddrFrom16(p.Addr().As16()), p.Bits()+96)
+			out = append(out, mapped.String())
+		}
+	}
+	return out, nil
+}
+
+// siteRanges are the client ranges a site's hosts are served to: loopback,
+// then the site's own.
+func siteRanges(s Site) ([]string, error) {
+	extra, err := clientRanges(s.Clients)
+	if err != nil {
+		return nil, fmt.Errorf("proxy: site %s: %w", s.Alias, err)
+	}
+	return append(slices.Clone(loopbackRanges), extra...), nil
 }
 
 // Options configures the embedded Caddy instance.
@@ -81,7 +116,7 @@ func accessWriter() map[string]any {
 // siteRoute is the route serving one host of a site: it tags the request
 // with the site's alias, keeps the exchange when capture is on, and proxies
 // to the upstream.
-func siteRoute(s Site, host string, capture bool) map[string]any {
+func siteRoute(s Site, host string, ranges []string, capture bool) map[string]any {
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	handle = append(handle, captureHandler(s.Alias, capture)...)
 	handle = append(handle, map[string]any{
@@ -101,10 +136,10 @@ func siteRoute(s Site, host string, capture bool) map[string]any {
 	})
 	return map[string]any{
 		// One match set, so both must hold: the host is this one and the
-		// client is on this machine.
+		// client is on this machine or in one of the site's extra ranges.
 		"match": []any{map[string]any{
 			"host":      []string{host},
-			"remote_ip": map[string]any{"ranges": loopbackRanges},
+			"remote_ip": map[string]any{"ranges": ranges},
 		}},
 		"handle":   handle,
 		"terminal": true,
@@ -128,34 +163,41 @@ func homeRoute(version string) map[string]any {
 	}
 }
 
-// httpServer is the server on the http port. It serves loopback clients
-// asking for a host in hosts a 308 to the same URL over https, and drops
-// every other connection without an answer, as the https server does.
+// hostRanges is a host and the client ranges it is served to.
+type hostRanges struct {
+	host   string
+	ranges []string
+}
+
+// httpServer is the server on the http port. It serves the clients each of
+// hosts is served to (loopback, and a site's extra ranges) a 308 to the same
+// URL over https, and drops every other connection without an answer, as the
+// https server does. union is the union of all those ranges.
 //
 // Automatic HTTPS adds routes of its own to any server on the http port: a
 // redirect per exact host, with no client matcher, inserted after the last
 // route with a host matcher, or first of all when no route has one, and
 // then a catch-all redirect appended at the end. Unchecked, those would
 // answer clients on other machines and hosts that are not served. So the
-// first route drops a client that is not on loopback, whatever comes after
+// first route drops a client outside the union, whatever comes after
 // it; every host, exact or pattern, has its own redirect, so there is
 // always a host-matched route and Caddy's redirects land after them, where
 // ours have already answered; and the last of our routes drops what is
 // left, so Caddy's catch-all after it is never reached.
-func httpServer(hosts []string, httpPort int) map[string]any {
+func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any {
 	abort := []any{map[string]any{"handler": "static_response", "abort": true}}
 	routes := make([]any, 0, len(hosts)+2)
 	routes = append(routes, map[string]any{
 		"match": []any{map[string]any{"not": []any{map[string]any{
-			"remote_ip": map[string]any{"ranges": loopbackRanges},
+			"remote_ip": map[string]any{"ranges": union},
 		}}}},
 		"handle": abort,
 	})
 	for _, h := range hosts {
 		routes = append(routes, map[string]any{
 			"match": []any{map[string]any{
-				"host":      []string{h},
-				"remote_ip": map[string]any{"ranges": loopbackRanges},
+				"host":      []string{h.host},
+				"remote_ip": map[string]any{"ranges": h.ranges},
 			}},
 			"handle": []any{map[string]any{
 				"handler":     "static_response",
@@ -164,6 +206,21 @@ func httpServer(hosts []string, httpPort int) map[string]any {
 					"Location": []string{"https://{http.request.host}{http.request.uri}"},
 				},
 			}},
+			"terminal": true,
+		})
+	}
+	if len(union) > len(loopbackRanges) {
+		// The first route lets a site's extra clients through for every
+		// host, so a host they are not served would fall to the redirect
+		// Caddy adds for it, which has no client matcher. This route, the
+		// last with a host matcher, drops them first.
+		names := make([]string, len(hosts))
+		for i, h := range hosts {
+			names[i] = h.host
+		}
+		routes = append(routes, map[string]any{
+			"match":    []any{map[string]any{"host": names}},
+			"handle":   abort,
 			"terminal": true,
 		})
 	}
@@ -209,10 +266,15 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		home bool // the host is localhost, served the home page
 	}
 	var all []served
-	siteOf := map[string]int{} // lower-cased host to the index of its site: names match without case
+	rangesOf := map[string][]string{} // lower-cased host to the client ranges it is served to
+	siteOf := map[string]int{}        // lower-cased host to the index of its site: names match without case
 	for i, s := range sites {
 		if s.Alias == "" || s.Upstream == "" || len(s.Hosts) == 0 {
 			return nil, fmt.Errorf("proxy: site needs alias, hosts and upstream, got %+v", s)
+		}
+		ranges, err := siteRanges(s)
+		if err != nil {
+			return nil, err
 		}
 		for _, h := range s.Hosts {
 			key := strings.ToLower(h)
@@ -223,6 +285,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 				return nil, fmt.Errorf("proxy: host %q is listed twice on site %s", key, s.Alias)
 			}
 			siteOf[key] = i
+			rangesOf[key] = ranges
 			all = append(all, served{site: s, host: h})
 		}
 	}
@@ -249,14 +312,16 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	routes := make([]any, 0, len(all)+1)
 	subjects := make([]string, 0, len(all))
 	var patterns []string
-	hosts := make([]string, 0, len(all))
+	hosts := make([]hostRanges, 0, len(all))
 	for _, sv := range all {
+		ranges := loopbackRanges
 		if sv.home {
 			routes = append(routes, homeRoute(opts.Version))
 		} else {
-			routes = append(routes, siteRoute(sv.site, sv.host, opts.Capture))
+			ranges = rangesOf[strings.ToLower(sv.host)]
+			routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts.Capture))
 		}
-		hosts = append(hosts, sv.host)
+		hosts = append(hosts, hostRanges{sv.host, ranges})
 		if hostname.IsPattern(sv.host) {
 			patterns = append(patterns, sv.host)
 		} else {
@@ -313,15 +378,52 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		}
 	}
 
+	// Sites opted in to the same extra client ranges share one policy,
+	// which matches the hosts of all of them. Groups are in the order their
+	// first site appears and hosts in the order of the routes, so the
+	// output is deterministic.
+	type group struct {
+		ranges []string
+		hosts  []string
+	}
+	var groups []*group
+	groupOf := map[string]*group{} // the site's Clients, joined, to its group
+	for _, s := range sites {
+		if len(s.Clients) == 0 {
+			continue
+		}
+		key := strings.Join(s.Clients, ",")
+		if groupOf[key] == nil {
+			extra, _ := clientRanges(s.Clients) // already checked by siteRanges
+			groupOf[key] = &group{ranges: extra}
+			groups = append(groups, groupOf[key])
+		}
+	}
+	for _, sv := range all {
+		if !sv.home && len(sv.site.Clients) > 0 {
+			g := groupOf[strings.Join(sv.site.Clients, ",")]
+			g.hosts = append(g.hosts, sv.host)
+		}
+	}
+	connPolicies := []any{map[string]any{
+		"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+	}}
+	for _, g := range groups {
+		connPolicies = append(connPolicies, map[string]any{"match": map[string]any{
+			"remote_ip":        map[string]any{"ranges": g.ranges},
+			hostsMatcherModule: map[string]any{"hosts": g.hosts},
+		}})
+	}
+
 	server := map[string]any{
 		"listen": []string{fmt.Sprintf(":%d", httpsPort)},
-		// The only policy is for loopback clients, so a handshake from
+		// Policies are first-match. The first is for loopback clients; the
+		// others, one per set of extra client ranges, are for those clients
+		// and the hosts of the sites that opted in. A handshake from
 		// anywhere else matches none and fails before a certificate is
 		// shown: it cannot tell a served alias from any other name.
-		"tls_connection_policies": []any{map[string]any{
-			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
-		}},
-		"routes": routes,
+		"tls_connection_policies": connPolicies,
+		"routes":                  routes,
 		// Requests are logged under one name; the tag handler on each route
 		// says which project the line is for.
 		"logs": map[string]any{"default_logger_name": accessLogger},
@@ -333,7 +435,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = httpServer(hosts, httpPort)
+	servers["nearhost_http"] = httpServer(hosts, unionRanges(sites), httpPort)
 
 	cfg := map[string]any{
 		// persist=false stops Caddy autosaving this config over the user's own
@@ -372,4 +474,19 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		delete(cfg["apps"].(map[string]any), "http")
 	}
 	return json.Marshal(cfg)
+}
+
+// unionRanges are loopback and every site's extra client ranges, each once,
+// for the http server's first route to drop the rest.
+func unionRanges(sites []Site) []string {
+	out := slices.Clone(loopbackRanges)
+	for _, s := range sites {
+		extra, _ := clientRanges(s.Clients) // already checked by siteRanges
+		for _, r := range extra {
+			if !slices.Contains(out, r) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
 }
