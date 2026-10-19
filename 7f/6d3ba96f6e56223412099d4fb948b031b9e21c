@@ -1,0 +1,28 @@
+internal/cli/export.go
+  s_89a63a3c1fa7d2::t_1777f05dfe8e48 1-249
+internal/cli/export_test.go
+  s_89a63a3c1fa7d2::t_0d20d69cf79b8c 262,297,325
+  s_89a63a3c1fa7d2::t_76599cc2296bff 1-261,263-296,298-324,326-340
+agents/nearhost/skills/nearhost/SKILL.md
+  s_89a63a3c1fa7d2::t_4854d98f6be80c 30-31
+internal/cli/ssh.go
+  s_89a63a3c1fa7d2::t_92513ffb9833e1 171-186
+internal/cli/root.go
+  s_89a63a3c1fa7d2::t_8703b1cf12c2f5 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f6d3ba96f6e56223412099d4fb948b031b9e21c",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
