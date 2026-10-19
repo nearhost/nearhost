@@ -53,7 +53,7 @@ func NewRoot() *cobra.Command {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "nearhost",
-		Short:         "Reach local and remote dev servers at https://<name>.test",
+		Short:         "Reach local and remote dev servers at their own domain (https://<name>.test by default)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

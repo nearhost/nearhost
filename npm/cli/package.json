@@ -1,7 +1,7 @@
 {
   "name": "@nearhost/cli",
   "version": "0.0.0",
-  "description": "Open dev servers on your other machines at trusted https://<name>.test addresses over your own SSH. A terminal app for macOS and Linux.",
+  "description": "Open dev servers on your other machines at trusted HTTPS addresses of their own (https://<name>.test by default) over your own SSH. A terminal app for macOS and Linux.",
   "keywords": [
     "dev server",
     "development server",

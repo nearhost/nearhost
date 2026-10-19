@@ -186,9 +186,10 @@ func (c sshClient) openRemoteWritable(ctx context.Context, srv config.Server, pr
 
 // openServer opens srv's files over SFTP, on an SSH connection of its own
 // that closing the handle ends. When the server refuses the connection, the
-// error says how to fix access and then what to do, as then says. It runs no command on the server, not even
-// to test the connection (an account may be allowed SFTP and nothing else),
-// and writes nothing there.
+// error says how to fix access and then what to do, as then says. It runs no
+// command on the server, not even to test the connection (an account may be
+// allowed SFTP and nothing else). Opening writes nothing there, but the
+// handle can write: export writes a project's .nearhostrc through it.
 //
 // The connection uses a private run directory. A session takes over whatever
 // master it finds on its control socket, so sharing the directory of a

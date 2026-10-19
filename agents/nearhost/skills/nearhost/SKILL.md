@@ -1,13 +1,13 @@
 ---
 name: nearhost
-description: Serve the project you are working in at https://<name>.test with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add or /nearhost status, or asks to add, serve or set up this project in Nearhost, or asks for its .test URL. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
+description: Serve the project you are working in at its own domain (https://<name>.test by default) with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add or /nearhost status, or asks to add, serve or set up this project in Nearhost, or asks for its URL. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
 argument-hint: "add [--web <port>] [--name <name>] | status [--all]"
 allowed-tools: Bash(sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh *)
 ---
 
 # Nearhost
 
-Nearhost runs on the user's laptop and serves projects, on the laptop or on servers it reaches over SSH, at `https://<name>.test`. You may be on the laptop or on one of those servers: you do not need to know which. The script `scripts/nearhost.sh`, next to this file, finds Nearhost and talks to it.
+Nearhost runs on the user's laptop and serves projects, on the laptop or on servers it reaches over SSH, at each project's own domain, `https://<name>.test` by default. You may be on the laptop or on one of those servers: you do not need to know which. The script `scripts/nearhost.sh`, next to this file, finds Nearhost and talks to it.
 
 Run it as `sh <this skill's directory>/scripts/nearhost.sh <command>`; in Claude Code that is `sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh <command>`. It prints JSON from Nearhost on success and one line saying what to do on failure.
 
