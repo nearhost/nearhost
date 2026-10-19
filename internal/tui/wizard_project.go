@@ -557,15 +557,14 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.busy, f.err = "Saving…", ""
 			seq, b, p := f.seq, f.b, f.project()
 			// Saving approves what .nearhostrc asks for, so its snapshot is
-			// saved with the project. A file that cannot be read now leaves
-			// what was approved before as it was.
+			// saved with the project. A file that cannot be read now has no
+			// snapshot, and the one approved before is dropped: the routes
+			// saved are the form's, not that snapshot's, so the next read
+			// that works must be reviewed in full.
 			p.Nearhostrc = f.draft.Nearhostrc
 			if f.edit != nil {
 				was := f.edit.Name
 				p.Enabled = f.edit.Enabled
-				if f.draft.RcError != "" {
-					p.Nearhostrc = f.edit.Nearhostrc
-				}
 				return f.w.do(func(context.Context) tea.Msg {
 					return projectSavedMsg{seq, p.Name, b.EditConfig(func(cfg *config.Config) error {
 						for i := range cfg.Projects {

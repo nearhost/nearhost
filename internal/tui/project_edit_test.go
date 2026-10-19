@@ -215,3 +215,26 @@ func TestEditProjectMergesNearhostrc(t *testing.T) {
 		t.Errorf("saved hosts %v", h)
 	}
 }
+
+// Editing a project whose .nearhostrc cannot be read now saves it without
+// the approved snapshot, so the next read that works is reviewed in full
+// rather than compared with what was approved before the file broke.
+func TestEditProjectWithAnUnreadableNearhostrcClearsTheSnapshot(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.cfg.Projects[1].Nearhostrc = &config.RcSnapshot{SHA256: "old", Routes: []config.Route{{Port: 80, Role: config.RoleWeb}}}
+	f.forms.files = &fakeFiles{home: "/home/dev", dirs: map[string]bool{"/srv/myapp": true}, drafts: map[string]Draft{
+		"/srv/myapp": {Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Label: "app"}}, RcError: ".nearhostrc: version 0 is not valid"},
+	}}
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "myapp"))
+	settle(m, press(m, "e"))
+	wantScreen(t, m, ".nearhostrc: version 0 is not valid")
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Edit myapp · confirm")
+	settle(m, press(m, "enter"))
+	p, _ := f.cfg.Project("myapp")
+	if f.edit.edits != 1 || p.Nearhostrc != nil {
+		t.Fatalf("edits %d, saved snapshot %+v, want none", f.edit.edits, p.Nearhostrc)
+	}
+}
