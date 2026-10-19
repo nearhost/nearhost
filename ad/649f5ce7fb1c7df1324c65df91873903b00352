@@ -1,0 +1,23 @@
+internal/doctor/compose.go
+  s_89a63a3c1fa7d2::t_0e830556c6a62a 50-51,149-190,230-231,233,237
+internal/doctor/compose_test.go
+  s_89a63a3c1fa7d2::t_66eb082b2c4576 97-131
+internal/doctor/docker_test.go
+  s_89a63a3c1fa7d2::t_6cbf15d58fc730 183-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad649f5ce7fb1c7df1324c65df91873903b00352",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
