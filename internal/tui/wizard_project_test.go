@@ -556,3 +556,48 @@ func TestFormListsDockerClientsForApproval(t *testing.T) {
 		t.Fatalf("saved %+v", f.forms.saved)
 	}
 }
+
+// The main name a .nearhostrc gives fills the alias field. It is not taken
+// as typed, so a real domain is still asked about; typing the project's name
+// does not replace it; and an alias typed is kept when discovery runs again.
+func TestFormTakesAliasFromNearhostrc(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{
+		Name: "here", Alias: "app.local.x.io",
+		Routes:     []config.Route{web(8220, "app")},
+		Nearhostrc: &config.RcSnapshot{SHA256: "abc", Alias: "app.local.x.io", Routes: []config.Route{{Port: 8220, Role: config.RoleWeb}}},
+	}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	pf := m.form.(*projectForm)
+	wantScreen(t, m, "alias     app.local.x.io")
+	want := []nearhostrc.Item{{Port: 8220, Host: "app.local.x.io", Why: "a real domain"}}
+	if got := pf.needsApproval(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("needsApproval = %+v", got)
+	}
+	typeText(m, "2")
+	wantScreen(t, m, "name      here2▏", "alias     app.local.x.io")
+
+	press(m, "tab")
+	press(m, "ctrl+u")
+	typeText(m, "mine.test")
+	press(m, "esc")
+	press(m, "esc")
+	if pf.step != projectStepPath {
+		t.Fatalf("step %d, want the path step", pf.step)
+	}
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	wantScreen(t, m, "alias     mine.test")
+
+	// With the name kept and the alias no longer counted as typed, the
+	// next discovery gives the file's main name again.
+	pf.aliasEdited = false
+	pf.alias.value = "here2.test"
+	press(m, "esc")
+	press(m, "esc")
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	wantScreen(t, m, "alias     app.local.x.io")
+}

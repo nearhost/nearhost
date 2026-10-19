@@ -158,8 +158,19 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
 	}
+	defaultAlias := project.Alias
 	if err := applyNearhostrc(cmd, b, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != ""); err != nil {
 		return errors.Join(err, done())
+	}
+	// A main name from the .nearhostrc must be free, as a typed one must.
+	if project.Alias != defaultAlias {
+		var aliasTaken *aliasTakenError
+		switch err := aliasProblem(cfg, project.Alias); {
+		case errors.As(err, &aliasTaken):
+			return errors.Join(fmt.Errorf("%s asks for alias %s, which is already used by project %q; pass another --alias", nearhostrc.FileName, project.Alias, aliasTaken.other.Name), done())
+		case err != nil:
+			return errors.Join(err, done())
+		}
 	}
 	// The advisories are about the roles the project ends up with. Merging
 	// and forceWeb keep the discovered routes' ports, so the roles are
@@ -217,7 +228,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // applyNearhostrc applies the project's .nearhostrc, if it has one, and the
 // --host flags to project, and asks before serving any host that would take
 // over traffic meant for the internet. A host typed with --host counts as
-// approved by being typed, and so is a main name given with --alias. Nothing is saved here; an error stops the add.
+// approved by being typed, and so is a main name given with --alias. The
+// file's alias is the project's main name unless --alias gave one: the flag
+// wins, and the snapshot still records the file's, so a later start keeps
+// the flag's until the file moves its alias. Nothing is saved here; an error
+// stops the add.
 func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
 	out := cmd.OutOrStdout()
 	f, found, err := nearhostrc.Read(reader)
@@ -225,11 +240,15 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 		return err
 	}
 	if found {
+		typedAlias := project.Alias
 		merged, err := nearhostrc.Merge(*project, f, project.Routes)
 		if err != nil {
 			return err
 		}
 		*project = merged
+		if aliasTyped {
+			project.Alias = typedAlias
+		}
 	}
 	// A host typed twice, or already on a route, is served once: it still
 	// counts as typed, so it is approved, but is not added again. Hosts are

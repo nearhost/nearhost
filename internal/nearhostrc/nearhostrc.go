@@ -45,10 +45,14 @@ type File struct {
 	// DockerClients is whether the file asks for the project to be served to
 	// containers on local Docker networks.
 	DockerClients bool
-	// SHA256 is the hex hash of the canonical JSON of Routes after filling.
-	// Hashing the filled values rather than the file means a change in .env
-	// that moves a port or host invalidates an earlier approval, while
-	// comments and formatting do not.
+	// Alias is the project's main name the file asks for, filled and
+	// checked as config.ValidProjectAlias does; empty when the file has none.
+	Alias string
+	// SHA256 is the hex hash of the canonical JSON of Routes, and of the
+	// options and alias when the file has them, after filling. Hashing the
+	// filled values rather than the file means a change in .env that moves a
+	// port, host or main name invalidates an earlier approval, while comments
+	// and formatting do not.
 	SHA256 string
 }
 
@@ -68,7 +72,8 @@ type rawFile struct {
 	Version int        `yaml:"version"`
 	Routes  []rawRoute `yaml:"routes"`
 
-	DockerClients bool `yaml:"docker_clients"`
+	DockerClients bool   `yaml:"docker_clients"`
+	Alias         string `yaml:"alias"`
 }
 
 type rawRoute struct {
@@ -78,7 +83,8 @@ type rawRoute struct {
 	Role  config.Role `yaml:"role"`
 }
 
-// Parse decodes data and fills ${VAR} references in ports and hosts from env.
+// Parse decodes data and fills ${VAR} references in ports, hosts, labels,
+// roles and the alias from env.
 // Every error starts with ".nearhostrc" so callers can show it as it is.
 func Parse(data []byte, env map[string]string) (*File, error) {
 	// Editors on Windows add a byte order mark that YAML would read as text.
@@ -145,17 +151,30 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 		return nil, err
 	}
 
-	// Without the option the hash stays the plain routes, as before, so
-	// approvals given by earlier versions are not invalidated by an upgrade.
-	// The option is added to the hashed form only when it is on, so turning
-	// it on asks again.
+	// The alias goes through the same token swap as the labels.
+	alias, name, ok := discovery.Expand(restore.Replace(raw.Alias), env)
+	if !ok {
+		return nil, unset(name)
+	}
+	if alias != "" {
+		if err := config.ValidProjectAlias(alias); err != nil {
+			return nil, fmt.Errorf("%s: alias: %w", FileName, err)
+		}
+	}
+
+	// Without the option or an alias the hash stays the plain routes, as
+	// before, so approvals given by earlier versions are not invalidated by
+	// an upgrade. The option is added to the hashed form only when it is on,
+	// and the alias only when there is one, so a file with only the option
+	// hashes as it did before alias existed, and adding either asks again.
 	var canon []byte
 	var err error
-	if raw.DockerClients {
+	if raw.DockerClients || alias != "" {
 		canon, err = json.Marshal(struct {
 			Routes        []Route `json:"routes"`
 			DockerClients bool    `json:"docker_clients"`
-		}{routes, true})
+			Alias         string  `json:"alias,omitempty"`
+		}{routes, raw.DockerClients, alias})
 	} else {
 		canon, err = json.Marshal(routes)
 	}
@@ -163,7 +182,7 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	sum := sha256.Sum256(canon)
-	return &File{Routes: routes, DockerClients: raw.DockerClients, SHA256: hex.EncodeToString(sum[:])}, nil
+	return &File{Routes: routes, DockerClients: raw.DockerClients, Alias: alias, SHA256: hex.EncodeToString(sum[:])}, nil
 }
 
 // yamlError wraps a decoding error, putting back the ${VAR} references Parse
@@ -189,7 +208,7 @@ func checkRoutes(routes []Route) error {
 		}
 		webs++
 		if webs > 1 && len(r.Hosts) == 0 {
-			return fmt.Errorf("%s: port %d needs at least one host; only the first web route is served at the project's .test name", FileName, r.Port)
+			return fmt.Errorf("%s: port %d needs at least one host; only the first web route is served at the project's main name", FileName, r.Port)
 		}
 		for _, h := range r.Hosts {
 			k := strings.ToLower(h)

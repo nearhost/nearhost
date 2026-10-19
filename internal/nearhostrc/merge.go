@@ -22,15 +22,28 @@ import (
 // visible, but any that were web are demoted to ignore, since the file is now
 // the only thing that says what is served. A demoted route loses its hosts,
 // because only web routes may have them. A manual host the file also lists,
-// on any route, is dropped from the manual ones so it is served once. Merge
-// fails when a route other than the primary lists the project's .test name,
-// which is always served on the first web route, and when the file asks for
-// docker_clients on a project that is not on this machine, since containers
-// cannot reach Nearhost on a server. The file's docker_clients choice is kept
-// in the snapshot.
+// on any route, is dropped from the manual ones so it is served once.
+//
+// The file's alias becomes p's main name only when it differs from the alias
+// the last approved snapshot had, as when the file is first read or someone
+// changes it, so a main name the user set by hand since stays until the file
+// moves its own. A file without an alias leaves the main name alone.
+//
+// Merge fails when a route other than the primary lists the project's main
+// name, which is always served on the first web route, and when the file asks
+// for docker_clients on a project that is not on this machine, since
+// containers cannot reach Nearhost on a server. The file's docker_clients
+// choice and alias are kept in the snapshot.
 func Merge(p config.Project, f *File, discovered []config.Route) (config.Project, error) {
 	if f.DockerClients && p.Server != config.LocalServer {
 		return p, fmt.Errorf("%s: docker_clients works only for projects on this machine; containers can't reach Nearhost from server %q", FileName, p.Server)
+	}
+	approvedAlias := ""
+	if p.Nearhostrc != nil {
+		approvedAlias = p.Nearhostrc.Alias
+	}
+	if f.Alias != "" && f.Alias != approvedAlias {
+		p.Alias = f.Alias
 	}
 	inFile := map[string]bool{}
 	primary := true
@@ -42,7 +55,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 		for _, h := range fr.Hosts {
 			inFile[strings.ToLower(h)] = true
 			if !isPrimary && strings.EqualFold(h, p.Alias) {
-				return p, fmt.Errorf("%s: port %d lists %q, the project's .test name, which is always served on the first web route", FileName, fr.Port, h)
+				return p, fmt.Errorf("%s: port %d lists %q, the project's main name, which is always served on the first web route", FileName, fr.Port, h)
 			}
 		}
 	}
@@ -113,7 +126,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 	}
 
 	p.Routes = routes
-	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot, DockerClients: f.DockerClients}
+	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot, DockerClients: f.DockerClients, Alias: f.Alias}
 	return p, nil
 }
 

@@ -677,16 +677,17 @@ func TestRcSnapshotCloneKeepsEverything(t *testing.T) {
 	if nilSnap.Clone() != nil {
 		t.Fatal("nil should clone to nil")
 	}
-	orig := &RcSnapshot{SHA256: "h", DockerClients: true, Routes: []Route{{Port: 80, Role: RoleWeb, Label: "l", Hosts: []string{"a.test"}}}}
+	orig := &RcSnapshot{SHA256: "h", DockerClients: true, Alias: "a.test", Routes: []Route{{Port: 80, Role: RoleWeb, Label: "l", Hosts: []string{"a.test"}}}}
 	clone := orig.Clone()
 	if !reflect.DeepEqual(clone, orig) {
 		t.Fatalf("clone = %+v", clone)
 	}
 	clone.SHA256 = "x"
 	clone.DockerClients = false
+	clone.Alias = "b.test"
 	clone.Routes[0].Port = 81
 	clone.Routes[0].Hosts[0] = "b.test"
-	if orig.SHA256 != "h" || !orig.DockerClients || orig.Routes[0].Port != 80 || orig.Routes[0].Hosts[0] != "a.test" {
+	if orig.SHA256 != "h" || !orig.DockerClients || orig.Alias != "a.test" || orig.Routes[0].Port != 80 || orig.Routes[0].Hosts[0] != "a.test" {
 		t.Fatalf("original changed: %+v", orig)
 	}
 }

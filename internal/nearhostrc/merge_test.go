@@ -213,3 +213,41 @@ func TestNeedsApprovalListsDockerClients(t *testing.T) {
 		t.Fatalf("dropped: %+v", got)
 	}
 }
+
+func TestMergeAppliesFileAliasOnlyWhenItChanged(t *testing.T) {
+	routes := []Route{{Port: 80, Role: config.RoleWeb}}
+	cases := map[string]struct {
+		alias, snap, file, want string
+		noSnap                  bool
+	}{
+		"first file alias":       {alias: "dd.test", noSnap: true, file: "a.test", want: "a.test"},
+		"snapshot without alias": {alias: "dd.test", snap: "", file: "a.test", want: "a.test"},
+		"hand edit kept":         {alias: "mine.test", snap: "a.test", file: "a.test", want: "mine.test"},
+		"file moved it":          {alias: "a.test", snap: "a.test", file: "b.test", want: "b.test"},
+		"hand edit, file moved":  {alias: "mine.test", snap: "a.test", file: "b.test", want: "b.test"},
+		"file without alias":     {alias: "mine.test", snap: "a.test", file: "", want: "mine.test"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := config.Project{Name: "dd", Alias: c.alias}
+			if !c.noSnap {
+				p.Nearhostrc = &config.RcSnapshot{SHA256: "old", Alias: c.snap}
+			}
+			got := mustMerge(t, p, &File{SHA256: "new", Alias: c.file, Routes: routes}, nil)
+			if got.Alias != c.want {
+				t.Fatalf("Alias = %q, want %q", got.Alias, c.want)
+			}
+			if got.Nearhostrc.Alias != c.file {
+				t.Fatalf("snapshot Alias = %q, want the file's %q", got.Nearhostrc.Alias, c.file)
+			}
+		})
+	}
+}
+
+func TestMergeRejectsFileAliasOnNonPrimaryRoute(t *testing.T) {
+	p := config.Project{Name: "dd", Alias: "dd.test"}
+	f := &File{Alias: "a.test", Routes: []Route{{Port: 1, Role: config.RoleWeb, Hosts: []string{"x.dd.io"}}, {Port: 2, Role: config.RoleWeb, Hosts: []string{"a.test"}}}}
+	if _, err := Merge(p, f, nil); err == nil || !strings.Contains(err.Error(), "the project's main name") {
+		t.Fatalf("err = %v", err)
+	}
+}

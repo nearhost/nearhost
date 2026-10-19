@@ -227,3 +227,39 @@ func TestEngineCopiesKeepDockerClients(t *testing.T) {
 		t.Fatalf("adopted project = %+v, nearhostrc %+v", p, p.Nearhostrc)
 	}
 }
+
+// A main name a .nearhostrc moves without needing approval is adopted by the
+// start: the status, the proxy's site and the proxy's logs follow it.
+func TestStartAdoptsFileAliasAndFilesLogsUnderIt(t *testing.T) {
+	port := upstream(t, "p")
+	p := localProject("p", port)
+	p.Alias = "a.test"
+	p.Nearhostrc = &config.RcSnapshot{SHA256: "old", Alias: "a.test", Routes: p.Routes}
+	var calls atomic.Int32
+	h := withReview(t, &config.Config{Projects: []config.Project{p}}, func(_ context.Context, p config.Project, _ discovery.FileReader) Review {
+		if calls.Add(1) > 1 {
+			return Review{}
+		}
+		next := p
+		next.Alias = "b.test"
+		next.Nearhostrc = &config.RcSnapshot{SHA256: "new", Alias: "b.test", Routes: next.Routes}
+		return Review{Updated: &next}
+	})
+	events, unsubscribe := h.eng.Events().Subscribe(256)
+	defer unsubscribe()
+	mustStart(t, h, "p")
+
+	if st := h.eng.Status("p"); st.State != StateRunning || st.Alias != "b.test" {
+		t.Fatalf("status = %+v", st)
+	}
+	if sites := h.eng.Sites(); len(sites) != 1 || sites[0].Alias != "b.test" || sites[0].Hosts[0] != "b.test" {
+		t.Fatalf("Sites = %+v", sites)
+	}
+	if q, _ := h.eng.Config().Project("p"); q.Alias != "b.test" {
+		t.Fatalf("the engine's config has alias %q", q.Alias)
+	}
+	h.eng.proxyLog("b.test", "GET / 200")
+	if !sawLog(events, "p", "GET / 200") {
+		t.Fatal("a proxy log line under the new main name was not filed under the project")
+	}
+}

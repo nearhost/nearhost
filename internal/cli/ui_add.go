@@ -201,7 +201,8 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 	// The project's .nearhostrc says what it serves. One that cannot be
 	// read, or merged with what was found, is said on the routes step, and
 	// the project can be added without it. It is merged for the server the
-	// form is on, since docker_clients is allowed only on this machine.
+	// form is on, since docker_clients is allowed only on this machine. The
+	// file's alias, when it has one, is the main name the form proposes.
 	rc, found, err := nearhostrc.Read(reader)
 	switch {
 	case err != nil:
@@ -212,7 +213,7 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 			d.RcError = err.Error()
 			break
 		}
-		d.Routes, d.Nearhostrc = merged.Routes, merged.Nearhostrc
+		d.Routes, d.Nearhostrc, d.Alias = merged.Routes, merged.Nearhostrc, merged.Alias
 	}
 	for _, o := range res.Suggested {
 		alias, _ := config.SplitPreset(o.Name)

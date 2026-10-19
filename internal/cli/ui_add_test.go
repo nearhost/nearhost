@@ -275,7 +275,7 @@ func TestFormDiscoveryReadsNearhostrc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Nearhostrc != nil || !strings.Contains(d.RcError, "the project's .test name") {
+	if d.Nearhostrc != nil || !strings.Contains(d.RcError, "the project's main name") {
 		t.Errorf("snapshot %+v, rc error %q", d.Nearhostrc, d.RcError)
 	}
 }
@@ -354,5 +354,28 @@ func TestFormPublicAddress(t *testing.T) {
 		if addr, ok := u.PublicAddress(ctx, h); ok {
 			t.Errorf("%s = %q, %v", h, addr, ok)
 		}
+	}
+}
+
+// The form's discovery takes the main name a .nearhostrc gives.
+func TestFormDiscoveryTakesAliasFromNearhostrc(t *testing.T) {
+	u := formEngine(t)
+	ctx := context.Background()
+	files, err := u.OpenServer(ctx, config.Server{Name: config.LocalServer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	dir := t.TempDir()
+	rc := "version: 1\nalias: ${APP_HOST:-rc.test}\nroutes:\n  - port: 8220\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Alias != "rc.test" || d.Nearhostrc == nil || d.Nearhostrc.Alias != "rc.test" || d.RcError != "" {
+		t.Fatalf("draft alias %q, snapshot %+v, rc error %q", d.Alias, d.Nearhostrc, d.RcError)
 	}
 }
