@@ -1,0 +1,23 @@
+agents/nearhost/skills/nearhost/SKILL.md
+  s_89a63a3c1fa7d2::t_ed392eb825db88 25,42,45,47-49,62
+agents/nearhost/skills/nearhost/scripts/nearhost.sh
+  s_89a63a3c1fa7d2::t_045f45ffad30d3 16,222,232
+internal/agentapi/script_test.go
+  s_89a63a3c1fa7d2::t_26255ea622d26d 12,14,386-464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "096bfcf0da1a2046a9a8976191cd5149e30418dd",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
