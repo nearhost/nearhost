@@ -62,9 +62,16 @@ var varRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}\n]*)?\}`)
 
 var unknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type`)
 
-func newerVersion(v int) error {
-	return fmt.Errorf("%s is version %d; this Nearhost understands version %d, so update Nearhost", FileName, v, Version)
+// VersionError is the error for a .nearhostrc whose version is newer than this
+// Nearhost understands. It is a type so that a caller can tell it from a
+// malformed file: the cure is to update Nearhost, not to edit the file.
+type VersionError struct{ Version int }
+
+func (e *VersionError) Error() string {
+	return fmt.Sprintf("%s is version %d; this Nearhost understands version %d, so update Nearhost", FileName, e.Version, Version)
 }
+
+func newerVersion(v int) error { return &VersionError{Version: v} }
 
 func token(i int) string { return "nhrcvar" + strconv.Itoa(i) + "x" }
 
@@ -273,8 +280,40 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 	return r, nil
 }
 
-func unset(name string) error {
-	return fmt.Errorf("%s: ${%s} has no value in .env.local or .env, and no default", FileName, name)
+// UnsetError is the error for a ${VAR} in a .nearhostrc that has no value in
+// .env.local or .env and no default. It is a type so that a caller can name
+// the variable and find where the file uses it.
+type UnsetError struct{ Var string }
+
+func (e *UnsetError) Error() string {
+	return fmt.Sprintf("%s: ${%s} has no value in .env.local or .env, and no default", FileName, e.Var)
+}
+
+func unset(name string) error { return &UnsetError{Var: name} }
+
+var errLine = regexp.MustCompile(`\bline (\d+):`)
+
+// Line returns the 1-based line of data that err, as Parse or Read returned
+// it, points at, or 0 when it points at none. An unset variable carries no
+// line of its own, so the line is that of the first reference to it; for any
+// other error it is the number in the first "line N:" of the message.
+func Line(data []byte, err error) int {
+	if err == nil {
+		return 0
+	}
+	var ue *UnsetError
+	if errors.As(err, &ue) {
+		ref := regexp.MustCompile(`\$\{` + regexp.QuoteMeta(ue.Var) + `(\}|:-|-)`)
+		if loc := ref.FindIndex(data); loc != nil {
+			return 1 + bytes.Count(data[:loc[0]], []byte("\n"))
+		}
+		return 0
+	}
+	if m := errLine.FindStringSubmatch(err.Error()); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 0
 }
 
 // Read reads .nearhostrc and the project's env through r. A project without

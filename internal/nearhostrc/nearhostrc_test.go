@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -234,5 +235,45 @@ func TestHashKeepsOldFormWithoutAlias(t *testing.T) {
 	}
 	if withAlias.SHA256 == plain.SHA256 || dockerAlias.SHA256 == docker.SHA256 || withAlias.SHA256 == dockerAlias.SHA256 {
 		t.Fatal("adding alias must change the hash")
+	}
+}
+
+func TestParseErrorKinds(t *testing.T) {
+	_, err := Parse([]byte("version: 2\nroutes: []\n"), nil)
+	var ve *VersionError
+	if !errors.As(err, &ve) || ve.Version != 2 {
+		t.Fatalf("newer version: %v, want *VersionError{2}", err)
+	}
+	want := ".nearhostrc is version 2; this Nearhost understands version 1, so update Nearhost"
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err, want)
+	}
+
+	_, err = Parse([]byte("version: 1\nroutes:\n  - port: ${MISSING}\n"), nil)
+	var ue *UnsetError
+	if !errors.As(err, &ue) || ue.Var != "MISSING" {
+		t.Fatalf("unset: %v, want *UnsetError{MISSING}", err)
+	}
+	want = ".nearhostrc: ${MISSING} has no value in .env.local or .env, and no default"
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err, want)
+	}
+}
+
+func TestLineOfErrors(t *testing.T) {
+	unset := []byte("version: 1\nroutes:\n  - port: 3000\n    hosts: [${API_HOST}]\n  - port: 3001\n")
+	_, err := Parse(unset, nil)
+	if got := Line(unset, err); got != 4 {
+		t.Errorf("unset variable: line %d, want 4 (%v)", got, err)
+	}
+
+	extra := []byte("version: 1\nroutes: []\nextra: 1\n")
+	_, err = Parse(extra, nil)
+	if got := Line(extra, err); got != 3 {
+		t.Errorf("unknown key: line %d, want 3 (%v)", got, err)
+	}
+
+	if got := Line(extra, errors.New("x")); got != 0 {
+		t.Errorf("plain error: line %d, want 0", got)
 	}
 }
