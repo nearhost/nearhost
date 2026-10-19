@@ -7,10 +7,13 @@
 #   nearhost.sh status [--all] [path]                   the project holding path
 #   nearhost.sh propose [--web N] [--name X] [path]     ask to add the project
 #   nearhost.sh wait <id>                               wait up to 50s for the answer
+#   nearhost.sh doctor [path]                           check how the project is served
+#   nearhost.sh reload [path]                           make Nearhost re-read .nearhostrc
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable, 3 Nearhost runs without its interface, 4 several
-# laptops answer, 5 API mismatch, 6 declined, 7 expired.
+# laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined,
+# 7 expired, 8 superseded by a newer change.
 
 set -u
 
@@ -94,6 +97,16 @@ find_socket() {
 		fi
 		die 5 "Nearhost on $laptop speaks API ${api:-?} and this skill speaks $API: update Nearhost on $laptop."
 	fi
+}
+
+# need CAP exits 5 unless this Nearhost lists CAP in its capabilities. An
+# older Nearhost has no such list, which counts as lacking every one.
+need() {
+	caps=$(printf '%s' "$HELLO" | sed -n 's/.*"capabilities":\[\([^]]*\)\].*/\1/p')
+	case $caps in
+	*\"$1\"*) ;;
+	*) die 5 "Nearhost on $(field laptop "$HELLO") doesn't support $1 yet: update Nearhost there." ;;
+	esac
 }
 
 # absolute PATH prints PATH as an absolute directory, as the shell sees it:
@@ -198,9 +211,34 @@ wait)
 	case $(field state "$BODY") in
 	declined) exit 6 ;;
 	expired) exit 7 ;;
+	superseded) exit 8 ;;
 	esac
 	;;
+doctor)
+	dir=$(absolute "${1:-.}") || exit 1
+	TARGET=$dir
+	find_socket
+	need doctor
+	call "$SOCK" 30 -G --data-urlencode "path=$dir" --data-urlencode "real=$(resolved "$dir")" http://nearhost/v1/doctor ||
+		die 2 "Nearhost stopped answering."
+	printf '%s\n' "$BODY"
+	[ "$STATUS" = 200 ] || exit 1
+	;;
+reload)
+	dir=$(absolute "${1:-.}") || exit 1
+	TARGET=$dir
+	find_socket
+	need reload
+	call "$SOCK" 30 -X POST -H 'Content-Type: application/json' --data-binary "{\"path\":$(quote "$dir"),\"real\":$(quote "$(resolved "$dir")")}" http://nearhost/v1/projects/reload ||
+		die 2 "Nearhost stopped answering."
+	# 200 is either applied or declined: the user already refused this change.
+	if [ "$STATUS" = 200 ] && [ "$(field state "$BODY")" = declined ]; then
+		printf '%s\n' "$BODY"
+		exit 6
+	fi
+	answer
+	;;
 *)
-	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id>"
+	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path]"
 	;;
 esac
