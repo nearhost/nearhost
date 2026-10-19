@@ -256,7 +256,7 @@ func (u *uiEngine) HostsState() string {
 	}
 	// The same names doctor checks, filtered the same way, so the interface
 	// and `nearhost doctor` never disagree about what the file should hold.
-	c := checkHosts(context.Background(), doctorBackend{readHosts: u.b.readHosts, lookup: u.b.lookup}, u.Config())
+	c := checkHosts(context.Background(), doctorBackend{env: doctorEnv{readHosts: u.b.readHosts, lookup: u.b.lookup}}, u.Config())
 	return c.detail
 }
 

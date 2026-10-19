@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -52,11 +53,13 @@ type doctorBackend struct {
 	probePort func(network string, port int) error
 	// holderOf names the process listening on a port, or returns "".
 	holderOf func(ctx context.Context, port int) string
-	// readHosts returns the content of the hosts file.
-	readHosts func() (string, error)
-	// lookup finds the addresses DNS gives a name; nil keeps every name in
-	// the hosts check.
-	lookup hosts.Lookup
+	// env is what the hosts check and the project checks need of the
+	// machine. Its lookup may be nil, which keeps every name in the hosts
+	// check.
+	env doctorEnv
+	// openFiles opens the files of a server's projects. nil skips the
+	// project section.
+	openFiles func(ctx context.Context, srv config.Server) (serverFiles, error)
 	// checkServer reports whether ssh reaches a server without prompting.
 	checkServer func(ctx context.Context, srv config.Server) error
 	// checkAgents reports whether a server forwards the socket agents reach
@@ -76,11 +79,13 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		trust:     systemTrust(),
 		probePort: probePort,
 		holderOf:  engine.PortHolder,
-		readHosts: func() (string, error) {
-			data, err := os.ReadFile(hosts.DefaultPath)
-			return string(data), err
+		// --no-hosts is a flag of the run, so it is applied then. A config
+		// directory that can't be found leaves the CA check out of the
+		// project section; the machine checks report it.
+		env: systemDoctorEnv(lookup, false, caddyDirOrEmpty()),
+		openFiles: func(ctx context.Context, srv config.Server) (serverFiles, error) {
+			return openFiles(ctx, sshClient{}, srv, "run `nearhost doctor` again")
 		},
-		lookup:      lookup,
 		checkServer: sshClient{}.check,
 		checkAgents: sshClient{}.checkAgents,
 		goos:        runtime.GOOS,
@@ -93,6 +98,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 
 func newDoctorCmd(b doctorBackend) *cobra.Command {
 	var flags serveFlags
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check ports, the local CA, the hosts block and server access",
@@ -101,20 +107,42 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 			"there can reach Nearhost. Each check is reported as ok, warn or FAIL with what\n" +
 			"to do about it. Only a FAIL makes the exit status non-zero. Nothing is changed,\n" +
 			"apart from ~/.nearhost on each server, which the agents check creates as\n" +
-			"`nearhost` would.",
+			"`nearhost` would. Then each enabled project is checked for problems in its\n" +
+			"files and setup, and --json prints all of it as one JSON object instead.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := flags.validate(); err != nil {
 				return err
 			}
-			return report(cmd, runChecks(cmd, b, flags))
+			m := runChecks(cmd, b, flags)
+			var projects []projectReport
+			if m.cfg != nil && b.openFiles != nil {
+				env := b.env
+				env.noHosts = env.noHosts || flags.noHosts
+				projects = checkProjects(cmd.Context(), b, env, m.cfg, m.cfgPath, m.reachable)
+			}
+			if asJSON {
+				return reportJSON(cmd, m.checks, projects)
+			}
+			return report(cmd, m.checks, projects)
 		},
 	}
 	flags.bind(cmd)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the checks and the projects' findings as JSON")
 	return cmd
 }
 
-func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
+// machine is the outcome of the machine checks, with what the project
+// section needs from them.
+type machine struct {
+	checks  []check
+	cfg     *config.Config // nil when the config could not be read
+	cfgPath string
+	// reachable holds the servers ssh reaches, and this machine.
+	reachable map[string]bool
+}
+
+func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	var checks []check
 	cfg, path, err := loadConfig(cmd)
 	switch {
@@ -146,20 +174,22 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) []check {
 		if !flags.noHosts {
 			checks = append(checks, unread("hosts block"))
 		}
-		return append(checks, unread("servers"))
+		return machine{checks: append(checks, unread("servers")), cfgPath: path}
 	}
 	checks = append(checks, checkAliases(cfg, path)...)
 	if !flags.noHosts {
 		checks = append(checks, checkHosts(ctx, b, cfg))
 	}
+	reachable := map[string]bool{config.LocalServer: true}
 	for _, srv := range cfg.Servers {
 		c := checkServer(ctx, b, srv)
 		checks = append(checks, c)
+		reachable[srv.Name] = c.level == levelOK
 		if c.level == levelOK && b.checkAgents != nil {
 			checks = append(checks, checkAgents(ctx, b, srv))
 		}
 	}
-	return checks
+	return machine{checks: checks, cfg: cfg, cfgPath: path, reachable: reachable}
 }
 
 // checkAgents reports whether coding agents on srv can reach Nearhost. They
@@ -182,10 +212,10 @@ func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check 
 	return check{name: name, detail: "can reach Nearhost through ~/" + transport.AgentDir}
 }
 
-// report prints the checks and returns an error when one failed.
-func report(cmd *cobra.Command, checks []check) error {
-	out := cmd.OutOrStdout()
-	failed, warned := 0, 0
+// tally counts the failures and warnings among the checks and the
+// projects' findings. An error finding counts as a failed check; info
+// counts as nothing, since it needs no action.
+func tally(checks []check, projects []projectReport) (failed, warned int) {
 	for _, c := range checks {
 		switch c.level {
 		case levelFail:
@@ -193,6 +223,35 @@ func report(cmd *cobra.Command, checks []check) error {
 		case levelWarn:
 			warned++
 		}
+	}
+	for _, p := range projects {
+		for _, f := range p.findings {
+			switch f.Severity {
+			case doctor.SeverityError:
+				failed++
+			case doctor.SeverityWarning:
+				warned++
+			}
+		}
+	}
+	return failed, warned
+}
+
+// failure is the error doctor exits with when failed checks failed, and
+// nil when none did.
+func failure(failed int) error {
+	if failed == 0 {
+		return nil
+	}
+	return errors.New(plural(failed, "check") + " failed")
+}
+
+// report prints the checks, then the project section, and returns an error
+// when a check failed or a project has an error.
+func report(cmd *cobra.Command, checks []check, projects []projectReport) error {
+	out := cmd.OutOrStdout()
+	failed, warned := tally(checks, projects)
+	for _, c := range checks {
 		// A detail of several lines (ssh can print more than one) keeps its
 		// lines, aligned under the first.
 		detail := strings.ReplaceAll(strings.TrimRight(c.detail, "\n"), "\n", "\n"+strings.Repeat(" ", 23))
@@ -201,12 +260,13 @@ func report(cmd *cobra.Command, checks []check) error {
 			fmt.Fprintf(out, "      fix: %s\n", c.fix)
 		}
 	}
+	printProjects(out, projects)
 	fmt.Fprintln(out)
 	switch {
 	case failed > 0:
-		summary := plural(failed, "check") + " failed"
-		fmt.Fprintln(out, summary+".")
-		return errors.New(summary)
+		err := failure(failed)
+		fmt.Fprintln(out, err.Error()+".")
+		return err
 	case warned > 0:
 		fmt.Fprintf(out, "No failures, %s.\n", plural(warned, "warning"))
 	default:
@@ -348,8 +408,8 @@ func checkAliases(cfg *config.Config, path string) []check {
 // to this machine.
 func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check {
 	const name, fix = "hosts block", "run `nearhost up`; it updates the block and asks for your password"
-	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.lookup)
-	existing, err := b.readHosts()
+	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.env.lookup)
+	existing, err := b.env.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}
 	}
