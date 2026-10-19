@@ -22,7 +22,7 @@ If that is empty or reads as a placeholder, take `add`, `status` or `doctor` fro
 3. If the JSON says `"state":"exists"`, the project is already in Nearhost: report its `url` and `state`, and stop.
 4. Otherwise it printed an `id`. Tell the user: "Review it in Nearhost on <laptop>." Get `<laptop>` from `sh .../nearhost.sh socket`.
 5. Run `sh .../nearhost.sh wait <id>`. While it prints `"state":"pending"`, run it again. Each run waits up to 50 seconds.
-6. On `"state":"accepted"`, report the project's `url`. Run `sh .../nearhost.sh status` until its `state` is `running` or `error`, a few seconds apart. Then run `sh .../nearhost.sh doctor .`. If that exits with status 5, this Nearhost has no doctor: skip it without saying so. When it finds errors or warnings, offer to work through them as in `doctor`.
+6. On `"state":"accepted"`, report the project's `url`. Run `sh .../nearhost.sh status` a few seconds apart while its `state` is `starting`, for 30 seconds at most. Then run `sh .../nearhost.sh doctor .` whatever the state is: it reports a project that is stopped or degraded itself. If that exits with status 5, this Nearhost has no doctor: skip it without saying so. When it finds errors or warnings, offer to work through them as in `doctor`.
 7. Exit status 6 means the user declined it: say so, with the `reason` if there is one. Exit status 7 means nobody answered within 10 minutes: say so; the user can run `/nearhost add` again.
 
 The user decides in Nearhost which ports to serve and what to call the project. Do not edit Nearhost's config file yourself.

@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -40,7 +41,7 @@ func dockerFindings(in Input) []Finding {
 	if err != nil {
 		env = nil
 	}
-	services, err := composeServices(data, env, dotEnv(in.Files))
+	services, err := composeServices(data, env, composeEnv(in.Files, in.Environ))
 	if err != nil {
 		// discovery reports a Compose file that does not parse.
 		return nil
@@ -151,17 +152,17 @@ func dockerClientsFinding(goos string) Finding {
 	}
 }
 
-// dotEnv reads the project's .env alone, the only file Compose fills in
-// variables from besides the shell. A missing or broken one gives none.
-func dotEnv(r discovery.FileReader) map[string]string {
-	data, err := r.ReadFile(".env")
-	if err != nil {
-		return nil
+// composeEnv is what Compose fills in variables from: the project's .env,
+// the only file it reads, with the shell's environ over it, as Compose
+// orders them. A missing or broken .env gives none of its own.
+func composeEnv(r discovery.FileReader, environ map[string]string) map[string]string {
+	env := map[string]string{}
+	if data, err := r.ReadFile(".env"); err == nil {
+		if dot, err := discovery.ParseEnv(data); err == nil {
+			maps.Copy(env, dot)
+		}
 	}
-	env, err := discovery.ParseEnv(data)
-	if err != nil {
-		return nil
-	}
+	maps.Copy(env, environ)
 	return env
 }
 

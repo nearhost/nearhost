@@ -168,6 +168,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 				Severity: SeverityError,
 				Message:  n + " does not resolve to this machine, and is not in the hosts file",
 				Fix:      Fix{Kind: FixNearhost, Text: "Start the project in Nearhost; it adds " + n + " to /etc/hosts."},
+				Host:     n,
 			})
 		}
 		if ad, ok := a.publicAddr(); ok && !strings.HasSuffix(n, ".test") {

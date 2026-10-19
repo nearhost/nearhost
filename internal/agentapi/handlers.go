@@ -327,7 +327,8 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Agents reload in a loop: the same change waits on one record, and a
-	// newer one ends the record of the change it replaces.
+	// newer one ends the record of the change it replaces, unless the user's
+	// approval of that change is being saved (see Accepting).
 	var rec *proposal
 	for _, p := range s.proposals {
 		if !p.reload || p.Name != found.Name || p.state != StatePending {
@@ -335,7 +336,7 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 		}
 		if p.sha == got.SHA256 && p.Origin == o {
 			rec = p
-		} else {
+		} else if s.accepting[change{p.Name, p.sha}] == 0 {
 			s.endLocked(p, StateSuperseded, "", "")
 		}
 	}

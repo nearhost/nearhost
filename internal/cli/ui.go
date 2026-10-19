@@ -223,6 +223,9 @@ type uiEngine struct {
 	agents *agents
 	// hostsAsked is set by the first HostsState call.
 	hostsAsked atomic.Bool
+	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it
+	// to re-read meanwhile; it is nil otherwise.
+	acceptSaving func()
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
@@ -258,7 +261,7 @@ func (u *uiEngine) HostsState() string {
 	}
 	// The same names doctor checks, filtered the same way, so the interface
 	// and `nearhost doctor` never disagree about what the file should hold.
-	c := checkHosts(context.Background(), doctorBackend{env: doctorEnv{readHosts: u.b.readHosts, lookup: u.b.lookup}}, u.Config())
+	c, _ := checkHosts(context.Background(), doctorBackend{env: doctorEnv{readHosts: u.b.readHosts, lookup: u.b.lookup}}, u.Config())
 	return c.detail
 }
 

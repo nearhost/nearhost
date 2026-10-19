@@ -19,7 +19,7 @@ type service struct {
 	Env         map[string]string // environment, with ${VAR} expanded
 	EnvFiles    []string          // env_file paths
 	ExtraHosts  []string          // names in extra_hosts, lowercased
-	Sources     []string          // volume sources, expanded from .env only
+	Sources     []string          // volume sources, expanded from the shell and .env only
 	HostNetwork bool              // network_mode: host
 }
 
@@ -28,7 +28,7 @@ type service struct {
 // forms, so each is read from the yaml.Node rather than a fixed Go type;
 // reading one form only would report a correct project as broken. Variables
 // are expanded from env, and volume sources from dotEnv, the variables of
-// .env alone: Compose fills in the file from the shell and .env, never
+// the shell and .env alone: Compose fills in the file from those, never
 // .env.local, so a mount that needs .env.local is not one. A value with a
 // variable that has no value stays as written.
 func composeServices(data []byte, env, dotEnv map[string]string) ([]service, error) {

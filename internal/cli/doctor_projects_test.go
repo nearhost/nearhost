@@ -495,3 +495,127 @@ func TestSystemDoctorEnvPointsAtTheRootCertificate(t *testing.T) {
 		t.Errorf("caCert %q without storage", env.caCert)
 	}
 }
+
+// The CA check counts a NEARHOST_CA_CERT set in the shell, as its fix
+// suggests. Only a project on this machine runs Compose in Nearhost's own
+// environment, so only it gets that environment.
+func TestDoctorInputPassesTheEnvironmentToLocalProjects(t *testing.T) {
+	const key = "NEARHOST_TEST_DOCTOR_ENVIRON"
+	t.Setenv(key, "from the shell")
+	cfgPath := configHome(t)
+	local, remote := localProject("shop", 3000, true), remoteProject("api")
+	local.Path = t.TempDir()
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{local, remote}}
+	saveConfig(t, cfgPath, cfg)
+	env := systemDoctorEnv(nil, true, "")
+
+	in := doctorInput(env, cfg, cfgPath, local, true, false, localFiles{}.reader(local.Path))
+	if got := in.Environ[key]; got != "from the shell" {
+		t.Errorf("local project: Environ[%s] = %q", key, got)
+	}
+	in = doctorInput(env, cfg, cfgPath, remote, true, false, localFiles{}.reader(t.TempDir()))
+	if in.Environ != nil {
+		t.Errorf("remote project: Environ = %v, want nil", in.Environ)
+	}
+}
+
+func TestProjectFindingsCountsTheCACertInTheShell(t *testing.T) {
+	cfgPath := configHome(t)
+	shop := localProject("shop", 3000, true)
+	shop.Path = t.TempDir()
+	compose := "services:\n  worker:\n    environment:\n      CALLBACK: https://shop.test/hook\n" +
+		"    volumes:\n      - \"${NEARHOST_CA_CERT:?set it}:/c:ro\"\n"
+	if err := os.WriteFile(filepath.Join(shop.Path, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Projects: []config.Project{shop}}
+	saveConfig(t, cfgPath, cfg)
+	const ca = "/ca/root.crt"
+	hasCA := func(environ []string) bool {
+		env := doctorEnv{caCert: ca, goos: "linux", noHosts: true, environ: func() []string { return environ }}
+		for _, f := range projectFindings(context.Background(), env, cfg, cfgPath, shop, true, false, localFiles{}.reader(shop.Path)) {
+			if f.ID == "docker.ca" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasCA(nil) {
+		t.Error("docker.ca not reported with NEARHOST_CA_CERT unset")
+	}
+	if hasCA([]string{"NEARHOST_CA_CERT=" + ca}) {
+		t.Error("docker.ca reported with NEARHOST_CA_CERT set in the shell")
+	}
+}
+
+// The hosts block check can fail without naming a project's missing host:
+// for stale names only, or a hosts file it could not read. Then the
+// project's own finding is all that names it.
+func TestDoctorKeepsAMissingNameTheHostsCheckDoesNotName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first string // the hosts file the machine check reads
+		err   error
+		check string
+	}{
+		{"stale names only", "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n127.0.0.1 gone.test\n# nearhost:end\n", nil,
+			"FAIL  hosts block      no longer configured: gone.test\n"},
+		{"unreadable", "", fs.ErrPermission, "FAIL  hosts block      permission denied\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := configHome(t)
+			blog := localProject("blog", 8000, true)
+			blog.Path = t.TempDir()
+			saveConfig(t, path, &config.Config{Projects: []config.Project{blog}})
+			f := healthy()
+			f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+				return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+			}
+			var opened []string
+			b := withProjects(f.backend(), nil, &opened)
+			// The machine check reads the file first; by the time the
+			// project is checked, blog.test has gone from it.
+			reads := 0
+			b.env.readHosts = func() (string, error) {
+				reads++
+				if reads == 1 {
+					return tc.first, tc.err
+				}
+				return "127.0.0.1 localhost\n", nil
+			}
+			out, _ := execute(t, newDoctorCmd(b), "doctor")
+			if !strings.Contains(out, tc.check) || !strings.Contains(out, "FAIL  blog             blog.test does not resolve to this machine") {
+				t.Fatalf("doctor printed:\n%s", out)
+			}
+		})
+	}
+}
+
+// Only the names the hosts block check reports as missing are left out of
+// the projects' findings, whichever project they belong to.
+func TestWithoutReportedDropsOnlyTheNamesTheHostsCheckNames(t *testing.T) {
+	unresolved := func(host string) doctor.Finding {
+		return doctor.Finding{ID: "hosts.unresolved", Severity: doctor.SeverityError, Host: host,
+			Message: host + " does not resolve to this machine, and is not in the hosts file"}
+	}
+	other := doctor.Finding{ID: "hosts.public", Severity: doctor.SeverityWarning, Host: "app.test", Message: "app.test is a real name"}
+	projects := []projectReport{
+		{name: "app", findings: []doctor.Finding{unresolved("app.test"), unresolved("admin.app.test"), other}},
+		{name: "shop", findings: []doctor.Finding{unresolved("shop.test")}},
+	}
+	got := withoutReported(projects, []string{"app.test", "shop.test"})
+	want := []projectReport{
+		{name: "app", findings: []doctor.Finding{unresolved("admin.app.test"), other}},
+		{name: "shop", findings: []doctor.Finding{}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
+	}
+	if len(projects[0].findings) != 3 {
+		t.Errorf("changed the projects passed in: %+v", projects)
+	}
+	// Names compare as DNS does, whatever their case.
+	if got := withoutReported(projects[1:], []string{"Shop.TEST"}); len(got[0].findings) != 0 {
+		t.Errorf("kept a name the check lists in another case: %+v", got)
+	}
+}

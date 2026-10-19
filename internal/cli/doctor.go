@@ -121,9 +121,7 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 				env := b.env
 				env.noHosts = env.noHosts || flags.noHosts
 				projects = checkProjects(cmd.Context(), b, env, m.cfg, m.cfgPath, m.reachable)
-				if m.hostsFailed() {
-					projects = withoutUnresolved(projects)
-				}
+				projects = withoutReported(projects, m.hostsMissing)
 			}
 			if asJSON {
 				return reportJSON(cmd, m.checks, projects)
@@ -144,21 +142,25 @@ type machine struct {
 	cfgPath string
 	// reachable holds the servers ssh reaches, and this machine.
 	reachable map[string]bool
+	// hostsMissing holds the names the hosts block check failed for
+	// lacking. The projects' hosts.unresolved findings for them would
+	// repeat it with another fix.
+	hostsMissing []string
 }
 
-// hostsFailed reports whether the hosts block check failed. It names the
-// names missing from the block, which the projects' hosts.unresolved would
-// repeat with another fix.
-func (m machine) hostsFailed() bool {
-	return slices.ContainsFunc(m.checks, func(c check) bool { return c.name == "hosts block" && c.level == levelFail })
-}
-
-// withoutUnresolved is projects without their hosts.unresolved findings.
-func withoutUnresolved(projects []projectReport) []projectReport {
+// withoutReported is projects without their hosts.unresolved findings for
+// the names in missing, which the hosts block check reported. A finding for
+// any other name stays: when the check fails for stale names only, or for a
+// hosts file it could not read, the finding is all that names it. Names
+// compare without regard to case, as DNS compares them.
+func withoutReported(projects []projectReport, missing []string) []projectReport {
 	out := make([]projectReport, len(projects))
 	for i, p := range projects {
 		out[i] = projectReport{name: p.name, findings: slices.DeleteFunc(slices.Clone(p.findings),
-			func(f doctor.Finding) bool { return f.ID == "hosts.unresolved" })}
+			func(f doctor.Finding) bool {
+				return f.ID == "hosts.unresolved" &&
+					slices.ContainsFunc(missing, func(n string) bool { return strings.EqualFold(n, f.Host) })
+			})}
 	}
 	return out
 }
@@ -198,8 +200,11 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		return machine{checks: append(checks, unread("servers")), cfgPath: path}
 	}
 	checks = append(checks, checkAliases(cfg, path)...)
+	var missing []string
 	if !flags.noHosts {
-		checks = append(checks, checkHosts(ctx, b, cfg))
+		var c check
+		c, missing = checkHosts(ctx, b, cfg)
+		checks = append(checks, c)
 	}
 	reachable := map[string]bool{config.LocalServer: true}
 	for _, srv := range cfg.Servers {
@@ -210,7 +215,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 			checks = append(checks, checkAgents(ctx, b, srv))
 		}
 	}
-	return machine{checks: checks, cfg: cfg, cfgPath: path, reachable: reachable}
+	return machine{checks: checks, cfg: cfg, cfgPath: path, reachable: reachable, hostsMissing: missing}
 }
 
 // checkAgents reports whether coding agents on srv can reach Nearhost. They
@@ -426,26 +431,27 @@ func checkAliases(cfg *config.Config, path string) []check {
 
 // checkHosts compares the managed block with the names `nearhost up` would
 // put there: the config's hosts file names, less the names DNS already sends
-// to this machine.
-func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check {
+// to this machine. It returns too the names it reports missing from the
+// block, none unless it fails.
+func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check, []string) {
 	const name, fix = "hosts block", "run `nearhost up`; it updates the block and asks for your password"
 	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.env.lookup)
 	existing, err := b.env.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}
+		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}, nil
 	}
 	updated, err := hosts.Rewrite(existing, want)
 	if err != nil {
-		return check{name, levelFail, err.Error(), fix}
+		return check{name, levelFail, err.Error(), fix}, nil
 	}
 	if updated == existing || updated == existing+"\n" {
 		if len(want) == 0 {
-			return check{name: name, detail: "no names configured"}
+			return check{name: name, detail: "no names configured"}, nil
 		}
 		if len(want) == 1 {
-			return check{name: name, detail: "1 name"}
+			return check{name: name, detail: "1 name"}, nil
 		}
-		return check{name: name, detail: fmt.Sprintf("%d names", len(want))}
+		return check{name: name, detail: fmt.Sprintf("%d names", len(want))}, nil
 	}
 	missing, stale := diff(want, hosts.Aliases(existing))
 	var parts []string
@@ -458,7 +464,7 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) check 
 	if len(parts) == 0 {
 		parts = []string{"the block is not in the form nearhost writes"}
 	}
-	return check{name, levelFail, strings.Join(parts, "; "), fix}
+	return check{name, levelFail, strings.Join(parts, "; "), fix}, missing
 }
 
 // diff returns what is only in want and what is only in have, each sorted.

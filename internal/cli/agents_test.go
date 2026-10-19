@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,6 +211,8 @@ type fakeProjects struct {
 	review  engine.Review
 	pending *engine.Change
 	notice  string
+	// rereadErr fails each Reread, as for a server not connected.
+	rereadErr error
 }
 
 func (f fakeProjects) Status(name string) engine.ProjectStatus {
@@ -225,7 +228,7 @@ func (f fakeProjects) Reread(_ context.Context, name string) (engine.Review, err
 	if f.reread != nil {
 		f.reread(name)
 	}
-	return f.review, nil
+	return f.review, f.rereadErr
 }
 
 func (f fakeProjects) StopProject(ctx context.Context, name string) error {
@@ -503,6 +506,34 @@ func TestDoctorRestartsUnderUp(t *testing.T) {
 	}
 }
 
+// A re-read that fails, as for a server not connected, still leaves the
+// doctor to report what is in the project's files.
+func TestDoctorToleratesAFailedReread(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	p := localProject("p", 3000, true)
+	p.Path = t.TempDir()
+	writeFiles(t, p.Path, map[string]string{".nearhostrc": unknownKeyRc})
+	saveConfig(t, path, &config.Config{Projects: []config.Project{p}})
+	var log []string
+	src := &agentSource{
+		cfgPath: path,
+		env:     agentEnv{restart: true, doctor: doctorEnv{listening: func(context.Context, int) bool { return true }, goos: "darwin"}},
+		projects: fakeProjects{log: &log, states: map[string]engine.State{"p": engine.StateRunning},
+			review: engine.Review{Updated: &config.Project{Name: "p"}}, rereadErr: errors.New(`server "local" is not connected`)},
+		openFiles: func(context.Context, config.Server) (serverFiles, error) { return localFiles{}, nil },
+	}
+	got, err := src.Doctor(context.Background(), config.LocalServer, "p", p.Path)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if !slices.ContainsFunc(got, func(f doctor.Finding) bool { return f.ID == "nearhostrc.invalid" }) {
+		t.Errorf("findings %+v, want the broken .nearhostrc", got)
+	}
+	if !reflect.DeepEqual(log, []string{"reread p"}) {
+		t.Errorf("log %v, want one re-read and no restart", log)
+	}
+}
+
 // An agent is told what to do once ssh lets Nearhost in, in its own words.
 func TestAgentDoctorTellsTheAgentToRunItAgain(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -566,5 +597,75 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 		if out := getJSON(t, sock, "/v1/proposals/"+id+"?wait=5"); out["state"] != want {
 			t.Fatalf("accept %v: %v", accept, out)
 		}
+	}
+}
+
+// A re-read while the user's approval is saved can clear the engine's
+// pending change before the save returns. An agent polling then still sees
+// its reload waiting, and then accepted.
+func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	a.attach(u.Engine)
+	a.review(&tui.Proposals{})
+	u.agents = a
+	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
+	if status != 202 {
+		t.Fatalf("reload: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	var during any
+	u.acceptSaving = func() {
+		// What a re-read in another goroutine could do meanwhile.
+		u.Engine.DeclineChange("two", "new")
+		during = getJSON(t, sock, "/v1/proposals/"+id)["state"]
+	}
+	if err := u.AcceptChange("two", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if during != "pending" {
+		t.Errorf("polled during the save: %v", during)
+	}
+	if out := getJSON(t, sock, "/v1/proposals/"+id+"?wait=5"); out["state"] != "accepted" {
+		t.Fatalf("after the save: %v", out)
+	}
+}
+
+// AcceptChange holds a change before it reads whether the change still
+// waits, and lets go of it when it no longer does, so that the reload
+// waiting on it then ends superseded.
+func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	a.attach(u.Engine)
+	a.review(&tui.Proposals{})
+	u.agents = a
+	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
+	if status != 202 {
+		t.Fatalf("reload: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	u.Engine.DeclineChange("two", "new")
+	if err := u.AcceptChange("two", "new"); err == nil {
+		t.Fatal("accepted a change that no longer waits")
+	}
+	if out := getJSON(t, sock, "/v1/proposals/"+id); out["state"] != "superseded" {
+		t.Fatalf("after the refused accept: %v", out)
 	}
 }
