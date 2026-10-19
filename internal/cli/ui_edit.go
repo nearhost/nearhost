@@ -43,13 +43,13 @@ func (u *uiEngine) saveRc(p config.Project) error {
 // that the project's .nearhostrc waits on. It must be the change pending
 // now: the user approved what the review showed, and a newer file may ask
 // for more. The config poll then applies the save, which restarts the
-// project with it. DeclineChange is the engine's own.
+// project with it. An agent waiting on the change is told once it is saved.
 func (u *uiEngine) AcceptChange(project, sha string) error {
 	change := u.Status(project).Pending
 	if change == nil || change.SHA256 != sha {
 		return fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
 	}
-	return u.EditConfig(func(cfg *config.Config) error {
+	err := u.EditConfig(func(cfg *config.Config) error {
 		if err := takeRc(cfg, change.Project, u.path); err != nil {
 			return err
 		}
@@ -59,6 +59,16 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 		}
 		return nil
 	})
+	if err == nil {
+		u.agents.changeAnswered(project, sha, true)
+	}
+	return err
+}
+
+// DeclineChange is the engine's, and tells an agent waiting on the change.
+func (u *uiEngine) DeclineChange(project, sha string) {
+	u.Engine.DeclineChange(project, sha)
+	u.agents.changeAnswered(project, sha, false)
 }
 
 func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {

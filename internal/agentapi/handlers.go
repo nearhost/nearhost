@@ -25,6 +25,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/proposals", s.propose)
 	mux.HandleFunc("GET /v1/proposals/{id}", s.proposal)
 	mux.HandleFunc("GET /v1/doctor", s.doctor)
+	mux.HandleFunc("POST /v1/projects/reload", s.reload)
 	mux.HandleFunc("/", noSuchCall)
 	return mux
 }
@@ -66,6 +67,9 @@ func (s *Server) capabilities() []string {
 	caps := []string{}
 	if s.opts.Doctor != nil {
 		caps = append(caps, "doctor")
+	}
+	if s.opts.Reload != nil {
+		caps = append(caps, "reload")
 	}
 	slices.Sort(caps)
 	return caps
@@ -180,16 +184,25 @@ type proposeRequest struct {
 	Web  int    `json:"web"`
 }
 
-func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
-	var req proposeRequest
+// readBody decodes the JSON body of r into v. ok is false when it can't,
+// and the request has been answered.
+func readBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	if err := dec.Decode(&req); err != nil {
+	if err := dec.Decode(v); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			fail(w, http.StatusBadRequest, "the request is over 4 KiB")
-			return
+			return false
 		}
 		fail(w, http.StatusBadRequest, "the body must be JSON like {\"path\": \"/abs/dir\"}: "+err.Error())
+		return false
+	}
+	return true
+}
+
+func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
+	var req proposeRequest
+	if !readBody(w, r, &req) {
 		return
 	}
 	switch {
@@ -217,7 +230,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	reviewer := s.reviewer
 	pending := 0
 	for _, p := range s.proposals {
-		if p.Origin == o && p.state == StatePending {
+		if p.Origin == o && p.state == StatePending && !p.reload {
 			pending++
 		}
 	}
@@ -243,6 +256,107 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	reviewer.Review(p.Proposal)
 	reply(w, http.StatusAccepted, map[string]any{"id": p.ID, "expires_at": p.Expires.UTC().Format(time.RFC3339)})
+}
+
+type reloadRequest struct {
+	Path string `json:"path"`
+	// Real is Path with its symlinks resolved, when the agent can tell.
+	Real string `json:"real"`
+}
+
+// reload re-reads the .nearhostrc of the project holding the path. A change
+// that needs approval waits for the user in the interface, and the agent
+// polls it as a proposal; one the user declined stays declined until the
+// file changes, so an agent that reloads again is told, not left waiting.
+func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Reload == nil {
+		noSuchCall(w, r)
+		return
+	}
+	var req reloadRequest
+	if !readBody(w, r, &req) {
+		return
+	}
+	switch {
+	case !path.IsAbs(req.Path):
+		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", req.Path))
+		return
+	case req.Real != "" && !path.IsAbs(req.Real):
+		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", req.Real))
+		return
+	}
+	o := origin(r)
+	found, ok := holdingEither(s.opts.Source.Projects(o), req.Path, req.Real)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s; add it first", path.Clean(req.Path)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), reloadTimeout)
+	defer cancel()
+	got, err := s.opts.Reload.Reload(ctx, found.Name)
+	switch {
+	case err != nil:
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	case got.Problem != "":
+		fail(w, http.StatusUnprocessableEntity, got.Problem)
+		return
+	case got.Declined:
+		reply(w, http.StatusOK, map[string]any{"state": StateDeclined, "reason": declinedReason})
+		return
+	case len(got.Items) == 0:
+		// The reload may have started or restarted the project.
+		for _, p := range s.opts.Source.Projects(o) {
+			if p.Name == found.Name {
+				found = p
+			}
+		}
+		reply(w, http.StatusOK, map[string]any{"state": "applied", "project": found})
+		return
+	}
+
+	s.mu.Lock()
+	s.sweepLocked()
+	if s.reviewer == nil {
+		s.mu.Unlock()
+		reply(w, http.StatusConflict, map[string]any{
+			"error": "open nearhost on " + s.laptop() + " to approve what .nearhostrc asks for (" +
+				strings.Join(got.Items, ", ") + "); `nearhost up` cannot show it",
+			"items": got.Items,
+		})
+		return
+	}
+	// Agents reload in a loop: the same change waits on one record, and a
+	// newer one ends the record of the change it replaces.
+	var rec *proposal
+	for _, p := range s.proposals {
+		if !p.reload || p.Name != found.Name || p.state != StatePending {
+			continue
+		}
+		if p.sha == got.SHA256 && p.Origin == o {
+			rec = p
+		} else {
+			s.endLocked(p, StateSuperseded, "", "")
+		}
+	}
+	if rec == nil {
+		rec = &proposal{
+			Proposal: Proposal{
+				ID: newID(), Origin: o, Path: path.Clean(found.Path), Name: found.Name,
+				Expires: s.opts.Now().Add(expiry),
+			},
+			state:  StatePending,
+			done:   make(chan struct{}),
+			reload: true,
+			sha:    got.SHA256,
+		}
+		s.proposals[rec.ID] = rec
+	}
+	id, expires := rec.ID, rec.Expires
+	s.mu.Unlock()
+	reply(w, http.StatusAccepted, map[string]any{
+		"id": id, "state": StatePending, "items": got.Items, "expires_at": expires.UTC().Format(time.RFC3339),
+	})
 }
 
 func (s *Server) laptop() string {

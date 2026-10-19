@@ -17,6 +17,8 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/tui"
 )
 
 // agentHome is a home directory short enough for ~/.nearhost/<id>.sock.
@@ -198,18 +200,45 @@ func TestAgentProjectsListEveryURL(t *testing.T) {
 	}
 }
 
-// fakeProjects is an engine that reports states and records rechecks.
+// fakeProjects is an engine that reports states and records rechecks,
+// rereads, stops and starts. A reread finds review; Status shows pending
+// and notice.
 type fakeProjects struct {
 	states  map[string]engine.State
 	recheck func(name string)
 	log     *[]string
+	review  engine.Review
+	pending *engine.Change
+	notice  string
 }
 
 func (f fakeProjects) Status(name string) engine.ProjectStatus {
-	if st, ok := f.states[name]; ok {
-		return engine.ProjectStatus{State: st}
+	st := engine.ProjectStatus{State: engine.StateStopped, Pending: f.pending, Notice: f.notice}
+	if s, ok := f.states[name]; ok {
+		st.State = s
 	}
-	return engine.ProjectStatus{State: engine.StateStopped}
+	return st
+}
+
+func (f fakeProjects) Reread(_ context.Context, name string) (engine.Review, error) {
+	*f.log = append(*f.log, "reread "+name)
+	return f.review, nil
+}
+
+func (f fakeProjects) StopProject(ctx context.Context, name string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	*f.log = append(*f.log, "stop "+name)
+	return nil
+}
+
+func (f fakeProjects) StartProject(ctx context.Context, name string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	*f.log = append(*f.log, "start "+name)
+	return nil
 }
 
 func (f fakeProjects) Recheck(_ context.Context, name string) error {
@@ -313,13 +342,13 @@ func TestAgentDoctorSaysWhyAServerCannotBeChecked(t *testing.T) {
 	}
 }
 
-func TestAgentsOfferTheDoctor(t *testing.T) {
+func TestAgentsOfferTheDoctorAndReload(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
 	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	out := getJSON(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), "/v1")
-	if caps, _ := out["capabilities"].([]any); len(caps) != 1 || caps[0] != "doctor" {
+	if caps, _ := out["capabilities"].([]any); len(caps) != 2 || caps[0] != "doctor" || caps[1] != "reload" {
 		t.Fatalf("GET /v1: %v", out)
 	}
 }
@@ -335,5 +364,148 @@ func TestAgentDoctorGivesUpWhenTheCallEnds(t *testing.T) {
 	_, err := src.Doctor(ctx, "box", "", "/srv/plain")
 	if !errors.Is(err, context.DeadlineExceeded) || box.closed != 1 {
 		t.Fatalf("%v, closed %d", err, box.closed)
+	}
+}
+
+// waitingChange is a change of p's .nearhostrc that waits for approval.
+var waitingChange = &engine.Change{SHA256: "b", Items: []nearhostrc.Item{
+	{Port: 3000, Host: "app.example.com", Why: "a real domain"}, {Option: "docker_clients"},
+}}
+
+func TestReloadReportsAChangeTheUserDeclined(t *testing.T) {
+	var log []string
+	src := &agentSource{projects: fakeProjects{log: &log, review: engine.Review{Pending: waitingChange}}}
+	got, err := src.Reload(context.Background(), "p")
+	if err != nil || !got.Declined || len(got.Items) != 0 || got.SHA256 != "" {
+		t.Fatalf("%+v %v", got, err)
+	}
+
+	// The same change still waiting is what waits.
+	src.projects = fakeProjects{log: &log, review: engine.Review{Pending: waitingChange}, pending: waitingChange}
+	got, err = src.Reload(context.Background(), "p")
+	if err != nil || got.Declined || !reflect.DeepEqual(got.Items, []string{"app.example.com", "docker_clients"}) || got.SHA256 != "b" {
+		t.Fatalf("waiting: %+v %v", got, err)
+	}
+
+	src.projects = fakeProjects{log: &log, review: engine.Review{Problem: "bad"}, notice: "bad"}
+	if got, err = src.Reload(context.Background(), "p"); err != nil || got.Problem != "bad" || got.Declined {
+		t.Fatalf("a problem: %+v %v", got, err)
+	}
+	if !reflect.DeepEqual(log, []string{"reread p", "reread p", "reread p"}) {
+		t.Fatalf("log %v", log)
+	}
+
+	if _, err := (&agentSource{}).Reload(context.Background(), "p"); err == nil {
+		t.Fatal("reloaded without an engine")
+	}
+}
+
+func TestReloadAsksTheInterfaceToShowTheChange(t *testing.T) {
+	var log []string
+	eng := engine.New(&config.Config{}, engine.Options{})
+	events, unsubscribe := eng.Events().Subscribe(8)
+	defer unsubscribe()
+	src := &agentSource{projects: fakeProjects{log: &log, review: engine.Review{Pending: waitingChange}, pending: waitingChange}}
+	src.eng.Store(eng)
+
+	// Under nearhost up nothing can show it.
+	if _, err := src.Reload(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-events:
+		t.Fatalf("without the interface: %+v", ev)
+	default:
+	}
+
+	src.reviewed.Store(true)
+	if _, err := src.Reload(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-events:
+		if ev.Project != "p" || ev.Message != "A coding agent asks you to approve what its .nearhostrc asks for: select p and press a." {
+			t.Fatalf("event %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the interface was not asked")
+	}
+}
+
+func TestReloadRestartsUnderUp(t *testing.T) {
+	updated := engine.Review{Updated: &config.Project{Name: "p"}}
+	running := map[string]engine.State{"p": engine.StateRunning}
+	for _, c := range []struct {
+		name    string
+		restart bool
+		states  map[string]engine.State
+		review  engine.Review
+		want    []string
+	}{
+		{"up", true, running, updated, []string{"reread p", "stop p", "start p"}},
+		{"the interface", false, running, updated, []string{"reread p"}},
+		{"stopped", true, nil, updated, []string{"reread p"}},
+		{"unchanged", true, running, engine.Review{}, []string{"reread p"}},
+	} {
+		var log []string
+		src := &agentSource{env: agentEnv{restart: c.restart}, projects: fakeProjects{log: &log, states: c.states, review: c.review}}
+		got, err := src.Reload(context.Background(), "p")
+		if err != nil || got.Declined || len(got.Items) != 0 || !reflect.DeepEqual(log, c.want) {
+			t.Errorf("%s: %+v %v, log %v", c.name, got, err, log)
+		}
+	}
+}
+
+// postJSON posts body to path on the agent API on sock.
+func postJSON(t *testing.T, sock, path, body string) (int, map[string]any) {
+	t.Helper()
+	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	}}}
+	resp, err := c.Post("http://nearhost"+path, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, out
+}
+
+// A reload waiting on a change ends when the user answers it in the
+// interface.
+func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
+	for _, accept := range []bool{true, false} {
+		u, path := pendingUI(t, []string{"app.local.example.io"})
+		home := agentHome(t)
+		opts := engine.Options{RunDir: filepath.Join(home, "run")}
+		a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+		if a == nil {
+			t.Fatal(note)
+		}
+		defer a.close()
+		a.attach(u.Engine)
+		a.review(&tui.Proposals{})
+		u.agents = a
+		sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+		status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
+		if status != 202 {
+			t.Fatalf("reload: %d %v", status, out)
+		}
+		id := out["id"].(string)
+		want := "declined"
+		if accept {
+			want = "accepted"
+			if err := u.AcceptChange("two", "new"); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			u.DeclineChange("two", "new")
+		}
+		if out := getJSON(t, sock, "/v1/proposals/"+id+"?wait=5"); out["state"] != want {
+			t.Fatalf("accept %v: %v", accept, out)
+		}
 	}
 }

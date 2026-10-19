@@ -86,6 +86,9 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	if d, ok := src.(agentapi.Doctor); ok {
 		opts.Doctor = d
 	}
+	if r, ok := src.(agentapi.Reloader); ok {
+		opts.Reload = r
+	}
 	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
 		if errors.Is(err, agentapi.ErrInUse) {
@@ -145,10 +148,20 @@ func (a *agents) attach(eng *engine.Engine) {
 	}
 }
 
-// review has the interface review the agents' proposals.
+// review has the interface review the agents' proposals, and the changes
+// their reloads find.
 func (a *agents) review(to *tui.Proposals) {
 	if a != nil {
 		a.api.SetReviewer(reviewer{to})
+		a.src.reviewed.Store(true)
+	}
+}
+
+// changeAnswered tells the reloads waiting on the change with hash sha of
+// project that the user approved or declined it.
+func (a *agents) changeAnswered(project, sha string, approved bool) {
+	if a != nil {
+		a.api.ChangeAnswered(project, sha, approved)
 	}
 }
 
@@ -186,6 +199,9 @@ type agentSource struct {
 	httpsPort int
 	env       agentEnv
 	eng       atomic.Pointer[engine.Engine]
+	// reviewed is set once the interface reviews what agents ask for, so a
+	// reload can point the user at a change that waits.
+	reviewed atomic.Bool
 
 	// openFiles opens a server's files for the doctor; nil opens them with
 	// env.ssh. Tests set it, and projects, to fakes.
@@ -194,10 +210,13 @@ type agentSource struct {
 	projects projectEngine
 }
 
-// projectEngine is what the doctor needs of the engine.
+// projectEngine is what the doctor and reload need of the engine.
 type projectEngine interface {
 	Status(name string) engine.ProjectStatus
 	Recheck(ctx context.Context, name string) error
+	Reread(ctx context.Context, name string) (engine.Review, error)
+	StopProject(ctx context.Context, name string) error
+	StartProject(ctx context.Context, name string) error
 }
 
 // engine is the engine, or nil before it is attached.
@@ -298,6 +317,51 @@ func (s *agentSource) Doctor(ctx context.Context, origin, name, dir string) ([]d
 	case <-ctx.Done():
 		return nil, fmt.Errorf("the checks did not finish in time: %w", ctx.Err())
 	}
+}
+
+// Reload re-reads the .nearhostrc of the project called name. A change
+// that needs no approval has been saved by the review; the interface's
+// config poll applies it, but `nearhost up` never re-applies its config, so
+// there a running project is restarted, which adopts the saved change as it
+// starts. The restart outlives the call: an agent that hangs up must not
+// leave the project stopped.
+func (s *agentSource) Reload(ctx context.Context, name string) (agentapi.Reloaded, error) {
+	eng := s.engine()
+	if eng == nil {
+		return agentapi.Reloaded{}, errors.New("nearhost is still starting; try again")
+	}
+	r, err := eng.Reread(ctx, name)
+	if err != nil {
+		return agentapi.Reloaded{}, err
+	}
+	if r.Updated != nil && s.env.restart && eng.Status(name).State == engine.StateRunning {
+		ctx := context.WithoutCancel(ctx)
+		if err := eng.StopProject(ctx, name); err != nil {
+			return agentapi.Reloaded{}, err
+		}
+		if err := eng.StartProject(ctx, name); err != nil {
+			return agentapi.Reloaded{}, err
+		}
+	}
+	st := eng.Status(name)
+	out := agentapi.Reloaded{Problem: st.Notice}
+	switch {
+	case st.Pending != nil:
+		out.SHA256 = st.Pending.SHA256
+		out.Items = make([]string, len(st.Pending.Items))
+		for i, it := range st.Pending.Items {
+			out.Items[i] = it.Name()
+		}
+		if e := s.eng.Load(); e != nil && s.reviewed.Load() {
+			e.Events().Publish(engine.Event{Project: name,
+				Message: "A coding agent asks you to approve what its .nearhostrc asks for: select " + name + " and press a."})
+		}
+	case r.Pending != nil:
+		// The engine drops a change the user declined, so nothing waits
+		// though the file asks for it.
+		out.Declined = true
+	}
+	return out, nil
 }
 
 // notThere is a directory that could not be resolved, which the agent API
