@@ -200,13 +200,14 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 	}
 	// The project's .nearhostrc says what it serves. One that cannot be
 	// read, or merged with what was found, is said on the routes step, and
-	// the project can be added without it.
+	// the project can be added without it. It is merged for the server the
+	// form is on, since docker_clients is allowed only on this machine.
 	rc, found, err := nearhostrc.Read(reader)
 	switch {
 	case err != nil:
 		d.RcError = err.Error()
 	case found:
-		merged, err := nearhostrc.Merge(config.Project{Name: name, Alias: d.Alias, Routes: d.Routes}, rc, d.Routes)
+		merged, err := nearhostrc.Merge(config.Project{Name: name, Server: f.srv.Name, Alias: d.Alias, Routes: d.Routes}, rc, d.Routes)
 		if err != nil {
 			d.RcError = err.Error()
 			break

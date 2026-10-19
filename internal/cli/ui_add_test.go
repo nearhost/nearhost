@@ -280,6 +280,39 @@ func TestFormDiscoveryReadsNearhostrc(t *testing.T) {
 	}
 }
 
+// Discovery merges the .nearhostrc for the server the form is on, so a
+// local project can ask for docker_clients and a remote one is told it
+// cannot.
+func TestFormDiscoveryMergesForItsServer(t *testing.T) {
+	u := formEngine(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	rc := "version: 1\ndocker_clients: true\nroutes:\n  - port: 8220\n    hosts: [app.local.dd.io]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files := &uiFiles{u: u, srv: config.Server{Name: config.LocalServer}, files: localFiles{}}
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.RcError != "" || d.Nearhostrc == nil || !d.Nearhostrc.DockerClients {
+		t.Errorf("local: snapshot %+v, rc error %q", d.Nearhostrc, d.RcError)
+	}
+
+	// A remote server's files are read the same way here; only the server
+	// the form is on differs.
+	files = &uiFiles{u: u, srv: config.Server{Name: "mini"}, files: localFiles{}}
+	d, err = files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Nearhostrc != nil || !strings.Contains(d.RcError, "docker_clients works only for projects on this machine") || !strings.Contains(d.RcError, `server "mini"`) {
+		t.Errorf("remote: snapshot %+v, rc error %q", d.Nearhostrc, d.RcError)
+	}
+}
+
 // A new project cannot serve a host an enabled project serves; added
 // disabled, it serves nothing, so it can.
 func TestFormSaveRefusesAHostAnotherProjectServes(t *testing.T) {
