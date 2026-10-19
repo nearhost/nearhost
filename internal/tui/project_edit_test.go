@@ -238,3 +238,29 @@ func TestEditProjectWithAnUnreadableNearhostrcClearsTheSnapshot(t *testing.T) {
 		t.Fatalf("edits %d, saved snapshot %+v, want none", f.edit.edits, p.Nearhostrc)
 	}
 }
+
+// Editing a project that was approved for docker_clients keeps the opt-in
+// through mergeRc and asks about nothing.
+func TestEditKeepsDockerClientsThroughMergeRc(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	snap := func() *config.RcSnapshot {
+		return &config.RcSnapshot{SHA256: "abc", DockerClients: true, Routes: []config.Route{{Port: 8080, Role: config.RoleWeb}}}
+	}
+	f.cfg.Projects[0].Nearhostrc = snap()
+	f.forms.files = &fakeFiles{home: "/home/dev", dirs: map[string]bool{"/code/website": true}, drafts: map[string]Draft{
+		"/code/website": {Routes: []config.Route{{Port: 8080, Role: config.RoleWeb}}, Nearhostrc: snap()},
+	}}
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "website"))
+	settle(m, press(m, "e"))
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Edit website · confirm")
+	if s := screen(m); strings.Contains(s, "Needs your approval:") || strings.Contains(s, "docker_clients") {
+		t.Errorf("an approved opt-in is asked about again:\n%s", s)
+	}
+	settle(m, press(m, "enter"))
+	if p, _ := f.cfg.Project("website"); f.edit.edits != 1 || !p.DockerClients() {
+		t.Fatalf("edits %d, saved %+v", f.edit.edits, p.Nearhostrc)
+	}
+}

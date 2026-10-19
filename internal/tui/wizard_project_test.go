@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -431,7 +432,7 @@ func TestAddFormShowsNearhostrcRoutesAndApprovalItems(t *testing.T) {
 	wantScreen(t, m, "Add project · confirm", "Needs your approval:", "app.local.dd.io on port 8220 (a real domain)",
 		"resolves to 93.184.216.34 on the internet", "enter approve and save")
 	settle(m, press(m, "enter"))
-	if len(f.forms.saved) != 1 || f.forms.saved[0].Nearhostrc != rc {
+	if len(f.forms.saved) != 1 || !reflect.DeepEqual(f.forms.saved[0].Nearhostrc, rc) {
 		t.Fatalf("saved %+v", f.forms.saved)
 	}
 	if r := f.forms.saved[0].Routes[0]; r.Port != 8220 || len(r.Hosts) != 1 || r.Hosts[0] != "app.local.dd.io" {
@@ -500,5 +501,27 @@ func TestRoutesStepEditsHosts(t *testing.T) {
 	settle(m, press(m, "enter"))
 	if len(f.forms.saved) != 1 || len(f.forms.saved[0].Routes[0].Hosts) != 2 {
 		t.Errorf("saved %+v", f.forms.saved)
+	}
+}
+
+// docker_clients is listed for approval as an option, not as a host on a
+// port.
+func TestFormListsDockerClientsForApproval(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{
+		Routes:     []config.Route{web(8220, "app")},
+		Nearhostrc: &config.RcSnapshot{SHA256: "abc", DockerClients: true, Routes: []config.Route{{Port: 8220, Role: config.RoleWeb}}},
+	}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · confirm", "Needs your approval:", "docker_clients (lets local Docker containers reach this project)")
+	if strings.Contains(screen(m), "on port 0") {
+		t.Errorf("an option is listed as a host:\n%s", screen(m))
+	}
+	settle(m, press(m, "enter"))
+	if len(f.forms.saved) != 1 || !f.forms.saved[0].DockerClients() {
+		t.Fatalf("saved %+v", f.forms.saved)
 	}
 }

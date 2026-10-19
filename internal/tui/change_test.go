@@ -75,7 +75,7 @@ func pendingModel(t *testing.T) (*Model, *fakeBackend) {
 
 func TestReviewScreenApprovesAndDeclines(t *testing.T) {
 	m, f := pendingModel(t)
-	wantScreen(t, m, ".nearhostrc asks for 1 host that needs approval · a to review")
+	wantScreen(t, m, ".nearhostrc asks for 1 change that needs approval · a to review")
 	settle(m, press(m, "a"))
 	wantScreen(t, m, "app.local.dd.io on port 8220 (a real domain)", "resolves to 203.0.113.7",
 		"old.local.dd.io port 80 → 8220", "y approve · n decline · esc later")
@@ -128,7 +128,7 @@ func TestPendingLineCountsHosts(t *testing.T) {
 	st := f.Status("dd")
 	st.Pending.Items = append(st.Pending.Items, nearhostrc.Item{Port: 8220, Host: "*.local.dd.io", Why: "a wildcard"})
 	f.setState("dd", st)
-	wantScreen(t, m, ".nearhostrc asks for 2 hosts that need approval · a to review")
+	wantScreen(t, m, ".nearhostrc asks for 2 changes that need approval · a to review")
 
 	st.Pending, st.Notice = nil, ".nearhostrc: version 2 is newer than this Nearhost understands"
 	f.setState("dd", st)
@@ -183,5 +183,21 @@ func TestMovesSaysWhatGoes(t *testing.T) {
 	got := strings.Join(moves(old, next), "|")
 	if want := "a.local.dd.io port 80 → 8080|b.local.dd.io port 80 → removed|port 5173 (vite) → removed"; got != want {
 		t.Errorf("moves = %q, want %q", got, want)
+	}
+}
+
+// A change that only asks for docker_clients is reviewed like one for hosts,
+// without a lookup of an address it does not have.
+func TestChangeScreenShowsDockerClients(t *testing.T) {
+	m, f := pendingModel(t)
+	st := f.Status("dd")
+	st.Pending.Items = []nearhostrc.Item{{Option: nearhostrc.OptionDockerClients, Why: "lets local Docker containers reach this project"}}
+	f.setState("dd", st)
+	f.forms.public = map[string]string{"": "203.0.113.7"}
+	wantScreen(t, m, ".nearhostrc asks for 1 change that needs approval · a to review")
+	settle(m, press(m, "a"))
+	wantScreen(t, m, "docker_clients (lets local Docker containers reach this project)")
+	if s := screen(m); strings.Contains(s, "on port 0") || strings.Contains(s, "resolves to") {
+		t.Errorf("an option is shown as a host:\n%s", s)
 	}
 }

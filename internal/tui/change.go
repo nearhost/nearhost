@@ -22,7 +22,7 @@ type changeForm struct {
 	w      *worker
 	name   string
 	change *engine.Change
-	items  []approvalItem // the hosts to approve, with their internet addresses once known
+	items  []approvalItem // the hosts and options to approve, with their internet addresses once known
 	moves  []string       // what is served now that the change moves or removes
 	busy   bool
 	err    string
@@ -64,7 +64,10 @@ func (m *Model) reviewChange(name string) tea.Cmd {
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		out := make([]approvalItem, len(items))
 		for i, it := range items {
-			addr, _ := b.PublicAddress(ctx, it.Host)
+			var addr string
+			if it.Host != "" {
+				addr, _ = b.PublicAddress(ctx, it.Host)
+			}
 			out[i] = approvalItem{it, addr}
 		}
 		return changeAddressesMsg{seq, out}
@@ -195,11 +198,11 @@ func portOf(p config.Project, host string) int {
 func pendingLines(st engine.ProjectStatus, width int) []string {
 	var lines []string
 	if st.Pending != nil {
-		hosts := "1 host that needs"
+		changes := "1 change that needs"
 		if n := len(st.Pending.Items); n != 1 {
-			hosts = strconv.Itoa(n) + " hosts that need"
+			changes = strconv.Itoa(n) + " changes that need"
 		}
-		text := nearhostrc.FileName + " asks for " + hosts + " approval · a to review"
+		text := nearhostrc.FileName + " asks for " + changes + " approval · a to review"
 		for _, l := range wrap(text, width) {
 			lines = append(lines, styleAmber.Render(l))
 		}

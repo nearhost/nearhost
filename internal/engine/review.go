@@ -81,7 +81,7 @@ func (e *Engine) noteReviewLocked(run *projectRun, r Review) {
 		run.pending, run.declined = r.Pending, ""
 		hosts := make([]string, len(r.Pending.Items))
 		for i, it := range r.Pending.Items {
-			hosts[i] = it.Host
+			hosts[i] = it.Name()
 		}
 		e.logProject(run, "%s%s", PendingPrefix, strings.Join(hosts, ", "))
 	case r.Problem != "":
@@ -109,10 +109,7 @@ func (e *Engine) adoptLocked(run *projectRun, updated config.Project) *config.Pr
 		}
 		q := &next.Projects[i]
 		q.Routes = cloneRoutes(updated.Routes)
-		q.Nearhostrc = nil
-		if rc := updated.Nearhostrc; rc != nil {
-			q.Nearhostrc = &config.RcSnapshot{SHA256: rc.SHA256, Routes: cloneRoutes(rc.Routes)}
-		}
+		q.Nearhostrc = updated.Nearhostrc.Clone()
 		e.setConfigLocked(next, nil) // the runs stay as they are
 		e.logProject(run, "%s changed only ports or labels; applied", nearhostrc.FileName)
 		out := *q

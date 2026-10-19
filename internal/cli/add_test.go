@@ -652,3 +652,56 @@ func TestAddHostFlagTypedTwiceIsServedOnce(t *testing.T) {
 		t.Fatalf("hosts = %v", web.Hosts)
 	}
 }
+
+const rcDockerClients = "version: 1\ndocker_clients: true\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.test]\n"
+
+// docker_clients is asked about like a host: listed at the prompt, and saved
+// only on a yes.
+func TestAddAsksBeforeDockerClients(t *testing.T) {
+	dir := rcProject(t, rcDockerClients)
+
+	declined := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
+	if err == nil {
+		t.Fatalf("a declined add succeeded\n%s", out)
+	}
+	wantContains(t, out, "  docker_clients (lets local Docker containers reach this project)\n", "Serve these? [y/N] ")
+	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
+		t.Fatalf("a declined add wrote the config: %v", statErr)
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	if out, err = executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets"); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if p, ok := loadSaved(t, cfgPath).Project("rcapp"); !ok || !p.DockerClients() {
+		t.Fatalf("project = %+v %v, want docker_clients", p, ok)
+	}
+}
+
+func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
+	dir := rcProject(t, rcDockerClients)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err == nil || !strings.Contains(err.Error(), "docker_clients") || !strings.Contains(err.Error(), "run nearhost add in a terminal") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+}
+
+// Containers cannot reach Nearhost from a server, so the file's request is
+// refused rather than approved.
+func TestAddRefusesDockerClientsOnAServer(t *testing.T) {
+	cfgPath, before := existing(t)
+	dir := rcProject(t, rcDockerClients)
+	b := addBackend{openRemote: func(_ context.Context, _ config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+		return discovery.DirReader{Root: dir}, projectPath, func() error { return nil }, nil
+	}}
+	out, err := executeWithInput(t, "y\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "mini", "--name", "blog", "--no-presets")
+	want := `.nearhostrc: docker_clients works only for projects on this machine; containers can't reach Nearhost from server "mini"`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
+		t.Fatalf("a refused add changed the config:\n%s", after)
+	}
+}
