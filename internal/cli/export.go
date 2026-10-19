@@ -181,7 +181,7 @@ func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p conf
 	// Only a change the review would hold for approval was waiting: one
 	// that only moves ports, or a file that does not parse, waits for no
 	// one.
-	pending := classifyRc(p, existing, found, err).kind == rcPending
+	pending := nearhostrc.Classify(p, existing, found, err).Kind == nearhostrc.Pending
 
 	res, warnings, err := discoverOnce(cfg, cfgPath, reader, nil, nil)
 	if err != nil {
