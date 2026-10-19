@@ -39,6 +39,7 @@ func NewRoot() *cobra.Command {
 		newUntrustCmd(systemTrust()),
 		newUpCmd(systemUp(lookup)),
 		newAddCmd(systemAdd()),
+		newExportCmd(systemExport()),
 		newLsCmd(),
 		newPresetCmd(systemPresets()),
 		newDoctorCmd(systemDoctor(lookup)),

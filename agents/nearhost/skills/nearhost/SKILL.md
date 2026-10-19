@@ -27,6 +27,8 @@ If that is empty or reads as a placeholder, take `add` or `status` from what the
 
 The user decides in Nearhost which ports to serve and what to call the project. Do not edit Nearhost's config file yourself.
 
+When a project works in Nearhost and has no `.nearhostrc`, suggest the user run `nearhost export` to commit its setup. Never run it unasked.
+
 ## status
 
 Run `sh .../nearhost.sh status` for the project holding this directory, or `status --all` for every project on this machine. Report each project's `url`, any other `urls`, `state` and any `error`. Exit status 1 with `no project holds` means this directory is not in Nearhost yet: say so, and offer `/nearhost add`.

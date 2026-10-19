@@ -168,6 +168,22 @@ func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPat
 	return files.reader(resolved), resolved, files.close, nil
 }
 
+// openRemoteWritable is openRemote for a command that also writes into the
+// project, as export writes its .nearhostrc: the writer goes through the same
+// SFTP client as the reader, so both see the same directory on one
+// connection.
+func (c sshClient) openRemoteWritable(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, transport.FileWriter, string, func() error, error) {
+	files, err := c.openServer(ctx, srv, "export the project again")
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	resolved, err := files.resolve(projectPath)
+	if err != nil {
+		return nil, nil, "", nil, errors.Join(err, files.close())
+	}
+	return files.reader(resolved), files.client.Writer(resolved), resolved, files.close, nil
+}
+
 // openServer opens srv's files over SFTP, on an SSH connection of its own
 // that closing the handle ends. When the server refuses the connection, the
 // error says how to fix access and then what to do, as then says. It runs no command on the server, not even
