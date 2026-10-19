@@ -1,0 +1,37 @@
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_0e8693dcb6a838 259-261
+internal/cli/add_stages.go
+  s_89a63a3c1fa7d2::t_e924f48a06930c 280-313
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_406faa64c7a868 783-798,805,809,909-972
+internal/cli/doctor_projects.go
+  s_89a63a3c1fa7d2::t_00ad22627ebbf4 169-170,192
+internal/cli/doctor_projects_test.go
+  s_89a63a3c1fa7d2::t_d4377f5384d8a1 652-666
+internal/cli/testdata/presets-reverb/reverb.yaml
+  s_89a63a3c1fa7d2::t_d7d7f78f765ed5 1-13
+internal/cli/ui_add.go
+  s_89a63a3c1fa7d2::t_e6bf979d2b6401 218-219
+internal/cli/ui_add_test.go
+  s_89a63a3c1fa7d2::t_d588b434d53fcb 407-432
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_60fa354aab5ab5 1011-1014,1033-1034,1037-1040,1042-1044,1048,1057-1059
+internal/tui/wizard_project_test.go
+  s_89a63a3c1fa7d2::t_29c07f6330e72d 675-701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0e1c29dc6a766a6810567e1317ec533d56648ce",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
