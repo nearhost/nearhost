@@ -96,10 +96,12 @@ func (f *changeForm) update(msg tea.Msg) tea.Cmd {
 		case "y":
 			f.seq = nextSeq()
 			f.busy, f.err = true, ""
-			seq, b, name := f.seq, f.b, f.name
-			return f.w.do(func(context.Context) tea.Msg { return changeAcceptedMsg{seq, b.AcceptChange(name)} })
+			// The change shown is the one approved: AcceptChange refuses it
+			// when the file has changed again since.
+			seq, b, name, sha := f.seq, f.b, f.name, f.change.SHA256
+			return f.w.do(func(context.Context) tea.Msg { return changeAcceptedMsg{seq, b.AcceptChange(name, sha)} })
 		case "n":
-			f.b.DeclineChange(f.name)
+			f.b.DeclineChange(f.name, f.change.SHA256)
 			name := f.name
 			return func() tea.Msg { return changeDeclinedMsg{name} }
 		case "esc":
@@ -193,11 +195,11 @@ func portOf(p config.Project, host string) int {
 func pendingLines(st engine.ProjectStatus, width int) []string {
 	var lines []string
 	if st.Pending != nil {
-		hosts := "1 host"
+		hosts := "1 host that needs"
 		if n := len(st.Pending.Items); n != 1 {
-			hosts = strconv.Itoa(n) + " hosts"
+			hosts = strconv.Itoa(n) + " hosts that need"
 		}
-		text := nearhostrc.FileName + " asks for " + hosts + " that need approval · a to review"
+		text := nearhostrc.FileName + " asks for " + hosts + " approval · a to review"
 		for _, l := range wrap(text, width) {
 			lines = append(lines, styleAmber.Render(l))
 		}

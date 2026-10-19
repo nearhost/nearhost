@@ -198,7 +198,7 @@ func TestAcceptRefusesAHostAnotherProjectServes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = u.AcceptChange("two")
+	err = u.AcceptChange("two", "new")
 	if want := `host x.local.example.io is already served by project "one"`; err == nil || err.Error() != want {
 		t.Fatalf("AcceptChange = %v, want %s", err, want)
 	}
@@ -219,7 +219,7 @@ func TestAcceptSavesOnlyTheRoutesAndSnapshot(t *testing.T) {
 	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := u.AcceptChange("two"); err != nil {
+	if err := u.AcceptChange("two", "new"); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err = config.Load(path)
@@ -235,8 +235,24 @@ func TestAcceptSavesOnlyTheRoutesAndSnapshot(t *testing.T) {
 // Declining drops the pending change.
 func TestDeclineDropsTheChange(t *testing.T) {
 	u, _ := pendingUI(t, []string{"app.local.example.io"})
-	u.DeclineChange("two")
+	u.DeclineChange("two", "new")
 	if st := u.Status("two"); st.Pending != nil {
 		t.Errorf("still pending: %+v", st.Pending)
+	}
+}
+
+// A change other than the one pending now is refused, and nothing is saved.
+func TestAcceptRefusesAStaleChange(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = u.AcceptChange("two", "older")
+	if want := "the .nearhostrc changed again; review it again"; err == nil || err.Error() != want {
+		t.Fatalf("AcceptChange = %v, want %s", err, want)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Errorf("the config changed:\n%s", after)
 	}
 }

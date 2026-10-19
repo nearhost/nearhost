@@ -109,13 +109,14 @@ type Backend interface {
 	// Recheck reads a project's .nearhostrc again without restarting it;
 	// what it finds shows in the project's status.
 	Recheck(ctx context.Context, project string) error
-	// AcceptChange approves the change the project's .nearhostrc waits on,
-	// as its status has it now, by saving the routes it asks for. A host
-	// another enabled project serves is refused, and nothing is saved.
-	AcceptChange(project string) error
-	// DeclineChange drops the change the project's .nearhostrc waits on,
-	// until the file changes again.
-	DeclineChange(project string)
+	// AcceptChange approves the change with hash sha that the project's
+	// .nearhostrc waits on, by saving the routes it asks for. One no longer
+	// pending, because the file changed again, is refused, as is a host
+	// another enabled project serves; nothing is saved then.
+	AcceptChange(project, sha string) error
+	// DeclineChange drops the change with hash sha that the project's
+	// .nearhostrc waits on, until the file changes again.
+	DeclineChange(project, sha string)
 
 	// AcceptProposal tells the agent that made proposal id that it was
 	// saved as the project called name.

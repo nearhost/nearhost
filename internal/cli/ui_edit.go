@@ -38,13 +38,15 @@ func (u *uiEngine) saveRc(p config.Project) error {
 	return u.EditConfig(func(cfg *config.Config) error { return takeRc(cfg, p, u.path) })
 }
 
-// AcceptChange saves the routes and snapshot of the change the project's
-// .nearhostrc waits on. The config poll then applies them, which restarts
-// the project with them.
-func (u *uiEngine) AcceptChange(project string) error {
+// AcceptChange saves the routes and snapshot of the change with hash sha
+// that the project's .nearhostrc waits on. It must be the change pending
+// now: the user approved what the review showed, and a newer file may ask
+// for more. The config poll then applies the save, which restarts the
+// project with it. DeclineChange is the engine's own.
+func (u *uiEngine) AcceptChange(project, sha string) error {
 	change := u.Status(project).Pending
-	if change == nil {
-		return fmt.Errorf("%s has no %s change waiting for approval", project, nearhostrc.FileName)
+	if change == nil || change.SHA256 != sha {
+		return fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
 	}
 	return u.EditConfig(func(cfg *config.Config) error {
 		if err := takeRc(cfg, change.Project, u.path); err != nil {
@@ -56,14 +58,6 @@ func (u *uiEngine) AcceptChange(project string) error {
 		}
 		return nil
 	})
-}
-
-// DeclineChange drops the change the project's .nearhostrc waits on, as its
-// status has it now.
-func (u *uiEngine) DeclineChange(project string) {
-	if change := u.Status(project).Pending; change != nil {
-		u.Engine.DeclineChange(project, change.SHA256)
-	}
 }
 
 func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ type changeFake struct {
 	accepted  []string
 	declined  []string
 	acceptErr error
+	saved     int // changes AcceptChange took
 }
 
 func (f *fakeBackend) Recheck(_ context.Context, project string) error {
@@ -26,17 +28,26 @@ func (f *fakeBackend) Recheck(_ context.Context, project string) error {
 	return nil
 }
 
-func (f *fakeBackend) AcceptChange(project string) error {
+// AcceptChange refuses a change other than the one pending now, as the real
+// one does; it records "<project> <sha>" when it is asked.
+func (f *fakeBackend) AcceptChange(project, sha string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.change.accepted = append(f.change.accepted, project)
-	return f.change.acceptErr
+	f.change.accepted = append(f.change.accepted, project+" "+sha)
+	if p := f.states[project].Pending; p == nil || p.SHA256 != sha {
+		return errors.New("the .nearhostrc changed again; review it again")
+	}
+	if f.change.acceptErr != nil {
+		return f.change.acceptErr
+	}
+	f.change.saved++
+	return nil
 }
 
-func (f *fakeBackend) DeclineChange(project string) {
+func (f *fakeBackend) DeclineChange(project, sha string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.change.declined = append(f.change.declined, project)
+	f.change.declined = append(f.change.declined, project+" "+sha)
 }
 
 // pendingModel is a model with the project dd selected, whose .nearhostrc
@@ -64,12 +75,12 @@ func pendingModel(t *testing.T) (*Model, *fakeBackend) {
 
 func TestReviewScreenApprovesAndDeclines(t *testing.T) {
 	m, f := pendingModel(t)
-	wantScreen(t, m, ".nearhostrc asks for 1 host that need approval · a to review")
+	wantScreen(t, m, ".nearhostrc asks for 1 host that needs approval · a to review")
 	settle(m, press(m, "a"))
 	wantScreen(t, m, "app.local.dd.io on port 8220 (a real domain)", "resolves to 203.0.113.7",
 		"old.local.dd.io port 80 → 8220", "y approve · n decline · esc later")
 	settle(m, press(m, "y"))
-	if len(f.change.accepted) != 1 || f.change.accepted[0] != "dd" || m.form != nil {
+	if len(f.change.accepted) != 1 || f.change.accepted[0] != "dd new" || f.change.saved != 1 || m.form != nil {
 		t.Fatalf("accepted %v, form %T", f.change.accepted, m.form)
 	}
 
@@ -88,9 +99,26 @@ func TestReviewScreenApprovesAndDeclines(t *testing.T) {
 
 	settle(m, press(m, "a"))
 	settle(m, press(m, "n"))
-	if len(f.change.declined) != 1 || f.change.declined[0] != "dd" || m.form != nil {
+	if len(f.change.declined) != 1 || f.change.declined[0] != "dd new" || m.form != nil {
 		t.Fatalf("declined %v, form %T", f.change.declined, m.form)
 	}
+}
+
+// y approves the change the screen shows: one the file replaced while it was
+// open is refused, on the screen, and nothing is saved.
+func TestReviewScreenRefusesAChangeItDidNotShow(t *testing.T) {
+	m, f := pendingModel(t)
+	settle(m, press(m, "a"))
+	st := f.Status("dd")
+	newer := *st.Pending
+	newer.SHA256 = "newer"
+	st.Pending = &newer
+	f.setState("dd", st)
+	settle(m, press(m, "y"))
+	if m.form == nil || f.change.saved != 0 || len(f.change.accepted) != 1 || f.change.accepted[0] != "dd new" {
+		t.Fatalf("form %T, saved %d, accepted %v", m.form, f.change.saved, f.change.accepted)
+	}
+	wantScreen(t, m, "The .nearhostrc changed again; review it again")
 }
 
 // Two hosts are counted as hosts, and a is nothing on a project with no
