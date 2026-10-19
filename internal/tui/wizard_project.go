@@ -333,15 +333,6 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 		}
 		f.busy = ""
 		f.nameErr, f.aliasErr = errText(msg.nameErr), errText(msg.aliasErr)
-		if f.edit != nil {
-			// The project being edited does not clash with itself.
-			if f.name.value == f.edit.Name {
-				f.nameErr = ""
-			}
-			if strings.EqualFold(f.alias.value, f.edit.Alias) {
-				f.aliasErr = ""
-			}
-		}
 		if f.nameErr == "" && f.aliasErr == "" {
 			f.advice, f.approval = msg.advice, msg.approval
 			f.notes = append(f.notes, msg.notes...)
@@ -521,9 +512,21 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.name.value, f.alias.value = strings.TrimSpace(f.name.value), strings.TrimSpace(f.alias.value)
 			seq, b, name, alias := f.seq, f.b, f.name.value, f.alias.value
 			files, dir, routes := f.files, f.resolved, append([]config.Route(nil), f.routes...)
-			items := f.needsApproval()
+			items, edit := f.needsApproval(), f.edit
 			return f.w.do(func(ctx context.Context) tea.Msg {
 				nameErr, aliasErr := b.CheckNames(name, alias)
+				if edit != nil {
+					// The project being edited does not clash with itself.
+					// This is settled before the advice and the approval
+					// list are worked out, which keeping the name must not
+					// skip.
+					if name == edit.Name {
+						nameErr = nil
+					}
+					if strings.EqualFold(alias, edit.Alias) {
+						aliasErr = nil
+					}
+				}
 				msg := namesCheckedMsg{seq: seq, nameErr: nameErr, aliasErr: aliasErr}
 				if nameErr == nil && aliasErr == nil && files != nil {
 					var err error

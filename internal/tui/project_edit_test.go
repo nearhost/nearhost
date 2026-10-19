@@ -193,14 +193,25 @@ func TestEditProjectMergesNearhostrc(t *testing.T) {
 	}
 	wantScreen(t, m, "from .nearhostrc")
 	press(m, "enter")
+	// The name and alias are kept: the backend says another project has
+	// them, which is this one, and that must not hide what needs approval.
 	settle(m, press(m, "enter"))
-	wantScreen(t, m, "new.local.dd.io on port 80 (a real domain)", "enter approve and save")
+	wantScreen(t, m, "Edit myapp · confirm", "Needs your approval:", "new.local.dd.io on port 80 (a real domain)", "enter approve and save")
 	if strings.Contains(screen(m), "mine.local.dd.io on port") {
 		t.Errorf("a saved host is asked about:\n%s", screen(m))
+	}
+	if len(pf.advice) == 0 {
+		t.Error("keeping the name skipped the advice")
+	}
+	if p, _ := f.cfg.Project("myapp"); f.edit.edits != 0 || p.Nearhostrc.SHA256 != "old" {
+		t.Fatalf("saved before enter: edits %d, snapshot %+v", f.edit.edits, p.Nearhostrc)
 	}
 	settle(m, press(m, "enter"))
 	p, _ := f.cfg.Project("myapp")
 	if p.Nearhostrc == nil || p.Nearhostrc.SHA256 != "new" {
 		t.Errorf("saved snapshot %+v", p.Nearhostrc)
+	}
+	if h := p.Routes[0].Hosts; len(h) != 2 || h[0] != "new.local.dd.io" || h[1] != "mine.local.dd.io" {
+		t.Errorf("saved hosts %v", h)
 	}
 }

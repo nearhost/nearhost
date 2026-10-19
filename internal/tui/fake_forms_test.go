@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -153,8 +154,22 @@ func (f *fakeBackend) EnablePresets(_ context.Context, names []string) []string 
 	return f.forms.enableNotes
 }
 
-func (f *fakeBackend) CheckNames(string, string) (error, error) {
-	return f.forms.nameErr, f.forms.aliasErr
+// CheckNames refuses a name or alias a configured project has, as the real
+// one does, including the project being edited; nameErr and aliasErr, when
+// set, are said instead.
+func (f *fakeBackend) CheckNames(name, alias string) (error, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	nameErr, aliasErr := f.forms.nameErr, f.forms.aliasErr
+	for _, p := range f.cfg.Projects {
+		if nameErr == nil && p.Name == name {
+			nameErr = fmt.Errorf("a project called %q already exists, on %s", name, p.Server)
+		}
+		if aliasErr == nil && strings.EqualFold(p.Alias, alias) {
+			aliasErr = fmt.Errorf("alias %s is already used by project %q", alias, p.Name)
+		}
+	}
+	return nameErr, aliasErr
 }
 
 func (f *fakeBackend) SaveProject(p config.Project) error {
