@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -79,7 +82,11 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 		laptop = b.laptop()
 	}
 	sock := filepath.Join(home, transport.AgentDir, id+".sock")
-	a := &agents{api: agentapi.New(agentapi.Options{Laptop: laptop, Source: src}), id: id, runDir: runDir, sock: sock}
+	opts := agentapi.Options{Laptop: laptop, Source: src}
+	if d, ok := src.(agentapi.Doctor); ok {
+		opts.Doctor = d
+	}
+	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
 		if errors.Is(err, agentapi.ErrInUse) {
 			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
@@ -105,13 +112,23 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	return transport.AgentForward{Name: a.id + ".sock", Local: local, Own: a.sock}, true
 }
 
+// agentEnv is what the agents' doctor needs of the run of nearhost.
+type agentEnv struct {
+	// ssh opens a connection of the doctor's own to a server.
+	ssh    sshClient
+	doctor doctorEnv
+	// restart is true under `nearhost up`, which never re-applies its
+	// config, so a reload restarts a running project to apply a change.
+	restart bool
+}
+
 // serveAgents starts the agent API for a run of nearhost, and sets opts so
 // that the engine forwards it to each server. Call attach with the engine
 // once it exists. The note says why agents cannot reach nearhost,
 // when they cannot; the agents returned are then nil, and their methods do
 // nothing.
-func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPort int) (*agents, string) {
-	src := &agentSource{cfgPath: cfgPath, httpsPort: httpsPort}
+func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPort int, env agentEnv) (*agents, string) {
+	src := &agentSource{cfgPath: cfgPath, httpsPort: httpsPort, env: env}
 	a, note := startAgents(b, src, opts.RunDir)
 	if a != nil {
 		a.src = src
@@ -167,7 +184,31 @@ func (a *agents) close() {
 type agentSource struct {
 	cfgPath   string
 	httpsPort int
+	env       agentEnv
 	eng       atomic.Pointer[engine.Engine]
+
+	// openFiles opens a server's files for the doctor; nil opens them with
+	// env.ssh. Tests set it, and projects, to fakes.
+	openFiles func(ctx context.Context, srv config.Server) (serverFiles, error)
+	// projects stands in for the engine when not nil.
+	projects projectEngine
+}
+
+// projectEngine is what the doctor needs of the engine.
+type projectEngine interface {
+	Status(name string) engine.ProjectStatus
+	Recheck(ctx context.Context, name string) error
+}
+
+// engine is the engine, or nil before it is attached.
+func (s *agentSource) engine() projectEngine {
+	if s.projects != nil {
+		return s.projects
+	}
+	if eng := s.eng.Load(); eng != nil {
+		return eng
+	}
+	return nil
 }
 
 func (s *agentSource) Projects(origin string) []agentapi.Project {
@@ -189,6 +230,82 @@ func (s *agentSource) Projects(origin string) []agentapi.Project {
 	}
 	return out
 }
+
+// Doctor checks a configured project, or the directory dir on origin's
+// machine as nearhost add would make it. A configured project's .nearhostrc
+// is rechecked first, so a change that needs no approval is applied, and
+// one that does is shown in the interface, before the findings are worked
+// out from the config as it then is. The server's files are opened for the
+// call, and closed once it ends, which also ends any read the checks are
+// still waiting on when ctx ends first.
+func (s *agentSource) Doctor(ctx context.Context, origin, name, dir string) ([]doctor.Finding, error) {
+	eng := s.engine()
+	running := false
+	if name != "" && eng != nil {
+		// A server not connected can't be rechecked; its findings say what
+		// is in its files all the same.
+		_ = eng.Recheck(ctx, name)
+		running = eng.Status(name).State == engine.StateRunning
+	}
+	cfg, err := config.Load(s.cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	srv, ok := cfg.Server(origin)
+	if !ok {
+		return nil, fmt.Errorf("no server called %q", origin)
+	}
+	var p config.Project
+	if name != "" {
+		found, ok := cfg.Project(name)
+		if !ok {
+			return nil, fmt.Errorf("no project called %q", name)
+		}
+		p = *found
+	}
+	open := s.openFiles
+	if open == nil {
+		open = func(ctx context.Context, srv config.Server) (serverFiles, error) {
+			return openFiles(ctx, s.env.ssh, srv, connectAgain)
+		}
+	}
+	files, err := open(ctx, srv)
+	if err != nil {
+		return nil, err
+	}
+	defer files.close()
+
+	type result struct {
+		findings []doctor.Finding
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resolved, err := files.resolve(dir)
+		if err != nil {
+			done <- result{err: notThere{err}}
+			return
+		}
+		reader := files.reader(resolved)
+		if name == "" {
+			p = draftProject(cfg, s.cfgPath, srv, resolved, reader)
+		}
+		done <- result{findings: projectFindings(ctx, s.env.doctor, cfg, s.cfgPath, p, name != "", running, reader)}
+	}()
+	select {
+	case r := <-done:
+		return r.findings, r.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("the checks did not finish in time: %w", ctx.Err())
+	}
+}
+
+// notThere is a directory that could not be resolved, which the agent API
+// answers as not there. It reads as the reason.
+type notThere struct{ err error }
+
+func (e notThere) Error() string   { return e.err.Error() }
+func (e notThere) Unwrap() []error { return []error{e.err, fs.ErrNotExist} }
 
 // agentProject is p as an agent sees it, given its engine status. A web
 // route is applied only when the engine has a local port for it, since a

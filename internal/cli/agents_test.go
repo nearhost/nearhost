@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 )
 
@@ -55,7 +58,7 @@ func getJSON(t *testing.T, sock, path string) map[string]any {
 
 func TestAZeroAgentsBackendServesNone(t *testing.T) {
 	var opts engine.Options
-	a, note := serveAgents(agentsBackend{}, &opts, "", 443)
+	a, note := serveAgents(agentsBackend{}, &opts, "", 443, agentEnv{})
 	if a != nil || note != "" || opts.Agent != nil {
 		t.Fatalf("%v %q", a, note)
 	}
@@ -66,7 +69,7 @@ func TestAZeroAgentsBackendServesNone(t *testing.T) {
 func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, note := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443)
+	a, note := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	if a == nil || note != "" {
 		t.Fatalf("%v %q", a, note)
 	}
@@ -90,10 +93,10 @@ func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 
 func TestASecondNearhostLeavesAgentsToTheFirst(t *testing.T) {
 	home := agentHome(t)
-	first, _ := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, "", 443)
+	first, _ := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
 	defer first.close()
 	var opts engine.Options
-	second, note := serveAgents(fakeAgents(home), &opts, "", 443)
+	second, note := serveAgents(fakeAgents(home), &opts, "", 443, agentEnv{})
 	if second != nil || opts.Agent != nil || !strings.Contains(note, "Another Nearhost is already serving coding agents") {
 		t.Fatalf("%v %q", second, note)
 	}
@@ -136,7 +139,7 @@ func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
 	blocked := filepath.Join(home, "run")
 	os.WriteFile(blocked, []byte("a file where the run directory should be"), 0o600)
 	opts := engine.Options{RunDir: blocked}
-	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443)
+	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	eng := engine.New(&config.Config{}, engine.Options{})
 	a.attach(eng)
@@ -158,7 +161,7 @@ func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
 func TestAServerThatIsGoneStopsBeingServed(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443)
+	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	f, _ := opts.Agent("mini")
 	opts.AgentDone("mini")
@@ -192,5 +195,145 @@ func TestAgentProjectsListEveryURL(t *testing.T) {
 	st.WebLocalPorts = map[int]int{8220: 8220}
 	if got := agentProject(p, st, 18443); got.Routes[1].Applied || got.URLs[3] != "https://ws.local.dd.io:18443" {
 		t.Fatalf("%+v %v", got.Routes, got.URLs)
+	}
+}
+
+// fakeProjects is an engine that reports states and records rechecks.
+type fakeProjects struct {
+	states  map[string]engine.State
+	recheck func(name string)
+	log     *[]string
+}
+
+func (f fakeProjects) Status(name string) engine.ProjectStatus {
+	if st, ok := f.states[name]; ok {
+		return engine.ProjectStatus{State: st}
+	}
+	return engine.ProjectStatus{State: engine.StateStopped}
+}
+
+func (f fakeProjects) Recheck(_ context.Context, name string) error {
+	*f.log = append(*f.log, "recheck "+name)
+	if f.recheck != nil {
+		f.recheck(name)
+	}
+	return errors.New("server box is not connected")
+}
+
+// severities lists the id and severity of each finding.
+func severities(findings []doctor.Finding) []string {
+	var out []string
+	for _, f := range findings {
+		out = append(out, f.ID+" "+string(f.Severity))
+	}
+	return out
+}
+
+func TestAgentDoctorChecksLocalAndRemoteProjects(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	here := localProject("here", 3000, true)
+	here.Path = t.TempDir()
+	myapp := config.Project{Name: "myapp", Server: "box", Path: "/srv/myapp", Alias: "myapp.test", Enabled: true}
+	saveConfig(t, path, &config.Config{
+		Servers:  []config.Server{{Name: "box", SSHHost: "box.lan"}},
+		Projects: []config.Project{here, myapp},
+	})
+	box := &memFiles{dirs: map[string]map[string]string{"/srv/myapp": {}, "/srv/plain": {}}}
+	var log []string
+	src := &agentSource{
+		cfgPath: path,
+		env:     agentEnv{doctor: doctorEnv{listening: func(context.Context, int) bool { return false }, goos: "darwin"}},
+		openFiles: func(_ context.Context, srv config.Server) (serverFiles, error) {
+			log = append(log, "open "+srv.Name)
+			if srv.Name == config.LocalServer {
+				return localFiles{}, nil
+			}
+			return box, nil
+		},
+	}
+	ctx := context.Background()
+
+	// Without an engine yet, nothing is rechecked and nothing runs.
+	got, err := src.Doctor(ctx, config.LocalServer, "here", here.Path)
+	if err != nil || !reflect.DeepEqual(severities(got), []string{"routes.not-listening info"}) {
+		t.Fatalf("%v %+v", err, got)
+	}
+
+	// A running project's port that nothing listens on is a warning.
+	src.projects = fakeProjects{states: map[string]engine.State{"here": engine.StateRunning}, log: &log,
+		recheck: func(name string) {
+			if name == "myapp" {
+				// A change the recheck finds is in the findings.
+				box.dirs["/srv/myapp"][".nearhostrc"] = unknownKeyRc
+			}
+		}}
+	log = nil
+	got, err = src.Doctor(ctx, config.LocalServer, "here", here.Path)
+	if err != nil || !reflect.DeepEqual(severities(got), []string{"routes.not-listening warning"}) {
+		t.Fatalf("%v %+v", err, got)
+	}
+	if !reflect.DeepEqual(log, []string{"recheck here", "open local"}) {
+		t.Fatalf("log %v", log)
+	}
+
+	log = nil
+	got, err = src.Doctor(ctx, "box", "myapp", "/srv/myapp")
+	if err != nil || len(got) == 0 || got[0].ID != "nearhostrc.invalid" || got[0].Project != "myapp" {
+		t.Fatalf("%v %+v", err, got)
+	}
+	if !reflect.DeepEqual(log, []string{"recheck myapp", "open box"}) || box.closed != 1 {
+		t.Fatalf("log %v, closed %d", log, box.closed)
+	}
+
+	// A directory not added is checked as it would be added, unrechecked.
+	log = nil
+	got, err = src.Doctor(ctx, "box", "", "/srv/plain")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("%v %+v", err, got)
+	}
+	if !reflect.DeepEqual(log, []string{"open box"}) || box.closed != 2 {
+		t.Fatalf("log %v, closed %d", log, box.closed)
+	}
+
+	_, err = src.Doctor(ctx, "box", "", "/srv/gone")
+	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "/srv/gone: no such directory") || box.closed != 3 {
+		t.Fatalf("a missing directory: %v, closed %d", err, box.closed)
+	}
+}
+
+func TestAgentDoctorSaysWhyAServerCannotBeChecked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, path, &config.Config{Servers: []config.Server{{Name: "box", SSHHost: "box.lan"}}})
+	src := &agentSource{cfgPath: path, openFiles: func(context.Context, config.Server) (serverFiles, error) {
+		return nil, errors.New("connect to box.lan: no route to host")
+	}}
+	_, err := src.Doctor(context.Background(), "box", "", "/srv/plain")
+	if err == nil || errors.Is(err, fs.ErrNotExist) || err.Error() != "connect to box.lan: no route to host" {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestAgentsOfferTheDoctor(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
+	defer a.close()
+	out := getJSON(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), "/v1")
+	if caps, _ := out["capabilities"].([]any); len(caps) != 1 || caps[0] != "doctor" {
+		t.Fatalf("GET /v1: %v", out)
+	}
+}
+
+func TestAgentDoctorGivesUpWhenTheCallEnds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, path, &config.Config{Servers: []config.Server{{Name: "box", SSHHost: "box.lan"}}})
+	box := &memFiles{dirs: map[string]map[string]string{"/srv/plain": {}}, block: make(chan struct{})}
+	defer close(box.block)
+	src := &agentSource{cfgPath: path, openFiles: func(context.Context, config.Server) (serverFiles, error) { return box, nil }}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := src.Doctor(ctx, "box", "", "/srv/plain")
+	if !errors.Is(err, context.DeadlineExceeded) || box.closed != 1 {
+		t.Fatalf("%v, closed %d", err, box.closed)
 	}
 }

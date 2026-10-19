@@ -1,15 +1,21 @@
 package agentapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 )
 
 func (s *Server) routes() http.Handler {
@@ -18,10 +24,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/projects", s.projects)
 	mux.HandleFunc("POST /v1/proposals", s.propose)
 	mux.HandleFunc("GET /v1/proposals/{id}", s.proposal)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fail(w, http.StatusNotFound, "no such call; GET /v1 says which API this is")
-	})
+	mux.HandleFunc("GET /v1/doctor", s.doctor)
+	mux.HandleFunc("/", noSuchCall)
 	return mux
+}
+
+// noSuchCall answers a call this server doesn't have.
+func noSuchCall(w http.ResponseWriter, _ *http.Request) {
+	fail(w, http.StatusNotFound, "no such call; GET /v1 says which API this is")
 }
 
 func origin(r *http.Request) string {
@@ -45,7 +55,20 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	reply(w, http.StatusOK, map[string]any{
 		"api": Version, "origin": origin(r), "laptop": s.opts.Laptop, "interface": review,
+		"capabilities": s.capabilities(),
 	})
+}
+
+// capabilities lists, sorted, the calls beyond API 1's first ones that this
+// server has. The API version stays 1 as calls are added, so a skill asks
+// for the calls it needs here, and on an older nearhost finds them missing.
+func (s *Server) capabilities() []string {
+	caps := []string{}
+	if s.opts.Doctor != nil {
+		caps = append(caps, "doctor")
+	}
+	slices.Sort(caps)
+	return caps
 }
 
 func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
@@ -57,13 +80,8 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, map[string]any{"projects": all})
 		return
 	}
-	p, real := r.URL.Query().Get("path"), r.URL.Query().Get("real")
-	if !path.IsAbs(p) {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", p))
-		return
-	}
-	if real != "" && !path.IsAbs(real) {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", real))
+	p, real, valid := pathQuery(w, r)
+	if !valid {
 		return
 	}
 	found, ok := holdingEither(all, p, real)
@@ -72,6 +90,60 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, found)
+}
+
+// pathQuery reads the path and real parameters, which must be absolute when
+// given. ok is false when they are not, and the request has been answered.
+func pathQuery(w http.ResponseWriter, r *http.Request) (p, real string, ok bool) {
+	p, real = r.URL.Query().Get("path"), r.URL.Query().Get("real")
+	if !path.IsAbs(p) {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", p))
+		return "", "", false
+	}
+	if real != "" && !path.IsAbs(real) {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", real))
+		return "", "", false
+	}
+	return p, real, true
+}
+
+// doctor checks the project holding the path, or the directory at it as it
+// would be added when no project does. The project is null then, so an
+// agent can tell a directory with nothing wrong from a failure.
+func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Doctor == nil {
+		noSuchCall(w, r)
+		return
+	}
+	p, real, ok := pathQuery(w, r)
+	if !ok {
+		return
+	}
+	o := origin(r)
+	var project *Project
+	name, dir := "", path.Clean(p)
+	if found, ok := holdingEither(s.opts.Source.Projects(o), p, real); ok {
+		project, name, dir = &found, found.Name, found.Path
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), doctorTimeout)
+	defer cancel()
+	findings, err := s.opts.Doctor.Doctor(ctx, o, name, dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		machine := o
+		if o == config.LocalServer {
+			machine = s.laptop()
+		}
+		fail(w, http.StatusNotFound, fmt.Sprintf("%s is not a directory on %s", dir, machine))
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if findings == nil {
+		findings = []doctor.Finding{}
+	}
+	reply(w, http.StatusOK, map[string]any{"project": project, "findings": findings})
 }
 
 // holdingEither finds the project holding p, the path as the agent sees
