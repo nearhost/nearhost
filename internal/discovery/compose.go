@@ -25,15 +25,15 @@ var composeFiles = []string{"docker-compose.yml", "docker-compose.yaml", "compos
 // caller can point at the file it read. When there is none, name is empty and
 // err is nil.
 func ReadCompose(r FileReader) (name string, data []byte, err error) {
-	for _, name := range composeFiles {
-		data, err := r.ReadFile(name)
-		if errors.Is(err, fs.ErrNotExist) {
+	for _, file := range composeFiles {
+		b, rerr := r.ReadFile(file)
+		if errors.Is(rerr, fs.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			return "", nil, fmt.Errorf("read %s: %w", name, err)
+		if rerr != nil {
+			return "", nil, fmt.Errorf("read %s: %w", file, rerr)
 		}
-		return name, data, nil
+		return file, b, nil
 	}
 	return "", nil, nil
 }

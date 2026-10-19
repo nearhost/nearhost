@@ -220,4 +220,13 @@ func TestNotListening(t *testing.T) {
 	if has(run(func(in *Input) { in.Listening = func(context.Context, int) bool { return true } }), "routes.not-listening") {
 		t.Error("listening port reported")
 	}
+
+	// A web route without hosts of its own is named by the main name.
+	second := run(func(in *Input) {
+		in.Project.Routes = append(in.Project.Routes, config.Route{Port: 5173, Role: config.RoleWeb})
+		in.Listening = func(_ context.Context, port int) bool { return port != 5173 }
+	})
+	if f := byID(t, second, "routes.not-listening"); f.Message != "nothing listens on port 5173, which serves app.test" {
+		t.Errorf("a route without hosts: %q", f.Message)
+	}
 }

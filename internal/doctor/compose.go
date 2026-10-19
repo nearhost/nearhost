@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ type service struct {
 	Env         map[string]string // environment, with ${VAR} expanded
 	EnvFiles    []string          // env_file paths
 	ExtraHosts  []string          // names in extra_hosts, lowercased
-	Sources     []string          // volume sources, expanded
+	Sources     []string          // volume sources, expanded from .env only
 	HostNetwork bool              // network_mode: host
 }
 
@@ -26,8 +27,11 @@ type service struct {
 // Compose accepts environment, extra_hosts, env_file and volumes in several
 // forms, so each is read from the yaml.Node rather than a fixed Go type;
 // reading one form only would report a correct project as broken. Variables
-// are expanded from env, and one that has no value stays as written.
-func composeServices(data []byte, env map[string]string) ([]service, error) {
+// are expanded from env, and volume sources from dotEnv, the variables of
+// .env alone: Compose fills in the file from the shell and .env, never
+// .env.local, so a mount that needs .env.local is not one. A value with a
+// variable that has no value stays as written.
+func composeServices(data []byte, env, dotEnv map[string]string) ([]service, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("parse compose: %w", err)
@@ -39,12 +43,7 @@ func composeServices(data []byte, env map[string]string) ([]service, error) {
 	if services == nil || services.Kind != yaml.MappingNode {
 		return nil, nil
 	}
-	expand := func(s string) string {
-		if v, _, ok := discovery.Expand(s, env); ok {
-			return v
-		}
-		return s
-	}
+	expand := func(s string) string { return expandCompose(s, env) }
 
 	var out []service
 	for _, kv := range mapPairs(services) {
@@ -90,17 +89,62 @@ func composeServices(data []byte, env map[string]string) ([]service, error) {
 			src := ""
 			if n.Kind == yaml.MappingNode {
 				src = scalar(mapGet(n, "source"))
-			} else if before, _, found := strings.Cut(scalar(n), ":"); found {
-				src = before
+			} else {
+				src = volumeSource(scalar(n))
 			}
 			if src != "" {
-				s.Sources = append(s.Sources, expand(src))
+				s.Sources = append(s.Sources, expandCompose(src, dotEnv))
 			}
 		}
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// requiredVar matches ${VAR:?message} and ${VAR?message}, which Compose
+// fills in like ${VAR} and refuses to run without.
+var requiredVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:?)\?[^}]*\}`)
+
+// expandCompose substitutes the variables in s from env as Compose would,
+// or returns s as written when one has no value. discovery.Expand reads
+// ${VAR}, ${VAR:-default}, ${VAR-default} and $VAR; a required variable is
+// filled in here first, ":?" only when it is not empty.
+func expandCompose(s string, env map[string]string) string {
+	ok := true
+	filled := requiredVar.ReplaceAllStringFunc(s, func(m string) string {
+		sub := requiredVar.FindStringSubmatch(m)
+		v, set := env[sub[1]]
+		if !set || (sub[2] == ":" && v == "") {
+			ok = false
+			return m
+		}
+		return v
+	})
+	if !ok {
+		return s
+	}
+	if v, _, ok := discovery.Expand(filled, env); ok {
+		return v
+	}
+	return s
+}
+
+// volumeSource is the source of a short volume, "source:target[:mode]".
+// A colon inside ${...}, as in ${VAR:-default}, is part of the source.
+func volumeSource(spec string) string {
+	depth := 0
+	for i, c := range spec {
+		switch {
+		case c == '{' && i > 0 && spec[i-1] == '$':
+			depth++
+		case c == '}' && depth > 0:
+			depth--
+		case c == ':' && depth == 0:
+			return spec[:i]
+		}
+	}
+	return ""
 }
 
 // resolve follows an alias to the node it names.
