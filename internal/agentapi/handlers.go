@@ -400,6 +400,9 @@ func (s *Server) proposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.expireLocked(p)
+	s.mu.Unlock()
+	s.supersedeStale(p)
+	s.mu.Lock()
 	done, left := p.done, p.Expires.Sub(s.opts.Now())
 	s.mu.Unlock()
 
@@ -408,6 +411,7 @@ func (s *Server) proposal(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-done:
 		case <-t.C:
+			s.supersedeStale(p)
 		case <-r.Context().Done():
 			t.Stop()
 			return

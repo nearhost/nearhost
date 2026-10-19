@@ -376,6 +376,19 @@ func (s *agentSource) Reload(ctx context.Context, name string) (agentapi.Reloade
 	return out, nil
 }
 
+// Waiting is the hash of the change of the project's .nearhostrc that
+// waits for approval, or "" when none does or the engine is not attached.
+func (s *agentSource) Waiting(name string) string {
+	eng := s.engine()
+	if eng == nil {
+		return ""
+	}
+	if c := eng.Status(name).Pending; c != nil {
+		return c.SHA256
+	}
+	return ""
+}
+
 // notThere is a directory that could not be resolved, which the agent API
 // answers as not there. It reads as the reason.
 type notThere struct{ err error }

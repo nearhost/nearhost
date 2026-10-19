@@ -90,6 +90,9 @@ type Doctor interface {
 // Reloader re-reads a project's .nearhostrc for an agent.
 type Reloader interface {
 	Reload(ctx context.Context, name string) (Reloaded, error)
+	// Waiting is the hash of the change of the project's .nearhostrc that
+	// waits for approval, or "" when none does. It must not block.
+	Waiting(name string) string
 }
 
 // Reloaded is what a reload found.
@@ -126,8 +129,9 @@ const (
 	StateExpired  State = "expired"
 	// StateExists answers a proposal for a path a project already holds.
 	StateExists State = "exists"
-	// StateSuperseded ends a reload waiting on a change when a newer reload
-	// finds the file changed again.
+	// StateSuperseded ends a reload waiting on a change that no longer
+	// waits: a newer reload found the file changed again, the user answered
+	// a newer change, or the change stopped waiting some other way.
 	StateSuperseded State = "superseded"
 )
 
@@ -318,20 +322,36 @@ func (s *Server) Decline(id, reason string) {
 const declinedReason = "the user declined this change; change .nearhostrc to ask again"
 
 // ChangeAnswered ends the reloads waiting on the change with hash sha of
-// the project called name: accepted when approved, declined otherwise.
+// the project called name: accepted when approved, declined otherwise. The
+// user answered the change the file asks for now, so a reload waiting on
+// another change of the project ends superseded.
 func (s *Server) ChangeAnswered(name, sha string, approved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.proposals {
-		if !p.reload || p.Name != name || p.sha != sha {
-			continue
-		}
-		if approved {
+		switch {
+		case !p.reload || p.Name != name:
+		case p.sha != sha:
+			s.endLocked(p, StateSuperseded, "", "")
+		case approved:
 			s.endLocked(p, StateAccepted, "", name)
-		} else {
+		default:
 			s.endLocked(p, StateDeclined, declinedReason, "")
 		}
 	}
+}
+
+// supersedeStale ends p superseded when it is a reload whose change no
+// longer waits for approval, so an agent is not left waiting on a change
+// nobody can answer. Waiting is asked without s.mu held; an answer that
+// ends p meanwhile stands, as endLocked leaves an ended record alone.
+func (s *Server) supersedeStale(p *proposal) {
+	if !p.reload || s.opts.Reload == nil || s.opts.Reload.Waiting(p.Name) == p.sha {
+		return
+	}
+	s.mu.Lock()
+	s.endLocked(p, StateSuperseded, "", "")
+	s.mu.Unlock()
 }
 
 func (s *Server) end(id string, state State, reason, name string) {

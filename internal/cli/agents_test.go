@@ -395,6 +395,21 @@ func TestReloadReportsAChangeTheUserDeclined(t *testing.T) {
 	}
 }
 
+func TestWaitingIsTheHashOfTheChangeThatWaits(t *testing.T) {
+	src := &agentSource{}
+	if got := src.Waiting("p"); got != "" {
+		t.Fatalf("without an engine: %q", got)
+	}
+	src.projects = fakeProjects{pending: waitingChange}
+	if got := src.Waiting("p"); got != "b" {
+		t.Fatalf("waiting: %q", got)
+	}
+	src.projects = fakeProjects{}
+	if got := src.Waiting("p"); got != "" {
+		t.Fatalf("nothing waiting: %q", got)
+	}
+}
+
 func TestReloadAsksTheInterfaceToShowTheChange(t *testing.T) {
 	var log []string
 	eng := engine.New(&config.Config{}, engine.Options{})
