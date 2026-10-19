@@ -21,19 +21,21 @@ type ComposePort struct {
 
 var composeFiles = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
 
-// readCompose returns the first Compose file found.
-func readCompose(r FileReader) ([]byte, bool, error) {
+// ReadCompose returns the first Compose file found and its name, so that a
+// caller can point at the file it read. When there is none, name is empty and
+// err is nil.
+func ReadCompose(r FileReader) (name string, data []byte, err error) {
 	for _, name := range composeFiles {
 		data, err := r.ReadFile(name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, false, fmt.Errorf("read %s: %w", name, err)
+			return "", nil, fmt.Errorf("read %s: %w", name, err)
 		}
-		return data, true, nil
+		return name, data, nil
 	}
-	return nil, false, nil
+	return "", nil, nil
 }
 
 type composeDoc struct {

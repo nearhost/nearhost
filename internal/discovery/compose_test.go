@@ -88,14 +88,14 @@ func TestParseComposeRejectsInvalidYAML(t *testing.T) {
 	}
 }
 
-func TestReadComposeFindsAnyStandardName(t *testing.T) {
-	data, ok, err := readCompose(DirReader{Root: "testdata/compose-literal"})
-	if err != nil || !ok || len(data) == 0 {
-		t.Fatalf("compose.yaml not found: ok=%v err=%v", ok, err)
+func TestReadComposeNamesTheFile(t *testing.T) {
+	name, data, err := ReadCompose(DirReader{Root: "testdata/compose-literal"})
+	if err != nil || name != "compose.yaml" || len(data) == 0 {
+		t.Fatalf("compose.yaml not found: name=%q err=%v", name, err)
 	}
-	_, ok, err = readCompose(DirReader{Root: "testdata/empty"})
-	if err != nil || ok {
-		t.Fatalf("expected not found, got ok=%v err=%v", ok, err)
+	name, data, err = ReadCompose(DirReader{Root: "testdata/empty"})
+	if err != nil || name != "" || data != nil {
+		t.Fatalf("expected not found, got name=%q err=%v", name, err)
 	}
 }
 
