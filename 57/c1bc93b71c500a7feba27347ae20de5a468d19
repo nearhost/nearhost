@@ -1,0 +1,44 @@
+internal/engine/apply_test.go
+  s_89a63a3c1fa7d2::t_cb95c315a5538b 288-308
+internal/engine/docker_test.go
+  s_89a63a3c1fa7d2::t_fe2e0b554acadf 1-224
+internal/dockernet/dockernet.go
+  s_89a63a3c1fa7d2::t_d2d7db7af0bbb4 1-2,6,8,10-20,23-25,28-65,67-152
+  s_89a63a3c1fa7d2::t_bb609ee6cfea59 3-5,7,9,21-22,26-27,66,153
+internal/engine/project.go
+  s_89a63a3c1fa7d2::t_590c3d8229851c 42,259-266,286,444-448,456,462,467-471
+internal/engine/teardown.go
+  s_89a63a3c1fa7d2::t_590c3d8229851c 52-53
+internal/engine/engine.go
+  s_89a63a3c1fa7d2::t_2c2e8204469e6a 147-152
+  s_89a63a3c1fa7d2::t_fc4f113f943842 9,76-84,165-166,173-174,204-206,224-227,464-466,505-508,510
+  s_89a63a3c1fa7d2::t_bb609ee6cfea59 85,167
+internal/engine/docker.go
+  s_89a63a3c1fa7d2::t_f3c4fdee420f47 1-206
+internal/dockernet/dockernet_test.go
+  s_89a63a3c1fa7d2::t_5b826e5d884f76 1-121
+internal/engine/apply.go
+  s_89a63a3c1fa7d2::t_92c84e32dabdaa 25-28
+  s_89a63a3c1fa7d2::t_fc4f113f943842 24,55
+internal/cli/ui_add_test.go
+  s_89a63a3c1fa7d2::t_0c1d49e48d7d59 283-315
+internal/cli/ui_add.go
+  s_89a63a3c1fa7d2::t_5475e33f049261 203-204
+  s_89a63a3c1fa7d2::t_d5cf17df7d7211 210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57c1bc93b71c500a7feba27347ae20de5a468d19",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
