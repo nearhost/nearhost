@@ -84,6 +84,7 @@ func Check(ctx context.Context, in Input) []Finding {
 	out = append(out, rc...)
 	out = append(out, driftFindings(in, found)...)
 	out = append(out, adviceFindings(in)...)
+	out = append(out, hostFindings(ctx, in)...)
 
 	if in.Added {
 		for i := range out {
