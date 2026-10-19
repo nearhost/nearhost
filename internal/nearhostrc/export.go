@@ -29,9 +29,9 @@ type PortVars map[int][]string
 // either holds that port in env or is not set there, since discovery found it
 // in the project's compose file and its default supplies the served port; a
 // variable env sets to another port gives a bare number. The main name is
-// written as ${VAR:-name} for the alphabetically first variable env sets to
-// exactly that name. Either way the file follows the project's .env on
-// another machine. Export refuses to return a file that does not read
+// written as ${VAR:-name} for the alphabetically first variable whose name
+// ends in _HOST and that env sets to exactly that name (see aliasVariable).
+// Either way the file follows the project's .env on another machine. Export refuses to return a file that does not read
 // back to p's routes, main name and docker_clients choice, so what it writes
 // is always what the user approved.
 func Export(p config.Project, dir string, vars PortVars, env map[string]string) ([]byte, *config.RcSnapshot, error) {
@@ -152,12 +152,19 @@ func sameProject(want, got config.Project) error {
 	return nil
 }
 
-// aliasVariable names the variable env sets to exactly alias, or "" when none
-// does. With several, the alphabetically first wins so the output is stable.
+// aliasVariable names the variable whose name ends in _HOST and that env sets
+// to exactly alias, or "" when none does, so the main name is written as
+// itself. Only _HOST variables count: on another machine such a variable
+// still names the host the project is reached at, whereas one that merely
+// holds the same value here may mean something else there. A _DOMAIN
+// variable such as SESSION_DOMAIN usually holds a parent domain or a cookie's
+// scope, and binding the main name to it would break the committed file or
+// silently propose another name. With several, the alphabetically first wins
+// so the output is stable.
 func aliasVariable(alias string, env map[string]string) string {
 	var names []string
 	for k, v := range env {
-		if v == alias {
+		if strings.HasSuffix(k, "_HOST") && v == alias {
 			names = append(names, k)
 		}
 	}

@@ -202,3 +202,29 @@ func TestExportRefusesLabelWithVariableSyntax(t *testing.T) {
 		t.Fatalf("got %q, %v, %v", got, snap, err)
 	}
 }
+
+func TestExportAliasVariableMustEndInHost(t *testing.T) {
+	p := config.Project{Name: "a", Server: config.LocalServer, Alias: "app.x.io", Routes: []config.Route{{Port: 80, Role: config.RoleWeb}}}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"session domain", map[string]string{"SESSION_DOMAIN": "app.x.io"}, "alias: app.x.io\n"},
+		{"host suffix", map[string]string{"SITE_HOST": "app.x.io"}, "alias: ${SITE_HOST:-app.x.io}\n"},
+		{"first of two hosts", map[string]string{"B_HOST": "app.x.io", "A_HOST": "app.x.io"}, "alias: ${A_HOST:-app.x.io}\n"},
+		{"domain suffix", map[string]string{"APP_DOMAIN": "app.x.io"}, "alias: app.x.io\n"},
+		{"not exactly the name", map[string]string{"APP_HOST": "app.x.io,other"}, "alias: app.x.io\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _, err := Export(p, "a", nil, c.env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(got), c.want) {
+				t.Fatalf("output:\n%s\nwant %q", got, c.want)
+			}
+		})
+	}
+}
