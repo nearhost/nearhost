@@ -167,6 +167,39 @@ func TestDeclinedChangeStaysDeclinedUntilTheFileChanges(t *testing.T) {
 	}
 }
 
+func TestRereadReturnsTheReview(t *testing.T) {
+	port := upstream(t, "p")
+	cfg := &config.Config{Projects: []config.Project{localProject("p", port)}}
+	h := withReview(t, cfg, func(_ context.Context, p config.Project, _ discovery.FileReader) Review {
+		next := p
+		next.Routes = []config.Route{{Port: port, Role: config.RoleWeb, Hosts: []string{"x.example.com"}}}
+		return Review{Pending: &Change{SHA256: "b", Project: next, Items: []nearhostrc.Item{{Port: port, Host: "x.example.com", Why: "a real domain"}}}}
+	})
+	mustStart(t, h, "p")
+
+	r, err := h.eng.Reread(context.Background(), "p")
+	if err != nil || r.Pending == nil || r.Pending.SHA256 != "b" {
+		t.Fatalf("Reread = %+v, %v", r, err)
+	}
+	if st := h.eng.Status("p"); st.Pending == nil || st.Pending.SHA256 != "b" {
+		t.Fatalf("status = %+v", st)
+	}
+
+	// A declined change is still what the file asks for, though it no
+	// longer waits.
+	h.eng.DeclineChange("p", "b")
+	r, err = h.eng.Reread(context.Background(), "p")
+	if err != nil || r.Pending == nil || r.Pending.SHA256 != "b" {
+		t.Fatalf("Reread after decline = %+v, %v", r, err)
+	}
+	if st := h.eng.Status("p"); st.Pending != nil {
+		t.Fatalf("Pending after decline = %+v", st.Pending)
+	}
+	if _, err := h.eng.Reread(context.Background(), "nope"); err == nil {
+		t.Fatal("an unknown project was reread")
+	}
+}
+
 // sawLog reports whether a log line (not a state change) of project with
 // exactly message is buffered on events. Other events are dropped.
 func sawLog(events <-chan Event, project, message string) bool {

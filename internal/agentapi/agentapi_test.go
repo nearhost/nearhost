@@ -512,3 +512,234 @@ func TestADirectoryMissingOnTheLaptopNamesIt(t *testing.T) {
 		t.Fatalf("%d %v", status, out)
 	}
 }
+
+// liveSource is a Source whose projects a test can change.
+type liveSource struct {
+	mu       sync.Mutex
+	projects map[string][]Project
+}
+
+func (l *liveSource) Projects(origin string) []Project {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]Project(nil), l.projects[origin]...)
+}
+
+func (l *liveSource) setState(origin, name, state string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.projects[origin] {
+		if l.projects[origin][i].Name == name {
+			l.projects[origin][i].State = state
+		}
+	}
+}
+
+// fakeReloader records the projects it reloads and answers with got and err,
+// calling then first when it is set.
+type fakeReloader struct {
+	mu    sync.Mutex
+	calls []string
+	got   Reloaded
+	err   error
+	then  func(name string)
+}
+
+func (f *fakeReloader) Reload(_ context.Context, name string) (Reloaded, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, name)
+	got, err, then := f.got, f.err, f.then
+	f.mu.Unlock()
+	if then != nil {
+		then(name)
+	}
+	return got, err
+}
+
+func (f *fakeReloader) answer(got Reloaded, err error) {
+	f.mu.Lock()
+	f.got, f.err = got, err
+	f.mu.Unlock()
+}
+
+func (f *fakeReloader) all() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// reloadServer is a server with a fake Reloader, serving mini's socket.
+// mini has a third project, so three reloads can wait at once.
+func reloadServer(t *testing.T, review bool) (*Server, *fakeReviewer, *fakeReloader, *liveSource, string) {
+	t.Helper()
+	src := &liveSource{projects: map[string][]Project{"mini": append(append([]Project(nil), mini...),
+		Project{Name: "third", Path: "/home/dev/code/third", URL: "https://third.test", State: "stopped"})}}
+	rl := &fakeReloader{}
+	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
+	s := New(Options{Laptop: "ecs@macbook", Source: src, Reload: rl, Now: c.Now})
+	r := &fakeReviewer{}
+	if review {
+		s.SetReviewer(r)
+	}
+	sock := filepath.Join(shortDir(t), "mini.sock")
+	if err := s.Listen("mini", sock); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s, r, rl, src, sock
+}
+
+var waiting = Reloaded{Items: []string{"app.example.com", "docker_clients"}, SHA256: "b"}
+
+func TestReloadAnswers(t *testing.T) {
+	_, _, _, _, remote := newServer(t, true)
+	if status, out := call(t, remote, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`); status != 404 ||
+		!strings.Contains(out["error"].(string), "no such call") {
+		t.Fatalf("without a reloader: %d %v", status, out)
+	}
+
+	_, r, rl, src, sock := reloadServer(t, true)
+	if _, out := call(t, sock, "GET", "/v1", ""); fmt.Sprint(out["capabilities"]) != "[reload]" {
+		t.Fatalf("GET /v1: %v", out)
+	}
+	for name, body := range map[string]string{
+		"relative": `{"path": "code/myapp"}`,
+		"real":     `{"path": "/home/dev/code/myapp", "real": "code/myapp"}`,
+		"json":     `{"path": `,
+	} {
+		if status, _ := call(t, sock, "POST", "/v1/projects/reload", body); status != 400 {
+			t.Errorf("%s: %d", name, status)
+		}
+	}
+	status, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/other/"}`)
+	if status != 404 || out["error"] != "no project holds /home/dev/code/other; add it first" {
+		t.Fatalf("no project: %d %v", status, out)
+	}
+	if len(rl.all()) != 0 {
+		t.Fatalf("reloaded without a project: %v", rl.all())
+	}
+
+	rl.answer(Reloaded{}, errors.New("server \"mini\" is not connected"))
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp/src"}`)
+	if status != 502 || out["error"] != `server "mini" is not connected` {
+		t.Fatalf("an error: %d %v", status, out)
+	}
+	if got := rl.all(); len(got) != 1 || got[0] != "myapp" {
+		t.Fatalf("reloaded %v", got)
+	}
+
+	rl.answer(Reloaded{Problem: ".nearhostrc: line 3: unknown key \"hsts\""}, nil)
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	if status != 422 || out["error"] != `.nearhostrc: line 3: unknown key "hsts"` {
+		t.Fatalf("a problem: %d %v", status, out)
+	}
+
+	rl.answer(Reloaded{Declined: true}, nil)
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	if status != 200 || out["state"] != "declined" || out["reason"] != "the user declined this change; change .nearhostrc to ask again" {
+		t.Fatalf("declined: %d %v", status, out)
+	}
+
+	// The project answered is as it is after the reload.
+	rl.answer(Reloaded{}, nil)
+	rl.then = func(name string) { src.setState("mini", name, "starting") }
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/link", "real": "/home/dev/code/myapp"}`)
+	if p, _ := out["project"].(map[string]any); status != 200 || out["state"] != "applied" || p["name"] != "myapp" || p["state"] != "starting" {
+		t.Fatalf("applied: %d %v", status, out)
+	}
+	rl.then = nil
+
+	rl.answer(waiting, nil)
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	if status != 202 || out["state"] != "pending" || out["id"] == nil || out["expires_at"] != "2026-10-15T12:10:00Z" ||
+		fmt.Sprint(out["items"]) != "[app.example.com docker_clients]" {
+		t.Fatalf("waiting: %d %v", status, out)
+	}
+	// It waits for the user.
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+out["id"].(string)+"?wait=1", ""); out["state"] != "pending" {
+		t.Fatalf("before an answer: %v", out)
+	}
+	if len(r.all()) != 0 {
+		t.Fatalf("the reviewer was shown a reload: %v", r.all())
+	}
+
+	_, _, rl, _, sock = reloadServer(t, false)
+	rl.answer(waiting, nil)
+	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	if status != 409 || out["error"] != "open nearhost on ecs@macbook to approve what .nearhostrc asks for (app.example.com, docker_clients); `nearhost up` cannot show it" ||
+		fmt.Sprint(out["items"]) != "[app.example.com docker_clients]" {
+		t.Fatalf("without the interface: %d %v", status, out)
+	}
+}
+
+func TestReloadIsAnsweredByTheUser(t *testing.T) {
+	s, r, rl, _, sock := reloadServer(t, true)
+	rl.answer(waiting, nil)
+	reload := func(path string) string {
+		t.Helper()
+		status, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "`+path+`"}`)
+		if status != 202 {
+			t.Fatalf("%s: %d %v", path, status, out)
+		}
+		return out["id"].(string)
+	}
+	myapp, inner, third := reload("/home/dev/code/myapp"), reload("/home/dev/code/myapp/packages/inner"), reload("/home/dev/code/third")
+
+	// Waiting reloads are not proposals: an agent may still propose three.
+	for i := range 3 {
+		if status, out := call(t, sock, "POST", "/v1/proposals", `{"path": "/srv/app`+string(rune('a'+i))+`"}`); status != 202 {
+			t.Fatalf("proposal %d: %d %v", i, status, out)
+		}
+	}
+	if seen := r.all(); len(seen) != 3 {
+		t.Fatalf("the reviewer saw %+v", seen)
+	}
+
+	// An answer about another change of the file leaves it waiting.
+	s.ChangeAnswered("myapp", "a", true)
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+myapp, ""); out["state"] != "pending" {
+		t.Fatalf("another hash answered it: %v", out)
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		s.ChangeAnswered("myapp", "b", true)
+	}()
+	_, out := call(t, sock, "GET", "/v1/proposals/"+myapp+"?wait=5", "")
+	if p, _ := out["project"].(map[string]any); out["state"] != "accepted" || p["name"] != "myapp" || p["url"] != "https://myapp.test" {
+		t.Fatalf("approved: %v", out)
+	}
+
+	s.ChangeAnswered("inner", "b", false)
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+inner+"?wait=5", ""); out["state"] != "declined" {
+		t.Fatalf("declined: %v", out)
+	}
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+third, ""); out["state"] != "pending" {
+		t.Fatalf("an answer for another project ended it: %v", out)
+	}
+	if seen := r.all(); len(seen) != 3 {
+		t.Fatalf("the reviewer was shown a reload: %+v", seen)
+	}
+}
+
+func TestReloadReusesOrSupersedesItsRecord(t *testing.T) {
+	_, _, rl, _, sock := reloadServer(t, true)
+	rl.answer(waiting, nil)
+	_, first := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	_, again := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp/src"}`)
+	if first["id"] == nil || again["id"] != first["id"] {
+		t.Fatalf("the same change twice: %v then %v", first, again)
+	}
+
+	rl.answer(Reloaded{Items: []string{"other.example.com"}, SHA256: "c"}, nil)
+	status, changed := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	if status != 202 || changed["id"] == first["id"] || fmt.Sprint(changed["items"]) != "[other.example.com]" {
+		t.Fatalf("a changed file: %d %v", status, changed)
+	}
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+first["id"].(string), ""); out["state"] != "superseded" {
+		t.Fatalf("the first: %v", out)
+	}
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+changed["id"].(string), ""); out["state"] != "pending" {
+		t.Fatalf("the second: %v", out)
+	}
+}

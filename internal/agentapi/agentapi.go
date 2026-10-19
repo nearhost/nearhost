@@ -43,6 +43,9 @@ const (
 	// doctorTimeout bounds one call to the doctor, which may read a
 	// project's files over ssh.
 	doctorTimeout = 45 * time.Second
+	// reloadTimeout bounds one re-read of a project's .nearhostrc, which
+	// may read it over ssh.
+	reloadTimeout = 45 * time.Second
 )
 
 // Route is one of a project's ports and what nearhost does with it.
@@ -84,6 +87,19 @@ type Doctor interface {
 	Doctor(ctx context.Context, origin, name, dir string) ([]doctor.Finding, error)
 }
 
+// Reloader re-reads a project's .nearhostrc for an agent.
+type Reloader interface {
+	Reload(ctx context.Context, name string) (Reloaded, error)
+}
+
+// Reloaded is what a reload found.
+type Reloaded struct {
+	Items    []string // what waits for approval, by Item.Name(); empty when nothing does
+	SHA256   string   // the waiting change's hash
+	Declined bool     // the file asks for a change the user declined; it stays declined until the file changes
+	Problem  string   // why the file could not be taken into account
+}
+
 // Proposal is a project an agent asks to add.
 type Proposal struct {
 	ID     string
@@ -110,6 +126,9 @@ const (
 	StateExpired  State = "expired"
 	// StateExists answers a proposal for a path a project already holds.
 	StateExists State = "exists"
+	// StateSuperseded ends a reload waiting on a change when a newer reload
+	// finds the file changed again.
+	StateSuperseded State = "superseded"
 )
 
 // ErrInUse is returned by Listen when another process answers on the socket.
@@ -122,6 +141,8 @@ type Options struct {
 	Source Source
 	// Doctor answers GET /v1/doctor; nil means no doctor.
 	Doctor Doctor
+	// Reload answers POST /v1/projects/reload; nil means no reload.
+	Reload Reloader
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -146,6 +167,13 @@ type listener struct {
 
 // proposal is a Proposal and what became of it. done is closed when it is
 // answered or expires.
+//
+// A reload waiting on a change of a project's .nearhostrc is one too, with
+// reload set, so an agent polls it as it polls a proposal. Its Name is the
+// project's and its Path the project's directory, and sha is the hash of the
+// change it waits on. The user answers the change, not the reload, so a
+// reload is never shown to the Reviewer, and it does not count against
+// maxPending: an agent waiting on its .nearhostrc may still propose.
 type proposal struct {
 	Proposal
 	state   State
@@ -153,6 +181,8 @@ type proposal struct {
 	project string // the name it was saved as, when accepted
 	ended   time.Time
 	done    chan struct{}
+	reload  bool
+	sha     string
 }
 
 type originKey struct{}
@@ -283,13 +313,37 @@ func (s *Server) Decline(id, reason string) {
 	s.end(id, StateDeclined, reason, "")
 }
 
+// declinedReason is why a reload ends declined, whether the user declined
+// the change while it waited or before it was asked for.
+const declinedReason = "the user declined this change; change .nearhostrc to ask again"
+
+// ChangeAnswered ends the reloads waiting on the change with hash sha of
+// the project called name: accepted when approved, declined otherwise.
+func (s *Server) ChangeAnswered(name, sha string, approved bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.proposals {
+		if !p.reload || p.Name != name || p.sha != sha {
+			continue
+		}
+		if approved {
+			s.endLocked(p, StateAccepted, "", name)
+		} else {
+			s.endLocked(p, StateDeclined, declinedReason, "")
+		}
+	}
+}
+
 func (s *Server) end(id string, state State, reason, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p := s.proposals[id]
-	if p == nil {
-		return
+	if p := s.proposals[id]; p != nil && !p.reload {
+		s.endLocked(p, state, reason, name)
 	}
+}
+
+// endLocked answers p, unless it has already ended.
+func (s *Server) endLocked(p *proposal, state State, reason, name string) {
 	s.expireLocked(p)
 	if p.state != StatePending {
 		return

@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -179,8 +180,12 @@ func pendingUI(t *testing.T, next []string) (*uiEngine, string) {
 	changed := two
 	changed.Routes = []config.Route{{Port: 8002, Role: config.RoleWeb, Hosts: next}}
 	changed.Nearhostrc = &config.RcSnapshot{SHA256: "new", Routes: changed.Routes}
+	var items []nearhostrc.Item
+	for _, h := range next {
+		items = append(items, nearhostrc.Item{Port: 8002, Host: h, Why: "a real domain"})
+	}
 	review := func(context.Context, config.Project, discovery.FileReader) engine.Review {
-		return engine.Review{Pending: &engine.Change{SHA256: "new", Project: changed}}
+		return engine.Review{Pending: &engine.Change{SHA256: "new", Project: changed, Items: items}}
 	}
 	u := &uiEngine{Engine: engine.New(cfg, engine.Options{Review: review}), path: path}
 	if err := u.Recheck(context.Background(), "two"); err != nil {

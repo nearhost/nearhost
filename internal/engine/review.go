@@ -150,11 +150,21 @@ func (e *Engine) reviewStart(ctx context.Context, run *projectRun, p *config.Pro
 // project with it; the engine's configuration is left alone so that Apply
 // sees the change. A remote project needs its server connected.
 func (e *Engine) Recheck(ctx context.Context, name string) error {
+	_, err := e.Reread(ctx, name)
+	return err
+}
+
+// Reread is Recheck, returning the review it noted. The review says what
+// the file asks for, which the status alone cannot: a change the user
+// declined is still the review's Pending, though the status shows nothing
+// pending, so a caller can tell a declined change from no change at all.
+// Without Options.Review it returns the zero Review.
+func (e *Engine) Reread(ctx context.Context, name string) (Review, error) {
 	e.mu.Lock()
 	p, ok := e.cfg.Project(name)
 	if !ok {
 		e.mu.Unlock()
-		return fmt.Errorf("unknown project %q", name)
+		return Review{}, fmt.Errorf("unknown project %q", name)
 	}
 	run := e.runs[name]
 	var sess *transport.Session
@@ -162,14 +172,14 @@ func (e *Engine) Recheck(ctx context.Context, name string) error {
 		c := e.servers[p.Server]
 		if c == nil || c.sess.Status() != transport.StatusConnected {
 			e.mu.Unlock()
-			return fmt.Errorf("server %q is not connected", p.Server)
+			return Review{}, fmt.Errorf("server %q is not connected", p.Server)
 		}
 		sess = c.sess
 	}
 	proj := *p
 	e.mu.Unlock()
 	if e.opts.Review == nil {
-		return nil
+		return Review{}, nil
 	}
 
 	r := e.readRc(ctx, proj, sess)
@@ -178,7 +188,7 @@ func (e *Engine) Recheck(ctx context.Context, name string) error {
 	if e.runs[name] == run { // a run Apply replaced has nothing to show
 		e.noteReviewLocked(run, r)
 	}
-	return nil
+	return r, nil
 }
 
 // DeclineChange forgets a project's pending change with hash sha. A later
