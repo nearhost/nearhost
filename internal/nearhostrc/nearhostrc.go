@@ -130,12 +130,49 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 		routes = append(routes, r)
 	}
 
+	if err := checkRoutes(routes); err != nil {
+		return nil, err
+	}
+
 	canon, err := json.Marshal(routes)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	sum := sha256.Sum256(canon)
 	return &File{Routes: routes, SHA256: hex.EncodeToString(sum[:])}, nil
+}
+
+// checkRoutes rejects routes that could never become a valid project, so the
+// user hears about the file's mistake instead of a vaguer error from the
+// configuration it is merged into.
+func checkRoutes(routes []Route) error {
+	ports := map[int]bool{}
+	hosts := map[string]bool{}
+	webs := 0
+	for _, r := range routes {
+		if ports[r.Port] {
+			return fmt.Errorf("%s: port %d is listed twice", FileName, r.Port)
+		}
+		ports[r.Port] = true
+		if r.Role != config.RoleWeb {
+			continue
+		}
+		webs++
+		if webs > 1 && len(r.Hosts) == 0 {
+			return fmt.Errorf("%s: port %d needs at least one host; only the first web route is served at the project's .test name", FileName, r.Port)
+		}
+		for _, h := range r.Hosts {
+			k := strings.ToLower(h)
+			if hosts[k] {
+				return fmt.Errorf("%s: host %q (port %d) is listed twice", FileName, h, r.Port)
+			}
+			hosts[k] = true
+		}
+	}
+	if webs == 0 {
+		return fmt.Errorf("%s needs at least one web route", FileName)
+	}
+	return nil
 }
 
 // fill turns one raw route into a Route, filling and checking its values.

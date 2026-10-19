@@ -610,3 +610,26 @@ func TestHostsFileNamesHoldExactHostsOfWebRoutes(t *testing.T) {
 		t.Fatalf("HostsFileNames() = %v, want %v", got, want)
 	}
 }
+
+func TestNearhostrcSnapshotValidatesAndRoundTrips(t *testing.T) {
+	cfg := sample()
+	cfg.Projects[0].Nearhostrc = &RcSnapshot{SHA256: "abc", Routes: []Route{{Port: 8220, Role: RoleWeb, Hosts: []string{"app.local.dd.io", "*.x.dd.io"}}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got.Projects[0].Nearhostrc, cfg.Projects[0].Nearhostrc) {
+		t.Fatalf("snapshot = %+v", got.Projects[0].Nearhostrc)
+	}
+	cfg.Projects[0].Nearhostrc.Routes[0].Hosts = []string{"bad host"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected an invalid snapshot host to be rejected")
+	}
+}
