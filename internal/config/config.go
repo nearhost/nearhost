@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -168,28 +169,30 @@ func (c *Config) HostClash(p Project) (host, other string, clash bool) {
 	return "", "", false
 }
 
-// ValidProjectAlias reports why alias cannot be a project's alias, or returns nil.
-// The alias is the project's own name under .test, which no DNS serves, so
-// it must stay a lowercase .test host name; real domains are hosts of a route.
+// ValidProjectAlias reports why alias cannot be a project's main name, or
+// returns nil. The main name is one exact, lowercase domain: a .test name or a
+// real one. A wildcard pattern would stand for many names, and localhost and
+// an IP address are not names a hosts file or the proxy's certificate can
+// serve as a project's own.
 func ValidProjectAlias(alias string) error {
-	const suffix = ".test"
-	if len(alias) > len(suffix) && strings.HasSuffix(alias, suffix) &&
-		hostname.Valid(alias) == nil && !hostname.IsPattern(alias) {
-		return nil
+	if _, err := netip.ParseAddr(alias); err == nil || alias == "localhost" ||
+		hostname.Valid(alias) != nil || hostname.IsPattern(alias) || alias == ".test" {
+		return fmt.Errorf("invalid main name %q: must be a lowercase domain name, not a wildcard, localhost or an IP address", alias)
 	}
-	return fmt.Errorf("invalid alias %q: must be a lowercase hostname ending in .test", alias)
+	return nil
 }
 
 // HostsFileNames lists the names nearhost puts in the hosts file for this
-// config before any DNS filtering: the valid aliases of all projects and the
-// exact hosts of the web routes of enabled ones, sorted and without
-// duplicates. A disabled project's hosts stay out because, unlike a .test
-// alias, a real domain also has a site elsewhere, and an entry here would
-// hide it for a project nothing serves. localhost
-// and wildcard patterns are left out, as a hosts file resolves neither, and
-// so is an invalid alias, which no project is started with. It is the single
-// candidate list the engine, doctor and the interface share, so they cannot
-// disagree about what the file should hold.
+// config before any DNS filtering: the main names of projects and the exact
+// hosts of the web routes of enabled ones, sorted and without duplicates. A
+// .test main name is listed for every project, as no DNS serves it. A real
+// domain, whether a main name or a route host, is listed only for an enabled
+// project, because it also has a site elsewhere and an entry here would hide
+// that site for a project nothing serves. localhost and wildcard patterns are
+// left out, as a hosts file resolves neither, and so is an invalid main name,
+// which no project is started with. It is the single candidate list the
+// engine, doctor and the interface share, so they cannot disagree about what
+// the file should hold.
 func (c *Config) HostsFileNames() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -200,7 +203,7 @@ func (c *Config) HostsFileNames() []string {
 		}
 	}
 	for _, p := range c.Projects {
-		if ValidProjectAlias(p.Alias) == nil {
+		if ValidProjectAlias(p.Alias) == nil && (p.Enabled || strings.HasSuffix(p.Alias, ".test")) {
 			add(p.Alias)
 		}
 		if !p.Enabled {

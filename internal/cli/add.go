@@ -89,7 +89,7 @@ func newAddCmd(b addBackend) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&flags.server, "server", config.LocalServer, "server the project runs on")
 	cmd.Flags().StringVar(&flags.name, "name", "", "project name (default: directory name)")
-	cmd.Flags().StringVar(&flags.alias, "alias", "", "hostname (default: <name>.test)")
+	cmd.Flags().StringVar(&flags.alias, "alias", "", "main name (default: <name>.test); any domain, typing it approves it")
 	cmd.Flags().IntVar(&flags.web, "web", 0, "force this port to be the web route")
 	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "add it disabled: 'nearhost up' starts it only when named")
 	cmd.Flags().StringArrayVar(&flags.presets, "preset", nil, "enable this preset first, without asking (repeatable)")
@@ -158,7 +158,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if flags.web > 0 {
 		project.Routes = forceWeb(project.Routes, flags.web)
 	}
-	if err := applyNearhostrc(cmd, b, reader, answers, &project, flags.hosts); err != nil {
+	if err := applyNearhostrc(cmd, b, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != ""); err != nil {
 		return errors.Join(err, done())
 	}
 	// The advisories are about the roles the project ends up with. Merging
@@ -217,8 +217,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // applyNearhostrc applies the project's .nearhostrc, if it has one, and the
 // --host flags to project, and asks before serving any host that would take
 // over traffic meant for the internet. A host typed with --host counts as
-// approved by being typed. Nothing is saved here; an error stops the add.
-func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string) error {
+// approved by being typed, and so is a main name given with --alias. Nothing is saved here; an error stops the add.
+func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
 	out := cmd.OutOrStdout()
 	f, found, err := nearhostrc.Read(reader)
 	if err != nil {
@@ -246,6 +246,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 			approved[h] = true
 			extra = append(extra, h)
 		}
+	}
+	if aliasTyped {
+		approved[strings.ToLower(project.Alias)] = true
 	}
 	onRoute := map[string]bool{}
 	for _, r := range project.Routes {

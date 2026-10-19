@@ -733,15 +733,21 @@ func (f *projectForm) setHosts() {
 
 // needsApproval is what saving the project approves: the hosts and options
 // that need approval and were not approved before, leaving out hosts typed
-// here.
+// here and a main name typed in the alias field.
 func (f *projectForm) needsApproval() []nearhostrc.Item {
 	var old config.Project
 	if f.edit != nil {
 		old = *f.edit
 	}
+	// The alias is checked against what is typed now, not remembered in
+	// f.typed, so a name typed and then changed is asked about again.
+	typedAlias := ""
+	if f.aliasEdited {
+		typedAlias = strings.ToLower(strings.TrimSpace(f.alias.value))
+	}
 	var items []nearhostrc.Item
 	for _, it := range nearhostrc.NeedsApproval(old, f.project()) {
-		if it.Host == "" || !f.typed[strings.ToLower(it.Host)] {
+		if it.Host == "" || !(f.typed[strings.ToLower(it.Host)] || strings.ToLower(it.Host) == typedAlias) {
 			items = append(items, it)
 		}
 	}

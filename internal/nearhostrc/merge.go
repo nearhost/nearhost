@@ -239,6 +239,14 @@ func NeedsApproval(old, next config.Project) []Item {
 		}
 		return items[i].Host < items[j].Host
 	})
+	// A main name that is a real domain takes over traffic meant for the
+	// internet as a route host does, so it is asked about the same way, on
+	// the port of the primary web route it is served at.
+	if alias := next.Alias; alias != "" && !strings.HasSuffix(strings.ToLower(alias), ".test") && !strings.EqualFold(alias, old.Alias) {
+		if web, ok := next.WebRoute(); ok {
+			items = append(items, Item{Port: web.Port, Host: alias, Why: "a real domain"})
+		}
+	}
 	if next.DockerClients() && !old.DockerClients() {
 		items = append(items, Item{Option: OptionDockerClients, Why: "lets local Docker containers reach this project"})
 	}

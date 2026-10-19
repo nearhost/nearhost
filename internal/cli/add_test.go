@@ -208,8 +208,8 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		{"duplicate name", []string{"add", dir, "--name", "shop", "--web", "9000"}, []string{`project "shop" already exists`, "--name"}},
 		{"duplicate alias", []string{"add", dir, "--name", "Shop", "--web", "9000"}, []string{"shop.test", `"shop"`, "--alias"}},
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
-		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", ".test"}},
-		{"alias not under .test", []string{"add", dir, "--name", "other", "--alias", "other.example", "--web", "9000"}, []string{"other.example", ".test"}},
+		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", "lowercase domain name"}},
+		{"alias is an IP address", []string{"add", dir, "--name", "other", "--alias", "127.0.0.1", "--web", "9000"}, []string{"127.0.0.1", "IP address"}},
 		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`unknown server "nas"`, "servers:"}},
 		{"remote without a path", []string{"add", "--server", "mini", "--name", "x"}, []string{"path"}},
 		{"remote with a relative path", []string{"add", "code/x", "--server", "mini", "--name", "x"}, []string{"absolute path"}},
@@ -406,6 +406,29 @@ func TestAddTrimsTheAlias(t *testing.T) {
 	out, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "again", "--alias", "shop.test ", "--web", "8080")
 	if err == nil || !strings.Contains(err.Error(), `already used by project "shop"`) {
 		t.Errorf("a padded duplicate alias: %v\n%s", err, out)
+	}
+}
+
+// A main name typed with --alias is approved by being typed, as --host is, so
+// a real domain needs neither a prompt nor a terminal.
+func TestAddAliasFlagApprovesRealDomain(t *testing.T) {
+	cfgPath, _ := existing(t)
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "real", "--alias", "app.local.x.io", "--web", "8080")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if p, _ := loadSaved(t, cfgPath).Project("real"); p.Alias != "app.local.x.io" {
+		t.Errorf("saved the alias %q", p.Alias)
+	}
+	wantContains(t, out, "at https://app.local.x.io\n")
+}
+
+func TestAddRefusesWildcardAlias(t *testing.T) {
+	cfgPath, _ := existing(t)
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "wild", "--alias", "*.x.io", "--web", "8080")
+	want := `invalid main name "*.x.io": must be a lowercase domain name, not a wildcard, localhost or an IP address`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v\n%s", err, out)
 	}
 }
 
