@@ -1,0 +1,21 @@
+internal/nearhostrc/export.go
+  s_89a63a3c1fa7d2::t_0995e8ed05f8a1 1-154
+internal/nearhostrc/export_test.go
+  s_89a63a3c1fa7d2::t_09c5c7ed5bd1f0 1-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9192c4455fa9e33ea4b7a02eb7a164a6d5d0e897",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
