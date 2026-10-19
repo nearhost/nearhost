@@ -49,10 +49,11 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	composeData, hasCompose, err := readCompose(files)
+	composeName, composeData, err := ReadCompose(files)
 	if err != nil {
 		return nil, err
 	}
+	hasCompose := composeName != ""
 
 	res := &Result{
 		Env:        env,
