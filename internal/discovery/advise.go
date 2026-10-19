@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -17,6 +18,11 @@ type Advisory struct {
 // hosts is every name the project will be served at, its alias first.
 // The second value lists advisories that could not be worked out.
 func Advise(res *Result, alias string, hosts []string, others []config.Project) ([]Advisory, []string) {
+	// A project's hosts hold the alias only once one of its routes is web,
+	// but advisories are promised it first whatever the routes are.
+	if len(hosts) == 0 || !strings.EqualFold(hosts[0], alias) {
+		hosts = append([]string{alias}, hosts...)
+	}
 	taken := takenLoopbacks(res, others)
 	advs := clashAdvisories(res, others, taken)
 	free := func(from int) int { return freeFrom(taken, from) }

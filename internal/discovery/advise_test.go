@@ -158,3 +158,22 @@ func TestAdviseGetsHosts(t *testing.T) {
 		t.Errorf("with the host: %s", codes(advs))
 	}
 }
+
+// A project with no web route yet has no hosts of its own, but advisories
+// are promised the alias first.
+func TestAdviseAlwaysGivesTheAliasFirst(t *testing.T) {
+	p := inline2(t, "h", "detect: 'true'\nadvisories:\n  - {id: first, when: 'hosts[0] == \"a.test\" && serves(\"a.test\")', message: First}\n")
+	res := discover(t, memReader{}, Options{Presets: []*preset.Preset{p}})
+	for _, hosts := range [][]string{nil, {"app.x.io"}, {"a.test", "app.x.io"}} {
+		advs, warnings := Advise(res, "a.test", hosts, nil)
+		if codes(advs) != "first" || len(warnings) != 0 {
+			t.Errorf("hosts %q: codes = %s, warnings = %q", hosts, codes(advs), warnings)
+		}
+	}
+	// The alias in another case is still the alias, so it is not added twice.
+	once := inline2(t, "o", "detect: 'true'\nadvisories:\n  - {id: once, when: 'size(hosts) == 1', message: Once}\n")
+	res = discover(t, memReader{}, Options{Presets: []*preset.Preset{once}})
+	if advs, _ := Advise(res, "a.test", []string{"A.Test"}, nil); codes(advs) != "once" {
+		t.Errorf("alias in another case: codes = %s", codes(advs))
+	}
+}
