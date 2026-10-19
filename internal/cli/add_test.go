@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -564,7 +565,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, ".nearhostrc asks for these, which need your approval:", "app.local.dd.io on port 8220 (a real domain)", "Approve these? [y/N] ")
+	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.dd.io on port 8220 (a real domain)", "Approve these? [y/N] ")
 	p, ok := loadSaved(t, cfgPath).Project("rcapp")
 	if !ok || len(p.Routes) == 0 {
 		t.Fatalf("project = %+v %v", p, ok)
@@ -706,7 +707,7 @@ func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
 	dir := rcProject(t, rcDockerClients)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil || err.Error() != "not added: .nearhostrc asks for things that need your approval (docker_clients); run nearhost add in a terminal, or open nearhost" {
+	if err == nil || err.Error() != "not added: this project asks for things that need your approval (docker_clients); run nearhost add in a terminal, or open nearhost" {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 }
@@ -762,7 +763,7 @@ func TestAddTakesAliasFromNearhostrc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add a real domain: %v\n%s", err, out)
 	}
-	wantContains(t, out, ".nearhostrc asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)", "Approve these? [y/N] ")
+	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)", "Approve these? [y/N] ")
 	if p, _ := loadSaved(t, real).Project("rcapp"); p.Alias != "app.local.x.io" {
 		t.Fatalf("saved alias %q", p.Alias)
 	}
@@ -772,5 +773,107 @@ func TestAddTakesAliasFromNearhostrc(t *testing.T) {
 	out, err = executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", real, "add", dir, "--name", "rcapp", "--no-presets")
 	if err == nil || !strings.Contains(err.Error(), `already used by project "other"`) {
 		t.Fatalf("a taken file alias: %v\n%s", err, out)
+	}
+}
+
+// enableHostedPreset installs the schema 2 preset that infers a web host from
+// APP_URL, beside the config, and enables it.
+func enableHostedPreset(t *testing.T, cfgPath string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "presets-hosts", "hosted.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(presetsDir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(presetPath(cfgPath, "hosted"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadSaved(t, cfgPath)
+	cfg.UpsertPreset(config.PresetRef{Name: "hosted"})
+	off := false
+	cfg.RegistryPrompt = &off
+	saveConfig(t, cfgPath, cfg)
+}
+
+const hostedEnv = "APP_URL=https://app.local.x.io:8220\nAPP_PORT=8220\n"
+
+func TestAddNearhostrcBeatsInferredHosts(t *testing.T) {
+	dir := envProject(t, hostedEnv)
+	rc := "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [auth.local.x.io]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "auth.local.x.io on port 8220")
+	if strings.Contains(out, "app.local.x.io on port") {
+		t.Errorf("the inferred host was asked about:\n%s", out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("rcapp")
+	for _, r := range p.Routes {
+		if r.Port == 8220 && !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
+			t.Errorf("route 8220 hosts = %v", r.Hosts)
+		}
+	}
+}
+
+func TestAddApprovesInferredHosts(t *testing.T) {
+	dir := envProject(t, hostedEnv)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "hostapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)")
+
+	other := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, other, &config.Config{})
+	enableHostedPreset(t, other)
+	_, err = execute(t, newAddCmd(rcBackend(t, false)), "--config", other, "add", dir, "--name", "hostapp")
+	if err == nil || err.Error() != "not added: this project asks for things that need your approval (app.local.x.io); run nearhost add in a terminal, or open nearhost" {
+		t.Fatalf("err = %v", err)
+	}
+
+	typed := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, typed, &config.Config{})
+	enableHostedPreset(t, typed)
+	out, err = execute(t, newAddCmd(rcBackend(t, false)), "--config", typed, "add", dir, "--name", "hostapp", "--host", "app.local.x.io")
+	if err != nil {
+		t.Fatalf("add --host: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Approve these?") {
+		t.Errorf("--host still prompted:\n%s", out)
+	}
+}
+
+func TestForceWebKeepsHostedRoutes(t *testing.T) {
+	in := []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 6001, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 3306, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleWeb},
+	}
+	got := forceWeb(in, 6001)
+	want := []config.Route{
+		{Port: 6001, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 3306, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleIgnore},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("forceWeb = %+v\nwant %+v", got, want)
+	}
+	added := forceWeb([]config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}}, {Port: 3306, Role: config.RoleIgnore}}, 4000)
+	if len(added) != 3 || added[0].Port != 4000 || added[0].Role != config.RoleWeb || added[1].Port != 80 || added[1].Role != config.RoleWeb {
+		t.Errorf("added = %+v", added)
 	}
 }

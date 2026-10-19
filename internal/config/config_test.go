@@ -691,3 +691,26 @@ func TestRcSnapshotCloneKeepsEverything(t *testing.T) {
 		t.Fatalf("original changed: %+v", orig)
 	}
 }
+
+func TestMovePrimary(t *testing.T) {
+	ports := func(rs []Route) []int {
+		var out []int
+		for _, r := range rs {
+			out = append(out, r.Port)
+		}
+		return out
+	}
+	in := []Route{{Port: 80, Role: RoleIgnore}, {Port: 6001, Role: RoleWeb}, {Port: 8220, Role: RoleWeb}}
+	if got := ports(MovePrimary(in, 8220)); !reflect.DeepEqual(got, []int{80, 8220, 6001}) {
+		t.Errorf("8220: %v", got)
+	}
+	if !reflect.DeepEqual(ports(in), []int{80, 6001, 8220}) {
+		t.Errorf("input modified: %v", ports(in))
+	}
+	if got := ports(MovePrimary(in, 6001)); !reflect.DeepEqual(got, []int{80, 6001, 8220}) {
+		t.Errorf("6001: %v", got)
+	}
+	if got := ports(MovePrimary(in, 9999)); !reflect.DeepEqual(got, []int{80, 6001, 8220}) {
+		t.Errorf("absent: %v", got)
+	}
+}

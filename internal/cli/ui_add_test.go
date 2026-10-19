@@ -379,3 +379,28 @@ func TestFormDiscoveryTakesAliasFromNearhostrc(t *testing.T) {
 		t.Fatalf("draft alias %q, snapshot %+v, rc error %q", d.Alias, d.Nearhostrc, d.RcError)
 	}
 }
+
+func TestFormDiscoveryNearhostrcBeatsInferredHosts(t *testing.T) {
+	u := formEngine(t)
+	enableHostedPreset(t, u.path)
+	ctx := context.Background()
+	files, err := u.OpenServer(ctx, config.Server{Name: config.LocalServer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	dir := envProject(t, hostedEnv)
+	rc := "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [auth.local.x.io]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range d.Routes {
+		if r.Port == 8220 && !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
+			t.Errorf("route 8220 hosts = %v in %+v", r.Hosts, d.Routes)
+		}
+	}
+}

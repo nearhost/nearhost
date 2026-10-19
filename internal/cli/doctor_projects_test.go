@@ -619,3 +619,33 @@ func TestWithoutReportedDropsOnlyTheNamesTheHostsCheckNames(t *testing.T) {
 		t.Errorf("kept a name the check lists in another case: %+v", got)
 	}
 }
+
+func TestDraftProjectNearhostrcBeatsInferredHosts(t *testing.T) {
+	cfgPath := configHome(t)
+	cfg := &config.Config{}
+	saveConfig(t, cfgPath, cfg)
+	enableHostedPreset(t, cfgPath)
+	cfg = loadSaved(t, cfgPath)
+	dir := filepath.Join(t.TempDir(), "shop")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{
+		".env":        hostedEnv,
+		".nearhostrc": "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [auth.local.x.io]\n",
+	})
+	local := config.Server{Name: config.LocalServer}
+	p := draftProject(cfg, cfgPath, local, dir, localFiles{}.reader(dir))
+	found := false
+	for _, r := range p.Routes {
+		if r.Port == 8220 {
+			found = true
+			if !reflect.DeepEqual(r.Hosts, []string{"auth.local.x.io"}) {
+				t.Errorf("route 8220 hosts = %v", r.Hosts)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no route on 8220: %+v", p.Routes)
+	}
+}

@@ -265,6 +265,18 @@ func discoveredRoutes(res *discovery.Result) []config.Route {
 	return routes
 }
 
+// withoutHosts is a copy of routes with every Hosts nil. A .nearhostrc is
+// merged over routes stripped this way, so that hosts inferred from presets
+// and project files do not ride along on the ports the file lists.
+func withoutHosts(routes []config.Route) []config.Route {
+	out := make([]config.Route, len(routes))
+	for i, r := range routes {
+		r.Hosts = nil
+		out[i] = r
+	}
+	return out
+}
+
 // saveProject adds project to cfg and saves it. Nothing is saved when the
 // project cannot be added.
 func saveProject(cfg *config.Config, cfgPath string, project config.Project) error {
