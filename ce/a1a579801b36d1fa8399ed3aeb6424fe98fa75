@@ -1,0 +1,21 @@
+internal/tui/project_edit_test.go
+  s_89a63a3c1fa7d2::t_e7440aa5f2131f 5,300-325
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_280f7e481da27a 1123-1126,1138,1143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cea1a579801b36d1fa8399ed3aeb6424fe98fa75",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
