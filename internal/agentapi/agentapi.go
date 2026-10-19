@@ -1,6 +1,8 @@
 // Package agentapi is the HTTP API a coding agent uses to reach nearhost: it
-// reads the status of the projects on its machine and proposes a project to
-// add, which the user reviews in the interface.
+// reads the status of the projects on its machine, proposes a project to
+// add, which the user reviews in the interface, asks the doctor what is wrong
+// with a project or a directory, and has nearhost reload a project's
+// .nearhostrc. GET /v1 lists which of the doctor and reload a server has.
 //
 // It serves JSON on Unix sockets, one per origin: "local" for this machine's
 // own socket, or a server's name for the socket nearhost forwards to that
@@ -19,6 +21,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/doctor"
 )
 
 // Version is the API version, reported by GET /v1.
@@ -36,6 +40,9 @@ const (
 	// keep is how long an answered or expired proposal can still be asked
 	// about.
 	keep = 10 * time.Minute
+	// doctorTimeout bounds one call to the doctor, which may read a
+	// project's files over ssh.
+	doctorTimeout = 45 * time.Second
 )
 
 // Route is one of a project's ports and what nearhost does with it.
@@ -66,6 +73,15 @@ type Project struct {
 type Source interface {
 	// Projects lists the projects on origin's machine.
 	Projects(origin string) []Project
+}
+
+// Doctor works out the findings for agents.
+type Doctor interface {
+	// Doctor checks the project called name, whose directory is dir on
+	// origin's machine, or, when name is "", the directory dir as it would
+	// be added. An error satisfying errors.Is(err, fs.ErrNotExist) means dir
+	// is not a directory there.
+	Doctor(ctx context.Context, origin, name, dir string) ([]doctor.Finding, error)
 }
 
 // Proposal is a project an agent asks to add.
@@ -104,6 +120,8 @@ type Options struct {
 	// Laptop names this machine to agents, as user@host.
 	Laptop string
 	Source Source
+	// Doctor answers GET /v1/doctor; nil means no doctor.
+	Doctor Doctor
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

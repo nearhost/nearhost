@@ -148,7 +148,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// at a time with them; one that does waits for a to review it.
 	back := &uiEngine{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
 	opts.Review = reviewProject(back.saveRc)
-	ag, agentNote := serveAgents(b.up.agents, &opts, cfgPath, flags.httpsPort)
+	ag, agentNote := serveAgents(b.up.agents, &opts, cfgPath, flags.httpsPort, agentEnv{
+		ssh: b.up.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot),
+	})
 	defer ag.close()
 	eng := engine.New(cfg, opts)
 	back.Engine, back.agents = eng, ag

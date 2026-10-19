@@ -162,7 +162,9 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	opts.Review = reviewProject(saveTo(cfgPath))
 	// Agents can read the projects' status. Without the interface there is
 	// no one to review a proposal, so the API refuses them.
-	ag, agentNote := serveAgents(b.agents, &opts, cfgPath, flags.httpsPort)
+	ag, agentNote := serveAgents(b.agents, &opts, cfgPath, flags.httpsPort, agentEnv{
+		ssh: b.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot), restart: true,
+	})
 	defer ag.close()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)

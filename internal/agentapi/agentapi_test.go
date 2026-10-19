@@ -3,7 +3,10 @@ package agentapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/doctor"
 )
 
 // shortDir is a temp directory short enough for a Unix socket path: the one
@@ -377,5 +382,133 @@ func TestTheResolvedPathAlsoFindsTheProject(t *testing.T) {
 	_, out = call(t, remote, "POST", "/v1/proposals", `{"path": "/home/dev/link2", "real": "/srv/elsewhere"}`)
 	if seen := r.all(); len(seen) != 1 || seen[0].Path != "/home/dev/link2" {
 		t.Fatalf("the proposal should carry the path the agent stands in: %+v %v", seen, out)
+	}
+}
+
+// fakeDoctor records its calls and answers with findings and err.
+type fakeDoctor struct {
+	mu       sync.Mutex
+	calls    []string // origin|name|dir
+	findings []doctor.Finding
+	err      error
+}
+
+func (f *fakeDoctor) Doctor(_ context.Context, origin, name, dir string) ([]doctor.Finding, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, origin+"|"+name+"|"+dir)
+	f.mu.Unlock()
+	return f.findings, f.err
+}
+
+func (f *fakeDoctor) all() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// doctorServer is a server with d as its doctor, serving mini's socket.
+func doctorServer(t *testing.T, d Doctor) string {
+	t.Helper()
+	s := New(Options{Laptop: "ecs@macbook", Source: fakeSource{"mini": mini}, Doctor: d})
+	sock := filepath.Join(shortDir(t), "mini.sock")
+	if err := s.Listen("mini", sock); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return sock
+}
+
+func TestHelloListsCapabilities(t *testing.T) {
+	_, _, _, _, remote := newServer(t, true)
+	_, out := call(t, remote, "GET", "/v1", "")
+	if got, ok := out["capabilities"].([]any); !ok || len(got) != 0 || out["api"] != float64(1) {
+		t.Fatalf("without a doctor: %v", out)
+	}
+	_, out = call(t, doctorServer(t, &fakeDoctor{}), "GET", "/v1", "")
+	if got, ok := out["capabilities"].([]any); !ok || len(got) != 1 || got[0] != "doctor" || out["api"] != float64(1) {
+		t.Fatalf("with a doctor: %v", out)
+	}
+}
+
+func TestDoctorEndpointForAProject(t *testing.T) {
+	d := &fakeDoctor{findings: []doctor.Finding{{
+		ID: "routes.not-listening", Severity: doctor.SeverityWarning, Project: "myapp", Message: "nothing listens on 8080",
+		Fix: doctor.Fix{Kind: doctor.FixManual, Text: "Start the dev server."},
+	}}}
+	status, out := call(t, doctorServer(t, d), "GET", "/v1/doctor?path=/home/dev/code/myapp/src", "")
+	if status != 200 {
+		t.Fatalf("%d %v", status, out)
+	}
+	if got := d.all(); len(got) != 1 || got[0] != "mini|myapp|/home/dev/code/myapp" {
+		t.Fatalf("doctor called with %v", got)
+	}
+	project, _ := out["project"].(map[string]any)
+	findings, _ := out["findings"].([]any)
+	if project["name"] != "myapp" || project["url"] != "https://myapp.test" || len(findings) != 1 {
+		t.Fatalf("%v", out)
+	}
+	if f := findings[0].(map[string]any); f["id"] != "routes.not-listening" || f["fix"].(map[string]any)["kind"] != "manual" {
+		t.Fatalf("finding %v", f)
+	}
+}
+
+func TestDoctorEndpointForADirectoryNotAdded(t *testing.T) {
+	d := &fakeDoctor{}
+	status, out := call(t, doctorServer(t, d), "GET", "/v1/doctor?path=/home/dev/code/other/", "")
+	if status != 200 {
+		t.Fatalf("%d %v", status, out)
+	}
+	if got := d.all(); len(got) != 1 || got[0] != "mini||/home/dev/code/other" {
+		t.Fatalf("doctor called with %v", got)
+	}
+	if p, ok := out["project"]; !ok || p != nil {
+		t.Fatalf("project %v", out)
+	}
+	if f, ok := out["findings"].([]any); !ok || len(f) != 0 {
+		t.Fatalf("findings %v", out)
+	}
+}
+
+func TestDoctorEndpointMapsErrors(t *testing.T) {
+	d := &fakeDoctor{}
+	sock := doctorServer(t, d)
+	if status, _ := call(t, sock, "GET", "/v1/doctor?path=code/myapp", ""); status != 400 {
+		t.Fatalf("a relative path: %d", status)
+	}
+	if status, _ := call(t, sock, "GET", "/v1/doctor?path=/srv/app&real=srv", ""); status != 400 {
+		t.Fatalf("a relative real: %d", status)
+	}
+	if len(d.all()) != 0 {
+		t.Fatalf("a bad request reached the doctor: %v", d.all())
+	}
+	d.err = fmt.Errorf("/home/dev/gone: %w", fs.ErrNotExist)
+	status, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/gone", "")
+	if status != 404 || out["error"] != "/home/dev/gone is not a directory on mini" {
+		t.Fatalf("a missing directory: %d %v", status, out)
+	}
+	d.err = errors.New("connect to mini.lan: no route to host")
+	status, out = call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
+	if status != 502 || out["error"] != "connect to mini.lan: no route to host" {
+		t.Fatalf("a server not reached: %d %v", status, out)
+	}
+
+	_, _, _, local, _ := newServer(t, true)
+	status, out = call(t, local, "GET", "/v1/doctor?path=/Users/ecs/app", "")
+	if status != 404 || !strings.Contains(out["error"].(string), "no such call") {
+		t.Fatalf("without a doctor: %d %v", status, out)
+	}
+}
+
+func TestADirectoryMissingOnTheLaptopNamesIt(t *testing.T) {
+	d := &fakeDoctor{err: fs.ErrNotExist}
+	s := New(Options{Laptop: "ecs@macbook", Source: fakeSource{}, Doctor: d})
+	sock := filepath.Join(shortDir(t), "local.sock")
+	if err := s.Listen("local", sock); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	status, out := call(t, sock, "GET", "/v1/doctor?path=/Users/ecs/gone", "")
+	if status != 404 || out["error"] != "/Users/ecs/gone is not a directory on ecs@macbook" {
+		t.Fatalf("%d %v", status, out)
 	}
 }
