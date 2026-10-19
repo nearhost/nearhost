@@ -1,0 +1,172 @@
+internal/engine/apply_test.go
+  s_89a63a3c1fa7d2::t_cb95c315a5538b 288-308
+internal/engine/docker_test.go
+  s_89a63a3c1fa7d2::t_fe2e0b554acadf 1-141,143-224
+  s_89a63a3c1fa7d2::t_060045cba9a168 142,225-276
+internal/dockernet/dockernet.go
+  s_89a63a3c1fa7d2::t_d2d7db7af0bbb4 1-2,6,8,10-20,23-25,28-65,67-152
+  s_89a63a3c1fa7d2::t_bb609ee6cfea59 3-5,7,9,21-22,26-27,66,153
+internal/engine/project.go
+  s_89a63a3c1fa7d2::t_590c3d8229851c 45,271-277,297,455-459,467,473,478-482
+  s_89a63a3c1fa7d2::t_4815d1b26ce53d 267-270
+  s_89a63a3c1fa7d2::t_54b2a22fcaca27 256-260
+  s_89a63a3c1fa7d2::t_bcef47eda50339 27-30,32-33
+internal/engine/teardown.go
+  s_89a63a3c1fa7d2::t_590c3d8229851c 52-53
+internal/engine/engine.go
+  s_89a63a3c1fa7d2::t_2c2e8204469e6a 147-152
+  s_89a63a3c1fa7d2::t_fc4f113f943842 9,76-84,165-166,173-174,204-206,224-227,464-466,505-508,510
+  s_89a63a3c1fa7d2::t_bb609ee6cfea59 85,167
+internal/engine/docker.go
+  s_89a63a3c1fa7d2::t_f3c4fdee420f47 1-61,65-71,73,75-209
+  s_89a63a3c1fa7d2::t_4815d1b26ce53d 62-64,72,74
+internal/dockernet/dockernet_test.go
+  s_89a63a3c1fa7d2::t_5b826e5d884f76 1-121
+internal/engine/apply.go
+  s_89a63a3c1fa7d2::t_92c84e32dabdaa 25-28
+  s_89a63a3c1fa7d2::t_fc4f113f943842 24,55
+internal/cli/ui_add_test.go
+  s_89a63a3c1fa7d2::t_0c1d49e48d7d59 283-315
+  s_89a63a3c1fa7d2::t_f07b537941bb24 278,359-380
+  s_89a63a3c1fa7d2::t_aea80cd28f3706 381
+internal/cli/ui_add.go
+  s_89a63a3c1fa7d2::t_5475e33f049261 203
+  s_89a63a3c1fa7d2::t_d5cf17df7d7211 211
+  s_89a63a3c1fa7d2::t_73e47940f357fb 204-205,216
+internal/proxy/config.go
+  s_89a63a3c1fa7d2::t_35ab0fdc887c4a 166-168,172-196,204-209,214-220,223,245-246,268-271,335-341,353-357,445-457,460,484
+internal/proxy/hostmatch.go
+  s_89a63a3c1fa7d2::t_671bfd6ec60b31 24-28,30-31,42-46,51-56,59-61
+internal/proxy/config_test.go
+  s_89a63a3c1fa7d2::t_baef884970a0ad 683-685,693-694,700-709,729-731,763-765,794-796,814-815,817-824,829-833,861,866,869-870,874,877
+  s_89a63a3c1fa7d2::t_7c05dc387e3d22 5-7,847-860,862-865,867-868,871-873,875-876,878
+internal/proxy/proxy_test.go
+  s_89a63a3c1fa7d2::t_e9d993239ec437 1170,1187-1188,1190-1191,1193,1200,1202-1204,1215,1226-1232,1234-1244
+internal/proxy/hostmatch_test.go
+  s_89a63a3c1fa7d2::t_36fb91c09de88d 23-43
+internal/proxy/testdata/no-clients.json
+  s_61f35ba0472b53::t_4a1bc0839db4c2 1
+internal/engine/review_test.go
+  s_89a63a3c1fa7d2::t_2cb00caa5f1610 54,81,196
+  s_89a63a3c1fa7d2::t_7f648ccf556db6 230-265
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_25fee5c1c127cd 1421-1423
+  s_89a63a3c1fa7d2::t_67f99d105d4a7c 736-737
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 738,744-749,752
+  s_89a63a3c1fa7d2::t_9e3ad42301756d 83,617-618,621,1046-1058,1073,1086-1091
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_25fee5c1c127cd 312,314,322,324
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 92,162,236,269-270
+  s_89a63a3c1fa7d2::t_967abf7f7be08c 271
+  s_89a63a3c1fa7d2::t_73e47940f357fb 161,165-174,231-235,243,249-251
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_2cb00caa5f1610 567,582,616,658,691,709
+  s_89a63a3c1fa7d2::t_2b13f87f0e9e40 211-212
+  s_89a63a3c1fa7d2::t_11f2148729ae64 412-434
+  s_89a63a3c1fa7d2::t_f07b537941bb24 731-776
+internal/cli/review_test.go
+  s_89a63a3c1fa7d2::t_56382265c16e90 6,99-115
+  s_89a63a3c1fa7d2::t_2cb00caa5f1610 162
+  s_89a63a3c1fa7d2::t_2fd25be74fe860 116-117
+  s_89a63a3c1fa7d2::t_7f648ccf556db6 219-290
+internal/cli/review.go
+  s_89a63a3c1fa7d2::t_25fee5c1c127cd 42
+  s_89a63a3c1fa7d2::t_73e47940f357fb 108-112,132-136,139-141,143-148,154-156
+  s_89a63a3c1fa7d2::t_bcef47eda50339 17-21
+  s_89a63a3c1fa7d2::t_002e0c65514d4d 28-32,34-35,37,44-96,98
+internal/engine/review.go
+  s_89a63a3c1fa7d2::t_25fee5c1c127cd 21-24,83,85,87,121
+  s_89a63a3c1fa7d2::t_bcef47eda50339 95-105,118-119
+internal/tui/change_test.go
+  s_89a63a3c1fa7d2::t_25fee5c1c127cd 124-126
+internal/cli/up_print.go
+  s_89a63a3c1fa7d2::t_7dead8f8cbba5e 53
+internal/tui/wizard_project_test.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 12
+  s_89a63a3c1fa7d2::t_11f2148729ae64 508-511,513-514,516-519,524-537
+  s_89a63a3c1fa7d2::t_dbcd81132ce1ae 512,520-523
+  s_89a63a3c1fa7d2::t_f80d7aa6c7fef1 515
+  s_89a63a3c1fa7d2::t_0657ca759e011e 594-595
+  s_89a63a3c1fa7d2::t_86df060c1a17ce 559-593,596-603
+internal/nearhostrc/merge.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 255-262
+  s_89a63a3c1fa7d2::t_066e6efc21910e 25-36,41-47,58,129
+internal/config/config_test.go
+  s_89a63a3c1fa7d2::t_d6287d90946fe2 581-584,587-615,632
+  s_89a63a3c1fa7d2::t_11f2148729ae64 4
+  s_89a63a3c1fa7d2::t_0ed7d8adf98cef 680,687,690
+internal/config/config.go
+  s_89a63a3c1fa7d2::t_589b362cab624d 8
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 176-180,182-184,186,190-199,210
+  s_89a63a3c1fa7d2::t_3bdb27a95729c4 72-75
+internal/nearhostrc/merge_test.go
+  s_89a63a3c1fa7d2::t_d6287d90946fe2 88-105
+  s_89a63a3c1fa7d2::t_77e0497aad7e4b 216-253
+internal/cli/doctor_test.go
+  s_89a63a3c1fa7d2::t_2b13f87f0e9e40 356,366,444
+internal/cli/doctor.go
+  s_89a63a3c1fa7d2::t_11202f87adda16 329
+internal/tui/project_edit_test.go
+  s_89a63a3c1fa7d2::t_86df060c1a17ce 267-298
+internal/nearhostrc/nearhostrc_test.go
+  s_89a63a3c1fa7d2::t_77e0497aad7e4b 180-238
+internal/nearhostrc/nearhostrc.go
+  s_89a63a3c1fa7d2::t_066e6efc21910e 48-55,75-76,86-87,154-169,172,176-177,185,211
+internal/nearhostrc/export.go
+  s_89a63a3c1fa7d2::t_0995e8ed05f8a1 1-4,7-18,19-27,35-42,48-50,51-147,149-153
+  s_89a63a3c1fa7d2::t_d514f9b35323e1 5-6,28-34,43-47,148,154-169
+internal/nearhostrc/export_test.go
+  s_89a63a3c1fa7d2::t_09c5c7ed5bd1f0 1-84,86-89,91-128,130,138-140,145-149,151-153,155-174
+  s_89a63a3c1fa7d2::t_91a96c3c5cf616 135
+  s_89a63a3c1fa7d2::t_a1ee1e0558aec3 85,90,129,131-134,136-137,141-144,150,154,175-204
+internal/transport/sftp_test.go
+  s_89a63a3c1fa7d2::t_d258918b876cb1 133,139-140,153-154,156,165-167,178,199,208,244,253,280,287
+  s_89a63a3c1fa7d2::t_3563e2bba04584 168,179,188,200,209,241,246,254,281,284
+  s_89a63a3c1fa7d2::t_d9722821230d21 134-138,141-152,155,157-164,169-177,180-187,189-198,201-207,210-240,242-243,245,247-252,255-265,269-279,282-283,285-286,288
+  s_89a63a3c1fa7d2::t_52993dc733498f 266-268
+internal/transport/sftp.go
+  s_89a63a3c1fa7d2::t_432b0a70a5d3fc 5-6
+  s_89a63a3c1fa7d2::t_cb33eef3cda647 14
+  s_89a63a3c1fa7d2::t_8accf73cbb2f03 132-150,155-158,189-193,197,202-208,211-212,215-234,236-237,260,262,265-271,275-276,280-285,287-307
+  s_89a63a3c1fa7d2::t_d9722821230d21 151-154,159-188,194-196,198-201,209-210,213-214,235,238-259,261,263-264,272-274,277-279,286
+internal/cli/export.go
+  s_89a63a3c1fa7d2::t_1777f05dfe8e48 1-170,173-180,185-228,235-251
+  s_89a63a3c1fa7d2::t_002e0c65514d4d 171-172,181-183
+  s_89a63a3c1fa7d2::t_02e0f674902197 184
+  s_89a63a3c1fa7d2::t_2b9200e2505fc8 229-234
+internal/cli/export_test.go
+  s_89a63a3c1fa7d2::t_0d20d69cf79b8c 262,297,325
+  s_89a63a3c1fa7d2::t_76599cc2296bff 1-261,263-296,298-324,326-340
+  s_89a63a3c1fa7d2::t_6284ebcc59c001 341-380
+  s_89a63a3c1fa7d2::t_70d5b5e32438d2 381-383
+agents/nearhost/skills/nearhost/SKILL.md
+  s_89a63a3c1fa7d2::t_4854d98f6be80c 30-31
+internal/cli/ssh.go
+  s_89a63a3c1fa7d2::t_92513ffb9833e1 171-186
+internal/cli/root.go
+  s_89a63a3c1fa7d2::t_8703b1cf12c2f5 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be9aab6a5c20ecb6f0bd33d7cb25dd9c060c1a97",
+  "prompts": {},
+  "sessions": {
+    "s_61f35ba0472b53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad4482b0412fa6f1d",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
