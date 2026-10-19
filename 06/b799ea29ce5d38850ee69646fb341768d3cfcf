@@ -1,0 +1,31 @@
+internal/proxy/config.go
+  s_89a63a3c1fa7d2::t_4366c863fec9b9 270,381-417,425-426,479-492
+  s_89a63a3c1fa7d2::t_50b52c6a6a02c5 175,187,192,269,275-278,288,315,317,321-322,324,420-422,438,478
+  s_89a63a3c1fa7d2::t_27616530ba0ef4 8-9,41-73,119,139,142,166-174,182,199-200
+  s_89a63a3c1fa7d2::t_26182ac2e5443b 212-226
+internal/proxy/proxy_test.go
+  s_89a63a3c1fa7d2::t_8f75b079b00dc7 1133-1203
+internal/proxy/hostmatch.go
+  s_89a63a3c1fa7d2::t_27616530ba0ef4 1-50
+internal/proxy/config_test.go
+  s_89a63a3c1fa7d2::t_26182ac2e5443b 790-797
+  s_89a63a3c1fa7d2::t_8f75b079b00dc7 671-789,798-815
+internal/proxy/hostmatch_test.go
+  s_89a63a3c1fa7d2::t_8f75b079b00dc7 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06b799ea29ce5d38850ee69646fb341768d3cfcf",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
