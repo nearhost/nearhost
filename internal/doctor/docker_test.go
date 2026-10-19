@@ -165,3 +165,18 @@ func TestCAFinding(t *testing.T) {
 		t.Error("reported with no CACert")
 	}
 }
+
+func TestHostGatewayHonoursMergedExtraHosts(t *testing.T) {
+	const compose = `x-common: &common
+  extra_hosts:
+    - "api.local.x.io:host-gateway"
+services:
+  worker:
+    <<: *common
+    environment:
+      CALLBACK: https://api.local.x.io/hook
+`
+	if has(dockerCheck(dockerProject(), files{"docker-compose.yml": compose}, nil), "docker.host-gateway") {
+		t.Error("reported although extra_hosts is merged in")
+	}
+}

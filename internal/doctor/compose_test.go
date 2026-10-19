@@ -54,3 +54,43 @@ func TestComposeServicesRefusesBadYAML(t *testing.T) {
 		t.Error("no error")
 	}
 }
+
+func TestComposeServicesFollowsMergeKeys(t *testing.T) {
+	const src = `x-common: &common
+  environment:
+    CALLBACK: https://api.x.io
+  extra_hosts:
+    - "api.x.io:host-gateway"
+x-net: &net
+  network_mode: host
+  extra_hosts:
+    - "ignored.x.io:host-gateway"
+services:
+  a:
+    <<: *common
+  b:
+    <<: [*net, *common]
+  c:
+    <<: *common
+    extra_hosts:
+      - "own.x.io:host-gateway"
+`
+	got, err := composeServices([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %+v", got)
+	}
+	a, b, c := got[0], got[1], got[2]
+	if !reflect.DeepEqual(a.ExtraHosts, []string{"api.x.io"}) || a.Env["CALLBACK"] != "https://api.x.io" {
+		t.Errorf("a = %+v", a)
+	}
+	// The earlier entry of a merge sequence wins, and the other still supplies what it lacks.
+	if !reflect.DeepEqual(b.ExtraHosts, []string{"ignored.x.io"}) || !b.HostNetwork || b.Env["CALLBACK"] != "https://api.x.io" {
+		t.Errorf("b = %+v", b)
+	}
+	if !reflect.DeepEqual(c.ExtraHosts, []string{"own.x.io"}) || c.Env["CALLBACK"] != "https://api.x.io" {
+		t.Errorf("c = %+v", c)
+	}
+}

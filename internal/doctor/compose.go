@@ -111,15 +111,36 @@ func resolve(n *yaml.Node) *yaml.Node {
 	return n
 }
 
-// mapGet returns the value of key in a mapping node, or nil.
+// mapGet returns the value of key in a mapping node, or nil. A key the
+// mapping does not hold itself is looked up in its "<<" merge entries, which
+// Compose files use to share settings through an anchor. The mapping's own
+// keys win, and an earlier merge entry wins over a later one, as in YAML.
 func mapGet(n *yaml.Node, key string) *yaml.Node {
 	n = resolve(n)
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Value == key {
+		if n.Content[i].Value == key && n.Content[i].Tag != "!!merge" {
 			return resolve(n.Content[i+1])
+		}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Tag != "!!merge" {
+			continue
+		}
+		v := resolve(n.Content[i+1])
+		if v == nil {
+			continue
+		}
+		sources := []*yaml.Node{v}
+		if v.Kind == yaml.SequenceNode {
+			sources = v.Content
+		}
+		for _, m := range sources {
+			if got := mapGet(m, key); got != nil {
+				return got
+			}
 		}
 	}
 	return nil
