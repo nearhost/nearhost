@@ -181,3 +181,49 @@ func sawLog(events <-chan Event, project, message string) bool {
 		}
 	}
 }
+
+func TestPendingLogNamesDockerClients(t *testing.T) {
+	port := upstream(t, "p")
+	cfg := &config.Config{Projects: []config.Project{localProject("p", port)}}
+	h := withReview(t, cfg, func(_ context.Context, p config.Project, _ discovery.FileReader) Review {
+		next := p
+		next.Nearhostrc = &config.RcSnapshot{SHA256: "b", Routes: next.Routes, DockerClients: true}
+		return Review{Pending: &Change{SHA256: "b", Project: next, Items: []nearhostrc.Item{{Option: nearhostrc.OptionDockerClients, Why: "lets local Docker containers reach this project"}}}}
+	})
+	events, unsubscribe := h.eng.Events().Subscribe(64)
+	defer unsubscribe()
+	mustStart(t, h, "p")
+	if !sawLog(events, "p", ".nearhostrc asks for hosts that need approval: docker_clients") {
+		t.Fatal("no event naming docker_clients")
+	}
+}
+
+// The engine's copies of its configuration keep docker_clients, so an
+// approval or a port-only change through the engine does not lose it.
+func TestEngineCopiesKeepDockerClients(t *testing.T) {
+	snap := &config.RcSnapshot{SHA256: "a", DockerClients: true, Routes: []config.Route{{Port: 80, Role: config.RoleWeb}}}
+	cfg := &config.Config{Projects: []config.Project{{Name: "p", Server: config.LocalServer, Alias: "p.test", Nearhostrc: snap}}}
+	if p, _ := cloneConfig(cfg).Project("p"); !p.DockerClients() {
+		t.Fatalf("cloneConfig lost docker_clients: %+v", p.Nearhostrc)
+	}
+
+	// A port-only change reaches adoptLocked through a start.
+	moved := upstream(t, "moved")
+	old := upstream(t, "old")
+	proj := localProject("p", old)
+	proj.Nearhostrc = &config.RcSnapshot{SHA256: "a", DockerClients: true, Routes: proj.Routes}
+	var calls atomic.Int32
+	h := withReview(t, &config.Config{Projects: []config.Project{proj}}, func(_ context.Context, p config.Project, _ discovery.FileReader) Review {
+		if calls.Add(1) > 1 {
+			return Review{}
+		}
+		next := p
+		next.Routes = []config.Route{{Port: moved, Role: config.RoleWeb, Label: "web"}}
+		next.Nearhostrc = &config.RcSnapshot{SHA256: "b", DockerClients: true, Routes: next.Routes}
+		return Review{Updated: &next}
+	})
+	mustStart(t, h, "p")
+	if p, _ := h.eng.Config().Project("p"); p.Routes[0].Port != moved || !p.DockerClients() {
+		t.Fatalf("adopted project = %+v, nearhostrc %+v", p, p.Nearhostrc)
+	}
+}

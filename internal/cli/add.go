@@ -274,7 +274,8 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 
 	var items []nearhostrc.Item
 	for _, it := range nearhostrc.NeedsApproval(config.Project{}, *project) {
-		if !approved[strings.ToLower(it.Host)] {
+		// Only a host can be typed with --host; an option is always asked.
+		if it.Host == "" || !approved[strings.ToLower(it.Host)] {
 			items = append(items, it)
 		}
 	}
@@ -284,12 +285,16 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 	if answers == nil {
 		names := make([]string, len(items))
 		for i, it := range items {
-			names[i] = it.Host
+			names[i] = it.Name()
 		}
 		return fmt.Errorf("not added: .nearhostrc asks for hosts that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
 	}
 	fmt.Fprintln(out, ".nearhostrc asks Nearhost to serve:")
 	for _, it := range items {
+		if it.Host == "" {
+			fmt.Fprintf(out, "  %s (%s)\n", printable(it.Name()), it.Why)
+			continue
+		}
 		fmt.Fprintf(out, "  %s on port %d (%s%s)\n", printable(it.Host), it.Port, it.Why, publicAddress(cmd.Context(), b.lookup, it.Host))
 	}
 	fmt.Fprint(out, "Serve these? [y/N] ")

@@ -239,9 +239,7 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	out.Projects = append([]config.Project(nil), cfg.Projects...)
 	for i := range out.Projects {
 		out.Projects[i].Routes = cloneRoutes(out.Projects[i].Routes)
-		if rc := out.Projects[i].Nearhostrc; rc != nil {
-			out.Projects[i].Nearhostrc = &config.RcSnapshot{SHA256: rc.SHA256, Routes: cloneRoutes(rc.Routes)}
-		}
+		out.Projects[i].Nearhostrc = out.Projects[i].Nearhostrc.Clone()
 	}
 	return out
 }

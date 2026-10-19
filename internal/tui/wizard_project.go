@@ -536,7 +536,10 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 				}
 				if nameErr == nil && aliasErr == nil {
 					for _, it := range items {
-						addr, _ := b.PublicAddress(ctx, it.Host)
+						var addr string
+						if it.Host != "" {
+							addr, _ = b.PublicAddress(ctx, it.Host)
+						}
 						msg.approval = append(msg.approval, approvalItem{it, addr})
 					}
 				}
@@ -556,12 +559,6 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.seq = nextSeq()
 			f.busy, f.err = "Saving…", ""
 			seq, b, p := f.seq, f.b, f.project()
-			// Saving approves what .nearhostrc asks for, so its snapshot is
-			// saved with the project. A file that cannot be read now has no
-			// snapshot, and the one approved before is dropped: the routes
-			// saved are the form's, not that snapshot's, so the next read
-			// that works must be reviewed in full.
-			p.Nearhostrc = f.draft.Nearhostrc
 			if f.edit != nil {
 				was := f.edit.Name
 				p.Enabled = f.edit.Enabled
@@ -743,7 +740,7 @@ func (f *projectForm) needsApproval() []nearhostrc.Item {
 	}
 	var items []nearhostrc.Item
 	for _, it := range nearhostrc.NeedsApproval(old, f.project()) {
-		if !f.typed[strings.ToLower(it.Host)] {
+		if it.Host == "" || !f.typed[strings.ToLower(it.Host)] {
 			items = append(items, it)
 		}
 	}
@@ -1051,7 +1048,7 @@ func (f *projectForm) mergeRc() {
 	if snap == nil {
 		return
 	}
-	file := &nearhostrc.File{SHA256: snap.SHA256}
+	file := &nearhostrc.File{SHA256: snap.SHA256, DockerClients: snap.DockerClients}
 	for _, r := range snap.Routes {
 		file.Routes = append(file.Routes, nearhostrc.Route{Port: r.Port, Role: r.Role, Label: r.Label, Hosts: r.Hosts})
 	}
@@ -1100,6 +1097,13 @@ func (f *projectForm) project() config.Project {
 	return config.Project{
 		Name: f.name.value, Server: f.srv.Name, Path: f.resolved, Alias: f.alias.value,
 		Enabled: true, Routes: append([]config.Route(nil), f.routes...),
+		// The snapshot is copied so needsApproval sees the opt-in, and saving
+		// approves what .nearhostrc asks for, so it is saved with the
+		// project. A file that cannot be read now has no snapshot, and the
+		// one approved before is dropped: the routes saved are the form's,
+		// not that snapshot's, so the next read that works must be reviewed
+		// in full.
+		Nearhostrc: f.draft.Nearhostrc.Clone(),
 	}
 }
 
@@ -1386,7 +1390,7 @@ func (f *projectForm) routeLines(width int) []string {
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
 }
 
-// approvalLines lists the hosts saving approves, each with why it needs
+// approvalLines lists the hosts and options saving approves, each with why it needs
 // approval and, for one the internet has, what serving it here hides.
 func approvalLines(items []approvalItem, width int) []string {
 	if len(items) == 0 {
@@ -1394,6 +1398,10 @@ func approvalLines(items []approvalItem, width int) []string {
 	}
 	lines := []string{"", styleAmber.Render("Needs your approval:")}
 	for _, it := range items {
+		if it.Host == "" {
+			lines = append(lines, wrap(fmt.Sprintf("  %s (%s)", clean(it.Name()), it.Why), width)...)
+			continue
+		}
 		lines = append(lines, wrap(fmt.Sprintf("  %s on port %d (%s)", clean(it.Host), it.Port, it.Why), width)...)
 		if it.public != "" {
 			for _, l := range wrap("resolves to "+clean(it.public)+" on the internet; serving it here hides that site on this machine", width-4) {
