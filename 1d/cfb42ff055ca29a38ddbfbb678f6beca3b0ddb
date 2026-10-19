@@ -1,0 +1,23 @@
+internal/tui/fake_forms_test.go
+  s_89a63a3c1fa7d2::t_f6055eb3c6f0d7 6,157-172
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_f6055eb3c6f0d7 515,518-529
+internal/tui/project_edit_test.go
+  s_89a63a3c1fa7d2::t_f6055eb3c6f0d7 196-197,199,203-208,214-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1dcfb42ff055ca29a38ddbfbb678f6beca3b0ddb",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
