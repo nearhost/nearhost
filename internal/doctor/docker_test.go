@@ -223,3 +223,32 @@ services:
 		t.Error("docker.ca reported although the CA variable is merged in")
 	}
 }
+
+// The fix tells developers to set NEARHOST_CA_CERT in their shell profile, so
+// a value from the shell counts as Compose counts it: over .env's, and still
+// never from .env.local.
+func TestCAFindingReadsTheShell(t *testing.T) {
+	const ca = "/home/me/.local/share/nearhost/root.crt"
+	const compose = "services:\n  worker:\n    environment:\n      CALLBACK: https://api.local.x.io/hook\n" +
+		"    volumes:\n      - \"${NEARHOST_CA_CERT:?set NEARHOST_CA_CERT to Nearhost's root certificate}:/c:ro\"\n"
+	run := func(f files, environ map[string]string) []Finding {
+		f["docker-compose.yml"] = compose
+		return onlyID(dockerCheck(dockerProject(), f, func(in *Input) {
+			in.CACert = ca
+			in.Environ = environ
+		}), "docker.ca")
+	}
+
+	if got := run(files{}, map[string]string{"NEARHOST_CA_CERT": ca}); len(got) != 0 {
+		t.Errorf("reported with NEARHOST_CA_CERT set in the shell: %+v", got)
+	}
+	if got := run(files{".env.local": "NEARHOST_CA_CERT=" + ca + "\n"}, nil); len(got) != 1 {
+		t.Errorf("not reported with NEARHOST_CA_CERT only in .env.local and no shell: %+v", got)
+	}
+	if got := run(files{".env": "NEARHOST_CA_CERT=/elsewhere.crt\n"}, map[string]string{"NEARHOST_CA_CERT": ca}); len(got) != 0 {
+		t.Errorf("reported with the shell's NEARHOST_CA_CERT overriding .env's: %+v", got)
+	}
+	if got := run(files{".env": "NEARHOST_CA_CERT=" + ca + "\n"}, map[string]string{"NEARHOST_CA_CERT": "/elsewhere.crt"}); len(got) != 1 {
+		t.Errorf("not reported with .env's NEARHOST_CA_CERT overridden by the shell's: %+v", got)
+	}
+}

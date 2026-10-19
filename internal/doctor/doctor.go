@@ -73,6 +73,11 @@ type Input struct {
 	Listening    func(ctx context.Context, port int) bool // nil skips the port check
 	CACert       string                                   // absolute path of the root certificate; "" skips docker.ca
 	GOOS         string
+
+	// Environ is the environment Compose would see from the shell, nil when
+	// unknown. Compose fills in variables from it over .env's, and the CA
+	// fix tells developers to set NEARHOST_CA_CERT in their shell profile.
+	Environ map[string]string
 }
 
 // Check runs every check on one project. It never returns nil, so that the

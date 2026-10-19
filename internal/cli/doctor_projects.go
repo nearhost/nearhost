@@ -33,6 +33,9 @@ type doctorEnv struct {
 	listening func(ctx context.Context, port int) bool
 	caCert    string // "" when the CA's directory can't be found
 	goos      string
+	// environ is the environment a project on this machine runs Compose
+	// in, as os.Environ gives it; nil when unknown.
+	environ func() []string
 }
 
 // listenTimeout bounds the dial that tells whether a dev server listens. A
@@ -58,7 +61,8 @@ func systemDoctorEnv(lookup hosts.Lookup, noHosts bool, storage string) doctorEn
 			conn.Close()
 			return true
 		},
-		goos: runtime.GOOS,
+		goos:    runtime.GOOS,
+		environ: os.Environ,
 	}
 	if storage != "" {
 		env.caCert = proxy.RootCertPath(storage)
@@ -78,6 +82,11 @@ func caddyDirOrEmpty() string {
 // projectFindings checks p, a configured project when added and a draft
 // from draftProject otherwise, reading its files through files.
 func projectFindings(ctx context.Context, env doctorEnv, cfg *config.Config, cfgPath string, p config.Project, added, running bool, files discovery.FileReader) []doctor.Finding {
+	return doctor.Check(ctx, doctorInput(env, cfg, cfgPath, p, added, running, files))
+}
+
+// doctorInput gathers what the checks need to know of p and the machine.
+func doctorInput(env doctorEnv, cfg *config.Config, cfgPath string, p config.Project, added, running bool, files discovery.FileReader) doctor.Input {
 	in := doctor.Input{
 		Project:   p,
 		Added:     added,
@@ -87,6 +96,13 @@ func projectFindings(ctx context.Context, env doctorEnv, cfg *config.Config, cfg
 		Listening: env.listening,
 		CACert:    env.caCert,
 		GOOS:      env.goos,
+	}
+	// Compose fills in a project's file from the shell it runs in. That is
+	// unknown for a project on a server; for one here, Nearhost's own
+	// environment stands in for the user's shell, which is what it is when
+	// they run nearhost doctor, and close to it under the interface or up.
+	if p.Server == config.LocalServer && env.environ != nil {
+		in.Environ = environMap(env.environ())
 	}
 	for _, o := range cfg.Projects {
 		if !added || o.Name != p.Name {
@@ -115,7 +131,18 @@ func projectFindings(ctx context.Context, env doctorEnv, cfg *config.Config, cfg
 			in.Block = hosts.Aliases(content)
 		}
 	}
-	return doctor.Check(ctx, in)
+	return in
+}
+
+// environMap turns os.Environ's "KEY=value" entries into a map.
+func environMap(environ []string) map[string]string {
+	out := make(map[string]string, len(environ))
+	for _, kv := range environ {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // adviceResult is res with each route found taking the role the project

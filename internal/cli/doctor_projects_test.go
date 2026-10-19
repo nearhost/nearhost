@@ -495,3 +495,55 @@ func TestSystemDoctorEnvPointsAtTheRootCertificate(t *testing.T) {
 		t.Errorf("caCert %q without storage", env.caCert)
 	}
 }
+
+// The CA check counts a NEARHOST_CA_CERT set in the shell, as its fix
+// suggests. Only a project on this machine runs Compose in Nearhost's own
+// environment, so only it gets that environment.
+func TestDoctorInputPassesTheEnvironmentToLocalProjects(t *testing.T) {
+	const key = "NEARHOST_TEST_DOCTOR_ENVIRON"
+	t.Setenv(key, "from the shell")
+	cfgPath := configHome(t)
+	local, remote := localProject("shop", 3000, true), remoteProject("api")
+	local.Path = t.TempDir()
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{local, remote}}
+	saveConfig(t, cfgPath, cfg)
+	env := systemDoctorEnv(nil, true, "")
+
+	in := doctorInput(env, cfg, cfgPath, local, true, false, localFiles{}.reader(local.Path))
+	if got := in.Environ[key]; got != "from the shell" {
+		t.Errorf("local project: Environ[%s] = %q", key, got)
+	}
+	in = doctorInput(env, cfg, cfgPath, remote, true, false, localFiles{}.reader(t.TempDir()))
+	if in.Environ != nil {
+		t.Errorf("remote project: Environ = %v, want nil", in.Environ)
+	}
+}
+
+func TestProjectFindingsCountsTheCACertInTheShell(t *testing.T) {
+	cfgPath := configHome(t)
+	shop := localProject("shop", 3000, true)
+	shop.Path = t.TempDir()
+	compose := "services:\n  worker:\n    environment:\n      CALLBACK: https://shop.test/hook\n" +
+		"    volumes:\n      - \"${NEARHOST_CA_CERT:?set it}:/c:ro\"\n"
+	if err := os.WriteFile(filepath.Join(shop.Path, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Projects: []config.Project{shop}}
+	saveConfig(t, cfgPath, cfg)
+	const ca = "/ca/root.crt"
+	hasCA := func(environ []string) bool {
+		env := doctorEnv{caCert: ca, goos: "linux", noHosts: true, environ: func() []string { return environ }}
+		for _, f := range projectFindings(context.Background(), env, cfg, cfgPath, shop, true, false, localFiles{}.reader(shop.Path)) {
+			if f.ID == "docker.ca" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasCA(nil) {
+		t.Error("docker.ca not reported with NEARHOST_CA_CERT unset")
+	}
+	if hasCA([]string{"NEARHOST_CA_CERT=" + ca}) {
+		t.Error("docker.ca reported with NEARHOST_CA_CERT set in the shell")
+	}
+}
