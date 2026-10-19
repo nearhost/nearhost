@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -577,13 +578,41 @@ func TestHostClashIgnoresDisabledAndMatchesPatternsExactly(t *testing.T) {
 	}
 }
 
-func TestValidProjectAliasAndHostsFileNames(t *testing.T) {
-	for _, bad := range []string{"app.example.io", "A.test", ".test", "*.test", "a_b.test", "localhost"} {
-		if ValidProjectAlias(bad) == nil {
-			t.Errorf("ValidProjectAlias accepted %q", bad)
+func TestValidProjectAliasAcceptsAnyExactDomain(t *testing.T) {
+	for _, ok := range []string{"app.test", "app.local.domaindash.io", "a-b.example.com"} {
+		if err := ValidProjectAlias(ok); err != nil {
+			t.Errorf("ValidProjectAlias(%q) = %v", ok, err)
 		}
 	}
-	c := &Config{Projects: []Project{{Name: "b", Alias: "b.test"}, {Name: "a", Alias: "a.test"}, {Name: "c", Alias: "b.test"}, {Name: "d", Alias: "d.example.io"}}}
+	for _, bad := range []string{"*.x.io", "localhost", "127.0.0.1", "::1", "App.Test", "", ".test", "*.test", "a_b.test"} {
+		want := fmt.Sprintf("invalid main name %q: must be a lowercase domain name, not a wildcard, localhost or an IP address", bad)
+		if err := ValidProjectAlias(bad); err == nil || err.Error() != want {
+			t.Errorf("ValidProjectAlias(%q) = %v, want %q", bad, err, want)
+		}
+	}
+}
+
+func TestHostsFileNamesSkipsRealDomainAliasOfDisabledProject(t *testing.T) {
+	c := &Config{Projects: []Project{{Name: "a", Alias: "app.local.x.io"}, {Name: "b", Alias: "b.test"}}}
+	if got := c.HostsFileNames(); !slices.Equal(got, []string{"b.test"}) {
+		t.Fatalf("disabled: HostsFileNames() = %v", got)
+	}
+	c.Projects[0].Enabled = true
+	if got := c.HostsFileNames(); !slices.Equal(got, []string{"app.local.x.io", "b.test"}) {
+		t.Fatalf("enabled: HostsFileNames() = %v", got)
+	}
+}
+
+func TestHostsFileNamesDropsOldAliasOnRename(t *testing.T) {
+	c := &Config{Projects: []Project{{Name: "dd", Alias: "dd.test", Enabled: true}}}
+	c.Projects[0].Alias = "app.local.x.io"
+	if got := c.HostsFileNames(); !slices.Equal(got, []string{"app.local.x.io"}) {
+		t.Fatalf("HostsFileNames() = %v", got)
+	}
+}
+
+func TestHostsFileNamesDedupAndSort(t *testing.T) {
+	c := &Config{Projects: []Project{{Name: "b", Alias: "b.test"}, {Name: "a", Alias: "a.test"}, {Name: "c", Alias: "b.test"}}}
 	if got := c.HostsFileNames(); !slices.Equal(got, []string{"a.test", "b.test"}) {
 		t.Fatalf("HostsFileNames() = %v", got)
 	}
@@ -600,7 +629,7 @@ func TestHostsFileNamesHoldExactHostsOfWebRoutes(t *testing.T) {
 			{Port: 8212, Role: RoleWeb, Hosts: []string{"ws.local.redactr.pro", "pro.test"}},
 			{Port: 5432, Role: RoleLoopback, Hosts: []string{"db.local.redactr.pro"}},
 		}},
-		{Name: "bad", Alias: "bad.example.io", Enabled: true, Routes: []Route{{Port: 9000, Role: RoleWeb, Hosts: []string{"x.local.redactr.pro"}}}},
+		{Name: "bad", Alias: "Bad.example.io", Enabled: true, Routes: []Route{{Port: 9000, Role: RoleWeb, Hosts: []string{"x.local.redactr.pro"}}}},
 		// A disabled project keeps its alias, as before, but its real-domain
 		// hosts stay out: they would shadow DNS for a site nothing serves.
 		{Name: "off", Alias: "off.test", Routes: []Route{{Port: 80, Role: RoleWeb, Hosts: []string{"staging.example.io"}}}},

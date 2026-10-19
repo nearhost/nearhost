@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
 // settle runs cmd and what follows from it, feeding each message to the
@@ -501,6 +502,36 @@ func TestRoutesStepEditsHosts(t *testing.T) {
 	settle(m, press(m, "enter"))
 	if len(f.forms.saved) != 1 || len(f.forms.saved[0].Routes[0].Hosts) != 2 {
 		t.Errorf("saved %+v", f.forms.saved)
+	}
+}
+
+// A main name typed in the alias field is approved by being typed, like a
+// host; the same name from a draft is not.
+func TestFormTypedAliasNeedsNoApproval(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{Routes: []config.Route{web(8220, "app")}}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	press(m, "enter")
+	pf := m.form.(*projectForm)
+	if pf.step != projectStepDetails {
+		t.Fatalf("step %d, want the details step", pf.step)
+	}
+	// The alias is the draft's: it came from discovery, not from typing.
+	pf.alias.value = "app.local.x.io"
+	if pf.aliasEdited {
+		t.Fatal("the alias counts as typed")
+	}
+	want := []nearhostrc.Item{{Port: 8220, Host: "app.local.x.io", Why: "a real domain"}}
+	if got := pf.needsApproval(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("from a draft: needsApproval = %+v", got)
+	}
+
+	press(m, "tab")
+	press(m, "ctrl+u")
+	typeText(m, "app.local.x.io")
+	if got := pf.needsApproval(); len(got) != 0 {
+		t.Fatalf("typed: needsApproval = %+v", got)
 	}
 }
 

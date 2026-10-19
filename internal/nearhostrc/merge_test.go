@@ -85,6 +85,24 @@ func TestNeedsApproval(t *testing.T) {
 	}
 }
 
+func TestNeedsApprovalListsRealDomainAlias(t *testing.T) {
+	routes := []config.Route{{Port: 8220, Role: config.RoleWeb}, {Port: 9000, Role: config.RoleWeb}}
+	proj := func(alias string) config.Project { return config.Project{Alias: alias, Routes: routes} }
+	want := []Item{{Port: 8220, Host: "app.local.x.io", Why: "a real domain"}}
+	if got := NeedsApproval(config.Project{}, proj("app.local.x.io")); !reflect.DeepEqual(got, want) {
+		t.Fatalf("new project: NeedsApproval = %+v", got)
+	}
+	if got := NeedsApproval(proj("x.test"), proj("y.test")); len(got) != 0 {
+		t.Fatalf(".test to .test: %+v", got)
+	}
+	if got := NeedsApproval(proj("app.local.x.io"), proj("App.Local.X.io")); len(got) != 0 {
+		t.Fatalf("same real alias: %+v", got)
+	}
+	if got := NeedsApproval(proj("app.local.x.io"), proj("x.test")); len(got) != 0 {
+		t.Fatalf("real to .test: %+v", got)
+	}
+}
+
 // mustMerge merges and checks that config.Validate accepts the result.
 func mustMerge(t *testing.T, p config.Project, f *File, discovered []config.Route) config.Project {
 	t.Helper()

@@ -353,7 +353,7 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 		if err == nil || err.Error() != "1 check failed" {
 			t.Errorf("%v: err = %v\n%s", args, err, out)
 		}
-		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias \"Legacy.example\": must be a lowercase hostname ending in .test\n"+
+		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid main name \"Legacy.example\": must be a lowercase domain name, not a wildcard, localhost or an IP address\n"+
 			"      fix: correct the alias in "+path+"; `nearhost up` does not start a project with such an alias\n")
 	}
 
@@ -363,7 +363,7 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 	if err == nil || err.Error() != "2 checks failed" {
 		t.Errorf("err = %v\n%s", err, out)
 	}
-	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid alias", "FAIL  hosts block      missing web.test\n")
+	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid main name", "FAIL  hosts block      missing web.test\n")
 }
 
 // doctor says when the local CA expires.
@@ -441,7 +441,7 @@ func TestDoctorsSocketIsAsLongAsAnInstallsAndNeverOne(t *testing.T) {
 func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
 	path := configHome(t)
 	other := localProject("app", 8001, true)
-	other.Alias = "app.local.example.io" // not a valid project alias: never a candidate
+	other.Alias = "App.local.example.io" // not a valid project alias: never a candidate
 	saveConfig(t, path, &config.Config{Projects: []config.Project{localProject("api", 8000, true), other}})
 	f := healthy()
 	f.hosts = "127.0.0.1 localhost\n"

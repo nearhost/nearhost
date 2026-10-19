@@ -326,7 +326,7 @@ func checkCA(b trustBackend) []check {
 	return []check{ca, nss}
 }
 
-// checkAliases reports the projects whose alias is not a valid .test name,
+// checkAliases reports the projects whose main name is not a valid domain,
 // which `nearhost up` does not start. It adds no line when every alias is
 // valid; the hosts check leaves the invalid ones out.
 func checkAliases(cfg *config.Config, path string) []check {
