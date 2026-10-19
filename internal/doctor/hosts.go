@@ -248,10 +248,18 @@ func listeningFindings(ctx context.Context, in Input) []Finding {
 			continue
 		}
 		hs := slices.DeleteFunc(slices.Clone(w.Hosts), func(h string) bool { return h == "" })
+		msg := fmt.Sprintf("nothing listens on port %d", w.Port)
+		switch {
+		case len(hs) > 0:
+			msg += ", which serves " + strings.Join(hs, ", ")
+		case p.Alias != "":
+			// A route without hosts of its own is the project's all the same.
+			msg += ", which serves " + p.Alias
+		}
 		out = append(out, Finding{
 			ID:       "routes.not-listening",
 			Severity: sev,
-			Message:  fmt.Sprintf("nothing listens on port %d, which serves %s", w.Port, strings.Join(hs, ", ")),
+			Message:  msg,
 			Fix:      Fix{Kind: FixManual, Text: fmt.Sprintf("Start the project's dev server on port %d, or correct the port.", w.Port)},
 		})
 	}

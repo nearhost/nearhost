@@ -28,9 +28,10 @@ func rcFindings(in Input) (findings []Finding, found bool) {
 
 	c := nearhostrc.Classify(in.Project, f, found, nil)
 	switch {
-	case !in.Added:
+	case !in.Added && (c.Kind != nearhostrc.Problem || !found):
 		// Approval happens when the project is added, so nothing is waiting
-		// yet; only the file's own errors matter, and they were reported above.
+		// yet; only the file's own errors matter: those reported above, and
+		// a file add could not take, below.
 	case c.Kind == nearhostrc.Pending:
 		names := make([]string, len(c.Items))
 		for i, it := range c.Items {

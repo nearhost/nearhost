@@ -536,13 +536,31 @@ func (l *liveSource) setState(origin, name, state string) {
 }
 
 // fakeReloader records the projects it reloads and answers with got and err,
-// calling then first when it is set.
+// calling then first when it is set. The change waiting is the one got
+// found, unless wait sets another.
 type fakeReloader struct {
-	mu    sync.Mutex
-	calls []string
-	got   Reloaded
-	err   error
-	then  func(name string)
+	mu      sync.Mutex
+	calls   []string
+	got     Reloaded
+	err     error
+	then    func(name string)
+	waiting *string
+}
+
+func (f *fakeReloader) Waiting(string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.waiting != nil {
+		return *f.waiting
+	}
+	return f.got.SHA256
+}
+
+// wait has sha be the change waiting for approval, "" for none.
+func (f *fakeReloader) wait(sha string) {
+	f.mu.Lock()
+	f.waiting = &sha
+	f.mu.Unlock()
 }
 
 func (f *fakeReloader) Reload(_ context.Context, name string) (Reloaded, error) {
@@ -695,12 +713,6 @@ func TestReloadIsAnsweredByTheUser(t *testing.T) {
 		t.Fatalf("the reviewer saw %+v", seen)
 	}
 
-	// An answer about another change of the file leaves it waiting.
-	s.ChangeAnswered("myapp", "a", true)
-	if _, out := call(t, sock, "GET", "/v1/proposals/"+myapp, ""); out["state"] != "pending" {
-		t.Fatalf("another hash answered it: %v", out)
-	}
-
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		s.ChangeAnswered("myapp", "b", true)
@@ -741,5 +753,78 @@ func TestReloadReusesOrSupersedesItsRecord(t *testing.T) {
 	}
 	if _, out := call(t, sock, "GET", "/v1/proposals/"+changed["id"].(string), ""); out["state"] != "pending" {
 		t.Fatalf("the second: %v", out)
+	}
+}
+
+// The user answering a newer change of the file ends a reload waiting on an
+// older one, which a reload again then finds as it is.
+func TestAnAnswerToANewerChangeSupersedesTheReload(t *testing.T) {
+	s, _, rl, _, sock := reloadServer(t, true)
+	rl.answer(waiting, nil)
+	_, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	myapp := out["id"].(string)
+	_, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/third"}`)
+	third := out["id"].(string)
+
+	// Waiting still says "b": the answer alone ends it.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		s.ChangeAnswered("myapp", "c", true)
+	}()
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+myapp+"?wait=5", ""); out["state"] != "superseded" {
+		t.Fatalf("answered a newer change: %v", out)
+	}
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+third, ""); out["state"] != "pending" {
+		t.Fatalf("an answer for another project ended it: %v", out)
+	}
+}
+
+// A reload whose change no longer waits, because the file changed back or
+// was approved elsewhere, ends superseded rather than waiting until it
+// expires.
+func TestAReloadWhoseChangeNoLongerWaitsIsSuperseded(t *testing.T) {
+	_, _, rl, _, sock := reloadServer(t, true)
+	rl.answer(waiting, nil)
+	_, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	id := out["id"].(string)
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+id, ""); out["state"] != "pending" {
+		t.Fatalf("still waiting: %v", out)
+	}
+	rl.wait("")
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+id, ""); out["state"] != "superseded" {
+		t.Fatalf("the file changed back: %v", out)
+	}
+
+	// A long poll asks again when it wakes.
+	rl.answer(Reloaded{Items: []string{"other.example.com"}, SHA256: "c"}, nil)
+	rl.wait("c")
+	_, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+	id = out["id"].(string)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		rl.wait("d")
+	}()
+	if _, out := call(t, sock, "GET", "/v1/proposals/"+id+"?wait=1", ""); out["state"] != "superseded" {
+		t.Fatalf("the file changed during the poll: %v", out)
+	}
+}
+
+// An answer to the change a reload waits on stands, though the change no
+// longer waits once it is answered.
+func TestAnAnsweredReloadStaysAnswered(t *testing.T) {
+	for _, approved := range []bool{true, false} {
+		s, _, rl, _, sock := reloadServer(t, true)
+		rl.answer(waiting, nil)
+		_, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+		id := out["id"].(string)
+		s.ChangeAnswered("myapp", "b", approved)
+		rl.wait("")
+		want := "declined"
+		if approved {
+			want = "accepted"
+		}
+		if _, out := call(t, sock, "GET", "/v1/proposals/"+id+"?wait=5", ""); out["state"] != want {
+			t.Fatalf("approved %v: %v", approved, out)
+		}
 	}
 }

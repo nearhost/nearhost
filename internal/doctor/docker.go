@@ -40,7 +40,7 @@ func dockerFindings(in Input) []Finding {
 	if err != nil {
 		env = nil
 	}
-	services, err := composeServices(data, env)
+	services, err := composeServices(data, env, dotEnv(in.Files))
 	if err != nil {
 		// discovery reports a Compose file that does not parse.
 		return nil
@@ -151,6 +151,20 @@ func dockerClientsFinding(goos string) Finding {
 	}
 }
 
+// dotEnv reads the project's .env alone, the only file Compose fills in
+// variables from besides the shell. A missing or broken one gives none.
+func dotEnv(r discovery.FileReader) map[string]string {
+	data, err := r.ReadFile(".env")
+	if err != nil {
+		return nil
+	}
+	env, err := discovery.ParseEnv(data)
+	if err != nil {
+		return nil
+	}
+	return env
+}
+
 // caFinding reports a service that calls a served name over HTTPS without
 // trusting Nearhost's root certificate.
 func caFinding(caCert, file string, s service) (Finding, bool) {
@@ -165,7 +179,7 @@ func caFinding(caCert, file string, s service) (Finding, bool) {
 	if slices.Contains(s.Sources, caCert) {
 		return Finding{}, false
 	}
-	snippet := fmt.Sprintf("services:\n  %s:\n    environment:\n      NODE_EXTRA_CA_CERTS: %s\n    volumes:\n      - \"${NEARHOST_CA_CERT}:%s:ro\"",
+	snippet := fmt.Sprintf("services:\n  %s:\n    environment:\n      NODE_EXTRA_CA_CERTS: %s\n    volumes:\n      - \"${NEARHOST_CA_CERT:?set NEARHOST_CA_CERT to Nearhost's root certificate}:%s:ro\"",
 		s.Name, caMountPath, caMountPath)
 	return Finding{
 		ID:       "docker.ca",
@@ -176,7 +190,8 @@ func caFinding(caCert, file string, s service) (Finding, bool) {
 		Fix: Fix{
 			Kind: FixProject,
 			Text: "Mount Nearhost's root certificate, " + caCert + ", and point the service at it. " +
-				"Each developer sets NEARHOST_CA_CERT= to that path in their own .env.local, so the Compose file holds no one's path. " +
+				"Each developer sets NEARHOST_CA_CERT to that path in their shell profile, or in .env when the project doesn't commit .env, " +
+				"so the Compose file holds no one's path; Compose reads only .env and the shell. " +
 				"SSL_CERT_FILE, AWS_CA_BUNDLE and REQUESTS_CA_BUNDLE replace the default bundle: " +
 				"point them at a bundle that includes the certificate, or have the image run update-ca-certificates.",
 			Snippet: snippet,

@@ -22,7 +22,7 @@ If that is empty or reads as a placeholder, take `add`, `status` or `doctor` fro
 3. If the JSON says `"state":"exists"`, the project is already in Nearhost: report its `url` and `state`, and stop.
 4. Otherwise it printed an `id`. Tell the user: "Review it in Nearhost on <laptop>." Get `<laptop>` from `sh .../nearhost.sh socket`.
 5. Run `sh .../nearhost.sh wait <id>`. While it prints `"state":"pending"`, run it again. Each run waits up to 50 seconds.
-6. On `"state":"accepted"`, report the project's `url`. You may run `sh .../nearhost.sh status` to check it is running. Then run `sh .../nearhost.sh doctor .`. When it finds errors or warnings, offer to work through them as in `doctor`.
+6. On `"state":"accepted"`, report the project's `url`. Run `sh .../nearhost.sh status` until its `state` is `running` or `error`, a few seconds apart. Then run `sh .../nearhost.sh doctor .`. If that exits with status 5, this Nearhost has no doctor: skip it without saying so. When it finds errors or warnings, offer to work through them as in `doctor`.
 7. Exit status 6 means the user declined it: say so, with the `reason` if there is one. Exit status 7 means nobody answered within 10 minutes: say so; the user can run `/nearhost add` again.
 
 The user decides in Nearhost which ports to serve and what to call the project. Do not edit Nearhost's config file yourself.
@@ -39,13 +39,14 @@ Use this when a project isn't served as the user expects.
 
 1. Run `sh .../nearhost.sh doctor .` and read `findings`. Work through `error` findings, then `warning`. Mention `info` only when it bears on what the user asked.
 2. For a fix of kind `project`: show the user the change, the `snippet` at `file`:`line`, and make it in the project's files with their agreement. Never make it in Nearhost's config. When the setup is more than Nearhost can infer (several hosts, patterns, `localhost`, Docker callbacks), write or edit `.nearhostrc`. `nearhost export` writes the current setup, to start from.
-3. After editing `.nearhostrc`, or for a fix of kind `nearhost`, run `sh .../nearhost.sh reload .`.
+3. After editing `.nearhostrc`, and for the findings `nearhostrc.pending` and `nearhostrc.not-applied`, run `sh .../nearhost.sh reload .`.
    - On `"state":"pending"` (status 202), tell the user: "Approve it in Nearhost on <laptop>." Then run `sh .../nearhost.sh wait <id>` as in add.
    - Exit status 6 means the user declined it.
-   - Exit status 8 means the file changed again: run `reload .` again.
+   - Exit status 8 means the file changed again, or the change stopped waiting: run `reload .` again.
    - Exit status 3 means Nearhost runs as `nearhost up`: ask the user to open `nearhost`.
-4. For a fix of kind `manual`, tell the user plainly what its `text` says. The user does those.
-5. Run `doctor .` again. Stop when no error or warning is left that you can fix, then say what is left.
+4. Any other fix of kind `nearhost` is something the user does in Nearhost, and a reload changes nothing for it. Pass its `text` on to the user, or offer to write the port or host into `.nearhostrc` instead and then reload as above.
+5. For a fix of kind `manual`, tell the user plainly what its `text` says. The user does those.
+6. Run `doctor .` again. Stop when no error or warning is left that you can fix, then say what is left.
 
 Do not edit Nearhost's config file yourself.
 
@@ -58,6 +59,6 @@ Do not edit Nearhost's config file yourself.
 - **Exit status 3**: Nearhost is running as `nearhost up`, which cannot show proposals. Tell the user to open `nearhost` on the laptop and try again.
 - **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API, or this Nearhost is too old for `doctor` or `reload`. Pass on which one to update.
-- **Exit status 8 from `wait`**: a newer change of `.nearhostrc` replaced the one that waited. Run `reload .` again.
+- **Exit status 8 from `wait`**: the change of `.nearhostrc` that waited no longer does, as a newer one replaced it or the file changed back. Run `reload .` again.
 - **Exit status 1**: Nearhost refused. Pass on its `error`.
 - **A sandbox denies the connection**: your sandbox blocks Unix sockets. If you can ask to run that one command outside the sandbox, do so: approving it opens nothing else. Do not suggest settings that open every socket, such as `allowAllUnixSockets` or full network access, unless the user asks; they also expose sockets like Docker's. Otherwise tell the user that Nearhost needs `~/.nearhost/*.sock`, and point them to https://nearhost.dev/docs/getting-started/use-a-coding-agent/.

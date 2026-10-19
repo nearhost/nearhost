@@ -66,9 +66,11 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 }
 
 // DeclineChange is the engine's, and tells an agent waiting on the change.
+// The agent is told first: once the engine forgets the change nothing
+// waits, and a poll in between would find its reload superseded.
 func (u *uiEngine) DeclineChange(project, sha string) {
-	u.Engine.DeclineChange(project, sha)
 	u.agents.changeAnswered(project, sha, false)
+	u.Engine.DeclineChange(project, sha)
 }
 
 func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {

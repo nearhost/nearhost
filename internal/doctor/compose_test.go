@@ -33,7 +33,7 @@ func TestComposeServicesReadsBothForms(t *testing.T) {
       - ${CERT}:/c:ro
     network_mode: host
 `
-	got, err := composeServices([]byte(src), map[string]string{"APP_HOST": "app.test", "FROM_ENV": "val", "CERT": "/p/root.crt"})
+	got, err := composeServices([]byte(src), map[string]string{"APP_HOST": "app.test", "FROM_ENV": "val", "CERT": "/p/root.crt"}, map[string]string{"CERT": "/p/root.crt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestComposeServicesReadsBothForms(t *testing.T) {
 }
 
 func TestComposeServicesRefusesBadYAML(t *testing.T) {
-	if _, err := composeServices([]byte("services: [\n"), nil); err == nil {
+	if _, err := composeServices([]byte("services: [\n"), nil, nil); err == nil {
 		t.Error("no error")
 	}
 }
@@ -75,7 +75,7 @@ services:
     extra_hosts:
       - "own.x.io:host-gateway"
 `
-	got, err := composeServices([]byte(src), nil)
+	got, err := composeServices([]byte(src), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ services:
     extra_hosts:
       <<: *hosts
 `
-	got, err := composeServices([]byte(src), nil)
+	got, err := composeServices([]byte(src), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,5 +127,35 @@ services:
 	want := map[string]string{"NODE_EXTRA_CA_CERTS": "/ca.crt", "OTHER": "x", "KEEP": "own"}
 	if !reflect.DeepEqual(a.Env, want) || !reflect.DeepEqual(a.ExtraHosts, []string{"api.x.io"}) {
 		t.Errorf("a = %+v", a)
+	}
+}
+
+func TestExpandComposeAndVolumeSource(t *testing.T) {
+	env := map[string]string{"CERT": "/p/root.crt", "EMPTY": ""}
+	for in, want := range map[string]string{
+		"${CERT}":             "/p/root.crt",
+		"${CERT:?say}":        "/p/root.crt",
+		"${CERT?say}/x":       "/p/root.crt/x",
+		"${EMPTY?say}x":       "x",
+		"${EMPTY:?say}":       "${EMPTY:?say}",
+		"${GONE?say}":         "${GONE?say}",
+		"${GONE:-/d}":         "/d",
+		"${CERT:?a}:${GONE}":  "${CERT:?a}:${GONE}",
+		"$CERT and ${CERT:?}": "/p/root.crt and /p/root.crt",
+	} {
+		if got := expandCompose(in, env); got != want {
+			t.Errorf("expandCompose(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for in, want := range map[string]string{
+		"./a:/b:ro":             "./a",
+		"${CERT:?set it}:/c:ro": "${CERT:?set it}",
+		"${CERT:-/x:y}:/c":      "${CERT:-/x:y}",
+		"named":                 "",
+		"/abs/path:/c":          "/abs/path",
+	} {
+		if got := volumeSource(in); got != want {
+			t.Errorf("volumeSource(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

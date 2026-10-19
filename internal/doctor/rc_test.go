@@ -124,6 +124,14 @@ func TestRcFindingsForADirectoryNotAdded(t *testing.T) {
 	if f := byID(t, got, "nearhostrc.version"); f.Project != "" {
 		t.Errorf("project %q", f.Project)
 	}
+
+	// A file that parses but that add could not take is reported before add.
+	remote := config.Project{Name: "app", Server: "box", Enabled: true}
+	got = Check(context.Background(), Input{Project: remote, Files: files{".nearhostrc": rc + "docker_clients: true\n"}})
+	if f := byID(t, got, "nearhostrc.invalid"); f.Severity != SeverityError || !strings.Contains(f.Message, "docker_clients works only") ||
+		f.Fix.Kind != FixProject || len(got) != 1 {
+		t.Errorf("a file add could not take: %+v", got)
+	}
 }
 
 func TestDriftFindings(t *testing.T) {
