@@ -205,3 +205,57 @@ func TestCheckSortsAndNeverReturnsNil(t *testing.T) {
 		t.Errorf("got %v want %v", g, want)
 	}
 }
+
+func TestDriftUnservedHost(t *testing.T) {
+	disc := &discovery.Result{Routes: []discovery.Candidate{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}}
+	project := func(routes ...config.Route) config.Project {
+		return config.Project{Name: "app", Alias: "a.test", Enabled: true, Routes: routes}
+	}
+	web80 := config.Route{Port: 80, Role: config.RoleWeb}
+
+	in := Input{Project: project(web80), Added: true, Files: files{}, Discovered: disc}
+	got := Check(context.Background(), in)
+	f := byID(t, got, "routes.unserved-host")
+	if len(got) != 1 || f.Severity != SeverityWarning ||
+		f.Message != "app.x.io is named by the project's settings for port 80, but Nearhost doesn't serve it" ||
+		f.Fix.Kind != FixNearhost ||
+		f.Fix.Text != "Edit the project in Nearhost: select it and press e. The form adds app.x.io for you to approve." {
+		t.Errorf("unserved host: %+v", got)
+	}
+
+	web8080 := config.Route{Port: 8080, Role: config.RoleWeb, Hosts: []string{"app.x.io"}}
+	served := map[string][]config.Route{
+		"exact":      {{Port: 80, Role: config.RoleWeb, Hosts: []string{"APP.x.io"}}},
+		"pattern":    {{Port: 80, Role: config.RoleWeb, Hosts: []string{"*.x.io"}}},
+		"other port": {web80, web8080},
+	}
+	for name, routes := range served {
+		in := Input{Project: project(routes...), Added: true, Files: files{}, Discovered: disc}
+		for _, f := range Check(context.Background(), in) {
+			if f.ID == "routes.unserved-host" {
+				t.Errorf("%s serves the host: %+v", name, f)
+			}
+		}
+	}
+
+	in = Input{Project: project(web80), Added: true, Files: files{".nearhostrc": rcApproved}, Discovered: disc}
+	for _, f := range Check(context.Background(), in) {
+		if strings.HasPrefix(f.ID, "routes.") {
+			t.Errorf("with .nearhostrc: %+v", f)
+		}
+	}
+
+	disc8080 := &discovery.Result{Routes: []discovery.Candidate{
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}}
+	in = Input{Project: project(web80), Added: true, Files: files{}, Discovered: disc8080}
+	got = Check(context.Background(), in)
+	byID(t, got, "routes.unserved-port")
+	for _, f := range got {
+		if f.ID == "routes.unserved-host" {
+			t.Errorf("unserved port should not also report the host: %+v", f)
+		}
+	}
+}
