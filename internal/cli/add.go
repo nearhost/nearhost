@@ -301,22 +301,31 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 
 // publicAddress is ", resolves to <addr> on the internet" when DNS gives host
 // an address that is not loopback, which is what the user most needs to know
-// before shadowing it. It is empty for a pattern, when lookup is nil and
-// when the lookup fails, since the warning is a courtesy.
+// before shadowing it. It is empty when firstPublic finds none.
 func publicAddress(ctx context.Context, lookup hosts.Lookup, host string) string {
+	if addr, ok := firstPublic(ctx, lookup, host); ok {
+		return ", resolves to " + addr + " on the internet"
+	}
+	return ""
+}
+
+// firstPublic is the first address DNS gives host that is not loopback. ok
+// is false for a pattern, when lookup is nil, when the lookup fails and when
+// every address is loopback, since the warning it feeds is a courtesy.
+func firstPublic(ctx context.Context, lookup hosts.Lookup, host string) (addr string, ok bool) {
 	if lookup == nil || hostname.IsPattern(host) {
-		return ""
+		return "", false
 	}
 	addrs, err := lookup(ctx, host)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, a := range addrs {
 		if !a.IsLoopback() {
-			return ", resolves to " + a.String() + " on the internet"
+			return a.String(), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // discoverWithPresets runs discovery with the enabled presets, then offers

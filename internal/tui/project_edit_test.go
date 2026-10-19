@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -150,5 +151,67 @@ func TestMakingARouteWebKeepsWebRoutesWithHosts(t *testing.T) {
 	got := []config.Role{f.routes[0].Role, f.routes[1].Role, f.routes[2].Role}
 	if got[0] != config.RoleIgnore || got[1] != config.RoleWeb || got[2] != config.RoleWeb {
 		t.Errorf("roles %v; want ignore, web, web", got)
+	}
+}
+
+// Saving an edit that serves a host another enabled project serves fails
+// in the form, and nothing is saved.
+func TestEditSaveRefusesAHostAnotherProjectServes(t *testing.T) {
+	m, f, _ := editModel(t)
+	f.cfg.Projects[0].Routes[0].Hosts = []string{"x.local.example.io"} // website
+	press(m, "h")
+	typeText(m, "x.local.example.io")
+	press(m, "enter")
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Edit myapp · confirm", `Host x.local.example.io is already served by project "website"`)
+	if f.edit.edits != 0 || m.form == nil {
+		t.Errorf("edits %d, form %T", f.edit.edits, m.form)
+	}
+}
+
+// Editing a project with a .nearhostrc keeps the hosts added by hand to a
+// port the file lists, takes the file's own, and asks only about the new.
+func TestEditProjectMergesNearhostrc(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.cfg.Projects[1].Routes[0].Hosts = []string{"old.local.dd.io", "mine.local.dd.io"}
+	f.cfg.Projects[1].Nearhostrc = &config.RcSnapshot{SHA256: "old", Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"old.local.dd.io"}}}}
+	rc := &config.RcSnapshot{SHA256: "new", Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Label: "app", Hosts: []string{"new.local.dd.io"}}}}
+	f.forms.files = &fakeFiles{home: "/home/dev", dirs: map[string]bool{"/srv/myapp": true}, drafts: map[string]Draft{
+		"/srv/myapp": {Routes: []config.Route{
+			{Port: 80, Role: config.RoleWeb, Label: "app", Hosts: []string{"new.local.dd.io"}},
+			{Port: 8025, Role: config.RoleIgnore, Label: "mail"},
+		}, Nearhostrc: rc},
+	}}
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "myapp"))
+	settle(m, press(m, "e"))
+	pf := m.form.(*projectForm)
+	if h := pf.routes[0].Hosts; pf.routes[0].Port != 80 || len(h) != 2 || h[0] != "new.local.dd.io" || h[1] != "mine.local.dd.io" {
+		t.Fatalf("routes %+v", pf.routes)
+	}
+	wantScreen(t, m, "from .nearhostrc")
+	press(m, "enter")
+	// The name and alias are kept: the backend says another project has
+	// them, which is this one, and that must not hide what needs approval.
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Edit myapp · confirm", "Needs your approval:", "new.local.dd.io on port 80 (a real domain)", "enter approve and save")
+	if strings.Contains(screen(m), "mine.local.dd.io on port") {
+		t.Errorf("a saved host is asked about:\n%s", screen(m))
+	}
+	if len(pf.advice) == 0 {
+		t.Error("keeping the name skipped the advice")
+	}
+	if p, _ := f.cfg.Project("myapp"); f.edit.edits != 0 || p.Nearhostrc.SHA256 != "old" {
+		t.Fatalf("saved before enter: edits %d, snapshot %+v", f.edit.edits, p.Nearhostrc)
+	}
+	settle(m, press(m, "enter"))
+	p, _ := f.cfg.Project("myapp")
+	if p.Nearhostrc == nil || p.Nearhostrc.SHA256 != "new" {
+		t.Errorf("saved snapshot %+v", p.Nearhostrc)
+	}
+	if h := p.Routes[0].Hosts; len(h) != 2 || h[0] != "new.local.dd.io" || h[1] != "mine.local.dd.io" {
+		t.Errorf("saved hosts %v", h)
 	}
 }

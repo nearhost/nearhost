@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -226,5 +228,98 @@ func TestFormSaveRefusesALoopbackClashInItsWords(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "--disabled") || strings.Contains(err.Error(), "advisory above") ||
 		!strings.Contains(err.Error(), `loopback port 5173 is already forwarded for project "a"`) || !strings.Contains(err.Error(), "set this route to ignore") {
 		t.Errorf("SaveProject = %v", err)
+	}
+}
+
+// Discovery applies the project's .nearhostrc, and one that cannot be read
+// is reported in the draft, without failing discovery.
+func TestFormDiscoveryReadsNearhostrc(t *testing.T) {
+	u := formEngine(t)
+	ctx := context.Background()
+	files, err := u.OpenServer(ctx, config.Server{Name: config.LocalServer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	dir := t.TempDir()
+	rc := "version: 1\nroutes:\n  - port: 8220\n    hosts: [app.local.dd.io]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(rc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []config.Route{{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}}}
+	if !reflect.DeepEqual(d.Routes, want) || d.Nearhostrc == nil || !reflect.DeepEqual(d.Nearhostrc.Routes, want) || d.RcError != "" {
+		t.Errorf("draft routes %+v, snapshot %+v, rc error %q", d.Routes, d.Nearhostrc, d.RcError)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte("version: 9\nroutes: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err = files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Nearhostrc != nil || !strings.Contains(d.RcError, "update Nearhost") {
+		t.Errorf("snapshot %+v, rc error %q", d.Nearhostrc, d.RcError)
+	}
+
+	// A file Merge refuses is reported the same way.
+	bad := "version: 1\nroutes:\n  - port: 8220\n  - port: 8221\n    hosts: [" + filepath.Base(dir) + ".test]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err = files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Nearhostrc != nil || !strings.Contains(d.RcError, "the project's .test name") {
+		t.Errorf("snapshot %+v, rc error %q", d.Nearhostrc, d.RcError)
+	}
+}
+
+// A new project cannot serve a host an enabled project serves; added
+// disabled, it serves nothing, so it can.
+func TestFormSaveRefusesAHostAnotherProjectServes(t *testing.T) {
+	u := formEngine(t)
+	route := []config.Route{{Port: 3000, Role: config.RoleWeb, Hosts: []string{"x.local.example.io"}}}
+	one := config.Project{Name: "one", Server: config.LocalServer, Path: "/one", Alias: "one.test", Enabled: true, Routes: route}
+	if err := u.SaveProject(one); err != nil {
+		t.Fatal(err)
+	}
+	two := config.Project{Name: "two", Server: config.LocalServer, Path: "/two", Alias: "two.test", Enabled: true, Routes: route}
+	if err := u.SaveProject(two); err == nil || err.Error() != `host x.local.example.io is already served by project "one"` {
+		t.Errorf("SaveProject = %v", err)
+	}
+	if _, ok := loadSaved(t, u.path).Project("two"); ok {
+		t.Error("the clashing project was saved")
+	}
+	two.Enabled = false
+	if err := u.SaveProject(two); err != nil {
+		t.Errorf("SaveProject disabled = %v", err)
+	}
+}
+
+// PublicAddress is the first address DNS gives a host that is not loopback.
+func TestFormPublicAddress(t *testing.T) {
+	u := &uiEngine{b: uiBackend{lookup: func(_ context.Context, name string) ([]netip.Addr, error) {
+		switch name {
+		case "app.local.dd.io":
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("93.184.216.34")}, nil
+		case "loop.dd.io":
+			return []netip.Addr{netip.MustParseAddr("::1")}, nil
+		}
+		return nil, errors.New("no such host")
+	}}}
+	ctx := context.Background()
+	if addr, ok := u.PublicAddress(ctx, "app.local.dd.io"); !ok || addr != "93.184.216.34" {
+		t.Errorf("app.local.dd.io = %q, %v", addr, ok)
+	}
+	for _, h := range []string{"loop.dd.io", "gone.dd.io", "*.dd.io"} {
+		if addr, ok := u.PublicAddress(ctx, h); ok {
+			t.Errorf("%s = %q, %v", h, addr, ok)
+		}
 	}
 }

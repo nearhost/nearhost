@@ -75,8 +75,13 @@ type Backend interface {
 	// CheckNames says what is wrong with a new project's name and alias, nil
 	// for each that is fine.
 	CheckNames(name, alias string) (nameErr, aliasErr error)
-	// SaveProject saves a new project.
+	// SaveProject saves a new project. An enabled project that serves a
+	// host another enabled project serves is refused.
 	SaveProject(p config.Project) error
+	// PublicAddress is the first address DNS gives host that is not
+	// loopback, which serving the host here would hide on this machine. ok
+	// is false when it resolves to loopback only, or not at all.
+	PublicAddress(ctx context.Context, host string) (addr string, ok bool)
 
 	// EditConfig reads the config file afresh, runs fn on it, checks the
 	// result and saves it. Nothing is saved when fn or the check fails.
@@ -133,6 +138,13 @@ type Draft struct {
 	Presets     []SuggestedPreset
 	Advisories  []Advisory
 	Notes       []string
+	// Nearhostrc is the project's .nearhostrc as Routes apply it, saved as
+	// the approved snapshot when the project is; nil when it has none, or
+	// it cannot be read.
+	Nearhostrc *config.RcSnapshot
+	// RcError says why the project's .nearhostrc cannot be used; Routes
+	// then leave it out.
+	RcError string
 }
 
 // SuggestedPreset is a preset a trusted registry offers for the project.
