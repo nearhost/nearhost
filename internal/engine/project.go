@@ -256,7 +256,10 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	if err := e.ensureHosts(ctx, web); err != nil {
 		return StateStopped, fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Name, err)
 	}
-	docker := p.DockerClients()
+	// Validate refuses docker_clients on a remote project; checking the
+	// server here too means a config that skipped it still never serves a
+	// remote project to the local Docker networks.
+	docker := p.DockerClients() && p.Server == config.LocalServer
 	if docker {
 		// Asked before the site is published, so it is never served to
 		// fewer networks than Docker has, nor to more than it needs.

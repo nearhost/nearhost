@@ -59,7 +59,9 @@ func describeRanges(ranges []string) string {
 }
 
 // dockerStart settles the ranges run is about to be served to, asking
-// Docker when it has never answered, and logs them for the project. It
+// Docker when it has never answered or when no refresh loop runs, so a
+// start after a long idle uses the networks Docker has now rather than the
+// last ones the loop saw, and logs them for the project. It
 // holds no engine lock while it asks, as ensureHosts holds none while the
 // hosts file is updated, and gives up when ctx ends. A Docker that does not
 // answer does not fail the start: the project is served to
@@ -67,8 +69,9 @@ func describeRanges(ranges []string) string {
 func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 	e.mu.Lock()
 	answered := e.docker.answered
+	ask := !answered || e.docker.stop == nil
 	e.mu.Unlock()
-	if !answered {
+	if ask {
 		ranges, err := e.askDocker(ctx)
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
