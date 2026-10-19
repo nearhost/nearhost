@@ -2,6 +2,8 @@ package nearhostrc
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,10 +16,6 @@ import (
 // theirs to edit.
 const exportHeader = "# Written by nearhost export. Safe to edit and commit; see https://nearhost.dev/docs for the format.\n"
 
-// aliasVar is the variable an exported alias refers to when the project's env
-// sets it to that alias.
-const aliasVar = "APP_HOST"
-
 // PortVars lists, for each port, the variables discovery says set it, in
 // discovery's rank order.
 type PortVars map[int][]string
@@ -27,9 +25,13 @@ type PortVars map[int][]string
 // project directory's base name; an alias equal to config.AliasFor(dir) is
 // left out, since reading the file without one gives the same name.
 //
-// A port is written as ${VAR:-port} when a variable from vars holds that port
-// in env, so the file follows the project's .env on another machine, and as a
-// bare number otherwise. Export refuses to return a file that does not read
+// A port is written as ${VAR:-port} when a variable from vars, in rank order,
+// either holds that port in env or is not set there, since discovery found it
+// in the project's compose file and its default supplies the served port; a
+// variable env sets to another port gives a bare number. The main name is
+// written as ${VAR:-name} for the alphabetically first variable env sets to
+// exactly that name. Either way the file follows the project's .env on
+// another machine. Export refuses to return a file that does not read
 // back to p's routes, main name and docker_clients choice, so what it writes
 // is always what the user approved.
 func Export(p config.Project, dir string, vars PortVars, env map[string]string) ([]byte, *config.RcSnapshot, error) {
@@ -38,16 +40,13 @@ func Export(p config.Project, dir string, vars PortVars, env map[string]string) 
 	b.WriteString("version: 1\n")
 
 	if p.Alias != "" && p.Alias != config.AliasFor(dir) {
-		alias, err := scalar(p.Alias, "main name")
+		text := p.Alias
+		if v := aliasVariable(p.Alias, env); v != "" {
+			text = "${" + v + ":-" + p.Alias + "}"
+		}
+		alias, err := scalar(text, "main name")
 		if err != nil {
 			return nil, nil, err
-		}
-		if env[aliasVar] == p.Alias {
-			// Quoting "${APP_HOST:-x}" keeps YAML from reading the braces.
-			alias = "${" + aliasVar + ":-" + p.Alias + "}"
-			if q, err := scalar(alias, "main name"); err == nil {
-				alias = q
-			}
 		}
 		b.WriteString("alias: " + alias + "\n")
 	}
@@ -146,9 +145,25 @@ func sameProject(want, got config.Project) error {
 	}
 	for i, w := range want.Routes {
 		g := got.Routes[i]
-		if w.Port != g.Port || w.Role != g.Role || w.Label != g.Label || strings.Join(w.Hosts, "\n") != strings.Join(g.Hosts, "\n") || len(w.Hosts) != len(g.Hosts) {
+		if w.Port != g.Port || w.Role != g.Role || w.Label != g.Label || !slices.Equal(w.Hosts, g.Hosts) {
 			return fmt.Errorf("port %d: %+v became %+v", w.Port, w, g)
 		}
 	}
 	return nil
+}
+
+// aliasVariable names the variable env sets to exactly alias, or "" when none
+// does. With several, the alphabetically first wins so the output is stable.
+func aliasVariable(alias string, env map[string]string) string {
+	var names []string
+	for k, v := range env {
+		if v == alias {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }
