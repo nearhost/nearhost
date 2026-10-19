@@ -38,8 +38,11 @@ func (m *Model) footerItems() []footerItem {
 		if st := m.b.Status(name).State; st == engine.StateStopped || st == engine.StateError {
 			verb = "start"
 		}
-		items = []footerItem{{"enter", verb}, {"o", "open"},
-			{"tab", "routes"}, {"e", "edit"}, {"d", "remove"}}
+		items = []footerItem{{"enter", verb}, {"o", "open"}}
+		if m.b.Status(name).Pending != nil {
+			items = append(items, footerItem{"a", "review"})
+		}
+		items = append(items, footerItem{"tab", "routes"}, footerItem{"e", "edit"}, footerItem{"d", "remove"})
 	case rowHome:
 		for _, p := range m.problems() {
 			if p.server != "" {
@@ -268,10 +271,16 @@ func (m *Model) action(s string) tea.Cmd {
 		}
 	case "r":
 		switch kind, name := m.selected(); {
+		case kind == rowProject:
+			return m.recheck(name)
 		case kind == rowServer && name != config.LocalServer:
 			return m.reconnect(name)
 		case kind == rowHome:
 			return m.retryServers()
+		}
+	case "a":
+		if kind, name := m.selected(); kind == rowProject {
+			return m.reviewChange(name)
 		}
 	case "tab":
 		if kind, _ := m.selected(); kind == rowProject {
@@ -370,11 +379,17 @@ func (m *Model) enter() tea.Cmd {
 		m.collapsed[name] = !m.collapsed[name]
 	case rowProject:
 		switch m.b.Status(name).State {
-		case engine.StateStopped:
-			return m.startProject(name)
-		case engine.StateError:
+		case engine.StateStopped, engine.StateError:
 			// A project in error may still serve some routes; enter tries
-			// again, as starting it removes what its last attempt left.
+			// again, as starting it removes what its last attempt left. A
+			// disabled one starts only when no enabled project serves its
+			// hosts.
+			if p, ok := m.cfg.Project(name); ok {
+				if err := m.enableClash(*p); err != nil {
+					m.panelErr = err.Error()
+					return nil
+				}
+			}
 			return m.startProject(name)
 		default:
 			return m.stopProject(name)

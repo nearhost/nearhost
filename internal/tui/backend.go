@@ -106,6 +106,17 @@ type Backend interface {
 	// interface suspended so a password can be asked for.
 	Trust(ctx context.Context) error
 
+	// Recheck reads a project's .nearhostrc again without restarting it;
+	// what it finds shows in the project's status.
+	Recheck(ctx context.Context, project string) error
+	// AcceptChange approves the change the project's .nearhostrc waits on,
+	// as its status has it now, by saving the routes it asks for. A host
+	// another enabled project serves is refused, and nothing is saved.
+	AcceptChange(project string) error
+	// DeclineChange drops the change the project's .nearhostrc waits on,
+	// until the file changes again.
+	DeclineChange(project string)
+
 	// AcceptProposal tells the agent that made proposal id that it was
 	// saved as the project called name.
 	AcceptProposal(id, name string)

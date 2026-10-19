@@ -143,16 +143,21 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
+	// Each start, and r on a project, re-reads its .nearhostrc. A change
+	// that needs no approval is saved as the interface's own edits are, one
+	// at a time with them; one that does waits for a to review it.
+	back := &uiEngine{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
+	opts.Review = reviewProject(back.saveRc)
 	ag, agentNote := serveAgents(b.up.agents, &opts, cfgPath, flags.httpsPort)
 	defer ag.close()
 	eng := engine.New(cfg, opts)
+	back.Engine, back.agents = eng, ag
 	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way.
 	defer eng.Shutdown(context.Background())
 	var proposals tui.Proposals
 	ag.review(&proposals)
-	back := &uiEngine{Engine: eng, b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root, agents: ag}
 	m := tui.New(back, dir)
 	if agentNote != "" {
 		eng.Events().Publish(engine.Event{Message: agentNote})

@@ -60,6 +60,9 @@ func (m *Model) projectPanel(name string, width int) []string {
 	if fix := fixFor(st.State, st.Message, serverUp, host); fix != "" {
 		lines = append(lines, field("fix", fix, width)...)
 	}
+	if more := pendingLines(st, width); len(more) > 0 {
+		lines = append(append(lines, ""), more...)
+	}
 	lines = append(lines, "")
 	lines = append(lines, m.routeTable(*p, st, width)...)
 	if m.panelErr != "" {
