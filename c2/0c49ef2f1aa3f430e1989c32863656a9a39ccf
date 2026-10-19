@@ -1,0 +1,35 @@
+internal/doctor/rc_test.go
+  s_89a63a3c1fa7d2::t_2219a6119db8e9 127-134
+internal/doctor/hosts_test.go
+  s_89a63a3c1fa7d2::t_03895f763e91d7 223-231
+internal/doctor/rc.go
+  s_89a63a3c1fa7d2::t_9d8a056d4b013e 31,33-34
+internal/doctor/hosts.go
+  s_89a63a3c1fa7d2::t_7e78ac16a96923 251-258,262
+internal/discovery/compose.go
+  s_89a63a3c1fa7d2::t_f4f8ec4080ab06 28-30,33-34,36
+internal/doctor/compose.go
+  s_89a63a3c1fa7d2::t_98d4dec71fd423 5,22,30-34,46,92-93,96,105-149
+internal/doctor/compose_test.go
+  s_89a63a3c1fa7d2::t_240202bd15d3aa 36,53,78,114,132-161
+internal/doctor/docker.go
+  s_89a63a3c1fa7d2::t_7f99ab890d5bbd 43,154-167,182,193-194
+internal/doctor/docker_test.go
+  s_89a63a3c1fa7d2::t_1b202c1ffe26e1 146-147,152-156,168-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c20c49ef2f1aa3f430e1989c32863656a9a39ccf",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
