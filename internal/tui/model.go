@@ -14,6 +14,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
 const (
@@ -197,6 +198,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.refused(rowKey(rowServer, msg.name), msg.err)
 		}
+	case recheckedMsg:
+		key := rowKey(rowProject, msg.name)
+		if msg.err != nil {
+			m.refused(key, msg.err)
+			return m, nil
+		}
+		// The log's source says who: "nearhost re-read .nearhostrc".
+		m.logs.noteOn(key, "re-read "+nearhostrc.FileName)
+	case changeDeclinedMsg:
+		m.form = nil
+		m.selectRow(rowKey(rowProject, msg.name))
+		m.logs.noteOn(m.sel, "Declined what "+nearhostrc.FileName+" asks for, until the file changes again.")
 	case editedMsg:
 		if msg.err != nil {
 			m.editing = false

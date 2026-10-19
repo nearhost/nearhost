@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -27,6 +28,36 @@ func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
 		return err
 	}
 	return config.Save(u.path, cfg)
+}
+
+// saveRc is the save of the interface engine's Options.Review: it writes a
+// project's routes and approved snapshot through EditConfig, so it never
+// saves over an edit the interface is making, and keeps every other field
+// as the file has it now.
+func (u *uiEngine) saveRc(p config.Project) error {
+	return u.EditConfig(func(cfg *config.Config) error { return takeRc(cfg, p, u.path) })
+}
+
+// AcceptChange saves the routes and snapshot of the change with hash sha
+// that the project's .nearhostrc waits on. It must be the change pending
+// now: the user approved what the review showed, and a newer file may ask
+// for more. The config poll then applies the save, which restarts the
+// project with it. DeclineChange is the engine's own.
+func (u *uiEngine) AcceptChange(project, sha string) error {
+	change := u.Status(project).Pending
+	if change == nil || change.SHA256 != sha {
+		return fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
+	}
+	return u.EditConfig(func(cfg *config.Config) error {
+		if err := takeRc(cfg, change.Project, u.path); err != nil {
+			return err
+		}
+		p, _ := cfg.Project(project)
+		if host, other, clash := cfg.HostClash(*p); clash {
+			return fmt.Errorf("host %s is already served by project %q", host, other)
+		}
+		return nil
+	})
 }
 
 func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {

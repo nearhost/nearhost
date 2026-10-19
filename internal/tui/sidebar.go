@@ -218,17 +218,22 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 		return renderRow(left, []seg{dot, word}, width, selected)
 	}
 	p, _ := m.cfg.Project(r.name)
-	st := m.b.Status(r.name).State
+	status := m.b.Status(r.name)
+	st := status.State
 	if p != nil && !p.Enabled {
 		name = styleDim
 	}
 	dot := m.stateDot(st)
+	if status.Pending != nil {
+		dot.style = styleAmber // its .nearhostrc waits for approval
+	}
 	left := append([]seg{{styleText, "  "}, dot, {styleText, " "}}, highlight(clean(r.name), m.query(), seg{style: name})...)
 	if m.narrow() {
 		return renderRow(left, nil, width, selected)
 	}
 	word := seg{dot.style, string(st)}
 	switch {
+	case status.Pending != nil: // the word stays amber with the dot
 	case selected && st == engine.StateRunning:
 		word.style = styleBeacon
 	case st == engine.StateRunning, st == engine.StateStopped:

@@ -67,21 +67,26 @@ func saveTo(path string) func(config.Project) error {
 		if err != nil {
 			return err
 		}
-		i := -1
-		for j := range cfg.Projects {
-			if cfg.Projects[j].Name == p.Name {
-				i = j
-				break
-			}
+		if err := takeRc(cfg, p, path); err != nil {
+			return err
 		}
-		if i < 0 {
-			return fmt.Errorf("project %q is no longer in %s", p.Name, path)
-		}
-		cfg.Projects[i].Routes = p.Routes
-		cfg.Projects[i].Nearhostrc = p.Nearhostrc
 		if err := cfg.Validate(); err != nil {
 			return err
 		}
 		return config.Save(path, cfg)
 	}
+}
+
+// takeRc sets the routes and the approved snapshot of the project in cfg
+// called as p is to p's, and leaves the rest of it as cfg has it. A project
+// no longer in cfg, the file at path, is not added back.
+func takeRc(cfg *config.Config, p config.Project, path string) error {
+	for i := range cfg.Projects {
+		if cfg.Projects[i].Name == p.Name {
+			cfg.Projects[i].Routes = p.Routes
+			cfg.Projects[i].Nearhostrc = p.Nearhostrc
+			return nil
+		}
+	}
+	return fmt.Errorf("project %q is no longer in %s", p.Name, path)
 }

@@ -34,6 +34,7 @@ type fakeBackend struct {
 	applyErr  error
 	forms     formFake
 	edit      editFake
+	change    changeFake
 	trusted   bool
 	caExpires time.Time
 	// hostsState is what HostsState says; empty means "2 names".
