@@ -42,6 +42,9 @@ type Route struct {
 // File is a parsed .nearhostrc.
 type File struct {
 	Routes []Route
+	// DockerClients is whether the file asks for the project to be served to
+	// containers on local Docker networks.
+	DockerClients bool
 	// SHA256 is the hex hash of the canonical JSON of Routes after filling.
 	// Hashing the filled values rather than the file means a change in .env
 	// that moves a port or host invalidates an earlier approval, while
@@ -64,6 +67,8 @@ func token(i int) string { return "nhrcvar" + strconv.Itoa(i) + "x" }
 type rawFile struct {
 	Version int        `yaml:"version"`
 	Routes  []rawRoute `yaml:"routes"`
+
+	DockerClients bool `yaml:"docker_clients"`
 }
 
 type rawRoute struct {
@@ -140,12 +145,25 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 		return nil, err
 	}
 
-	canon, err := json.Marshal(routes)
+	// Without the option the hash stays the plain routes, as before, so
+	// approvals given by earlier versions are not invalidated by an upgrade.
+	// The option is added to the hashed form only when it is on, so turning
+	// it on asks again.
+	var canon []byte
+	var err error
+	if raw.DockerClients {
+		canon, err = json.Marshal(struct {
+			Routes        []Route `json:"routes"`
+			DockerClients bool    `json:"docker_clients"`
+		}{routes, true})
+	} else {
+		canon, err = json.Marshal(routes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	sum := sha256.Sum256(canon)
-	return &File{Routes: routes, SHA256: hex.EncodeToString(sum[:])}, nil
+	return &File{Routes: routes, DockerClients: raw.DockerClients, SHA256: hex.EncodeToString(sum[:])}, nil
 }
 
 // yamlError wraps a decoding error, putting back the ${VAR} references Parse
