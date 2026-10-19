@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -72,6 +73,16 @@ type Options struct {
 	// returns. It may block, and is never called under the engine's lock;
 	// ctx ends when the start is interrupted. nil reads no .nearhostrc.
 	Review func(ctx context.Context, p config.Project, files discovery.FileReader) Review
+	// DockerRanges gives the subnets of the local Docker daemon's networks,
+	// which projects that opt in with docker_clients are served to besides
+	// loopback. It is called with no engine lock held: when such a project
+	// starts while Docker has never answered, and then every DockerRefresh
+	// while one runs. nil means dockernet.Ranges.
+	DockerRanges func(ctx context.Context) ([]string, error)
+	// DockerRefresh is how often DockerRanges is asked again while a project
+	// that opts in runs, so a network created later is served too. 0 means
+	// 30s.
+	DockerRefresh time.Duration
 }
 
 // ProjectStatus is a snapshot of one project.
@@ -133,6 +144,12 @@ type ProjectStatus struct {
 // its own (lookupHolder). It holds no lock while it asks, and takes mu
 // afterwards to check that the answer still applies before publishing it.
 // Shutdown ends these lookups and waits for them.
+//
+// The Docker networks are asked for the same way, with no lock held: by a
+// start, before it publishes, and by the refresh loop (refreshDocker). An
+// answer that changes them is applied under applyMu then mu, like a site
+// change, and dropped if the loop was stopped meanwhile. Shutdown waits for
+// the loop.
 type Engine struct {
 	opts  Options
 	bus   *Bus
@@ -145,11 +162,16 @@ type Engine struct {
 	// applySites gives the proxy the set of sites that includes a project
 	// being started. It is the proxy's Apply; tests wrap it.
 	applySites func(sites []proxy.Site) error
+	// refreshSites gives the proxy the sites again when the Docker networks
+	// change, unless another engine has taken the proxy over. Tests wrap it.
+	refreshSites func(sites []proxy.Site) error
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
 	ctx     context.Context
 	stop    context.CancelFunc
 	lookups sync.WaitGroup
+	// dockerLoops counts the Docker refresh loops, which run under ctx too.
+	dockerLoops sync.WaitGroup
 	// starts counts the project starts Apply has begun. Shutdown waits for
 	// them; each returns at once when it finds the engine closed.
 	starts sync.WaitGroup
@@ -179,6 +201,9 @@ type Engine struct {
 	// session, so a reload that replaces the session keeps it.
 	held  map[string]bool
 	ports map[int]string // local port held by a forward -> project
+	// docker is what is known of the local Docker networks, shared by every
+	// project that opts in, as they share the machine's Docker.
+	docker dockerState
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
@@ -196,6 +221,10 @@ func New(cfg *config.Config, opts Options) *Engine {
 		ports:       map[int]string{},
 	}
 	e.applySites = e.proxy.Apply
+	e.refreshSites = func(sites []proxy.Site) error {
+		_, err := e.proxy.ApplyIfRunning(sites)
+		return err
+	}
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	e.setConfigLocked(cloneConfig(cfg), nil)
 	return e
@@ -432,6 +461,9 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	}
 	wg.Wait()
 	e.lookups.Wait()
+	// The last site that opted in is gone, which ends the refresh loop, and
+	// e.stop ended it in any case.
+	e.dockerLoops.Wait()
 	// Caddy and its log sink are process-global. If another engine has taken
 	// the proxy over since Start, both are that engine's now: leave them.
 	if started && e.proxy.Running() {
@@ -470,8 +502,12 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.server == config.LocalServer {
 			host = "localhost"
 		}
+		var clients []string
+		if run.docker {
+			clients = e.dockerClientsLocked()
+		}
 		for i, w := range run.web {
-			sites = append(sites, proxy.Site{Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i])})
+			sites = append(sites, proxy.Site{Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients)})
 		}
 	}
 	return sites

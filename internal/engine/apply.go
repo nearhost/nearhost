@@ -21,10 +21,11 @@ type applyPlan struct {
 // old config is anything but stopped. Projects are matched by name.
 //
 //   - A project that is gone is stopped.
-//   - A project whose server, path, alias or routes (ports, roles and the
-//     hosts of web routes) changed, or whose server's ssh_host changed or
-//     whose server is gone, is stopped and given a fresh run; it is started
-//     again if it was active, or if it has just been enabled, and is enabled.
+//   - A project whose server, path, alias, routes (ports, roles and the
+//     hosts of web routes) or docker_clients changed, or whose server's
+//     ssh_host changed or whose server is gone, is stopped and given a fresh
+//     run; it is started again if it was active, or if it has just been
+//     enabled, and is enabled.
 //   - Otherwise a project that was enabled and is now disabled is stopped,
 //     and one that was disabled and is now enabled is started.
 //   - A new project is started when it is enabled, unless it takes the
@@ -51,7 +52,7 @@ func planApply(prev, next *config.Config, active func(name string) bool) applyPl
 		case !ok:
 			plan.stop = append(plan.stop, p.Name)
 			plan.replace[p.Name] = true
-		case p.Server != q.Server || p.Path != q.Path || p.Alias != q.Alias || !sameRoutes(p.Routes, q.Routes) || serverChanged[p.Server]:
+		case p.Server != q.Server || p.Path != q.Path || p.Alias != q.Alias || !sameRoutes(p.Routes, q.Routes) || p.DockerClients() != q.DockerClients() || serverChanged[p.Server]:
 			plan.stop = append(plan.stop, p.Name)
 			plan.replace[p.Name] = true
 		case p.Enabled && !q.Enabled:

@@ -49,7 +49,8 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 			errs = append(errs, fmt.Errorf("remove site: %w", err))
 		} else {
 			e.mu.Lock()
-			run.site = false
+			run.site, run.docker = false, false
+			e.dockerIdleLocked()
 			e.mu.Unlock()
 		}
 	}
