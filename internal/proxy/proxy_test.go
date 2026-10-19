@@ -1130,3 +1130,74 @@ func TestProjectServingLocalhostReplacesHomePage(t *testing.T) {
 	}
 	h.waitCerts(t, "a.test")
 }
+
+// A site's extra client ranges are served at that site's hosts alone: a
+// client in the range gets the site over https and a redirect from http,
+// while a site that did not opt in stays out of reach, as for any client
+// that is not on loopback.
+func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "docker page")
+	}))
+	t.Cleanup(up.Close)
+
+	tried := 0
+	for _, ip := range nonLoopbackAddrs(t) {
+		bits := 128
+		if ip.To4() != nil {
+			bits = 32
+		}
+		client := fmt.Sprintf("%s/%d", ip, bits)
+		h := startProxy(t, []Site{
+			{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up), Clients: []string{client}},
+			{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up)},
+		})
+		h.waitCerts(t, "a.test", "b.test")
+		dialed, _, err := h.plainHTTP(t, ip, "a.test")
+		if !dialed {
+			t.Logf("%s: not dialable, skipping it: %v", ip, err)
+			continue
+		}
+		tried++
+
+		// get sends one GET for sni over a fresh TLS connection from ip.
+		get := func(sni string) (string, error) {
+			raw, err := (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(h.httpsPort)))
+			if err != nil {
+				return "", err
+			}
+			defer raw.Close()
+			raw.SetDeadline(time.Now().Add(10 * time.Second))
+			conn := tls.Client(raw, &tls.Config{RootCAs: h.pool, ServerName: sni})
+			if err := conn.Handshake(); err != nil {
+				return "", err
+			}
+			if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", sni); err != nil {
+				return "", err
+			}
+			r, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				return "", err
+			}
+			defer r.Body.Close()
+			b, _ := io.ReadAll(r.Body)
+			return string(b), nil
+		}
+		if body, err := get("a.test"); err != nil || body != "docker page" {
+			t.Errorf("client %s asking for a.test: body %q, err %v, want the upstream's answer", ip, body, err)
+		}
+		if body, err := get("b.test"); err == nil {
+			t.Errorf("client %s asking for b.test got %q, want the handshake to fail", ip, body)
+		}
+		if _, status, err := h.plainHTTP(t, ip, "a.test"); err != nil || status != 308 {
+			t.Errorf("http from %s to a.test: status %d, err %v, want 308", ip, status, err)
+		}
+		if _, status, err := h.plainHTTP(t, ip, "b.test"); err == nil {
+			t.Errorf("http from %s to b.test got status %d, want no answer", ip, status)
+		}
+		h.p.Stop()
+	}
+	if tried == 0 {
+		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
+	}
+}
