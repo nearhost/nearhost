@@ -200,12 +200,12 @@ func TestAgentProjectsListEveryURL(t *testing.T) {
 	}
 }
 
-// fakeProjects is an engine that reports states and records rechecks,
-// rereads, stops and starts. A reread finds review; Status shows pending
-// and notice.
+// fakeProjects is an engine that reports states and records rereads, stops
+// and starts. A reread calls reread when it is set and finds review; Status
+// shows pending and notice.
 type fakeProjects struct {
 	states  map[string]engine.State
-	recheck func(name string)
+	reread  func(name string)
 	log     *[]string
 	review  engine.Review
 	pending *engine.Change
@@ -222,6 +222,9 @@ func (f fakeProjects) Status(name string) engine.ProjectStatus {
 
 func (f fakeProjects) Reread(_ context.Context, name string) (engine.Review, error) {
 	*f.log = append(*f.log, "reread "+name)
+	if f.reread != nil {
+		f.reread(name)
+	}
 	return f.review, nil
 }
 
@@ -239,14 +242,6 @@ func (f fakeProjects) StartProject(ctx context.Context, name string) error {
 	}
 	*f.log = append(*f.log, "start "+name)
 	return nil
-}
-
-func (f fakeProjects) Recheck(_ context.Context, name string) error {
-	*f.log = append(*f.log, "recheck "+name)
-	if f.recheck != nil {
-		f.recheck(name)
-	}
-	return errors.New("server box is not connected")
 }
 
 // severities lists the id and severity of each finding.
@@ -282,7 +277,7 @@ func TestAgentDoctorChecksLocalAndRemoteProjects(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Without an engine yet, nothing is rechecked and nothing runs.
+	// Without an engine yet, nothing is re-read and nothing runs.
 	got, err := src.Doctor(ctx, config.LocalServer, "here", here.Path)
 	if err != nil || !reflect.DeepEqual(severities(got), []string{"routes.not-listening info"}) {
 		t.Fatalf("%v %+v", err, got)
@@ -290,9 +285,9 @@ func TestAgentDoctorChecksLocalAndRemoteProjects(t *testing.T) {
 
 	// A running project's port that nothing listens on is a warning.
 	src.projects = fakeProjects{states: map[string]engine.State{"here": engine.StateRunning}, log: &log,
-		recheck: func(name string) {
+		reread: func(name string) {
 			if name == "myapp" {
-				// A change the recheck finds is in the findings.
+				// A change the re-read finds is in the findings.
 				box.dirs["/srv/myapp"][".nearhostrc"] = unknownKeyRc
 			}
 		}}
@@ -301,7 +296,7 @@ func TestAgentDoctorChecksLocalAndRemoteProjects(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(severities(got), []string{"routes.not-listening warning"}) {
 		t.Fatalf("%v %+v", err, got)
 	}
-	if !reflect.DeepEqual(log, []string{"recheck here", "open local"}) {
+	if !reflect.DeepEqual(log, []string{"reread here", "open local"}) {
 		t.Fatalf("log %v", log)
 	}
 
@@ -310,11 +305,11 @@ func TestAgentDoctorChecksLocalAndRemoteProjects(t *testing.T) {
 	if err != nil || len(got) == 0 || got[0].ID != "nearhostrc.invalid" || got[0].Project != "myapp" {
 		t.Fatalf("%v %+v", err, got)
 	}
-	if !reflect.DeepEqual(log, []string{"recheck myapp", "open box"}) || box.closed != 1 {
+	if !reflect.DeepEqual(log, []string{"reread myapp", "open box"}) || box.closed != 1 {
 		t.Fatalf("log %v, closed %d", log, box.closed)
 	}
 
-	// A directory not added is checked as it would be added, unrechecked.
+	// A directory not added is checked as it would be added, not re-read.
 	log = nil
 	got, err = src.Doctor(ctx, "box", "", "/srv/plain")
 	if err != nil || len(got) != 0 {
@@ -453,6 +448,55 @@ func TestReloadRestartsUnderUp(t *testing.T) {
 		if err != nil || got.Declined || len(got.Items) != 0 || !reflect.DeepEqual(log, c.want) {
 			t.Errorf("%s: %+v %v, log %v", c.name, got, err, log)
 		}
+	}
+}
+
+// Under up a change saved by the doctor's re-read is served at once, as a
+// reload's is, so the findings are about what runs.
+func TestDoctorRestartsUnderUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	p := localProject("p", 3000, true)
+	p.Path = t.TempDir()
+	saveConfig(t, path, &config.Config{Projects: []config.Project{p}})
+	updated := engine.Review{Updated: &config.Project{Name: "p"}}
+	running := map[string]engine.State{"p": engine.StateRunning}
+	for _, c := range []struct {
+		name    string
+		restart bool
+		states  map[string]engine.State
+		review  engine.Review
+		want    []string
+	}{
+		{"up", true, running, updated, []string{"reread p", "stop p", "start p", "open local"}},
+		{"the interface", false, running, updated, []string{"reread p", "open local"}},
+		{"stopped", true, nil, updated, []string{"reread p", "open local"}},
+		{"unchanged", true, running, engine.Review{}, []string{"reread p", "open local"}},
+	} {
+		var log []string
+		src := &agentSource{
+			cfgPath:  path,
+			env:      agentEnv{restart: c.restart, doctor: doctorEnv{listening: func(context.Context, int) bool { return true }, goos: "darwin"}},
+			projects: fakeProjects{log: &log, states: c.states, review: c.review},
+			openFiles: func(_ context.Context, srv config.Server) (serverFiles, error) {
+				log = append(log, "open "+srv.Name)
+				return localFiles{}, nil
+			},
+		}
+		if _, err := src.Doctor(context.Background(), config.LocalServer, "p", p.Path); err != nil || !reflect.DeepEqual(log, c.want) {
+			t.Errorf("%s: %v, log %v", c.name, err, log)
+		}
+	}
+}
+
+// An agent is told what to do once ssh lets Nearhost in, in its own words.
+func TestAgentDoctorTellsTheAgentToRunItAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, path, &config.Config{Servers: []config.Server{{Name: "box", SSHHost: "box.lan"}}})
+	ssh, _ := fakeClient(t, "FAKE_SSH_AUTH_FAIL=1")
+	src := &agentSource{cfgPath: path, env: agentEnv{ssh: ssh}}
+	_, err := src.Doctor(context.Background(), "box", "", "/srv/plain")
+	if err == nil || !strings.Contains(err.Error(), "run `ssh box.lan` once in a terminal to fix access, then run /nearhost doctor again") {
+		t.Fatalf("%v", err)
 	}
 }
 

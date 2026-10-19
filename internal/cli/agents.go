@@ -213,7 +213,6 @@ type agentSource struct {
 // projectEngine is what the doctor and reload need of the engine.
 type projectEngine interface {
 	Status(name string) engine.ProjectStatus
-	Recheck(ctx context.Context, name string) error
 	Reread(ctx context.Context, name string) (engine.Review, error)
 	StopProject(ctx context.Context, name string) error
 	StartProject(ctx context.Context, name string) error
@@ -250,20 +249,23 @@ func (s *agentSource) Projects(origin string) []agentapi.Project {
 	return out
 }
 
+// doctorAgain is what an agent does once ssh lets Nearhost in.
+const doctorAgain = "run /nearhost doctor again"
+
 // Doctor checks a configured project, or the directory dir on origin's
 // machine as nearhost add would make it. A configured project's .nearhostrc
-// is rechecked first, so a change that needs no approval is applied, and
-// one that does is shown in the interface, before the findings are worked
-// out from the config as it then is. The server's files are opened for the
-// call, and closed once it ends, which also ends any read the checks are
-// still waiting on when ctx ends first.
+// is re-read first, as by Reload, so a change that needs no approval is
+// applied, and one that does is shown in the interface, before the findings
+// are worked out from the config as it then is. The server's files are
+// opened for the call, and closed once it ends, which also ends any read
+// the checks are still waiting on when ctx ends first.
 func (s *agentSource) Doctor(ctx context.Context, origin, name, dir string) ([]doctor.Finding, error) {
 	eng := s.engine()
 	running := false
 	if name != "" && eng != nil {
-		// A server not connected can't be rechecked; its findings say what
+		// A server not connected can't be re-read; its findings say what
 		// is in its files all the same.
-		_ = eng.Recheck(ctx, name)
+		_, _ = s.reread(ctx, eng, name)
 		running = eng.Status(name).State == engine.StateRunning
 	}
 	cfg, err := config.Load(s.cfgPath)
@@ -285,7 +287,7 @@ func (s *agentSource) Doctor(ctx context.Context, origin, name, dir string) ([]d
 	open := s.openFiles
 	if open == nil {
 		open = func(ctx context.Context, srv config.Server) (serverFiles, error) {
-			return openFiles(ctx, s.env.ssh, srv, connectAgain)
+			return openFiles(ctx, s.env.ssh, srv, doctorAgain)
 		}
 	}
 	files, err := open(ctx, srv)
@@ -319,29 +321,39 @@ func (s *agentSource) Doctor(ctx context.Context, origin, name, dir string) ([]d
 	}
 }
 
-// Reload re-reads the .nearhostrc of the project called name. A change
+// reread re-reads the .nearhostrc of the project called name. A change
 // that needs no approval has been saved by the review; the interface's
 // config poll applies it, but `nearhost up` never re-applies its config, so
 // there a running project is restarted, which adopts the saved change as it
 // starts. The restart outlives the call: an agent that hangs up must not
 // leave the project stopped.
+func (s *agentSource) reread(ctx context.Context, eng projectEngine, name string) (engine.Review, error) {
+	r, err := eng.Reread(ctx, name)
+	if err != nil {
+		return r, err
+	}
+	if r.Updated != nil && s.env.restart && eng.Status(name).State == engine.StateRunning {
+		ctx := context.WithoutCancel(ctx)
+		if err := eng.StopProject(ctx, name); err != nil {
+			return r, err
+		}
+		if err := eng.StartProject(ctx, name); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+// Reload re-reads the .nearhostrc of the project called name, and says what
+// it found.
 func (s *agentSource) Reload(ctx context.Context, name string) (agentapi.Reloaded, error) {
 	eng := s.engine()
 	if eng == nil {
 		return agentapi.Reloaded{}, errors.New("nearhost is still starting; try again")
 	}
-	r, err := eng.Reread(ctx, name)
+	r, err := s.reread(ctx, eng, name)
 	if err != nil {
 		return agentapi.Reloaded{}, err
-	}
-	if r.Updated != nil && s.env.restart && eng.Status(name).State == engine.StateRunning {
-		ctx := context.WithoutCancel(ctx)
-		if err := eng.StopProject(ctx, name); err != nil {
-			return agentapi.Reloaded{}, err
-		}
-		if err := eng.StartProject(ctx, name); err != nil {
-			return agentapi.Reloaded{}, err
-		}
 	}
 	st := eng.Status(name)
 	out := agentapi.Reloaded{Problem: st.Notice}

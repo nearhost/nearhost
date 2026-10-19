@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -120,6 +121,9 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 				env := b.env
 				env.noHosts = env.noHosts || flags.noHosts
 				projects = checkProjects(cmd.Context(), b, env, m.cfg, m.cfgPath, m.reachable)
+				if m.hostsFailed() {
+					projects = withoutUnresolved(projects)
+				}
 			}
 			if asJSON {
 				return reportJSON(cmd, m.checks, projects)
@@ -140,6 +144,23 @@ type machine struct {
 	cfgPath string
 	// reachable holds the servers ssh reaches, and this machine.
 	reachable map[string]bool
+}
+
+// hostsFailed reports whether the hosts block check failed. It names the
+// names missing from the block, which the projects' hosts.unresolved would
+// repeat with another fix.
+func (m machine) hostsFailed() bool {
+	return slices.ContainsFunc(m.checks, func(c check) bool { return c.name == "hosts block" && c.level == levelFail })
+}
+
+// withoutUnresolved is projects without their hosts.unresolved findings.
+func withoutUnresolved(projects []projectReport) []projectReport {
+	out := make([]projectReport, len(projects))
+	for i, p := range projects {
+		out[i] = projectReport{name: p.name, findings: slices.DeleteFunc(slices.Clone(p.findings),
+			func(f doctor.Finding) bool { return f.ID == "hosts.unresolved" })}
+	}
+	return out
 }
 
 func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {

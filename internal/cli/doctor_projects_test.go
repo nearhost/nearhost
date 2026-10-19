@@ -148,6 +148,30 @@ func TestDoctorProjectSection(t *testing.T) {
 	}
 }
 
+// A name missing from the hosts block fails the machine check, which names
+// it, so its projects don't report it again with another fix.
+func TestDoctorReportsAMissingHostsNameOnce(t *testing.T) {
+	path := configHome(t)
+	blog := localProject("blog", 8000, true)
+	blog.Path = t.TempDir()
+	saveConfig(t, path, &config.Config{Projects: []config.Project{blog}})
+	f := healthy()
+	f.hosts = "127.0.0.1 localhost\n"
+	f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+	}
+	var opened []string
+	out, err := execute(t, newDoctorCmd(withProjects(f.backend(), nil, &opened)), "doctor")
+	if err == nil || err.Error() != "1 check failed" || !strings.Contains(out, "FAIL  hosts block      missing blog.test\n") ||
+		!strings.HasSuffix(out, "\nProjects\nok    blog             no problems found\n\n1 check failed.\n") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	out, err = execute(t, newDoctorCmd(withProjects(f.backend(), nil, &opened)), "doctor", "--json")
+	if strings.Contains(out, "hosts.unresolved") {
+		t.Fatalf("--json: %v\n%s", err, out)
+	}
+}
+
 func TestDoctorPrintsEachFindingWithItsLevelFixAndSnippet(t *testing.T) {
 	var out bytes.Buffer
 	printProjects(&out, []projectReport{
