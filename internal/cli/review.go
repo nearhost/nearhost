@@ -25,34 +25,77 @@ import (
 func reviewProject(save func(config.Project) error) func(ctx context.Context, p config.Project, files discovery.FileReader) engine.Review {
 	return func(_ context.Context, p config.Project, files discovery.FileReader) engine.Review {
 		f, found, err := nearhostrc.Read(files)
-		switch {
-		case err != nil:
-			return engine.Review{Problem: err.Error()}
-		case !found && p.Nearhostrc == nil:
+		c := classifyRc(p, f, found, err)
+		switch c.kind {
+		case rcProblem:
+			return engine.Review{Problem: c.problem}
+		case rcNothing:
 			return engine.Review{}
-		case !found:
-			return engine.Review{Problem: nearhostrc.FileName + " is gone; serving what was last approved"}
-		case p.Nearhostrc != nil && f.SHA256 == p.Nearhostrc.SHA256:
-			return engine.Review{}
+		case rcPending:
+			return engine.Review{Pending: &engine.Change{SHA256: f.SHA256, Project: c.next, Items: c.items}}
 		}
-		// The routes the file doesn't list are kept from the config: there
-		// is no discovery run at start to say what else the project has.
-		next, err := nearhostrc.Merge(p, f, nil)
-		if err != nil {
-			return engine.Review{Problem: err.Error()}
-		}
-		if items := nearhostrc.NeedsApproval(p, next); len(items) > 0 {
-			return engine.Review{Pending: &engine.Change{SHA256: f.SHA256, Project: next, Items: items}}
-		}
-		if err := save(next); err != nil {
+		if err := save(c.next); err != nil {
 			var clash *hostClashError
 			if errors.As(err, &clash) {
 				return engine.Review{Problem: fmt.Sprintf("%s: %v; serving what was last approved", nearhostrc.FileName, err)}
 			}
 			return engine.Review{Problem: fmt.Sprintf("%s changed nothing that needs approval, but saving the config failed: %v", nearhostrc.FileName, err)}
 		}
-		return engine.Review{Updated: &next}
+		return engine.Review{Updated: &c.next}
 	}
+}
+
+// rcKind is what a project's .nearhostrc, as read, asks of it.
+type rcKind int
+
+const (
+	// rcNothing: there is no file and none was approved, or the file is
+	// the approved one.
+	rcNothing rcKind = iota
+	// rcUpdated: the file changed only what needs no approval.
+	rcUpdated
+	// rcPending: the file asks for a host or main name that needs the
+	// user's approval.
+	rcPending
+	// rcProblem: the file cannot be read or merged, or is gone after being
+	// approved.
+	rcProblem
+)
+
+// rcClass is how a read .nearhostrc stands against a project: its kind, the
+// project it merges to and what of that needs approval, or the problem.
+type rcClass struct {
+	kind    rcKind
+	next    config.Project
+	items   []nearhostrc.Item
+	problem string
+}
+
+// classifyRc says how the .nearhostrc that nearhostrc.Read returned as f,
+// found and err stands against p and its approved snapshot. It is the
+// review's judgement, kept in one place so that export says a change was
+// waiting for approval exactly when the review would have held it. The
+// routes the file doesn't list are kept from p: there is no discovery run at
+// start to say what else the project has.
+func classifyRc(p config.Project, f *nearhostrc.File, found bool, err error) rcClass {
+	switch {
+	case err != nil:
+		return rcClass{kind: rcProblem, problem: err.Error()}
+	case !found && p.Nearhostrc == nil:
+		return rcClass{kind: rcNothing}
+	case !found:
+		return rcClass{kind: rcProblem, problem: nearhostrc.FileName + " is gone; serving what was last approved"}
+	case p.Nearhostrc != nil && f.SHA256 == p.Nearhostrc.SHA256:
+		return rcClass{kind: rcNothing}
+	}
+	next, err := nearhostrc.Merge(p, f, nil)
+	if err != nil {
+		return rcClass{kind: rcProblem, problem: err.Error()}
+	}
+	if items := nearhostrc.NeedsApproval(p, next); len(items) > 0 {
+		return rcClass{kind: rcPending, next: next, items: items}
+	}
+	return rcClass{kind: rcUpdated, next: next}
 }
 
 // saveMu serialises the saves of saveTo, so two projects whose .nearhostrc

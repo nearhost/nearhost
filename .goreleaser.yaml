@@ -39,7 +39,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://nearhost.dev
-    description: Reach local and remote development servers at https://<name>.test
+    description: Reach local and remote development servers at their own domain (https://<name>.test by default)
     license: MIT
     commit_msg_template: "feat: update nearhost to {{ .Tag }}"
     hooks:

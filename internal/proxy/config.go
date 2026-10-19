@@ -31,7 +31,8 @@ var loopbackRanges = []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
 // one upstream. A project with several web routes is several sites sharing
 // an Alias. No host may be on two sites.
 type Site struct {
-	// Alias is the project's .test alias, e.g. myapp.test. It names the
+	// Alias is the project's main name: myapp.test by default, or any
+	// domain the user chose, e.g. app.local.example.io. It names the
 	// project in logs and captured exchanges, whichever host was asked for.
 	Alias string
 	// Hosts are the names served, exact or patterns such as

@@ -168,9 +168,8 @@ func openForExport(ctx context.Context, b exportBackend, cfg *config.Config, p c
 // renderExport works out the file for p from its files: the port variables
 // discovery finds with the enabled presets, as add finds them, and the
 // project's env. It refuses an existing file unless forced or only shown,
-// and reports whether that file was a change waiting for approval: one that
-// reads to a hash other than the approved snapshot's, which the export will
-// replace.
+// and reports whether that file was a change waiting for approval, as the
+// review classifies it, which the export will replace.
 func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p config.Project, reader discovery.FileReader, dir string, flags exportFlags) ([]byte, *config.RcSnapshot, bool, error) {
 	existing, found, err := nearhostrc.Read(reader)
 	if err != nil && !found {
@@ -179,9 +178,10 @@ func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p conf
 	if found && !flags.force && !flags.dryRun {
 		return nil, nil, false, fmt.Errorf("%s already exists in %s; run with --force to replace it, or --dry-run to see what would be written", nearhostrc.FileName, dir)
 	}
-	// A file that does not parse waits for no approval: the review reports
-	// it as a problem instead.
-	pending := found && err == nil && (p.Nearhostrc == nil || existing.SHA256 != p.Nearhostrc.SHA256)
+	// Only a change the review would hold for approval was waiting: one
+	// that only moves ports, or a file that does not parse, waits for no
+	// one.
+	pending := classifyRc(p, existing, found, err).kind == rcPending
 
 	res, warnings, err := discoverOnce(cfg, cfgPath, reader, nil, nil)
 	if err != nil {
@@ -226,10 +226,12 @@ func fileIn(p config.Project, dir string) string {
 }
 
 // saveSnapshot sets the approved snapshot of the project called name to snap
-// in the config at cfgPath and saves it. The file is loaded again under
-// saveMu, as saveTo does, so that a running `nearhost` saving a reviewed
-// change at the same moment is not undone; nothing but the snapshot changes,
-// since the file was rendered from what the config already serves.
+// in the config at cfgPath and saves it. Nothing but the snapshot changes,
+// since the file was rendered from what the config already serves. saveMu
+// only serialises saves within this process; a separate running `nearhost`
+// saving a reviewed change has its own. Loading the config again just
+// before saving narrows the window in which this save could undo that one,
+// but does not close it.
 func saveSnapshot(cfgPath, name string, snap *config.RcSnapshot) error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
