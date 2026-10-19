@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -65,6 +66,12 @@ type Options struct {
 	// too. It is called once per session Agent was asked about, never under
 	// the engine's lock. nil does nothing.
 	AgentDone func(server string)
+	// Review re-reads a project's .nearhostrc through files, each time the
+	// project starts and on Recheck, and says what it found (see Review).
+	// What needs no approval it saves to the config file itself before it
+	// returns. It may block, and is never called under the engine's lock;
+	// ctx ends when the start is interrupted. nil reads no .nearhostrc.
+	Review func(ctx context.Context, p config.Project, files discovery.FileReader) Review
 }
 
 // ProjectStatus is a snapshot of one project.
@@ -78,6 +85,13 @@ type ProjectStatus struct {
 	// WebLocalPorts maps the port of each web route to the local port the
 	// proxy sends that route's hosts to; nil when the site is not published.
 	WebLocalPorts map[int]int
+	// Pending is the change the project's .nearhostrc asks for that waits
+	// for approval; nil when there is none. The project serves what was
+	// approved meanwhile. It is shared: do not change it.
+	Pending *Change
+	// Notice is why the project's .nearhostrc could not be taken into
+	// account at its last read; empty when nothing went wrong.
+	Notice string
 }
 
 // Engine owns the proxy, one SSH session per server and the runtime state of
@@ -484,7 +498,7 @@ func (e *Engine) Status(name string) ProjectStatus {
 		// announces before it lets go of the lock.
 		st, msg = e.effectiveLocked(run)
 	}
-	status := ProjectStatus{State: st, Message: msg, Alias: run.alias}
+	status := ProjectStatus{State: st, Message: msg, Alias: run.alias, Pending: run.pending, Notice: run.notice}
 	if len(run.webLocals) > 0 {
 		status.WebLocalPort = run.webLocals[0]
 		status.WebLocalPorts = make(map[int]int, len(run.webLocals))
