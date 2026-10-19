@@ -1,0 +1,13 @@
+schema: 2
+name: reverb
+title: Reverb
+detect: 'true'
+routes:
+  - id: app
+    port: env_port("APP_PORT", 8000)
+    label: App
+    web: preferred
+  - id: reverb
+    port: env_port("REVERB_PORT", 8080)
+    label: Reverb
+    hosts: '[url_host(env["REVERB_URL"])]'

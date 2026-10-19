@@ -256,6 +256,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 			project.Alias = typedAlias
 		}
 	}
+	// The main name is final now, so a route other than the primary that
+	// names it is dropped before anything is asked about it.
+	project.Routes = withoutAliasHosts(project.Routes, project.Alias)
 	// A host typed twice, or already on a route, is served once: it still
 	// counts as typed, so it is approved, but is not added again. Hosts are
 	// matched without regard to case, and typed ones are lower-cased so that

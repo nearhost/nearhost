@@ -404,3 +404,29 @@ func TestFormDiscoveryNearhostrcBeatsInferredHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestFormDiscoveryDropsTheAliasFromSecondaryRoutes(t *testing.T) {
+	u := formEngine(t)
+	enableReverbPreset(t, u.path)
+	ctx := context.Background()
+	files, err := u.OpenServer(ctx, config.Server{Name: config.LocalServer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	dir := filepath.Join(t.TempDir(), "rapp")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(reverbEnv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := files.Discover(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Alias != "rapp.test" {
+		t.Fatalf("alias %q", d.Alias)
+	}
+	wantAliasHostDropped(t, d.Routes)
+}

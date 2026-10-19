@@ -672,3 +672,30 @@ func TestEditInferredHostNotDuplicated(t *testing.T) {
 		t.Fatalf("hosts = %v, want %v", got, want)
 	}
 }
+
+// A newly found port is deduped as a saved one is: a host another route
+// serves, or the alias, is left off, and a port left without hosts follows
+// the rule for new ports without them.
+func TestEditNewHostedPortNotDuplicated(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(80, config.RoleWeb), hosted(81, config.RoleWeb, "Other.x.io")}, "Here.test",
+		Draft{Routes: []config.Route{
+			hosted(80, config.RoleWeb),
+			hosted(6001, config.RoleWeb, "here.test"),
+			hosted(6002, config.RoleWeb, "other.x.io", "ws.x.io"),
+		}})
+	want := map[int]config.Route{
+		6001: {Port: 6001, Role: config.RoleIgnore},
+		6002: hosted(6002, config.RoleWeb, "ws.x.io"),
+	}
+	for _, r := range pf.routes {
+		if w, ok := want[r.Port]; ok {
+			if r.Role != w.Role || !reflect.DeepEqual(r.Hosts, w.Hosts) && len(r.Hosts)+len(w.Hosts) > 0 {
+				t.Errorf("route %d = %+v, want %+v", r.Port, r, w)
+			}
+			delete(want, r.Port)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing routes %v in %+v", want, pf.routes)
+	}
+}

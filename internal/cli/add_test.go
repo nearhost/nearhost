@@ -780,18 +780,33 @@ func TestAddTakesAliasFromNearhostrc(t *testing.T) {
 // APP_URL, beside the config, and enables it.
 func enableHostedPreset(t *testing.T, cfgPath string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "presets-hosts", "hosted.yaml"))
+	enableTestPreset(t, cfgPath, filepath.Join("testdata", "presets-hosts"), "hosted")
+}
+
+// enableReverbPreset installs the schema 2 preset with an App route on
+// APP_PORT and a Reverb route whose host comes from REVERB_URL, beside the
+// config, and enables it.
+func enableReverbPreset(t *testing.T, cfgPath string) {
+	t.Helper()
+	enableTestPreset(t, cfgPath, filepath.Join("testdata", "presets-reverb"), "reverb")
+}
+
+// enableTestPreset installs the preset name from dir beside the config and
+// enables it.
+func enableTestPreset(t *testing.T, cfgPath, dir, name string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, name+".yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(presetsDir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(presetPath(cfgPath, "hosted"), data, 0o644); err != nil {
+	if err := os.WriteFile(presetPath(cfgPath, name), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := loadSaved(t, cfgPath)
-	cfg.UpsertPreset(config.PresetRef{Name: "hosted"})
+	cfg.UpsertPreset(config.PresetRef{Name: name})
 	off := false
 	cfg.RegistryPrompt = &off
 	saveConfig(t, cfgPath, cfg)
@@ -889,5 +904,69 @@ func TestAddDecliningInferredHostsSavesNothing(t *testing.T) {
 	}
 	if _, ok := loadSaved(t, cfgPath).Project("hostapp"); ok {
 		t.Error("the project was saved")
+	}
+}
+
+// reverbEnv names the alias rapp.test as the Reverb route's host, as a Laravel
+// app whose REVERB_HOST is its own name does.
+const reverbEnv = "APP_PORT=8220\nREVERB_PORT=8230\nREVERB_URL=https://rapp.test\n"
+
+// wantAliasHostDropped fails unless routes have 8220 web and 8230 ignored
+// without hosts: the alias is served on the primary, so the Reverb route
+// has nothing of its own to serve.
+func wantAliasHostDropped(t *testing.T, routes []config.Route) {
+	t.Helper()
+	found := 0
+	for _, r := range routes {
+		switch r.Port {
+		case 8220:
+			found++
+			if r.Role != config.RoleWeb {
+				t.Errorf("route 8220 = %+v, want web", r)
+			}
+		case 8230:
+			found++
+			if r.Role != config.RoleIgnore || len(r.Hosts) != 0 {
+				t.Errorf("route 8230 = %+v, want ignore without hosts", r)
+			}
+		}
+	}
+	if found != 2 {
+		t.Errorf("routes = %+v, want 8220 and 8230", routes)
+	}
+}
+
+func TestAddDropsTheAliasFromSecondaryRoutes(t *testing.T) {
+	dir := envProject(t, reverbEnv)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableReverbPreset(t, cfgPath)
+	out, err := execute(t, newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	p, _ := loadSaved(t, cfgPath).Project("rapp")
+	wantAliasHostDropped(t, p.Routes)
+}
+
+func TestWithoutAliasHosts(t *testing.T) {
+	in := []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"App.test"}},
+		{Port: 6001, Role: config.RoleWeb, Hosts: []string{"APP.test"}},
+		{Port: 6002, Role: config.RoleWeb, Hosts: []string{"app.test", "ws.x.io"}},
+		{Port: 3306, Role: config.RoleIgnore},
+	}
+	got := withoutAliasHosts(in, "app.test")
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"App.test"}},
+		{Port: 6001, Role: config.RoleIgnore},
+		{Port: 6002, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 3306, Role: config.RoleIgnore},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("withoutAliasHosts = %+v\nwant %+v", got, want)
+	}
+	if !reflect.DeepEqual(in[1].Hosts, []string{"APP.test"}) {
+		t.Errorf("changed the routes passed in: %+v", in)
 	}
 }
