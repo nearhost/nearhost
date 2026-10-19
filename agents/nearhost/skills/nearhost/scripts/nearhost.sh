@@ -13,7 +13,7 @@
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined,
-# 7 expired, 8 superseded by a newer change.
+# 7 expired, 8 superseded: the change waited on no longer waits.
 
 set -u
 
@@ -219,7 +219,7 @@ doctor)
 	TARGET=$dir
 	find_socket
 	need doctor
-	call "$SOCK" 30 -G --data-urlencode "path=$dir" --data-urlencode "real=$(resolved "$dir")" http://nearhost/v1/doctor ||
+	call "$SOCK" 60 -G --data-urlencode "path=$dir" --data-urlencode "real=$(resolved "$dir")" http://nearhost/v1/doctor ||
 		die 2 "Nearhost stopped answering."
 	printf '%s\n' "$BODY"
 	[ "$STATUS" = 200 ] || exit 1
@@ -229,7 +229,7 @@ reload)
 	TARGET=$dir
 	find_socket
 	need reload
-	call "$SOCK" 30 -X POST -H 'Content-Type: application/json' --data-binary "{\"path\":$(quote "$dir"),\"real\":$(quote "$(resolved "$dir")")}" http://nearhost/v1/projects/reload ||
+	call "$SOCK" 60 -X POST -H 'Content-Type: application/json' --data-binary "{\"path\":$(quote "$dir"),\"real\":$(quote "$(resolved "$dir")")}" http://nearhost/v1/projects/reload ||
 		die 2 "Nearhost stopped answering."
 	# 200 is either applied or declined: the user already refused this change.
 	if [ "$STATUS" = 200 ] && [ "$(field state "$BODY")" = declined ]; then

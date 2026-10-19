@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -379,5 +381,84 @@ func TestScriptReloadDeclined(t *testing.T) {
 	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Reload: rl})
 	if r := runScript(t, home, nil, "reload", dir); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// A Nearhost from before the doctor answers GET /v1 without capabilities.
+// The skill runs doctor after an add and skips it on exit status 5.
+func TestScriptDoctorOnANearhostWithoutCapabilities(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
+	l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	var mu sync.Mutex
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte(`{"api":1,"interface":true,"laptop":"ecs@older","origin":"mini"}`))
+	})}
+	go srv.Serve(l)
+	defer srv.Close()
+	for _, cmd := range []string{"doctor", "reload"} {
+		if r := runScript(t, home, nil, cmd, home); r.code != 5 || !strings.Contains(r.stderr, "Nearhost on ecs@older doesn't support "+cmd) {
+			t.Fatalf("%s: %+v", cmd, r)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range calls {
+		if c != "/v1" {
+			t.Fatalf("called %s", c)
+		}
+	}
+}
+
+// The script waits for the doctor and a reload longer than the server
+// gives them, so it reads the server's answer rather than giving up first.
+func TestScriptWaitsForTheDoctorAndReloadLongerThanTheServer(t *testing.T) {
+	data, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cmd, server := range map[string]time.Duration{"doctor": doctorTimeout, "reload": reloadTimeout} {
+		m := regexp.MustCompile(`(?s)\n` + cmd + `\)\n.*?\bcall "\$SOCK" ([0-9]+) `).FindSubmatch(data)
+		if m == nil {
+			t.Fatalf("no call in %s", cmd)
+		}
+		secs, _ := strconv.Atoi(string(m[1]))
+		if time.Duration(secs)*time.Second <= server {
+			t.Errorf("%s: the script waits %ds, the server up to %s", cmd, secs, server)
+		}
+	}
+}
+
+// The skill's instructions for what the script answers. A reload re-reads
+// .nearhostrc and nothing else, so only the findings about that file call
+// for one; and after an add the doctor waits for the project to start, and
+// is skipped on a Nearhost without it.
+func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "..", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := string(data)
+	if regexp.MustCompile("kind `nearhost`, run[^\n]*reload").MatchString(skill) {
+		t.Error("the skill reloads for every fix of kind nearhost")
+	}
+	reload := regexp.MustCompile("(?m)^[0-9]\\. [^\n]*`nearhostrc.pending`[^\n]*`nearhostrc.not-applied`[^\n]*reload .")
+	if !reload.MatchString(skill) {
+		t.Error("the skill does not reload for nearhostrc.pending and nearhostrc.not-applied")
+	}
+	add := regexp.MustCompile("(?m)^6\\. On `\"state\":\"accepted\"`.*$").FindString(skill)
+	status, doctor := strings.Index(add, "nearhost.sh status"), strings.Index(add, "nearhost.sh doctor .")
+	if status < 0 || doctor < status || !strings.Contains(add, "`running` or `error`") || !strings.Contains(add, "status 5") {
+		t.Errorf("after an add: %q", add)
 	}
 }
