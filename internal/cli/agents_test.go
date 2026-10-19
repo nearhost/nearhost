@@ -568,3 +568,42 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 		}
 	}
 }
+
+// A re-read while the user's approval is saved can clear the engine's
+// pending change before the save returns. An agent polling then still sees
+// its reload waiting, and then accepted.
+func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	a.attach(u.Engine)
+	a.review(&tui.Proposals{})
+	u.agents = a
+	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
+	if status != 202 {
+		t.Fatalf("reload: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	var during any
+	u.acceptSaving = func() {
+		// What a re-read in another goroutine could do meanwhile.
+		u.Engine.DeclineChange("two", "new")
+		during = getJSON(t, sock, "/v1/proposals/"+id)["state"]
+	}
+	if err := u.AcceptChange("two", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if during != "pending" {
+		t.Errorf("polled during the save: %v", during)
+	}
+	if out := getJSON(t, sock, "/v1/proposals/"+id+"?wait=5"); out["state"] != "accepted" {
+		t.Fatalf("after the save: %v", out)
+	}
+}

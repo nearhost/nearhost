@@ -828,3 +828,75 @@ func TestAnAnsweredReloadStaysAnswered(t *testing.T) {
 		}
 	}
 }
+
+// While the user's approval of a change is saved, a re-read may find the
+// change no longer waiting before the save returns. The reload waiting on
+// it must not end superseded then: it ends accepted once the save does, and
+// stays pending if the save fails.
+func TestAReloadBeingAcceptedIsNotSuperseded(t *testing.T) {
+	s, _, rl, _, sock := reloadServer(t, true)
+	rl.answer(waiting, nil)
+	reload := func() string {
+		t.Helper()
+		status, out := call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
+		if status != 202 {
+			t.Fatalf("reload: %d %v", status, out)
+		}
+		return out["id"].(string)
+	}
+	poll := func(id string) any {
+		t.Helper()
+		_, out := call(t, sock, "GET", "/v1/proposals/"+id, "")
+		return out["state"]
+	}
+
+	id := reload()
+	done := s.Accepting("myapp", "b")
+	rl.wait("")
+	if got := poll(id); got != "pending" {
+		t.Fatalf("while accepting: %v", got)
+	}
+	done(true)
+	if got := poll(id); got != "accepted" {
+		t.Fatalf("once saved: %v", got)
+	}
+
+	rl.wait("b")
+	id = reload()
+	done = s.Accepting("myapp", "b")
+	rl.wait("")
+	if got := poll(id); got != "pending" {
+		t.Fatalf("while accepting again: %v", got)
+	}
+	done(false)
+	if got := poll(id); got != "superseded" {
+		t.Fatalf("after a failed save: %v", got)
+	}
+
+	// Nor does a reload that finds the file changed again meanwhile end it.
+	rl.wait("b")
+	id = reload()
+	done = s.Accepting("myapp", "b")
+	rl.answer(Reloaded{Items: []string{"other.example.com"}, SHA256: "c"}, nil)
+	reload()
+	if got := poll(id); got != "pending" {
+		t.Fatalf("after a newer change while accepting: %v", got)
+	}
+	done(true)
+	if got := poll(id); got != "accepted" {
+		t.Fatalf("once saved after a newer change: %v", got)
+	}
+	rl.answer(waiting, nil)
+
+	// A hold on another change, or another project, protects nothing.
+	rl.wait("b")
+	id = reload()
+	done = s.Accepting("myapp", "c")
+	defer done(false)
+	other := s.Accepting("third", "b")
+	defer other(false)
+	rl.wait("")
+	if got := poll(id); got != "superseded" {
+		t.Fatalf("held for another change: %v", got)
+	}
+}

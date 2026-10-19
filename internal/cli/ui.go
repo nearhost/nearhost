@@ -223,6 +223,9 @@ type uiEngine struct {
 	agents *agents
 	// hostsAsked is set by the first HostsState call.
 	hostsAsked atomic.Bool
+	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it
+	// to re-read meanwhile; it is nil otherwise.
+	acceptSaving func()
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }

@@ -161,8 +161,13 @@ type Server struct {
 	reviewer  Reviewer
 	listeners map[string]*listener // by origin
 	proposals map[string]*proposal // by ID
+	accepting map[change]int       // changes being accepted, by holds on each
 	closed    bool
 }
+
+// change is one change of a project's .nearhostrc: the project's name and
+// the change's hash.
+type change struct{ name, sha string }
 
 type listener struct {
 	path string
@@ -328,6 +333,10 @@ const declinedReason = "the user declined this change; change .nearhostrc to ask
 func (s *Server) ChangeAnswered(name, sha string, approved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.changeAnsweredLocked(name, sha, approved)
+}
+
+func (s *Server) changeAnsweredLocked(name, sha string, approved bool) {
 	for _, p := range s.proposals {
 		switch {
 		case !p.reload || p.Name != name:
@@ -341,16 +350,52 @@ func (s *Server) ChangeAnswered(name, sha string, approved bool) {
 	}
 }
 
+// Accepting holds the change with hash sha of the project called name
+// while the user's approval of it is saved. Saving re-reads nothing, but a
+// re-read meanwhile, for an agent's doctor or reload, can find the change
+// no longer waiting before the save returns, and an agent polling then
+// would see its reload superseded although the user approved it. While
+// held, no reload waiting on the change ends superseded. done(true) ends
+// them accepted, as ChangeAnswered does; done(false), for a save that
+// failed, releases the hold and leaves them as they are. Only the first
+// call of done counts.
+func (s *Server) Accepting(name, sha string) (done func(saved bool)) {
+	c := change{name, sha}
+	s.mu.Lock()
+	if s.accepting == nil {
+		s.accepting = map[change]int{}
+	}
+	s.accepting[c]++
+	s.mu.Unlock()
+	var once sync.Once
+	return func(saved bool) {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.accepting[c]--; s.accepting[c] <= 0 {
+				delete(s.accepting, c)
+			}
+			if saved {
+				s.changeAnsweredLocked(name, sha, true)
+			}
+		})
+	}
+}
+
 // supersedeStale ends p superseded when it is a reload whose change no
 // longer waits for approval, so an agent is not left waiting on a change
-// nobody can answer. Waiting is asked without s.mu held; an answer that
-// ends p meanwhile stands, as endLocked leaves an ended record alone.
+// nobody can answer. Waiting is asked without s.mu held, as the engine
+// takes its own lock for it; an answer that ends p meanwhile stands, as
+// endLocked leaves an ended record alone, and so does a hold Accepting put
+// on its change.
 func (s *Server) supersedeStale(p *proposal) {
 	if !p.reload || s.opts.Reload == nil || s.opts.Reload.Waiting(p.Name) == p.sha {
 		return
 	}
 	s.mu.Lock()
-	s.endLocked(p, StateSuperseded, "", "")
+	if s.accepting[change{p.Name, p.sha}] == 0 {
+		s.endLocked(p, StateSuperseded, "", "")
+	}
 	s.mu.Unlock()
 }
 

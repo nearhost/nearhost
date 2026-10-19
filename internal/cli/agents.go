@@ -165,6 +165,16 @@ func (a *agents) changeAnswered(project, sha string, approved bool) {
 	}
 }
 
+// accepting holds the reloads waiting on the change with hash sha of
+// project while the user's approval of it is saved; see
+// agentapi.Server.Accepting. done(true) tells them it was approved.
+func (a *agents) accepting(project, sha string) (done func(saved bool)) {
+	if a == nil {
+		return func(bool) {}
+	}
+	return a.api.Accepting(project, sha)
+}
+
 func (a *agents) accept(id, name string) {
 	if a != nil {
 		a.api.Accept(id, name)
