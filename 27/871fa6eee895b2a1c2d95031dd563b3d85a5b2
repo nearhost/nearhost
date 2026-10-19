@@ -1,0 +1,28 @@
+internal/nearhostrc/nearhostrc_test.go
+  s_89a63a3c1fa7d2::t_5a75972f892955 110-135
+internal/nearhostrc/nearhostrc.go
+  s_89a63a3c1fa7d2::t_b4037030514294 14,100-104,107,119,151-156,192-202
+internal/nearhostrc/merge.go
+  s_89a63a3c1fa7d2::t_faa94c756909ec 116-118,133
+  s_89a63a3c1fa7d2::t_42e7bb8045dff8 16-20,55-56,84-88,114-115,119-132,134-155
+  s_89a63a3c1fa7d2::t_d1b44666cdbff1 156-157
+internal/nearhostrc/merge_test.go
+  s_89a63a3c1fa7d2::t_5a75972f892955 20-22,32-58
+  s_89a63a3c1fa7d2::t_189935f0f0d099 59-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27871fa6eee895b2a1c2d95031dd563b3d85a5b2",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
