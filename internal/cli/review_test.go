@@ -104,16 +104,28 @@ func TestSaveToReplacesTheProject(t *testing.T) {
 	if err := config.Save(path, &config.Config{Projects: []config.Project{a, b}}); err != nil {
 		t.Fatal(err)
 	}
-	a.Routes[0].Port = 3001
-	if err := saveTo(path)(a); err != nil {
+	// The engine's copy of a is what was loaded; the file changes after.
+	stale := a
+	stale.Routes = []config.Route{{Port: 3001, Role: config.RoleWeb}}
+	stale.Nearhostrc = &config.RcSnapshot{SHA256: "abc", Routes: []config.Route{{Port: 3001, Role: config.RoleWeb}}}
+	edited := a
+	edited.Enabled, edited.Alias = false, "renamed.test"
+	if err := config.Save(path, &config.Config{Projects: []config.Project{edited, b}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveTo(path)(stale); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Projects) != 2 || cfg.Projects[0].Routes[0].Port != 3001 || cfg.Projects[1].Name != "b" {
+	got := cfg.Projects[0]
+	if len(cfg.Projects) != 2 || got.Routes[0].Port != 3001 || got.Nearhostrc == nil || got.Nearhostrc.SHA256 != "abc" || cfg.Projects[1].Name != "b" {
 		t.Fatalf("saved %+v", cfg.Projects)
+	}
+	if got.Enabled || got.Alias != "renamed.test" {
+		t.Fatalf("the save undid an edit made to the file since: %+v", got)
 	}
 	gone := config.Project{Name: "gone", Server: config.LocalServer, Path: "/g", Alias: "g.test"}
 	if err := saveTo(path)(gone); err == nil {

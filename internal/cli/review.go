@@ -52,10 +52,13 @@ func reviewProject(save func(config.Project) error) func(ctx context.Context, p 
 // changed at once do not each save a config without the other's change.
 var saveMu sync.Mutex
 
-// saveTo returns a save for reviewProject that writes a project into the
-// config file at path: it loads the file, replaces the project of the same
-// name, validates and saves, as EditConfig does for the interface. A project
-// no longer in the file is not added back.
+// saveTo returns a save for reviewProject that writes a project's routes
+// into the config file at path: it loads the file, sets the routes and the
+// approved snapshot of the project of the same name, validates and saves, as
+// EditConfig does for the interface. Only those two fields are taken from p:
+// p is the engine's copy, which `up` loaded at launch, and anything else
+// changed in the file since (enabled, alias, path) must not be undone. A
+// project no longer in the file is not added back.
 func saveTo(path string) func(config.Project) error {
 	return func(p config.Project) error {
 		saveMu.Lock()
@@ -74,7 +77,8 @@ func saveTo(path string) func(config.Project) error {
 		if i < 0 {
 			return fmt.Errorf("project %q is no longer in %s", p.Name, path)
 		}
-		cfg.Projects[i] = p
+		cfg.Projects[i].Routes = p.Routes
+		cfg.Projects[i].Nearhostrc = p.Nearhostrc
 		if err := cfg.Validate(); err != nil {
 			return err
 		}
