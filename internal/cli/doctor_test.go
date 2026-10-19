@@ -60,9 +60,12 @@ func (f *fakeMachine) backend() doctorBackend {
 			f.probed = append(f.probed, key)
 			return f.portErr[key]
 		},
-		lookup:    f.lookup,
-		holderOf:  func(_ context.Context, port int) string { return f.holders[port] },
-		readHosts: func() (string, error) { f.hostsReads++; return f.hosts, f.hostsErr },
+		env: doctorEnv{
+			lookup:    f.lookup,
+			readHosts: func() (string, error) { f.hostsReads++; return f.hosts, f.hostsErr },
+			goos:      f.goos,
+		},
+		holderOf: func(_ context.Context, port int) string { return f.holders[port] },
 		checkServer: func(_ context.Context, srv config.Server) error {
 			f.serverCalls = append(f.serverCalls, srv.SSHHost)
 			return f.serverErr[srv.Name]
