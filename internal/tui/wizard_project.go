@@ -1120,8 +1120,10 @@ func (f *projectForm) mergeRc() {
 	}
 }
 
-// proposeWeb makes port the web route, as the agent proposed, when
-// discovery found it; the route that was the web route is then ignored.
+// proposeWeb makes port the primary web route, as the agent proposed, when
+// discovery found it. A web route without hosts is then ignored, as only the
+// primary goes without; one with hosts serves them and stays web, as add
+// --web keeps it.
 func (f *projectForm) proposeWeb(port int) {
 	at := -1
 	for i, r := range f.routes {
@@ -1133,11 +1135,12 @@ func (f *projectForm) proposeWeb(port int) {
 		return
 	}
 	for i := range f.routes {
-		if f.routes[i].Role == config.RoleWeb {
+		if f.routes[i].Role == config.RoleWeb && len(f.routes[i].Hosts) == 0 {
 			f.routes[i].Role = config.RoleIgnore
 		}
 	}
 	f.routes[at].Role = config.RoleWeb
+	f.routes = config.MovePrimary(f.routes, port)
 }
 
 // routeLabel is how a route's label is shown: a saved route no longer found
