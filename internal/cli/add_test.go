@@ -580,7 +580,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 	declined := filepath.Join(t.TempDir(), "config.yaml")
 	for _, answer := range []string{"\n", ""} {
 		out, err = executeWithInput(t, answer, newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
-		if err == nil || err.Error() != "not added: what .nearhostrc asks for was not approved" {
+		if err == nil || err.Error() != "not added: what this project asks for was not approved" {
 			t.Fatalf("answer %q: err = %v\n%s", answer, err, out)
 		}
 	}
@@ -875,5 +875,19 @@ func TestForceWebKeepsHostedRoutes(t *testing.T) {
 	added := forceWeb([]config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}}, {Port: 3306, Role: config.RoleIgnore}}, 4000)
 	if len(added) != 3 || added[0].Port != 4000 || added[0].Role != config.RoleWeb || added[1].Port != 80 || added[1].Role != config.RoleWeb {
 		t.Errorf("added = %+v", added)
+	}
+}
+
+func TestAddDecliningInferredHostsSavesNothing(t *testing.T) {
+	dir := envProject(t, hostedEnv)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	_, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "hostapp")
+	if err == nil || err.Error() != "not added: what this project asks for was not approved" {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := loadSaved(t, cfgPath).Project("hostapp"); ok {
+		t.Error("the project was saved")
 	}
 }

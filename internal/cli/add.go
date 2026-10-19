@@ -327,7 +327,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 	}
 	fmt.Fprint(out, "Approve these? [y/N] ")
 	if !saidYesDefaultNo(answers, out) {
-		return errors.New("not added: what .nearhostrc asks for was not approved")
+		return errors.New("not added: what this project asks for was not approved")
 	}
 	return nil
 }
