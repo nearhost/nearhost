@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
 // The steps of the add-project form.
@@ -69,12 +71,19 @@ type projectForm struct {
 	routes   []config.Route
 	routeRow int
 	webPort  textField // asked for when discovery found no routes
+	// hosts edits the selected web route's hosts while editingHosts; what
+	// is wrong with them is hostsErr.
+	hosts        textField
+	editingHosts bool
+	hostsErr     string
+	typed        map[string]bool // hosts typed on the routes step, approved by being typed
 
 	name, alias       textField
 	aliasEdited       bool // the alias was typed, so it no longer follows the name
 	focus             int  // 0 name, 1 alias
 	nameErr, aliasErr string
-	advice            []Advisory // for the routes and alias chosen, shown at the end
+	advice            []Advisory     // for the routes and alias chosen, shown at the end
+	approval          []approvalItem // the hosts to approve on the last look
 
 	edit *config.Project // the project being edited; nil when adding
 	// proposal is the agent's proposal the form was opened with; nil when
@@ -92,6 +101,13 @@ type projectForm struct {
 	err     string   // the current step's error
 	seq     int      // the background step whose answer is awaited
 	w       *worker
+}
+
+// approvalItem is a host the user approves by saving, and the address it
+// has on the internet, if any.
+type approvalItem struct {
+	nearhostrc.Item
+	public string
 }
 
 // listing is a parent directory's listing: out while not done, then its
@@ -147,6 +163,7 @@ type (
 		nameErr, aliasErr error
 		advice            []Advisory
 		notes             []string
+		approval          []approvalItem
 	}
 	projectSavedMsg struct {
 		seq  int
@@ -326,7 +343,7 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 			}
 		}
 		if f.nameErr == "" && f.aliasErr == "" {
-			f.advice = msg.advice
+			f.advice, f.approval = msg.advice, msg.approval
 			f.notes = append(f.notes, msg.notes...)
 			f.step = projectStepConfirm
 		}
@@ -379,6 +396,10 @@ func (f *projectForm) closeFiles() tea.Cmd {
 
 func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if s == "esc" && f.editingHosts {
+		f.editingHosts, f.hostsErr = false, ""
+		return nil
+	}
 	if s == "esc" {
 		return f.back()
 	}
@@ -500,6 +521,7 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.name.value, f.alias.value = strings.TrimSpace(f.name.value), strings.TrimSpace(f.alias.value)
 			seq, b, name, alias := f.seq, f.b, f.name.value, f.alias.value
 			files, dir, routes := f.files, f.resolved, append([]config.Route(nil), f.routes...)
+			items := f.needsApproval()
 			return f.w.do(func(ctx context.Context) tea.Msg {
 				nameErr, aliasErr := b.CheckNames(name, alias)
 				msg := namesCheckedMsg{seq: seq, nameErr: nameErr, aliasErr: aliasErr}
@@ -507,6 +529,12 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 					var err error
 					if msg.advice, msg.notes, err = files.Advise(ctx, dir, routes, alias); err != nil {
 						msg.notes = append(msg.notes, err.Error())
+					}
+				}
+				if nameErr == nil && aliasErr == nil {
+					for _, it := range items {
+						addr, _ := b.PublicAddress(ctx, it.Host)
+						msg.approval = append(msg.approval, approvalItem{it, addr})
 					}
 				}
 				return msg
@@ -525,15 +553,22 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 			f.seq = nextSeq()
 			f.busy, f.err = "Saving…", ""
 			seq, b, p := f.seq, f.b, f.project()
+			// Saving approves what .nearhostrc asks for, so its snapshot is
+			// saved with the project. A file that cannot be read now leaves
+			// what was approved before as it was.
+			p.Nearhostrc = f.draft.Nearhostrc
 			if f.edit != nil {
 				was := f.edit.Name
 				p.Enabled = f.edit.Enabled
+				if f.draft.RcError != "" {
+					p.Nearhostrc = f.edit.Nearhostrc
+				}
 				return f.w.do(func(context.Context) tea.Msg {
 					return projectSavedMsg{seq, p.Name, b.EditConfig(func(cfg *config.Config) error {
 						for i := range cfg.Projects {
 							if cfg.Projects[i].Name == was {
 								cfg.Projects[i] = p
-								return nil
+								return hostClash(cfg, p)
 							}
 						}
 						return errNoLongerConfigured(was)
@@ -558,6 +593,11 @@ func (f *projectForm) paste(s string) tea.Cmd {
 			return f.edited()
 		}
 	case projectStepRoutes:
+		if f.editingHosts {
+			f.hosts.paste(s)
+			f.hostsErr = ""
+			return nil
+		}
 		if len(f.routes) == 0 && strings.Trim(s, "0123456789") == "" {
 			f.webPort.paste(s)
 			f.err = ""
@@ -603,7 +643,22 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if f.editingHosts {
+		if k.String() == "enter" {
+			f.setHosts()
+		} else if f.hosts.key(k) {
+			f.hostsErr = ""
+		}
+		return nil
+	}
 	switch k.String() {
+	case "h":
+		if f.routes[f.routeRow].Role != config.RoleWeb {
+			f.err = "only a web route has hosts; make this one web with ← or → first"
+			return nil
+		}
+		f.hosts.value = strings.Join(f.routes[f.routeRow].Hosts, " ")
+		f.editingHosts, f.hostsErr, f.err = true, "", ""
 	case "up":
 		f.routeRow = max(f.routeRow-1, 0)
 	case "down":
@@ -632,6 +687,88 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 		f.err, f.step = "", projectStepDetails
 	}
 	return nil
+}
+
+// setHosts gives the selected route the hosts typed for it, separated by
+// spaces, as `nearhost add --host` takes them: lower-cased, each checked, and
+// each served once, so one on another route, or typed twice, is dropped.
+// Hosts new to the route count as approved, since the user typed them. A
+// host that is not valid keeps the field open and says why.
+func (f *projectForm) setHosts() {
+	elsewhere := map[string]bool{}
+	for j, r := range f.routes {
+		if j != f.routeRow {
+			for _, h := range r.Hosts {
+				elsewhere[strings.ToLower(h)] = true
+			}
+		}
+	}
+	had := map[string]bool{}
+	for _, h := range f.routes[f.routeRow].Hosts {
+		had[strings.ToLower(h)] = true
+	}
+	var hosts []string
+	seen := map[string]bool{}
+	for _, h := range strings.Fields(f.hosts.value) {
+		h = strings.ToLower(h)
+		if err := hostname.Valid(h); err != nil {
+			f.hostsErr = err.Error()
+			return
+		}
+		if !seen[h] && !elsewhere[h] {
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	if f.typed == nil {
+		f.typed = map[string]bool{}
+	}
+	for _, h := range hosts {
+		if !had[h] {
+			f.typed[h] = true
+		}
+	}
+	f.routes[f.routeRow].Hosts = hosts
+	f.editingHosts, f.hostsErr = false, ""
+}
+
+// needsApproval is what saving the project approves: the hosts that need
+// approval and were not served before, leaving out those typed here.
+func (f *projectForm) needsApproval() []nearhostrc.Item {
+	var old config.Project
+	if f.edit != nil {
+		old = *f.edit
+	}
+	var items []nearhostrc.Item
+	for _, it := range nearhostrc.NeedsApproval(old, f.project()) {
+		if !f.typed[strings.ToLower(it.Host)] {
+			items = append(items, it)
+		}
+	}
+	return items
+}
+
+// hostClash refuses p, as it is in cfg, when it is enabled and serves a host
+// another enabled project serves. A disabled project serves nothing, as
+// `nearhost add` has it.
+func hostClash(cfg *config.Config, p config.Project) error {
+	if host, other, clash := cfg.HostClash(p); clash && p.Enabled {
+		return fmt.Errorf("host %s is already served by project %q", host, other)
+	}
+	return nil
+}
+
+// fromRc reports whether the project's .nearhostrc lists port.
+func (f *projectForm) fromRc(port int) bool {
+	if f.draft.Nearhostrc == nil {
+		return false
+	}
+	for _, r := range f.draft.Nearhostrc.Routes {
+		if r.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // roles are the roles a route can take on the form's server, in the order
@@ -889,15 +1026,42 @@ func (f *projectForm) toRoutes() {
 				f.routes = append(f.routes, r)
 			}
 		}
+		f.mergeRc()
 	}
 	if f.proposal != nil && f.proposal.Web != 0 {
 		f.proposeWeb(f.proposal.Web)
 	}
-	f.routeRow, f.webPort.value = 0, ""
+	f.routeRow, f.webPort.value, f.editingHosts = 0, "", false
 	if f.name.value == "" {
 		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
 	}
 	f.step, f.err = projectStepRoutes, ""
+}
+
+// mergeRc applies the project's .nearhostrc to the routes of the project
+// being edited as nearhost does when it starts: the file's routes come first
+// with its hosts, hosts added by hand to a port it lists stay, and the rest
+// keep their saved roles, but are not web. Discovery merged the file without
+// the saved project, so it could not tell which hosts were added by hand. A
+// merge that fails is said like a file that cannot be read.
+func (f *projectForm) mergeRc() {
+	snap := f.draft.Nearhostrc
+	if snap == nil {
+		return
+	}
+	file := &nearhostrc.File{SHA256: snap.SHA256}
+	for _, r := range snap.Routes {
+		file.Routes = append(file.Routes, nearhostrc.Route{Port: r.Port, Role: r.Role, Label: r.Label, Hosts: r.Hosts})
+	}
+	merged, err := nearhostrc.Merge(*f.edit, file, f.routes)
+	if err != nil {
+		f.draft.RcError, f.draft.Nearhostrc = err.Error(), nil
+		return
+	}
+	f.routes = merged.Routes
+	for _, r := range snap.Routes {
+		delete(f.missing, r.Port) // the file has it
+	}
 }
 
 // proposeWeb makes port the web route, as the agent proposed, when
@@ -1108,8 +1272,13 @@ func (f *projectForm) lines(width int) []string {
 			if i == 0 {
 				label = "routes"
 			}
-			lines = append(lines, field(label, fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, clean(f.routeLabel(r))), width)...)
+			route := fmt.Sprintf("%-6d %-9s %s", r.Port, r.Role, clean(f.routeLabel(r)))
+			if len(r.Hosts) > 0 {
+				route = fmt.Sprintf("%-6d %-9s %s  %s", r.Port, r.Role, clean(strings.Join(r.Hosts, " ")), clean(f.routeLabel(r)))
+			}
+			lines = append(lines, field(label, route, width)...)
 		}
+		lines = append(lines, approvalLines(f.approval, width)...)
 		lines = append(lines, adviceLines(f.advice, width)...)
 	}
 	if f.busy != "" {
@@ -1173,8 +1342,34 @@ func (f *projectForm) routeLines(width int) []string {
 		case r.Role == config.RoleWeb:
 			role.style = styleBeacon
 		}
-		cells := []seg{{text, " "}, box, {text, " " + fit(strconv.Itoa(r.Port), 8)}, role, {text, clean(f.routeLabel(r))}}
-		lines = append(lines, renderRow(cells, nil, width, selected))
+		cells := []seg{{text, " "}, box, {text, " " + fit(strconv.Itoa(r.Port), 8)}, role}
+		label := clean(f.routeLabel(r))
+		var right []seg
+		if f.fromRc(r.Port) {
+			right = []seg{{styleDim, "from .nearhostrc"}}
+		}
+		if len(r.Hosts) > 0 {
+			// The hosts are cut short to leave room for the label, or the
+			// first 24 cells of it.
+			room := width - 28 - min(ansi.StringWidth(label), 24) - 2 - segsWidth(right) - 1
+			hosts := ansi.Truncate(clean(strings.Join(r.Hosts, " ")), max(room, 8), "…")
+			cells = append(cells, seg{text, hosts + "  "})
+		}
+		cells = append(cells, seg{text, label})
+		lines = append(lines, renderRow(cells, right, width, selected))
+	}
+	if f.editingHosts {
+		lines = append(lines, "")
+		lines = append(lines, field("hosts", f.hosts.view(true), width)...)
+		if f.hostsErr != "" {
+			lines = append(lines, errorLines(f.hostsErr, width)...)
+		}
+	}
+	if f.draft.RcError != "" {
+		lines = append(lines, "")
+		for _, l := range wrap(strings.TrimSuffix(clean(sentence(f.draft.RcError)), ".")+". These routes leave it out.", width) {
+			lines = append(lines, styleAmber.Render(l))
+		}
 	}
 	alias := f.draft.Alias
 	if alias == "" || f.proposal != nil && f.alias.value != "" {
@@ -1187,6 +1382,24 @@ func (f *projectForm) routeLines(width int) []string {
 	}
 	lines = append(lines, wrap(explain, width)...)
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
+}
+
+// approvalLines lists the hosts saving approves, each with why it needs
+// approval and, for one the internet has, what serving it here hides.
+func approvalLines(items []approvalItem, width int) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	lines := []string{"", styleAmber.Render("Needs your approval:")}
+	for _, it := range items {
+		lines = append(lines, wrap(fmt.Sprintf("  %s on port %d (%s)", clean(it.Host), it.Port, it.Why), width)...)
+		if it.public != "" {
+			for _, l := range wrap("resolves to "+clean(it.public)+" on the internet; serving it here hides that site on this machine", width-4) {
+				lines = append(lines, styleDim.Render("    "+l))
+			}
+		}
+	}
+	return lines
 }
 
 // adviceLines draws advisories, each with its snippet.
@@ -1255,9 +1468,19 @@ func (f *projectForm) keys() []footerItem {
 		if len(f.routes) == 0 {
 			return []footerItem{{"enter", "next"}, {"esc", "back"}}
 		}
-		return []footerItem{{"space", "toggle"}, {"←/→", "role"}, {"enter", "next"}, {"esc", "back"}}
+		if f.editingHosts {
+			return []footerItem{{"enter", "set hosts"}, {"esc", "cancel"}}
+		}
+		items := []footerItem{{"space", "toggle"}, {"←/→", "role"}}
+		if f.routes[f.routeRow].Role == config.RoleWeb {
+			items = append(items, footerItem{"h", "hosts"})
+		}
+		return append(items, footerItem{"enter", "next"}, footerItem{"esc", "back"})
 	case projectStepDetails:
 		return []footerItem{{"tab", "switch"}, {"enter", "next"}, {"esc", "back"}}
+	}
+	if len(f.approval) > 0 {
+		return []footerItem{{"enter", "approve and save"}, {"esc", "back"}}
 	}
 	if f.edit != nil {
 		return []footerItem{{"enter", "save"}, {"esc", "back"}}

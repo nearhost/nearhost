@@ -31,6 +31,7 @@ type formFake struct {
 	aliasErr    error
 	saveErr     error
 	saved       []config.Project
+	public      map[string]string // the internet addresses of hosts, for PublicAddress
 }
 
 // fakeFiles is a server's files: dirs lists every directory, by path, and
@@ -164,6 +165,13 @@ func (f *fakeBackend) SaveProject(p config.Project) error {
 	}
 	f.forms.saved = append(f.forms.saved, p)
 	return nil
+}
+
+func (f *fakeBackend) PublicAddress(_ context.Context, host string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	addr, ok := f.forms.public[host]
+	return addr, ok
 }
 
 func (f *fakeFiles) Advise(_ context.Context, _ string, routes []config.Route, alias string) ([]Advisory, []string, error) {

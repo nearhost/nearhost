@@ -409,3 +409,96 @@ func TestConfirmShowsAdviceForTheFinalChoices(t *testing.T) {
 		t.Errorf("advised for %v", files.advised)
 	}
 }
+
+// Routes that came from .nearhostrc say so, and the hosts they ask for are
+// listed on the last look for approval, with where a real domain points.
+func TestAddFormShowsNearhostrcRoutesAndApprovalItems(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	rc := &config.RcSnapshot{SHA256: "abc", Routes: []config.Route{{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}}}}
+	files.drafts["/work/here"] = Draft{
+		Routes:     []config.Route{{Port: 8220, Role: config.RoleWeb, Label: "app", Hosts: []string{"app.local.dd.io"}}, ignored(5173, "vite")},
+		Nearhostrc: rc,
+	}
+	f.forms.public = map[string]string{"app.local.dd.io": "93.184.216.34"}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · routes", "app.local.dd.io", "from .nearhostrc", "h hosts")
+	if strings.Count(screen(m), "from .nearhostrc") != 1 {
+		t.Errorf("a route discovery found is marked as from .nearhostrc:\n%s", screen(m))
+	}
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · confirm", "Needs your approval:", "app.local.dd.io on port 8220 (a real domain)",
+		"resolves to 93.184.216.34 on the internet", "enter approve and save")
+	settle(m, press(m, "enter"))
+	if len(f.forms.saved) != 1 || f.forms.saved[0].Nearhostrc != rc {
+		t.Fatalf("saved %+v", f.forms.saved)
+	}
+	if r := f.forms.saved[0].Routes[0]; r.Port != 8220 || len(r.Hosts) != 1 || r.Hosts[0] != "app.local.dd.io" {
+		t.Errorf("saved routes %+v", f.forms.saved[0].Routes)
+	}
+}
+
+// A .nearhostrc that cannot be read is said on the routes step, and the
+// project can be added without it.
+func TestRoutesStepShowsANearhostrcThatCannotBeRead(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{Routes: []config.Route{web(8080, "app")}, RcError: ".nearhostrc: ${APP_PORT} has no value in .env.local or .env, and no default"}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, ".nearhostrc: ${APP_PORT} has no value", "[x] 8080")
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "enter add · esc back")
+	settle(m, press(m, "enter"))
+	if len(f.forms.saved) != 1 || f.forms.saved[0].Nearhostrc != nil {
+		t.Errorf("saved %+v", f.forms.saved)
+	}
+}
+
+func TestRoutesStepEditsHosts(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{Routes: []config.Route{web(8080, "app"), ignored(5173, "vite")}}
+	toPath(t, m, 0)
+	settle(m, press(m, "enter"))
+	pf := m.form.(*projectForm)
+
+	press(m, "down")
+	press(m, "h") // vite is not a web route
+	wantScreen(t, m, "Only a web route has hosts")
+	press(m, "up")
+	press(m, "h")
+	wantScreen(t, m, "hosts     ▏", "enter set hosts · esc cancel")
+	typeText(m, "a.local.x.io  B.local.x.io a.local.x.io")
+	press(m, "enter")
+	if h := pf.routes[0].Hosts; len(h) != 2 || h[0] != "a.local.x.io" || h[1] != "b.local.x.io" {
+		t.Fatalf("hosts %v", h)
+	}
+	wantScreen(t, m, "‹ web ›       a.local.x.io b.local.x.io", "h hosts")
+
+	press(m, "h")
+	wantScreen(t, m, "hosts     a.local.x.io b.local.x.io▏")
+	press(m, "ctrl+u")
+	typeText(m, "*.com")
+	press(m, "enter")
+	wantScreen(t, m, `Invalid host "*.com"`, "hosts     *.com▏")
+	if h := pf.routes[0].Hosts; len(h) != 2 || !pf.editingHosts {
+		t.Fatalf("a bad host changed the hosts to %v, or closed the field", h)
+	}
+	press(m, "esc")
+	if pf.editingHosts || pf.step != projectStepRoutes || len(pf.routes[0].Hosts) != 2 {
+		t.Fatalf("esc: editing %v, step %d, hosts %v", pf.editingHosts, pf.step, pf.routes[0].Hosts)
+	}
+
+	// Hosts typed here are approved by typing them.
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · confirm", "enter add · esc back")
+	if strings.Contains(screen(m), "Needs your approval:") {
+		t.Errorf("typed hosts are asked about:\n%s", screen(m))
+	}
+	settle(m, press(m, "enter"))
+	if len(f.forms.saved) != 1 || len(f.forms.saved[0].Routes[0].Hosts) != 2 {
+		t.Errorf("saved %+v", f.forms.saved)
+	}
+}

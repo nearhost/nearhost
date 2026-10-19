@@ -8,6 +8,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -126,6 +127,12 @@ func (u *uiEngine) SaveProject(p config.Project) error {
 	return err
 }
 
+// PublicAddress looks host up with the lookup the engine and the hosts
+// state share, so an answer is cached for all of them.
+func (u *uiEngine) PublicAddress(ctx context.Context, host string) (string, bool) {
+	return firstPublic(ctx, u.b.lookup, host)
+}
+
 // formNameProblem is nameProblem in the words of the add form.
 func formNameProblem(cfg *config.Config, name string) error {
 	var taken *nameTakenError
@@ -157,8 +164,8 @@ func (f *uiFiles) Resolve(_ context.Context, path string) (string, error) {
 }
 
 // Discover runs discovery with the enabled presets and returns what the add
-// form shows: the routes, the presets the trusted registries suggest,
-// advisories and notes.
+// form shows: the routes, with the project's .nearhostrc applied, the
+// presets the trusted registries suggest, advisories and notes.
 func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) {
 	cfg, err := f.u.current()
 	if err != nil {
@@ -179,6 +186,21 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 		Server: f.srv, Path: dir,
 		Name: name, Alias: config.AliasFor(name),
 		Routes: discoveredRoutes(res),
+	}
+	// The project's .nearhostrc says what it serves. One that cannot be
+	// read, or merged with what was found, is said on the routes step, and
+	// the project can be added without it.
+	rc, found, err := nearhostrc.Read(reader)
+	switch {
+	case err != nil:
+		d.RcError = err.Error()
+	case found:
+		merged, err := nearhostrc.Merge(config.Project{Name: name, Alias: d.Alias, Routes: d.Routes}, rc, d.Routes)
+		if err != nil {
+			d.RcError = err.Error()
+			break
+		}
+		d.Routes, d.Nearhostrc = merged.Routes, merged.Nearhostrc
 	}
 	for _, o := range res.Suggested {
 		alias, _ := config.SplitPreset(o.Name)
