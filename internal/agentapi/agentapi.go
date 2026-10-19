@@ -333,10 +333,6 @@ const declinedReason = "the user declined this change; change .nearhostrc to ask
 func (s *Server) ChangeAnswered(name, sha string, approved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.changeAnsweredLocked(name, sha, approved)
-}
-
-func (s *Server) changeAnsweredLocked(name, sha string, approved bool) {
 	for _, p := range s.proposals {
 		switch {
 		case !p.reload || p.Name != name:
@@ -356,9 +352,12 @@ func (s *Server) changeAnsweredLocked(name, sha string, approved bool) {
 // no longer waiting before the save returns, and an agent polling then
 // would see its reload superseded although the user approved it. While
 // held, no reload waiting on the change ends superseded. done(true) ends
-// them accepted, as ChangeAnswered does; done(false), for a save that
-// failed, releases the hold and leaves them as they are. Only the first
-// call of done counts.
+// them accepted. Unlike ChangeAnswered it leaves the project's reloads of
+// other changes alone: a newer change found during the save still waits
+// for the user, and an older one ends superseded when its agent next polls.
+// done(false), for a save that failed or a change that no longer waits,
+// releases the hold and leaves them as they are. Only the first call of
+// done counts.
 func (s *Server) Accepting(name, sha string) (done func(saved bool)) {
 	c := change{name, sha}
 	s.mu.Lock()
@@ -375,8 +374,13 @@ func (s *Server) Accepting(name, sha string) (done func(saved bool)) {
 			if s.accepting[c]--; s.accepting[c] <= 0 {
 				delete(s.accepting, c)
 			}
-			if saved {
-				s.changeAnsweredLocked(name, sha, true)
+			if !saved {
+				return
+			}
+			for _, p := range s.proposals {
+				if p.reload && p.Name == name && p.sha == sha {
+					s.endLocked(p, StateAccepted, "", name)
+				}
 			}
 		})
 	}

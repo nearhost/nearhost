@@ -878,13 +878,19 @@ func TestAReloadBeingAcceptedIsNotSuperseded(t *testing.T) {
 	id = reload()
 	done = s.Accepting("myapp", "b")
 	rl.answer(Reloaded{Items: []string{"other.example.com"}, SHA256: "c"}, nil)
-	reload()
+	newer := reload()
 	if got := poll(id); got != "pending" {
 		t.Fatalf("after a newer change while accepting: %v", got)
 	}
+	rl.wait("c")
 	done(true)
 	if got := poll(id); got != "accepted" {
 		t.Fatalf("once saved after a newer change: %v", got)
+	}
+	// The newer change still waits for the user; accepting the older one
+	// does not answer it.
+	if got := poll(newer); got != "pending" {
+		t.Fatalf("the newer change once the older one is saved: %v", got)
 	}
 	rl.answer(waiting, nil)
 

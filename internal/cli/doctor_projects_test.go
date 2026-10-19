@@ -614,4 +614,8 @@ func TestWithoutReportedDropsOnlyTheNamesTheHostsCheckNames(t *testing.T) {
 	if len(projects[0].findings) != 3 {
 		t.Errorf("changed the projects passed in: %+v", projects)
 	}
+	// Names compare as DNS does, whatever their case.
+	if got := withoutReported(projects[1:], []string{"Shop.TEST"}); len(got[0].findings) != 0 {
+		t.Errorf("kept a name the check lists in another case: %+v", got)
+	}
 }

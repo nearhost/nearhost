@@ -151,12 +151,16 @@ type machine struct {
 // withoutReported is projects without their hosts.unresolved findings for
 // the names in missing, which the hosts block check reported. A finding for
 // any other name stays: when the check fails for stale names only, or for a
-// hosts file it could not read, the finding is all that names it.
+// hosts file it could not read, the finding is all that names it. Names
+// compare without regard to case, as DNS compares them.
 func withoutReported(projects []projectReport, missing []string) []projectReport {
 	out := make([]projectReport, len(projects))
 	for i, p := range projects {
 		out[i] = projectReport{name: p.name, findings: slices.DeleteFunc(slices.Clone(p.findings),
-			func(f doctor.Finding) bool { return f.ID == "hosts.unresolved" && slices.Contains(missing, f.Host) })}
+			func(f doctor.Finding) bool {
+				return f.ID == "hosts.unresolved" &&
+					slices.ContainsFunc(missing, func(n string) bool { return strings.EqualFold(n, f.Host) })
+			})}
 	}
 	return out
 }

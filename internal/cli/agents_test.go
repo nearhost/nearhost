@@ -638,3 +638,34 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 		t.Fatalf("after the save: %v", out)
 	}
 }
+
+// AcceptChange holds a change before it reads whether the change still
+// waits, and lets go of it when it no longer does, so that the reload
+// waiting on it then ends superseded.
+func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	a.attach(u.Engine)
+	a.review(&tui.Proposals{})
+	u.agents = a
+	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
+	if status != 202 {
+		t.Fatalf("reload: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	u.Engine.DeclineChange("two", "new")
+	if err := u.AcceptChange("two", "new"); err == nil {
+		t.Fatal("accepted a change that no longer waits")
+	}
+	if out := getJSON(t, sock, "/v1/proposals/"+id); out["state"] != "superseded" {
+		t.Fatalf("after the refused accept: %v", out)
+	}
+}

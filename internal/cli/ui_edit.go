@@ -44,14 +44,15 @@ func (u *uiEngine) saveRc(p config.Project) error {
 // now: the user approved what the review showed, and a newer file may ask
 // for more. The config poll then applies the save, which restarts the
 // project with it. An agent waiting on the change is told once it is saved;
-// until then its reload is held, so that a re-read clearing the pending
-// change meanwhile does not end it superseded.
+// until then its reload is held, from before the change is read, so that a
+// re-read clearing the pending change meanwhile does not end it superseded.
 func (u *uiEngine) AcceptChange(project, sha string) error {
+	done := u.agents.accepting(project, sha)
 	change := u.Status(project).Pending
 	if change == nil || change.SHA256 != sha {
+		done(false)
 		return fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
 	}
-	done := u.agents.accepting(project, sha)
 	err := u.EditConfig(func(cfg *config.Config) error {
 		if err := takeRc(cfg, change.Project, u.path); err != nil {
 			return err
