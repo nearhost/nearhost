@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,6 +211,8 @@ type fakeProjects struct {
 	review  engine.Review
 	pending *engine.Change
 	notice  string
+	// rereadErr fails each Reread, as for a server not connected.
+	rereadErr error
 }
 
 func (f fakeProjects) Status(name string) engine.ProjectStatus {
@@ -225,7 +228,7 @@ func (f fakeProjects) Reread(_ context.Context, name string) (engine.Review, err
 	if f.reread != nil {
 		f.reread(name)
 	}
-	return f.review, nil
+	return f.review, f.rereadErr
 }
 
 func (f fakeProjects) StopProject(ctx context.Context, name string) error {
@@ -500,6 +503,34 @@ func TestDoctorRestartsUnderUp(t *testing.T) {
 		if _, err := src.Doctor(context.Background(), config.LocalServer, "p", p.Path); err != nil || !reflect.DeepEqual(log, c.want) {
 			t.Errorf("%s: %v, log %v", c.name, err, log)
 		}
+	}
+}
+
+// A re-read that fails, as for a server not connected, still leaves the
+// doctor to report what is in the project's files.
+func TestDoctorToleratesAFailedReread(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	p := localProject("p", 3000, true)
+	p.Path = t.TempDir()
+	writeFiles(t, p.Path, map[string]string{".nearhostrc": unknownKeyRc})
+	saveConfig(t, path, &config.Config{Projects: []config.Project{p}})
+	var log []string
+	src := &agentSource{
+		cfgPath: path,
+		env:     agentEnv{restart: true, doctor: doctorEnv{listening: func(context.Context, int) bool { return true }, goos: "darwin"}},
+		projects: fakeProjects{log: &log, states: map[string]engine.State{"p": engine.StateRunning},
+			review: engine.Review{Updated: &config.Project{Name: "p"}}, rereadErr: errors.New(`server "local" is not connected`)},
+		openFiles: func(context.Context, config.Server) (serverFiles, error) { return localFiles{}, nil },
+	}
+	got, err := src.Doctor(context.Background(), config.LocalServer, "p", p.Path)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if !slices.ContainsFunc(got, func(f doctor.Finding) bool { return f.ID == "nearhostrc.invalid" }) {
+		t.Errorf("findings %+v, want the broken .nearhostrc", got)
+	}
+	if !reflect.DeepEqual(log, []string{"reread p"}) {
+		t.Errorf("log %v, want one re-read and no restart", log)
 	}
 }
 
