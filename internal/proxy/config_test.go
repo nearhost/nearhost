@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -677,7 +680,9 @@ var dockerRanges = []string{"172.16.0.0/12", "::ffff:172.16.0.0/108", "fd00:d0c:
 var dockerClients = []string{"172.16.0.0/12", "fd00:d0c::/64"}
 
 // A site's extra client ranges are served on that site's routes alone,
-// in the same match set as the host.
+// in the same match set as the host. Each host not served to them is
+// followed by a drop for that host alone, so their clients cannot fall
+// through to the opted-in site's pattern.
 func TestBuildConfigAddsSiteClientsToItsRoutesOnly(t *testing.T) {
 	cfg := build(t, []Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "*.a.local.x.io"}, Upstream: "127.0.0.1:1", Clients: dockerClients},
@@ -685,12 +690,23 @@ func TestBuildConfigAddsSiteClientsToItsRoutesOnly(t *testing.T) {
 	})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
 	seenA, seenB := 0, 0
-	for _, r := range routes {
+	var dropped []string
+	for i, r := range routes {
 		m, ok := dig(t, r, "match").([]any)
 		if !ok {
 			continue
 		}
 		host := strs(dig(t, m[0], "host"))[0]
+		if dig(t, m[0], "remote_ip") == nil {
+			if dig(t, r, "handle", 0, "abort") != true || len(m[0].(map[string]any)) != 1 {
+				t.Errorf("route %d = %v, want a drop matched by host alone", i, r)
+			}
+			if prev := strs(dig(t, routes[i-1], "match", 0, "host"))[0]; prev != host {
+				t.Errorf("drop for %s follows the route for %s, want its own", host, prev)
+			}
+			dropped = append(dropped, host)
+			continue
+		}
 		got := strs(dig(t, m[0], "remote_ip", "ranges"))
 		switch host {
 		case "a.test", "*.a.local.x.io":
@@ -709,6 +725,9 @@ func TestBuildConfigAddsSiteClientsToItsRoutesOnly(t *testing.T) {
 	}
 	if seenA != 2 || seenB != 1 {
 		t.Errorf("saw %d routes of a and %d of b, want 2 and 1", seenA, seenB)
+	}
+	if want := []string{"b.test", "localhost"}; !slices.Equal(dropped, want) {
+		t.Errorf("hosts followed by a drop = %v, want %v", dropped, want)
 	}
 }
 
@@ -741,6 +760,9 @@ func TestBuildConfigAddsADockerTLSPolicyMatchedByHost(t *testing.T) {
 	if got := strs(dig(t, match, "nearhost_hosts", "hosts")); !slices.Equal(got, []string{"a.test", "b.local.x.io"}) {
 		t.Errorf("second policy hosts = %v, want a's hosts, sorted", got)
 	}
+	if got := strs(dig(t, match, "nearhost_hosts", "except")); !slices.Equal(got, []string{"b.test", "localhost"}) {
+		t.Errorf("second policy except = %v, want every other host, sorted", got)
+	}
 
 	if n := len(tlsPolicies(t, build(t, []Site{b}))); n != 1 {
 		t.Errorf("%d policies with no site opted in, want 1", n)
@@ -769,7 +791,9 @@ func TestBuildConfigAddsADockerTLSPolicyMatchedByHost(t *testing.T) {
 }
 
 // The http port drops clients outside loopback and every site's extra
-// ranges, and redirects each host only to the clients it is served to.
+// ranges, redirects each host only to the clients it is served to, and
+// follows each host not served to all of them with a drop for that host
+// alone, ahead of the redirects Caddy adds.
 func TestBuildConfigRedirectsSiteClientsFromHTTP(t *testing.T) {
 	cfg := build(t, []Site{
 		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1", Clients: dockerClients},
@@ -787,18 +811,25 @@ func TestBuildConfigRedirectsSiteClientsFromHTTP(t *testing.T) {
 		"c.test":    append(slices.Clone(loopbackRanges), "172.16.0.0/12", "::ffff:172.16.0.0/108"),
 		"localhost": loopbackRanges,
 	}
-	// Before the last route, which drops the rest, a route with every
-	// host and no client matcher drops clients a host is not served to, ahead
-	// of the redirects Caddy adds.
-	drop := routes[len(routes)-2]
-	if got := strs(dig(t, drop, "match", 0, "host")); !slices.Equal(got, []string{"a.test", "b.test", "c.test", "localhost"}) || dig(t, drop, "match", 0, "remote_ip") != nil || dig(t, drop, "handle", 0, "abort") != true {
-		t.Errorf("route before the last = %v, want an abort for every host", drop)
-	}
-	for _, r := range routes[1 : len(routes)-2] {
+	var order []string
+	for _, r := range routes[1 : len(routes)-1] {
 		host := strs(dig(t, r, "match", 0, "host"))[0]
+		if dig(t, r, "match", 0, "remote_ip") == nil {
+			if dig(t, r, "handle", 0, "abort") != true {
+				t.Errorf("host-only route for %s = %v, want a drop", host, r)
+			}
+			order = append(order, "drop "+host)
+			continue
+		}
+		order = append(order, host)
 		if got := strs(dig(t, r, "match", 0, "remote_ip", "ranges")); !slices.Equal(got, want[host]) {
 			t.Errorf("redirect for %s ranges = %v, want %v", host, got, want[host])
 		}
+	}
+	// a.test is served to the whole union, so nothing falls through it.
+	wantOrder := []string{"a.test", "b.test", "drop b.test", "c.test", "drop c.test", "localhost", "drop localhost"}
+	if !slices.Equal(order, wantOrder) {
+		t.Errorf("routes = %v, want %v", order, wantOrder)
 	}
 	last := routes[len(routes)-1].(map[string]any)
 	if h := dig(t, last, "handle", 0).(map[string]any); last["match"] != nil || h["abort"] != true {
@@ -811,5 +842,37 @@ func TestBuildConfigRejectsBadClientRange(t *testing.T) {
 	const want = `proxy: site a.test: client range "not-a-cidr" is not a CIDR`
 	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %s", err, want)
+	}
+}
+
+var updateGolden = flag.Bool("update", false, "rewrite the golden configs in testdata")
+
+// With no site opted in to extra clients, the config is exactly what it
+// was before sites could have them: no host-only drops, no Except. The
+// golden file was written before the Docker client routes existed; rewrite
+// it with -update only for a change meant to reach every config.
+func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
+	raw, err := BuildConfig([]Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "*.local.x.io", "internal.*.local.x.io"}, Upstream: "127.0.0.1:1"},
+		{Alias: "b.test", Hosts: []string{"b.test", "api.local.x.io"}, Upstream: "127.0.0.1:2"},
+	}, Options{StorageRoot: "/tmp/store", HTTPSPort: 8443, HTTPPort: 8080, Capture: true, Version: "1.2.3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("testdata", "no-clients.json")
+	if *updateGolden {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(want) {
+		t.Errorf("config without clients changed:\n got %s\nwant %s", raw, want)
 	}
 }

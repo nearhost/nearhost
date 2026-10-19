@@ -1167,6 +1167,7 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 		io.WriteString(w, "docker page")
 	}))
 	t.Cleanup(up.Close)
+	other := named(t, "b page")
 
 	tried := 0
 	for _, ip := range nonLoopbackAddrs(t) {
@@ -1183,20 +1184,24 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 			bits = 32
 		}
 		client := fmt.Sprintf("%s/%d", seen, bits)
+		// a.test opts in and serves a pattern; b.test does not, and serves
+		// a name the pattern matches, which is b.test's alone.
 		h := startProxy(t, []Site{
-			{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up), Clients: []string{client}},
-			{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up)},
+			{Alias: "a.test", Hosts: []string{"a.test", "*.local.x.io"}, Upstream: addr(up), Clients: []string{client}},
+			{Alias: "b.test", Hosts: []string{"b.test", "api.local.x.io"}, Upstream: addr(other)},
 		})
-		h.waitCerts(t, "a.test", "b.test")
+		h.waitCerts(t, "a.test", "b.test", "api.local.x.io", "other.local.x.io")
 		dialed, _, err := h.plainHTTP(t, ip, "a.test")
 		if !dialed {
 			t.Logf("%s: not dialable, skipping it: %v", ip, err)
 			continue
 		}
 		tried++
+		t.Logf("client address %s", ip)
 
-		// get sends one GET for sni over a fresh TLS connection from ip.
-		get := func(sni string) (string, error) {
+		// get sends one GET for host over a fresh TLS connection from ip,
+		// with sni as the server name.
+		get := func(sni, host string) (string, error) {
 			raw, err := (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(h.httpsPort)))
 			if err != nil {
 				return "", err
@@ -1207,7 +1212,7 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 			if err := conn.Handshake(); err != nil {
 				return "", err
 			}
-			if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", sni); err != nil {
+			if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host); err != nil {
 				return "", err
 			}
 			r, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -1218,17 +1223,25 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 			b, _ := io.ReadAll(r.Body)
 			return string(b), nil
 		}
-		if body, err := get("a.test"); err != nil || body != "docker page" {
-			t.Errorf("client %s asking for a.test: body %q, err %v, want the upstream's answer", ip, body, err)
+		for _, host := range []string{"a.test", "other.local.x.io"} {
+			if body, err := get(host, host); err != nil || body != "docker page" {
+				t.Errorf("client %s asking for %s: body %q, err %v, want the upstream's answer", ip, host, body, err)
+			}
+			if _, status, err := h.plainHTTP(t, ip, host); err != nil || status != 308 {
+				t.Errorf("http from %s to %s: status %d, err %v, want 308", ip, host, status, err)
+			}
 		}
-		if body, err := get("b.test"); err == nil {
-			t.Errorf("client %s asking for b.test got %q, want the handshake to fail", ip, body)
-		}
-		if _, status, err := h.plainHTTP(t, ip, "a.test"); err != nil || status != 308 {
-			t.Errorf("http from %s to a.test: status %d, err %v, want 308", ip, status, err)
-		}
-		if _, status, err := h.plainHTTP(t, ip, "b.test"); err == nil {
-			t.Errorf("http from %s to b.test got status %d, want no answer", ip, status)
+		for _, host := range []string{"b.test", "api.local.x.io"} {
+			if body, err := get(host, host); err == nil {
+				t.Errorf("client %s asking for %s got %q, want the handshake to fail", ip, host, body)
+			}
+			if _, status, err := h.plainHTTP(t, ip, host); err == nil {
+				t.Errorf("http from %s to %s got status %d, want no answer", ip, host, status)
+			}
+			// A handshake for a.test's name does not open b.test's hosts.
+			if body, err := get("a.test", host); err == nil {
+				t.Errorf("client %s with SNI a.test asking for Host %s got %q, want no answer", ip, host, body)
+			}
 		}
 		h.p.Stop()
 	}

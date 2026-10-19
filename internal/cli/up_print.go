@@ -50,7 +50,7 @@ func (p *upPrinter) event(ev engine.Event) {
 	}
 	fmt.Fprintf(p.out, "%s [%s] %s\n", ev.Time.Format("15:04:05"), source, msg)
 	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
-		// Approving takes the interface, which shows each host and why it
+		// Approving takes the interface, which shows each change and why it
 		// needs approval; up only says where to go.
 		fmt.Fprintln(p.out, "  open nearhost to approve them; nearhost up cannot")
 	}

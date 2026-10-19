@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -95,6 +96,25 @@ func TestReviewProjectCases(t *testing.T) {
 	}
 }
 
+// Turning docker_clients off needs no approval, so it is saved; a save
+// that fails says so without calling it a port or label change.
+func TestReviewSaysWhenSavingAChangeWithoutApprovalFails(t *testing.T) {
+	dir := t.TempDir()
+	files := discovery.DirReader{Root: dir}
+	p := config.Project{Name: "app", Server: config.LocalServer, Path: dir, Alias: "app.test", Enabled: true,
+		Routes:     []config.Route{{Port: 3000, Role: config.RoleWeb}},
+		Nearhostrc: &config.RcSnapshot{SHA256: "old", DockerClients: true, Routes: []config.Route{{Port: 3000, Role: config.RoleWeb}}}}
+	if err := os.WriteFile(filepath.Join(dir, nearhostrc.FileName), []byte("version: 1\nroutes:\n  - port: 3000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	review := reviewProject(func(config.Project) error { return errors.New("disk full") })
+	r := review(context.Background(), p, files)
+	const want = ".nearhostrc changed nothing that needs approval, but saving the config failed: disk full"
+	if r.Problem != want || r.Pending != nil || r.Updated != nil {
+		t.Fatalf("review = %+v, want Problem %q", r, want)
+	}
+}
+
 func TestSaveToReplacesTheProject(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	a := config.Project{Name: "a", Server: config.LocalServer, Path: "/a", Alias: "a.test", Enabled: true,
@@ -139,7 +159,7 @@ func TestUpPrintsWhereToApproveAPendingChange(t *testing.T) {
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
 	at := time.Date(2026, 10, 16, 9, 30, 0, 0, time.Local)
 	p.event(engine.Event{Time: at, Project: "app", Message: engine.PendingPrefix + "app.example.com, *.example.com"})
-	want := "09:30:00 [app] .nearhostrc asks for hosts that need approval: app.example.com, *.example.com\n" +
+	want := "09:30:00 [app] .nearhostrc asks for changes that need approval: app.example.com, *.example.com\n" +
 		"  open nearhost to approve them; nearhost up cannot\n"
 	if out.String() != want {
 		t.Fatalf("printed:\n%s\nwant:\n%s", out.String(), want)

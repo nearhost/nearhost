@@ -139,7 +139,7 @@ func TestOptedInProjectIsServedToDockerRanges(t *testing.T) {
 	defer unsubscribe()
 	mustStart(t, h, "a")
 	mustStart(t, h, "b")
-	if got := clientsOf(h, "a.test"); !slices.Equal(got[0], []string{"10.99.0.0/16"}) || len(got) != 1 {
+	if got := clientsOf(h, "a.test"); len(got) != 1 || !slices.Equal(got[0], []string{"10.99.0.0/16"}) {
 		t.Errorf("a's clients = %q", got)
 	}
 	if got := clientsOf(h, "b.test"); len(got) != 1 || got[0] != nil {
@@ -220,5 +220,57 @@ func TestRefreshStopsWithoutOptedInProjects(t *testing.T) {
 	time.Sleep(10 * 20 * time.Millisecond)
 	if n := f.count(); n != calls {
 		t.Errorf("Docker asked %d more times with no opted-in project running", n-calls)
+	}
+}
+
+// A remote project is never served to Docker networks, even when a config
+// that skipped Validate gives it the flag: containers cannot reach Nearhost
+// from another machine, and Docker is not asked.
+func TestRemoteProjectIsNotServedToDocker(t *testing.T) {
+	f := &fakeDocker{answers: []dockerAnswer{{ranges: []string{"10.99.0.0/16"}}}}
+	cfg := remoteConfig(testutil.FreePort(t))
+	cfg.Projects[0].Nearhostrc = &config.RcSnapshot{SHA256: "h", DockerClients: true}
+	h := buildHarness(t, cfg, func(o *Options) { o.DockerRanges = f.ranges })
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	mustStart(t, h, "myapp")
+	got := clientsOf(h, "myapp.test")
+	if len(got) == 0 {
+		t.Fatal("myapp has no published site")
+	}
+	for _, c := range got {
+		if c != nil {
+			t.Errorf("myapp's clients = %q, want nil", got)
+		}
+	}
+	if n := f.count(); n != 0 {
+		t.Errorf("Docker asked %d times for a remote project", n)
+	}
+}
+
+// A start with no refresh loop running asks Docker again, though it has
+// answered before, so a project started after a long idle is served to the
+// networks Docker has now rather than those it had when the loop stopped.
+func TestStartAsksDockerAgainWhenNoLoopRuns(t *testing.T) {
+	one, both := []string{"10.99.0.0/16"}, []string{"10.99.0.0/16", "10.98.0.0/16"}
+	f := &fakeDocker{answers: []dockerAnswer{{ranges: one}, {ranges: both}}}
+	h := dockerHarness(t, f, time.Hour, optedIn(t, "a"))
+	mustStart(t, h, "a")
+	if got := clientsOf(h, "a.test"); len(got) != 1 || !slices.Equal(got[0], one) {
+		t.Fatalf("a's clients = %q, want %q", got, one)
+	}
+	if err := h.eng.StopProject(bg, "a"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 2*time.Second, func() bool {
+		h.eng.mu.Lock()
+		defer h.eng.mu.Unlock()
+		return h.eng.docker.loops == 0
+	}, "the refresh loop to end")
+	mustStart(t, h, "a")
+	// The refresh is an hour away, so only the start can have asked.
+	if got := clientsOf(h, "a.test"); len(got) != 1 || !slices.Equal(got[0], both) {
+		t.Errorf("a's clients after starting again = %q, want %q", got, both)
 	}
 }

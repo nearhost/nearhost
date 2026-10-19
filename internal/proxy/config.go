@@ -163,10 +163,37 @@ func homeRoute(version string) map[string]any {
 	}
 }
 
-// hostRanges is a host and the client ranges it is served to.
+// hostRanges is a host and the client ranges it is served to. drop is
+// whether a route for the host alone, dropping the connection, follows its
+// own (see hostDrop).
 type hostRanges struct {
 	host   string
 	ranges []string
+	drop   bool
+}
+
+// hostDrop is the route after a host's own that drops a client the host is
+// not served to. A name belongs to the site whose host is its most specific
+// match, which is the first route it matches, so without this a client
+// outside the site's ranges would fall through to a less specific pattern
+// of a site that does let it in, and be answered for a name that is not
+// that site's.
+func hostDrop(host string) map[string]any {
+	return map[string]any{
+		"match":    []any{map[string]any{"host": []string{host}}},
+		"handle":   []any{map[string]any{"handler": "static_response", "abort": true}},
+		"terminal": true,
+	}
+}
+
+// coversAll reports whether ranges has every range in union.
+func coversAll(ranges, union []string) bool {
+	for _, r := range union {
+		if !slices.Contains(ranges, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // httpServer is the server on the http port. It serves the clients each of
@@ -174,19 +201,26 @@ type hostRanges struct {
 // URL over https, and drops every other connection without an answer, as the
 // https server does. union is the union of all those ranges.
 //
+// Its routes are, in order: a drop for a client outside union; for each
+// host, its redirect, matched by the host and the ranges it is served to,
+// followed, for a host marked drop, by a drop matched by the host alone, so
+// a client the host is not served to cannot fall through to a less
+// specific pattern's redirect; and a drop for whatever is left.
+//
 // Automatic HTTPS adds routes of its own to any server on the http port: a
 // redirect per exact host, with no client matcher, inserted after the last
 // route with a host matcher, or first of all when no route has one, and
 // then a catch-all redirect appended at the end. Unchecked, those would
-// answer clients on other machines and hosts that are not served. So the
-// first route drops a client outside the union, whatever comes after
-// it; every host, exact or pattern, has its own redirect, so there is
-// always a host-matched route and Caddy's redirects land after them, where
-// ours have already answered; and the last of our routes drops what is
-// left, so Caddy's catch-all after it is never reached.
+// answer clients on other machines and hosts that are not served. The
+// first route stops a client outside union reaching them. Every host,
+// exact or pattern, has its own redirect, so there is always a
+// host-matched route and Caddy's redirects land after ours; a client in
+// union has by then been redirected or, by a host's drop, refused, for
+// every host Caddy redirects. The last of our routes drops what is left, so
+// Caddy's catch-all after it is never reached.
 func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any {
 	abort := []any{map[string]any{"handler": "static_response", "abort": true}}
-	routes := make([]any, 0, len(hosts)+2)
+	routes := make([]any, 0, 2*len(hosts)+2)
 	routes = append(routes, map[string]any{
 		"match": []any{map[string]any{"not": []any{map[string]any{
 			"remote_ip": map[string]any{"ranges": union},
@@ -208,21 +242,9 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 			}},
 			"terminal": true,
 		})
-	}
-	if len(union) > len(loopbackRanges) {
-		// The first route lets a site's extra clients through for every
-		// host, so a host they are not served would fall to the redirect
-		// Caddy adds for it, which has no client matcher. This route, the
-		// last with a host matcher, drops them first.
-		names := make([]string, len(hosts))
-		for i, h := range hosts {
-			names[i] = h.host
+		if h.drop {
+			routes = append(routes, hostDrop(h.host))
 		}
-		routes = append(routes, map[string]any{
-			"match":    []any{map[string]any{"host": names}},
-			"handle":   abort,
-			"terminal": true,
-		})
 	}
 	routes = append(routes, map[string]any{"handle": abort})
 	return map[string]any{
@@ -243,9 +265,10 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 // the config shape is defined; call it with no sites to get just the base
 // config, which declares no listeners. Output is deterministic: there is one
 // route per host, ordered by hostname.Less, so exact hosts win over patterns
-// and more specific patterns over less specific ones. While there are sites
-// and none serves localhost, localhost is one more exact host, served
-// Nearhost's own page.
+// and more specific patterns over less specific ones. While any site has
+// extra clients, a host not served to all of them is followed by a drop
+// for that host alone (see hostDrop). While there are sites and none serves
+// localhost, localhost is one more exact host, served Nearhost's own page.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -309,7 +332,13 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		return a.site.Alias < b.site.Alias
 	})
 
-	routes := make([]any, 0, len(all)+1)
+	// While any site has extra clients, each host not served to all of them
+	// is followed by a drop for that host alone, on both servers (see
+	// hostDrop). With none, there is nothing to fall through to and the
+	// config is as it was before sites had clients.
+	union := unionRanges(sites)
+	anyClients := len(union) > len(loopbackRanges)
+	routes := make([]any, 0, 2*len(all)+1)
 	subjects := make([]string, 0, len(all))
 	var patterns []string
 	hosts := make([]hostRanges, 0, len(all))
@@ -321,7 +350,11 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			ranges = rangesOf[strings.ToLower(sv.host)]
 			routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts.Capture))
 		}
-		hosts = append(hosts, hostRanges{sv.host, ranges})
+		drop := anyClients && !coversAll(ranges, union)
+		if drop {
+			routes = append(routes, hostDrop(sv.host))
+		}
+		hosts = append(hosts, hostRanges{sv.host, ranges, drop})
 		if hostname.IsPattern(sv.host) {
 			patterns = append(patterns, sv.host)
 		} else {
@@ -409,9 +442,22 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 	}}
 	for _, g := range groups {
+		// Except is every host outside the group, localhost's included, so
+		// a pattern of the group's does not match a name a more specific
+		// host of another site owns (see HostsMatcher).
+		var except []string
+		for _, sv := range all {
+			if !slices.Contains(g.hosts, sv.host) {
+				except = append(except, sv.host)
+			}
+		}
+		hm := map[string]any{"hosts": g.hosts}
+		if len(except) > 0 {
+			hm["except"] = except
+		}
 		connPolicies = append(connPolicies, map[string]any{"match": map[string]any{
 			"remote_ip":        map[string]any{"ranges": g.ranges},
-			hostsMatcherModule: map[string]any{"hosts": g.hosts},
+			hostsMatcherModule: hm,
 		}})
 	}
 
@@ -435,7 +481,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = httpServer(hosts, unionRanges(sites), httpPort)
+	servers["nearhost_http"] = httpServer(hosts, union, httpPort)
 
 	cfg := map[string]any{
 		// persist=false stops Caddy autosaving this config over the user's own

@@ -48,7 +48,7 @@ func reviewProject(save func(config.Project) error) func(ctx context.Context, p 
 			if errors.As(err, &clash) {
 				return engine.Review{Problem: fmt.Sprintf("%s: %v; serving what was last approved", nearhostrc.FileName, err)}
 			}
-			return engine.Review{Problem: fmt.Sprintf("%s changed only ports or labels, but saving the config failed: %v", nearhostrc.FileName, err)}
+			return engine.Review{Problem: fmt.Sprintf("%s changed nothing that needs approval, but saving the config failed: %v", nearhostrc.FileName, err)}
 		}
 		return engine.Review{Updated: &next}
 	}

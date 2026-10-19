@@ -51,7 +51,7 @@ func TestPendingChangeKeepsApprovedRoutesServing(t *testing.T) {
 	if st.State != StateRunning || st.Pending == nil || st.Pending.SHA256 != "b" {
 		t.Fatalf("status = %+v", st)
 	}
-	if !sawLog(events, "p", ".nearhostrc asks for hosts that need approval: new.local.x.io") {
+	if !sawLog(events, "p", ".nearhostrc asks for changes that need approval: new.local.x.io") {
 		t.Fatal("no event about the pending change")
 	}
 }
@@ -78,7 +78,7 @@ func TestPortOnlyChangeIsSavedOnceAndDoesNotRestartAgain(t *testing.T) {
 	if sites := h.eng.Sites(); len(sites) != 1 || sites[0].Upstream != "localhost:"+strconv.Itoa(moved) {
 		t.Fatalf("Sites = %+v", h.eng.Sites())
 	}
-	if !sawLog(events, "p", ".nearhostrc changed only ports or labels; applied") {
+	if !sawLog(events, "p", ".nearhostrc changed nothing that needs approval; applied") {
 		t.Fatal("no event about the applied change")
 	}
 	if p, _ := h.eng.Config().Project("p"); p.Routes[0].Port != moved {
@@ -193,7 +193,7 @@ func TestPendingLogNamesDockerClients(t *testing.T) {
 	events, unsubscribe := h.eng.Events().Subscribe(64)
 	defer unsubscribe()
 	mustStart(t, h, "p")
-	if !sawLog(events, "p", ".nearhostrc asks for hosts that need approval: docker_clients") {
+	if !sawLog(events, "p", ".nearhostrc asks for changes that need approval: docker_clients") {
 		t.Fatal("no event naming docker_clients")
 	}
 }

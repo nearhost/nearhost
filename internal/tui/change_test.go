@@ -121,9 +121,9 @@ func TestReviewScreenRefusesAChangeItDidNotShow(t *testing.T) {
 	wantScreen(t, m, "The .nearhostrc changed again; review it again")
 }
 
-// Two hosts are counted as hosts, and a is nothing on a project with no
-// change waiting.
-func TestPendingLineCountsHosts(t *testing.T) {
+// Two waiting changes are counted as changes, and a is nothing on a project
+// with no change waiting.
+func TestPendingLineCountsChanges(t *testing.T) {
 	m, f := pendingModel(t)
 	st := f.Status("dd")
 	st.Pending.Items = append(st.Pending.Items, nearhostrc.Item{Port: 8220, Host: "*.local.dd.io", Why: "a wildcard"})
