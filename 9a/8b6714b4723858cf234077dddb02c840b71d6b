@@ -1,0 +1,44 @@
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 92,161,220-221,250-251
+  s_89a63a3c1fa7d2::t_967abf7f7be08c 252
+internal/tui/wizard_project_test.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 12
+  s_89a63a3c1fa7d2::t_11f2148729ae64 508-511,513-514,516-519,524-537
+  s_89a63a3c1fa7d2::t_dbcd81132ce1ae 512,520-523
+  s_89a63a3c1fa7d2::t_f80d7aa6c7fef1 515
+internal/nearhostrc/merge.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 242-249
+internal/config/config_test.go
+  s_89a63a3c1fa7d2::t_d6287d90946fe2 581-584,587-615,632
+  s_89a63a3c1fa7d2::t_11f2148729ae64 4
+internal/tui/wizard_project.go
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 736,742-747,750
+internal/config/config.go
+  s_89a63a3c1fa7d2::t_589b362cab624d 8
+  s_89a63a3c1fa7d2::t_9f5c9ae0feba38 172-176,178-180,182,186-195,206
+internal/cli/add_test.go
+  s_89a63a3c1fa7d2::t_2b13f87f0e9e40 211-212
+  s_89a63a3c1fa7d2::t_11f2148729ae64 412-434
+internal/nearhostrc/merge_test.go
+  s_89a63a3c1fa7d2::t_d6287d90946fe2 88-105
+internal/cli/doctor_test.go
+  s_89a63a3c1fa7d2::t_2b13f87f0e9e40 356,366,444
+internal/cli/doctor.go
+  s_89a63a3c1fa7d2::t_11202f87adda16 329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a8b6714b4723858cf234077dddb02c840b71d6b",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
