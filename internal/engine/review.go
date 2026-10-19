@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -52,7 +53,18 @@ func (e *Engine) readRc(ctx context.Context, p config.Project, sess *transport.S
 	if err != nil {
 		return Review{Problem: fmt.Sprintf("cannot read %s: %v", nearhostrc.FileName, err)}
 	}
-	defer f.Close()
+	// A read from a server that stops answering never returns by itself, and
+	// would hold the start, and so Stop and Shutdown, until it did. Closing
+	// the client when ctx ends, at the timeout or when the start is
+	// cancelled, makes the read fail instead. The once keeps that close and
+	// the one after the review from running together.
+	var once sync.Once
+	closeSFTP := func() { once.Do(func() { f.Close() }) }
+	stop := context.AfterFunc(ctx, closeSFTP)
+	defer func() {
+		stop()
+		closeSFTP()
+	}()
 	return e.opts.Review(ctx, p, f.Reader(p.Path))
 }
 
