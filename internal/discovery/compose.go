@@ -53,9 +53,9 @@ type composeLongPort struct {
 // composeVar matches ${VAR}, ${VAR:-default}, ${VAR-default} and $VAR.
 var composeVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
-// resolve substitutes variables in s. It returns the first variable name
+// Expand substitutes variables in s. It returns the first variable name
 // seen and ok=false when a variable has no value and no default.
-func resolve(s string, env map[string]string) (value, varName string, ok bool) {
+func Expand(s string, env map[string]string) (value, varName string, ok bool) {
 	ok = true
 	out := composeVar.ReplaceAllStringFunc(s, func(m string) string {
 		sub := composeVar.FindStringSubmatch(m)
@@ -118,7 +118,7 @@ func ParseCompose(data []byte, env map[string]string) ([]ComposePort, error) {
 				varName := ""
 				if !ok {
 					if s, isStr := lp.Published.(string); isStr {
-						resolved, vn, rok := resolve(s, env)
+						resolved, vn, rok := Expand(s, env)
 						varName = vn
 						if !rok {
 							continue
@@ -156,7 +156,7 @@ func parseShortPort(spec string, env map[string]string) (ComposePort, bool) {
 	default:
 		return ComposePort{}, false // container-only port gets an ephemeral host port
 	}
-	resolvedHost, varName, ok := resolve(hostPart, env)
+	resolvedHost, varName, ok := Expand(hostPart, env)
 	if !ok || strings.Contains(resolvedHost, "-") {
 		return ComposePort{}, false
 	}
@@ -165,7 +165,7 @@ func parseShortPort(spec string, env map[string]string) (ComposePort, bool) {
 		return ComposePort{}, false
 	}
 	target := 0
-	if resolvedTarget, _, tok := resolve(targetPart, env); tok {
+	if resolvedTarget, _, tok := Expand(targetPart, env); tok {
 		if strings.Contains(resolvedTarget, "-") {
 			return ComposePort{}, false // target range
 		}

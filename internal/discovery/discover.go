@@ -45,7 +45,7 @@ type Result struct {
 // when an active preset asks for them; presets supply the rest.
 func Discover(r FileReader, opts Options) (*Result, error) {
 	files := newMemo(r)
-	env, err := readEnv(files)
+	env, err := ReadEnv(files)
 	if err != nil {
 		return nil, err
 	}
