@@ -1,0 +1,47 @@
+internal/cli/add.go
+  s_89a63a3c1fa7d2::t_32147e234a8f8a 189
+internal/cli/doctor_projects.go
+  s_89a63a3c1fa7d2::t_208b8d96118942 120
+internal/cli/preset_test_cmd.go
+  s_89a63a3c1fa7d2::t_7e04d353b1f762 147,156,159,205-213
+internal/cli/preset_test_cmd_test.go
+  s_89a63a3c1fa7d2::t_d53699a51bfa68 79-93
+internal/cli/testdata/fixtures-hosts/hosted/.env
+  s_89a63a3c1fa7d2::t_b2e4e25a775c72 1-2
+internal/cli/testdata/fixtures-hosts/hosted/expected.yaml
+  s_89a63a3c1fa7d2::t_c67093daa4583a 1-7
+internal/cli/testdata/fixtures-hosts/missing/.env
+  s_89a63a3c1fa7d2::t_e8a5706392e0d9 1-2
+internal/cli/testdata/fixtures-hosts/missing/expected.yaml
+  s_89a63a3c1fa7d2::t_222b45afcdabc6 1-6
+internal/cli/testdata/presets-hosts/hosted.yaml
+  s_89a63a3c1fa7d2::t_453c09ae75612c 1-10
+internal/cli/ui_add.go
+  s_89a63a3c1fa7d2::t_4d39b8628b3b2d 223,274
+internal/discovery/advise.go
+  s_89a63a3c1fa7d2::t_16bd5adbda708e 17,19,32
+internal/discovery/advise_test.go
+  s_89a63a3c1fa7d2::t_e6f5f8bc7ced67 31,39,53,64,68,75,86,94,109,116,129,142,150-160
+internal/discovery/discover.go
+  s_89a63a3c1fa7d2::t_f91b2f136b46f3 5-6,12,44-45,69-70,106-107,212-213,239-240,244-282,285-298,300-311,314-317,343,350
+internal/discovery/discover_test.go
+  s_89a63a3c1fa7d2::t_b86f0c6c430d68 521-647
+internal/discovery/env.go
+  s_89a63a3c1fa7d2::t_03de94fed461bc 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a51a9ee9f008f26d0a23c550fd48082cb8bf266",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
