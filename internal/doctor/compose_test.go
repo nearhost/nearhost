@@ -94,3 +94,38 @@ services:
 		t.Errorf("c = %+v", c)
 	}
 }
+
+func TestComposeServicesFollowsMergeKeysInsideMaps(t *testing.T) {
+	const src = `x-shared: &shared
+  NODE_EXTRA_CA_CERTS: /ca.crt
+  KEEP: merged
+x-hosts: &hosts
+  api.x.io: host-gateway
+services:
+  <<: {z: {image: z}}
+  a:
+    environment:
+      <<: *shared
+      OTHER: x
+      KEEP: own
+    extra_hosts:
+      <<: *hosts
+`
+	got, err := composeServices([]byte(src), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a service
+	for _, s := range got {
+		if s.Name == "<<" {
+			t.Errorf("merge key read as a service")
+		}
+		if s.Name == "a" {
+			a = s
+		}
+	}
+	want := map[string]string{"NODE_EXTRA_CA_CERTS": "/ca.crt", "OTHER": "x", "KEEP": "own"}
+	if !reflect.DeepEqual(a.Env, want) || !reflect.DeepEqual(a.ExtraHosts, []string{"api.x.io"}) {
+		t.Errorf("a = %+v", a)
+	}
+}

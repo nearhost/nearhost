@@ -47,8 +47,8 @@ func composeServices(data []byte, env map[string]string) ([]service, error) {
 	}
 
 	var out []service
-	for i := 0; i+1 < len(services.Content); i += 2 {
-		key, node := services.Content[i], resolve(services.Content[i+1])
+	for _, kv := range mapPairs(services) {
+		key, node := kv[0], resolve(kv[1])
 		s := service{Name: key.Value, Line: key.Line, Env: map[string]string{}}
 		if node.Kind != yaml.MappingNode {
 			out = append(out, s)
@@ -146,6 +146,48 @@ func mapGet(n *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
+// mapPairs lists the key and value nodes of a mapping, merge entries
+// included, with the same precedence as mapGet: own keys first, then each
+// "<<" entry in order, the first occurrence of a key winning.
+func mapPairs(n *yaml.Node) [][2]*yaml.Node {
+	n = resolve(n)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	var out [][2]*yaml.Node
+	seen := map[string]bool{}
+	add := func(k, v *yaml.Node) {
+		if !seen[k.Value] {
+			seen[k.Value] = true
+			out = append(out, [2]*yaml.Node{k, v})
+		}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Tag != "!!merge" {
+			add(n.Content[i], n.Content[i+1])
+		}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Tag != "!!merge" {
+			continue
+		}
+		v := resolve(n.Content[i+1])
+		if v == nil {
+			continue
+		}
+		sources := []*yaml.Node{v}
+		if v.Kind == yaml.SequenceNode {
+			sources = v.Content
+		}
+		for _, m := range sources {
+			for _, kv := range mapPairs(m) {
+				add(kv[0], kv[1])
+			}
+		}
+	}
+	return out
+}
+
 // scalar returns the value of a scalar node, or "".
 func scalar(n *yaml.Node) string {
 	if n = resolve(n); n == nil || n.Kind != yaml.ScalarNode {
@@ -185,14 +227,14 @@ func keyValues(n *yaml.Node) map[string]*string {
 	}
 	switch n.Kind {
 	case yaml.MappingNode:
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			v := resolve(n.Content[i+1])
+		for _, kv := range mapPairs(n) {
+			v := resolve(kv[1])
 			if v.Kind != yaml.ScalarNode || v.Tag == "!!null" {
-				out[n.Content[i].Value] = nil
+				out[kv[0].Value] = nil
 				continue
 			}
 			s := v.Value
-			out[n.Content[i].Value] = &s
+			out[kv[0].Value] = &s
 		}
 	case yaml.SequenceNode:
 		for _, c := range n.Content {

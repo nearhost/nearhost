@@ -180,3 +180,18 @@ services:
 		t.Error("reported although extra_hosts is merged in")
 	}
 }
+
+func TestCAFindingHonoursMergedEnvironment(t *testing.T) {
+	const compose = `x-common: &common
+  NODE_EXTRA_CA_CERTS: /ca.crt
+services:
+  worker:
+    environment:
+      <<: *common
+      CALLBACK: https://api.local.x.io/hook
+`
+	got := dockerCheck(dockerProject(), files{"docker-compose.yml": compose}, func(in *Input) { in.CACert = "/ca.crt" })
+	if has(got, "docker.ca") {
+		t.Error("docker.ca reported although the CA variable is merged in")
+	}
+}
