@@ -145,3 +145,54 @@ func TestUpPrintsWhereToApproveAPendingChange(t *testing.T) {
 		t.Fatalf("printed:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
+
+// clashSetup writes a config in which app's .nearhostrc moves its port and
+// also lists other.test, the alias of another enabled project. The change
+// needs no approval, since the new host is under .test, so the review saves
+// it, and the save must refuse it.
+func clashSetup(t *testing.T, path string) config.Project {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, nearhostrc.FileName), []byte("version: 1\nroutes:\n  - port: 3001\n    hosts: [other.test]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := config.Project{Name: "app", Server: config.LocalServer, Path: dir, Alias: "app.test", Enabled: true,
+		Routes:     []config.Route{{Port: 3000, Role: config.RoleWeb}},
+		Nearhostrc: &config.RcSnapshot{SHA256: "old", Routes: []config.Route{{Port: 3000, Role: config.RoleWeb}}}}
+	other := config.Project{Name: "other", Server: config.LocalServer, Path: "/other", Alias: "other.test", Enabled: true,
+		Routes: []config.Route{{Port: 4000, Role: config.RoleWeb}}}
+	cfg := &config.Config{}
+	if _, err := os.Stat(path); err == nil {
+		cfg = loadSaved(t, path)
+	}
+	cfg.Projects = append(cfg.Projects, app, other)
+	saveConfig(t, path, cfg)
+	return app
+}
+
+func checkClashRefused(t *testing.T, path string, save func(config.Project) error, app config.Project) {
+	t.Helper()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := reviewProject(save)(context.Background(), app, discovery.DirReader{Root: app.Path})
+	if r.Updated != nil || r.Pending != nil || !strings.Contains(r.Problem, `host other.test is already served by project "other"`) {
+		t.Fatalf("review = %+v, want a Problem saying other.test is taken", r)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatalf("a refused change was saved:\n%s", after)
+	}
+}
+
+func TestSaveToRefusesAHostAnotherProjectServes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	app := clashSetup(t, path)
+	checkClashRefused(t, path, saveTo(path), app)
+}
+
+func TestSaveRcRefusesAHostAnotherProjectServes(t *testing.T) {
+	u := formEngine(t)
+	app := clashSetup(t, u.path)
+	checkClashRefused(t, u.path, u.saveRc, app)
+}

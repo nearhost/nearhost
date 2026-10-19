@@ -33,9 +33,10 @@ func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
 // saveRc is the save of the interface engine's Options.Review: it writes a
 // project's routes and approved snapshot through EditConfig, so it never
 // saves over an edit the interface is making, and keeps every other field
-// as the file has it now.
+// as the file has it now. Like saveTo, it refuses a host another enabled
+// project serves.
 func (u *uiEngine) saveRc(p config.Project) error {
-	return u.EditConfig(func(cfg *config.Config) error { return takeRc(cfg, p, u.path) })
+	return u.EditConfig(func(cfg *config.Config) error { return takeServedRc(cfg, p, u.path) })
 }
 
 // AcceptChange saves the routes and snapshot of the change with hash sha
