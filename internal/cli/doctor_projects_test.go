@@ -547,3 +547,71 @@ func TestProjectFindingsCountsTheCACertInTheShell(t *testing.T) {
 		t.Error("docker.ca reported with NEARHOST_CA_CERT set in the shell")
 	}
 }
+
+// The hosts block check can fail without naming a project's missing host:
+// for stale names only, or a hosts file it could not read. Then the
+// project's own finding is all that names it.
+func TestDoctorKeepsAMissingNameTheHostsCheckDoesNotName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first string // the hosts file the machine check reads
+		err   error
+		check string
+	}{
+		{"stale names only", "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n127.0.0.1 gone.test\n# nearhost:end\n", nil,
+			"FAIL  hosts block      no longer configured: gone.test\n"},
+		{"unreadable", "", fs.ErrPermission, "FAIL  hosts block      permission denied\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := configHome(t)
+			blog := localProject("blog", 8000, true)
+			blog.Path = t.TempDir()
+			saveConfig(t, path, &config.Config{Projects: []config.Project{blog}})
+			f := healthy()
+			f.lookup = func(_ context.Context, name string) ([]netip.Addr, error) {
+				return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+			}
+			var opened []string
+			b := withProjects(f.backend(), nil, &opened)
+			// The machine check reads the file first; by the time the
+			// project is checked, blog.test has gone from it.
+			reads := 0
+			b.env.readHosts = func() (string, error) {
+				reads++
+				if reads == 1 {
+					return tc.first, tc.err
+				}
+				return "127.0.0.1 localhost\n", nil
+			}
+			out, _ := execute(t, newDoctorCmd(b), "doctor")
+			if !strings.Contains(out, tc.check) || !strings.Contains(out, "FAIL  blog             blog.test does not resolve to this machine") {
+				t.Fatalf("doctor printed:\n%s", out)
+			}
+		})
+	}
+}
+
+// Only the names the hosts block check reports as missing are left out of
+// the projects' findings, whichever project they belong to.
+func TestWithoutReportedDropsOnlyTheNamesTheHostsCheckNames(t *testing.T) {
+	unresolved := func(host string) doctor.Finding {
+		return doctor.Finding{ID: "hosts.unresolved", Severity: doctor.SeverityError, Host: host,
+			Message: host + " does not resolve to this machine, and is not in the hosts file"}
+	}
+	other := doctor.Finding{ID: "hosts.public", Severity: doctor.SeverityWarning, Host: "app.test", Message: "app.test is a real name"}
+	projects := []projectReport{
+		{name: "app", findings: []doctor.Finding{unresolved("app.test"), unresolved("admin.app.test"), other}},
+		{name: "shop", findings: []doctor.Finding{unresolved("shop.test")}},
+	}
+	got := withoutReported(projects, []string{"app.test", "shop.test"})
+	want := []projectReport{
+		{name: "app", findings: []doctor.Finding{unresolved("admin.app.test"), other}},
+		{name: "shop", findings: []doctor.Finding{}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
+	}
+	if len(projects[0].findings) != 3 {
+		t.Errorf("changed the projects passed in: %+v", projects)
+	}
+}

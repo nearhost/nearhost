@@ -54,6 +54,11 @@ type Finding struct {
 	File     string   `json:"file,omitempty"`
 	Line     int      `json:"line,omitempty"`
 	Fix      Fix      `json:"fix"`
+
+	// Host is the name a hosts.unresolved finding is about, so that
+	// nearhost doctor can leave out one its hosts block check already
+	// names. It stays out of the JSON, whose Message names it.
+	Host string `json:"-"`
 }
 
 // Input is everything the checks of one project look at.
