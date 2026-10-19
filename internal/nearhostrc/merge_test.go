@@ -17,13 +17,44 @@ func TestMergePutsFileRoutesFirstAndKeepsManualHosts(t *testing.T) {
 	f := &File{SHA256: "new", Routes: []Route{{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}}}}
 	got := mustMerge(t, old, f, nil)
 	want := []config.Route{
-		{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}}, // port moved; "mine" was on 8220, which the file no longer lists
+		// The port moved: "mine" was added by hand to 8220, which the file
+		// no longer lists, so it follows app.local.dd.io to 8221.
+		{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io", "mine.local.dd.io"}},
 		{Port: 8220, Role: config.RoleIgnore, Hosts: nil},
 		{Port: 5432, Role: config.RoleLoopback},
 		{Port: 9000, Role: config.RoleIgnore},
 	}
 	if !reflect.DeepEqual(got.Routes, want) || got.Nearhostrc.SHA256 != "new" {
 		t.Fatalf("Merge = %+v", got)
+	}
+}
+
+func TestMergeMovesManualHostsOfADroppedPortToThePrimary(t *testing.T) {
+	old := config.Project{Name: "dd", Alias: "dd.test", Routes: []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.local.dd.io", "mine.local.dd.io", "app.local.dd.io"}}, // mine: added by hand
+	}, Nearhostrc: &config.RcSnapshot{SHA256: "old", Routes: []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.local.dd.io"}},
+	}}}
+	// No file route holds files.local.dd.io any more, so the hand-added host
+	// on 9000 goes to the primary web route. app.local.dd.io is in the file,
+	// so it is served once, where the file puts it.
+	f := &File{SHA256: "new", Routes: []Route{
+		{Port: 5432, Role: config.RoleLoopback},
+		{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}},
+		{Port: 8230, Role: config.RoleWeb, Hosts: []string{"ws.local.dd.io"}},
+	}}
+	got := mustMerge(t, old, f, nil)
+	want := []config.Route{
+		{Port: 5432, Role: config.RoleLoopback},
+		{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io", "mine.local.dd.io"}},
+		{Port: 8230, Role: config.RoleWeb, Hosts: []string{"ws.local.dd.io"}},
+		{Port: 8220, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleIgnore},
+	}
+	if !reflect.DeepEqual(got.Routes, want) {
+		t.Fatalf("Merge = %+v", got.Routes)
 	}
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -16,8 +17,9 @@ import (
 // (p.Nearhostrc). A change that only moves ports, relabels routes or adds
 // .test hosts is saved with save and handed back as Updated; one that asks
 // for a host that needs approval is handed back as Pending and saved by no
-// one until the user approves it. A file that cannot be read or merged, or
-// one that is gone after being approved, is a Problem: the project keeps
+// one until the user approves it. A file that cannot be read or merged, one
+// that is gone after being approved, or a change save refuses because
+// another enabled project serves one of its hosts, is a Problem: the project keeps
 // serving what was approved, which is still in the config.
 func reviewProject(save func(config.Project) error) func(ctx context.Context, p config.Project, files discovery.FileReader) engine.Review {
 	return func(_ context.Context, p config.Project, files discovery.FileReader) engine.Review {
@@ -42,6 +44,10 @@ func reviewProject(save func(config.Project) error) func(ctx context.Context, p 
 			return engine.Review{Pending: &engine.Change{SHA256: f.SHA256, Project: next, Items: items}}
 		}
 		if err := save(next); err != nil {
+			var clash *hostClashError
+			if errors.As(err, &clash) {
+				return engine.Review{Problem: fmt.Sprintf("%s: %v; serving what was last approved", nearhostrc.FileName, err)}
+			}
 			return engine.Review{Problem: fmt.Sprintf("%s changed only ports or labels, but saving the config failed: %v", nearhostrc.FileName, err)}
 		}
 		return engine.Review{Updated: &next}
@@ -67,7 +73,7 @@ func saveTo(path string) func(config.Project) error {
 		if err != nil {
 			return err
 		}
-		if err := takeRc(cfg, p, path); err != nil {
+		if err := takeServedRc(cfg, p, path); err != nil {
 			return err
 		}
 		if err := cfg.Validate(); err != nil {
@@ -89,4 +95,30 @@ func takeRc(cfg *config.Config, p config.Project, path string) error {
 		}
 	}
 	return fmt.Errorf("project %q is no longer in %s", p.Name, path)
+}
+
+// takeServedRc is takeRc for a change saved without the user's approval. A
+// .test host needs no approval, but it can be another enabled project's alias
+// or one of its hosts, and two projects cannot serve the same host, so the
+// change is refused and the approved routes keep serving.
+func takeServedRc(cfg *config.Config, p config.Project, path string) error {
+	if err := takeRc(cfg, p, path); err != nil {
+		return err
+	}
+	q, _ := cfg.Project(p.Name)
+	if !q.Enabled {
+		return nil
+	}
+	if host, other, clash := cfg.HostClash(*q); clash {
+		return &hostClashError{host: host, other: other}
+	}
+	return nil
+}
+
+// hostClashError says a host is already served by another project, so the
+// review can say so in its own words.
+type hostClashError struct{ host, other string }
+
+func (e *hostClashError) Error() string {
+	return fmt.Sprintf("host %s is already served by project %q", e.host, e.other)
 }

@@ -13,7 +13,10 @@ import (
 )
 
 // What the interface's add forms ask of nearhost. Each call reads the config
-// file afresh, so a form never saves over a change made while it was open.
+// file afresh, so a form never saves over a change made while it was open,
+// and each one that saves it holds editMu from the read to the save, as
+// EditConfig does, so a save made meanwhile in the background, such as a
+// .nearhostrc change, is not lost either.
 
 // current reads and checks the config file.
 func (u *uiEngine) current() (*config.Config, error) {
@@ -54,6 +57,8 @@ func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
 }
 
 func (u *uiEngine) AddServer(srv config.Server) error {
+	u.editMu.Lock()
+	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return err
@@ -75,6 +80,8 @@ func (u *uiEngine) RegistryQuestion() bool {
 }
 
 func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer) (string, error) {
+	u.editMu.Lock()
+	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return "", err
@@ -90,6 +97,8 @@ func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer
 }
 
 func (u *uiEngine) EnablePresets(ctx context.Context, names []string) []string {
+	u.editMu.Lock()
+	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return []string{err.Error()}
@@ -112,6 +121,8 @@ func (u *uiEngine) CheckNames(name, alias string) (error, error) {
 }
 
 func (u *uiEngine) SaveProject(p config.Project) error {
+	u.editMu.Lock()
+	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return err

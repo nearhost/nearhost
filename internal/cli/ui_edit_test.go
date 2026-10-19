@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/nearhost/nearhost/internal/tui"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -144,5 +146,53 @@ func TestEditConfigSerialisesEdits(t *testing.T) {
 	}
 	if got := len(loadSaved(t, u.path).Projects); got != n {
 		t.Errorf("%d of %d edits saved", got, n)
+	}
+}
+
+// The interface's add forms and the background .nearhostrc save both load,
+// change and save the config file. Run at once, neither may save a config
+// without the other's change.
+func TestSaveProjectAndSaveRcDoNotEraseEachOther(t *testing.T) {
+	u := formEngine(t)
+	app := config.Project{Name: "app", Server: config.LocalServer, Path: "/code/app", Alias: "app.test", Enabled: true,
+		Routes: []config.Route{{Port: 3000, Role: config.RoleWeb}}}
+	cfg := loadSaved(t, u.path)
+	cfg.Projects = append(cfg.Projects, app)
+	saveConfig(t, u.path, cfg)
+
+	const n = 40
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*n)
+	for i := range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("p%d", i)
+			errs <- u.SaveProject(config.Project{Name: name, Server: config.LocalServer, Path: "/code/" + name, Alias: name + ".test", Enabled: true,
+				Routes: []config.Route{{Port: 5000 + i, Role: config.RoleWeb}}})
+		}()
+		go func() {
+			defer wg.Done()
+			moved := app
+			moved.Routes = []config.Route{{Port: 3001, Role: config.RoleWeb}}
+			moved.Nearhostrc = &config.RcSnapshot{SHA256: "new", Routes: moved.Routes}
+			errs <- u.saveRc(moved)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved := loadSaved(t, u.path)
+	for i := range n {
+		if _, ok := saved.Project(fmt.Sprintf("p%d", i)); !ok {
+			t.Errorf("project p%d was erased", i)
+		}
+	}
+	if p, ok := saved.Project("app"); !ok || p.Routes[0].Port != 3001 || p.Nearhostrc == nil {
+		t.Errorf("the port change was erased: %+v", p)
 	}
 }
