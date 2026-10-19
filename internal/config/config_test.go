@@ -633,3 +633,31 @@ func TestNearhostrcSnapshotValidatesAndRoundTrips(t *testing.T) {
 		t.Fatal("expected an invalid snapshot host to be rejected")
 	}
 }
+
+func TestValidateRefusesDockerClientsOnAServer(t *testing.T) {
+	c := sample()
+	c.Projects[0].Nearhostrc = &RcSnapshot{SHA256: "h", DockerClients: true}
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), `project "myapp"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRcSnapshotCloneKeepsEverything(t *testing.T) {
+	var nilSnap *RcSnapshot
+	if nilSnap.Clone() != nil {
+		t.Fatal("nil should clone to nil")
+	}
+	orig := &RcSnapshot{SHA256: "h", DockerClients: true, Routes: []Route{{Port: 80, Role: RoleWeb, Label: "l", Hosts: []string{"a.test"}}}}
+	clone := orig.Clone()
+	if !reflect.DeepEqual(clone, orig) {
+		t.Fatalf("clone = %+v", clone)
+	}
+	clone.SHA256 = "x"
+	clone.DockerClients = false
+	clone.Routes[0].Port = 81
+	clone.Routes[0].Hosts[0] = "b.test"
+	if orig.SHA256 != "h" || !orig.DockerClients || orig.Routes[0].Port != 80 || orig.Routes[0].Hosts[0] != "a.test" {
+		t.Fatalf("original changed: %+v", orig)
+	}
+}

@@ -76,7 +76,7 @@ func TestNeedsApproval(t *testing.T) {
 		{Port: 8221, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io", "x.test", "*.status.local.dd.io", "*.dd.test"}},
 		{Port: 8230, Role: config.RoleWeb, Hosts: []string{"localhost"}},
 	}}
-	want := []Item{{8221, "*.dd.test", "a wildcard"}, {8221, "*.status.local.dd.io", "a wildcard"}, {8230, "localhost", "localhost"}}
+	want := []Item{{Port: 8221, Host: "*.dd.test", Why: "a wildcard"}, {Port: 8221, Host: "*.status.local.dd.io", Why: "a wildcard"}, {Port: 8230, Host: "localhost", Why: "localhost"}}
 	if got := NeedsApproval(old, next); !reflect.DeepEqual(got, want) {
 		t.Fatalf("NeedsApproval = %+v", got)
 	}
@@ -148,5 +148,50 @@ func TestParseRejectsRoutesThatCannotBeServed(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestMergeKeepsDockerClientsInSnapshot(t *testing.T) {
+	p := config.Project{Name: "dd", Server: config.LocalServer, Alias: "dd.test"}
+	f := &File{SHA256: "h", DockerClients: true, Routes: []Route{{Port: 80, Role: config.RoleWeb}}}
+	got := mustMerge(t, p, f, nil)
+	if !got.Nearhostrc.DockerClients || !got.DockerClients() {
+		t.Fatalf("snapshot = %+v", got.Nearhostrc)
+	}
+}
+
+func TestMergeRefusesDockerClientsOnAServer(t *testing.T) {
+	p := config.Project{Name: "dd", Server: "box", Alias: "dd.test"}
+	f := &File{SHA256: "h", DockerClients: true, Routes: []Route{{Port: 80, Role: config.RoleWeb}}}
+	_, err := Merge(p, f, nil)
+	want := `.nearhostrc: docker_clients works only for projects on this machine; containers can't reach Nearhost from server "box"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v", err)
+	}
+	f.DockerClients = false
+	if _, err := Merge(p, f, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNeedsApprovalListsDockerClients(t *testing.T) {
+	web := []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.example.com"}}}
+	without := config.Project{Routes: web, Nearhostrc: &config.RcSnapshot{}}
+	with := config.Project{Routes: web, Nearhostrc: &config.RcSnapshot{DockerClients: true}}
+	got := NeedsApproval(without, with)
+	want := []Item{{Option: OptionDockerClients, Why: "lets local Docker containers reach this project"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	// A new project lists its hosts first, then the option.
+	got = NeedsApproval(config.Project{}, with)
+	if len(got) != 2 || got[0].Host != "app.example.com" || got[1] != want[0] || got[1].Name() != "docker_clients" {
+		t.Fatalf("got %+v", got)
+	}
+	if got := NeedsApproval(with, with); len(got) != 0 {
+		t.Fatalf("same: %+v", got)
+	}
+	if got := NeedsApproval(with, without); len(got) != 0 {
+		t.Fatalf("dropped: %+v", got)
 	}
 }

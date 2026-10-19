@@ -65,6 +65,30 @@ type Project struct {
 type RcSnapshot struct {
 	SHA256 string  `yaml:"sha256"`
 	Routes []Route `yaml:"routes"`
+	// DockerClients is whether the approved file asked for the project to be
+	// served to containers on local Docker networks.
+	DockerClients bool `yaml:"docker_clients,omitempty"`
+}
+
+// Clone returns a deep copy of s, so a caller can hold or change it without
+// touching the original's routes or hosts. A nil snapshot clones to nil.
+func (s *RcSnapshot) Clone() *RcSnapshot {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	c.Routes = make([]Route, len(s.Routes))
+	for i, r := range s.Routes {
+		r.Hosts = append([]string(nil), r.Hosts...)
+		c.Routes[i] = r
+	}
+	return &c
+}
+
+// DockerClients reports whether the project's approved .nearhostrc asks to be
+// served to containers on local Docker networks.
+func (p Project) DockerClients() bool {
+	return p.Nearhostrc != nil && p.Nearhostrc.DockerClients
 }
 
 // WebRoute returns the project's primary web route, the first one, if present.
@@ -422,6 +446,10 @@ func (c *Config) Validate() error {
 		}
 		aliases[aliasKey] = p.Name
 
+		if p.DockerClients() && p.Server != LocalServer {
+			// Containers can only reach Nearhost on this machine.
+			return fmt.Errorf("project %q: docker_clients works only for projects on this machine", p.Name)
+		}
 		if p.Nearhostrc != nil {
 			for _, r := range p.Nearhostrc.Routes {
 				for _, h := range r.Hosts {

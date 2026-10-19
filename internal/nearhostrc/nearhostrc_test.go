@@ -1,6 +1,9 @@
 package nearhostrc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -131,5 +134,46 @@ func TestParseEmptyFileAsksForVersion(t *testing.T) {
 		if err == nil || err.Error() != ".nearhostrc needs version: 1" {
 			t.Errorf("Parse(%q) = %v, want .nearhostrc needs version: 1", data, err)
 		}
+	}
+}
+
+func TestParseReadsDockerClients(t *testing.T) {
+	for _, tc := range []struct {
+		yaml string
+		want bool
+	}{
+		{"version: 1\ndocker_clients: true\nroutes:\n  - port: 80\n", true},
+		{"version: 1\ndocker_clients: false\nroutes:\n  - port: 80\n", false},
+		{"version: 1\nroutes:\n  - port: 80\n", false},
+	} {
+		f, err := Parse([]byte(tc.yaml), nil)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", tc.yaml, err)
+		}
+		if f.DockerClients != tc.want {
+			t.Fatalf("Parse(%q).DockerClients = %v", tc.yaml, f.DockerClients)
+		}
+	}
+	_, err := Parse([]byte("version: 1\ndocker_clients: yes please\nroutes:\n  - port: 80\n"), nil)
+	if err == nil || !strings.HasPrefix(err.Error(), ".nearhostrc") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestHashWithoutDockerClientsIsUnchanged(t *testing.T) {
+	body := "routes:\n  - port: 80\n"
+	plain, err := Parse([]byte("version: 1\n"+body), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canon, _ := json.Marshal(plain.Routes)
+	sum := sha256.Sum256(canon)
+	if plain.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("SHA256 = %s", plain.SHA256)
+	}
+	off, _ := Parse([]byte("version: 1\ndocker_clients: false\n"+body), nil)
+	on, _ := Parse([]byte("version: 1\ndocker_clients: true\n"+body), nil)
+	if off.SHA256 != plain.SHA256 || on.SHA256 == plain.SHA256 {
+		t.Fatalf("off %s on %s plain %s", off.SHA256, on.SHA256, plain.SHA256)
 	}
 }

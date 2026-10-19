@@ -24,8 +24,14 @@ import (
 // because only web routes may have them. A manual host the file also lists,
 // on any route, is dropped from the manual ones so it is served once. Merge
 // fails when a route other than the primary lists the project's .test name,
-// which is always served on the first web route.
+// which is always served on the first web route, and when the file asks for
+// docker_clients on a project that is not on this machine, since containers
+// cannot reach Nearhost on a server. The file's docker_clients choice is kept
+// in the snapshot.
 func Merge(p config.Project, f *File, discovered []config.Route) (config.Project, error) {
+	if f.DockerClients && p.Server != config.LocalServer {
+		return p, fmt.Errorf("%s: docker_clients works only for projects on this machine; containers can't reach Nearhost from server %q", FileName, p.Server)
+	}
 	inFile := map[string]bool{}
 	primary := true
 	for _, fr := range f.Routes {
@@ -107,7 +113,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 	}
 
 	p.Routes = routes
-	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot}
+	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot, DockerClients: f.DockerClients}
 	return p, nil
 }
 
@@ -164,20 +170,37 @@ func containsFold(list []string, h string) bool {
 	return false
 }
 
-// Item is one host that needs the user's approval before it is served.
+// OptionDockerClients is the Item.Option for the docker_clients opt-in.
+const OptionDockerClients = "docker_clients"
+
+// Item is one host, or one option, that needs the user's approval before it
+// takes effect. An option item has an empty Host, Port 0 and its name in
+// Option.
 type Item struct {
 	Port int
 	Host string
 	// Why says what makes the host risky: "a real domain", "a wildcard" or
 	// "localhost".
 	Why string
+	// Option names the option being approved, or is empty for a host.
+	Option string
+}
+
+// Name is what the item is about: its host, or its option when it has no host.
+func (it Item) Name() string {
+	if it.Host == "" {
+		return it.Option
+	}
+	return it.Host
 }
 
 // NeedsApproval lists every host on a web route of next that is risky and
 // wasn't on a web route of old. Hosts ending in .test can only resolve on
 // this machine, so they are safe; a real domain, a wildcard or localhost
-// would take over traffic the user may want to reach elsewhere. Pass the zero
-// Project as old for a new project. The result is sorted by port, then host.
+// would take over traffic the user may want to reach elsewhere. Turning on
+// docker_clients is listed too, after the hosts, since it opens the project to
+// containers. Pass the zero Project as old for a new project. The hosts are
+// sorted by port, then host.
 func NeedsApproval(old, next config.Project) []Item {
 	had := map[string]bool{}
 	for _, r := range old.Routes {
@@ -216,5 +239,8 @@ func NeedsApproval(old, next config.Project) []Item {
 		}
 		return items[i].Host < items[j].Host
 	})
+	if next.DockerClients() && !old.DockerClients() {
+		items = append(items, Item{Option: OptionDockerClients, Why: "lets local Docker containers reach this project"})
+	}
 	return items
 }
