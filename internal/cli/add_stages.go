@@ -311,6 +311,55 @@ func withoutAliasHosts(routes []config.Route, alias string) []config.Route {
 	return out
 }
 
+// withoutTakenHosts is a copy of p's routes without the inferred hosts that
+// another enabled project of cfg serves, as HostClash finds them, and a note
+// for each host left out. Two checkouts of one app infer the same host from
+// the same settings, and the second can still be added without it. inferred
+// holds the hosts discovery gave, lower-cased; a host typed or from the
+// .nearhostrc is not in it, so a clash there stays an error on save. A route
+// other than the primary left without hosts is ignored.
+func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string]bool) ([]config.Route, []string) {
+	taken := map[string]string{}
+	for _, q := range cfg.Projects {
+		if q.Name == p.Name || !q.Enabled {
+			continue
+		}
+		for _, h := range q.AllHosts() {
+			if _, seen := taken[strings.ToLower(h)]; !seen {
+				taken[strings.ToLower(h)] = q.Name
+			}
+		}
+	}
+	var notes []string
+	out := make([]config.Route, len(p.Routes))
+	primary := true
+	for i, r := range p.Routes {
+		out[i] = r
+		if r.Role != config.RoleWeb {
+			continue
+		}
+		isPrimary := primary
+		primary = false
+		var kept []string
+		for _, h := range r.Hosts {
+			other, ok := taken[strings.ToLower(h)]
+			if ok && inferred[strings.ToLower(h)] {
+				notes = append(notes, fmt.Sprintf("Not serving %s: project %q already serves it.", h, other))
+				continue
+			}
+			kept = append(kept, h)
+		}
+		if len(kept) == len(r.Hosts) {
+			continue
+		}
+		out[i].Hosts = kept
+		if len(kept) == 0 && !isPrimary {
+			out[i].Role = config.RoleIgnore
+		}
+	}
+	return out, notes
+}
+
 // saveProject adds project to cfg and saves it. Nothing is saved when the
 // project cannot be added.
 func saveProject(cfg *config.Config, cfgPath string, project config.Project) error {

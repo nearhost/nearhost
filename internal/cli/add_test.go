@@ -970,3 +970,72 @@ func TestWithoutAliasHosts(t *testing.T) {
 		t.Errorf("changed the routes passed in: %+v", in)
 	}
 }
+
+// Two checkouts of one app infer the same host. The second is added without
+// it, saying why, rather than failed; a host typed with --host still fails.
+func TestAddSkipsInferredHostsAnotherProjectServes(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	if out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", envProject(t, hostedEnv), "--name", "first"); err != nil {
+		t.Fatalf("first add: %v\n%s", err, out)
+	}
+
+	var stdout, stderr syncBuffer
+	root := newRootCmd()
+	root.AddCommand(newAddCmd(rcBackend(t, true)))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetIn(strings.NewReader("y\n"))
+	root.SetArgs([]string{"--config", cfgPath, "add", envProject(t, hostedEnv), "--name", "second"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("second add: %v\n%s%s", err, stdout.String(), stderr.String())
+	}
+	if want := "Not serving app.local.x.io: project \"first\" already serves it.\n"; !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr = %q, want %q", stderr.String(), want)
+	}
+	if strings.Contains(stdout.String(), "Approve these?") {
+		t.Errorf("asked about the host:\n%s", stdout.String())
+	}
+	p, ok := loadSaved(t, cfgPath).Project("second")
+	if !ok {
+		t.Fatal("second was not saved")
+	}
+	if hosts := p.AllHosts(); !reflect.DeepEqual(hosts, []string{"second.test"}) {
+		t.Errorf("second serves %v", hosts)
+	}
+
+	out, err := execute(t, newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", envProject(t, hostedEnv), "--name", "third", "--host", "app.local.x.io")
+	if err == nil || err.Error() != `host app.local.x.io is already served by project "first"` {
+		t.Fatalf("typed host: %v\n%s", err, out)
+	}
+}
+
+func TestWithoutTakenHosts(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{
+		{Name: "other", Alias: "other.test", Enabled: true, Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io", "ws.x.io", "typed.x.io"}}}},
+		{Name: "off", Alias: "off.test", Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"files.x.io"}}}},
+	}}
+	p := config.Project{Name: "mine", Alias: "mine.test", Routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"App.x.io", "typed.x.io"}},
+		{Port: 6001, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.x.io"}},
+	}}
+	inferred := map[string]bool{"app.x.io": true, "ws.x.io": true, "files.x.io": true}
+	routes, notes := withoutTakenHosts(cfg, p, inferred)
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"typed.x.io"}},
+		{Port: 6001, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.x.io"}},
+	}
+	if !reflect.DeepEqual(routes, want) {
+		t.Errorf("routes = %+v\nwant %+v", routes, want)
+	}
+	wantNotes := []string{
+		`Not serving App.x.io: project "other" already serves it.`,
+		`Not serving ws.x.io: project "other" already serves it.`,
+	}
+	if !reflect.DeepEqual(notes, wantNotes) {
+		t.Errorf("notes = %q", notes)
+	}
+}
