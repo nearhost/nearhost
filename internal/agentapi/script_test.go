@@ -441,8 +441,9 @@ func TestScriptWaitsForTheDoctorAndReloadLongerThanTheServer(t *testing.T) {
 
 // The skill's instructions for what the script answers. A reload re-reads
 // .nearhostrc and nothing else, so only the findings about that file call
-// for one; and after an add the doctor waits for the project to start, and
-// is skipped on a Nearhost without it.
+// for one; and after an add the doctor waits while the project starts, for
+// about 30 seconds at most, since a degraded or stopped project never runs,
+// and is skipped on a Nearhost without it.
 func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "..", "SKILL.md"))
 	if err != nil {
@@ -458,7 +459,12 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 	}
 	add := regexp.MustCompile("(?m)^6\\. On `\"state\":\"accepted\"`.*$").FindString(skill)
 	status, doctor := strings.Index(add, "nearhost.sh status"), strings.Index(add, "nearhost.sh doctor .")
-	if status < 0 || doctor < status || !strings.Contains(add, "`running` or `error`") || !strings.Contains(add, "status 5") {
+	if status < 0 || doctor < status || !strings.Contains(add, "status 5") {
+		t.Errorf("after an add: %q", add)
+	}
+	if !regexp.MustCompile("while its `state` is `starting`").MatchString(add) ||
+		!regexp.MustCompile(`\b30 seconds\b`).MatchString(add) ||
+		!strings.Contains(add, "whatever") {
 		t.Errorf("after an add: %q", add)
 	}
 }
