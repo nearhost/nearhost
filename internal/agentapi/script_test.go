@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/doctor"
 )
 
 // The skill's script, run against the API: it must find the socket, speak
@@ -57,11 +59,19 @@ func scriptServer(t *testing.T, home, id, origin string, review bool) (*Server, 
 
 func scriptServerOf(t *testing.T, home, id, origin string, review bool, src Source) (*Server, *clock) {
 	t.Helper()
+	return scriptServerWith(t, home, id, origin, review, Options{Source: src})
+}
+
+// scriptServerWith is scriptServerOf with opts, which may add a Doctor or a
+// Reload; its Laptop and Now are set here.
+func scriptServerWith(t *testing.T, home, id, origin string, review bool, opts Options) (*Server, *clock) {
+	t.Helper()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl is not installed")
 	}
 	c := &clock{now: time.Now()}
-	s := New(Options{Laptop: "ecs@" + id, Source: src, Now: c.Now})
+	opts.Laptop, opts.Now = "ecs@"+id, c.Now
+	s := New(opts)
 	if review {
 		s.SetReviewer(&fakeReviewer{})
 	}
@@ -285,6 +295,89 @@ func TestScriptNamesTheProposedPathWhenNoNearhostAnswers(t *testing.T) {
 	os.Mkdir(dir, 0o755)
 	r := runScript(t, home, []string{"SSH_CONNECTION=10.0.0.2 50000 10.0.0.9 22"}, "propose", dir)
 	if r.code != 2 || !strings.Contains(r.stderr, "proj\n") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// scriptProject makes a directory that Nearhost holds as the project myapp.
+func scriptProject(t *testing.T, home string) (dir string, src Source) {
+	t.Helper()
+	dir = filepath.Join(home, "myapp")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(dir)
+	return dir, fakeSource{"mini": {{Name: "myapp", Path: real, URL: "https://myapp.test", State: "running"}}}
+}
+
+func TestScriptDoctorPrintsFindings(t *testing.T) {
+	home := shortDir(t)
+	dir, src := scriptProject(t, home)
+	d := &fakeDoctor{findings: []doctor.Finding{{ID: "routes.stale-port", Severity: "warning", Project: "myapp", Message: "nothing listens"}}}
+	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Doctor: d})
+	r := runScript(t, home, nil, "doctor", dir)
+	if r.code != 0 || !strings.Contains(r.stdout, `"findings"`) || !strings.Contains(r.stdout, "routes.stale-port") {
+		t.Fatalf("doctor: %+v", r)
+	}
+
+	other := shortDir(t)
+	scriptServerWith(t, other, "z9", "mini", true, Options{Source: src})
+	r = runScript(t, other, nil, "doctor", ".")
+	if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, "doctor") {
+		t.Fatalf("without a doctor: %+v", r)
+	}
+}
+
+func TestScriptReloadAndWait(t *testing.T) {
+	home := shortDir(t)
+	dir, src := scriptProject(t, home)
+	rl := &fakeReloader{}
+	rl.answer(waiting, nil)
+	s, _ := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Reload: rl})
+	r := runScript(t, home, nil, "reload", dir)
+	m := proposalID.FindStringSubmatch(r.stdout)
+	if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"state":"pending"`) {
+		t.Fatalf("reload: %+v", r)
+	}
+	id := m[1]
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		s.ChangeAnswered("myapp", "b", true)
+	}()
+	if r := runScript(t, home, nil, "wait", id); r.code != 0 || !strings.Contains(r.stdout, `"state":"accepted"`) {
+		t.Fatalf("wait: %+v", r)
+	}
+
+	rl.answer(Reloaded{Items: []string{"a.example.com"}, SHA256: "c"}, nil)
+	first := proposalID.FindStringSubmatch(runScript(t, home, nil, "reload", dir).stdout)[1]
+	rl.answer(Reloaded{Items: []string{"b.example.com"}, SHA256: "d"}, nil)
+	if r := runScript(t, home, nil, "reload", dir); r.code != 0 || proposalID.FindStringSubmatch(r.stdout)[1] == first {
+		t.Fatalf("changed reload: %+v", r)
+	}
+	if r := runScript(t, home, nil, "wait", first); r.code != 8 || !strings.Contains(r.stdout, `"state":"superseded"`) {
+		t.Fatalf("superseded: %+v", r)
+	}
+}
+
+func TestScriptReloadUnderUp(t *testing.T) {
+	home := shortDir(t)
+	dir, src := scriptProject(t, home)
+	rl := &fakeReloader{}
+	rl.answer(waiting, nil)
+	scriptServerWith(t, home, "k3f9q2", "mini", false, Options{Source: src, Reload: rl})
+	if r := runScript(t, home, nil, "reload", dir); r.code != 3 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestScriptReloadDeclined(t *testing.T) {
+	home := shortDir(t)
+	dir, src := scriptProject(t, home)
+	rl := &fakeReloader{}
+	rl.answer(Reloaded{Declined: true}, nil)
+	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Reload: rl})
+	if r := runScript(t, home, nil, "reload", dir); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
 		t.Fatalf("%+v", r)
 	}
 }
