@@ -629,6 +629,33 @@ func TestLoopbackHandshakeMatcherAcceptsOnlyLoopbackClients(t *testing.T) {
 // nonLoopbackAddrs lists the addresses of this machine that are neither
 // loopback nor link-local. A connection made to one of them from this machine
 // has that address as its source too.
+// sourceSeen dials ip and reports the address the accepting side sees the
+// connection come from, or false when ip cannot be dialed or the connection
+// arrives from loopback, which cannot stand in for another machine.
+func sourceSeen(t *testing.T, ip net.IP) (net.IP, bool) {
+	t.Helper()
+	l, err := net.Listen("tcp", net.JoinHostPort(ip.String(), "0"))
+	if err != nil {
+		return nil, false
+	}
+	defer l.Close()
+	c, err := net.DialTimeout("tcp", l.Addr().String(), 5*time.Second)
+	if err != nil {
+		return nil, false
+	}
+	defer c.Close()
+	a, err := l.Accept()
+	if err != nil {
+		return nil, false
+	}
+	defer a.Close()
+	seen := a.RemoteAddr().(*net.TCPAddr).IP
+	if seen.IsLoopback() {
+		return nil, false
+	}
+	return seen, true
+}
+
 func nonLoopbackAddrs(t *testing.T) []net.IP {
 	t.Helper()
 	addrs, err := net.InterfaceAddrs()
@@ -1143,11 +1170,19 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 
 	tried := 0
 	for _, ip := range nonLoopbackAddrs(t) {
+		// The client's range is the address the proxy will see, which is
+		// not always the one dialed: on a Linux host running Docker, its NAT
+		// rule rewrites the source of a connection to the docker0 address.
+		seen, ok := sourceSeen(t, ip)
+		if !ok {
+			t.Logf("%s: not dialable, or seen as loopback, skipping it", ip)
+			continue
+		}
 		bits := 128
-		if ip.To4() != nil {
+		if seen.To4() != nil {
 			bits = 32
 		}
-		client := fmt.Sprintf("%s/%d", ip, bits)
+		client := fmt.Sprintf("%s/%d", seen, bits)
 		h := startProxy(t, []Site{
 			{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up), Clients: []string{client}},
 			{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up)},
