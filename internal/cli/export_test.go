@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -381,3 +382,55 @@ func TestExportReportsPendingAsTheReviewDoes(t *testing.T) {
 	}
 }
 
+// TestExportThenAddOnAnotherMachine is the seam between export and add: a
+// project exported here, then added from its folder with another .env, as
+// whoever clones it would, comes back as the same project, serving the port
+// the new .env sets.
+func TestExportThenAddOnAnotherMachine(t *testing.T) {
+	dir := exportDir(t)
+	p := exportProject("shop", dir)
+	p.Alias = "shop.example.com"
+	p.Routes = []config.Route{
+		{Port: 3000, Role: config.RoleWeb, Label: "app", Hosts: []string{"api.shop.test"}},
+		{Port: 5173, Role: config.RoleLoopback, Label: "vite"},
+		{Port: 5432, Role: config.RoleIgnore, Label: "postgres"},
+	}
+	p.Nearhostrc = &config.RcSnapshot{DockerClients: true}
+	cfgPath, _ := exportConfig(t, &config.Config{Projects: []config.Project{p}})
+
+	if out, err := execute(t, newExportCmd(exportBackend{}), "--config", cfgPath, "export", "shop"); err != nil {
+		t.Fatalf("export: %v\n%s", err, out)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_PORT=3100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	saveConfig(t, cfgPath, &config.Config{})
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "shop.example.com", "docker_clients", "Approve these? [y/N] ")
+
+	got, ok := loadSaved(t, cfgPath).Project("shop")
+	if !ok {
+		t.Fatalf("the project was not added:\n%s", out)
+	}
+	if got.Alias != "shop.example.com" {
+		t.Errorf("main name = %q, want shop.example.com", got.Alias)
+	}
+	if !got.DockerClients() {
+		t.Error("docker_clients is off")
+	}
+	want := p.Routes
+	want[0].Port = 3100
+	if len(got.Routes) != len(want) {
+		t.Fatalf("routes = %+v, want %+v", got.Routes, want)
+	}
+	for i, w := range want {
+		g := got.Routes[i]
+		if g.Port != w.Port || g.Role != w.Role || g.Label != w.Label || !slices.Equal(g.Hosts, w.Hosts) {
+			t.Errorf("route %d = %+v, want %+v", i, g, w)
+		}
+	}
+}
