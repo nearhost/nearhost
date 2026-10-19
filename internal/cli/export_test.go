@@ -338,3 +338,46 @@ func TestExportThenStartAsksNothing(t *testing.T) {
 		t.Errorf("review after export = %+v", r)
 	}
 }
+
+// TestExportReportsPendingAsTheReviewDoes checks that export says it replaced
+// a change waiting for approval only when the review would have held that
+// change for approval, with an approved snapshot or without one.
+func TestExportReportsPendingAsTheReviewDoes(t *testing.T) {
+	const pendingLine = "replaced the .nearhostrc change that was waiting for approval"
+	approved, err := nearhostrc.Parse([]byte("version: 1\nroutes:\n  - port: 3000\n"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		snapshot *config.RcSnapshot
+		file     string
+		pending  bool
+	}{
+		{"port only, approved before", &config.RcSnapshot{SHA256: approved.SHA256}, "version: 1\nroutes:\n  - port: 3001\n", false},
+		{"real domain, approved before", &config.RcSnapshot{SHA256: approved.SHA256}, "version: 1\nroutes:\n  - port: 3000\n    hosts: [shop.example.com]\n", true},
+		{"port only, never approved", nil, "version: 1\nroutes:\n  - port: 3001\n", false},
+		{"real domain, never approved", nil, "version: 1\nroutes:\n  - port: 3000\n    hosts: [shop.example.com]\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := exportDir(t)
+			p := exportProject("shop", dir)
+			p.Nearhostrc = c.snapshot
+			if err := os.WriteFile(filepath.Join(dir, nearhostrc.FileName), []byte(c.file), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfgPath, _ := exportConfig(t, &config.Config{Projects: []config.Project{p}})
+
+			out, err := execute(t, newExportCmd(exportBackend{}), "--config", cfgPath, "export", "shop", "--force")
+			if err != nil {
+				t.Fatalf("export: %v\n%s", err, out)
+			}
+			if got := strings.Contains(out, pendingLine); got != c.pending {
+				t.Errorf("pending line shown = %t, want %t; output:\n%s", got, c.pending, out)
+			}
+			wantSnapshotOf(t, cfgPath, "shop", dir)
+		})
+	}
+}
+
