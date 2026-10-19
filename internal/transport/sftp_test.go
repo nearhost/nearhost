@@ -130,3 +130,91 @@ func TestSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// writerCase runs one of three behaviours against a FileWriter, so the
+// local and SFTP writers are held to one contract.
+func writerCase(t *testing.T, name string, newWriter func(t *testing.T, root string) FileWriter) {
+	newRoot := func(t *testing.T) string { return t.TempDir() }
+	switch name {
+	case "CreatesWithMode0644":
+		root := newRoot(t)
+		if err := newWriter(t, root).WriteFile(".nearhostrc", []byte("a\n")); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filepath.Join(root, ".nearhostrc"))
+		if err != nil || info.Mode().Perm() != 0o644 {
+			t.Fatalf("stat: %v %v", info, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(root, ".nearhostrc")); string(b) != "a\n" {
+			t.Fatalf("content %q", b)
+		}
+		assertNoStray(t, root, ".nearhostrc")
+	case "ReplacesKeepingMode":
+		root := newRoot(t)
+		p := filepath.Join(root, ".nearhostrc")
+		os.WriteFile(p, []byte("old\n"), 0o600)
+		os.Chmod(p, 0o600)
+		if err := newWriter(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(p)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("stat: %v %v", info, err)
+		}
+		if b, _ := os.ReadFile(p); string(b) != "new\n" {
+			t.Fatalf("content %q", b)
+		}
+		assertNoStray(t, root, ".nearhostrc")
+	case "LeavesNoTempFileOnFailure":
+		root := newRoot(t)
+		missing := filepath.Join(root, "missing")
+		if err := newWriter(t, missing).WriteFile(".nearhostrc", []byte("x")); err == nil {
+			t.Fatal("expected an error for a root that does not exist")
+		}
+		if _, err := os.Stat(missing); err == nil {
+			t.Fatal("the root must not be created")
+		}
+		assertNoStray(t, root, "")
+	}
+}
+
+func assertNoStray(t *testing.T, root, want string) {
+	t.Helper()
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if e.Name() != want {
+			t.Fatalf("stray file %q in %s", e.Name(), root)
+		}
+	}
+}
+
+func sftpWriterFor(t *testing.T, root string) FileWriter {
+	client, _ := inProcessSFTP(t)
+	return NewSFTPWriter(client, root)
+}
+
+func dirWriterFor(_ *testing.T, root string) FileWriter { return DirWriter(root) }
+
+func TestSFTPWriterCreatesWithMode0644(t *testing.T) {
+	writerCase(t, "CreatesWithMode0644", sftpWriterFor)
+}
+
+func TestSFTPWriterReplacesKeepingMode(t *testing.T) {
+	writerCase(t, "ReplacesKeepingMode", sftpWriterFor)
+}
+
+func TestSFTPWriterLeavesNoTempFileOnFailure(t *testing.T) {
+	writerCase(t, "LeavesNoTempFileOnFailure", sftpWriterFor)
+}
+
+func TestDirWriterCreatesWithMode0644(t *testing.T) {
+	writerCase(t, "CreatesWithMode0644", dirWriterFor)
+}
+
+func TestDirWriterReplacesKeepingMode(t *testing.T) {
+	writerCase(t, "ReplacesKeepingMode", dirWriterFor)
+}
+
+func TestDirWriterLeavesNoTempFileOnFailure(t *testing.T) {
+	writerCase(t, "LeavesNoTempFileOnFailure", dirWriterFor)
+}

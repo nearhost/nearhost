@@ -2,6 +2,8 @@ package transport
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 
 	"github.com/pkg/sftp"
 
@@ -125,4 +128,120 @@ func isNotExist(err error) bool {
 	}
 	var se *sftp.StatusError
 	return errors.As(err, &se) && se.Code == 2 // SSH_FX_NO_SUCH_FILE
+}
+
+// FileWriter writes a file under a project root. Implementations replace the
+// target atomically, so a reader never sees a half-written file.
+type FileWriter interface {
+	WriteFile(name string, data []byte) error
+}
+
+// defaultFileMode is the mode of a file the writer creates; a file it
+// replaces keeps its own.
+const defaultFileMode fs.FileMode = 0o644
+
+// Writer returns a FileWriter rooted at a remote directory.
+func (f *SFTP) Writer(root string) FileWriter {
+	return NewSFTPWriter(f.Client, root)
+}
+
+type sftpWriter struct {
+	c    *sftp.Client
+	root string
+}
+
+// NewSFTPWriter adapts an SFTP client to FileWriter.
+func NewSFTPWriter(c *sftp.Client, root string) FileWriter {
+	return sftpWriter{c: c, root: root}
+}
+
+// WriteFile writes to a temporary file beside the target and renames it into
+// place. Same directory keeps the rename on one filesystem, and the leading
+// dot keeps the temporary file out of the way of project tooling. The mode is
+// set explicitly because the server's umask would otherwise decide it.
+func (w sftpWriter) WriteFile(name string, data []byte) (err error) {
+	target := path.Join(w.root, name)
+	mode := defaultFileMode
+	if info, statErr := w.c.Stat(target); statErr == nil {
+		mode = info.Mode().Perm()
+	} else if !isNotExist(statErr) {
+		return statErr
+	}
+
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return err
+	}
+	tmp := path.Join(w.root, "."+name+".nearhost-"+hex.EncodeToString(suffix[:]))
+	f, err := w.c.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			w.c.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if _, ok := w.c.HasExtension("posix-rename@openssh.com"); ok {
+		return w.c.PosixRename(tmp, target)
+	}
+	// Plain SFTP rename refuses to replace an existing file, so the target
+	// has to go first. That leaves a brief window with no file; it is the
+	// best a server without the extension allows.
+	if err = w.c.Rename(tmp, target); err != nil {
+		if rmErr := w.c.Remove(target); rmErr != nil && !isNotExist(rmErr) {
+			return err
+		}
+		err = w.c.Rename(tmp, target)
+	}
+	return err
+}
+
+type dirWriter struct{ root string }
+
+// DirWriter returns a FileWriter rooted at a local directory.
+func DirWriter(root string) FileWriter { return dirWriter{root: root} }
+
+// WriteFile follows the same temp-file-then-rename scheme as the SFTP writer.
+// os.CreateTemp makes the file 0600, so the mode is set before the rename.
+func (w dirWriter) WriteFile(name string, data []byte) (err error) {
+	target := filepath.Join(w.root, name)
+	mode := defaultFileMode
+	if info, statErr := os.Stat(target); statErr == nil {
+		mode = info.Mode().Perm()
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return statErr
+	}
+	f, err := os.CreateTemp(w.root, "."+name+".nearhost-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), target)
 }
