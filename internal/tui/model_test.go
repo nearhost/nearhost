@@ -273,7 +273,7 @@ func TestQuitStopsEverythingAndASecondQuitCutsItShort(t *testing.T) {
 func TestMouse(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 4, Button: tea.MouseLeft}) // website, under a blank line, home, a blank line and local
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 3, Button: tea.MouseLeft}) // website, under home, a blank line and local
 	if m.sel != rowKey(rowProject, "website") {
 		t.Fatalf("click selected %q", m.sel)
 	}

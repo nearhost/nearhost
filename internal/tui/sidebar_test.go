@@ -29,12 +29,10 @@ func TestSidebarLayout(t *testing.T) {
 	f.servers["mini"] = transport.StatusAuthFailed
 	m := sized(f)
 	want := []string{
+		"▌home             1 running ", // Home is selected at the start, on the main panel's first line
 		"                            ",
-		"▌home             1 running ", // Home is selected at the start
-		"                            ",
-		" ▾ local                  1 ",
+		" ▾ local                  1 ", // the servers follow each other, as Herdr's groups do
 		"   ● website        running ",
-		"                            ",
 		" ▾ mini       ○ auth failed ",
 		"   ○ myapp          stopped ",
 		"   ○ old            stopped ",
@@ -72,9 +70,9 @@ func TestNarrowSidebar(t *testing.T) {
 	m := New(f, "/work/here")
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	got := sideText(m)
-	for i, w := range []string{"▌home           0 ", "", " ▾ local        1 ", "   ○ website      ", "", " ▾ mini ●         "} {
-		if w != "" && got[i+1] != w {
-			t.Errorf("line %d is %q, want %q", i+1, got[i+1], w)
+	for i, w := range []string{"▌home           0 ", "", " ▾ local        1 ", "   ○ website      ", " ▾ mini ●         "} {
+		if w != "" && got[i] != w {
+			t.Errorf("line %d is %q, want %q", i, got[i], w)
 		}
 	}
 }
@@ -111,7 +109,7 @@ func TestSpinnerTurnsWhileStarting(t *testing.T) {
 func TestClickOnABlankLine(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	m.sel = rowKey(rowProject, "website")
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 5, Button: tea.MouseLeft})
+	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 1, Button: tea.MouseLeft}) // the line under home
 	if m.sel != rowKey(rowProject, "website") {
 		t.Errorf("a click on a blank line selected %q", m.sel)
 	}
@@ -124,7 +122,7 @@ func TestSidebarCutsLongNames(t *testing.T) {
 	f := newFake(t, cfg)
 	f.setState(cfg.Projects[0].Name, engine.ProjectStatus{State: engine.StateRunning})
 	m := sized(f)
-	if got := sideText(m)[4]; got != "   ● a-project-wit… running " {
+	if got := sideText(m)[3]; got != "   ● a-project-wit… running " {
 		t.Errorf("row %q", got)
 	}
 }

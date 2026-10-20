@@ -111,15 +111,15 @@ func (m *Model) adviceLinesFor(name string, width int) []string {
 	var lines []string
 	switch {
 	case a.loading, m.adviceWaiting == rowKey(rowProject, name):
-		lines = append(lines, "", busyLine("Reading advice…"))
+		lines = append(append(lines, m.gap()...), busyLine("Reading advice…"))
 	case a.err != "":
-		lines = append(lines, "")
+		lines = append(lines, m.gap()...)
 		for _, l := range wrap(clean(sentence("advice could not be read: "+a.err)), width) {
 			lines = append(lines, styleDim.Render(l))
 		}
 	}
 	for _, item := range a.items {
-		lines = append(lines, "")
+		lines = append(lines, m.gap()...)
 		lines = append(lines, adviceBox(item, width)...)
 	}
 	for _, n := range a.notes {

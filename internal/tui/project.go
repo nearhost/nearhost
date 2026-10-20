@@ -44,7 +44,7 @@ func (m *Model) projectPanel(name string, width int) []string {
 			meta = styleDim.Render("server") + " " + server + "    " + styleDim.Render("preset") + " " + presets +
 				"    " + styleDim.Render("path") + " " + clean(p.Path)
 		}
-		lines = []string{spread(title, state, width), "", fit(meta, width)}
+		lines = []string{spread(title, state, width), fit(meta, width)}
 	}
 	if urls := otherURLs(*p, width); urls != "" {
 		lines = append(lines, urls)
@@ -61,12 +61,12 @@ func (m *Model) projectPanel(name string, width int) []string {
 		lines = append(lines, field("fix", fix, width)...)
 	}
 	if more := pendingLines(st, width); len(more) > 0 {
-		lines = append(append(lines, ""), more...)
+		lines = append(append(lines, m.gap()...), more...)
 	}
-	lines = append(lines, "")
+	lines = append(lines, m.gap()...)
 	lines = append(lines, m.routeTable(*p, st, width)...)
 	if m.panelErr != "" {
-		lines = append(lines, "")
+		lines = append(lines, m.gap()...)
 		lines = append(lines, errorLines(m.panelErr, width)...)
 	}
 	return append(lines, m.adviceLinesFor(name, width)...)

@@ -17,6 +17,15 @@ const (
 	bodyTop = 2
 )
 
+// gap is the blank line between sections of a panel, or nothing where the
+// terminal's line height already spaces its cells out (see cellsTall).
+func (m *Model) gap() []string {
+	if m.tallCells {
+		return nil
+	}
+	return []string{""}
+}
+
 // narrow reports whether the window gets the compact layout.
 func (m *Model) narrow() bool { return m.width < narrowBelow }
 
