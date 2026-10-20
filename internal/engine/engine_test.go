@@ -36,8 +36,9 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	web.Routes = append(web.Routes, config.Route{Port: testutil.FreePort(t), Role: config.RoleLoopback})
 	h := newHarness(t, &config.Config{Projects: []config.Project{web}})
 
-	if portOpen(h.httpsPort) {
-		t.Fatal("proxy listens before any project is started")
+	// Before any project starts, the proxy already serves its own page.
+	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "<title>Nearhost</title>") {
+		t.Fatalf("localhost before any project: %d %q", code, body)
 	}
 	if st := h.eng.Status("web"); st.State != StateStopped || st.Alias != "web.test" {
 		t.Fatalf("status before start = %+v", st)
@@ -71,8 +72,8 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	if code, body := h.get(t, "web.test", "/"); code == 200 && strings.HasPrefix(body, "ok:") {
 		t.Fatal("project still served after stop")
 	}
-	if portOpen(h.httpsPort) || portOpen(h.httpPort) {
-		t.Fatal("stopping the last project must leave the proxy with no listeners")
+	if code, _ := h.get(t, "localhost", "/"); code != 200 {
+		t.Fatalf("localhost after the last project stopped: %d, want the proxy's page", code)
 	}
 }
 

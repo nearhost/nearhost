@@ -215,7 +215,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
 		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version}),
+		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
@@ -332,8 +332,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			return fmt.Errorf("create run directory: %w", err)
 		}
 	}
-	// With no sites the proxy opens no listeners, so a port conflict would
-	// only show when the first project starts. Find it now.
+	// Name the program in the way, which Caddy's own error does not.
 	if err := e.probePort(ctx, "HTTPS", e.opts.HTTPSPort, 443); err != nil {
 		return err
 	}
