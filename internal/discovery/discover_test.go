@@ -518,3 +518,130 @@ func TestResultComposeUnread(t *testing.T) {
 		t.Error("there is no Compose file to leave unread")
 	}
 }
+
+// inline2 parses a schema 2 preset written in the test.
+func inline2(t *testing.T, name, body string) *preset.Preset {
+	t.Helper()
+	p, err := preset.Parse(name, []byte("schema: 2\nname: "+name+"\ntitle: T\n"+body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// routeLines shows ConfigRoutes as "port role [hosts]".
+func routeLines(res *Result) string {
+	var out []string
+	for _, r := range res.ConfigRoutes() {
+		out = append(out, fmt.Sprintf("%d %s %v", r.Port, r.Role, r.Hosts))
+	}
+	return strings.Join(out, "\n")
+}
+
+const hostsCompose = `services:
+  app:
+    ports:
+      - '${APP_PORT:-80}:80'
+      - '${FORWARD_REVERB_PORT:-8080}:8080'
+`
+
+func hostsPreset(t *testing.T, appHosts string) *preset.Preset {
+	return inline2(t, "h", `detect: 'true'
+compose: ports
+routes:
+  - id: app
+    port: env_port("APP_PORT", 80)
+    label: App
+    hosts: '`+appHosts+`'
+  - id: reverb
+    port: env_port("FORWARD_REVERB_PORT", 8080)
+    label: Reverb
+    hosts: '[url_host(env["REVERB_HOST"])]'
+`)
+}
+
+// Hosts a preset infers make their routes web, with the primary first even
+// though the other has the lower port.
+func TestDiscoverInfersRouteHosts(t *testing.T) {
+	r := memReader{
+		"compose.yaml": hostsCompose,
+		".env":         "APP_URL=https://app.local.x.io:8220\nAPP_PORT=8220\nFORWARD_REVERB_PORT=6001\nREVERB_HOST=ws.local.x.io\n",
+	}
+	res := discover(t, r, Options{Presets: []*preset.Preset{hostsPreset(t, `[url_host(env["APP_URL"])]`)}})
+	if want := "8220 web [app.local.x.io]\n6001 web [ws.local.x.io]"; routeLines(res) != want {
+		t.Fatalf("routes:\n%s\nwant:\n%s", routeLines(res), want)
+	}
+	if l := res.Routes[0].Label; l != "app (APP_PORT)" {
+		t.Errorf("the Compose label should be kept, got %q", l)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+}
+
+func TestDiscoverFiltersInferredHosts(t *testing.T) {
+	r := memReader{
+		"compose.yaml": hostsCompose,
+		".env":         "REVERB_HOST=app.x.io\n",
+	}
+	list := `["localhost", "127.0.0.1", "::1", "myapp", "", "App.X.io.", "bad_host.x.io", "app.x.io"]`
+	res := discover(t, r, Options{Presets: []*preset.Preset{hostsPreset(t, list)}})
+	m := routeMap(res)
+	if got := m[80].Hosts; strings.Join(got, ",") != "app.x.io" {
+		t.Errorf("hosts = %v", got)
+	}
+	if len(m[8080].Hosts) != 0 || m[8080].Role == config.RoleWeb {
+		t.Errorf("a host an earlier route holds should be left off: %+v", m[8080])
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "bad_host.x.io") {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+}
+
+func TestDiscoverStockSailInfersNoHosts(t *testing.T) {
+	r := memReader{
+		"compose.yaml": hostsCompose,
+		".env":         "APP_URL=http://localhost\nREVERB_HOST=localhost\n",
+	}
+	with := discover(t, r, Options{Presets: []*preset.Preset{hostsPreset(t, `[url_host(env["APP_URL"])]`)}})
+	without := discover(t, r, Options{Presets: []*preset.Preset{inline2(t, "h", `detect: 'true'
+compose: ports
+routes:
+  - {id: app, port: 'env_port("APP_PORT", 80)', label: App}
+  - {id: reverb, port: 'env_port("FORWARD_REVERB_PORT", 8080)', label: Reverb}
+`)}})
+	if routeLines(with) != routeLines(without) {
+		t.Fatalf("routes:\n%s\nwithout the hosts:\n%s", routeLines(with), routeLines(without))
+	}
+	web := 0
+	for _, c := range with.Routes {
+		if len(c.Hosts) != 0 {
+			t.Errorf("hosts = %v", c.Hosts)
+		}
+		if c.Role == config.RoleWeb {
+			web++
+		}
+	}
+	if web != 1 {
+		t.Errorf("%d web routes, want 1", web)
+	}
+}
+
+func TestDiscoverHostsOnLoopbackPortDropped(t *testing.T) {
+	r := memReader{"compose.yaml": hostsCompose, ".env": "REVERB_HOST=ws.x.io\n"}
+	p := inline2(t, "h", `detect: 'true'
+compose: ports
+ports:
+  - {var: FORWARD_REVERB_PORT, label: Reverb, role: loopback}
+routes:
+  - {id: reverb, port: 'env_port("FORWARD_REVERB_PORT", 8080)', label: Reverb, hosts: '[url_host(env["REVERB_HOST"])]'}
+`)
+	res := discover(t, r, Options{Presets: []*preset.Preset{p}})
+	c := routeMap(res)[8080]
+	if c.Role != config.RoleLoopback || len(c.Hosts) != 0 {
+		t.Errorf("candidate = %+v", c)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "port 8080") {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+}

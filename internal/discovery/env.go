@@ -20,6 +20,7 @@ type Candidate struct {
 	Source string      // where it came from: "compose:<service>", "env:<variable>", "preset:<key>"
 	Var    string      // environment variable that sets it, if any
 	Preset string      // key of the preset that identified it, if any
+	Hosts  []string    // names a preset says it is served at; only a web route keeps them
 
 	web preset.WebHint
 }

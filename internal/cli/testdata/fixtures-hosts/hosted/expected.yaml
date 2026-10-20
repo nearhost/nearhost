@@ -1,0 +1,7 @@
+presets: [hosted]
+alias: myapp.test
+routes:
+  - port: 8220
+    role: web
+    label: App
+    hosts: [app.local.x.io]

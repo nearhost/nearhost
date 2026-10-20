@@ -144,7 +144,7 @@ func runFixture(dir, name, from string) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
-	advisories, warnings := discovery.Advise(res, want.Alias, others)
+	advisories, warnings := discovery.Advise(res, want.Alias, config.Project{Alias: want.Alias, Routes: res.ConfigRoutes()}.AllHosts(), others)
 
 	var problems []string
 	for _, w := range append(res.Warnings, warnings...) {
@@ -153,10 +153,10 @@ func runFixture(dir, name, from string) []string {
 
 	var wantRoutes, gotRoutes []string
 	for _, r := range want.Routes {
-		wantRoutes = append(wantRoutes, fmt.Sprintf("%d %s %s", r.Port, r.Role, r.Label))
+		wantRoutes = append(wantRoutes, routeLine(r))
 	}
 	for _, r := range res.ConfigRoutes() {
-		gotRoutes = append(gotRoutes, fmt.Sprintf("%d %s %s", r.Port, r.Role, r.Label))
+		gotRoutes = append(gotRoutes, routeLine(r))
 	}
 	if p := difference("routes", wantRoutes, gotRoutes); p != "" {
 		problems = append(problems, p)
@@ -201,4 +201,13 @@ func difference(what string, want, got []string) string {
 	list("want", want)
 	list("got ", got)
 	return b.String()
+}
+
+// routeLine is how a fixture's route is compared and shown.
+func routeLine(r config.Route) string {
+	line := fmt.Sprintf("%d %s %s", r.Port, r.Role, r.Label)
+	if len(r.Hosts) > 0 {
+		line += " hosts=" + strings.Join(r.Hosts, ",")
+	}
+	return line
 }

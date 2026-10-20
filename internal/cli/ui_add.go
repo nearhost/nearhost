@@ -220,7 +220,7 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 		reg, _ := cfg.Trusted(alias)
 		d.Presets = append(d.Presets, tui.SuggestedPreset{Name: o.Name, Title: offerTitle(o), Repo: reg.Repo})
 	}
-	advisories, advisoryWarnings := discovery.Advise(res, d.Alias, cfg.Projects)
+	advisories, advisoryWarnings := discovery.Advise(res, d.Alias, config.Project{Alias: d.Alias, Routes: d.Routes}.AllHosts(), cfg.Projects)
 	for _, a := range advisories {
 		d.Advisories = append(d.Advisories, tui.Advisory{Code: a.Code, Message: printableLines(a.Message), Snippet: printableLines(a.Snippet)})
 	}
@@ -271,7 +271,7 @@ func (f *uiFiles) advise(ctx context.Context, cfg *config.Config, path string, r
 			others = append(others, p)
 		}
 	}
-	advisories, notes := discovery.Advise(res, alias, others)
+	advisories, notes := discovery.Advise(res, alias, config.Project{Alias: alias, Routes: routes}.AllHosts(), others)
 	var out []tui.Advisory
 	for _, a := range advisories {
 		out = append(out, tui.Advisory{Code: a.Code, Message: printableLines(a.Message), Snippet: printableLines(a.Snippet)})
