@@ -159,7 +159,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		project.Routes = forceWeb(project.Routes, flags.web)
 	}
 	defaultAlias := project.Alias
-	if err := applyNearhostrc(cmd, b, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != ""); err != nil {
+	if err := applyNearhostrc(cmd, b, cfg, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != ""); err != nil {
 		return errors.Join(err, done())
 	}
 	// A main name from the .nearhostrc must be free, as a typed one must.
@@ -229,17 +229,28 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // --host flags to project, and asks before serving any host that would take
 // over traffic meant for the internet, whether the file, a preset or the
 // project's files gave it. A port the file lists takes the file's hosts and
-// none inferred; without a file, the inferred hosts stay. A host typed with --host counts as
-// approved by being typed, and so is a main name given with --alias. The
-// file's alias is the project's main name unless --alias gave one: the flag
-// wins, and the snapshot still records the file's, so a later start keeps
-// the flag's until the file moves its alias. Nothing is saved here; an error
-// stops the add.
-func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
+// none inferred; without a file, the inferred hosts stay. A host typed with
+// --host counts as approved by being typed, and so is a main name given with
+// --alias. The file's alias is the project's main name unless --alias gave
+// one: the flag wins, and the snapshot still records the file's, so a later
+// start keeps the flag's until the file moves its alias. An inferred host
+// another project in cfg serves is left out, with a note on stderr. Nothing
+// is saved here; an error stops the add.
+func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
 	out := cmd.OutOrStdout()
 	f, found, err := nearhostrc.Read(reader)
 	if err != nil {
 		return err
+	}
+	// Without a file, the hosts on the routes now are the ones discovery
+	// inferred; with one, every host comes from the file.
+	inferred := map[string]bool{}
+	if !found {
+		for _, r := range project.Routes {
+			for _, h := range r.Hosts {
+				inferred[strings.ToLower(h)] = true
+			}
+		}
 	}
 	if found {
 		typedAlias := project.Alias
@@ -256,6 +267,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 			project.Alias = typedAlias
 		}
 	}
+	// The main name is final now, so a route other than the primary that
+	// names it is dropped before anything is asked about it.
+	project.Routes = withoutAliasHosts(project.Routes, project.Alias)
 	// A host typed twice, or already on a route, is served once: it still
 	// counts as typed, so it is approved, but is not added again. Hosts are
 	// matched without regard to case, and typed ones are lower-cased so that
@@ -298,6 +312,16 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 			}
 		}
 		project.Routes = routes
+	}
+	// An inferred host another project serves is left out with a note, so
+	// it is neither asked about nor fails the save; a typed one still fails.
+	for h := range approved {
+		delete(inferred, h)
+	}
+	routes, notes := withoutTakenHosts(cfg, *project, inferred)
+	project.Routes = routes
+	for _, n := range notes {
+		fmt.Fprintln(cmd.ErrOrStderr(), n)
 	}
 
 	var items []nearhostrc.Item

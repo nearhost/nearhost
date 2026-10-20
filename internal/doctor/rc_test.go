@@ -259,3 +259,29 @@ func TestDriftUnservedHost(t *testing.T) {
 		}
 	}
 }
+
+// A host the settings name for a port the project saved as ignore or
+// loopback is not served either, and the fix makes the port web first.
+func TestDriftUnservedHostOnAPortNotServedAsWeb(t *testing.T) {
+	disc := &discovery.Result{Routes: []discovery.Candidate{
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}}
+	for _, role := range []config.Role{config.RoleIgnore, config.RoleLoopback} {
+		p := config.Project{Name: "app", Alias: "a.test", Enabled: true, Routes: []config.Route{
+			{Port: 80, Role: config.RoleWeb}, {Port: 8080, Role: role},
+		}}
+		got := Check(context.Background(), Input{Project: p, Added: true, Files: files{}, Discovered: disc})
+		f := byID(t, got, "routes.unserved-host")
+		if f.Severity != SeverityWarning ||
+			f.Message != "app.x.io is named by the project's settings for port 8080, but Nearhost doesn't serve it" ||
+			f.Fix.Kind != FixNearhost ||
+			f.Fix.Text != "Edit the project in Nearhost: select it and press e, make port 8080 a web route, and add app.x.io." {
+			t.Errorf("%s: %+v", role, got)
+		}
+		for _, f := range got {
+			if f.ID == "routes.unserved-port" {
+				t.Errorf("%s: the port has a route: %+v", role, f)
+			}
+		}
+	}
+}

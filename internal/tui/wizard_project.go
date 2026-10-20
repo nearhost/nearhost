@@ -818,9 +818,9 @@ func (f *projectForm) toggleRoute(i int) {
 }
 
 // setRole gives route i role; a route made web takes the place of the web
-// route without hosts. A web route with hosts of its own is a site the user
-// wrote by hand, so it stays web; Validate on save reports a project that
-// ends up inconsistent.
+// route without hosts, and becomes the primary. A web route with hosts of
+// its own is a site the user wrote by hand, so it stays web; Validate on save
+// reports a project that ends up inconsistent.
 func (f *projectForm) setRole(i int, role config.Role) {
 	if role == config.RoleWeb {
 		for j := range f.routes {
@@ -830,6 +830,21 @@ func (f *projectForm) setRole(i int, role config.Role) {
 		}
 	}
 	f.routes[i].Role = role
+	if role != config.RoleWeb {
+		return
+	}
+	// Left after a hosted web route, it would be a web route other than the
+	// primary, which needs hosts it may not have. The cursor follows it.
+	port := f.routes[i].Port
+	f.routes = config.MovePrimary(f.routes, port)
+	if f.routeRow == i {
+		for j, r := range f.routes {
+			if r.Port == port {
+				f.routeRow = j
+				break
+			}
+		}
+	}
 }
 
 // pick goes on with srv: to the path step, connecting to the server.
@@ -1008,8 +1023,10 @@ func (f *projectForm) discover() tea.Cmd {
 // editing, each port still found keeps its saved role, label and hosts, and
 // a saved web route also gets the hosts discovery infers that are not on any
 // route of the form or the alias yet; a saved route no longer found is kept
-// and marked; and a new port found does not take the web route from the
-// saved one, unless it has hosts, when it is web but after the saved primary.
+// and marked; and a new port found keeps only the hosts it infers that are
+// not on another route or the alias, and does not take the web route from
+// the saved one, unless it has hosts left, when it is web but after the
+// saved primary.
 func (f *projectForm) toRoutes() {
 	f.routes = append([]config.Route(nil), f.draft.Routes...)
 	if f.edit != nil {
@@ -1028,22 +1045,22 @@ func (f *projectForm) toRoutes() {
 				f.routes[i].Role, f.routes[i].Label = s.Role, s.Label
 				f.routes[i].Hosts = append([]string(nil), s.Hosts...)
 				delete(saved, r.Port)
-			} else if r.Role == config.RoleWeb && savedWeb && len(r.Hosts) == 0 {
-				f.routes[i].Role = config.RoleIgnore
+			} else {
+				f.routes[i].Hosts = nil // the inferred ones not yet served are added below
 			}
 		}
-		// Hosts discovery infers are added to a saved web route, unless
-		// they are already on a route of the form or are the alias.
+		// Hosts discovery infers are added to a saved web route, and kept
+		// on a new port, unless they are already on a route of the form or
+		// are the alias. The alias is served on the primary, and a host on
+		// two routes could not be saved.
 		have := map[string]bool{strings.ToLower(strings.TrimSpace(f.alias.value)): true}
-		for _, rs := range [][]config.Route{f.routes, f.edit.Routes} { // saved routes no longer found too
-			for _, r := range rs {
-				for _, h := range r.Hosts {
-					have[strings.ToLower(h)] = true
-				}
+		for _, r := range f.edit.Routes { // saved routes no longer found too
+			for _, h := range r.Hosts {
+				have[strings.ToLower(h)] = true
 			}
 		}
 		for i, r := range f.routes {
-			if !wasSaved[r.Port] || r.Role != config.RoleWeb {
+			if wasSaved[r.Port] && r.Role != config.RoleWeb {
 				continue
 			}
 			for _, h := range inferred[i] {
@@ -1051,6 +1068,9 @@ func (f *projectForm) toRoutes() {
 					have[strings.ToLower(h)] = true
 					f.routes[i].Hosts = append(f.routes[i].Hosts, h)
 				}
+			}
+			if !wasSaved[r.Port] && r.Role == config.RoleWeb && savedWeb && len(f.routes[i].Hosts) == 0 {
+				f.routes[i].Role = config.RoleIgnore
 			}
 		}
 		f.missing = map[int]bool{}
@@ -1120,8 +1140,10 @@ func (f *projectForm) mergeRc() {
 	}
 }
 
-// proposeWeb makes port the web route, as the agent proposed, when
-// discovery found it; the route that was the web route is then ignored.
+// proposeWeb makes port the primary web route, as the agent proposed, when
+// discovery found it. A web route without hosts is then ignored, as only the
+// primary goes without; one with hosts serves them and stays web, as add
+// --web keeps it.
 func (f *projectForm) proposeWeb(port int) {
 	at := -1
 	for i, r := range f.routes {
@@ -1133,11 +1155,12 @@ func (f *projectForm) proposeWeb(port int) {
 		return
 	}
 	for i := range f.routes {
-		if f.routes[i].Role == config.RoleWeb {
+		if f.routes[i].Role == config.RoleWeb && len(f.routes[i].Hosts) == 0 {
 			f.routes[i].Role = config.RoleIgnore
 		}
 	}
 	f.routes[at].Role = config.RoleWeb
+	f.routes = config.MovePrimary(f.routes, port)
 }
 
 // routeLabel is how a route's label is shown: a saved route no longer found

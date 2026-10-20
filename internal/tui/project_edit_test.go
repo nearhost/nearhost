@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -294,5 +295,53 @@ func TestEditTakesTheMainNameTheNearhostrcMoved(t *testing.T) {
 				t.Fatalf("saved alias %q, snapshot %+v", p.Alias, p.Nearhostrc)
 			}
 		})
+	}
+}
+
+// An agent's proposed web port takes the place of the web route without
+// hosts only: a hosted web route stays web, and the proposed port becomes
+// the primary so the project still validates.
+func TestProposeWebKeepsWebRoutesWithHosts(t *testing.T) {
+	f := &projectForm{routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+	}}
+	f.proposeWeb(8080)
+	want := []config.Route{
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}
+	if !reflect.DeepEqual(f.routes, want) {
+		t.Fatalf("routes = %+v, want %+v", f.routes, want)
+	}
+	f.proposeWeb(80)
+	if f.routes[0].Port != 80 || f.routes[1].Role != config.RoleWeb {
+		t.Fatalf("routes = %+v, want 80 first and 8080 still web", f.routes)
+	}
+	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+}
+
+// A port without hosts made web while a hosted web route comes first would
+// be a second web route without hosts. It becomes the primary instead, and
+// the cursor stays on it.
+func TestMakingAHostlessRouteWebMakesItPrimary(t *testing.T) {
+	f := &projectForm{routeRow: 1, routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 9000, Role: config.RoleIgnore},
+	}}
+	f.setRole(1, config.RoleWeb)
+	want := []config.Route{
+		{Port: 9000, Role: config.RoleWeb},
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
+	}
+	if !reflect.DeepEqual(f.routes, want) || f.routeRow != 0 {
+		t.Fatalf("routes = %+v, row %d; want %+v, row 0", f.routes, f.routeRow, want)
+	}
+	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
 	}
 }

@@ -649,3 +649,18 @@ func TestDraftProjectNearhostrcBeatsInferredHosts(t *testing.T) {
 		t.Errorf("no route on 8220: %+v", p.Routes)
 	}
 }
+
+func TestDraftProjectDropsTheAliasFromSecondaryRoutes(t *testing.T) {
+	cfgPath := configHome(t)
+	saveConfig(t, cfgPath, &config.Config{})
+	enableReverbPreset(t, cfgPath)
+	cfg := loadSaved(t, cfgPath)
+	dir := filepath.Join(t.TempDir(), "rapp")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{".env": reverbEnv})
+	local := config.Server{Name: config.LocalServer}
+	p := draftProject(cfg, cfgPath, local, dir, localFiles{}.reader(dir))
+	wantAliasHostDropped(t, p.Routes)
+}

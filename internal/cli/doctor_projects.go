@@ -166,7 +166,8 @@ func adviceResult(res *discovery.Result, routes []config.Route) *discovery.Resul
 
 // draftProject is the project nearhost add would make of dir on srv:
 // defaultName, the alias add gives it, discoveredRoutes, then the
-// .nearhostrc merged in when it parses.
+// .nearhostrc merged in when it parses and the alias kept off routes other
+// than the primary, as add keeps it.
 func draftProject(cfg *config.Config, cfgPath string, srv config.Server, dir string, files discovery.FileReader) config.Project {
 	p, err := newProject(cfg, cfgPath, srv, addFlags{}, []string{dir})
 	if err != nil {
@@ -188,6 +189,7 @@ func draftProject(cfg *config.Config, cfgPath string, srv config.Server, dir str
 			p = merged
 		}
 	}
+	p.Routes = withoutAliasHosts(p.Routes, p.Alias)
 	return p
 }
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -670,5 +671,46 @@ func TestEditInferredHostNotDuplicated(t *testing.T) {
 		Draft{Routes: []config.Route{hosted(80, config.RoleWeb, "other.x.io", "alias.x.io", "new.x.io")}})
 	if got, want := pf.routes[0].Hosts, []string{"new.x.io"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hosts = %v, want %v", got, want)
+	}
+}
+
+// A newly found port is deduped as a saved one is: a host another route
+// serves, or the alias, is left off, and a port left without hosts follows
+// the rule for new ports without them.
+func TestEditNewHostedPortNotDuplicated(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(80, config.RoleWeb), hosted(81, config.RoleWeb, "Other.x.io")}, "Here.test",
+		Draft{Routes: []config.Route{
+			hosted(80, config.RoleWeb),
+			hosted(6001, config.RoleWeb, "here.test"),
+			hosted(6002, config.RoleWeb, "other.x.io", "ws.x.io"),
+		}})
+	want := map[int]config.Route{
+		6001: {Port: 6001, Role: config.RoleIgnore},
+		6002: hosted(6002, config.RoleWeb, "ws.x.io"),
+	}
+	for _, r := range pf.routes {
+		if w, ok := want[r.Port]; ok {
+			if r.Role != w.Role || !reflect.DeepEqual(r.Hosts, w.Hosts) && len(r.Hosts)+len(w.Hosts) > 0 {
+				t.Errorf("route %d = %+v, want %+v", r.Port, r, w)
+			}
+			delete(want, r.Port)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing routes %v in %+v", want, pf.routes)
+	}
+}
+
+// A newly found port's inferred hosts are asked about on save, as those
+// added to a saved web route are.
+func TestEditNewHostedPortNeedsApproval(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(8220, config.RoleWeb)}, "here.test",
+		Draft{Routes: []config.Route{hosted(8220, config.RoleWeb), hosted(6001, config.RoleWeb, "ws.x.io")}})
+	var got []string
+	for _, it := range pf.needsApproval() {
+		got = append(got, fmt.Sprintf("%s:%d", it.Host, it.Port))
+	}
+	if want := []string{"ws.x.io:6001"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("needsApproval = %v, want %v", got, want)
 	}
 }
