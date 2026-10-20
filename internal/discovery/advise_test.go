@@ -154,8 +154,8 @@ func TestAdviseGetsHosts(t *testing.T) {
 	if advs, _ := Advise(res, "a.test", []string{"a.test"}, nil); codes(advs) != "add-host" {
 		t.Errorf("without the host: %s", codes(advs))
 	}
-	if advs, _ := Advise(res, "a.test", []string{"a.test", "app.x.io"}, nil); codes(advs) != "" {
-		t.Errorf("with the host: %s", codes(advs))
+	if advs, warnings := Advise(res, "a.test", []string{"a.test", "app.x.io"}, nil); codes(advs) != "" || len(warnings) != 0 {
+		t.Errorf("with the host: %s, warnings %q", codes(advs), warnings)
 	}
 }
 

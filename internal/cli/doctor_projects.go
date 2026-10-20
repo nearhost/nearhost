@@ -189,7 +189,7 @@ func draftProject(cfg *config.Config, cfgPath string, srv config.Server, dir str
 			p = merged
 		}
 	}
-	p.Routes = withoutAliasHosts(p.Routes, p.Alias)
+	p.Routes = config.WithoutAliasHosts(p.Routes, p.Alias)
 	return p
 }
 

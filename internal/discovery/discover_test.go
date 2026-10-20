@@ -645,3 +645,24 @@ routes:
 		t.Errorf("warnings = %v", res.Warnings)
 	}
 }
+
+// A host a loopback route loses still goes to a later route that names it.
+func TestDiscoverHostOnLoopbackPortGoesToTheNextRoute(t *testing.T) {
+	r := memReader{"compose.yaml": hostsCompose, ".env": "REVERB_HOST=ws.x.io\n"}
+	p := inline2(t, "h", `detect: 'true'
+compose: ports
+ports:
+  - {var: FORWARD_REVERB_PORT, label: Reverb, role: loopback}
+routes:
+  - {id: reverb, port: 'env_port("FORWARD_REVERB_PORT", 8080)', label: Reverb, hosts: '[url_host(env["REVERB_HOST"])]'}
+  - {id: proxy, port: '9000', label: Proxy, hosts: '[url_host(env["REVERB_HOST"])]'}
+`)
+	res := discover(t, r, Options{Presets: []*preset.Preset{p}})
+	m := routeMap(res)
+	if c := m[8080]; c.Role != config.RoleLoopback || len(c.Hosts) != 0 {
+		t.Errorf("8080 = %+v", c)
+	}
+	if c := m[9000]; c.Role != config.RoleWeb || len(c.Hosts) != 1 || c.Hosts[0] != "ws.x.io" {
+		t.Errorf("9000 = %+v", c)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -630,11 +631,13 @@ func TestDraftProjectNearhostrcBeatsInferredHosts(t *testing.T) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, dir, map[string]string{
-		".env":        hostedEnv,
-		".nearhostrc": "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [auth.local.x.io]\n",
-	})
+	writeFiles(t, dir, map[string]string{".env": hostedEnv})
 	local := config.Server{Name: config.LocalServer}
+	// Without the file, the preset infers a host for the route.
+	if hosts := draftProject(cfg, cfgPath, local, dir, localFiles{}.reader(dir)).AllHosts(); !slices.Contains(hosts, "app.local.x.io") {
+		t.Fatalf("nothing inferred to override: %v", hosts)
+	}
+	writeFiles(t, dir, map[string]string{".nearhostrc": "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [auth.local.x.io]\n"})
 	p := draftProject(cfg, cfgPath, local, dir, localFiles{}.reader(dir))
 	found := false
 	for _, r := range p.Routes {

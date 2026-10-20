@@ -96,17 +96,12 @@ func (m *Model) cycleRole(p config.Project) tea.Cmd {
 
 // makeWeb makes the selected route web and saves it; a web route without
 // hosts of its own becomes ignore. The cursor follows the route when it
-// moves to be the primary.
+// moves to be the primary, once the change is in (setConfig).
 func (m *Model) makeWeb(p config.Project) tea.Cmd {
 	if m.routeRow >= len(p.Routes) || p.Routes[m.routeRow].Role == config.RoleWeb {
 		return nil
 	}
-	port := p.Routes[m.routeRow].Port
-	cmd := m.setRole(p.Name, port, config.RoleWeb)
-	if cmd != nil {
-		m.routeRow = routeAt(config.SetRole(p.Routes, port, config.RoleWeb), port)
-	}
-	return cmd
+	return m.setRole(p.Name, p.Routes[m.routeRow].Port, config.RoleWeb)
 }
 
 // setRole saves the role of a project's route on port, as config.SetRole

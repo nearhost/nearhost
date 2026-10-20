@@ -956,28 +956,6 @@ func TestAddDropsTheAliasFromSecondaryRoutes(t *testing.T) {
 	wantAliasHostDropped(t, p.Routes)
 }
 
-func TestWithoutAliasHosts(t *testing.T) {
-	in := []config.Route{
-		{Port: 80, Role: config.RoleWeb, Hosts: []string{"App.test"}},
-		{Port: 6001, Role: config.RoleWeb, Hosts: []string{"APP.test"}},
-		{Port: 6002, Role: config.RoleWeb, Hosts: []string{"app.test", "ws.x.io"}},
-		{Port: 3306, Role: config.RoleIgnore},
-	}
-	got := withoutAliasHosts(in, "app.test")
-	want := []config.Route{
-		{Port: 80, Role: config.RoleWeb, Hosts: []string{"App.test"}},
-		{Port: 6001, Role: config.RoleIgnore},
-		{Port: 6002, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
-		{Port: 3306, Role: config.RoleIgnore},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("withoutAliasHosts = %+v\nwant %+v", got, want)
-	}
-	if !reflect.DeepEqual(in[1].Hosts, []string{"APP.test"}) {
-		t.Errorf("changed the routes passed in: %+v", in)
-	}
-}
-
 // Two checkouts of one app infer the same host. The second is added without
 // it, saying why, rather than failed; a host typed with --host still fails.
 func TestAddSkipsInferredHostsAnotherProjectServes(t *testing.T) {

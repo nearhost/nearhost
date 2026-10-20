@@ -277,40 +277,6 @@ func withoutHosts(routes []config.Route) []config.Route {
 	return out
 }
 
-// withoutAliasHosts is a copy of routes without the alias among the hosts
-// of web routes other than the primary. The primary is served at the alias
-// already, so a preset that names it for another route, as REVERB_HOST does
-// when it is the app's own name, would serve it twice. A route left without
-// hosts has nothing of its own to serve, so it is ignored.
-func withoutAliasHosts(routes []config.Route, alias string) []config.Route {
-	out := make([]config.Route, len(routes))
-	primary := true
-	for i, r := range routes {
-		out[i] = r
-		if r.Role != config.RoleWeb {
-			continue
-		}
-		if primary {
-			primary = false
-			continue
-		}
-		var kept []string
-		for _, h := range r.Hosts {
-			if !strings.EqualFold(h, alias) {
-				kept = append(kept, h)
-			}
-		}
-		if len(kept) == len(r.Hosts) {
-			continue
-		}
-		out[i].Hosts = kept
-		if len(kept) == 0 {
-			out[i].Role = config.RoleIgnore
-		}
-	}
-	return out
-}
-
 // withoutTakenHosts is a copy of p's routes without the inferred hosts that
 // another enabled project of cfg serves, as HostClash finds them, and a note
 // for each host left out. Two checkouts of one app infer the same host from

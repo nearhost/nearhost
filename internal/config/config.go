@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -646,20 +647,17 @@ func MovePrimary(routes []Route, port int) []Route {
 // own, which are ignored, and when it has no hosts itself it becomes the
 // primary, the only web route that needs none. A route made anything else
 // loses its hosts, which only a web route has. routes itself is not
-// modified.
+// modified, and nothing changes when no route is on port.
 func SetRole(routes []Route, port int, role Role) []Route {
 	out := append([]Route(nil), routes...)
-	at := -1
-	for i := range out {
-		switch {
-		case out[i].Port == port && at < 0:
-			at = i
-		case role == RoleWeb && out[i].Role == RoleWeb && len(out[i].Hosts) == 0:
-			out[i].Role = RoleIgnore
-		}
-	}
+	at := slices.IndexFunc(out, func(r Route) bool { return r.Port == port })
 	if at < 0 {
 		return out
+	}
+	for i := range out {
+		if i != at && role == RoleWeb && out[i].Role == RoleWeb && len(out[i].Hosts) == 0 {
+			out[i].Role = RoleIgnore
+		}
 	}
 	out[at].Role = role
 	if role != RoleWeb {
@@ -670,4 +668,38 @@ func SetRole(routes []Route, port int, role Role) []Route {
 		return out
 	}
 	return MovePrimary(out, port)
+}
+
+// WithoutAliasHosts is a copy of routes without the alias among the hosts
+// of web routes other than the primary. The primary is served at the alias
+// already, so a preset that names it for another route, as REVERB_HOST does
+// when it is the app's own name, would serve it twice. A route left without
+// hosts has nothing of its own to serve, so it is ignored.
+func WithoutAliasHosts(routes []Route, alias string) []Route {
+	out := make([]Route, len(routes))
+	primary := true
+	for i, r := range routes {
+		out[i] = r
+		if r.Role != RoleWeb {
+			continue
+		}
+		if primary {
+			primary = false
+			continue
+		}
+		var kept []string
+		for _, h := range r.Hosts {
+			if !strings.EqualFold(h, alias) {
+				kept = append(kept, h)
+			}
+		}
+		if len(kept) == len(r.Hosts) {
+			continue
+		}
+		out[i].Hosts = kept
+		if len(kept) == 0 {
+			out[i].Role = RoleIgnore
+		}
+	}
+	return out
 }

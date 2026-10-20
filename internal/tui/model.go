@@ -384,9 +384,22 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // setConfig takes in the engine's configuration after a change, keeping the
 // selection when its row is still there and selecting a project that is new.
+// The selected route stays on its port, which a change may have moved.
 func (m *Model) setConfig(cfg *config.Config) {
 	old := m.cfg
+	kind, name := m.selected()
+	port := 0
+	if p, ok := old.Project(name); ok && kind == rowProject && m.routeRow < len(p.Routes) {
+		port = p.Routes[m.routeRow].Port
+	}
 	m.cfg = cfg
+	if p, ok := cfg.Project(name); ok && port != 0 {
+		for i, r := range p.Routes {
+			if r.Port == port {
+				m.routeRow = i
+			}
+		}
+	}
 	for _, p := range cfg.Projects {
 		if _, existed := old.Project(p.Name); !existed {
 			delete(m.collapsed, p.Server) // so the new project's row is shown
