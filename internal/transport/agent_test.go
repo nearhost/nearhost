@@ -109,7 +109,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 	os.WriteFile(other, nil, 0o600)
 	os.WriteFile(filepath.Join(home, AgentDir, "k3f9q2.sock"), nil, 0o600)
 
-	sock, err := PrepareAgentDir(client, home, "k3f9q2.sock", "")
+	sock, err := PrepareAgentDir(client, home, "k3f9q2.sock", "", "")
 	if err != nil || sock != filepath.Join(home, AgentDir, "k3f9q2.sock") {
 		t.Fatalf("%q %v", sock, err)
 	}
@@ -123,7 +123,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 		t.Fatalf("mode %v", info.Mode().Perm())
 	}
 	// Again, with nothing to remove.
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err != nil {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -132,18 +132,18 @@ func TestPrepareAgentDirTakesASymlinkToADirectory(t *testing.T) {
 	client, home := inProcessSFTP(t)
 	os.Mkdir(filepath.Join(home, "elsewhere"), 0o700)
 	os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(home, AgentDir))
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err != nil {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestPrepareAgentDirRefusesWhatItCannotUse(t *testing.T) {
 	client, home := inProcessSFTP(t)
-	if _, err := PrepareAgentDir(client, home, "../evil.sock", ""); err == nil {
+	if _, err := PrepareAgentDir(client, home, "../evil.sock", "", ""); err == nil {
 		t.Fatal("a name with a slash was taken")
 	}
 	os.WriteFile(filepath.Join(home, AgentDir), []byte("a file"), 0o600)
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", ""); err == nil || !strings.Contains(err.Error(), ".nearhost") {
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", "", ""); err == nil || !strings.Contains(err.Error(), ".nearhost") {
 		t.Fatalf("a file in the way: %v", err)
 	}
 }
@@ -153,11 +153,29 @@ func TestPrepareAgentDirLeavesThisMachinesOwnSocketAlone(t *testing.T) {
 	own := filepath.Join(home, AgentDir, "k3f9q2.sock")
 	os.MkdirAll(filepath.Dir(own), 0o700)
 	os.WriteFile(own, nil, 0o600)
-	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", own); !errors.Is(err, ErrThisMachine) {
+	os.WriteFile(filepath.Join(home, AgentDir, ".probe-1"), nil, 0o600) // the server sees it: it is this machine
+	if _, err := PrepareAgentDir(client, home, "k3f9q2.sock", own, ".probe-1"); !errors.Is(err, ErrThisMachine) {
 		t.Fatalf("got %v, want ErrThisMachine", err)
 	}
 	if _, err := os.Stat(own); err != nil {
 		t.Fatalf("this machine's socket was removed: %v", err)
+	}
+}
+
+// Another machine can have its home at the path of this one's, as two Macs
+// with one user name do. It does not see the probe made here, so it is
+// readied as any server, and its old socket of this install removed.
+func TestPrepareAgentDirReadiesAnotherMachineWithTheSameHomePath(t *testing.T) {
+	client, home := inProcessSFTP(t)
+	sock := filepath.Join(home, AgentDir, "k3f9q2.sock")
+	os.MkdirAll(filepath.Dir(sock), 0o700)
+	os.WriteFile(sock, nil, 0o600) // left by an earlier forward
+	got, err := PrepareAgentDir(client, home, "k3f9q2.sock", sock, ".probe-1")
+	if err != nil || got != sock {
+		t.Fatalf("%q %v, want %q", got, err, sock)
+	}
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Fatalf("the old socket is still there: %v", err)
 	}
 }
 
