@@ -216,7 +216,7 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 		d.Routes, d.Nearhostrc, d.Alias = merged.Routes, merged.Nearhostrc, merged.Alias
 	}
 	// The alias the form proposes is served on the primary route only.
-	d.Routes = withoutAliasHosts(d.Routes, d.Alias)
+	d.Routes = config.WithoutAliasHosts(d.Routes, d.Alias)
 	for _, o := range res.Suggested {
 		alias, _ := config.SplitPreset(o.Name)
 		reg, _ := cfg.Trusted(alias)

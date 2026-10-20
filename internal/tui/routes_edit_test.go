@@ -188,6 +188,10 @@ func TestRoutesMakeWebKeepsHostedRoute(t *testing.T) {
 	if err := f.cfg.Validate(); err != nil {
 		t.Errorf("Validate() = %v", err)
 	}
+	if m.routeRow != 2 {
+		t.Errorf("cursor moved to row %d before the change is in", m.routeRow)
+	}
+	m.Update(appliedMsg{})
 	if m.routeRow != 0 {
 		t.Errorf("cursor on row %d, want 0", m.routeRow)
 	}

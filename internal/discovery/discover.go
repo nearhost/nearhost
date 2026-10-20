@@ -41,7 +41,7 @@ type Result struct {
 	active     []*preset.Preset
 	facts      map[string]map[string]any // by preset key
 	owners     map[string]string         // id to preset key
-	hostsSeen  map[string]bool           // hosts some candidate holds
+	hostClaims []hostClaim               // the hosts candidates were given, in order
 	hostOwners map[int]string            // port to the key of the preset that gave it hosts
 }
 
@@ -66,7 +66,6 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		files:      files,
 		hasCompose: hasCompose,
 		facts:      map[string]map[string]any{},
-		hostsSeen:  map[string]bool{},
 		hostOwners: map[int]string{},
 	}
 	res.activate(opts.Presets)
@@ -249,9 +248,16 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 	}
 }
 
+// hostClaim is a host a candidate on port was given.
+type hostClaim struct {
+	host string
+	port int
+}
+
 // inferHosts gives c the hosts a route of p names, leaving out those that
 // cannot be served: ones that are not names at all are dropped quietly,
-// ones that are malformed with a warning, and ones another candidate holds.
+// ones that are malformed with a warning. A host two candidates are given
+// goes to the first that is served (serveHosts).
 func (res *Result) inferHosts(p *preset.Preset, id string, c *Candidate, hosts []string) {
 	for _, h := range hosts {
 		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
@@ -260,10 +266,10 @@ func (res *Result) inferHosts(p *preset.Preset, id string, c *Candidate, hosts [
 				res.warn("preset %s: route %s: %q is not a host name, so it is left out", p.Key(), id, h)
 				continue
 			}
-			if res.hostsSeen[h] {
+			if slices.Contains(c.Hosts, h) {
 				continue
 			}
-			res.hostsSeen[h] = true
+			res.hostClaims = append(res.hostClaims, hostClaim{h, c.Port})
 			c.Hosts = append(c.Hosts, h)
 			if res.hostOwners[c.Port] == "" {
 				res.hostOwners[c.Port] = p.Key()
@@ -273,7 +279,8 @@ func (res *Result) inferHosts(p *preset.Preset, id string, c *Candidate, hosts [
 }
 
 // serveHosts makes the candidates that have hosts web routes, except for
-// loopback ones, which lose them. The primary web route, the one assignWeb
+// loopback ones, which lose them. A host given to two candidates stays
+// with the first of them that keeps its hosts. The primary web route, the one assignWeb
 // picked (index primary, or -1) or else the first web one, goes just before
 // the other web routes. routes must be sorted by port.
 func (res *Result) serveHosts(routes []Candidate, primary int) []Candidate {
@@ -284,6 +291,20 @@ func (res *Result) serveHosts(routes []Candidate, primary int) []Candidate {
 		}
 		if c.Role == config.RoleLoopback {
 			res.warn("preset %s: port %d is forwarded to this machine, so its hosts are left out", res.hostOwners[c.Port], c.Port)
+			c.Hosts = nil
+		}
+	}
+	owner := map[string]int{}
+	for _, cl := range res.hostClaims {
+		at := slices.IndexFunc(routes, func(c Candidate) bool { return c.Port == cl.port })
+		if _, taken := owner[cl.host]; !taken && at >= 0 && slices.Contains(routes[at].Hosts, cl.host) {
+			owner[cl.host] = cl.port
+		}
+	}
+	for i := range routes {
+		c := &routes[i]
+		c.Hosts = slices.DeleteFunc(c.Hosts, func(h string) bool { return owner[h] != c.Port })
+		if len(c.Hosts) == 0 {
 			c.Hosts = nil
 			continue
 		}

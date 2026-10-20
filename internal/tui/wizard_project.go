@@ -1163,11 +1163,13 @@ func (f *projectForm) routeLabel(r config.Route) string {
 	return r.Label
 }
 
-// project is the project the form adds.
+// project is the project the form adds. The alias, which can change after
+// the routes step, is served on the primary route only, so a route other
+// than the primary that names it does not.
 func (f *projectForm) project() config.Project {
 	return config.Project{
 		Name: f.name.value, Server: f.srv.Name, Path: f.resolved, Alias: f.alias.value,
-		Enabled: true, Routes: append([]config.Route(nil), f.routes...),
+		Enabled: true, Routes: config.WithoutAliasHosts(f.routes, f.alias.value),
 		// The snapshot is copied so needsApproval sees the opt-in, and saving
 		// approves what .nearhostrc asks for, so it is saved with the
 		// project. A file that cannot be read now has no snapshot, and the
@@ -1344,7 +1346,7 @@ func (f *projectForm) lines(width int) []string {
 		lines = append(lines, field("path", clean(f.resolved), width)...)
 		lines = append(lines, field("name", clean(f.name.value), width)...)
 		lines = append(lines, field("alias", styleBeacon.Render("https://"+clean(f.alias.value)), width)...)
-		for i, r := range f.routes {
+		for i, r := range f.project().Routes { // as they are saved
 			label := ""
 			if i == 0 {
 				label = "routes"

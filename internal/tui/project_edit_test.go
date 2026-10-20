@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/nearhost/nearhost/internal/config"
 )
 
@@ -299,15 +301,17 @@ func TestEditTakesTheMainNameTheNearhostrcMoved(t *testing.T) {
 }
 
 // An agent's proposed web port takes the place of the web route without
-// hosts only: a hosted web route stays web, and the proposed port becomes
-// the primary so the project still validates.
+// hosts only: that one is ignored, a hosted web route stays web, and the
+// proposed port becomes the primary so the project still validates.
 func TestProposeWebKeepsWebRoutesWithHosts(t *testing.T) {
 	f := &projectForm{routes: []config.Route{
+		{Port: 3000, Role: config.RoleWeb},
 		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
 		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
 	}}
 	f.proposeWeb(8080)
 	want := []config.Route{
+		{Port: 3000, Role: config.RoleIgnore},
 		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
 		{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io"}},
 	}
@@ -315,8 +319,8 @@ func TestProposeWebKeepsWebRoutesWithHosts(t *testing.T) {
 		t.Fatalf("routes = %+v, want %+v", f.routes, want)
 	}
 	f.proposeWeb(80)
-	if f.routes[0].Port != 80 || f.routes[1].Role != config.RoleWeb {
-		t.Fatalf("routes = %+v, want 80 first and 8080 still web", f.routes)
+	if f.routes[1].Port != 80 || f.routes[2].Role != config.RoleWeb {
+		t.Fatalf("routes = %+v, want 80 the primary and 8080 still web", f.routes)
 	}
 	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
 	if err := cfg.Validate(); err != nil {
@@ -364,5 +368,42 @@ func TestIgnoringAHostedRouteDropsItsHosts(t *testing.T) {
 	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() = %v", err)
+	}
+}
+
+// An alias chosen after the routes step that a route other than the primary
+// names is served on the primary only, so the project still saves.
+func TestFormProjectDropsTheAliasFromSecondaryRoutes(t *testing.T) {
+	f := &projectForm{routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"Ws.x.io"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"ws.x.io", "files.x.io"}},
+	}}
+	f.name.value, f.alias.value = "x", "ws.x.io"
+	p := f.project()
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.x.io"}},
+	}
+	if !reflect.DeepEqual(p.Routes, want) {
+		t.Fatalf("routes = %+v, want %+v", p.Routes, want)
+	}
+	if len(f.routes[1].Hosts) != 1 {
+		t.Errorf("changed the form's routes: %+v", f.routes)
+	}
+}
+
+// The last look shows the routes as they are saved, without the alias on a
+// route other than the primary.
+func TestConfirmShowsTheRoutesAsSaved(t *testing.T) {
+	f := &projectForm{step: projectStepConfirm, srv: config.Server{Name: config.LocalServer}, routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+	}}
+	f.name.value, f.alias.value = "x", "ws.x.io"
+	screen := ansi.Strip(strings.Join(f.lines(100), "\n"))
+	if !strings.Contains(screen, "8080   ignore") || strings.Contains(screen, "8080   web") {
+		t.Errorf("confirm shows:\n%s", screen)
 	}
 }

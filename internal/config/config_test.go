@@ -753,6 +753,9 @@ func TestSetRole(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ignored 8080: %+v\nwant %+v", got, want)
 	}
+	if got := SetRole(in, 9999, RoleWeb); !reflect.DeepEqual(got, in) {
+		t.Errorf("no route on 9999, yet: %+v", got)
+	}
 	if in[2].Role != RoleWeb || !reflect.DeepEqual(in[2].Hosts, []string{"files.x.io"}) || in[0].Role != RoleWeb {
 		t.Errorf("input modified: %+v", in)
 	}
@@ -763,5 +766,27 @@ func TestSetRole(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Errorf("%+v: %v", rs, err)
 		}
+	}
+}
+
+func TestWithoutAliasHosts(t *testing.T) {
+	in := []Route{
+		{Port: 80, Role: RoleWeb, Hosts: []string{"App.test"}},
+		{Port: 6001, Role: RoleWeb, Hosts: []string{"APP.test"}},
+		{Port: 6002, Role: RoleWeb, Hosts: []string{"app.test", "ws.x.io"}},
+		{Port: 3306, Role: RoleIgnore},
+	}
+	got := WithoutAliasHosts(in, "app.test")
+	want := []Route{
+		{Port: 80, Role: RoleWeb, Hosts: []string{"App.test"}},
+		{Port: 6001, Role: RoleIgnore},
+		{Port: 6002, Role: RoleWeb, Hosts: []string{"ws.x.io"}},
+		{Port: 3306, Role: RoleIgnore},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WithoutAliasHosts = %+v\nwant %+v", got, want)
+	}
+	if !reflect.DeepEqual(in[1].Hosts, []string{"APP.test"}) {
+		t.Errorf("changed the routes passed in: %+v", in)
 	}
 }
