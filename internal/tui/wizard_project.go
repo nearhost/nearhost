@@ -1329,14 +1329,25 @@ func (f *projectForm) lines(width int) []string {
 	case projectStepRoutes:
 		lines = append(lines, f.routeLines(width)...)
 	case projectStepDetails:
+		name := strings.TrimSpace(f.name.value)
+		if name == "" {
+			name = "<name>"
+		}
 		lines = append(lines, field("name", f.name.view(f.focus == 0 && f.busy == ""), width)...)
 		if f.nameErr != "" {
 			lines = append(lines, errorLines(f.nameErr, width)...)
 		}
-		lines = append(lines, field("alias", f.alias.view(f.focus == 1 && f.busy == ""), width)...)
+		lines = append(lines, field("", styleDim.Render("What Nearhost calls the project: in the sidebar, the log and `nearhost up "+clean(name)+"`."), width)...)
+		lines = append(lines, "")
+		lines = append(lines, field("alias", styleDim.Render("https://")+f.alias.view(f.focus == 1 && f.busy == ""), width)...)
 		if f.aliasErr != "" {
 			lines = append(lines, errorLines(f.aliasErr, width)...)
 		}
+		hint := "The address your browser opens. Any lowercase domain works, such as myapp.test or myapp.local.example.com."
+		if !f.aliasEdited {
+			hint += " It follows the name until you change it."
+		}
+		lines = append(lines, field("", styleDim.Render(hint), width)...)
 	case projectStepConfirm:
 		server := "local (this machine)"
 		if f.srv.Name != config.LocalServer {
