@@ -1526,7 +1526,7 @@ func (f *projectForm) roleLine(alias string) string {
 		return styleDim.Render("web: your browser opens ") + strings.Join(addrs, styleDim.Render(", ")) +
 			styleDim.Render(", and Nearhost sends "+them+" to port "+port+" "+clean(where)+". One port is the project's web port; h gives another port names of its own.")
 	case config.RoleLoopback:
-		return styleDim.Render("loopback: localhost:"+port+" on this machine reaches port "+port+" "+clean(where)+
+		return styleDim.Render("loopback: localhost:" + port + " on this machine reaches port " + port + " " + clean(where) +
 			", for what the app's pages load from that port themselves, such as Vite's dev server.")
 	}
 	return styleDim.Render("ignore: Nearhost opens nothing for port " + port + ".")
