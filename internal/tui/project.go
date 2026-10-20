@@ -117,8 +117,12 @@ func (m *Model) routeColumns(width int) (port, role, label, local int) {
 }
 
 // routeTable draws a project's routes: a header, then a row each. With the
-// focus on the routes, the selected one is filled.
+// focus on the routes, the selected one is filled. Ignored routes fold into
+// one line after the rest unless i shows them, or the routes have the keys,
+// so every route can be selected.
 func (m *Model) routeTable(p config.Project, st engine.ProjectStatus, width int) []string {
+	fold := !m.showIgnored && !m.routeFocus
+	var ignored []string
 	port, role, label, local := m.routeColumns(width)
 	head := fit("port", port) + fit("role", role)
 	if label > 0 {
@@ -127,6 +131,12 @@ func (m *Model) routeTable(p config.Project, st engine.ProjectStatus, width int)
 	head += fit("local", local) + "status"
 	lines := []string{" " + styleDim.Render(fit(head, width-1))}
 	for i, r := range p.Routes {
+		if r.Role == config.RoleIgnore {
+			ignored = append(ignored, strconv.Itoa(r.Port))
+			if fold {
+				continue
+			}
+		}
 		plain, roleStyle := styleText, styleText
 		switch r.Role {
 		case config.RoleWeb:
@@ -144,6 +154,14 @@ func (m *Model) routeTable(p config.Project, st engine.ProjectStatus, width int)
 		}
 		cells = append(cells, seg{plain, fit(where, local)}, routeDot(r, st))
 		lines = append(lines, renderRow(cells, nil, width, m.routeFocus && i == m.routeRow))
+	}
+	switch {
+	case len(ignored) == 0 || m.routeFocus:
+	case fold:
+		lines = append(lines, " "+fit(styleDim.Render(fmt.Sprintf("%d ignored: %s", len(ignored), strings.Join(ignored, " ")))+
+			styleDim.Render("  ·  ")+styleBeacon.Render("i")+styleDim.Render(" show"), width-1))
+	default:
+		lines = append(lines, " "+fit(styleBeacon.Render("i")+styleDim.Render(fmt.Sprintf(" hide the %d ignored", len(ignored))), width-1))
 	}
 	return lines
 }
