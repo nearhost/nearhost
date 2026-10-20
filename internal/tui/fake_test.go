@@ -298,6 +298,34 @@ func wantRow(t *testing.T, m *Model, subs ...string) {
 	t.Errorf("no row holds %q:\n%s", subs, s)
 }
 
+// wantText fails unless the screen holds every one of subs as text (see
+// screenText), wherever the lines wrap it.
+func wantText(t *testing.T, m *Model, subs ...string) {
+	t.Helper()
+	text := screenText(m)
+	for _, sub := range subs {
+		if !strings.Contains(text, sub) {
+			t.Errorf("screen lacks %q:\n%s", sub, screen(m))
+		}
+	}
+}
+
+// screenText is the screen read as text across the lines a form's box wraps
+// it onto: each line's content between the box's edges, joined with single
+// spaces.
+func screenText(m *Model) string {
+	var parts []string
+	for _, l := range strings.Split(screen(m), "\n") {
+		if i, j := strings.Index(l, "│"), strings.LastIndex(l, "│"); i >= 0 && j > i {
+			l = l[i+len("│") : j]
+		}
+		if l = strings.TrimSpace(l); l != "" {
+			parts = append(parts, l)
+		}
+	}
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
 var errBoom = errors.New("boom")
 
 func (f *fakeBackend) appliedCount() int {
