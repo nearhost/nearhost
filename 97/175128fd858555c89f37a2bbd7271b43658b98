@@ -1,0 +1,21 @@
+internal/nearhostrc/merge.go
+  s_89a63a3c1fa7d2::t_e7a0c699275841 34-35,81
+internal/nearhostrc/merge_test.go
+  s_89a63a3c1fa7d2::t_1048f276c2be4b 289-314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97175128fd858555c89f37a2bbd7271b43658b98",
+  "prompts": {},
+  "sessions": {
+    "s_89a63a3c1fa7d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ade858e5-1767-41c6-b0b0-fdd74aba68cf",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
