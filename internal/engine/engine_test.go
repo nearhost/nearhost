@@ -317,6 +317,23 @@ func TestLoopbackPortInUseByAnUnknownProcess(t *testing.T) {
 	}
 }
 
+// The forward listens on [::1] too, so a process there alone holds the port.
+func TestLoopbackPortInUseOnTheIPv6Loopback(t *testing.T) {
+	l, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	defer l.Close()
+	lb := l.Addr().(*net.TCPAddr).Port
+	h := newHarness(t, remoteConfig(lb))
+	if err := h.eng.StartProject(bg, "myapp"); err == nil {
+		t.Fatal("expected an error")
+	}
+	if msg := h.eng.Status("myapp").Message; !strings.Contains(msg, fmt.Sprintf("loopback port %d is already in use on this machine", lb)) {
+		t.Fatalf("message = %q", msg)
+	}
+}
+
 func TestLoopbackPortClashBetweenProjects(t *testing.T) {
 	lb := testutil.FreePort(t)
 	cfg := &config.Config{
@@ -2305,5 +2322,52 @@ func TestProxyHomePageShowsTheVersion(t *testing.T) {
 	}
 	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "Nearhost 4.5.6-engine") {
 		t.Fatalf("https://localhost/: status %d, footer with 4.5.6-engine: %v", code, strings.Contains(body, "4.5.6-engine"))
+	}
+}
+
+// A loopback forward answers on [::1] too, through a relay to 127.0.0.1,
+// until the project stops.
+func TestLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
+	probe, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	lb := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	h := newHarness(t, remoteConfig(lb))
+	mustStart(t, h, "myapp")
+	// The harness's ssh is a fake, so this stands in for the forward.
+	fwd, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", lb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fwd.Close()
+	go func() {
+		c, err := fwd.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = io.Copy(c, c)
+	}()
+	c, err := net.Dial("tcp", fmt.Sprintf("[::1]:%d", lb))
+	if err != nil {
+		t.Fatalf("dial [::1]: %v", err)
+	}
+	if _, err := c.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.(*net.TCPConn).CloseWrite()
+	got, err := io.ReadAll(c)
+	c.Close()
+	if err != nil || string(got) != "ping" {
+		t.Fatalf("read %q, %v", got, err)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := net.Dial("tcp", fmt.Sprintf("[::1]:%d", lb)); err == nil {
+		c.Close()
+		t.Error("[::1] still answers after the project stopped")
 	}
 }

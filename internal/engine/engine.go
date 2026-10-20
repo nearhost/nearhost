@@ -201,6 +201,9 @@ type Engine struct {
 	// session, so a reload that replaces the session keeps it.
 	held  map[string]bool
 	ports map[int]string // local port held by a forward -> project
+	// relays are the [::1] listeners of loopback forwards, by port; they
+	// go when the port is released.
+	relays map[int]net.Listener
 	// docker is what is known of the local Docker networks, shared by every
 	// project that opts in, as they share the machine's Docker.
 	docker dockerState
@@ -219,6 +222,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		servers:     map[string]*serverConn{},
 		held:        map[string]bool{},
 		ports:       map[int]string{},
+		relays:      map[int]net.Listener{},
 	}
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {
@@ -460,6 +464,14 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	// A forward whose cancel failed kept its port, and its relay with it;
+	// with the sessions gone, nothing is left for either to serve.
+	e.mu.Lock()
+	for port, l := range e.relays {
+		_ = l.Close()
+		delete(e.relays, port)
+	}
+	e.mu.Unlock()
 	e.lookups.Wait()
 	// The last site that opted in is gone, which ends the refresh loop, and
 	// e.stop ended it in any case.
