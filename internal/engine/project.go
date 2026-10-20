@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -373,9 +374,15 @@ func (e *Engine) claimPort(run *projectRun, port int) (owner string, ok bool) {
 	return "", true
 }
 
+// releasePort gives up a local port claimed for a forward, and stops the
+// forward's [::1] relay if it has one.
 func (e *Engine) releasePort(port int) {
 	e.mu.Lock()
 	delete(e.ports, port)
+	if l, ok := e.relays[port]; ok {
+		_ = l.Close()
+		delete(e.relays, port)
+	}
 	e.mu.Unlock()
 }
 
@@ -440,6 +447,15 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	} else if err := l.Close(); err != nil {
 		e.releasePort(port)
 		return fmt.Errorf("loopback port %d: %w", port, err)
+	}
+	// A machine without the IPv6 loopback has only 127.0.0.1 to serve.
+	if l, err := relayIPv6(port); errors.Is(err, syscall.EADDRINUSE) {
+		e.releasePort(port)
+		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
+	} else if err == nil {
+		e.mu.Lock()
+		e.relays[port] = l
+		e.mu.Unlock()
 	}
 	if err := sess.AddForward(ctx, port, port); err != nil {
 		e.releasePort(port)
