@@ -1,0 +1,19 @@
+internal/tui/frame_test.go
+  s_97d6a9a0f6828b::t_ea92f3f7be0f04 127-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d97f58b2cbf8cb2a746883e3737d0f319ae858d",
+  "prompts": {},
+  "sessions": {
+    "s_97d6a9a0f6828b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57996611-a4a8-4725-97ac-1660bfc58ed8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
