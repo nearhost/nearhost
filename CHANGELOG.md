@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/nearhost/nearhost/compare/v0.6.0...v0.7.0) (2026-10-20)
+
+
+### Features
+
+* **nearhostrc:** accept a file without routes, such as one that only sets the alias ([#198](https://github.com/nearhost/nearhost/issues/198)) ([200df61](https://github.com/nearhost/nearhost/commit/200df61c4ff67b07eb4a26c16aa24b9d165590b2))
+
+
+### Bug Fixes
+
+* **engine:** answer loopback forwards on [::1] too ([#197](https://github.com/nearhost/nearhost/issues/197)) ([b157466](https://github.com/nearhost/nearhost/commit/b157466361ffc2e712358e29b7dc71bb71666872))
+
 ## [0.6.0](https://github.com/nearhost/nearhost/compare/v0.5.0...v0.6.0) (2026-10-20)
 
 
