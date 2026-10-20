@@ -34,7 +34,7 @@ func TestFirstRunScreen(t *testing.T) {
 		t.Fatalf("no mark:\n%s", screen(m))
 	}
 	for i, want := range []string{" ▄█████▄ ", "██     ██", "██ ▄▄▄ ██", "██ ▀▀▀ ██", "", "nearhost"} {
-		if !strings.Contains(lines[at+i], want) {
+		if !lineHas(lines[at+i], want) {
 			t.Errorf("line %d is %q, want %q", at+i, lines[at+i], want)
 		}
 	}
@@ -63,7 +63,7 @@ func TestFirstRunScreenTallCells(t *testing.T) {
 		t.Fatalf("no short mark:\n%s", screen(m))
 	}
 	for i, want := range []string{"██ ▀▀▀ ██", "", "nearhost"} {
-		if !strings.Contains(lines[at+1+i], want) {
+		if !lineHas(lines[at+1+i], want) {
 			t.Errorf("line %d is %q, want %q", at+1+i, lines[at+1+i], want)
 		}
 	}
@@ -85,6 +85,14 @@ func TestCellsTall(t *testing.T) {
 			t.Errorf("cellsTall(%d, %d) = %v, want %v", c.w, c.h, got, c.want)
 		}
 	}
+}
+
+// lineHas reports whether line holds want, or is blank when want is empty.
+func lineHas(line, want string) bool {
+	if want == "" {
+		return strings.TrimSpace(line) == ""
+	}
+	return strings.Contains(line, want)
 }
 
 // Keys and clicks for rows that are not shown do nothing.
