@@ -305,8 +305,9 @@ func (e *Engine) Config() *config.Config {
 }
 
 // Start prepares the engine: it creates the run directory, checks that the
-// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well), and loads the proxy with no
-// sites, which creates the local CA and opens no listeners. If a port is
+// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well),
+// and loads the proxy with no sites, which creates the local CA and listens
+// on both ports to serve Nearhost's own page at localhost. If a port is
 // taken it returns an error naming the port and the engine stays unstarted;
 // Start can then be called again. Starting a started engine does nothing.
 func (e *Engine) Start(ctx context.Context) error {

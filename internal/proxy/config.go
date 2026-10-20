@@ -274,11 +274,11 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
-// config, which declares no listeners unless opts.HomeWithNoSites. Output is deterministic: there is one
-// route per host, ordered by hostname.Less, so exact hosts win over patterns
-// and more specific patterns over less specific ones. While any site has
-// extra clients, a host not served to all of them is followed by a drop
-// for that host alone (see hostDrop). While the config listens and no site
+// config, which declares no listeners unless opts.HomeWithNoSites. Output is
+// deterministic: there is one route per host, ordered by hostname.Less, so
+// exact hosts win over patterns and more specific patterns over less
+// specific ones. While any site has extra clients, a host not served to all
+// of them is followed by a drop for that host alone (see hostDrop). While the config listens and no site
 // serves localhost, localhost is one more exact host, served Nearhost's own
 // page.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {

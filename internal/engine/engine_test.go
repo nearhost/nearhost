@@ -72,8 +72,8 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	if code, body := h.get(t, "web.test", "/"); code == 200 && strings.HasPrefix(body, "ok:") {
 		t.Fatal("project still served after stop")
 	}
-	if code, _ := h.get(t, "localhost", "/"); code != 200 {
-		t.Fatalf("localhost after the last project stopped: %d, want the proxy's page", code)
+	if code, body := h.get(t, "localhost", "/"); code != 200 || !strings.Contains(body, "<title>Nearhost</title>") {
+		t.Fatalf("localhost after the last project stopped: %d %q, want the proxy's page", code, body)
 	}
 }
 
