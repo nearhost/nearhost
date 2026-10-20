@@ -101,21 +101,21 @@ type sideLine struct {
 	draw func(selected bool) string
 }
 
-// sideLines are every line of the sidebar, width wide: Home, then each
-// server with its projects, a blank line between each.
+// sideLines are every line of the sidebar, width wide: Home, on the main
+// panel's first line, a blank line, then each server with its projects.
 func (m *Model) sideLines(width int) []sideLine {
 	blank := sideLine{draw: func(bool) string { return strings.Repeat(" ", width) }}
-	lines := []sideLine{blank}
+	var lines []sideLine
 	if m.filtering || m.query() != "" {
 		for _, l := range m.filterLines(width) {
 			lines = append(lines, sideLine{draw: func(bool) string { return l }})
 		}
 	}
 	for _, r := range m.rows() {
-		if r.kind == rowServer {
+		lines = append(lines, sideLine{key: r.key(), draw: func(selected bool) string { return m.rowLine(r, width, selected) }})
+		if r.kind == rowHome {
 			lines = append(lines, blank)
 		}
-		lines = append(lines, sideLine{key: r.key(), draw: func(selected bool) string { return m.rowLine(r, width, selected) }})
 	}
 	return lines
 }

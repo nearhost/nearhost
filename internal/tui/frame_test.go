@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -70,7 +71,7 @@ func TestNarrowHeader(t *testing.T) {
 	if !strings.HasSuffix(lines[0], "● proxy · CA · hosts ") {
 		t.Errorf("header %q", lines[0])
 	}
-	if got := strings.Index(lines[2], "│"); got != narrowSidebar {
+	if got := ansi.StringWidth(lines[2][:strings.Index(lines[2], "│")]); got != narrowSidebar {
 		t.Errorf("the sidebar's border is at %d, want %d:\n%s", got, narrowSidebar, screen(m))
 	}
 }
@@ -96,5 +97,34 @@ func TestSpreadAndSection(t *testing.T) {
 	}
 	if got := ansi.Strip(section("log", "following", 20)); got != "log ────── following" {
 		t.Errorf("section = %q", got)
+	}
+}
+
+// Where the terminal's line height stretches its cells, a panel's sections
+// follow one another without blank lines between them.
+func TestTallCellsDropTheGapsBetweenSections(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	m.sel = rowKey(rowProject, "myapp")
+	lines := strings.Split(screen(m), "\n")
+	at := func(sub string) int {
+		for i, l := range lines {
+			if strings.Contains(l, sub) {
+				return i
+			}
+		}
+		t.Fatalf("no %q:\n%s", sub, screen(m))
+		return -1
+	}
+	if got := at(" port    role") - at("server mini"); got != 2 {
+		t.Errorf("the table starts %d lines after the details, want 2", got)
+	}
+	m.Update(uv.CellSizeEvent{Width: 13, Height: 52})
+	lines = strings.Split(screen(m), "\n")
+	if got := at(" port    role") - at("server mini"); got != 1 {
+		t.Errorf("with tall cells the table starts %d lines after the details, want 1", got)
+	}
+	if got := at("log ─") - at("1 ignored: 3306"); got > 2 {
+		t.Errorf("with tall cells the log starts %d lines after the routes:\n%s", got, screen(m))
 	}
 }

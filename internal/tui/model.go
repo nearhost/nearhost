@@ -542,7 +542,10 @@ func (m *Model) main(width, height int) []string {
 	if m.scroll > 0 {
 		follow = styleDim.Render(fmt.Sprintf("%d newer below", m.scroll))
 	}
-	lines = append(lines, strings.Repeat(" ", width), section(label, follow, width))
+	for range m.gap() {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	lines = append(lines, section(label, follow, width))
 	// The newest entries that fit, counted back from the end less what is
 	// scrolled.
 	room := height - len(lines)

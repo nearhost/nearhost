@@ -30,7 +30,7 @@ func (m *Model) home(width int) []string {
 			serversUsed[p.Server] = true
 		}
 	}
-	lines := []string{styleTitle.Render("Nearhost"), ""}
+	lines := []string{styleTitle.Render("Nearhost")}
 	lines = append(lines, m.proxyLines(width)...)
 	lines = append(lines, field("local CA", ca, width)...)
 	lines = append(lines, field("hosts", hostsDot+" "+hostsText, width)...)
