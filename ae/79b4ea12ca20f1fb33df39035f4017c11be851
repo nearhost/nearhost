@@ -1,0 +1,40 @@
+internal/tui/sidebar_test.go
+  s_97d6a9a0f6828b::t_cd0e8f1902f2cb 125
+  s_97d6a9a0f6828b::t_0de8b88994b63f 32,34,73-75,112
+internal/tui/model.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 545-548
+internal/tui/home.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 33
+internal/tui/frame.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 20-28
+internal/tui/model_test.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 276
+internal/tui/sidebar.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 104-105,108,115-116
+internal/tui/project.go
+  s_97d6a9a0f6828b::t_8072cb63f7050a 69
+  s_97d6a9a0f6828b::t_0de8b88994b63f 47,64,66
+internal/tui/frame_test.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 74
+  s_97d6a9a0f6828b::t_8072cb63f7050a 8,102-129
+  s_97d6a9a0f6828b::t_bfca4e6dcbf036 130
+internal/tui/advice.go
+  s_97d6a9a0f6828b::t_0de8b88994b63f 122
+  s_97d6a9a0f6828b::t_8072cb63f7050a 114,116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae79b4ea12ca20f1fb33df39035f4017c11be851",
+  "prompts": {},
+  "sessions": {
+    "s_97d6a9a0f6828b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57996611-a4a8-4725-97ac-1660bfc58ed8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
