@@ -20,7 +20,7 @@ Nearhost gives each project a name, a certificate your browser trusts and forwar
 
 - **One address per project.** Every project gets a stable `.test` alias, so bookmarks, cookies and OAuth callbacks keep working.
 - **Real HTTPS, trusted once.** Nearhost creates its own local certificate authority on first run, and it signs a certificate for each alias. Secure cookies, service workers and anything else that needs a secure context behave as they do in production. No shared key ships in the binary, so nobody else can mint certificates for your names.
-- **Remote servers over the SSH you already have.** Nearhost runs your own `ssh`, so your `~/.ssh/config`, agent and jump hosts all apply. Nothing is installed or changed on the server, and no ports are opened there.
+- **Remote servers over the SSH you already have.** Nearhost runs your own `ssh`, so your `~/.ssh/config`, agent and jump hosts all apply. Nothing is installed on the server and no ports are opened there; Nearhost only keeps a socket in `~/.nearhost`, so a coding agent on the server can reach it.
 - **Hot reload and WebSockets pass through.** Upgrades travel through the same connection as the page.
 - **Works with any stack.** If it listens on a port, Nearhost can serve it. It reads the port variables in your `.env` and proposes routes with no framework knowledge at all.
 - **Local projects too.** The `local` server needs no setup. Projects on your laptop get the same alias and certificate, so one tool covers the laptop and the servers.
@@ -130,7 +130,7 @@ Server mini is not in the config. Add it? [Y/n]: y
 SSH host for mini [mini]:
 ```
 
-`~` is the home directory on the server, even when your shell has already expanded it to the one on your laptop. The files are read over SFTP, and nothing is installed or changed on the server. Then start Nearhost as before:
+`~` is the home directory on the server, even when your shell has already expanded it to the one on your laptop. The files are read over SFTP, and nothing is installed on the server. Then start Nearhost as before:
 
 ```sh
 nearhost
