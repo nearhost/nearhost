@@ -44,7 +44,7 @@ func TestEditProjectKeepsSavedRoutes(t *testing.T) {
 func TestEditProjectRenamesAndSaves(t *testing.T) {
 	m, f, files := editModel(t)
 	press(m, "enter") // routes
-	wantScreen(t, m, "Edit myapp · name", "name      myapp▏", "alias     myapp.test")
+	wantScreen(t, m, "Edit myapp · name", "name      myapp▏", "alias     https://myapp.test")
 	// Its own name and alias are not taken by itself.
 	f.forms.nameErr = errors.New(`a project called "myapp" already exists, on mini`)
 	f.forms.aliasErr = errors.New(`alias myapp.test is already used by project "myapp"`)
@@ -293,7 +293,7 @@ func TestEditTakesTheMainNameTheNearhostrcMoved(t *testing.T) {
 			m.selectRow(rowKey(rowProject, "website"))
 			settle(m, press(m, "e"))
 			press(m, "enter")
-			wantScreen(t, m, "alias     "+tc.want)
+			wantScreen(t, m, "alias     https://"+tc.want)
 			settle(m, press(m, "enter"))
 			settle(m, press(m, "enter"))
 			if p, _ := f.cfg.Project("website"); p.Alias != tc.want || p.Nearhostrc.Alias != "b.test" {

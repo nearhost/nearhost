@@ -135,7 +135,7 @@ func TestProjectFormAddsAProject(t *testing.T) {
 		"Found 2 ports. Pick what to serve.", "[x] 8080    ‹ web ›       https://here.test  app (APP_PORT)", "[x] 5173    loopback      localhost:5173     vite",
 		"Advisory (vite-config-port): Vite reads its port from vite.config.", "server: { port: 5173 }", "registry other (o/p) cannot be read.")
 	press(m, "enter")
-	wantScreen(t, m, "name      here▏", "alias     here.test")
+	wantScreen(t, m, "name      here▏", "alias     https://here.test")
 	press(m, "tab")
 	press(m, "ctrl+u")
 	typeText(m, "site.test")
@@ -383,7 +383,9 @@ func TestAliasFollowsTheName(t *testing.T) {
 	settle(m, press(m, "enter"))
 	press(m, "enter")
 	typeText(m, "2")
-	wantScreen(t, m, "name      blog2▏", "alias     blog2.test")
+	wantScreen(t, m, "name      blog2▏", "alias     https://blog2.test",
+		"What Nearhost calls the project: in the sidebar, the log and", "`nearhost up blog2`.",
+		"The address your browser opens.", "It follows", "the name until you change it.")
 	press(m, "tab")
 	press(m, "backspace")
 	press(m, "backspace")
@@ -393,7 +395,12 @@ func TestAliasFollowsTheName(t *testing.T) {
 	typeText(m, "site.test")
 	press(m, "tab")
 	typeText(m, "3")
-	wantScreen(t, m, "name      blog23▏", "alias     blog2site.test")
+	wantScreen(t, m, "name      blog23▏", "alias     https://blog2site.test")
+	typeText(m, " x") // the name has the focus
+	wantScreen(t, m, "`nearhost up 'blog23 x'`.")
+	if strings.Contains(screen(m), "the name until you change it.") {
+		t.Errorf("the alias was typed, but the hint says it follows the name:\n%s", screen(m))
+	}
 }
 
 // The last step shows advice for the roles and alias chosen.
@@ -573,13 +580,16 @@ func TestFormTakesAliasFromNearhostrc(t *testing.T) {
 	settle(m, press(m, "enter"))
 	press(m, "enter")
 	pf := m.form.(*projectForm)
-	wantScreen(t, m, "alias     app.local.x.io")
+	wantScreen(t, m, "alias     https://app.local.x.io")
 	want := []nearhostrc.Item{{Port: 8220, Host: "app.local.x.io", Why: "a real domain"}}
 	if got := pf.needsApproval(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("needsApproval = %+v", got)
 	}
 	typeText(m, "2")
-	wantScreen(t, m, "name      here2▏", "alias     app.local.x.io")
+	wantScreen(t, m, "name      here2▏", "alias     https://app.local.x.io")
+	if strings.Contains(screen(m), "the name until you change it.") {
+		t.Errorf("the alias is the .nearhostrc's, but the hint says it follows the name:\n%s", screen(m))
+	}
 
 	press(m, "tab")
 	press(m, "ctrl+u")
@@ -591,7 +601,7 @@ func TestFormTakesAliasFromNearhostrc(t *testing.T) {
 	}
 	settle(m, press(m, "enter"))
 	press(m, "enter")
-	wantScreen(t, m, "alias     mine.test")
+	wantScreen(t, m, "alias     https://mine.test")
 
 	// With the name kept and the alias no longer counted as typed, the
 	// next discovery gives the file's main name again.
@@ -601,7 +611,7 @@ func TestFormTakesAliasFromNearhostrc(t *testing.T) {
 	press(m, "esc")
 	settle(m, press(m, "enter"))
 	press(m, "enter")
-	wantScreen(t, m, "alias     app.local.x.io")
+	wantScreen(t, m, "alias     https://app.local.x.io")
 }
 
 // editForm opens the edit form for a local project at /work/here with the

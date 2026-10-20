@@ -41,7 +41,7 @@ func TestAProposalOpensTheAddFormFilledIn(t *testing.T) {
 		t.Fatalf("log:\n%s", logText(m, homeKey))
 	}
 	press(m, "enter")
-	wantScreen(t, m, "name      journal▏", "alias     journal.test")
+	wantScreen(t, m, "name      journal▏", "alias     https://journal.test")
 	settle(m, press(m, "enter"))
 	settle(m, press(m, "enter"))
 	if len(f.forms.saved) != 1 || f.forms.saved[0].Name != "journal" || f.forms.saved[0].Path != "/home/dev/code/blog" {
