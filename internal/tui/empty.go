@@ -15,6 +15,22 @@ var markLines = []string{
 	styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
 }
 
+// shortMarkLines draw the mark in 2 rows for cells about twice as tall as
+// usual, at half the height in pixels: the lintel, legs and dot keep their
+// shape where markLines would stand twice as tall as it is wide.
+var shortMarkLines = []string{
+	styleBeacon.Render("▄█▀▀▀▀▀█▄"),
+	styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
+}
+
+// cellsTall reports whether cells of w by h pixels are tall enough that
+// shortMarkLines comes nearer the mark's shape than markLines. markLines is
+// square in cells twice as tall as wide; the short mark has half the rows,
+// so it is the nearer from 8/3 up, where the two are equally far off.
+func cellsTall(w, h int) bool {
+	return w > 0 && 3*h > 8*w
+}
+
 // emptyWidth is the width of the first-run screen's text.
 const emptyWidth = 56
 
@@ -38,10 +54,14 @@ var emptyAdding = []string{
 func (m *Model) emptyScreen() string {
 	centre := func(s string) string { return lipgloss.PlaceHorizontal(emptyWidth, lipgloss.Center, s) }
 	var lines []string
-	for _, l := range markLines {
+	mark := markLines
+	if m.tallCells {
+		mark = shortMarkLines
+	}
+	for _, l := range mark {
 		lines = append(lines, centre(l))
 	}
-	lines = append(lines, "", centre(styleTitle.Render("nearhost")), "", "",
+	lines = append(lines, "", centre(styleTitle.Render("nearhost")), "",
 		centre(styleTitle.Render("Nothing to serve yet.")), "")
 	// The two keys line up with the fields below.
 	for _, l := range emptyAdding {

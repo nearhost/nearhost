@@ -11,6 +11,8 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -39,6 +41,7 @@ type Model struct {
 	cfg       *config.Config
 	width     int
 	height    int
+	tallCells bool   // the terminal's line height stretches cells; see cellsTall
 	sel       string // key of the selected row
 	collapsed map[string]bool
 	logs      *logs
@@ -155,6 +158,11 @@ func (m *Model) Init() tea.Cmd {
 	}, m.listen(), tick())
 }
 
+// requestCellSize asks the terminal how big a cell is in pixels, on the first
+// window size and every one after. Terminals that answer send a
+// uv.CellSizeEvent; the rest stay silent.
+var requestCellSize = tea.Raw(ansi.WindowOp(ansi.RequestCellSizeWinOp))
+
 func (m *Model) listen() tea.Cmd {
 	events := m.events
 	return func() tea.Msg {
@@ -226,6 +234,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.reloadConfig()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// A new font size resizes the window, so the cells may have changed.
+		return m, requestCellSize
+	case uv.CellSizeEvent:
+		m.tallCells = cellsTall(msg.Width, msg.Height)
 	case startedMsg:
 		if msg.err != nil {
 			m.proxyErr = msg.err
