@@ -32,10 +32,13 @@ func editModel(t *testing.T) (*Model, *fakeBackend, *fakeFiles) {
 func TestEditProjectKeepsSavedRoutes(t *testing.T) {
 	m, _, _ := editModel(t)
 	wantScreen(t, m, "Edit myapp · routes",
-		"[x] 80      ‹ web ›       web",  // saved role and label kept
-		"[ ] 8025    ignore        mail", // new: does not take the web route
-		"[x] 5173    loopback      vite (VITE_PORT) (not found now)",
-		"[ ] 3306    ignore        db (not found now)")
+		"[x] 80      ‹ web ›       https://myapp.test  web", // saved role and label kept
+		"[ ] 8025    ignore        –                   mail", // new: does not take the web route
+		"[x] 5173    loopback      localhost:5173      vite (VITE_PORT)",
+		"[ ] 3306    ignore        –                   db")
+	if s := screen(m); strings.Count(s, "not found now") != 2 {
+		t.Errorf("want 2 routes marked not found now:\n%s", s)
+	}
 }
 
 func TestEditProjectRenamesAndSaves(t *testing.T) {

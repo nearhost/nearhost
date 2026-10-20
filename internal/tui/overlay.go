@@ -13,7 +13,15 @@ const (
 	// of a form with steps, in a window that has room for them; a form with
 	// more to say grows the box as far as the window allows.
 	boxWidth, boxHeight = 76, 22
+	// wideBoxWidth is the width of the box of a form with a table to show,
+	// in a window that has room for it.
+	wideBoxWidth = 96
 )
+
+// wideForm is a form drawn in the wide box.
+type wideForm interface {
+	wide() bool
+}
 
 // colourBoxEdge draws the edge of a form's box.
 var colourBoxEdge = lipgloss.Color("#4A5449")
@@ -21,7 +29,11 @@ var colourBoxEdge = lipgloss.Color("#4A5449")
 // formBox draws the open form in a box over base, the screen drawn faint
 // behind it: a terminal has no transparency, so dimming is redrawing.
 func (m *Model) formBox(base string, f form) string {
-	w := min(boxWidth, m.width-4)
+	w := boxWidth
+	if wf, ok := f.(wideForm); ok && wf.wide() {
+		w = wideBoxWidth
+	}
+	w = min(w, m.width-4)
 	inner := w - 6 // the edges, and two cells of space inside each
 	body := f.lines(inner)
 	hd := f.heading()
