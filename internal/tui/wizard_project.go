@@ -1472,7 +1472,7 @@ func (f *projectForm) routeLines(width int) []string {
 // any other.
 func (f *projectForm) webNames(i int, alias string) []string {
 	var names []string
-	if i == slices.IndexFunc(f.routes, func(r config.Route) bool { return r.Role == config.RoleWeb }) {
+	if alias != "" && i == slices.IndexFunc(f.routes, func(r config.Route) bool { return r.Role == config.RoleWeb }) {
 		names = append(names, alias)
 	}
 	for _, h := range f.routes[i].Hosts {
@@ -1515,6 +1515,10 @@ func (f *projectForm) roleLine(alias string) string {
 	switch r.Role {
 	case config.RoleWeb:
 		names := f.webNames(f.routeRow, alias)
+		more := " One port is the project's web port. To serve another port as well, give it names of its own with h."
+		if len(names) == 0 {
+			return styleDim.Render("web: Nearhost serves port " + port + " " + clean(where) + " at the project's alias, which the next step sets." + more)
+		}
 		addrs := make([]string, len(names))
 		for i, n := range names {
 			addrs[i] = styleBeacon.Render("https://" + clean(n))
@@ -1524,7 +1528,7 @@ func (f *projectForm) roleLine(alias string) string {
 			them = "them"
 		}
 		return styleDim.Render("web: your browser opens ") + strings.Join(addrs, styleDim.Render(", ")) +
-			styleDim.Render(", and Nearhost sends "+them+" to port "+port+" "+clean(where)+". One port is the project's web port; h gives another port names of its own.")
+			styleDim.Render(", and Nearhost sends "+them+" to port "+port+" "+clean(where)+"."+more)
 	case config.RoleLoopback:
 		return styleDim.Render("loopback: localhost:" + port + " on this machine reaches port " + port + " " + clean(where) +
 			", for what the app's pages load from that port themselves, such as Vite's dev server.")

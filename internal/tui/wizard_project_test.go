@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
@@ -712,5 +713,18 @@ func TestEditNewHostedPortNeedsApproval(t *testing.T) {
 	}
 	if want := []string{"ws.x.io:6001"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("needsApproval = %v, want %v", got, want)
+	}
+}
+
+// A web route with no name yet, before the alias is set, says where it will
+// be served instead of naming no address.
+func TestRoleLineForAWebRouteWithNoName(t *testing.T) {
+	f := &projectForm{srv: config.Server{Name: "mini"}, routes: []config.Route{{Port: 80, Role: config.RoleWeb}}}
+	got := ansi.Strip(f.roleLine(""))
+	if !strings.Contains(got, "web: Nearhost serves port 80 on mini at the project's alias") || strings.Contains(got, "opens ,") {
+		t.Errorf("roleLine = %q", got)
+	}
+	if got := f.opens(0, ""); got != "–" {
+		t.Errorf("opens = %q", got)
 	}
 }

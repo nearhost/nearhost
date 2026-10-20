@@ -36,9 +36,9 @@ func TestEditProjectKeepsSavedRoutes(t *testing.T) {
 		"[ ] 8025    ignore        –                   mail", // new: does not take the web route
 		"[x] 5173    loopback      localhost:5173      vite (VITE_PORT)",
 		"[ ] 3306    ignore        –                   db")
-	if s := screen(m); strings.Count(s, "not found now") != 2 {
-		t.Errorf("want 2 routes marked not found now:\n%s", s)
-	}
+	// The marks are at the end of their own rows.
+	wantRow(t, m, "[x] 5173", "vite (VITE_PORT)", "not found now   │")
+	wantRow(t, m, "[ ] 3306", "db", "not found now   │")
 }
 
 func TestEditProjectRenamesAndSaves(t *testing.T) {

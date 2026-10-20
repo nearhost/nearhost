@@ -11,7 +11,7 @@ import (
 // The mark on a route no longer found is shown, never saved.
 func TestNotFoundMarkIsNotSaved(t *testing.T) {
 	m, f, _ := editModel(t)
-	wantScreen(t, m, "[ ] 3306    ignore        –                   db", "not found now")
+	wantRow(t, m, "[ ] 3306    ignore        –                   db", "not found now")
 	press(m, "enter")
 	settle(m, press(m, "enter"))
 	settle(m, press(m, "enter"))

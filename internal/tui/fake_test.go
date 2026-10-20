@@ -276,6 +276,28 @@ func wantScreen(t *testing.T, m *Model, subs ...string) {
 	}
 }
 
+// wantRow fails unless the screen has a line holding every one of subs, in
+// order: one rendered row, with what it should show.
+func wantRow(t *testing.T, m *Model, subs ...string) {
+	t.Helper()
+	s := screen(m)
+	for _, l := range strings.Split(s, "\n") {
+		rest, ok := l, true
+		for _, sub := range subs {
+			i := strings.Index(rest, sub)
+			if i < 0 {
+				ok = false
+				break
+			}
+			rest = rest[i+len(sub):]
+		}
+		if ok {
+			return
+		}
+	}
+	t.Errorf("no row holds %q:\n%s", subs, s)
+}
+
 var errBoom = errors.New("boom")
 
 func (f *fakeBackend) appliedCount() int {
