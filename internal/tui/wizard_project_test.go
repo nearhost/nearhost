@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
@@ -131,7 +132,7 @@ func TestProjectFormAddsAProject(t *testing.T) {
 		t.Fatalf("enabled %v", f.forms.enabled)
 	}
 	wantScreen(t, m, "Add project · routes", "server    local", "path      /work/here", "presets   nearhost/vite",
-		"Found 2 ports. Pick what to serve.", "[x] 8080    ‹ web ›       app (APP_PORT)", "[x] 5173    loopback      vite",
+		"Found 2 ports. Pick what to serve.", "[x] 8080    ‹ web ›       https://here.test  app (APP_PORT)", "[x] 5173    loopback      localhost:5173     vite",
 		"Advisory (vite-config-port): Vite reads its port from vite.config.", "server: { port: 5173 }", "registry other (o/p) cannot be read.")
 	press(m, "enter")
 	wantScreen(t, m, "name      here▏", "alias     here.test")
@@ -182,7 +183,7 @@ func TestProjectFormOffersLoopbackOnAServer(t *testing.T) {
 	settle(m, press(m, "enter"))
 	press(m, "down")
 	press(m, "space") // vite: ignore -> loopback
-	wantScreen(t, m, "[x] 5173    ‹ loopback ›", "loopback ports open on 127.0.0.1")
+	wantScreen(t, m, "[x] 5173    ‹ loopback ›  localhost:5173", "loopback: localhost:5173 on this machine reaches port 5173 on mini,")
 	press(m, "left") // vite: loopback -> web, which 80 was
 	wantScreen(t, m, "[x] 5173    ‹ web ›", "[ ] 80      ignore")
 	press(m, "right")
@@ -477,7 +478,7 @@ func TestRoutesStepEditsHosts(t *testing.T) {
 	if h := pf.routes[0].Hosts; len(h) != 2 || h[0] != "a.local.x.io" || h[1] != "b.local.x.io" {
 		t.Fatalf("hosts %v", h)
 	}
-	wantScreen(t, m, "‹ web ›       a.local.x.io b.local.x.io", "h hosts")
+	wantScreen(t, m, "‹ web ›       https://here.test +2", "web: your browser opens https://here.test, https://a.local.x.io, https://b.local.x.io, and", "Nearhost sends them to port 8080", "h hosts")
 
 	press(m, "h")
 	wantScreen(t, m, "hosts     a.local.x.io b.local.x.io▏")
@@ -712,5 +713,18 @@ func TestEditNewHostedPortNeedsApproval(t *testing.T) {
 	}
 	if want := []string{"ws.x.io:6001"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("needsApproval = %v, want %v", got, want)
+	}
+}
+
+// A web route with no name yet, before the alias is set, says where it will
+// be served instead of naming no address.
+func TestRoleLineForAWebRouteWithNoName(t *testing.T) {
+	f := &projectForm{srv: config.Server{Name: "mini"}, routes: []config.Route{{Port: 80, Role: config.RoleWeb}}}
+	got := ansi.Strip(f.roleLine(""))
+	if !strings.Contains(got, "web: Nearhost serves port 80 on mini at the project's alias") || strings.Contains(got, "opens ,") {
+		t.Errorf("roleLine = %q", got)
+	}
+	if got := f.opens(0, ""); got != "–" {
+		t.Errorf("opens = %q", got)
 	}
 }

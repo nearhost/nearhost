@@ -36,7 +36,7 @@ func TestAProposalOpensTheAddFormFilledIn(t *testing.T) {
 		t.Fatalf("opened %+v", f.forms.opened)
 	}
 	wantScreen(t, m, "Proposed by an agent on mini", "Add project · routes", "server    mini", "path      /home/dev/code/blog",
-		"[x] 5173    web", "[ ] 80      ‹ ignore ›", "https://journal.test serves")
+		"[x] 5173    web           https://journal.test", "[ ] 80      ‹ ignore ›", "ignore: Nearhost opens nothing for port 80.")
 	if !strings.Contains(logText(m, homeKey), "Agent on mini wants to add /home/dev/code/blog.") {
 		t.Fatalf("log:\n%s", logText(m, homeKey))
 	}

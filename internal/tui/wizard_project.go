@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -1396,6 +1397,11 @@ func (f *projectForm) summary(width int) []string {
 	return append(lines, "")
 }
 
+// wide draws the form in the wide box, with room for the routes table: its
+// port, role, what each opens and the label. It is wide on every step, so
+// the box keeps its size from step to step.
+func (f *projectForm) wide() bool { return true }
+
 // routeLines draws the routes step: a row a route, with a box ticked when
 // it is served and its role between arrows on the selected row.
 func (f *projectForm) routeLines(width int) []string {
@@ -1407,7 +1413,17 @@ func (f *projectForm) routeLines(width int) []string {
 	if len(f.routes) == 1 {
 		found = "Found 1 port. Pick what to serve."
 	}
-	lines := []string{found, "", styleDim.Render(fit("      port    role          label", width))}
+	alias := f.draft.Alias
+	if alias == "" || f.proposal != nil && f.alias.value != "" {
+		alias = f.alias.value // none found, or the agent named the project
+	}
+	opens := make([]string, len(f.routes))
+	opensWidth := len("opens")
+	for i := range f.routes {
+		opens[i] = clean(f.opens(i, alias))
+		opensWidth = max(opensWidth, min(ansi.StringWidth(opens[i]), 28))
+	}
+	lines := []string{found, "", styleDim.Render(fit("      port    role          "+fit("opens", opensWidth+2)+"label", width))}
 	for i, r := range f.routes {
 		selected := i == f.routeRow
 		text, box := styleText, seg{styleBeacon, "[x]"}
@@ -1421,20 +1437,16 @@ func (f *projectForm) routeLines(width int) []string {
 		case r.Role == config.RoleWeb:
 			role.style = styleBeacon
 		}
-		cells := []seg{{text, " "}, box, {text, " " + fit(strconv.Itoa(r.Port), 8)}, role}
-		label := clean(f.routeLabel(r))
+		cells := []seg{{text, " "}, box, {text, " " + fit(strconv.Itoa(r.Port), 8)}, role,
+			{text, fit(ansi.Truncate(opens[i], opensWidth, "…"), opensWidth+2)}, {text, clean(r.Label)}}
+		// The marks sit at the right, so a long label is cut before them.
 		var right []seg
-		if f.fromRc(r.Port) {
+		switch {
+		case f.missing[r.Port]:
+			right = []seg{{styleAmber, "not found now"}}
+		case f.fromRc(r.Port):
 			right = []seg{{styleDim, "from .nearhostrc"}}
 		}
-		if len(r.Hosts) > 0 {
-			// The hosts are cut short to leave room for the label, or the
-			// first 24 cells of it.
-			room := width - 28 - min(ansi.StringWidth(label), 24) - 2 - segsWidth(right) - 1
-			hosts := ansi.Truncate(clean(strings.Join(r.Hosts, " ")), max(room, 8), "…")
-			cells = append(cells, seg{text, hosts + "  "})
-		}
-		cells = append(cells, seg{text, label})
 		lines = append(lines, renderRow(cells, right, width, selected))
 	}
 	if f.editingHosts {
@@ -1450,17 +1462,78 @@ func (f *projectForm) routeLines(width int) []string {
 			lines = append(lines, styleAmber.Render(l))
 		}
 	}
-	alias := f.draft.Alias
-	if alias == "" || f.proposal != nil && f.alias.value != "" {
-		alias = f.alias.value // none found, or the agent named the project
-	}
 	lines = append(lines, "")
-	explain := styleDim.Render("web is what ") + styleBeacon.Render("https://"+clean(alias)) + styleDim.Render(" serves.")
-	if f.srv.Name != config.LocalServer {
-		explain += styleDim.Render(" loopback ports open on 127.0.0.1 here too, so the browser reaches them.")
-	}
-	lines = append(lines, wrap(explain, width)...)
+	lines = append(lines, wrap(f.roleLine(alias), width)...)
 	return append(lines, adviceLines(f.draft.Advisories, width)...)
+}
+
+// webNames are the names web route i is served at: the alias and its own
+// hosts on the primary route, the first web one, and its hosts alone on
+// any other.
+func (f *projectForm) webNames(i int, alias string) []string {
+	var names []string
+	if alias != "" && i == slices.IndexFunc(f.routes, func(r config.Route) bool { return r.Role == config.RoleWeb }) {
+		names = append(names, alias)
+	}
+	for _, h := range f.routes[i].Hosts {
+		if !strings.EqualFold(h, alias) {
+			names = append(names, h)
+		}
+	}
+	return names
+}
+
+// opens is what route i opens on this machine: the address of a web route,
+// with how many more names it has, localhost and the port for loopback,
+// and nothing for a route that is ignored.
+func (f *projectForm) opens(i int, alias string) string {
+	r := f.routes[i]
+	switch r.Role {
+	case config.RoleWeb:
+		names := f.webNames(i, alias)
+		if len(names) == 0 {
+			return "–"
+		}
+		if len(names) > 1 {
+			return fmt.Sprintf("https://%s +%d", names[0], len(names)-1)
+		}
+		return "https://" + names[0]
+	case config.RoleLoopback:
+		return "localhost:" + strconv.Itoa(r.Port)
+	}
+	return "–"
+}
+
+// roleLine says what the selected route's role does, in full.
+func (f *projectForm) roleLine(alias string) string {
+	r := f.routes[f.routeRow]
+	where := "on " + f.srv.Name
+	if f.srv.Name == config.LocalServer {
+		where = "on this machine"
+	}
+	port := strconv.Itoa(r.Port)
+	switch r.Role {
+	case config.RoleWeb:
+		names := f.webNames(f.routeRow, alias)
+		more := " One port is the project's web port. To serve another port as well, give it names of its own with h."
+		if len(names) == 0 {
+			return styleDim.Render("web: Nearhost serves port " + port + " " + clean(where) + " at the project's alias, which the next step sets." + more)
+		}
+		addrs := make([]string, len(names))
+		for i, n := range names {
+			addrs[i] = styleBeacon.Render("https://" + clean(n))
+		}
+		them := "it"
+		if len(names) > 1 {
+			them = "them"
+		}
+		return styleDim.Render("web: your browser opens ") + strings.Join(addrs, styleDim.Render(", ")) +
+			styleDim.Render(", and Nearhost sends "+them+" to port "+port+" "+clean(where)+"."+more)
+	case config.RoleLoopback:
+		return styleDim.Render("loopback: localhost:" + port + " on this machine reaches port " + port + " " + clean(where) +
+			", for what the app's pages load from that port themselves, such as Vite's dev server.")
+	}
+	return styleDim.Render("ignore: Nearhost opens nothing for port " + port + ".")
 }
 
 // approvalLines lists the hosts and options saving approves, each with why

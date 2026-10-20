@@ -22,7 +22,7 @@ func TestFormOpensInABox(t *testing.T) {
 		t.Fatalf("drew %d lines", len(lines))
 	}
 	top := (36 - boxHeight) / 2
-	left := (120 - boxWidth) / 2
+	left := (120 - wideBoxWidth) / 2 // the project form has a table to show
 	if got := []rune(lines[top])[left]; got != '╭' {
 		t.Errorf("the box's corner is %q at %d,%d:\n%s", got, left, top, screen(m))
 	}
