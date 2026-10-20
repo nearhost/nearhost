@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -43,6 +44,46 @@ func TestFirstRunScreen(t *testing.T) {
 	wantScreen(t, m, "local CA  ● trusted", "proxy     ◐ starting")
 	if s := screen(m); strings.Contains(s, "home") || strings.Contains(s, "│") {
 		t.Errorf("the first-run screen has a sidebar:\n%s", s)
+	}
+}
+
+// Where the terminal says its cells are about twice as tall as usual, the
+// first-run screen draws the mark in 2 rows so it keeps its shape.
+func TestFirstRunScreenTallCells(t *testing.T) {
+	m := sized(newFake(t, &config.Config{}))
+	m.Update(uv.CellSizeEvent{Width: 13, Height: 52})
+	lines := strings.Split(screen(m), "\n")
+	at := -1
+	for i, l := range lines {
+		if strings.Contains(l, "▄█▀▀▀▀▀█▄") {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatalf("no short mark:\n%s", screen(m))
+	}
+	for i, want := range []string{"██ ▀▀▀ ██", "", "nearhost"} {
+		if !strings.Contains(lines[at+1+i], want) {
+			t.Errorf("line %d is %q, want %q", at+1+i, lines[at+1+i], want)
+		}
+	}
+	m.Update(uv.CellSizeEvent{Width: 13, Height: 28})
+	if s := screen(m); !strings.Contains(s, "▄█████▄") {
+		t.Errorf("usual cells did not bring the full mark back:\n%s", s)
+	}
+}
+
+// The short mark takes over from cells 8/3 as tall as wide, where the two
+// marks are equally far from square; a terminal that does not know its cell
+// size keeps the full one.
+func TestCellsTall(t *testing.T) {
+	for _, c := range []struct {
+		w, h int
+		want bool
+	}{{8, 16, false}, {10, 23, false}, {3, 8, false}, {3, 9, true}, {13, 52, true}, {0, 0, false}, {0, 20, false}} {
+		if got := cellsTall(c.w, c.h); got != c.want {
+			t.Errorf("cellsTall(%d, %d) = %v, want %v", c.w, c.h, got, c.want)
+		}
 	}
 }
 
