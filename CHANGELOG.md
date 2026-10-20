@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.6.0](https://github.com/nearhost/nearhost/compare/v0.5.0...v0.6.0) (2026-10-20)
+
+
+### Features
+
+* add /nearhost doctor to the skill, with doctor and reload in its script ([#185](https://github.com/nearhost/nearhost/issues/185)) ([0b43968](https://github.com/nearhost/nearhost/commit/0b43968efe944f416728cf8f36711298a7af5118))
+* add host name patterns with wildcard labels and precedence ([#145](https://github.com/nearhost/nearhost/issues/145)) ([4a5a5b3](https://github.com/nearhost/nearhost/commit/4a5a5b37ed93b09c8f76fcf051776594f3f38225))
+* add nearhost export, which writes a project's setup to its .nearhostrc ([#175](https://github.com/nearhost/nearhost/issues/175)) ([93cf29f](https://github.com/nearhost/nearhost/commit/93cf29f8033607c0c38bfb8983eefd27bb86e2e7))
+* add nearhost update, and say when a newer release is out ([#143](https://github.com/nearhost/nearhost/issues/143)) ([ac7cffd](https://github.com/nearhost/nearhost/commit/ac7cffd7aed311ef2a6a10a555fe5df18178e2b3))
+* add the doctor's findings model and its .nearhostrc, drift and advice checks ([#178](https://github.com/nearhost/nearhost/issues/178)) ([4a5b847](https://github.com/nearhost/nearhost/commit/4a5b847470f79064ab359bf22e100df0c3e831fc))
+* ask before letting Docker containers reach a project, in nearhost add and the interface ([#166](https://github.com/nearhost/nearhost/issues/166)) ([14594df](https://github.com/nearhost/nearhost/commit/14594df81f91a3e0a1850a399522bf1bcd3754d8))
+* check each enabled project in nearhost doctor, and print it all as JSON with --json ([#182](https://github.com/nearhost/nearhost/issues/182)) ([d30c497](https://github.com/nearhost/nearhost/commit/d30c4979114696f1d9698ffa8f88db35084c2d92))
+* **cli:** serve inferred hosts on add, with .nearhostrc taking precedence ([#190](https://github.com/nearhost/nearhost/issues/190)) ([36a7fd8](https://github.com/nearhost/nearhost/commit/36a7fd883158fc8896716251f964bb8254983c12))
+* **discovery:** infer route hosts from presets, and give advisories the project's hosts ([#189](https://github.com/nearhost/nearhost/issues/189)) ([ab0e2d0](https://github.com/nearhost/nearhost/commit/ab0e2d0918551cbc6f4eb8ce13baad17a56e05eb))
+* **doctor:** report hosts the project's settings name that aren't served ([#192](https://github.com/nearhost/nearhost/issues/192)) ([f6b43f2](https://github.com/nearhost/nearhost/commit/f6b43f2cb99a9678522cde5cd783cc3e28f794c9))
+* edit a route's hosts in the interface, show what .nearhostrc asks for, and approve it on save ([#162](https://github.com/nearhost/nearhost/issues/162)) ([a9bc91e](https://github.com/nearhost/nearhost/commit/a9bc91ea349b43d4063bc4856a9e64a6f43a88a1))
+* give agents a project's findings with GET /v1/doctor, and list the API's capabilities ([#183](https://github.com/nearhost/nearhost/issues/183)) ([1908018](https://github.com/nearhost/nearhost/commit/1908018c8a58fa02921d418cb4240807ff69975c))
+* issue certificates for wildcard hosts on demand, and redirect them to https with a 308 ([#149](https://github.com/nearhost/nearhost/issues/149)) ([0af6adf](https://github.com/nearhost/nearhost/commit/0af6adf3dffd4ab4e7b27fa5d62e4abd88b382af))
+* let a .nearhostrc ask for docker_clients, keep it in the approved snapshot, and list it for approval ([#165](https://github.com/nearhost/nearhost/issues/165)) ([00519fb](https://github.com/nearhost/nearhost/commit/00519fb4df798f4f58e5b895dbaad4a1451e1618))
+* let a .nearhostrc set the project's main name, with variables, applied like its hosts ([#172](https://github.com/nearhost/nearhost/issues/172)) ([3016644](https://github.com/nearhost/nearhost/commit/30166445f3ec491e1433eacd449d279af47a0ce7))
+* let a project's main name be any domain, approved when it isn't .test ([#171](https://github.com/nearhost/nearhost/issues/171)) ([64c5fc0](https://github.com/nearhost/nearhost/commit/64c5fc04bf6b03eb8bdced2ba206a17ef85535b6))
+* let a project's web routes list hosts, and allow more than one web route ([#146](https://github.com/nearhost/nearhost/issues/146)) ([69a5c6c](https://github.com/nearhost/nearhost/commit/69a5c6c8af9d4c912b8b8874abc1c2b02eedf6b2))
+* let agents ask Nearhost to re-read a .nearhostrc, and wait for the user's approval ([#184](https://github.com/nearhost/nearhost/issues/184)) ([3930e13](https://github.com/nearhost/nearhost/commit/3930e13ec384c0c4f4d68084cafec3aa495e76c4))
+* let nearhost add read .nearhostrc, take --host, and ask before serving hosts that need approval ([#160](https://github.com/nearhost/nearhost/issues/160)) ([f60f08f](https://github.com/nearhost/nearhost/commit/f60f08fc8fa782bae490834e77c30347ea16921a))
+* merge a project's .nearhostrc with its routes, keeping hosts added by hand, and say which hosts need approval ([#158](https://github.com/nearhost/nearhost/issues/158)) ([d98fb77](https://github.com/nearhost/nearhost/commit/d98fb77029b6c35c9c7f9eb42ba5543c3eafe27f))
+* **preset:** add preset schema 2, with hosts on routes and URL helpers ([#188](https://github.com/nearhost/nearhost/issues/188)) ([6cb6bc2](https://github.com/nearhost/nearhost/commit/6cb6bc21f3fb10554a63bae8dd2ea1148945bab8))
+* put real-domain hosts in the hosts file only when DNS doesn't already send them to this machine ([#151](https://github.com/nearhost/nearhost/issues/151)) ([5b8a2b9](https://github.com/nearhost/nearhost/commit/5b8a2b974ce7892443d0e468b868687ae1a8e6bd))
+* re-read .nearhostrc when a project starts, apply port-only changes, and hold the rest for approval ([#161](https://github.com/nearhost/nearhost/issues/161)) ([adadb3a](https://github.com/nearhost/nearhost/commit/adadb3a1eba960d7417fd6aa6a6312cbaf9ad214))
+* read a project's .nearhostrc, with ports and hosts filled from .env.local and .env ([#157](https://github.com/nearhost/nearhost/issues/157)) ([4d838d9](https://github.com/nearhost/nearhost/commit/4d838d9e0cbae4c7b1afe74cced5184e91da583a))
+* render a project as a .nearhostrc that reads back to the same project ([#173](https://github.com/nearhost/nearhost/issues/173)) ([b1ea464](https://github.com/nearhost/nearhost/commit/b1ea464784d4d0ab8ddc6ef926b29c787a872022))
+* report containers that call a served host without host-gateway, docker_clients or the local CA ([#181](https://github.com/nearhost/nearhost/issues/181)) ([7aa6345](https://github.com/nearhost/nearhost/commit/7aa63450b84296f3da1a2cb37f79d742f954fd37))
+* report hosts that don't reach Nearhost, overlapping patterns and web ports nothing listens on ([#180](https://github.com/nearhost/nearhost/issues/180)) ([84e7982](https://github.com/nearhost/nearhost/commit/84e7982bcc8ca4e5a085c57fcc816ff0719d6bf6))
+* review and approve .nearhostrc changes in the interface, recheck a project on demand, and refuse clashing hosts when enabling ([#163](https://github.com/nearhost/nearhost/issues/163)) ([4ce25c9](https://github.com/nearhost/nearhost/commit/4ce25c9f977866b7df0ed8763215d8b184b35fb2))
+* serve a site at several hosts, exact names before wildcards, with logs tagged by project ([#148](https://github.com/nearhost/nearhost/issues/148)) ([df60b38](https://github.com/nearhost/nearhost/commit/df60b3840ed1ec604b2918604d1bb57dd1ae5a96))
+* serve a site to extra client ranges, matched by host at the handshake, so opted-in projects can be reached from containers ([#168](https://github.com/nearhost/nearhost/issues/168)) ([235b479](https://github.com/nearhost/nearhost/commit/235b47912d48647a07d6ff13c5da33efa1c395f4))
+* serve projects that opt in to the local Docker networks, as the Docker daemon reports them, and follow its networks as they change ([#169](https://github.com/nearhost/nearhost/issues/169)) ([4f6a502](https://github.com/nearhost/nearhost/commit/4f6a5021bfe847eb569cd519e6b476a288f8ec04))
+* show a Nearhost page at https://localhost when no project uses it ([#156](https://github.com/nearhost/nearhost/issues/156)) ([97107ac](https://github.com/nearhost/nearhost/commit/97107ac598634d1d5c603fb094ea3906082544ea))
+* show every URL a project serves, to coding agents and in the interface ([#153](https://github.com/nearhost/nearhost/issues/153)) ([ea1076c](https://github.com/nearhost/nearhost/commit/ea1076c40c35ccaf8a5e7921a114e09d6a23a778))
+* start every web route of a project, and refuse a host another project already serves ([#152](https://github.com/nearhost/nearhost/issues/152)) ([0d1dfb2](https://github.com/nearhost/nearhost/commit/0d1dfb230ff8f151783fa69625dacfda3ad41016))
+* **tui:** add newly inferred hosts when a project is edited ([#191](https://github.com/nearhost/nearhost/issues/191)) ([53a5754](https://github.com/nearhost/nearhost/commit/53a575461ffab6f8788bf0ceda6b188488cce0d4))
+* write project files atomically, locally and over SFTP ([#174](https://github.com/nearhost/nearhost/issues/174)) ([a6e8b99](https://github.com/nearhost/nearhost/commit/a6e8b99b440d6571701914a2d7409fcb8199de08))
+
+
+### Bug Fixes
+
+* address cubic's review of hosts from presets ([#196](https://github.com/nearhost/nearhost/issues/196)) ([3ef3a5f](https://github.com/nearhost/nearhost/commit/3ef3a5f39724518d13ecaf8de101baeb0572a906))
+* address the final review of hosts from presets ([#193](https://github.com/nearhost/nearhost/issues/193)) ([be698a0](https://github.com/nearhost/nearhost/commit/be698a0de412a5586557d05b473d870fee764b46))
+* address the final review of the project doctor ([#186](https://github.com/nearhost/nearhost/issues/186)) ([0920045](https://github.com/nearhost/nearhost/commit/092004556c254727f7301f1287ca2a851ee6310a))
+* bind an exported main name only to a *_HOST variable, match the review on pending changes, and describe projects at their own domain ([#176](https://github.com/nearhost/nearhost/issues/176)) ([daece35](https://github.com/nearhost/nearhost/commit/daece354a3e04910baac66acdd06aad84c06f38f))
+* close the multi-host follow-ups: hosts for hand-started projects, quiet reloads, and a port 80 that drops what it doesn't serve ([#155](https://github.com/nearhost/nearhost/issues/155)) ([0eb44ae](https://github.com/nearhost/nearhost/commit/0eb44aea52562773c5911a3ad99acf1d9553f7fe))
+* keep hosts right on a --disabled add and when a route's role changes ([#195](https://github.com/nearhost/nearhost/issues/195)) ([8cde4c9](https://github.com/nearhost/nearhost/commit/8cde4c926ae5966cf5e01142e383f5e1eb9de38d))
+* keep hosts through edits, cache DNS answers, and show each web route's port ([#154](https://github.com/nearhost/nearhost/issues/154)) ([175611a](https://github.com/nearhost/nearhost/commit/175611abb5306d4564c7e59d754b33e1cbf660f9))
+* let the interface opt in to Docker clients, keep each name with its most specific host for Docker clients too, and word approval for options ([#170](https://github.com/nearhost/nearhost/issues/170)) ([e706f89](https://github.com/nearhost/nearhost/commit/e706f89dcafc4919b1e2c5b54232c92f6966ead6))
+* refuse clashing hosts at start, share the interface's config lock, and keep hand-added hosts when a .nearhostrc port moves ([#164](https://github.com/nearhost/nearhost/issues/164)) ([b02b7ad](https://github.com/nearhost/nearhost/commit/b02b7adca7356cafee77a6d58a5421492b7468cd))
+* tighten the project doctor's follow-ups from the final review ([#187](https://github.com/nearhost/nearhost/issues/187)) ([d3ea3be](https://github.com/nearhost/nearhost/commit/d3ea3bed5a0cecd29fddf0c217f1a010719bc5ef))
+
 ## [0.5.0](https://github.com/nearhost/nearhost/compare/v0.4.0...v0.5.0) (2026-10-16)
 
 
