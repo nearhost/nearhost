@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,8 +27,10 @@ type AgentForward struct {
 	// Local is the socket on this machine that it reaches.
 	Local string
 	// Own is this machine's own agent socket. A server whose socket would
-	// be at that path shares this machine's home: it is not forwarded to,
-	// and its agents reach Nearhost on Own as this machine's.
+	// be at that path, and that sees the same files there, shares this
+	// machine's home: it is not forwarded to, and its agents reach Nearhost
+	// on Own as this machine's. Another machine can have a home at the same
+	// path, as two Macs with one user name do; it is forwarded to.
 	Own string
 }
 
@@ -163,16 +166,35 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (s
 	if err != nil {
 		return "", fmt.Errorf("find the home directory on %s: %w", s.Name, err)
 	}
-	return PrepareAgentDir(f.Client, home, fwd.Name, fwd.Own)
+	probe := ""
+	if fwd.Own != "" {
+		// A file made here for the call: the server is this machine only if
+		// it sees it too. Without it nothing tells this machine from another,
+		// and going on could remove this machine's own socket, so it fails.
+		p, err := os.CreateTemp(filepath.Dir(fwd.Own), ".probe-*")
+		if err != nil {
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
+		}
+		defer os.Remove(p.Name())
+		if err := p.Close(); err != nil {
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
+		}
+		probe = filepath.Base(p.Name())
+	}
+	return PrepareAgentDir(f.Client, home, fwd.Name, fwd.Own, probe)
 }
 
 // PrepareAgentDir makes ~/.nearhost in home with mode 0700 if it is not
 // there, and removes the socket called name in it, left by an earlier run of
 // this install, so that sshd can bind it again. It returns the socket's
 // path. Only that one socket is ever removed: the others are other installs'.
-// When that path is own, this machine's own socket, it is left alone and
-// ErrThisMachine returned.
-func PrepareAgentDir(c *sftp.Client, home, name, own string) (string, error) {
+// When that path is own, this machine's own socket, and the server sees
+// probe, a file the caller has made beside own on this machine, the server
+// is this machine: the socket is left alone and ErrThisMachine returned. A
+// server that reports probe not found is another machine with its home at
+// the same path, and is readied as any other. Without a probe, or when the
+// server cannot say, nothing is removed and an error returned.
+func PrepareAgentDir(c *sftp.Client, home, name, own, probe string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
 		return "", fmt.Errorf("agent socket name %q is not a file name", name)
 	}
@@ -188,7 +210,18 @@ func PrepareAgentDir(c *sftp.Client, home, name, own string) (string, error) {
 	}
 	sock := path.Join(dir, name)
 	if own != "" && sock == own {
-		return "", ErrThisMachine
+		// Only a probe the server does not have shows it is another
+		// machine. Anything else could be this one, whose socket must stay.
+		if probe == "" {
+			return "", fmt.Errorf("cannot tell whether the server is this machine: no probe")
+		}
+		_, err := c.Stat(path.Join(dir, probe))
+		switch {
+		case err == nil:
+			return "", ErrThisMachine
+		case !isNotExist(err):
+			return "", fmt.Errorf("cannot tell whether the server is this machine: %w", err)
+		}
 	}
 	if err := c.Remove(sock); err != nil && !isNotExist(err) && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("remove the old socket %s: %w", sock, err)
