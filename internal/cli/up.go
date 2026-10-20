@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -305,29 +304,9 @@ func upTargets(cfg *config.Config, args []string) ([]string, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no enabled projects to start; name one, like `%s`", upCommand(cfg.Projects[0].Name))
+		return nil, fmt.Errorf("no enabled projects to start; name one, like `%s`", config.UpCommand(cfg.Projects[0].Name))
 	}
 	return names, nil
-}
-
-// upCommand is the command line that starts the project called name, fit to
-// be copied into a shell: a name that is not one plain word is quoted, and one
-// that begins with a dash is kept from being read as a flag.
-func upCommand(name string) string {
-	plain := name != ""
-	for _, c := range name {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-+:@%,=", c)) {
-			plain = false
-			break
-		}
-	}
-	if !plain {
-		name = "'" + strings.ReplaceAll(name, "'", `'\''`) + "'"
-	}
-	if strings.HasPrefix(name, "-") {
-		return "nearhost up -- " + name
-	}
-	return "nearhost up " + name
 }
 
 // engineOptions builds the engine's options from the standard directories.

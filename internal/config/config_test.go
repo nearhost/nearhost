@@ -790,3 +790,17 @@ func TestWithoutAliasHosts(t *testing.T) {
 		t.Errorf("changed the routes passed in: %+v", in)
 	}
 }
+
+func TestUpCommand(t *testing.T) {
+	for name, want := range map[string]string{
+		"blog":       "nearhost up blog",
+		"my app":     "nearhost up 'my app'",
+		"it's":       `nearhost up 'it'\''s'`,
+		"-x":         "nearhost up -- -x",
+		"a.local.io": "nearhost up a.local.io",
+	} {
+		if got := UpCommand(name); got != want {
+			t.Errorf("UpCommand(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

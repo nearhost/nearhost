@@ -395,7 +395,9 @@ func TestAliasFollowsTheName(t *testing.T) {
 	press(m, "tab")
 	typeText(m, "3")
 	wantScreen(t, m, "name      blog23▏", "alias     https://blog2site.test")
-	if strings.Contains(screen(m), "It follows the name") {
+	typeText(m, " x") // the name has the focus
+	wantScreen(t, m, "`nearhost up 'blog23 x'`.")
+	if strings.Contains(screen(m), "the name until you change it.") {
 		t.Errorf("the alias was typed, but the hint says it follows the name:\n%s", screen(m))
 	}
 }
@@ -584,6 +586,9 @@ func TestFormTakesAliasFromNearhostrc(t *testing.T) {
 	}
 	typeText(m, "2")
 	wantScreen(t, m, "name      here2▏", "alias     https://app.local.x.io")
+	if strings.Contains(screen(m), "the name until you change it.") {
+		t.Errorf("the alias is the .nearhostrc's, but the hint says it follows the name:\n%s", screen(m))
+	}
 
 	press(m, "tab")
 	press(m, "ctrl+u")

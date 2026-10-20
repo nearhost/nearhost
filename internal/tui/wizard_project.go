@@ -1329,22 +1329,22 @@ func (f *projectForm) lines(width int) []string {
 	case projectStepRoutes:
 		lines = append(lines, f.routeLines(width)...)
 	case projectStepDetails:
-		name := strings.TrimSpace(f.name.value)
-		if name == "" {
-			name = "<name>"
+		up := "nearhost up <name>"
+		if name := strings.TrimSpace(f.name.value); name != "" {
+			up = config.UpCommand(name)
 		}
 		lines = append(lines, field("name", f.name.view(f.focus == 0 && f.busy == ""), width)...)
 		if f.nameErr != "" {
 			lines = append(lines, errorLines(f.nameErr, width)...)
 		}
-		lines = append(lines, field("", styleDim.Render("What Nearhost calls the project: in the sidebar, the log and `nearhost up "+clean(name)+"`."), width)...)
+		lines = append(lines, field("", styleDim.Render("What Nearhost calls the project: in the sidebar, the log and `"+clean(up)+"`."), width)...)
 		lines = append(lines, "")
 		lines = append(lines, field("alias", styleDim.Render("https://")+f.alias.view(f.focus == 1 && f.busy == ""), width)...)
 		if f.aliasErr != "" {
 			lines = append(lines, errorLines(f.aliasErr, width)...)
 		}
 		hint := "The address your browser opens. Any lowercase domain works, such as myapp.test or myapp.local.example.com."
-		if !f.aliasEdited {
+		if !f.aliasEdited && !f.aliasFromRc {
 			hint += " It follows the name until you change it."
 		}
 		lines = append(lines, field("", styleDim.Render(hint), width)...)

@@ -703,3 +703,23 @@ func WithoutAliasHosts(routes []Route, alias string) []Route {
 	}
 	return out
 }
+
+// UpCommand is the command line that starts the project called name, fit to
+// be copied into a shell: a name that is not one plain word is quoted, and one
+// that begins with a dash is kept from being read as a flag.
+func UpCommand(name string) string {
+	plain := name != ""
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-+:@%,=", c)) {
+			plain = false
+			break
+		}
+	}
+	if !plain {
+		name = "'" + strings.ReplaceAll(name, "'", `'\''`) + "'"
+	}
+	if strings.HasPrefix(name, "-") {
+		return "nearhost up -- " + name
+	}
+	return "nearhost up " + name
+}
