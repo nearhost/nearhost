@@ -61,9 +61,12 @@ type Model struct {
 	proposals []Proposal
 	proposing *proposing
 
-	routeFocus bool   // the project panel's routes have the keys
-	routeRow   int    // the route selected there
-	panelErr   string // why the last change made in the panel was refused
+	routeFocus bool // the project panel's routes have the keys
+	routeRow   int  // the route selected there
+	// showIgnored lists a project's ignored routes in its panel; without
+	// it they fold into one line, unless the routes have the keys.
+	showIgnored bool
+	panelErr    string // why the last change made in the panel was refused
 	// adviceWaiting is the row whose advice is read when the selection has
 	// rested on it; empty when none is.
 	adviceWaiting string

@@ -331,6 +331,10 @@ func (m *Model) action(s string) tea.Cmd {
 		return load
 	case "p":
 		return m.nextProposal()
+	case "i":
+		if kind, _ := m.selected(); kind == rowProject {
+			m.showIgnored = !m.showIgnored
+		}
 	case "enter":
 		return m.enter()
 	case "o":

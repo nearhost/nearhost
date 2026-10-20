@@ -101,8 +101,20 @@ func TestProjectPanel(t *testing.T) {
 	wantScreen(t, m, "myapp  https://myapp.test", "● error", "server mini    path /srv/myapp",
 		"why       loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
 		" port    role        label", "80      web         web", "52114     ○", "5173    loopback    vite (VITE_PORT)", "5173      ○",
-		"3306    ignore      db", "–         –",
+		"1 ignored: 3306  ·  i show",
 		"enter start · o open · tab routes · e edit · d remove · l log · / filter · ? more", "myapp 2/3")
+	if strings.Contains(screen(m), "3306    ignore") {
+		t.Errorf("the ignored route is not folded:\n%s", screen(m))
+	}
+	press(m, "i")
+	wantScreen(t, m, "3306    ignore      db", "–         –", "i hide the 1 ignored")
+	press(m, "i")
+	wantScreen(t, m, "1 ignored: 3306  ·  i show")
+	press(m, "tab") // every route can be selected
+	wantScreen(t, m, "3306    ignore      db")
+	if strings.Contains(screen(m), "ignored") {
+		t.Errorf("the routes have the keys, but the fold line shows:\n%s", screen(m))
+	}
 }
 
 func TestFixFor(t *testing.T) {
