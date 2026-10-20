@@ -345,3 +345,24 @@ func TestMakingAHostlessRouteWebMakesItPrimary(t *testing.T) {
 		t.Fatalf("Validate() = %v", err)
 	}
 }
+
+// A web route with hosts that is ignored loses its hosts, which only a web
+// route has, so the project still saves.
+func TestIgnoringAHostedRouteDropsItsHosts(t *testing.T) {
+	f := &projectForm{routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"files.x.io"}},
+	}}
+	f.setRole(1, config.RoleIgnore)
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleIgnore},
+	}
+	if !reflect.DeepEqual(f.routes, want) {
+		t.Fatalf("routes = %+v, want %+v", f.routes, want)
+	}
+	cfg := &config.Config{Projects: []config.Project{{Name: "x", Server: config.LocalServer, Alias: "x.test", Enabled: true, Routes: f.routes}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+}

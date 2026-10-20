@@ -640,3 +640,34 @@ func MovePrimary(routes []Route, port int) []Route {
 	out[first] = r
 	return out
 }
+
+// SetRole returns a copy of routes with the route on port given role. A
+// route made web takes the place of every web route without hosts of its
+// own, which are ignored, and when it has no hosts itself it becomes the
+// primary, the only web route that needs none. A route made anything else
+// loses its hosts, which only a web route has. routes itself is not
+// modified.
+func SetRole(routes []Route, port int, role Role) []Route {
+	out := append([]Route(nil), routes...)
+	at := -1
+	for i := range out {
+		switch {
+		case out[i].Port == port && at < 0:
+			at = i
+		case role == RoleWeb && out[i].Role == RoleWeb && len(out[i].Hosts) == 0:
+			out[i].Role = RoleIgnore
+		}
+	}
+	if at < 0 {
+		return out
+	}
+	out[at].Role = role
+	if role != RoleWeb {
+		out[at].Hosts = nil
+		return out
+	}
+	if len(out[at].Hosts) > 0 {
+		return out
+	}
+	return MovePrimary(out, port)
+}

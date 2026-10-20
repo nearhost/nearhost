@@ -714,3 +714,54 @@ func TestMovePrimary(t *testing.T) {
 		t.Errorf("absent: %v", got)
 	}
 }
+
+func TestSetRole(t *testing.T) {
+	in := []Route{
+		{Port: 80, Role: RoleWeb},
+		{Port: 3306, Role: RoleIgnore},
+		{Port: 8080, Role: RoleWeb, Hosts: []string{"files.x.io"}},
+	}
+	got := SetRole(in, 3306, RoleWeb)
+	want := []Route{
+		{Port: 80, Role: RoleIgnore},
+		{Port: 3306, Role: RoleWeb},
+		{Port: 8080, Role: RoleWeb, Hosts: []string{"files.x.io"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("made 3306 web: %+v\nwant %+v", got, want)
+	}
+
+	hosted := []Route{
+		{Port: 80, Role: RoleWeb, Hosts: []string{"app.x.io"}},
+		{Port: 3306, Role: RoleIgnore},
+	}
+	got = SetRole(hosted, 3306, RoleWeb)
+	want = []Route{
+		{Port: 3306, Role: RoleWeb},
+		{Port: 80, Role: RoleWeb, Hosts: []string{"app.x.io"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("made 3306 web beside a hosted route: %+v\nwant %+v", got, want)
+	}
+
+	got = SetRole(in, 8080, RoleIgnore)
+	want = []Route{
+		{Port: 80, Role: RoleWeb},
+		{Port: 3306, Role: RoleIgnore},
+		{Port: 8080, Role: RoleIgnore},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ignored 8080: %+v\nwant %+v", got, want)
+	}
+	if in[2].Role != RoleWeb || !reflect.DeepEqual(in[2].Hosts, []string{"files.x.io"}) || in[0].Role != RoleWeb {
+		t.Errorf("input modified: %+v", in)
+	}
+	// Each result saves: no hosts off a web route, none missing on one.
+	for _, rs := range [][]Route{SetRole(in, 3306, RoleWeb), SetRole(hosted, 3306, RoleWeb), SetRole(in, 8080, RoleLoopback)} {
+		c := sample()
+		c.Projects[0].Routes = rs
+		if err := c.Validate(); err != nil {
+			t.Errorf("%+v: %v", rs, err)
+		}
+	}
+}

@@ -1018,6 +1018,31 @@ func TestAddSkipsInferredHostsAnotherProjectServes(t *testing.T) {
 	}
 }
 
+// A disabled project serves nothing, so it keeps an inferred host another
+// project serves; the clash comes up only when it is enabled.
+func TestAddDisabledKeepsInferredHostsAnotherProjectServes(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	if out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", envProject(t, hostedEnv), "--name", "first"); err != nil {
+		t.Fatalf("first add: %v\n%s", err, out)
+	}
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", envProject(t, hostedEnv), "--name", "second", "--disabled")
+	if err != nil {
+		t.Fatalf("second add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Not serving") {
+		t.Errorf("left out a host:\n%s", out)
+	}
+	p, ok := loadSaved(t, cfgPath).Project("second")
+	if !ok {
+		t.Fatal("second was not saved")
+	}
+	if hosts := p.AllHosts(); !reflect.DeepEqual(hosts, []string{"second.test", "app.local.x.io"}) {
+		t.Errorf("second serves %v", hosts)
+	}
+}
+
 func TestWithoutTakenHosts(t *testing.T) {
 	cfg := &config.Config{Projects: []config.Project{
 		{Name: "other", Alias: "other.test", Enabled: true, Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.x.io", "ws.x.io", "typed.x.io"}}}},
