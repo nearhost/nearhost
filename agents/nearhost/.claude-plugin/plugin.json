@@ -1,6 +1,6 @@
 {
   "name": "nearhost",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Add the project you are working in to Nearhost, and read its status, from the laptop or a server Nearhost reaches over SSH.",
   "author": {
     "name": "Nearhost",

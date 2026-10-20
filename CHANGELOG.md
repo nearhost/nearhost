@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/nearhost/nearhost/compare/v0.7.0...v0.7.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **proxy:** serve https://localhost while nearhost runs with no projects ([#203](https://github.com/nearhost/nearhost/issues/203)) ([2bd1771](https://github.com/nearhost/nearhost/commit/2bd177123ac447b54c7bcba4588c6dd588bbdf96))
+* **tui:** keep the mark's shape when line height stretches cells ([#202](https://github.com/nearhost/nearhost/issues/202)) ([2bac077](https://github.com/nearhost/nearhost/commit/2bac077d0598accdf3617606332fa5611770a46e))
+
 ## [0.7.0](https://github.com/nearhost/nearhost/compare/v0.6.0...v0.7.0) (2026-10-20)
 
 
