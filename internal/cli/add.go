@@ -242,10 +242,12 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	if err != nil {
 		return err
 	}
-	// Without a file, the hosts on the routes now are the ones discovery
-	// inferred; with one, every host comes from the file.
+	// Without a file, or with one that lists no routes, the hosts on the
+	// routes now are the ones discovery inferred; with routes in the file,
+	// every host comes from it.
+	rcRoutes := found && len(f.Routes) > 0
 	inferred := map[string]bool{}
-	if !found {
+	if !rcRoutes {
 		for _, r := range project.Routes {
 			for _, h := range r.Hosts {
 				inferred[strings.ToLower(h)] = true
@@ -254,11 +256,12 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	}
 	if found {
 		typedAlias := project.Alias
-		// The file wins over hosts inferred from presets and project files:
-		// Merge would keep them as hand-added ones on the ports it lists.
+		// The file's routes win over hosts inferred from presets and project
+		// files: Merge would keep them as hand-added ones on the ports it
+		// lists. A file without routes leaves them.
 		stripped := *project
-		stripped.Routes = withoutHosts(project.Routes)
-		merged, err := nearhostrc.Merge(stripped, f, withoutHosts(project.Routes))
+		stripped.Routes = rcBase(project.Routes, f)
+		merged, err := nearhostrc.Merge(stripped, f, stripped.Routes)
 		if err != nil {
 			return err
 		}

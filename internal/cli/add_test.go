@@ -1049,3 +1049,28 @@ func TestWithoutTakenHosts(t *testing.T) {
 		t.Errorf("notes = %q", notes)
 	}
 }
+
+// A .nearhostrc that only sets the main name leaves the routes to discovery,
+// so an inferred host is still served; the name and the host are both asked
+// about.
+func TestAddNearhostrcWithOnlyAnAlias(t *testing.T) {
+	dir := envProject(t, hostedEnv)
+	if err := os.WriteFile(filepath.Join(dir, ".nearhostrc"), []byte("version: 1\nalias: local.myapp.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	saveConfig(t, cfgPath, &config.Config{})
+	enableHostedPreset(t, cfgPath)
+	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "aliasapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "This project asks for these, which need your approval:", "local.myapp.com", "app.local.x.io on port 8220")
+	p, _ := loadSaved(t, cfgPath).Project("aliasapp")
+	if p.Alias != "local.myapp.com" {
+		t.Errorf("alias = %q", p.Alias)
+	}
+	if hosts := p.AllHosts(); !reflect.DeepEqual(hosts, []string{"local.myapp.com", "app.local.x.io"}) {
+		t.Errorf("serves %v", hosts)
+	}
+}
