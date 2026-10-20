@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -263,6 +264,16 @@ func discoveredRoutes(res *discovery.Result) []config.Route {
 		routes[i].Label = printable(routes[i].Label)
 	}
 	return routes
+}
+
+// rcBase is routes as they go into a merge with f: without their hosts when
+// f lists routes, whose hosts win over inferred ones, and as they are when
+// it lists none and leaves the routes alone.
+func rcBase(routes []config.Route, f *nearhostrc.File) []config.Route {
+	if len(f.Routes) == 0 {
+		return routes
+	}
+	return withoutHosts(routes)
 }
 
 // withoutHosts is a copy of routes with every Hosts nil. A .nearhostrc is

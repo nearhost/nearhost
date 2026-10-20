@@ -208,7 +208,8 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 	case err != nil:
 		d.RcError = err.Error()
 	case found:
-		merged, err := nearhostrc.Merge(config.Project{Name: name, Server: f.srv.Name, Alias: d.Alias, Routes: withoutHosts(d.Routes)}, rc, withoutHosts(d.Routes))
+		base := rcBase(d.Routes, rc)
+		merged, err := nearhostrc.Merge(config.Project{Name: name, Server: f.srv.Name, Alias: d.Alias, Routes: base}, rc, base)
 		if err != nil {
 			d.RcError = err.Error()
 			break

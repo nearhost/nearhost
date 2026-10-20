@@ -251,3 +251,64 @@ func TestMergeRejectsFileAliasOnNonPrimaryRoute(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A file without routes, as one that only sets the main name, leaves the
+// routes to the project: only the hosts the file gave before go.
+func TestMergeWithoutRoutesKeepsTheProjectsRoutes(t *testing.T) {
+	f, err := Parse([]byte("version: 1\nalias: local.myapp.com\n"), nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(f.Routes) != 0 || f.Alias != "local.myapp.com" {
+		t.Fatalf("Parse = %+v", f)
+	}
+	old := config.Project{Name: "dd", Alias: "dd.test", Routes: []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io", "mine.local.dd.io"}}, // mine: added by hand
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.local.dd.io"}},
+		{Port: 5432, Role: config.RoleLoopback},
+	}, Nearhostrc: &config.RcSnapshot{SHA256: "old", Routes: []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Hosts: []string{"app.local.dd.io"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.local.dd.io"}},
+	}}}
+	got := mustMerge(t, old, f, nil)
+	want := []config.Route{
+		{Port: 8220, Role: config.RoleWeb, Hosts: []string{"mine.local.dd.io"}},
+		{Port: 9000, Role: config.RoleIgnore},
+		{Port: 5432, Role: config.RoleLoopback},
+	}
+	if !reflect.DeepEqual(got.Routes, want) || got.Alias != "local.myapp.com" {
+		t.Fatalf("Merge = %+v", got)
+	}
+	if s := got.Nearhostrc; s.SHA256 != f.SHA256 || len(s.Routes) != 0 || s.Alias != "local.myapp.com" {
+		t.Fatalf("snapshot = %+v", s)
+	}
+	if !reflect.DeepEqual(old.Routes[0].Hosts, []string{"app.local.dd.io", "mine.local.dd.io"}) {
+		t.Errorf("changed the project passed in: %+v", old.Routes)
+	}
+}
+
+// The main name a file without routes sets is served on the primary only,
+// so another route that has it as a host loses it.
+func TestMergeWithoutRoutesDropsTheAliasFromOtherRoutes(t *testing.T) {
+	f, err := Parse([]byte("version: 1\nalias: ws.myapp.com\n"), nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	old := config.Project{Name: "dd", Alias: "dd.test", Routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.myapp.com"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"WS.myapp.com", "files.myapp.com"}},
+	}}
+	got := mustMerge(t, old, f, nil)
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.myapp.com"}},
+	}
+	if !reflect.DeepEqual(got.Routes, want) {
+		t.Fatalf("routes = %+v\nwant %+v", got.Routes, want)
+	}
+	if err := (&config.Config{Projects: []config.Project{{Name: "dd", Server: config.LocalServer, Alias: got.Alias, Enabled: true, Routes: got.Routes}}}).Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+}

@@ -41,6 +41,9 @@ type Route struct {
 
 // File is a parsed .nearhostrc.
 type File struct {
+	// Routes are what the project serves, when the file says; a file
+	// without routes, as one that only sets the alias, leaves them to
+	// discovery and the user.
 	Routes []Route
 	// DockerClients is whether the file asks for the project to be served to
 	// containers on local Docker networks.
@@ -225,8 +228,8 @@ func checkRoutes(routes []Route) error {
 			hosts[k] = true
 		}
 	}
-	if webs == 0 {
-		return fmt.Errorf("%s needs at least one web route", FileName)
+	if webs == 0 && len(routes) > 0 {
+		return fmt.Errorf("%s needs at least one web route among its routes", FileName)
 	}
 	return nil
 }

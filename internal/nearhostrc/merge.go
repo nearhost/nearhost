@@ -29,6 +29,12 @@ import (
 // changes it, so a main name the user set by hand since stays until the file
 // moves its own. A file without an alias leaves the main name alone.
 //
+// A file without routes leaves p's routes as they are, or discovered when
+// it is not nil, but for the hosts the last approved snapshot gave, which
+// came from the file, and the main name, which the primary serves already,
+// on any other route. A route other than the primary left without hosts is
+// ignored.
+//
 // Merge fails when a route other than the primary lists the project's main
 // name, which is always served on the first web route, and when the file asks
 // for docker_clients on a project that is not on this machine, since
@@ -71,6 +77,12 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 		current[r.Port] = r.Hosts
 	}
 
+	if len(f.Routes) == 0 {
+		p.Routes = config.WithoutAliasHosts(withoutApproved(routesOr(discovered, p.Routes), approved), p.Alias)
+		p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, DockerClients: f.DockerClients, Alias: f.Alias}
+		return p, nil
+	}
+
 	moved := movedHosts(p, f, approved)
 
 	routes := make([]config.Route, 0, len(f.Routes))
@@ -110,11 +122,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 		snapshot = append(snapshot, config.Route{Port: fr.Port, Role: fr.Role, Label: fr.Label, Hosts: append([]string(nil), fr.Hosts...)})
 	}
 
-	rest := discovered
-	if rest == nil {
-		rest = p.Routes
-	}
-	for _, r := range rest {
+	for _, r := range routesOr(discovered, p.Routes) {
 		if listed[r.Port] {
 			continue
 		}
@@ -128,6 +136,41 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 	p.Routes = routes
 	p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, Routes: snapshot, DockerClients: f.DockerClients, Alias: f.Alias}
 	return p, nil
+}
+
+// routesOr is discovered, or routes when discovered is nil.
+func routesOr(discovered, routes []config.Route) []config.Route {
+	if discovered == nil {
+		return routes
+	}
+	return discovered
+}
+
+// withoutApproved is a copy of routes without the hosts approved holds for
+// their ports. A web route other than the primary left without hosts is
+// ignored, as only the primary is served without hosts of its own.
+func withoutApproved(routes []config.Route, approved map[int][]string) []config.Route {
+	out := make([]config.Route, len(routes))
+	primary := true
+	for i, r := range routes {
+		out[i] = r
+		if r.Role != config.RoleWeb {
+			continue
+		}
+		isPrimary := primary
+		primary = false
+		var kept []string
+		for _, h := range r.Hosts {
+			if !containsFold(approved[r.Port], h) {
+				kept = append(kept, h)
+			}
+		}
+		out[i].Hosts = kept
+		if len(kept) == 0 && !isPrimary {
+			out[i].Role = config.RoleIgnore
+		}
+	}
+	return out
 }
 
 // movedHosts finds the hand-added hosts of p's web routes on ports the file
