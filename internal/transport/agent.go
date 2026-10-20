@@ -169,13 +169,17 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (s
 	probe := ""
 	if fwd.Own != "" {
 		// A file made here for the call: the server is this machine only if
-		// it sees it too. Without it the server cannot be this machine,
-		// whose own socket's directory would be there.
-		if p, err := os.CreateTemp(filepath.Dir(fwd.Own), ".probe-*"); err == nil {
-			p.Close()
-			defer os.Remove(p.Name())
-			probe = filepath.Base(p.Name())
+		// it sees it too. Without it nothing tells this machine from another,
+		// and going on could remove this machine's own socket, so it fails.
+		p, err := os.CreateTemp(filepath.Dir(fwd.Own), ".probe-*")
+		if err != nil {
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
 		}
+		defer os.Remove(p.Name())
+		if err := p.Close(); err != nil {
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
+		}
+		probe = filepath.Base(p.Name())
 	}
 	return PrepareAgentDir(f.Client, home, fwd.Name, fwd.Own, probe)
 }
@@ -187,8 +191,9 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (s
 // When that path is own, this machine's own socket, and the server sees
 // probe, a file the caller has made beside own on this machine, the server
 // is this machine: the socket is left alone and ErrThisMachine returned. A
-// server that does not see probe is another machine with its home at the
-// same path, and is readied as any other.
+// server that reports probe not found is another machine with its home at
+// the same path, and is readied as any other. Without a probe, or when the
+// server cannot say, nothing is removed and an error returned.
 func PrepareAgentDir(c *sftp.Client, home, name, own, probe string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
 		return "", fmt.Errorf("agent socket name %q is not a file name", name)
@@ -204,9 +209,18 @@ func PrepareAgentDir(c *sftp.Client, home, name, own, probe string) (string, err
 		return "", fmt.Errorf("make %s private: %w", dir, err)
 	}
 	sock := path.Join(dir, name)
-	if own != "" && sock == own && probe != "" {
-		if _, err := c.Stat(path.Join(dir, probe)); err == nil {
+	if own != "" && sock == own {
+		// Only a probe the server does not have shows it is another
+		// machine. Anything else could be this one, whose socket must stay.
+		if probe == "" {
+			return "", fmt.Errorf("cannot tell whether the server is this machine: no probe")
+		}
+		_, err := c.Stat(path.Join(dir, probe))
+		switch {
+		case err == nil:
 			return "", ErrThisMachine
+		case !isNotExist(err):
+			return "", fmt.Errorf("cannot tell whether the server is this machine: %w", err)
 		}
 	}
 	if err := c.Remove(sock); err != nil && !isNotExist(err) && !errors.Is(err, os.ErrNotExist) {

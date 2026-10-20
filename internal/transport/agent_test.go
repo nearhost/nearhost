@@ -162,6 +162,29 @@ func TestPrepareAgentDirLeavesThisMachinesOwnSocketAlone(t *testing.T) {
 	}
 }
 
+// A server whose socket path is this machine's own, that cannot be told from
+// this machine, keeps the socket: without a probe, or when it cannot say
+// whether it has the probe, it might be this machine.
+func TestPrepareAgentDirKeepsTheSocketWhenItCannotTell(t *testing.T) {
+	client, home := inProcessSFTP(t)
+	own := filepath.Join(home, AgentDir, "k3f9q2.sock")
+	os.MkdirAll(filepath.Dir(own), 0o700)
+	os.WriteFile(own, nil, 0o600)
+	os.WriteFile(filepath.Join(home, AgentDir, "plain"), nil, 0o600)
+	for name, probe := range map[string]string{
+		"no probe":        "",
+		"stat unanswered": "plain/.probe-1", // a file where a directory would be: neither found nor not found
+	} {
+		_, err := PrepareAgentDir(client, home, "k3f9q2.sock", own, probe)
+		if err == nil || errors.Is(err, ErrThisMachine) || !strings.Contains(err.Error(), "cannot tell whether the server is this machine") {
+			t.Errorf("%s: got %v", name, err)
+		}
+		if _, err := os.Stat(own); err != nil {
+			t.Fatalf("%s: this machine's socket was removed: %v", name, err)
+		}
+	}
+}
+
 // Another machine can have its home at the path of this one's, as two Macs
 // with one user name do. It does not see the probe made here, so it is
 // readied as any server, and its old socket of this install removed.
