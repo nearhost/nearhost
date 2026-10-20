@@ -286,3 +286,29 @@ func TestMergeWithoutRoutesKeepsTheProjectsRoutes(t *testing.T) {
 		t.Errorf("changed the project passed in: %+v", old.Routes)
 	}
 }
+
+// The main name a file without routes sets is served on the primary only,
+// so another route that has it as a host loses it.
+func TestMergeWithoutRoutesDropsTheAliasFromOtherRoutes(t *testing.T) {
+	f, err := Parse([]byte("version: 1\nalias: ws.myapp.com\n"), nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	old := config.Project{Name: "dd", Alias: "dd.test", Routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.myapp.com"}},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"WS.myapp.com", "files.myapp.com"}},
+	}}
+	got := mustMerge(t, old, f, nil)
+	want := []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleIgnore},
+		{Port: 9000, Role: config.RoleWeb, Hosts: []string{"files.myapp.com"}},
+	}
+	if !reflect.DeepEqual(got.Routes, want) {
+		t.Fatalf("routes = %+v\nwant %+v", got.Routes, want)
+	}
+	if err := (&config.Config{Projects: []config.Project{{Name: "dd", Server: config.LocalServer, Alias: got.Alias, Enabled: true, Routes: got.Routes}}}).Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+}

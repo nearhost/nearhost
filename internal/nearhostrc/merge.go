@@ -31,7 +31,8 @@ import (
 //
 // A file without routes leaves p's routes as they are, or discovered when
 // it is not nil, but for the hosts the last approved snapshot gave, which
-// came from the file. A route other than the primary left without hosts is
+// came from the file, and the main name, which the primary serves already,
+// on any other route. A route other than the primary left without hosts is
 // ignored.
 //
 // Merge fails when a route other than the primary lists the project's main
@@ -77,7 +78,7 @@ func Merge(p config.Project, f *File, discovered []config.Route) (config.Project
 	}
 
 	if len(f.Routes) == 0 {
-		p.Routes = withoutApproved(routesOr(discovered, p.Routes), approved)
+		p.Routes = config.WithoutAliasHosts(withoutApproved(routesOr(discovered, p.Routes), approved), p.Alias)
 		p.Nearhostrc = &config.RcSnapshot{SHA256: f.SHA256, DockerClients: f.DockerClients, Alias: f.Alias}
 		return p, nil
 	}
