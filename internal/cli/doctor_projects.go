@@ -181,7 +181,10 @@ func draftProject(cfg *config.Config, cfgPath string, srv config.Server, dir str
 	// A file that can't be read or merged is reported by the checks; the
 	// draft keeps what discovery found.
 	if rc, found, err := nearhostrc.Read(files); err == nil && found {
-		if merged, err := nearhostrc.Merge(p, rc, p.Routes); err == nil {
+		// The file wins over hosts discovery inferred.
+		bare := p
+		bare.Routes = withoutHosts(p.Routes)
+		if merged, err := nearhostrc.Merge(bare, rc, bare.Routes); err == nil {
 			p = merged
 		}
 	}

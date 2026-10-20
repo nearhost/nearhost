@@ -613,3 +613,30 @@ func AliasFor(name string) string {
 	}
 	return s + ".test"
 }
+
+// MovePrimary returns a copy of routes in which the route on port sits just
+// before the first other web route, so that it is the primary one. The order
+// is unchanged when that route is already the first web route, is not a web
+// route, or is absent. routes itself is not modified.
+func MovePrimary(routes []Route, port int) []Route {
+	out := append([]Route(nil), routes...)
+	at, first := -1, -1
+	for i, r := range out {
+		if r.Role != RoleWeb {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		if r.Port == port && at < 0 {
+			at = i
+		}
+	}
+	if at <= first {
+		return out
+	}
+	r := out[at]
+	copy(out[first+1:at+1], out[first:at])
+	out[first] = r
+	return out
+}

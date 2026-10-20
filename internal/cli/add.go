@@ -227,7 +227,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 
 // applyNearhostrc applies the project's .nearhostrc, if it has one, and the
 // --host flags to project, and asks before serving any host that would take
-// over traffic meant for the internet. A host typed with --host counts as
+// over traffic meant for the internet, whether the file, a preset or the
+// project's files gave it. A port the file lists takes the file's hosts and
+// none inferred; without a file, the inferred hosts stay. A host typed with --host counts as
 // approved by being typed, and so is a main name given with --alias. The
 // file's alias is the project's main name unless --alias gave one: the flag
 // wins, and the snapshot still records the file's, so a later start keeps
@@ -241,7 +243,11 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 	}
 	if found {
 		typedAlias := project.Alias
-		merged, err := nearhostrc.Merge(*project, f, project.Routes)
+		// The file wins over hosts inferred from presets and project files:
+		// Merge would keep them as hand-added ones on the ports it lists.
+		stripped := *project
+		stripped.Routes = withoutHosts(project.Routes)
+		merged, err := nearhostrc.Merge(stripped, f, withoutHosts(project.Routes))
 		if err != nil {
 			return err
 		}
@@ -309,9 +315,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 		for i, it := range items {
 			names[i] = it.Name()
 		}
-		return fmt.Errorf("not added: .nearhostrc asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
+		return fmt.Errorf("not added: this project asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
 	}
-	fmt.Fprintln(out, ".nearhostrc asks for these, which need your approval:")
+	fmt.Fprintln(out, "This project asks for these, which need your approval:")
 	for _, it := range items {
 		if it.Host == "" {
 			fmt.Fprintf(out, "  %s (%s)\n", printable(it.Name()), it.Why)
@@ -321,7 +327,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, reader discovery.FileRead
 	}
 	fmt.Fprint(out, "Approve these? [y/N] ")
 	if !saidYesDefaultNo(answers, out) {
-		return errors.New("not added: what .nearhostrc asks for was not approved")
+		return errors.New("not added: what this project asks for was not approved")
 	}
 	return nil
 }
@@ -626,21 +632,33 @@ func openProject(ctx context.Context, b addBackend, srv config.Server, projectPa
 	return discovery.DirReader{Root: projectPath}, projectPath, func() error { return nil }, nil
 }
 
-// forceWeb makes port the only web route, adding it if it was not discovered.
+// forceWeb makes port the primary web route, adding it before the first web
+// route if it was not discovered. Another web route with hosts stays web,
+// since a route with hosts cannot be ignored; one without becomes ignore.
 func forceWeb(routes []config.Route, port int) []config.Route {
+	out := make([]config.Route, len(routes))
 	found := false
-	for i := range routes {
-		if routes[i].Port == port {
-			routes[i].Role = config.RoleWeb
+	for i, r := range routes {
+		if r.Port == port {
+			r.Role = config.RoleWeb
 			found = true
-		} else if routes[i].Role == config.RoleWeb {
-			routes[i].Role = config.RoleIgnore
+		} else if r.Role == config.RoleWeb && len(r.Hosts) == 0 {
+			r.Role = config.RoleIgnore
 		}
+		out[i] = r
 	}
 	if !found {
-		routes = append(routes, config.Route{Port: port, Role: config.RoleWeb, Label: "web (--web)"})
+		added := config.Route{Port: port, Role: config.RoleWeb, Label: "web (--web)"}
+		at := len(out)
+		for i, r := range out {
+			if r.Role == config.RoleWeb {
+				at = i
+				break
+			}
+		}
+		out = append(out[:at], append([]config.Route{added}, out[at:]...)...)
 	}
-	return routes
+	return config.MovePrimary(out, port)
 }
 
 func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
