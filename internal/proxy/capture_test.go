@@ -97,6 +97,9 @@ func TestCaptureLimits(t *testing.T) {
 		}
 		r.Body.Close()
 	}
+	// Each exchange is kept before its access line is written, but the two
+	// can finish in either order: wait for both.
+	idOf(t, h, "a.test", "/echo")
 	idOf(t, h, "a.test", "/echo?again")
 	if _, ok := Captured(first); ok {
 		t.Error("the oldest exchange was kept past the limit")
