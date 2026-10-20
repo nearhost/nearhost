@@ -601,3 +601,74 @@ func TestFormTakesAliasFromNearhostrc(t *testing.T) {
 	press(m, "enter")
 	wantScreen(t, m, "alias     app.local.x.io")
 }
+
+// editForm opens the edit form for a local project at /work/here with the
+// saved routes, discovering draft, and returns it after discovery.
+func editForm(t *testing.T, saved []config.Route, alias string, draft Draft) *projectForm {
+	t.Helper()
+	m, f, files := projectFormModel(t)
+	f.cfg.Projects = append(f.cfg.Projects, config.Project{
+		Name: "here", Server: config.LocalServer, Path: "/work/here", Alias: alias, Enabled: true, Routes: saved,
+	})
+	files.dirs["/work/here"] = true
+	files.drafts["/work/here"] = draft
+	m.cfg = f.cfg
+	m.sel = rowKey(rowProject, "here")
+	settle(m, m.action("e"))
+	pf, ok := m.form.(*projectForm)
+	if !ok {
+		t.Fatalf("no project form: %T", m.form)
+	}
+	settle(m, press(m, "enter"))
+	if pf.step < projectStepRoutes {
+		t.Fatalf("step %d, err %q; want discovery done", pf.step, pf.err)
+	}
+	return pf
+}
+
+func hosted(port int, role config.Role, hosts ...string) config.Route {
+	return config.Route{Port: port, Role: role, Hosts: hosts}
+}
+
+func TestEditAddsInferredHosts(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(80, config.RoleWeb, "manual.x.io")}, "here.test",
+		Draft{Routes: []config.Route{hosted(80, config.RoleWeb, "app.x.io")}})
+	if got, want := pf.routes[0].Hosts, []string{"manual.x.io", "app.x.io"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("hosts = %v, want %v", got, want)
+	}
+	var hosts []string
+	for _, it := range pf.needsApproval() {
+		hosts = append(hosts, it.Host)
+	}
+	if want := []string{"app.x.io"}; !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("needsApproval hosts = %v, want %v", hosts, want)
+	}
+}
+
+func TestEditKeepsSavedRoleOverHosts(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(9000, config.RoleIgnore)}, "here.test",
+		Draft{Routes: []config.Route{hosted(9000, config.RoleWeb, "files.x.io")}})
+	r := pf.routes[0]
+	if r.Role != config.RoleIgnore || len(r.Hosts) != 0 {
+		t.Fatalf("route = %+v, want ignore with no hosts", r)
+	}
+}
+
+func TestEditNewHostedPortStaysSecondary(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(8220, config.RoleWeb)}, "here.test",
+		Draft{Routes: []config.Route{hosted(6001, config.RoleWeb, "ws.x.io"), hosted(8220, config.RoleWeb)}})
+	if len(pf.routes) != 2 || pf.routes[0].Port != 8220 || pf.routes[0].Role != config.RoleWeb {
+		t.Fatalf("routes = %+v, want 8220 web first", pf.routes)
+	}
+	if r := pf.routes[1]; r.Port != 6001 || r.Role != config.RoleWeb || !reflect.DeepEqual(r.Hosts, []string{"ws.x.io"}) {
+		t.Fatalf("new route = %+v", r)
+	}
+}
+
+func TestEditInferredHostNotDuplicated(t *testing.T) {
+	pf := editForm(t, []config.Route{hosted(80, config.RoleWeb), hosted(81, config.RoleWeb, "Other.x.io")}, "Alias.x.io",
+		Draft{Routes: []config.Route{hosted(80, config.RoleWeb, "other.x.io", "alias.x.io", "new.x.io")}})
+	if got, want := pf.routes[0].Hosts, []string{"new.x.io"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("hosts = %v, want %v", got, want)
+	}
+}
