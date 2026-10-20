@@ -115,6 +115,17 @@ func TestProjectPanel(t *testing.T) {
 	if strings.Contains(screen(m), "ignored") {
 		t.Errorf("the routes have the keys, but the fold line shows:\n%s", screen(m))
 	}
+	press(m, "down")
+	press(m, "down")
+	if !strings.Contains(screen(m), "▌3306    ignore      db") { // the cursor reaches the folded route
+		t.Errorf("3306 is not the selected row:\n%s", screen(m))
+	}
+	if p, _ := m.cfg.Project("myapp"); p.Routes[m.routeRow].Port != 3306 {
+		t.Errorf("route %d selected, want 3306", p.Routes[m.routeRow].Port)
+	}
+	press(m, "i") // nothing to show: every route is
+	press(m, "tab")
+	wantScreen(t, m, "1 ignored: 3306  ·  i show")
 }
 
 func TestFixFor(t *testing.T) {

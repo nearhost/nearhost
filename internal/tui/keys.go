@@ -332,7 +332,9 @@ func (m *Model) action(s string) tea.Cmd {
 	case "p":
 		return m.nextProposal()
 	case "i":
-		if kind, _ := m.selected(); kind == rowProject {
+		// The routes with the keys show every route, so i would change
+		// nothing to be seen until they gave the keys back.
+		if kind, _ := m.selected(); kind == rowProject && !m.routeFocus {
 			m.showIgnored = !m.showIgnored
 		}
 	case "enter":
