@@ -1,0 +1,16 @@
+internal/tui/project_edit_test.go
+  h_13c4e797d6e9d2 35
+internal/tui/wizard_project.go
+  h_13c4e797d6e9d2 1529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2db7ec76571f092a95762c8eb53051b0c1e75b2",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
