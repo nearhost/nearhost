@@ -315,13 +315,16 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	}
 	// An inferred host another project serves is left out with a note, so
 	// it is neither asked about nor fails the save; a typed one still fails.
-	for h := range approved {
-		delete(inferred, h)
-	}
-	routes, notes := withoutTakenHosts(cfg, *project, inferred)
-	project.Routes = routes
-	for _, n := range notes {
-		fmt.Fprintln(cmd.ErrOrStderr(), n)
+	// A disabled project serves nothing, so it keeps them.
+	if project.Enabled {
+		for h := range approved {
+			delete(inferred, h)
+		}
+		routes, notes := withoutTakenHosts(cfg, *project, inferred)
+		project.Routes = routes
+		for _, n := range notes {
+			fmt.Fprintln(cmd.ErrOrStderr(), n)
+		}
 	}
 
 	var items []nearhostrc.Item
