@@ -1346,7 +1346,7 @@ func (f *projectForm) lines(width int) []string {
 		lines = append(lines, field("path", clean(f.resolved), width)...)
 		lines = append(lines, field("name", clean(f.name.value), width)...)
 		lines = append(lines, field("alias", styleBeacon.Render("https://"+clean(f.alias.value)), width)...)
-		for i, r := range f.routes {
+		for i, r := range f.project().Routes { // as they are saved
 			label := ""
 			if i == 0 {
 				label = "routes"

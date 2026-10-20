@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/nearhost/nearhost/internal/config"
 )
 
@@ -389,5 +391,19 @@ func TestFormProjectDropsTheAliasFromSecondaryRoutes(t *testing.T) {
 	}
 	if len(f.routes[1].Hosts) != 1 {
 		t.Errorf("changed the form's routes: %+v", f.routes)
+	}
+}
+
+// The last look shows the routes as they are saved, without the alias on a
+// route other than the primary.
+func TestConfirmShowsTheRoutesAsSaved(t *testing.T) {
+	f := &projectForm{step: projectStepConfirm, srv: config.Server{Name: config.LocalServer}, routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.io"}},
+	}}
+	f.name.value, f.alias.value = "x", "ws.x.io"
+	screen := ansi.Strip(strings.Join(f.lines(100), "\n"))
+	if !strings.Contains(screen, "8080   ignore") || strings.Contains(screen, "8080   web") {
+		t.Errorf("confirm shows:\n%s", screen)
 	}
 }
