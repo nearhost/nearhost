@@ -71,9 +71,9 @@ func (m *Model) routesKey(s string) (tea.Cmd, bool) {
 }
 
 // cycleRole switches the selected route between loopback and ignore, and
-// saves it. A project has exactly one web route at all times, so the web
-// route is changed with w (makeWeb), not here; on this machine loopback
-// means nothing, so a route there is web or ignored.
+// saves it. A project always has a web route, so a web route is changed
+// by making another one web with w (makeWeb), not here; on this machine
+// loopback means nothing, so a route there is web or ignored.
 func (m *Model) cycleRole(p config.Project) tea.Cmd {
 	if m.routeRow >= len(p.Routes) {
 		return nil
@@ -94,17 +94,23 @@ func (m *Model) cycleRole(p config.Project) tea.Cmd {
 	return m.setRole(p.Name, r.Port, role)
 }
 
-// makeWeb makes the selected route the web route and saves it; the route
-// that was web becomes ignore.
+// makeWeb makes the selected route web and saves it; a web route without
+// hosts of its own becomes ignore. The cursor follows the route when it
+// moves to be the primary.
 func (m *Model) makeWeb(p config.Project) tea.Cmd {
 	if m.routeRow >= len(p.Routes) || p.Routes[m.routeRow].Role == config.RoleWeb {
 		return nil
 	}
-	return m.setRole(p.Name, p.Routes[m.routeRow].Port, config.RoleWeb)
+	port := p.Routes[m.routeRow].Port
+	cmd := m.setRole(p.Name, port, config.RoleWeb)
+	if cmd != nil {
+		m.routeRow = routeAt(config.SetRole(p.Routes, port, config.RoleWeb), port)
+	}
+	return cmd
 }
 
-// setRole saves the role of a project's route on port. A route made web
-// takes the place of the one that was.
+// setRole saves the role of a project's route on port, as config.SetRole
+// gives it.
 func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
 	if m.editing {
 		return nil // the last change is not applied yet
@@ -115,14 +121,7 @@ func (m *Model) setRole(name string, port int, role config.Role) tea.Cmd {
 		if !ok {
 			return errNoLongerConfigured(name)
 		}
-		for j := range q.Routes {
-			if role == config.RoleWeb && q.Routes[j].Role == config.RoleWeb {
-				q.Routes[j].Role = config.RoleIgnore
-			}
-			if q.Routes[j].Port == port {
-				q.Routes[j].Role = role
-			}
-		}
+		q.Routes = config.SetRole(q.Routes, port, role)
 		return nil
 	})
 }

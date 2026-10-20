@@ -167,3 +167,28 @@ func TestEditOfAProjectThatHasGone(t *testing.T) {
 		t.Error("the edit brought myapp back")
 	}
 }
+
+// Making a route web keeps a web route with hosts of its own, which is a
+// site of its own; the new web route, without hosts, becomes the primary,
+// and the cursor follows it.
+func TestRoutesMakeWebKeepsHostedRoute(t *testing.T) {
+	m, f := routesModel(t)
+	f.cfg.Projects[1].Routes[0].Hosts = []string{"app.x.io"}
+	press(m, "down")
+	press(m, "down")
+	run(m, press(m, "w")) // 3306 becomes web, before 80
+	want := []config.Route{
+		{Port: 3306, Role: config.RoleWeb, Label: "db"},
+		{Port: 80, Role: config.RoleWeb, Label: "web", Hosts: []string{"app.x.io"}},
+		{Port: 5173, Role: config.RoleLoopback, Label: "vite (VITE_PORT)"},
+	}
+	if got := f.cfg.Projects[1].Routes; !reflect.DeepEqual(got, want) {
+		t.Errorf("routes after w: %+v\nwant %+v", got, want)
+	}
+	if err := f.cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	if m.routeRow != 0 {
+		t.Errorf("cursor on row %d, want 0", m.routeRow)
+	}
+}
