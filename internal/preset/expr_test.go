@@ -136,3 +136,40 @@ func TestParseChecksExpressions(t *testing.T) {
 		})
 	}
 }
+
+func TestURLHelpers(t *testing.T) {
+	h, vars := testEnv(t)
+	vars["env"] = map[string]string{"P": " 8220 ", "Q": "abc"}
+	env, err := newEnv(scopeRoute, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for src, want := range map[string]string{
+		`url_host(" https://App.Local.X.io:8220/path ")`: "app.local.x.io",
+		`url_host("http://app.local.x.io.")`:             "app.local.x.io",
+		`url_host("ws.local.x.io")`:                      "ws.local.x.io",
+		`url_host("127.0.0.1:8000")`:                     "127.0.0.1",
+		`url_host("http://[::1]:80")`:                    "::1",
+		`url_host("https://")`:                           "",
+		`url_host("")`:                                   "",
+	} {
+		got, err := eval(env, src, vars)
+		if err != nil || got != want {
+			t.Errorf("%s = %v %v, want %q", src, got, err, want)
+		}
+	}
+	for src, want := range map[string]int{
+		`url_port("https://a.b.io:8443/x")`: 8443,
+		`url_port("https://a.b.io")`:        0,
+		`url_port("a.b.io:70000")`:          0,
+		`env_port("P", 80)`:                 8220,
+		`env_port("Q", 80)`:                 80,
+		`env_port("R", 80)`:                 80,
+	} {
+		h.env = vars["env"].(map[string]string)
+		env, _ := newEnv(scopeRoute, h)
+		if got, err := evalInt(env, src, vars); err != nil || got != want {
+			t.Errorf("%s = %d %v, want %d", src, got, err, want)
+		}
+	}
+}

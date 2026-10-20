@@ -114,7 +114,7 @@ func TestAdvice(t *testing.T) {
   - {id: bare, when: 'true', message: Bare}
 `)
 	c := Context{Project: &Project{Env: map[string]string{"APP_URL": "x"}}}
-	got, errs := p.EvalAdvice(c, "myapp.test", func(from int) int { return from + 2 }, func(id string) bool { return id != "dropped" })
+	got, errs := p.EvalAdvice(c, "myapp.test", nil, func(from int) int { return from + 2 }, func(id string) bool { return id != "dropped" })
 	want := []AdviceOut{
 		{ID: "shown", Message: "Set APP_URL to https://myapp.test.", Snippet: "APP_URL=https://myapp.test\nPORT=5175"},
 		{ID: "bare", Message: "Bare"},
@@ -225,5 +225,41 @@ func TestErrorsNameThePresetByItsQualifiedName(t *testing.T) {
 	_, errs := p.EvalRoutes(Context{Project: &Project{}}, all)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "preset acme/x: route broken") {
 		t.Errorf("errs = %v", errs)
+	}
+}
+
+func TestEvalRoutesHosts(t *testing.T) {
+	p := mustParse(t, "x", "schema: 2\nname: x\ntitle: T\ndetect: 'true'\nroutes:\n"+
+		"  - {id: a, port: '80', label: A, hosts: '[\"App.X.io\", \"localhost\"]'}\n"+
+		"  - {id: b, port: '81', label: B, hosts: '[env[\"MISSING\"]]'}\n"+
+		"  - {id: c, port: '82', label: C}\n")
+	got, errs := p.EvalRoutes(Context{Project: &Project{}}, all)
+	if len(got) != 2 || !reflect.DeepEqual(got[0].Hosts, []string{"App.X.io", "localhost"}) || got[1].Hosts != nil {
+		t.Errorf("Routes = %+v", got)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "route b: hosts") {
+		t.Errorf("errs = %v, want route b: hosts", errs)
+	}
+}
+
+func TestEvalAdviceSeesHosts(t *testing.T) {
+	p := named(t, "x", `advisories:
+  - {id: exact, when: 'serves("APP.local.x.io")', message: Exact}
+  - {id: wild, when: 'serves("acme.status.local.x.io")', message: Wild}
+  - {id: other, when: 'serves("other.x.io")', message: Other}
+  - {id: empty, when: 'serves("")', message: Empty}
+  - {id: first, when: 'hosts[0] == "myapp.test"', message: First}
+`)
+	hosts := []string{"myapp.test", "app.local.x.io", "*.status.local.x.io"}
+	got, errs := p.EvalAdvice(Context{Project: &Project{}}, "myapp.test", hosts, nil, all)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	var ids []string
+	for _, a := range got {
+		ids = append(ids, a.ID)
+	}
+	if want := []string{"exact", "wild", "first"}; !reflect.DeepEqual(ids, want) {
+		t.Errorf("advice = %v, want %v", ids, want)
 	}
 }

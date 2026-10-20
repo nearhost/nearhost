@@ -100,13 +100,14 @@ func (c Context) vars() map[string]any {
 }
 
 func (c Context) host() host {
-	return host{file: c.Project.hasFile, pkg: c.Project.hasPackage, active: c.Active}
+	return host{file: c.Project.hasFile, pkg: c.Project.hasPackage, active: c.Active, env: c.Project.Env}
 }
 
 // RouteOut is a route a preset proposes.
 type RouteOut struct {
 	ID    string
 	Port  int
+	Hosts []string // as the expression gave them; discovery filters
 	Label string
 	Role  config.Role
 	Web   WebHint
@@ -145,7 +146,15 @@ func (p *Preset) EvalRoutes(c Context, keep func(id string) bool) ([]RouteOut, [
 		if port < 1 || port > 65535 {
 			continue
 		}
-		out = append(out, RouteOut{ID: r.ID, Port: port, Label: r.Label, Role: r.Role, Web: r.Web})
+		var hosts []string
+		if strings.TrimSpace(r.Hosts) != "" {
+			var err error
+			if hosts, err = evalStrings(env, r.Hosts, vars); err != nil {
+				errs = append(errs, fmt.Errorf("preset %s: route %s: hosts: %w", p.Key(), r.ID, err))
+				continue
+			}
+		}
+		out = append(out, RouteOut{ID: r.ID, Port: port, Hosts: hosts, Label: r.Label, Role: r.Role, Web: r.Web})
 	}
 	return out, errs
 }
@@ -158,16 +167,22 @@ type AdviceOut struct {
 }
 
 // EvalAdvice evaluates the preset's advisories for which keep returns true. An
-// advisory whose expressions fail is left out and reported.
-func (p *Preset) EvalAdvice(c Context, alias string, freePort func(from int) int, keep func(id string) bool) ([]AdviceOut, []error) {
+// advisory whose expressions fail is left out and reported. hosts is every
+// name the project is served at, alias first.
+func (p *Preset) EvalAdvice(c Context, alias string, hosts []string, freePort func(from int) int, keep func(id string) bool) ([]AdviceOut, []error) {
 	h := c.host()
 	h.freePort = freePort
+	h.hosts = hosts
 	env, err := newEnv(scopeAdvisory, h)
 	if err != nil {
 		return nil, []error{err}
 	}
 	vars := c.vars()
 	vars["alias"] = alias
+	if hosts == nil {
+		hosts = []string{}
+	}
+	vars["hosts"] = hosts
 	var out []AdviceOut
 	var errs []error
 	for _, a := range p.Advisories {
