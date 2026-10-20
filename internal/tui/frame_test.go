@@ -124,7 +124,9 @@ func TestTallCellsDropTheGapsBetweenSections(t *testing.T) {
 	if got := at(" port    role") - at("server mini"); got != 1 {
 		t.Errorf("with tall cells the table starts %d lines after the details, want 1", got)
 	}
-	if got := at("log ─") - at("1 ignored: 3306"); got > 2 {
-		t.Errorf("with tall cells the log starts %d lines after the routes:\n%s", got, screen(m))
+	// The line above the log's rule is the panel's last, Reading advice…
+	// here, not a blank one.
+	if above := lines[at("log ─")-1]; strings.TrimSpace(above[strings.Index(above, "│")+len("│"):]) == "" {
+		t.Errorf("with tall cells a blank line comes before the log:\n%s", screen(m))
 	}
 }
