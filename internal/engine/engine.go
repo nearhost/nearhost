@@ -464,6 +464,14 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	// A forward whose cancel failed kept its port, and its relay with it;
+	// with the sessions gone, nothing is left for either to serve.
+	e.mu.Lock()
+	for port, l := range e.relays {
+		_ = l.Close()
+		delete(e.relays, port)
+	}
+	e.mu.Unlock()
 	e.lookups.Wait()
 	// The last site that opted in is gone, which ends the refresh loop, and
 	// e.stop ended it in any case.

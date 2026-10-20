@@ -449,13 +449,18 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 		return fmt.Errorf("loopback port %d: %w", port, err)
 	}
 	// A machine without the IPv6 loopback has only 127.0.0.1 to serve.
-	if l, err := relayIPv6(port); errors.Is(err, syscall.EADDRINUSE) {
-		e.releasePort(port)
-		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
-	} else if err == nil {
+	switch l, err := relayIPv6(port); {
+	case err == nil:
 		e.mu.Lock()
 		e.relays[port] = l
 		e.mu.Unlock()
+	case errors.Is(err, syscall.EADDRNOTAVAIL) || errors.Is(err, syscall.EAFNOSUPPORT):
+	case errors.Is(err, syscall.EADDRINUSE):
+		e.releasePort(port)
+		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
+	default:
+		e.releasePort(port)
+		return fmt.Errorf("loopback port %d: %w", port, err)
 	}
 	if err := sess.AddForward(ctx, port, port); err != nil {
 		e.releasePort(port)

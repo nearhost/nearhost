@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"errors"
 	"io"
 	"net"
 	"strconv"
+	"time"
 )
 
 // relayIPv6 listens on [::1]:port and passes each connection to the loopback
@@ -19,11 +21,20 @@ func relayIPv6(port int) (net.Listener, error) {
 		return nil, err
 	}
 	go func() {
+		// An error other than the close, such as running out of file
+		// descriptors, passes; the loop waits a little longer each time.
+		wait := 5 * time.Millisecond
 		for {
 			c, err := l.Accept()
-			if err != nil {
+			if errors.Is(err, net.ErrClosed) {
 				return
 			}
+			if err != nil {
+				time.Sleep(wait)
+				wait = min(2*wait, time.Second)
+				continue
+			}
+			wait = 5 * time.Millisecond
 			go relayConn(c, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		}
 	}()
