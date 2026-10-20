@@ -85,6 +85,16 @@ type Options struct {
 	// Version is the Nearhost version the home page at https://localhost
 	// shows. Empty means dev.
 	Version string
+	// HomeWithNoSites serves the home page, and so listens, even with no
+	// sites, so https://localhost answers before the first project. Without
+	// it a config with no sites declares no listeners.
+	HomeWithNoSites bool
+}
+
+// listens reports whether the config for sites declares listeners: with
+// any site, or with none while the home page is served without one.
+func listens(sites []Site, opts Options) bool {
+	return len(sites) > 0 || opts.HomeWithNoSites
 }
 
 // captureHandler is the handler that keeps a site's exchanges, before the
@@ -264,12 +274,13 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
-// config, which declares no listeners. Output is deterministic: there is one
-// route per host, ordered by hostname.Less, so exact hosts win over patterns
-// and more specific patterns over less specific ones. While any site has
-// extra clients, a host not served to all of them is followed by a drop
-// for that host alone (see hostDrop). While there are sites and none serves
-// localhost, localhost is one more exact host, served Nearhost's own page.
+// config, which declares no listeners unless opts.HomeWithNoSites. Output is
+// deterministic: there is one route per host, ordered by hostname.Less, so
+// exact hosts win over patterns and more specific patterns over less
+// specific ones. While any site has extra clients, a host not served to all
+// of them is followed by a drop for that host alone (see hostDrop). While the config listens and no site
+// serves localhost, localhost is one more exact host, served Nearhost's own
+// page.
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -313,11 +324,10 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			all = append(all, served{site: s, host: h})
 		}
 	}
-	// While the proxy serves any project, localhost has Nearhost's own page,
-	// unless a project serves localhost itself: then the page is left out
+	// While the proxy listens, localhost has Nearhost's own page, unless a
+	// project serves localhost itself: then the page is left out
 	// altogether, so it never has to be decided which of the two wins.
-	// With no sites, nothing is served and nothing listens, as before.
-	if _, claimed := siteOf[homeHost]; len(sites) > 0 && !claimed {
+	if _, claimed := siteOf[homeHost]; listens(sites, opts) && !claimed {
 		all = append(all, served{host: homeHost, home: true})
 	}
 	for _, sv := range all {
@@ -514,10 +524,10 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			},
 		},
 	}
-	// With no sites there is nothing to serve, so leave the HTTP app out and
-	// Caddy opens no listeners. The PKI app still creates the local CA root,
-	// which is how EnsureCA makes the CA without binding ports 80/443.
-	if len(sites) == 0 {
+	// With nothing to serve, leave the HTTP app out and Caddy opens no
+	// listeners. The PKI app still creates the local CA root, which is how
+	// EnsureCA makes the CA without binding ports 80/443.
+	if !listens(sites, opts) {
 		delete(cfg["apps"].(map[string]any), "http")
 	}
 	return json.Marshal(cfg)

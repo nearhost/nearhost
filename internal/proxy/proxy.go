@@ -74,7 +74,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	}
 	owner = p
 	was := listening
-	listening = len(sites) > 0 // with no sites the config declares no listeners
+	listening = listens(sites, p.opts)
 	if was && !listening {
 		// Caddy stops the old listeners as Stop does, in goroutines it
 		// does not wait for: wait for the ports, so the proxy never takes

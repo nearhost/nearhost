@@ -134,6 +134,28 @@ func TestBuildConfigNoSitesHasNoListenersButKeepsCA(t *testing.T) {
 	}
 }
 
+// With HomeWithNoSites, a config with no sites still listens, to serve the
+// home page at localhost alone.
+func TestBuildConfigHomeWithNoSites(t *testing.T) {
+	raw, err := BuildConfig(nil, Options{StorageRoot: t.TempDir(), HomeWithNoSites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"localhost"}) {
+		t.Fatalf("route hosts = %v, want localhost alone", got)
+	}
+	if len(homeRoutes(t, cfg)) != 1 {
+		t.Error("no home page route")
+	}
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost"}) {
+		t.Errorf("subjects = %v, want localhost", got)
+	}
+}
+
 func TestBuildConfigRejectsBadInput(t *testing.T) {
 	if _, err := BuildConfig([]Site{{Alias: "", Upstream: "127.0.0.1:1"}}, Options{StorageRoot: "/x"}); err == nil {
 		t.Error("empty alias should fail")

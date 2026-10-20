@@ -215,7 +215,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
 		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version}),
+		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
@@ -305,8 +305,9 @@ func (e *Engine) Config() *config.Config {
 }
 
 // Start prepares the engine: it creates the run directory, checks that the
-// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well), and loads the proxy with no
-// sites, which creates the local CA and opens no listeners. If a port is
+// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well),
+// and loads the proxy with no sites, which creates the local CA and listens
+// on both ports to serve Nearhost's own page at localhost. If a port is
 // taken it returns an error naming the port and the engine stays unstarted;
 // Start can then be called again. Starting a started engine does nothing.
 func (e *Engine) Start(ctx context.Context) error {
@@ -332,8 +333,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			return fmt.Errorf("create run directory: %w", err)
 		}
 	}
-	// With no sites the proxy opens no listeners, so a port conflict would
-	// only show when the first project starts. Find it now.
+	// Name the program in the way, which Caddy's own error does not.
 	if err := e.probePort(ctx, "HTTPS", e.opts.HTTPSPort, 443); err != nil {
 		return err
 	}
