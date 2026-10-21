@@ -164,13 +164,23 @@ func TestProjectFormRoutesNeedOneWebRoute(t *testing.T) {
 	press(m, "space") // vite: ignore -> web, as loopback means nothing on this machine
 	wantScreen(t, m, "[x] 5173    ‹ web ›")
 	press(m, "up")
-	press(m, "space") // app: ignore -> web, vite back to ignore
-	wantScreen(t, m, "[x] 8080    ‹ web ›", "[ ] 5173    ignore")
-	press(m, "space") // the web route stays
-	wantScreen(t, m, "A project needs its web route", "[x] 8080    ‹ web ›")
-	press(m, "right") // app: web -> ignore; loopback is skipped on this machine
-	wantScreen(t, m, "[ ] 8080    ‹ ignore ›")
-	press(m, "right")
+	press(m, "space") // app: ignore -> web, and vite stays web
+	wantScreen(t, m, "[x] 8080    ‹ web ›", "[x] 5173    web")
+	press(m, "down")
+	wantScreen(t, m, "web: port 5173 has no names of its own, and only one web route can go without")
+	press(m, "up")
+	press(m, "enter") // two web routes without hosts
+	wantScreen(t, m, "Only one web route can go without names of its own, and ports 8080 and 5173 have none", "Add project · routes")
+	press(m, "space") // app: web -> ignore, as vite is web
+	wantScreen(t, m, "[ ] 8080    ‹ ignore ›", "[x] 5173    web")
+	press(m, "down")
+	press(m, "space") // the only web route stays
+	wantScreen(t, m, "A project needs its web route", "[x] 5173    ‹ web ›")
+	press(m, "up")
+	press(m, "right") // app: ignore -> web; loopback is skipped on this machine
+	press(m, "down")
+	press(m, "right") // vite: web -> ignore
+	wantScreen(t, m, "[x] 8080    web", "[ ] 5173    ‹ ignore ›")
 	press(m, "enter")
 	wantScreen(t, m, "Add project · name")
 }
@@ -184,10 +194,10 @@ func TestProjectFormOffersLoopbackOnAServer(t *testing.T) {
 	press(m, "down")
 	press(m, "space") // vite: ignore -> loopback
 	wantScreen(t, m, "[x] 5173    ‹ loopback ›  localhost:5173", "loopback: localhost:5173 on this machine reaches port 5173 on mini,")
-	press(m, "left") // vite: loopback -> web, which 80 was
-	wantScreen(t, m, "[x] 5173    ‹ web ›", "[ ] 80      ignore")
+	press(m, "left") // vite: loopback -> web, and 80 stays web
+	wantScreen(t, m, "[x] 5173    ‹ web ›", "[x] 80      web")
 	press(m, "right")
-	wantScreen(t, m, "[x] 5173    ‹ loopback ›")
+	wantScreen(t, m, "[x] 5173    ‹ loopback ›", "[x] 80      web")
 }
 
 func TestProjectFormAsksForTheWebPortWhenNoneWasFound(t *testing.T) {

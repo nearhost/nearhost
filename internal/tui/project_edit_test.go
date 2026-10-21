@@ -2,10 +2,12 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -144,19 +146,54 @@ func TestEditProjectKeepsHostsOfEveryWebRoute(t *testing.T) {
 	}
 }
 
-// TestMakingARouteWebKeepsWebRoutesWithHosts makes a third route web: the
-// web route with hosts stays web, as a route of its own, and only the one
-// without hosts is demoted.
-func TestMakingARouteWebKeepsWebRoutesWithHosts(t *testing.T) {
+// TestMakingARouteWebKeepsTheOtherWebRoutes makes a third route web: the
+// others stay web, so cycling roles changes nothing else, and the new one
+// without hosts becomes the primary.
+func TestMakingARouteWebKeepsTheOtherWebRoutes(t *testing.T) {
 	f := &projectForm{routes: []config.Route{
 		{Port: 80, Role: config.RoleWeb},
 		{Port: 8230, Role: config.RoleWeb, Hosts: []string{"ws.local.x.io"}},
 		{Port: 9000, Role: config.RoleIgnore},
-	}}
+	}, routeRow: 2}
 	f.setRole(2, config.RoleWeb)
-	got := []config.Role{f.routes[0].Role, f.routes[1].Role, f.routes[2].Role}
-	if got[0] != config.RoleIgnore || got[1] != config.RoleWeb || got[2] != config.RoleWeb {
-		t.Errorf("roles %v; want ignore, web, web", got)
+	var got []string
+	for _, r := range f.routes {
+		got = append(got, fmt.Sprintf("%d %s", r.Port, r.Role))
+	}
+	if strings.Join(got, ", ") != "9000 web, 80 web, 8230 web" || f.routeRow != 0 {
+		t.Errorf("routes %v, row %d", got, f.routeRow)
+	}
+}
+
+// A web route cycled to another role and back gets its hosts again, but not
+// one another route has taken meanwhile.
+func TestCyclingARouteBackToWebKeepsItsHosts(t *testing.T) {
+	f := &projectForm{srv: config.Server{Name: "mini"}, routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb},
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.test", "api.x.test"}},
+	}, routeRow: 1}
+	f.cycleRole(1, 1)
+	if r := f.routes[1]; r.Role != config.RoleLoopback || len(r.Hosts) != 0 {
+		t.Fatalf("route %+v; want loopback without hosts", r)
+	}
+	f.routes[0].Hosts = []string{"api.x.test"}
+	f.cycleRole(1, 1)
+	f.cycleRole(1, 1)
+	if r := f.routes[1]; r.Role != config.RoleWeb || strings.Join(r.Hosts, " ") != "ws.x.test" {
+		t.Errorf("route %+v; want web with ws.x.test", r)
+	}
+}
+
+// Enter makes the web route without hosts the primary when one with hosts
+// is above it, as only the primary goes without.
+func TestRoutesEnterMakesTheBareWebRouteThePrimary(t *testing.T) {
+	f := &projectForm{srv: config.Server{Name: "mini"}, routes: []config.Route{
+		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.test"}},
+		{Port: 80, Role: config.RoleWeb},
+	}, step: projectStepRoutes}
+	f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if f.err != "" || f.step != projectStepDetails || f.routes[0].Port != 80 {
+		t.Errorf("err %q, step %v, routes %+v", f.err, f.step, f.routes)
 	}
 }
 
