@@ -393,7 +393,7 @@ func checkCA(b trustBackend) []check {
 	const name, fix = "local CA", "run `nearhost trust`"
 	dir, err := config.CaddyDir()
 	if err != nil {
-		return []check{{name, levelFail, err.Error(), "set HOME or XDG_CONFIG_HOME"}}
+		return []check{{name, levelFail, err.Error(), "set HOME"}}
 	}
 	cert, err := b.rootCert(dir)
 	switch {

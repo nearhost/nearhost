@@ -39,12 +39,21 @@ func systemTrust() trustBackend {
 	}
 }
 
+// migrateCA moves the local CA from where Nearhost 0.7 and earlier kept it to
+// the data directory, unless another Nearhost is running and may be using it.
+// Only the commands that own the CA call it: `nearhost`, `nearhost up`,
+// `trust` and `untrust`.
+func migrateCA() error { return config.MigrateCaddyDir(nearhostRunning) }
+
 func newTrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "trust",
 		Short: "Install the Nearhost Local CA into the system trust store",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := migrateCA(); err != nil {
+				return err
+			}
 			dir, err := config.CaddyDir()
 			if err != nil {
 				return err
@@ -110,6 +119,9 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 		Short: "Remove the Nearhost Local CA from the system trust store",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := migrateCA(); err != nil {
+				return err
+			}
 			dir, err := config.CaddyDir()
 			if err != nil {
 				return err

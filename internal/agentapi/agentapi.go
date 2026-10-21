@@ -228,7 +228,7 @@ func (s *Server) Listen(origin, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if answers(path) {
+	if Answers(path) {
 		return ErrInUse
 	}
 	os.Remove(path)
@@ -299,9 +299,9 @@ func (l *listener) close() {
 	os.Remove(l.path)
 }
 
-// answers reports whether something accepts connections on the socket at
-// path.
-func answers(path string) bool {
+// Answers reports whether something accepts connections on the socket at
+// path, as a running Nearhost does on the one it Listens on.
+func Answers(path string) bool {
 	c, err := net.DialTimeout("unix", path, 500*time.Millisecond)
 	if err != nil {
 		return false

@@ -5,11 +5,14 @@ import (
 	"crypto/x509"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
 )
 
@@ -234,5 +237,38 @@ func TestRootRegistersTrustCommands(t *testing.T) {
 	root.SetArgs([]string{"trust", "extra"})
 	if err := root.Execute(); err == nil {
 		t.Error("real trust command accepted a stray argument")
+	}
+}
+
+func TestTrustMovesTheCAToTheDataDir(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	old := filepath.Join(cfgHome, "nearhost", "caddy")
+	key := filepath.Join("pki", "authorities", "local", "root.key")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(old, key)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, key), []byte("the key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(data) })
+	f := newFake()
+	if _, err := run(t, newTrustCmd(f.backend()), "trust"); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(data, "caddy")
+	if len(f.ensured) != 1 || f.ensured[0] != want {
+		t.Fatalf("CA made in %v, want %s", f.ensured, want)
+	}
+	if got, err := os.ReadFile(filepath.Join(want, key)); err != nil || string(got) != "the key" {
+		t.Fatalf("moved root.key = %q, %v", got, err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("old CA directory still there: %v", err)
 	}
 }

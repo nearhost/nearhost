@@ -126,6 +126,11 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err := flags.validate(); err != nil {
 		return err
 	}
+	// Before anything reads the CA's directory, so this run serves from
+	// where it lands.
+	if err := migrateCA(); err != nil {
+		return err
+	}
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err
