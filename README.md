@@ -26,7 +26,7 @@ Nearhost gives each project a name, a certificate your browser trusts and forwar
 - **Local projects too.** The `local` server needs no setup. Projects on your laptop get the same alias and certificate, so one tool covers the laptop and the servers.
 - **Presets when you want them.** Framework-specific setups, such as Docker Compose, Laravel Sail or Vite, come from preset registries. No registry is trusted until you add one, and you can publish and trust your own.
 - **Your traffic stays yours.** No relay, no account and no public URL. Requests travel over your own SSH connection.
-- **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts`, asks for `sudo` only when that block changes, and removes it again with `nearhost hosts clean`.
+- **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts`, with each name on `127.0.0.1` and `::1`, asks for `sudo` only when that block changes, and removes it again with `nearhost hosts clean`.
 - **Runs in the foreground.** `nearhost up` serves until you press Ctrl-C, and the forwards close with it. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
 
 ## Install
@@ -69,6 +69,10 @@ sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
+The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, run `xattr -dr com.apple.quarantine nearhost` on the extracted binary.
+
+Releases carry build provenance attestations. To check a download, run `gh attestation verify <file> --repo nearhost/nearhost`.
+
 ### Updating
 
 ```sh
@@ -86,6 +90,8 @@ Trust the local certificate authority. This asks for your password once:
 ```sh
 nearhost trust
 ```
+
+The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux; `$XDG_DATA_HOME/nearhost/caddy` when that is set). Anyone with it can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. An older copy in `~/.config/nearhost/caddy` is moved there the first time Nearhost runs, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from your trust stores.
 
 Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml`. Nothing in the project is changed.
 
@@ -112,13 +118,29 @@ nearhost
 
 `nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the view. With no projects yet it opens on the Nearhost mark and asks you to add one.
 
-`/` filters the sidebar by name. `l` opens the selected project's log, or every log from Home, across the whole window: `tab` shows requests, events or errors, `/` searches, `enter` opens a request to show its headers, the body sent and the body that came back, and its route, `v` reveals its cookies, `c` copies it as a curl command, `r` sends it again (asking first unless it is a GET, HEAD or OPTIONS), and `G` follows new lines again. Home lists anything that needs you, such as a server that cannot connect, with how many attempts failed and when the next is, and how to fix it; there `r` retries the connection and `y` copies the `ssh` command that fixes access. On a server, `c` drops its connection and holds it closed, its projects waiting, until `c` connects it again. `?` lists every key.
+`/` filters the sidebar by name. `l` opens the selected project's log, or every log from Home, across the whole window: `tab` shows requests, events or errors, `/` searches, `enter` opens a request to show its headers, the body sent and the body that came back, and its route, `v` reveals its cookies, `c` copies it as a curl command, `r` sends it again (asking first unless it is a GET, HEAD or OPTIONS), and `G` follows new lines again. Home lists anything that needs you, such as a server that cannot connect, with how many attempts failed and when the next is, and how to fix it; there `r` retries the connection and `y` copies the `ssh` command that fixes access. On a server, `c` drops its connection and holds it closed, its projects waiting, until `c` connects it again. `?` lists every key. The mouse works too: drag to select and copy text, double-click to copy a word, and click an address to open it.
 
 To show bodies and send requests again, the proxy keeps each request and its response in memory while Nearhost runs: bodies up to 64 KiB, the last thousand or so exchanges, never written to disk or to the log. `--no-capture` turns it off.
 
 Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the view; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the view afterwards.
 
 For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
+
+### Nearhost's page
+
+While Nearhost runs, a short page at https://localhost:6327 confirms it is up and shows its version. If something else holds port 6327, Nearhost starts without the page and says so. `--web-port <port>` moves the page, and `--web-port 0` turns it off.
+
+### Share a project's setup
+
+`nearhost export` writes what Nearhost serves for a project, which is its routes, hosts and main name, to a `.nearhostrc` in the project's directory. Commit it, and whoever runs `nearhost add` after cloning gets the same setup. `--dry-run` prints the file instead, and an existing one is replaced only with `--force`.
+
+### Any domain, and more hosts
+
+A project's main name is `<name>.test` unless you choose another. `add --alias` takes any domain, and `add --host` adds a further host to the web route; repeat it for more. Typing a name on the command line approves it.
+
+```sh
+nearhost add --alias app.example.test --host admin.example.test
+```
 
 ### A project on another machine
 
@@ -171,13 +193,18 @@ Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this
 | Command | What it does |
 | --- | --- |
 | `nearhost` | Open the full-screen view and serve every enabled project |
+| `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it |
 | `nearhost ls` | List the configured projects and their routes |
 | `nearhost up [project...]` | Serve the named projects, or every enabled one, without the full-screen view |
+| `nearhost export [project]` | Write the project's setup to a `.nearhostrc` to commit with it |
+| `nearhost preset` | Manage presets and the registries you trust |
+| `nearhost update` | Update Nearhost the way you installed it |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block, server access and whether agents there reach Nearhost |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
+| `nearhost trust` | Trust the local certificate authority; asks for your password |
 | `nearhost untrust` | Remove the certificate authority from the trust store |
 
-Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.
+`nearhost --version` prints the version. Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.
 
 ## How it compares
 
@@ -210,10 +237,10 @@ Point Nearhost at a scratch config directory so a development build leaves your 
 ```sh
 export XDG_CONFIG_HOME="$PWD/.dev"
 ./nearhost add --web 8080 ~/code/myapp
-./nearhost up --no-hosts --https-port 18443 --http-port 18080
+./nearhost up --no-hosts --https-port 18443 --http-port 18080 --web-port 16327
 ```
 
-`./nearhost --no-hosts --https-port 18443 --http-port 18080` opens the full-screen view with the same settings.
+`./nearhost --no-hosts --https-port 18443 --http-port 18080 --web-port 16327` opens the full-screen view with the same settings.
 
 Without the hosts block, `myapp.test` does not resolve, so ask for it by address:
 
@@ -258,7 +285,7 @@ make -C ../presets check NEARHOST="$PWD/nearhost"
 
 ### Contributing
 
-Open a pull request against `main`. Pull requests are squash merged, and the title becomes the commit message, so write it as a [Conventional Commit](https://www.conventionalcommits.org/) such as `feat: read ports from .env.local` or `fix: keep the hosts block when up fails`. Releases are cut by [release-please](https://github.com/googleapis/release-please) from those messages, and GoReleaser attaches the binaries to each GitHub Release.
+Open a pull request against `main`. Titles are [Conventional Commits](https://www.conventionalcommits.org/), pull requests are squash merged, and [release-please](https://github.com/googleapis/release-please) cuts releases from the messages. The full guidance is in [CONTRIBUTING.md](https://github.com/nearhost/.github/blob/main/CONTRIBUTING.md).
 
 ## Licence
 
