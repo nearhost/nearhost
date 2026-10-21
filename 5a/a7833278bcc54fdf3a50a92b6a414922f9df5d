@@ -1,0 +1,21 @@
+internal/proxy/plainlog.go
+  s_e8c5d245e902d9::t_a7c33cedac053f 97-101,104-110
+internal/proxy/plainlog_test.go
+  s_e8c5d245e902d9::t_a7c33cedac053f 19-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5aa7833278bcc54fdf3a50a92b6a414922f9df5d",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
