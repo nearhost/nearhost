@@ -381,7 +381,7 @@ func TestCheckIsNotDivertedByUserConfig(t *testing.T) {
 	if err := s.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none mini true"
+	want := "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none -- mini true"
 	if got := logLines(t, logPath); len(got) != 1 || got[0] != want {
 		t.Fatalf("check ran\n  %q\nwant\n  %q", got, want)
 	}
@@ -392,7 +392,7 @@ func TestMasterIsNotDivertedByUserConfig(t *testing.T) {
 	connected(t, s)
 	want := "-N -M -S " + s.SocketPath() +
 		" -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3" +
-		" -o ControlPersist=no -o ClearAllForwardings=yes -o RemoteCommand=none mini"
+		" -o ControlPersist=no -o ClearAllForwardings=yes -o RemoteCommand=none -- mini"
 	var masters []string
 	for _, l := range logLines(t, logPath) {
 		if strings.HasPrefix(l, "-N -M ") {
@@ -410,7 +410,7 @@ func TestSFTPIsNotDivertedByUserConfig(t *testing.T) {
 	if f, err := s.OpenSFTP(t.Context()); err == nil {
 		f.Close()
 	}
-	want := "-S " + s.SocketPath() + " -o BatchMode=yes -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -s mini sftp"
+	want := "-S " + s.SocketPath() + " -o BatchMode=yes -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -s -- mini sftp"
 	var got []string
 	for _, l := range logLines(t, logPath) {
 		if strings.HasSuffix(l, " sftp") {
@@ -456,10 +456,10 @@ func TestControlCommandsCarryNoOptions(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"-F /dev/null -S " + sock + " -O check mini",
-		"-F /dev/null -S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
-		"-F /dev/null -S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
-		"-F /dev/null -S " + sock + " -O exit mini",
+		"-F /dev/null -S " + sock + " -O check -- mini",
+		"-F /dev/null -S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 -- mini",
+		"-F /dev/null -S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 -- mini",
+		"-F /dev/null -S " + sock + " -O exit -- mini",
 	} {
 		if !seen[want] {
 			t.Errorf("control command %q was not run; got %v", want, seen)

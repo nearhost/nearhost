@@ -1,0 +1,611 @@
+package transport
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// newFakeSession returns a Session wired to the fake ssh script.
+func newFakeSession(t *testing.T, env ...string) (*Session, string) {
+	t.Helper()
+	ssh, err := filepath.Abs("testdata/fakessh/ssh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ssh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "ssh.log")
+	s := NewSession("mini", "mini", shortDir(t))
+	s.SSHPath = ssh
+	s.Env = append([]string{"FAKE_SSH_LOG=" + logPath}, env...)
+	s.pollInterval = 20 * time.Millisecond
+	s.connectTimeout = 2 * time.Second
+	s.baseBackoff = 10 * time.Millisecond
+	s.maxBackoff = 50 * time.Millisecond
+	t.Cleanup(s.Stop)
+	return s, logPath
+}
+
+// shortDir is a run directory whose path leaves room for a control socket.
+// t.TempDir carries the test's name and is too long for one on macOS.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "nh-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+func readLog(t *testing.T, path string) string {
+	t.Helper()
+	b, _ := os.ReadFile(path)
+	return string(b)
+}
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", msg)
+}
+
+func TestCheckSucceedsAndUsesBatchMode(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	if err := s.Check(context.Background()); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "-o BatchMode=yes") || !strings.HasSuffix(strings.TrimSpace(log), "mini true") {
+		t.Fatalf("unexpected ssh invocation: %q", log)
+	}
+}
+
+func TestCheckReturnsStderrOnFailure(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	err := s.Check(context.Background())
+	var ce *CheckError
+	if !errors.As(err, &ce) || !strings.Contains(ce.Stderr, "Permission denied") {
+		t.Fatalf("expected CheckError with stderr, got %v", err)
+	}
+}
+
+func TestStartConnectsAndStopExitsMaster(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatalf("WaitConnected: %v (last error %q)", err, s.LastError())
+	}
+	if s.Status() != StatusConnected {
+		t.Fatalf("status = %s", s.Status())
+	}
+	if !strings.Contains(readLog(t, logPath), "-N -M -S "+s.SocketPath()) {
+		t.Fatalf("master not launched with control socket: %q", readLog(t, logPath))
+	}
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after stop = %s", s.Status())
+	}
+	if !strings.Contains(readLog(t, logPath), "-O exit") {
+		t.Fatal("expected -O exit on stop")
+	}
+}
+
+func TestSupervisorReconnectsAfterMasterExit(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.3")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect")
+}
+
+func TestSupervisorStopsAfterRepeatedAuthFailures(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	if s.Launches() != 3 {
+		t.Fatalf("expected 3 launches, got %d", s.Launches())
+	}
+	if !strings.Contains(s.LastError(), "Permission denied") {
+		t.Fatalf("LastError = %q", s.LastError())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("WaitConnected should surface the auth error, got %v", err)
+	}
+}
+
+func TestHostKeyFailureIsFatal(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	if s.Launches() != 3 || !strings.Contains(s.LastError(), "Host key verification failed") {
+		t.Fatalf("launches=%d lastErr=%q", s.Launches(), s.LastError())
+	}
+}
+
+func TestStopIsIdempotentBeforeStart(t *testing.T) {
+	s, _ := newFakeSession(t)
+	s.Stop()
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status = %s", s.Status())
+	}
+}
+
+func TestStartThenImmediateStopDoesNotPanic(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		s, _ := newFakeSession(t)
+		s.Start()
+		s.Stop()
+		if s.Status() != StatusDisconnected {
+			t.Fatalf("iteration %d: status = %s", i, s.Status())
+		}
+		s.Stop()
+	}
+}
+
+func TestStartStopStartAgain(t *testing.T) {
+	s, _ := newFakeSession(t)
+	s.Start()
+	s.Stop()
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatalf("WaitConnected after restart: %v", err)
+	}
+}
+
+func TestIsFatalSSHError(t *testing.T) {
+	fatal := []string{
+		"user@host: Permission denied (publickey).",
+		"Host key verification failed.",
+		"Too many authentication failures",
+	}
+	for _, m := range fatal {
+		if !isFatalSSHError(m) {
+			t.Errorf("%q should be fatal", m)
+		}
+	}
+	retry := []string{
+		"Warning: Identity file /x/id_missing not accessible: No such file or directory.",
+		"client_loop: send disconnect: Broken pipe",
+		"ssh exited",
+	}
+	for _, m := range retry {
+		if isFatalSSHError(m) {
+			t.Errorf("%q should be retried", m)
+		}
+	}
+}
+
+func TestConnectTimeoutKillsStuckMasterAndRetries(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_HANG=1")
+	s.connectTimeout = 150 * time.Millisecond
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 }, "second launch after connect timeout")
+	if s.Status() == StatusConnected {
+		t.Fatalf("status = %s", s.Status())
+	}
+}
+
+func TestStartDuringStopWaitsForOldSupervisor(t *testing.T) {
+	s, _ := newFakeSession(t)
+	var mu sync.Mutex
+	var events []string
+	s.Logf = func(format string, args ...any) {
+		mu.Lock()
+		events = append(events, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	// Start as soon as Stop has detached the running supervisor.
+	waitFor(t, 2*time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.cancel == nil
+	}, "stop to begin")
+	s.Start()
+	<-stopped
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	disc, conn := -1, -1
+	for i, e := range events {
+		if e == "mini: disconnected" && disc < 0 {
+			disc = i
+		}
+		if e == "mini: connecting" && i > 0 && conn < 0 && disc < 0 {
+			conn = i // a second "connecting" before the first disconnect
+		}
+	}
+	if conn >= 0 {
+		t.Fatalf("new supervisor started before old one exited: %v", events)
+	}
+}
+
+func TestStartAfterSupervisorGaveUpRestarts(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	if s.Launches() != 3 {
+		t.Fatalf("launches = %d, want 3", s.Launches())
+	}
+	// Status and error stay visible until the next Start.
+	time.Sleep(50 * time.Millisecond)
+	if s.Status() != StatusAuthFailed || !strings.Contains(s.LastError(), "Permission denied") {
+		t.Fatalf("status=%s err=%q", s.Status(), s.LastError())
+	}
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() > 3 }, "launches to grow after restart")
+}
+
+func TestStopAfterSupervisorGaveUpReportsDisconnected(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after stop = %s", s.Status())
+	}
+}
+
+func TestOrphanedLiveSocketIsReplacedByOwnMaster(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	// A live socket left behind by a crashed run.
+	if err := os.WriteFile(s.SocketPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	exitAt := strings.Index(log, "-O exit")
+	masterAt := strings.Index(log, "-N -M -S "+s.SocketPath())
+	if exitAt < 0 || masterAt < 0 || exitAt > masterAt {
+		t.Fatalf("orphan must be told to exit before the new master launches: %q", log)
+	}
+	if s.Launches() != 1 {
+		t.Fatalf("launches = %d", s.Launches())
+	}
+	// Death of the supervised master is noticed.
+	os.Remove(s.SocketPath())
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect after master death")
+}
+
+func TestAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_ALTERNATE=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 8 || s.Status() == StatusAuthFailed }, "eight launches")
+	if s.Status() == StatusAuthFailed {
+		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", s.Launches())
+	}
+}
+
+func TestStartRetriesWhenSSHCannotBeLaunched(t *testing.T) {
+	s, _ := newFakeSession(t)
+	fake := s.SSHPath
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.baseBackoff = 150 * time.Millisecond
+	s.maxBackoff = 300 * time.Millisecond
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusReconnecting || s.Status() == StatusAuthFailed }, "first launch failure")
+	if s.Status() == StatusAuthFailed {
+		t.Fatalf("one launch failure ended supervision: %q", s.LastError())
+	}
+	if !strings.Contains(s.LastError(), "start ssh") {
+		t.Fatalf("LastError = %q", s.LastError())
+	}
+	if err := os.Symlink(fake, s.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.WaitConnected(ctx); err != nil {
+		t.Fatalf("WaitConnected after ssh became launchable: %v", err)
+	}
+}
+
+func TestStartGivesUpWhenSSHNeverLaunches(t *testing.T) {
+	s, _ := newFakeSession(t)
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "terminal status")
+	if s.Launches() != 0 || !strings.Contains(s.LastError(), "start ssh") {
+		t.Fatalf("launches=%d lastErr=%q", s.Launches(), s.LastError())
+	}
+}
+
+func TestSocketPathStaysInsideRunDir(t *testing.T) {
+	dir := "/tmp/nh-run" // only named, never created
+	if got := NewSession("mini", "mini", dir).SocketPath(); got != filepath.Join(dir, "mini.sock") {
+		t.Fatalf("plain name should be kept: %q", got)
+	}
+	paths := map[string]string{}
+	for _, name := range []string{"../escape", "a/b", "a_b", "pct%h", "..", ""} {
+		p := NewSession(name, "mini", dir).SocketPath()
+		if filepath.Dir(p) != dir {
+			t.Errorf("name %q: socket %q is outside %q", name, p, dir)
+		}
+		if strings.Contains(filepath.Base(p), "%") {
+			t.Errorf("name %q: socket file name %q is not safe to pass to ssh -S", name, filepath.Base(p))
+		}
+		if other, dup := paths[p]; dup {
+			t.Errorf("names %q and %q share socket %q", other, name, p)
+		}
+		paths[p] = name
+	}
+}
+
+// logLines returns the argv lines the fake ssh recorded.
+func logLines(t *testing.T, path string) []string {
+	t.Helper()
+	return strings.Split(strings.TrimSpace(readLog(t, path)), "\n")
+}
+
+// The user's ssh_config applies to every ssh nearhost runs. These pin the
+// options that keep it from changing what each invocation does; an option on
+// the command line wins over the configuration files.
+func TestCheckIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	if err := s.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none -- mini true"
+	if got := logLines(t, logPath); len(got) != 1 || got[0] != want {
+		t.Fatalf("check ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestMasterIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	want := "-N -M -S " + s.SocketPath() +
+		" -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3" +
+		" -o ControlPersist=no -o ClearAllForwardings=yes -o RemoteCommand=none -- mini"
+	var masters []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasPrefix(l, "-N -M ") {
+			masters = append(masters, l)
+		}
+	}
+	if len(masters) != 1 || masters[0] != want {
+		t.Fatalf("master ran\n  %q\nwant\n  %q", masters, want)
+	}
+}
+
+func TestSFTPIsNotDivertedByUserConfig(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if f, err := s.OpenSFTP(t.Context()); err == nil {
+		f.Close()
+	}
+	want := "-S " + s.SocketPath() + " -o BatchMode=yes -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -s -- mini sftp"
+	var got []string
+	for _, l := range logLines(t, logPath) {
+		if strings.HasSuffix(l, " sftp") {
+			got = append(got, l)
+		}
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("sftp ran\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// ClearAllForwardings on the master must not reach the forwards nearhost
+// asks for: those go to the running master over its control socket, and a
+// control command that carried the option would drop its own -L. A control
+// command must not read the user's configuration either: a mux client sends
+// the LocalForward and RemoteForward entries listed for the host to the
+// master along with the forward it was asked for.
+func TestControlCommandsCarryNoOptions(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	connected(t, s)
+	if err := s.AddForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelForward(context.Background(), 5000, 80); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+	sock := s.SocketPath()
+	seen := map[string]bool{}
+	for _, l := range logLines(t, logPath) {
+		if !strings.Contains(l, " -O ") {
+			if strings.Contains(l, "-L ") {
+				t.Errorf("a forward was given outside a control command: %q", l)
+			}
+			continue
+		}
+		seen[l] = true
+		if !strings.HasPrefix(l, "-F /dev/null -S "+sock+" -O ") {
+			t.Errorf("control command reads the user's configuration: %q", l)
+		}
+		if strings.Contains(l, " -o ") {
+			t.Errorf("control command carries options: %q", l)
+		}
+	}
+	for _, want := range []string{
+		"-F /dev/null -S " + sock + " -O check mini",
+		"-F /dev/null -S " + sock + " -O forward -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O cancel -L 127.0.0.1:5000:localhost:80 mini",
+		"-F /dev/null -S " + sock + " -O exit mini",
+	} {
+		if !seen[want] {
+			t.Errorf("control command %q was not run; got %v", want, seen)
+		}
+	}
+}
+
+// OpenSSH binds a control socket at its path plus a 17-byte temporary suffix,
+// and a socket address holds 104 bytes on macOS including the final NUL. So a
+// socket path may be at most 86 bytes long.
+func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
+	dir := "/tmp/nh-run"
+	// "/tmp/nh-run/" is 12 bytes and ".sock" 5: a 69-byte name gives 86.
+	fits, tooLong := strings.Repeat("a", 69), strings.Repeat("a", 70)
+	s := NewSession(fits, "mini", dir)
+	if got := s.SocketPath(); got != filepath.Join(dir, fits+".sock") || len(got) != 86 {
+		t.Fatalf("a name that still fits must be kept: %q (%d bytes)", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath for a path of 86 bytes: %v", err)
+	}
+
+	s = NewSession(tooLong, "mini", dir)
+	got := s.SocketPath()
+	if filepath.Dir(got) != dir || !strings.HasPrefix(filepath.Base(got), "h-") || len(filepath.Base(got)) != len("h-0123456789abcdef.sock") {
+		t.Fatalf("a name that does not fit must become the hashed name, got %q", got)
+	}
+	if len(got)+17 >= 104 {
+		t.Fatalf("hashed socket path %q (%d bytes) does not fit either", got, len(got))
+	}
+	if err := s.CheckSocketPath(); err != nil {
+		t.Fatalf("CheckSocketPath: %v", err)
+	}
+	if again := NewSession(tooLong, "other-host", dir).SocketPath(); again != got {
+		t.Fatalf("the socket of one name changed: %q then %q", got, again)
+	}
+	if other := NewSession(tooLong+"b", "mini", dir).SocketPath(); other == got {
+		t.Fatalf("two long names share the socket %q", got)
+	}
+}
+
+func TestStartFailsAtOnceWhenTheRunDirectoryIsTooLong(t *testing.T) {
+	s, logPath := newFakeSession(t)
+	long := filepath.Join(shortDir(t), strings.Repeat("d", 70))
+	s.runDir = long
+	s.connectTimeout = time.Minute // a wait for ssh would outlast the test
+
+	err := s.CheckSocketPath()
+	if err == nil {
+		t.Fatalf("CheckSocketPath accepted %q", s.SocketPath())
+	}
+	for _, want := range []string{s.SocketPath(), "86 bytes", "XDG_CONFIG_HOME"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	s.Start()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := time.Now()
+	werr := s.WaitConnected(ctx)
+	if werr == nil || !strings.Contains(werr.Error(), "XDG_CONFIG_HOME") {
+		t.Fatalf("WaitConnected = %v, want the socket path error", werr)
+	}
+	if took := time.Since(begin); took > 2*time.Second {
+		t.Fatalf("the failure took %s", took)
+	}
+	if log := readLog(t, logPath); log != "" {
+		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)
+	}
+	if s.Launches() != 0 {
+		t.Fatalf("launches = %d", s.Launches())
+	}
+	if _, err := os.Stat(long); err == nil {
+		t.Fatal("the unusable run directory was created")
+	}
+	// Stop and a second Start behave as after any start that gave up.
+	s.Stop()
+	if s.Status() != StatusDisconnected {
+		t.Fatalf("status after Stop = %s", s.Status())
+	}
+	s.Start()
+	if s.Status() != StatusAuthFailed || readLog(t, logPath) != "" {
+		t.Fatalf("second Start: status %s, log %q", s.Status(), readLog(t, logPath))
+	}
+}
+
+// A long name is replaced by "h-" and 16 hex digits. A server that is itself
+// named like that must not get the socket of the long name it stands for.
+func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
+	dir := "/tmp/nh-run"
+	long := strings.Repeat("a", 70)
+	hashed := strings.TrimSuffix(filepath.Base(NewSession(long, "mini", dir).SocketPath()), ".sock")
+	for _, literal := range []string{hashed, strings.ToUpper(hashed)} {
+		got := NewSession(literal, "mini", dir).SocketPath()
+		if strings.EqualFold(got, filepath.Join(dir, hashed+".sock")) {
+			t.Errorf("the server named %q shares the socket %q with the long name", literal, got)
+		}
+		if filepath.Dir(got) != dir || NewSession(literal, "other-host", dir).SocketPath() != got {
+			t.Errorf("socket of %q: %q", literal, got)
+		}
+	}
+	// Only the exact hashed form is replaced.
+	for _, plain := range []string{"h-mini", "h-0123456789abcdeg", "h-0123456789abcde", "h-0123456789abcdef0"} {
+		if got := NewSession(plain, "mini", dir).SocketPath(); got != filepath.Join(dir, plain+".sock") {
+			t.Errorf("the plain name %q was not kept: %q", plain, got)
+		}
+	}
+}
+
+// A session that gives up says how many attempts failed and that it will
+// not try again by itself.
+func TestHealthCountsFailuresUntilGivingUp(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	h := s.Health()
+	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+		t.Errorf("health %+v", h)
+	}
+	s.Stop()
+	s.Start() // a fresh start counts afresh
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 3 }, "auth failed again")
+}
+
+// A session that is reconnecting says when it tries next; connecting
+// clears the count.
+func TestHealthSaysWhenTheNextAttemptIs(t *testing.T) {
+	s, _ := newFakeSession(t)
+	fake := s.SSHPath
+	s.SSHPath = filepath.Join(t.TempDir(), "ssh")
+	s.baseBackoff = 300 * time.Millisecond
+	s.maxBackoff = 300 * time.Millisecond
+	before := time.Now()
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusReconnecting }, "a failed launch")
+	h := s.Health()
+	if h.Failures != 1 || h.NextAttempt.Before(before.Add(300*time.Millisecond)) || h.NextAttempt.After(time.Now().Add(300*time.Millisecond)) {
+		t.Errorf("health %+v", h)
+	}
+	if err := os.Symlink(fake, s.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	if h := s.Health(); h.Failures != 0 || !h.NextAttempt.IsZero() {
+		t.Errorf("health once connected %+v", h)
+	}
+}

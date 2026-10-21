@@ -154,7 +154,7 @@ func TestUpShutsDownCleanlyWhenItsOutputIsGone(t *testing.T) {
 		t.Errorf("the output was written to after it broke:\n%s", out[len(before):])
 	}
 	log := sshLog(t, filepath.Join(filepath.Dir(u.cfgPath), "ssh.log"))
-	if !strings.Contains(log, "-O cancel") || !strings.Contains(log, "-O exit mini.lan") {
+	if !strings.Contains(log, "-O cancel") || !strings.Contains(log, "-O exit -- mini.lan") {
 		t.Errorf("the shutdown did not cancel the forward and end the master:\n%s", log)
 	}
 }
@@ -373,7 +373,7 @@ func TestUpInterruptedAgainWhileShuttingDownStillEndsTheMasters(t *testing.T) {
 	if strings.Count(out, "\nstopping now\n") != 1 || strings.HasSuffix(out, "\nstopped\n") {
 		t.Errorf("unexpected output:\n%s", out)
 	}
-	if log := sshLog(t, filepath.Join(filepath.Dir(u.cfgPath), "ssh.log")); !strings.Contains(log, "-O exit mini.lan") {
+	if log := sshLog(t, filepath.Join(filepath.Dir(u.cfgPath), "ssh.log")); !strings.Contains(log, "-O exit -- mini.lan") {
 		t.Errorf("the master was not asked to exit:\n%s", log)
 	}
 }

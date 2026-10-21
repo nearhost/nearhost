@@ -126,7 +126,7 @@ func (s *Session) ForwardStates() (Status, []ForwardState) {
 
 // controlForward runs one `ssh -O forward|cancel`. It holds no session lock.
 func (s *Session) controlForward(ctx context.Context, op string, local, remote int) error {
-	cmd := s.control(ctx, "-O", op, "-L", forwardSpec(local, remote), s.Host)
+	cmd := s.control(ctx, "-O", op, "-L", forwardSpec(local, remote), "--", s.Host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -160,7 +160,7 @@ func (s *Session) markConnected(ctx context.Context, exited <-chan struct{}) boo
 	}
 	// A dying master is often noticed here first, a moment before its
 	// process is reaped.
-	if failed > 0 && s.control(ctx, "-O", "check", s.Host).Run() != nil {
+	if failed > 0 && s.control(ctx, "-O", "check", "--", s.Host).Run() != nil {
 		return false
 	}
 	s.setStatus(StatusConnected, "")

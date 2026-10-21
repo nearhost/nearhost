@@ -56,7 +56,7 @@ func noAddLeftovers(t *testing.T, log string) {
 }
 
 // checkArgv is how the connectivity check runs ssh for the host mini.lan.
-const checkArgv = "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none mini.lan true"
+const checkArgv = "-o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none -- mini.lan true"
 
 func TestCheckServerRunsTheBatchModeCheck(t *testing.T) {
 	c, log := fakeClient(t)
@@ -89,7 +89,7 @@ func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 	// One connection attempt and nothing else: no command was run on the
 	// server to test it, and a server that refuses is not tried again.
 	lines := strings.Split(strings.TrimSpace(sshLog(t, log)), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "-N -M ") || !strings.HasSuffix(lines[0], " mini.lan") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "-N -M ") || !strings.HasSuffix(lines[0], " -- mini.lan") {
 		t.Fatalf("ssh was run as:\n%s", strings.Join(lines, "\n"))
 	}
 	noAddLeftovers(t, log)
@@ -151,8 +151,8 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	// ran: no command on the server, not even to test the connection.
 	for _, line := range strings.Split(strings.TrimSpace(sshLog(t, log)), "\n") {
 		switch {
-		case strings.HasSuffix(line, " -s mini.lan sftp"),
-			strings.Contains(line, " -O "), strings.HasPrefix(line, "-N -M ") && strings.HasSuffix(line, " mini.lan"):
+		case strings.HasSuffix(line, " -s -- mini.lan sftp"),
+			strings.Contains(line, " -O "), strings.HasPrefix(line, "-N -M ") && strings.HasSuffix(line, " -- mini.lan"):
 		default:
 			t.Errorf("unexpected ssh invocation: %s", line)
 		}

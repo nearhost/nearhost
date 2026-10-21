@@ -237,7 +237,7 @@ func (s *Session) Check(ctx context.Context) error {
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-o", "ControlPath=none",
-		s.Host, "true")
+		"--", s.Host, "true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -435,7 +435,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"-o", "ControlPersist=no",
 			"-o", "ClearAllForwardings=yes",
 			"-o", "RemoteCommand=none",
-			s.Host)
+			"--", s.Host)
 		var stderr bytes.Buffer
 		master.Stderr = &stderr
 		if err := master.Start(); err != nil {
@@ -585,7 +585,7 @@ func (s *Session) waitForSocket(ctx context.Context, exited <-chan struct{}) boo
 			return false
 		case <-time.After(s.pollInterval):
 		}
-		check := s.control(ctx, "-O", "check", s.Host)
+		check := s.control(ctx, "-O", "check", "--", s.Host)
 		if check.Run() == nil {
 			return true
 		}
@@ -599,13 +599,13 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 	if _, err := os.Stat(s.SocketPath()); err != nil {
 		return
 	}
-	check := s.control(ctx, "-O", "check", s.Host)
+	check := s.control(ctx, "-O", "check", "--", s.Host)
 	if check.Run() == nil {
 		// A master from a crashed run is still alive on this socket. Ask it
 		// to exit so the new master is the one we supervise.
 		exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.control(exitCtx, "-O", "exit", s.Host).Run()
+		s.control(exitCtx, "-O", "exit", "--", s.Host).Run()
 	}
 	os.Remove(s.SocketPath())
 }
@@ -615,7 +615,7 @@ func (s *Session) exitMaster(master *exec.Cmd, exited <-chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.cancelAgent(ctx)
-	s.control(ctx, "-O", "exit", s.Host).Run()
+	s.control(ctx, "-O", "exit", "--", s.Host).Run()
 	select {
 	case <-exited:
 	case <-time.After(3 * time.Second):

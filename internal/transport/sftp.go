@@ -34,7 +34,7 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
-		"-s", s.Host, "sftp")
+		"-s", "--", s.Host, "sftp")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

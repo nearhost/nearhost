@@ -69,6 +69,15 @@ func TestValidateAcceptsSample(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsSSHHostOption(t *testing.T) {
+	c := sample()
+	c.Servers = append(c.Servers, Server{Name: "evil", SSHHost: "-oProxyCommand=touch /tmp/x"})
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), `ssh_host must not start with "-"`) {
+		t.Fatalf("expected ssh_host option error, got %v", err)
+	}
+}
+
 func TestValidateRejectsDuplicateAlias(t *testing.T) {
 	c := sample()
 	p := c.Projects[0]

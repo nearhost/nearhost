@@ -425,6 +425,9 @@ func (c *Config) Validate() error {
 		if s.Name == "" || s.SSHHost == "" {
 			return fmt.Errorf("server %q needs a name and ssh_host", s.Name)
 		}
+		if strings.HasPrefix(s.SSHHost, "-") {
+			return fmt.Errorf("server %q: ssh_host must not start with %q, ssh would read it as an option", s.Name, "-")
+		}
 		if serverNames[s.Name] {
 			return fmt.Errorf("duplicate server name %q", s.Name)
 		}
