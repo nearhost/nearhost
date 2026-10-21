@@ -35,8 +35,9 @@ type mouseState struct {
 	// span is the columns a selection keeps to, [lo, hi): the panel or box
 	// the press was in, so text beside it is left out.
 	lo, hi int
-	// shown is whether from and to are a selection to highlight: while
-	// dragging, and after, until the next press or key.
+	// shown is whether from and to are a selection to highlight, while
+	// dragging. It goes once the text is copied: the note saying so, or
+	// any new log line, moves the text under it.
 	shown     bool
 	lastClick point
 	lastAt    time.Time
@@ -135,7 +136,8 @@ type openFailedMsg struct {
 	err error
 }
 
-// clearSelection drops the highlight, as a key or a new press does.
+// clearSelection drops the highlight, as a key, the wheel or a resize
+// does.
 func (m *Model) clearSelection() {
 	m.mouse.shown = false
 }
@@ -148,6 +150,7 @@ func (m *Model) copySelection() tea.Cmd {
 		m.mouse.shown = false
 		return nil
 	}
+	m.mouse.shown = false
 	n := strings.Count(text, "\n") + 1
 	what := "Copied " + plural(n, "line") + "."
 	if n == 1 {

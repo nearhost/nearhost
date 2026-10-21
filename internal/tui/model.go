@@ -395,6 +395,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
 		m.logs.noteOn(m.sel, "Could not open "+msg.url+": "+msg.err.Error())
+	case copyFailedMsg:
+		m.logs.noteOn(m.sel, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
 	case tea.MouseWheelMsg:
 		m.clearSelection() // the text under it moves
 		m.wheel(msg.Mouse())

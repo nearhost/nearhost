@@ -256,8 +256,6 @@ func press(m *Model, key string) tea.Cmd {
 	return cmd
 }
 
-// run runs cmd and feeds its message back to the model, once. A batch has
-// each of its commands run so, and what they lead to is batched.
 // click presses and releases the left button at x, y, and returns what the
 // release does.
 func click(m *Model, x, y int) tea.Cmd {
@@ -266,6 +264,8 @@ func click(m *Model, x, y int) tea.Cmd {
 	return cmd
 }
 
+// run runs cmd and feeds its message back to the model, once. A batch has
+// each of its commands run so, and what they lead to is batched.
 func run(m *Model, cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return nil

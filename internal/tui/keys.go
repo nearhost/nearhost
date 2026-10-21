@@ -417,15 +417,23 @@ func (m *Model) clickable(mouse tea.Mouse) bool {
 	return !m.empty() && mouse.X < m.sideWidth() && y < m.bodyHeight() && m.sidebarKeyAt(y) != ""
 }
 
-// click handles a mouse click: a sidebar row selects it, a footer action
-// runs it.
+// click handles a mouse click where clickable says one does something: a
+// sidebar row selects it, a footer action runs it.
 func (m *Model) click(mouse tea.Mouse) tea.Cmd {
-	if !m.clickable(mouse) {
-		return nil
-	}
 	if mouse.Y == m.height-1 {
 		key := m.footerKeyAt(mouse.X)
 		if key == "" {
+			return nil
+		}
+		if m.filtering {
+			// The filter's own keys, as typed: enter here is not start or
+			// stop.
+			switch key {
+			case "enter":
+				return m.filterKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			case "esc":
+				return m.filterKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+			}
 			return nil
 		}
 		if m.routeFocus {

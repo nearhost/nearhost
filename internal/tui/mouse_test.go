@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -63,14 +65,23 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 	run(m, func() tea.Msg { return startedMsg{} })
 	x0, y0 := find(t, m, "proxy     ●")
 	x1, y1 := find(t, m, "web UI    https://localhost:6327")
-	got := clipboard(drag(m, x0, y0, x1+len("web UI    https://localhost:6327")-1, y1))
-	if got != "proxy     ● https :443 · http :80\nweb UI    https://localhost:6327" {
+	x1 += len("web UI    https://localhost:6327") - 1
+	m.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
+	m.Update(tea.MouseMotionMsg{X: x1, Y: y1, Button: tea.MouseLeft})
+	if !reversed.MatchString(m.View().Content) {
+		t.Error("the selection is not highlighted while dragging")
+	}
+	_, cmd := m.Update(tea.MouseReleaseMsg{X: x1, Y: y1, Button: tea.MouseLeft})
+	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\nweb UI    https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	if !reversed.MatchString(m.View().Content) {
-		t.Error("the selection is not highlighted")
-	}
 	wantScreen(t, m, "Copied 2 lines.")
+	// The note moved the log, so a highlight now would be on other text.
+	if reversed.MatchString(m.View().Content) {
+		t.Error("the selection is still highlighted after the copy")
+	}
+	m.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
+	m.Update(tea.MouseMotionMsg{X: x1, Y: y1, Button: tea.MouseLeft})
 	press(m, "j")
 	if reversed.MatchString(m.View().Content) {
 		t.Error("a key left the selection highlighted")
@@ -147,9 +158,26 @@ func TestDragFromTheFooterDoesNotRunItsKey(t *testing.T) {
 	m := sized(f)
 	click(m, 3, bodyTop+3) // website
 	x, y := find(t, m, "o open")
-	run(m, drag(m, x, y, x+5, y))
+	if got := clipboard(drag(m, x, y, x+5, y)); got != "o open" {
+		t.Errorf("copied %q", got)
+	}
 	if len(f.opened) != 0 {
 		t.Errorf("the drag opened %v", f.opened)
+	}
+	wantScreen(t, m, `Copied “o open”.`)
+}
+
+// While the sidebar is filtered, the footer's enter keeps the filter, as
+// the key does, rather than starting or stopping the selected project.
+func TestFooterClicksWhileFiltering(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	press(m, "/")
+	typeText(m, "web")
+	x, y := find(t, m, "enter keep filter")
+	run(m, click(m, x, y))
+	if m.filtering || m.query() != "web" || len(f.started)+len(f.stopped) != 0 {
+		t.Errorf("filtering %v, query %q, started %v, stopped %v", m.filtering, m.query(), f.started, f.stopped)
 	}
 }
 
@@ -188,23 +216,63 @@ func TestDragLeavesOutBlankRows(t *testing.T) {
 	}
 }
 
-// A copy goes to the terminal over OSC 52 and to the system's own tool, as
-// some terminals have no OSC 52.
+// A copy goes to the terminal over OSC 52 and, once, to the system's own
+// tool, as some terminals have no OSC 52.
 func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 	var got []string
 	old := systemClipboard
 	systemClipboard = func(text string) error { got = append(got, text); return nil }
 	t.Cleanup(func() { systemClipboard = old })
-	cmd := copyText("ssh mini")
-	if s := clipboard(cmd); s != "ssh mini" {
-		t.Errorf("OSC 52 got %q", s)
-	}
-	for _, c := range cmd().(tea.BatchMsg) {
-		if c != nil {
-			c()
+	var osc52 []string
+	for _, c := range copyText("ssh mini")().(tea.BatchMsg) {
+		if s := clipboardOf(c); s != "" {
+			osc52 = append(osc52, s)
 		}
 	}
-	if strings.Join(got, ",") != "ssh mini" {
-		t.Errorf("the system clipboard got %v", got)
+	if strings.Join(osc52, ",") != "ssh mini" || strings.Join(got, ",") != "ssh mini" {
+		t.Errorf("OSC 52 got %v, the system clipboard %v", osc52, got)
+	}
+	// A tool that fails says so, as OSC 52 cannot.
+	systemClipboard = func(string) error { return errBoom }
+	m := sized(newFake(t, sampleConfig()))
+	for _, c := range copyText("x")().(tea.BatchMsg) {
+		run(m, c)
+	}
+	wantScreen(t, m, "Could not copy to the clipboard: boom.")
+}
+
+// A clipboard tool that fails, as wl-copy does outside Wayland, gives way
+// to the next one, and one not installed is passed over.
+func TestCopyWithTriesTheNextTool(t *testing.T) {
+	dir, out := t.TempDir(), filepath.Join(t.TempDir(), "copied")
+	for name, script := range map[string]string{
+		"wl-copy": "#!/bin/sh\nexit 1\n",
+		"xclip":   "#!/bin/sh\n/bin/cat > " + out + "\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	if err := copyWith([][]string{{"nh-not-installed"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"}}, "ssh mini"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(out); err != nil || string(b) != "ssh mini" {
+		t.Errorf("xclip got %q, %v", b, err)
+	}
+}
+
+// With every tool failing, the last failure is reported.
+func TestCopyWithReportsAFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "wl-copy"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if err := copyWith([][]string{{"wl-copy"}}, "x"); err == nil || !strings.HasPrefix(err.Error(), "wl-copy: ") {
+		t.Errorf("err = %v", err)
+	}
+	if err := copyWith([][]string{{"nh-not-installed"}}, "x"); err != nil {
+		t.Errorf("with no tool installed, err = %v", err)
 	}
 }

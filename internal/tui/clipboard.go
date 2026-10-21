@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -15,26 +16,42 @@ import (
 // one.
 func copyText(text string) tea.Cmd {
 	return tea.Batch(tea.SetClipboard(text), func() tea.Msg {
-		_ = systemClipboard(text) // OSC 52 may well have done it
+		if err := systemClipboard(text); err != nil {
+			return copyFailedMsg{err}
+		}
 		return nil
 	})
 }
 
-// systemClipboard copies text with pbcopy on macOS, or with the first of
-// wl-copy, xclip and xsel found elsewhere. Tests replace it, so they leave
-// the clipboard alone.
+// copyFailedMsg says the system's clipboard tool failed. OSC 52 may still
+// have copied, which nothing can tell.
+type copyFailedMsg struct{ err error }
+
+// systemClipboard copies text with pbcopy on macOS, or elsewhere with the
+// first of wl-copy, xclip and xsel that works. Tests replace it, so they
+// leave the clipboard alone.
 var systemClipboard = func(text string) error {
-	tools := [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}}
 	if runtime.GOOS == "darwin" {
-		tools = [][]string{{"pbcopy"}}
+		return copyWith([][]string{{"pbcopy"}}, text)
 	}
+	return copyWith([][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}}, text)
+}
+
+// copyWith copies text with the first of tools, each a command and its
+// arguments, that is installed and works: wl-copy fails outside Wayland,
+// where xclip may not. With none installed, it does nothing.
+func copyWith(tools [][]string, text string) error {
+	var err error
 	for _, t := range tools {
-		if _, err := exec.LookPath(t[0]); err != nil {
+		if _, look := exec.LookPath(t[0]); look != nil {
 			continue
 		}
 		cmd := exec.Command(t[0], t[1:]...)
 		cmd.Stdin = strings.NewReader(text)
-		return cmd.Run()
+		if err = cmd.Run(); err == nil {
+			return nil
+		}
+		err = fmt.Errorf("%s: %w", t[0], err)
 	}
-	return nil
+	return err
 }
