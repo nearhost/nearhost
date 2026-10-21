@@ -1187,12 +1187,19 @@ func TestWebPortServesHomePageAlways(t *testing.T) {
 	if got := h.body(t, "https://localhost/"); got != "project" {
 		t.Errorf("https://localhost/ answered %q, want the project's upstream", got)
 	}
+	// With a.test's certificate issued, the handshake for it succeeds on
+	// the web port too, so a failure can only be the request dropped.
+	h.waitCerts(t, "a.test")
 	tr.TLSClientConfig.ServerName = "a.test"
+	conn, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", h.webPort), &tls.Config{RootCAs: h.pool, ServerName: "a.test"})
+	if err != nil {
+		t.Fatalf("handshake for a.test on the web port: %v", err)
+	}
+	conn.Close()
 	if resp, err := c.Get(fmt.Sprintf("https://a.test:%d/", h.webPort)); err == nil {
 		resp.Body.Close()
 		t.Errorf("a.test on the web port answered %d, want the connection dropped", resp.StatusCode)
 	}
-	h.waitCerts(t, "a.test")
 }
 
 // A project that serves localhost gets every request for it.

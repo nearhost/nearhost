@@ -39,7 +39,7 @@ type Options struct {
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
-	// WebPort is the port of the proxy's own that always serves Nearhost's
+	// WebPort is a port of the proxy's own that always serves Nearhost's
 	// page, its web interface, at https://localhost:<port>. 0 means none.
 	WebPort int
 	// Capture keeps each request the proxy passes on, and its response, in
