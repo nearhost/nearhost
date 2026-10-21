@@ -1,0 +1,41 @@
+internal/agentapi/agentapi.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 231,302-304
+internal/cli/ui.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 129-133
+internal/config/paths_test.go
+  s_e8c5d245e902d9::t_d269e36f383124 149
+  s_e8c5d245e902d9::t_1a26fcb17f0997 1-148,150-247
+internal/cli/doctor.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 396
+internal/cli/doctor_test.go
+  s_e8c5d245e902d9::t_9a6636791cea19 129-134
+internal/config/paths.go
+  s_e8c5d245e902d9::t_54ec11499c2fa9 4-7,10-11,41-218
+internal/cli/agents.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 40-61,106
+internal/cli/trust_test.go
+  s_e8c5d245e902d9::t_f16e7e1f38f78e 8-9,15
+  s_e8c5d245e902d9::t_d59755c27fe0d4 242-274
+internal/config/config_test.go
+  s_e8c5d245e902d9::t_93affe0c2abd72 224-225
+internal/cli/up.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 146-150
+internal/cli/trust.go
+  s_e8c5d245e902d9::t_e087bf6fc92c33 42-47,54-56,122-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da889cfe0f50b9b728aaf62212cd28ac3b75054b",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
