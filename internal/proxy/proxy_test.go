@@ -1191,7 +1191,8 @@ func TestWebPortServesHomePageAlways(t *testing.T) {
 	// the web port too, so a failure can only be the request dropped.
 	h.waitCerts(t, "a.test")
 	tr.TLSClientConfig.ServerName = "a.test"
-	conn, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", h.webPort), &tls.Config{RootCAs: h.pool, ServerName: "a.test"})
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second, Deadline: time.Now().Add(10 * time.Second)}, "tcp",
+		fmt.Sprintf("127.0.0.1:%d", h.webPort), &tls.Config{RootCAs: h.pool, ServerName: "a.test"})
 	if err != nil {
 		t.Fatalf("handshake for a.test on the web port: %v", err)
 	}
