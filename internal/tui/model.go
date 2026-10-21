@@ -532,8 +532,9 @@ func (m *Model) content() string {
 }
 
 // main draws the main panel: the selected item's details, then its log,
-// exactly height lines of width cells.
-func (m *Model) main(width, height int) []string {
+// exactly height lines of width cells, and the log's scrollbar, a cell a
+// line, for the caller to draw at the right.
+func (m *Model) main(width, height int) ([]string, []string) {
 	var details []string
 	kind, name := m.selected()
 	switch kind {
@@ -568,17 +569,28 @@ func (m *Model) main(width, height int) []string {
 	// scrolled.
 	room := height - len(lines)
 	var shown []string
+	entries := 0
 	for i := len(log) - 1 - m.scroll; i >= 0 && len(shown) < room; i-- {
 		shown = append(entryLines(log[i], width, kind != rowProject), shown...)
+		entries++
 	}
 	if len(shown) > room {
 		shown = shown[len(shown)-room:]
 	}
+	// The log's scrollbar counts entries, as the wheel scrolls them.
+	bar := make([]string, len(lines), height)
+	for i := range bar {
+		bar[i] = " "
+	}
+	bar = append(bar, scrollbarOf(len(log)-m.scroll-entries, entries, len(log), room)...)
 	lines = append(lines, shown...)
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
-	return lines
+	for len(bar) < height {
+		bar = append(bar, " ")
+	}
+	return lines, bar
 }
 
 // selected is the kind and name of the selected row.

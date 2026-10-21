@@ -44,7 +44,8 @@ func TestFilterByName(t *testing.T) {
 		t.Errorf("selected %q, want the first match", m.sel)
 	}
 	var line string
-	for _, l := range m.sidebar(m.sideWidth(), m.bodyHeight()) {
+	side, _ := m.sidebar(m.sideWidth(), m.bodyHeight())
+	for _, l := range side {
 		if strings.Contains(ansi.Strip(l), "clientsite") {
 			line = l
 		}

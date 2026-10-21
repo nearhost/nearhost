@@ -627,20 +627,33 @@ func curlFor(a proxy.Access) string {
 // scrollbar is a column height cells tall, with a thumb where the view is
 // in total lines from offset.
 func scrollbar(offset, total, height int) []string {
+	return scrollbarOf(offset, height, total, height)
+}
+
+// scrollbarOf is a column height cells tall, with a thumb for a view of
+// view items from offset among total: blank cells, and the thumb, so a
+// caller can draw its own track. With everything in view there is no
+// thumb.
+func scrollbarOf(offset, view, total, height int) []string {
 	out := make([]string, height)
 	for i := range out {
 		out[i] = " "
 	}
-	if total <= height || height <= 0 {
+	if total <= view || height <= 0 {
 		return out
 	}
-	size := max(height*height/total, 1)
-	top := min(offset*height/total, height-size)
+	size := min(max(height*view/total, 1), height)
+	// The thumb travels the track left by its size, so the last view puts
+	// it at the bottom.
+	top := min(max(offset, 0)*(height-size)/(total-view), height-size)
 	for i := top; i < top+size; i++ {
-		out[i] = styleBox.Render("┃")
+		out[i] = styleBox.Render(thumb)
 	}
 	return out
 }
+
+// thumb is the part of a scrollbar that shows where the view is.
+const thumb = "┃"
 
 var styleBox = styleDim.Foreground(colourBoxEdge)
 

@@ -49,6 +49,10 @@ const doubleClick = 400 * time.Millisecond
 // edge is the vertical line between panels and on the sides of a box.
 const edge = "│"
 
+// isEdge reports whether a cell is an edge, or a scrollbar's thumb drawn
+// on one.
+func isEdge(c string) bool { return c == edge || c == thumb }
+
 // openURL opens an address in the browser; tests replace it.
 var openURL = func(url string) error {
 	name := "xdg-open"
@@ -188,13 +192,13 @@ func (m *Model) spanAt(lines []uv.Line, p point) (int, int) {
 	}
 	row := lines[p.y]
 	for x := min(p.x, len(row)) - 1; x >= 0; x-- {
-		if row[x].Content == edge {
+		if isEdge(row[x].Content) {
 			lo = x + 1
 			break
 		}
 	}
 	for x := p.x + 1; x < len(row); x++ {
-		if row[x].Content == edge {
+		if isEdge(row[x].Content) {
 			hi = x
 			break
 		}
@@ -332,7 +336,7 @@ func wordAt(lines []uv.Line, p point) (int, int, bool) {
 	row := lines[p.y]
 	blank := func(x int) bool {
 		c := row[x].Content
-		return c == " " || c == edge
+		return c == " " || isEdge(c)
 	}
 	if blank(p.x) {
 		return 0, 0, false

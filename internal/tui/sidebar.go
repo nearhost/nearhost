@@ -120,12 +120,13 @@ func (m *Model) sideLines(width int) []sideLine {
 	return lines
 }
 
-// sidebar draws the sidebar, height lines tall and width wide (the border
-// is drawn by the caller).
-func (m *Model) sidebar(width, height int) []string {
+// sidebar draws the sidebar, height lines tall and width wide, and its
+// scrollbar, for the caller to draw on the border.
+func (m *Model) sidebar(width, height int) ([]string, []string) {
 	all := m.sideLines(width)
 	out := make([]string, 0, height)
-	for _, l := range all[sidebarTop(all, m.sel, height):] {
+	top := sidebarTop(all, m.sel, height)
+	for _, l := range all[top:] {
 		if len(out) == height {
 			break
 		}
@@ -134,7 +135,7 @@ func (m *Model) sidebar(width, height int) []string {
 	for len(out) < height {
 		out = append(out, strings.Repeat(" ", width))
 	}
-	return out
+	return out, scrollbar(top, len(all), height)
 }
 
 // sidebarTop is the first line drawn in a sidebar height lines tall: the

@@ -61,8 +61,14 @@ func (m *Model) formBox(base string, f form) string {
 	}
 	h = min(h, m.height-2)
 	room := h - 2 - len(top) - len(bottom)
-	if len(body) > room {
-		body = body[:room]
+	// A body taller than its room scrolls to keep the selected row in
+	// view, with a scrollbar on the box's right edge. A few lines below
+	// the row stay in view too, where what it does is said.
+	var bar []string
+	if len(body) > room && room > 0 {
+		from := min(max(selectedLine(body)+scrollMargin-room+1, 0), len(body)-room)
+		bar = scrollbarOf(from, room, len(body), room)
+		body = body[from : from+room]
 	}
 	for len(body) < room {
 		body = append(body, "")
@@ -73,11 +79,37 @@ func (m *Model) formBox(base string, f form) string {
 	}
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colourBoxEdge).
 		Padding(0, 2).Width(w).Render(strings.Join(lines, "\n"))
+	if bar != nil {
+		rows := strings.Split(box, "\n")
+		for i, b := range bar {
+			// The edge keeps its colour; only the glyph becomes the thumb.
+			if r := &rows[1+len(top)+i]; b != " " {
+				at := strings.LastIndex(*r, edge)
+				*r = (*r)[:at] + thumb + (*r)[at+len(edge):]
+			}
+		}
+		box = strings.Join(rows, "\n")
+	}
 	x, y := (m.width-w)/2, max((m.height-h)/2, 1)
 	return lipgloss.NewCompositor(
 		lipgloss.NewLayer(faint(base)),
 		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
 	).Render()
+}
+
+// scrollMargin is how many lines below the selected row a scrolled form
+// keeps in view.
+const scrollMargin = 3
+
+// selectedLine is the index of the line drawn with the selection's mark,
+// ▌, or -1 with none.
+func selectedLine(lines []string) int {
+	for i, l := range lines {
+		if strings.Contains(ansi.Strip(l), "▌") {
+			return i
+		}
+	}
+	return -1
 }
 
 // progress is a bar width cells long, filled at of at.

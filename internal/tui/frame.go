@@ -144,12 +144,18 @@ func (m *Model) frame(body []string, footer string) string {
 // columns draws the body: the sidebar, its border, and the main panel.
 func (m *Model) columns() []string {
 	height := m.bodyHeight()
-	side := m.sidebar(m.sideWidth(), height)
-	main := m.main(m.mainWidth(), height)
+	side, sideBar := m.sidebar(m.sideWidth(), height)
+	main, logBar := m.main(m.mainWidth(), height)
 	border := styleRule.Render("│")
 	lines := make([]string, height)
 	for i := range lines {
-		lines[i] = side[i] + border + "  " + main[i] + " "
+		// The border is the sidebar's scrollbar's track, and the cell at
+		// the right the panel log's.
+		edge := border
+		if sideBar[i] != " " {
+			edge = sideBar[i]
+		}
+		lines[i] = side[i] + edge + "  " + main[i] + logBar[i]
 	}
 	return lines
 }
