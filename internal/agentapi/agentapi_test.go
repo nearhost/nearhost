@@ -906,3 +906,14 @@ func TestAReloadBeingAcceptedIsNotSuperseded(t *testing.T) {
 		t.Fatalf("held for another change: %v", got)
 	}
 }
+
+// A path past the socket limit fails with the limit named, not the bare
+// "bind: invalid argument" the OS gives.
+func TestListenNamesTheSocketPathLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), strings.Repeat("a", maxSocketPath), "x.sock")
+	err := New(Options{Source: fakeSource{}}).Listen("local", path)
+	want := fmt.Sprintf("socket path is too long (%d bytes; the limit is %d)", len(path), maxSocketPath)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+}

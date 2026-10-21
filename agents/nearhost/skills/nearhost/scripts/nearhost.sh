@@ -11,7 +11,7 @@
 #   nearhost.sh reload [path]                           make Nearhost re-read .nearhostrc
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
-# 2 no Nearhost reachable, 3 Nearhost runs without its interface, 4 several
+# 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined,
 # 7 expired, 8 superseded: the change waited on no longer waits.
 
@@ -60,6 +60,7 @@ no_nearhost() {
 
 # find_socket sets SOCK and HELLO, the answer to GET /v1, or exits.
 find_socket() {
+	command -v curl >/dev/null 2>&1 || die 2 "curl is needed to reach Nearhost and is not installed here. Install curl, then run this again."
 	if [ -n "${NEARHOST_SOCKET:-}" ]; then
 		if ! call "$NEARHOST_SOCKET" 2 http://nearhost/v1 || [ "$STATUS" != 200 ]; then
 			die 2 "Nothing answers on NEARHOST_SOCKET ($NEARHOST_SOCKET). Unset it to look in ~/.nearhost."
@@ -177,12 +178,15 @@ propose)
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--web)
-			web=${2:-}
-			shift 2 || die 1 "--web needs a port"
+			# dash exits on a failed shift, so check the count first.
+			[ $# -ge 2 ] || die 1 "--web needs a port"
+			web=$2
+			shift 2
 			;;
 		--name)
-			name=${2:-}
-			shift 2 || die 1 "--name needs a name"
+			[ $# -ge 2 ] || die 1 "--name needs a name"
+			name=$2
+			shift 2
 			;;
 		*) break ;;
 		esac
