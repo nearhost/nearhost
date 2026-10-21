@@ -150,9 +150,10 @@ type (
 		caExpires  time.Time
 		hostsState string
 	}
+	// openedMsg is what came of opening url for the row key.
 	openedMsg struct {
-		url string
-		err error
+		key, url string
+		err      error
 	}
 )
 
@@ -297,7 +298,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setConfig(m.b.Config())
 	case openedMsg:
 		if msg.err != nil {
-			return m, m.alertProblem(m.sel, "Open "+msg.url+" in your browser.")
+			return m, m.alertProblem(msg.key, "Open "+msg.url+" in your browser.")
 		}
 	case suspendMsg:
 		if m.quitting {
@@ -392,7 +393,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
-		return m, m.alertProblem(m.sel, "Could not open "+msg.url+": "+msg.err.Error())
+		return m, m.alertProblem(msg.key, "Could not open "+msg.url+": "+msg.err.Error())
 	case toastDoneMsg:
 		m.toastDone(msg)
 	case copyFailedMsg:

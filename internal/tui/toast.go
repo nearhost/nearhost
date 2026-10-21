@@ -62,7 +62,7 @@ func (m *Model) toastDone(msg toastDoneMsg) {
 }
 
 // withToast draws the toast over content, at the right, just above the
-// footer's rule.
+// footer's rule, and clear of the sidebar.
 func (m *Model) withToast(content string) string {
 	if m.toast.text == "" || m.width < minWidth || m.height < minHeight {
 		return content
@@ -71,11 +71,21 @@ func (m *Model) withToast(content string) string {
 	if m.toast.problem {
 		dot = styleAmber.Render("●")
 	}
-	text := ansi.Truncate(clean(m.toast.text), min(toastWidth, m.width-10), "…")
+	// Over the main panel alone, where the sidebar is drawn: the sidebar's
+	// rows take clicks, the toast does not.
+	room := m.width - 10
+	if m.logView == nil && !m.empty() {
+		room = m.mainWidth() - 7 // the box's edges, padding and dot, and the gap at the right
+	}
+	text := ansi.Truncate(clean(m.toast.text), min(toastWidth, room), "…")
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colourBoxEdge).Padding(0, 1).
 		Render(dot + " " + styleText.Render(text))
 	w, h := lipgloss.Width(box), lipgloss.Height(box)
-	x, y := m.width-w-2, m.height-m.footerHeight()-1-h
+	footer := m.footerHeight()
+	if m.logView != nil {
+		footer = 1 // the full-screen log's footer is a row, help or not
+	}
+	x, y := m.width-w-2, m.height-footer-1-h
 	return lipgloss.NewCompositor(
 		lipgloss.NewLayer(content),
 		lipgloss.NewLayer(box).X(x).Y(y).Z(1),

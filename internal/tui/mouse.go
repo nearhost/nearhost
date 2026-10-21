@@ -105,9 +105,10 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	lines := m.screenLines()
 	if url := linkAt(lines, ms.to); url != "" {
 		ms.lastAt = time.Time{}
+		key := m.sel
 		return func() tea.Msg {
 			if err := openURL(url); err != nil {
-				return openFailedMsg{url, err}
+				return openFailedMsg{key, url, err}
 			}
 			return nil
 		}
@@ -130,10 +131,10 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	return nil
 }
 
-// openFailedMsg says an address could not be opened.
+// openFailedMsg says an address could not be opened, from the row key.
 type openFailedMsg struct {
-	url string
-	err error
+	key, url string
+	err      error
 }
 
 // clearSelection drops the highlight, as a key, the wheel or a resize

@@ -318,7 +318,7 @@ func TestAlertsGoToTheLogAndAToast(t *testing.T) {
 		t.Error("an add's toast is a problem's")
 	}
 	long := "Could not open https://example.test/" + strings.Repeat("a", 80) + ": boom"
-	m.Update(openFailedMsg{"https://example.test/" + strings.Repeat("a", 80), errBoom})
+	m.Update(openFailedMsg{m.sel, "https://example.test/" + strings.Repeat("a", 80), errBoom})
 	if !m.toast.problem || m.toast.text != long {
 		t.Errorf("toast %+v", m.toast)
 	}
@@ -328,5 +328,44 @@ func TestAlertsGoToTheLogAndAToast(t *testing.T) {
 	wantScreen(t, m, "● "+ansi.Truncate(long, toastWidth, "…")+" │")
 	if len(m.logs.entries(m.sel, "")) == 0 || !strings.Contains(m.logs.entries(m.sel, "")[len(m.logs.entries(m.sel, ""))-1].text, long) {
 		t.Error("the log does not have the whole line")
+	}
+}
+
+// A failure to open is logged for the row that asked, wherever the
+// selection has moved since.
+func TestOpenFailureGoesToTheRowThatAsked(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	key := rowKey(rowProject, "website")
+	m.Update(openedMsg{key, "https://website.test", errBoom})
+	m.Update(openFailedMsg{key, "https://x.test", errBoom})
+	var got []string
+	for _, e := range m.logs.entries(key, "") {
+		got = append(got, e.text)
+	}
+	if want := "Open https://website.test in your browser.|Could not open https://x.test: boom"; strings.Join(got, "|") != want {
+		t.Errorf("website's log %q, want %q", got, want)
+	}
+}
+
+// The toast keeps clear of the sidebar, and on the full-screen log sits
+// above its one-row footer, even with the help open.
+func TestToastPlacement(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: minWidth, Height: 30})
+	m.showToast("Could not open https://example.test/"+strings.Repeat("a", 80), true)
+	for _, l := range strings.Split(screen(m), "\n") {
+		if i := strings.Index(l, "╭"); i >= 0 && ansi.StringWidth(l[:i]) < m.mainX() {
+			t.Errorf("the toast starts at %d, over the sidebar, which ends at %d:\n%s", ansi.StringWidth(l[:i]), m.mainX(), screen(m))
+		}
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	press(m, "?")
+	press(m, "l")
+	if m.logView == nil {
+		t.Fatal("l did not open the log")
+	}
+	lines := strings.Split(screen(m), "\n")
+	if !strings.Contains(lines[m.height-3], "╯") {
+		t.Errorf("the toast's bottom is not on the row above the footer's rule:\n%s", screen(m))
 	}
 }
