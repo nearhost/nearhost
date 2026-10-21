@@ -170,7 +170,7 @@ func (m *Model) copySSH() tea.Cmd {
 	for _, p := range m.problems() {
 		if p.host != "" {
 			m.logs.noteOn(homeKey, "Copied ssh "+clean(p.host)+".")
-			return tea.SetClipboard("ssh " + p.host)
+			return copyText("ssh " + p.host)
 		}
 	}
 	return nil

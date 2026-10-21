@@ -279,14 +279,12 @@ func TestQuitStopsEverythingAndASecondQuitCutsItShort(t *testing.T) {
 func TestMouse(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 3, Button: tea.MouseLeft}) // website, under home, a blank line and local
+	click(m, 3, bodyTop+3) // website, under home, a blank line and local
 	if m.sel != rowKey(rowProject, "website") {
 		t.Fatalf("click selected %q", m.sel)
 	}
 	// The footer reads " enter start/stop · o open · ..."; o is at column 20.
-	m.Update(tea.MouseClickMsg{X: 20, Y: 29, Button: tea.MouseLeft})
-	_, cmd := m.Update(tea.MouseClickMsg{X: 20, Y: 29, Button: tea.MouseLeft})
-	run(m, cmd)
+	run(m, click(m, 20, 29))
 	if len(f.opened) == 0 || f.opened[0] != "https://website.test" {
 		t.Errorf("footer click opened %v", f.opened)
 	}
@@ -526,7 +524,7 @@ func TestSidebarKeepsTheSelectionInView(t *testing.T) {
 	if !strings.Contains(lines[bodyTop+m.bodyHeight()-1], "p39") {
 		t.Errorf("the selected row is not on the last sidebar line:\n%s", screen(m))
 	}
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + m.bodyHeight() - 2, Button: tea.MouseLeft})
+	click(m, 3, bodyTop+m.bodyHeight()-2)
 	if m.sel != rowKey(rowProject, "p38") {
 		t.Errorf("click selected %q, want the row drawn there", m.sel)
 	}

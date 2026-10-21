@@ -123,7 +123,7 @@ func TestFirstRunScreenIgnoresRowKeys(t *testing.T) {
 	for _, k := range []string{"j", "j", "d", "e", "enter"} {
 		press(m, k)
 	}
-	m.Update(tea.MouseClickMsg{X: 3, Y: bodyTop + 3, Button: tea.MouseLeft})
+	click(m, 3, bodyTop+3)
 	if m.sel != homeKey || m.form != nil {
 		t.Errorf("selected %q, form %T", m.sel, m.form)
 	}
