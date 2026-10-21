@@ -145,9 +145,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	}
 	// Before anything reads the CA's directory, so this run serves from
 	// where it lands.
-	if err := migrateCA(); err != nil {
-		return err
-	}
+	migrateCA(cmd.ErrOrStderr())
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err

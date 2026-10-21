@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 
@@ -42,8 +43,31 @@ func systemTrust() trustBackend {
 // migrateCA moves the local CA from where Nearhost 0.7 and earlier kept it to
 // the data directory, unless another Nearhost is running and may be using it.
 // Only the commands that own the CA call it: `nearhost`, `nearhost up`,
-// `trust` and `untrust`.
-func migrateCA() error { return config.MigrateCaddyDir(nearhostRunning) }
+// `trust` and `untrust`. A failure leaves a CA where config.CaddyDir finds
+// it, so it is a warning on w and the command carries on.
+func migrateCA(w io.Writer) {
+	if msg := migrateWarning(config.MigrateCaddyDir(nearhostRunning)); msg != "" {
+		fmt.Fprintln(w, msg)
+	}
+}
+
+// migrateWarning words a config.MigrateCaddyDir error for the user, "" for
+// none.
+func migrateWarning(err error) string {
+	var me *config.MigrateError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &me) && me.Moved:
+		return fmt.Sprintf("Warning: Nearhost moved its local CA to %s but could not delete %s (%v). "+
+			"That directory still holds a copy of the CA's private key; delete it.", me.New, me.Old, me.Err)
+	case errors.As(err, &me):
+		return fmt.Sprintf("Warning: Nearhost could not move its local CA from %s to %s (%v), so it keeps using %s.",
+			me.Old, me.New, me.Err, me.Old)
+	default:
+		return fmt.Sprintf("Warning: Nearhost could not move its local CA to its data directory: %v.", err)
+	}
+}
 
 func newTrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
@@ -51,9 +75,7 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 		Short: "Install the Nearhost Local CA into the system trust store",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := migrateCA(); err != nil {
-				return err
-			}
+			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()
 			if err != nil {
 				return err
@@ -119,9 +141,7 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 		Short: "Remove the Nearhost Local CA from the system trust store",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := migrateCA(); err != nil {
-				return err
-			}
+			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()
 			if err != nil {
 				return err

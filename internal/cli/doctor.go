@@ -395,6 +395,18 @@ func checkCA(b trustBackend) []check {
 	if err != nil {
 		return []check{{name, levelFail, err.Error(), "set HOME"}}
 	}
+	checks := checkCAAt(b, dir)
+	if old, ok := config.LeftoverCaddyDir(); ok {
+		checks = append(checks, check{"old CA copy", levelWarn,
+			old + " still holds a copy of the local CA's private key; Nearhost now keeps it in " + dir,
+			"delete " + old})
+	}
+	return checks
+}
+
+// checkCAAt is checkCA for the CA in dir.
+func checkCAAt(b trustBackend, dir string) []check {
+	const name, fix = "local CA", "run `nearhost trust`"
 	cert, err := b.rootCert(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

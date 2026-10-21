@@ -93,7 +93,13 @@ func CaddyDir() (string, error) {
 // MigrateCaddyDir moves the Caddy storage older versions kept in Dir to
 // DataDir, so the trusted CA goes with it. running reports whether another
 // Nearhost is serving on this machine; while one is, it may be using the old
-// directory, so nothing moves and CaddyDir keeps returning the old one.
+// directory, so nothing moves and CaddyDir keeps returning the old one. A
+// failure is a *MigrateError when it got as far as moving; every failure
+// leaves a CA where CaddyDir finds it, so callers may carry on.
+//
+// A Nearhost 0.7 or earlier started between the check and the move would find
+// no directory at the old path and make a fresh CA there. Nothing is deleted
+// in that case: this run moves the original, and the other uses its new one.
 func MigrateCaddyDir(running func() bool) error {
 	current, old, err := caddyDirs()
 	if err != nil {
@@ -102,10 +108,38 @@ func MigrateCaddyDir(running func() bool) error {
 	if exists(current) || !exists(old) || running() {
 		return nil
 	}
-	if err := migrateCaddyDir(old, current); err != nil {
-		return fmt.Errorf("move the local CA from %s to %s: %w", old, current, err)
+	return migrateCaddyDir(old, current)
+}
+
+// MigrateError is a failure to move the Caddy storage from Old to New.
+type MigrateError struct {
+	Old, New string
+	// Moved says the storage is complete at New and only removing Old,
+	// which still holds a copy of the CA's private key, failed.
+	Moved bool
+	Err   error
+}
+
+// Error describes the failure, naming both directories.
+func (e *MigrateError) Error() string {
+	if e.Moved {
+		return fmt.Sprintf("moved the local CA to %s but could not delete %s: %v", e.New, e.Old, e.Err)
 	}
-	return nil
+	return fmt.Sprintf("move the local CA from %s to %s: %v", e.Old, e.New, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *MigrateError) Unwrap() error { return e.Err }
+
+// LeftoverCaddyDir returns the Caddy storage older versions kept in Dir when
+// it is still there beside the one in DataDir, which is the one in use. It
+// still holds a copy of the CA's private key.
+func LeftoverCaddyDir() (string, bool) {
+	current, old, err := caddyDirs()
+	if err != nil || !exists(current) || !exists(old) {
+		return "", false
+	}
+	return old, true
 }
 
 // exists reports whether anything is at path. A path that can't be checked
@@ -120,33 +154,60 @@ func exists(path string) bool {
 var rename = os.Rename
 
 // migrateCaddyDir moves the directory old to new unless new exists or old
-// does not. Across filesystems it copies old, keeping every mode, into a
-// temporary directory beside new, renames that to new and only then removes
-// old, so a failed copy leaves old as it was and nothing at new.
+// does not. Across filesystems, or when old is a symbolic link, it copies the
+// real directory, keeping every mode, into a temporary directory beside new,
+// renames that to new and only then removes old (only the link, when old is
+// one), so a failed copy leaves old as it was and nothing at new. Its errors
+// are *MigrateError.
 func migrateCaddyDir(old, new string) error {
 	if exists(new) || !exists(old) {
 		return nil
 	}
+	fail := func(err error) error { return &MigrateError{Old: old, New: new, Err: err} }
 	if err := os.MkdirAll(filepath.Dir(new), 0o700); err != nil {
-		return err
+		return fail(err)
 	}
-	err := rename(old, new)
-	if !errors.Is(err, syscall.EXDEV) {
-		return err
+	fi, err := os.Lstat(old)
+	if err != nil {
+		return fail(err)
+	}
+	// Renaming a link would move the link alone, which may then point
+	// nowhere, and leave the key where it was.
+	link := fi.Mode()&fs.ModeSymlink != 0
+	src := old
+	if link {
+		if src, err = filepath.EvalSymlinks(old); err != nil {
+			return fail(err)
+		}
+	} else {
+		err := rename(old, new)
+		if !errors.Is(err, syscall.EXDEV) {
+			if err != nil {
+				return fail(err)
+			}
+			return nil
+		}
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(new), "."+filepath.Base(new)+"-")
 	if err != nil {
-		return err
+		return fail(err)
 	}
-	if err := copyTree(old, tmp); err != nil {
+	if err := copyTree(src, tmp); err != nil {
 		os.RemoveAll(tmp)
-		return err
+		return fail(err)
 	}
 	if err := rename(tmp, new); err != nil {
 		os.RemoveAll(tmp)
-		return err
+		return fail(err)
 	}
-	return os.RemoveAll(old)
+	remove := os.RemoveAll
+	if link {
+		remove = os.Remove
+	}
+	if err := remove(old); err != nil {
+		return &MigrateError{Old: old, New: new, Moved: true, Err: err}
+	}
+	return nil
 }
 
 // copyTree copies the directory from into the existing directory to, which

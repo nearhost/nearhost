@@ -272,3 +272,96 @@ func TestTrustMovesTheCAToTheDataDir(t *testing.T) {
 		t.Fatalf("old CA directory still there: %v", err)
 	}
 }
+
+func TestMigrateWarningNamesBothDirectories(t *testing.T) {
+	if got := migrateWarning(nil); got != "" {
+		t.Fatalf("no error: %q", got)
+	}
+	failed := migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Err: errors.New("disk full")})
+	if !strings.Contains(failed, "/old/caddy") || !strings.Contains(failed, "/new/caddy") ||
+		!strings.Contains(failed, "disk full") || !strings.Contains(failed, "keeps using /old/caddy") {
+		t.Fatalf("failed move: %q", failed)
+	}
+	left := migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Moved: true, Err: errors.New("busy")})
+	if !strings.Contains(left, "/new/caddy") || !strings.Contains(left, "could not delete /old/caddy") ||
+		!strings.Contains(left, "delete it") {
+		t.Fatalf("old left behind: %q", left)
+	}
+}
+
+func TestTrustCarriesOnWhenTheMoveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only directories")
+	}
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	old := filepath.Join(cfgHome, "nearhost", "caddy")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The data directory's parent can't be written, so the move fails.
+	parent := filepath.Dir(data)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o700); os.RemoveAll(data) })
+	f := newFake()
+	root := &cobra.Command{Use: "nearhost", SilenceUsage: true, SilenceErrors: true}
+	root.AddCommand(newTrustCmd(f.backend()))
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"trust"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.ensured) != 1 || f.ensured[0] != old {
+		t.Fatalf("CA made in %v, want the old %s", f.ensured, old)
+	}
+	if !strings.Contains(errOut.String(), "Warning") || !strings.Contains(errOut.String(), old) {
+		t.Fatalf("stderr %q", errOut.String())
+	}
+}
+
+func TestDoctorWarnsOfAnOldCACopy(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(data) })
+	if err := os.MkdirAll(filepath.Join(data, "caddy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	f.trusted = true
+	f.nss = proxy.NSSStatus{State: proxy.NSSCovered}
+	for _, c := range checkCA(f.backend()) {
+		if c.name == "old CA copy" {
+			t.Fatalf("warned with no old directory: %+v", c)
+		}
+	}
+	old := filepath.Join(cfgHome, "nearhost", "caddy")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	checks := checkCA(f.backend())
+	last := checks[len(checks)-1]
+	if last.name != "old CA copy" || last.level != levelWarn || !strings.Contains(last.detail, old) || last.fix != "delete "+old {
+		t.Fatalf("checks %+v", checks)
+	}
+	if len(f.rootDirs) != 2 || f.rootDirs[1] != filepath.Join(data, "caddy") {
+		t.Fatalf("CA read from %v", f.rootDirs)
+	}
+}

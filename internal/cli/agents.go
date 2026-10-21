@@ -46,7 +46,8 @@ func agentSocket(home, id string) string {
 // nearhostRunning reports whether another Nearhost is serving on this machine:
 // every run serves coding agents on the same socket, so one answering there
 // means a Nearhost is up. When the socket can't be worked out it says yes, the
-// cautious answer for its callers.
+// cautious answer for its callers. Working it out needs the install id, so
+// config.InstallID creates the id file if there is none yet.
 func nearhostRunning() bool {
 	id, err := config.InstallID()
 	if err != nil {

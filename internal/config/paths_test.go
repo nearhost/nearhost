@@ -184,8 +184,10 @@ func TestMigrateKeepsOldWhenCopyFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(unreadable, 0o644) })
-	if err := migrateCaddyDir(old, new); err == nil {
-		t.Fatal("copy of an unreadable file succeeded")
+	err := migrateCaddyDir(old, new)
+	var me *MigrateError
+	if !errors.As(err, &me) || me.Moved || me.Old != old || me.New != new {
+		t.Fatalf("copy of an unreadable file: %v, want a MigrateError not Moved", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(old, key)); err != nil || string(data) != "the key" {
 		t.Fatalf("old root.key = %q, %v", data, err)
@@ -244,4 +246,75 @@ func TestMigrateCaddyDirWaitsWhileNearhostRuns(t *testing.T) {
 		t.Fatalf("CaddyDir() = %q after the move", got)
 	}
 	checkMoved(t, old, filepath.Join(data, "caddy"), key)
+}
+
+func TestMigrateCopiesASymlinkedOldDir(t *testing.T) {
+	exdev(t)
+	base := t.TempDir()
+	real := filepath.Join(base, "dotfiles", "caddy")
+	key := caddyTree(t, real, "the key")
+	old := filepath.Join(base, "config", "nearhost", "caddy")
+	if err := os.MkdirAll(filepath.Dir(old), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Relative, as dotfiles managers often make them.
+	if err := os.Symlink(filepath.Join("..", "..", "dotfiles", "caddy"), old); err != nil {
+		t.Fatal(err)
+	}
+	new := filepath.Join(base, "data", "nearhost", "caddy")
+	if err := migrateCaddyDir(old, new); err != nil {
+		t.Fatal(err)
+	}
+	checkMoved(t, old, new, key)
+	if fi, err := os.Lstat(new); err != nil || !fi.IsDir() {
+		t.Fatalf("new is not a real directory: %v, %v", fi, err)
+	}
+	// Only the link goes; what it pointed at is the user's to keep or delete.
+	if data, err := os.ReadFile(filepath.Join(real, key)); err != nil || string(data) != "the key" {
+		t.Fatalf("link target's root.key = %q, %v", data, err)
+	}
+}
+
+func TestMigrateReportsAnOldDirItCouldNotDelete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root deletes from read-only directories")
+	}
+	exdev(t)
+	base := t.TempDir()
+	old := filepath.Join(base, "config", "nearhost", "caddy")
+	new := filepath.Join(base, "data", "nearhost", "caddy")
+	key := caddyTree(t, old, "the key")
+	parent := filepath.Dir(old)
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o700) })
+	err := migrateCaddyDir(old, new)
+	var me *MigrateError
+	if !errors.As(err, &me) || !me.Moved || me.Old != old || me.New != new {
+		t.Fatalf("got %v, want a Moved MigrateError", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(new, key)); err != nil || string(data) != "the key" {
+		t.Fatalf("new root.key = %q, %v", data, err)
+	}
+}
+
+func TestLeftoverCaddyDirOnlyWhenBothExist(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	data, err := DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(home, "config", "nearhost", "caddy")
+	caddyTree(t, old, "old key")
+	if got, ok := LeftoverCaddyDir(); ok {
+		t.Fatalf("old alone is in use, not left over: %q", got)
+	}
+	caddyTree(t, filepath.Join(data, "caddy"), "new key")
+	if got, ok := LeftoverCaddyDir(); !ok || got != old {
+		t.Fatalf("both exist: %q, %v; want %q", got, ok, old)
+	}
 }
