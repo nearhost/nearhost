@@ -122,6 +122,9 @@ func (p *Proxy) ports() []int {
 	if http == 0 {
 		http = 80
 	}
+	if p.opts.WebPort != 0 {
+		return []int{https, http, p.opts.WebPort}
+	}
 	return []int{https, http}
 }
 

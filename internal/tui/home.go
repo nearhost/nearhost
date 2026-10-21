@@ -32,6 +32,7 @@ func (m *Model) home(width int) []string {
 	}
 	lines := []string{styleTitle.Render("Nearhost")}
 	lines = append(lines, m.proxyLines(width)...)
+	lines = append(lines, m.webLines(width)...)
 	lines = append(lines, field("local CA", ca, width)...)
 	lines = append(lines, field("hosts", hostsDot+" "+hostsText, width)...)
 	lines = append(lines, field("config", clean(m.b.ConfigPath()), width)...)
@@ -51,6 +52,16 @@ func (m *Model) proxyLines(width int) []string {
 		return field("proxy", styleAmber.Render("◐ starting"), width)
 	}
 	return field("proxy", styleBeacon.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
+}
+
+// webLines link to the web interface, once the proxy serves it.
+func (m *Model) webLines(width int) []string {
+	port := m.b.WebPort()
+	if port == 0 || !m.started || m.proxyErr != nil {
+		return nil
+	}
+	url := fmt.Sprintf("https://localhost:%d", port)
+	return field("web UI", styleBeacon.Underline(true).Hyperlink(url).Render(url), width)
 }
 
 // problem is something that needs the user: what it is, why, what to do,

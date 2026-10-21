@@ -1463,9 +1463,9 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 }
 
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
-	// The proxy listens on TCP for HTTPS and HTTP, and on UDP at the HTTPS
-	// port for HTTP/3.
-	for _, which := range []string{"https", "http", "https-udp"} {
+	// The proxy listens on TCP for HTTPS, HTTP and the web interface, and on
+	// UDP at the HTTPS port for HTTP/3.
+	for _, which := range []string{"https", "http", "web", "https-udp"} {
 		t.Run(which, func(t *testing.T) {
 			var holder interface{ Close() error }
 			var held int
@@ -1484,9 +1484,12 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			}
 			defer holder.Close()
 			h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, func(o *Options) {
-				if which == "http" {
+				switch which {
+				case "http":
 					o.HTTPPort = held
-				} else {
+				case "web":
+					o.WebPort = held
+				default:
 					o.HTTPSPort = held
 				}
 			})
@@ -1922,12 +1925,12 @@ func TestStartRefusesEqualProxyPorts(t *testing.T) {
 
 	// Equal only once the defaults are filled in. Asked of the check alone:
 	// a Start that got past it would bind the real ports.
-	for ports, equal := range map[[2]int]bool{
-		{80, 0}: true, {0, 443}: true, {8443, 8443}: true,
-		{0, 0}: false, {8443, 0}: false, {8443, 8080}: false,
+	for ports, equal := range map[[3]int]bool{
+		{80, 0, 0}: true, {0, 443, 0}: true, {8443, 8443, 0}: true, {0, 0, 443}: true, {8443, 0, 80}: true, {8443, 8080, 8080}: true,
+		{0, 0, 0}: false, {8443, 0, 0}: false, {8443, 8080, 0}: false, {0, 0, 6327}: false,
 	} {
-		if err := differentProxyPorts(ports[0], ports[1]); (err != nil) != equal {
-			t.Errorf("HTTPS port %d and HTTP port %d: %v", ports[0], ports[1], err)
+		if err := differentProxyPorts(ports[0], ports[1], ports[2]); (err != nil) != equal {
+			t.Errorf("HTTPS port %d, HTTP port %d and web port %d: %v", ports[0], ports[1], ports[2], err)
 		}
 	}
 }

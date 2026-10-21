@@ -666,6 +666,56 @@ func TestBuildConfigServesHomePageAtLocalhost(t *testing.T) {
 	}
 }
 
+// With a web port, a server of its own serves the home page at localhost
+// to loopback clients, even while a project serves localhost, and drops
+// the rest. localhost is a subject either way.
+func TestBuildConfigWebPortServesHomePage(t *testing.T) {
+	raw, err := BuildConfig([]Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: "127.0.0.1:1"},
+	}, Options{StorageRoot: t.TempDir(), Version: "1.2.3", WebPort: 6327})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
+	if got := strs(web["listen"]); !slices.Equal(got, []string{":6327"}) {
+		t.Errorf("listen = %v, want :6327", got)
+	}
+	if got := strs(web["protocols"]); !slices.Equal(got, []string{"h1", "h2"}) {
+		t.Errorf("protocols = %v, want h1 and h2, so no UDP port", got)
+	}
+	routes := web["routes"].([]any)
+	if len(routes) != 2 || dig(t, routes[0], "handle", 0, "handler") != homeModule || dig(t, routes[0], "handle", 0, "web_port") != float64(6327) ||
+		dig(t, routes[1], "handle", 0, "abort") != true {
+		t.Errorf("routes = %v, want the home page, then a drop", routes)
+	}
+	if got := strs(dig(t, routes[0], "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+		t.Errorf("home route remote_ip = %v, want loopback", got)
+	}
+	if len(homeRoutes(t, cfg)) != 0 {
+		t.Error("the https port serves the home page though a project serves localhost")
+	}
+	if got := tlsSubjects(cfg); !slices.Contains(got, "localhost") {
+		t.Errorf("subjects = %v, want localhost", got)
+	}
+	// A config that does not listen has no web server, nor one without a
+	// web port.
+	raw, err = BuildConfig(nil, Options{StorageRoot: t.TempDir(), WebPort: 6327})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "nearhost_web") {
+		t.Error("config with no listeners has a web server")
+	}
+	cfg = buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
+	if _, ok := dig(t, cfg, "apps", "http", "servers").(map[string]any)["nearhost_web"]; ok {
+		t.Error("config without a web port has a web server")
+	}
+}
+
 func TestBuildConfigHomePageVersionDefaultsToDev(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
 	home := homeRoutes(t, cfg)

@@ -89,6 +89,10 @@ type Options struct {
 	// sites, so https://localhost answers before the first project. Without
 	// it a config with no sites declares no listeners.
 	HomeWithNoSites bool
+	// WebPort is a port of its own that serves the home page, Nearhost's
+	// web interface, at https://localhost:<port> whenever the proxy
+	// listens, even while a project serves localhost. 0 means none.
+	WebPort int
 }
 
 // listens reports whether the config for sites declares listeners: with
@@ -160,17 +164,39 @@ func siteRoute(s Site, host string, ranges []string, capture bool) map[string]an
 // homeRoute is the route serving Nearhost's own page at localhost to
 // loopback clients. It has no tag: the page is no project's, so its access
 // lines are dropped like any other untagged line.
-func homeRoute(version string) map[string]any {
+func homeRoute(opts Options) map[string]any {
+	version := opts.Version
 	if version == "" {
 		version = "dev"
+	}
+	handler := map[string]any{"handler": homeModule, "version": version}
+	if opts.WebPort != 0 {
+		handler["web_port"] = opts.WebPort
 	}
 	return map[string]any{
 		"match": []any{map[string]any{
 			"host":      []string{homeHost},
 			"remote_ip": map[string]any{"ranges": loopbackRanges},
 		}},
-		"handle":   []any{map[string]any{"handler": homeModule, "version": version}},
+		"handle":   []any{handler},
 		"terminal": true,
+	}
+}
+
+// webServer is the server on opts.WebPort, which serves the home page at
+// localhost to loopback clients and drops everything else. It has no
+// HTTP/3, so it needs no UDP port, and no redirects of its own.
+func webServer(opts Options) map[string]any {
+	return map[string]any{
+		"listen": []string{fmt.Sprintf(":%d", opts.WebPort)},
+		"tls_connection_policies": []any{map[string]any{
+			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+		}},
+		"routes": []any{homeRoute(opts), map[string]any{
+			"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
+		}},
+		"automatic_https": map[string]any{"disable_redirects": true},
+		"protocols":       []string{"h1", "h2"},
 	}
 }
 
@@ -356,7 +382,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	for _, sv := range all {
 		ranges := loopbackRanges
 		if sv.home {
-			routes = append(routes, homeRoute(opts.Version))
+			routes = append(routes, homeRoute(opts))
 		} else {
 			ranges = rangesOf[strings.ToLower(sv.host)]
 			routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts.Capture))
@@ -393,6 +419,10 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
 	})
 
+	// The web port serves localhost too. Its certificate is already a
+	// subject: the home page's on the https port, or the project's that
+	// serves localhost.
+	web := opts.WebPort != 0 && listens(sites, opts)
 	// An empty-subject policy would match every name, so only add one when
 	// there are exact hosts.
 	policies := []any{}
@@ -493,6 +523,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
 	servers["nearhost_http"] = httpServer(hosts, union, httpPort)
+	if web {
+		servers["nearhost_web"] = webServer(opts)
+	}
 
 	cfg := map[string]any{
 		// persist=false stops Caddy autosaving this config over the user's own

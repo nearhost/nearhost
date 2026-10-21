@@ -178,6 +178,7 @@ type harness struct {
 	storage   string
 	httpsPort int
 	httpPort  int
+	webPort   int
 	pool      *x509.CertPool
 }
 
@@ -191,12 +192,20 @@ func startProxy(t *testing.T, sites []Site) *harness {
 // startProxyWith is startProxy, keeping exchanges when capture is set.
 func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
 	t.Helper()
+	return startProxyOpts(t, sites, Options{Capture: capture})
+}
+
+// startProxyOpts is startProxy with opts, whose storage, ports other than
+// the web port, and version it sets.
+func startProxyOpts(t *testing.T, sites []Site, opts Options) *harness {
+	t.Helper()
 	// Caddy can go on writing certificates to storage just after Stop, so
 	// the storage is removed with retries, as the engine harness does.
-	h := &harness{t: t, rec: &recorder{}, storage: testutil.TempDir(t, "nh-caddy-"), httpsPort: freePort(t), httpPort: freePort(t)}
+	h := &harness{t: t, rec: &recorder{}, storage: testutil.TempDir(t, "nh-caddy-"), httpsPort: freePort(t), httpPort: freePort(t), webPort: opts.WebPort}
 	SetSink(h.rec)
 	t.Cleanup(func() { SetSink(nil) })
-	h.p = New(Options{StorageRoot: h.storage, HTTPSPort: h.httpsPort, HTTPPort: h.httpPort, Capture: capture, Version: testVersion})
+	opts.StorageRoot, opts.HTTPSPort, opts.HTTPPort, opts.Version = h.storage, h.httpsPort, h.httpPort, testVersion
+	h.p = New(opts)
 	if err := h.p.Apply(sites); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -1147,6 +1156,43 @@ func TestHomePageAtLocalhost(t *testing.T) {
 			t.Errorf("an access line for the home page reached the sink: %q", l)
 		}
 	}
+}
+
+// The web port serves the home page at localhost even while a project
+// serves localhost on the https port, and nothing else.
+func TestWebPortServesHomePageAlways(t *testing.T) {
+	h := startProxyOpts(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: addr(named(t, "project"))}}, Options{WebPort: freePort(t)})
+	tr := &http.Transport{
+		TLSClientConfig:   &tls.Config{RootCAs: h.pool, ServerName: "localhost"},
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", h.webPort))
+		},
+	}
+	c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	var body string
+	waitUntil(t, 10*time.Second, func() bool {
+		resp, err := c.Get(fmt.Sprintf("https://localhost:%d/", h.webPort))
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		body = string(b)
+		return resp.StatusCode == 200
+	}, "home page on the web port")
+	if want := fmt.Sprintf("localhost:%d always", h.webPort); !strings.Contains(body, "Run it anywhere.") || !strings.Contains(body, want) {
+		t.Errorf("web port page lacks the home page or %q:\n%s", want, body)
+	}
+	if got := h.body(t, "https://localhost/"); got != "project" {
+		t.Errorf("https://localhost/ answered %q, want the project's upstream", got)
+	}
+	tr.TLSClientConfig.ServerName = "a.test"
+	if resp, err := c.Get(fmt.Sprintf("https://a.test:%d/", h.webPort)); err == nil {
+		resp.Body.Close()
+		t.Errorf("a.test on the web port answered %d, want the connection dropped", resp.StatusCode)
+	}
+	h.waitCerts(t, "a.test")
 }
 
 // A project that serves localhost gets every request for it.

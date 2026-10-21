@@ -72,6 +72,7 @@ func (m *Model) emptyScreen() string {
 	lines = append(lines, field("directory", clean(m.dir), emptyWidth)...)
 	lines = append(lines, field("local CA", ca, emptyWidth)...)
 	lines = append(lines, m.proxyLines(emptyWidth)...)
+	lines = append(lines, m.webLines(emptyWidth)...)
 	lines = append(lines, m.problemLines(emptyWidth)...)
 	for i, l := range lines {
 		lines[i] = fit(l, emptyWidth)

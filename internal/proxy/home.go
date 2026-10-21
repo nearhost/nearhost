@@ -14,7 +14,8 @@ import (
 // homeModule is the Caddy handler module name registered below.
 const homeModule = "nearhost_home"
 
-// homeHost is where the home page is served while no project serves it.
+// homeHost is where the home page is served: on the https port while no
+// project serves it, and on the web port always.
 const homeHost = "localhost"
 
 // homeCSP lets the page use its own inline styles and data: images and
@@ -35,13 +36,17 @@ func init() {
 }
 
 // Home is a Caddy HTTP handler that serves Nearhost's own page, at
-// https://localhost while no project serves localhost. It is a module of
+// https://localhost while no project serves localhost, and at
+// https://localhost:<web port> always. It is a module of
 // its own, rather than a static response in the config, so the page can
 // grow without touching routing. It answers every request itself and never
 // calls the next handler.
 type Home struct {
 	// Version is the Nearhost version shown in the footer. Empty means dev.
 	Version string `json:"version,omitempty"`
+	// WebPort is the port of its own the page is also served on. 0 means
+	// none.
+	WebPort int `json:"web_port,omitempty"`
 
 	page []byte
 }
@@ -55,14 +60,18 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision implements caddy.Provisioner. The page depends only on the
-// version, so it is rendered once per config load, not per request.
+// version and the web port, so it is rendered once per config load, not per
+// request.
 func (h *Home) Provision(caddy.Context) error {
 	v := h.Version
 	if v == "" {
 		v = "dev"
 	}
 	var buf bytes.Buffer
-	if err := homePage.Execute(&buf, struct{ Version string }{v}); err != nil {
+	if err := homePage.Execute(&buf, struct {
+		Version string
+		WebPort int
+	}{v, h.WebPort}); err != nil {
 		return err
 	}
 	h.page = buf.Bytes()

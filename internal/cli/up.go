@@ -324,7 +324,7 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 	opts := engine.Options{
 		RunDir: runDir, StorageRoot: storage,
 		SSHPath: ssh.path, SSHEnv: ssh.env,
-		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort,
+		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort, WebPort: f.webPort,
 		Capture: !f.noCapture,
 		Version: Version,
 	}
