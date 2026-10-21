@@ -1074,3 +1074,29 @@ func TestAddNearhostrcWithOnlyAnAlias(t *testing.T) {
 		t.Errorf("serves %v", hosts)
 	}
 }
+
+func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	dir := fixture(t, "sail-custom")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{dir, "--name", "w", "--web", "abc"}, `--web must be a port number, not "abc"`},
+		{[]string{dir, "--name", "w", "--web", "70000"}, "--web must be a port between 1 and 65535, not 70000"},
+		{[]string{"/nonexistent"}, "no directory at /nonexistent"},
+		{[]string{dir, "--name", "ünï"}, `the name "ünï" has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain`},
+		{[]string{dir, "--name", "café"}, `the name "café" has no letters a domain can use`},
+	} {
+		out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, c.args...)...)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("add %v: err = %v, want %q\n%s", c.args, err, c.want, out)
+		}
+	}
+	// An ASCII name that needs tidying, and a non-ASCII name with its own alias, still work.
+	for _, args := range [][]string{{dir, "--name", "My App", "--web", "8080"}, {dir, "--name", "ünï", "--alias", "uni.test", "--web", "8080"}} {
+		if out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, args...)...); err != nil {
+			t.Errorf("add %v: %v\n%s", args, err, out)
+		}
+	}
+}

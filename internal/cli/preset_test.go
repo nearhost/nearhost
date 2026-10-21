@@ -162,3 +162,14 @@ func TestPresetValidate(t *testing.T) {
 		t.Error("expected an error for a missing file")
 	}
 }
+
+func TestPresetEnableAndDisableNeedAName(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	for _, verb := range []string{"enable", "disable"} {
+		_, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", verb)
+		want := "name the preset to " + verb + ", e.g. nearhost preset " + verb + " vite"
+		if err == nil || err.Error() != want {
+			t.Errorf("preset %s: err = %v, want %q", verb, err, want)
+		}
+	}
+}

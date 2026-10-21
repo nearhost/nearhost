@@ -118,12 +118,23 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 	}
 }
 
+// presetNameArg accepts exactly one preset name. With none, it says what to
+// type, using verb for the subcommand.
+func presetNameArg(verb string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("name the preset to %s, e.g. nearhost preset %s vite", verb, verb)
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	}
+}
+
 func newPresetEnableCmd(b presetBackend) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "enable <name>",
 		Short: "Enable a local preset, or install one from a trusted registry as <registry>/<name>",
-		Args:  cobra.ExactArgs(1),
+		Args:  presetNameArg("enable"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			cfg, cfgPath, err := loadConfig(cmd)
@@ -153,7 +164,7 @@ func newPresetDisableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "disable <name>",
 		Short: "Stop using a preset; its file is kept",
-		Args:  cobra.ExactArgs(1),
+		Args:  presetNameArg("disable"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			_, cfgPath, err := loadConfig(cmd)

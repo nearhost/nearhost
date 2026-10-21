@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -62,8 +63,21 @@ type addFlags struct {
 	noPresets           bool
 }
 
+// rawPort keeps a port flag's text, so that RunE can refuse a word with a
+// clear message. It shows as an int in help.
+type rawPort string
+
+func (r *rawPort) String() string { return string(*r) }
+
+func (r *rawPort) Set(v string) error { *r = rawPort(v); return nil }
+
+func (r *rawPort) Type() string { return "int" }
+
 func newAddCmd(b addBackend) *cobra.Command {
 	var flags addFlags
+	// web is read as text so that a word gets a clear message, not the flag
+	// parser's; flags.web stays an int for the rest of add.
+	var web rawPort
 	cmd := &cobra.Command{
 		Use:   "add [path]",
 		Short: "Add a project, discovering its ports from its files",
@@ -78,8 +92,15 @@ func newAddCmd(b addBackend) *cobra.Command {
 			"Nothing is started and no project file is changed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("web") && (flags.web < 1 || flags.web > 65535) {
-				return fmt.Errorf("--web must be a port between 1 and 65535, not %d", flags.web)
+			if cmd.Flags().Changed("web") {
+				port, err := strconv.Atoi(strings.TrimSpace(string(web)))
+				if err != nil {
+					return fmt.Errorf("--web must be a port number, not %q", web)
+				}
+				if port < 1 || port > 65535 {
+					return fmt.Errorf("--web must be a port between 1 and 65535, not %d", port)
+				}
+				flags.web = port
 			}
 			if flags.noPresets && len(flags.presets) > 0 {
 				return errors.New("--no-presets and --preset contradict each other; pass one of them")
@@ -90,7 +111,7 @@ func newAddCmd(b addBackend) *cobra.Command {
 	cmd.Flags().StringVar(&flags.server, "server", config.LocalServer, "server the project runs on")
 	cmd.Flags().StringVar(&flags.name, "name", "", "project name (default: directory name)")
 	cmd.Flags().StringVar(&flags.alias, "alias", "", "main name (default: <name>.test); any domain, typing it approves it")
-	cmd.Flags().IntVar(&flags.web, "web", 0, "force this port to be the web route")
+	cmd.Flags().Var((*rawPort)(&web), "web", "force this port to be the web route")
 	cmd.Flags().BoolVar(&flags.disabled, "disabled", false, "add it disabled: 'nearhost up' starts it only when named")
 	cmd.Flags().StringArrayVar(&flags.presets, "preset", nil, "enable this preset first, without asking (repeatable)")
 	cmd.Flags().StringArrayVar(&flags.hosts, "host", nil, "add this host to the web route (repeatable); typing it approves it")
@@ -626,6 +647,9 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			name = path.Base(projectPath)
 		}
 	}
+	if flags.name != "" && strings.TrimSpace(flags.alias) == "" && config.HasNonASCIIWord(flags.name) {
+		return fail("the name %q has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain", flags.name)
+	}
 	var taken *nameTakenError
 	switch err := nameProblem(cfg, name); {
 	case errors.As(err, &taken):
@@ -656,6 +680,9 @@ func openProject(ctx context.Context, b addBackend, srv config.Server, projectPa
 		return b.openRemote(ctx, srv, projectPath)
 	}
 	info, err := os.Stat(projectPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, "", nil, fmt.Errorf("no directory at %s", projectPath)
+	}
 	if err != nil {
 		return nil, "", nil, err
 	}
