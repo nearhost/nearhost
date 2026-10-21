@@ -72,6 +72,8 @@ func TestDNSLookupTimesOut(t *testing.T) {
 	oldPort := dnsPort
 	dnsPort = port
 	defer func() { dnsPort = oldPort }()
+	allowLoopbackNameserver = true
+	defer func() { allowLoopbackNameserver = false }()
 
 	start := time.Now()
 	_, err = DNSLookup(context.Background(), "app.local.example.io")
@@ -211,5 +213,25 @@ func TestCachedLookupIsSafeForConcurrentCallers(t *testing.T) {
 	}
 	if c := calls.Load(); c < 3 || c > 50 {
 		t.Errorf("%d lookups", c)
+	}
+}
+
+func TestDNSLookupRefusesLoopbackNameserver(t *testing.T) {
+	old := resolvConf
+	defer func() { resolvConf = old }()
+	for _, server := range []string{"127.0.0.53", "::1"} {
+		conf := filepath.Join(t.TempDir(), "resolv.conf")
+		if err := os.WriteFile(conf, []byte("nameserver "+server+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolvConf = conf
+		_, err := DNSLookup(context.Background(), "app.example.io")
+		if !errors.Is(err, errLocalResolver) {
+			t.Errorf("nameserver %s: err = %v, want errLocalResolver", server, err)
+		}
+		got := Wanted(context.Background(), []string{"app.example.io"}, DNSLookup)
+		if !slices.Equal(got, []string{"app.example.io"}) {
+			t.Errorf("nameserver %s: Wanted = %v, want app.example.io kept", server, got)
+		}
 	}
 }

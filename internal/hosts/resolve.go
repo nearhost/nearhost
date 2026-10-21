@@ -28,10 +28,20 @@ var resolvConf = "/etc/resolv.conf"
 // a port, so tests use it to reach a socket of their own.
 var dnsPort string
 
+// allowLoopbackNameserver lets tests point resolv.conf at a nameserver on
+// 127.0.0.1, which DNSLookup otherwise refuses.
+var allowLoopbackNameserver bool
+
+// errLocalResolver is what DNSLookup returns when the nameserver runs on this
+// machine.
+var errLocalResolver = errors.New("the nameserver is on this machine, so it may answer from the hosts file")
+
 // DNSLookup returns the A and AAAA records of name from the nameservers in
 // /etc/resolv.conf. It asks them directly rather than through the system
 // resolver, because that would read the hosts file and so report the very
-// entries nearhost wrote as if DNS had supplied them.
+// entries nearhost wrote as if DNS had supplied them. A nameserver on this
+// machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
+// too, so DNSLookup refuses it with errLocalResolver and Wanted keeps the name.
 func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
@@ -41,6 +51,9 @@ func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	}
 	if len(conf.Servers) == 0 {
 		return nil, errors.New("no nameserver in " + resolvConf)
+	}
+	if ip, err := netip.ParseAddr(conf.Servers[0]); err == nil && ip.IsLoopback() && !allowLoopbackNameserver {
+		return nil, errLocalResolver
 	}
 	// The first nameserver answers; trying the rest is the system resolver's
 	// job, and a wrong answer here only costs a redundant hosts entry.
