@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/engine"
 )
@@ -79,6 +80,36 @@ func TestHelpOverlayNoCutDescriptions(t *testing.T) {
 					t.Errorf("width %d lacks %q", w, b.Help().Desc)
 				}
 			}
+		}
+	}
+}
+
+// The home screen with the help open fits the window, at the documented
+// minimum too, where the help takes the body's place.
+func TestHomeHelpFits(t *testing.T) {
+	for _, sz := range [][2]int{{80, 20}, {80, 24}, {100, 20}} {
+		m := New(newFake(t, sampleConfig()), "/work/here")
+		m.Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+		press(m, "?")
+		out := screen(m)
+		lines := strings.Split(out, "\n")
+		if len(lines) != sz[1] {
+			t.Errorf("%dx%d: drew %d lines:\n%s", sz[0], sz[1], len(lines), out)
+		}
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w > sz[0] {
+				t.Errorf("%dx%d: line %d is %d cells wide", sz[0], sz[1], i, w)
+			}
+		}
+		for _, g := range helpGroups {
+			for _, b := range g.keys {
+				if !strings.Contains(out, b.Help().Desc) {
+					t.Errorf("%dx%d lacks %q", sz[0], sz[1], b.Help().Desc)
+				}
+			}
+		}
+		if !strings.Contains(out, "close help") {
+			t.Errorf("%dx%d lacks the close-help hint", sz[0], sz[1])
 		}
 	}
 }
