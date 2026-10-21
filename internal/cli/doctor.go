@@ -475,6 +475,9 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check
 		}
 		return check{name: name, detail: fmt.Sprintf("%d names", len(want))}, nil
 	}
+	if len(want) > 0 && hosts.IsIPv4Only(existing, want) {
+		return check{name, levelWarn, "the block was written by an older Nearhost and has no IPv6 (::1) entries", fix}, nil
+	}
 	missing, stale := diff(want, hosts.Aliases(existing))
 	var parts []string
 	if len(missing) > 0 {

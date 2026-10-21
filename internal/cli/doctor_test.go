@@ -285,6 +285,17 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 		})
 	}
 
+	t.Run("a block from 0.7.x without ::1 rows warns", func(t *testing.T) {
+		doctorConfig(t)
+		f := healthy()
+		f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n127.0.0.1 web.test\n# nearhost:end\n"
+		out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+		if err != nil {
+			t.Errorf("err = %v", err)
+		}
+		wantContains(t, out, "warn  hosts block      the block was written by an older Nearhost and has no IPv6 (::1) entries\n"+fix)
+	})
+
 	t.Run("--no-hosts skips the check", func(t *testing.T) {
 		doctorConfig(t)
 		f := healthy()
