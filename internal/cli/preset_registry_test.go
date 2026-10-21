@@ -472,3 +472,29 @@ func TestNoRegistryMeansNoRequest(t *testing.T) {
 		t.Errorf("no registry is trusted, so nothing may be requested: %v", f.hits)
 	}
 }
+
+func TestInstallLeavesNoTempFile(t *testing.T) {
+	cfgPath, _, b := trusted(t)
+	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "enable", "test/stack"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	dir := filepath.Join(filepath.Dir(cfgPath), "presets", "test")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "stack.yaml" {
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("directory holds %v, want only stack.yaml", names)
+	}
+	info, err := os.Stat(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("preset mode = %v, want 0644", info.Mode().Perm())
+	}
+}
