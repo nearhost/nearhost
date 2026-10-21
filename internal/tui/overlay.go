@@ -101,11 +101,12 @@ func (m *Model) formBox(base string, f form) string {
 // keeps in view.
 const scrollMargin = 3
 
-// selectedLine is the index of the line drawn with the selection's mark,
-// ▌, or -1 with none.
+// selectedLine is the index of the line drawn with a selection's mark: ▌
+// on a row of a table, ▸ before a choice in a list. It is -1 with none.
 func selectedLine(lines []string) int {
 	for i, l := range lines {
-		if strings.Contains(ansi.Strip(l), "▌") {
+		text := ansi.Strip(l)
+		if strings.Contains(text, "▌") || strings.HasPrefix(strings.TrimLeft(text, " "), "▸ ") {
 			return i
 		}
 	}

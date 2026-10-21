@@ -129,3 +129,30 @@ func boxEdge(t *testing.T, m *Model) string {
 	}
 	return sb.String()
 }
+
+// A list whose choice is marked ▸, as the server step's is, scrolls to it
+// too.
+func TestFormScrollsToTheChosenItem(t *testing.T) {
+	cfg := sampleConfig()
+	for i := 0; i < 30; i++ {
+		cfg.Servers = append(cfg.Servers, config.Server{Name: fmt.Sprintf("s%02d", i), SSHHost: fmt.Sprintf("s%02d.lan", i)})
+	}
+	m := New(newFake(t, cfg), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: minHeight})
+	press(m, "n")
+	for i := 0; i < 31; i++ { // past local and mini
+		press(m, "down")
+	}
+	wantScreen(t, m, "▸ s29")
+}
+
+// A thumb's glyph in a log line is text: a drag across it copies it, and
+// does not stop at it.
+func TestThumbGlyphInTextIsNotAnEdge(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.logs.noteOn(m.sel, "left┃right│end")
+	x, y := find(t, m, "left┃right│end")
+	if got := clipboard(drag(m, x, y, x+len("left┃right│end")-1-4, y)); got != "left┃right│end" {
+		t.Errorf("copied %q", got)
+	}
+}

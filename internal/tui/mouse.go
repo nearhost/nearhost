@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -50,8 +51,21 @@ const doubleClick = 400 * time.Millisecond
 const edge = "│"
 
 // isEdge reports whether a cell is an edge, or a scrollbar's thumb drawn
-// on one.
-func isEdge(c string) bool { return c == edge || c == thumb }
+// on one: the glyph in the colour of rules or of boxes' edges, so the same
+// glyph in a log line is text.
+func isEdge(c *uv.Cell) bool {
+	return (c.Content == edge || c.Content == thumb) && (sameColour(c.Style.Fg, colourLine) || sameColour(c.Style.Fg, colourBoxEdge))
+}
+
+// sameColour reports whether a and b are the same colour.
+func sameColour(a, b color.Color) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	r1, g1, b1, a1 := a.RGBA()
+	r2, g2, b2, a2 := b.RGBA()
+	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
+}
 
 // openURL opens an address in the browser; tests replace it.
 var openURL = func(url string) error {
@@ -192,13 +206,13 @@ func (m *Model) spanAt(lines []uv.Line, p point) (int, int) {
 	}
 	row := lines[p.y]
 	for x := min(p.x, len(row)) - 1; x >= 0; x-- {
-		if isEdge(row[x].Content) {
+		if isEdge(&row[x]) {
 			lo = x + 1
 			break
 		}
 	}
 	for x := p.x + 1; x < len(row); x++ {
-		if isEdge(row[x].Content) {
+		if isEdge(&row[x]) {
 			hi = x
 			break
 		}
@@ -335,8 +349,7 @@ func wordAt(lines []uv.Line, p point) (int, int, bool) {
 	}
 	row := lines[p.y]
 	blank := func(x int) bool {
-		c := row[x].Content
-		return c == " " || isEdge(c)
+		return row[x].Content == " " || isEdge(&row[x])
 	}
 	if blank(p.x) {
 		return 0, 0, false
