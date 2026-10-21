@@ -397,7 +397,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toastDoneMsg:
 		m.toastDone(msg)
 	case copyFailedMsg:
-		return m, m.alertProblem(m.sel, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
+		return m, m.alertProblem(msg.key, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
 	case tea.MouseWheelMsg:
 		m.clearSelection() // the text under it moves
 		m.wheel(msg.Mouse())

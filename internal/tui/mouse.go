@@ -156,7 +156,7 @@ func (m *Model) copySelection() tea.Cmd {
 	if n == 1 {
 		what = "Copied " + quoteShort(text) + "."
 	}
-	return tea.Batch(copyText(text), m.alert(m.sel, what))
+	return tea.Batch(copyText(m.sel, text), m.alert(m.sel, what))
 }
 
 // plural is n and noun, with an s when n is not one.

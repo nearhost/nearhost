@@ -224,7 +224,7 @@ func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 	systemClipboard = func(text string) error { got = append(got, text); return nil }
 	t.Cleanup(func() { systemClipboard = old })
 	var osc52 []string
-	for _, c := range copyText("ssh mini")().(tea.BatchMsg) {
+	for _, c := range copyText(homeKey, "ssh mini")().(tea.BatchMsg) {
 		if s := clipboardOf(c); s != "" {
 			osc52 = append(osc52, s)
 		}
@@ -235,10 +235,14 @@ func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 	// A tool that fails says so, as OSC 52 cannot.
 	systemClipboard = func(string) error { return errBoom }
 	m := sized(newFake(t, sampleConfig()))
-	for _, c := range copyText("x")().(tea.BatchMsg) {
+	key := rowKey(rowProject, "website")
+	for _, c := range copyText(key, "x")().(tea.BatchMsg) {
 		run(m, c)
 	}
 	wantScreen(t, m, "Could not copy to the clipboard: boom.")
+	if es := m.logs.entries(key, ""); len(es) == 0 || !strings.HasPrefix(es[len(es)-1].text, "Could not copy") {
+		t.Error("the failure is not in the log of the row that copied")
+	}
 }
 
 // A clipboard tool that fails, as wl-copy does outside Wayland, gives way

@@ -9,23 +9,26 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// copyText puts text on the clipboard two ways: OSC 52, which the terminal
+// copyText puts text from the row key on the clipboard two ways: OSC 52, which the terminal
 // handles, and the system's own tool, as Nearhost runs on the machine whose
 // clipboard it is. Terminal.app has no OSC 52, and iTerm2 has it off unless
 // it is allowed; the tool covers those, and OSC 52 covers a machine without
 // one.
-func copyText(text string) tea.Cmd {
+func copyText(key, text string) tea.Cmd {
 	return tea.Batch(tea.SetClipboard(text), func() tea.Msg {
 		if err := systemClipboard(text); err != nil {
-			return copyFailedMsg{err}
+			return copyFailedMsg{key, err}
 		}
 		return nil
 	})
 }
 
-// copyFailedMsg says the system's clipboard tool failed. OSC 52 may still
-// have copied, which nothing can tell.
-type copyFailedMsg struct{ err error }
+// copyFailedMsg says the system's clipboard tool failed on a copy from the
+// row key. OSC 52 may still have copied, which nothing can tell.
+type copyFailedMsg struct {
+	key string
+	err error
+}
 
 // systemClipboard copies text with pbcopy on macOS, or elsewhere with the
 // first of wl-copy, xclip and xsel that works. Tests replace it, so they

@@ -194,9 +194,9 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 			a := shown[at].req
 			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				return tea.Batch(copyText(curlForExchange(ex)), note)
+				return tea.Batch(copyText(v.key, curlForExchange(ex)), note)
 			}
-			return tea.Batch(copyText(curlFor(*a)), note)
+			return tea.Batch(copyText(v.key, curlFor(*a)), note)
 		}
 	case "v":
 		v.reveal = !v.reveal

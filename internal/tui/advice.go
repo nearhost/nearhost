@@ -142,7 +142,7 @@ func (m *Model) copyAdvice(name string) tea.Cmd {
 	if len(snippets) == 0 {
 		return m.alertProblem(key, name+" has no advice to copy.")
 	}
-	return tea.Batch(copyText(strings.Join(snippets, "\n\n")), m.alert(key, "Copied the advice for "+name+"."))
+	return tea.Batch(copyText(key, strings.Join(snippets, "\n\n")), m.alert(key, "Copied the advice for "+name+"."))
 }
 
 // colourWarnEdge draws the edge of a piece of advice.
