@@ -180,6 +180,8 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 		{"invalid config", &config.Config{Projects: []config.Project{web, dup}}, "", nil, []string{"config.yaml", "alias", `"web"`, `"dup"`}},
 		{"bad port", &config.Config{Projects: []config.Project{web}}, "", []string{"--https-port", "70000"}, []string{"--https-port"}},
 		{"same ports", &config.Config{Projects: []config.Project{web}}, "", []string{"--https-port", "8443", "--http-port", "8443"}, []string{"must differ"}},
+		{"bad web port", &config.Config{Projects: []config.Project{web}}, "", []string{"--web-port", "-1"}, []string{"--web-port", "0 for none"}},
+		{"web port on the https port", &config.Config{Projects: []config.Project{web}}, "", []string{"--https-port", "8443", "--web-port", "8443"}, []string{"--web-port must differ"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

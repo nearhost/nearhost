@@ -179,6 +179,9 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 
 	ctx := cmd.Context()
 	checks = append(checks, checkPort(ctx, b, flags.httpsPort, "--https-port", true), checkPort(ctx, b, flags.httpPort, "--http-port", false))
+	if flags.webPort != 0 {
+		checks = append(checks, checkPort(ctx, b, flags.webPort, "--web-port", false))
+	}
 	if low := min(flags.httpsPort, flags.httpPort); b.goos == "linux" && low < 1024 {
 		lv, detail := b.lowPorts(low)
 		c := check{name: "privileged ports", level: lv, detail: detail}

@@ -39,6 +39,9 @@ type Options struct {
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
+	// WebPort is a port of the proxy's own that always serves Nearhost's
+	// page, its web interface, at https://localhost:<port>. 0 means none.
+	WebPort int
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
 	Capture bool
@@ -215,7 +218,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
 		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
+		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
 		connectWait: 30 * time.Second,
 		holderOf:    PortHolder,
 		hostsTurn:   make(chan struct{}, 1),
@@ -305,9 +308,10 @@ func (e *Engine) Config() *config.Config {
 }
 
 // Start prepares the engine: it creates the run directory, checks that the
-// proxy's HTTPS and HTTP ports can be bound (the HTTPS port on UDP as well),
-// and loads the proxy with no sites, which creates the local CA and listens
-// on both ports to serve Nearhost's own page at localhost. If a port is
+// proxy's HTTPS and HTTP ports, and any web port, can be bound (the HTTPS
+// port on UDP as well), and loads the proxy with no sites, which creates the
+// local CA and listens on every port to serve Nearhost's own page at
+// localhost. If a port is
 // taken it returns an error naming the port and the engine stays unstarted;
 // Start can then be called again. Starting a started engine does nothing.
 func (e *Engine) Start(ctx context.Context) error {
@@ -325,7 +329,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := differentProxyPorts(e.opts.HTTPSPort, e.opts.HTTPPort); err != nil {
+	if err := differentProxyPorts(e.opts.HTTPSPort, e.opts.HTTPPort, e.opts.WebPort); err != nil {
 		return err
 	}
 	if e.opts.RunDir != "" {
@@ -339,6 +343,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
+	}
+	if e.opts.WebPort != 0 {
+		if err := e.probePort(ctx, "Web interface", e.opts.WebPort, 0); err != nil {
+			return err
+		}
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
 	e.applyMu.Lock()
@@ -355,10 +364,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// differentProxyPorts refuses the same port for HTTPS and HTTP (0 standing
-// for 443 and 80). Each can be bound by itself, so the probes would pass, but
-// the proxy cannot serve both on one port and no site could be published.
-func differentProxyPorts(httpsPort, httpPort int) error {
+// differentProxyPorts refuses the same port for any two of HTTPS, HTTP and
+// the web interface (0 standing for 443 and 80, and for no web port). Each
+// can be bound by itself, so the probes would pass, but the proxy cannot
+// serve two of them on one port and no site could be published.
+func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 	if httpsPort == 0 {
 		httpsPort = 443
 	}
@@ -367,6 +377,9 @@ func differentProxyPorts(httpsPort, httpPort int) error {
 	}
 	if httpsPort == httpPort {
 		return fmt.Errorf("the HTTPS and HTTP ports must differ (both are %d)", httpPort)
+	}
+	if webPort == httpsPort || webPort == httpPort {
+		return fmt.Errorf("the web interface port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
 	}
 	return nil
 }

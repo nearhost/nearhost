@@ -89,6 +89,19 @@ func doctorConfig(t *testing.T) string {
 	return path
 }
 
+// --web-port 0 serves no web port, so there is none to check.
+func TestDoctorSkipsTheWebPortWhenThereIsNone(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--web-port", "0")
+	if err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "6327") || strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80" {
+		t.Errorf("ports probed: %v\n%s", f.probed, out)
+	}
+}
+
 func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 	path := doctorConfig(t)
 	f := healthy()
@@ -100,6 +113,7 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 		"ok    config           " + path + "\n" +
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
+		"ok    port 6327        free\n" +
 		"ok    local CA         trusted by the system trust store\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"ok    hosts block      2 names\n" +
@@ -109,7 +123,7 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 	if out != want {
 		t.Fatalf("doctor printed:\n%s\nwant:\n%s", out, want)
 	}
-	if strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80" {
+	if strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80; tcp 6327" {
 		t.Errorf("ports probed: %v", f.probed)
 	}
 	if want := filepath.Join(filepath.Dir(path), "caddy"); len(f.trust.rootDirs) != 1 || f.trust.rootDirs[0] != want {
@@ -318,6 +332,7 @@ func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 		"FAIL  config           " + path + ": project \"broken\" uses unknown server \"gone\"\n      fix: edit " + path + "\n" +
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
+		"ok    port 6327        free\n" +
 		"ok    local CA         trusted by the system trust store\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"warn  hosts block      " + unread +

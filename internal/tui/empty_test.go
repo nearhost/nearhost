@@ -45,6 +45,26 @@ func TestFirstRunScreen(t *testing.T) {
 	if s := screen(m); strings.Contains(s, "home") || strings.Contains(s, "│") {
 		t.Errorf("the first-run screen has a sidebar:\n%s", s)
 	}
+	if strings.Contains(screen(m), "web UI") {
+		t.Error("the web UI is linked before the proxy has started")
+	}
+	run(m, func() tea.Msg { return startedMsg{} })
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "web UI    https://localhost:6327")
+	if !strings.Contains(m.View().Content, "\x1b]8;;https://localhost:6327") {
+		t.Error("the web UI address is not a link")
+	}
+}
+
+// With no web port, there is nothing to link to.
+func TestFirstRunScreenWithoutAWebPort(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	f.webPort = 0
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{} })
+	wantScreen(t, m, "proxy     ● https :443 · http :80")
+	if strings.Contains(screen(m), "web UI") {
+		t.Errorf("the web UI is linked without a web port:\n%s", screen(m))
+	}
 }
 
 // Where the terminal says its cells are about twice as tall as usual, the

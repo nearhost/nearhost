@@ -86,7 +86,7 @@ footer {
     <span class="wordmark">nearhost</span>
   </div>
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
-  <p>Nearhost is running on this machine. Your projects are served at their own names; this page answers at localhost when no project uses it.</p>
+  <p>Nearhost is running on this machine. Your projects are served at their own names; this page answers at localhost when no project uses it{{if .WebPort}}, and at localhost:{{.WebPort}} always{{end}}.</p>
   <nav aria-label="Nearhost links">
     <a href="https://nearhost.dev">Website</a>
     <a href="https://nearhost.dev/docs/">Docs</a>

@@ -236,6 +236,8 @@ func (u *uiEngine) ConfigPath() string { return u.path }
 
 func (u *uiEngine) Ports() (int, int) { return u.flags.httpsPort, u.flags.httpPort }
 
+func (u *uiEngine) WebPort() int { return u.flags.webPort }
+
 func (u *uiEngine) CATrusted() bool { return untrustedCA(u.b.up.trust, u.storage) == "" }
 
 func (u *uiEngine) CAExpires() time.Time {

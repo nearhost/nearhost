@@ -67,8 +67,11 @@ func TestHomeShowsTheMachine(t *testing.T) {
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "proxy     ● https :443 · http :80", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 names", "config    "+f.path,
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "web UI    https://localhost:6327", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 names", "config    "+f.path,
 		"running   1 of 3 projects on 1 of 2 servers")
+	if !strings.Contains(m.View().Content, "\x1b]8;;https://localhost:6327") {
+		t.Error("the web UI address is not a link")
+	}
 }
 
 func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
@@ -78,6 +81,9 @@ func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
 		t.Error("projects were started without a proxy")
 	}
 	wantScreen(t, m, "proxy     ● down", "● proxy  down", "why       boom", "The proxy could not start: boom")
+	if strings.Contains(screen(m), "web UI") {
+		t.Error("the web UI is linked while the proxy is down")
+	}
 }
 
 func TestStartedEngineStartsEveryEnabledProject(t *testing.T) {

@@ -73,10 +73,15 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
+// defaultWebPort is where the web interface is served,
+// https://localhost:6327: NEAR on a phone keypad.
+const defaultWebPort = 6327
+
 // serveFlags are shared by up and doctor.
 type serveFlags struct {
 	httpsPort int
 	httpPort  int
+	webPort   int // 0 serves no web port
 	noHosts   bool
 	noCapture bool
 }
@@ -84,6 +89,7 @@ type serveFlags struct {
 func (f *serveFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.httpsPort, "https-port", 443, "port for https://<alias>")
 	cmd.Flags().IntVar(&f.httpPort, "http-port", 80, "port that redirects to https")
+	cmd.Flags().IntVar(&f.webPort, "web-port", defaultWebPort, "port for the web interface at https://localhost:<port>; 0 for none")
 	cmd.Flags().BoolVar(&f.noHosts, "no-hosts", false, "do not manage /etc/hosts")
 }
 
@@ -103,6 +109,12 @@ func (f *serveFlags) validate() error {
 	}
 	if f.httpsPort == f.httpPort {
 		return fmt.Errorf("--https-port and --http-port must differ (both are %d)", f.httpPort)
+	}
+	if f.webPort < 0 || f.webPort > 65535 {
+		return fmt.Errorf("--web-port must be between 1 and 65535, or 0 for none, not %d", f.webPort)
+	}
+	if f.webPort == f.httpsPort || f.webPort == f.httpPort {
+		return fmt.Errorf("--web-port must differ from --https-port and --http-port (it is %d)", f.webPort)
 	}
 	return nil
 }

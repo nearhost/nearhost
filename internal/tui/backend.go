@@ -44,6 +44,9 @@ type Backend interface {
 	StopProject(ctx context.Context, name string) error
 	// Ports are the proxy's HTTPS and HTTP ports.
 	Ports() (https, http int)
+	// WebPort is the port the web interface is served on, at
+	// https://localhost:<port>; 0 when there is none.
+	WebPort() int
 	// CATrusted reports whether the system trusts the local CA.
 	CATrusted() bool
 	// CAExpires is when the local CA's root certificate expires; zero when

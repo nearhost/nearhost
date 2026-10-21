@@ -121,6 +121,7 @@ func TestDoctorProjectSection(t *testing.T) {
 		"ok    config           " + path + "\n" +
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
+		"ok    port 6327        free\n" +
 		"ok    local CA         trusted by the system trust store\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"ok    hosts block      3 names\n" +
@@ -265,7 +266,7 @@ func TestDoctorJSON(t *testing.T) {
 	for _, c := range got.Checks {
 		levels[c.Name] = c.Level
 	}
-	if levels["port 443"] != "ok" || levels["browser stores"] != "warn" || levels["port 80"] != "fail" || len(levels) != 6 {
+	if levels["port 443"] != "ok" || levels["browser stores"] != "warn" || levels["port 80"] != "fail" || levels["port 6327"] != "ok" || len(levels) != 7 {
 		t.Errorf("check levels %v", levels)
 	}
 	for _, c := range got.Checks {

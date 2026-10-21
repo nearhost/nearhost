@@ -20,6 +20,7 @@ import (
 // fakeBackend records what the interface asks of it.
 type fakeBackend struct {
 	mu        sync.Mutex
+	webPort   int
 	cfg       *config.Config
 	path      string
 	bus       *engine.Bus
@@ -55,7 +56,7 @@ func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
 	return &fakeBackend{
 		cfg: cfg, path: filepath.Join(t.TempDir(), "config.yaml"), bus: engine.NewBus(),
 		states: map[string]engine.ProjectStatus{}, servers: map[string]transport.Status{},
-		srvErrs: map[string]string{}, health: map[string]engine.ServerHealth{}, trusted: true,
+		srvErrs: map[string]string{}, health: map[string]engine.ServerHealth{}, trusted: true, webPort: 6327,
 	}
 }
 
@@ -146,6 +147,8 @@ func (f *fakeBackend) StopProject(_ context.Context, name string) error {
 	return nil
 }
 func (f *fakeBackend) Ports() (int, int) { return 443, 80 }
+
+func (f *fakeBackend) WebPort() int { return f.webPort }
 func (f *fakeBackend) CAExpires() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
