@@ -1,0 +1,32 @@
+internal/tui/home.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 173
+internal/tui/clipboard.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 1-40
+internal/tui/fake_test.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 210-214
+internal/tui/logview.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 197,199
+internal/tui/mouse_test.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 45
+  s_97d6a9a0f6828b::t_c3cf4f27a456ec 190-210
+internal/tui/advice.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 147
+internal/tui/mouse.go
+  s_97d6a9a0f6828b::t_b226bf3170fdb1 157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd17024b81e208618660311b4793d838edc873b4",
+  "prompts": {},
+  "sessions": {
+    "s_97d6a9a0f6828b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57996611-a4a8-4725-97ac-1660bfc58ed8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
