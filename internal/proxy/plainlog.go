@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -85,11 +86,30 @@ func Level(line string) string {
 	return l.Level
 }
 
+// quietMessages are messages of the proxy that only report how Nearhost
+// configures it, so showing them tells the user nothing to act on.
+var quietMessages = []string{
+	// Nearhost turns Caddy's admin endpoint off on purpose (see BuildConfig),
+	// and Caddy warns about that on every load.
+	"admin endpoint disabled",
+}
+
+// quiet reports whether line is a log line of the proxy whose message is
+// one of quietMessages.
+func quiet(line string) bool {
+	l, ok := parse(line)
+	return ok && slices.Contains(quietMessages, l.Msg)
+}
+
 // PlainLog turns a log line of the proxy, which writes JSON, into a short
 // plain one: "GET /path 200 in 12ms" for a handled request, otherwise
 // "<level>: <message>", followed by the request it is about when there is
-// one. Any other line is returned as it is.
+// one. A routine message (see quietMessages) becomes "". Any other line is
+// returned as it is.
 func PlainLog(line string) string {
+	if quiet(line) {
+		return ""
+	}
 	l, ok := parse(line)
 	if !ok {
 		return line

@@ -97,6 +97,9 @@ type lineWriter struct {
 // send passes one line to the sink, under the alias it carries when this is
 // the access writer.
 func (l *lineWriter) send(line string) {
+	if quiet(line) {
+		return // a routine message, for no sink to show
+	}
 	if !l.access {
 		emit(l.alias, line)
 		return

@@ -571,3 +571,23 @@ func TestDoctorFixesStartCapitalised(t *testing.T) {
 		t.Errorf("saw %d fixes, want the scenario to produce several:\n%s", n, out)
 	}
 }
+
+// A failed check is said once, in the report's summary. Main adds nothing
+// after it but the exit code.
+func TestDoctorFailureSummaryOnce(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.portErr = map[string]error{"tcp 8080": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	var stderr strings.Builder
+	code := exitCode(err, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if n := strings.Count(out+stderr.String(), "1 check failed"); n != 1 {
+		t.Errorf("the summary appears %d times, want once:\n%s\nstderr: %s", n, out, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("Main printed %q after the report", stderr.String())
+	}
+}
