@@ -94,8 +94,9 @@ type projectForm struct {
 	proposed bool
 	// lastErr is the last error the form showed, kept for the decline:
 	// going back a step clears err.
-	lastErr string
-	missing map[int]bool // saved routes no longer found, by port; shown, not saved
+	lastErr  string
+	missing  map[int]bool     // saved routes no longer found, by port; shown, not saved
+	setAside map[int][]string // hosts of routes made other than web, by port, back when made web again
 
 	enabled []string // the presets enabled here
 	notes   []string // what the registry, discovery and presets had to say
@@ -674,17 +675,30 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 		f.cycleRole(f.routeRow, -1)
 		f.err = ""
 	case "enter":
-		web := 0
+		// More than one web route is allowed when all but one have hosts
+		// of their own; the one without is the primary, served at the alias.
+		web, bare := 0, []string{}
 		for _, r := range f.routes {
 			if r.Role == config.RoleWeb {
 				web++
+				if len(r.Hosts) == 0 {
+					bare = append(bare, strconv.Itoa(r.Port))
+				}
 			}
 		}
-		// More than one web route is allowed: a second one is kept when it
-		// has hosts of its own, and Validate on save says what is amiss.
-		if web == 0 {
+		switch {
+		case web == 0:
 			f.err = "choose the web route with ← or →"
 			return nil
+		case len(bare) > 1:
+			ports := strings.Join(bare[:len(bare)-1], ", ") + " and " + bare[len(bare)-1]
+			f.err = "only one web route can go without names of its own, and ports " + ports + " have none; change one with ← or →, or give it names with h"
+			return nil
+		case len(bare) == 1:
+			p, _ := strconv.Atoi(bare[0])
+			selected := f.routes[f.routeRow].Port
+			f.routes = config.MovePrimary(f.routes, p)
+			f.routeRow = routeAt(f.routes, selected)
 		}
 		f.err, f.step = "", projectStepDetails
 	}
@@ -803,11 +817,15 @@ func (f *projectForm) cycleRole(i, step int) {
 }
 
 // toggleRoute serves an ignored route, as loopback, or web on this
-// machine, and ignores one that is served. The web route stays: a project
-// needs one, so another is made web first.
+// machine, and ignores one that is served. The only web route stays: a
+// project needs one, so another is made web first.
 func (f *projectForm) toggleRoute(i int) {
 	switch f.routes[i].Role {
 	case config.RoleWeb:
+		if slices.ContainsFunc(f.routes, func(r config.Route) bool { return r.Port != f.routes[i].Port && r.Role == config.RoleWeb }) {
+			f.setRole(i, config.RoleIgnore)
+			break
+		}
 		f.err = "a project needs its web route; make another route web with ← or → first"
 		return
 	case config.RoleIgnore:
@@ -818,15 +836,53 @@ func (f *projectForm) toggleRoute(i int) {
 	f.err = ""
 }
 
-// setRole gives route i role, as config.SetRole does: a route made web
-// takes the place of the web routes without hosts, and one made anything
-// else loses its hosts. The cursor follows the route when it moves.
+// setRole gives route i role. Unlike config.SetRole, other web routes stay
+// web, so cycling a route through the roles changes nothing else; enter
+// says when two web routes have no hosts. A route made anything else sets
+// its hosts aside, which only a web route has, and gets back those still
+// free when made web again. A route made web without hosts becomes the
+// primary. The cursor follows the route when it moves.
 func (f *projectForm) setRole(i int, role config.Role) {
 	port := f.routes[i].Port
-	f.routes = config.SetRole(f.routes, port, role)
+	f.routes = append([]config.Route(nil), f.routes...)
+	r := &f.routes[i]
+	switch {
+	case role != config.RoleWeb && len(r.Hosts) > 0:
+		if f.setAside == nil {
+			f.setAside = map[int][]string{}
+		}
+		f.setAside[port], r.Hosts = r.Hosts, nil
+	case role == config.RoleWeb && len(r.Hosts) == 0:
+		r.Hosts = f.freeHosts(i, f.setAside[port])
+		delete(f.setAside, port)
+	}
+	r.Role = role
+	if role == config.RoleWeb && len(r.Hosts) == 0 {
+		f.routes = config.MovePrimary(f.routes, port)
+	}
 	if f.routeRow == i {
 		f.routeRow = routeAt(f.routes, port)
 	}
+}
+
+// freeHosts are those of hosts on no route but i and not the alias, as a
+// host is served once.
+func (f *projectForm) freeHosts(i int, hosts []string) []string {
+	taken := map[string]bool{strings.ToLower(strings.TrimSpace(f.alias.value)): true}
+	for j, r := range f.routes {
+		if j != i {
+			for _, h := range r.Hosts {
+				taken[strings.ToLower(h)] = true
+			}
+		}
+	}
+	var free []string
+	for _, h := range hosts {
+		if !taken[strings.ToLower(h)] {
+			free = append(free, h)
+		}
+	}
+	return free
 }
 
 // routeAt is the index of the route on port in routes, or 0.
@@ -1021,6 +1077,7 @@ func (f *projectForm) discover() tea.Cmd {
 // saved primary.
 func (f *projectForm) toRoutes() {
 	f.routes = append([]config.Route(nil), f.draft.Routes...)
+	f.setAside = nil
 	if f.edit != nil {
 		saved, wasSaved := map[int]config.Route{}, map[int]bool{}
 		savedWeb, primary := false, 0
@@ -1527,6 +1584,10 @@ func (f *projectForm) roleLine(alias string) string {
 	case config.RoleWeb:
 		names := f.webNames(f.routeRow, alias)
 		more := " One port is the project's web port. To serve another port as well, give it names of its own with h."
+		primary := f.routeRow == slices.IndexFunc(f.routes, func(r config.Route) bool { return r.Role == config.RoleWeb })
+		if len(names) == 0 && !primary {
+			return styleAmber.Render("web: port " + port + " has no names of its own, and only one web route can go without, served at the alias. Give it names with h, or change its role with ← or →.")
+		}
 		if len(names) == 0 {
 			return styleDim.Render("web: Nearhost serves port " + port + " " + clean(where) + " at the project's alias, which the next step sets." + more)
 		}
