@@ -130,3 +130,14 @@ func TestTallCellsDropTheGapsBetweenSections(t *testing.T) {
 		t.Errorf("with tall cells a blank line comes before the log:\n%s", screen(m))
 	}
 }
+
+// The too-small message wraps in windows narrower than itself.
+func TestTooSmallMessageFits(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 30, Height: 10})
+	for i, l := range strings.Split(screen(m), "\n") {
+		if w := ansi.StringWidth(l); w > 30 {
+			t.Errorf("line %d is %d cells wide: %q", i, w, l)
+		}
+	}
+}

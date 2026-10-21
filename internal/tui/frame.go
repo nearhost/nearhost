@@ -51,7 +51,7 @@ func (m *Model) bodyHeight() int { return m.height - bodyTop - 1 - m.footerHeigh
 // footerHeight is the number of rows the footer takes.
 func (m *Model) footerHeight() int {
 	if m.showHelp {
-		return helpRows()
+		return helpRows(m.width)
 	}
 	return 1
 }
@@ -162,6 +162,7 @@ func (m *Model) columns() []string {
 
 // tooSmall is the screen drawn in a window smaller than the interface needs.
 func (m *Model) tooSmall() string {
+	msg := fmt.Sprintf("Make the window larger (%d×%d or more).", minWidth, minHeight)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-		fmt.Sprintf("Make the window larger (%d×%d or more).", minWidth, minHeight))
+		lipgloss.NewStyle().Width(max(m.width, 1)).Render(msg))
 }

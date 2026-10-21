@@ -18,7 +18,7 @@ func TestFullHelp(t *testing.T) {
 	if len(lines) != 30 {
 		t.Fatalf("drew %d lines in a 30-line window", len(lines))
 	}
-	help := strings.Join(lines[30-helpRows():], "\n")
+	help := strings.Join(lines[30-helpRows(m.width):], "\n")
 	for _, want := range []string{"move", "project", "server", "nearhost", "j/k    up and down", "enter  start or stop", "r      reconnect", "o      open in browser", "q      quit",
 		"move · mouse", "drag   copy text", "2click copy a word", "click  open an address"} {
 		if !strings.Contains(help, want) {
@@ -60,5 +60,25 @@ func TestNarrowFooter(t *testing.T) {
 	wantScreen(t, m, " enter start · o open · e edit · d remove · l log · / filter · ? more", "2/3 ")
 	if m.footerKeyAt(m.width-5) != "" {
 		t.Error("a click on the place took a key")
+	}
+}
+
+// No description is cut short, in whatever columns the window has room for.
+func TestHelpOverlayNoCutDescriptions(t *testing.T) {
+	for _, w := range []int{80, 100, 120} {
+		m := New(newFake(t, sampleConfig()), "/work/here")
+		m.Update(tea.WindowSizeMsg{Width: w, Height: 40})
+		press(m, "?")
+		out := screen(m)
+		if strings.Contains(out, "…") {
+			t.Errorf("width %d cut a description:\n%s", w, out)
+		}
+		for _, g := range helpGroups {
+			for _, b := range g.keys {
+				if !strings.Contains(out, b.Help().Desc) {
+					t.Errorf("width %d lacks %q", w, b.Help().Desc)
+				}
+			}
+		}
 	}
 }
