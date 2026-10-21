@@ -1,14 +1,19 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -64,6 +69,35 @@ func (m *Model) webLines(width int) []string {
 	return field("page", styleBeacon.Underline(true).Hyperlink(url).Render(url), width)
 }
 
+// goos is the operating system, a var so tests can pick one.
+var goos = runtime.GOOS
+
+// executable is the path of the running binary, or "" if unknown; a var so
+// tests can replace it.
+var executable = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
+}
+
+// proxyFix is what to do about the proxy being down, for the reason it is
+// down: setcap on Linux when the port needs a privilege, the program using
+// the port when it is taken. Caddy can return the error as text with the
+// errno lost, so the message is the fallback.
+func proxyFix(err error, goos, exe string) string {
+	const ports = "pass --https-port and --http-port."
+	denied := errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "permission denied")
+	if denied && goos == "linux" {
+		return doctor.SetcapFix(exe)
+	}
+	if denied {
+		return "Run nearhost as a user that may bind the port, or " + ports
+	}
+	return "Quit the program using the port, or " + ports
+}
+
 // problem is something that needs the user: what it is, why, what to do,
 // and what it stops.
 type problem struct {
@@ -80,7 +114,7 @@ func (m *Model) problems() []problem {
 	var out []problem
 	if m.proxyErr != nil {
 		out = append(out, problem{dot: seg{styleRed, "●"}, title: "proxy", what: "down", why: m.proxyErr.Error(),
-			fix: "Quit the program using the port, or run nearhost with --https-port and --http-port."})
+			fix: proxyFix(m.proxyErr, goos, executable())})
 	}
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)

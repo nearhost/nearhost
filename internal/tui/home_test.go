@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -97,5 +101,30 @@ func TestConnectedServerHidesItsOldError(t *testing.T) {
 	m.sel = rowKey(rowServer, "vps")
 	if s := screen(m); strings.Contains(s, "Permission denied") || strings.Contains(s, "fix ") {
 		t.Errorf("a connected server shows its old error:\n%s", s)
+	}
+}
+
+// The fix for a proxy that is down matches why it is down.
+func TestProxyFix(t *testing.T) {
+	denied := fmt.Errorf("start proxy: listen tcp :443: bind: %w", syscall.EACCES)
+	text := errors.New("start proxy: listen tcp :443: bind: permission denied")
+	busy := fmt.Errorf("start proxy: listen tcp :443: bind: %w", syscall.EADDRINUSE)
+	const ports = "pass --https-port and --http-port."
+	cases := []struct {
+		name string
+		err  error
+		goos string
+		want string
+	}{
+		{"denied on linux", denied, "linux", doctor.SetcapFix("/usr/bin/nearhost")},
+		{"denied as text on linux", text, "linux", doctor.SetcapFix("/usr/bin/nearhost")},
+		{"denied on darwin", denied, "darwin", "Run nearhost as a user that may bind the port, or " + ports},
+		{"in use", busy, "linux", "Quit the program using the port, or " + ports},
+	}
+	for _, c := range cases {
+		got := proxyFix(c.err, c.goos, "/usr/bin/nearhost")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: proxyFix = %q, want it to contain %q", c.name, got, c.want)
+		}
 	}
 }

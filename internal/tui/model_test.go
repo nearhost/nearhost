@@ -444,7 +444,7 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		m := sized(f)
 		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
 		wantScreen(t, m, "● proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
-			"fix       Quit the program using the port, or run", "http-port.")
+			"fix       Quit the program using the port, or pass", "http-port.")
 	}
 }
 
