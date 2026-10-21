@@ -93,22 +93,44 @@ type cache struct {
 	Latest    string    `json:"latest,omitempty"`
 }
 
-// Cached is Latest, answered from the cache when it is less than TTL old.
-func (c Checker) Cached(ctx context.Context) (string, error) {
+// fresh reads the cache and reports it, with whether it is less than TTL old.
+func (c Checker) fresh() (cache, bool) {
+	if c.CachePath == "" {
+		return cache{}, false
+	}
 	now := time.Now
 	if c.Now != nil {
 		now = c.Now
 	}
-	if c.CachePath != "" {
-		if data, err := os.ReadFile(c.CachePath); err == nil {
-			var kept cache
-			if json.Unmarshal(data, &kept) == nil && now().Sub(kept.CheckedAt) < TTL && !now().Before(kept.CheckedAt) {
-				if kept.Latest == "" {
-					return "", errors.New("the last check for a newer nearhost failed")
-				}
-				return kept.Latest, nil
-			}
+	data, err := os.ReadFile(c.CachePath)
+	if err != nil {
+		return cache{}, false
+	}
+	var kept cache
+	if json.Unmarshal(data, &kept) != nil || now().Sub(kept.CheckedAt) >= TTL || now().Before(kept.CheckedAt) {
+		return cache{}, false
+	}
+	return kept, true
+}
+
+// HasFresh reports whether the cache holds a check less than TTL old, a
+// failed one included, so Cached would answer without asking GitHub.
+func (c Checker) HasFresh() bool {
+	_, ok := c.fresh()
+	return ok
+}
+
+// Cached is Latest, answered from the cache when it is less than TTL old.
+func (c Checker) Cached(ctx context.Context) (string, error) {
+	if kept, ok := c.fresh(); ok {
+		if kept.Latest == "" {
+			return "", errors.New("the last check for a newer nearhost failed")
 		}
+		return kept.Latest, nil
+	}
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
 	}
 	latest, err := c.Latest(ctx)
 	if c.CachePath != "" && ctx.Err() == nil {
