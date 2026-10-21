@@ -1,0 +1,67 @@
+internal/proxy/config.go
+  s_97d6a9a0f6828b::t_a34b127ea6467f 422-424
+  s_97d6a9a0f6828b::t_60378ec7025128 92-95,167-168,172-175,181,186-202,385,425,526-528
+internal/tui/model_test.go
+  s_97d6a9a0f6828b::t_a6f54271038019 70,72-74,84-86
+internal/proxy/proxy.go
+  s_97d6a9a0f6828b::t_60378ec7025128 125-127
+internal/tui/backend.go
+  s_97d6a9a0f6828b::t_b89a2a3e763751 47-49
+internal/tui/empty.go
+  s_97d6a9a0f6828b::t_e0acbefd7fa301 75
+internal/cli/root.go
+  s_97d6a9a0f6828b::t_b89a2a3e763751 76-79,84,92,113-118
+internal/tui/empty_test.go
+  s_97d6a9a0f6828b::t_a6f54271038019 48-67
+internal/tui/fake_test.go
+  s_97d6a9a0f6828b::t_e0acbefd7fa301 23,59
+  s_97d6a9a0f6828b::t_b89a2a3e763751 150-151
+internal/cli/up.go
+  s_97d6a9a0f6828b::t_b89a2a3e763751 327
+internal/proxy/proxy_test.go
+  s_97d6a9a0f6828b::t_201f10860fb5dc 181,194-200,204,207-208,1161-1196
+  s_97d6a9a0f6828b::t_6d6fad685047a0 1197
+internal/engine/engine_test.go
+  s_97d6a9a0f6828b::t_16fa38f52f2e80 1928-1930,1932-1933
+  s_97d6a9a0f6828b::t_e4326163d6349c 1466-1468,1487-1488,1490-1492
+internal/cli/doctor_test.go
+  s_97d6a9a0f6828b::t_897b08b49ab7e1 116,126,335
+  s_97d6a9a0f6828b::t_a6f54271038019 92-104
+internal/engine/engine.go
+  s_97d6a9a0f6828b::t_7c34561010e99f 312-314
+  s_97d6a9a0f6828b::t_16fa38f52f2e80 42-44,221,311,332,347-351,367-371,381-383
+internal/proxy/home/index.html
+  s_97d6a9a0f6828b::t_73d623a880ab40 89
+internal/cli/doctor.go
+  s_97d6a9a0f6828b::t_b89a2a3e763751 182-184
+internal/tui/home.go
+  s_97d6a9a0f6828b::t_e0acbefd7fa301 35,57-64
+  s_97d6a9a0f6828b::t_e4a1eca2438814 65-66
+internal/proxy/config_test.go
+  s_97d6a9a0f6828b::t_201f10860fb5dc 669-703,712-718
+  s_97d6a9a0f6828b::t_3274a6edfa26dc 704-711
+internal/cli/ui.go
+  s_97d6a9a0f6828b::t_b89a2a3e763751 239-240
+internal/cli/doctor_projects_test.go
+  s_97d6a9a0f6828b::t_897b08b49ab7e1 124,269
+internal/proxy/home.go
+  s_97d6a9a0f6828b::t_60378ec7025128 17-18,39-40,47-49,63-64,71-74
+internal/cli/up_test.go
+  s_97d6a9a0f6828b::t_a6f54271038019 183-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "95e2c04269d17d3a909ae8bb4d671a62241fd269",
+  "prompts": {},
+  "sessions": {
+    "s_97d6a9a0f6828b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57996611-a4a8-4725-97ac-1660bfc58ed8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
