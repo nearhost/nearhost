@@ -1,0 +1,23 @@
+internal/hosts/resolve.go
+  s_e8c5d245e902d9::t_10e7e3097fd50c 31-38,42-44,55-56
+  s_e8c5d245e902d9::t_88cd6b7ecf6b00 57
+internal/hosts/resolve_test.go
+  s_e8c5d245e902d9::t_ed2eb789d47927 75-76,218-235
+  s_e8c5d245e902d9::t_d3a78ea273b393 236-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f217888c92b60906281a65df700ba86e9fdaf021",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
