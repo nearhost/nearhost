@@ -1,7 +1,7 @@
 .PHONY: build test vet
 
 build:
-	go build -o nearhost ./cmd/nearhost
+	go build -x -o nearhost ./cmd/nearhost
 
 test:
 	go test ./...
