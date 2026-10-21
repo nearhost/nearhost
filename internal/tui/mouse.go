@@ -51,10 +51,18 @@ const doubleClick = 400 * time.Millisecond
 const edge = "│"
 
 // isEdge reports whether a cell is an edge, or a scrollbar's thumb drawn
-// on one: the glyph in the colour of rules or of boxes' edges, so the same
-// glyph in a log line is text.
+// on one: the glyph in the colour of rules, of boxes' edges or of advice's
+// edges, so the same glyph in a log line is text.
 func isEdge(c *uv.Cell) bool {
-	return (c.Content == edge || c.Content == thumb) && (sameColour(c.Style.Fg, colourLine) || sameColour(c.Style.Fg, colourBoxEdge))
+	if c.Content != edge && c.Content != thumb {
+		return false
+	}
+	for _, colour := range []color.Color{colourLine, colourBoxEdge, colourWarnEdge} {
+		if sameColour(c.Style.Fg, colour) {
+			return true
+		}
+	}
+	return false
 }
 
 // sameColour reports whether a and b are the same colour.

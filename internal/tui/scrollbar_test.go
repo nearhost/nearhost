@@ -156,3 +156,17 @@ func TestThumbGlyphInTextIsNotAnEdge(t *testing.T) {
 		t.Errorf("copied %q", got)
 	}
 }
+
+// A drag inside a piece of advice keeps to its box.
+func TestDragKeepsToAnAdviceBox(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	m.selectRow(rowKey(rowProject, "myapp"))
+	m.advice["myapp"] = advice{of: entryOf(m.cfg.Projects[1]), items: []Advisory{
+		{Code: "app-url", Message: "APP_URL should be https://myapp.test.", Snippet: "APP_URL=https://myapp.test"},
+	}}
+	x, y := find(t, m, "▲ APP_URL")
+	if got := clipboard(drag(m, x, y, m.width-1, y+1)); strings.ContainsAny(got, "│╰") || !strings.HasPrefix(got, "▲ APP_URL") {
+		t.Errorf("copied %q", got)
+	}
+}
