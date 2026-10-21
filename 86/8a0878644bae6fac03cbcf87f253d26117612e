@@ -1,0 +1,21 @@
+internal/sudo/sudo.go
+  s_e8c5d245e902d9::t_18cf8f312b80c5 21,40
+internal/sudo/sudo_test.go
+  s_e8c5d245e902d9::t_9682678404fdec 9,27-30,33,38-45,174-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "868a0878644bae6fac03cbcf87f253d26117612e",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
