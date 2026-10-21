@@ -135,11 +135,11 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
 	// Caddy adds "Via: 1.1 Caddy" to the response after the proxy's own
-	// header operations, so Via is set here, deferred to when the response
-	// is written. The upstream answers over HTTP/1.1.
+	// header operations, so its entry is renamed here, deferred to when the
+	// response is written. Hops the upstream's own proxies added stay.
 	handle = append(handle, map[string]any{
 		"handler":  "headers",
-		"response": map[string]any{"set": map[string]any{"Via": []string{"1.1 " + via(opts.Version)}}, "deferred": true},
+		"response": map[string]any{"replace": viaReplace(opts.Version), "deferred": true},
 	})
 	handle = append(handle, map[string]any{
 		"handler":        "reverse_proxy",
@@ -151,13 +151,15 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 		// connections open when the proxy stops, stay open until either end
 		// closes or the delay elapses.
 		"stream_close_delay": "24h",
-		// Request operations run after Caddy adds its own Via, so this one
-		// replaces it, with the protocol the client used, as HTTP/2.0.
-		"headers": map[string]any{"request": map[string]any{"set": map[string]any{
-			"X-Forwarded-Proto": []string{"https"},
-			"X-Forwarded-For":   []string{"{http.request.remote.host}"},
-			"Via":               []string{"{http.request.proto} " + via(opts.Version)},
-		}}},
+		// Request operations run after Caddy adds its own Via, so its entry
+		// is renamed, keeping the hops before Nearhost.
+		"headers": map[string]any{"request": map[string]any{
+			"set": map[string]any{
+				"X-Forwarded-Proto": []string{"https"},
+				"X-Forwarded-For":   []string{"{http.request.remote.host}"},
+			},
+			"replace": viaReplace(opts.Version),
+		}},
 	})
 	return map[string]any{
 		// One match set, so both must hold: the host is this one and the
@@ -171,13 +173,18 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	}
 }
 
-// via is how Nearhost names itself in a Via header, after the protocol:
-// "Nearhost (0.8.0)", or "Nearhost (dev)" for a build without a version.
-func via(version string) string {
+// viaReplace renames the entry Caddy adds to Via, "1.1 Caddy", as
+// Nearhost's: "1.1 Nearhost (0.8.0)", or "(dev)" for a build without a
+// version. Caddy adds its entry as a value of its own, so the other hops'
+// values are left alone, and it keeps the protocol Caddy wrote.
+func viaReplace(version string) map[string]any {
 	if version == "" {
 		version = "dev"
 	}
-	return "Nearhost (" + version + ")"
+	return map[string]any{"Via": []any{map[string]any{
+		"search_regexp": `^(\S+) Caddy$`,
+		"replace":       "$1 Nearhost (" + version + ")",
+	}}}
 }
 
 // homeRoute is the route serving Nearhost's own page at localhost to

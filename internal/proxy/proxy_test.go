@@ -1305,22 +1305,42 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 }
 
 // Via names Nearhost and its version, not Caddy, on the request the
-// upstream gets and on the response the client gets, with the protocol of
-// each hop.
+// upstream gets and on the response the client gets, after the hops of
+// other proxies on the way, which stay.
 func TestViaNamesNearhost(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/behind" {
+			w.Header().Add("Via", "1.1 nginx")
+		}
 		io.WriteString(w, strings.Join(r.Header.Values("Via"), ", "))
 	}))
 	t.Cleanup(up.Close)
 	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up)}})
+	ours := "1.1 Nearhost (" + testVersion + ")"
 	resp, body := h.getEventually(h.client("a.test", false), "a.test", "/")
-	if want := "HTTP/1.1 Nearhost (" + testVersion + ")"; body != want {
-		t.Errorf("the upstream got Via %q, want %q", body, want)
+	if body != ours {
+		t.Errorf("the upstream got Via %q, want %q", body, ours)
 	}
-	if got, want := resp.Header.Values("Via"), []string{"1.1 Nearhost (" + testVersion + ")"}; !slices.Equal(got, want) {
-		t.Errorf("the client got Via %q, want %q", got, want)
+	if got := resp.Header.Values("Via"); !slices.Equal(got, []string{ours}) {
+		t.Errorf("the client got Via %q, want %q", got, ours)
 	}
 	if s := resp.Header.Get("Server"); s != "" {
 		t.Errorf("the client got Server %q", s)
+	}
+
+	req, _ := http.NewRequest("GET", h.url("a.test", "/behind"), nil)
+	req.Header.Add("Via", "1.0 corp-proxy")
+	resp, err := h.client("a.test", false).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if want := "1.0 corp-proxy, " + ours; string(b) != want {
+		t.Errorf("behind a proxy, the upstream got Via %q, want %q", b, want)
+	}
+	got := resp.Header.Values("Via")
+	if len(got) != 2 || !slices.Contains(got, ours) || !slices.Contains(got, "1.1 nginx") {
+		t.Errorf("behind a proxy, the client got Via %q, want ours and nginx's", got)
 	}
 }
