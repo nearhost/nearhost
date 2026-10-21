@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/sftp"
 
@@ -180,6 +181,13 @@ func (w sftpWriter) resolve(target string) (string, error) {
 	return "", fmt.Errorf("%s: too many levels of symbolic links", target)
 }
 
+// withinSFTPRoot reports whether target is root itself or inside it, using
+// slash-separated paths and whole path elements, so /proj2 is not inside /proj.
+func withinSFTPRoot(root, target string) bool {
+	root = path.Clean(root)
+	return target == root || strings.HasPrefix(target, strings.TrimSuffix(root, "/")+"/")
+}
+
 func randomSuffix() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -193,11 +201,19 @@ func randomSuffix() (string, error) {
 // dot keeps the temporary file out of the way of project tooling. The mode is
 // set explicitly because the server's umask would otherwise decide it. A
 // symlink at name is written through: the file it points to is replaced and
-// the link stays.
+// the link stays. A link that leads outside the project is refused, so a
+// cloned repository cannot aim the write at a file elsewhere on the server.
 func (w sftpWriter) WriteFile(name string, data []byte) (err error) {
 	target, err := w.resolve(path.Join(w.root, name))
 	if err != nil {
 		return err
+	}
+	root, err := w.resolve(w.root)
+	if err != nil {
+		return err
+	}
+	if !withinSFTPRoot(root, target) {
+		return fmt.Errorf("%s is a link to a file outside the project (%s)", name, target)
 	}
 	mode := defaultFileMode
 	if info, statErr := w.c.Stat(target); statErr == nil {
@@ -270,11 +286,20 @@ type dirWriter struct{ root string }
 func DirWriter(root string) FileWriter { return dirWriter{root: root} }
 
 // WriteFile follows the same temp-file-then-rename scheme as the SFTP writer,
-// including writing through a symlink at name. os.CreateTemp makes the file
-// 0600, so the mode is set before the rename.
+// including writing through a symlink at name, unless the link leads outside
+// the project, which is refused. os.CreateTemp makes the file 0600, so the
+// mode is set before the rename.
 func (w dirWriter) WriteFile(name string, data []byte) (err error) {
 	target := filepath.Join(w.root, name)
 	if resolved, evalErr := filepath.EvalSymlinks(target); evalErr == nil {
+		root, err := filepath.EvalSymlinks(w.root)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("%s is a link to a file outside the project (%s)", name, resolved)
+		}
 		target = resolved
 	}
 	mode := defaultFileMode

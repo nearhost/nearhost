@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pkg/sftp"
@@ -234,6 +235,58 @@ func checkSymlinkTarget(t *testing.T, nw newWriterFunc) {
 	}
 	checkFile(t, dest, "new\n", 0o600)
 	assertOnly(t, root, ".nearhostrc", "real.rc")
+}
+
+// checkRefusesLinkOutsideRoot links .nearhostrc to a file beside the project,
+// which a cloned repository could do to point at a shell startup file.
+func checkRefusesLinkOutsideRoot(t *testing.T, nw newWriterFunc) {
+	base := t.TempDir()
+	root := filepath.Join(base, "proj")
+	os.Mkdir(root, 0o755)
+	outside := filepath.Join(base, "outside.txt")
+	os.WriteFile(outside, []byte("keep\n"), 0o600)
+	if err := os.Symlink("../outside.txt", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n"))
+	if err == nil || !strings.Contains(err.Error(), "is a link to a file outside the project") {
+		t.Fatalf("error %v, want a link outside the project", err)
+	}
+	checkFile(t, outside, "keep\n", 0o600)
+	assertOnly(t, root, ".nearhostrc")
+}
+
+// checkWritesThroughLinkInsideRoot is the monorepo case: the link stays and
+// its target, inside the project, is replaced.
+func checkWritesThroughLinkInsideRoot(t *testing.T, nw newWriterFunc) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "config"), 0o755)
+	dest := filepath.Join(root, "config", "nearhostrc")
+	os.WriteFile(dest, []byte("old\n"), 0o644)
+	if err := os.Symlink("config/nearhostrc", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, ".nearhostrc")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", fi, err)
+	}
+	checkFile(t, dest, "new\n", 0o644)
+	assertOnly(t, filepath.Join(root, "config"), "nearhostrc")
+}
+
+func TestSFTPWriterRefusesLinkOutsideRoot(t *testing.T) {
+	checkRefusesLinkOutsideRoot(t, sftpWriterFor)
+}
+func TestSFTPWriterWritesThroughLinkInsideRoot(t *testing.T) {
+	checkWritesThroughLinkInsideRoot(t, sftpWriterFor)
+}
+func TestDirWriterRefusesLinkOutsideRoot(t *testing.T) {
+	checkRefusesLinkOutsideRoot(t, dirWriterFor)
+}
+func TestDirWriterWritesThroughLinkInsideRoot(t *testing.T) {
+	checkWritesThroughLinkInsideRoot(t, dirWriterFor)
 }
 
 func TestSFTPWriterCreatesWithMode0644(t *testing.T) { checkCreatesWithMode0644(t, sftpWriterFor) }
