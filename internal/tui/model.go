@@ -41,7 +41,8 @@ type Model struct {
 	cfg       *config.Config
 	width     int
 	height    int
-	tallCells bool   // the terminal's line height stretches cells; see cellsTall
+	tallCells bool // the terminal's line height stretches cells; see cellsTall
+	mouse     mouseState
 	sel       string // key of the selected row
 	collapsed map[string]bool
 	logs      *logs
@@ -236,6 +237,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.reloadConfig()
 	case tea.WindowSizeMsg:
+		m.clearSelection()
 		m.width, m.height = msg.Width, msg.Height
 		// A new font size resizes the window, so the cells may have changed.
 		return m, requestCellSize
@@ -383,10 +385,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.form.update(msg)
 		}
 	case tea.KeyPressMsg:
+		m.clearSelection()
 		return m, m.key(msg)
 	case tea.MouseClickMsg:
-		return m, m.click(msg.Mouse())
+		m.mouseDown(msg.Mouse())
+	case tea.MouseMotionMsg:
+		m.mouseMove(msg.Mouse())
+	case tea.MouseReleaseMsg:
+		return m, m.mouseUp(msg.Mouse())
+	case openFailedMsg:
+		m.logs.noteOn(m.sel, "Could not open "+msg.url+": "+msg.err.Error())
 	case tea.MouseWheelMsg:
+		m.clearSelection() // the text under it moves
 		m.wheel(msg.Mouse())
 	default:
 		// The answers of a form's background steps.
@@ -487,8 +497,16 @@ func (m *Model) quit() tea.Cmd {
 	}
 }
 
-// View draws the screen.
+// View draws the screen, with any text selected with the mouse highlighted.
 func (m *Model) View() tea.View {
+	v := tea.NewView(m.highlight(m.content()))
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// content is the screen as drawn, without the selection.
+func (m *Model) content() string {
 	var content string
 	if m.width < minWidth || m.height < minHeight {
 		content = m.tooSmall()
@@ -507,10 +525,7 @@ func (m *Model) View() tea.View {
 			content = m.formBox(content, m.password)
 		}
 	}
-	v := tea.NewView(content)
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	return content
 }
 
 // main draws the main panel: the selected item's details, then its log,

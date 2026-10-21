@@ -36,7 +36,8 @@ type helpGroup struct {
 
 // helpGroups are every key of the main screen, in four columns.
 var helpGroups = []helpGroup{
-	{"move", bindings([]footerItem{{"j/k", "up and down"}, {"h", "home"}, {"tab", "routes"}, {"/", "filter by name"}, {"esc", "clear filter"}})},
+	{"move · mouse", bindings([]footerItem{{"j/k", "up and down"}, {"h", "home"}, {"tab", "routes"}, {"/", "filter by name"}, {"esc", "clear filter"},
+		{"drag", "copy text"}, {"2click", "copy a word"}, {"click", "open an address"}})},
 	{"project", bindings([]footerItem{{"enter", "start or stop"}, {"o", "open in browser"}, {"e", "edit"}, {"d", "remove"}, {"y", "copy advice"},
 		{"i", "show or hide ignored ports"},
 		{"r", "re-read .nearhostrc"}, {"a", "review .nearhostrc"}})},

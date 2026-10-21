@@ -19,7 +19,8 @@ func TestFullHelp(t *testing.T) {
 		t.Fatalf("drew %d lines in a 30-line window", len(lines))
 	}
 	help := strings.Join(lines[30-helpRows():], "\n")
-	for _, want := range []string{"move", "project", "server", "nearhost", "j/k    up and down", "enter  start or stop", "r      reconnect", "o      open in browser", "q      quit"} {
+	for _, want := range []string{"move", "project", "server", "nearhost", "j/k    up and down", "enter  start or stop", "r      reconnect", "o      open in browser", "q      quit",
+		"move · mouse", "drag   copy text", "2click copy a word", "click  open an address"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q:\n%s", want, help)
 		}

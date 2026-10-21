@@ -404,10 +404,23 @@ func (m *Model) enter() tea.Cmd {
 	return nil
 }
 
+// clickable reports whether a click at mouse does something: on a footer
+// key, or a sidebar row, while no box covers them.
+func (m *Model) clickable(mouse tea.Mouse) bool {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.width < minWidth || m.height < minHeight {
+		return false
+	}
+	if mouse.Y == m.height-1 {
+		return m.footerKeyAt(mouse.X) != ""
+	}
+	y := mouse.Y - bodyTop
+	return !m.empty() && mouse.X < m.sideWidth() && y < m.bodyHeight() && m.sidebarKeyAt(y) != ""
+}
+
 // click handles a mouse click: a sidebar row selects it, a footer action
 // runs it.
 func (m *Model) click(mouse tea.Mouse) tea.Cmd {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.width < minWidth || m.height < minHeight {
+	if !m.clickable(mouse) {
 		return nil
 	}
 	if mouse.Y == m.height-1 {
