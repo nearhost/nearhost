@@ -185,15 +185,16 @@ func TestCyclingARouteBackToWebKeepsItsHosts(t *testing.T) {
 }
 
 // Enter makes the web route without hosts the primary when one with hosts
-// is above it, as only the primary goes without.
+// is above it, as only the primary goes without, and the cursor stays on
+// the route it was on.
 func TestRoutesEnterMakesTheBareWebRouteThePrimary(t *testing.T) {
 	f := &projectForm{srv: config.Server{Name: "mini"}, routes: []config.Route{
 		{Port: 8080, Role: config.RoleWeb, Hosts: []string{"ws.x.test"}},
 		{Port: 80, Role: config.RoleWeb},
 	}, step: projectStepRoutes}
 	f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if f.err != "" || f.step != projectStepDetails || f.routes[0].Port != 80 {
-		t.Errorf("err %q, step %v, routes %+v", f.err, f.step, f.routes)
+	if f.err != "" || f.step != projectStepDetails || f.routes[0].Port != 80 || f.routeRow != 1 {
+		t.Errorf("err %q, step %v, routes %+v, row %d", f.err, f.step, f.routes, f.routeRow)
 	}
 }
 

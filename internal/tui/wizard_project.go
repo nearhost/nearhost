@@ -696,7 +696,9 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		case len(bare) == 1:
 			p, _ := strconv.Atoi(bare[0])
+			selected := f.routes[f.routeRow].Port
 			f.routes = config.MovePrimary(f.routes, p)
+			f.routeRow = routeAt(f.routes, selected)
 		}
 		f.err, f.step = "", projectStepDetails
 	}
