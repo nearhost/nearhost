@@ -38,19 +38,18 @@ func DefaultPath() (string, error) { return sub("config.yaml") }
 // RunDir holds SSH control sockets.
 func RunDir() (string, error) { return sub("run") }
 
-// DataDir is the nearhost data directory: ~/Library/Application Support/nearhost
-// on macOS and, elsewhere, $XDG_DATA_HOME/nearhost when that is absolute or
-// ~/.local/share/nearhost. It holds the local CA's private key, which must not
+// DataDir is the nearhost data directory: $XDG_DATA_HOME/nearhost when that is
+// absolute and otherwise ~/Library/Application Support/nearhost on macOS or
+// ~/.local/share/nearhost elsewhere. A relative XDG_DATA_HOME is ignored, as
+// for XDG_CONFIG_HOME. It holds the local CA's private key, which must not
 // live in ~/.config: people often keep that folder in a dotfiles repository,
 // and anyone with the key can sign a certificate this machine trusts.
 func DataDir() (string, error) { return dataDirFor(runtime.GOOS) }
 
 // dataDirFor is DataDir on the operating system goos.
 func dataDirFor(goos string) (string, error) {
-	if goos != "darwin" {
-		if xdg := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(xdg) {
-			return filepath.Join(xdg, "nearhost"), nil
-		}
+	if xdg := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(xdg) {
+		return filepath.Join(xdg, "nearhost"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
