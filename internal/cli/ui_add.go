@@ -14,9 +14,10 @@ import (
 
 // What the interface's add forms ask of nearhost. Each call reads the config
 // file afresh, so a form never saves over a change made while it was open,
-// and each one that saves it holds editMu from the read to the save, as
-// EditConfig does, so a save made meanwhile in the background, such as a
-// .nearhostrc change, is not lost either.
+// and each one that saves it does so through EditConfig or another
+// config.Update, which reapplies its change under the config's lock, so a
+// save made meanwhile, such as a .nearhostrc change or a `nearhost add` in
+// a terminal, is not lost either.
 
 // current reads and checks the config file.
 func (u *uiEngine) current() (*config.Config, error) {
@@ -24,10 +25,19 @@ func (u *uiEngine) current() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", u.path, err)
+	if err := u.check(cfg); err != nil {
+		return nil, err
 	}
 	return cfg, nil
+}
+
+// check validates cfg as read from the config file, naming the file in what
+// it finds.
+func (u *uiEngine) check(cfg *config.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", u.path, err)
+	}
+	return nil
 }
 
 // What to do after fixing access, in the words of the forms: the add-server
@@ -57,13 +67,7 @@ func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
 }
 
 func (u *uiEngine) AddServer(srv config.Server) error {
-	u.editMu.Lock()
-	defer u.editMu.Unlock()
-	cfg, err := u.current()
-	if err != nil {
-		return err
-	}
-	return addServer(cfg, u.path, srv)
+	return u.EditConfig(func(cfg *config.Config) error { return addServerTo(cfg, srv) })
 }
 
 func (u *uiEngine) OpenServer(ctx context.Context, srv config.Server) (tui.ServerFiles, error) {
@@ -80,8 +84,6 @@ func (u *uiEngine) RegistryQuestion() bool {
 }
 
 func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer) (string, error) {
-	u.editMu.Lock()
-	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return "", err
@@ -97,8 +99,6 @@ func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer
 }
 
 func (u *uiEngine) EnablePresets(ctx context.Context, names []string) []string {
-	u.editMu.Lock()
-	defer u.editMu.Unlock()
 	cfg, err := u.current()
 	if err != nil {
 		return []string{err.Error()}
@@ -121,16 +121,12 @@ func (u *uiEngine) CheckNames(name, alias string) (error, error) {
 }
 
 func (u *uiEngine) SaveProject(p config.Project) error {
-	u.editMu.Lock()
-	defer u.editMu.Unlock()
-	cfg, err := u.current()
-	if err != nil {
-		return err
-	}
-	if err := errors.Join(formNameProblem(cfg, p.Name), aliasProblem(cfg, p.Alias)); err != nil {
-		return err
-	}
-	err = saveProject(cfg, u.path, p)
+	err := u.EditConfig(func(cfg *config.Config) error {
+		if err := errors.Join(formNameProblem(cfg, p.Name), aliasProblem(cfg, p.Alias)); err != nil {
+			return err
+		}
+		return addProjectTo(cfg, p)
+	})
 	var clash *loopbackClashError
 	if errors.As(err, &clash) {
 		return fmt.Errorf("loopback port %d is already forwarded for project %q, and only one project can bind it; set this route to ignore, or give the project another port", clash.port, clash.other)

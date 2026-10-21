@@ -138,7 +138,7 @@ func newPresetEnableCmd(b presetBackend) *cobra.Command {
 				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Preset %s is already enabled.\n", name)
 				return err
 			}
-			if err := config.Save(cfgPath, cfg); err != nil {
+			if err := savePresets(cfgPath, cfg, name); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Enabled preset %s (%s).\n", name, printable(p.Title))
@@ -156,14 +156,17 @@ func newPresetDisableCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			cfg, cfgPath, err := loadConfig(cmd)
+			_, cfgPath, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
-			if !cfg.RemovePreset(name) {
-				return fmt.Errorf("preset %q is not enabled", name)
-			}
-			if err := config.Save(cfgPath, cfg); err != nil {
+			err = config.Update(cfgPath, func(cfg *config.Config) error {
+				if !cfg.RemovePreset(name) {
+					return fmt.Errorf("preset %q is not enabled", name)
+				}
+				return nil
+			})
+			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Disabled preset %s. Its file is kept at %s.\n", name, presetPath(cfgPath, name))
@@ -205,7 +208,8 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 			// is not good enough. Each registry is asked once.
 			indexes := map[string]*registry.Index{}
 			problems := map[string]error{}
-			changed, failed := false, 0
+			var changed []string
+			failed := 0
 			for _, ref := range targets {
 				alias, _ := config.SplitPreset(ref.Name)
 				reg, _ := cfg.Trusted(alias) // the config is valid, so it is there
@@ -223,11 +227,24 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 					fmt.Fprintf(out, "%s: not updated: %v\n", ref.Name, err)
 					continue
 				}
-				changed = changed || did
+				if did {
+					changed = append(changed, ref.Name)
+				}
 				fmt.Fprintf(out, "%s: %s\n", ref.Name, line)
 			}
-			if changed {
-				if err := config.Save(cfgPath, cfg); err != nil {
+			// Each preset updated is recorded at its new version, unless it
+			// was disabled meanwhile: the update must not enable it again.
+			if len(changed) > 0 {
+				err := config.Update(cfgPath, func(fresh *config.Config) error {
+					for _, name := range changed {
+						ref, _ := cfg.Preset(name)
+						if _, ok := fresh.Preset(name); ok {
+							fresh.UpsertPreset(ref)
+						}
+					}
+					return nil
+				})
+				if err != nil {
 					return err
 				}
 			}

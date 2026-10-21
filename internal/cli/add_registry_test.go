@@ -206,7 +206,9 @@ func TestAddFailsWhenDontAskAgainCannotBeSaved(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
 	out, err := addSailCustom(t, b, cfgPath, "d\n", "myapp", "--web", "8080")
-	if err == nil || !strings.Contains(err.Error(), "create temp config") {
+	// The lock beside the config cannot be created either, so that is
+	// where the save stops.
+	if err == nil || !strings.Contains(err.Error(), "open config lock") {
 		t.Fatalf("expected the save error, got %v\n%s", err, out)
 	}
 	if strings.Contains(out, "Routes found") {

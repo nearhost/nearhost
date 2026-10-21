@@ -226,26 +226,16 @@ func fileIn(p config.Project, dir string) string {
 }
 
 // saveSnapshot sets the approved snapshot of the project called name to snap
-// in the config at cfgPath and saves it. Nothing but the snapshot changes,
-// since the file was rendered from what the config already serves. saveMu
-// only serialises saves within this process; a separate running `nearhost`
-// saving a reviewed change has its own. Loading the config again just
-// before saving narrows the window in which this save could undo that one,
-// but does not close it.
+// in the config at cfgPath and saves it, under the config's lock. Nothing
+// but the snapshot changes, since the file was rendered from what the config
+// already serves.
 func saveSnapshot(cfgPath, name string, snap *config.RcSnapshot) error {
-	saveMu.Lock()
-	defer saveMu.Unlock()
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-	p, ok := cfg.Project(name)
-	if !ok {
-		return fmt.Errorf("project %q is no longer in %s", name, cfgPath)
-	}
-	p.Nearhostrc = snap
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	return config.Save(cfgPath, cfg)
+	return config.Update(cfgPath, func(cfg *config.Config) error {
+		p, ok := cfg.Project(name)
+		if !ok {
+			return fmt.Errorf("project %q is no longer in %s", name, cfgPath)
+		}
+		p.Nearhostrc = snap
+		return nil
+	})
 }

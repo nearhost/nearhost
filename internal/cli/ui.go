@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -216,9 +215,6 @@ type uiEngine struct {
 	path    string
 	flags   serveFlags
 	storage string
-	// editMu makes edits of the config file one at a time, so none saves
-	// over another.
-	editMu sync.Mutex
 	// root runs steps that need root.
 	root asRoot
 	// agents answers the agents' proposals; nil when none can reach
