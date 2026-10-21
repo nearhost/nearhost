@@ -174,7 +174,6 @@ func TestProgramAsksForAPassword(t *testing.T) {
 	go func() { first <- s.Password(context.Background(), "First reason.", check) }()
 	out.shown(t, "First reason.")
 	go func() { second <- s.Password(context.Background(), "Second reason.", check) }()
-	time.Sleep(100 * time.Millisecond) // the second waits its turn
 	typeIn("one\r")
 	if err := <-first; err != nil || <-checked != "one" {
 		t.Fatalf("first = %v", err)
@@ -193,7 +192,7 @@ func TestProgramAsksForAPassword(t *testing.T) {
 	if err := <-ended; !errors.Is(err, context.Canceled) {
 		t.Fatalf("a request whose context ended = %v", err)
 	}
-	time.Sleep(100 * time.Millisecond) // the box is taken away
+	p.Send(struct{}{}) // returns once the program has handled the box's removal
 	typeIn("three\r")
 	select {
 	case pw := <-checked:

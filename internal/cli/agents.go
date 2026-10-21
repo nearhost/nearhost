@@ -60,7 +60,7 @@ func nearhostRunning() bool {
 	return agentapi.Answers(agentSocket(home, id))
 }
 
-// laptopName is the user and the short host name, as in ecs@macbook.
+// laptopName is the user and the short host name, as in dev@laptop.
 func laptopName() string {
 	name := "you"
 	if u, err := user.Current(); err == nil && u.Username != "" {
