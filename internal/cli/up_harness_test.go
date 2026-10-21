@@ -26,6 +26,7 @@ type upRun struct {
 	cfgPath   string
 	httpsPort int
 	httpPort  int
+	webPort   int
 	sshEnv    []string
 	hostsErr  error
 	// hostsBlocks makes the hosts function wait until its context ends.
@@ -49,6 +50,9 @@ func newUpRun(t *testing.T, cfg *config.Config) *upRun {
 	u := &upRun{t: t, cfgPath: configHome(t), trust: newFake()}
 	u.trust.trusted = true
 	u.httpsPort, u.httpPort = testutil.ProxyPorts(t)
+	// Not the default web port, which a Nearhost running on this machine
+	// holds.
+	u.webPort = testutil.ProxyPort(t)
 	saveConfig(t, u.cfgPath, cfg)
 	return u
 }
@@ -82,7 +86,7 @@ func (u *upRun) backend() upBackend {
 }
 
 func (u *upRun) args(extra ...string) []string {
-	args := []string{"up", "--https-port", strconv.Itoa(u.httpsPort), "--http-port", strconv.Itoa(u.httpPort)}
+	args := []string{"up", "--https-port", strconv.Itoa(u.httpsPort), "--http-port", strconv.Itoa(u.httpPort), "--web-port", strconv.Itoa(u.webPort)}
 	if u.noHosts {
 		args = append(args, "--no-hosts")
 	}
@@ -115,7 +119,7 @@ func (u *upRun) stop() error {
 		u.t.Fatalf("up did not return after its context ended; output:\n%s", u.out.String())
 	}
 	u.done = nil
-	for _, port := range []int{u.httpsPort, u.httpPort} {
+	for _, port := range []int{u.httpsPort, u.httpPort, u.webPort} {
 		if portOpen(port) {
 			u.t.Errorf("something still listens on port %d after up returned", port)
 		}
