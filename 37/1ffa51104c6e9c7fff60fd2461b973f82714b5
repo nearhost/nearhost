@@ -1,0 +1,14 @@
+Makefile
+  h_13c4e797d6e9d2 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "371ffa51104c6e9c7fff60fd2461b973f82714b5",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
