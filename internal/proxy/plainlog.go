@@ -94,11 +94,20 @@ var quietMessages = []string{
 	"admin endpoint disabled",
 }
 
-// quiet reports whether line is a log line of the proxy whose message is
-// one of quietMessages.
+// quiet reports whether line is a log line of the proxy that is routine: its
+// message is one of quietMessages, or it is a certificate job that was
+// cancelled. Stopping Nearhost, or reloading the proxy, while a certificate
+// is being issued cancels the job; that is the stop, not a fault. A job that
+// failed for any other reason is not quiet.
 func quiet(line string) bool {
 	l, ok := parse(line)
-	return ok && slices.Contains(quietMessages, l.Msg)
+	if !ok {
+		return false
+	}
+	if l.Msg == "job failed" && strings.HasSuffix(l.Error, "context canceled") {
+		return true
+	}
+	return slices.Contains(quietMessages, l.Msg)
 }
 
 // PlainLog turns a log line of the proxy, which writes JSON, into a short
