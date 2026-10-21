@@ -207,6 +207,11 @@ func sampleConfig() *config.Config {
 }
 
 // sized is a model for b in a 100×30 window.
+// Tests never touch the clipboard of the machine they run on.
+func init() {
+	systemClipboard = func(string) error { return nil }
+}
+
 func sized(b Backend) *Model {
 	m := New(b, "/work/here")
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})

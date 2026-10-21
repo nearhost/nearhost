@@ -144,7 +144,7 @@ func (m *Model) copyAdvice(name string) tea.Cmd {
 		return nil
 	}
 	m.logs.noteOn(key, "Copied the advice for "+name+".")
-	return tea.SetClipboard(strings.Join(snippets, "\n\n"))
+	return copyText(strings.Join(snippets, "\n\n"))
 }
 
 // colourWarnEdge draws the edge of a piece of advice.

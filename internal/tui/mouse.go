@@ -154,7 +154,7 @@ func (m *Model) copySelection() tea.Cmd {
 		what = "Copied " + quoteShort(text) + "."
 	}
 	m.logs.noteOn(m.sel, what)
-	return tea.SetClipboard(text)
+	return copyText(text)
 }
 
 // plural is n and noun, with an s when n is not one.

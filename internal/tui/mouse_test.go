@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -43,11 +42,7 @@ func clipboard(cmd tea.Cmd) string {
 	if cmd == nil {
 		return ""
 	}
-	msg := cmd()
-	if fmt.Sprintf("%T", msg) != "tea.setClipboardMsg" {
-		return ""
-	}
-	return fmt.Sprint(msg)
+	return clipboardOf(cmd)
 }
 
 // opens replaces openURL for the test and returns what it was asked to open.
@@ -190,5 +185,26 @@ func TestDragLeavesOutBlankRows(t *testing.T) {
 	x, y := find(t, m, "Nothing to serve yet.")
 	if got := clipboard(drag(m, 0, y-1, x+len("Nothing to serve yet.")-1, y)); got != "Nothing to serve yet." {
 		t.Errorf("copied %q", got)
+	}
+}
+
+// A copy goes to the terminal over OSC 52 and to the system's own tool, as
+// some terminals have no OSC 52.
+func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
+	var got []string
+	old := systemClipboard
+	systemClipboard = func(text string) error { got = append(got, text); return nil }
+	t.Cleanup(func() { systemClipboard = old })
+	cmd := copyText("ssh mini")
+	if s := clipboard(cmd); s != "ssh mini" {
+		t.Errorf("OSC 52 got %q", s)
+	}
+	for _, c := range cmd().(tea.BatchMsg) {
+		if c != nil {
+			c()
+		}
+	}
+	if strings.Join(got, ",") != "ssh mini" {
+		t.Errorf("the system clipboard got %v", got)
 	}
 }

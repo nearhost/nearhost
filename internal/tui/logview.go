@@ -194,9 +194,9 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 			a := shown[at].req
 			m.logs.noteOn(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				return tea.SetClipboard(curlForExchange(ex))
+				return copyText(curlForExchange(ex))
 			}
-			return tea.SetClipboard(curlFor(*a))
+			return copyText(curlFor(*a))
 		}
 	case "v":
 		v.reveal = !v.reveal
