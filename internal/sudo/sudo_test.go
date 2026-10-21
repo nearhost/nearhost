@@ -6,12 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-// fake makes sudo the stand-in for sudo, owned by root as far as Binary can tell, with the stand-in for sudo, with password as the password,
-// and returns the file whose presence means the credentials are cached.
 // realOwnedByRoot is the ownership check Nearhost ships with.
 var realOwnedByRoot = OwnedByRoot
 
@@ -25,14 +24,25 @@ func useCandidates(t *testing.T, paths ...string) {
 	t.Cleanup(func() { Candidates, OwnedByRoot = origCandidates, origOwned })
 }
 
+// fake points Binary at the stand-in for sudo, with password as the password,
+// and returns the file whose presence means the credentials are cached. The
+// stand-in is copied and made 0o755 so that the umask cannot make Binary
+// reject it.
 func fake(t *testing.T, password string) (cache, log string) {
 	t.Helper()
-	p, err := filepath.Abs("testdata/sudo")
+	src, err := os.ReadFile("testdata/sudo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	useCandidates(t, p)
 	dir := t.TempDir()
+	p := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(p, src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useCandidates(t, p)
 	cache, log = filepath.Join(dir, "cache"), filepath.Join(dir, "log")
 	t.Setenv("FAKE_SUDO_PASSWORD", password)
 	t.Setenv("FAKE_SUDO_CACHE", cache)
@@ -159,5 +169,21 @@ func TestBinaryRejectsADirectory(t *testing.T) {
 	useCandidates(t, t.TempDir())
 	if got, err := Binary(); err == nil {
 		t.Errorf("Binary() = %q, want an error", got)
+	}
+}
+
+func TestBinaryFallsThroughARejectedCandidate(t *testing.T) {
+	good := executable(t, 0o755)
+	useCandidates(t, executable(t, 0o777), good)
+	got, err := Binary()
+	if err != nil || got != good {
+		t.Errorf("Binary() = %q, %v, want %q", got, err, good)
+	}
+}
+
+func TestDefaultCandidates(t *testing.T) {
+	want := []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo", "/run/wrappers/bin/sudo"}
+	if !reflect.DeepEqual(Candidates, want) {
+		t.Errorf("Candidates = %q, want %q", Candidates, want)
 	}
 }

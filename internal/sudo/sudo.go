@@ -18,7 +18,7 @@ import (
 // Candidates are the places sudo is looked for, in order, by absolute path:
 // a sudo found through PATH could be a fake that is handed the password.
 // Tests replace it.
-var Candidates = []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"}
+var Candidates = []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo", "/run/wrappers/bin/sudo"}
 
 // OwnedByRoot reports whether info describes a file owned by uid 0. Tests
 // replace it.
@@ -37,7 +37,7 @@ func Binary() (string, error) {
 		}
 		return path, nil
 	}
-	return "", errors.New("no root-owned sudo in /usr/bin, /bin or /usr/local/bin")
+	return "", errors.New("no root-owned sudo in /usr/bin, /bin, /usr/local/bin or /run/wrappers/bin")
 }
 
 // ErrWrongPassword is the error of a password sudo refused.
