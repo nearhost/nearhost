@@ -15,7 +15,8 @@ import (
 // sideText is the sidebar as drawn, without colours, a line each.
 func sideText(m *Model) []string {
 	var out []string
-	for _, l := range m.sidebar(m.sideWidth(), m.bodyHeight()) {
+	side, _ := m.sidebar(m.sideWidth(), m.bodyHeight())
+	for _, l := range side {
 		out = append(out, ansi.Strip(l))
 	}
 	return out
@@ -50,7 +51,8 @@ func TestSidebarSelection(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	m.sel = rowKey(rowProject, "myapp")
 	var line string
-	for _, l := range m.sidebar(m.sideWidth(), m.bodyHeight()) {
+	side, _ := m.sidebar(m.sideWidth(), m.bodyHeight())
+	for _, l := range side {
 		if strings.Contains(ansi.Strip(l), "myapp") {
 			line = l
 		}
