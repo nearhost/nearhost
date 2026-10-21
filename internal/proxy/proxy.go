@@ -39,6 +39,13 @@ func New(opts Options) *Proxy {
 	return &Proxy{opts: opts}
 }
 
+// DropWebPort stops the proxy serving Nearhost's page on a port of its own,
+// for a caller that found the port taken. It must be called before the first
+// Apply, as the options are read without a lock.
+func (p *Proxy) DropWebPort() {
+	p.opts.WebPort = 0
+}
+
 // Apply loads a configuration serving exactly the given sites. Existing
 // connections survive; it is safe to call repeatedly and concurrently.
 func (p *Proxy) Apply(sites []Site) error {

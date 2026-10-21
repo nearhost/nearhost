@@ -64,15 +64,15 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	run(m, func() tea.Msg { return startedMsg{} })
 	x0, y0 := find(t, m, "proxy     ●")
-	x1, y1 := find(t, m, "web UI    https://localhost:6327")
-	x1 += len("web UI    https://localhost:6327") - 1
+	x1, y1 := find(t, m, "page      https://localhost:6327")
+	x1 += len("page      https://localhost:6327") - 1
 	m.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
 	m.Update(tea.MouseMotionMsg{X: x1, Y: y1, Button: tea.MouseLeft})
 	if !reversed.MatchString(m.View().Content) {
 		t.Error("the selection is not highlighted while dragging")
 	}
 	_, cmd := m.Update(tea.MouseReleaseMsg{X: x1, Y: y1, Button: tea.MouseLeft})
-	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\nweb UI    https://localhost:6327" {
+	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\npage      https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
 	wantScreen(t, m, "● Copied 2 lines")

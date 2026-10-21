@@ -90,7 +90,7 @@ type Options struct {
 	// it a config with no sites declares no listeners.
 	HomeWithNoSites bool
 	// WebPort is a port of its own that serves the home page, Nearhost's
-	// web interface, at https://localhost:<port> whenever the proxy
+	// page, at https://localhost:<port> whenever the proxy
 	// listens, even while a project serves localhost. 0 means none.
 	WebPort int
 }

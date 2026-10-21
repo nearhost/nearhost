@@ -510,3 +510,17 @@ func TestDoctorHostsCheckExpectsARouteHostOnlyWhenDNSDoesNotResolveIt(t *testing
 		})
 	}
 }
+
+// A taken page port costs only the page, so doctor warns rather than fails.
+func TestDoctorWarnsWhenTheWebPortIsTaken(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.portErr = map[string]error{"tcp 6327": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+	if err != nil {
+		t.Fatalf("doctor failed on a taken page port: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warn  port 6327") || !strings.Contains(out, "without Nearhost's page") {
+		t.Errorf("output:\n%s", out)
+	}
+}
