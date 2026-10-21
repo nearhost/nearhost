@@ -118,13 +118,13 @@ Then start Nearhost and open `https://myapp.test`:
 nearhost
 ```
 
-`nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the view. With no projects yet it opens on the Nearhost mark and asks you to add one.
+`nearhost` opens the interface: your servers and projects, full screen. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the interface. With no projects yet it opens on the Nearhost mark and asks you to add one.
 
 `/` filters the sidebar by name. `l` opens the selected project's log, or every log from Home, across the whole window: `tab` shows requests, events or errors, `/` searches, `enter` opens a request to show its headers, the body sent and the body that came back, and its route, `v` reveals its cookies, `c` copies it as a curl command, `r` sends it again (asking first unless it is a GET, HEAD or OPTIONS), and `G` follows new lines again. Home lists anything that needs you, such as a server that cannot connect, with how many attempts failed and when the next is, and how to fix it; there `r` retries the connection and `y` copies the `ssh` command that fixes access. On a server, `c` drops its connection and holds it closed, its projects waiting, until `c` connects it again. `?` lists every key. The mouse works too: drag to select and copy text, double-click to copy a word, and click an address to open it.
 
 To show bodies and send requests again, the proxy keeps each request and its response in memory while Nearhost runs: bodies up to 64 KiB, the last thousand or so exchanges, never written to disk or to the log. `--no-capture` turns it off.
 
-Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the view; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the view afterwards.
+Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the interface; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the interface afterwards.
 
 For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
 
@@ -186,7 +186,7 @@ npx skills add nearhost/nearhost -g
 
 [![skills.sh](https://skills.sh/b/nearhost/nearhost)](https://skills.sh/nearhost/nearhost)
 
-Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its view with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
+Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its interface with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
 
 Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs to reach `~/.nearhost/*.sock`: approve the skill's command when the agent asks to run it outside the sandbox, which opens nothing else. The [documentation](https://nearhost.dev/docs/getting-started/use-a-coding-agent/) covers the settings, and what the broader ones open. Set `notifications: false` in the config to keep the terminal quiet.
 
@@ -194,10 +194,10 @@ Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this
 
 | Command | What it does |
 | --- | --- |
-| `nearhost` | Open the full-screen view and serve every enabled project |
+| `nearhost` | Open the interface, which serves every enabled project |
 | `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it |
 | `nearhost ls` | List the configured projects and their routes |
-| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the full-screen view |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface |
 | `nearhost export [project]` | Write the project's setup to a `.nearhostrc` to commit with it |
 | `nearhost preset` | Manage presets and the registries you trust |
 | `nearhost update` | Update Nearhost the way you installed it |
@@ -243,7 +243,7 @@ export XDG_DATA_HOME="$PWD/.dev/data"
 ./nearhost up --no-hosts --https-port 18443 --http-port 18080 --web-port 16327
 ```
 
-`./nearhost --no-hosts --https-port 18443 --http-port 18080 --web-port 16327` opens the full-screen view with the same settings.
+`./nearhost --no-hosts --https-port 18443 --http-port 18080 --web-port 16327` opens the interface with the same settings.
 
 Without the hosts block, `myapp.test` does not resolve, so ask for it by address:
 

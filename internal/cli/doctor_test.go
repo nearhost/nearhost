@@ -532,13 +532,15 @@ func TestDoctorWarnsWhenTheWebPortIsTaken(t *testing.T) {
 	doctorConfig(t)
 	f := healthy()
 	f.portErr = map[string]error{"tcp 6327": syscall.EADDRINUSE}
+	f.holders = map[int]string{6327: "nearhost (pid 7)"}
 	out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
 	if err != nil {
 		t.Fatalf("doctor failed on a taken page port: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "warn  port 6327") || !strings.Contains(out, "without Nearhost's page") {
-		t.Errorf("output:\n%s", out)
-	}
+	// Another Nearhost holding it is the usual case, so the fix says so.
+	wantContains(t, out,
+		"warn  port 6327        in use by nearhost (pid 7)\n"+
+			"      fix: Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another\n")
 }
 
 // Every fix reads as a sentence: it starts with a capital or, when it is a

@@ -1922,6 +1922,10 @@ func TestStartRefusesEqualProxyPorts(t *testing.T) {
 		t.Error("the proxy was started")
 	}
 
+	if err := differentProxyPorts(8443, 8080, 8080); err == nil ||
+		err.Error() != "Nearhost's page port must differ from the HTTPS and HTTP ports (it is 8080)" {
+		t.Errorf("same page and HTTP port: %v", err)
+	}
 	// Equal only once the defaults are filled in. Asked of the check alone:
 	// a Start that got past it would bind the real ports.
 	for ports, equal := range map[[3]int]bool{
@@ -2491,6 +2495,43 @@ func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
 		select {
 		case ev := <-events:
 			if strings.Contains(ev.Message, want) {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no event said %q", want)
+		}
+	}
+}
+
+// A taken page port names its holder from the one lookup the probe made.
+func TestStartLooksUpThePagePortsHolderOnce(t *testing.T) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	held := l.Addr().(*net.TCPAddr).Port
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = held })
+	var lookups atomic.Int32
+	h.eng.holderOf = func(_ context.Context, port int) string {
+		if port == held {
+			lookups.Add(1)
+		}
+		return "node (pid 4242)"
+	}
+	events, unsubscribe := h.eng.Events().Subscribe(64)
+	defer unsubscribe()
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start with the page port taken: %v", err)
+	}
+	want := fmt.Sprintf("port %d is in use by node (pid 4242); serving without Nearhost's page", held)
+	for {
+		select {
+		case ev := <-events:
+			if strings.Contains(ev.Message, want) {
+				if n := lookups.Load(); n != 1 {
+					t.Fatalf("looked up the holder %d times, want 1", n)
+				}
 				return
 			}
 		case <-time.After(5 * time.Second):

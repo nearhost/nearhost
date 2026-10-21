@@ -372,9 +372,10 @@ func (e *Engine) Start(ctx context.Context) error {
 			e.mu.Lock()
 			e.webPort = 0
 			e.mu.Unlock()
-			reason := "is in use" + e.heldBy(ctx, port)
-			if errors.Is(err, syscall.EACCES) {
-				reason = "needs permission to bind"
+			reason := "is not available"
+			var pe *portError
+			if errors.As(err, &pe) {
+				reason = pe.reason()
 			}
 			e.bus.Publish(Event{Message: fmt.Sprintf("port %d %s; serving without Nearhost's page (pass --web-port to choose another)", port, reason)})
 		}
@@ -409,27 +410,62 @@ func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 		return fmt.Errorf("the HTTPS and HTTP ports must differ (both are %d)", httpPort)
 	}
 	if webPort == httpsPort || webPort == httpPort {
-		return fmt.Errorf("the page's port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
+		return fmt.Errorf("Nearhost's page port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
 	}
 	return nil
 }
 
+// portError is a port the proxy cannot listen on.
+type portError struct {
+	what string // "HTTPS", "HTTP" or "Nearhost's page"
+	port int
+	udp  bool // on UDP, for HTTP/3, rather than TCP
+	// heldBy names the program holding a TCP port, as Engine.heldBy does:
+	// " by node (pid 4242)", or "" when it is not known.
+	heldBy string
+	err    error
+}
+
+// reason says why the port is not available: "needs permission to bind" when
+// the user may not bind it, or else that it is in use, by whom when known.
+func (e *portError) reason() string {
+	switch {
+	case errors.Is(e.err, syscall.EACCES):
+		return "needs permission to bind"
+	case e.udp:
+		return "is not available"
+	}
+	return "is in use" + e.heldBy
+}
+
+// Error says which port is not available, and why.
+func (e *portError) Error() string {
+	if e.udp {
+		return fmt.Sprintf("%s port %d (UDP, for HTTP/3) %s: %v", e.what, e.port, e.reason(), e.err)
+	}
+	return fmt.Sprintf("%s port %d %s: %v", e.what, e.port, e.reason(), e.err)
+}
+
+// Unwrap returns the error from binding the port.
+func (e *portError) Unwrap() error { return e.err }
+
 // probePort reports whether the proxy could listen on port (def when 0): on
-// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. A port the
-// user may not bind needs permission, and its error wraps syscall.EACCES; any
-// other failure to bind on TCP is the port being in use, and names the
-// program holding it when that can be found.
+// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. A port it
+// cannot bind is a *portError, which wraps syscall.EACCES when the user may
+// not bind the port. Any other failure on TCP is the port being in use, and
+// names the program holding it when that can be found.
 func (e *Engine) probePort(ctx context.Context, what string, port, def int) error {
 	if port == 0 {
 		port = def
 	}
 	addr := fmt.Sprintf(":%d", port)
 	l, err := e.listen("tcp", addr)
-	if errors.Is(err, syscall.EACCES) {
-		return fmt.Errorf("%s port %d needs permission to bind: %w", what, port, err)
-	}
 	if err != nil {
-		return fmt.Errorf("%s port %d is in use%s: %w", what, port, e.heldBy(ctx, port), err)
+		pe := &portError{what: what, port: port, err: err}
+		if !errors.Is(err, syscall.EACCES) {
+			pe.heldBy = e.heldBy(ctx, port)
+		}
+		return pe
 	}
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("%s port %d: %w", what, port, err)
@@ -438,11 +474,8 @@ func (e *Engine) probePort(ctx context.Context, what string, port, def int) erro
 		return nil
 	}
 	pc, err := e.listenPacket("udp", addr)
-	if errors.Is(err, syscall.EACCES) {
-		return fmt.Errorf("%s port %d (UDP, for HTTP/3) needs permission to bind: %w", what, port, err)
-	}
 	if err != nil {
-		return fmt.Errorf("%s port %d (UDP, for HTTP/3) is not available: %w", what, port, err)
+		return &portError{what: what, port: port, udp: true, err: err}
 	}
 	if err := pc.Close(); err != nil {
 		return fmt.Errorf("%s port %d (UDP): %w", what, port, err)
