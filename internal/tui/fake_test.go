@@ -208,8 +208,10 @@ func sampleConfig() *config.Config {
 
 // sized is a model for b in a 100×30 window.
 // Tests never touch the clipboard of the machine they run on.
+// Nor do they wait for toasts to go.
 func init() {
 	systemClipboard = func(string) error { return nil }
+	toastTimer = func(int) tea.Cmd { return nil }
 }
 
 func sized(b Backend) *Model {

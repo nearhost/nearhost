@@ -105,9 +105,10 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	lines := m.screenLines()
 	if url := linkAt(lines, ms.to); url != "" {
 		ms.lastAt = time.Time{}
+		key := m.sel
 		return func() tea.Msg {
 			if err := openURL(url); err != nil {
-				return openFailedMsg{url, err}
+				return openFailedMsg{key, url, err}
 			}
 			return nil
 		}
@@ -130,10 +131,10 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	return nil
 }
 
-// openFailedMsg says an address could not be opened.
+// openFailedMsg says an address could not be opened, from the row key.
 type openFailedMsg struct {
-	url string
-	err error
+	key, url string
+	err      error
 }
 
 // clearSelection drops the highlight, as a key, the wheel or a resize
@@ -142,8 +143,7 @@ func (m *Model) clearSelection() {
 	m.mouse.shown = false
 }
 
-// copySelection puts the selected text on the clipboard and says so in the
-// selected row's log.
+// copySelection puts the selected text on the clipboard and says so.
 func (m *Model) copySelection() tea.Cmd {
 	text := m.selectedText(m.screenLines())
 	if strings.TrimSpace(text) == "" {
@@ -156,8 +156,7 @@ func (m *Model) copySelection() tea.Cmd {
 	if n == 1 {
 		what = "Copied " + quoteShort(text) + "."
 	}
-	m.logs.noteOn(m.sel, what)
-	return copyText(text)
+	return tea.Batch(copyText(m.sel, text), m.alert(m.sel, what))
 }
 
 // plural is n and noun, with an s when n is not one.
@@ -169,7 +168,8 @@ func plural(n int, noun string) string {
 	return s
 }
 
-// quoteShort is text in quotes, cut to a length that fits a log line.
+// quoteShort is text in quotes, cut short enough for a toast to show it
+// whole.
 func quoteShort(text string) string {
 	return "“" + ansi.Truncate(text, 40, "…") + "”"
 }

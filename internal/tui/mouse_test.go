@@ -75,7 +75,7 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\nweb UI    https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	wantScreen(t, m, "Copied 2 lines.")
+	wantScreen(t, m, "● Copied 2 lines")
 	// The note moved the log, so a highlight now would be on other text.
 	if reversed.MatchString(m.View().Content) {
 		t.Error("the selection is still highlighted after the copy")
@@ -97,7 +97,7 @@ func TestDragWithinARow(t *testing.T) {
 	if got := clipboard(drag(m, end, y, x, y)); got != "https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	wantScreen(t, m, `Copied “https://localhost:6327”.`)
+	wantScreen(t, m, `● Copied “https://localhost:6327”`)
 }
 
 // A click on a link opens it, and so does one on an address a log line
@@ -164,7 +164,7 @@ func TestDragFromTheFooterDoesNotRunItsKey(t *testing.T) {
 	if len(f.opened) != 0 {
 		t.Errorf("the drag opened %v", f.opened)
 	}
-	wantScreen(t, m, `Copied “o open”.`)
+	wantScreen(t, m, `● Copied “o open”`)
 }
 
 // While the sidebar is filtered, the footer's enter keeps the filter, as
@@ -224,7 +224,7 @@ func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 	systemClipboard = func(text string) error { got = append(got, text); return nil }
 	t.Cleanup(func() { systemClipboard = old })
 	var osc52 []string
-	for _, c := range copyText("ssh mini")().(tea.BatchMsg) {
+	for _, c := range copyText(homeKey, "ssh mini")().(tea.BatchMsg) {
 		if s := clipboardOf(c); s != "" {
 			osc52 = append(osc52, s)
 		}
@@ -235,10 +235,14 @@ func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 	// A tool that fails says so, as OSC 52 cannot.
 	systemClipboard = func(string) error { return errBoom }
 	m := sized(newFake(t, sampleConfig()))
-	for _, c := range copyText("x")().(tea.BatchMsg) {
+	key := rowKey(rowProject, "website")
+	for _, c := range copyText(key, "x")().(tea.BatchMsg) {
 		run(m, c)
 	}
 	wantScreen(t, m, "Could not copy to the clipboard: boom.")
+	if es := m.logs.entries(key, ""); len(es) == 0 || !strings.HasPrefix(es[len(es)-1].text, "Could not copy") {
+		t.Error("the failure is not in the log of the row that copied")
+	}
 }
 
 // A clipboard tool that fails, as wl-copy does outside Wayland, gives way
@@ -274,5 +278,98 @@ func TestCopyWithReportsAFailure(t *testing.T) {
 	}
 	if err := copyWith([][]string{{"nh-not-installed"}}, "x"); err != nil {
 		t.Errorf("with no tool installed, err = %v", err)
+	}
+}
+
+// A copy's toast sits at the bottom right, just above the footer's rule,
+// and goes when its time is up. The timer of a toast that was replaced
+// leaves the new one be.
+func TestCopyShowsAToast(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	run(m, func() tea.Msg { return startedMsg{} })
+	x, y := find(t, m, "https://localhost:6327")
+	drag(m, x, y, x+7, y)
+	first := m.toast.seq
+	lines := strings.Split(screen(m), "\n")
+	at := -1
+	for i, l := range lines {
+		if strings.Contains(l, "● Copied “https://”") {
+			at = i
+		}
+	}
+	if at != m.height-m.footerHeight()-3 || !strings.HasSuffix(strings.TrimRight(lines[at], " "), "│") ||
+		!strings.Contains(lines[at+1], "╯") || ansi.StringWidth(strings.TrimRight(lines[at+1], " ")) != m.width-2 {
+		t.Fatalf("the toast is on line %d, want %d, at the right:\n%s", at, m.height-m.footerHeight()-3, screen(m))
+	}
+	drag(m, x, y, x+3, y)
+	m.Update(toastDoneMsg{first})
+	wantScreen(t, m, "● Copied “http”")
+	m.Update(toastDoneMsg{m.toast.seq})
+	if strings.Contains(screen(m), "● Copied") {
+		t.Errorf("the toast outlived its time:\n%s", screen(m))
+	}
+}
+
+// alert writes to the log and shows a toast; alertProblem's toast has the
+// amber dot. A long line is cut in the toast and whole in the log.
+func TestAlertsGoToTheLogAndAToast(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.Update(projectAddedMsg{name: "blog"})
+	if n := strings.Count(screen(m), "Added blog."); n != 2 {
+		t.Errorf("Added blog. is on the screen %d times, want in the log and a toast:\n%s", n, screen(m))
+	}
+	if m.toast.problem {
+		t.Error("an add's toast is a problem's")
+	}
+	long := "Could not open https://example.test/" + strings.Repeat("a", 80) + ": boom"
+	m.Update(openFailedMsg{m.sel, "https://example.test/" + strings.Repeat("a", 80), errBoom})
+	if !m.toast.problem || m.toast.text != long {
+		t.Errorf("toast %+v", m.toast)
+	}
+	if !strings.Contains(m.View().Content, styleAmber.Render("●")) {
+		t.Error("the problem's toast has no amber dot")
+	}
+	wantScreen(t, m, "● "+ansi.Truncate(long, toastWidth, "…")+" │")
+	if len(m.logs.entries(m.sel, "")) == 0 || !strings.Contains(m.logs.entries(m.sel, "")[len(m.logs.entries(m.sel, ""))-1].text, long) {
+		t.Error("the log does not have the whole line")
+	}
+}
+
+// A failure to open is logged for the row that asked, wherever the
+// selection has moved since.
+func TestOpenFailureGoesToTheRowThatAsked(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	key := rowKey(rowProject, "website")
+	m.Update(openedMsg{key, "https://website.test", errBoom})
+	m.Update(openFailedMsg{key, "https://x.test", errBoom})
+	var got []string
+	for _, e := range m.logs.entries(key, "") {
+		got = append(got, e.text)
+	}
+	if want := "Open https://website.test in your browser.|Could not open https://x.test: boom"; strings.Join(got, "|") != want {
+		t.Errorf("website's log %q, want %q", got, want)
+	}
+}
+
+// The toast keeps clear of the sidebar, and on the full-screen log sits
+// above its one-row footer, even with the help open.
+func TestToastPlacement(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: minWidth, Height: 30})
+	m.showToast("Could not open https://example.test/"+strings.Repeat("a", 80), true)
+	for _, l := range strings.Split(screen(m), "\n") {
+		if i := strings.Index(l, "╭"); i >= 0 && ansi.StringWidth(l[:i]) < m.mainX() {
+			t.Errorf("the toast starts at %d, over the sidebar, which ends at %d:\n%s", ansi.StringWidth(l[:i]), m.mainX(), screen(m))
+		}
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	press(m, "?")
+	press(m, "l")
+	if m.logView == nil {
+		t.Fatal("l did not open the log")
+	}
+	lines := strings.Split(screen(m), "\n")
+	if !strings.Contains(lines[m.height-3], "╯") {
+		t.Errorf("the toast's bottom is not on the row above the footer's rule:\n%s", screen(m))
 	}
 }

@@ -345,8 +345,8 @@ func (m *Model) action(s string) tea.Cmd {
 			return nil
 		}
 		p, _ := m.cfg.Project(name)
-		url := "https://" + p.Alias
-		return func() tea.Msg { return openedMsg{url, m.b.Open(url)} }
+		url, key := "https://"+p.Alias, m.sel
+		return func() tea.Msg { return openedMsg{key, url, m.b.Open(url)} }
 	}
 	return nil
 }
