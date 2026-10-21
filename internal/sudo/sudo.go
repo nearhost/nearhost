@@ -8,13 +8,37 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
-// Path is the sudo binary. Tests replace it.
-var Path = "sudo"
+// Candidates are the places sudo is looked for, in order, by absolute path:
+// a sudo found through PATH could be a fake that is handed the password.
+// Tests replace it.
+var Candidates = []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"}
+
+// OwnedByRoot reports whether info describes a file owned by uid 0. Tests
+// replace it.
+var OwnedByRoot = func(info fs.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == 0
+}
+
+// Binary returns the first of Candidates that is a regular file owned by
+// root and not writable by its group or others.
+func Binary() (string, error) {
+	for _, path := range Candidates {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || !OwnedByRoot(info) {
+			continue
+		}
+		return path, nil
+	}
+	return "", errors.New("no root-owned sudo in /usr/bin, /bin or /usr/local/bin")
+}
 
 // ErrWrongPassword is the error of a password sudo refused.
 var ErrWrongPassword = errors.New("sorry, try again")
@@ -25,14 +49,18 @@ func Needed() bool {
 	if os.Geteuid() == 0 {
 		return false
 	}
-	_, err := exec.LookPath(Path)
+	_, err := Binary()
 	return err == nil
 }
 
 // Cached reports whether sudo has the user's credentials now, so a command
 // run through it will not prompt. It never prompts itself.
 func Cached(ctx context.Context) bool {
-	return exec.CommandContext(ctx, Path, "-n", "-v").Run() == nil
+	path, err := Binary()
+	if err != nil {
+		return false
+	}
+	return exec.CommandContext(ctx, path, "-n", "-v").Run() == nil
 }
 
 // Validate checks password with sudo, which caches the credentials when it
@@ -40,7 +68,11 @@ func Cached(ctx context.Context) bool {
 // refuses is ErrWrongPassword. The password goes to sudo on its standard
 // input, never in its arguments.
 func Validate(ctx context.Context, password string) error {
-	cmd := exec.CommandContext(ctx, Path, "-S", "-v", "-p", "")
+	path, err := Binary()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, path, "-S", "-v", "-p", "")
 	// sudo's messages are translated; in the C locale a refusal reads the
 	// same everywhere.
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
