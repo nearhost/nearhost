@@ -54,15 +54,10 @@ func normalize(aliases []string) ([]string, error) {
 	return sorted, nil
 }
 
-// block renders the managed lines for already normalized aliases, or nil.
-// Each name gets an IPv4 and an IPv6 loopback row, so a real domain with a
-// public AAAA record cannot send the browser to the live site over IPv6.
-func block(sorted []string) []string {
-	return blockFor(sorted, true)
-}
-
-// blockFor is block with the ::1 rows optional: without them it is the form
-// 0.7.x wrote.
+// blockFor renders the managed lines for already normalized aliases, or nil.
+// With ipv6 each name gets an IPv4 and an IPv6 loopback row, so a real domain
+// with a public AAAA record cannot send the browser to the live site over
+// IPv6; without it the block is the form 0.7.x wrote.
 func blockFor(sorted []string, ipv6 bool) []string {
 	if len(sorted) == 0 {
 		return nil

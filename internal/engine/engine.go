@@ -410,6 +410,7 @@ func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 		return fmt.Errorf("the HTTPS and HTTP ports must differ (both are %d)", httpPort)
 	}
 	if webPort == httpsPort || webPort == httpPort {
+		//lint:ignore ST1005 the message starts with the name Nearhost.
 		return fmt.Errorf("Nearhost's page port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
 	}
 	return nil
