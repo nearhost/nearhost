@@ -487,9 +487,9 @@ func TestBuildConfigTagsBeforeCapture(t *testing.T) {
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
 	for i := range 2 {
 		handle := dig(t, routes[i], "handle").([]any)
-		if len(handle) != 3 || dig(t, handle[0], "handler") != tagModule || dig(t, handle[0], "alias") != "a.test" ||
-			dig(t, handle[1], "handler") != captureModule || dig(t, handle[2], "handler") != "reverse_proxy" {
-			t.Errorf("route %d handlers = %v, want tag, capture, reverse_proxy", i, handle)
+		if len(handle) != 4 || dig(t, handle[0], "handler") != tagModule || dig(t, handle[0], "alias") != "a.test" ||
+			dig(t, handle[1], "handler") != captureModule || dig(t, handle[2], "handler") != "headers" || dig(t, handle[3], "handler") != "reverse_proxy" {
+			t.Errorf("route %d handlers = %v, want tag, capture, headers, reverse_proxy", i, handle)
 		}
 	}
 }

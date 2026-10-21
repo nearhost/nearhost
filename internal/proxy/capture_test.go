@@ -73,6 +73,10 @@ func TestCaptureKeepsExchanges(t *testing.T) {
 	if h.rec.hasFor("a.test", "session=secret") {
 		t.Error("the cookie reached the log")
 	}
+	// The response kept is the one the client got, Via and all.
+	if got := e.RespHeader.Values("Via"); len(got) != 1 || got[0] != "1.1 Nearhost ("+testVersion+")" {
+		t.Errorf("kept Via %q", got)
+	}
 }
 
 // Bodies are cut at the limit, and the oldest exchanges go first.
