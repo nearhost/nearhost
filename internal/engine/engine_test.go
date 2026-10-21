@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2429,5 +2430,71 @@ func TestWebPortReportsServedPort(t *testing.T) {
 	}
 	if got := h.eng.WebPort(); got != page {
 		t.Fatalf("WebPort = %d, want %d", got, page)
+	}
+}
+
+// deniedListen fails as binding a privileged port without the privilege does.
+func deniedListen(network, addr string) error {
+	return &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EACCES)}
+}
+
+// A port the user may not bind needs permission; it is not in use, and no
+// program holding it is looked for.
+func TestStartSaysAPortNeedsPermission(t *testing.T) {
+	for _, udp := range []bool{false, true} {
+		h := buildHarness(t, &config.Config{}, nil)
+		if udp {
+			h.eng.listenPacket = func(network, addr string) (net.PacketConn, error) {
+				return nil, deniedListen(network, addr)
+			}
+		} else {
+			h.eng.listen = func(network, addr string) (net.Listener, error) {
+				return nil, deniedListen(network, addr)
+			}
+		}
+		h.eng.holderOf = func(context.Context, int) string {
+			t.Error("looked for a holder of a port that needs permission")
+			return ""
+		}
+		err := h.eng.Start(bg)
+		want := fmt.Sprintf("HTTPS port %d needs permission to bind", h.eng.opts.HTTPSPort)
+		if udp {
+			want = fmt.Sprintf("HTTPS port %d (UDP, for HTTP/3) needs permission to bind", h.eng.opts.HTTPSPort)
+		}
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "in use") {
+			t.Fatalf("udp %v: Start = %v, want %q", udp, err, want)
+		}
+		// The TUI's fix for the proxy being down tells EACCES apart this way.
+		if !errors.Is(err, syscall.EACCES) {
+			t.Fatalf("udp %v: %v does not wrap EACCES", udp, err)
+		}
+	}
+}
+
+// The page's port needing permission costs only the page, and says why.
+func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+	web := h.eng.opts.WebPort
+	h.eng.listen = func(network, addr string) (net.Listener, error) {
+		if addr == fmt.Sprintf(":%d", web) {
+			return nil, deniedListen(network, addr)
+		}
+		return net.Listen(network, addr)
+	}
+	events, unsubscribe := h.eng.Events().Subscribe(64)
+	defer unsubscribe()
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start with the page port denied: %v", err)
+	}
+	want := fmt.Sprintf("port %d needs permission to bind; serving without Nearhost's page", web)
+	for {
+		select {
+		case ev := <-events:
+			if strings.Contains(ev.Message, want) {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no event said %q", want)
+		}
 	}
 }

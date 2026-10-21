@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -163,6 +164,10 @@ type Engine struct {
 	// holderOf names the process listening on a local TCP port, or returns ""
 	// when it cannot tell or ctx ends first. Tests replace it.
 	holderOf func(ctx context.Context, port int) string
+	// listen and listenPacket are net.Listen and net.ListenPacket, which
+	// probePort binds the proxy's ports with. Tests replace them.
+	listen       func(network, addr string) (net.Listener, error)
+	listenPacket func(network, addr string) (net.PacketConn, error)
 	// applySites gives the proxy the set of sites that includes a project
 	// being started. It is the proxy's Apply; tests wrap it.
 	applySites func(sites []proxy.Site) error
@@ -220,17 +225,19 @@ type Engine struct {
 // seen until they are given to Apply. Call Start before starting projects.
 func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
-		opts:        opts,
-		webPort:     opts.WebPort,
-		bus:         NewBus(),
-		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
-		connectWait: 30 * time.Second,
-		holderOf:    PortHolder,
-		hostsTurn:   make(chan struct{}, 1),
-		servers:     map[string]*serverConn{},
-		held:        map[string]bool{},
-		ports:       map[int]string{},
-		relays:      map[int]net.Listener{},
+		opts:         opts,
+		webPort:      opts.WebPort,
+		bus:          NewBus(),
+		proxy:        proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
+		connectWait:  30 * time.Second,
+		holderOf:     PortHolder,
+		listen:       net.Listen,
+		listenPacket: net.ListenPacket,
+		hostsTurn:    make(chan struct{}, 1),
+		servers:      map[string]*serverConn{},
+		held:         map[string]bool{},
+		ports:        map[int]string{},
+		relays:       map[int]net.Listener{},
 	}
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {
@@ -365,7 +372,11 @@ func (e *Engine) Start(ctx context.Context) error {
 			e.mu.Lock()
 			e.webPort = 0
 			e.mu.Unlock()
-			e.bus.Publish(Event{Message: fmt.Sprintf("port %d is in use%s; serving without Nearhost's page (pass --web-port to choose another)", port, e.heldBy(ctx, port))})
+			reason := "is in use" + e.heldBy(ctx, port)
+			if errors.Is(err, syscall.EACCES) {
+				reason = "needs permission to bind"
+			}
+			e.bus.Publish(Event{Message: fmt.Sprintf("port %d %s; serving without Nearhost's page (pass --web-port to choose another)", port, reason)})
 		}
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
@@ -404,13 +415,19 @@ func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 }
 
 // probePort reports whether the proxy could listen on port (def when 0): on
-// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3.
+// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. A port the
+// user may not bind needs permission, and its error wraps syscall.EACCES; any
+// other failure to bind on TCP is the port being in use, and names the
+// program holding it when that can be found.
 func (e *Engine) probePort(ctx context.Context, what string, port, def int) error {
 	if port == 0 {
 		port = def
 	}
 	addr := fmt.Sprintf(":%d", port)
-	l, err := net.Listen("tcp", addr)
+	l, err := e.listen("tcp", addr)
+	if errors.Is(err, syscall.EACCES) {
+		return fmt.Errorf("%s port %d needs permission to bind: %w", what, port, err)
+	}
 	if err != nil {
 		return fmt.Errorf("%s port %d is in use%s: %w", what, port, e.heldBy(ctx, port), err)
 	}
@@ -420,7 +437,10 @@ func (e *Engine) probePort(ctx context.Context, what string, port, def int) erro
 	if what != "HTTPS" {
 		return nil
 	}
-	pc, err := net.ListenPacket("udp", addr)
+	pc, err := e.listenPacket("udp", addr)
+	if errors.Is(err, syscall.EACCES) {
+		return fmt.Errorf("%s port %d (UDP, for HTTP/3) needs permission to bind: %w", what, port, err)
+	}
 	if err != nil {
 		return fmt.Errorf("%s port %d (UDP, for HTTP/3) is not available: %w", what, port, err)
 	}
