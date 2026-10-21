@@ -149,7 +149,7 @@ func (b presetBackend) enable(ctx context.Context, cfg *config.Config, cfgPath, 
 	}
 	reg, ok := cfg.Trusted(alias)
 	if !ok {
-		return nil, false, fmt.Errorf("No registry is trusted as %q. Add one with: nearhost preset registry add <owner/repo> --as %s", alias, alias)
+		return nil, false, fmt.Errorf("no registry is trusted as %q. Add one with: nearhost preset registry add <owner/repo> --as %s", alias, alias)
 	}
 	file := presetPath(cfgPath, name)
 	data, err := os.ReadFile(file)

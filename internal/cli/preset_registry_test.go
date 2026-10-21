@@ -59,7 +59,7 @@ func TestPresetEnableNeedsTheRegistryToBeTrusted(t *testing.T) {
 	f, b := newFakeRegistries(t)
 	f.publish(acmeReg.Repo, refOne, "stack")
 	_, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "enable", "acme/stack")
-	want := `No registry is trusted as "acme". Add one with: nearhost preset registry add <owner/repo> --as acme`
+	want := `no registry is trusted as "acme". Add one with: nearhost preset registry add <owner/repo> --as acme`
 	if err == nil || err.Error() != want {
 		t.Fatalf("error = %v, want %q", err, want)
 	}
@@ -438,13 +438,13 @@ func TestPresetListMakesRegistryTitlesSafeToPrint(t *testing.T) {
 	cfgPath, f, b := trusted(t)
 	// The index refuses control characters, so what is left to strip is
 	// other unprintable text, such as a right-to-left override.
-	f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", `title: "Evil‮ der​dro"`, 1)
+	f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", "title: \"Evil\u202e der\u200bdro\"", 1)
 
 	out, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "list")
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	if strings.ContainsAny(out, "‮​") {
+	if strings.ContainsAny(out, "\u202e\u200b") {
 		t.Errorf("output carries unprintable text: %q", out)
 	}
 	if !strings.Contains(out, "  test/stack    Evil derdro\n") {

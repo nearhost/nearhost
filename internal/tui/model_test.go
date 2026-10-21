@@ -548,10 +548,10 @@ func TestNewProjectUnderACollapsedServerIsShown(t *testing.T) {
 // change how a name reads.
 func TestFormatCharactersAreRemoved(t *testing.T) {
 	cfg := sampleConfig()
-	cfg.Projects[0].Routes[0].Label = "abc‮def​"
+	cfg.Projects[0].Routes[0].Label = "abc\u202edef\u200b"
 	m := sized(newFake(t, cfg))
 	m.sel = rowKey(rowProject, "website")
-	if s := screen(m); strings.ContainsAny(s, "‮​") || !strings.Contains(s, "abcdef") {
+	if s := screen(m); strings.ContainsAny(s, "\u202e\u200b") || !strings.Contains(s, "abcdef") {
 		t.Errorf("format characters reached the screen:\n%s", s)
 	}
 }
