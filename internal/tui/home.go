@@ -169,8 +169,7 @@ func (m *Model) retryServers() tea.Cmd {
 func (m *Model) copySSH() tea.Cmd {
 	for _, p := range m.problems() {
 		if p.host != "" {
-			m.logs.noteOn(homeKey, "Copied ssh "+clean(p.host)+".")
-			return copyText("ssh " + p.host)
+			return tea.Batch(copyText("ssh "+p.host), m.alert(homeKey, "Copied ssh "+clean(p.host)+"."))
 		}
 	}
 	return nil

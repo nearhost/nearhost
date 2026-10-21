@@ -142,8 +142,7 @@ func (m *Model) clearSelection() {
 	m.mouse.shown = false
 }
 
-// copySelection puts the selected text on the clipboard and says so in the
-// selected row's log.
+// copySelection puts the selected text on the clipboard and says so.
 func (m *Model) copySelection() tea.Cmd {
 	text := m.selectedText(m.screenLines())
 	if strings.TrimSpace(text) == "" {
@@ -156,8 +155,7 @@ func (m *Model) copySelection() tea.Cmd {
 	if n == 1 {
 		what = "Copied " + quoteShort(text) + "."
 	}
-	m.logs.noteOn(m.sel, what)
-	return copyText(text)
+	return tea.Batch(copyText(text), m.alert(m.sel, what))
 }
 
 // plural is n and noun, with an s when n is not one.
@@ -169,7 +167,8 @@ func plural(n int, noun string) string {
 	return s
 }
 
-// quoteShort is text in quotes, cut to a length that fits a log line.
+// quoteShort is text in quotes, cut short enough for a toast to show it
+// whole.
 func quoteShort(text string) string {
 	return "“" + ansi.Truncate(text, 40, "…") + "”"
 }

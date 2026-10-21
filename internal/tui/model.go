@@ -43,6 +43,7 @@ type Model struct {
 	height    int
 	tallCells bool // the terminal's line height stretches cells; see cellsTall
 	mouse     mouseState
+	toast     toastState
 	sel       string // key of the selected row
 	collapsed map[string]bool
 	logs      *logs
@@ -296,7 +297,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setConfig(m.b.Config())
 	case openedMsg:
 		if msg.err != nil {
-			m.logs.note("Open " + msg.url + " in your browser.")
+			return m, m.alertProblem(m.sel, "Open "+msg.url+" in your browser.")
 		}
 	case suspendMsg:
 		if m.quitting {
@@ -332,10 +333,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.edited {
 			verb = "Saved server "
 		}
-		m.logs.noteOn(key, verb+msg.srv.Name+".")
-		var cmd tea.Cmd
+		cmd := m.alert(key, verb+msg.srv.Name+".")
 		if pf, ok := m.form.(*projectForm); ok && pf.sub != nil {
-			cmd = pf.update(msg) // back to adding the project, on this server
+			cmd = tea.Batch(cmd, pf.update(msg)) // back to adding the project, on this server
 		} else {
 			m.form = nil
 			m.selectRow(key)
@@ -355,13 +355,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.edited {
 			verb = "Saved "
 		}
-		m.logs.noteOn(m.sel, verb+msg.name+".")
-		return m, m.applyNow()
+		return m, tea.Batch(m.alert(m.sel, verb+msg.name+"."), m.applyNow())
 	case changedMsg:
 		m.form = nil
 		m.selectRow(msg.sel)
-		m.logs.noteOn(m.sel, msg.note)
-		return m, m.applyNow()
+		return m, tea.Batch(m.alert(m.sel, msg.note), m.applyNow())
 	case passwordMsg:
 		m.askPassword(msg)
 	case passwordClosedMsg:
@@ -394,9 +392,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
-		m.logs.noteOn(m.sel, "Could not open "+msg.url+": "+msg.err.Error())
+		return m, m.alertProblem(m.sel, "Could not open "+msg.url+": "+msg.err.Error())
+	case toastDoneMsg:
+		m.toastDone(msg)
 	case copyFailedMsg:
-		m.logs.noteOn(m.sel, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
+		return m, m.alertProblem(m.sel, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
 	case tea.MouseWheelMsg:
 		m.clearSelection() // the text under it moves
 		m.wheel(msg.Mouse())
@@ -501,7 +501,7 @@ func (m *Model) quit() tea.Cmd {
 
 // View draws the screen, with any text selected with the mouse highlighted.
 func (m *Model) View() tea.View {
-	v := tea.NewView(m.highlight(m.content()))
+	v := tea.NewView(m.withToast(m.highlight(m.content())))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v

@@ -75,7 +75,7 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\nweb UI    https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	wantScreen(t, m, "Copied 2 lines.")
+	wantScreen(t, m, "● Copied 2 lines")
 	// The note moved the log, so a highlight now would be on other text.
 	if reversed.MatchString(m.View().Content) {
 		t.Error("the selection is still highlighted after the copy")
@@ -97,7 +97,7 @@ func TestDragWithinARow(t *testing.T) {
 	if got := clipboard(drag(m, end, y, x, y)); got != "https://localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	wantScreen(t, m, `Copied “https://localhost:6327”.`)
+	wantScreen(t, m, `● Copied “https://localhost:6327”`)
 }
 
 // A click on a link opens it, and so does one on an address a log line
@@ -164,7 +164,7 @@ func TestDragFromTheFooterDoesNotRunItsKey(t *testing.T) {
 	if len(f.opened) != 0 {
 		t.Errorf("the drag opened %v", f.opened)
 	}
-	wantScreen(t, m, `Copied “o open”.`)
+	wantScreen(t, m, `● Copied “o open”`)
 }
 
 // While the sidebar is filtered, the footer's enter keeps the filter, as
@@ -274,5 +274,59 @@ func TestCopyWithReportsAFailure(t *testing.T) {
 	}
 	if err := copyWith([][]string{{"nh-not-installed"}}, "x"); err != nil {
 		t.Errorf("with no tool installed, err = %v", err)
+	}
+}
+
+// A copy's toast sits at the bottom right, just above the footer's rule,
+// and goes when its time is up. The timer of a toast that was replaced
+// leaves the new one be.
+func TestCopyShowsAToast(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	run(m, func() tea.Msg { return startedMsg{} })
+	x, y := find(t, m, "https://localhost:6327")
+	drag(m, x, y, x+7, y)
+	first := m.toast.seq
+	lines := strings.Split(screen(m), "\n")
+	at := -1
+	for i, l := range lines {
+		if strings.Contains(l, "● Copied “https://”") {
+			at = i
+		}
+	}
+	if at != m.height-m.footerHeight()-3 || !strings.HasSuffix(strings.TrimRight(lines[at], " "), "│") ||
+		!strings.Contains(lines[at+1], "╯") || ansi.StringWidth(strings.TrimRight(lines[at+1], " ")) != m.width-2 {
+		t.Fatalf("the toast is on line %d, want %d, at the right:\n%s", at, m.height-m.footerHeight()-3, screen(m))
+	}
+	drag(m, x, y, x+3, y)
+	m.Update(toastDoneMsg{first})
+	wantScreen(t, m, "● Copied “http”")
+	m.Update(toastDoneMsg{m.toast.seq})
+	if strings.Contains(screen(m), "● Copied") {
+		t.Errorf("the toast outlived its time:\n%s", screen(m))
+	}
+}
+
+// alert writes to the log and shows a toast; alertProblem's toast has the
+// amber dot. A long line is cut in the toast and whole in the log.
+func TestAlertsGoToTheLogAndAToast(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.Update(projectAddedMsg{name: "blog"})
+	if n := strings.Count(screen(m), "Added blog."); n != 2 {
+		t.Errorf("Added blog. is on the screen %d times, want in the log and a toast:\n%s", n, screen(m))
+	}
+	if m.toast.problem {
+		t.Error("an add's toast is a problem's")
+	}
+	long := "Could not open https://example.test/" + strings.Repeat("a", 80) + ": boom"
+	m.Update(openFailedMsg{"https://example.test/" + strings.Repeat("a", 80), errBoom})
+	if !m.toast.problem || m.toast.text != long {
+		t.Errorf("toast %+v", m.toast)
+	}
+	if !strings.Contains(m.View().Content, styleAmber.Render("●")) {
+		t.Error("the problem's toast has no amber dot")
+	}
+	wantScreen(t, m, "● "+ansi.Truncate(long, toastWidth, "…")+" │")
+	if len(m.logs.entries(m.sel, "")) == 0 || !strings.Contains(m.logs.entries(m.sel, "")[len(m.logs.entries(m.sel, ""))-1].text, long) {
+		t.Error("the log does not have the whole line")
 	}
 }
