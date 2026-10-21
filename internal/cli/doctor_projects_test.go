@@ -106,7 +106,7 @@ func shopAndBlog(t *testing.T) string {
 	return path
 }
 
-const shopAndBlogHosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n127.0.0.1 old.test\n127.0.0.1 shop.test\n# nearhost:end\n"
+const shopAndBlogHosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n::1 blog.test\n127.0.0.1 old.test\n::1 old.test\n127.0.0.1 shop.test\n::1 shop.test\n# nearhost:end\n"
 
 func TestDoctorProjectSection(t *testing.T) {
 	path := shopAndBlog(t)
@@ -143,7 +143,7 @@ func TestDoctorProjectSection(t *testing.T) {
 	cfg := loadSaved(t, path)
 	cfg.Projects = cfg.Projects[1:]
 	saveConfig(t, path, cfg)
-	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n127.0.0.1 old.test\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n::1 blog.test\n127.0.0.1 old.test\n::1 old.test\n# nearhost:end\n"
 	out, err = execute(t, newDoctorCmd(withProjects(f.backend(), nil, &opened)), "doctor")
 	if err != nil || !strings.HasSuffix(out, "\nProjects\nok    blog             no problems found\n\nAll checks passed.\n") {
 		t.Fatalf("err = %v\n%s", err, out)
@@ -310,7 +310,7 @@ func TestDoctorReportsProjectsOfAnUnreachableServerUnchecked(t *testing.T) {
 		Projects: []config.Project{shop, cart, idle},
 	})
 	f := healthy()
-	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n127.0.0.1 idle.test\n127.0.0.1 shop.test\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n::1 cart.test\n127.0.0.1 idle.test\n::1 idle.test\n127.0.0.1 shop.test\n::1 shop.test\n# nearhost:end\n"
 	f.serverErr = map[string]error{"box": errors.New("no route to host")}
 	var opened []string
 	out, err := execute(t, newDoctorCmd(withProjects(f.backend(), nil, &opened)), "doctor")
@@ -360,7 +360,7 @@ func TestDoctorOpensEachServersFilesOnceAndClosesThem(t *testing.T) {
 		cart.Path: {},
 	}}
 	f := healthy()
-	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n127.0.0.1 gone.test\n127.0.0.1 shop.test\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n::1 cart.test\n127.0.0.1 gone.test\n::1 gone.test\n127.0.0.1 shop.test\n::1 shop.test\n# nearhost:end\n"
 	var opened []string
 	out, err := execute(t, newDoctorCmd(withProjects(f.backend(), map[string]serverFiles{"mini": box}, &opened)), "doctor")
 	if err == nil || err.Error() != "1 check failed" {
@@ -385,7 +385,7 @@ func TestDoctorGivesUpOnAProjectWhoseChecksHang(t *testing.T) {
 	box := &memFiles{dirs: map[string]map[string]string{shop.Path: {}, cart.Path: {}}, block: make(chan struct{})}
 	defer close(box.block)
 	f := healthy()
-	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n127.0.0.1 shop.test\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 cart.test\n::1 cart.test\n127.0.0.1 shop.test\n::1 shop.test\n# nearhost:end\n"
 	var opened []string
 	done := make(chan string)
 	go func() {
@@ -474,7 +474,7 @@ func TestProjectFindingsReadsTheHostsBlock(t *testing.T) {
 		env  doctorEnv
 		want []string
 	}{
-		{"in the block", doctorEnv{lookup: nx, readHosts: hostsFile("# nearhost:start\n127.0.0.1 shop.test\n# nearhost:end\n", nil)}, nil},
+		{"in the block", doctorEnv{lookup: nx, readHosts: hostsFile("# nearhost:start\n127.0.0.1 shop.test\n::1 shop.test\n# nearhost:end\n", nil)}, nil},
 		{"missing from the block", doctorEnv{lookup: nx, readHosts: hostsFile("127.0.0.1 localhost\n", nil)}, []string{"hosts.unresolved"}},
 		{"no hosts file yet", doctorEnv{lookup: nx, readHosts: hostsFile("", fs.ErrNotExist)}, []string{"hosts.unresolved"}},
 		{"hosts not managed", doctorEnv{lookup: nx, noHosts: true, readHosts: hostsFile("127.0.0.1 localhost\n", nil)}, nil},
@@ -560,7 +560,7 @@ func TestDoctorKeepsAMissingNameTheHostsCheckDoesNotName(t *testing.T) {
 		err   error
 		check string
 	}{
-		{"stale names only", "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n127.0.0.1 gone.test\n# nearhost:end\n", nil,
+		{"stale names only", "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.test\n::1 blog.test\n127.0.0.1 gone.test\n::1 gone.test\n# nearhost:end\n", nil,
 			"FAIL  hosts block      no longer configured: gone.test\n"},
 		{"unreadable", "", fs.ErrPermission, "FAIL  hosts block      permission denied\n"},
 	} {

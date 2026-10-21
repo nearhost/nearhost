@@ -20,7 +20,7 @@ const base = "127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1         
 
 func TestRewriteAppendsBlockWhenAbsent(t *testing.T) {
 	got := mustRewrite(t, base, []string{"b.test", "a.test"})
-	want := base + "# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 b.test\n# nearhost:end\n"
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -39,7 +39,7 @@ func TestRewriteWithoutTrailingNewlineStartsBlockOnOwnLine(t *testing.T) {
 func TestRewriteReplacesStaleBlockAndKeepsSurroundings(t *testing.T) {
 	existing := "# before\n" + base + "# nearhost:start\n127.0.0.1 old.test\n# nearhost:end\n# after\n192.168.1.5 nas\n"
 	got := mustRewrite(t, existing, []string{"new.test"})
-	want := "# before\n" + base + "# nearhost:start\n127.0.0.1 new.test\n# nearhost:end\n# after\n192.168.1.5 nas\n"
+	want := "# before\n" + base + "# nearhost:start\n127.0.0.1 new.test\n::1 new.test\n# nearhost:end\n# after\n192.168.1.5 nas\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -57,7 +57,7 @@ func TestRewriteWithNoAliasesRemovesBlock(t *testing.T) {
 
 func TestRewriteDeduplicatesAliases(t *testing.T) {
 	got := mustRewrite(t, "", []string{"a.test", "a.test"})
-	if strings.Count(got, "a.test") != 1 {
+	if strings.Count(got, "127.0.0.1 a.test") != 1 || strings.Count(got, "::1 a.test") != 1 {
 		t.Fatalf("duplicate alias written:\n%s", got)
 	}
 }
@@ -120,7 +120,7 @@ func TestEnsureTreatsMissingFileAsEmpty(t *testing.T) {
 func TestRewriteUnterminatedBlockKeepsForeignContent(t *testing.T) {
 	existing := base + "# nearhost:start\n127.0.0.1 old.test\n10.0.0.1 nas\n# keep me\n127.0.0.1 mine.test\n"
 	got := mustRewrite(t, existing, []string{"new.test"})
-	want := base + "10.0.0.1 nas\n# keep me\n127.0.0.1 mine.test\n# nearhost:start\n127.0.0.1 new.test\n# nearhost:end\n"
+	want := base + "10.0.0.1 nas\n# keep me\n127.0.0.1 mine.test\n# nearhost:start\n127.0.0.1 new.test\n::1 new.test\n# nearhost:end\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -139,7 +139,7 @@ func TestRewriteUnterminatedBlockRemovedWhenNoAliases(t *testing.T) {
 func TestRewriteBlockLastWithoutTrailingNewline(t *testing.T) {
 	existing := base + "# nearhost:start\n127.0.0.1 old.test\n# nearhost:end"
 	got := mustRewrite(t, existing, []string{"new.test"})
-	want := base + "# nearhost:start\n127.0.0.1 new.test\n# nearhost:end\n"
+	want := base + "# nearhost:start\n127.0.0.1 new.test\n::1 new.test\n# nearhost:end\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -154,7 +154,7 @@ func TestCleanLeavesRestUntouched(t *testing.T) {
 
 func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
-	os.WriteFile(path, []byte("127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n# nearhost:end"), 0o644)
+	os.WriteFile(path, []byte("127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end"), 0o644)
 	called := false
 	changed, err := Ensure(path, []string{"a.test"}, func([]string) error { called = true; return nil })
 	if err != nil || changed || called {
@@ -216,7 +216,7 @@ func TestRewriteRejectsInvalidAliases(t *testing.T) {
 
 func TestRewriteAcceptsValidAliases(t *testing.T) {
 	got := mustRewrite(t, "", []string{"my-app-2.test", "api.myapp.test", "  pad.test  "})
-	want := "# nearhost:start\n127.0.0.1 api.myapp.test\n127.0.0.1 my-app-2.test\n127.0.0.1 pad.test\n# nearhost:end\n"
+	want := "# nearhost:start\n127.0.0.1 api.myapp.test\n::1 api.myapp.test\n127.0.0.1 my-app-2.test\n::1 my-app-2.test\n127.0.0.1 pad.test\n::1 pad.test\n# nearhost:end\n"
 	if got != want {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -333,7 +333,7 @@ func TestApplyWritesCorrectContentAndLeavesNoTempFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
-	want := base + "# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 b.test\n# nearhost:end\n"
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
 	if string(got) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -377,7 +377,7 @@ func TestApplyCreatesMissingFileWith0644(t *testing.T) {
 		t.Fatalf("mode %v, want 0644", fi.Mode().Perm())
 	}
 	got, _ := os.ReadFile(path)
-	if string(got) != "# nearhost:start\n127.0.0.1 a.test\n# nearhost:end\n" {
+	if string(got) != "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n" {
 		t.Fatalf("got %q", got)
 	}
 	tempLeftovers(t, dir, "hosts")
@@ -609,5 +609,48 @@ func TestRewriteAcceptsRealDomainsButNotPatternsOrLocalhost(t *testing.T) {
 		if _, err := Rewrite("", []string{bad}); err == nil {
 			t.Errorf("Rewrite accepted %q", bad)
 		}
+	}
+}
+
+func TestBlockWritesIPv4AndIPv6(t *testing.T) {
+	got := mustRewrite(t, "", []string{"b.test", "a.test"})
+	want := "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAliasesDedupesBothFamilies(t *testing.T) {
+	got := Aliases("# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n")
+	if want := []string{"a.test", "b.test"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestAliasesReadsOldIPv4OnlyBlock(t *testing.T) {
+	got := Aliases("# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 b.test\n# nearhost:end\n")
+	if want := []string{"a.test", "b.test"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestEnsureRewritesOldBlockOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	old := base + "# nearhost:start\n127.0.0.1 a.test\n127.0.0.1 b.test\n# nearhost:end\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aliases := []string{"a.test", "b.test"}
+	apply := func(a []string) error { return Apply(path, a) }
+	if changed, err := Ensure(path, aliases, apply); err != nil || !changed {
+		t.Fatalf("first Ensure: changed=%v err=%v", changed, err)
+	}
+	data, _ := os.ReadFile(path)
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
+	if string(data) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
+	}
+	if changed, err := Ensure(path, aliases, apply); err != nil || changed {
+		t.Fatalf("second Ensure: changed=%v err=%v", changed, err)
 	}
 }
