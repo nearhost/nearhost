@@ -5,6 +5,8 @@ package dockernet
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,24 +44,90 @@ func Ranges(ctx context.Context) ([]string, error) {
 }
 
 // sockets lists where a daemon's socket may be, most specific first:
-// DOCKER_HOST when it names a unix socket, Docker Desktop's, Colima's, a
-// rootless daemon's and the system one. A DOCKER_HOST that is not a unix
-// socket (tcp, ssh) is skipped: that daemon's networks are not on this
-// machine, so its containers do not come from them.
+// DOCKER_HOST when it names a unix socket, the current docker context's
+// socket, then Docker Desktop's, OrbStack's, Rancher Desktop's, every Colima
+// profile's (default first), a rootless Docker's, Podman's and the system
+// one. A DOCKER_HOST or context that is not a unix socket (tcp, ssh) is
+// skipped: that daemon's networks are not on this machine, so its containers
+// do not come from them. Each place is listed once.
 func sockets() []string {
 	var out []string
 	if host, ok := strings.CutPrefix(os.Getenv("DOCKER_HOST"), "unix://"); ok && host != "" {
 		out = append(out, host)
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	home, homeErr := os.UserHomeDir()
+	if sock := contextSocket(home); sock != "" {
+		out = append(out, sock)
+	}
+	if homeErr == nil {
 		out = append(out,
 			filepath.Join(home, ".docker", "run", "docker.sock"),
+			filepath.Join(home, ".orbstack", "run", "docker.sock"),
+			filepath.Join(home, ".rd", "docker.sock"),
 			filepath.Join(home, ".colima", "default", "docker.sock"))
+		others, _ := filepath.Glob(filepath.Join(home, ".colima", "*", "docker.sock"))
+		out = append(out, others...) // Glob sorts; duplicates are dropped below
 	}
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		out = append(out, filepath.Join(dir, "docker.sock"))
+		out = append(out,
+			filepath.Join(dir, "docker.sock"),
+			filepath.Join(dir, "podman", "podman.sock"))
 	}
-	return append(out, "/var/run/docker.sock")
+	out = append(out, "/var/run/docker.sock")
+	var unique []string
+	for _, path := range out {
+		if !slices.Contains(unique, path) {
+			unique = append(unique, path)
+		}
+	}
+	return unique
+}
+
+// contextSocket returns the unix socket of the current docker context, or ""
+// when there is none. DOCKER_CONTEXT overrides the config file's
+// currentContext, and DOCKER_CONFIG replaces ~/.docker. It is best effort: a
+// missing or unparsable file, the "default" context and a non-unix host all
+// give "".
+func contextSocket(home string) string {
+	dir := os.Getenv("DOCKER_CONFIG")
+	if dir == "" {
+		if home == "" {
+			return ""
+		}
+		dir = filepath.Join(home, ".docker")
+	}
+	name := os.Getenv("DOCKER_CONTEXT")
+	if name == "" {
+		var cfg struct {
+			CurrentContext string `json:"currentContext"`
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+		if err != nil || json.Unmarshal(data, &cfg) != nil {
+			return ""
+		}
+		name = cfg.CurrentContext
+	}
+	if name == "" || name == "default" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(name))
+	data, err := os.ReadFile(filepath.Join(dir, "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json"))
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Endpoints struct {
+			Docker struct{ Host string }
+		}
+	}
+	if json.Unmarshal(data, &meta) != nil {
+		return ""
+	}
+	sock, _ := strings.CutPrefix(meta.Endpoints.Docker.Host, "unix://")
+	if sock == meta.Endpoints.Docker.Host {
+		return ""
+	}
+	return sock
 }
 
 // rangesFrom is Ranges over the given sockets, tried in order.

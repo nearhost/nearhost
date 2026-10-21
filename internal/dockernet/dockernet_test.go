@@ -2,8 +2,11 @@ package dockernet
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -117,5 +120,57 @@ func TestRangesTriesSocketsInOrder(t *testing.T) {
 	}
 	if want := []string{"10.99.0.0/16"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ranges = %q, want %q", got, want)
+	}
+}
+
+// TestSocketsOrder checks every place a daemon's socket is looked for, and
+// the order they are tried in.
+func TestSocketsOrder(t *testing.T) {
+	home := t.TempDir()
+	xdg := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("DOCKER_CONFIG", "")
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", "unix:///x/host.sock")
+	t.Setenv("XDG_RUNTIME_DIR", xdg)
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sum := sha256.Sum256([]byte("orbstack"))
+	write(filepath.Join(home, ".docker", "config.json"), `{"currentContext":"orbstack"}`)
+	write(filepath.Join(home, ".docker", "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json"),
+		`{"Name":"orbstack","Endpoints":{"docker":{"Host":"unix:///x/orb.sock"}}}`)
+	for _, profile := range []string{"zed", "default", "alpha"} {
+		write(filepath.Join(home, ".colima", profile, "docker.sock"), "")
+	}
+	want := []string{
+		"/x/host.sock",
+		"/x/orb.sock",
+		filepath.Join(home, ".docker", "run", "docker.sock"),
+		filepath.Join(home, ".orbstack", "run", "docker.sock"),
+		filepath.Join(home, ".rd", "docker.sock"),
+		filepath.Join(home, ".colima", "default", "docker.sock"),
+		filepath.Join(home, ".colima", "alpha", "docker.sock"),
+		filepath.Join(home, ".colima", "zed", "docker.sock"),
+		filepath.Join(xdg, "docker.sock"),
+		filepath.Join(xdg, "podman", "podman.sock"),
+		"/var/run/docker.sock",
+	}
+	if got := sockets(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sockets() = %q, want %q", got, want)
+	}
+
+	// DOCKER_CONTEXT wins over the config file, and "default" adds nothing.
+	t.Setenv("DOCKER_CONTEXT", "default")
+	for _, s := range sockets() {
+		if s == "/x/orb.sock" {
+			t.Fatalf("default context still added %q", s)
+		}
 	}
 }
