@@ -18,14 +18,18 @@ func newHostsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hosts",
 		Short: "Manage the nearhost block in /etc/hosts",
+		Long: `Manage the nearhost block in /etc/hosts.
+
+Asks for your password, as it runs sudo.`,
 	}
 	var file string
 	cmd.PersistentFlags().StringVar(&file, "file", hosts.DefaultPath, "hosts file to edit")
 
 	apply := &cobra.Command{
-		Use:   "apply",
-		Args:  cobra.NoArgs,
-		Short: "Set the managed block to the aliases read from stdin (one per line)",
+		Use:    "apply",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		Short:  "Set the managed block to the aliases read from stdin (one per line)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var aliases []string
 			sc := bufio.NewScanner(cmd.InOrStdin())

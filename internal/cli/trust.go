@@ -73,7 +73,10 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "trust",
 		Short: "Install the Nearhost Local CA into the system trust store",
-		Args:  cobra.NoArgs,
+		Long: `Install the Nearhost Local CA into the system trust store.
+
+Asks for your password, as it runs sudo.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()
@@ -139,7 +142,10 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "untrust",
 		Short: "Remove the Nearhost Local CA from the system trust store",
-		Args:  cobra.NoArgs,
+		Long: `Remove the Nearhost Local CA from the system trust store.
+
+Asks for your password, as it runs sudo.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()

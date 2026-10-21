@@ -112,13 +112,24 @@ func bindUI(root *cobra.Command, b uiBackend) {
 	var flags serveFlags
 	flags.bind(root)
 	flags.bindCapture(root)
-	root.Args = cobra.NoArgs
+	root.Args = rootArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if b.interactive == nil || !b.interactive() {
 			return cmd.Help()
 		}
 		return runUI(cmd, b, flags)
 	}
+}
+
+// rootArgs is cobra.NoArgs, except that a single argument that looks like a
+// mistyped command is answered with the commands it may have meant.
+func rootArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 {
+		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+			return fmt.Errorf("unknown command %q for %q\n\nDid you mean this?\n\t%s", args[0], cmd.CommandPath(), strings.Join(s, "\n\t"))
+		}
+	}
+	return cobra.NoArgs(cmd, args)
 }
 
 func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
