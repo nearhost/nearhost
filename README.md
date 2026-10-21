@@ -61,6 +61,8 @@ or `npm install -g @nearhost/cli` to keep the `nearhost` command. npm installs t
 go install github.com/nearhost/nearhost/cmd/nearhost@latest
 ```
 
+`go install` builds with your own Go toolchain. Use Go 1.27.3 or later, the version the release binaries are built with.
+
 On Linux, allow the binary to bind ports 80 and 443. Run this again after each upgrade:
 
 ```sh
@@ -69,7 +71,7 @@ sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
-The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, run `xattr -dr com.apple.quarantine nearhost` on the extracted binary.
+The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, clear the flag on the extracted binary: from the folder you extracted it to, run `xattr -dr com.apple.quarantine ./nearhost`.
 
 Releases carry build provenance attestations. To check a download, run `gh attestation verify <file> --repo nearhost/nearhost`.
 
@@ -91,7 +93,7 @@ Trust the local certificate authority. This asks for your password once:
 nearhost trust
 ```
 
-The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux; `$XDG_DATA_HOME/nearhost/caddy` when that is set). Anyone with it can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. An older copy in `~/.config/nearhost/caddy` is moved there the first time Nearhost runs, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from your trust stores.
+The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On either, an absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy`. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
 
 Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml`. Nothing in the project is changed.
 
@@ -232,10 +234,11 @@ A source build reports its version as `dev`.
 
 ### Run from source
 
-Point Nearhost at a scratch config directory so a development build leaves your real config, certificate authority and `/etc/hosts` alone. Unprivileged ports avoid needing `setcap` on Linux:
+Point Nearhost at scratch directories so a development build leaves your real setup alone: `XDG_CONFIG_HOME` keeps its config apart, `XDG_DATA_HOME` keeps its certificate authority apart, and `--no-hosts` leaves `/etc/hosts` as it is. Unprivileged ports avoid needing `setcap` on Linux:
 
 ```sh
 export XDG_CONFIG_HOME="$PWD/.dev"
+export XDG_DATA_HOME="$PWD/.dev/data"
 ./nearhost add --web 8080 ~/code/myapp
 ./nearhost up --no-hosts --https-port 18443 --http-port 18080 --web-port 16327
 ```
@@ -248,7 +251,7 @@ Without the hosts block, `myapp.test` does not resolve, so ask for it by address
 curl -k --resolve myapp.test:18443:127.0.0.1 https://myapp.test:18443/
 ```
 
-Drop `-k` after running `./nearhost trust` with the same `XDG_CONFIG_HOME`, and remember to run `./nearhost untrust` when you are done.
+The source build makes its own CA in `.dev/data`, apart from the installed Nearhost's. To drop `-k`, run `./nearhost trust` with the same variables set, which adds that dev CA to the system trust store. When you are done, run `./nearhost untrust` with them still set, so it removes the dev CA rather than the installed one.
 
 ### Test
 
