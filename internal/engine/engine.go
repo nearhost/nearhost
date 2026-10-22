@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"slices"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -365,10 +365,15 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
 	}
-	// A taken page port costs only the page, not the proxy.
+	// A taken page port costs only the page, not the proxy. A Start that
+	// failed after dropping it tries the port again.
+	e.proxy.SetWebPort(e.opts.WebPort)
+	e.mu.Lock()
+	e.webPort = e.opts.WebPort
+	e.mu.Unlock()
 	if port := e.opts.WebPort; port != 0 {
 		if err := e.probePort(ctx, "Nearhost's page", port, 0); err != nil {
-			e.proxy.DropWebPort()
+			e.proxy.SetWebPort(0)
 			e.mu.Lock()
 			e.webPort = 0
 			e.mu.Unlock()
@@ -431,7 +436,7 @@ type portError struct {
 // the user may not bind it, or else that it is in use, by whom when known.
 func (e *portError) reason() string {
 	switch {
-	case errors.Is(e.err, syscall.EACCES):
+	case errors.Is(e.err, fs.ErrPermission):
 		return "needs permission to bind"
 	case e.udp:
 		return "is not available"
@@ -452,7 +457,7 @@ func (e *portError) Unwrap() error { return e.err }
 
 // probePort reports whether the proxy could listen on port (def when 0): on
 // TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. A port it
-// cannot bind is a *portError, which wraps syscall.EACCES when the user may
+// cannot bind is a *portError, which wraps EACCES or EPERM when the user may
 // not bind the port. Any other failure on TCP is the port being in use, and
 // names the program holding it when that can be found.
 func (e *Engine) probePort(ctx context.Context, what string, port, def int) error {
@@ -463,7 +468,7 @@ func (e *Engine) probePort(ctx context.Context, what string, port, def int) erro
 	l, err := e.listen("tcp", addr)
 	if err != nil {
 		pe := &portError{what: what, port: port, err: err}
-		if !errors.Is(err, syscall.EACCES) {
+		if !errors.Is(err, fs.ErrPermission) {
 			pe.heldBy = e.heldBy(ctx, port)
 		}
 		return pe

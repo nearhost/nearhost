@@ -2403,7 +2403,8 @@ func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
 	}
 	defer l.Close()
 	held := l.Addr().(*net.TCPAddr).Port
-	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = held })
+	cfg := &config.Config{Projects: []config.Project{localProject("alpha", upstream(t, "alpha"))}}
+	h := buildHarness(t, cfg, func(o *Options) { o.WebPort = held })
 	events, unsubscribe := h.eng.Events().Subscribe(64)
 	defer unsubscribe()
 	if err := h.eng.Start(bg); err != nil {
@@ -2413,16 +2414,61 @@ func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
 		t.Fatalf("WebPort = %d, want 0", got)
 	}
 	want := fmt.Sprintf("port %d is in use", held)
-	for {
+	for said := false; !said; {
 		select {
 		case ev := <-events:
-			if strings.Contains(ev.Message, want) && strings.Contains(ev.Message, "without Nearhost's page") {
-				return
-			}
+			said = strings.Contains(ev.Message, want) && strings.Contains(ev.Message, "without Nearhost's page")
 		case <-time.After(5 * time.Second):
 			t.Fatalf("no event said %q", want)
 		}
 	}
+	// Projects are still served.
+	mustStart(t, h, "alpha")
+	if code, body := h.getEventually(t, "alpha.test", "/"); code != 200 || !strings.HasPrefix(body, "alpha:") {
+		t.Fatalf("alpha through proxy: %d %q", code, body)
+	}
+}
+
+// A Start that fails after dropping a taken page port tries the port again
+// when it is called again.
+func TestStartRetriesThePagePort(t *testing.T) {
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+	web := h.eng.opts.WebPort
+	// The page port is taken at the probe, and the HTTPS port right after
+	// it, so the proxy fails to start.
+	var https net.Listener
+	t.Cleanup(func() {
+		if https != nil {
+			https.Close()
+		}
+	})
+	h.eng.listen = func(network, addr string) (net.Listener, error) {
+		if addr == fmt.Sprintf(":%d", web) {
+			var err error
+			if https, err = net.Listen("tcp", fmt.Sprintf(":%d", h.httpsPort)); err != nil {
+				t.Fatal(err)
+			}
+			return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+		}
+		return net.Listen(network, addr)
+	}
+	if err := h.eng.Start(bg); err == nil {
+		t.Fatal("Start succeeded with the HTTPS port taken")
+	}
+	https.Close()
+	https = nil
+	h.eng.listen = net.Listen
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start again: %v", err)
+	}
+	if got := h.eng.WebPort(); got != web {
+		t.Fatalf("WebPort = %d, want %d", got, web)
+	}
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", web))
+	if err != nil {
+		t.Fatalf("page port not served after the retry: %v", err)
+	}
+	c.Close()
 }
 
 func TestStartStillFailsWhenHTTPSPortBusy(t *testing.T) {
@@ -2553,6 +2599,17 @@ func TestStartLooksUpThePagePortsHolderOnce(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("no event said %q", want)
+		}
+	}
+}
+
+// EPERM, which some systems return for a port the user may not bind, needs
+// permission as EACCES does.
+func TestPortErrorSaysEPERMNeedsPermission(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.EPERM} {
+		pe := &portError{what: "HTTPS", port: 443, err: os.NewSyscallError("bind", errno), heldBy: " by node (pid 1)"}
+		if got := pe.reason(); got != "needs permission to bind" {
+			t.Errorf("%v: reason = %q", errno, got)
 		}
 	}
 }
