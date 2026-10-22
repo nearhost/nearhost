@@ -90,6 +90,10 @@ func goBin(dir string, getenv func(string) string) bool {
 	if gopath == "" {
 		home := getenv("HOME")
 		if home == "" {
+			// Go's default GOPATH on Windows is %USERPROFILE%\go.
+			home = getenv("USERPROFILE")
+		}
+		if home == "" {
 			return false
 		}
 		gopath = filepath.Join(home, "go")
