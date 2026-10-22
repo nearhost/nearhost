@@ -113,13 +113,6 @@ func (c Checker) fresh() (cache, bool) {
 	return kept, true
 }
 
-// HasFresh reports whether the cache holds a check less than TTL old, a
-// failed one included, so Cached would answer without asking GitHub.
-func (c Checker) HasFresh() bool {
-	_, ok := c.fresh()
-	return ok
-}
-
 // Cached is Latest, answered from the cache when it is less than TTL old.
 func (c Checker) Cached(ctx context.Context) (string, error) {
 	if kept, ok := c.fresh(); ok {

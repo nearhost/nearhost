@@ -39,11 +39,12 @@ func New(opts Options) *Proxy {
 	return &Proxy{opts: opts}
 }
 
-// DropWebPort stops the proxy serving Nearhost's page on a port of its own,
-// for a caller that found the port taken. It must be called before the first
-// Apply, as the options are read without a lock.
-func (p *Proxy) DropWebPort() {
-	p.opts.WebPort = 0
+// SetWebPort sets the port the proxy serves Nearhost's page on, 0 for none:
+// a caller that found the port taken drops it, and restores it before trying
+// again. It must be called while the proxy is not running, as the options are
+// read without a lock.
+func (p *Proxy) SetWebPort(port int) {
+	p.opts.WebPort = port
 }
 
 // Apply loads a configuration serving exactly the given sites. Existing

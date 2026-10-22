@@ -496,15 +496,21 @@ func TestScriptFlagWithoutItsValueIsAUsageErrorInEveryShell(t *testing.T) {
 
 // Without curl the script says so, rather than that Nearhost is not running.
 func TestScriptWithoutCurlSaysSo(t *testing.T) {
+	shells := []string{"sh"}
+	if _, err := exec.LookPath("dash"); err == nil {
+		shells = append(shells, "dash")
+	}
 	home := shortDir(t)
-	for _, cmd := range []string{"socket", "status", "propose", "wait", "doctor", "reload"} {
-		args := []string{cmd}
-		if cmd == "wait" {
-			args = append(args, "abc123")
-		}
-		r := runScript(t, home, []string{"PATH=/nonexistent"}, args...)
-		if r.code != 2 || !strings.Contains(r.stderr, "curl is needed") || strings.Contains(r.stderr, "not running") {
-			t.Fatalf("%s: %+v", cmd, r)
+	for _, shell := range shells {
+		for _, cmd := range []string{"socket", "status", "propose", "wait", "doctor", "reload"} {
+			args := []string{cmd}
+			if cmd == "wait" {
+				args = append(args, "abc123")
+			}
+			r := runScriptIn(t, shell, home, []string{"PATH=/nonexistent"}, args...)
+			if r.code != 2 || !strings.Contains(r.stderr, "curl is needed") || strings.Contains(r.stderr, "not running") {
+				t.Fatalf("%s %s: %+v", shell, cmd, r)
+			}
 		}
 	}
 }

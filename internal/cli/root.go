@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -75,10 +74,8 @@ Getting started:
 	// the flag first; the suggestion is the more useful thing to say.
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		if !cmd.HasParent() {
-			if args := cmd.Flags().Args(); len(args) == 1 {
-				if suggest := rootArgs(cmd, args); suggest != nil && strings.Contains(suggest.Error(), "Did you mean") {
-					return suggest
-				}
+			if args := cmd.Flags().Args(); len(args) == 1 && len(cmd.SuggestionsFor(args[0])) > 0 {
+				return rootArgs(cmd, args)
 			}
 		}
 		return err
@@ -179,12 +176,12 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 func Main(args []string) int {
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
 	if shouldCheckForUpdate(args, os.Getenv, Version, os.Geteuid(), tty) {
-		updates = startBackgroundCheck(Version, cachedLatest, hasFreshCache())
+		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root := NewRoot()
 	root.SetArgs(args)
 	code := exitCode(root.Execute(), os.Stderr)
-	if n := updates.notice(updates.grace()); n != "" {
+	if n := updates.notice(updateGrace); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	return code

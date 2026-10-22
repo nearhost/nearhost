@@ -141,3 +141,59 @@ func TestAddSavesANewServerOnlyWithTheProject(t *testing.T) {
 		}
 	})
 }
+
+// A server another add saved while this one asked and read is not saved
+// twice, which the config would refuse.
+func TestAddSavesANewServerOnceWhenAnotherAddSavedIt(t *testing.T) {
+	var opened config.Server
+	cfgPath, _, b := serverAsking(t, true, &opened)
+	open := b.openRemote
+	b.openRemote = func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+		if err := config.Update(cfgPath, func(cfg *config.Config) error {
+			cfg.Servers = append(cfg.Servers, srv)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return open(ctx, srv, projectPath)
+	}
+	out, err := executeWithInput(t, "\n\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Added server") {
+		t.Errorf("said it added the server another add saved:\n%s", out)
+	}
+	saved := loadSaved(t, cfgPath)
+	if len(saved.Servers) != 1 {
+		t.Errorf("saved servers = %+v, want apollo once", saved.Servers)
+	}
+	if p, ok := saved.Project("blog"); !ok || p.Server != "apollo" {
+		t.Errorf("saved project = %+v %v", p, ok)
+	}
+}
+
+// A server another add saved meanwhile with another SSH host is not the one
+// the project was read from, so nothing is saved.
+func TestAddRefusesWhenAnotherAddSavedTheServerElsewhere(t *testing.T) {
+	var opened config.Server
+	cfgPath, _, b := serverAsking(t, true, &opened)
+	open := b.openRemote
+	b.openRemote = func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+		if err := config.Update(cfgPath, func(cfg *config.Config) error {
+			cfg.Servers = append(cfg.Servers, config.Server{Name: srv.Name, SSHHost: "other.lan"})
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return open(ctx, srv, projectPath)
+	}
+	out, err := executeWithInput(t, "\n\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo", "--web", "9000")
+	if err == nil || !strings.Contains(err.Error(), "ssh other.lan") {
+		t.Fatalf("add = %v, want the other host named\n%s", err, out)
+	}
+	saved := loadSaved(t, cfgPath)
+	if _, ok := saved.Project("blog"); ok {
+		t.Error("the project was saved under the other server")
+	}
+}

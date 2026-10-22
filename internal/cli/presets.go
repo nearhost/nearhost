@@ -259,9 +259,21 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 
 // writeFileAtomic writes data to path so that a crash leaves either the old
 // file or the new one, never a truncated file. It writes a temp file beside
-// path, syncs it, sets its mode and renames it into place. The temp file is
-// removed on any error.
+// the file path resolves to, so a link the user keeps there still points at
+// it, sets its mode (the existing file's, or mode for a new one), syncs it,
+// renames it into place and syncs the directory, as far as it can: the file
+// is in place by then. The temp file is removed on any error.
 func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
 	if err != nil {
 		return err
@@ -276,16 +288,23 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	if _, err = tmp.Write(data); err != nil {
 		return err
 	}
-	if err = tmp.Sync(); err != nil {
+	if err = tmp.Chmod(mode); err != nil {
 		return err
 	}
-	if err = tmp.Chmod(mode); err != nil {
+	if err = tmp.Sync(); err != nil {
 		return err
 	}
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err = os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		dir.Sync()
+		dir.Close()
+	}
+	return nil
 }
 
 // printable makes text from a preset or the registry safe to print: one line, no control characters.

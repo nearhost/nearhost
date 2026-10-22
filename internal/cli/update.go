@@ -177,15 +177,11 @@ type backgroundCheck struct {
 	current string
 	done    chan struct{}
 	latest  string
-	// cached is whether a fresh cache existed when the check started, so
-	// the check is answered at once and needs no long grace.
-	cached bool
 }
 
-// startBackgroundCheck starts latest in the background. cached says a fresh
-// cache existed, which sets how long grace waits.
-func startBackgroundCheck(current string, latest func(context.Context) (string, error), cached bool) *backgroundCheck {
-	c := &backgroundCheck{current: strings.TrimPrefix(current, "v"), done: make(chan struct{}), cached: cached}
+// startBackgroundCheck starts latest in the background.
+func startBackgroundCheck(current string, latest func(context.Context) (string, error)) *backgroundCheck {
+	c := &backgroundCheck{current: strings.TrimPrefix(current, "v"), done: make(chan struct{})}
 	go func() {
 		defer close(c.done)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -197,15 +193,16 @@ func startBackgroundCheck(current string, latest func(context.Context) (string, 
 	return c
 }
 
-// grace is how long a command that has finished waits for the check: a moment
-// when the cache was fresh, and long enough for a slow link to finish and
-// save the cache when it was not.
-func (c *backgroundCheck) grace() time.Duration {
-	if c != nil && !c.cached {
-		return 2 * time.Second
-	}
-	return 500 * time.Millisecond
-}
+// updateGrace is the longest a command that has finished waits for the
+// check. A check answered from the cache is done at once, so only a check
+// that asks GitHub waits, and backgroundHTTP gives up within the grace, so
+// even a GitHub that does not answer leaves a cache entry for later runs.
+const updateGrace = 2 * time.Second
+
+// backgroundHTTP is the background check's client: its timeout is under
+// updateGrace, so the check ends, and saves what it found, before the
+// command exits.
+func backgroundHTTP() *http.Client { return &http.Client{Timeout: 1500 * time.Millisecond} }
 
 // notice is the line saying a new release is out, or "" when there is none
 // or the check has not finished within grace. A command that ends quickly
@@ -255,11 +252,5 @@ func cachedLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return update.Checker{HTTP: updateHTTP(), CachePath: path}.Cached(ctx)
-}
-
-// hasFreshCache reports whether cachedLatest would answer from the cache.
-func hasFreshCache() bool {
-	path, err := update.CachePath()
-	return err == nil && update.Checker{CachePath: path}.HasFresh()
+	return update.Checker{HTTP: backgroundHTTP(), CachePath: path}.Cached(ctx)
 }

@@ -140,4 +140,7 @@ func TestTooSmallMessageFits(t *testing.T) {
 			t.Errorf("line %d is %d cells wide: %q", i, w, l)
 		}
 	}
+	if s := strings.Join(strings.Fields(screen(m)), " "); !strings.Contains(s, "Make the window larger (80×20 or more).") {
+		t.Errorf("no too-small message in:\n%s", screen(m))
+	}
 }

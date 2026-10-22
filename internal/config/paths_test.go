@@ -211,9 +211,9 @@ func TestMigrateKeepsOldWhenCopyFails(t *testing.T) {
 	if _, err := os.Lstat(new); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("half a copy left at new: %v", err)
 	}
-	left, _ := os.ReadDir(filepath.Dir(new))
-	if len(left) != 0 {
-		t.Fatalf("left beside new: %v", left)
+	left, err := os.ReadDir(filepath.Dir(new))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("left beside new: %v, %v; want nothing", left, err)
 	}
 }
 

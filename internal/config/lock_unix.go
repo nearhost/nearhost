@@ -21,6 +21,16 @@ func lockFile(path string) (unlock func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("open config lock: %w", err)
 	}
+	// The mode above applies only to a file it creates.
+	if info, err := f.Stat(); err != nil || info.Mode().Perm() != 0o600 {
+		if err == nil {
+			err = f.Chmod(0o600)
+		}
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("set config lock permissions: %w", err)
+		}
+	}
 	for {
 		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 		if err != syscall.EINTR {

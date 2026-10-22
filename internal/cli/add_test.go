@@ -1078,25 +1078,58 @@ func TestAddNearhostrcWithOnlyAnAlias(t *testing.T) {
 func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	dir := fixture(t, "sail-custom")
+	missing := filepath.Join(t.TempDir(), "missing")
+	// A directory whose name becomes the project's.
+	uni := filepath.Join(t.TempDir(), "ünï")
+	if err := os.Mkdir(uni, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{dir, "--name", "w", "--web", "abc"}, `--web must be a port number, not "abc"`},
 		{[]string{dir, "--name", "w", "--web", "70000"}, "--web must be a port between 1 and 65535, not 70000"},
-		{[]string{"/nonexistent"}, "no directory at /nonexistent"},
-		{[]string{dir, "--name", "ünï"}, `the name "ünï" has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain`},
-		{[]string{dir, "--name", "café"}, `the name "café" has no letters a domain can use`},
+		{[]string{missing}, "no directory at " + missing},
+		{[]string{dir, "--name", "ünï"}, `the name "ünï" holds characters a .test name can't use; pass --name with a-z, 0-9 and -, or --alias for the full domain`},
+		{[]string{dir, "--name", "café"}, `the name "café" holds characters a .test name can't use`},
+		{[]string{dir, "--name", "foo™"}, `the name "foo™" holds characters a .test name can't use`},
+		{[]string{dir, "--name", "foo\u0301"}, `holds characters a .test name can't use`},
+		{[]string{uni}, `the name "ünï" holds characters a .test name can't use; pass --name`},
 	} {
 		out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, c.args...)...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("add %v: err = %v, want %q\n%s", c.args, err, c.want, out)
 		}
 	}
+	// A directory with a non-ASCII name whose .nearhostrc names the alias.
+	named := filepath.Join(t.TempDir(), "café-app")
+	if err := os.Mkdir(named, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(named, ".env"), []byte("APP_PORT=8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(named, ".nearhostrc"), []byte("version: 1\nalias: cafe.test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", named, "--web", "8080"); err != nil {
+		t.Errorf("add with the alias in .nearhostrc: %v\n%s", err, out)
+	} else if p, _ := loadSaved(t, cfgPath).Project("café-app"); p == nil || p.Alias != "cafe.test" {
+		t.Errorf("saved %+v, want alias cafe.test", p)
+	}
 	// An ASCII name that needs tidying, and a non-ASCII name with its own alias, still work.
-	for _, args := range [][]string{{dir, "--name", "My App", "--web", "8080"}, {dir, "--name", "ünï", "--alias", "uni.test", "--web", "8080"}} {
+	for _, args := range [][]string{{dir, "--name", "My App", "--web", "8080"}, {dir, "--name", "ünï", "--alias", "uni.test", "--web", "8080"}, {dir, "--name", "web–shop", "--web", "8080"}, {dir, "--name", "big\u00a0shop", "--web", "8080"}} {
 		if out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, args...)...); err != nil {
 			t.Errorf("add %v: %v\n%s", args, err, out)
 		}
+	}
+	// An en dash separates words as a hyphen does.
+	if p, ok := loadSaved(t, cfgPath).Project("web–shop"); !ok || p.Alias != "web-shop.test" {
+		t.Errorf("saved %+v, want alias web-shop.test", p)
+	}
+	// So does a non-breaking space.
+	if p, ok := loadSaved(t, cfgPath).Project("big\u00a0shop"); !ok || p.Alias != "big-shop.test" {
+		t.Errorf("saved %+v, want alias big-shop.test", p)
 	}
 }

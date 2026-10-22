@@ -76,7 +76,7 @@ Then ask the agent to add the project, with `/nearhost add` in Claude Code. Near
 | `nearhost` | Open the interface, which serves every enabled project |
 | `nearhost add [path]` | Add a project, discovering its ports from its files |
 | `nearhost ls` | List the configured projects and their routes |
-| `nearhost up [project...]` | Serve projects without the interface |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block and server access |
 | `nearhost trust` / `untrust` | Add or remove the local certificate authority in the system trust store |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |

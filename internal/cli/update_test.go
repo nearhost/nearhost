@@ -194,19 +194,19 @@ func TestShouldCheckForUpdate(t *testing.T) {
 }
 
 func TestBackgroundCheckNotice(t *testing.T) {
-	c := startBackgroundCheck("0.5.0", func(context.Context) (string, error) { return "0.6.0", nil }, true)
+	c := startBackgroundCheck("0.5.0", func(context.Context) (string, error) { return "0.6.0", nil })
 	<-c.done
 	if got := c.notice(0); !strings.Contains(got, "0.5.0 → 0.6.0") || !strings.Contains(got, "nearhost update") {
 		t.Fatalf("notice %q", got)
 	}
-	c = startBackgroundCheck("0.6.0", func(context.Context) (string, error) { return "0.6.0", nil }, true)
+	c = startBackgroundCheck("0.6.0", func(context.Context) (string, error) { return "0.6.0", nil })
 	<-c.done
 	if got := c.notice(0); got != "" {
 		t.Fatalf("up to date, but notice %q", got)
 	}
 	block := make(chan struct{})
 	defer close(block)
-	c = startBackgroundCheck("0.5.0", func(context.Context) (string, error) { <-block; return "0.6.0", nil }, true)
+	c = startBackgroundCheck("0.5.0", func(context.Context) (string, error) { <-block; return "0.6.0", nil })
 	if got := c.notice(0); got != "" {
 		t.Fatalf("an unfinished check gave notice %q", got)
 	}
@@ -216,29 +216,46 @@ func TestBackgroundCheckNotice(t *testing.T) {
 	}
 }
 
-func TestNoticeWaitsLongerWithoutCache(t *testing.T) {
+// The first check of the day, asking GitHub, has the grace to finish and
+// fill the cache.
+func TestColdCheckFinishesWithinTheGrace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(700 * time.Millisecond)
 		io.WriteString(w, `{"tag_name":"v0.6.0"}`)
 	}))
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "update.json")
-	checker := update.Checker{URL: srv.URL, CachePath: path}
-	c := startBackgroundCheck("0.5.0", checker.Cached, checker.HasFresh())
-	if c.grace() != 2*time.Second {
-		t.Fatalf("grace %v without a cache, want 2s", c.grace())
-	}
-	if got := c.notice(c.grace()); got == "" {
+	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP()}
+	c := startBackgroundCheck("0.5.0", checker.Cached)
+	if got := c.notice(updateGrace); got == "" {
 		t.Fatal("a check finishing within the grace gave no notice")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the cache was not written: %v", err)
 	}
-	if !checker.HasFresh() {
-		t.Fatal("the saved cache is not fresh")
+}
+
+// A GitHub that does not answer still leaves a cache entry before the
+// command's grace ends, so later runs do not wait on it again.
+func TestHungCheckSavesTheCacheWithinTheGrace(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	path := filepath.Join(t.TempDir(), "update.json")
+	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP()}
+	c := startBackgroundCheck("0.5.0", checker.Cached)
+	select {
+	case <-c.done:
+	case <-time.After(updateGrace):
+		t.Fatal("the check outlasted the grace")
 	}
-	c = startBackgroundCheck("0.5.0", checker.Cached, checker.HasFresh())
-	if c.grace() != 500*time.Millisecond {
-		t.Fatalf("grace %v with a fresh cache, want 500ms", c.grace())
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the failed check was not cached: %v", err)
 	}
 }

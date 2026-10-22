@@ -24,6 +24,10 @@ func fakeTrustSudo(t *testing.T) string {
 		if err := os.WriteFile(p, nil, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		// The umask can take the execute bits WriteFile asks for.
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	origCandidates, origOwned := sudo.Candidates, sudo.OwnedByRoot
 	sudo.Candidates = []string{trusted}

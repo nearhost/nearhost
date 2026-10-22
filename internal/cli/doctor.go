@@ -183,10 +183,13 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	if flags.webPort != 0 {
 		c := checkPort(ctx, b, flags.webPort, "--web-port", false)
 		if c.level == levelFail {
-			// A taken page port costs only the page: `nearhost up` runs
-			// without it.
+			// A page port Nearhost cannot bind costs only the page:
+			// `nearhost up` runs without it. checkPort's fix stands for a
+			// permission failure, since nothing holds the port then.
 			c.level = levelWarn
-			c.fix = "Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another"
+			if c.detail != "permission denied" {
+				c.fix = "Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another"
+			}
 		}
 		checks = append(checks, c)
 	}

@@ -915,6 +915,18 @@ func (h *harness) handshake(t *testing.T, sni string) (tls.ConnectionState, erro
 	return conn.ConnectionState(), err
 }
 
+// tryHandshake is handshake for a caller that retries: a connection Caddy
+// resets while it swaps listeners on a reload is an error, not a failure.
+func (h *harness) tryHandshake(sni string) error {
+	raw, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", h.httpsPort), 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	raw.SetDeadline(time.Now().Add(10 * time.Second))
+	return tls.Client(raw, &tls.Config{RootCAs: h.pool, ServerName: sni}).Handshake()
+}
+
 // postHTTP POSTs form to path on the proxy's http port from loopback, with
 // host as Host, and returns the response without following redirects.
 func (h *harness) postHTTP(t *testing.T, host, path, form string) *http.Response {
@@ -942,8 +954,7 @@ func (h *harness) waitCerts(t *testing.T, hosts ...string) {
 	t.Helper()
 	for _, host := range hosts {
 		waitUntil(t, 10*time.Second, func() bool {
-			_, err := h.handshake(t, host)
-			return err == nil
+			return h.tryHandshake(host) == nil
 		}, "certificate for "+host)
 	}
 }

@@ -81,3 +81,33 @@ func TestPrintable(t *testing.T) {
 		}
 	}
 }
+
+// A preset kept as a link to a file the user manages is written through: the
+// link stays and its file gets the new contents.
+func TestWriteFileAtomicWritesThroughALink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "mine.yaml")
+	if err := os.WriteFile(real, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "preset.yaml")
+	if err := os.Symlink("mine.yaml", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(link, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", fi, err)
+	}
+	if data, err := os.ReadFile(real); err != nil || string(data) != "new\n" {
+		t.Fatalf("linked file = %q, %v", data, err)
+	}
+	// The file keeps its own mode.
+	if info, err := os.Stat(real); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, %v; want 0600", info, err)
+	}
+}

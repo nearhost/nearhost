@@ -39,14 +39,26 @@ func (u *uiEngine) saveRc(p config.Project) error {
 // project with it. An agent waiting on the change is told once it is saved;
 // until then its reload is held, from before the change is read, so that a
 // re-read clearing the pending change meanwhile does not end it superseded.
+//
+// The check is made again under the config's lock, with the approved snapshot
+// the change was reviewed against: a review that saved a newer file while
+// this waited for the lock would otherwise be overwritten.
 func (u *uiEngine) AcceptChange(project, sha string) error {
 	done := u.agents.accepting(project, sha)
+	stale := fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
 	change := u.Status(project).Pending
 	if change == nil || change.SHA256 != sha {
 		done(false)
-		return fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
+		return stale
+	}
+	approved := approvedRc(u.Config(), project)
+	if u.acceptLocking != nil {
+		u.acceptLocking()
 	}
 	err := u.EditConfig(func(cfg *config.Config) error {
+		if now := u.Status(project).Pending; now == nil || now.SHA256 != sha || approvedRc(cfg, project) != approved {
+			return stale
+		}
 		if err := takeRc(cfg, change.Project, u.path); err != nil {
 			return err
 		}
@@ -61,6 +73,15 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 	})
 	done(err == nil)
 	return err
+}
+
+// approvedRc is the hash of the .nearhostrc approved for project in cfg, ""
+// for none.
+func approvedRc(cfg *config.Config, project string) string {
+	if p, ok := cfg.Project(project); ok && p.Nearhostrc != nil {
+		return p.Nearhostrc.SHA256
+	}
+	return ""
 }
 
 // DeclineChange is the engine's, and tells an agent waiting on the change.

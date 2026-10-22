@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 // trustBackend is the seam between the trust commands and the machine: the
@@ -24,6 +26,36 @@ type trustBackend struct {
 	nss        func(*x509.Certificate) proxy.NSSStatus
 	installNSS func(*x509.Certificate) error
 	uninstall  func(*x509.Certificate) error
+	// findSudo returns sudo.ErrNotFound when the system store cannot be
+	// changed: no root-owned sudo, and Nearhost is not root. nil skips the
+	// check.
+	findSudo func() error
+}
+
+// systemSudo is the production findSudo.
+func systemSudo() error {
+	if os.Geteuid() == 0 {
+		return nil
+	}
+	_, err := sudo.Binary()
+	return err
+}
+
+// noSudo says what to do about a missing sudo, for the command name.
+func noSudo(err error, name string) error {
+	return fmt.Errorf("%w; install sudo in one of those, or run `nearhost %s` as root", err, name)
+}
+
+// sudoProblem is the backend's findSudo for the command name, worded by
+// noSudo, or nil.
+func (b trustBackend) sudoProblem(name string) error {
+	if b.findSudo == nil {
+		return nil
+	}
+	if err := b.findSudo(); err != nil {
+		return noSudo(err, name)
+	}
+	return nil
 }
 
 // systemTrust is the production backend. Only NewRoot wires it in.
@@ -37,6 +69,7 @@ func systemTrust() trustBackend {
 		nss:        proxy.CheckNSS,
 		installNSS: proxy.InstallNSS,
 		uninstall:  proxy.Uninstall,
+		findSudo:   systemSudo,
 	}
 }
 
@@ -46,9 +79,15 @@ func systemTrust() trustBackend {
 // `trust` and `untrust`. A failure leaves a CA where config.CaddyDir finds
 // it, so it is a warning on w and the command carries on.
 func migrateCA(w io.Writer) {
-	if msg := migrateWarning(config.MigrateCaddyDir(nearhostRunning)); msg != "" {
+	if msg := migrateCANote(); msg != "" {
 		fmt.Fprintln(w, msg)
 	}
+}
+
+// migrateCANote is migrateCA for the interface, which hides stderr while it
+// runs: it returns the warning, "" for none, for the interface's log.
+func migrateCANote() string {
+	return migrateWarning(config.MigrateCaddyDir(nearhostRunning))
 }
 
 // migrateWarning words a config.MigrateCaddyDir error for the user, "" for
@@ -91,8 +130,14 @@ Asks for your password, as it runs sudo.`,
 			if b.isTrusted(cert) {
 				return trustNSSOnly(out, b, cert)
 			}
+			if err := b.sudoProblem("trust"); err != nil {
+				return err
+			}
 			fmt.Fprintln(out, "Installing Nearhost Local CA. You may be asked for your password.")
 			if err := b.install(cert); err != nil {
+				if errors.Is(err, sudo.ErrNotFound) {
+					return noSudo(err, "trust") // no prompt was shown, and another try won't find sudo
+				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost trust` again and approve it)", err)
 			}
 			fmt.Fprintln(out, "Done. Nearhost Local CA is in the system trust store.")
@@ -156,7 +201,13 @@ Asks for your password, as it runs sudo.`,
 			if err != nil {
 				return fmt.Errorf("no local CA found: %w", err)
 			}
+			if err := b.sudoProblem("untrust"); err != nil {
+				return err
+			}
 			if err := b.uninstall(cert); err != nil {
+				if errors.Is(err, sudo.ErrNotFound) {
+					return noSudo(err, "untrust")
+				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost untrust` again and approve it)", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Nearhost Local CA removed from the trust store.")

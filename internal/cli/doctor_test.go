@@ -543,6 +543,22 @@ func TestDoctorWarnsWhenTheWebPortIsTaken(t *testing.T) {
 			"      fix: Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another\n")
 }
 
+// A page port Nearhost may not bind also only warns, and keeps the
+// permission fix rather than telling the user to stop a process.
+func TestDoctorKeepsThePermissionFixForTheWebPort(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.goos = "linux"
+	f.portErr = map[string]error{"tcp 6327": syscall.EACCES}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err != nil {
+		t.Fatalf("doctor failed on a page port it may not bind: %v\n%s", err, out)
+	}
+	wantContains(t, out,
+		"warn  port 6327        permission denied\n"+
+			"      fix: `sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"`\n")
+}
+
 // Every fix reads as a sentence: it starts with a capital or, when it is a
 // command, a backtick.
 func TestDoctorFixesStartCapitalised(t *testing.T) {
