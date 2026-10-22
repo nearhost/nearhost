@@ -5,8 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/update"
 )
@@ -189,24 +194,51 @@ func TestShouldCheckForUpdate(t *testing.T) {
 }
 
 func TestBackgroundCheckNotice(t *testing.T) {
-	c := startBackgroundCheck("0.5.0", func(context.Context) (string, error) { return "0.6.0", nil })
+	c := startBackgroundCheck("0.5.0", func(context.Context) (string, error) { return "0.6.0", nil }, true)
 	<-c.done
 	if got := c.notice(0); !strings.Contains(got, "0.5.0 → 0.6.0") || !strings.Contains(got, "nearhost update") {
 		t.Fatalf("notice %q", got)
 	}
-	c = startBackgroundCheck("0.6.0", func(context.Context) (string, error) { return "0.6.0", nil })
+	c = startBackgroundCheck("0.6.0", func(context.Context) (string, error) { return "0.6.0", nil }, true)
 	<-c.done
 	if got := c.notice(0); got != "" {
 		t.Fatalf("up to date, but notice %q", got)
 	}
 	block := make(chan struct{})
 	defer close(block)
-	c = startBackgroundCheck("0.5.0", func(context.Context) (string, error) { <-block; return "0.6.0", nil })
+	c = startBackgroundCheck("0.5.0", func(context.Context) (string, error) { <-block; return "0.6.0", nil }, true)
 	if got := c.notice(0); got != "" {
 		t.Fatalf("an unfinished check gave notice %q", got)
 	}
 	var nilCheck *backgroundCheck
 	if nilCheck.notice(0) != "" {
 		t.Fatal("nil check gave a notice")
+	}
+}
+
+func TestNoticeWaitsLongerWithoutCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(700 * time.Millisecond)
+		io.WriteString(w, `{"tag_name":"v0.6.0"}`)
+	}))
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "update.json")
+	checker := update.Checker{URL: srv.URL, CachePath: path}
+	c := startBackgroundCheck("0.5.0", checker.Cached, checker.HasFresh())
+	if c.grace() != 2*time.Second {
+		t.Fatalf("grace %v without a cache, want 2s", c.grace())
+	}
+	if got := c.notice(c.grace()); got == "" {
+		t.Fatal("a check finishing within the grace gave no notice")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the cache was not written: %v", err)
+	}
+	if !checker.HasFresh() {
+		t.Fatal("the saved cache is not fresh")
+	}
+	c = startBackgroundCheck("0.5.0", checker.Cached, checker.HasFresh())
+	if c.grace() != 500*time.Millisecond {
+		t.Fatalf("grace %v with a fresh cache, want 500ms", c.grace())
 	}
 }
