@@ -87,7 +87,10 @@ func TestPrintable(t *testing.T) {
 func TestWriteFileAtomicWritesThroughALink(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "mine.yaml")
-	if err := os.WriteFile(real, []byte("old\n"), 0o644); err != nil {
+	if err := os.WriteFile(real, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "preset.yaml")
@@ -102,5 +105,9 @@ func TestWriteFileAtomicWritesThroughALink(t *testing.T) {
 	}
 	if data, err := os.ReadFile(real); err != nil || string(data) != "new\n" {
 		t.Fatalf("linked file = %q, %v", data, err)
+	}
+	// The file keeps its own mode.
+	if info, err := os.Stat(real); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, %v; want 0600", info, err)
 	}
 }

@@ -260,11 +260,17 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 // writeFileAtomic writes data to path so that a crash leaves either the old
 // file or the new one, never a truncated file. It writes a temp file beside
 // the file path resolves to, so a link the user keeps there still points at
-// it, sets its mode, syncs it, renames it into place and syncs the directory.
-// The temp file is removed on any error.
+// it, sets its mode (the existing file's, or mode for a new one), syncs it,
+// renames it into place and syncs the directory, as far as it can: the file
+// is in place by then. The temp file is removed on any error.
 func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		mode = info.Mode().Perm()
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -294,15 +300,11 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	if err = os.Rename(tmpName, path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	if err = dir.Sync(); err != nil {
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		dir.Sync()
 		dir.Close()
-		return err
 	}
-	return dir.Close()
+	return nil
 }
 
 // printable makes text from a preset or the registry safe to print: one line, no control characters.
