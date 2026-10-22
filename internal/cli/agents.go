@@ -37,6 +37,29 @@ func systemAgents() agentsBackend {
 	return agentsBackend{home: os.UserHomeDir, id: config.InstallID, laptop: laptopName}
 }
 
+// agentSocket is this machine's own agent socket, ~/.nearhost/<id>.sock in
+// home, for the install id.
+func agentSocket(home, id string) string {
+	return filepath.Join(home, transport.AgentDir, id+".sock")
+}
+
+// nearhostRunning reports whether another Nearhost is serving on this machine:
+// every run serves coding agents on the same socket, so one answering there
+// means a Nearhost is up. When the socket can't be worked out it says yes, the
+// cautious answer for its callers. Working it out needs the install id, so
+// config.InstallID creates the id file if there is none yet.
+func nearhostRunning() bool {
+	id, err := config.InstallID()
+	if err != nil {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return true
+	}
+	return agentapi.Answers(agentSocket(home, id))
+}
+
 // laptopName is the user and the short host name, as in ecs@macbook.
 func laptopName() string {
 	name := "you"
@@ -81,7 +104,7 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	if b.laptop != nil {
 		laptop = b.laptop()
 	}
-	sock := filepath.Join(home, transport.AgentDir, id+".sock")
+	sock := agentSocket(home, id)
 	opts := agentapi.Options{Laptop: laptop, Source: src}
 	if d, ok := src.(agentapi.Doctor); ok {
 		opts.Doctor = d

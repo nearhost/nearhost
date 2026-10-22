@@ -126,7 +126,12 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 	if strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80; tcp 6327" {
 		t.Errorf("ports probed: %v", f.probed)
 	}
-	if want := filepath.Join(filepath.Dir(path), "caddy"); len(f.trust.rootDirs) != 1 || f.trust.rootDirs[0] != want {
+	// The CA lives in the data directory, not beside the config.
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(data, "caddy"); len(f.trust.rootDirs) != 1 || f.trust.rootDirs[0] != want {
 		t.Errorf("CA looked up in %v, want %s", f.trust.rootDirs, want)
 	}
 	if f.trust.installs+f.trust.nssInstalls+f.trust.uninstall+len(f.trust.ensured) != 0 {

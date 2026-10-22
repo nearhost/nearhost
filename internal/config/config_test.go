@@ -221,9 +221,8 @@ func TestPathsHonourXDGConfigHome(t *testing.T) {
 		t.Fatalf("DefaultPath = %q", p)
 	}
 	r, _ := RunDir()
-	cd, _ := CaddyDir()
-	if r != "/tmp/xdg/nearhost/run" || cd != "/tmp/xdg/nearhost/caddy" {
-		t.Fatalf("RunDir/CaddyDir = %q %q", r, cd)
+	if r != "/tmp/xdg/nearhost/run" {
+		t.Fatalf("RunDir = %q", r)
 	}
 }
 
