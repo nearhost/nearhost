@@ -138,7 +138,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	}
 	// Before anything reads the CA's directory, so this run serves from
 	// where it lands.
-	migrateCA(cmd.ErrOrStderr())
+	migrateNote := migrateCANote()
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err
@@ -174,8 +174,10 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	var proposals tui.Proposals
 	ag.review(&proposals)
 	m := tui.New(back, dir)
-	if agentNote != "" {
-		eng.Events().Publish(engine.Event{Message: agentNote})
+	for _, note := range []string{migrateNote, agentNote} {
+		if note != "" {
+			eng.Events().Publish(engine.Event{Message: note})
+		}
 	}
 	if b.updateNotice != nil {
 		go func() {

@@ -47,9 +47,15 @@ func systemTrust() trustBackend {
 // `trust` and `untrust`. A failure leaves a CA where config.CaddyDir finds
 // it, so it is a warning on w and the command carries on.
 func migrateCA(w io.Writer) {
-	if msg := migrateWarning(config.MigrateCaddyDir(nearhostRunning)); msg != "" {
+	if msg := migrateCANote(); msg != "" {
 		fmt.Fprintln(w, msg)
 	}
+}
+
+// migrateCANote is migrateCA for the interface, which hides stderr while it
+// runs: it returns the warning, "" for none, for the interface's log.
+func migrateCANote() string {
+	return migrateWarning(config.MigrateCaddyDir(nearhostRunning))
 }
 
 // migrateWarning words a config.MigrateCaddyDir error for the user, "" for

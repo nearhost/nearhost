@@ -261,3 +261,39 @@ func TestAcceptRefusesAStaleChange(t *testing.T) {
 		t.Errorf("the config changed:\n%s", after)
 	}
 }
+
+// The interface hides stderr while it runs, so a CA that could not move is
+// not warned of there; the warning goes to the interface's log.
+func TestBareNearhostKeepsTheMoveWarningOffStderr(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only directories")
+	}
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(cfgHome, "nearhost", "caddy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The data directory's parent can't be written, so the move fails.
+	parent := filepath.Dir(data)
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o700) })
+	if note := migrateCANote(); !strings.Contains(note, "Warning") {
+		t.Fatalf("the move did not fail: %q", note)
+	}
+	ran := false
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080")
+	if err != nil || !ran {
+		t.Fatalf("err %v, ran %v", err, ran)
+	}
+	if strings.Contains(out, "Warning") {
+		t.Errorf("warned on stderr, hidden behind the interface:\n%s", out)
+	}
+}
