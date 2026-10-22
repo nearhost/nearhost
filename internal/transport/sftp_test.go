@@ -263,6 +263,7 @@ func checkWritesThroughLinkInsideRoot(t *testing.T, nw newWriterFunc) {
 	os.Mkdir(filepath.Join(root, "config"), 0o755)
 	dest := filepath.Join(root, "config", "nearhostrc")
 	os.WriteFile(dest, []byte("old\n"), 0o644)
+	os.Chmod(dest, 0o644)
 	if err := os.Symlink("config/nearhostrc", filepath.Join(root, ".nearhostrc")); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}
@@ -274,6 +275,69 @@ func checkWritesThroughLinkInsideRoot(t *testing.T, nw newWriterFunc) {
 	}
 	checkFile(t, dest, "new\n", 0o644)
 	assertOnly(t, filepath.Join(root, "config"), "nearhostrc")
+}
+
+// checkRefusesDotDotOutsideRoot links .nearhostrc by an absolute path that
+// starts inside the project and climbs out of it.
+func checkRefusesDotDotOutsideRoot(t *testing.T, nw newWriterFunc) {
+	base := t.TempDir()
+	root := filepath.Join(base, "proj")
+	os.Mkdir(root, 0o755)
+	outside := filepath.Join(base, "outside.txt")
+	os.WriteFile(outside, []byte("keep\n"), 0o600)
+	if err := os.Symlink(root+"/../outside.txt", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n"))
+	if err == nil || !strings.Contains(err.Error(), "is a link to a file outside the project") {
+		t.Fatalf("error %v, want a link outside the project", err)
+	}
+	checkFile(t, outside, "keep\n", 0o600)
+}
+
+// checkRefusesDanglingLinkOutsideRoot links .nearhostrc to a file beside the
+// project that does not exist yet, which the write would create.
+func checkRefusesDanglingLinkOutsideRoot(t *testing.T, nw newWriterFunc) {
+	base := t.TempDir()
+	root := filepath.Join(base, "proj")
+	os.Mkdir(root, 0o755)
+	if err := os.Symlink("../missing.txt", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n"))
+	if err == nil || !strings.Contains(err.Error(), "is a link to a file outside the project") {
+		t.Fatalf("error %v, want a link outside the project", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, ".nearhostrc")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", fi, err)
+	}
+	assertOnly(t, base, "proj")
+}
+
+// checkWritesUnderALinkedRoot is a project whose path is itself a link.
+func checkWritesUnderALinkedRoot(t *testing.T, nw newWriterFunc) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	os.Mkdir(real, 0o755)
+	root := filepath.Join(base, "proj")
+	if err := os.Symlink("real", root); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	checkFile(t, filepath.Join(real, ".nearhostrc"), "new\n", 0o644)
+	assertOnly(t, real, ".nearhostrc")
+}
+
+func TestWritersRefuseLinksOutsideRoot(t *testing.T) {
+	for name, nw := range map[string]newWriterFunc{"sftp": sftpWriterFor, "dir": dirWriterFor} {
+		t.Run(name, func(t *testing.T) {
+			t.Run("dotdot", func(t *testing.T) { checkRefusesDotDotOutsideRoot(t, nw) })
+			t.Run("dangling", func(t *testing.T) { checkRefusesDanglingLinkOutsideRoot(t, nw) })
+			t.Run("linked root", func(t *testing.T) { checkWritesUnderALinkedRoot(t, nw) })
+		})
+	}
 }
 
 func TestSFTPWriterRefusesLinkOutsideRoot(t *testing.T) {
@@ -306,7 +370,12 @@ func TestSFTPWriterWithoutPosixRename(t *testing.T) {
 }
 
 func TestSFTPWriterRestoresTheOriginalWhenTheSecondRenameFails(t *testing.T) {
-	root := t.TempDir()
+	// The writer renames onto the path with links followed, which the temp
+	// directory can have (/var is a link on macOS).
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(root, ".nearhostrc")
 	os.WriteFile(p, []byte("old\n"), 0o600)
 	os.Chmod(p, 0o600)

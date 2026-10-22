@@ -161,30 +161,74 @@ func NewSFTPWriter(c *sftp.Client, root string) FileWriter {
 	return sftpWriter{c: c, root: root, posixRename: ok, rename: c.Rename}
 }
 
-// resolve follows symlinks at the target, resolving relative links against
-// the link's directory, so a link is written through rather than replaced.
-func (w sftpWriter) resolve(target string) (string, error) {
-	for i := 0; i < 16; i++ {
-		info, err := w.c.Lstat(target)
-		if err != nil || info.Mode()&fs.ModeSymlink == 0 {
-			return target, nil
+// evalLinks is filepath.EvalSymlinks for an absolute slash-separated path,
+// reached through lstat and readlink so it works over SFTP too. It follows
+// links in every element, resolving a relative link against the link's
+// directory and ".." after the links before it, except that a missing
+// element ends the walk: the rest is joined on as it is, so a dangling link
+// resolves to where it points.
+func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(string) (string, error)) (string, error) {
+	resolved := "/"
+	rest := strings.Split(p, "/")
+	for links := 0; len(rest) > 0; {
+		elem := rest[0]
+		rest = rest[1:]
+		switch elem {
+		case "", ".":
+			continue
+		case "..":
+			resolved = path.Dir(resolved)
+			continue
 		}
-		dest, err := w.c.ReadLink(target)
+		next := path.Join(resolved, elem)
+		info, err := lstat(next)
+		if isNotExist(err) {
+			return path.Join(append([]string{next}, rest...)...), nil
+		}
 		if err != nil {
 			return "", err
 		}
-		if !path.IsAbs(dest) {
-			dest = path.Join(path.Dir(target), dest)
+		if info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			continue
 		}
-		target = dest
+		if links++; links > 40 {
+			return "", fmt.Errorf("%s: too many levels of symbolic links", p)
+		}
+		dest, err := readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if path.IsAbs(dest) {
+			resolved = "/"
+		}
+		rest = append(strings.Split(dest, "/"), rest...)
 	}
-	return "", fmt.Errorf("%s: too many levels of symbolic links", target)
+	return resolved, nil
+}
+
+// linkedTarget is where writing name under root lands, every link followed,
+// or an error when that is outside root, so a cloned repository cannot aim
+// the write at a file elsewhere on the machine. root must be absolute.
+func linkedTarget(root, name string, lstat func(string) (fs.FileInfo, error), readlink func(string) (string, error)) (string, error) {
+	target, err := evalLinks(path.Join(root, name), lstat, readlink)
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := evalLinks(root, lstat, readlink)
+	if err != nil {
+		return "", err
+	}
+	if !withinSFTPRoot(realRoot, target) {
+		return "", fmt.Errorf("%s is a link to a file outside the project (%s)", name, target)
+	}
+	return target, nil
 }
 
 // withinSFTPRoot reports whether target is root itself or inside it, using
 // slash-separated paths and whole path elements, so /proj2 is not inside /proj.
 func withinSFTPRoot(root, target string) bool {
-	root = path.Clean(root)
+	root, target = path.Clean(root), path.Clean(target)
 	return target == root || strings.HasPrefix(target, strings.TrimSuffix(root, "/")+"/")
 }
 
@@ -204,16 +248,17 @@ func randomSuffix() (string, error) {
 // the link stays. A link that leads outside the project is refused, so a
 // cloned repository cannot aim the write at a file elsewhere on the server.
 func (w sftpWriter) WriteFile(name string, data []byte) (err error) {
-	target, err := w.resolve(path.Join(w.root, name))
+	root := w.root
+	if !path.IsAbs(root) {
+		cwd, err := w.c.Getwd()
+		if err != nil {
+			return err
+		}
+		root = path.Join(cwd, root)
+	}
+	target, err := linkedTarget(root, name, w.c.Lstat, w.c.ReadLink)
 	if err != nil {
 		return err
-	}
-	root, err := w.resolve(w.root)
-	if err != nil {
-		return err
-	}
-	if !withinSFTPRoot(root, target) {
-		return fmt.Errorf("%s is a link to a file outside the project (%s)", name, target)
 	}
 	mode := defaultFileMode
 	if info, statErr := w.c.Stat(target); statErr == nil {
@@ -290,18 +335,15 @@ func DirWriter(root string) FileWriter { return dirWriter{root: root} }
 // the project, which is refused. os.CreateTemp makes the file 0600, so the
 // mode is set before the rename.
 func (w dirWriter) WriteFile(name string, data []byte) (err error) {
-	target := filepath.Join(w.root, name)
-	if resolved, evalErr := filepath.EvalSymlinks(target); evalErr == nil {
-		root, err := filepath.EvalSymlinks(w.root)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, resolved)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("%s is a link to a file outside the project (%s)", name, resolved)
-		}
-		target = resolved
+	root, err := filepath.Abs(w.root)
+	if err != nil {
+		return err
 	}
+	target, err := linkedTarget(filepath.ToSlash(root), filepath.ToSlash(name), os.Lstat, os.Readlink)
+	if err != nil {
+		return err
+	}
+	target = filepath.FromSlash(target)
 	mode := defaultFileMode
 	if info, statErr := os.Stat(target); statErr == nil {
 		mode = info.Mode().Perm()
