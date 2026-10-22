@@ -1,11 +1,9 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os/exec"
-	"unicode/utf16"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -35,32 +33,17 @@ type copyFailedMsg struct {
 // arguments, that is installed and works: wl-copy fails outside Wayland,
 // where xclip may not. With none installed, it does nothing.
 func copyWith(tools [][]string, text string) error {
-	return copyWithInput(tools, []byte(text))
-}
-
-// copyWithInput is copyWith for a tool that wants input encoded as given.
-func copyWithInput(tools [][]string, input []byte) error {
 	var err error
 	for _, t := range tools {
 		if _, look := exec.LookPath(t[0]); look != nil {
 			continue
 		}
 		cmd := exec.Command(t[0], t[1:]...)
-		cmd.Stdin = bytes.NewReader(input)
+		cmd.Stdin = strings.NewReader(text)
 		if err = cmd.Run(); err == nil {
 			return nil
 		}
 		err = fmt.Errorf("%s: %w", t[0], err)
 	}
 	return err
-}
-
-// utf16LE is text as UTF-16, little-endian, after a byte order mark: what
-// Windows' clip.exe reads as Unicode rather than the console's code page.
-func utf16LE(text string) []byte {
-	out := []byte{0xFF, 0xFE}
-	for _, unit := range utf16.Encode([]rune(text)) {
-		out = binary.LittleEndian.AppendUint16(out, unit)
-	}
-	return out
 }
