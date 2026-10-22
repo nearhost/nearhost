@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/pkg/sftp"
@@ -166,7 +167,7 @@ func NewSFTPWriter(c *sftp.Client, root string) FileWriter {
 // links in every element, resolving a relative link against the link's
 // directory and ".." after the links before it, except that a missing
 // element ends the walk: the rest is joined on as it is, so a dangling link
-// resolves to where it points.
+// resolves to where it points. A ".." after a missing element is an error.
 func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(string) (string, error)) (string, error) {
 	resolved := "/"
 	rest := strings.Split(p, "/")
@@ -183,6 +184,12 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 		next := path.Join(resolved, elem)
 		info, err := lstat(next)
 		if isNotExist(err) {
+			// Joining ".." past a missing element would clean it away as
+			// text and skip links the kernel follows; the kernel finds
+			// nothing there anyway.
+			if slices.Contains(rest, "..") {
+				return "", fmt.Errorf("%s: %w", next, fs.ErrNotExist)
+			}
 			return path.Join(append([]string{next}, rest...)...), nil
 		}
 		if err != nil {

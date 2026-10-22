@@ -314,6 +314,27 @@ func checkRefusesDanglingLinkOutsideRoot(t *testing.T, nw newWriterFunc) {
 	assertOnly(t, base, "proj")
 }
 
+// checkRefusesDotDotPastAMissingElement links .nearhostrc through a missing
+// directory and back up into a link that leads outside, which a textual
+// clean of the ".." would take for a path inside the project.
+func checkRefusesDotDotPastAMissingElement(t *testing.T, nw newWriterFunc) {
+	base := t.TempDir()
+	root := filepath.Join(base, "proj")
+	outside := filepath.Join(base, "outside")
+	os.Mkdir(root, 0o755)
+	os.Mkdir(outside, 0o755)
+	if err := os.Symlink(outside, filepath.Join(root, "evil")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := os.Symlink("nope/../evil/x", filepath.Join(root, ".nearhostrc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := nw(t, root).WriteFile(".nearhostrc", []byte("new\n")); err == nil {
+		t.Fatal("wrote through a .. past a missing directory")
+	}
+	assertOnly(t, outside)
+}
+
 // checkWritesUnderALinkedRoot is a project whose path is itself a link.
 func checkWritesUnderALinkedRoot(t *testing.T, nw newWriterFunc) {
 	base := t.TempDir()
@@ -335,6 +356,7 @@ func TestWritersRefuseLinksOutsideRoot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Run("dotdot", func(t *testing.T) { checkRefusesDotDotOutsideRoot(t, nw) })
 			t.Run("dangling", func(t *testing.T) { checkRefusesDanglingLinkOutsideRoot(t, nw) })
+			t.Run("dotdot past missing", func(t *testing.T) { checkRefusesDotDotPastAMissingElement(t, nw) })
 			t.Run("linked root", func(t *testing.T) { checkWritesUnderALinkedRoot(t, nw) })
 		})
 	}
