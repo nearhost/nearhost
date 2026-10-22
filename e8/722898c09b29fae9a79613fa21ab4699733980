@@ -1,0 +1,60 @@
+internal/oserr/oserr_test.go
+  s_cc6c1166ddaad7::t_4c10d51d28499e 56-62
+internal/engine/holder_windows_test.go
+  s_cc6c1166ddaad7::t_4c10d51d28499e 8,11-12,27-35
+  s_cc6c1166ddaad7::t_bc9cd414a43499 36
+internal/config/paths.go
+  s_cc6c1166ddaad7::t_72f93d5cc5052a 62
+  s_cc6c1166ddaad7::t_321b19829ead0c 63-66
+internal/agentapi/socket_windows.go
+  s_cc6c1166ddaad7::t_72f93d5cc5052a 4-5
+internal/desktop/desktop_test.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 1-2
+internal/winsys/winsys_windows.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 1-19
+internal/oserr/oserr_windows_test.go
+  s_cc6c1166ddaad7::t_4c10d51d28499e 14-16,24-29
+internal/agentapi/socket_darwin.go
+  s_cc6c1166ddaad7::t_72f93d5cc5052a 4
+internal/agentapi/socket_linux.go
+  s_cc6c1166ddaad7::t_72f93d5cc5052a 4
+internal/update/method.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 89-92,94,109
+internal/tui/clipboard_windows_test.go
+  s_cc6c1166ddaad7::t_4c10d51d28499e 1-46
+internal/update/method_test.go
+  s_cc6c1166ddaad7::t_4c10d51d28499e 76-77,81,83-88,91-93
+  s_cc6c1166ddaad7::t_8b64a16ef0af5c 78-80,82,89-90
+internal/desktop/desktop_windows_test.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 1-21
+internal/desktop/open_windows.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 3-4,8
+internal/winsys/doc.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 1-3
+internal/engine/holder_windows.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 7,11,15
+.github/workflows/ci.yml
+  s_cc6c1166ddaad7::t_321b19829ead0c 33,35
+internal/oserr/oserr_windows.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 10-12,16
+internal/winsys/winsys_windows_test.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 1-13
+internal/tui/clipboard_windows.go
+  s_cc6c1166ddaad7::t_d2e361f9b5ef04 3-4,9,11-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8722898c09b29fae9a79613fa21ab4699733980",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
