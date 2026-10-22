@@ -237,8 +237,15 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
 	err = config.Update(cfgPath, func(cfg *config.Config) error {
-		// Another add may have saved the server meanwhile.
-		if _, ok := cfg.Server(srv.Name); newServer && !ok {
+		// Another add may have saved the server meanwhile: the same server
+		// is used as it is, and one reached another way is not the one the
+		// project was read from.
+		if saved, ok := cfg.Server(srv.Name); newServer && ok {
+			if saved.SSHHost != srv.SSHHost {
+				return fmt.Errorf("server %s was added meanwhile, reached with `ssh %s`, not `ssh %s` as typed; nothing was saved. Run the add again", printable(srv.Name), printable(saved.SSHHost), printable(srv.SSHHost))
+			}
+			newServer = false
+		} else if newServer {
 			cfg.Servers = append(cfg.Servers, srv)
 		}
 		return addProjectTo(cfg, project)
