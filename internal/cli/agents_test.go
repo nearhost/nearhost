@@ -37,7 +37,7 @@ func fakeAgents(home string) agentsBackend {
 	return agentsBackend{
 		home:   func() (string, error) { return home, nil },
 		id:     func() (string, error) { return "k3f9q2", nil },
-		laptop: func() string { return "ecs@macbook" },
+		laptop: func() string { return "dev@laptop" },
 	}
 }
 
@@ -78,7 +78,7 @@ func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 	}
 	defer a.close()
 	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
-	if out := getJSON(t, sock, "/v1"); out["origin"] != "local" || out["laptop"] != "ecs@macbook" {
+	if out := getJSON(t, sock, "/v1"); out["origin"] != "local" || out["laptop"] != "dev@laptop" {
 		t.Fatalf("GET /v1: %v", out)
 	}
 	f, ok := opts.Agent("mini")
@@ -110,7 +110,7 @@ func TestAgentStatusComesFromTheConfigFile(t *testing.T) {
 	cfg := &config.Config{
 		Servers: []config.Server{{Name: "mini", SSHHost: "mini"}},
 		Projects: []config.Project{
-			{Name: "here", Server: config.LocalServer, Path: "/Users/ecs/here", Alias: "here.test", Enabled: true,
+			{Name: "here", Server: config.LocalServer, Path: "/home/dev/here", Alias: "here.test", Enabled: true,
 				Routes: []config.Route{{Port: 3000, Role: config.RoleWeb}}},
 			{Name: "myapp", Server: "mini", Path: "/home/dev/code/myapp", Alias: "myapp.test", Enabled: true,
 				Routes: []config.Route{{Port: 8080, Role: config.RoleWeb, Label: "app"}, {Port: 5432, Role: config.RoleIgnore}}},

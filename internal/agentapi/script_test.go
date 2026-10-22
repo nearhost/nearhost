@@ -78,7 +78,7 @@ func scriptServerWith(t *testing.T, home, id, origin string, review bool, opts O
 		t.Skip("curl is not installed")
 	}
 	c := &clock{now: time.Now()}
-	opts.Laptop, opts.Now = "ecs@"+id, c.Now
+	opts.Laptop, opts.Now = "dev@"+id, c.Now
 	s := New(opts)
 	if review {
 		s.SetReviewer(&fakeReviewer{})
@@ -167,7 +167,7 @@ func TestScriptReportsAProjectThatExists(t *testing.T) {
 func TestScriptSaysWhenNearhostRunsWithoutItsInterface(t *testing.T) {
 	home := shortDir(t)
 	scriptServer(t, home, "k3f9q2", "mini", false)
-	if r := runScript(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "open nearhost on ecs@k3f9q2") {
+	if r := runScript(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "open nearhost on dev@k3f9q2") {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -177,11 +177,11 @@ func TestScriptAsksWhichLaptopWhenSeveralAnswer(t *testing.T) {
 	scriptServer(t, home, "aaaaaa", "mini", true)
 	scriptServer(t, home, "bbbbbb", "mini", true)
 	r := runScript(t, home, nil, "socket")
-	if r.code != 4 || !strings.Contains(r.stderr, "aaaaaa.sock  (ecs@aaaaaa)") || !strings.Contains(r.stderr, "bbbbbb.sock  (ecs@bbbbbb)") {
+	if r.code != 4 || !strings.Contains(r.stderr, "aaaaaa.sock  (dev@aaaaaa)") || !strings.Contains(r.stderr, "bbbbbb.sock  (dev@bbbbbb)") {
 		t.Fatalf("%+v", r)
 	}
 	chosen := filepath.Join(home, ".nearhost", "bbbbbb.sock")
-	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + chosen}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"laptop":"ecs@bbbbbb"`) {
+	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + chosen}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"laptop":"dev@bbbbbb"`) {
 		t.Fatalf("with NEARHOST_SOCKET: %+v", r)
 	}
 }
@@ -228,7 +228,7 @@ func TestScriptRefusesAnAPIItDoesNotSpeak(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"api":2,"interface":true,"laptop":"ecs@future","origin":"mini"}`))
+		w.Write([]byte(`{"api":2,"interface":true,"laptop":"dev@future","origin":"mini"}`))
 	})}
 	go srv.Serve(l)
 	defer srv.Close()
@@ -408,12 +408,12 @@ func TestScriptDoctorOnANearhostWithoutCapabilities(t *testing.T) {
 		mu.Lock()
 		calls = append(calls, r.URL.Path)
 		mu.Unlock()
-		w.Write([]byte(`{"api":1,"interface":true,"laptop":"ecs@older","origin":"mini"}`))
+		w.Write([]byte(`{"api":1,"interface":true,"laptop":"dev@older","origin":"mini"}`))
 	})}
 	go srv.Serve(l)
 	defer srv.Close()
 	for _, cmd := range []string{"doctor", "reload"} {
-		if r := runScript(t, home, nil, cmd, home); r.code != 5 || !strings.Contains(r.stderr, "Nearhost on ecs@older doesn't support "+cmd) {
+		if r := runScript(t, home, nil, cmd, home); r.code != 5 || !strings.Contains(r.stderr, "Nearhost on dev@older doesn't support "+cmd) {
 			t.Fatalf("%s: %+v", cmd, r)
 		}
 	}

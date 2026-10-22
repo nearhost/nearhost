@@ -107,7 +107,7 @@ var mini = []Project{
 func newServer(t *testing.T, review bool) (*Server, *fakeReviewer, *clock, string, string) {
 	t.Helper()
 	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
-	s := New(Options{Laptop: "ecs@macbook", Source: fakeSource{"mini": mini}, Now: c.Now})
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini}, Now: c.Now})
 	r := &fakeReviewer{}
 	if review {
 		s.SetReviewer(r)
@@ -127,7 +127,7 @@ func newServer(t *testing.T, review bool) (*Server, *fakeReviewer, *clock, strin
 func TestHelloNamesTheOriginAndTheLaptop(t *testing.T) {
 	_, _, _, local, remote := newServer(t, true)
 	status, out := call(t, remote, "GET", "/v1", "")
-	if status != 200 || out["api"] != float64(1) || out["origin"] != "mini" || out["laptop"] != "ecs@macbook" || out["interface"] != true {
+	if status != 200 || out["api"] != float64(1) || out["origin"] != "mini" || out["laptop"] != "dev@laptop" || out["interface"] != true {
 		t.Fatalf("GET /v1 on mini: %d %v", status, out)
 	}
 	if _, out := call(t, local, "GET", "/v1", ""); out["origin"] != "local" {
@@ -203,7 +203,7 @@ func TestProposeAPathAProjectHoldsSaysItExists(t *testing.T) {
 func TestProposeWithoutTheInterfaceIsRefused(t *testing.T) {
 	_, _, _, _, remote := newServer(t, false)
 	status, out := call(t, remote, "POST", "/v1/proposals", `{"path": "/srv/app"}`)
-	if status != 409 || !strings.Contains(out["error"].(string), "open nearhost on ecs@macbook") {
+	if status != 409 || !strings.Contains(out["error"].(string), "open nearhost on dev@laptop") {
 		t.Fatalf("%d %v", status, out)
 	}
 	if _, out := call(t, remote, "GET", "/v1", ""); out["interface"] != false {
@@ -409,7 +409,7 @@ func (f *fakeDoctor) all() []string {
 // doctorServer is a server with d as its doctor, serving mini's socket.
 func doctorServer(t *testing.T, d Doctor) string {
 	t.Helper()
-	s := New(Options{Laptop: "ecs@macbook", Source: fakeSource{"mini": mini}, Doctor: d})
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini}, Doctor: d})
 	sock := filepath.Join(shortDir(t), "mini.sock")
 	if err := s.Listen("mini", sock); err != nil {
 		t.Fatal(err)
@@ -493,7 +493,7 @@ func TestDoctorEndpointMapsErrors(t *testing.T) {
 	}
 
 	_, _, _, local, _ := newServer(t, true)
-	status, out = call(t, local, "GET", "/v1/doctor?path=/Users/ecs/app", "")
+	status, out = call(t, local, "GET", "/v1/doctor?path=/home/dev/app", "")
 	if status != 404 || !strings.Contains(out["error"].(string), "no such call") {
 		t.Fatalf("without a doctor: %d %v", status, out)
 	}
@@ -501,14 +501,14 @@ func TestDoctorEndpointMapsErrors(t *testing.T) {
 
 func TestADirectoryMissingOnTheLaptopNamesIt(t *testing.T) {
 	d := &fakeDoctor{err: fs.ErrNotExist}
-	s := New(Options{Laptop: "ecs@macbook", Source: fakeSource{}, Doctor: d})
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{}, Doctor: d})
 	sock := filepath.Join(shortDir(t), "local.sock")
 	if err := s.Listen("local", sock); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	status, out := call(t, sock, "GET", "/v1/doctor?path=/Users/ecs/gone", "")
-	if status != 404 || out["error"] != "/Users/ecs/gone is not a directory on ecs@macbook" {
+	status, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/gone", "")
+	if status != 404 || out["error"] != "/home/dev/gone is not a directory on dev@laptop" {
 		t.Fatalf("%d %v", status, out)
 	}
 }
@@ -594,7 +594,7 @@ func reloadServer(t *testing.T, review bool) (*Server, *fakeReviewer, *fakeReloa
 		Project{Name: "third", Path: "/home/dev/code/third", URL: "https://third.test", State: "stopped"})}}
 	rl := &fakeReloader{}
 	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
-	s := New(Options{Laptop: "ecs@macbook", Source: src, Reload: rl, Now: c.Now})
+	s := New(Options{Laptop: "dev@laptop", Source: src, Reload: rl, Now: c.Now})
 	r := &fakeReviewer{}
 	if review {
 		s.SetReviewer(r)
@@ -684,7 +684,7 @@ func TestReloadAnswers(t *testing.T) {
 	_, _, rl, _, sock = reloadServer(t, false)
 	rl.answer(waiting, nil)
 	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
-	if status != 409 || out["error"] != "open nearhost on ecs@macbook to approve what .nearhostrc asks for (app.example.com, docker_clients); `nearhost up` cannot show it" ||
+	if status != 409 || out["error"] != "open nearhost on dev@laptop to approve what .nearhostrc asks for (app.example.com, docker_clients); `nearhost up` cannot show it" ||
 		fmt.Sprint(out["items"]) != "[app.example.com docker_clients]" {
 		t.Fatalf("without the interface: %d %v", status, out)
 	}

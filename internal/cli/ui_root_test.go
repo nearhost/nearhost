@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nearhost/nearhost/internal/sudo"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -166,22 +165,22 @@ func TestAsRootTakesTurns(t *testing.T) {
 	f := &fakeRoot{needed: true, sticks: true}
 	root := f.root()
 	root.turn = make(chan struct{}, 1)
-	release := make(chan struct{})
+	release, open := make(chan struct{}), make(chan struct{})
 	ask := root.ask
 	root.ask = func(ctx context.Context, why string, check func(context.Context, string) error) error {
+		close(open)
 		<-release // the box stays open
 		return ask(ctx, why, check)
 	}
 	var first, second step
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
 	go func() { firstDone <- root.run(context.Background(), "First.", "Done.", first.run) }()
-	time.Sleep(50 * time.Millisecond)
+	<-open // the first holds the turn with its box open
 	go func() { secondDone <- root.run(context.Background(), "Second.", "Done.", second.run) }()
 	ctx, cancel := context.WithCancel(context.Background())
 	thirdDone := make(chan error, 1)
 	go func() { thirdDone <- root.run(ctx, "Third.", "Done.", (&step{}).run) }()
-	time.Sleep(50 * time.Millisecond)
-	cancel()
+	cancel() // the turn is held, so the third ends on its context whenever it gets to wait
 	if err := <-thirdDone; !errors.Is(err, context.Canceled) {
 		t.Errorf("a start that ended while waiting = %v", err)
 	}
