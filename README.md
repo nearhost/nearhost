@@ -219,7 +219,7 @@ Nearhost serves your own machines to your own browser. To show work to someone e
 
 ## Development
 
-You need Git and Go 1.27.3 or later (Go 1.21 and later download it if needed). Make is optional; each target is one Go command.
+You need Git and Go 1.27.3 or later (Go 1.21 and later download it if needed, unless `GOTOOLCHAIN` forbids it). Make is optional; each target is one Go command.
 
 ### Check out and build
 
