@@ -82,3 +82,19 @@ func TestInstallRefusesWithoutTrustedSudo(t *testing.T) {
 		t.Fatal("the trust store was touched without a trusted sudo")
 	}
 }
+
+func TestInstallWithEmptyPathAddsNoCurrentDirectory(t *testing.T) {
+	trusted := fakeTrustSudo(t)
+	t.Setenv("PATH", "")
+	var during string
+	origInstall := trustInstall
+	trustInstall = func(*x509.Certificate, ...truststore.Option) error { during = os.Getenv("PATH"); return nil }
+	t.Cleanup(func() { trustInstall = origInstall })
+
+	if err := Install(&x509.Certificate{}); err != nil {
+		t.Fatal(err)
+	}
+	if during != filepath.Dir(trusted) {
+		t.Fatalf("PATH during install = %q, want %q alone", during, filepath.Dir(trusted))
+	}
+}

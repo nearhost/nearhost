@@ -61,7 +61,7 @@ or `npm install -g @nearhost/cli` to keep the `nearhost` command. npm installs t
 go install github.com/nearhost/nearhost/cmd/nearhost@latest
 ```
 
-Nearhost needs Go 1.27.3 or later, the version the release binaries are built with. Go 1.21 to 1.27.2 downloads it first, unless `GOTOOLCHAIN` is set to `local`.
+Nearhost needs Go 1.27.3 or later, the version the release binaries are built with. Go 1.21 to 1.27.2 downloads it first, unless `GOTOOLCHAIN` forbids it (some distributions' Go packages set it to `local`).
 
 On Linux, allow the binary to bind ports 80 and 443. Run this again after each upgrade:
 

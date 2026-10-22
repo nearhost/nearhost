@@ -94,7 +94,13 @@ func withTrustedSudo(fn func() error) error {
 		return err
 	}
 	orig, had := os.LookupEnv("PATH")
-	if err := os.Setenv("PATH", filepath.Dir(path)+string(os.PathListSeparator)+orig); err != nil {
+	// An empty entry means the current directory, so a missing PATH
+	// becomes sudo's directory alone.
+	next := filepath.Dir(path)
+	if orig != "" {
+		next += string(os.PathListSeparator) + orig
+	}
+	if err := os.Setenv("PATH", next); err != nil {
 		return err
 	}
 	defer func() {
