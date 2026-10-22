@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -84,7 +85,7 @@ func runExport(cmd *cobra.Command, b exportBackend, flags exportFlags, args []st
 	}
 	// The file is written first: a snapshot saved for a file that failed
 	// to be written would approve what is not there.
-	if err := saveSnapshot(cfgPath, p.Name, snap); err != nil {
+	if err := saveSnapshot(cfgPath, p, snap); err != nil {
 		return fmt.Errorf("wrote %s, but saving the config failed: %w", fileIn(p, dir), err)
 	}
 	if pending {
@@ -225,15 +226,21 @@ func fileIn(p config.Project, dir string) string {
 	return path.Join(dir, nearhostrc.FileName)
 }
 
-// saveSnapshot sets the approved snapshot of the project called name to snap
-// in the config at cfgPath and saves it, under the config's lock. Nothing
-// but the snapshot changes, since the file was rendered from what the config
-// already serves.
-func saveSnapshot(cfgPath, name string, snap *config.RcSnapshot) error {
+// saveSnapshot sets the approved snapshot of project from to snap in the
+// config at cfgPath and saves it, under the config's lock. Nothing but the
+// snapshot changes, since the file was rendered from what the config already
+// serves. A project another process changed meanwhile is not what the file
+// was rendered from, so its snapshot is not saved.
+func saveSnapshot(cfgPath string, from config.Project, snap *config.RcSnapshot) error {
 	return config.Update(cfgPath, func(cfg *config.Config) error {
-		p, ok := cfg.Project(name)
+		p, ok := cfg.Project(from.Name)
 		if !ok {
-			return fmt.Errorf("project %q is no longer in %s", name, cfgPath)
+			return fmt.Errorf("project %q is no longer in %s", from.Name, cfgPath)
+		}
+		now := *p
+		now.Nearhostrc, from.Nearhostrc = nil, nil
+		if !reflect.DeepEqual(now, from) {
+			return fmt.Errorf("project %q changed while it was exported, so the file is not approved; run `nearhost export` again", from.Name)
 		}
 		p.Nearhostrc = snap
 		return nil

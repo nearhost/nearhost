@@ -434,3 +434,36 @@ func TestExportThenAddOnAnotherMachine(t *testing.T) {
 		}
 	}
 }
+
+// A project changed by another process while it was exported is not what
+// the file was rendered from, so the file is not approved.
+func TestExportDoesNotApproveAProjectChangedMeanwhile(t *testing.T) {
+	remote := exportDir(t)
+	p := exportProject("box-app", "/srv/www/app")
+	p.Server = "box"
+	cfgPath, _ := exportConfig(t, &config.Config{
+		Servers:  []config.Server{{Name: "box", SSHHost: "box.lan"}},
+		Projects: []config.Project{p},
+	})
+	w := &memWriter{files: map[string][]byte{}}
+	b := exportBackend{
+		openRemote: func(_ context.Context, srv config.Server, projectPath string) (discovery.FileReader, transport.FileWriter, string, func() error, error) {
+			if err := config.Update(cfgPath, func(cfg *config.Config) error {
+				p, _ := cfg.Project("box-app")
+				p.Routes = append(p.Routes, config.Route{Port: 5173, Role: config.RoleIgnore})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return discovery.DirReader{Root: remote}, w, projectPath, func() error { return nil }, nil
+		},
+	}
+	out, err := execute(t, newExportCmd(b), "--config", cfgPath, "export", "box-app")
+	if err == nil || !strings.Contains(err.Error(), "changed while it was exported") {
+		t.Fatalf("export = %v, want the project changed\n%s", err, out)
+	}
+	saved, _ := loadSaved(t, cfgPath).Project("box-app")
+	if saved.Nearhostrc != nil || len(saved.Routes) != 2 {
+		t.Errorf("saved %+v, want the other change and no snapshot", saved)
+	}
+}
