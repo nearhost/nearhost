@@ -373,3 +373,28 @@ func TestToastPlacement(t *testing.T) {
 		t.Errorf("the toast's bottom is not on the row above the footer's rule:\n%s", screen(m))
 	}
 }
+
+// With the help taking the body's place in a short window, the toast stays
+// on screen below the header rather than over it.
+func TestToastPlacementWhenTheHelpHidesTheBody(t *testing.T) {
+	m := New(newFake(t, sampleConfig()), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: minWidth, Height: minHeight})
+	press(m, "?")
+	if !m.helpHidesBody() {
+		t.Fatal("the help does not take the body's place at this size")
+	}
+	m.showToast("Copied", false)
+	lines := strings.Split(screen(m), "\n")
+	top, bottom := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "╭") && top < 0 {
+			top = i
+		}
+		if strings.Contains(l, "╯") {
+			bottom = i
+		}
+	}
+	if top < bodyTop || bottom != m.height-2 || !strings.Contains(screen(m), "Copied") {
+		t.Errorf("toast from row %d to %d, want it to end on row %d:\n%s", top, bottom, m.height-2, screen(m))
+	}
+}

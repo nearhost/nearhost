@@ -82,10 +82,13 @@ func (m *Model) withToast(content string) string {
 		Render(dot + " " + styleText.Render(text))
 	w, h := lipgloss.Width(box), lipgloss.Height(box)
 	footer := m.footerHeight()
-	if m.logView != nil {
+	switch {
+	case m.logView != nil:
 		footer = 1 // the full-screen log's footer is a row, help or not
+	case m.helpHidesBody():
+		footer = 0 // the help runs from the header to the bottom; the toast sits over its foot
 	}
-	x, y := m.width-w-2, m.height-footer-1-h
+	x, y := m.width-w-2, max(m.height-footer-1-h, bodyTop)
 	return lipgloss.NewCompositor(
 		lipgloss.NewLayer(content),
 		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
