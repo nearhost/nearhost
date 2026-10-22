@@ -1,0 +1,21 @@
+internal/proxy/trust_sudo_test.go
+  s_e8c5d245e902d9::t_cbf0f0ff506ab7 1-84
+internal/proxy/trust.go
+  s_e8c5d245e902d9::t_ea42c9cc043b67 9,13-14,58-64,68,76,82-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09e7afaee0c54dd67dd51392bf30cad8ea422227",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
