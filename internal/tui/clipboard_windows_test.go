@@ -24,8 +24,9 @@ func TestSystemClipboardKeepsUnicodeOnWindows(t *testing.T) {
 	}
 	powershell := filepath.Join(dir, "WindowsPowerShell", "v1.0", "powershell.exe")
 	// Get-Clipboard writes through the console's code page; UTF-8 output
-	// keeps what it read intact.
-	script := "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw"
+	// keeps what it read intact. [Text.Encoding]::UTF8 would put a byte
+	// order mark before it.
+	script := "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; Get-Clipboard -Raw"
 	out, err := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command", script).Output()
 	if err != nil {
 		t.Fatal(err)
