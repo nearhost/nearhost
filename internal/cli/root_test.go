@@ -95,6 +95,21 @@ func TestUnknownCommandSuggests(t *testing.T) {
 	}
 }
 
+// A bad flag with no command, or with a word nothing is like, is the plain
+// flag error, with no suggestion.
+func TestUnknownFlagWithoutACommandIsAFlagError(t *testing.T) {
+	for _, args := range [][]string{{"--foo"}, {"zzzzzz", "--foo"}} {
+		root := NewRoot()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(args)
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "unknown flag: --foo") || strings.Contains(err.Error(), "Did you mean") {
+			t.Errorf("%v: err = %v", args, err)
+		}
+	}
+}
+
 func TestHostsApplyHidden(t *testing.T) {
 	root := NewRoot()
 	var out bytes.Buffer
