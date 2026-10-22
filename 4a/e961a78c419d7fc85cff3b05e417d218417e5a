@@ -1,0 +1,22 @@
+internal/cli/trust.go
+  s_e8c5d245e902d9::t_3140e658e68ad8 8,29-58,72,133-135,139,204-206,209
+internal/cli/trust_test.go
+  s_e8c5d245e902d9::t_5a33e23fb8815b 230,236-255
+  s_e8c5d245e902d9::t_1570711c88e6ec 256-258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ae961a78c419d7fc85cff3b05e417d218417e5a",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
