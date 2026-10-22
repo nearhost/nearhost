@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,8 +17,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/oserr"
 )
 
 // Fallback is the range served while Docker has never answered: the private
@@ -140,7 +140,7 @@ func rangesFrom(ctx context.Context, sockets []string) ([]string, error) {
 		if err == nil {
 			return ranges, nil
 		}
-		if failed == nil && !absent(err) {
+		if failed == nil && !oserr.NothingListening(err) {
 			failed = fmt.Errorf("%s: %w", path, err)
 		}
 		if ctx.Err() != nil {
@@ -154,12 +154,6 @@ func rangesFrom(ctx context.Context, sockets []string) ([]string, error) {
 		return nil, err
 	}
 	return nil, fmt.Errorf("no Docker daemon at %s", strings.Join(sockets, ", "))
-}
-
-// absent reports whether err says nothing listens at a socket: there is no
-// file, or one left behind by a daemon that has gone.
-func absent(err error) bool {
-	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // network is the part of a network in the daemon's list that is read.

@@ -8,12 +8,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/oserr"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -454,8 +454,8 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 		e.mu.Lock()
 		e.relays[port] = l
 		e.mu.Unlock()
-	case errors.Is(err, syscall.EADDRNOTAVAIL) || errors.Is(err, syscall.EAFNOSUPPORT):
-	case errors.Is(err, syscall.EADDRINUSE):
+	case oserr.NoLoopbackFamily(err):
+	case oserr.AddrInUse(err):
 		e.releasePort(port)
 		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
 	default:
