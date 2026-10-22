@@ -394,7 +394,8 @@ func TestToastPlacementWhenTheHelpHidesTheBody(t *testing.T) {
 			bottom = i
 		}
 	}
-	if top < bodyTop || bottom != m.height-2 || !strings.Contains(screen(m), "Copied") {
+	if top < bodyTop || bottom != m.height-2 {
 		t.Errorf("toast from row %d to %d, want it to end on row %d:\n%s", top, bottom, m.height-2, screen(m))
 	}
+	wantRow(t, m, "│", "Copied", "│")
 }
