@@ -1,0 +1,53 @@
+internal/config/id.go
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 143-144,146
+internal/config/fingerprint_windows.go
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 1-18
+internal/engine/holder_test.go
+  s_cc6c1166ddaad7::t_1e592950c45e0c 108-135
+internal/agentapi/socket_windows.go
+  s_cc6c1166ddaad7::t_50084faba73b5d 1-5
+internal/config/fingerprint_other.go
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 1-6
+internal/engine/holder_windows_test.go
+  s_cc6c1166ddaad7::t_1e592950c45e0c 1-23
+internal/engine/holder.go
+  s_cc6c1166ddaad7::t_30c2a0df0c4991 49,150-169
+  s_cc6c1166ddaad7::t_07f84cad5ef876 170
+internal/config/fingerprint_windows_test.go
+  s_cc6c1166ddaad7::t_1e592950c45e0c 1-14
+internal/engine/holder_linux.go
+  s_cc6c1166ddaad7::t_30c2a0df0c4991 1-5
+internal/agentapi/socket_linux.go
+  s_cc6c1166ddaad7::t_50084faba73b5d 1-5
+internal/config/fingerprint_linux.go
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 1-16
+.github/workflows/ci.yml
+  s_cc6c1166ddaad7::t_ff51bec76733ae 33
+internal/config/fingerprint_darwin.go
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 1-12
+internal/engine/holder_windows.go
+  s_cc6c1166ddaad7::t_30c2a0df0c4991 1-41,46
+  s_cc6c1166ddaad7::t_27fe222bc1ddec 42-45
+internal/engine/holder_unix.go
+  s_cc6c1166ddaad7::t_30c2a0df0c4991 1-6
+internal/agentapi/socket_other.go
+  s_cc6c1166ddaad7::t_50084faba73b5d 1-8
+internal/agentapi/socket_darwin.go
+  s_cc6c1166ddaad7::t_50084faba73b5d 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "937e0b3dd499593d57af2dd7cdbb1b066497d619",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
