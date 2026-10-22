@@ -217,8 +217,8 @@ func (s *Server) SetReviewer(r Reviewer) {
 }
 
 // maxSocketPath is the longest Unix socket path the running OS accepts: the
-// size of sockaddr_un's sun_path less its terminating NUL. That is 104 bytes
-// on macOS and the BSDs and 108 on Linux.
+// size of sockaddr_un's sun_path less its terminating NUL. sun_path is 104
+// bytes on macOS and the BSDs and 108 on Linux, so the limits are 103 and 107.
 var maxSocketPath = func() int {
 	if runtime.GOOS == "linux" {
 		return 107
