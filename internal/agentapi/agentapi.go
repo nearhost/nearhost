@@ -15,10 +15,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -214,16 +216,30 @@ func (s *Server) SetReviewer(r Reviewer) {
 	s.mu.Unlock()
 }
 
+// maxSocketPath is the longest Unix socket path the running OS accepts: the
+// size of sockaddr_un's sun_path less its terminating NUL. That is 104 bytes
+// on macOS and the BSDs and 108 on Linux.
+var maxSocketPath = func() int {
+	if runtime.GOOS == "linux" {
+		return 107
+	}
+	return 103
+}()
+
 // Listen serves the API for origin on a Unix socket at path, creating its
 // directory with mode 0700. A socket left at path by a process that has gone
 // is removed first; one that still answers is left alone and ErrInUse
-// returned. Listening again for an origin moves it to the new path.
+// returned. A path longer than the OS allows for a socket is refused with a
+// message that says so. Listening again for an origin moves it to the new path.
 func (s *Server) Listen(origin, path string) error {
 	s.mu.Lock()
 	same := s.listeners[origin] != nil && s.listeners[origin].path == path
 	s.mu.Unlock()
 	if same {
 		return nil
+	}
+	if n := len(path); n > maxSocketPath {
+		return fmt.Errorf("socket path is too long (%d bytes; the limit is %d): %s", n, maxSocketPath, path)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

@@ -32,11 +32,17 @@ type scriptResult struct {
 // and env added.
 func runScript(t *testing.T, home string, env []string, args ...string) scriptResult {
 	t.Helper()
+	return runScriptIn(t, "sh", home, env, args...)
+}
+
+// runScriptIn is runScript with the interpreter shell.
+func runScriptIn(t *testing.T, shell, home string, env []string, args ...string) scriptResult {
+	t.Helper()
 	path, err := filepath.Abs(script)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", append([]string{path}, args...)...)
+	cmd := exec.Command(shell, append([]string{path}, args...)...)
 	cmd.Env = append([]string{"HOME=" + home, "PATH=/usr/bin:/bin"}, env...)
 	cmd.Dir = home
 	var out, errOut bytes.Buffer
@@ -466,5 +472,39 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 		!regexp.MustCompile(`\b30 seconds\b`).MatchString(add) ||
 		!strings.Contains(add, "whatever") {
 		t.Errorf("after an add: %q", add)
+	}
+}
+
+// dash exits on a failed shift, so a flag without its value must be checked
+// first: it is a usage error (1), which the skill does not read as "no
+// Nearhost reachable" (2). Skipped where dash is absent.
+func TestScriptFlagWithoutItsValueIsAUsageErrorInEveryShell(t *testing.T) {
+	shells := []string{"sh"}
+	if _, err := exec.LookPath("dash"); err == nil {
+		shells = append(shells, "dash")
+	}
+	home := shortDir(t)
+	for _, shell := range shells {
+		for flag, want := range map[string]string{"--web": "--web needs a port", "--name": "--name needs a name"} {
+			r := runScriptIn(t, shell, home, nil, "propose", flag)
+			if r.code != 1 || !strings.Contains(r.stderr, want) {
+				t.Fatalf("%s %s: %+v", shell, flag, r)
+			}
+		}
+	}
+}
+
+// Without curl the script says so, rather than that Nearhost is not running.
+func TestScriptWithoutCurlSaysSo(t *testing.T) {
+	home := shortDir(t)
+	for _, cmd := range []string{"socket", "status", "propose", "wait", "doctor", "reload"} {
+		args := []string{cmd}
+		if cmd == "wait" {
+			args = append(args, "abc123")
+		}
+		r := runScript(t, home, []string{"PATH=/nonexistent"}, args...)
+		if r.code != 2 || !strings.Contains(r.stderr, "curl is needed") || strings.Contains(r.stderr, "not running") {
+			t.Fatalf("%s: %+v", cmd, r)
+		}
 	}
 }

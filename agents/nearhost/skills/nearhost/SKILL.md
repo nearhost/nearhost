@@ -56,6 +56,7 @@ Do not edit Nearhost's config file yourself.
 - **Exit status 2 from `propose` or `status`**, no Nearhost answers. Pass on what the script printed.
   - On a server, it says what to do on the laptop: start `nearhost` and connect this server, or add the server first.
   - On the laptop, if it says the `nearhost` command is here and nothing was proposed yet: you may run `nearhost add <path>` yourself, since the user asked for the add at this machine. If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it.
+- **Exit status 2 and the script printed `curl is needed`**: this machine has no curl, so nothing was asked of Nearhost. Tell the user to install curl. Do not run `nearhost add` instead.
 - **Exit status 3**: Nearhost is running as `nearhost up`, which cannot show proposals. Tell the user to open `nearhost` on the laptop and try again.
 - **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API, or this Nearhost is too old for `doctor` or `reload`. Pass on which one to update.
