@@ -121,6 +121,7 @@ func TestProxyFix(t *testing.T) {
 		{"denied as text on linux", text, "linux", doctor.SetcapFix("/usr/bin/nearhost")},
 		{"denied on darwin", denied, "darwin", "Run nearhost as a user that may bind the port, or " + ports},
 		{"in use", busy, "linux", "Quit the program using the port, or " + ports},
+		{"run directory not a directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.ENOTDIR}), "linux", "Fix /run/nearhost: not a directory."},
 		{"run directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.EACCES}), "linux", "Check that this user can create /run/nearhost."},
 	}
 	for _, c := range cases {

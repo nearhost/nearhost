@@ -91,7 +91,10 @@ func proxyFix(err error, goos, exe string) string {
 	const ports = "pass --https-port and --http-port."
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
-		return "Check that this user can create " + pe.Path + "."
+		if errors.Is(pe.Err, fs.ErrPermission) {
+			return "Check that this user can create " + pe.Path + "."
+		}
+		return "Fix " + pe.Path + ": " + pe.Err.Error() + "."
 	}
 	denied := errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "permission denied")
 	if denied && goos == "linux" {
