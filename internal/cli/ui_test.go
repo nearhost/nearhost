@@ -262,6 +262,30 @@ func TestAcceptRefusesAStaleChange(t *testing.T) {
 	}
 }
 
+// A newer .nearhostrc that a review saved while the accept waited for the
+// config's lock is not overwritten with the change the user approved.
+func TestAcceptRefusesAChangeANewerReviewSaved(t *testing.T) {
+	u, path := pendingUI(t, []string{"app.local.example.io"})
+	if err := config.Update(path, func(cfg *config.Config) error {
+		p, _ := cfg.Project("two")
+		p.Nearhostrc = &config.RcSnapshot{SHA256: "newer", Routes: p.Routes}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = u.AcceptChange("two", "new")
+	if want := "the .nearhostrc changed again; review it again"; err == nil || err.Error() != want {
+		t.Fatalf("AcceptChange = %v, want %s", err, want)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Errorf("the config changed:\n%s", after)
+	}
+}
+
 // The interface hides stderr while it runs, so a CA that could not move is
 // not warned of there; the warning goes to the interface's log.
 func TestBareNearhostKeepsTheMoveWarningOffStderr(t *testing.T) {
