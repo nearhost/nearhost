@@ -252,6 +252,10 @@ type uiEngine struct {
 	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it
 	// to re-read meanwhile; it is nil otherwise.
 	acceptSaving func()
+	// acceptLocking, when set, runs in AcceptChange after it has checked
+	// the change and before it takes the config's lock. Tests use it to
+	// save meanwhile; it is nil otherwise.
+	acceptLocking func()
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }

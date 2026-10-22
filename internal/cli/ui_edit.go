@@ -52,6 +52,9 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 		return stale
 	}
 	approved := approvedRc(u.Config(), project)
+	if u.acceptLocking != nil {
+		u.acceptLocking()
+	}
 	err := u.EditConfig(func(cfg *config.Config) error {
 		if now := u.Status(project).Pending; now == nil || now.SHA256 != sha || approvedRc(cfg, project) != approved {
 			return stale
