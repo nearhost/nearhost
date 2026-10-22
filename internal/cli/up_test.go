@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -390,6 +392,28 @@ func TestUpInterruptedWhileStartingShutsDownCleanly(t *testing.T) {
 	out := u.out.String()
 	if strings.Contains(out, "Ctrl-C") || strings.Contains(out, "fix:") || !strings.HasSuffix(out, "\nstopped\n") {
 		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
+// An interrupt ends every start in flight, so by the time up looks, its
+// starts may all have returned as well: both are ready at once. The interrupt
+// wins. Without that, up summed up the starts it had just interrupted, as
+// errors with a fix, and said "Press Ctrl-C to stop" while shutting down.
+func TestUpInterruptedAsTheStartsReturnPrintsNoSummary(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
+	eng := engine.New(cfg, engine.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := make(chan struct{})
+	close(started)
+	// Go picks among ready cases at random, so each round is a fresh draw.
+	for range 64 {
+		var out bytes.Buffer
+		p := &upPrinter{out: &out, eng: eng, cfg: cfg}
+		p.untilInterrupted(ctx, nil, started, nil, []string{"api"}, []error{context.Canceled})
+		if out.Len() != 0 || p.advise {
+			t.Fatalf("an interrupted run was summed up:\n%s", out.String())
+		}
 	}
 }
 

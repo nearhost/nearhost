@@ -31,11 +31,27 @@ func TestDataDirXDG(t *testing.T) {
 func TestDataDirDarwin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// macOS keeps application data in Application Support, XDG or not.
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	// An absolute XDG_DATA_HOME moves the data directory on macOS too, so a
+	// source build can keep its CA apart from the installed one.
+	xdg := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdg)
+	if got, err := dataDirFor("darwin"); err != nil || got != filepath.Join(xdg, "nearhost") {
+		t.Fatalf("absolute XDG_DATA_HOME: got %q, %v", got, err)
+	}
+	if runtime.GOOS == "darwin" {
+		if got, err := DataDir(); err != nil || got != filepath.Join(xdg, "nearhost") {
+			t.Fatalf("DataDir() = %q, %v; want %q", got, err, filepath.Join(xdg, "nearhost"))
+		}
+	}
+	// Otherwise macOS keeps application data in Application Support.
 	want := filepath.Join(home, "Library", "Application Support", "nearhost")
+	t.Setenv("XDG_DATA_HOME", "relative/data")
 	if got, err := dataDirFor("darwin"); err != nil || got != want {
-		t.Fatalf("got %q, %v; want %q", got, err, want)
+		t.Fatalf("relative XDG_DATA_HOME: got %q, %v; want %q", got, err, want)
+	}
+	t.Setenv("XDG_DATA_HOME", "")
+	if got, err := dataDirFor("darwin"); err != nil || got != want {
+		t.Fatalf("no XDG_DATA_HOME: got %q, %v; want %q", got, err, want)
 	}
 	if runtime.GOOS == "darwin" {
 		if got, err := DataDir(); err != nil || got != want {

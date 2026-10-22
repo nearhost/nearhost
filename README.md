@@ -61,6 +61,8 @@ or `npm install -g @nearhost/cli` to keep the `nearhost` command. npm installs t
 go install github.com/nearhost/nearhost/cmd/nearhost@latest
 ```
 
+`go install` builds with your own Go toolchain. Use Go 1.27.3 or later, the version the release binaries are built with.
+
 On Linux, allow the binary to bind ports 80 and 443. Run this again after each upgrade:
 
 ```sh
@@ -69,7 +71,7 @@ sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
-The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, run `xattr -dr com.apple.quarantine nearhost` on the extracted binary.
+The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, clear the flag on the extracted binary: from the folder you extracted it to, run `xattr -dr com.apple.quarantine ./nearhost`.
 
 Releases carry build provenance attestations. To check a download, run `gh attestation verify <file> --repo nearhost/nearhost`.
 
@@ -91,7 +93,7 @@ Trust the local certificate authority. This asks for your password once:
 nearhost trust
 ```
 
-The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux; `$XDG_DATA_HOME/nearhost/caddy` when that is set). Anyone with it can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. An older copy in `~/.config/nearhost/caddy` is moved there the first time Nearhost runs, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from your trust stores.
+The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On either, an absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy`. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
 
 Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml`. Nothing in the project is changed.
 
@@ -116,13 +118,13 @@ Then start Nearhost and open `https://myapp.test`:
 nearhost
 ```
 
-`nearhost` opens a full-screen view of your servers and projects. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the view. With no projects yet it opens on the Nearhost mark and asks you to add one.
+`nearhost` opens the interface: your servers and projects, full screen. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the interface. With no projects yet it opens on the Nearhost mark and asks you to add one.
 
 `/` filters the sidebar by name. `l` opens the selected project's log, or every log from Home, across the whole window: `tab` shows requests, events or errors, `/` searches, `enter` opens a request to show its headers, the body sent and the body that came back, and its route, `v` reveals its cookies, `c` copies it as a curl command, `r` sends it again (asking first unless it is a GET, HEAD or OPTIONS), and `G` follows new lines again. Home lists anything that needs you, such as a server that cannot connect, with how many attempts failed and when the next is, and how to fix it; there `r` retries the connection and `y` copies the `ssh` command that fixes access. On a server, `c` drops its connection and holds it closed, its projects waiting, until `c` connects it again. `?` lists every key. The mouse works too: drag to select and copy text, double-click to copy a word, and click an address to open it.
 
 To show bodies and send requests again, the proxy keeps each request and its response in memory while Nearhost runs: bodies up to 64 KiB, the last thousand or so exchanges, never written to disk or to the log. `--no-capture` turns it off.
 
-Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the view; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the view afterwards.
+Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the interface; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the interface afterwards.
 
 For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
 
@@ -184,7 +186,7 @@ npx skills add nearhost/nearhost -g
 
 [![skills.sh](https://skills.sh/b/nearhost/nearhost)](https://skills.sh/nearhost/nearhost)
 
-Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its view with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
+Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its interface with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
 
 Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs to reach `~/.nearhost/*.sock`: approve the skill's command when the agent asks to run it outside the sandbox, which opens nothing else. The [documentation](https://nearhost.dev/docs/getting-started/use-a-coding-agent/) covers the settings, and what the broader ones open. Set `notifications: false` in the config to keep the terminal quiet.
 
@@ -192,10 +194,10 @@ Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this
 
 | Command | What it does |
 | --- | --- |
-| `nearhost` | Open the full-screen view and serve every enabled project |
+| `nearhost` | Open the interface, which serves every enabled project |
 | `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it |
 | `nearhost ls` | List the configured projects and their routes |
-| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the full-screen view |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface |
 | `nearhost export [project]` | Write the project's setup to a `.nearhostrc` to commit with it |
 | `nearhost preset` | Manage presets and the registries you trust |
 | `nearhost update` | Update Nearhost the way you installed it |
@@ -232,15 +234,16 @@ A source build reports its version as `dev`.
 
 ### Run from source
 
-Point Nearhost at a scratch config directory so a development build leaves your real config, certificate authority and `/etc/hosts` alone. Unprivileged ports avoid needing `setcap` on Linux:
+Point Nearhost at scratch directories so a development build leaves your real setup alone: `XDG_CONFIG_HOME` keeps its config apart, `XDG_DATA_HOME` keeps its certificate authority apart, and `--no-hosts` leaves `/etc/hosts` as it is. Unprivileged ports avoid needing `setcap` on Linux:
 
 ```sh
 export XDG_CONFIG_HOME="$PWD/.dev"
+export XDG_DATA_HOME="$PWD/.dev/data"
 ./nearhost add --web 8080 ~/code/myapp
 ./nearhost up --no-hosts --https-port 18443 --http-port 18080 --web-port 16327
 ```
 
-`./nearhost --no-hosts --https-port 18443 --http-port 18080 --web-port 16327` opens the full-screen view with the same settings.
+`./nearhost --no-hosts --https-port 18443 --http-port 18080 --web-port 16327` opens the interface with the same settings.
 
 Without the hosts block, `myapp.test` does not resolve, so ask for it by address:
 
@@ -248,7 +251,7 @@ Without the hosts block, `myapp.test` does not resolve, so ask for it by address
 curl -k --resolve myapp.test:18443:127.0.0.1 https://myapp.test:18443/
 ```
 
-Drop `-k` after running `./nearhost trust` with the same `XDG_CONFIG_HOME`, and remember to run `./nearhost untrust` when you are done.
+The source build makes its own CA in `.dev/data`, apart from the installed Nearhost's. To drop `-k`, run `./nearhost trust` with the same variables set, which adds that dev CA to the system trust store. When you are done, run `./nearhost untrust` with them still set, so it removes the dev CA rather than the installed one.
 
 ### Test
 

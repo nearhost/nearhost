@@ -201,34 +201,10 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	}()
 
 	// Whether the system trusts the local CA is asked on the side, so a slow
-	// trust store holds nothing up. The answer is printed once the summary
-	// is out, whichever comes first.
+	// trust store holds nothing up.
 	trustHint := make(chan string, 1)
 	go func() { trustHint <- untrustedCA(b.trust, opts.StorageRoot) }()
-	hint, summarised := "", false
-
-	// Everything is printed from this goroutine, so lines never interleave.
-	allStarted := started
-	for interrupted := false; !interrupted; {
-		select {
-		case ev := <-events:
-			p.event(ev)
-		case hint = <-trustHint:
-			trustHint = nil
-		case <-allStarted:
-			allStarted = nil
-			p.buffered(events) // the state changes the summary sums up
-			p.summary(names, startErrs)
-			p.advise = true // from here a state change is news, and so is its fix
-			summarised = true
-		case <-ctx.Done():
-			interrupted = true
-		}
-		if summarised && hint != "" {
-			fmt.Fprintln(p.out, hint)
-			hint = ""
-		}
-	}
+	p.untilInterrupted(ctx, events, started, trustHint, names, startErrs)
 
 	// A second signal must not end the process: the ssh masters are outside
 	// its process group and would be left running. It cuts the shutdown
@@ -264,6 +240,41 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	}
 	fmt.Fprintln(p.out, "stopped")
 	return nil
+}
+
+// untilInterrupted prints the engine's events until ctx ends and, once every
+// start has returned (started is closed), the summary of names, whose starts
+// returned startErrs, unless ctx has ended by then. The trust store's hint is
+// printed after the summary, whichever comes first. Everything is printed
+// from this goroutine, so lines never interleave.
+func (p *upPrinter) untilInterrupted(ctx context.Context, events <-chan engine.Event, started <-chan struct{}, trustHint <-chan string, names []string, startErrs []error) {
+	hint, summarised := "", false
+	for {
+		select {
+		case ev := <-events:
+			p.event(ev)
+		case hint = <-trustHint:
+			trustHint = nil
+		case <-started:
+			// An interrupt ends the starts too, so both can be ready at
+			// once, and select picks either. Starts that returned because
+			// of the interrupt are not summed up, as errors to fix.
+			if ctx.Err() != nil {
+				return
+			}
+			started = nil
+			p.buffered(events) // the state changes the summary sums up
+			p.summary(names, startErrs)
+			p.advise = true // from here a state change is news, and so is its fix
+			summarised = true
+		case <-ctx.Done():
+			return
+		}
+		if summarised && hint != "" {
+			fmt.Fprintln(p.out, hint)
+			hint = ""
+		}
+	}
 }
 
 // untrustedCA returns the line to print when the system trust store does not

@@ -186,7 +186,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 			// A taken page port costs only the page: `nearhost up` runs
 			// without it.
 			c.level = levelWarn
-			c.fix = "`nearhost up` serves without Nearhost's page while this port is taken; stop what uses it, or pass another --web-port"
+			c.fix = "Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another"
 		}
 		checks = append(checks, c)
 	}
