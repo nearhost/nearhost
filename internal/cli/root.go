@@ -176,12 +176,12 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 func Main(args []string) int {
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
 	if shouldCheckForUpdate(args, os.Getenv, Version, os.Geteuid(), tty) {
-		updates = startBackgroundCheck(Version, cachedLatest, hasFreshCache())
+		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root := NewRoot()
 	root.SetArgs(args)
 	code := exitCode(root.Execute(), os.Stderr)
-	if n := updates.notice(updates.grace()); n != "" {
+	if n := updates.notice(updateGrace); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	return code
