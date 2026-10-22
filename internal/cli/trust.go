@@ -10,6 +10,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 // trustBackend is the seam between the trust commands and the machine: the
@@ -93,6 +94,9 @@ Asks for your password, as it runs sudo.`,
 			}
 			fmt.Fprintln(out, "Installing Nearhost Local CA. You may be asked for your password.")
 			if err := b.install(cert); err != nil {
+				if errors.Is(err, sudo.ErrNotFound) {
+					return err // no prompt was shown, and another try won't find sudo
+				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost trust` again and approve it)", err)
 			}
 			fmt.Fprintln(out, "Done. Nearhost Local CA is in the system trust store.")
@@ -157,6 +161,9 @@ Asks for your password, as it runs sudo.`,
 				return fmt.Errorf("no local CA found: %w", err)
 			}
 			if err := b.uninstall(cert); err != nil {
+				if errors.Is(err, sudo.ErrNotFound) {
+					return err
+				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost untrust` again and approve it)", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Nearhost Local CA removed from the trust store.")

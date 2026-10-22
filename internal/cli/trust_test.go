@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 type fakeTrust struct {
@@ -209,6 +211,25 @@ func TestUntrustSurfacesErrorWithHint(t *testing.T) {
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
 	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "run `nearhost untrust` again") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Without a root-owned sudo no password prompt appears and another try
+// fails the same way, so the error is not told to approve one.
+func TestTrustCommandsWithoutSudoGiveNoPromptHint(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.instErr = fmt.Errorf("install CA: %w", sudo.ErrNotFound)
+	f.uninstErr = fmt.Errorf("uninstall CA: %w", sudo.ErrNotFound)
+	for _, name := range []string{"trust", "untrust"} {
+		cmd := newTrustCmd(f.backend())
+		if name == "untrust" {
+			cmd = newUntrustCmd(f.backend())
+		}
+		_, err := run(t, cmd, name)
+		if !errors.Is(err, sudo.ErrNotFound) || strings.Contains(err.Error(), "again") {
+			t.Errorf("%s: err = %v", name, err)
+		}
 	}
 }
 
