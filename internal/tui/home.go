@@ -3,11 +3,11 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -85,10 +85,15 @@ var executable = func() string {
 // proxyFix is what to do about the proxy being down, for the reason it is
 // down: setcap on Linux when the port needs a privilege, the program using
 // the port when it is taken. Caddy can return the error as text with the
-// errno lost, so the message is the fallback.
+// errno lost, so the message is the fallback. A file Nearhost could not
+// create, such as its run directory, is no port problem.
 func proxyFix(err error, goos, exe string) string {
 	const ports = "pass --https-port and --http-port."
-	denied := errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "permission denied")
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return "Check that this user can create " + pe.Path + "."
+	}
+	denied := errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "permission denied")
 	if denied && goos == "linux" {
 		return doctor.SetcapFix(exe)
 	}
