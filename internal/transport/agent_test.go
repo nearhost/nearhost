@@ -38,11 +38,11 @@ func TestTheAgentSocketIsForwardedOnceConnected(t *testing.T) {
 	withAgent(s, nil)
 	s.Start()
 	waitFor(t, 3*time.Second, func() bool { return s.Health().AgentPath == agentRemote }, "the agent forward")
-	if !strings.Contains(readLog(t, log), "-O forward -R "+agentRemote+":/run/nh/agent-mini.sock mini") {
+	if !strings.Contains(readLog(t, log), "-O forward -R "+agentRemote+":/run/nh/agent-mini.sock -- mini") {
 		t.Fatalf("no -R forward in:\n%s", readLog(t, log))
 	}
 	s.Stop()
-	if !strings.Contains(readLog(t, log), "-O cancel -R "+agentRemote+":/run/nh/agent-mini.sock mini") {
+	if !strings.Contains(readLog(t, log), "-O cancel -R "+agentRemote+":/run/nh/agent-mini.sock -- mini") {
 		t.Fatalf("Stop did not cancel it:\n%s", readLog(t, log))
 	}
 	if h := s.Health(); h.AgentPath != "" {

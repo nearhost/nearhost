@@ -139,7 +139,7 @@ func (s *Session) cancelAgent(ctx context.Context) {
 // controlAgent runs one `ssh -O forward|cancel -R remote:local`.
 func (s *Session) controlAgent(ctx context.Context, op, remote, local string) error {
 	spec := remote + ":" + local
-	cmd := s.control(ctx, "-O", op, "-R", spec, s.Host)
+	cmd := s.control(ctx, "-O", op, "-R", spec, "--", s.Host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

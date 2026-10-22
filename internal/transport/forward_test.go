@@ -28,7 +28,7 @@ func TestAddForwardRunsControlCommand(t *testing.T) {
 	if err := s.AddForward(context.Background(), 8080, 80); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readLog(t, logPath), "-O forward -L 127.0.0.1:8080:localhost:80 mini") {
+	if !strings.Contains(readLog(t, logPath), "-O forward -L 127.0.0.1:8080:localhost:80 -- mini") {
 		t.Fatalf("forward not issued: %q", readLog(t, logPath))
 	}
 	if f := s.Forwards(); len(f) != 1 || f[0] != [2]int{8080, 80} {
@@ -37,7 +37,7 @@ func TestAddForwardRunsControlCommand(t *testing.T) {
 	if err := s.CancelForward(context.Background(), 8080, 80); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80 mini") {
+	if !strings.Contains(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80 -- mini") {
 		t.Fatal("cancel not issued")
 	}
 	if len(s.Forwards()) != 0 {
@@ -169,7 +169,7 @@ func TestFailedCancelKeepsForwardTrackedForRetry(t *testing.T) {
 	if len(s.Forwards()) != 0 {
 		t.Fatal("forward should be forgotten once the cancel succeeds")
 	}
-	if n := strings.Count(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80 mini"); n != 2 {
+	if n := strings.Count(readLog(t, logPath), "-O cancel -L 127.0.0.1:8080:localhost:80 -- mini"); n != 2 {
 		t.Fatalf("expected the retry to reach ssh, saw %d cancel commands", n)
 	}
 }

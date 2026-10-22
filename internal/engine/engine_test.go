@@ -128,10 +128,10 @@ func TestRemoteProjectForwardsThroughSSH(t *testing.T) {
 		t.Fatalf("status = %+v", st)
 	}
 	log := h.log()
-	if !regexp.MustCompile(`-O forward -L 127\.0\.0\.1:` + strconv.Itoa(st.WebLocalPort) + `:localhost:80 mini`).MatchString(log) {
+	if !regexp.MustCompile(`-O forward -L 127\.0\.0\.1:` + strconv.Itoa(st.WebLocalPort) + `:localhost:80 -- mini`).MatchString(log) {
 		t.Fatalf("web forward missing:\n%s", log)
 	}
-	if !strings.Contains(log, fmt.Sprintf("-O forward -L 127.0.0.1:%d:localhost:%d mini", lb, lb)) {
+	if !strings.Contains(log, fmt.Sprintf("-O forward -L 127.0.0.1:%d:localhost:%d -- mini", lb, lb)) {
 		t.Fatalf("loopback forward missing:\n%s", log)
 	}
 	if strings.Contains(log, "localhost:3306") {
@@ -1584,7 +1584,7 @@ func TestShutdownStopsEverythingAndKeepsHosts(t *testing.T) {
 			t.Fatalf("%s = %+v", name, st)
 		}
 	}
-	if !strings.Contains(h.log(), "-O exit mini") {
+	if !strings.Contains(h.log(), "-O exit -- mini") {
 		t.Fatalf("the master was not asked to exit:\n%s", h.log())
 	}
 	if st, _ := h.eng.ServerStatus("mini"); st != transport.StatusDisconnected {
@@ -1623,7 +1623,7 @@ func TestShutdownReturnsTeardownErrorsAndStillStopsTheRest(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "myapp") || !strings.Contains(err.Error(), "cancel") {
 		t.Fatalf("expected Shutdown to report the failed cancel of myapp, got %v", err)
 	}
-	if !strings.Contains(h.log(), "-O exit mini") {
+	if !strings.Contains(h.log(), "-O exit -- mini") {
 		t.Fatal("the master must still be stopped")
 	}
 	if st := h.eng.Status("web"); st.State != StateStopped {
@@ -1672,7 +1672,7 @@ func TestShutdownWithAnEndedContextStillEndsEveryMaster(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Shutdown with an ended context did not return")
 	}
-	if !strings.Contains(h.log(), "-O exit mini") {
+	if !strings.Contains(h.log(), "-O exit -- mini") {
 		t.Fatalf("the master was not asked to exit:\n%s", h.log())
 	}
 	if st, _ := h.eng.ServerStatus("mini"); st != transport.StatusDisconnected {
@@ -1768,7 +1768,7 @@ func TestShutdownOfAReplacedEngineWithSitesLeavesTheNewerProxy(t *testing.T) {
 	if len(old.eng.Sites()) != 0 || len(old.forwards("mini")) != 0 {
 		t.Fatalf("the older engine kept sites %v, forwards %v", old.eng.Sites(), old.forwards("mini"))
 	}
-	if log := old.log(); strings.Count(log, "-O cancel") != 2 || !strings.Contains(log, "-O exit mini") {
+	if log := old.log(); strings.Count(log, "-O cancel") != 2 || !strings.Contains(log, "-O exit -- mini") {
 		t.Fatalf("the older engine must cancel its forwards and end its master:\n%s", log)
 	}
 
@@ -2210,7 +2210,7 @@ func TestRemoteProjectForwardsEveryWebRoute(t *testing.T) {
 	}
 	log := h.log()
 	for _, f := range [][2]int{{l80, 80}, {l81, 81}} {
-		if !strings.Contains(log, fmt.Sprintf("-O forward -L 127.0.0.1:%d:localhost:%d mini", f[0], f[1])) {
+		if !strings.Contains(log, fmt.Sprintf("-O forward -L 127.0.0.1:%d:localhost:%d -- mini", f[0], f[1])) {
 			t.Fatalf("forward %d -> %d missing:\n%s", f[0], f[1], log)
 		}
 	}
@@ -2242,7 +2242,7 @@ func TestRemoteSecondWebForwardFailureRollsBack(t *testing.T) {
 	if st.State != StateError || !strings.Contains(st.Message, "web port 81: ") || st.WebLocalPort != 0 || st.WebLocalPorts != nil {
 		t.Fatalf("status = %+v", st)
 	}
-	if !strings.Contains(h.log(), "localhost:80 mini") {
+	if !strings.Contains(h.log(), "localhost:80 -- mini") {
 		t.Fatalf("the first web route was never forwarded, so nothing was rolled back:\n%s", h.log())
 	}
 	if got := h.eng.Sites(); len(got) != 0 {
