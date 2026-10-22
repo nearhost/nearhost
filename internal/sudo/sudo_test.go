@@ -181,6 +181,20 @@ func TestBinaryRejectsAFileNoOneCanRun(t *testing.T) {
 	}
 }
 
+// A file whose execute bit is its group's alone cannot be run by its owner,
+// so the kernel refuses it to the user running the test.
+func TestBinaryRejectsAFileThisUserCannotRun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may run any file with an execute bit")
+	}
+	good := executable(t, 0o755)
+	useCandidates(t, executable(t, 0o010), good)
+	got, err := Binary()
+	if err != nil || got != good {
+		t.Errorf("Binary() = %q, %v, want %q", got, err, good)
+	}
+}
+
 func TestBinaryWithoutACandidateIsErrNotFound(t *testing.T) {
 	useCandidates(t, filepath.Join(t.TempDir(), "missing"))
 	if _, err := Binary(); !errors.Is(err, ErrNotFound) {
