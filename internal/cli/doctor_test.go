@@ -46,7 +46,7 @@ func healthy() *fakeMachine {
 	f.nss = proxy.NSSStatus{State: proxy.NSSCovered}
 	return &fakeMachine{
 		trust:    f,
-		hosts:    "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n127.0.0.1 web.test\n# nearhost:end\n",
+		hosts:    "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n::1 api.test\n127.0.0.1 web.test\n::1 web.test\n# nearhost:end\n",
 		goos:     "darwin",
 		lowLevel: levelOK, lowDetail: "has cap_net_bind_service",
 	}
@@ -266,9 +266,9 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 		want  string
 	}{
 		{"no block", "127.0.0.1 localhost\n", nil, "FAIL  hosts block      missing api.test, web.test\n" + fix},
-		{"one missing, one stale", "# nearhost:start\n127.0.0.1 old.test\n127.0.0.1 web.test\n# nearhost:end\n", nil,
+		{"one missing, one stale", "# nearhost:start\n127.0.0.1 old.test\n::1 old.test\n127.0.0.1 web.test\n::1 web.test\n# nearhost:end\n", nil,
 			"FAIL  hosts block      missing api.test; no longer configured: old.test\n" + fix},
-		{"right aliases, block not as nearhost writes it", "# nearhost:start\n127.0.0.1 web.test\n127.0.0.1 api.test\n# nearhost:end\n", nil,
+		{"right aliases, block not as nearhost writes it", "# nearhost:start\n127.0.0.1 web.test\n::1 web.test\n127.0.0.1 api.test\n::1 api.test\n# nearhost:end\n", nil,
 			"FAIL  hosts block      the block is not in the form nearhost writes\n" + fix},
 		{"unreadable", "", errors.New("open /etc/hosts: permission denied"), "FAIL  hosts block      open /etc/hosts: permission denied\n"},
 	}
@@ -284,6 +284,17 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 			wantContains(t, out, tc.want)
 		})
 	}
+
+	t.Run("a block from 0.7.x without ::1 rows warns", func(t *testing.T) {
+		doctorConfig(t)
+		f := healthy()
+		f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n127.0.0.1 web.test\n# nearhost:end\n"
+		out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+		if err != nil {
+			t.Errorf("err = %v", err)
+		}
+		wantContains(t, out, "warn  hosts block      the block was written by an older Nearhost and has no IPv6 (::1) entries\n"+fix)
+	})
 
 	t.Run("--no-hosts skips the check", func(t *testing.T) {
 		doctorConfig(t)
@@ -483,7 +494,7 @@ func TestDoctorHostsCheckFiltersCandidatesThroughTheLookup(t *testing.T) {
 // A real-domain host of a web route is a hosts file name too, but only while
 // DNS does not already send it to this machine.
 func TestDoctorHostsCheckExpectsARouteHostOnlyWhenDNSDoesNotResolveIt(t *testing.T) {
-	const block = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 app.test\n# nearhost:end\n"
+	const block = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 app.test\n::1 app.test\n# nearhost:end\n"
 	app := localProject("app", 8001, true)
 	app.Routes[0].Hosts = []string{"app.local.example.io"}
 	for _, tc := range []struct {

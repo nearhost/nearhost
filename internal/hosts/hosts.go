@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -54,13 +55,24 @@ func normalize(aliases []string) ([]string, error) {
 }
 
 // block renders the managed lines for already normalized aliases, or nil.
+// Each name gets an IPv4 and an IPv6 loopback row, so a real domain with a
+// public AAAA record cannot send the browser to the live site over IPv6.
 func block(sorted []string) []string {
+	return blockFor(sorted, true)
+}
+
+// blockFor is block with the ::1 rows optional: without them it is the form
+// 0.7.x wrote.
+func blockFor(sorted []string, ipv6 bool) []string {
 	if len(sorted) == 0 {
 		return nil
 	}
 	lines := []string{StartMarker}
 	for _, a := range sorted {
 		lines = append(lines, "127.0.0.1 "+a)
+		if ipv6 {
+			lines = append(lines, "::1 "+a)
+		}
 	}
 	return append(lines, EndMarker)
 }
@@ -91,10 +103,12 @@ func findBlock(lines []string) (start, end int) {
 	return start, -1
 }
 
-// isEntry reports whether line is a row nearhost would have written.
+// isEntry reports whether line is a row nearhost would have written: a
+// loopback address of either family and one name. Blocks from 0.7.x hold only
+// the IPv4 rows and are still read.
 func isEntry(line string) bool {
 	f := strings.Fields(line)
-	return len(f) == 2 && f[0] == "127.0.0.1" && validEntry(f[1])
+	return len(f) == 2 && (f[0] == "127.0.0.1" || f[0] == "::1") && validEntry(f[1])
 }
 
 // unchanged reports whether updated differs from existing at most by a
@@ -106,6 +120,19 @@ func unchanged(existing, updated string) bool {
 // Rewrite returns the hosts content with the managed block set to aliases.
 // Everything outside the markers is preserved byte for byte.
 func Rewrite(existing string, aliases []string) (string, error) {
+	return rewrite(existing, aliases, true)
+}
+
+// IsIPv4Only reports whether existing is exactly what 0.7.x wrote for
+// aliases: the managed block with 127.0.0.1 rows and no ::1 rows. A rewrite
+// brings it up to date.
+func IsIPv4Only(existing string, aliases []string) bool {
+	old, err := rewrite(existing, aliases, false)
+	return err == nil && unchanged(existing, old)
+}
+
+// rewrite is Rewrite with the ::1 rows optional.
+func rewrite(existing string, aliases []string, ipv6 bool) (string, error) {
 	sorted, err := normalize(aliases)
 	if err != nil {
 		return "", err
@@ -129,7 +156,7 @@ func Rewrite(existing string, aliases []string) (string, error) {
 	}
 	out := make([]string, 0, len(before)+len(sorted)+2+len(after))
 	out = append(out, before...)
-	out = append(out, block(sorted)...)
+	out = append(out, blockFor(sorted, ipv6)...)
 	out = append(out, after...)
 	if len(out) == 0 {
 		return "", nil
@@ -150,7 +177,8 @@ func Aliases(existing string) []string {
 			out = append(out, strings.Fields(l)[1])
 		}
 	}
-	return out
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 func read(path string) (string, error) {

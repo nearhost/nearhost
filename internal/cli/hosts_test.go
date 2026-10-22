@@ -21,14 +21,14 @@ func TestHostsApplyReadsAliasesFromStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "127.0.0.1 a.test\n127.0.0.1 b.test") {
+	if !strings.Contains(string(data), "127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test") {
 		t.Fatalf("unexpected hosts:\n%s", data)
 	}
 }
 
 func TestHostsCleanPassesFilePathToApplier(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
-	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n# nearhost:end\n"
+	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
 	os.WriteFile(path, []byte(content), 0o644)
 	var gotPath string
 	orig := newSudoApplier
@@ -76,7 +76,7 @@ func TestHostsSubcommandsRejectPositionalArguments(t *testing.T) {
 	}
 	for _, sub := range []string{"apply", "clean"} {
 		path := filepath.Join(t.TempDir(), "hosts")
-		content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n# nearhost:end\n"
+		content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
 		os.WriteFile(path, []byte(content), 0o644)
 		root := NewRoot()
 		root.SetIn(strings.NewReader(""))
