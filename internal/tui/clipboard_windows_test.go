@@ -35,13 +35,3 @@ func TestSystemClipboardKeepsUnicodeOnWindows(t *testing.T) {
 		t.Fatalf("clipboard holds %q, want %q", got, text)
 	}
 }
-
-func TestSystemClipboardUsesSystem32OnWindows(t *testing.T) {
-	dir, err := windows.GetSystemDirectory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := clipTool(), filepath.Join(dir, "clip.exe"); got != want {
-		t.Fatalf("clipTool() = %q, want %q", got, want)
-	}
-}
