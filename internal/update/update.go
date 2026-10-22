@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -148,10 +149,21 @@ func (c Checker) save(kept cache) {
 }
 
 // CachePath is the default cache file: under XDG_CACHE_HOME when it is
-// absolute, otherwise ~/.cache.
-func CachePath() (string, error) {
+// absolute, otherwise %LOCALAPPDATA%\nearhost\cache on Windows or ~/.cache
+// elsewhere.
+func CachePath() (string, error) { return cachePathFor(runtime.GOOS) }
+
+// cachePathFor is CachePath on the operating system goos.
+func cachePathFor(goos string) (string, error) {
 	if xdg := os.Getenv("XDG_CACHE_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "nearhost", "update.json"), nil
+	}
+	if goos == "windows" {
+		local := os.Getenv("LOCALAPPDATA")
+		if !filepath.IsAbs(local) {
+			return "", errors.New("%LOCALAPPDATA% is not set to an absolute path")
+		}
+		return filepath.Join(local, "nearhost", "cache", "update.json"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

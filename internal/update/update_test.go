@@ -118,3 +118,30 @@ func TestCachedIgnoresCorruptCache(t *testing.T) {
 		t.Fatalf("Cached = %q, %v", got, err)
 	}
 }
+
+func TestCachePathForEachOS(t *testing.T) {
+	home, localAppData, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("XDG_CACHE_HOME", "")
+	for goos, want := range map[string]string{
+		"darwin":  filepath.Join(home, ".cache", "nearhost", "update.json"),
+		"linux":   filepath.Join(home, ".cache", "nearhost", "update.json"),
+		"windows": filepath.Join(localAppData, "nearhost", "cache", "update.json"),
+	} {
+		if got, err := cachePathFor(goos); err != nil || got != want {
+			t.Errorf("cachePathFor(%s): got %q, %v; want %q", goos, got, err, want)
+		}
+	}
+	t.Setenv("XDG_CACHE_HOME", xdg)
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		if got, err := cachePathFor(goos); err != nil || got != filepath.Join(xdg, "nearhost", "update.json") {
+			t.Errorf("cachePathFor(%s) with XDG_CACHE_HOME: got %q, %v", goos, got, err)
+		}
+	}
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("LOCALAPPDATA", "")
+	if _, err := cachePathFor("windows"); err == nil {
+		t.Error("cachePathFor(windows) with no LOCALAPPDATA: no error")
+	}
+}
