@@ -55,13 +55,13 @@ npx @nearhost/cli
 
 or `npm install -g @nearhost/cli` to keep the `nearhost` command. npm installs the binary for your machine as a platform package, with no install script, so pnpm, bun and `--ignore-scripts` work too.
 
-**From source**, with Go 1.26 or later:
+**From source**, with Go:
 
 ```sh
 go install github.com/nearhost/nearhost/cmd/nearhost@latest
 ```
 
-`go install` builds with your own Go toolchain. Use Go 1.27.3 or later, the version the release binaries are built with.
+Nearhost needs Go 1.27.3 or later, the version the release binaries are built with. Go 1.21 to 1.27.2 downloads it first, unless `GOTOOLCHAIN` forbids it (some distributions' Go packages set it to `local`).
 
 On Linux, allow the binary to bind ports 80 and 443. Run this again after each upgrade:
 
@@ -219,7 +219,7 @@ Nearhost serves your own machines to your own browser. To show work to someone e
 
 ## Development
 
-You need Git and Go 1.26 or later (the exact version is in `go.mod`). Make is optional; each target is one Go command.
+You need Git and Go 1.27.3 or later (Go 1.21 and later download it if needed). Make is optional; each target is one Go command.
 
 ### Check out and build
 

@@ -1463,6 +1463,27 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 	}
 }
 
+// holdUDPOnly holds a UDP port whose TCP twin was free when it was taken, so
+// the engine's TCP bind on that port number succeeds and its UDP bind fails.
+// A UDP port picked alone may be in use on TCP by another test.
+func holdUDPOnly(t *testing.T) (net.PacketConn, int) {
+	t.Helper()
+	for range 20 {
+		l, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		l.Close()
+		if err == nil {
+			return pc, port
+		}
+	}
+	t.Fatal("no port free on both TCP and UDP")
+	return nil, 0
+}
+
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 	// The proxy listens on TCP for HTTPS, HTTP and Nearhost's page, and on
 	// UDP at the HTTPS port for HTTP/3.
@@ -1471,11 +1492,7 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			var holder interface{ Close() error }
 			var held int
 			if which == "https-udp" {
-				pc, err := net.ListenPacket("udp", ":0")
-				if err != nil {
-					t.Fatal(err)
-				}
-				holder, held = pc, pc.LocalAddr().(*net.UDPAddr).Port
+				holder, held = holdUDPOnly(t)
 			} else {
 				l, err := net.Listen("tcp", ":0")
 				if err != nil {
