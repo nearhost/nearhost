@@ -153,9 +153,9 @@ func TestDoctorFailsOnATakenPortAndNamesTheHolder(t *testing.T) {
 	}
 	wantContains(t, out,
 		"FAIL  port 8443        in use by nginx (pid 12); UDP (for HTTP/3): address already in use\n"+
-			"      fix: stop that process (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
+			"      fix: Stop that process (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
 		"FAIL  port 8080        address already in use\n"+
-			"      fix: stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --http-port\n",
+			"      fix: Stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --http-port\n",
 		"\n2 checks failed.\n")
 
 	// Taken on UDP alone: the report says so instead of blaming TCP.
@@ -167,7 +167,7 @@ func TestDoctorFailsOnATakenPortAndNamesTheHolder(t *testing.T) {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 	wantContains(t, out, "FAIL  port 8443        UDP (for HTTP/3): address already in use\n"+
-		"      fix: stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
+		"      fix: Stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --https-port\n",
 		"ok    port 8080        free\n")
 }
 
@@ -193,8 +193,8 @@ func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 	wantContains(t, out,
-		"FAIL  port 443         permission denied\n      fix: sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"\n",
-		"FAIL  privileged ports not root and the binary lacks cap_net_bind_service\n      fix: sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"\n")
+		"FAIL  port 443         permission denied\n      fix: `sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"`\n",
+		"FAIL  privileged ports not root and the binary lacks cap_net_bind_service\n      fix: `sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"`\n")
 
 	// Installed from npm, `command -v nearhost` is the Node launcher, and a
 	// capability on a script does nothing: the fix names the binary itself.
@@ -203,7 +203,7 @@ func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
 	f.exe = "/home/me/.npm/_npx/1a2b/node_modules/@nearhost/cli-linux-x64/bin/nearhost"
 	f.lowLevel, f.lowDetail = levelFail, "not root and the binary lacks cap_net_bind_service"
 	out, _ = execute(t, newDoctorCmd(f.backend()), "doctor")
-	wantContains(t, out, "      fix: sudo setcap cap_net_bind_service=+ep '/home/me/.npm/_npx/1a2b/node_modules/@nearhost/cli-linux-x64/bin/nearhost'\n")
+	wantContains(t, out, "      fix: `sudo setcap cap_net_bind_service=+ep '/home/me/.npm/_npx/1a2b/node_modules/@nearhost/cli-linux-x64/bin/nearhost'`\n")
 
 	// Ports above 1023 need no privilege, so there is nothing to check.
 	f = healthy()
@@ -215,7 +215,7 @@ func TestDoctorChecksPrivilegedPortsOnLinuxOnly(t *testing.T) {
 }
 
 func TestDoctorReportsTheCAAndTheBrowserStoresSeparately(t *testing.T) {
-	const trustFix = "      fix: run `nearhost trust`\n"
+	const trustFix = "      fix: Run `nearhost trust`\n"
 	cases := []struct {
 		name    string
 		mutate  func(*fakeTrust)
@@ -238,7 +238,7 @@ func TestDoctorReportsTheCAAndTheBrowserStoresSeparately(t *testing.T) {
 			f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, Detail: `"certutil" not found (install it with "brew install nss")`}
 		},
 			[]string{"warn  browser stores   not checked: \"certutil\" not found (install it with \"brew install nss\")\n" +
-				"      fix: only Firefox (and on Linux Chromium-family browsers) need this; set them up, then run `nearhost trust`\n"}, "", ""},
+				"      fix: Only Firefox (and on Linux Chromium-family browsers) need this; set them up, then run `nearhost trust`\n"}, "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,7 +258,7 @@ func TestDoctorReportsTheCAAndTheBrowserStoresSeparately(t *testing.T) {
 }
 
 func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
-	const fix = "      fix: run `nearhost up`; it updates the block and asks for your password\n"
+	const fix = "      fix: Run `nearhost up`; it updates the block and asks for your password\n"
 	cases := []struct {
 		name  string
 		hosts string
@@ -329,7 +329,7 @@ func TestDoctorShowsTheSSHErrorVerbatimWithTheHint(t *testing.T) {
 	wantContains(t, out, ""+
 		"FAIL  server mini      Host key verification failed.\n"+
 		"                       ssh: second line\n"+
-		"      fix: run `ssh mini.lan` once in a terminal to fix access, then run `nearhost doctor` again\n")
+		"      fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost doctor` again\n")
 	if len(f.serverCalls) != 1 || f.serverCalls[0] != "mini.lan" {
 		t.Errorf("servers checked: %v", f.serverCalls)
 	}
@@ -343,9 +343,9 @@ func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 	if err == nil || err.Error() != "1 check failed" {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
-	const unread = "not checked: the config could not be read\n      fix: correct the config (see above), then run `nearhost doctor` again\n"
+	const unread = "not checked: the config could not be read\n      fix: Correct the config (see above), then run `nearhost doctor` again\n"
 	want := "" +
-		"FAIL  config           " + path + ": project \"broken\" uses unknown server \"gone\"\n      fix: edit " + path + "\n" +
+		"FAIL  config           " + path + ": project \"broken\" uses unknown server \"gone\"\n      fix: Edit " + path + "\n" +
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
 		"ok    port 6327        free\n" +
@@ -388,7 +388,7 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 			t.Errorf("%v: err = %v\n%s", args, err, out)
 		}
 		wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid main name \"Legacy.example\": must be a lowercase domain name, not a wildcard, localhost or an IP address\n"+
-			"      fix: correct the alias in "+path+"; `nearhost up` does not start a project with such an alias\n")
+			"      fix: Correct the alias in "+path+"; `nearhost up` does not start a project with such an alias\n")
 	}
 
 	// The hosts block is still compared with the aliases that are valid.
@@ -432,7 +432,7 @@ func TestDoctorChecksThatAgentsReachNearhostFromEachServer(t *testing.T) {
 		t.Fatalf("a refusal failed doctor: %v", err)
 	}
 	if !strings.Contains(out, "warn  agents on mini   "+refusal.Error()+"\n") ||
-		!strings.Contains(out, "fix: set AllowStreamLocalForwarding yes in the sshd_config of mini.lan") {
+		!strings.Contains(out, "fix: Set AllowStreamLocalForwarding yes in the sshd_config of mini.lan") {
 		t.Fatalf("doctor printed:\n%s", out)
 	}
 
@@ -538,5 +538,36 @@ func TestDoctorWarnsWhenTheWebPortIsTaken(t *testing.T) {
 	}
 	if !strings.Contains(out, "warn  port 6327") || !strings.Contains(out, "without Nearhost's page") {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+// Every fix reads as a sentence: it starts with a capital or, when it is a
+// command, a backtick.
+func TestDoctorFixesStartCapitalised(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.goos = "linux"
+	f.lowLevel, f.lowDetail = levelFail, "not root and the binary lacks cap_net_bind_service"
+	f.portErr = map[string]error{
+		"tcp 443": syscall.EACCES, "udp 443": syscall.EACCES, "tcp 80": syscall.EACCES,
+		"tcp 6327": syscall.EADDRINUSE,
+	}
+	f.serverErr = map[string]error{"mini": &transport.CheckError{Host: "mini.lan", Stderr: "Host key verification failed."}}
+	b := f.backend()
+	b.checkAgents = func(context.Context, config.Server) error { return errors.New("refused") }
+	out, _ := execute(t, newDoctorCmd(b), "doctor")
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		fix, ok := strings.CutPrefix(strings.TrimSpace(line), "fix: ")
+		if !ok {
+			continue
+		}
+		n++
+		if c := fix[0]; c != '`' && (c < 'A' || c > 'Z') {
+			t.Errorf("fix %q does not start with a capital or a backtick", fix)
+		}
+	}
+	if n < 4 {
+		t.Errorf("saw %d fixes, want the scenario to produce several:\n%s", n, out)
 	}
 }

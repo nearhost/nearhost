@@ -4,7 +4,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -52,11 +55,33 @@ func NewRoot() *cobra.Command {
 // newRootCmd is the root command with its shared flags and no subcommands.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "nearhost",
-		Short:         "Reach local and remote dev servers at their own domain (https://<name>.test by default)",
+		Use:   "nearhost",
+		Short: "Reach local and remote dev servers at their own domain (https://<name>.test by default)",
+		Long: `Reach local and remote dev servers at their own domain (https://<name>.test by default).
+
+Getting started:
+  nearhost add .     Add the project in this directory
+  nearhost           Open the interface, which serves every enabled project
+  nearhost up        Serve them without the interface
+  nearhost doctor    Check the machine and each project`,
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SuggestionsMinimumDistance = 2
+	// A mistyped command with a flag, as in `nearhost lss --foo`, fails on
+	// the flag first; the suggestion is the more useful thing to say.
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		if !cmd.HasParent() {
+			if args := cmd.Flags().Args(); len(args) == 1 {
+				if suggest := rootArgs(cmd, args); suggest != nil && strings.Contains(suggest.Error(), "Did you mean") {
+					return suggest
+				}
+			}
+		}
+		return err
+	})
+	root.SetVersionTemplate("nearhost {{.Version}}\n")
 	root.PersistentFlags().String("config", "", "config file (default $XDG_CONFIG_HOME/nearhost/config.yaml, or ~/.config/nearhost/config.yaml when XDG_CONFIG_HOME is not an absolute path)")
 	return root
 }
@@ -172,3 +197,13 @@ func Main(args []string) int {
 // updates is this run's check for a new release, or nil when it makes none.
 // Main starts it, so the interface can say so too.
 var updates *backgroundCheck
+
+// upperFirst upper-cases the first letter of s, so a fix reads as a sentence.
+// A fix that starts with a backtick, as a command does, is left alone.
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, n := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[n:]
+}

@@ -128,6 +128,6 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		}
 	}
 	if fix != "" {
-		fmt.Fprintln(p.out, "  fix: "+fix)
+		fmt.Fprintln(p.out, "  fix: "+upperFirst(fix))
 	}
 }

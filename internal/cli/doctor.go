@@ -130,6 +130,7 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 		},
 	}
 	flags.bind(cmd)
+	cmd.Flags().Lookup("no-hosts").Usage = "do not check the hosts file"
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the checks and the projects' findings as JSON")
 	return cmd
 }
@@ -193,7 +194,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		lv, detail := b.lowPorts(low)
 		c := check{name: "privileged ports", level: lv, detail: detail}
 		if lv != levelOK {
-			c.fix = doctor.SetcapFix(b.exe)
+			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
 		}
 		checks = append(checks, c)
 	}
@@ -293,7 +294,7 @@ func report(cmd *cobra.Command, checks []check, projects []projectReport) error 
 		detail := strings.ReplaceAll(strings.TrimRight(c.detail, "\n"), "\n", "\n"+strings.Repeat(" ", 23))
 		fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, c.name, detail)
 		if c.fix != "" {
-			fmt.Fprintf(out, "      fix: %s\n", c.fix)
+			fmt.Fprintf(out, "      fix: %s\n", upperFirst(c.fix))
 		}
 	}
 	printProjects(out, projects)
@@ -368,7 +369,7 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		c.level, c.detail = levelFail, "permission denied"
 		c.fix = "run nearhost as a user that may bind this port, or pass another " + flag
 		if b.goos == "linux" {
-			c.fix = doctor.SetcapFix(b.exe)
+			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
 		}
 	case len(problems) > 0:
 		c.level, c.detail = levelFail, strings.Join(problems, "; ")

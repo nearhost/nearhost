@@ -256,7 +256,7 @@ func TestUpReportsAFailedProjectAndKeepsServingTheOthers(t *testing.T) {
 	wantContains(t, out,
 		"[server mini] auth failed: user@host: Permission denied (publickey).\n",
 		"\napi: error: ssh mini.lan: user@host: Permission denied (publickey).\n"+
-			"  fix: run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"+
+			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"+
 			"web: running at https://web.test\n"+
 			"\nServing until interrupted. Press Ctrl-C to stop.\n")
 	if strings.Count(out, "  fix: ") != 1 {
@@ -284,7 +284,7 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
 			"sudo hosts apply: exit status 1")
 	}
-	if n := strings.Count(out, "  fix: run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
+	if n := strings.Count(out, "  fix: Run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
 		t.Errorf("expected the fix once under each project, found %d:\n%s", n, out)
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {
@@ -310,7 +310,7 @@ func TestUpFollowsARemoteProjectThroughAReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	u.waitFor("[api] state: degraded: server mini is reconnecting")
-	u.waitFor("  fix: none needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n")
+	u.waitFor("  fix: None needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n")
 	testutil.WaitUntil(t, 30*time.Second, func() bool {
 		return strings.Count(u.out.String(), "[api] state: running\n") > before
 	}, "the project to return to running")

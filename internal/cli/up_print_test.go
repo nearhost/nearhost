@@ -30,8 +30,8 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 	p.event(engine.Event{Time: at, Project: "api", Message: "bind: address already in use"})
 	p.event(engine.Event{Time: at, Project: "api", Message: "bind: address already in use"})
 
-	const degradedFix = "  fix: none needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n"
-	const errorFix = "  fix: run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"
+	const degradedFix = "  fix: None needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n"
+	const errorFix = "  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"
 	want := "" +
 		"09:30:00 [api] state: degraded: server mini is reconnecting: connection refused\n" + degradedFix +
 		"09:30:00 [api] state: degraded: server mini is reconnecting: no route to host\n" + degradedFix +

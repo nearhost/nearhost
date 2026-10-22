@@ -353,7 +353,7 @@ type jsonReport struct {
 func reportJSON(cmd *cobra.Command, checks []check, projects []projectReport) error {
 	r := jsonReport{Checks: []jsonCheck{}, Findings: []doctor.Finding{}}
 	for _, c := range checks {
-		r.Checks = append(r.Checks, jsonCheck{Name: c.name, Level: strings.ToLower(c.level.String()), Detail: c.detail, Fix: c.fix})
+		r.Checks = append(r.Checks, jsonCheck{Name: c.name, Level: strings.ToLower(c.level.String()), Detail: c.detail, Fix: upperFirst(c.fix)})
 	}
 	for _, p := range projects {
 		r.Findings = append(r.Findings, p.findings...)
