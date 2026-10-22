@@ -164,6 +164,15 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		fmt.Fprintf(out, "Read %s as %s on %s, since the shell turned ~ into this machine's home.\n\n", project.Path, opened, srv.Name)
 	}
 	project.Path = opened
+	// A name with characters a .test name can't hold, typed or from the
+	// directory, would lose them in the alias made from it. It is refused
+	// unless the main name comes from --alias or the project's .nearhostrc;
+	// a file that can't be read is reported when it is applied.
+	if strings.TrimSpace(flags.alias) == "" && config.HasNonASCII(project.Name) {
+		if f, found, err := nearhostrc.Read(reader); err == nil && (!found || f.Alias == "") {
+			return errors.Join(fmt.Errorf("the name %q holds characters a .test name can't use; pass --name with a-z, 0-9 and -, or --alias for the full domain", project.Name), done())
+		}
+	}
 	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader, answers)
 	if err != nil {
 		return errors.Join(err, done())
@@ -647,11 +656,6 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		if name == "" {
 			name = path.Base(projectPath)
 		}
-	}
-	// A name from the directory is checked too: it becomes the alias the
-	// same way.
-	if strings.TrimSpace(flags.alias) == "" && config.HasNonASCII(name) {
-		return fail("the name %q has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain", name)
 	}
 	var taken *nameTakenError
 	switch err := nameProblem(cfg, name); {
