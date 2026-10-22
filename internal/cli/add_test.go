@@ -1128,4 +1128,8 @@ func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 	if p, ok := loadSaved(t, cfgPath).Project("web–shop"); !ok || p.Alias != "web-shop.test" {
 		t.Errorf("saved %+v, want alias web-shop.test", p)
 	}
+	// So does a non-breaking space.
+	if p, ok := loadSaved(t, cfgPath).Project("big\u00a0shop"); !ok || p.Alias != "big-shop.test" {
+		t.Errorf("saved %+v, want alias big-shop.test", p)
+	}
 }
