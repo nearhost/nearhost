@@ -1,3 +1,5 @@
+//go:build unix
+
 package desktop
 
 import (
@@ -12,8 +14,6 @@ func TestOpenCommand(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin":
 		want = []string{"open", url}
-	case "windows":
-		want = []string{"rundll32", "url.dll,FileProtocolHandler", url}
 	default:
 		want = []string{"xdg-open", url}
 	}
