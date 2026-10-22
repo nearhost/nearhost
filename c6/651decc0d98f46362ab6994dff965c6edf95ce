@@ -1,0 +1,26 @@
+internal/proxy/proxy.go
+  s_e8c5d245e902d9::t_1f6372853c8ea1 42-47
+internal/engine/engine.go
+  s_e8c5d245e902d9::t_ac2ff65529703f 7
+  s_e8c5d245e902d9::t_1f6372853c8ea1 368-373,376,439,471
+  s_e8c5d245e902d9::t_c3d3ea95b58f07 460
+internal/engine/engine_test.go
+  s_e8c5d245e902d9::t_67cf7f1729a297 2406-2407,2417,2420,2425-2471
+  s_e8c5d245e902d9::t_658befa0aed40e 2605-2615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6651decc0d98f46362ab6994dff965c6edf95ce",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
