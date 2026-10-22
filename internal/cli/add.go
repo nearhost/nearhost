@@ -228,7 +228,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
 	err = config.Update(cfgPath, func(cfg *config.Config) error {
-		if newServer {
+		// Another add may have saved the server meanwhile.
+		if _, ok := cfg.Server(srv.Name); newServer && !ok {
 			cfg.Servers = append(cfg.Servers, srv)
 		}
 		return addProjectTo(cfg, project)

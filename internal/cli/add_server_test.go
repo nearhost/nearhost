@@ -141,3 +141,31 @@ func TestAddSavesANewServerOnlyWithTheProject(t *testing.T) {
 		}
 	})
 }
+
+// A server another add saved while this one asked and read is not saved
+// twice, which the config would refuse.
+func TestAddSavesANewServerOnceWhenAnotherAddSavedIt(t *testing.T) {
+	var opened config.Server
+	cfgPath, _, b := serverAsking(t, true, &opened)
+	open := b.openRemote
+	b.openRemote = func(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
+		if err := config.Update(cfgPath, func(cfg *config.Config) error {
+			cfg.Servers = append(cfg.Servers, srv)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return open(ctx, srv, projectPath)
+	}
+	out, err := executeWithInput(t, "\n\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo", "--web", "9000")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	saved := loadSaved(t, cfgPath)
+	if len(saved.Servers) != 1 {
+		t.Errorf("saved servers = %+v, want apollo once", saved.Servers)
+	}
+	if p, ok := saved.Project("blog"); !ok || p.Server != "apollo" {
+		t.Errorf("saved project = %+v %v", p, ok)
+	}
+}
