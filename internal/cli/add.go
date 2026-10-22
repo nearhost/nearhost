@@ -168,7 +168,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// directory, would lose them in the alias made from it. It is refused
 	// unless the main name comes from --alias or the project's .nearhostrc;
 	// a file that can't be read is reported when it is applied.
-	if strings.TrimSpace(flags.alias) == "" && config.HasNonASCII(project.Name) {
+	if strings.TrimSpace(flags.alias) == "" && config.LosesInAlias(project.Name) {
 		if f, found, err := nearhostrc.Read(reader); err == nil && (!found || f.Alias == "") {
 			return errors.Join(fmt.Errorf("the name %q holds characters a .test name can't use; pass --name with a-z, 0-9 and -, or --alias for the full domain", project.Name), done())
 		}

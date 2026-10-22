@@ -602,12 +602,13 @@ var nonAlias = regexp.MustCompile(`[^a-z0-9]+`)
 // maxLabel is the longest DNS label.
 const maxLabel = 63
 
-// HasNonASCII reports whether name holds a character outside ASCII, which
-// AliasFor would drop: a letter, a digit, or a mark or symbol such as ™ or a
-// combining accent.
-func HasNonASCII(name string) bool {
+// LosesInAlias reports whether AliasFor would drop part of name: a letter,
+// digit, mark or symbol outside ASCII, such as é, ™ or a combining accent.
+// Non-ASCII spaces and punctuation, such as a non-breaking space or an en
+// dash, become a hyphen as their ASCII forms do, so they lose nothing.
+func LosesInAlias(name string) bool {
 	for _, r := range name {
-		if r > unicode.MaxASCII {
+		if r > unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || unicode.IsSymbol(r)) {
 			return true
 		}
 	}

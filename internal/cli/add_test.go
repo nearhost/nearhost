@@ -1119,9 +1119,13 @@ func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 		t.Errorf("saved %+v, want alias cafe.test", p)
 	}
 	// An ASCII name that needs tidying, and a non-ASCII name with its own alias, still work.
-	for _, args := range [][]string{{dir, "--name", "My App", "--web", "8080"}, {dir, "--name", "ünï", "--alias", "uni.test", "--web", "8080"}} {
+	for _, args := range [][]string{{dir, "--name", "My App", "--web", "8080"}, {dir, "--name", "ünï", "--alias", "uni.test", "--web", "8080"}, {dir, "--name", "web–shop", "--web", "8080"}, {dir, "--name", "big\u00a0shop", "--web", "8080"}} {
 		if out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, args...)...); err != nil {
 			t.Errorf("add %v: %v\n%s", args, err, out)
 		}
+	}
+	// An en dash separates words as a hyphen does.
+	if p, ok := loadSaved(t, cfgPath).Project("web–shop"); !ok || p.Alias != "web-shop.test" {
+		t.Errorf("saved %+v, want alias web-shop.test", p)
 	}
 }
