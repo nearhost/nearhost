@@ -227,8 +227,31 @@ func TestTrustCommandsWithoutSudoGiveNoPromptHint(t *testing.T) {
 			cmd = newUntrustCmd(f.backend())
 		}
 		_, err := run(t, cmd, name)
-		if !errors.Is(err, sudo.ErrNotFound) || strings.Contains(err.Error(), "again") {
+		if !errors.Is(err, sudo.ErrNotFound) || strings.Contains(err.Error(), "again") || !strings.Contains(err.Error(), "as root") {
 			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+// Without sudo the commands stop before promising a password prompt, and
+// say what to do.
+func TestTrustCommandsCheckForSudoFirst(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, name := range []string{"trust", "untrust"} {
+		f := newFake()
+		b := f.backend()
+		b.findSudo = func() error { return sudo.ErrNotFound }
+		cmd := newTrustCmd(b)
+		if name == "untrust" {
+			cmd = newUntrustCmd(b)
+		}
+		out, err := run(t, cmd, name)
+		want := "install sudo in one of those, or run `nearhost " + name + "` as root"
+		if !errors.Is(err, sudo.ErrNotFound) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
+		if strings.Contains(out, "password") || f.installs != 0 || f.uninstall != 0 {
+			t.Errorf("%s: out %q, installs %d, uninstalls %d", name, out, f.installs, f.uninstall)
 		}
 	}
 }

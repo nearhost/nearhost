@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -25,6 +26,36 @@ type trustBackend struct {
 	nss        func(*x509.Certificate) proxy.NSSStatus
 	installNSS func(*x509.Certificate) error
 	uninstall  func(*x509.Certificate) error
+	// findSudo returns sudo.ErrNotFound when the system store cannot be
+	// changed: no root-owned sudo, and Nearhost is not root. nil skips the
+	// check.
+	findSudo func() error
+}
+
+// systemSudo is the production findSudo.
+func systemSudo() error {
+	if os.Geteuid() == 0 {
+		return nil
+	}
+	_, err := sudo.Binary()
+	return err
+}
+
+// noSudo says what to do about a missing sudo, for the command name.
+func noSudo(err error, name string) error {
+	return fmt.Errorf("%w; install sudo in one of those, or run `nearhost %s` as root", err, name)
+}
+
+// sudoProblem is the backend's findSudo for the command name, worded by
+// noSudo, or nil.
+func (b trustBackend) sudoProblem(name string) error {
+	if b.findSudo == nil {
+		return nil
+	}
+	if err := b.findSudo(); err != nil {
+		return noSudo(err, name)
+	}
+	return nil
 }
 
 // systemTrust is the production backend. Only NewRoot wires it in.
@@ -38,6 +69,7 @@ func systemTrust() trustBackend {
 		nss:        proxy.CheckNSS,
 		installNSS: proxy.InstallNSS,
 		uninstall:  proxy.Uninstall,
+		findSudo:   systemSudo,
 	}
 }
 
@@ -98,10 +130,13 @@ Asks for your password, as it runs sudo.`,
 			if b.isTrusted(cert) {
 				return trustNSSOnly(out, b, cert)
 			}
+			if err := b.sudoProblem("trust"); err != nil {
+				return err
+			}
 			fmt.Fprintln(out, "Installing Nearhost Local CA. You may be asked for your password.")
 			if err := b.install(cert); err != nil {
 				if errors.Is(err, sudo.ErrNotFound) {
-					return err // no prompt was shown, and another try won't find sudo
+					return noSudo(err, "trust") // no prompt was shown, and another try won't find sudo
 				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost trust` again and approve it)", err)
 			}
@@ -166,9 +201,12 @@ Asks for your password, as it runs sudo.`,
 			if err != nil {
 				return fmt.Errorf("no local CA found: %w", err)
 			}
+			if err := b.sudoProblem("untrust"); err != nil {
+				return err
+			}
 			if err := b.uninstall(cert); err != nil {
 				if errors.Is(err, sudo.ErrNotFound) {
-					return err
+					return noSudo(err, "untrust")
 				}
 				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost untrust` again and approve it)", err)
 			}
