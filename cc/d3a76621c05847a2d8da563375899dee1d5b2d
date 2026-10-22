@@ -1,0 +1,22 @@
+internal/cli/ui_edit.go
+  s_e8c5d245e902d9::t_2410547860f120 42-45,48,52,54,56-58,75-81
+  s_e8c5d245e902d9::t_fc6cdda37c9628 82-83
+internal/cli/ui_test.go
+  s_e8c5d245e902d9::t_2410547860f120 265-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ccd3a76621c05847a2d8da563375899dee1d5b2d",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
