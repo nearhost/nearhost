@@ -6,6 +6,7 @@ package doctor
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
@@ -123,4 +124,14 @@ func severityRank(s Severity) int {
 		return 1
 	}
 	return 2
+}
+
+// SetcapFix is the command that lets the binary at exe bind ports below 1024.
+// It names the binary itself rather than `command -v nearhost`, which for an
+// npm install is the Node launcher: a capability on a script does nothing.
+func SetcapFix(exe string) string {
+	if exe == "" {
+		return `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`
+	}
+	return "sudo setcap cap_net_bind_service=+ep '" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -137,7 +138,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	if b.goos == "linux" {
 		switch m.Kind {
 		case update.Go:
-			fmt.Fprintf(out, "Let the new binary bind ports 80 and 443 again:\n\n  %s\n", setcapFix(exe))
+			fmt.Fprintf(out, "Let the new binary bind ports 80 and 443 again:\n\n  %s\n", doctor.SetcapFix(exe))
 		case update.Homebrew:
 			fmt.Fprintln(out, "Let the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep \"$(readlink -f \"$(command -v nearhost)\")\"")
 		}
