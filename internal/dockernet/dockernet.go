@@ -126,7 +126,7 @@ func ask(ctx context.Context, path string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Docker answered %s", resp.Status)
+		return nil, fmt.Errorf("docker answered %s", resp.Status)
 	}
 	var nets []network
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&nets); err != nil {

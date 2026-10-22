@@ -134,7 +134,7 @@ func TestAddPresetFlagFailsForAnUnknownPreset(t *testing.T) {
 	for _, name := range []string{"test/nope", "nope", "other/stack"} {
 		cfgPath, _, b := suggesting(t, false, "stack")
 		_, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--preset", name)
-		if err == nil || !strings.Contains(err.Error(), "no preset named") && !strings.Contains(err.Error(), "No registry is trusted") {
+		if err == nil || !strings.Contains(err.Error(), "no preset named") && !strings.Contains(err.Error(), "no registry is trusted") {
 			t.Fatalf("--preset %s: expected an unknown preset error, got %v", name, err)
 		}
 		if _, ok := loadSaved(t, cfgPath).Project("myapp"); ok {
@@ -272,12 +272,12 @@ func TestAddMakesSuggestedTitlesSafeToPrint(t *testing.T) {
 			cfgPath, f, b := suggesting(t, terminal, "stack")
 			// The index refuses control characters, so what is left to strip
 			// is other unprintable text, such as a right-to-left override.
-			f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", `title: "Evil‮ der​dro"`, 1)
+			f.files["/test/presets/HEAD/index.yaml"] = strings.Replace(f.files["/test/presets/HEAD/index.yaml"], "title: Test stack", "title: \"Evil\u202e der\u200bdro\"", 1)
 			out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
 			if err != nil {
 				t.Fatalf("add: %v\n%s", err, out)
 			}
-			if strings.ContainsAny(out, "‮​") {
+			if strings.ContainsAny(out, "\u202e\u200b") {
 				t.Errorf("output carries unprintable text: %q", out)
 			}
 			wantContains(t, out, "This looks like a Evil derdro project. ")

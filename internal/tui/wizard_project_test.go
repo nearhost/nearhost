@@ -312,9 +312,9 @@ func TestAddedProjectWaitsForARunningApply(t *testing.T) {
 func TestFieldsDropControlCharacters(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	toPath(t, m, 1)
-	m.Update(tea.KeyPressMsg{Text: "\x1b[2Jco‮de\x07"})
+	m.Update(tea.KeyPressMsg{Text: "\x1b[2Jco\u202ede\x07"})
 	s := m.View().Content
-	if strings.Contains(s, "\x1b[2J") || strings.ContainsAny(s, "‮\x07") {
+	if strings.Contains(s, "\x1b[2J") || strings.ContainsAny(s, "\u202e\x07") {
 		t.Errorf("control characters reached the screen: %q", s)
 	}
 	wantScreen(t, m, "path      ~/[2Jcode▏")

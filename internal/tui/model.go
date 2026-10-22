@@ -166,8 +166,9 @@ func (m *Model) Init() tea.Cmd {
 
 // requestCellSize asks the terminal how big a cell is in pixels, on the first
 // window size and every one after. Terminals that answer send a
-// uv.CellSizeEvent; the rest stay silent.
-var requestCellSize = tea.Raw(ansi.WindowOp(ansi.RequestCellSizeWinOp))
+// uv.CellSizeEvent; the rest stay silent. Window operation 16 is the cell size
+// request.
+var requestCellSize = tea.Raw(ansi.WindowOp(16))
 
 func (m *Model) listen() tea.Cmd {
 	events := m.events

@@ -2,6 +2,8 @@ module github.com/nearhost/nearhost
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	cel.dev/cel-go v0.32.0
 	charm.land/bubbles/v2 v2.2.1
@@ -20,7 +22,7 @@ require (
 	github.com/smallstep/truststore v0.13.0
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.28.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/term v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 )

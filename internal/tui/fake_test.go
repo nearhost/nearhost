@@ -346,12 +346,6 @@ func screenText(m *Model) string {
 
 var errBoom = errors.New("boom")
 
-func (f *fakeBackend) appliedCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.applied)
-}
-
 // logText is the log of the row with key, an entry a line.
 func logText(m *Model, key string) string {
 	var lines []string

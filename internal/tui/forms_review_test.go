@@ -108,7 +108,7 @@ func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 // Text pasted into a field arrives in it, without control characters.
 func TestPasteIntoFields(t *testing.T) {
 	m, _ := serverFormModel(t)
-	m.Update(tea.PasteMsg{Content: "dev@box\x1b[2J\n.lan‮"})
+	m.Update(tea.PasteMsg{Content: "dev@box\x1b[2J\n.lan\u202e"})
 	wantScreen(t, m, "host      dev@box[2J.lan▏")
 
 	m, _, _ = projectFormModel(t)
