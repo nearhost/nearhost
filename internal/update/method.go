@@ -86,8 +86,12 @@ func Detect(exe string, getenv func(string) string) Method {
 // entry, which defaults to ~/go, or %USERPROFILE%\go on Windows whatever
 // HOME says.
 func goBin(dir string, getenv func(string) string, goos string) bool {
+	same := func(a, b string) bool { return a == b }
+	if goos == "windows" {
+		same = strings.EqualFold // Windows paths ignore case
+	}
 	if gobin := getenv("GOBIN"); gobin != "" {
-		return filepath.Clean(gobin) == dir
+		return same(filepath.Clean(gobin), dir)
 	}
 	gopath := getenv("GOPATH")
 	if gopath == "" {
@@ -102,5 +106,5 @@ func goBin(dir string, getenv func(string) string, goos string) bool {
 		gopath = filepath.Join(home, "go")
 	}
 	first := filepath.SplitList(gopath)[0]
-	return filepath.Join(first, "bin") == dir
+	return same(filepath.Join(first, "bin"), dir)
 }

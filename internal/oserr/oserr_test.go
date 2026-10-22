@@ -53,14 +53,13 @@ func TestNotAFile(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{dir, filepath.Join(file, "child")} {
-		_, err := os.ReadFile(path)
-		if err == nil {
-			t.Fatalf("reading %s succeeded", path)
-		}
-		if !NotAFile(err) && !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("reading %s: %v (%#v) is neither NotAFile nor fs.ErrNotExist", path, err, errors.Unwrap(err))
-		}
+	if _, err := os.ReadFile(dir); !NotAFile(err) {
+		t.Errorf("reading a directory: NotAFile(%v) = false", err)
+	}
+	// Beneath a regular file is ENOTDIR on Unix and ERROR_PATH_NOT_FOUND,
+	// which is fs.ErrNotExist, on Windows.
+	if _, err := os.ReadFile(filepath.Join(file, "child")); !NotAFile(err) && !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("reading beneath a file: %v is neither NotAFile nor fs.ErrNotExist", err)
 	}
 	if NotAFile(io.EOF) {
 		t.Error("NotAFile(io.EOF) = true")
