@@ -166,6 +166,11 @@ func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 // file must exist and be a regular file.
 func useSudo(t *testing.T, path string) {
 	t.Helper()
+	// The umask can take the execute bits the caller's WriteFile asked for,
+	// and sudo.Binary skips a file no one can run.
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	origCandidates, origOwned := sudo.Candidates, sudo.OwnedByRoot
 	sudo.Candidates = []string{path}
 	sudo.OwnedByRoot = func(fs.FileInfo) bool { return true }
