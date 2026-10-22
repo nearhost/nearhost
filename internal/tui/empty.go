@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // markLines draw the Nearhost mark in half blocks: an arch in the beacon
@@ -58,6 +59,7 @@ func (m *Model) emptyScreen() string {
 	if m.tallCells {
 		mark = shortMarkLines
 	}
+	markRows := len(mark)
 	for _, l := range mark {
 		lines = append(lines, centre(l))
 	}
@@ -77,6 +79,29 @@ func (m *Model) emptyScreen() string {
 	for i, l := range lines {
 		lines[i] = fit(l, emptyWidth)
 	}
-	body := lipgloss.Place(m.width, m.height-1-m.footerHeight(), lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
+	room := max(m.height-1-m.footerHeight(), 0)
+	body := lipgloss.Place(m.width, room, lipgloss.Center, lipgloss.Center, strings.Join(emptyFit(lines, markRows, room), "\n"))
 	return body + "\n" + rule(m.width) + "\n" + m.footer()
+}
+
+// emptyFit cuts lines, whose first markRows are the mark, to room rows. The
+// mark goes first, then blank lines, then lines from the bottom.
+func emptyFit(lines []string, markRows, room int) []string {
+	if len(lines) <= room {
+		return lines
+	}
+	lines = lines[min(markRows, len(lines)):]
+	if len(lines) <= room {
+		return lines
+	}
+	kept := lines[:0:0]
+	for _, l := range lines {
+		if strings.TrimSpace(ansi.Strip(l)) != "" {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) > room {
+		kept = kept[:room]
+	}
+	return kept
 }

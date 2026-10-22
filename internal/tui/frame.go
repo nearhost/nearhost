@@ -46,12 +46,27 @@ func (m *Model) mainWidth() int { return m.width - m.mainX() - 1 }
 
 // bodyHeight is the number of rows between the header's rule and the
 // footer's.
-func (m *Model) bodyHeight() int { return m.height - bodyTop - 1 - m.footerHeight() }
+// It is 0 while the help takes the body's place, and never negative.
+func (m *Model) bodyHeight() int {
+	if m.helpHidesBody() {
+		return 0
+	}
+	return max(m.height-bodyTop-1-m.footerHeight(), 0)
+}
+
+// minBody is the fewest rows of body worth drawing beside the full help.
+const minBody = 5
+
+// helpHidesBody reports whether the open help leaves the body fewer than
+// minBody rows, so the help takes the body's place.
+func (m *Model) helpHidesBody() bool {
+	return m.showHelp && m.height-bodyTop-1-helpRows(m.width) < minBody
+}
 
 // footerHeight is the number of rows the footer takes.
 func (m *Model) footerHeight() int {
 	if m.showHelp {
-		return helpRows()
+		return helpRows(m.width)
 	}
 	return 1
 }
@@ -137,6 +152,17 @@ func (m *Model) frame(body []string, footer string) string {
 	lines := make([]string, 0, m.height)
 	lines = append(lines, m.header(), rule(m.width))
 	lines = append(lines, body...)
+	if m.helpHidesBody() {
+		// The help is the rest of the window; it needs the rule's row.
+		lines = append(strings.Split(strings.Join(lines, "\n"), "\n"), strings.Split(footer, "\n")...)
+		if len(lines) > m.height {
+			lines = lines[:m.height]
+		}
+		for len(lines) < m.height {
+			lines = append(lines, strings.Repeat(" ", m.width))
+		}
+		return strings.Join(lines, "\n")
+	}
 	lines = append(lines, rule(m.width), footer)
 	return strings.Join(lines, "\n")
 }
@@ -144,6 +170,9 @@ func (m *Model) frame(body []string, footer string) string {
 // columns draws the body: the sidebar, its border, and the main panel.
 func (m *Model) columns() []string {
 	height := m.bodyHeight()
+	if height == 0 {
+		return nil
+	}
 	side, sideBar := m.sidebar(m.sideWidth(), height)
 	main, logBar := m.main(m.mainWidth(), height)
 	border := styleRule.Render("│")
@@ -162,6 +191,7 @@ func (m *Model) columns() []string {
 
 // tooSmall is the screen drawn in a window smaller than the interface needs.
 func (m *Model) tooSmall() string {
+	msg := fmt.Sprintf("Make the window larger (%d×%d or more).", minWidth, minHeight)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-		fmt.Sprintf("Make the window larger (%d×%d or more).", minWidth, minHeight))
+		lipgloss.NewStyle().Width(max(m.width, 1)).Render(msg))
 }

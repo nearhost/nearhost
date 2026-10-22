@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -130,5 +131,55 @@ func TestFirstRunScreenIgnoresRowKeys(t *testing.T) {
 	press(m, "n")
 	if _, ok := m.form.(*projectForm); !ok {
 		t.Errorf("n opened %T", m.form)
+	}
+}
+
+// emptyAt is the first-run screen in a window of w by h, after the proxy
+// failed to start with a long reason.
+func emptyAt(t *testing.T, w, h int, failed bool) *Model {
+	t.Helper()
+	m := New(newFake(t, &config.Config{}), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	if failed {
+		m.Update(startedMsg{errors.New("listen tcp 127.0.0.1:443: bind: address already in use, and nothing else can say why it is so")})
+	} else {
+		m.Update(startedMsg{})
+	}
+	return m
+}
+
+// assertEmptyFits fails unless the screen is exactly h lines of at most w
+// cells with the footer as its last line.
+func assertEmptyFits(t *testing.T, m *Model, w, h int, footer string) {
+	t.Helper()
+	lines := strings.Split(screen(m), "\n")
+	if len(lines) != h {
+		t.Errorf("%dx%d: drew %d lines:\n%s", w, h, len(lines), strings.Join(lines, "\n"))
+	}
+	for i, l := range lines {
+		if ansi.StringWidth(l) > w {
+			t.Errorf("%dx%d: line %d is %d cells wide", w, h, i, ansi.StringWidth(l))
+		}
+	}
+	if foot := strings.Join(lines[max(len(lines)-m.footerHeight(), 0):], "\n"); !strings.Contains(foot, footer) {
+		t.Errorf("%dx%d: the footer is %q, want %q", w, h, foot, footer)
+	}
+}
+
+// A proxy that failed to start adds lines to the first-run screen; it still
+// fits the window and keeps the footer.
+func TestEmptyFitsWithProxyError(t *testing.T) {
+	for _, sz := range [][2]int{{80, 20}, {80, 24}} {
+		assertEmptyFits(t, emptyAt(t, sz[0], sz[1], true), sz[0], sz[1], "add project")
+	}
+}
+
+// The full help takes rows from the first-run screen, which gives up its
+// mark and blank lines first.
+func TestEmptyHelpFits(t *testing.T) {
+	for _, sz := range [][2]int{{80, 20}, {80, 24}, {100, 20}} {
+		m := emptyAt(t, sz[0], sz[1], true)
+		press(m, "?")
+		assertEmptyFits(t, m, sz[0], sz[1], "close help")
 	}
 }

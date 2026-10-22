@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/engine"
 )
@@ -18,7 +19,7 @@ func TestFullHelp(t *testing.T) {
 	if len(lines) != 30 {
 		t.Fatalf("drew %d lines in a 30-line window", len(lines))
 	}
-	help := strings.Join(lines[30-helpRows():], "\n")
+	help := strings.Join(lines[30-helpRows(m.width):], "\n")
 	for _, want := range []string{"move", "project", "server", "nearhost", "j/k    up and down", "enter  start or stop", "r      reconnect", "o      open in browser", "q      quit",
 		"move · mouse", "drag   copy text", "2click copy a word", "click  open an address"} {
 		if !strings.Contains(help, want) {
@@ -60,5 +61,55 @@ func TestNarrowFooter(t *testing.T) {
 	wantScreen(t, m, " enter start · o open · e edit · d remove · l log · / filter · ? more", "2/3 ")
 	if m.footerKeyAt(m.width-5) != "" {
 		t.Error("a click on the place took a key")
+	}
+}
+
+// No description is cut short, in whatever columns the window has room for.
+func TestHelpOverlayNoCutDescriptions(t *testing.T) {
+	for _, w := range []int{80, 100, 120} {
+		m := New(newFake(t, sampleConfig()), "/work/here")
+		m.Update(tea.WindowSizeMsg{Width: w, Height: 40})
+		press(m, "?")
+		out := screen(m)
+		if strings.Contains(out, "…") {
+			t.Errorf("width %d cut a description:\n%s", w, out)
+		}
+		for _, g := range helpGroups {
+			for _, b := range g.keys {
+				if !strings.Contains(out, b.Help().Desc) {
+					t.Errorf("width %d lacks %q", w, b.Help().Desc)
+				}
+			}
+		}
+	}
+}
+
+// The home screen with the help open fits the window, at the documented
+// minimum too, where the help takes the body's place.
+func TestHomeHelpFits(t *testing.T) {
+	for _, sz := range [][2]int{{80, 20}, {80, 24}, {100, 20}} {
+		m := New(newFake(t, sampleConfig()), "/work/here")
+		m.Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+		press(m, "?")
+		out := screen(m)
+		lines := strings.Split(out, "\n")
+		if len(lines) != sz[1] {
+			t.Errorf("%dx%d: drew %d lines:\n%s", sz[0], sz[1], len(lines), out)
+		}
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w > sz[0] {
+				t.Errorf("%dx%d: line %d is %d cells wide", sz[0], sz[1], i, w)
+			}
+		}
+		for _, g := range helpGroups {
+			for _, b := range g.keys {
+				if !strings.Contains(out, b.Help().Desc) {
+					t.Errorf("%dx%d lacks %q", sz[0], sz[1], b.Help().Desc)
+				}
+			}
+		}
+		if !strings.Contains(out, "close help") {
+			t.Errorf("%dx%d lacks the close-help hint", sz[0], sz[1])
+		}
 	}
 }
