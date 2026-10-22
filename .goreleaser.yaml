@@ -26,6 +26,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# One SBOM per archive, written by syft (the release workflow installs it).
+sboms:
+  - artifacts: archive
+
 # release-please writes the notes; keep them and only add the assets.
 changelog:
   disable: true
