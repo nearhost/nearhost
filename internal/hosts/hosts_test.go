@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 const base = "127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1             localhost\n"
@@ -159,8 +162,26 @@ func TestEnsureNoApplyWhenBlockCorrectWithoutTrailingNewline(t *testing.T) {
 	}
 }
 
+// useSudo makes path the sudo that Nearhost runs, root-owned or not. The
+// file must exist and be a regular file.
+func useSudo(t *testing.T, path string) {
+	t.Helper()
+	origCandidates, origOwned := sudo.Candidates, sudo.OwnedByRoot
+	sudo.Candidates = []string{path}
+	sudo.OwnedByRoot = func(fs.FileInfo) bool { return true }
+	t.Cleanup(func() { sudo.Candidates, sudo.OwnedByRoot = origCandidates, origOwned })
+}
+
 func TestSudoCommandCarriesFilePathAndAliases(t *testing.T) {
-	cmd := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", sudoPrompt, false, []string{"a.test", "b.test"})
+	fakeSudo := filepath.Join(t.TempDir(), "sudo")
+	if err := os.WriteFile(fakeSudo, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useSudo(t, fakeSudo)
+	cmd, err := sudoCommand(context.Background(), "/bin/nearhost", "/tmp/other-hosts", sudoPrompt, false, []string{"a.test", "b.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	args := strings.Join(cmd.Args, " ")
 	if !strings.HasSuffix(args, "/bin/nearhost hosts apply --file /tmp/other-hosts") {
 		t.Fatalf("args: %s", args)
@@ -242,9 +263,7 @@ func TestSudoApplierContextStopsSudoWhenCancelled(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := sudoPath
-	sudoPath = fake
-	t.Cleanup(func() { sudoPath = orig })
+	useSudo(t, fake)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -278,9 +297,7 @@ func TestSudoApplierContextDoesNotStartSudoWhenAlreadyCancelled(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > '"+started+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := sudoPath
-	sudoPath = fake
-	t.Cleanup(func() { sudoPath = orig })
+	useSudo(t, fake)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := SudoApplierContext(ctx, "/bin/nearhost", filepath.Join(dir, "hosts"))([]string{"a.test"}); !errors.Is(err, context.Canceled) {
@@ -538,9 +555,7 @@ func TestSudoApplierWith(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" > '"+args+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := sudoPath
-	sudoPath = fake
-	t.Cleanup(func() { sudoPath = orig })
+	useSudo(t, fake)
 	ctx := context.Background()
 	for _, c := range []struct {
 		prompt   string
@@ -568,9 +583,7 @@ func TestSudoApplierWithoutAPromptKeepsTheTerminalClear(t *testing.T) {
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := sudoPath
-	sudoPath = fake
-	t.Cleanup(func() { sudoPath = orig })
+	useSudo(t, fake)
 	outR, outW, _ := os.Pipe()
 	errR, errW, _ := os.Pipe()
 	stdout, stderr := os.Stdout, os.Stderr

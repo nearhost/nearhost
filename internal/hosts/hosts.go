@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 const (
@@ -280,9 +281,6 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 	return true, nil
 }
 
-// sudoPath is the sudo binary. Tests replace it.
-var sudoPath = "sudo"
-
 // sudoStopDelay is how long sudo gets to leave after it was asked to
 // terminate before it is killed.
 const sudoStopDelay = 2 * time.Second
@@ -311,7 +309,10 @@ const sudoPrompt = "nearhost needs your password to update /etc/hosts: "
 // fails if it needs a password.
 func SudoApplierWith(ctx context.Context, executable, path, prompt string, noPrompt bool) Applier {
 	return func(aliases []string) error {
-		cmd := sudoCommand(ctx, executable, path, prompt, noPrompt, aliases)
+		cmd, err := sudoCommand(ctx, executable, path, prompt, noPrompt, aliases)
+		if err != nil {
+			return fmt.Errorf("sudo hosts apply: %w", err)
+		}
 		// Without a prompt the terminal is in use by someone else (the
 		// interface): what sudo and the command say is kept for the error.
 		var said bytes.Buffer
@@ -339,16 +340,20 @@ func lastLine(said string) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
-func sudoCommand(ctx context.Context, executable, path, prompt string, noPrompt bool, aliases []string) *exec.Cmd {
+func sudoCommand(ctx context.Context, executable, path, prompt string, noPrompt bool, aliases []string) (*exec.Cmd, error) {
+	bin, err := sudo.Binary()
+	if err != nil {
+		return nil, err
+	}
 	args := []string{"-p", prompt}
 	if noPrompt {
 		args = []string{"-n"}
 	}
-	cmd := exec.CommandContext(ctx, sudoPath, append(args, executable, "hosts", "apply", "--file", path)...)
+	cmd := exec.CommandContext(ctx, bin, append(args, executable, "hosts", "apply", "--file", path)...)
 	cmd.Stdin = strings.NewReader(strings.Join(aliases, "\n") + "\n")
 	// Terminate rather than kill: at its password prompt sudo then puts the
 	// terminal back the way it was.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = sudoStopDelay
-	return cmd
+	return cmd, nil
 }
