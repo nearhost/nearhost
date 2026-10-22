@@ -2,7 +2,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -181,17 +183,37 @@ func Main(args []string) int {
 	}
 	root := NewRoot()
 	root.SetArgs(args)
-	err := root.Execute()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "nearhost:", err)
-	}
+	code := exitCode(root.Execute(), os.Stderr)
 	if n := updates.notice(500 * time.Millisecond); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	if err != nil {
-		return 1
+	return code
+}
+
+// exitError is an error whose message the command has already printed, as
+// the summary of its own output. Main exits with its code and prints nothing
+// more.
+type exitError struct {
+	code int
+	msg  string
+}
+
+// Error returns the message the command printed.
+func (e exitError) Error() string { return e.msg }
+
+// exitCode is the exit code for the error a command returned, which is 0 for
+// nil. It writes "nearhost: <err>" to stderr unless the command printed the
+// error itself (see exitError).
+func exitCode(err error, stderr io.Writer) int {
+	if err == nil {
+		return 0
 	}
-	return 0
+	var ee exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	fmt.Fprintln(stderr, "nearhost:", err)
+	return 1
 }
 
 // updates is this run's check for a new release, or nil when it makes none.

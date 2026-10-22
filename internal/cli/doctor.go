@@ -275,12 +275,12 @@ func tally(checks []check, projects []projectReport) (failed, warned int) {
 }
 
 // failure is the error doctor exits with when failed checks failed, and
-// nil when none did.
+// nil when none did. The report says it, so Main does not (see exitError).
 func failure(failed int) error {
 	if failed == 0 {
 		return nil
 	}
-	return errors.New(plural(failed, "check") + " failed")
+	return exitError{code: 1, msg: plural(failed, "check") + " failed"}
 }
 
 // report prints the checks, then the project section, and returns an error
