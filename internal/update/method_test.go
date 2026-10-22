@@ -54,14 +54,22 @@ func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
 	}
 }
 
-func TestGoBinUsesUserProfile(t *testing.T) {
-	getenv := func(name string) string {
-		if name == "USERPROFILE" {
-			return "/u"
+func TestGoBinHomeForEachOS(t *testing.T) {
+	// Git Bash sets HOME on Windows, but Go's default GOPATH there is still
+	// %USERPROFILE%\go.
+	env := map[string]string{"HOME": "/h", "USERPROFILE": "/u"}
+	getenv := func(name string) string { return env[name] }
+	for _, tc := range []struct {
+		goos, dir string
+		want      bool
+	}{
+		{"windows", filepath.Join("/u", "go", "bin"), true},
+		{"windows", filepath.Join("/h", "go", "bin"), false},
+		{"darwin", filepath.Join("/h", "go", "bin"), true},
+		{"linux", filepath.Join("/u", "go", "bin"), false},
+	} {
+		if got := goBin(tc.dir, getenv, tc.goos); got != tc.want {
+			t.Errorf("goBin(%s) on %s = %v, want %v", tc.dir, tc.goos, got, tc.want)
 		}
-		return ""
-	}
-	if !goBin(filepath.Join("/u", "go", "bin"), getenv) {
-		t.Error("goBin is false for USERPROFILE's go/bin with no HOME, GOPATH or GOBIN")
 	}
 }

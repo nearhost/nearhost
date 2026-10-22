@@ -2,6 +2,7 @@ package update
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -70,7 +71,7 @@ func Detect(exe string, getenv func(string) string) Method {
 		default:
 			m.Kind, m.Args = NPM, []string{"npm", "install", "-g", "@nearhost/cli@latest"}
 		}
-	case goBin(dir, getenv):
+	case goBin(dir, getenv, runtime.GOOS):
 		m.Kind, m.Args = Go, []string{"go", "install", "github.com/nearhost/nearhost/cmd/nearhost@latest"}
 	default:
 		m.Kind = Script
@@ -80,19 +81,21 @@ func Detect(exe string, getenv func(string) string) Method {
 	return m
 }
 
-// goBin reports whether dir is where `go install` puts binaries: GOBIN, or
-// the bin directory of the first GOPATH entry, which defaults to ~/go.
-func goBin(dir string, getenv func(string) string) bool {
+// goBin reports whether dir is where `go install` puts binaries on the
+// operating system goos: GOBIN, or the bin directory of the first GOPATH
+// entry, which defaults to ~/go, or %USERPROFILE%\go on Windows whatever
+// HOME says.
+func goBin(dir string, getenv func(string) string, goos string) bool {
 	if gobin := getenv("GOBIN"); gobin != "" {
 		return filepath.Clean(gobin) == dir
 	}
 	gopath := getenv("GOPATH")
 	if gopath == "" {
-		home := getenv("HOME")
-		if home == "" {
-			// Go's default GOPATH on Windows is %USERPROFILE%\go.
-			home = getenv("USERPROFILE")
+		homeVar := "HOME"
+		if goos == "windows" {
+			homeVar = "USERPROFILE"
 		}
+		home := getenv(homeVar)
 		if home == "" {
 			return false
 		}
