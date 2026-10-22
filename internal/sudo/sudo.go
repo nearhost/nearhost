@@ -8,24 +8,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // Candidates are the places sudo is looked for, in order, by absolute path:
 // a sudo found through PATH could be a fake that is handed the password.
 // Tests replace it.
 var Candidates = []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo", "/run/wrappers/bin/sudo"}
-
-// OwnedByRoot reports whether info describes a file owned by uid 0. Tests
-// replace it.
-var OwnedByRoot = func(info fs.FileInfo) bool {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && st.Uid == 0
-}
 
 // ErrNotFound is Binary's error when no candidate will do.
 var ErrNotFound = errors.New("no root-owned sudo in /usr/bin, /bin, /usr/local/bin or /run/wrappers/bin")
@@ -42,13 +33,6 @@ func Binary() (string, error) {
 		return path, nil
 	}
 	return "", ErrNotFound
-}
-
-// runnable reports whether this user may execute path, as the kernel decides
-// from its mode, owner and group.
-func runnable(path string) bool {
-	const xOK = 1 // access(2)'s X_OK
-	return syscall.Access(path, xOK) == nil
 }
 
 // ErrWrongPassword is the error of a password sudo refused.
