@@ -1,8 +1,6 @@
 module github.com/nearhost/nearhost
 
-go 1.26.0
-
-toolchain go1.27.3
+go 1.27.3
 
 require (
 	cel.dev/cel-go v0.32.0
