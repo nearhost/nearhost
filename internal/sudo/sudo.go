@@ -27,17 +27,21 @@ var OwnedByRoot = func(info fs.FileInfo) bool {
 	return ok && st.Uid == 0
 }
 
-// Binary returns the first of Candidates that is a regular file owned by
-// root and not writable by its group or others.
+// ErrNotFound is Binary's error when no candidate will do.
+var ErrNotFound = errors.New("no root-owned sudo in /usr/bin, /bin, /usr/local/bin or /run/wrappers/bin")
+
+// Binary returns the first of Candidates that is an executable regular file
+// owned by root and not writable by its group or others; ErrNotFound when
+// there is none.
 func Binary() (string, error) {
 	for _, path := range Candidates {
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || !OwnedByRoot(info) {
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || info.Mode().Perm()&0o111 == 0 || !OwnedByRoot(info) {
 			continue
 		}
 		return path, nil
 	}
-	return "", errors.New("no root-owned sudo in /usr/bin, /bin, /usr/local/bin or /run/wrappers/bin")
+	return "", ErrNotFound
 }
 
 // ErrWrongPassword is the error of a password sudo refused.

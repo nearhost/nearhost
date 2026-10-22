@@ -165,6 +165,29 @@ func TestBinaryRejectsAFileOthersCanWrite(t *testing.T) {
 	}
 }
 
+func TestBinaryRejectsAFileItsGroupCanWrite(t *testing.T) {
+	useCandidates(t, executable(t, 0o775))
+	if got, err := Binary(); err == nil {
+		t.Errorf("Binary() = %q, want an error", got)
+	}
+}
+
+func TestBinaryRejectsAFileNoOneCanRun(t *testing.T) {
+	good := executable(t, 0o755)
+	useCandidates(t, executable(t, 0o644), good)
+	got, err := Binary()
+	if err != nil || got != good {
+		t.Errorf("Binary() = %q, %v, want %q", got, err, good)
+	}
+}
+
+func TestBinaryWithoutACandidateIsErrNotFound(t *testing.T) {
+	useCandidates(t, filepath.Join(t.TempDir(), "missing"))
+	if _, err := Binary(); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Binary() error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestBinaryRejectsADirectory(t *testing.T) {
 	useCandidates(t, t.TempDir())
 	if got, err := Binary(); err == nil {
