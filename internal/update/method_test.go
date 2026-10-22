@@ -73,3 +73,21 @@ func TestGoBinHomeForEachOS(t *testing.T) {
 		}
 	}
 }
+
+func TestGoBinIgnoresCaseOnWindows(t *testing.T) {
+	// No drive letters: the test runs on Unix too, where GOPATH lists split
+	// on the colon.
+	env := map[string]string{"USERPROFILE": `\Users\Ada`}
+	getenv := func(name string) string { return env[name] }
+	dir := filepath.Join(`\users\ada`, "go", "bin")
+	if !goBin(dir, getenv, "windows") {
+		t.Errorf("goBin(%s) on windows = false for USERPROFILE %s", dir, env["USERPROFILE"])
+	}
+	if goBin(dir, getenv, "linux") {
+		t.Errorf("goBin(%s) on linux = true, though case matters there", dir)
+	}
+	env = map[string]string{"GOBIN": `\Go\Bin`}
+	if !goBin(`\go\bin`, getenv, "windows") {
+		t.Error("goBin on windows = false for GOBIN differing only in case")
+	}
+}
