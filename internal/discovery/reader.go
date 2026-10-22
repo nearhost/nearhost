@@ -7,7 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"syscall"
+
+	"github.com/nearhost/nearhost/internal/oserr"
 )
 
 // FileReader reads files relative to a project root. Paths are slash
@@ -63,5 +64,5 @@ func (m *memo) ReadFile(name string) ([]byte, error) {
 // isAbsent reports whether err means the file is not there: missing, a
 // directory, or under a parent that is a regular file.
 func isAbsent(err error) bool {
-	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.ENOTDIR)
+	return errors.Is(err, fs.ErrNotExist) || oserr.NotAFile(err)
 }

@@ -9,11 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
+	"github.com/nearhost/nearhost/internal/oserr"
 )
 
 // caddyMu serialises every call into Caddy's process-global Load/Stop, and
@@ -153,7 +153,7 @@ func waitReleased(ports []int, timeout time.Duration) error {
 				l.Close()
 				break
 			}
-			if !errors.Is(err, syscall.EADDRINUSE) {
+			if !oserr.AddrInUse(err) {
 				break
 			}
 			if time.Now().After(deadline) {
