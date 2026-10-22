@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
@@ -45,33 +44,17 @@ func reviewProject(save func(config.Project) error) func(ctx context.Context, p 
 	}
 }
 
-// saveMu serialises the saves of saveTo, so two projects whose .nearhostrc
-// changed at once do not each save a config without the other's change.
-var saveMu sync.Mutex
-
 // saveTo returns a save for reviewProject that writes a project's routes
-// into the config file at path: it loads the file, sets the routes and the
-// approved snapshot of the project of the same name, validates and saves, as
-// EditConfig does for the interface. Only those fields, and the alias when
-// the file moved it, are taken from p: p is the engine's copy, which `up`
-// loaded at launch, and anything else changed in the file since (enabled,
-// path, an alias set by hand) must not be undone. A project no longer in the
-// file is not added back.
+// into the config file at path: under the config's lock, it loads the file,
+// sets the routes and the approved snapshot of the project of the same name,
+// validates and saves, as EditConfig does for the interface. Only those
+// fields, and the alias when the file moved it, are taken from p: p is the
+// engine's copy, which `up` loaded at launch, and anything else changed in
+// the file since (enabled, path, an alias set by hand) must not be undone. A
+// project no longer in the file is not added back.
 func saveTo(path string) func(config.Project) error {
 	return func(p config.Project) error {
-		saveMu.Lock()
-		defer saveMu.Unlock()
-		cfg, err := config.Load(path)
-		if err != nil {
-			return err
-		}
-		if err := takeServedRc(cfg, p, path); err != nil {
-			return err
-		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
-		return config.Save(path, cfg)
+		return config.Update(path, func(cfg *config.Config) error { return takeServedRc(cfg, p, path) })
 	}
 }
 

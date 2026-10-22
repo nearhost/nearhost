@@ -337,9 +337,14 @@ func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string
 	return out, notes
 }
 
-// saveProject adds project to cfg and saves it. Nothing is saved when the
-// project cannot be added.
-func saveProject(cfg *config.Config, cfgPath string, project config.Project) error {
+// saveProject adds project to the config at cfgPath, under the config's
+// lock. Nothing is saved when the project cannot be added.
+func saveProject(cfgPath string, project config.Project) error {
+	return config.Update(cfgPath, func(cfg *config.Config) error { return addProjectTo(cfg, project) })
+}
+
+// addProjectTo adds project to cfg, or says why it cannot be added.
+func addProjectTo(cfg *config.Config, project config.Project) error {
 	if err := loopbackClash(cfg, project); err != nil {
 		return err
 	}
@@ -352,7 +357,7 @@ func saveProject(cfg *config.Config, cfgPath string, project config.Project) err
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("%w; nothing was saved", err)
 	}
-	return config.Save(cfgPath, cfg)
+	return nil
 }
 
 // errBadHost is an SSH host that ssh would take for an option, or that is
@@ -382,8 +387,13 @@ func serverNameProblem(cfg *config.Config, name string) error {
 	return nil
 }
 
-// addServer adds srv to cfg and saves it.
-func addServer(cfg *config.Config, cfgPath string, srv config.Server) error {
+// addServer adds srv to the config at cfgPath, under the config's lock.
+func addServer(cfgPath string, srv config.Server) error {
+	return config.Update(cfgPath, func(cfg *config.Config) error { return addServerTo(cfg, srv) })
+}
+
+// addServerTo adds srv to cfg, or says why it cannot be added.
+func addServerTo(cfg *config.Config, srv config.Server) error {
 	if err := serverNameProblem(cfg, srv.Name); err != nil {
 		return err
 	}
@@ -391,10 +401,7 @@ func addServer(cfg *config.Config, cfgPath string, srv config.Server) error {
 		return err
 	}
 	cfg.Servers = append(cfg.Servers, srv)
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	return config.Save(cfgPath, cfg)
+	return cfg.Validate()
 }
 
 // registryAnswer is an answer to whether to trust the official registry.
@@ -423,7 +430,10 @@ func answerRegistry(ctx context.Context, out io.Writer, b presetBackend, cfg *co
 	case registryNever:
 		off := false
 		cfg.RegistryPrompt = &off
-		return "", config.Save(cfgPath, cfg)
+		return "", config.Update(cfgPath, func(cfg *config.Config) error {
+			cfg.RegistryPrompt = &off
+			return nil
+		})
 	}
 	return "", nil
 }
@@ -434,7 +444,7 @@ func answerRegistry(ctx context.Context, out io.Writer, b presetBackend, cfg *co
 func enableOffered(ctx context.Context, b presetBackend, cfg *config.Config, cfgPath, name string) string {
 	_, _, err := b.enable(ctx, cfg, cfgPath, name, false)
 	if err == nil {
-		err = config.Save(cfgPath, cfg)
+		err = savePresets(cfgPath, cfg, name)
 	}
 	if err != nil {
 		return fmt.Sprintf("the %s preset was not enabled: %v", name, err)

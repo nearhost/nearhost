@@ -140,14 +140,14 @@ func TestSaveProjectRefusesALoopbackClash(t *testing.T) {
 	}}
 	saveConfig(t, cfgPath, cfg)
 	b := config.Project{Name: "b", Server: "mini", Path: "/b", Alias: "b.test", Enabled: true, Routes: []config.Route{web, lb}}
-	if err := saveProject(loadSaved(t, cfgPath), cfgPath, b); err == nil || !strings.Contains(err.Error(), "loopback port 5173") {
+	if err := saveProject(cfgPath, b); err == nil || !strings.Contains(err.Error(), "loopback port 5173") {
 		t.Fatalf("saveProject = %v", err)
 	}
 	if _, ok := loadSaved(t, cfgPath).Project("b"); ok {
 		t.Error("the clashing project was saved")
 	}
 	b.Routes = []config.Route{web}
-	if err := saveProject(loadSaved(t, cfgPath), cfgPath, b); err != nil {
+	if err := saveProject(cfgPath, b); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := loadSaved(t, cfgPath).Project("b"); !ok {
@@ -165,11 +165,11 @@ func TestAddServer(t *testing.T) {
 		{Name: "apollo", SSHHost: "-oProxyCommand=x"},
 		{Name: "apollo", SSHHost: "has space"},
 	} {
-		if err := addServer(loadSaved(t, cfgPath), cfgPath, srv); err == nil {
+		if err := addServer(cfgPath, srv); err == nil {
 			t.Errorf("addServer(%+v) succeeded", srv)
 		}
 	}
-	if err := addServer(loadSaved(t, cfgPath), cfgPath, config.Server{Name: "apollo", SSHHost: "dev@apollo.lan"}); err != nil {
+	if err := addServer(cfgPath, config.Server{Name: "apollo", SSHHost: "dev@apollo.lan"}); err != nil {
 		t.Fatal(err)
 	}
 	if srv, ok := loadSaved(t, cfgPath).Server("apollo"); !ok || srv.SSHHost != "dev@apollo.lan" {

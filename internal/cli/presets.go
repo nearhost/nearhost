@@ -188,6 +188,25 @@ func (b presetBackend) enable(ctx context.Context, cfg *config.Config, cfgPath, 
 	return p, true, nil
 }
 
+// savePresets records the named presets in the config at cfgPath as cfg has
+// them, under the config's lock, and changes nothing else in the file: cfg
+// was loaded before the presets were fetched, and the file may have changed
+// since.
+func savePresets(cfgPath string, cfg *config.Config, names ...string) error {
+	var refs []config.PresetRef
+	for _, name := range names {
+		if ref, ok := cfg.Preset(name); ok {
+			refs = append(refs, ref)
+		}
+	}
+	return config.Update(cfgPath, func(cfg *config.Config) error {
+		for _, ref := range refs {
+			cfg.UpsertPreset(ref)
+		}
+		return nil
+	})
+}
+
 // enableLocal enables the local preset file of the given plain name. No
 // registry is asked about it.
 func enableLocal(cfg *config.Config, cfgPath, name string) (*preset.Preset, bool, error) {

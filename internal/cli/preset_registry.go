@@ -84,11 +84,19 @@ func (b presetBackend) trust(ctx context.Context, out io.Writer, cfg *config.Con
 	if err != nil {
 		return config.Registry{}, &unreadableRegistryError{problem: registryProblem(reg, err)}
 	}
-	cfg.Registries = append(cfg.Registries, reg)
-	if err := config.Save(cfgPath, cfg); err != nil {
-		cfg.Registries = cfg.Registries[:len(cfg.Registries)-1]
+	// The fetch took a while, so the registry is checked again against the
+	// file as it is now.
+	err = config.Update(cfgPath, func(cfg *config.Config) error {
+		if _, err := newRegistry(cfg, reg.Repo, reg.Alias); err != nil {
+			return err
+		}
+		cfg.Registries = append(cfg.Registries, reg)
+		return nil
+	})
+	if err != nil {
 		return config.Registry{}, err
 	}
+	cfg.Registries = append(cfg.Registries, reg)
 	_, err = fmt.Fprintf(out, "Trusted registry %s (%s). Its index at %s offers %s.\n",
 		reg.Alias, reg.Repo, shortRef(idx.Ref), plural(len(idx.Presets), "preset"))
 	return reg, err
@@ -159,27 +167,31 @@ func newRegistryRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
-			cfg, cfgPath, err := loadConfig(cmd)
+			_, cfgPath, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
-			// Only an alias the config holds, and so a valid one, reaches a
-			// path below.
-			reg, ok := cfg.Trusted(alias)
-			if !ok {
-				return fmt.Errorf("no registry is trusted as %q", alias)
-			}
-			var enabled []string
-			for _, p := range cfg.Presets {
-				if a, _ := config.SplitPreset(p.Name); a == alias {
-					enabled = append(enabled, p.Name)
+			var reg config.Registry
+			err = config.Update(cfgPath, func(cfg *config.Config) error {
+				// Only an alias the config holds, and so a valid one,
+				// reaches a path below.
+				var ok bool
+				if reg, ok = cfg.Trusted(alias); !ok {
+					return fmt.Errorf("no registry is trusted as %q", alias)
 				}
-			}
-			if len(enabled) > 0 {
-				return fmt.Errorf("presets from registry %s are enabled: %s. Disable them first with `nearhost preset disable <name>`", alias, strings.Join(enabled, ", "))
-			}
-			cfg.Registries = slices.DeleteFunc(cfg.Registries, func(r config.Registry) bool { return r.Alias == alias })
-			if err := config.Save(cfgPath, cfg); err != nil {
+				var enabled []string
+				for _, p := range cfg.Presets {
+					if a, _ := config.SplitPreset(p.Name); a == alias {
+						enabled = append(enabled, p.Name)
+					}
+				}
+				if len(enabled) > 0 {
+					return fmt.Errorf("presets from registry %s are enabled: %s. Disable them first with `nearhost preset disable <name>`", alias, strings.Join(enabled, ", "))
+				}
+				cfg.Registries = slices.DeleteFunc(cfg.Registries, func(r config.Registry) bool { return r.Alias == alias })
+				return nil
+			})
+			if err != nil {
 				return err
 			}
 			if err := os.RemoveAll(registryDir(cfgPath, alias)); err != nil {

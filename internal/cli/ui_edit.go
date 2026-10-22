@@ -15,19 +15,12 @@ import (
 // What the interface asks of nearhost to change what is configured.
 
 func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
-	u.editMu.Lock()
-	defer u.editMu.Unlock()
-	cfg, err := u.current()
-	if err != nil {
-		return err
-	}
-	if err := fn(cfg); err != nil {
-		return err
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	return config.Save(u.path, cfg)
+	return config.Update(u.path, func(cfg *config.Config) error {
+		if err := u.check(cfg); err != nil {
+			return err
+		}
+		return fn(cfg)
+	})
 }
 
 // saveRc is the save of the interface engine's Options.Review: it writes a

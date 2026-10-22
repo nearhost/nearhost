@@ -206,10 +206,13 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
-	if newServer {
-		cfg.Servers = append(cfg.Servers, srv)
-	}
-	if err := saveProject(cfg, cfgPath, project); err != nil {
+	err = config.Update(cfgPath, func(cfg *config.Config) error {
+		if newServer {
+			cfg.Servers = append(cfg.Servers, srv)
+		}
+		return addProjectTo(cfg, project)
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Fprintln(out)
@@ -411,7 +414,7 @@ func discoverWithPresets(cmd *cobra.Command, b addBackend, flags addFlags, cfg *
 			return nil, nil, err
 		}
 		if changed {
-			if err := config.Save(cfgPath, cfg); err != nil {
+			if err := savePresets(cfgPath, cfg, name); err != nil {
 				return nil, nil, err
 			}
 		}
