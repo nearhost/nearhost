@@ -1,6 +1,7 @@
 package update
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -50,5 +51,17 @@ func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
 	}
 	if m.Args[0] != "sh" || !strings.Contains(m.Args[2], "install.sh | sh") {
 		t.Fatalf("Args = %v", m.Args)
+	}
+}
+
+func TestGoBinUsesUserProfile(t *testing.T) {
+	getenv := func(name string) string {
+		if name == "USERPROFILE" {
+			return "/u"
+		}
+		return ""
+	}
+	if !goBin(filepath.Join("/u", "go", "bin"), getenv) {
+		t.Error("goBin is false for USERPROFILE's go/bin with no HOME, GOPATH or GOBIN")
 	}
 }

@@ -12,17 +12,35 @@ import (
 	"github.com/nearhost/nearhost/internal/oserr"
 )
 
-// Dir is the nearhost configuration directory. A relative XDG_CONFIG_HOME is
-// ignored, as the XDG base directory specification requires.
-func Dir() (string, error) {
+// Dir is the nearhost configuration directory: $XDG_CONFIG_HOME/nearhost
+// when that is absolute, and otherwise %APPDATA%\nearhost on Windows or
+// ~/.config/nearhost elsewhere. A relative XDG_CONFIG_HOME is ignored, as the
+// XDG base directory specification requires.
+func Dir() (string, error) { return configDirFor(runtime.GOOS) }
+
+// configDirFor is Dir on the operating system goos.
+func configDirFor(goos string) (string, error) {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "nearhost"), nil
+	}
+	if goos == "windows" {
+		return windowsDir("APPDATA")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, ".config", "nearhost"), nil
+}
+
+// windowsDir is the nearhost directory in the folder the environment
+// variable name gives, which must be absolute.
+func windowsDir(name string) (string, error) {
+	dir := os.Getenv(name)
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("%%%s%% is not set to an absolute path", name)
+	}
+	return filepath.Join(dir, "nearhost"), nil
 }
 
 func sub(name string) (string, error) {
@@ -40,8 +58,8 @@ func DefaultPath() (string, error) { return sub("config.yaml") }
 func RunDir() (string, error) { return sub("run") }
 
 // DataDir is the nearhost data directory: $XDG_DATA_HOME/nearhost when that is
-// absolute and otherwise ~/Library/Application Support/nearhost on macOS or
-// ~/.local/share/nearhost elsewhere. A relative XDG_DATA_HOME is ignored, as
+// absolute and otherwise ~/Library/Application Support/nearhost on macOS,
+// %LOCALAPPDATA%\nearhost on Windows or ~/.local/share/nearhost elsewhere. A relative XDG_DATA_HOME is ignored, as
 // for XDG_CONFIG_HOME. It holds the local CA's private key, which must not
 // live in ~/.config: people often keep that folder in a dotfiles repository,
 // and anyone with the key can sign a certificate this machine trusts.
@@ -51,6 +69,9 @@ func DataDir() (string, error) { return dataDirFor(runtime.GOOS) }
 func dataDirFor(goos string) (string, error) {
 	if xdg := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "nearhost"), nil
+	}
+	if goos == "windows" {
+		return windowsDir("LOCALAPPDATA")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
