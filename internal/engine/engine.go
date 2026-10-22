@@ -40,7 +40,8 @@ type Options struct {
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
 	// WebPort is a port of the proxy's own that always serves Nearhost's
-	// page, its web interface, at https://localhost:<port>. 0 means none.
+	// page at https://localhost:<port>. 0 means none. If the port is taken
+	// when the engine starts, the proxy runs without the page.
 	WebPort int
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
@@ -197,6 +198,9 @@ type Engine struct {
 
 	started bool
 	closed  bool
+	// webPort is the port Nearhost's page is served on, 0 when there is none:
+	// the option was 0, or the port was taken at Start.
+	webPort int
 	lookup  uint64 // number of the last holder lookup started
 	servers map[string]*serverConn
 	// held names the servers disconnected on purpose, so nothing starts
@@ -217,6 +221,7 @@ type Engine struct {
 func New(cfg *config.Config, opts Options) *Engine {
 	e := &Engine{
 		opts:        opts,
+		webPort:     opts.WebPort,
 		bus:         NewBus(),
 		proxy:       proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
 		connectWait: 30 * time.Second,
@@ -300,6 +305,14 @@ func cloneRoutes(routes []config.Route) []config.Route {
 // Events returns the event bus.
 func (e *Engine) Events() *Bus { return e.bus }
 
+// WebPort returns the port Nearhost's page is served on, or 0 when there is
+// none: the option was 0, or the port was taken when the engine started.
+func (e *Engine) WebPort() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.webPort
+}
+
 // Config returns a copy of the engine's configuration.
 func (e *Engine) Config() *config.Config {
 	e.mu.Lock()
@@ -308,12 +321,13 @@ func (e *Engine) Config() *config.Config {
 }
 
 // Start prepares the engine: it creates the run directory, checks that the
-// proxy's HTTPS and HTTP ports, and any web port, can be bound (the HTTPS
+// proxy's HTTPS and HTTP ports, and any page port, can be bound (the HTTPS
 // port on UDP as well), and loads the proxy with no sites, which creates the
 // local CA and listens on every port to serve Nearhost's own page at
-// localhost. If a port is
-// taken it returns an error naming the port and the engine stays unstarted;
-// Start can then be called again. Starting a started engine does nothing.
+// localhost. If the HTTPS or HTTP port is taken it returns an error naming
+// the port and the engine stays unstarted; Start can then be called again. A
+// taken page port only publishes an event, and the proxy runs without the
+// page. Starting a started engine does nothing.
 func (e *Engine) Start(ctx context.Context) error {
 	e.lifeMu.Lock()
 	defer e.lifeMu.Unlock()
@@ -344,9 +358,14 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
 	}
-	if e.opts.WebPort != 0 {
-		if err := e.probePort(ctx, "Web interface", e.opts.WebPort, 0); err != nil {
-			return err
+	// A taken page port costs only the page, not the proxy.
+	if port := e.opts.WebPort; port != 0 {
+		if err := e.probePort(ctx, "Nearhost's page", port, 0); err != nil {
+			e.proxy.DropWebPort()
+			e.mu.Lock()
+			e.webPort = 0
+			e.mu.Unlock()
+			e.bus.Publish(Event{Message: fmt.Sprintf("port %d is in use%s; serving without Nearhost's page (pass --web-port to choose another)", port, e.heldBy(ctx, port))})
 		}
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
@@ -365,7 +384,7 @@ func (e *Engine) Start(ctx context.Context) error {
 }
 
 // differentProxyPorts refuses the same port for any two of HTTPS, HTTP and
-// the web interface (0 standing for 443 and 80, and for no web port). Each
+// Nearhost's page (0 standing for 443 and 80, and for no page). Each
 // can be bound by itself, so the probes would pass, but the proxy cannot
 // serve two of them on one port and no site could be published.
 func differentProxyPorts(httpsPort, httpPort, webPort int) error {
@@ -379,7 +398,7 @@ func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 		return fmt.Errorf("the HTTPS and HTTP ports must differ (both are %d)", httpPort)
 	}
 	if webPort == httpsPort || webPort == httpPort {
-		return fmt.Errorf("the web interface port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
+		return fmt.Errorf("the page's port must differ from the HTTPS and HTTP ports (it is %d)", webPort)
 	}
 	return nil
 }

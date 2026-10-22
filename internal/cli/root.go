@@ -73,7 +73,7 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-// defaultWebPort is where the web interface is served,
+// defaultWebPort is where Nearhost's page is served,
 // https://localhost:6327: NEAR on a phone keypad.
 const defaultWebPort = 6327
 
@@ -89,7 +89,7 @@ type serveFlags struct {
 func (f *serveFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.httpsPort, "https-port", 443, "port for https://<alias>")
 	cmd.Flags().IntVar(&f.httpPort, "http-port", 80, "port that redirects to https")
-	cmd.Flags().IntVar(&f.webPort, "web-port", defaultWebPort, "port for the web interface at https://localhost:<port>; 0 for none")
+	cmd.Flags().IntVar(&f.webPort, "web-port", defaultWebPort, "port for Nearhost's page at https://localhost:<port>; 0 for none")
 	cmd.Flags().BoolVar(&f.noHosts, "no-hosts", false, "do not manage /etc/hosts")
 }
 

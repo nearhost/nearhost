@@ -45,13 +45,13 @@ func TestFirstRunScreen(t *testing.T) {
 	if s := screen(m); strings.Contains(s, "home") || strings.Contains(s, "│") {
 		t.Errorf("the first-run screen has a sidebar:\n%s", s)
 	}
-	if strings.Contains(screen(m), "web UI") {
-		t.Error("the web UI is linked before the proxy has started")
+	if strings.Contains(screen(m), "page") {
+		t.Error("the page is linked before the proxy has started")
 	}
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "proxy     ● https :443 · http :80", "web UI    https://localhost:6327")
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "page      https://localhost:6327")
 	if !strings.Contains(m.View().Content, "\x1b]8;;https://localhost:6327") {
-		t.Error("the web UI address is not a link")
+		t.Error("the page address is not a link")
 	}
 }
 
@@ -62,8 +62,8 @@ func TestFirstRunScreenWithoutAWebPort(t *testing.T) {
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
 	wantScreen(t, m, "proxy     ● https :443 · http :80")
-	if strings.Contains(screen(m), "web UI") {
-		t.Errorf("the web UI is linked without a web port:\n%s", screen(m))
+	if strings.Contains(screen(m), "page") {
+		t.Errorf("the page is linked without a web port:\n%s", screen(m))
 	}
 }
 

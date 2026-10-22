@@ -1463,9 +1463,9 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 }
 
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
-	// The proxy listens on TCP for HTTPS, HTTP and the web interface, and on
+	// The proxy listens on TCP for HTTPS, HTTP and Nearhost's page, and on
 	// UDP at the HTTPS port for HTTP/3.
-	for _, which := range []string{"https", "http", "web", "https-udp"} {
+	for _, which := range []string{"https", "http", "https-udp"} {
 		t.Run(which, func(t *testing.T) {
 			var holder interface{ Close() error }
 			var held int
@@ -1487,8 +1487,6 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 				switch which {
 				case "http":
 					o.HTTPPort = held
-				case "web":
-					o.WebPort = held
 				default:
 					o.HTTPSPort = held
 				}
@@ -2373,5 +2371,63 @@ func TestLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 	if c, err := net.Dial("tcp", fmt.Sprintf("[::1]:%d", lb)); err == nil {
 		c.Close()
 		t.Error("[::1] still answers after the project stopped")
+	}
+}
+
+func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	held := l.Addr().(*net.TCPAddr).Port
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = held })
+	events, unsubscribe := h.eng.Events().Subscribe(64)
+	defer unsubscribe()
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start with the page port taken: %v", err)
+	}
+	if got := h.eng.WebPort(); got != 0 {
+		t.Fatalf("WebPort = %d, want 0", got)
+	}
+	want := fmt.Sprintf("port %d is in use", held)
+	for {
+		select {
+		case ev := <-events:
+			if strings.Contains(ev.Message, want) && strings.Contains(ev.Message, "without Nearhost's page") {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no event said %q", want)
+		}
+	}
+}
+
+func TestStartStillFailsWhenHTTPSPortBusy(t *testing.T) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	h := buildHarness(t, &config.Config{}, func(o *Options) {
+		o.HTTPSPort = l.Addr().(*net.TCPAddr).Port
+		o.WebPort = testutil.ProxyPort(t)
+	})
+	if err := h.eng.Start(bg); err == nil || !strings.Contains(err.Error(), "HTTPS port") {
+		t.Fatalf("Start = %v, want an HTTPS port error", err)
+	}
+}
+
+func TestWebPortReportsServedPort(t *testing.T) {
+	var page int
+	h := buildHarness(t, &config.Config{}, func(o *Options) {
+		page = testutil.ProxyPort(t)
+		o.WebPort = page
+	})
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.eng.WebPort(); got != page {
+		t.Fatalf("WebPort = %d, want %d", got, page)
 	}
 }

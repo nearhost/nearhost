@@ -180,7 +180,14 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	ctx := cmd.Context()
 	checks = append(checks, checkPort(ctx, b, flags.httpsPort, "--https-port", true), checkPort(ctx, b, flags.httpPort, "--http-port", false))
 	if flags.webPort != 0 {
-		checks = append(checks, checkPort(ctx, b, flags.webPort, "--web-port", false))
+		c := checkPort(ctx, b, flags.webPort, "--web-port", false)
+		if c.level == levelFail {
+			// A taken page port costs only the page: `nearhost up` runs
+			// without it.
+			c.level = levelWarn
+			c.fix = "`nearhost up` serves without Nearhost's page while this port is taken; stop what uses it, or pass another --web-port"
+		}
+		checks = append(checks, c)
 	}
 	if low := min(flags.httpsPort, flags.httpPort); b.goos == "linux" && low < 1024 {
 		lv, detail := b.lowPorts(low)

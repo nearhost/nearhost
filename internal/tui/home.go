@@ -54,14 +54,14 @@ func (m *Model) proxyLines(width int) []string {
 	return field("proxy", styleBeacon.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }
 
-// webLines link to the web interface, once the proxy serves it.
+// webLines link to Nearhost's page, once the proxy serves it.
 func (m *Model) webLines(width int) []string {
 	port := m.b.WebPort()
 	if port == 0 || !m.started || m.proxyErr != nil {
 		return nil
 	}
 	url := fmt.Sprintf("https://localhost:%d", port)
-	return field("web UI", styleBeacon.Underline(true).Hyperlink(url).Render(url), width)
+	return field("page", styleBeacon.Underline(true).Hyperlink(url).Render(url), width)
 }
 
 // problem is something that needs the user: what it is, why, what to do,
