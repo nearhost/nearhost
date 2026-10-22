@@ -467,3 +467,42 @@ func TestExportDoesNotApproveAProjectChangedMeanwhile(t *testing.T) {
 		t.Errorf("saved %+v, want the other change and no snapshot", saved)
 	}
 }
+
+// A save by another process that only rewrites how the file holds the
+// project, as an empty hosts list it drops, is not a change to it.
+func TestExportApprovesAProjectAnotherSaveOnlyRewrote(t *testing.T) {
+	remote := exportDir(t)
+	p := exportProject("box-app", "/srv/www/app")
+	p.Server = "box"
+	p.Routes[0].Hosts = nil
+	cfgPath, before := exportConfig(t, &config.Config{
+		Servers:  []config.Server{{Name: "box", SSHHost: "box.lan"}},
+		Projects: []config.Project{p},
+	})
+	edited := strings.Replace(string(before), "role: web\n", "role: web\n          hosts: []\n", 1)
+	if edited == string(before) {
+		t.Fatalf("no route to edit in:\n%s", before)
+	}
+	if err := os.WriteFile(cfgPath, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err := config.Load(cfgPath); err != nil || loaded.Projects[0].Routes[0].Hosts == nil {
+		t.Fatalf("the edit did not load as an empty list: %v", err)
+	}
+	w := &memWriter{files: map[string][]byte{}}
+	b := exportBackend{
+		openRemote: func(_ context.Context, srv config.Server, projectPath string) (discovery.FileReader, transport.FileWriter, string, func() error, error) {
+			// Another process saves the file, which drops the empty list.
+			if err := config.Update(cfgPath, func(*config.Config) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			return discovery.DirReader{Root: remote}, w, projectPath, func() error { return nil }, nil
+		},
+	}
+	if out, err := execute(t, newExportCmd(b), "--config", cfgPath, "export", "box-app"); err != nil {
+		t.Fatalf("export: %v\n%s", err, out)
+	}
+	if saved, _ := loadSaved(t, cfgPath).Project("box-app"); saved.Nearhostrc == nil {
+		t.Error("no snapshot saved")
+	}
+}

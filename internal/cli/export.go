@@ -1,16 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
@@ -208,6 +209,15 @@ func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p conf
 	return data, snap, pending, nil
 }
 
+// sameProject reports whether a and b say the same thing in the config file,
+// compared as the file would hold them, so an empty list and a missing one,
+// which a load and a save can swap, are not a change.
+func sameProject(a, b config.Project) bool {
+	ya, errA := yaml.Marshal(a)
+	yb, errB := yaml.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ya, yb)
+}
+
 // baseName is the name of the project's directory, by the path rules of the
 // machine it is on.
 func baseName(p config.Project, dir string) string {
@@ -239,7 +249,7 @@ func saveSnapshot(cfgPath string, from config.Project, snap *config.RcSnapshot) 
 		}
 		now := *p
 		now.Nearhostrc, from.Nearhostrc = nil, nil
-		if !reflect.DeepEqual(now, from) {
+		if !sameProject(now, from) {
 			return fmt.Errorf("project %q changed while it was exported, so the file is not approved; run `nearhost export` again", from.Name)
 		}
 		p.Nearhostrc = snap
