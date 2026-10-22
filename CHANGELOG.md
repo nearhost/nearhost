@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.8.0](https://github.com/nearhost/nearhost/compare/v0.7.1...v0.8.0) (2026-10-22)
+
+
+### Features
+
+* **cli:** --version, a getting started in help, and suggestions for typos ([#234](https://github.com/nearhost/nearhost/issues/234)) ([04e66fc](https://github.com/nearhost/nearhost/commit/04e66fc05f0d8b7ca233a2e9558c7f8df63a6bc2))
+* **proxy:** name Nearhost and its version in Via, not Caddy ([#219](https://github.com/nearhost/nearhost/issues/219)) ([e918f95](https://github.com/nearhost/nearhost/commit/e918f9555557c37f0e0ac122c1bb15c49dad5624))
+* serve Nearhost's page at https://localhost:6327 always ([8dcdf69](https://github.com/nearhost/nearhost/commit/8dcdf699b18e3f4032d14996d90844e06b35aa5d))
+* **tui:** alert, which writes to the log and shows a toast ([#217](https://github.com/nearhost/nearhost/issues/217)) ([cda2362](https://github.com/nearhost/nearhost/commit/cda2362626373e73829ce34efa0c2527a1195832))
+* **tui:** fold a project's ignored ports into one line ([#207](https://github.com/nearhost/nearhost/issues/207)) ([acf2c5e](https://github.com/nearhost/nearhost/commit/acf2c5e009bf9bea0fa8d38e1acd089bb8946193))
+* **tui:** line the sidebar up with the panel, and tighten the gaps ([#211](https://github.com/nearhost/nearhost/issues/211)) ([f3a67b6](https://github.com/nearhost/nearhost/commit/f3a67b62cbff47534c8711cc63530c3ba647784b))
+* **tui:** say what the name and alias are for on the name step ([#206](https://github.com/nearhost/nearhost/issues/206)) ([77ada46](https://github.com/nearhost/nearhost/commit/77ada46b2ba4f643bb4ba575ec6852f2a2ed7012))
+* **tui:** scrollbars on the sidebar, the panel log and long forms ([#218](https://github.com/nearhost/nearhost/issues/218)) ([1e8e224](https://github.com/nearhost/nearhost/commit/1e8e2243c1229bfed1928cbce142d72cc4662cfe))
+* **tui:** select and copy with the mouse, and click addresses to open them ([#216](https://github.com/nearhost/nearhost/issues/216)) ([13cc396](https://github.com/nearhost/nearhost/commit/13cc396f44204f1f69319837b2a55dc55fc6e844))
+* **tui:** show what each route opens on the routes step ([#205](https://github.com/nearhost/nearhost/issues/205)) ([07874bc](https://github.com/nearhost/nearhost/commit/07874bc37ba4b03129e7ef230184713171dfa3da))
+
+
+### Bug Fixes
+
+* **agents:** clear errors for a missing --web value, no curl, or a long socket path ([#238](https://github.com/nearhost/nearhost/issues/238)) ([2f36d6c](https://github.com/nearhost/nearhost/commit/2f36d6c790780dcab0d6d1202cfbb95f706b0985))
+* **cli:** clear errors for a bad port, path, name or missing preset ([#235](https://github.com/nearhost/nearhost/issues/235)) ([775346b](https://github.com/nearhost/nearhost/commit/775346b0e3237e2203f4f09dd391d2c9fa456035))
+* **config:** lock the config file while one process changes it ([#229](https://github.com/nearhost/nearhost/issues/229)) ([36af1d8](https://github.com/nearhost/nearhost/commit/36af1d80542abe83ecd7e619fb9e993eae9be85e))
+* **dockernet:** look for OrbStack, Rancher Desktop, Podman and the current docker context ([#230](https://github.com/nearhost/nearhost/issues/230)) ([5cff3cb](https://github.com/nearhost/nearhost/commit/5cff3cbc5027807530899bc1e5d33bf08dc695be))
+* **engine:** serve without Nearhost's page when its port is taken ([#221](https://github.com/nearhost/nearhost/issues/221)) ([e8c15a4](https://github.com/nearhost/nearhost/commit/e8c15a41b216fc8d89d880604d324268d4f3c57e))
+* **export:** refuse a .nearhostrc that links outside the project ([#225](https://github.com/nearhost/nearhost/issues/225)) ([d9017f7](https://github.com/nearhost/nearhost/commit/d9017f781750580518244d9a2c7d58920d8b0436))
+* **hosts:** add ::1 beside 127.0.0.1 for each name ([#228](https://github.com/nearhost/nearhost/issues/228)) ([3d2c400](https://github.com/nearhost/nearhost/commit/3d2c400e2511a2f8009ee6c43b95cee2f7207617))
+* **hosts:** keep a name when the nameserver is on this machine ([#227](https://github.com/nearhost/nearhost/issues/227)) ([a82afaf](https://github.com/nearhost/nearhost/commit/a82afafccd2141174598bdbbf95962be5dd2cb3e))
+* keep a source build's CA apart, and say when a port needs permission ([#242](https://github.com/nearhost/nearhost/issues/242)) ([2a3b797](https://github.com/nearhost/nearhost/commit/2a3b797e1bdd5440cc815c4b8e994827f443cf5d))
+* keep the local CA in the data directory, not ~/.config ([#226](https://github.com/nearhost/nearhost/issues/226)) ([80e5b49](https://github.com/nearhost/nearhost/commit/80e5b49ef0d1bd77fb012aa27145e5464b744a6b))
+* **presets:** write a registry preset atomically ([#231](https://github.com/nearhost/nearhost/issues/231)) ([40333d5](https://github.com/nearhost/nearhost/commit/40333d58bc48ef6c44dc27d67b6edc92b7991c01))
+* run trust's sudo from its root-owned path, and require Go 1.27.3 ([#243](https://github.com/nearhost/nearhost/issues/243)) ([c6fa090](https://github.com/nearhost/nearhost/commit/c6fa09052d976288291064af49c0a01478094c71))
+* say a doctor failure once, and hide the proxy's routine messages ([#236](https://github.com/nearhost/nearhost/issues/236)) ([c784a22](https://github.com/nearhost/nearhost/commit/c784a225fc0a2cd5f2bfb7b610972d168e6b34b5))
+* **sudo:** run sudo by its absolute path, owned by root ([#223](https://github.com/nearhost/nearhost/issues/223)) ([203f90d](https://github.com/nearhost/nearhost/commit/203f90daec13090ece1c517f62742d99ebd9b615))
+* tighten export links, concurrent config writes, add's name check, sudo and page-port handling ([e5b280c](https://github.com/nearhost/nearhost/commit/e5b280c6dfb4eae346c98febe74a48f6eb0590b2))
+* **transport:** forward agents to a server whose home has this machine's path ([#208](https://github.com/nearhost/nearhost/issues/208)) ([9656552](https://github.com/nearhost/nearhost/commit/9656552541b5ea24a2aacce4afd7103e5e296baa))
+* **transport:** never read an ssh host as an option ([#224](https://github.com/nearhost/nearhost/issues/224)) ([33fa418](https://github.com/nearhost/nearhost/commit/33fa418e3a3ed22a17667282a75649cc39941dbd))
+* **tui:** fit the empty screen, help and size warning to small windows ([#232](https://github.com/nearhost/nearhost/issues/232)) ([8b4e89e](https://github.com/nearhost/nearhost/commit/8b4e89efda0b2757f748fac7fe44033c24e5811b))
+* **tui:** keep other web routes when cycling a route's role ([#212](https://github.com/nearhost/nearhost/issues/212)) ([dbf8361](https://github.com/nearhost/nearhost/commit/dbf8361fd5697821a76749590a91c722a621fa59))
+* **tui:** say how to fix the proxy for the reason it is down ([#233](https://github.com/nearhost/nearhost/issues/233)) ([0158849](https://github.com/nearhost/nearhost/commit/0158849745c4bf840eb7bb52594b6da7cbda466e))
+* **update:** give the first check of the day long enough to finish ([#237](https://github.com/nearhost/nearhost/issues/237)) ([2ffccd9](https://github.com/nearhost/nearhost/commit/2ffccd971c522efe7d7d700c9ab7626384366456))
+
 ## [0.7.1](https://github.com/nearhost/nearhost/compare/v0.7.0...v0.7.1) (2026-10-20)
 
 
