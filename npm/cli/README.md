@@ -81,7 +81,7 @@ Then ask the agent to add the project, with `/nearhost add` in Claude Code. Near
 | `nearhost trust` / `untrust` | Add or remove the local certificate authority in the system trust store |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
 
-Every command takes `--help`.
+`nearhost --version` prints the version. Every command takes `--help`.
 
 ## How it compares
 
