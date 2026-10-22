@@ -1,0 +1,32 @@
+internal/update/method.go
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 93-95
+  s_cc6c1166ddaad7::t_28504cc2862f3c 92
+internal/update/method_test.go
+  s_cc6c1166ddaad7::t_ddf843a183fe29 4,56-66
+  s_cc6c1166ddaad7::t_9b1b23a8f07f6d 67
+internal/update/update_test.go
+  s_cc6c1166ddaad7::t_ddf843a183fe29 121-147
+internal/update/update.go
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 13,152-157,161-166
+  s_cc6c1166ddaad7::t_30a8c6775ad31d 167
+internal/config/paths_test.go
+  s_cc6c1166ddaad7::t_ec01499778be31 9,338-386
+internal/config/paths.go
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 15-22,26-28,36-45,61-62,73-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd11ada5507ceea19ab0f2c0bbdeccf085c91ba1",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
