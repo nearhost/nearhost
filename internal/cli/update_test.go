@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,8 +230,8 @@ func TestColdCheckFinishesWithinTheGrace(t *testing.T) {
 	if got := c.notice(updateGrace); got == "" {
 		t.Fatal("a check finishing within the grace gave no notice")
 	}
-	if !checker.HasFresh() {
-		t.Fatal("the cache was not written")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the cache was not written: %v", err)
 	}
 }
 
@@ -254,7 +255,7 @@ func TestHungCheckSavesTheCacheWithinTheGrace(t *testing.T) {
 	case <-time.After(updateGrace):
 		t.Fatal("the check outlasted the grace")
 	}
-	if !checker.HasFresh() {
-		t.Fatal("the failed check was not cached")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the failed check was not cached: %v", err)
 	}
 }
