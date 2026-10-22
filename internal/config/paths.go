@@ -8,7 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
+
+	"github.com/nearhost/nearhost/internal/oserr"
 )
 
 // Dir is the nearhost configuration directory. A relative XDG_CONFIG_HOME is
@@ -180,7 +181,7 @@ func migrateCaddyDir(old, new string) error {
 		}
 	} else {
 		err := rename(old, new)
-		if !errors.Is(err, syscall.EXDEV) {
+		if !oserr.CrossDevice(err) {
 			if err != nil {
 				return fail(err)
 			}
