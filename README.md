@@ -71,7 +71,7 @@ sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
-The macOS binary is not notarised yet. The Homebrew cask removes the quarantine flag so Gatekeeper doesn't block it. The install script and the npm package don't need to: macOS only quarantines files that a browser or similar app downloads, and `curl` and npm are not that, so a binary they put in place runs without a warning. If you download a release archive in a browser, check it as below first, then clear the flag on the extracted binary: from the folder you extracted it to, run `xattr -dr com.apple.quarantine ./nearhost`.
+From Nearhost 0.9.0 the macOS binaries are signed with a Developer ID certificate and notarised by Apple, so Gatekeeper runs them however you download them.
 
 Releases carry build provenance attestations, and a software bill of materials (`<archive>.sbom.json`) for each archive. To check a download, run `gh attestation verify <file> --repo nearhost/nearhost`.
 
