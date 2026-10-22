@@ -26,6 +26,23 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Signs the darwin binaries with the Developer ID Application certificate and
+# has Apple notarise them before they are archived, so Gatekeeper lets them run.
+# Always on: the cask no longer clears the quarantine flag, so a release must
+# fail rather than ship an unsigned macOS binary when the secrets are missing.
+notarize:
+  macos:
+    - enabled: true
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
 # One SBOM per archive, written by syft (the release workflow installs it).
 sboms:
   - artifacts: archive
@@ -46,11 +63,3 @@ homebrew_casks:
     description: Reach local and remote development servers at their own domain (https://<name>.test by default)
     license: MIT
     commit_msg_template: "feat: update nearhost to {{ .Tag }}"
-    hooks:
-      post:
-        # The binary is not notarised, so lift the quarantine flag Gatekeeper
-        # would otherwise refuse it on.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/nearhost"]
-          end
