@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -286,9 +287,10 @@ func TestAcceptRefusesAChangeANewerReviewSaved(t *testing.T) {
 	}
 }
 
-// The interface hides stderr while it runs, so a CA that could not move is
-// not warned of there; the warning goes to the interface's log.
-func TestBareNearhostKeepsTheMoveWarningOffStderr(t *testing.T) {
+// failCAMove leaves a CA at the old path that cannot move, as the data
+// directory's parent can't be written.
+func failCAMove(t *testing.T) {
+	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes to read-only directories")
 	}
@@ -302,7 +304,6 @@ func TestBareNearhostKeepsTheMoveWarningOffStderr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The data directory's parent can't be written, so the move fails.
 	parent := filepath.Dir(data)
 	if err := os.Chmod(parent, 0o500); err != nil {
 		t.Fatal(err)
@@ -311,13 +312,51 @@ func TestBareNearhostKeepsTheMoveWarningOffStderr(t *testing.T) {
 	if note := migrateCANote(); !strings.Contains(note, "Warning") {
 		t.Fatalf("the move did not fail: %q", note)
 	}
+}
+
+// The interface hides stderr while it runs, so a CA that could not move is
+// warned of in the interface's log, not on stderr.
+func TestBareNearhostPutsTheMoveWarningInTheLog(t *testing.T) {
+	failCAMove(t)
 	ran := false
+	b := fakeUI(t, true, &ran)
+	var events <-chan engine.Event
+	b.engineMade = func(eng *engine.Engine) {
+		ch, unsubscribe := eng.Events().Subscribe(16)
+		t.Cleanup(unsubscribe)
+		events = ch
+	}
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	out, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080")
+	out, err := runRoot(t, uiRoot(b), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080")
 	if err != nil || !ran {
 		t.Fatalf("err %v, ran %v", err, ran)
 	}
 	if strings.Contains(out, "Warning") {
 		t.Errorf("warned on stderr, hidden behind the interface:\n%s", out)
+	}
+	for logged := false; !logged; {
+		select {
+		case ev := <-events:
+			logged = strings.Contains(ev.Message, "could not move its local CA")
+		default:
+			t.Fatal("the warning was not published to the interface's log")
+		}
+	}
+}
+
+// A run that fails before the interface exists prints the warning, which
+// would otherwise be lost.
+func TestBareNearhostPrintsTheMoveWarningWhenItFailsEarly(t *testing.T) {
+	failCAMove(t)
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.workDir = func() (string, error) { return "", errors.New("no working directory") }
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := runRoot(t, uiRoot(b), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080")
+	if err == nil || ran {
+		t.Fatalf("err %v, ran %v", err, ran)
+	}
+	if !strings.Contains(out, "could not move its local CA") {
+		t.Errorf("no warning on stderr:\n%s", out)
 	}
 }

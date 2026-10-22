@@ -52,6 +52,10 @@ type uiBackend struct {
 	// updateNotice delivers a line saying a new release is out, if one is;
 	// nil means no check.
 	updateNotice func() <-chan string
+	// engineMade, when set, is given the engine as soon as it is made,
+	// before anything is published on its bus. Tests use it to listen;
+	// it is nil otherwise.
+	engineMade func(*engine.Engine)
 }
 
 // systemUI is the production backend. Only NewRoot wires it in, with the
@@ -137,8 +141,14 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		return err
 	}
 	// Before anything reads the CA's directory, so this run serves from
-	// where it lands.
+	// where it lands. The warning goes to the interface's log; a run that
+	// fails before there is one prints it.
 	migrateNote := migrateCANote()
+	defer func() {
+		if migrateNote != "" {
+			fmt.Fprintln(cmd.ErrOrStderr(), migrateNote)
+		}
+	}()
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err
@@ -166,6 +176,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	})
 	defer ag.close()
 	eng := engine.New(cfg, opts)
+	if b.engineMade != nil {
+		b.engineMade(eng)
+	}
 	back.Engine, back.agents = eng, ag
 	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
@@ -179,6 +192,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 			eng.Events().Publish(engine.Event{Message: note})
 		}
 	}
+	migrateNote = "" // in the log now
 	if b.updateNotice != nil {
 		go func() {
 			for n := range b.updateNotice() {
