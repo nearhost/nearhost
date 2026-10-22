@@ -1,0 +1,22 @@
+README.md
+  s_e8c5d245e902d9::t_159da49634f962 64,222
+  s_e8c5d245e902d9::t_0c37c5a822d6a5 58
+go.mod
+  s_e8c5d245e902d9::t_960ab4a7ddc10b 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e1b069a43424de80da2eeeb06c05a1df6eee11f",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
