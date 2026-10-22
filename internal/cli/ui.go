@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/desktop"
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
@@ -90,7 +89,7 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			return string(data), err
 		},
 		lookup:  lookup,
-		open:    openBrowser,
+		open:    desktop.OpenURL,
 		workDir: os.Getwd,
 		presets: systemPresets(),
 		sshConfig: func() ([]byte, error) {
@@ -102,15 +101,6 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 		},
 		updateNotice: func() <-chan string { return updates.wait() },
 	}
-}
-
-// openBrowser opens url with the system's opener.
-func openBrowser(url string) error {
-	opener := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		opener = "open"
-	}
-	return exec.Command(opener, url).Run()
 }
 
 // bindUI makes bare `nearhost` open the interface at a terminal, with the

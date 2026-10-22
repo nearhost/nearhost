@@ -2,9 +2,7 @@ package tui
 
 import (
 	"image/color"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/nearhost/nearhost/internal/desktop"
 )
 
 // The TUI takes the mouse, for clicks on rows and keys and the wheel on the
@@ -76,13 +75,7 @@ func sameColour(a, b color.Color) bool {
 }
 
 // openURL opens an address in the browser; tests replace it.
-var openURL = func(url string) error {
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
-	}
-	return exec.Command(name, url).Run()
-}
+var openURL = desktop.OpenURL
 
 // now is the time, for double-clicks; tests replace it.
 var now = time.Now
