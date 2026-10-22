@@ -250,11 +250,42 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(file, data, 0o644); err != nil {
+	if err := writeFileAtomic(file, data, 0o644); err != nil {
 		return nil, err
 	}
 	cfg.UpsertPreset(config.PresetRef{Name: name, Ref: idx.Ref, SHA256: e.SHA256})
 	return p, nil
+}
+
+// writeFileAtomic writes data to path so that a crash leaves either the old
+// file or the new one, never a truncated file. It writes a temp file beside
+// path, syncs it, sets its mode and renames it into place. The temp file is
+// removed on any error.
+func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Chmod(mode); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // printable makes text from a preset or the registry safe to print: one line, no control characters.
