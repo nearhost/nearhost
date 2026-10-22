@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,11 +46,7 @@ var (
 // installed, the tool is slow or fails, or the process belongs to another
 // user and the tool will not name it. It gives up when ctx ends.
 func PortHolder(ctx context.Context, port int) string {
-	tools := []holderTool{lsofTool}
-	if runtime.GOOS == "linux" {
-		tools = []holderTool{ssTool, lsofTool}
-	}
-	return findHolder(ctx, tools, port, holderTimeout)
+	return findHolder(ctx, holderTools(), port, holderTimeout)
 }
 
 // heldBy is the clause naming the process that listens on port: " by node
@@ -151,4 +146,25 @@ func parseSS(out string, port int) string {
 		return describeHolder(m[1], pid)
 	}
 	return ""
+}
+
+// parseNetstat reads `netstat -ano` output on Windows and returns the pid of
+// the TCP socket listening on port, or 0. A socket listens when its remote
+// address is all zeros: the State column and the headings are translated, so
+// neither is read.
+func parseNetstat(out string, port int) int {
+	suffix := ":" + strconv.Itoa(port)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != "TCP" || !strings.HasSuffix(fields[1], suffix) {
+			continue
+		}
+		if fields[2] != "0.0.0.0:0" && fields[2] != "[::]:0" {
+			continue
+		}
+		if pid, err := strconv.Atoi(fields[len(fields)-1]); err == nil && pid > 0 {
+			return pid
+		}
+	}
+	return 0
 }
