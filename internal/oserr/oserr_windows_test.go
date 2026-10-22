@@ -17,3 +17,10 @@ func TestNoLoopbackFamilyOnWindows(t *testing.T) {
 		t.Errorf("NoLoopbackFamily(%v) = false", err)
 	}
 }
+
+func TestNotAFileForADirectoryOnWindows(t *testing.T) {
+	_, err := os.ReadFile(t.TempDir())
+	if !NotAFile(err) {
+		t.Errorf("NotAFile(%v) = false for reading a directory", err)
+	}
+}
