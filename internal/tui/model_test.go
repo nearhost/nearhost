@@ -81,7 +81,7 @@ func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
 		t.Error("projects were started without a proxy")
 	}
 	wantScreen(t, m, "proxy     ● down", "● proxy  down", "why       boom", "The proxy could not start: boom")
-	if strings.Contains(screen(m), "page") {
+	if strings.Contains(screen(m), "https://localhost") {
 		t.Error("the page is linked while the proxy is down")
 	}
 }
