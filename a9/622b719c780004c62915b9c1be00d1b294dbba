@@ -1,0 +1,22 @@
+internal/cli/presets_test.go
+  s_e8c5d245e902d9::t_f11192b5cae6bf 90-93,109-111
+  s_e8c5d245e902d9::t_0a991f32242993 112
+internal/cli/presets.go
+  s_e8c5d245e902d9::t_f11192b5cae6bf 263-265,269-273,303-304,307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a9622b719c780004c62915b9c1be00d1b294dbba",
+  "prompts": {},
+  "sessions": {
+    "s_e8c5d245e902d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5838b929-4de2-4f9c-a293-db115e94d8e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
