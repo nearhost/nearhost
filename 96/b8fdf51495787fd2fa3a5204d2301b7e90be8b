@@ -1,0 +1,14 @@
+README.md
+  h_13c4e797d6e9d2 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96b8fdf51495787fd2fa3a5204d2301b7e90be8b",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
