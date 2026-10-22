@@ -648,8 +648,10 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			name = path.Base(projectPath)
 		}
 	}
-	if flags.name != "" && strings.TrimSpace(flags.alias) == "" && config.HasNonASCIIWord(flags.name) {
-		return fail("the name %q has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain", flags.name)
+	// A name from the directory is checked too: it becomes the alias the
+	// same way.
+	if strings.TrimSpace(flags.alias) == "" && config.HasNonASCII(name) {
+		return fail("the name %q has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain", name)
 	}
 	var taken *nameTakenError
 	switch err := nameProblem(cfg, name); {

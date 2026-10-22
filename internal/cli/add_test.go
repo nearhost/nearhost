@@ -1078,15 +1078,24 @@ func TestAddNearhostrcWithOnlyAnAlias(t *testing.T) {
 func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	dir := fixture(t, "sail-custom")
+	missing := filepath.Join(t.TempDir(), "missing")
+	// A directory whose name becomes the project's.
+	uni := filepath.Join(t.TempDir(), "ünï")
+	if err := os.Mkdir(uni, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{dir, "--name", "w", "--web", "abc"}, `--web must be a port number, not "abc"`},
 		{[]string{dir, "--name", "w", "--web", "70000"}, "--web must be a port between 1 and 65535, not 70000"},
-		{[]string{"/nonexistent"}, "no directory at /nonexistent"},
+		{[]string{missing}, "no directory at " + missing},
 		{[]string{dir, "--name", "ünï"}, `the name "ünï" has no letters a domain can use; pass --name with a-z, 0-9 and -, or --alias for the full domain`},
 		{[]string{dir, "--name", "café"}, `the name "café" has no letters a domain can use`},
+		{[]string{dir, "--name", "foo™"}, `the name "foo™" has no letters a domain can use`},
+		{[]string{dir, "--name", "foo\u0301"}, `has no letters a domain can use`},
+		{[]string{uni}, `the name "ünï" has no letters a domain can use; pass --name`},
 	} {
 		out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, c.args...)...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
