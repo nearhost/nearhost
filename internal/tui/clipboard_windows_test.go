@@ -13,11 +13,9 @@ import (
 // package variables are set before any init runs.
 var realClipboard = systemClipboard
 
-func TestSystemClipboardKeepsUnicodeOnWindows(t *testing.T) {
-	text := "https://café.test/😀"
-	if err := realClipboard(text); err != nil {
-		t.Fatal(err)
-	}
+// readClipboard returns the clipboard's text, read by PowerShell.
+func readClipboard(t *testing.T) string {
+	t.Helper()
 	dir, err := windows.GetSystemDirectory()
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +29,34 @@ func TestSystemClipboardKeepsUnicodeOnWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimRight(string(out), "\r\n"); got != text {
+	// Write-Output ends what it writes with a line break of its own.
+	return strings.TrimSuffix(string(out), "\r\n")
+}
+
+// keepClipboard puts the clipboard's text back when the test ends, so a run
+// on a developer's machine leaves what they had copied.
+func keepClipboard(t *testing.T) {
+	saved := readClipboard(t)
+	t.Cleanup(func() { realClipboard(saved) })
+}
+
+func TestSystemClipboardKeepsUnicodeOnWindows(t *testing.T) {
+	keepClipboard(t)
+	text := "https://café.test/😀"
+	if err := realClipboard(text); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClipboard(t); got != text {
 		t.Fatalf("clipboard holds %q, want %q", got, text)
+	}
+}
+
+func TestSystemClipboardEndsLinesWithCRLFOnWindows(t *testing.T) {
+	keepClipboard(t)
+	if err := realClipboard("one\ntwo\r\nthree"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readClipboard(t), "one\r\ntwo\r\nthree"; got != want {
+		t.Fatalf("clipboard holds %q, want %q", got, want)
 	}
 }

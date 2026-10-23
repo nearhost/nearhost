@@ -11,7 +11,8 @@ func TestDetect(t *testing.T) {
 	env := func(vars map[string]string) func(string) string {
 		return func(k string) string { return vars[k] }
 	}
-	home := map[string]string{"HOME": "/Users/me"}
+	// Go's default GOPATH is under USERPROFILE on Windows.
+	home := map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}
 	for _, tc := range []struct {
 		name, exe string
 		env       map[string]string
@@ -27,7 +28,7 @@ func TestDetect(t *testing.T) {
 		{"npx", "/Users/me/.npm/_npx/1a2b3c/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost", home, Ephemeral, ""},
 		{"bunx", "/private/tmp/bunx-501-@nearhost/cli@latest/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost", home, Ephemeral, ""},
 		{"go default", "/Users/me/go/bin/nearhost", home, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
-		{"go GOPATH", "/work/gopath/bin/nearhost", map[string]string{"HOME": "/Users/me", "GOPATH": "/work/gopath:/other"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
+		{"go GOPATH", "/work/gopath/bin/nearhost", map[string]string{"HOME": "/Users/me", "GOPATH": "/work/gopath" + string(filepath.ListSeparator) + "/other"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"go GOBIN", "/opt/gobin/nearhost", map[string]string{"HOME": "/Users/me", "GOBIN": "/opt/gobin"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"script usr local", "/usr/local/bin/nearhost", home, Script, "curl -fsSL https://nearhost.dev/install.sh | sh"},
 		{"script local bin", "/Users/me/.local/bin/nearhost", home, Script, "curl -fsSL https://nearhost.dev/install.sh | sh"},

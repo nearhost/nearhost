@@ -338,7 +338,9 @@ func TestLeftoverCaddyDirOnlyWhenBothExist(t *testing.T) {
 
 func TestDirsForEachOS(t *testing.T) {
 	home, appData, localAppData, xdgConfig, xdgData := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	// os.UserHomeDir reads USERPROFILE on Windows.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("APPDATA", appData)
 	t.Setenv("LOCALAPPDATA", localAppData)
 	for _, tc := range []struct {
