@@ -46,8 +46,9 @@ func TestDetect(t *testing.T) {
 }
 
 func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
-	m := Detect("/opt/tools/bin/nearhost", func(string) string { return "" })
-	if !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR=/opt/tools/bin") {
+	dir := filepath.Join("/opt", "tools", "bin")
+	m := Detect(filepath.Join(dir, "nearhost"), func(string) string { return "" })
+	if !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR="+dir) {
 		t.Fatalf("Env = %v, want the binary's directory as NEARHOST_INSTALL_DIR", m.Env)
 	}
 	if m.Args[0] != "sh" || !strings.Contains(m.Args[2], "install.sh | sh") {

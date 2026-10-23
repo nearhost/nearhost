@@ -1,13 +1,10 @@
 package oserr
 
 import (
-	"errors"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -57,14 +54,7 @@ func TestNotAFile(t *testing.T) {
 	if _, err := os.ReadFile(dir); !NotAFile(err) {
 		t.Errorf("reading a directory: NotAFile(%v) = false", err)
 	}
-	// Beneath a regular file is ENOTDIR on Unix and ERROR_PATH_NOT_FOUND,
-	// which is fs.ErrNotExist, on Windows.
-	_, err := os.ReadFile(filepath.Join(file, "child"))
-	if runtime.GOOS == "windows" {
-		if NotAFile(err) || !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("reading beneath a file: NotAFile(%v) = %v, want fs.ErrNotExist alone", err, NotAFile(err))
-		}
-	} else if !NotAFile(err) {
+	if _, err := os.ReadFile(filepath.Join(file, "child")); !NotAFile(err) {
 		t.Errorf("reading beneath a file: NotAFile(%v) = false", err)
 	}
 	if NotAFile(io.EOF) {
