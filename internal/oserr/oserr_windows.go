@@ -11,7 +11,8 @@ import (
 // or WinNAT has reserved, or held with SO_EXCLUSIVEADDRUSE, is WSAEACCES:
 // taken, as far as Nearhost can tell. Reading a directory fails with
 // ERROR_INVALID_FUNCTION; a path beneath a regular file is
-// ERROR_PATH_NOT_FOUND, which callers see as fs.ErrNotExist.
+// ERROR_PATH_NOT_FOUND, which syscall defines as ENOTDIR and which is also
+// fs.ErrNotExist. So is a path whose directory is missing.
 var (
 	addrInUse        = []syscall.Errno{windows.WSAEADDRINUSE, windows.WSAEACCES}
 	noLoopbackFamily = []syscall.Errno{windows.WSAEADDRNOTAVAIL, windows.WSAEAFNOSUPPORT}
