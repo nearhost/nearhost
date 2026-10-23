@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -121,7 +122,9 @@ func TestCachedIgnoresCorruptCache(t *testing.T) {
 
 func TestCachePathForEachOS(t *testing.T) {
 	home, localAppData, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	// os.UserHomeDir reads USERPROFILE on Windows.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("LOCALAPPDATA", localAppData)
 	t.Setenv("XDG_CACHE_HOME", "")
 	for goos, want := range map[string]string{
@@ -140,8 +143,10 @@ func TestCachePathForEachOS(t *testing.T) {
 		}
 	}
 	t.Setenv("XDG_CACHE_HOME", "")
-	t.Setenv("LOCALAPPDATA", "")
-	if _, err := cachePathFor("windows"); err == nil {
-		t.Error("cachePathFor(windows) with no LOCALAPPDATA: no error")
+	for _, local := range []string{"", "relative"} {
+		t.Setenv("LOCALAPPDATA", local)
+		if _, err := cachePathFor("windows"); err == nil || !strings.Contains(err.Error(), "%LOCALAPPDATA%") {
+			t.Errorf("cachePathFor(windows) with LOCALAPPDATA %q: %v, want an error naming %%LOCALAPPDATA%%", local, err)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -35,6 +36,8 @@ const (
 // text without one in the console's code page. Tests replace it, so they
 // leave the clipboard alone.
 var systemClipboard = func(text string) error {
+	// Unicode text on the clipboard ends its lines with CR-LF.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
 	units, err := windows.UTF16FromString(text)
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -58,8 +59,13 @@ func TestNotAFile(t *testing.T) {
 	}
 	// Beneath a regular file is ENOTDIR on Unix and ERROR_PATH_NOT_FOUND,
 	// which is fs.ErrNotExist, on Windows.
-	if _, err := os.ReadFile(filepath.Join(file, "child")); !NotAFile(err) && !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("reading beneath a file: %v is neither NotAFile nor fs.ErrNotExist", err)
+	_, err := os.ReadFile(filepath.Join(file, "child"))
+	if runtime.GOOS == "windows" {
+		if NotAFile(err) || !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("reading beneath a file: NotAFile(%v) = %v, want fs.ErrNotExist alone", err, NotAFile(err))
+		}
+	} else if !NotAFile(err) {
+		t.Errorf("reading beneath a file: NotAFile(%v) = false", err)
 	}
 	if NotAFile(io.EOF) {
 		t.Error("NotAFile(io.EOF) = true")

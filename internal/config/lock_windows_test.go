@@ -5,7 +5,30 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
+
+func TestLockFileExcludesOthersOnWindows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml.lock")
+	unlock, err := lockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// A second open of the file asks for the same byte without waiting, so
+	// the answer does not depend on when a goroutine is scheduled.
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY)
+	err = windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, &windows.Overlapped{})
+	if err != windows.ERROR_LOCK_VIOLATION {
+		t.Fatalf("a second lock while the first is held: %v, want ERROR_LOCK_VIOLATION", err)
+	}
+}
 
 func TestLockFileWaitsOnWindows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml.lock")
