@@ -15,9 +15,11 @@ var crossDeviceCode = windows.ERROR_NOT_SAME_DEVICE
 // or reserve a port range, so it cannot produce them for real.
 
 func TestNoLoopbackFamilyOnWindows(t *testing.T) {
-	err := &net.OpError{Op: "listen", Net: "tcp6", Err: os.NewSyscallError("bind", windows.WSAEADDRNOTAVAIL)}
-	if !NoLoopbackFamily(err) {
-		t.Errorf("NoLoopbackFamily(%v) = false", err)
+	for _, code := range []windows.Errno{windows.WSAEADDRNOTAVAIL, windows.WSAEAFNOSUPPORT} {
+		err := &net.OpError{Op: "listen", Net: "tcp6", Err: os.NewSyscallError("bind", code)}
+		if !NoLoopbackFamily(err) {
+			t.Errorf("NoLoopbackFamily(%v) = false", err)
+		}
 	}
 }
 
