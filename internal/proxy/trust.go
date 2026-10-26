@@ -71,9 +71,13 @@ func Install(cert *x509.Certificate) error {
 	return nil
 }
 
-// Uninstall removes the root from the trust stores Install touched.
+// Uninstall removes the root from the trust stores Install touched, and on
+// macOS deletes it from the System keychain too.
 func Uninstall(cert *x509.Certificate) error {
 	if err := withTrustedSudo(func() error { return trustUninstall(cert, truststore.WithFirefox()) }); err != nil {
+		return fmt.Errorf("uninstall CA: %w", err)
+	}
+	if err := removeSystemCopy(cert); err != nil {
 		return fmt.Errorf("uninstall CA: %w", err)
 	}
 	return nil
