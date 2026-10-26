@@ -1,0 +1,23 @@
+internal/engine/docker.go
+  s_c5536fb18c5739::t_713ddda46cdcb5 19-22,35,64-65,83,179
+internal/dockernet/dockernet_test.go
+  s_c5536fb18c5739::t_713ddda46cdcb5 62
+internal/engine/docker_test.go
+  s_c5536fb18c5739::t_713ddda46cdcb5 151-153,162-163,165,200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5544df3bd9a234ab03280fc66d6eae2015ef48c1",
+  "prompts": {},
+  "sessions": {
+    "s_c5536fb18c5739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b76797d9-8413-4828-bfb8-a9666479d966",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
