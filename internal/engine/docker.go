@@ -16,10 +16,10 @@ const defaultDockerRefresh = 30 * time.Second
 // dockerState is what the engine knows of the local Docker networks. It is
 // guarded by Engine.mu.
 //
-// Only the ranges Docker reports are served. dockernet.Fallback, a block
-// that holds LAN addresses as well, stands in only while Docker has never
-// answered; once it has, a later failure keeps the last ranges it gave, so
-// a daemon that is restarting does not let the LAN in.
+// Only the ranges Docker reports are served: none while Docker has never
+// answered, since any guess at its networks (its default pools are in
+// 172.16.0.0/12) also holds LAN addresses. Once it has answered, a later
+// failure keeps the last ranges it gave.
 type dockerState struct {
 	ranges   []string // what Docker answered last; meaningless until answered
 	answered bool     // Docker has answered at least once
@@ -32,11 +32,8 @@ type dockerState struct {
 }
 
 // dockerClientsLocked is the ranges a site that opts in is served to,
-// besides loopback.
+// besides loopback: none until Docker has answered.
 func (e *Engine) dockerClientsLocked() []string {
-	if !e.docker.answered {
-		return []string{dockernet.Fallback}
-	}
 	return e.docker.ranges
 }
 
@@ -64,8 +61,8 @@ func describeRanges(ranges []string) string {
 // last ones the loop saw, and logs them for the project. It
 // holds no engine lock while it asks, as ensureHosts holds none while the
 // hosts file is updated, and gives up when ctx ends. A Docker that does not
-// answer does not fail the start: the project is served to
-// dockernet.Fallback until it does.
+// answer does not fail the start: the project is served to loopback alone
+// until it does.
 func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 	e.mu.Lock()
 	answered := e.docker.answered
@@ -83,7 +80,7 @@ func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 			answered = e.docker.answered // another start or the loop may have heard meanwhile
 			e.mu.Unlock()
 			if !answered {
-				e.logProject(run, "Docker did not answer (%v); accepting requests from %s until it does", err, dockernet.Fallback)
+				e.logProject(run, "Docker did not answer (%v); accepting requests from containers once it does", err)
 				return nil
 			}
 		}
@@ -179,7 +176,7 @@ func (e *Engine) dockerIdleLocked() {
 // refreshDocker asks Docker for its networks every Options.DockerRefresh
 // until ctx ends, holding no engine lock while it asks. An answer goes to
 // useDockerRanges; a failure keeps what sites are served to, which is the
-// last answer, or dockernet.Fallback while Docker has never answered.
+// last answer, or loopback alone while Docker has never answered.
 func (e *Engine) refreshDocker(ctx context.Context) {
 	defer e.dockerLoops.Done()
 	defer func() {
