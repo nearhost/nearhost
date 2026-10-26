@@ -1,0 +1,30 @@
+internal/proxy/keychain_other.go
+  s_c5536fb18c5739::t_49841cdfdf23bd 1-9
+internal/proxy/keychain_test.go
+  s_c5536fb18c5739::t_2c3127fedfd810 1-103
+internal/proxy/keychain.go
+  s_c5536fb18c5739::t_49841cdfdf23bd 1-56
+internal/proxy/trust.go
+  s_c5536fb18c5739::t_49841cdfdf23bd 74-75,80
+  s_c5536fb18c5739::t_b3bb2a78e95154 81-82
+internal/proxy/keychain_darwin.go
+  s_c5536fb18c5739::t_49841cdfdf23bd 1-9
+internal/proxy/trust_sudo_test.go
+  s_c5536fb18c5739::t_49841cdfdf23bd 52,54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d958257e25f1094c29fdae7c8e5714e08767f0eb",
+  "prompts": {},
+  "sessions": {
+    "s_c5536fb18c5739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b76797d9-8413-4828-bfb8-a9666479d966",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
