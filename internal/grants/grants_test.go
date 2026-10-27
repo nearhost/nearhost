@@ -296,3 +296,14 @@ func TestValidate(t *testing.T) {
 		t.Errorf("corrupt file: error = %v, want one naming %s", err, path)
 	}
 }
+
+func TestValidateDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "grants.json")
+	if err := os.Symlink(filepath.Join(dir, "missing", "grants.json"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(link).Validate(); err == nil || !strings.Contains(err.Error(), link) {
+		t.Errorf("Validate error = %v, want one naming %s", err, link)
+	}
+}

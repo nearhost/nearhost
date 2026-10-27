@@ -275,10 +275,14 @@ func (s *Store) Prune(keep []string) (removed int, err error) {
 }
 
 // Validate loads the file and returns the error if it cannot be read or
-// parsed. A missing file is valid.
+// parsed, or if it is a symlink to a file that does not exist, which a save
+// would refuse. A missing file is valid.
 func (s *Store) Validate() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := s.target(); err != nil {
+		return err
+	}
 	_, err := s.load()
 	return err
 }
