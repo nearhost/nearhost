@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.0](https://github.com/nearhost/nearhost/compare/v0.9.1...v0.10.0) (2026-10-27)
+
+
+### Features
+
+* **agentapi:** let agents ask for temporary passthroughs ([#271](https://github.com/nearhost/nearhost/issues/271)) ([2372cfe](https://github.com/nearhost/nearhost/commit/2372cfef74f8765ca94c51b2beb92caa3a594f3f))
+* **engine:** close passthroughs when their server or port goes away ([#270](https://github.com/nearhost/nearhost/issues/270)) ([4d95045](https://github.com/nearhost/nearhost/commit/4d950458712536a8dd0391651adf05d3c4c051d5))
+* **engine:** open temporary passthroughs on a connected server ([#268](https://github.com/nearhost/nearhost/issues/268)) ([feb1dfd](https://github.com/nearhost/nearhost/commit/feb1dfdd0db1f43a2510ea536515c4f7dc0b7020))
+* **grants:** keep always-allow grants as token hashes ([#267](https://github.com/nearhost/nearhost/issues/267)) ([8bd3135](https://github.com/nearhost/nearhost/commit/8bd31354db5163bb28471ffe1dd29cfc8ee3f44c))
+* serve passthroughs to agents from the engine ([#272](https://github.com/nearhost/nearhost/issues/272)) ([c4abca5](https://github.com/nearhost/nearhost/commit/c4abca52a0d44874f1457048345171f39fbd0471))
+* **skill:** open browser previews on the laptop from a server ([#275](https://github.com/nearhost/nearhost/issues/275)) ([5c2f104](https://github.com/nearhost/nearhost/commit/5c2f104f7c3de7dd2572111439bfe0b2249e3960))
+* **tui:** ask before opening a port for an agent ([#273](https://github.com/nearhost/nearhost/issues/273)) ([f1b953a](https://github.com/nearhost/nearhost/commit/f1b953a98d869ed59b4a37318551b4f36d645708))
+* **tui:** list, close and revoke passthroughs on the server panel ([#274](https://github.com/nearhost/nearhost/issues/274)) ([4c8dc88](https://github.com/nearhost/nearhost/commit/4c8dc88adbd831b6bad3765673682a93d91513ba))
+
+
+### Bug Fixes
+
+* **agentapi:** give each close its own time, and report what a failed close or grant leaves ([#282](https://github.com/nearhost/nearhost/issues/282)) ([7d947c6](https://github.com/nearhost/nearhost/commit/7d947c6d07a821b8d80e92ed03484ec7b4850c78))
+* **engine:** keep a closing passthrough until its cancel ends, and wait for passthroughs at shutdown ([#280](https://github.com/nearhost/nearhost/issues/280)) ([89e3412](https://github.com/nearhost/nearhost/commit/89e341240ba8ab300d6e5c9d4bb943fb4f14c184))
+* **grants:** sync saves, keep a symlinked file's link, and prune removed servers ([#279](https://github.com/nearhost/nearhost/issues/279)) ([78ef96b](https://github.com/nearhost/nearhost/commit/78ef96bf4f405c7f254c135247ba1ef59c03632f))
+* passthrough follow-up review fixes ([#286](https://github.com/nearhost/nearhost/issues/286)) ([904e85c](https://github.com/nearhost/nearhost/commit/904e85cb6238c03b4ab695fef0a8148738541685))
+* passthrough review fixes ([#277](https://github.com/nearhost/nearhost/issues/277)) ([211eb49](https://github.com/nearhost/nearhost/commit/211eb4944202ddcc1a55a4b610f2a9162f9a81b8))
+* revoke a removed server's grants, and serve agents without passthrough when grants.json is unreadable ([#283](https://github.com/nearhost/nearhost/issues/283)) ([8a65b8d](https://github.com/nearhost/nearhost/commit/8a65b8d74c662d7d43f4bed5facadcf684d479ff))
+* **skill:** keep the session marker until its close succeeds, and decode escaped characters ([#285](https://github.com/nearhost/nearhost/issues/285)) ([01ed477](https://github.com/nearhost/nearhost/commit/01ed477de93c5e94ca67d7371e384bbd67e65524))
+* **tui:** scroll the server's passthroughs, guard closes and revokes, and log what happened ([#284](https://github.com/nearhost/nearhost/issues/284)) ([63ec2e4](https://github.com/nearhost/nearhost/commit/63ec2e4f8f56d1566def884332324c3386ea746f))
+
 ## [0.9.1](https://github.com/nearhost/nearhost/compare/v0.9.0...v0.9.1) (2026-10-27)
 
 
