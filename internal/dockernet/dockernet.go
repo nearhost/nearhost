@@ -22,11 +22,6 @@ import (
 	"time"
 )
 
-// Fallback is the range served while Docker has never answered: the private
-// block Docker's default address pools come from. It also holds LAN
-// addresses, so it is only a stopgap until Docker says which networks exist.
-const Fallback = "172.16.0.0/12"
-
 // timeout bounds asking Docker, over every socket tried. A daemon that is
 // slower than this is treated as not answering; a start waits on it.
 const timeout = 2 * time.Second

@@ -148,7 +148,9 @@ func TestOptedInProjectIsServedToDockerRanges(t *testing.T) {
 	waitLog(t, events, "a", "accepts requests from Docker networks: 10.99.0.0/16")
 }
 
-func TestOptedInProjectFallsBackWhenDockerNeverAnswers(t *testing.T) {
+// While Docker has never answered, nothing beyond loopback is let in: a
+// guess at its networks would hold LAN addresses too.
+func TestOptedInProjectServesOnlyLoopbackUntilDockerAnswers(t *testing.T) {
 	f := &fakeDocker{answers: []dockerAnswer{{err: errors.New("no Docker socket found")}}}
 	h := dockerHarness(t, f, 0, optedIn(t, "a"))
 	events, unsubscribe := h.eng.Events().Subscribe(256)
@@ -157,10 +159,10 @@ func TestOptedInProjectFallsBackWhenDockerNeverAnswers(t *testing.T) {
 	if st := h.eng.Status("a"); st.State != StateRunning {
 		t.Fatalf("status = %+v", st)
 	}
-	if got := clientsOf(h, "a.test"); len(got) != 1 || !slices.Equal(got[0], []string{"172.16.0.0/12"}) {
-		t.Errorf("clients = %q", got)
+	if got := clientsOf(h, "a.test"); len(got) != 1 || got[0] != nil {
+		t.Errorf("clients = %q, want nil", got)
 	}
-	waitLog(t, events, "a", "Docker did not answer (no Docker socket found); accepting requests from 172.16.0.0/12 until it does")
+	waitLog(t, events, "a", "Docker did not answer (no Docker socket found); accepting requests from containers once it does")
 }
 
 func TestRefreshFollowsDockerNetworks(t *testing.T) {
@@ -195,7 +197,7 @@ func TestRefreshKeepsLastRangesWhenDockerStopsAnswering(t *testing.T) {
 	}
 }
 
-func TestRefreshMovesFromFallbackWhenDockerAnswers(t *testing.T) {
+func TestRefreshServesDockerOnceItAnswers(t *testing.T) {
 	f := &fakeDocker{answers: []dockerAnswer{{err: errors.New("not yet")}, {ranges: []string{"10.99.0.0/16"}}}}
 	h := dockerHarness(t, f, 20*time.Millisecond, optedIn(t, "a"))
 	mustStart(t, h, "a")

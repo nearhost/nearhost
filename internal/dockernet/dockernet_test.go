@@ -59,7 +59,7 @@ func TestRangesReadsDaemonNetworks(t *testing.T) {
 	}
 	want := []string{"172.17.0.0/16", "192.168.97.0/24", "fd00:d0c::/64"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ranges = %q, want %q (and never %s)", got, want, Fallback)
+		t.Errorf("ranges = %q, want %q", got, want)
 	}
 }
 
