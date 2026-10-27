@@ -985,6 +985,30 @@ func TestApplyPrunesRemovedServers(t *testing.T) {
 	}
 }
 
+// A config file that is missing when Apply starts loads as no servers; it
+// may be back by the time the apply ends, and that must not prune the grants.
+func TestApplyPrunesNothingWhenTheFileWasMissingAtTheStart(t *testing.T) {
+	u, home := applyRun(t)
+	data, err := os.ReadFile(u.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(u.path); err != nil {
+		t.Fatal(err)
+	}
+	u.applied = func() {
+		if err := os.WriteFile(u.path, data, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	if err := u.Apply(context.Background(), &config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+}
+
 func TestFailedApplyPrunesNothing(t *testing.T) {
 	u, home := applyRun(t)
 	// A server without an ssh_host does not validate, so the engine refuses it.
