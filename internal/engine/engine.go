@@ -242,6 +242,11 @@ type Engine struct {
 	// passWork counts the passthrough check loop and the closes run in the
 	// background. Shutdown waits for them.
 	passWork sync.WaitGroup
+	// passOps counts the OpenPassthrough and ClosePassthrough calls under
+	// way. Each is added under mu while closed is not set, so Shutdown,
+	// which sets it first, waits for every one before it lets go of the
+	// passthroughs.
+	passOps sync.WaitGroup
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
@@ -588,6 +593,9 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	// background find their sessions gone. Whatever passthroughs are left
 	// have nothing to carry them.
 	e.passWork.Wait()
+	// The opens and closes under way end too: with the sessions stopped,
+	// any forward or cancel left to them fails or only forgets the forward.
+	e.passOps.Wait()
 	e.releasePassthroughs()
 	// A forward whose cancel failed kept its port, and its relay with it;
 	// with the sessions gone, nothing is left for either to serve.
