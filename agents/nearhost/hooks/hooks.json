@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/skills/nearhost/scripts/nearhost.sh\" passthrough-close --session \"$CLAUDE_CODE_SESSION_ID\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 ---
 name: nearhost
-description: Serve the project you are working in at its own domain (https://<name>.test by default) with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add, /nearhost status or /nearhost doctor, or asks to add, serve or set up this project in Nearhost, or asks for its URL, or when a project isn't served as expected. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
-argument-hint: "add [--web <port>] [--name <name>] | status [--all] | doctor"
+description: Serve the project you are working in at its own domain (https://<name>.test by default) with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add, /nearhost status or /nearhost doctor, or asks to add, serve or set up this project in Nearhost, or asks for its URL, or when a project isn't served as expected, or when you start a dev server or are about to give the user a localhost URL on a server reached over SSH, to open it on the user's laptop. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
+argument-hint: "add [--web <port>] [--name <name>] | status [--all] | doctor | passthrough <port>"
 allowed-tools: Bash(sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh *)
 ---
 
@@ -13,7 +13,7 @@ Run it as `sh <this skill's directory>/scripts/nearhost.sh <command>`; in Claude
 
 The user asked for: $ARGUMENTS
 
-If that is empty or reads as a placeholder, take `add`, `status` or `doctor` from what the user asked.
+If that is empty or reads as a placeholder, take `add`, `status`, `doctor` or `passthrough` from what the user asked.
 
 ## add
 
@@ -49,6 +49,19 @@ Use this when a project isn't served as the user expects.
 6. Run `doctor .` again. Stop when no error or warning is left that you can fix, then say what is left.
 
 Do not edit Nearhost's config file yourself.
+
+## passthrough
+
+Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev server's port in the user's browser on the laptop.
+
+1. Before you give the user a `localhost:<port>` URL, run `sh .../nearhost.sh passthrough <port> --label "browser preview"`. Do not ask the user in chat first: Nearhost asks them.
+2. If the JSON has an `id` and no `state`, it is waiting. Tell the user: "Approve it in Nearhost on <laptop>." Get `<laptop>` from `sh .../nearhost.sh socket`. Then run `sh .../nearhost.sh passthrough-wait <id>`, and again while it prints `"state":"pending"`, as in add.
+3. On `"state":"open"`, give the user the returned `url` with the path of the page appended, not the `localhost` URL you started with. It is the laptop's port, which may differ from the server's.
+4. Exit status 6 means the user declined it: do not ask again for that port in this session. Exit status 7 means nobody answered within 10 minutes.
+5. On exit status 2 and 5, pass on the message the script printed as it is. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop.
+6. Never run `passthrough-close` yourself, unless the user asks you to close one. Nearhost closes a session's passthroughs when the session ends.
+
+When the user picks "Always allow" in Nearhost, the script keeps the token it is given under `$XDG_STATE_HOME/nearhost/tokens` (by default `~/.local/state/nearhost`) and later asks without a prompt. Do not read, print or edit those files.
 
 ## When the script fails
 
