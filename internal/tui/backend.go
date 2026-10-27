@@ -152,6 +152,10 @@ type Backend interface {
 // already, or opening it failed, which ends it.
 var ErrRequestEnded = errors.New("the request has ended")
 
+// ErrAllowNotSaved is wrapped by Backend.AnswerPassthrough's error when the
+// passthrough opened but the Always allow grant could not be saved.
+var ErrAllowNotSaved = errors.New("always allow was not saved")
+
 // RequestEnded is err, marked as the end of the request it answered: it
 // wraps both err and ErrRequestEnded, and reads as err.
 func RequestEnded(err error) error { return requestEnded{err} }

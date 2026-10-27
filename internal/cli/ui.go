@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -257,6 +258,20 @@ type uiEngine struct {
 	// the change and before it takes the config's lock. Tests use it to
 	// save meanwhile; it is nil otherwise.
 	acceptLocking func()
+}
+
+// Apply applies cfg to the engine. Once it has applied, the grants of servers
+// cfg no longer has are removed, so a server added later under the same name
+// does not inherit them. A failed Apply removes none, and a failure to
+// remove them is shown in the log and does not fail the Apply.
+func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
+	if err := u.Engine.Apply(ctx, cfg); err != nil {
+		return err
+	}
+	if msg := u.agents.prune(u.ConfigPath(), cfg); msg != "" {
+		u.Engine.Events().Publish(engine.Event{Message: msg})
+	}
+	return nil
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }

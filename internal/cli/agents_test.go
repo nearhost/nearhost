@@ -5,22 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
@@ -762,48 +757,21 @@ func TestUpHonoursGrants(t *testing.T) {
 
 func TestReviewerForwardsPassRequest(t *testing.T) {
 	var to tui.Proposals
-	got := make(chan string, 2)
-	prog := tea.NewProgram(recorder{got}, tea.WithInput(nil), tea.WithOutput(io.Discard))
-	to.Attach(prog)
-	go prog.Run()
-	defer prog.Kill()
-
 	r := reviewer{&to}
 	expires := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	r.ReviewPassthrough(agentapi.PassRequest{ID: "r1", Origin: "mini", Requester: "claude-code", Session: "s1",
 		Label: "vite", Remote: 5173, LocalTaken: true, CanAlways: true, Expires: expires})
-	r.Opened(agentapi.Passthrough{Origin: "mini", Requester: "claude-code", Remote: 5173, Local: 5174})
 
-	want := []string{
-		"{r:{ID:r1 Origin:mini Requester:claude-code Session:s1 Label:vite Remote:5173 LocalTaken:true CanAlways:true Expires:ext=" + strconv.FormatInt(expires.Unix()+62135596800, 10) + "}}",
-		"{origin:mini requester:claude-code remote:5173}",
+	props, passes := to.Waiting()
+	if len(props) != 0 || len(passes) != 1 {
+		t.Fatalf("waiting: %d proposals, %d requests", len(props), len(passes))
 	}
-	for i, w := range want {
-		select {
-		case g := <-got:
-			// The time is unexported inside the message, so %+v shows its raw
-			// seconds; keep only those.
-			g = regexp.MustCompile(`Expires:\{wall:0 ext:(\d+) loc:<nil>\}`).ReplaceAllString(g, "Expires:ext=$1")
-			if g != w {
-				t.Fatalf("message %d:\n got %s\nwant %s", i, g, w)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("message %d did not arrive", i)
-		}
+	got := passes[0]
+	if got.ID != "r1" || got.Origin != "mini" || got.Requester != "claude-code" || got.Session != "s1" ||
+		got.Label != "vite" || got.Remote != 5173 || !got.LocalTaken || !got.CanAlways || !got.Expires.Equal(expires) {
+		t.Fatalf("request: %#v", got)
 	}
 }
-
-// recorder is a program that reports the passthrough messages it gets.
-type recorder struct{ got chan<- string }
-
-func (recorder) Init() tea.Cmd { return nil }
-func (r recorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if s := fmt.Sprintf("%+v", msg); strings.HasPrefix(s, "{r:") || strings.HasPrefix(s, "{origin:") {
-		r.got <- s
-	}
-	return r, nil
-}
-func (recorder) View() tea.View { return tea.NewView("") }
 
 func TestGrantsErrorWithoutAgents(t *testing.T) {
 	var none *agents // this run serves no coding agents
@@ -855,5 +823,258 @@ func TestAnswerPassthroughMarksAnEndedRequest(t *testing.T) {
 	}
 	if err := a.answerPassthrough(context.Background(), "gone", tui.AnswerNo); err != nil {
 		t.Fatalf("no: %v", err)
+	}
+}
+
+// grantFile is the grants file of a run with home.
+func grantFile(home string) string { return filepath.Join(home, "grants.json") }
+
+// grantedServers are the servers that have a grant in the file at path.
+func grantedServers(t *testing.T, path string, servers ...string) []string {
+	t.Helper()
+	st := grants.Open(path)
+	var out []string
+	for _, s := range servers {
+		gs, err := st.List(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gs) > 0 {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// grantTo gives claude-code a passthrough grant on each of servers.
+func grantTo(t *testing.T, path string, servers ...string) {
+	t.Helper()
+	st := grants.Open(path)
+	for _, s := range servers {
+		if _, err := st.Allow(s, "claude-code", grants.KindPassthrough); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// configWith saves a config with servers and returns its path.
+func configWith(t *testing.T, dir string, servers ...string) string {
+	t.Helper()
+	cfg := &config.Config{}
+	for _, s := range servers {
+		cfg.Servers = append(cfg.Servers, config.Server{Name: s, SSHHost: s + ".example"})
+	}
+	path := filepath.Join(dir, "config.yaml")
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// useDefaultConfig makes path the default config path for the test.
+func useDefaultConfig(t *testing.T, path string) {
+	t.Helper()
+	old := defaultConfigPath
+	defaultConfigPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { defaultConfigPath = old })
+}
+
+func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
+	home := agentHome(t)
+	if err := os.WriteFile(grantFile(home), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatalf("agents are off: %s", note)
+	}
+	defer a.close()
+	a.review(&tui.Proposals{})
+	if !strings.Contains(note, grantFile(home)) || !strings.Contains(note, "passthrough is off") {
+		t.Fatalf("note %q", note)
+	}
+	out := getJSON(t, a.sock, "/v1")
+	if slices.Contains(out["capabilities"].([]any), any("passthrough")) {
+		t.Fatalf("advertises passthrough: %v", out)
+	}
+	if out["interface"] != true {
+		t.Fatalf("proposals are off: %v", out)
+	}
+	if err := a.grantsErr(); err == nil || !strings.Contains(err.Error(), grantFile(home)) {
+		t.Fatalf("grants error: %v", err)
+	}
+}
+
+func TestStartPrunesRemovedServers(t *testing.T) {
+	home := agentHome(t)
+	grantTo(t, grantFile(home), "apollo", "gone")
+	cfgPath := configWith(t, home, "apollo")
+	useDefaultConfig(t, cfgPath)
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	if got := grantedServers(t, grantFile(home), "apollo", "gone"); !slices.Equal(got, []string{"apollo"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+	if !strings.Contains(note, "Removed 1 Always allow grant") {
+		t.Fatalf("note %q", note)
+	}
+}
+
+func TestStartPrunesNothingWhenConfigFailsToLoad(t *testing.T) {
+	home := agentHome(t)
+	grantTo(t, grantFile(home), "apollo", "gone")
+	cfgPath := filepath.Join(home, "config.yaml")
+	useDefaultConfig(t, cfgPath)
+	if err := os.WriteFile(cfgPath, []byte("servers: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	if got := grantedServers(t, grantFile(home), "apollo", "gone"); !slices.Equal(got, []string{"apollo", "gone"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+}
+
+// applyRun is a running interface backend with grants on apollo and mini.
+func applyRun(t *testing.T) (u *uiEngine, home string) {
+	t.Helper()
+	home = agentHome(t)
+	grantTo(t, grantFile(home), "apollo", "mini")
+	cfgPath := configWith(t, home, "apollo", "mini")
+	useDefaultConfig(t, cfgPath)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	t.Cleanup(a.close)
+	eng := engine.New(cfg, engine.Options{RunDir: home})
+	return &uiEngine{Engine: eng, agents: a, path: cfgPath}, home
+}
+
+func TestApplyPrunesRemovedServers(t *testing.T) {
+	u, home := applyRun(t)
+	events, unsubscribe := u.Events().Subscribe(16)
+	defer unsubscribe()
+	next := &config.Config{Servers: []config.Server{{Name: "apollo", SSHHost: "apollo.example"}}}
+	if err := u.Apply(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if strings.Contains(ev.Message, "Removed 1 Always allow grant") {
+				return
+			}
+		case <-timeout:
+			t.Fatal("no event that says the grant was removed")
+		}
+	}
+}
+
+func TestFailedApplyPrunesNothing(t *testing.T) {
+	u, home := applyRun(t)
+	// A server without an ssh_host does not validate, so the engine refuses it.
+	bad := &config.Config{Servers: []config.Server{{Name: "apollo"}}}
+	if err := u.Apply(context.Background(), bad); err == nil {
+		t.Fatal("applied a bad config")
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+}
+
+func TestRenamedServerLosesGrant(t *testing.T) {
+	u, home := applyRun(t)
+	next := &config.Config{Servers: []config.Server{
+		{Name: "apollo2", SSHHost: "apollo.example"}, {Name: "mini", SSHHost: "mini.example"},
+	}}
+	if err := u.Apply(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "apollo2", "mini"); !slices.Equal(got, []string{"mini"}) {
+		t.Fatalf("grants left on %v", got)
+	}
+}
+
+func TestAnswerMapsAllowNotSaved(t *testing.T) {
+	saved := fmt.Errorf("%w: disk full", agentapi.ErrAllowNotSaved)
+	err := answerError(saved)
+	if !errors.Is(err, tui.ErrAllowNotSaved) || errors.Is(err, tui.ErrRequestEnded) || err.Error() != saved.Error() {
+		t.Fatalf("not saved: %v", err)
+	}
+	// An Always allow whose request ended too carries both marks.
+	both := fmt.Errorf("%w: %w", agentapi.ErrAllowNotSaved, agentapi.ErrPassEnded)
+	if err := answerError(both); !errors.Is(err, tui.ErrAllowNotSaved) || !errors.Is(err, tui.ErrRequestEnded) {
+		t.Fatalf("both: %v", err)
+	}
+	if err := answerError(nil); err != nil {
+		t.Fatalf("nil: %v", err)
+	}
+}
+
+func TestStartPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
+	for name, setup := range map[string]func(home string) (cfgPath string){
+		"missing file": func(home string) string {
+			p := filepath.Join(home, "config.yaml")
+			useDefaultConfig(t, p)
+			return p
+		},
+		"another config": func(home string) string {
+			useDefaultConfig(t, filepath.Join(home, "other.yaml"))
+			return configWith(t, home, "apollo")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := agentHome(t)
+			grantTo(t, grantFile(home), "apollo", "gone")
+			cfgPath := setup(home)
+			a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+			if a == nil {
+				t.Fatal(note)
+			}
+			defer a.close()
+			if got := grantedServers(t, grantFile(home), "apollo", "gone"); !slices.Equal(got, []string{"apollo", "gone"}) {
+				t.Fatalf("grants left on %v", got)
+			}
+		})
+	}
+}
+
+func TestApplyPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
+	empty := &config.Config{}
+	u, home := applyRun(t)
+	if err := os.Remove(u.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Apply(context.Background(), empty); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("missing file: grants left on %v", got)
+	}
+	u, home = applyRun(t)
+	u.path = filepath.Join(home, "other.yaml")
+	if err := os.WriteFile(u.path, []byte("servers: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Apply(context.Background(), empty); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("another config: grants left on %v", got)
 	}
 }
