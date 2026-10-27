@@ -590,6 +590,14 @@ func TestScriptPassthroughOpen(t *testing.T) {
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	home := shortDir(t)
 	s, _, g, rv := passScript(t, home, "mini", true)
+	// The skill's directories are made private even when they exist already.
+	tokens := filepath.Join(home, ".local", "state", "nearhost", "tokens")
+	if err := os.MkdirAll(tokens, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(tokens), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	r := runScript(t, home, claudeEnv, "passthrough", "3000")
 	m := proposalID.FindStringSubmatch(r.stdout)
 	if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"expires_at"`) || strings.Contains(r.stdout, `"state"`) {
@@ -613,8 +621,10 @@ func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	if m := mode(t, tokenPath(home, "claude-code")); m != 0o600 {
 		t.Fatalf("token mode %v", m)
 	}
-	if m := mode(t, filepath.Dir(tokenPath(home, "claude-code"))); m != 0o700 {
-		t.Fatalf("token directory mode %v", m)
+	for _, dir := range []string{filepath.Dir(tokenPath(home, "claude-code")), tokens, filepath.Dir(tokens)} {
+		if m := mode(t, dir); m != 0o700 {
+			t.Fatalf("%s mode %v", dir, m)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")); err != nil {
 		t.Fatalf("no marker: %v", err)

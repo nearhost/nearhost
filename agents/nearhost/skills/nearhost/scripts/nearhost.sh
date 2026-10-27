@@ -208,12 +208,14 @@ plain_word() {
 	esac
 }
 
-# private_dir DIR... makes each directory with mode 0700.
+# private_dir DIR... makes each directory, and gives it mode 0700 even when
+# it existed already. It fails when a directory cannot be made or chmod'd.
 private_dir() {
 	for d in "$@"; do
-		[ -d "$d" ] && continue
-		(umask 077 && mkdir -p "$d") || return 1
-		chmod 700 "$d" 2>/dev/null
+		if [ ! -d "$d" ]; then
+			(umask 077 && mkdir -p "$d") || return 1
+		fi
+		chmod 700 "$d" || return 1
 	done
 }
 
