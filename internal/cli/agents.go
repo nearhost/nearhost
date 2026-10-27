@@ -94,7 +94,8 @@ type agents struct {
 
 // startAgents serves the agent API on ~/.nearhost/<id>.sock. It returns nil
 // and a note saying why when agents cannot reach nearhost from this run,
-// and nil with no note when b serves none.
+// and nil with no note when b serves none. When only the grants file cannot
+// be used it serves the agents without passthroughs and returns a note too.
 func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, string) {
 	if b.home == nil || b.id == nil {
 		return nil, ""
@@ -114,15 +115,17 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	sock := agentSocket(home, id)
 	opts := agentapi.Options{Laptop: laptop, Source: src}
 	var store *grants.Store
+	var note string
 	if as, ok := src.(*agentSource); ok && b.grants != nil {
-		path, err := b.grants()
-		if err != nil {
-			return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
+		if path, err := b.grants(); err != nil {
+			// Agents are served without passthroughs, and the user is told why.
+			note = "Coding agents cannot ask for passthroughs: " + err.Error() + "."
+		} else {
+			store = grants.Open(path)
+			opts.ID = id
+			opts.Passer = passer{eng: &as.eng}
+			opts.Grants = passGrants{store}
 		}
-		store = grants.Open(path)
-		opts.ID = id
-		opts.Passer = passer{eng: &as.eng}
-		opts.Grants = passGrants{store}
 	}
 	if d, ok := src.(agentapi.Doctor); ok {
 		opts.Doctor = d
@@ -137,7 +140,7 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 		}
 		return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
 	}
-	return a, ""
+	return a, note
 }
 
 // forward is the engine's Agent option: it listens on the server's private
@@ -330,10 +333,19 @@ func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.An
 	return a.api.AnswerPassthrough(ctx, id, ans)
 }
 
+// grantsErr says why grants cannot be listed or changed in this run, or is
+// nil when they can.
+func (a *agents) grantsErr() error {
+	if a == nil || a.grants == nil {
+		return errors.New("Nearhost isn't serving coding agents in this run, so grants can't be changed here")
+	}
+	return nil
+}
+
 // passthroughGrants are the passthrough grants on server.
 func (a *agents) passthroughGrants(server string) ([]grants.Grant, error) {
-	if a == nil || a.grants == nil {
-		return nil, nil
+	if err := a.grantsErr(); err != nil {
+		return nil, err
 	}
 	all, err := a.grants.List(server)
 	var out []grants.Grant
@@ -347,8 +359,8 @@ func (a *agents) passthroughGrants(server string) ([]grants.Grant, error) {
 
 // revokeGrant takes back requester's passthrough grant on server.
 func (a *agents) revokeGrant(server, requester string) error {
-	if a == nil || a.grants == nil {
-		return nil
+	if err := a.grantsErr(); err != nil {
+		return err
 	}
 	return a.grants.Revoke(server, requester, grants.KindPassthrough)
 }

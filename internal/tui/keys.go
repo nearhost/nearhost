@@ -27,6 +27,17 @@ func (m *Model) footerItems() []footerItem {
 	if m.routeFocus {
 		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
 	}
+	if m.passFocus {
+		if kind, name := m.selected(); kind == rowServer {
+			if rows, _ := m.passRows(name); m.passFocus {
+				verb := "close"
+				if rows[m.passRow].grant != nil {
+					verb = "revoke"
+				}
+				return []footerItem{{"↑↓", "select"}, {"x", verb}, {"tab", "done"}}
+			}
+		}
+	}
 	if m.filtering {
 		return []footerItem{{"↑↓", "move"}, {"enter", "keep filter"}, {"esc", "clear filter"}}
 	}
@@ -57,8 +68,11 @@ func (m *Model) footerItems() []footerItem {
 			if m.connectsOnC(name) {
 				verb = "connect"
 			}
-			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb},
-				footerItem{"e", "edit"}, footerItem{"d", "remove"})
+			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb})
+			if rows, _ := m.passRows(name); len(rows) > 0 {
+				items = append(items, footerItem{"tab", "passthroughs"})
+			}
+			items = append(items, footerItem{"e", "edit"}, footerItem{"d", "remove"})
 		}
 	}
 	return append(items, footerItem{"l", "log"}, footerItem{"/", "filter"}, footerItem{"s", "server"},
@@ -69,7 +83,7 @@ func (m *Model) footerItems() []footerItem {
 // first first; ? lists them all.
 var minorKeys = []footerItem{
 	{"q", "quit"}, {"n", "add"}, {"s", "server"}, {"enter", "collapse"},
-	{"tab", "routes"}, {"d", "remove"}, {"e", "edit"},
+	{"tab", "routes"}, {"tab", "passthroughs"}, {"d", "remove"}, {"e", "edit"},
 }
 
 // shownFooterItems are the footer items that fit in width cells: on the
@@ -77,7 +91,7 @@ var minorKeys = []footerItem{
 // then says there is more.
 func (m *Model) shownFooterItems(width int) []footerItem {
 	items := m.footerItems()
-	if m.form != nil || m.routeFocus || m.filtering {
+	if m.form != nil || m.routeFocus || m.passFocus || m.filtering {
 		return items
 	}
 	for _, minor := range minorKeys {
@@ -217,6 +231,11 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 			return cmd
 		}
 	}
+	if m.passFocus && !m.filtering {
+		if cmd, ok := m.passKey(s); ok {
+			return cmd
+		}
+	}
 	if m.filtering {
 		return m.filterKey(k)
 	}
@@ -283,8 +302,12 @@ func (m *Model) action(s string) tea.Cmd {
 			return m.reviewChange(name)
 		}
 	case "tab":
-		if kind, _ := m.selected(); kind == rowProject {
+		if kind, name := m.selected(); kind == rowProject {
 			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
+		} else if kind == rowServer && name != config.LocalServer {
+			if rows, _ := m.passRows(name); len(rows) > 0 {
+				m.passFocus, m.passRow, m.panelErr = true, 0, ""
+			}
 		}
 	case "y":
 		switch kind, name := m.selected(); kind {
@@ -355,7 +378,7 @@ func (m *Model) action(s string) tea.Cmd {
 // what the panel said about the last change made there, end with it.
 func (m *Model) selectRow(key string) {
 	if key != m.sel {
-		m.routeFocus, m.panelErr = false, ""
+		m.routeFocus, m.passFocus, m.panelErr = false, false, ""
 	}
 	m.sel, m.scroll = key, 0
 }
@@ -439,6 +462,11 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 		if m.routeFocus {
 			if cmd, ok := m.routesKey(key); ok {
 				return cmd // the footer then lists the routes' keys
+			}
+		}
+		if m.passFocus {
+			if cmd, ok := m.passKey(key); ok {
+				return cmd
 			}
 		}
 		return m.action(key)

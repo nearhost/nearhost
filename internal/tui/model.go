@@ -65,6 +65,10 @@ type Model struct {
 
 	routeFocus bool // the project panel's routes have the keys
 	routeRow   int  // the route selected there
+	// passFocus is set while the server panel's passthroughs and grants have
+	// the keys, and passRow is the row selected there.
+	passFocus bool
+	passRow   int
 	// showIgnored lists a project's ignored routes in its panel; without
 	// it they fold into one line, unless the routes have the keys.
 	showIgnored bool
@@ -349,6 +353,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.gotPass(msg.r)
 	case passOpenedMsg:
 		return m, m.passOpened(msg)
+	case passClosedMsg:
+		m.passClosed(msg)
+	case revokedMsg:
+		m.revoked(msg)
 	case passAnsweredMsg:
 		return m, m.passAnswered(msg)
 	case projectAddedMsg:
