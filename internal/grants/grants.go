@@ -86,6 +86,10 @@ func (s *Store) load() (fileData, error) {
 // syncFile flushes f to disk. Tests replace it to see when it runs.
 var syncFile = (*os.File).Sync
 
+// syncDir flushes a directory's entries to disk. Tests replace it to see
+// when it runs and to make it fail.
+var syncDir = (*os.File).Sync
+
 // target is the path a save writes to. When the grants file is a symlink it
 // is the file the link points to, so the link survives the save. A link whose
 // target is missing is an error: a save would otherwise make a new file the
@@ -107,7 +111,8 @@ func (s *Store) target() (string, error) {
 
 // save writes d to a temporary file beside the grants file, syncs it, then
 // renames it into place, so a reader never sees half of it and a crash does
-// not leave an empty file.
+// not leave an empty file. It then syncs the directory so the rename lasts,
+// as far as it can: the file is in place by then, so that error is ignored.
 func (s *Store) save(d fileData) error {
 	path, err := s.target()
 	if err != nil {
@@ -138,8 +143,13 @@ func (s *Store) save(d fileData) error {
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
+		return err
 	}
-	return err
+	if f, err := os.Open(dir); err == nil {
+		syncDir(f)
+		f.Close()
+	}
+	return nil
 }
 
 // Allow creates the grant for server, requester and kind, or replaces its
