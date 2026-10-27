@@ -146,15 +146,25 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 		err := c.sess.CancelForward(cctx, local, spec.Remote)
 		cancel()
 		if err != nil {
+			err = fmt.Errorf("passthrough %q was closed while it opened, and cancelling port %d on %s failed: %w", spec.ID, spec.Remote, spec.Server, err)
+			e.mu.Lock()
+			if e.closed {
+				// Shutdown may have let go of the passthroughs already, and
+				// the check loop has ended, so nothing would close this one.
+				// Its session is gone or going, and the forward with it.
+				e.mu.Unlock()
+				e.releasePort(local)
+				forget()
+				return Passthrough{}, err
+			}
 			// The session keeps a forward it could not cancel, and puts it
 			// back on a reconnect, so the record and port stay. The record
 			// is listed now, and the next check closes it again.
-			e.mu.Lock()
 			p.opening = false
 			p.Opened = e.now()
 			p.checked = p.Opened
 			e.mu.Unlock()
-			return Passthrough{}, fmt.Errorf("passthrough %q was closed while it opened, and cancelling port %d on %s failed: %w", spec.ID, spec.Remote, spec.Server, err)
+			return Passthrough{}, err
 		}
 		e.releasePort(local)
 		forget()
