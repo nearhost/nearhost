@@ -28,7 +28,7 @@ func TestReconnectDoesNotRestartADroppedSession(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	dropped := make(chan struct{})
 	go func() {
-		h.eng.dropServer("mini") // as Apply does when the host changes
+		h.eng.dropServer(bg, "mini", "mini was disconnected") // as Apply does when the host changes
 		close(dropped)
 	}()
 	testutil.WaitUntil(t, 5*time.Second, func() bool {

@@ -158,7 +158,11 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("config not applied: %w", errors.Join(errs...))
 	}
 	for _, name := range plan.drop {
-		e.dropServer(name)
+		reason := name + " was disconnected" // its ssh_host changed
+		if _, still := next.Server(name); !still {
+			reason = name + " was removed from Nearhost"
+		}
+		e.dropServer(ctx, name, reason)
 		if _, still := next.Server(name); !still {
 			e.mu.Lock()
 			delete(e.held, name) // a server gone from the config holds nothing
@@ -181,14 +185,21 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 // dropServer ends a server's session and forgets it, so the next start on a
-// server of that name connects afresh. Its projects are stopped already.
-func (e *Engine) dropServer(name string) {
+// server of that name connects afresh. Its projects are stopped already. Its
+// passthroughs close with reason, so none outlives the session it was on.
+func (e *Engine) dropServer(ctx context.Context, name, reason string) {
 	e.mu.Lock()
 	c := e.servers[name]
 	delete(e.servers, name)
 	e.mu.Unlock()
 	if c != nil {
 		c.stop()
+		// The session is stopped, so each cancel only forgets the forward;
+		// and with the server gone from e.servers, no open can begin on it.
+		e.mu.Lock()
+		closes := e.sessionPassthroughsLocked(c.sess, reason)
+		e.mu.Unlock()
+		e.closePassthroughs(ctx, closes)
 		c.ensure.Lock()
 		asked := c.agentAsked
 		c.ensure.Unlock()

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,6 +52,15 @@ type passthrough struct {
 	// opening. The open then undoes itself and fails, so the caller's close
 	// is honoured and nothing is left forwarded.
 	closing bool
+	// checked is when a check last found the server connected, or when the
+	// passthrough opened.
+	checked time.Time
+	// awaySince is when the server was last seen connected before it went
+	// away, and zero while it is connected.
+	awaySince time.Time
+	// failingSince is when the port check began to fail, moved on by any
+	// time away, and zero while the port answers.
+	failingSince time.Time
 }
 
 // passthroughOwnerPrefix starts the owner of a port held by a passthrough. It
@@ -135,6 +146,7 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 	}
 	p.opening = false
 	p.Opened = e.now()
+	p.checked = p.Opened
 	got := p.Passthrough
 	e.mu.Unlock()
 	e.bus.Publish(Event{Server: spec.Server, Message: fmt.Sprintf("opened port %d for %s on laptop port %d", spec.Remote, spec.Requester, local)})
@@ -260,4 +272,257 @@ func (e *Engine) PortFree(port int) bool {
 	}
 	_ = l.Close()
 	return true
+}
+
+// When a passthrough ends on its own. The port is checked every
+// passCheckEvery; a passthrough closes once nothing has answered on it for
+// passFailFor of checks while its server was connected, or once its server
+// has been away for passGoneFor.
+const (
+	passCheckEvery = 30 * time.Second
+	passFailFor    = 5 * time.Minute
+	passGoneFor    = 10 * time.Minute
+)
+
+// passProbeWait bounds each step of the default port check: the dial, and
+// the wait for the first byte.
+const passProbeWait = 2 * time.Second
+
+// passCloseWait bounds a close run in the background, so Shutdown is not
+// held up by an ssh that does not answer.
+const passCloseWait = 10 * time.Second
+
+// probePassthroughPort is the default port check. It dials the local end of
+// a passthrough and waits for one byte. Data, or silence until the deadline,
+// means something answered: a dev server may say nothing until it is asked.
+// The connection closing first means nothing did, because ssh -L accepts the
+// local connection and closes it when the remote port refuses. A local port
+// that refuses is not answering either.
+func probePassthroughPort(ctx context.Context, local int) bool {
+	d := net.Dialer{Timeout: passProbeWait}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(local)))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	_ = conn.SetReadDeadline(time.Now().Add(passProbeWait))
+	_, err = conn.Read(make([]byte, 1))
+	switch {
+	case err == nil, errors.Is(err, os.ErrDeadlineExceeded):
+		return true
+	case ctx.Err() != nil:
+		return true // the check was cut short, which says nothing of the port
+	case errors.Is(err, io.EOF):
+		return false
+	}
+	return false // reset, or another failure before the deadline
+}
+
+// passClose is a passthrough to close and why.
+type passClose struct {
+	id, reason string
+}
+
+// checkPassthroughs checks every open passthrough once, at e.now. Those of a
+// server that is away count the time; one away for passGoneFor closes. On a
+// connected server, a passthrough whose forward the session could not put
+// back after a reconnect closes, and the others have their port checked;
+// one that has not answered for passFailFor of connected time closes. A
+// server that failed for good, or whose session is gone, closes its
+// passthroughs at once. The loop runs this every passCheckEvery.
+func (e *Engine) checkPassthroughs(ctx context.Context) {
+	now := e.now()
+	var closes []passClose
+	var probes []*passthrough
+	e.mu.Lock()
+	ids := make([]string, 0, len(e.passthroughs))
+	for id := range e.passthroughs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		p := e.passthroughs[id]
+		if p.opening {
+			continue
+		}
+		if c := e.servers[p.Server]; c == nil || c.sess != p.sess {
+			// dropServer closes these as it drops the session. One whose
+			// close failed is closed again here.
+			closes = append(closes, passClose{id, e.droppedReasonLocked(p.Server)})
+			continue
+		}
+		status, states := p.sess.ForwardStates()
+		switch status {
+		case transport.StatusConnected:
+			if !p.awaySince.IsZero() {
+				// Time away does not count against the port.
+				if !p.failingSince.IsZero() {
+					p.failingSince = p.failingSince.Add(now.Sub(p.awaySince))
+				}
+				p.awaySince = time.Time{}
+			}
+			p.checked = now
+			if !forwardApplied(states, p.Local, p.Remote) {
+				closes = append(closes, passClose{id, fmt.Sprintf("laptop port %d was taken while %s was away", p.Local, p.Server)})
+				continue
+			}
+			probes = append(probes, p)
+		case transport.StatusAuthFailed:
+			closes = append(closes, passClose{id, failedReason(p.Server, p.sess)})
+		default:
+			if p.awaySince.IsZero() {
+				// Away since the last check that found it connected, so a
+				// streak of failed checks never takes in time away.
+				p.awaySince = p.checked
+			}
+			if now.Sub(p.awaySince) >= passGoneFor {
+				closes = append(closes, passClose{id, fmt.Sprintf("%s was disconnected for 10 minutes", p.Server)})
+			}
+		}
+	}
+	e.mu.Unlock()
+	e.closePassthroughs(ctx, closes)
+
+	for _, p := range probes {
+		if ctx.Err() != nil {
+			return
+		}
+		answered := e.probePass(ctx, p.Local)
+		if ctx.Err() != nil {
+			return
+		}
+		e.mu.Lock()
+		if e.passthroughs[p.ID] != p {
+			e.mu.Unlock()
+			continue // closed meanwhile
+		}
+		switch {
+		case answered:
+			p.failingSince = time.Time{}
+		case p.failingSince.IsZero():
+			p.failingSince = now
+		case now.Sub(p.failingSince) >= passFailFor:
+			closes = []passClose{{p.ID, fmt.Sprintf("nothing answered on port %d for 5 minutes", p.Remote)}}
+		}
+		e.mu.Unlock()
+		if len(closes) > 0 {
+			e.closePassthroughs(ctx, closes)
+			closes = nil
+		}
+	}
+}
+
+// forwardApplied reports whether states has the forward local:remote,
+// applied on the current master.
+func forwardApplied(states []transport.ForwardState, local, remote int) bool {
+	for _, f := range states {
+		if f.Local == local && f.Remote == remote {
+			return f.Applied
+		}
+	}
+	return false
+}
+
+// failedReason is why the passthroughs of a server whose connection failed
+// for good are closed.
+func failedReason(server string, sess *transport.Session) string {
+	return fmt.Sprintf("%s's connection failed: %s", server, sess.LastError())
+}
+
+// droppedReasonLocked is why the passthroughs of a server whose session was
+// dropped are closed: the server left the configuration, or its session was
+// replaced. It must be called with e.mu held.
+func (e *Engine) droppedReasonLocked(server string) string {
+	if _, ok := e.cfg.Server(server); !ok {
+		return fmt.Sprintf("%s was removed from Nearhost", server)
+	}
+	return fmt.Sprintf("%s was disconnected", server)
+}
+
+// closePassthroughs closes each passthrough in closes. One whose close fails
+// stays open, and a later check tries again.
+func (e *Engine) closePassthroughs(ctx context.Context, closes []passClose) {
+	for _, c := range closes {
+		_ = e.ClosePassthrough(ctx, c.id, c.reason)
+	}
+}
+
+// sessionPassthroughsLocked lists the passthroughs carried by sess, opening
+// ones included, each with reason. It must be called with e.mu held.
+func (e *Engine) sessionPassthroughsLocked(sess *transport.Session, reason string) []passClose {
+	var out []passClose
+	for id, p := range e.passthroughs {
+		if p.sess == sess {
+			out = append(out, passClose{id, reason})
+		}
+	}
+	slices.SortFunc(out, func(a, b passClose) int { return strings.Compare(a.id, b.id) })
+	return out
+}
+
+// closeLaterLocked closes the passthroughs in closes on a goroutine of its
+// own, counted in passWork, so a caller that must not block (serverLog,
+// which may run under the session's forward lock) does not wait for the
+// session. After Shutdown has begun it does nothing: Shutdown releases every
+// passthrough itself. It must be called with e.mu held.
+func (e *Engine) closeLaterLocked(closes []passClose) {
+	if len(closes) == 0 || e.closed {
+		return
+	}
+	e.passWork.Add(1) // under mu and before closed is set, so before Shutdown waits
+	go func() {
+		defer e.passWork.Done()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(e.ctx), passCloseWait)
+		defer cancel()
+		e.closePassthroughs(ctx, closes)
+	}()
+}
+
+// closeOnFailureLocked closes the passthroughs of server once its session
+// has failed for good, as serverLog finds it. It must be called with e.mu
+// held.
+func (e *Engine) closeOnFailureLocked(server string) {
+	c := e.servers[server]
+	if c == nil || c.sess.Status() != transport.StatusAuthFailed {
+		return
+	}
+	e.closeLaterLocked(e.sessionPassthroughsLocked(c.sess, failedReason(server, c.sess)))
+}
+
+// watchPassthroughs runs checkPassthroughs every passCheckEvery until ctx
+// ends. It is counted in passWork.
+func (e *Engine) watchPassthroughs(ctx context.Context) {
+	defer e.passWork.Done()
+	t := time.NewTicker(passCheckEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.checkPassthroughs(ctx)
+		}
+	}
+}
+
+// releasePassthroughs lets go of every passthrough at Shutdown, once the
+// sessions that carried them have ended: their ports and relays are freed
+// and their records dropped. One still opening is told to undo itself.
+func (e *Engine) releasePassthroughs() {
+	e.mu.Lock()
+	var ports []int
+	for id, p := range e.passthroughs {
+		if p.opening {
+			p.closing = true
+			continue
+		}
+		delete(e.passthroughs, id)
+		ports = append(ports, p.Local)
+	}
+	e.mu.Unlock()
+	for _, port := range ports {
+		e.releasePort(port)
+	}
 }
