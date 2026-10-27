@@ -3,7 +3,10 @@ package agentapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -600,7 +603,7 @@ func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || !json.Valid([]byte(r.stdout)) {
 		t.Fatalf("passthrough-wait: %+v", r)
 	}
 	tok, err := os.ReadFile(tokenPath(home, "claude-code"))
@@ -636,8 +639,11 @@ func TestScriptPassthroughReplyToken(t *testing.T) {
 	}
 	// The repeat request is answered with the open record, token included.
 	r = runScript(t, home, claudeEnv, "passthrough", "3000")
-	if r.code != 0 || !strings.Contains(r.stdout, `"token":"tok-1"`) {
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || strings.Contains(r.stdout, "token") {
 		t.Fatalf("repeat: %+v", r)
+	}
+	if json.Valid([]byte(r.stdout)) == false {
+		t.Fatalf("not JSON: %q", r.stdout)
 	}
 	if tok, err := os.ReadFile(tokenPath(home, "claude-code")); err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
 		t.Fatalf("token %q: %v", tok, err)
@@ -670,7 +676,8 @@ func TestScriptPassthroughRevokedToken(t *testing.T) {
 	home := shortDir(t)
 	_, _, _, rv := passScript(t, home, "mini", true)
 	storeToken(t, home, "claude-code", "revoked")
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	posts, front := countPosts(t, home)
+	r := runScript(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "passthrough", "3000")
 	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
 		t.Fatalf("passthrough: %+v", r)
 	}
@@ -679,6 +686,9 @@ func TestScriptPassthroughRevokedToken(t *testing.T) {
 	}
 	if got := rv.prompts(); len(got) != 1 {
 		t.Fatalf("prompts %+v", got)
+	}
+	if n := posts(); n != 2 {
+		t.Fatalf("the server saw %d passthrough requests, want 2", n)
 	}
 }
 
@@ -824,5 +834,92 @@ func TestScriptPassthroughXDGStateHome(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("marker stayed: %v", err)
+	}
+}
+
+// countPosts proxies home's socket k3f9q2 through a second socket the
+// script finds instead, and returns a func counting the POSTs to
+// /v1/passthroughs that went through it.
+func countPosts(t *testing.T, home string) (posts func() int, front string) {
+	t.Helper()
+	real := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	front = filepath.Join(home, "front.sock")
+	ln, err := net.Listen("unix", front)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	n := 0
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/passthroughs" {
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}
+		r.RequestURI = ""
+		r.URL.Scheme, r.URL.Host = "http", "nearhost"
+		resp, err := client(real).Do(r)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}, front
+}
+
+func TestScriptPassthroughPendingMarker(t *testing.T) {
+	home := shortDir(t)
+	s, _, _, _ := passScript(t, home, "mini", true)
+	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	id := proposalID.FindStringSubmatch(r.stdout)[1]
+	marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("no marker while pending: %v", err)
+	}
+	if r = runScript(t, home, nil, "passthrough-close", "--session", "s1"); r.code != 0 {
+		t.Fatalf("close: %+v", r)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed: %v", err)
+	}
+	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+		t.Fatal("the request was still pending after its session closed")
+	}
+}
+
+func TestScriptPassthroughNotConnectedAnswer(t *testing.T) {
+	home := shortDir(t)
+	_, p, g, _ := passScript(t, home, "mini", false)
+	p.err = fmt.Errorf("dial: %w", ErrNotConnected)
+	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+	storeToken(t, home, "claude-code", "tok-x")
+	host, _ := os.Hostname()
+	host, _, _ = strings.Cut(host, ".")
+	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	want := "Nearhost isn't connected to this server. On your laptop, select " + host + " in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L 3000:localhost:3000 " + host + "\n"
+	if r.code != 2 || r.stderr != want {
+		t.Fatalf("%+v, want %q", r, want)
+	}
+}
+
+func TestScriptPassthroughBadPort(t *testing.T) {
+	home := shortDir(t)
+	passScript(t, home, "mini", true)
+	for _, port := range []string{"03000", "0", "70000", "abc"} {
+		if r := runScript(t, home, claudeEnv, "passthrough", port); r.code != 1 || r.stdout != "" {
+			t.Errorf("port %s: %+v", port, r)
+		}
 	}
 }

@@ -215,6 +215,12 @@ save_token() {
 	private_file "$tf" "$tok"
 }
 
+# show_body prints BODY without the one-time token, which belongs in the
+# token file and never in what an agent reads.
+show_body() {
+	printf '%s\n' "$BODY" | sed 's/"token":"[^"]*",\{0,1\}//; s/,}/}/'
+}
+
 # save_session notes that this session has an open passthrough, and on which
 # socket, so that passthrough-close --session can find it without looking.
 save_session() {
@@ -381,7 +387,7 @@ passthrough)
 		esac
 	done
 	case $PORT in
-	'' | *[!0-9]*) die 1 "passthrough needs the server's port, such as: passthrough 3000" ;;
+	'' | *[!0-9]* | 0*) die 1 "passthrough needs the server's port, such as: passthrough 3000" ;;
 	esac
 	[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die 1 "port must be between 1 and 65535, not $PORT"
 	PASSPORT=$PORT
@@ -389,13 +395,14 @@ passthrough)
 	pass_post
 	case $STATUS in
 	200 | 201)
-		printf '%s\n' "$BODY"
 		save_token
+		show_body
 		[ "$(field state "$BODY")" = open ] && save_session
 		exit 0
 		;;
 	202)
 		printf '%s\n' "$BODY"
+		save_session
 		exit 0
 		;;
 	409)
@@ -404,7 +411,7 @@ passthrough)
 		*"nearhost up"*) answer ;;
 		*"isn't connected"*)
 			host=$(hostname 2>/dev/null | cut -d. -f1)
-			die 2 "Nearhost isn't connected to this server. On $(field laptop "$HELLO"), select ${host:-<server>} in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L $PORT:localhost:$PORT ${host:-<server>}"
+			die 2 "Nearhost isn't connected to this server. On your laptop, select ${host:-<server>} in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L $PORT:localhost:$PORT ${host:-<server>}"
 			;;
 		esac
 		printf '%s\n' "$BODY"
@@ -424,14 +431,19 @@ passthrough-wait)
 	PORT=""
 	pass_find
 	call "$SOCK" 60 "http://nearhost/v1/passthroughs/$id?wait=50" || die 2 "Nearhost stopped answering: it may have quit."
-	printf '%s\n' "$BODY"
-	[ "$STATUS" = 200 ] || exit 1
+	[ "$STATUS" = 200 ] || {
+		printf '%s\n' "$BODY"
+		exit 1
+	}
 	case $(field state "$BODY") in
 	open)
 		save_token
 		save_session
 		;;
 	closed) save_token ;;
+	esac
+	show_body
+	case $(field state "$BODY") in
 	declined) exit 6 ;;
 	expired) exit 7 ;;
 	esac
