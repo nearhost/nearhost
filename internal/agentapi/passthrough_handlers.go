@@ -171,7 +171,9 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	local, err := s.opts.Passer.Open(r.Context(), p)
+	ctx, cancel := detached(r.Context(), openTimeout)
+	local, err := s.opts.Passer.Open(ctx, p)
+	cancel()
 	s.mu.Lock()
 	rec.opening = false
 	if err != nil {
@@ -186,10 +188,13 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.state != StatePending {
-		// Its session was closed while it opened.
 		s.mu.Unlock()
-		s.opts.Passer.Close(r.Context(), rec.ID)
-		fail(w, http.StatusConflict, "its session was closed while it opened")
+		closeErr := s.closeOpened(r.Context(), rec)
+		status := http.StatusConflict
+		if closeErr != nil {
+			status = http.StatusBadGateway
+		}
+		fail(w, status, closedWhileOpening(rec, closeErr).Error())
 		return
 	}
 	s.openPassLocked(rec, local, "")
@@ -266,9 +271,11 @@ func (s *Server) viewLocked(r *passRecord, full bool) map[string]any {
 	}
 	if r.state == StateOpen {
 		out["url"], out["local_port"] = localURL(r.local), r.local
-		if r.token != "" && !full {
-			out["token"], r.token = r.token, ""
-		}
+	}
+	// The token is given once, also to a request its session closed while
+	// Always allow was saved, as the grant stands.
+	if r.token != "" && !full && (r.state == StateOpen || r.state == StateClosed) {
+		out["token"], r.token = r.token, ""
 	}
 	if full {
 		out["port"], out["requester"], out["session"], out["label"] = r.Remote, r.Requester, r.Session, r.Label
@@ -409,12 +416,15 @@ func (s *Server) passDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// closePasses closes open passthroughs, without s.mu held, and records them
+// closePasses closes open passthroughs, without s.mu held and detached
+// from the agent hanging up (see closeTimeout), and records them
 // closed. It returns the first error.
 func (s *Server) closePasses(r *http.Request, recs []*passRecord) error {
+	ctx, cancel := detached(r.Context(), closeTimeout)
+	defer cancel()
 	var first error
 	for _, rec := range recs {
-		if err := s.opts.Passer.Close(r.Context(), rec.ID); err != nil {
+		if err := s.opts.Passer.Close(ctx, rec.ID); err != nil {
 			if first == nil {
 				first = err
 			}

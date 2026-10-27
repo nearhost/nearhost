@@ -161,23 +161,36 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	s.mu.Unlock()
 
 	local, err := s.opts.Passer.Open(ctx, p)
-	var token string
-	var allowErr error
-	if err == nil && a == AnswerAlways {
-		token, allowErr = s.opts.Grants.Allow(r.Origin, r.Requester)
-	}
-
 	s.mu.Lock()
-	r.opening = false
 	if err != nil {
+		r.opening = false
 		s.endPassLocked(r, StateDeclined, err.Error())
 		s.mu.Unlock()
 		return err
 	}
 	if r.state != StatePending {
-		// Its session was closed while it opened.
+		// Its session was closed while it opened: close the forward, and
+		// give no grant, which would replace the one the agent holds.
+		r.opening = false
 		s.mu.Unlock()
-		return s.opts.Passer.Close(ctx, id)
+		return closedWhileOpening(r, s.closeOpened(ctx, r))
+	}
+	s.mu.Unlock()
+
+	var token string
+	var allowErr error
+	if a == AnswerAlways {
+		token, allowErr = s.opts.Grants.Allow(r.Origin, r.Requester)
+	}
+
+	s.mu.Lock()
+	r.opening = false
+	// A token is given even to a request its session closed meanwhile, as
+	// the grant it belongs to is saved.
+	r.token = token
+	if r.state != StatePending {
+		s.mu.Unlock()
+		return closedWhileOpening(r, s.closeOpened(ctx, r))
 	}
 	s.openPassLocked(r, local, token)
 	s.mu.Unlock()
@@ -185,6 +198,39 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		return fmt.Errorf("port %d is open, but always allow was not saved: %w", r.Remote, allowErr)
 	}
 	return nil
+}
+
+// closeTimeout bounds closing a forward. Closes run detached from the
+// caller's context: an agent's session-end hook hangs up within about 1.5
+// seconds, and a close it cancelled would leave the forward open with
+// nothing left to close it.
+const closeTimeout = 10 * time.Second
+
+// openTimeout bounds opening a forward for a request with a token, which
+// runs detached from the agent's hang-up so a forward is never left half
+// applied; the agent finds the result by asking again.
+const openTimeout = 45 * time.Second
+
+// detached is ctx's values without its cancellation, bounded by d.
+func detached(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
+}
+
+// closeOpened closes the forward opened for r after its session was
+// closed. It returns Close's error, or nil.
+func (s *Server) closeOpened(ctx context.Context, r *passRecord) error {
+	ctx, cancel := detached(ctx, closeTimeout)
+	defer cancel()
+	return s.opts.Passer.Close(ctx, r.ID)
+}
+
+// closedWhileOpening is why a request whose session was closed while its
+// forward opened did not open, given closeErr from closing that forward.
+func closedWhileOpening(r *passRecord, closeErr error) error {
+	if closeErr != nil {
+		return fmt.Errorf("its session was closed while port %d opened, and closing it failed: %w", r.Remote, closeErr)
+	}
+	return fmt.Errorf("its session was closed while port %d opened", r.Remote)
 }
 
 // endPassLocked ends a pending request, unless it has already ended.
@@ -209,7 +255,7 @@ func (s *Server) openPassLocked(r *passRecord, local int, token string) {
 // closePassLocked records an open passthrough as closed.
 func (s *Server) closePassLocked(r *passRecord) {
 	if r.state == StateOpen {
-		r.state, r.token, r.ended = StateClosed, "", s.opts.Now()
+		r.state, r.ended = StateClosed, s.opts.Now()
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,18 +14,34 @@ import (
 )
 
 // fakePasser records what it opens and closes. A port in taken is not free,
-// and Open forwards it to local instead, when set.
+// and Open forwards it to local instead, when set. With block set, Open
+// sends on started and waits for block to close, then records whether its
+// context was cancelled meanwhile.
 type fakePasser struct {
-	mu     sync.Mutex
-	live   map[string]Passthrough
-	opens  []Passthrough
-	closes []string
-	taken  map[int]bool
-	local  int
-	err    error
+	mu       sync.Mutex
+	live     map[string]Passthrough
+	opens    []Passthrough
+	closes   []string
+	taken    map[int]bool
+	local    int
+	err      error
+	block    chan struct{}
+	started  chan struct{}
+	openCtx  []error // ctx.Err() as each blocked Open returned
+	closeCtx []error // ctx.Err() as each Close was called
 }
 
-func (f *fakePasser) Open(_ context.Context, p Passthrough) (int, error) {
+func (f *fakePasser) Open(ctx context.Context, p Passthrough) (int, error) {
+	f.mu.Lock()
+	block, started := f.block, f.started
+	f.mu.Unlock()
+	if block != nil {
+		started <- struct{}{}
+		<-block
+		f.mu.Lock()
+		f.openCtx = append(f.openCtx, ctx.Err())
+		f.mu.Unlock()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -39,9 +56,10 @@ func (f *fakePasser) Open(_ context.Context, p Passthrough) (int, error) {
 	return p.Local, nil
 }
 
-func (f *fakePasser) Close(_ context.Context, id string) error {
+func (f *fakePasser) Close(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.closeCtx = append(f.closeCtx, ctx.Err())
 	delete(f.live, id)
 	f.closes = append(f.closes, id)
 	return nil
@@ -63,6 +81,21 @@ func (f *fakePasser) Free(port int) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.taken[port]
+}
+
+// blocking makes Open wait until the returned func is called.
+func (f *fakePasser) blocking() (release func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.block, f.started = make(chan struct{}), make(chan struct{}, 4)
+	block := f.block
+	return sync.OnceFunc(func() { close(block) })
+}
+
+func (f *fakePasser) ctxErrs() (open, closes []error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]error(nil), f.openCtx...), append([]error(nil), f.closeCtx...)
 }
 
 func (f *fakePasser) drop(id string) {
@@ -568,5 +601,146 @@ func TestPassthroughDelete(t *testing.T) {
 	}
 	if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=nobody"); st != 204 {
 		t.Fatalf("a session with none: %d", st)
+	}
+}
+
+// waitStarted waits for a blocked Open to start.
+func (e *passEnv) waitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-e.p.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Open did not start")
+	}
+}
+
+// The session-end hook closes the session while a token open is in flight,
+// as the agent's client is torn down: the forward that opens must still be
+// closed, with a context the hang-up did not cancel.
+func TestPassthroughSessionClosedDuringATokenOpen(t *testing.T) {
+	for _, hangUp := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hangUp=%v", hangUp), func(t *testing.T) {
+			e := newPassServer(t, true)
+			e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+			release := e.p.blocking()
+			defer release()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, "POST", "http://nearhost/v1/passthroughs",
+				strings.NewReader(`{"port": 3000, "requester": "claude-code", "session": "s", "token": "good"}`))
+			type result struct {
+				status int
+				body   string
+				err    error
+			}
+			got := make(chan result, 1)
+			go func() {
+				resp, err := client(e.remote).Do(req)
+				if err != nil {
+					got <- result{err: err}
+					return
+				}
+				defer resp.Body.Close()
+				b, _ := io.ReadAll(resp.Body)
+				got <- result{status: resp.StatusCode, body: string(b)}
+			}()
+			e.waitStarted(t)
+			if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
+				t.Fatalf("delete the session: %d", st)
+			}
+			if hangUp {
+				cancel()
+				<-got
+				time.Sleep(200 * time.Millisecond) // for the server to see the hang-up
+			}
+			release()
+			if !hangUp {
+				res := <-got
+				if res.status != 409 || strings.Contains(res.body, `"open"`) {
+					t.Fatalf("the POST: %d %s", res.status, res.body)
+				}
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for len(e.p.closed()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if closed := e.p.closed(); len(closed) != 1 {
+				t.Fatalf("the forward was not closed: %v", closed)
+			}
+			if _, closes := e.p.ctxErrs(); len(closes) != 1 || closes[0] != nil {
+				t.Fatalf("Close got a cancelled context: %v", closes)
+			}
+			if live := e.p.List("apollo"); len(live) != 0 {
+				t.Fatalf("a forward is left: %v", live)
+			}
+		})
+	}
+}
+
+func TestPassthroughTokenOpenOutlivesTheClient(t *testing.T) {
+	e := newPassServer(t, true)
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	release := e.p.blocking()
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://nearhost/v1/passthroughs",
+		strings.NewReader(`{"port": 3000, "requester": "claude-code", "session": "s", "token": "good"}`))
+	hungUp := make(chan struct{})
+	go func() {
+		defer close(hungUp)
+		if resp, err := client(e.remote).Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	e.waitStarted(t)
+	cancel()
+	<-hungUp
+	time.Sleep(200 * time.Millisecond) // for the server to see the hang-up
+	release()
+
+	// The agent asks again and finds it open.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s"}`)
+		if st == 200 && out["state"] == "open" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("asked again: %d %v", st, out)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if opens, _ := e.p.ctxErrs(); len(opens) != 1 || opens[0] != nil {
+		t.Fatalf("the hang-up cancelled Open: %v", opens)
+	}
+}
+
+func TestPassthroughAlwaysWhileTheSessionCloses(t *testing.T) {
+	e := newPassServer(t, true)
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s"}`)
+	id := out["id"].(string)
+	release := e.p.blocking()
+	defer release()
+	answered := make(chan error, 1)
+	go func() { answered <- e.s.AnswerPassthrough(context.Background(), id, AnswerAlways) }()
+	e.waitStarted(t)
+	if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
+		t.Fatalf("delete the session: %d", st)
+	}
+	release()
+	if err := <-answered; err == nil || !strings.Contains(err.Error(), "session was closed") {
+		t.Fatalf("answer: %v", err)
+	}
+	if got := e.g.allowed(); len(got) != 0 {
+		t.Fatalf("a grant was saved: %v", got)
+	}
+	if closed := e.p.closed(); len(closed) != 1 || closed[0] != id {
+		t.Fatalf("the forward was not closed: %v", closed)
+	}
+	if _, closes := e.p.ctxErrs(); len(closes) != 1 || closes[0] != nil {
+		t.Fatalf("Close got a cancelled context: %v", closes)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "closed" {
+		t.Fatalf("after: %v", out)
 	}
 }
