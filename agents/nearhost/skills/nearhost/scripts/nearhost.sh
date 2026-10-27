@@ -15,8 +15,8 @@
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
-# laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined,
-# 7 expired, 8 superseded: the change waited on no longer waits.
+# laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
+# by the user, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
 
 set -u
@@ -37,6 +37,34 @@ die() {
 # before the fields read here, so the last match is the top-level one.
 field() {
 	printf '%s' "$2" | sed -n "s/.*\"$1\":\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p"
+}
+
+# text_field NAME JSON prints the first string NAME in JSON in full, with
+# its escapes undone, where field stops at the first comma.
+text_field() {
+	printf '%s' "$2" | NAME=$1 awk '{
+		key = "\"" ENVIRON["NAME"] "\":\""
+		i = index($0, key)
+		if (!i)
+			next
+		s = substr($0, i + length(key))
+		out = ""
+		while (s != "") {
+			c = substr(s, 1, 1)
+			if (c == "\"")
+				break
+			if (c == "\\") {
+				s = substr(s, 2)
+				c = substr(s, 1, 1)
+				if (c == "n" || c == "t" || c == "r")
+					c = " "
+			}
+			out = out c
+			s = substr(s, 2)
+		}
+		print out
+		exit
+	}'
 }
 
 # call SOCKET SECONDS CURL-ARGS... sets STATUS and BODY, or fails when
@@ -262,7 +290,11 @@ pass_post() {
 		body="{\"port\":$PORT,\"requester\":$(quote "$REQUESTER"),\"session\":$(quote "$SESSION")"
 		[ -n "$LABEL" ] && body="$body,\"label\":$(quote "$LABEL")"
 		[ -n "$tok" ] && body="$body,\"token\":$(quote "$tok")"
-		call "$SOCK" 60 -X POST -H 'Content-Type: application/json' --data-binary "$body}" http://nearhost/v1/passthroughs ||
+		# The body goes on stdin, as it holds the token, which an argument
+		# would show to anyone who lists this machine's processes.
+		call "$SOCK" 60 -X POST -H 'Content-Type: application/json' --data-binary @- http://nearhost/v1/passthroughs <<EOF ||
+$body}
+EOF
 			die 2 "Nearhost stopped answering."
 		if [ "$STATUS" = 401 ] && [ -n "$tok" ] && [ $attempt -eq 0 ]; then
 			rm -f "$tf"
@@ -444,7 +476,13 @@ passthrough-wait)
 	esac
 	show_body
 	case $(field state "$BODY") in
-	declined) exit 6 ;;
+	declined)
+		# The user's No has no reason. A reason means the user said yes and
+		# opening the port failed, which is no answer to stop asking for.
+		reason=$(text_field reason "$BODY")
+		[ -n "$reason" ] && die 1 "Nearhost could not open the port: $reason"
+		exit 6
+		;;
 	expired) exit 7 ;;
 	esac
 	;;

@@ -660,7 +660,7 @@ func TestScriptPassthroughDeclinedExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
+	if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.Contains(r.stdout, `"reason"`) || r.stderr != "" {
 		t.Fatalf("declined: %+v", r)
 	}
 	r = runScript(t, home, claudeEnv, "passthrough", "3001")
@@ -669,6 +669,54 @@ func TestScriptPassthroughDeclinedExpired(t *testing.T) {
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
 	if r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
 		t.Fatalf("expired: %+v", r)
+	}
+}
+
+func TestScriptPassthroughOpenFailedIsNoDecline(t *testing.T) {
+	home := shortDir(t)
+	s, p, _, _ := passScript(t, home, "mini", true)
+	p.err = errors.New(`ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`)
+	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	id := proposalID.FindStringSubmatch(r.stdout)[1]
+	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+		t.Fatal("the open did not fail")
+	}
+	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
+	want := `Nearhost could not open the port: ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`
+	if r.code != 1 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.TrimSpace(r.stderr) != want {
+		t.Fatalf("failed open: %+v", r)
+	}
+}
+
+func TestScriptPassthroughTokenNotInArguments(t *testing.T) {
+	home := shortDir(t)
+	_, _, g, _ := passScript(t, home, "mini", false)
+	g.tokens[[2]string{"mini", "claude-code"}] = "tok-secret"
+	storeToken(t, home, "claude-code", "tok-secret")
+	// A curl that records its arguments, as ps would show them.
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	args := filepath.Join(home, "args")
+	real, err := exec.LookPath("curl")
+	if err != nil {
+		t.Skip("no curl")
+	}
+	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + args + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, home, append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, claudeEnv...), "passthrough", "3000")
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+		t.Fatalf("passthrough: %+v", r)
+	}
+	seen, err := os.ReadFile(args)
+	if err != nil || !strings.Contains(string(seen), "/v1/passthroughs") {
+		t.Fatalf("curl was not called: %q %v", seen, err)
+	}
+	if strings.Contains(string(seen), "tok-secret") {
+		t.Fatalf("the token is in curl's arguments:\n%s", seen)
 	}
 }
 
