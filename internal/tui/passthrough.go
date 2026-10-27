@@ -198,11 +198,13 @@ func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
 		}
 	}
 	switch {
+	case errors.Is(msg.err, ErrRequestEnded) && (msg.answer == AnswerNo || errors.Is(msg.err, ErrAllowNotSaved)):
+		// An Always allow that failed to save for a request that ended too
+		// is ended first: its port was closed, so nothing was opened.
+		m.logs.note(fmt.Sprintf("The request to open port %d for %s had already ended.", msg.r.Remote, msg.r.who()))
+		return nil
 	case errors.Is(msg.err, ErrAllowNotSaved):
 		m.logs.note(fmt.Sprintf("Opened port %d for %s, but Always allow was not saved.", msg.r.Remote, msg.r.who()))
-		return nil
-	case msg.answer == AnswerNo && errors.Is(msg.err, ErrRequestEnded):
-		m.logs.note(fmt.Sprintf("The request to open port %d for %s had already ended.", msg.r.Remote, msg.r.who()))
 		return nil
 	}
 	if msg.err != nil {

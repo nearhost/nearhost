@@ -335,6 +335,20 @@ func TestAlwaysNotSavedStillLogsOpen(t *testing.T) {
 	}
 }
 
+// An Always allow whose request ended and whose grant failed logs that the
+// request had ended, as its port was closed.
+func TestAlwaysEndedAndNotSavedLogsEnded(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	f.passErr = fmt.Errorf("%w; %w", ErrRequestEnded, ErrAllowNotSaved)
+	ask(m, passReq(m))
+	settle(m, press(m, "a"))
+	log := logText(m, homeKey)
+	if !strings.Contains(log, "The request to open port 41873 for Claude Code on apollo had already ended.") ||
+		strings.Contains(log, "Opened port") {
+		t.Fatalf("log:\n%s", log)
+	}
+}
+
 func TestNoOnEndedLogsEnded(t *testing.T) {
 	m, f, _ := projectFormModel(t)
 	ask(m, passReq(m))

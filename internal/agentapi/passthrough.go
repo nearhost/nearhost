@@ -217,7 +217,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		s.mu.Unlock()
 		err := closedWhileOpening(r, s.closeOpened(ctx, r))
 		if allowErr != nil {
-			err = errors.Join(err, allowNotSaved(allowErr))
+			err = fmt.Errorf("%w; %w", err, allowNotSaved(allowErr))
 		}
 		return passEnded{err}
 	}

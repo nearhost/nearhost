@@ -934,6 +934,9 @@ func TestAllowNotSavedWhenSessionClosesDuringAllow(t *testing.T) {
 		!strings.Contains(err.Error(), "session was closed") || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("answer: %v", err)
 	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("answer spans lines: %q", err)
+	}
 	if closed := e.p.closed(); len(closed) != 1 || closed[0] != id {
 		t.Fatalf("the forward was not closed: %v", closed)
 	}
