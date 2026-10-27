@@ -217,7 +217,7 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.logView != nil {
 		if s == "p" && len(m.waiting) > 0 {
-			m.logView = nil // the proposal opens over the main screen
+			m.logView = nil // the request opens over the main screen
 			return m.nextAsked()
 		}
 		return m.logViewKey(k)

@@ -140,15 +140,16 @@ type Backend interface {
 	// ErrRequestEnded when the request is no longer waiting for an answer.
 	// No on such a request does nothing and returns nil.
 	AnswerPassthrough(ctx context.Context, id string, a Answer) error
-	// Grants are the passthrough grants given on server.
+	// Grants are the passthrough grants given on server. An empty server
+	// matches no grant.
 	Grants(server string) ([]grants.Grant, error)
 	// RevokeGrant takes back requester's passthrough grant on server.
 	RevokeGrant(server, requester string) error
 }
 
 // ErrRequestEnded is wrapped by Backend.AnswerPassthrough's error when the
-// request has ended: it expired, its agent's session ended, or opening it
-// failed, which ends it.
+// request has ended: it expired, its agent's session ended, it was answered
+// already, or opening it failed, which ends it.
 var ErrRequestEnded = errors.New("the request has ended")
 
 // RequestEnded is err, marked as the end of the request it answered: it

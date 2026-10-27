@@ -197,7 +197,8 @@ func tick() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	// A proposal's form that has gone without saving declines it, and the
-	// next proposal opens once nothing else is open.
+	// next request, a proposal or a passthrough, opens once nothing else is
+	// open.
 	m.endProposal()
 	// The advice of the selected project is read when it is not known, once
 	// the selection has rested on it.

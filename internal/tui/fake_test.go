@@ -137,7 +137,7 @@ func (f *fakeBackend) Grants(server string) ([]grants.Grant, error) {
 	defer f.mu.Unlock()
 	var out []grants.Grant
 	for _, g := range f.grantList {
-		if server == "" || g.Server == server {
+		if g.Server == server { // an empty server matches none, as in Backend
 			out = append(out, g)
 		}
 	}

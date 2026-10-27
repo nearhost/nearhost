@@ -39,8 +39,10 @@ field() {
 	printf '%s' "$2" | sed -n "s/.*\"$1\":\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p"
 }
 
-# text_field NAME JSON prints the first string NAME in JSON in full, with
-# its escapes undone, where field stops at the first comma.
+# text_field NAME JSON prints the first string NAME in JSON in full, where
+# field stops at the first comma. Of the escapes, only \n, \t and \r are
+# mapped, each to a space; any other drops its backslash and keeps the rest,
+# so \u003c prints as u003c.
 text_field() {
 	printf '%s' "$2" | NAME=$1 awk '{
 		key = "\"" ENVIRON["NAME"] "\":\""
