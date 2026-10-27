@@ -1026,3 +1026,40 @@ func TestShutdownWaitsForInFlightOpen(t *testing.T) {
 		t.Fatalf("close after Shutdown: err = %v, want errShutDown", err)
 	}
 }
+
+func TestReopenAfterCloseKeepsItsPort(t *testing.T) {
+	h, _ := passthroughHarness(t)
+	port := testutil.FreePort(t)
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err != nil {
+		t.Fatal(err)
+	}
+	var reopened Passthrough
+	var reopenErr error
+	h.eng.afterClose = func(id string) {
+		h.eng.afterClose = nil
+		reopened, reopenErr = h.eng.OpenPassthrough(bg, passthroughSpec(port))
+	}
+	if err := h.eng.ClosePassthrough(bg, "p1", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if reopenErr != nil {
+		t.Fatalf("reopen: %v", reopenErr)
+	}
+	if reopened.Local != port {
+		t.Fatalf("reopen got laptop port %d, want %d: the close still held it", reopened.Local, port)
+	}
+	if h.eng.PortFree(port) {
+		t.Fatal("the close released the reopen's port")
+	}
+	h.eng.mu.Lock()
+	owner := h.eng.ports[port]
+	h.eng.mu.Unlock()
+	if owner != passthroughOwner("p1") {
+		t.Fatalf("port %d owner = %q, want the reopen", port, owner)
+	}
+	if c, err := net.DialTimeout("tcp", net.JoinHostPort("::1", strconv.Itoa(port)), time.Second); err != nil {
+		t.Fatalf("the reopen's [::1] relay is gone: %v", err)
+	} else {
+		c.Close()
+	}
+}

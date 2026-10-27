@@ -385,12 +385,17 @@ func (e *Engine) claimPortFor(owner string, port int) (holder string, ok bool) {
 // forward's [::1] relay if it has one.
 func (e *Engine) releasePort(port int) {
 	e.mu.Lock()
+	e.releasePortLocked(port)
+	e.mu.Unlock()
+}
+
+// releasePortLocked is releasePort for a caller that holds e.mu.
+func (e *Engine) releasePortLocked(port int) {
 	delete(e.ports, port)
 	if l, ok := e.relays[port]; ok {
 		_ = l.Close()
 		delete(e.relays, port)
 	}
-	e.mu.Unlock()
 }
 
 // forwardWeb forwards a web route's remote port to a free local port chosen

@@ -296,9 +296,15 @@ func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error 
 		e.mu.Unlock()
 		return fmt.Errorf("cancelling port %d on %s: %w", p.Remote, p.Server, err)
 	}
+	// The port is released with the record, under the same lock, so an open
+	// of the same id that follows can claim the port without this close
+	// then releasing that open's claim and relay.
 	delete(e.passthroughs, id)
+	e.releasePortLocked(p.Local)
 	e.mu.Unlock()
-	e.releasePort(p.Local)
+	if e.afterClose != nil {
+		e.afterClose(id)
+	}
 	e.bus.Publish(Event{Server: p.Server, Message: fmt.Sprintf("closed port %d for %s: %s", p.Remote, p.Requester, reason)})
 	return nil
 }
