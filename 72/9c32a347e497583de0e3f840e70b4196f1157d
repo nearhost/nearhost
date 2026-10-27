@@ -1,0 +1,35 @@
+internal/engine/reconnect_race_test.go
+  s_81ad364fe15b72::t_55278216517342 31
+internal/engine/passthrough_test.go
+  s_81ad364fe15b72::t_2c7dcfe57edec2 4,8-9,12-13,270-497,500-531,536-596,608-655
+  s_81ad364fe15b72::t_5a6bbe2708fabd 532-535
+  s_81ad364fe15b72::t_82292294598795 498-499,597-607
+internal/engine/hold.go
+  s_81ad364fe15b72::t_62dded3cee142f 20,36-39
+internal/engine/server.go
+  s_81ad364fe15b72::t_62dded3cee142f 93-95,100
+internal/engine/passthrough.go
+  s_81ad364fe15b72::t_62dded3cee142f 55-63,149
+  s_81ad364fe15b72::t_1506c5a7b1cdf5 7,9,276-528
+internal/engine/apply.go
+  s_81ad364fe15b72::t_62dded3cee142f 161-165,188-190,197-202
+internal/engine/engine.go
+  s_81ad364fe15b72::t_62dded3cee142f 236-241,263,422-423,583-587
+  s_81ad364fe15b72::t_1506c5a7b1cdf5 153-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "729c32a347e497583de0e3f840e70b4196f1157d",
+  "prompts": {},
+  "sessions": {
+    "s_81ad364fe15b72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "047f1bbe-a859-4471-ae3c-0288f1e01a7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
