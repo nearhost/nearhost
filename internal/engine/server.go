@@ -90,12 +90,14 @@ func (c *serverConn) stop() {
 // each status change after making it, and reports itself connected only once
 // its forwards have been re-applied, so this is also where the projects of
 // the server are found to have become degraded, to have lost a forward, or to
-// have recovered. The session may hold its forward lock while it logs:
-// nothing here may block.
+// have recovered, and where a session that failed for good has its
+// passthroughs closed. The session may hold its forward lock while it logs:
+// nothing here may block, so those closes run on a goroutine of their own.
 func (e *Engine) serverLog(server, msg string) {
 	e.bus.Publish(Event{Server: server, Message: msg})
 	e.mu.Lock()
 	e.reviewServerLocked(server)
+	e.closeOnFailureLocked(server)
 	e.mu.Unlock()
 }
 

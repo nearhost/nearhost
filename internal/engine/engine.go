@@ -150,6 +150,13 @@ type ProjectStatus struct {
 // afterwards to check that the answer still applies before publishing it.
 // Shutdown ends these lookups and waits for them.
 //
+// Passthroughs that end on their own are closed by the check loop
+// (watchPassthroughs), by Apply as it drops a session, and, when serverLog
+// finds a session failed for good or DisconnectServer holds one, by a
+// goroutine of their own, because serverLog may run under fwdMu and
+// ClosePassthrough needs it. Shutdown waits for all of them (passWork), then
+// lets go of the passthroughs that are left.
+//
 // The Docker networks are asked for the same way, with no lock held: by a
 // start, before it publishes, and by the refresh loop (refreshDocker). An
 // answer that changes them is applied under applyMu then mu, like a site
@@ -226,6 +233,12 @@ type Engine struct {
 	// beforeForward, when set, runs in OpenPassthrough after the local port
 	// is claimed and before it is forwarded. Tests use it to hold an open.
 	beforeForward func(id string)
+	// probePass checks that something answers on the local port of a
+	// passthrough. Tests replace it.
+	probePass func(ctx context.Context, local int) bool
+	// passWork counts the passthrough check loop and the closes run in the
+	// background. Shutdown waits for them.
+	passWork sync.WaitGroup
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
@@ -247,6 +260,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		relays:       map[int]net.Listener{},
 		passthroughs: map[string]*passthrough{},
 		now:          time.Now,
+		probePass:    probePassthroughPort,
 	}
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {
@@ -405,6 +419,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.mu.Lock()
 	e.started = true
 	e.mu.Unlock()
+	e.passWork.Add(1) // under lifeMu, so before Shutdown can wait
+	go e.watchPassthroughs(e.ctx)
 	e.bus.Publish(Event{Message: "proxy ready"})
 	return nil
 }
@@ -564,6 +580,11 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	// The check loop has seen e.ctx end, and the closes begun in the
+	// background find their sessions gone. Whatever passthroughs are left
+	// have nothing to carry them.
+	e.passWork.Wait()
+	e.releasePassthroughs()
 	// A forward whose cancel failed kept its port, and its relay with it;
 	// with the sessions gone, nothing is left for either to serve.
 	e.mu.Lock()

@@ -17,7 +17,7 @@ func errHeld(name string) error {
 // nothing reconnects it until ConnectServer or ReconnectServer. Its
 // projects show degraded and keep their forwards and sites, so connecting
 // again brings them back as they were. Starting a project there meanwhile
-// is refused.
+// is refused. Its passthroughs close, in the background.
 func (e *Engine) DisconnectServer(name string) error {
 	c, err := e.connOf(name, "this machine has no connection to drop")
 	if err != nil {
@@ -33,6 +33,10 @@ func (e *Engine) DisconnectServer(name string) error {
 	e.mu.Unlock()
 	e.serverLog(name, "disconnected, as asked")
 	c.sess.Stop()
+	// Listed after the stop, so an open that was under way is caught too.
+	e.mu.Lock()
+	e.closeLaterLocked(e.sessionPassthroughsLocked(c.sess, name+" was disconnected"))
+	e.mu.Unlock()
 	return nil
 }
 
