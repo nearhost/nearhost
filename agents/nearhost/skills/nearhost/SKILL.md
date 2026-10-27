@@ -56,7 +56,7 @@ Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev s
 
 1. Before you give the user a `localhost:<port>` URL, run `sh .../nearhost.sh passthrough <port> --label "browser preview"`. Do not ask the user in chat first: Nearhost asks them.
 2. If the JSON has an `id` and no `state`, it is waiting. Tell the user: "Approve it in Nearhost on <laptop>." Get `<laptop>` from `sh .../nearhost.sh socket`. Then run `sh .../nearhost.sh passthrough-wait <id>`, and again while it prints `"state":"pending"`, as in add.
-3. On `"state":"open"`, give the user the returned `url` with the path of the page appended, not the `localhost` URL you started with. It is the laptop's port, which may differ from the server's.
+3. On `"state":"open"`, give the user the returned `url` with the path of the page appended, not the `localhost` URL you started with. It is the laptop's port, which may differ from the server's. On `"state":"closed"`, tell the user the passthrough was closed and no preview was opened.
 4. Exit status 6 means the user said No: do not ask again for that port in this session. Exit status 1 with `Nearhost could not open the port: <reason>` means the user said yes but opening it failed: pass the reason on to the user, and ask again only once it is fixed. Exit status 7 means nobody answered within 10 minutes.
 5. On exit status 2 and 5, pass on the message the script printed as it is. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop.
 6. Never run `passthrough-close` yourself, unless the user asks you to close one. Nearhost closes a session's passthroughs when the session ends.
