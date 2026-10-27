@@ -63,6 +63,38 @@ func TestDeleteFromKeychainDeletesTheRootAsRoot(t *testing.T) {
 	}
 }
 
+func TestDeleteFromKeychainDeletesEveryCopy(t *testing.T) {
+	cert := &x509.Certificate{Raw: []byte("root")}
+	line := "SHA-1 hash: " + keychainHash(cert) + "\n"
+	calls := fakeSecurity(t, line+"SHA-1 hash: 0000\n"+line, nil)
+
+	if err := deleteFromKeychain(cert, "/k"); err != nil {
+		t.Fatal(err)
+	}
+	deletes := 0
+	for _, c := range *calls {
+		if c.args[0] == "delete-certificate" {
+			deletes++
+		}
+	}
+	if deletes != 2 {
+		t.Fatalf("%d deletes, want one per copy: %v", deletes, *calls)
+	}
+}
+
+func TestDeleteFromKeychainReportsAFailedListing(t *testing.T) {
+	orig := security
+	security = func(bool, ...string) ([]byte, error) {
+		return []byte("security: SecKeychainOpen: no such keychain\n"), errors.New("exit status 50")
+	}
+	t.Cleanup(func() { security = orig })
+
+	err := deleteFromKeychain(&x509.Certificate{Raw: []byte("root")}, "/k")
+	if err == nil || !strings.Contains(err.Error(), "no such keychain") {
+		t.Fatalf("err = %v, want the tool's output", err)
+	}
+}
+
 func TestDeleteFromKeychainLeavesOtherCertificates(t *testing.T) {
 	cert := &x509.Certificate{Raw: []byte("root")}
 	// A longer hash that starts with this one's is another certificate.
