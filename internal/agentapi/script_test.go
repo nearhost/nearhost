@@ -981,3 +981,83 @@ func TestScriptPassthroughBadPort(t *testing.T) {
 		}
 	}
 }
+
+// writeMarker writes a session marker for session sid naming sock, the way
+// the skill does, and returns its path.
+func writeMarker(t *testing.T, home, sid, sock string) string {
+	t.Helper()
+	marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", sid)
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte(sock+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return marker
+}
+
+// answerDelete serves every request on a socket in home with status and
+// returns the socket's path.
+func answerDelete(t *testing.T, home string, status int) string {
+	t.Helper()
+	sock := filepath.Join(home, "d.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return sock
+}
+
+func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusBadGateway))
+	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 {
+		t.Fatalf("close: %+v", r)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker lost after a failed close: %v", err)
+	}
+}
+
+func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusNoContent))
+	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 {
+		t.Fatalf("close: %+v", r)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed after a close: %v", err)
+	}
+}
+
+func TestScriptDecodesHTMLEscapes(t *testing.T) {
+	home := shortDir(t)
+	s, p, _, _ := passScript(t, home, "mini", true)
+	p.err = errors.New("port <3000> & more")
+	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	id := proposalID.FindStringSubmatch(r.stdout)[1]
+	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+		t.Fatal("the open did not fail")
+	}
+	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
+	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more`) {
+		t.Fatalf("body is not escaped: %q", r.stdout)
+	}
+	want := "Nearhost could not open the port: port <3000> & more"
+	if strings.TrimSpace(r.stderr) != want {
+		t.Fatalf("stderr %q, want %q", r.stderr, want)
+	}
+}

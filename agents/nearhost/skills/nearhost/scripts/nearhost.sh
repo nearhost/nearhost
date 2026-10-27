@@ -40,9 +40,10 @@ field() {
 }
 
 # text_field NAME JSON prints the first string NAME in JSON in full, where
-# field stops at the first comma. Of the escapes, only \n, \t and \r are
-# mapped, each to a space; any other drops its backslash and keeps the rest,
-# so \u003c prints as u003c.
+# field stops at the first comma. Of the escapes, \n, \t and \r become a
+# space, as do \u2028 and \u2029; \u003c, \u003e and \u0026 (the ones Go's
+# JSON encoder writes) become <, > and &. Any other escape drops its
+# backslash and keeps the rest.
 text_field() {
 	printf '%s' "$2" | NAME=$1 awk '{
 		key = "\"" ENVIRON["NAME"] "\":\""
@@ -60,6 +61,13 @@ text_field() {
 				c = substr(s, 1, 1)
 				if (c == "n" || c == "t" || c == "r")
 					c = " "
+				else if (c == "u") {
+					u = tolower(substr(s, 2, 4))
+					if (u == "003c" || u == "003e" || u == "0026" || u == "2028" || u == "2029") {
+						c = (u == "003c") ? "<" : (u == "003e") ? ">" : (u == "0026") ? "&" : " "
+						s = substr(s, 5)
+					}
+				}
 			}
 			out = out c
 			s = substr(s, 2)
@@ -500,10 +508,13 @@ passthrough-close)
 		marker="$(state_dir)/sessions/$sid"
 		[ -f "$marker" ] || exit 0
 		IFS= read -r SOCK <"$marker" || :
-		rm -f "$marker"
 		[ -S "$SOCK" ] || exit 0
 		command -v curl >/dev/null 2>&1 || exit 0
-		call "$SOCK" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$sid" || :
+		# The marker stays until Nearhost confirms the close, so a later
+		# attempt can still find the socket.
+		if call "$SOCK" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$sid" && [ "$STATUS" = 204 ]; then
+			rm -f "$marker"
+		fi
 		exit 0
 	fi
 	id=${1:-}
