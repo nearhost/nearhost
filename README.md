@@ -190,6 +190,8 @@ Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$
 
 Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs to reach `~/.nearhost/*.sock`: approve the skill's command when the agent asks to run it outside the sandbox, which opens nothing else. The [documentation](https://nearhost.dev/docs/getting-started/use-a-coding-agent/) covers the settings, and what the broader ones open. Set `notifications: false` in the config to keep the terminal quiet.
 
+On a server, the skill can also open a browser preview on your laptop for the rest of the session, after you approve it in Nearhost. See [browser previews from a server](https://nearhost.dev/docs/getting-started/use-a-coding-agent/#browser-previews-from-a-server).
+
 ### Useful commands
 
 | Command | What it does |
