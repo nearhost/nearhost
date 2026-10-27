@@ -38,6 +38,9 @@ func DefaultPath() (string, error) { return sub("config.yaml") }
 // RunDir holds SSH control sockets.
 func RunDir() (string, error) { return sub("run") }
 
+// GrantsPath is the file of "Always allow" grants, which hold token hashes.
+func GrantsPath() (string, error) { return sub("grants.json") }
+
 // DataDir is the nearhost data directory: $XDG_DATA_HOME/nearhost when that is
 // absolute and otherwise ~/Library/Application Support/nearhost on macOS or
 // ~/.local/share/nearhost elsewhere. A relative XDG_DATA_HOME is ignored, as
