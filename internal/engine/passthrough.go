@@ -124,8 +124,9 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 		return Passthrough{}, fmt.Errorf("%w: Nearhost isn't connected to %s", ErrNotConnected, spec.Server)
 	}
 	if old, dup := e.passthroughs[spec.ID]; dup {
+		stillClosing := old.closing && !old.opening // read under mu
 		e.mu.Unlock()
-		if old.closing && !old.opening {
+		if stillClosing {
 			return Passthrough{}, fmt.Errorf("passthrough %q is still closing", spec.ID)
 		}
 		return Passthrough{}, fmt.Errorf("passthrough %q is already open", spec.ID)
