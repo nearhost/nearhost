@@ -1,0 +1,25 @@
+internal/engine/passthrough.go
+  s_81ad364fe15b72::t_6568ddd61feb64 1-215
+internal/engine/project.go
+  s_81ad364fe15b72::t_6568ddd61feb64 365-366,368-374,377-378,380,406-407,449
+internal/engine/engine.go
+  s_81ad364fe15b72::t_6568ddd61feb64 215,222-225,245-246
+internal/engine/passthrough_test.go
+  s_81ad364fe15b72::t_39a7086ceede09 1-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "194e535e6ec9838b688e6e328bc76e4f8d990942",
+  "prompts": {},
+  "sessions": {
+    "s_81ad364fe15b72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "047f1bbe-a859-4471-ae3c-0288f1e01a7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
