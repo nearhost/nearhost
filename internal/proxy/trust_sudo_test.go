@@ -49,9 +49,10 @@ func TestInstallAndUninstallRunTheTrustedSudo(t *testing.T) {
 		seen = append(seen, path)
 		return nil
 	}
-	origInstall, origUninstall := trustInstall, trustUninstall
+	origInstall, origUninstall, origRemove := trustInstall, trustUninstall, removeSystemCopy
 	trustInstall, trustUninstall = look, look
-	t.Cleanup(func() { trustInstall, trustUninstall = origInstall, origUninstall })
+	removeSystemCopy = func(*x509.Certificate) error { return nil }
+	t.Cleanup(func() { trustInstall, trustUninstall, removeSystemCopy = origInstall, origUninstall, origRemove })
 
 	if err := Install(&x509.Certificate{}); err != nil {
 		t.Fatal(err)

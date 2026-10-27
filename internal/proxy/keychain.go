@@ -1,0 +1,61 @@
+package proxy
+
+import (
+	"bytes"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+
+	"github.com/nearhost/nearhost/internal/sudo"
+)
+
+// systemKeychain is where `security add-trusted-cert -d` puts the root on
+// macOS.
+const systemKeychain = "/Library/Keychains/System.keychain"
+
+// securityTool is macOS's security tool, by its absolute path: sudo looks a
+// bare name up on the user's PATH, which could put another program there.
+const securityTool = "/usr/bin/security"
+
+// security runs securityTool, through the trusted sudo when asRoot, and
+// returns its combined output. Tests replace it.
+var security = func(asRoot bool, args ...string) ([]byte, error) {
+	name := securityTool
+	if asRoot {
+		path, err := sudo.Binary()
+		switch {
+		case err == nil:
+			args = append([]string{"--", name}, args...)
+			name = path
+		case !errors.Is(err, sudo.ErrNotFound) || os.Geteuid() != 0:
+			return nil, err
+		}
+	}
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+// deleteFromKeychain removes every copy of cert from keychain. The trust
+// store library's uninstall runs `security remove-trusted-cert`, which drops
+// the trust settings and leaves the certificate in the keychain, so each
+// trust and untrust would otherwise leave a copy behind. delete-certificate
+// removes one match a run, so it runs once for each copy listed.
+func deleteFromKeychain(cert *x509.Certificate, keychain string) error {
+	sum := sha1.Sum(cert.Raw)
+	hash := strings.ToUpper(hex.EncodeToString(sum[:]))
+	out, err := security(false, "find-certificate", "-a", "-Z", keychain)
+	if err != nil {
+		return fmt.Errorf("list %s: %w: %s", keychain, err, bytes.TrimSpace(out))
+	}
+	copies := bytes.Count(out, []byte("SHA-1 hash: "+hash+"\n"))
+	for range copies {
+		if out, err := security(true, "delete-certificate", "-Z", hash, keychain); err != nil {
+			return fmt.Errorf("delete the root from %s: %w: %s", keychain, err, bytes.TrimSpace(out))
+		}
+	}
+	return nil
+}
