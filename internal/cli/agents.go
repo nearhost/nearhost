@@ -217,6 +217,15 @@ func (r reviewer) Review(p agentapi.Proposal) {
 	r.to.Propose(tui.Proposal{ID: p.ID, Origin: p.Origin, Path: p.Path, Name: p.Name, Web: p.Web, Expires: p.Expires})
 }
 
+// ReviewPassthrough does nothing yet: the agent API has no Passer until
+// the engine is wired to it, so no passthrough request reaches here. Task 5
+// shows them in the interface.
+func (r reviewer) ReviewPassthrough(agentapi.PassRequest) {}
+
+// Opened does nothing yet, for the same reason as ReviewPassthrough. Task 5
+// shows a notice in the interface.
+func (r reviewer) Opened(agentapi.Passthrough) {}
+
 // close stops serving agents and removes the sockets on this machine.
 func (a *agents) close() {
 	if a != nil {
