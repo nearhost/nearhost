@@ -33,8 +33,9 @@ func (r PassRequest) who() string { return requesterName(r.Requester) + " " + r.
 
 // passForm asks whether to open a port for an agent: yes, no, or always
 // allow. The answer is given on the worker, since opening the forward blocks.
-// Once an answer fails, the request is over as far as the box goes: it shows
-// why, and n or esc close it without asking the backend again.
+// Once an answer fails, the box shows why and can only be closed: n or esc
+// close it, and decline the request on the worker when it may still be
+// waiting.
 type passForm struct {
 	b    Backend
 	w    *worker
@@ -44,7 +45,10 @@ type passForm struct {
 	// ended is set when the failed answer found the request no longer
 	// waiting, or ended it.
 	ended bool
-	seq   int
+	// opened is set when the failed answer still answered the request:
+	// the port opened, and only Always allow was not saved.
+	opened bool
+	seq    int
 }
 
 // passAnsweredMsg is the outcome of answering a request.
@@ -66,7 +70,10 @@ func (f *passForm) update(msg tea.Msg) tea.Cmd {
 			// a port the user saw fail, so the box can only be closed.
 			switch msg.String() {
 			case "n", "esc":
-				return closeForm
+				if f.ended || f.opened {
+					return closeForm
+				}
+				return tea.Batch(closeForm, f.decline())
 			}
 			return nil
 		}
@@ -94,6 +101,17 @@ func (f *passForm) answer(a Answer) tea.Cmd {
 	})
 }
 
+// decline says no to the request on the worker, as the box closes after a
+// failed answer that left the request waiting. It is best effort: the
+// outcome is not shown or logged, since the box has gone.
+func (f *passForm) decline() tea.Cmd {
+	b, id := f.b, f.r.ID
+	return f.w.do(func(ctx context.Context) tea.Msg {
+		_ = b.AnswerPassthrough(ctx, id, AnswerNo)
+		return nil
+	})
+}
+
 // answered takes the outcome of an answer; it reports whether the box is done.
 func (f *passForm) answered(msg passAnsweredMsg) bool {
 	if msg.seq != f.seq {
@@ -102,7 +120,10 @@ func (f *passForm) answered(msg passAnsweredMsg) bool {
 	f.busy = false
 	if msg.err != nil {
 		f.err, f.ended = msg.err.Error(), errors.Is(msg.err, ErrRequestEnded)
-		return false
+		f.opened = errors.Is(msg.err, ErrAllowNotSaved)
+		// A No on a request that has ended has nothing to show: the
+		// request is over, as the No wanted.
+		return msg.answer == AnswerNo && f.ended
 	}
 	return true
 }
@@ -166,7 +187,8 @@ func (m *Model) passOpened(msg passOpenedMsg) tea.Cmd {
 // passAnswered logs the outcome of an answer, whatever is open now, since the
 // forward may have opened or the agent been told. It closes the box only when
 // that is the one that answered. A failure the box shows is not logged; one
-// that comes after the box has gone is.
+// that comes after the box has gone is. A port that opened is logged either
+// way, as is a No on a request that had already ended, which closes the box.
 func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
 	shown := false
 	if pf, ok := m.form.(*passForm); ok && pf.shows(msg) {
@@ -174,6 +196,14 @@ func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
 		if pf.answered(msg) {
 			m.form = nil
 		}
+	}
+	switch {
+	case errors.Is(msg.err, ErrAllowNotSaved):
+		m.logs.note(fmt.Sprintf("Opened port %d for %s, but Always allow was not saved.", msg.r.Remote, msg.r.who()))
+		return nil
+	case msg.answer == AnswerNo && errors.Is(msg.err, ErrRequestEnded):
+		m.logs.note(fmt.Sprintf("The request to open port %d for %s had already ended.", msg.r.Remote, msg.r.who()))
+		return nil
 	}
 	if msg.err != nil {
 		if !shown {

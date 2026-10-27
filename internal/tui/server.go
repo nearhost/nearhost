@@ -19,8 +19,9 @@ func agentFix(p transport.AgentProblem) string {
 	return "Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r on the server to reconnect."
 }
 
-// serverPanel is the panel of the server called name.
-func (m *Model) serverPanel(name string, width int) []string {
+// serverPanel is the panel of the server called name, in height lines
+// where it can be.
+func (m *Model) serverPanel(name string, width, height int) []string {
 	if name == config.LocalServer {
 		return []string{
 			styleTitle.Render("local"),
@@ -66,12 +67,14 @@ func (m *Model) serverPanel(name string, width int) []string {
 		projects = strings.Join(on, ", ")
 	}
 	lines = append(lines, field("projects", projects, width)...)
-	if rows := m.passLines(name, width); len(rows) > 0 {
-		lines = append(append(lines, ""), rows...)
-	}
+	// The error comes before the passthroughs, so a long list of them
+	// cannot push it out of the panel.
 	if m.panelErr != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(m.panelErr, width)...)
+	}
+	if rows := m.passLines(name, width, height-len(lines)-1); len(rows) > 0 {
+		lines = append(append(lines, ""), rows...)
 	}
 	return lines
 }
