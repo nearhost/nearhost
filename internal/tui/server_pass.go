@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 )
@@ -24,14 +25,18 @@ type passRow struct {
 // passRows are the rows of the server called name: its open passthroughs,
 // sorted by remote port, then its grants, sorted by requester. They are read
 // from the backend each time, so what the engine closes is gone at once. The
-// error is why the grants could not be read, when they could not. The
+// error is why the grants could not be read, when they could not. The grants
+// are those fetchGrants last read, since reading them blocks. The
 // focus on the rows ends when none are left, and the selected row stays
 // within them.
 func (m *Model) passRows(name string) ([]passRow, error) {
 	passes := slices.Clone(m.b.Passthroughs(name))
 	sort.SliceStable(passes, func(i, j int) bool { return passes[i].Remote < passes[j].Remote })
-	gs, err := m.b.Grants(name)
-	gs = slices.Clone(gs)
+	var gs []grants.Grant
+	var err error
+	if e := m.grantCache[name]; e != nil {
+		gs, err = slices.Clone(e.list), e.err
+	}
 	sort.SliceStable(gs, func(i, j int) bool { return gs[i].Requester < gs[j].Requester })
 	var rows []passRow
 	for i := range passes {
@@ -64,18 +69,17 @@ func age(now, t time.Time) string {
 // text is the row's line.
 func (r passRow) text(now time.Time) string {
 	if g := r.grant; g != nil {
-		return requesterName(g.Requester) + " · since " + g.Created.Format("2 Jan")
+		return requesterName(g.Requester) + " · since " + g.Created.Local().Format("2 Jan")
 	}
 	p := r.pass
 	parts := []string{fmt.Sprintf("%d → localhost:%d", p.Remote, p.Local), requesterName(p.Requester)}
 	if l := clean(p.Label); l != "" {
 		parts = append(parts, l)
 	}
-	id := clean(p.ID)
-	if len(id) > 8 {
-		id = id[:8]
+	if s := clean(p.Session); s != "" {
+		parts = append(parts, string([]rune(s)[:min(len([]rune(s)), 8)]))
 	}
-	return strings.Join(append(parts, id, age(now, p.Opened)), " · ")
+	return strings.Join(append(parts, age(now, p.Opened)), " · ")
 }
 
 // passLines draws the server's passthroughs and grants for its panel: a label
@@ -110,7 +114,10 @@ func (m *Model) passLines(name string, width int) []string {
 	}
 	section("passthroughs", func(r passRow) bool { return r.pass != nil })
 	section("always allowed", func(r passRow) bool { return r.grant != nil })
-	if err != nil {
+	// A grants error is news only beside passthroughs, or with the rows
+	// selected; otherwise every server panel of a run without agents would
+	// carry it.
+	if err != nil && (m.passFocus || slices.ContainsFunc(rows, func(r passRow) bool { return r.pass != nil })) {
 		if !shown["always allowed"] {
 			lines = append(lines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
@@ -198,6 +205,8 @@ type revokedMsg struct {
 	err               error
 }
 
+// update answers y by taking the grant back, on the worker, and n or esc by
+// closing the question.
 func (f *revokeForm) update(msg tea.Msg) tea.Cmd {
 	km, ok := msg.(tea.KeyPressMsg)
 	if !ok || f.busy {
@@ -217,6 +226,7 @@ func (f *revokeForm) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// lines draws what the question adds to its title.
 func (f *revokeForm) lines(width int) []string {
 	lines := wrap("Open passthroughs stay open.", width)
 	if f.busy {
@@ -229,10 +239,12 @@ func (f *revokeForm) lines(width int) []string {
 	return lines
 }
 
+// heading is the question.
 func (f *revokeForm) heading() heading {
 	return heading{title: "Stop always allowing " + requesterName(f.requester) + " on " + clean(f.server) + "?"}
 }
 
+// keys are y and n, and none while the revoke runs.
 func (f *revokeForm) keys() []footerItem {
 	if f.busy {
 		return nil
@@ -253,6 +265,9 @@ func (m *Model) revoked(msg revokedMsg) {
 		return
 	}
 	m.form = nil
+	if e := m.grantCache[msg.server]; e != nil {
+		e.at = time.Time{} // read again at once
+	}
 	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s.", requesterName(msg.requester)))
 }
 
@@ -287,4 +302,57 @@ func (m *Model) passCounts(width int) []string {
 		}
 	}
 	return ls
+}
+
+// grantsEvery is how long the grants read for a server are fresh.
+const grantsEvery = 5 * time.Second
+
+// grantsEntry is the grants last read for a server.
+type grantsEntry struct {
+	list []grants.Grant
+	err  error
+	at   time.Time // when they were read; zero when they must be read again
+	busy bool      // a read is running
+}
+
+// grantsMsg is the outcome of reading a server's grants.
+type grantsMsg struct {
+	server string
+	list   []grants.Grant
+	err    error
+}
+
+// fetchGrants reads the selected server's grants on the worker when they are
+// not known or no longer fresh. Reading them blocks, so the panel draws
+// from what was last read.
+func (m *Model) fetchGrants() tea.Cmd {
+	kind, name := m.selected()
+	if kind != rowServer || name == config.LocalServer || m.quitting {
+		return nil
+	}
+	if m.grantCache == nil {
+		m.grantCache = map[string]*grantsEntry{}
+	}
+	e := m.grantCache[name]
+	if e == nil {
+		e = &grantsEntry{}
+		m.grantCache[name] = e
+	}
+	if e.busy || (!e.at.IsZero() && m.now().Sub(e.at) < grantsEvery) {
+		return nil
+	}
+	e.busy = true
+	b := m.b
+	return m.work.do(func(context.Context) tea.Msg {
+		list, err := b.Grants(name)
+		return grantsMsg{name, list, err}
+	})
+}
+
+// gotGrants keeps the grants that were read.
+func (m *Model) gotGrants(msg grantsMsg) {
+	if m.grantCache == nil {
+		m.grantCache = map[string]*grantsEntry{}
+	}
+	m.grantCache[msg.server] = &grantsEntry{list: msg.list, err: msg.err, at: m.now()}
 }

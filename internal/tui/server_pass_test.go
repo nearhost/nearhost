@@ -26,12 +26,13 @@ func passModel(t *testing.T) (*Model, *fakeBackend) {
 	f.passes = []engine.Passthrough{
 		{PassthroughSpec: engine.PassthroughSpec{ID: "ffff0000aaaa", Server: "apollo", Requester: "codex", Remote: 5173}, Local: 5173,
 			Opened: m.now().Add(-2 * time.Hour)},
-		{PassthroughSpec: engine.PassthroughSpec{ID: "1a2b3c4d5e6f7a8b", Server: "apollo", Requester: "claude-code", Label: "browser preview", Remote: 41873},
+		{PassthroughSpec: engine.PassthroughSpec{ID: "id-not-shown", Session: "1a2b3c4d5e6f7a8b", Server: "apollo", Requester: "claude-code", Label: "browser preview", Remote: 41873},
 			Local: 41873, Opened: m.now().Add(-12 * time.Minute)},
 	}
 	f.grantList = []grants.Grant{{Server: "apollo", Requester: "claude-code", Kind: grants.KindPassthrough,
 		Created: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)}}
 	m.selectRow(rowKey(rowServer, "apollo"))
+	run(m, m.fetchGrants()) // the grants are read on the worker
 	return m, f
 }
 
@@ -49,7 +50,7 @@ func TestServerPanelListsPassthroughs(t *testing.T) {
 	s := screenText(m)
 	for _, want := range []string{
 		"passthroughs",
-		"5173 → localhost:5173 · Codex · ffff0000 · 2h",
+		"5173 → localhost:5173 · Codex · 2h",
 		"41873 → localhost:41873 · Claude Code · browser preview · 1a2b3c4d · 12m",
 		"always allowed",
 		"Claude Code · since 27 Oct",
@@ -77,7 +78,7 @@ func TestServerPassFocus(t *testing.T) {
 	}
 	press(m, "down")
 	run(m, press(m, "x")) // 41873, the second passthrough
-	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close 1a2b3c4d5e6f7a8b"}) {
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close id-not-shown"}) {
 		t.Fatalf("calls %v", got)
 	}
 	press(m, "down") // the grant
@@ -90,7 +91,7 @@ func TestServerPassFocus(t *testing.T) {
 		t.Fatalf("footer %q", got)
 	}
 	settle(m, press(m, "y"))
-	want := []string{"close 1a2b3c4d5e6f7a8b", "revoke apollo claude-code"}
+	want := []string{"close id-not-shown", "revoke apollo claude-code"}
 	if got := f.passthroughCalls(); !slices.Equal(got, want) {
 		t.Fatalf("calls %v", got)
 	}
@@ -126,6 +127,7 @@ func TestServerPassFailureShown(t *testing.T) {
 func TestServerPassFocusEmpty(t *testing.T) {
 	m, f := passModel(t)
 	f.passes, f.grantList = nil, nil
+	m.Update(grantsMsg{server: "apollo"})
 	press(m, "tab")
 	if m.passFocus {
 		t.Fatal("tab focused nothing")
@@ -166,11 +168,26 @@ func TestPassFocusRowGone(t *testing.T) {
 	}
 	f.passes = nil
 	f.grantList = nil // the last rows go
+	m.Update(grantsMsg{server: "apollo"})
 	screen(m)
 	if m.passFocus {
 		t.Error("the focus stays with no rows")
 	}
 	if got := footer(m); strings.Contains(got, "close") {
 		t.Errorf("footer %q", got)
+	}
+}
+
+func TestServerPanelSilentWithoutAgents(t *testing.T) {
+	m, f := passModel(t)
+	f.passes, f.grantList, f.passErr = nil, nil, errBoom
+	m.grantCache = nil
+	run(m, m.fetchGrants()) // the grants cannot be read
+	if s := screenText(m); strings.Contains(s, "always allowed") || strings.Contains(s, "Boom") {
+		t.Errorf("an error with nothing to list:\n%s", s)
+	}
+	f.passes = []engine.Passthrough{{PassthroughSpec: engine.PassthroughSpec{ID: "x", Server: "apollo", Requester: "codex", Remote: 1}}}
+	if s := screenText(m); !strings.Contains(s, "Boom") {
+		t.Errorf("no error beside a passthrough:\n%s", s)
 	}
 }
