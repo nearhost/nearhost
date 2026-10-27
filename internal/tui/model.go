@@ -58,9 +58,9 @@ type Model struct {
 	// password asks for the user's password over everything else; nil when
 	// nothing is asking.
 	password *passwordBox
-	// proposals are the agents' proposals waiting to be reviewed, oldest
-	// first; proposing is the one whose form is open, nil when none is.
-	proposals []Proposal
+	// waiting are the agents' requests to be reviewed, oldest first;
+	// proposing is the proposal whose form is open, nil when none is.
+	waiting   []asked
 	proposing *proposing
 
 	routeFocus bool // the project panel's routes have the keys
@@ -193,7 +193,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.endProposal()
 	// The advice of the selected project is read when it is not known, once
 	// the selection has rested on it.
-	return model, tea.Batch(cmd, m.nextProposal(), m.waitForAdvice(), m.spin())
+	return model, tea.Batch(cmd, m.nextAsked(), m.waitForAdvice(), m.spin())
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -345,6 +345,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.applyNow())
 	case proposalMsg:
 		return m, m.gotProposal(msg.p)
+	case passMsg:
+		return m, m.gotPass(msg.r)
+	case passOpenedMsg:
+		return m, m.passOpened(msg)
+	case passAnsweredMsg:
+		return m, m.passAnswered(msg)
 	case projectAddedMsg:
 		if m.proposing != nil && m.form == m.proposing.form {
 			m.b.AcceptProposal(m.proposing.p.ID, msg.name)

@@ -132,20 +132,36 @@ type proposing struct {
 func (m *Model) gotProposal(p Proposal) tea.Cmd {
 	text := fmt.Sprintf("Agent %s wants to add %s", p.where(), clean(p.Path))
 	m.logs.note(text + ".")
-	m.proposals = append(m.proposals, p)
+	m.waiting = append(m.waiting, asked{prop: &p})
 	return m.notify(text)
 }
 
-// nextProposal opens the oldest proposal still waiting, when nothing else
-// is open over the screen and the filter is not being typed. One whose
-// agent stopped waiting is dropped.
-func (m *Model) nextProposal() tea.Cmd {
+// asked is a request waiting to be reviewed: a proposal or a passthrough.
+type asked struct {
+	prop *Proposal
+	pass *PassRequest
+}
+
+// nextAsked opens the oldest request still waiting, when nothing else is
+// open over the screen and the filter is not being typed. One whose agent
+// stopped waiting is dropped.
+func (m *Model) nextAsked() tea.Cmd {
 	if m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.filtering || m.proposing != nil {
 		return nil
 	}
-	for len(m.proposals) > 0 {
-		p := m.proposals[0]
-		m.proposals = m.proposals[1:]
+	for len(m.waiting) > 0 {
+		a := m.waiting[0]
+		m.waiting = m.waiting[1:]
+		if a.pass != nil {
+			r := *a.pass
+			if !m.now().Before(r.Expires) {
+				m.logs.note(fmt.Sprintf("The request from %s to open port %d expired before it was reviewed.", r.who(), r.Remote))
+				continue
+			}
+			m.form = &passForm{b: m.b, w: m.work, r: r}
+			return nil
+		}
+		p := *a.prop
 		if !m.now().Before(p.Expires) {
 			m.logs.note(fmt.Sprintf("The proposal to add %s %s expired before it was reviewed.", clean(p.Path), p.where()))
 			continue
@@ -180,20 +196,20 @@ func (m *Model) endProposal() {
 	m.logs.note(fmt.Sprintf("Declined the proposal to add %s %s.", clean(pr.p.Path), pr.p.where()))
 }
 
-// proposalsWaiting is Home's line about proposals waiting to be reviewed.
+// proposalsWaiting is Home's line about requests waiting to be reviewed.
 func (m *Model) proposalsWaiting(width int) []string {
 	n := 0
-	for _, p := range m.proposals {
-		if m.now().Before(p.Expires) {
+	for _, a := range m.waiting {
+		if m.now().Before(a.expires()) {
 			n++
 		}
 	}
 	if n == 0 {
 		return nil
 	}
-	what := "1 proposal waiting"
+	what := "1 request waiting"
 	if n > 1 {
-		what = fmt.Sprintf("%d proposals waiting", n)
+		what = fmt.Sprintf("%d requests waiting", n)
 	}
 	return field("agents", styleAmber.Render("● "+what)+styleDim.Render(" · ")+styleBeacon.Render("p")+styleDim.Render(" to review"), width)
 }

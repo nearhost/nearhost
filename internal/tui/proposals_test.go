@@ -94,11 +94,11 @@ func TestAProposalWaitsForTheOpenFormThenOpens(t *testing.T) {
 	press(m, "s") // the add-server form
 	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
 	propose(m, Proposal{ID: "p2", Origin: config.LocalServer, Path: "/work/here"})
-	if _, isServer := m.form.(*serverForm); !isServer || len(m.proposals) != 2 {
-		t.Fatalf("form %T, waiting %d", m.form, len(m.proposals))
+	if _, isServer := m.form.(*serverForm); !isServer || len(m.waiting) != 2 {
+		t.Fatalf("form %T, waiting %d", m.form, len(m.waiting))
 	}
 	m.form = nil
-	wantScreen(t, m, "agents    ● 2 proposals waiting · p to review")
+	wantScreen(t, m, "agents    ● 2 requests waiting · p to review")
 	settle(m, press(m, "p"))
 	wantScreen(t, m, "Proposed by an agent on mini")
 	settle(m, press(m, "esc"))
@@ -119,8 +119,8 @@ func TestAProposalThatExpiredUnreviewedIsDropped(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(time.Hour) }
 	m.form = nil
 	settle(m, press(m, "p"))
-	if m.form != nil || len(m.proposals) != 0 || len(f.proposalAnswers()) != 0 {
-		t.Fatalf("form %T, waiting %d, answers %v", m.form, len(m.proposals), f.proposalAnswers())
+	if m.form != nil || len(m.waiting) != 0 || len(f.proposalAnswers()) != 0 {
+		t.Fatalf("form %T, waiting %d, answers %v", m.form, len(m.waiting), f.proposalAnswers())
 	}
 	if !strings.Contains(logText(m, homeKey), "expired before it was reviewed") {
 		t.Fatalf("log:\n%s", logText(m, homeKey))
@@ -140,8 +140,8 @@ func TestAProposalWaitsWhileTheFilterIsTyped(t *testing.T) {
 	press(m, "/")
 	typeText(m, "my")
 	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
-	if m.form != nil || len(m.proposals) != 1 {
-		t.Fatalf("form %T, waiting %d", m.form, len(m.proposals))
+	if m.form != nil || len(m.waiting) != 1 {
+		t.Fatalf("form %T, waiting %d", m.form, len(m.waiting))
 	}
 	press(m, "esc") // stops typing the filter
 	settle(m, press(m, "p"))
@@ -260,13 +260,13 @@ func TestHomeCountsOnlyProposalsStillWaiting(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(30 * time.Minute) }
 	m.form = nil
 	m.filtering = true // keeps the proposal from opening, so Home shows the count
-	wantScreen(t, m, "agents    ● 1 proposal waiting · p to review")
+	wantScreen(t, m, "agents    ● 1 request waiting · p to review")
 }
 
 func TestHelpListsP(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	press(m, "?")
-	wantScreen(t, m, "p      review proposal ")
+	wantScreen(t, m, "p      review request ")
 }
 
 func TestPassRequestsAndNoticesKeepTheOrderWithProposals(t *testing.T) {

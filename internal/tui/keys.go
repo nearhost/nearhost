@@ -202,9 +202,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.form.update(k)
 	}
 	if m.logView != nil {
-		if s == "p" && len(m.proposals) > 0 {
+		if s == "p" && len(m.waiting) > 0 {
 			m.logView = nil // the proposal opens over the main screen
-			return m.nextProposal()
+			return m.nextAsked()
 		}
 		return m.logViewKey(k)
 	}
@@ -330,7 +330,7 @@ func (m *Model) action(s string) tea.Cmd {
 		m.form = f
 		return load
 	case "p":
-		return m.nextProposal()
+		return m.nextAsked()
 	case "i":
 		// The routes with the keys show every route, so i would change
 		// nothing to be seen until they gave the keys back.
