@@ -4,20 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -669,3 +678,129 @@ func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
 		t.Fatalf("after the refused accept: %v", out)
 	}
 }
+
+// withGrants has b keep grants in a file in dir.
+func withGrants(b agentsBackend, dir string) agentsBackend {
+	b.grants = func() (string, error) { return filepath.Join(dir, "grants.json"), nil }
+	return b
+}
+
+// postPass posts a passthrough request to the agent API on sock, with token
+// when it is not empty.
+func postPass(t *testing.T, sock, token string) (int, map[string]any) {
+	t.Helper()
+	body := `{"port": 5173, "requester": "claude-code", "session": "s1", "label": "vite"`
+	if token != "" {
+		body += `, "token": "` + token + `"`
+	}
+	return postJSON(t, sock, "/v1/passthroughs", body+"}")
+}
+
+func TestAgentsAdvertisePassthrough(t *testing.T) {
+	home := agentHome(t)
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	out := getJSON(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), "/v1")
+	if !slices.Contains(out["capabilities"].([]any), any("passthrough")) || out["id"] != "k3f9q2" {
+		t.Fatalf("GET /v1: %v", out)
+	}
+
+	b, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, "", 443, agentEnv{})
+	defer b.close()
+	out = getJSON(t, b.sock, "/v1")
+	if _, has := out["id"]; has || slices.Contains(out["capabilities"].([]any), any("passthrough")) {
+		t.Fatalf("without a grants file: %v", out)
+	}
+}
+
+func TestPasserMapsNotConnected(t *testing.T) {
+	var eng atomic.Pointer[engine.Engine]
+	p := passer{eng: &eng}
+	spec := agentapi.Passthrough{ID: "a", Origin: "mini", Requester: "claude-code", Remote: 5173}
+	if _, err := p.Open(context.Background(), spec); !errors.Is(err, agentapi.ErrNotConnected) {
+		t.Fatalf("no engine: %v", err)
+	}
+	cfg := &config.Config{Servers: []config.Server{{Name: "mini", SSHHost: "mini"}}}
+	eng.Store(engine.New(cfg, engine.Options{}))
+	if _, err := p.Open(context.Background(), spec); !errors.Is(err, agentapi.ErrNotConnected) {
+		t.Fatalf("no session: %v", err)
+	}
+	if got := p.List("mini"); len(got) != 0 {
+		t.Fatalf("list %v", got)
+	}
+}
+
+func TestUpHonoursGrants(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close() // no a.review: this is `nearhost up`
+	f, _ := opts.Agent("mini")
+
+	if status, out := postPass(t, f.Local, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
+		t.Fatalf("no token: %d %v", status, out)
+	}
+	token, err := a.grants.Allow("mini", "claude-code", grants.KindPassthrough)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The grant is honoured: the request reaches the engine, which is not
+	// attached, rather than being refused for want of a prompt.
+	if status, out := postPass(t, f.Local, token); status != 409 || !strings.Contains(out["error"].(string), "isn't connected to mini") {
+		t.Fatalf("token: %d %v", status, out)
+	}
+	if status, out := postPass(t, f.Local, "not-the-token"); status != 401 {
+		t.Fatalf("wrong token: %d %v", status, out)
+	}
+}
+
+func TestReviewerForwardsPassRequest(t *testing.T) {
+	var to tui.Proposals
+	got := make(chan string, 2)
+	prog := tea.NewProgram(recorder{got}, tea.WithInput(nil), tea.WithOutput(io.Discard))
+	to.Attach(prog)
+	go prog.Run()
+	defer prog.Kill()
+
+	r := reviewer{&to}
+	expires := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	r.ReviewPassthrough(agentapi.PassRequest{ID: "r1", Origin: "mini", Requester: "claude-code", Session: "s1",
+		Label: "vite", Remote: 5173, LocalTaken: true, CanAlways: true, Expires: expires})
+	r.Opened(agentapi.Passthrough{Origin: "mini", Requester: "claude-code", Remote: 5173, Local: 5174})
+
+	want := []string{
+		"{r:{ID:r1 Origin:mini Requester:claude-code Session:s1 Label:vite Remote:5173 LocalTaken:true CanAlways:true Expires:ext=" + strconv.FormatInt(expires.Unix()+62135596800, 10) + "}}",
+		"{origin:mini requester:claude-code remote:5173}",
+	}
+	for i, w := range want {
+		select {
+		case g := <-got:
+			// The time is unexported inside the message, so %+v shows its raw
+			// seconds; keep only those.
+			g = regexp.MustCompile(`Expires:\{wall:0 ext:(\d+) loc:<nil>\}`).ReplaceAllString(g, "Expires:ext=$1")
+			if g != w {
+				t.Fatalf("message %d:\n got %s\nwant %s", i, g, w)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("message %d did not arrive", i)
+		}
+	}
+}
+
+// recorder is a program that reports the passthrough messages it gets.
+type recorder struct{ got chan<- string }
+
+func (recorder) Init() tea.Cmd { return nil }
+func (r recorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if s := fmt.Sprintf("%+v", msg); strings.HasPrefix(s, "{r:") || strings.HasPrefix(s, "{origin:") {
+		r.got <- s
+	}
+	return r, nil
+}
+func (recorder) View() tea.View { return tea.NewView("") }

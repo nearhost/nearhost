@@ -18,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -261,6 +262,23 @@ type uiEngine struct {
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
 
 func (u *uiEngine) DeclineProposal(id, reason string) { u.agents.decline(id, reason) }
+
+// ClosePassthrough closes the passthrough id for the user.
+func (u *uiEngine) ClosePassthrough(ctx context.Context, id string) error {
+	return u.Engine.ClosePassthrough(ctx, id, "closed in Nearhost")
+}
+
+func (u *uiEngine) AnswerPassthrough(ctx context.Context, id string, a tui.Answer) error {
+	return u.agents.answerPassthrough(ctx, id, a)
+}
+
+func (u *uiEngine) Grants(server string) ([]grants.Grant, error) {
+	return u.agents.passthroughGrants(server)
+}
+
+func (u *uiEngine) RevokeGrant(server, requester string) error {
+	return u.agents.revokeGrant(server, requester)
+}
 
 func (u *uiEngine) ConfigPath() string { return u.path }
 

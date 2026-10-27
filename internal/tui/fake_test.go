@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -49,6 +51,13 @@ type fakeBackend struct {
 	opened   []string
 	shutdown []context.Context
 	answers  []string // "accept <id> <name>" or "decline <id> <reason>"
+
+	// passes are what Passthroughs lists, and grantList what Grants lists.
+	passes    []engine.Passthrough
+	grantList []grants.Grant
+	// passCalls records the passthrough calls, and passErr is what they return.
+	passCalls []string
+	passErr   error
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -71,6 +80,60 @@ func (f *fakeBackend) DeclineProposal(id, reason string) {
 	f.answers = append(f.answers, strings.TrimSpace("decline "+id+" "+reason))
 	f.mu.Unlock()
 }
+
+// Passthroughs records nothing and lists the fake's passthroughs.
+func (f *fakeBackend) Passthroughs(server string) []engine.Passthrough {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []engine.Passthrough
+	for _, p := range f.passes {
+		if server == "" || p.Server == server {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (f *fakeBackend) ClosePassthrough(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passCalls = append(f.passCalls, "close "+id)
+	return f.passErr
+}
+
+func (f *fakeBackend) AnswerPassthrough(_ context.Context, id string, a Answer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passCalls = append(f.passCalls, fmt.Sprintf("answer %s %d", id, a))
+	return f.passErr
+}
+
+func (f *fakeBackend) Grants(server string) ([]grants.Grant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []grants.Grant
+	for _, g := range f.grantList {
+		if server == "" || g.Server == server {
+			out = append(out, g)
+		}
+	}
+	return out, f.passErr
+}
+
+func (f *fakeBackend) RevokeGrant(server, requester string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passCalls = append(f.passCalls, "revoke "+server+" "+requester)
+	return f.passErr
+}
+
+// passthroughCalls are the passthrough calls made, in order.
+func (f *fakeBackend) passthroughCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.passCalls...)
+}
+
 func (f *fakeBackend) proposalAnswers() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

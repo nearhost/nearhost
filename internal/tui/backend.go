@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -127,7 +128,34 @@ type Backend interface {
 	// DeclineProposal tells the agent that made proposal id that it was
 	// dismissed, for reason when there is one.
 	DeclineProposal(id, reason string)
+
+	// Passthroughs are the open passthroughs of server, or of every server
+	// when it is empty.
+	Passthroughs(server string) []engine.Passthrough
+	// ClosePassthrough closes the passthrough id, telling the user it was
+	// closed in Nearhost.
+	ClosePassthrough(ctx context.Context, id string) error
+	// AnswerPassthrough answers the agent's request id. It blocks while the
+	// passthrough opens, and returns the error that stopped it.
+	AnswerPassthrough(ctx context.Context, id string, a Answer) error
+	// Grants are the passthrough grants given on server.
+	Grants(server string) ([]grants.Grant, error)
+	// RevokeGrant takes back requester's passthrough grant on server.
+	RevokeGrant(server, requester string) error
 }
+
+// Answer is the user's answer to a passthrough request.
+type Answer int
+
+const (
+	// AnswerNo declines the request.
+	AnswerNo Answer = iota
+	// AnswerYes opens the passthrough once.
+	AnswerYes
+	// AnswerAlways opens it and lets its requester open more on the server
+	// without asking.
+	AnswerAlways
+)
 
 // ServerFiles is the files of a server, open while a project there is being
 // added. Close ends it.

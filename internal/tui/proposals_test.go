@@ -268,3 +268,37 @@ func TestHelpListsP(t *testing.T) {
 	press(m, "?")
 	wantScreen(t, m, "p      review proposal ")
 }
+
+func TestPassRequestsAndNoticesKeepTheOrderWithProposals(t *testing.T) {
+	var s Proposals
+	s.Propose(Proposal{ID: "p1"})
+	s.Pass(PassRequest{ID: "r1", Remote: 3000})
+	s.Opened("mini", "claude-code", 5173)
+	var mu sync.Mutex
+	var got []tea.Msg
+	done := make(chan struct{})
+	s.attach(func(msg tea.Msg) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, msg)
+		if len(got) == 3 {
+			close(done)
+		}
+	})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("not all arrived")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if m, ok := got[0].(proposalMsg); !ok || m.p.ID != "p1" {
+		t.Fatalf("first %#v", got[0])
+	}
+	if m, ok := got[1].(passMsg); !ok || m.r.ID != "r1" || m.r.Remote != 3000 {
+		t.Fatalf("second %#v", got[1])
+	}
+	if m, ok := got[2].(passOpenedMsg); !ok || m.origin != "mini" || m.requester != "claude-code" || m.remote != 5173 {
+		t.Fatalf("third %#v", got[2])
+	}
+}

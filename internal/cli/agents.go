@@ -17,6 +17,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -30,11 +31,14 @@ type agentsBackend struct {
 	id func() (string, error)
 	// laptop names this machine to agents, as user@host.
 	laptop func() string
+	// grants is the file of Always allow grants (config.GrantsPath). When it
+	// is nil, as in most tests, agents have no passthroughs.
+	grants func() (string, error)
 }
 
 // systemAgents is the production backend. Only NewRoot wires it in.
 func systemAgents() agentsBackend {
-	return agentsBackend{home: os.UserHomeDir, id: config.InstallID, laptop: laptopName}
+	return agentsBackend{home: os.UserHomeDir, id: config.InstallID, laptop: laptopName, grants: config.GrantsPath}
 }
 
 // agentSocket is this machine's own agent socket, ~/.nearhost/<id>.sock in
@@ -83,6 +87,9 @@ type agents struct {
 	runDir string
 	src    *agentSource
 	sock   string // this machine's own socket
+	// grants is the one store of grants for the run, shared with the
+	// interface; nil when there are no passthroughs.
+	grants *grants.Store
 }
 
 // startAgents serves the agent API on ~/.nearhost/<id>.sock. It returns nil
@@ -106,13 +113,24 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	}
 	sock := agentSocket(home, id)
 	opts := agentapi.Options{Laptop: laptop, Source: src}
+	var store *grants.Store
+	if as, ok := src.(*agentSource); ok && b.grants != nil {
+		path, err := b.grants()
+		if err != nil {
+			return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
+		}
+		store = grants.Open(path)
+		opts.ID = id
+		opts.Passer = passer{eng: &as.eng}
+		opts.Grants = passGrants{store}
+	}
 	if d, ok := src.(agentapi.Doctor); ok {
 		opts.Doctor = d
 	}
 	if r, ok := src.(agentapi.Reloader); ok {
 		opts.Reload = r
 	}
-	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock}
+	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
 		if errors.Is(err, agentapi.ErrInUse) {
 			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
@@ -217,14 +235,123 @@ func (r reviewer) Review(p agentapi.Proposal) {
 	r.to.Propose(tui.Proposal{ID: p.ID, Origin: p.Origin, Path: p.Path, Name: p.Name, Web: p.Web, Expires: p.Expires})
 }
 
-// ReviewPassthrough does nothing yet: the agent API has no Passer until
-// the engine is wired to it, so no passthrough request reaches here. Task 5
-// shows them in the interface.
-func (r reviewer) ReviewPassthrough(agentapi.PassRequest) {}
+// ReviewPassthrough shows the interface a passthrough request.
+func (r reviewer) ReviewPassthrough(p agentapi.PassRequest) {
+	r.to.Pass(tui.PassRequest{
+		ID: p.ID, Origin: p.Origin, Requester: p.Requester, Session: p.Session, Label: p.Label,
+		Remote: p.Remote, LocalTaken: p.LocalTaken, CanAlways: p.CanAlways, Expires: p.Expires,
+	})
+}
 
-// Opened does nothing yet, for the same reason as ReviewPassthrough. Task 5
-// shows a notice in the interface.
-func (r reviewer) Opened(agentapi.Passthrough) {}
+// Opened tells the interface of a passthrough that opened without asking.
+func (r reviewer) Opened(p agentapi.Passthrough) { r.to.Opened(p.Origin, p.Requester, p.Remote) }
+
+// passer opens passthroughs on the engine, once it is attached.
+type passer struct {
+	eng *atomic.Pointer[engine.Engine]
+}
+
+// Open forwards p.Remote on p.Origin through the engine.
+func (s passer) Open(ctx context.Context, p agentapi.Passthrough) (int, error) {
+	eng := s.eng.Load()
+	if eng == nil {
+		return 0, agentapi.ErrNotConnected
+	}
+	got, err := eng.OpenPassthrough(ctx, engine.PassthroughSpec{
+		ID: p.ID, Server: p.Origin, Requester: p.Requester, Session: p.Session, Label: p.Label, Remote: p.Remote,
+	})
+	if errors.Is(err, engine.ErrNotConnected) {
+		return 0, fmt.Errorf("%w: %w", agentapi.ErrNotConnected, err)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return got.Local, nil
+}
+
+// Close closes the passthrough id, because the agent asked.
+func (s passer) Close(ctx context.Context, id string) error {
+	eng := s.eng.Load()
+	if eng == nil {
+		return nil
+	}
+	return eng.ClosePassthrough(ctx, id, "the agent closed it")
+}
+
+// List is origin's open passthroughs.
+func (s passer) List(origin string) []agentapi.Passthrough {
+	eng := s.eng.Load()
+	if eng == nil {
+		return nil
+	}
+	var out []agentapi.Passthrough
+	for _, p := range eng.Passthroughs(origin) {
+		out = append(out, agentapi.Passthrough{
+			ID: p.ID, Origin: p.Server, Requester: p.Requester, Session: p.Session, Label: p.Label,
+			Remote: p.Remote, Local: p.Local, Opened: p.Opened,
+		})
+	}
+	return out
+}
+
+// Free reports whether port is free on this machine.
+func (s passer) Free(port int) bool {
+	eng := s.eng.Load()
+	return eng != nil && eng.PortFree(port)
+}
+
+// passGrants keeps the agent API's grants in the run's store.
+type passGrants struct{ s *grants.Store }
+
+// Allow gives requester a passthrough grant on server.
+func (g passGrants) Allow(server, requester string) (string, error) {
+	return g.s.Allow(server, requester, grants.KindPassthrough)
+}
+
+// Check reports whether token is requester's passthrough token on server.
+func (g passGrants) Check(server, requester, token string) (bool, error) {
+	return g.s.Check(server, requester, grants.KindPassthrough, token)
+}
+
+// answerPassthrough tells the agent API the user's answer to request id.
+func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.Answer) error {
+	if a == nil {
+		return errors.New("no coding agent can reach Nearhost")
+	}
+	var ans agentapi.Answer
+	switch answer {
+	case tui.AnswerYes:
+		ans = agentapi.AnswerYes
+	case tui.AnswerAlways:
+		ans = agentapi.AnswerAlways
+	default:
+		ans = agentapi.AnswerNo
+	}
+	return a.api.AnswerPassthrough(ctx, id, ans)
+}
+
+// passthroughGrants are the passthrough grants on server.
+func (a *agents) passthroughGrants(server string) ([]grants.Grant, error) {
+	if a == nil || a.grants == nil {
+		return nil, nil
+	}
+	all, err := a.grants.List(server)
+	var out []grants.Grant
+	for _, g := range all {
+		if g.Kind == grants.KindPassthrough {
+			out = append(out, g)
+		}
+	}
+	return out, err
+}
+
+// revokeGrant takes back requester's passthrough grant on server.
+func (a *agents) revokeGrant(server, requester string) error {
+	if a == nil || a.grants == nil {
+		return nil
+	}
+	return a.grants.Revoke(server, requester, grants.KindPassthrough)
+}
 
 // close stops serving agents and removes the sockets on this machine.
 func (a *agents) close() {
