@@ -37,10 +37,19 @@ type Passthrough struct {
 	Opened time.Time // when it was opened
 }
 
-// passthrough is an open passthrough with the session that carries it.
+// passthrough is a passthrough with the session that carries it. It is
+// recorded as soon as its id is accepted, so its id and port are held while
+// it opens. Its fields other than Passthrough are guarded by Engine.mu.
 type passthrough struct {
 	Passthrough
 	sess *transport.Session
+	// opening is true until the forward is in place. Passthroughs does not
+	// list the passthrough until then.
+	opening bool
+	// closing is set by a close that arrives while the passthrough is
+	// opening. The open then undoes itself and fails, so the caller's close
+	// is honoured and nothing is left forwarded.
+	closing bool
 }
 
 // passthroughOwnerPrefix starts the owner of a port held by a passthrough. It
@@ -81,29 +90,55 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 	}
 	e.mu.Lock()
 	c := e.servers[spec.Server]
-	_, dup := e.passthroughs[spec.ID]
-	e.mu.Unlock()
 	if c == nil || c.sess.Status() != transport.StatusConnected {
+		e.mu.Unlock()
 		return Passthrough{}, fmt.Errorf("%w: Nearhost isn't connected to %s", ErrNotConnected, spec.Server)
 	}
-	if dup {
+	if _, dup := e.passthroughs[spec.ID]; dup {
+		e.mu.Unlock()
 		return Passthrough{}, fmt.Errorf("passthrough %q is already open", spec.ID)
 	}
-	owner := passthroughOwner(spec.ID)
-	local, err := e.claimPassthroughPort(ctx, owner, spec.Remote)
+	p := &passthrough{Passthrough: Passthrough{PassthroughSpec: spec}, sess: c.sess, opening: true}
+	e.passthroughs[spec.ID] = p
+	e.mu.Unlock()
+	// forget drops the record of a passthrough that did not open.
+	forget := func() {
+		e.mu.Lock()
+		delete(e.passthroughs, spec.ID)
+		e.mu.Unlock()
+	}
+	local, err := e.claimPassthroughPort(ctx, passthroughOwner(spec.ID), spec.Remote)
 	if err != nil {
+		forget()
 		return Passthrough{}, err
+	}
+	e.mu.Lock()
+	p.Local = local
+	e.mu.Unlock()
+	if e.beforeForward != nil {
+		e.beforeForward(spec.ID)
 	}
 	if err := c.sess.AddForward(ctx, local, spec.Remote); err != nil {
 		e.releasePort(local)
+		forget()
 		return Passthrough{}, fmt.Errorf("forwarding port %d on %s: %w", spec.Remote, spec.Server, err)
 	}
-	p := &passthrough{Passthrough: Passthrough{PassthroughSpec: spec, Local: local, Opened: e.now()}, sess: c.sess}
 	e.mu.Lock()
-	e.passthroughs[spec.ID] = p
+	if p.closing {
+		e.mu.Unlock()
+		// The forward was just made, so the cancel uses a context that the
+		// caller's cancellation cannot cut short.
+		_ = c.sess.CancelForward(context.WithoutCancel(ctx), local, spec.Remote)
+		e.releasePort(local)
+		forget()
+		return Passthrough{}, fmt.Errorf("passthrough %q was closed while it opened", spec.ID)
+	}
+	p.opening = false
+	p.Opened = e.now()
+	got := p.Passthrough
 	e.mu.Unlock()
 	e.bus.Publish(Event{Server: spec.Server, Message: fmt.Sprintf("opened port %d for %s on laptop port %d", spec.Remote, spec.Requester, local)})
-	return p.Passthrough, nil
+	return got, nil
 }
 
 // claimPassthroughPort claims a local port for owner and starts its [::1]
@@ -158,20 +193,33 @@ func (e *Engine) tryLocalPort(owner string, port int) error {
 }
 
 // ClosePassthrough cancels the passthrough with the given id and frees its
-// port, telling the user why. An id that is not open is not an error.
+// port, telling the user why. An id that is not open is not an error. A
+// passthrough still opening is marked, and its open then fails and undoes
+// itself; the reason is not published, because nothing was announced.
 func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error {
 	e.mu.Lock()
 	p := e.passthroughs[id]
-	e.mu.Unlock()
 	if p == nil {
+		e.mu.Unlock()
 		return nil
 	}
-	if err := p.sess.CancelForward(ctx, p.Local, p.Remote); err != nil {
-		return fmt.Errorf("cancelling port %d on %s: %w", p.Remote, p.Server, err)
+	if p.opening {
+		p.closing = true
+		e.mu.Unlock()
+		return nil
 	}
-	e.mu.Lock()
+	// Taking the record out first means a second close finds nothing, so a
+	// port is released once.
 	delete(e.passthroughs, id)
 	e.mu.Unlock()
+	if err := p.sess.CancelForward(ctx, p.Local, p.Remote); err != nil {
+		e.mu.Lock()
+		if _, taken := e.passthroughs[id]; !taken {
+			e.passthroughs[id] = p // so the close can be retried
+		}
+		e.mu.Unlock()
+		return fmt.Errorf("cancelling port %d on %s: %w", p.Remote, p.Server, err)
+	}
 	e.releasePort(p.Local)
 	e.bus.Publish(Event{Server: p.Server, Message: fmt.Sprintf("closed port %d for %s: %s", p.Remote, p.Requester, reason)})
 	return nil
@@ -183,7 +231,7 @@ func (e *Engine) Passthroughs(server string) []Passthrough {
 	e.mu.Lock()
 	var out []Passthrough
 	for _, p := range e.passthroughs {
-		if server == "" || p.Server == server {
+		if !p.opening && (server == "" || p.Server == server) {
 			out = append(out, p.Passthrough)
 		}
 	}

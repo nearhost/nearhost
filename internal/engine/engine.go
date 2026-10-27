@@ -223,6 +223,9 @@ type Engine struct {
 	passthroughs map[string]*passthrough
 	// now is the clock; tests replace it.
 	now func() time.Time
+	// beforeForward, when set, runs in OpenPassthrough after the local port
+	// is claimed and before it is forwarded. Tests use it to hold an open.
+	beforeForward func(id string)
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not

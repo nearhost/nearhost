@@ -178,3 +178,87 @@ func TestOpenPublishesEvent(t *testing.T) {
 	}
 	t.Fatalf("no event %q", want)
 }
+
+// holdOpen makes the next open of id wait in the engine after it has claimed
+// its port. It returns a channel that closes when the open has got there and
+// a function that lets it go on.
+func holdOpen(h *harness) (reached <-chan struct{}, release func()) {
+	in, out := make(chan struct{}), make(chan struct{})
+	h.eng.beforeForward = func(string) {
+		close(in)
+		<-out
+	}
+	return in, func() { close(out) }
+}
+
+func TestOpenPassthroughDuplicateIDLeavesFirstAlone(t *testing.T) {
+	h, _ := passthroughHarness(t)
+	port := testutil.FreePort(t)
+	first, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil {
+		t.Fatal("duplicate id accepted")
+	}
+	if h.eng.PortFree(first.Local) {
+		t.Fatal("the first passthrough lost its port")
+	}
+	h.eng.mu.Lock()
+	_, relay := h.eng.relays[first.Local]
+	h.eng.mu.Unlock()
+	if !relay {
+		t.Fatal("the first passthrough lost its relay")
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 1 || got[0] != first {
+		t.Fatalf("Passthroughs = %+v", got)
+	}
+}
+
+func TestClosePassthroughDuringOpen(t *testing.T) {
+	h, _ := passthroughHarness(t)
+	reached, release := holdOpen(h)
+	port := testutil.FreePort(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		done <- err
+	}()
+	<-reached
+	if len(h.eng.Passthroughs("")) != 0 {
+		t.Fatal("an opening passthrough is listed")
+	}
+	if err := h.eng.ClosePassthrough(bg, "p1", "done"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "closed while it opened") {
+		t.Fatalf("open err = %v", err)
+	}
+	if !h.eng.PortFree(port) || len(h.eng.Passthroughs("")) != 0 {
+		t.Fatal("a port or record is still held")
+	}
+	if got := h.forwards("apollo"); len(got) != 0 {
+		t.Fatalf("forwards = %v", got)
+	}
+}
+
+func TestOwnerTextDuringOpen(t *testing.T) {
+	port := testutil.FreePort(t)
+	h, _ := passthroughHarness(t, remoteProject("one", "apollo", port))
+	reached, release := holdOpen(h)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		done <- err
+	}()
+	<-reached
+	err := h.eng.StartProject(bg, "one")
+	release()
+	if openErr := <-done; openErr != nil {
+		t.Fatal(openErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "already forwarded for a passthrough for claude-code on apollo (session 1a2b3c4d)") {
+		t.Fatalf("err = %v", err)
+	}
+}
