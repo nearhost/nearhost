@@ -170,9 +170,9 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 			err = fmt.Errorf("passthrough %q was closed while it opened, and cancelling port %d on %s failed: %w", spec.ID, spec.Remote, spec.Server, err)
 			e.mu.Lock()
 			if e.closed {
-				// Shutdown may have let go of the passthroughs already, and
-				// the check loop has ended, so nothing would close this one.
-				// Its session is gone or going, and the forward with it.
+				// Shutdown waits for this open, then stops the sessions, and
+				// the check loop has ended, so nothing else will release
+				// this one. Its session is stopped, and the forward with it.
 				e.mu.Unlock()
 				e.releasePort(local)
 				forget()
