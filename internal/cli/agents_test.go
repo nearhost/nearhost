@@ -65,7 +65,7 @@ func getJSON(t *testing.T, sock, path string) map[string]any {
 
 func TestAZeroAgentsBackendServesNone(t *testing.T) {
 	var opts engine.Options
-	a, note := serveAgents(agentsBackend{}, &opts, "", 443, agentEnv{})
+	a, note := serveAgents(agentsBackend{}, &opts, nil, "", 443, agentEnv{})
 	if a != nil || note != "" || opts.Agent != nil {
 		t.Fatalf("%v %q", a, note)
 	}
@@ -76,7 +76,7 @@ func TestAZeroAgentsBackendServesNone(t *testing.T) {
 func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, note := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
+	a, note := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	if a == nil || note != "" {
 		t.Fatalf("%v %q", a, note)
 	}
@@ -100,10 +100,10 @@ func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 
 func TestASecondNearhostLeavesAgentsToTheFirst(t *testing.T) {
 	home := agentHome(t)
-	first, _ := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	first, _ := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
 	defer first.close()
 	var opts engine.Options
-	second, note := serveAgents(fakeAgents(home), &opts, "", 443, agentEnv{})
+	second, note := serveAgents(fakeAgents(home), &opts, nil, "", 443, agentEnv{})
 	if second != nil || opts.Agent != nil || !strings.Contains(note, "Another Nearhost is already serving coding agents") {
 		t.Fatalf("%v %q", second, note)
 	}
@@ -146,7 +146,7 @@ func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
 	blocked := filepath.Join(home, "run")
 	os.WriteFile(blocked, []byte("a file where the run directory should be"), 0o600)
 	opts := engine.Options{RunDir: blocked}
-	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
+	a, _ := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	eng := engine.New(&config.Config{}, engine.Options{})
 	a.attach(eng)
@@ -168,7 +168,7 @@ func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
 func TestAServerThatIsGoneStopsBeingServed(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
+	a, _ := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	f, _ := opts.Agent("mini")
 	opts.AgentDone("mini")
@@ -347,7 +347,7 @@ func TestAgentDoctorSaysWhyAServerCannotBeChecked(t *testing.T) {
 func TestAgentsOfferTheDoctorAndReload(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, _ := serveAgents(fakeAgents(home), &opts, filepath.Join(home, "config.yaml"), 443, agentEnv{})
+	a, _ := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
 	defer a.close()
 	out := getJSON(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), "/v1")
 	if caps, _ := out["capabilities"].([]any); len(caps) != 2 || caps[0] != "doctor" || caps[1] != "reload" {
@@ -575,7 +575,7 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 		u, path := pendingUI(t, []string{"app.local.example.io"})
 		home := agentHome(t)
 		opts := engine.Options{RunDir: filepath.Join(home, "run")}
-		a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+		a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
 		if a == nil {
 			t.Fatal(note)
 		}
@@ -611,7 +611,7 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 	u, path := pendingUI(t, []string{"app.local.example.io"})
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -650,7 +650,7 @@ func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
 	u, path := pendingUI(t, []string{"app.local.example.io"})
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, note := serveAgents(fakeAgents(home), &opts, path, 443, agentEnv{})
+	a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -693,7 +693,7 @@ func postPass(t *testing.T, sock, token string) (int, map[string]any) {
 
 func TestAgentsAdvertisePassthrough(t *testing.T) {
 	home := agentHome(t)
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -703,7 +703,7 @@ func TestAgentsAdvertisePassthrough(t *testing.T) {
 		t.Fatalf("GET /v1: %v", out)
 	}
 
-	b, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, "", 443, agentEnv{})
+	b, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, nil, "", 443, agentEnv{})
 	defer b.close()
 	out = getJSON(t, b.sock, "/v1")
 	if _, has := out["id"]; has || slices.Contains(out["capabilities"].([]any), any("passthrough")) {
@@ -731,7 +731,7 @@ func TestPasserMapsNotConnected(t *testing.T) {
 func TestUpHonoursGrants(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, "", 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -782,7 +782,7 @@ func TestGrantsErrorWithoutAgents(t *testing.T) {
 		t.Fatalf("revoke: %v", err)
 	}
 	// Agents without a grants file keep no grants, which is no empty list.
-	a, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, "", 443, agentEnv{})
+	a, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, nil, "", 443, agentEnv{})
 	defer a.close()
 	if _, err := a.passthroughGrants("mini"); err == nil {
 		t.Fatal("listed grants without a store")
@@ -796,7 +796,7 @@ func TestAgentsServeWithoutPassthroughsWhenGrantsFail(t *testing.T) {
 	home := agentHome(t)
 	b := fakeAgents(home)
 	b.grants = func() (string, error) { return "", errors.New("no home directory") }
-	a, note := serveAgents(b, &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	a, note := serveAgents(b, &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
 	if a == nil {
 		t.Fatalf("agents are off: %s", note)
 	}
@@ -812,7 +812,7 @@ func TestAgentsServeWithoutPassthroughsWhenGrantsFail(t *testing.T) {
 
 func TestAnswerPassthroughMarksAnEndedRequest(t *testing.T) {
 	home := agentHome(t)
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -884,7 +884,7 @@ func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
 	if err := os.WriteFile(grantFile(home), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
 	if a == nil {
 		t.Fatalf("agents are off: %s", note)
 	}
@@ -910,7 +910,7 @@ func TestStartPrunesRemovedServers(t *testing.T) {
 	grantTo(t, grantFile(home), "apollo", "gone")
 	cfgPath := configWith(t, home, "apollo")
 	useDefaultConfig(t, cfgPath)
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, loaded(t, cfgPath), cfgPath, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -923,15 +923,41 @@ func TestStartPrunesRemovedServers(t *testing.T) {
 	}
 }
 
-func TestStartPrunesNothingWhenConfigFailsToLoad(t *testing.T) {
+// Start-up prunes against the config the run loaded and validated, not a
+// second read of the file, which may have changed or broken since.
+func TestStartPrunesAgainstTheLoadedConfig(t *testing.T) {
+	for name, file := range map[string]string{
+		"changed": "servers:\n  - name: apollo\n    ssh_host: apollo.example\n",
+		"broken":  "servers: [\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := agentHome(t)
+			grantTo(t, grantFile(home), "apollo", "gone")
+			cfgPath := configWith(t, home, "apollo", "gone")
+			useDefaultConfig(t, cfgPath)
+			cfg := loaded(t, cfgPath)
+			if err := os.WriteFile(cfgPath, []byte(file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfg, cfgPath, 443, agentEnv{})
+			if a == nil {
+				t.Fatal(note)
+			}
+			defer a.close()
+			if got := grantedServers(t, grantFile(home), "apollo", "gone"); !slices.Equal(got, []string{"apollo", "gone"}) {
+				t.Fatalf("grants left on %v", got)
+			}
+		})
+	}
+}
+
+// A run that passes no config prunes nothing.
+func TestStartPrunesNothingWithoutAConfig(t *testing.T) {
 	home := agentHome(t)
 	grantTo(t, grantFile(home), "apollo", "gone")
-	cfgPath := filepath.Join(home, "config.yaml")
+	cfgPath := configWith(t, home, "apollo")
 	useDefaultConfig(t, cfgPath)
-	if err := os.WriteFile(cfgPath, []byte("servers: [\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, nil, cfgPath, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -941,6 +967,19 @@ func TestStartPrunesNothingWhenConfigFailsToLoad(t *testing.T) {
 	}
 }
 
+// loaded loads and validates the config at path, as a run does at its start.
+func loaded(t *testing.T, path string) *config.Config {
+	t.Helper()
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
 // applyRun is a running interface backend with grants on apollo and mini.
 func applyRun(t *testing.T) (u *uiEngine, home string) {
 	t.Helper()
@@ -948,11 +987,8 @@ func applyRun(t *testing.T) (u *uiEngine, home string) {
 	grantTo(t, grantFile(home), "apollo", "mini")
 	cfgPath := configWith(t, home, "apollo", "mini")
 	useDefaultConfig(t, cfgPath)
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+	cfg := loaded(t, cfgPath)
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfg, cfgPath, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
 	}
@@ -1066,7 +1102,10 @@ func TestStartPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
 			home := agentHome(t)
 			grantTo(t, grantFile(home), "apollo", "gone")
 			cfgPath := setup(home)
-			a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+			// The config the run loaded names only apollo, so any prune
+			// would remove the grant on gone.
+			cfg := &config.Config{Servers: []config.Server{{Name: "apollo", SSHHost: "apollo.example"}}}
+			a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfg, cfgPath, 443, agentEnv{})
 			if a == nil {
 				t.Fatal(note)
 			}
