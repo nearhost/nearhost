@@ -248,6 +248,42 @@ func TestClosePassthroughDuringOpen(t *testing.T) {
 	}
 }
 
+func TestFailedCancelOfClosedOpenKeepsPassthroughUntilChecked(t *testing.T) {
+	failFile := filepath.Join(t.TempDir(), "cancel-fails")
+	if err := os.WriteFile(failFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_FAIL="+failFile)
+	h.eng.beforeForward = func(id string) {
+		if err := h.eng.ClosePassthrough(bg, id, "done"); err != nil {
+			t.Error(err)
+		}
+	}
+	port := testutil.FreePort(t)
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil || !strings.Contains(err.Error(), "cancel") {
+		t.Fatalf("open err = %v, want the failed cancel", err)
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 1 || got[0].ID != "p1" {
+		t.Fatalf("passthroughs = %v, want p1 kept so it can be closed", got)
+	}
+	if h.eng.PortFree(port) {
+		t.Fatal("the port was freed while its forward is still live")
+	}
+	if err := os.Remove(failFile); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.checkPassthroughs(bg)
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("passthroughs = %v after the check", got)
+	}
+	if !h.eng.PortFree(port) {
+		t.Fatal("the port is still held after the check closed it")
+	}
+	if got := h.forwards("apollo"); len(got) != 0 {
+		t.Fatalf("forwards = %v", got)
+	}
+}
+
 func TestOwnerTextDuringOpen(t *testing.T) {
 	port := testutil.FreePort(t)
 	h, _ := passthroughHarness(t, remoteProject("one", "apollo", port))
@@ -659,7 +695,7 @@ func TestDefaultProbe(t *testing.T) {
 	}
 }
 
-func TestPassthroughsAreCheckedEveryThirtySeconds(t *testing.T) {
+func TestPassthroughCheckIntervalDefault(t *testing.T) {
 	if got := New(&config.Config{}, Options{}).passEvery; got != 30*time.Second {
 		t.Fatalf("passEvery %v", got)
 	}
