@@ -204,3 +204,24 @@ func TestRequesterName(t *testing.T) {
 		}
 	}
 }
+
+func TestPassAnsweredWithNoFormStillLogs(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	m.Update(passAnsweredMsg{seq: 1, r: passReq(m), answer: AnswerYes})
+	if !strings.Contains(logText(m, homeKey), "Opened port 41873 for Claude Code on apollo.") {
+		t.Fatalf("log:\n%s", logText(m, homeKey))
+	}
+}
+
+func TestPassAnsweredWithAnotherFormOpenKeepsIt(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "s")
+	other := m.form
+	m.Update(passAnsweredMsg{seq: 1, r: passReq(m), answer: AnswerNo})
+	if m.form != other {
+		t.Fatalf("form %T replaced", m.form)
+	}
+	if !strings.Contains(logText(m, homeKey), "Declined to open port 41873 for Claude Code on apollo.") {
+		t.Fatalf("log:\n%s", logText(m, homeKey))
+	}
+}

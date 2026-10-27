@@ -138,13 +138,16 @@ func (m *Model) passOpened(msg passOpenedMsg) tea.Cmd {
 	return m.showToast(text, false)
 }
 
-// passAnswered closes the box of a request that was answered.
+// passAnswered logs the outcome of an answer, whatever is open now, since the
+// forward may have opened or the agent been told. It closes the box only when
+// that is the one that answered.
 func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
-	pf, ok := m.form.(*passForm)
-	if !ok || !pf.answered(msg) {
+	if pf, ok := m.form.(*passForm); ok && pf.answered(msg) {
+		m.form = nil
+	}
+	if msg.err != nil {
 		return nil
 	}
-	m.form = nil
 	line := fmt.Sprintf("Opened port %d for %s.", msg.r.Remote, msg.r.who())
 	if msg.answer == AnswerNo {
 		line = fmt.Sprintf("Declined to open port %d for %s.", msg.r.Remote, msg.r.who())
