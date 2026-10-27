@@ -94,6 +94,11 @@ const (
 // connected.
 var ErrNotConnected = errors.New("the server isn't connected")
 
+// ErrAllowNotSaved is wrapped by AnswerPassthrough's error when the
+// passthrough opened, or was closed again with its session, but saving the
+// Always allow grant failed.
+var ErrAllowNotSaved = errors.New("always allow was not saved")
+
 // ErrPassEnded is wrapped by AnswerPassthrough's error when the request is
 // no longer waiting for an answer: it expired, its session ended, it was
 // answered already, or opening it failed, which ends it declined.
@@ -141,9 +146,12 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // and Always allow it opens the passthrough, blocking while it does, and
 // returns Open's error, which also ends the request declined with it as the
 // reason. It errors for Yes or Always allow on an id that is unknown or has
-// ended, and for Always allow on a request that may not have it. No on such
-// an id does nothing and returns nil, as the request is over either way.
-// Every error for a request that is no longer waiting wraps ErrPassEnded.
+// ended, and for Always allow on a request that may not have it. No on an
+// unknown id does nothing and returns nil, as the request is over either
+// way; No on a request that has ended returns the same error Yes would, so
+// the caller can say the answer came too late. When the grant for Always
+// allow fails to save, the error wraps ErrAllowNotSaved. Every error for a
+// request that is no longer waiting wraps ErrPassEnded.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
 	if s.opts.Passer == nil || s.opts.Grants == nil {
 		return errors.New("this nearhost has no passthroughs")
@@ -152,7 +160,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	s.sweepPassesLocked()
 	r := s.passes[id]
 	switch {
-	case a == AnswerNo && (r == nil || !r.prompted || r.state != StatePending):
+	case a == AnswerNo && (r == nil || !r.prompted):
 		s.mu.Unlock()
 		return nil
 	case r == nil || !r.prompted:
@@ -207,21 +215,26 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	r.token = token
 	if r.state != StatePending {
 		s.mu.Unlock()
-		return passEnded{closedWhileOpening(r, s.closeOpened(ctx, r))}
+		err := closedWhileOpening(r, s.closeOpened(ctx, r))
+		if allowErr != nil {
+			err = errors.Join(err, allowNotSaved(allowErr))
+		}
+		return passEnded{err}
 	}
 	s.openPassLocked(r, local, token)
 	s.mu.Unlock()
 	if allowErr != nil {
-		return fmt.Errorf("port %d is open, but always allow was not saved: %w", r.Remote, allowErr)
+		return fmt.Errorf("port %d is open, but %w", r.Remote, allowNotSaved(allowErr))
 	}
 	return nil
 }
 
-// closeTimeout bounds closing a forward. Closes run detached from the
+// closeTimeout bounds closing one forward. Closes run detached from the
 // caller's context: an agent's session-end hook hangs up within about 1.5
 // seconds, and a close it cancelled would leave the forward open with
-// nothing left to close it.
-const closeTimeout = 10 * time.Second
+// nothing left to close it. Each close gets its own time, so one that hangs
+// does not leave the rest with none. It is a variable so tests can shorten it.
+var closeTimeout = 10 * time.Second
 
 // openTimeout bounds opening a forward for a request with a token, which
 // runs detached from the agent's hang-up so a forward is never left half
@@ -231,6 +244,12 @@ const openTimeout = 45 * time.Second
 // detached is ctx's values without its cancellation, bounded by d.
 func detached(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), d)
+}
+
+// allowNotSaved is err, the reason saving a grant failed, as an error that
+// wraps ErrAllowNotSaved.
+func allowNotSaved(err error) error {
+	return fmt.Errorf("%w: %w", ErrAllowNotSaved, err)
 }
 
 // closeOpened closes the forward opened for r after its session was

@@ -29,6 +29,10 @@ type fakePasser struct {
 	started  chan struct{}
 	openCtx  []error // ctx.Err() as each blocked Open returned
 	closeCtx []error // ctx.Err() as each Close was called
+	// onClose, when set, runs as each Close is called, with the number of
+	// closes so far including this one. An error it returns fails that
+	// Close, leaving the forward open.
+	onClose func(ctx context.Context, n int) error
 }
 
 func (f *fakePasser) Open(ctx context.Context, p Passthrough) (int, error) {
@@ -58,10 +62,18 @@ func (f *fakePasser) Open(ctx context.Context, p Passthrough) (int, error) {
 
 func (f *fakePasser) Close(ctx context.Context, id string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.closeCtx = append(f.closeCtx, ctx.Err())
-	delete(f.live, id)
 	f.closes = append(f.closes, id)
+	hook, n := f.onClose, len(f.closes)
+	f.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, n); err != nil {
+			return err
+		}
+	}
+	f.mu.Lock()
+	delete(f.live, id)
+	f.mu.Unlock()
 	return nil
 }
 
@@ -122,9 +134,21 @@ type fakeGrants struct {
 	tokens map[[2]string]string
 	allows [][2]string
 	err    error
+	// allowErr fails Allow, and onAllow runs as it is called, before it fails.
+	allowErr error
+	onAllow  func()
 }
 
 func (f *fakeGrants) Allow(server, requester string) (string, error) {
+	f.mu.Lock()
+	hook, allowErr := f.onAllow, f.allowErr
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if allowErr != nil {
+		return "", allowErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.allows = append(f.allows, [2]string{server, requester})
@@ -167,15 +191,19 @@ type passEnv struct {
 	local  string
 	remote string // apollo's socket
 	other  string // mini's socket
+	// hungUp gets a signal each time a client hangs up on a request the
+	// server is still answering.
+	hungUp chan struct{}
 }
 
 func newPassServer(t *testing.T, review bool) *passEnv {
 	t.Helper()
 	e := &passEnv{
-		r: &fakeReviewer{},
-		p: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}},
-		g: &fakeGrants{tokens: map[[2]string]string{}},
-		c: &clock{now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)},
+		r:      &fakeReviewer{},
+		p:      &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}},
+		g:      &fakeGrants{tokens: map[[2]string]string{}},
+		c:      &clock{now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)},
+		hungUp: make(chan struct{}, 8),
 	}
 	e.s = New(Options{
 		ID: "laptop-id", Laptop: "dev@laptop", Source: fakeSource{"apollo": apollo, "mini": mini},
@@ -184,6 +212,23 @@ func newPassServer(t *testing.T, review bool) *passEnv {
 	if review {
 		e.s.SetReviewer(e.r)
 	}
+	next := e.s.handler
+	e.s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-r.Context().Done():
+				select {
+				case <-done: // the handler returned; this is not a hang-up
+				default:
+					e.hungUp <- struct{}{}
+				}
+			case <-done:
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 	dir := shortDir(t)
 	e.local, e.remote, e.other = filepath.Join(dir, "local.sock"), filepath.Join(dir, "apollo.sock"), filepath.Join(dir, "mini.sock")
 	for origin, sock := range map[string]string{"local": e.local, "apollo": e.remote, "mini": e.other} {
@@ -199,6 +244,16 @@ func newPassServer(t *testing.T, review bool) *passEnv {
 func (e *passEnv) ask(t *testing.T, body string) (int, map[string]any) {
 	t.Helper()
 	return call(t, e.remote, "POST", "/v1/passthroughs", body)
+}
+
+// waitHungUp waits for the server to see a client hang up mid-request.
+func (e *passEnv) waitHungUp(t *testing.T) {
+	t.Helper()
+	select {
+	case <-e.hungUp:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the server did not see the hang-up")
+	}
 }
 
 // status calls the API and returns only the status, for replies with no body.
@@ -372,16 +427,13 @@ func TestPassthroughNo(t *testing.T) {
 	}
 }
 
-func TestPassthroughNoOnAnEndedRequestIsANoOp(t *testing.T) {
+func TestPassthroughNoOnAnUnknownRequestIsANoOp(t *testing.T) {
 	e := newPassServer(t, true)
 	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
 	id := out["id"].(string)
 	e.c.add(10 * time.Minute)
-	if err := e.s.AnswerPassthrough(context.Background(), id, AnswerNo); err != nil {
-		t.Fatalf("no on an expired request: %v", err)
-	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "expired" {
-		t.Fatalf("no changed an expired request: %v", out)
+		t.Fatalf("not expired: %v", out)
 	}
 	if err := e.s.AnswerPassthrough(context.Background(), "nope", AnswerNo); err != nil {
 		t.Fatalf("no on an unknown request: %v", err)
@@ -596,6 +648,7 @@ func TestPassthroughList(t *testing.T) {
 func TestPassthroughDelete(t *testing.T) {
 	e := newPassServer(t, true)
 	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	e.g.tokens[[2]string{"mini", "claude-code"}] = "good"
 	_, one := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s1", "token": "good"}`)
 	if st := status(t, e.remote, "DELETE", "/v1/passthroughs/"+one["id"].(string)); st != 204 {
 		t.Fatalf("delete one: %d", st)
@@ -609,7 +662,9 @@ func TestPassthroughDelete(t *testing.T) {
 
 	_, a := e.ask(t, `{"port": 3001, "requester": "claude-code", "session": "s", "token": "good"}`)
 	_, b := e.ask(t, `{"port": 3002, "requester": "claude-code", "session": "t", "token": "good"}`)
-	call(t, e.other, "POST", "/v1/passthroughs", `{"port": 3003, "requester": "claude-code", "session": "s", "token": "good"}`)
+	if st, out := call(t, e.other, "POST", "/v1/passthroughs", `{"port": 3003, "requester": "claude-code", "session": "s", "token": "good"}`); st != 201 {
+		t.Fatalf("mini's open: %d %v", st, out)
+	}
 	_, pend := e.ask(t, `{"port": 3004, "requester": "claude-code", "session": "s"}`)
 	if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
 		t.Fatalf("delete a session: %d", st)
@@ -620,6 +675,9 @@ func TestPassthroughDelete(t *testing.T) {
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+b["id"].(string), ""); out["state"] != "open" {
 		t.Fatalf("another session's: %v", out)
+	}
+	if live := e.p.List("mini"); len(live) != 1 || live[0].Session != "s" {
+		t.Fatalf("mini's passthrough did not survive apollo's session delete: %v", live)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+pend["id"].(string), ""); out["state"] != "closed" {
 		t.Fatalf("the session's prompt: %v", out)
@@ -676,7 +734,7 @@ func TestPassthroughSessionClosedDuringATokenOpen(t *testing.T) {
 			if hangUp {
 				cancel()
 				<-got
-				time.Sleep(200 * time.Millisecond) // for the server to see the hang-up
+				e.waitHungUp(t)
 			}
 			release()
 			if !hangUp {
@@ -720,7 +778,7 @@ func TestPassthroughTokenOpenOutlivesTheClient(t *testing.T) {
 	e.waitStarted(t)
 	cancel()
 	<-hungUp
-	time.Sleep(200 * time.Millisecond) // for the server to see the hang-up
+	e.waitHungUp(t)
 	release()
 
 	// The agent asks again and finds it open.
@@ -767,5 +825,144 @@ func TestPassthroughAlwaysWhileTheSessionCloses(t *testing.T) {
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "closed" {
 		t.Fatalf("after: %v", out)
+	}
+}
+
+// The first close hangs until its own time is up; the others still run, each
+// with a context that is not done.
+func TestSessionCloseGivesEachCloseItsOwnTime(t *testing.T) {
+	old := closeTimeout
+	closeTimeout = 150 * time.Millisecond
+	defer func() { closeTimeout = old }()
+	e := newPassServer(t, true)
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	for _, port := range []int{3001, 3002, 3003} {
+		body := fmt.Sprintf(`{"port": %d, "requester": "claude-code", "session": "s", "token": "good"}`, port)
+		if st, out := e.ask(t, body); st != 201 {
+			t.Fatalf("open %d: %d %v", port, st, out)
+		}
+	}
+	e.p.mu.Lock()
+	e.p.onClose = func(ctx context.Context, n int) error {
+		if n == 1 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	e.p.mu.Unlock()
+	if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 502 {
+		t.Fatalf("delete the session: %d; the hung close should be reported", st)
+	}
+	if closed := e.p.closed(); len(closed) != 3 {
+		t.Fatalf("closed %v; want every record tried", closed)
+	}
+	_, closes := e.p.ctxErrs()
+	for i, err := range closes {
+		if err != nil {
+			t.Fatalf("close %d got a context that was done: %v", i+1, err)
+		}
+	}
+	if live := e.p.List("apollo"); len(live) != 1 {
+		t.Fatalf("%d forwards are left; want only the one whose close hung", len(live))
+	}
+}
+
+// A close that fails for a request whose session closed while it opened is
+// said so, never dropped.
+func TestFailedCloseWhileOpeningIsReported(t *testing.T) {
+	failClose := func(e *passEnv) {
+		e.p.mu.Lock()
+		e.p.onClose = func(context.Context, int) error { return errors.New("link down") }
+		e.p.mu.Unlock()
+	}
+	t.Run("token", func(t *testing.T) {
+		e := newPassServer(t, true)
+		e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+		failClose(e)
+		release := e.p.blocking()
+		defer release()
+		got := make(chan [2]any, 1)
+		go func() {
+			st, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s", "token": "good"}`)
+			got <- [2]any{st, out}
+		}()
+		e.waitStarted(t)
+		if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
+			t.Fatalf("delete the session: %d", st)
+		}
+		release()
+		res := <-got
+		if res[0] != 502 || !strings.Contains(fmt.Sprint(res[1]), "link down") {
+			t.Fatalf("the POST: %v", res)
+		}
+	})
+	t.Run("answer", func(t *testing.T) {
+		e := newPassServer(t, true)
+		failClose(e)
+		_, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s"}`)
+		id := out["id"].(string)
+		release := e.p.blocking()
+		defer release()
+		answered := make(chan error, 1)
+		go func() { answered <- e.s.AnswerPassthrough(context.Background(), id, AnswerYes) }()
+		e.waitStarted(t)
+		if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
+			t.Fatalf("delete the session: %d", st)
+		}
+		release()
+		err := <-answered
+		if !errors.Is(err, ErrPassEnded) || err == nil || !strings.Contains(err.Error(), "closing it failed") || !strings.Contains(err.Error(), "link down") {
+			t.Fatalf("answer: %v", err)
+		}
+	})
+}
+
+// Always allow fails to save while the session closes: the error says both.
+func TestAllowNotSavedWhenSessionClosesDuringAllow(t *testing.T) {
+	e := newPassServer(t, true)
+	e.g.allowErr = errors.New("disk full")
+	e.g.onAllow = func() {
+		if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
+			t.Errorf("delete the session: %d", st)
+		}
+	}
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s"}`)
+	id := out["id"].(string)
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerAlways)
+	if !errors.Is(err, ErrAllowNotSaved) || !errors.Is(err, ErrPassEnded) || err == nil ||
+		!strings.Contains(err.Error(), "session was closed") || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("answer: %v", err)
+	}
+	if closed := e.p.closed(); len(closed) != 1 || closed[0] != id {
+		t.Fatalf("the forward was not closed: %v", closed)
+	}
+}
+
+func TestAllowNotSavedIsTyped(t *testing.T) {
+	e := newPassServer(t, true)
+	e.g.allowErr = errors.New("disk full")
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s"}`)
+	id := out["id"].(string)
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerAlways)
+	if !errors.Is(err, ErrAllowNotSaved) || errors.Is(err, ErrPassEnded) {
+		t.Fatalf("answer: %v", err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "open" {
+		t.Fatalf("after: %v", out)
+	}
+}
+
+func TestNoOnEndedRequestSaysSo(t *testing.T) {
+	e := newPassServer(t, true)
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
+	id := out["id"].(string)
+	e.c.add(10 * time.Minute)
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerNo)
+	if !errors.Is(err, ErrPassEnded) || err == nil || !strings.Contains(err.Error(), "has ended: expired") {
+		t.Fatalf("no on an expired request: %v", err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "expired" {
+		t.Fatalf("no changed an expired request: %v", out)
 	}
 }
