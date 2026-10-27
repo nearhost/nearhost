@@ -154,10 +154,14 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		m.passFocus = false
 		return nil, false
 	}
+	sel := m.passSel
 	rows, _ := m.passRows(name)
 	if !m.passFocus {
 		return nil, false // the rows were all closed
 	}
+	// The selected row was closed since it was drawn, and the selection
+	// moved to a row the user has not seen selected yet.
+	moved := rows[m.passRow].key() != sel
 	switch s {
 	case "tab", "esc":
 		m.passFocus, m.panelErr = false, ""
@@ -168,6 +172,9 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		m.passRow = min(m.passRow+1, len(rows)-1)
 		m.passSel = rows[m.passRow].key()
 	case "x":
+		if moved {
+			return nil, true // the next draw shows the row x would close
+		}
 		return m.closeRow(name, rows[m.passRow]), true
 	default:
 		return nil, false

@@ -195,6 +195,28 @@ func TestPassSelectionFollowsItsPassthrough(t *testing.T) {
 	}
 }
 
+func TestPassCloseIgnoredWhenSelectionGone(t *testing.T) {
+	m, f := passModel(t)
+	pass := func(id string, remote int) engine.Passthrough {
+		return engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: id, Server: "apollo", Requester: "codex", Remote: remote}, Local: remote}
+	}
+	f.passes = []engine.Passthrough{pass("p3000", 3000), pass("p4000", 4000), pass("p5000", 5000)}
+	press(m, "tab")
+	press(m, "down") // 4000
+	f.mu.Lock()
+	f.passes = []engine.Passthrough{pass("p3000", 3000), pass("p5000", 5000)} // 4000 closed elsewhere
+	f.mu.Unlock()
+	run(m, press(m, "x"))
+	if got := f.passthroughCalls(); len(got) != 0 {
+		t.Fatalf("calls %v, want none: the row under the selection was never shown selected", got)
+	}
+	screen(m)
+	run(m, press(m, "x"))
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close p5000"}) {
+		t.Fatalf("calls %v, want the row now shown selected closed", got)
+	}
+}
+
 func TestServerPanelSilentWithoutAgents(t *testing.T) {
 	m, f := passModel(t)
 	f.passes, f.grantList, f.passErr = nil, nil, errBoom
