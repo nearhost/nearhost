@@ -363,11 +363,35 @@ func TestPassthroughNo(t *testing.T) {
 	if err := e.s.AnswerPassthrough(context.Background(), id, AnswerNo); err != nil {
 		t.Fatal(err)
 	}
-	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id+"?wait=5", ""); out["state"] != "declined" {
-		t.Fatalf("%v", out)
+	_, out = call(t, e.remote, "GET", "/v1/passthroughs/"+id+"?wait=5", "")
+	if _, ok := out["reason"]; out["state"] != "declined" || ok {
+		t.Fatalf("a user's no has a reason: %v", out)
 	}
 	if len(e.p.opened()) != 0 {
 		t.Fatal("no opened a forward")
+	}
+}
+
+func TestPassthroughNoOnAnEndedRequestIsANoOp(t *testing.T) {
+	e := newPassServer(t, true)
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
+	id := out["id"].(string)
+	e.c.add(10 * time.Minute)
+	if err := e.s.AnswerPassthrough(context.Background(), id, AnswerNo); err != nil {
+		t.Fatalf("no on an expired request: %v", err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "expired" {
+		t.Fatalf("no changed an expired request: %v", out)
+	}
+	if err := e.s.AnswerPassthrough(context.Background(), "nope", AnswerNo); err != nil {
+		t.Fatalf("no on an unknown request: %v", err)
+	}
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
+	if !errors.Is(err, ErrPassEnded) || !strings.Contains(err.Error(), "has ended: expired") {
+		t.Fatalf("yes on an expired request: %v", err)
+	}
+	if err := e.s.AnswerPassthrough(context.Background(), "nope", AnswerYes); !errors.Is(err, ErrPassEnded) {
+		t.Fatalf("yes on an unknown request: %v", err)
 	}
 }
 
@@ -389,7 +413,8 @@ func TestPassthroughOpenFails(t *testing.T) {
 	e.p.err = errors.New("ssh: the forward failed")
 	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
 	id := out["id"].(string)
-	if err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil || err.Error() != "ssh: the forward failed" {
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
+	if err == nil || err.Error() != "ssh: the forward failed" || !errors.Is(err, ErrPassEnded) || !errors.Is(err, e.p.err) {
 		t.Fatalf("got %v", err)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "declined" || out["reason"] != "ssh: the forward failed" {

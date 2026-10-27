@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -31,13 +33,18 @@ func (r PassRequest) who() string { return requesterName(r.Requester) + " " + r.
 
 // passForm asks whether to open a port for an agent: yes, no, or always
 // allow. The answer is given on the worker, since opening the forward blocks.
+// Once an answer fails, the request is over as far as the box goes: it shows
+// why, and n or esc close it without asking the backend again.
 type passForm struct {
 	b    Backend
 	w    *worker
 	r    PassRequest
 	busy bool
 	err  string
-	seq  int
+	// ended is set when the failed answer found the request no longer
+	// waiting, or ended it.
+	ended bool
+	seq   int
 }
 
 // passAnsweredMsg is the outcome of answering a request.
@@ -53,6 +60,15 @@ func (f *passForm) update(msg tea.Msg) tea.Cmd {
 	case tea.KeyPressMsg:
 		if f.busy {
 			return nil // an answer runs to its end
+		}
+		if f.err != "" {
+			// The answer failed: another would fail the same way, or open
+			// a port the user saw fail, so the box can only be closed.
+			switch msg.String() {
+			case "n", "esc":
+				return closeForm
+			}
+			return nil
 		}
 		switch msg.String() {
 		case "y":
@@ -85,11 +101,14 @@ func (f *passForm) answered(msg passAnsweredMsg) bool {
 	}
 	f.busy = false
 	if msg.err != nil {
-		f.err = msg.err.Error()
+		f.err, f.ended = msg.err.Error(), errors.Is(msg.err, ErrRequestEnded)
 		return false
 	}
 	return true
 }
+
+// shows reports whether the box is open on the answer msg is the outcome of.
+func (f *passForm) shows(msg passAnsweredMsg) bool { return msg.seq == f.seq }
 
 func (f *passForm) lines(width int) []string {
 	what := fmt.Sprintf("wants to open port %d on this laptop", f.r.Remote)
@@ -106,6 +125,9 @@ func (f *passForm) lines(width int) []string {
 	if f.err != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(f.err, width)...)
+		if f.ended {
+			lines = append(lines, "", "This request has ended, so the agent has stopped waiting for it.")
+		}
 	}
 	return lines
 }
@@ -115,6 +137,9 @@ func (f *passForm) heading() heading { return heading{title: "Open a port"} }
 func (f *passForm) keys() []footerItem {
 	if f.busy {
 		return nil
+	}
+	if f.err != "" {
+		return []footerItem{{"esc", "close"}}
 	}
 	items := []footerItem{{"y", "yes"}, {"n", "no"}}
 	if f.r.CanAlways {
@@ -140,12 +165,24 @@ func (m *Model) passOpened(msg passOpenedMsg) tea.Cmd {
 
 // passAnswered logs the outcome of an answer, whatever is open now, since the
 // forward may have opened or the agent been told. It closes the box only when
-// that is the one that answered.
+// that is the one that answered. A failure the box shows is not logged; one
+// that comes after the box has gone is.
 func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
-	if pf, ok := m.form.(*passForm); ok && pf.answered(msg) {
-		m.form = nil
+	shown := false
+	if pf, ok := m.form.(*passForm); ok && pf.shows(msg) {
+		shown = true
+		if pf.answered(msg) {
+			m.form = nil
+		}
 	}
 	if msg.err != nil {
+		if !shown {
+			verb := "open"
+			if msg.answer == AnswerNo {
+				verb = "decline"
+			}
+			m.logs.note(fmt.Sprintf("Could not %s port %d for %s: %s.", verb, msg.r.Remote, msg.r.who(), strings.TrimSuffix(clean(msg.err.Error()), ".")))
+		}
 		return nil
 	}
 	line := fmt.Sprintf("Opened port %d for %s.", msg.r.Remote, msg.r.who())

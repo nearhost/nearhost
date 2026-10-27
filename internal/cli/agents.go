@@ -330,7 +330,11 @@ func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.An
 	default:
 		ans = agentapi.AnswerNo
 	}
-	return a.api.AnswerPassthrough(ctx, id, ans)
+	err := a.api.AnswerPassthrough(ctx, id, ans)
+	if errors.Is(err, agentapi.ErrPassEnded) {
+		return tui.RequestEnded(err)
+	}
+	return err
 }
 
 // grantsErr says why grants cannot be listed or changed in this run, or is

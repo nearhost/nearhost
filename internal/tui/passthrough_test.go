@@ -106,7 +106,7 @@ func TestPassPromptAnswers(t *testing.T) {
 	}
 }
 
-func TestPassPromptErrorKeepsTheBoxOpen(t *testing.T) {
+func TestPassPromptYesFailsThenEscCloses(t *testing.T) {
 	m, f, _ := projectFormModel(t)
 	f.passErr = errors.New("the forward failed")
 	ask(m, passReq(m))
@@ -114,11 +114,98 @@ func TestPassPromptErrorKeepsTheBoxOpen(t *testing.T) {
 	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("form %T", m.form)
 	}
-	wantScreen(t, m, "The forward failed")
-	f.passErr = nil
-	settle(m, press(m, "y"))
-	if m.form != nil {
+	wantScreen(t, m, "The forward failed", "This request has ended")
+	if got := keyLabels(m.form); !slices.Equal(got, []string{"esc"}) {
+		t.Fatalf("keys %v", got)
+	}
+	settle(m, press(m, "y")) // another yes would only fail again
+	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("form %T", m.form)
+	}
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1"}) {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+func TestPassPromptExpiredNoCloses(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	f.mu.Lock()
+	f.endPass("r1", errors.New("the request for port 41873 has ended: expired"))
+	f.mu.Unlock()
+	settle(m, press(m, "n"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 0"}) {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+func TestPassPromptExpiredYesThenNCloses(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	f.mu.Lock()
+	f.endPass("r1", errors.New("the request for port 41873 has ended: expired"))
+	f.mu.Unlock()
+	settle(m, press(m, "y"))
+	wantScreen(t, m, "The request for port 41873 has ended: expired", "This request has ended")
+	settle(m, press(m, "n"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1"}) {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+func TestPassPromptSessionClosedWhileShownEscCloses(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	// The agent's session ends while the box is shown.
+	f.mu.Lock()
+	f.endPass("r1", errors.New("the request for port 41873 has ended: closed"))
+	f.mu.Unlock()
+	settle(m, press(m, "a"))
+	wantScreen(t, m, "The request for port 41873 has ended: closed", "This request has ended")
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 2"}) {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+func TestPassPromptErrorNotEndedSaysNothingOfEnding(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	f.mu.Lock()
+	f.passErr = errors.New("no coding agent can reach Nearhost")
+	f.mu.Unlock()
+	settle(m, press(m, "n"))
+	pf, ok := m.form.(*passForm)
+	if !ok {
+		t.Fatalf("form %T", m.form)
+	}
+	if text := strings.Join(pf.lines(80), "\n"); !strings.Contains(text, "No coding agent can reach Nearhost") || strings.Contains(text, "has ended") {
+		t.Fatalf("lines:\n%s", text)
+	}
+	settle(m, press(m, "esc"))
+	if m.form != nil || len(f.passthroughCalls()) != 1 {
+		t.Fatalf("form %T, calls %v", m.form, f.passthroughCalls())
+	}
+}
+
+func TestPassAnsweredErrorAfterTheBoxHasGoneLogs(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	m.Update(passAnsweredMsg{seq: 1, r: passReq(m), answer: AnswerYes, err: errors.New("the server isn't connected")})
+	if !strings.Contains(logText(m, homeKey), "Could not open port 41873 for Claude Code on apollo: the server isn't connected.") {
+		t.Fatalf("log:\n%s", logText(m, homeKey))
 	}
 }
 
