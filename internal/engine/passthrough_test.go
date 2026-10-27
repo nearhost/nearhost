@@ -1009,7 +1009,9 @@ func TestShutdownWaitsForInFlightOpen(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 	release()
-	<-opened
+	if err := <-opened; err != nil {
+		t.Fatalf("the in-flight open: %v", err)
+	}
 	if err := <-shut; err != nil {
 		t.Fatal(err)
 	}
