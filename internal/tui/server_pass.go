@@ -151,15 +151,20 @@ func (m *Model) passLines(name string, width, room int) []string {
 	if total > room && len(rows) > 0 {
 		from, to = m.passWindow(drawn, room-(total-lineCount(drawn))-2)
 	}
-	// The marker above the rows is left out when it would push the rows
-	// shown, and so the selected one, past the panel's end.
+	// The marker above the rows is left out when it, and the marker below
+	// them, would push the rows shown, and so the selected one, past the
+	// panel's end.
+	below := 0
+	if to < len(rows) {
+		below = 1
+	}
 	above := from > 0
 	if above {
 		heads := map[string]bool{}
 		for _, r := range rows[from:to] {
 			heads[label(r)] = true
 		}
-		above = len(heads)+1+lineCount(drawn[from:to]) <= room
+		above = len(heads)+1+below+lineCount(drawn[from:to]) <= room
 	}
 	var lines []string
 	shown := map[string]bool{}

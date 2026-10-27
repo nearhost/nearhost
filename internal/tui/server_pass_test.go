@@ -399,3 +399,30 @@ func TestPassWindowOnAShortPanel(t *testing.T) {
 		})
 	}
 }
+
+// With rows hidden both above and below, the lines drawn fit the room, and
+// hold the selected row and the marker below it, down to a room of three
+// lines, where the marker above is left out to make room for it.
+func TestPassLinesCountBottomMarker(t *testing.T) {
+	m, _ := manyPasses(t, 12)
+	press(m, "tab")
+	for range 6 {
+		press(m, "down")
+	}
+	for room := 3; room <= 9; room++ {
+		lines := m.passLines("apollo", 80, room)
+		text := strings.Join(lines, "\n")
+		if len(lines) > room {
+			t.Errorf("room %d: %d lines:\n%s", room, len(lines), text)
+		}
+		if !strings.Contains(text, "localhost:3007") {
+			t.Errorf("room %d: the selected row is not shown:\n%s", room, text)
+		}
+		// Once the last row is shown, nothing is hidden below it; and a
+		// room of three holds the label and the selected row, and the
+		// marker below them only if the one above is left out.
+		if last := lines[len(lines)-1]; !strings.Contains(text, "localhost:3012") && !strings.Contains(last, " more") {
+			t.Errorf("room %d: no marker below the rows:\n%s", room, text)
+		}
+	}
+}
