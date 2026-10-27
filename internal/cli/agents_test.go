@@ -762,14 +762,28 @@ func TestReviewerForwardsPassRequest(t *testing.T) {
 	r.ReviewPassthrough(agentapi.PassRequest{ID: "r1", Origin: "mini", Requester: "claude-code", Session: "s1",
 		Label: "vite", Remote: 5173, LocalTaken: true, CanAlways: true, Expires: expires})
 
-	props, passes := to.Waiting()
-	if len(props) != 0 || len(passes) != 1 {
-		t.Fatalf("waiting: %d proposals, %d requests", len(props), len(passes))
+	props, passes, opened := to.Waiting()
+	if len(props) != 0 || len(passes) != 1 || len(opened) != 0 {
+		t.Fatalf("waiting: %d proposals, %d requests, %d opened", len(props), len(passes), len(opened))
 	}
 	got := passes[0]
 	if got.ID != "r1" || got.Origin != "mini" || got.Requester != "claude-code" || got.Session != "s1" ||
 		got.Label != "vite" || got.Remote != 5173 || !got.LocalTaken || !got.CanAlways || !got.Expires.Equal(expires) {
 		t.Fatalf("request: %#v", got)
+	}
+}
+
+func TestReviewerForwardsOpened(t *testing.T) {
+	var to tui.Proposals
+	r := reviewer{&to}
+	r.Opened(agentapi.Passthrough{Origin: "mini", Requester: "claude-code", Remote: 5173, Local: 5174})
+
+	props, passes, opened := to.Waiting()
+	if len(props) != 0 || len(passes) != 0 || len(opened) != 1 {
+		t.Fatalf("waiting: %d proposals, %d requests, %d opened", len(props), len(passes), len(opened))
+	}
+	if got := opened[0]; got.Origin != "mini" || got.Requester != "claude-code" || got.Remote != 5173 {
+		t.Fatalf("opened: %#v", got)
 	}
 }
 
