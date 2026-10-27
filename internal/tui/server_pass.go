@@ -100,17 +100,13 @@ func (r passRow) text(now time.Time) string {
 	return strings.Join(append(parts, age(now, p.Opened)), " · ")
 }
 
-// minPassRows is the fewest passthrough rows the panel shows, however
-// low the window.
-const minPassRows = 3
-
 // passLines draws the server's passthroughs and grants for its panel, in at
 // most room lines where it can: a label line, then a line a row, the
 // selected one filled while the rows have the focus. The labels are longer
 // than a field's, so they have lines of their own. When the rows do not
-// fit, a window of them that holds the selection is shown, with at least
-// minPassRows rows, and a dim "+N more" line says how many are hidden above
-// it, under the first row's label, and below it.
+// fit, a window of them that holds the selection is shown, as many rows as
+// fit and at least the selected one, and a dim "+N more" line says how many
+// are hidden above it, under the first row's label, and below it.
 func (m *Model) passLines(name string, width, room int) []string {
 	rows, err := m.passRows(name)
 	// A grants error is news only beside passthroughs, or with the rows
@@ -155,6 +151,16 @@ func (m *Model) passLines(name string, width, room int) []string {
 	if total > room && len(rows) > 0 {
 		from, to = m.passWindow(drawn, room-(total-lineCount(drawn))-2)
 	}
+	// The marker above the rows is left out when it would push the rows
+	// shown, and so the selected one, past the panel's end.
+	above := from > 0
+	if above {
+		heads := map[string]bool{}
+		for _, r := range rows[from:to] {
+			heads[label(r)] = true
+		}
+		above = len(heads)+1+lineCount(drawn[from:to]) <= room
+	}
 	var lines []string
 	shown := map[string]bool{}
 	for i := from; i < to; i++ {
@@ -162,7 +168,7 @@ func (m *Model) passLines(name string, width, room int) []string {
 			lines = append(lines, styleLabel.UnsetWidth().Render(l))
 			shown[l] = true
 		}
-		if i == from && from > 0 {
+		if i == from && above {
 			lines = append(lines, "  "+styleDim.Render(fmt.Sprintf("+%d more", from)))
 		}
 		lines = append(lines, drawn[i]...)
@@ -183,13 +189,14 @@ func lineCount(drawn [][]string) int {
 }
 
 // passWindow is the rows from and up to to that are shown of those drawn,
-// in room lines: the selected row, and as many around it as fit, but never
-// fewer than minPassRows. The window moves only as far as the selection
+// in room lines: the selected row, and as many around it as fit. A panel
+// too short for even that row still shows it, and nothing more. The window
+// moves only as far as the selection
 // needs it to, so it stays put while the selection moves within it, and it
 // is filled again from above when rows below it go.
 func (m *Model) passWindow(drawn [][]string, room int) (int, int) {
 	fits := func(from, to int) bool {
-		return to-from <= minPassRows || lineCount(drawn[from:to]) <= room
+		return to-from <= 1 || lineCount(drawn[from:to]) <= room
 	}
 	sel := 0
 	if m.passFocus {
