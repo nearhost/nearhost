@@ -90,7 +90,14 @@ type agents struct {
 	// grants is the one store of grants for the run, shared with the
 	// interface; nil when there are no passthroughs.
 	grants *grants.Store
+	// grantsOff says why there are no grants when the file could not be
+	// read; empty otherwise.
+	grantsOff string
 }
+
+// defaultConfigPath is the config file whose servers grants follow. Tests
+// replace it.
+var defaultConfigPath = config.DefaultPath
 
 // startAgents serves the agent API on ~/.nearhost/<id>.sock. It returns nil
 // and a note saying why when agents cannot reach nearhost from this run,
@@ -115,7 +122,7 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	sock := agentSocket(home, id)
 	opts := agentapi.Options{Laptop: laptop, Source: src}
 	var store *grants.Store
-	var note string
+	var note, grantsOff string
 	if as, ok := src.(*agentSource); ok && b.grants != nil {
 		if path, err := b.grants(); err != nil {
 			// Agents are served without passthroughs, and the user is told why.
@@ -126,7 +133,8 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 				// A file that cannot be read would fail every grant check, so
 				// agents are served without passthroughs, and the user is told
 				// which file to look at.
-				note = fmt.Sprintf("Coding agents cannot ask for passthroughs: %s cannot be read (%v), so passthrough is off.", path, err)
+				grantsOff = fmt.Sprintf("%s cannot be read (%v), so passthrough is off", path, err)
+				note = "Coding agents cannot ask for passthroughs: " + grantsOff + "."
 			} else {
 				store = st
 				opts.ID = id
@@ -141,24 +149,24 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 	if r, ok := src.(agentapi.Reloader); ok {
 		opts.Reload = r
 	}
-	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store}
-	if as, ok := src.(*agentSource); ok && store != nil && as.cfgPath != "" {
-		// A config that cannot be read prunes nothing; the run has loaded it
-		// already, so this is rare.
+	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store, grantsOff: grantsOff}
+	if err := a.api.Listen(config.LocalServer, sock); err != nil {
+		if errors.Is(err, agentapi.ErrInUse) {
+			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
+		}
+		return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
+	}
+	// Only a run that serves agents prunes. A config that cannot be read
+	// prunes nothing; the run has loaded it already, so this is rare.
+	if as, ok := src.(*agentSource); ok && store != nil {
 		if cfg, err := config.Load(as.cfgPath); err == nil {
-			if msg := a.prune(cfg); msg != "" {
+			if msg := a.prune(as.cfgPath, cfg); msg != "" {
 				if note != "" {
 					note += " "
 				}
 				note += msg
 			}
 		}
-	}
-	if err := a.api.Listen(config.LocalServer, sock); err != nil {
-		if errors.Is(err, agentapi.ErrInUse) {
-			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
-		}
-		return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
 	}
 	return a, note
 }
@@ -371,8 +379,19 @@ func answerError(err error) error {
 // message to show the user when it removed some or could not. It is "" when
 // there is nothing to say. It must only be given a config that loaded or
 // applied, because a config with no servers removes every grant.
-func (a *agents) prune(cfg *config.Config) string {
-	if a == nil || a.grants == nil {
+//
+// Only the default config, and only while its file exists, decides which
+// servers keep their grants: grants.json is one file for the machine, so a
+// run with another --config, or a config file missing for a moment, must not
+// remove grants of servers that are still configured elsewhere.
+func (a *agents) prune(cfgPath string, cfg *config.Config) string {
+	if a == nil || a.grants == nil || cfgPath == "" {
+		return ""
+	}
+	if def, err := defaultConfigPath(); err != nil || def != cfgPath {
+		return ""
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
 		return ""
 	}
 	keep := []string{config.LocalServer}
@@ -394,6 +413,9 @@ func (a *agents) prune(cfg *config.Config) string {
 // grantsErr says why grants cannot be listed or changed in this run, or is
 // nil when they can.
 func (a *agents) grantsErr() error {
+	if a != nil && a.grantsOff != "" {
+		return errors.New("passthrough grants are off: " + a.grantsOff)
+	}
 	if a == nil || a.grants == nil {
 		return errors.New("Nearhost isn't serving coding agents in this run, so grants can't be changed here")
 	}

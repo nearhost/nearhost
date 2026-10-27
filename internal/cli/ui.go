@@ -268,7 +268,7 @@ func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := u.Engine.Apply(ctx, cfg); err != nil {
 		return err
 	}
-	if msg := u.agents.prune(cfg); msg != "" {
+	if msg := u.agents.prune(u.ConfigPath(), cfg); msg != "" {
 		u.Engine.Events().Publish(engine.Event{Message: msg})
 	}
 	return nil

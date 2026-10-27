@@ -871,6 +871,14 @@ func configWith(t *testing.T, dir string, servers ...string) string {
 	return path
 }
 
+// useDefaultConfig makes path the default config path for the test.
+func useDefaultConfig(t *testing.T, path string) {
+	t.Helper()
+	old := defaultConfigPath
+	defaultConfigPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { defaultConfigPath = old })
+}
+
 func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
 	home := agentHome(t)
 	if err := os.WriteFile(grantFile(home), []byte("{"), 0o600); err != nil {
@@ -892,8 +900,8 @@ func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
 	if out["interface"] != true {
 		t.Fatalf("proposals are off: %v", out)
 	}
-	if err := a.grantsErr(); err == nil {
-		t.Fatal("grants can be changed without a store")
+	if err := a.grantsErr(); err == nil || !strings.Contains(err.Error(), grantFile(home)) {
+		t.Fatalf("grants error: %v", err)
 	}
 }
 
@@ -901,6 +909,7 @@ func TestStartPrunesRemovedServers(t *testing.T) {
 	home := agentHome(t)
 	grantTo(t, grantFile(home), "apollo", "gone")
 	cfgPath := configWith(t, home, "apollo")
+	useDefaultConfig(t, cfgPath)
 	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
@@ -918,6 +927,7 @@ func TestStartPrunesNothingWhenConfigFailsToLoad(t *testing.T) {
 	home := agentHome(t)
 	grantTo(t, grantFile(home), "apollo", "gone")
 	cfgPath := filepath.Join(home, "config.yaml")
+	useDefaultConfig(t, cfgPath)
 	if err := os.WriteFile(cfgPath, []byte("servers: [\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -937,6 +947,7 @@ func applyRun(t *testing.T) (u *uiEngine, home string) {
 	home = agentHome(t)
 	grantTo(t, grantFile(home), "apollo", "mini")
 	cfgPath := configWith(t, home, "apollo", "mini")
+	useDefaultConfig(t, cfgPath)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatal(err)
@@ -947,7 +958,7 @@ func applyRun(t *testing.T) (u *uiEngine, home string) {
 	}
 	t.Cleanup(a.close)
 	eng := engine.New(cfg, engine.Options{RunDir: home})
-	return &uiEngine{Engine: eng, agents: a}, home
+	return &uiEngine{Engine: eng, agents: a, path: cfgPath}, home
 }
 
 func TestApplyPrunesRemovedServers(t *testing.T) {
@@ -1012,5 +1023,58 @@ func TestAnswerMapsAllowNotSaved(t *testing.T) {
 	}
 	if err := answerError(nil); err != nil {
 		t.Fatalf("nil: %v", err)
+	}
+}
+
+func TestStartPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
+	for name, setup := range map[string]func(home string) (cfgPath string){
+		"missing file": func(home string) string {
+			p := filepath.Join(home, "config.yaml")
+			useDefaultConfig(t, p)
+			return p
+		},
+		"another config": func(home string) string {
+			useDefaultConfig(t, filepath.Join(home, "other.yaml"))
+			return configWith(t, home, "apollo")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := agentHome(t)
+			grantTo(t, grantFile(home), "apollo", "gone")
+			cfgPath := setup(home)
+			a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, cfgPath, 443, agentEnv{})
+			if a == nil {
+				t.Fatal(note)
+			}
+			defer a.close()
+			if got := grantedServers(t, grantFile(home), "apollo", "gone"); !slices.Equal(got, []string{"apollo", "gone"}) {
+				t.Fatalf("grants left on %v", got)
+			}
+		})
+	}
+}
+
+func TestApplyPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
+	empty := &config.Config{}
+	u, home := applyRun(t)
+	if err := os.Remove(u.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Apply(context.Background(), empty); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("missing file: grants left on %v", got)
+	}
+	u, home = applyRun(t)
+	u.path = filepath.Join(home, "other.yaml")
+	if err := os.WriteFile(u.path, []byte("servers: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Apply(context.Background(), empty); err != nil {
+		t.Fatal(err)
+	}
+	if got := grantedServers(t, grantFile(home), "apollo", "mini"); !slices.Equal(got, []string{"apollo", "mini"}) {
+		t.Fatalf("another config: grants left on %v", got)
 	}
 }
