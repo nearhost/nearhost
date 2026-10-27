@@ -1070,17 +1070,17 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 func TestScriptDecodesHTMLEscapes(t *testing.T) {
 	home := shortDir(t)
 	s, p, _, _ := passScript(t, home, "mini", true)
-	p.err = errors.New("port <3000> & more")
+	p.err = errors.New("port <3000> & more\u2028on\u2029lines")
 	r := runScript(t, home, claudeEnv, "passthrough", "3000")
 	id := proposalID.FindStringSubmatch(r.stdout)[1]
 	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
 		t.Fatal("the open did not fail")
 	}
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more`) {
+	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more\u2028on\u2029lines`) {
 		t.Fatalf("body is not escaped: %q", r.stdout)
 	}
-	want := "Nearhost could not open the port: port <3000> & more"
+	want := "Nearhost could not open the port: port <3000> & more on lines"
 	if strings.TrimSpace(r.stderr) != want {
 		t.Fatalf("stderr %q, want %q", r.stderr, want)
 	}
