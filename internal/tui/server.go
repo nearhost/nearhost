@@ -66,6 +66,9 @@ func (m *Model) serverPanel(name string, width int) []string {
 		projects = strings.Join(on, ", ")
 	}
 	lines = append(lines, field("projects", projects, width)...)
+	if rows := m.passLines(name, width); len(rows) > 0 {
+		lines = append(append(lines, ""), rows...)
+	}
 	if m.panelErr != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(m.panelErr, width)...)

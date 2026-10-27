@@ -268,14 +268,20 @@ func (u *uiEngine) ClosePassthrough(ctx context.Context, id string) error {
 	return u.Engine.ClosePassthrough(ctx, id, "closed in Nearhost")
 }
 
+// AnswerPassthrough gives the user's answer to a coding agent's request for
+// a passthrough to the agent API.
 func (u *uiEngine) AnswerPassthrough(ctx context.Context, id string, a tui.Answer) error {
 	return u.agents.answerPassthrough(ctx, id, a)
 }
 
+// Grants lists the passthrough grants on server, or says why they cannot be
+// read in this run.
 func (u *uiEngine) Grants(server string) ([]grants.Grant, error) {
 	return u.agents.passthroughGrants(server)
 }
 
+// RevokeGrant takes back requester's passthrough grant on server, or says why
+// it cannot be taken back in this run.
 func (u *uiEngine) RevokeGrant(server, requester string) error {
 	return u.agents.revokeGrant(server, requester)
 }

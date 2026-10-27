@@ -804,3 +804,40 @@ func (r recorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return r, nil
 }
 func (recorder) View() tea.View { return tea.NewView("") }
+
+func TestGrantsErrorWithoutAgents(t *testing.T) {
+	var none *agents // this run serves no coding agents
+	if _, err := none.passthroughGrants("mini"); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
+		t.Fatalf("grants: %v", err)
+	}
+	if err := none.revokeGrant("mini", "claude-code"); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
+		t.Fatalf("revoke: %v", err)
+	}
+	// Agents without a grants file keep no grants, which is no empty list.
+	a, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, "", 443, agentEnv{})
+	defer a.close()
+	if _, err := a.passthroughGrants("mini"); err == nil {
+		t.Fatal("listed grants without a store")
+	}
+	if err := a.revokeGrant("mini", "claude-code"); err == nil {
+		t.Fatal("revoked a grant without a store")
+	}
+}
+
+func TestAgentsServeWithoutPassthroughsWhenGrantsFail(t *testing.T) {
+	home := agentHome(t)
+	b := fakeAgents(home)
+	b.grants = func() (string, error) { return "", errors.New("no home directory") }
+	a, note := serveAgents(b, &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatalf("agents are off: %s", note)
+	}
+	defer a.close()
+	if !strings.Contains(note, "no home directory") || !strings.Contains(note, "passthroughs") {
+		t.Fatalf("note %q", note)
+	}
+	out := getJSON(t, a.sock, "/v1")
+	if slices.Contains(out["capabilities"].([]any), any("passthrough")) {
+		t.Fatalf("advertises passthrough: %v", out)
+	}
+}

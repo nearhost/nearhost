@@ -41,7 +41,8 @@ var helpGroups = []helpGroup{
 	{"project", bindings([]footerItem{{"enter", "start or stop"}, {"o", "open in browser"}, {"e", "edit"}, {"d", "remove"}, {"y", "copy advice"},
 		{"i", "show or hide ignored ports"},
 		{"r", "re-read .nearhostrc"}, {"a", "review .nearhostrc"}})},
-	{"server", bindings([]footerItem{{"s", "add server"}, {"r", "reconnect"}, {"c", "connect or drop"}, {"e", "edit"}, {"d", "remove"}})},
+	{"server", bindings([]footerItem{{"s", "add server"}, {"r", "reconnect"}, {"c", "connect or drop"}, {"e", "edit"}, {"d", "remove"},
+		{"tab", "passthroughs"}, {"x", "close or revoke"}})},
 	{"nearhost", bindings([]footerItem{{"n", "add project"}, {"p", "review request"}, {"l", "full-screen log"}, {"?", "close help"}, {"q", "quit"}})},
 }
 
