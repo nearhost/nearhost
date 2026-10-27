@@ -55,8 +55,8 @@ type passthrough struct {
 	// checked is when a check last found the server connected, or when the
 	// passthrough opened.
 	checked time.Time
-	// awaySince is when the server was last seen connected before it went
-	// away, and zero while it is connected.
+	// awaySince is when a check first found the server away, and zero
+	// while it is connected.
 	awaySince time.Time
 	// failingSince is when the port check began to fail, moved on by any
 	// time away, and zero while the port answers.
@@ -357,9 +357,12 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 		switch status {
 		case transport.StatusConnected:
 			if !p.awaySince.IsZero() {
-				// Time away does not count against the port.
+				// Time away does not count against the port: neither does the
+				// interval before the first check that found the server away,
+				// so the shift runs from the last check that found it
+				// connected.
 				if !p.failingSince.IsZero() {
-					p.failingSince = p.failingSince.Add(now.Sub(p.awaySince))
+					p.failingSince = p.failingSince.Add(now.Sub(p.checked))
 				}
 				p.awaySince = time.Time{}
 			}
@@ -373,9 +376,7 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 			closes = append(closes, passClose{id, failedReason(p.Server, p.sess)})
 		default:
 			if p.awaySince.IsZero() {
-				// Away since the last check that found it connected, so a
-				// streak of failed checks never takes in time away.
-				p.awaySince = p.checked
+				p.awaySince = now
 			}
 			if now.Sub(p.awaySince) >= passGoneFor {
 				closes = append(closes, passClose{id, fmt.Sprintf("%s was disconnected for 10 minutes", p.Server)})

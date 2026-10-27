@@ -511,9 +511,11 @@ func TestLongDisconnectCloses(t *testing.T) {
 	}
 	h.dropMaster(t, "apollo")
 	waitStatus(t, h, "apollo away", away)
-	checksEvery(h, at, passCheckEvery, passGoneFor-passCheckEvery)
+	// The first check to find apollo away is at 30s, so 10 minutes away
+	// ends at 10m30s.
+	checksEvery(h, at, passCheckEvery, passGoneFor)
 	assertOpen(t, h)
-	at(passGoneFor)
+	at(passGoneFor + passCheckEvery)
 	h.eng.checkPassthroughs(bg)
 	waitClosedEvent(t, events, p.Remote, "apollo was disconnected for 10 minutes")
 	assertClosed(t, h, p.Local)
