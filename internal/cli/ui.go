@@ -173,7 +173,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// at a time with them; one that does waits for a to review it.
 	back := &uiEngine{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
 	opts.Review = reviewProject(back.saveRc)
-	ag, agentNote := serveAgents(b.up.agents, &opts, cfgPath, flags.httpsPort, agentEnv{
+	ag, agentNote := serveAgents(b.up.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
 		ssh: b.up.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot),
 	})
 	defer ag.close()
@@ -258,15 +258,28 @@ type uiEngine struct {
 	// the change and before it takes the config's lock. Tests use it to
 	// save meanwhile; it is nil otherwise.
 	acceptLocking func()
+	// applied, when set, runs in Apply after the engine has applied and
+	// before the grants are pruned. Tests use it to change the config file
+	// meanwhile; it is nil otherwise.
+	applied func()
 }
 
 // Apply applies cfg to the engine. Once it has applied, the grants of servers
 // cfg no longer has are removed, so a server added later under the same name
 // does not inherit them. A failed Apply removes none, and a failure to
-// remove them is shown in the log and does not fail the Apply.
+// remove them is shown in the log and does not fail the Apply. Neither does
+// an Apply that began while the config file was missing: a missing file
+// loads as no servers, and the file may be back by the time the apply ends.
 func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
+	_, statErr := os.Stat(u.path)
 	if err := u.Engine.Apply(ctx, cfg); err != nil {
 		return err
+	}
+	if u.applied != nil {
+		u.applied()
+	}
+	if statErr != nil {
+		return nil
 	}
 	if msg := u.agents.prune(u.ConfigPath(), cfg); msg != "" {
 		u.Engine.Events().Publish(engine.Event{Message: msg})

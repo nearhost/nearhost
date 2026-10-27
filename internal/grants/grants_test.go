@@ -3,6 +3,7 @@ package grants
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -294,5 +295,36 @@ func TestValidate(t *testing.T) {
 	}
 	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), path) {
 		t.Errorf("corrupt file: error = %v, want one naming %s", err, path)
+	}
+}
+
+func TestValidateDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "grants.json")
+	if err := os.Symlink(filepath.Join(dir, "missing", "grants.json"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(link).Validate(); err == nil || !strings.Contains(err.Error(), link) {
+		t.Errorf("Validate error = %v, want one naming %s", err, link)
+	}
+}
+
+func TestSaveSyncsDirectoryBestEffort(t *testing.T) {
+	s, path := tempStore(t)
+	var synced []string
+	old := syncDir
+	syncDir = func(f *os.File) error {
+		synced = append(synced, f.Name())
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("the directory was synced before the rename: %v", err)
+		}
+		return errors.New("sync not supported")
+	}
+	t.Cleanup(func() { syncDir = old })
+	if _, err := s.Allow("apollo", "claude-code", KindPassthrough); err != nil {
+		t.Fatalf("Allow = %v; a failed directory sync must not fail the save", err)
+	}
+	if len(synced) != 1 || synced[0] != filepath.Dir(path) {
+		t.Fatalf("synced %v, want the directory %s", synced, filepath.Dir(path))
 	}
 }

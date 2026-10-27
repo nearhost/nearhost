@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -375,5 +376,53 @@ func TestCloseInFlightIgnoresSecondX(t *testing.T) {
 	run(m, press(m, "x")) // the close came back, so the next row closes
 	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close ffff0000aaaa", "close id-not-shown"}) {
 		t.Fatalf("calls %v", got)
+	}
+}
+
+// A panel too short for three rows shows as many as fit, and the selected
+// one is always among them. The longest error leaves room for the label and
+// one row only.
+func TestPassWindowOnAShortPanel(t *testing.T) {
+	for _, words := range []int{0, 2, 4, 6, 8} {
+		t.Run(strconv.Itoa(words), func(t *testing.T) {
+			m, _ := manyPasses(t, 12)
+			m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+			press(m, "tab")
+			for range 6 {
+				press(m, "down")
+			}
+			// An error above the rows takes the room they would have.
+			m.panelErr = strings.Repeat("the forward could not be closed ", words)
+			if ports, _, _ := shownPorts(m); !slices.Contains(ports, 3007) {
+				t.Fatalf("shown %v, want the selected 3007:\n%s", ports, screen(m))
+			}
+		})
+	}
+}
+
+// With rows hidden both above and below, the lines drawn fit the room, and
+// hold the selected row and the marker below it, down to a room of three
+// lines, where the marker above is left out to make room for it.
+func TestPassLinesCountBottomMarker(t *testing.T) {
+	m, _ := manyPasses(t, 12)
+	press(m, "tab")
+	for range 6 {
+		press(m, "down")
+	}
+	for room := 3; room <= 9; room++ {
+		lines := m.passLines("apollo", 80, room)
+		text := strings.Join(lines, "\n")
+		if len(lines) > room {
+			t.Errorf("room %d: %d lines:\n%s", room, len(lines), text)
+		}
+		if !strings.Contains(text, "localhost:3007") {
+			t.Errorf("room %d: the selected row is not shown:\n%s", room, text)
+		}
+		// Once the last row is shown, nothing is hidden below it; and a
+		// room of three holds the label and the selected row, and the
+		// marker below them only if the one above is left out.
+		if last := lines[len(lines)-1]; !strings.Contains(text, "localhost:3012") && !strings.Contains(last, " more") {
+			t.Errorf("room %d: no marker below the rows:\n%s", room, text)
+		}
 	}
 }

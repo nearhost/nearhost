@@ -103,7 +103,9 @@ var defaultConfigPath = config.DefaultPath
 // and a note saying why when agents cannot reach nearhost from this run,
 // and nil with no note when b serves none. When only the grants file cannot
 // be used it serves the agents without passthroughs and returns a note too.
-func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, string) {
+// cfg is the config this run loaded and validated, which the grants are
+// pruned against; a nil cfg prunes nothing.
+func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDir string) (*agents, string) {
 	if b.home == nil || b.id == nil {
 		return nil, ""
 	}
@@ -156,16 +158,15 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 		}
 		return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
 	}
-	// Only a run that serves agents prunes. A config that cannot be read
-	// prunes nothing; the run has loaded it already, so this is rare.
-	if as, ok := src.(*agentSource); ok && store != nil {
-		if cfg, err := config.Load(as.cfgPath); err == nil {
-			if msg := a.prune(as.cfgPath, cfg); msg != "" {
-				if note != "" {
-					note += " "
-				}
-				note += msg
+	// Only a run that serves agents prunes, and against the config the run
+	// loaded and validated, never a second read of the file that may have
+	// changed since.
+	if as, ok := src.(*agentSource); ok && store != nil && cfg != nil {
+		if msg := a.prune(as.cfgPath, cfg); msg != "" {
+			if note != "" {
+				note += " "
 			}
+			note += msg
 		}
 	}
 	return a, note
@@ -202,10 +203,11 @@ type agentEnv struct {
 // once it exists. The note says why agents cannot reach nearhost, when
 // they cannot; the agents returned are then nil, and their methods do
 // nothing. When only passthroughs are off, the agents come back with a
-// note that says why.
-func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPort int, env agentEnv) (*agents, string) {
+// note that says why. cfg is the config the run loaded from cfgPath and
+// validated; the grants of servers it no longer has are pruned against it.
+func serveAgents(b agentsBackend, opts *engine.Options, cfg *config.Config, cfgPath string, httpsPort int, env agentEnv) (*agents, string) {
 	src := &agentSource{cfgPath: cfgPath, httpsPort: httpsPort, env: env}
-	a, note := startAgents(b, src, opts.RunDir)
+	a, note := startAgents(b, src, cfg, opts.RunDir)
 	if a != nil {
 		a.src = src
 		opts.Agent = a.forward

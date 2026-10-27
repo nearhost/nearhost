@@ -124,8 +124,9 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 		return Passthrough{}, fmt.Errorf("%w: Nearhost isn't connected to %s", ErrNotConnected, spec.Server)
 	}
 	if old, dup := e.passthroughs[spec.ID]; dup {
+		stillClosing := old.closing && !old.opening // read under mu
 		e.mu.Unlock()
-		if old.closing && !old.opening {
+		if stillClosing {
 			return Passthrough{}, fmt.Errorf("passthrough %q is still closing", spec.ID)
 		}
 		return Passthrough{}, fmt.Errorf("passthrough %q is already open", spec.ID)
@@ -170,9 +171,10 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 			err = fmt.Errorf("passthrough %q was closed while it opened, and cancelling port %d on %s failed: %w", spec.ID, spec.Remote, spec.Server, err)
 			e.mu.Lock()
 			if e.closed {
-				// Shutdown may have let go of the passthroughs already, and
-				// the check loop has ended, so nothing would close this one.
-				// Its session is gone or going, and the forward with it.
+				// Shutdown stops the sessions, waits for this open, and then
+				// releases the passthroughs. The check loop has ended, so
+				// nothing else will release this one; its session is
+				// stopped, and the forward with it.
 				e.mu.Unlock()
 				e.releasePort(local)
 				forget()
@@ -296,9 +298,15 @@ func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error 
 		e.mu.Unlock()
 		return fmt.Errorf("cancelling port %d on %s: %w", p.Remote, p.Server, err)
 	}
+	// The port is released with the record, under the same lock, so an open
+	// of the same id that follows can claim the port without this close
+	// then releasing that open's claim and relay.
 	delete(e.passthroughs, id)
+	e.releasePortLocked(p.Local)
 	e.mu.Unlock()
-	e.releasePort(p.Local)
+	if e.afterClose != nil {
+		e.afterClose(id)
+	}
 	e.bus.Publish(Event{Server: p.Server, Message: fmt.Sprintf("closed port %d for %s: %s", p.Remote, p.Requester, reason)})
 	return nil
 }

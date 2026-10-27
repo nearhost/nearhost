@@ -882,10 +882,24 @@ func TestFailedCloseWhileOpeningIsReported(t *testing.T) {
 		failClose(e)
 		release := e.p.blocking()
 		defer release()
-		got := make(chan [2]any, 1)
+		// The POST runs off the test goroutine, so it hands back its error
+		// rather than failing the test there.
+		type reply struct {
+			status int
+			body   []byte
+			err    error
+		}
+		got := make(chan reply, 1)
 		go func() {
-			st, out := e.ask(t, `{"port": 3000, "requester": "claude-code", "session": "s", "token": "good"}`)
-			got <- [2]any{st, out}
+			body := `{"port": 3000, "requester": "claude-code", "session": "s", "token": "good"}`
+			resp, err := client(e.remote).Post("http://nearhost/v1/passthroughs", "application/json", strings.NewReader(body))
+			if err != nil {
+				got <- reply{err: err}
+				return
+			}
+			defer resp.Body.Close()
+			data, err := io.ReadAll(resp.Body)
+			got <- reply{resp.StatusCode, data, err}
 		}()
 		e.waitStarted(t)
 		if st := status(t, e.remote, "DELETE", "/v1/passthroughs?session=s"); st != 204 {
@@ -893,8 +907,11 @@ func TestFailedCloseWhileOpeningIsReported(t *testing.T) {
 		}
 		release()
 		res := <-got
-		if res[0] != 502 || !strings.Contains(fmt.Sprint(res[1]), "link down") {
-			t.Fatalf("the POST: %v", res)
+		if res.err != nil {
+			t.Fatalf("the POST: %v", res.err)
+		}
+		if res.status != 502 || !strings.Contains(string(res.body), "link down") {
+			t.Fatalf("the POST: %d %s", res.status, res.body)
 		}
 	})
 	t.Run("answer", func(t *testing.T) {
@@ -933,6 +950,9 @@ func TestAllowNotSavedWhenSessionClosesDuringAllow(t *testing.T) {
 	if !errors.Is(err, ErrAllowNotSaved) || !errors.Is(err, ErrPassEnded) || err == nil ||
 		!strings.Contains(err.Error(), "session was closed") || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("answer: %v", err)
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("answer spans lines: %q", err)
 	}
 	if closed := e.p.closed(); len(closed) != 1 || closed[0] != id {
 		t.Fatalf("the forward was not closed: %v", closed)

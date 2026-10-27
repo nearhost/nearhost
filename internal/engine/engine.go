@@ -233,6 +233,10 @@ type Engine struct {
 	// beforeForward, when set, runs in OpenPassthrough after the local port
 	// is claimed and before it is forwarded. Tests use it to hold an open.
 	beforeForward func(id string)
+	// afterClose, when set, runs in ClosePassthrough once the record is gone
+	// and mu is released, before the close is published. Tests use it to
+	// open the same id again there.
+	afterClose func(id string)
 	// probePass checks that something answers on the local port of a
 	// passthrough. Tests replace it.
 	probePass func(ctx context.Context, local int) bool

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -997,20 +998,24 @@ func writeMarker(t *testing.T, home, sid, sock string) string {
 }
 
 // answerDelete serves every request on a socket in home with status and
-// returns the socket's path.
-func answerDelete(t *testing.T, home string, status int) string {
+// returns the socket's path and a count of the DELETE requests served.
+func answerDelete(t *testing.T, home string, status int) (string, *atomic.Int32) {
 	t.Helper()
 	sock := filepath.Join(home, "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
+	deletes := new(atomic.Int32)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes.Add(1)
+		}
 		w.WriteHeader(status)
 	})}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
-	return sock
+	return sock, deletes
 }
 
 func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
@@ -1018,13 +1023,31 @@ func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
 		t.Skip("curl is not installed")
 	}
 	home := shortDir(t)
-	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusBadGateway))
+	sock, deletes := answerDelete(t, home, http.StatusBadGateway)
+	marker := writeMarker(t, home, "s1", sock)
 	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
 	if r.code != 0 {
 		t.Fatalf("close: %+v", r)
 	}
+	if n := deletes.Load(); n != 1 {
+		t.Fatalf("%d DELETE requests, want 1", n)
+	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("marker lost after a failed close: %v", err)
+	}
+}
+
+// A marker whose socket is gone names a Nearhost that is no longer running,
+// whose passthroughs ended with it, so the marker goes.
+func TestScriptCloseRemovesMarkerWithoutSocket(t *testing.T) {
+	home := shortDir(t)
+	marker := writeMarker(t, home, "s1", filepath.Join(home, "gone.sock"))
+	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 || r.stdout != "" || r.stderr != "" {
+		t.Fatalf("close: %+v", r)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed with its socket gone: %v", err)
 	}
 }
 
@@ -1033,7 +1056,8 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 		t.Skip("curl is not installed")
 	}
 	home := shortDir(t)
-	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusNoContent))
+	sock, _ := answerDelete(t, home, http.StatusNoContent)
+	marker := writeMarker(t, home, "s1", sock)
 	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
 	if r.code != 0 {
 		t.Fatalf("close: %+v", r)
@@ -1046,17 +1070,17 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 func TestScriptDecodesHTMLEscapes(t *testing.T) {
 	home := shortDir(t)
 	s, p, _, _ := passScript(t, home, "mini", true)
-	p.err = errors.New("port <3000> & more")
+	p.err = errors.New("port <3000> & more\u2028on\u2029lines")
 	r := runScript(t, home, claudeEnv, "passthrough", "3000")
 	id := proposalID.FindStringSubmatch(r.stdout)[1]
 	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
 		t.Fatal("the open did not fail")
 	}
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more`) {
+	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more\u2028on\u2029lines`) {
 		t.Fatalf("body is not escaped: %q", r.stdout)
 	}
-	want := "Nearhost could not open the port: port <3000> & more"
+	want := "Nearhost could not open the port: port <3000> & more on lines"
 	if strings.TrimSpace(r.stderr) != want {
 		t.Fatalf("stderr %q, want %q", r.stderr, want)
 	}
