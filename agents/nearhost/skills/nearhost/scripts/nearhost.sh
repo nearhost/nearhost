@@ -508,10 +508,15 @@ passthrough-close)
 		marker="$(state_dir)/sessions/$sid"
 		[ -f "$marker" ] || exit 0
 		IFS= read -r SOCK <"$marker" || :
-		[ -S "$SOCK" ] || exit 0
+		# With its socket gone, that Nearhost is not running, and its
+		# passthroughs ended with it, so there is nothing left to close.
+		if [ ! -S "$SOCK" ]; then
+			rm -f "$marker"
+			exit 0
+		fi
 		command -v curl >/dev/null 2>&1 || exit 0
-		# The marker stays until Nearhost confirms the close, so a later
-		# attempt can still find the socket.
+		# Otherwise the marker stays until Nearhost confirms the close, so a
+		# later attempt can still find the socket.
 		if call "$SOCK" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$sid" && [ "$STATUS" = 204 ]; then
 			rm -f "$marker"
 		fi

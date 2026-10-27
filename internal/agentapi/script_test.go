@@ -1028,6 +1028,20 @@ func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
 	}
 }
 
+// A marker whose socket is gone names a Nearhost that is no longer running,
+// whose passthroughs ended with it, so the marker goes.
+func TestScriptCloseRemovesMarkerWithoutSocket(t *testing.T) {
+	home := shortDir(t)
+	marker := writeMarker(t, home, "s1", filepath.Join(home, "gone.sock"))
+	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 || r.stdout != "" || r.stderr != "" {
+		t.Fatalf("close: %+v", r)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed with its socket gone: %v", err)
+	}
+}
+
 func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl is not installed")
