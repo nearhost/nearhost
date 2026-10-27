@@ -121,10 +121,18 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 			// Agents are served without passthroughs, and the user is told why.
 			note = "Coding agents cannot ask for passthroughs: " + err.Error() + "."
 		} else {
-			store = grants.Open(path)
-			opts.ID = id
-			opts.Passer = passer{eng: &as.eng}
-			opts.Grants = passGrants{store}
+			st := grants.Open(path)
+			if err := st.Validate(); err != nil {
+				// A file that cannot be read would fail every grant check, so
+				// agents are served without passthroughs, and the user is told
+				// which file to look at.
+				note = fmt.Sprintf("Coding agents cannot ask for passthroughs: %s cannot be read (%v), so passthrough is off.", path, err)
+			} else {
+				store = st
+				opts.ID = id
+				opts.Passer = passer{eng: &as.eng}
+				opts.Grants = passGrants{store}
+			}
 		}
 	}
 	if d, ok := src.(agentapi.Doctor); ok {
@@ -134,6 +142,18 @@ func startAgents(b agentsBackend, src agentapi.Source, runDir string) (*agents, 
 		opts.Reload = r
 	}
 	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store}
+	if as, ok := src.(*agentSource); ok && store != nil && as.cfgPath != "" {
+		// A config that cannot be read prunes nothing; the run has loaded it
+		// already, so this is rare.
+		if cfg, err := config.Load(as.cfgPath); err == nil {
+			if msg := a.prune(cfg); msg != "" {
+				if note != "" {
+					note += " "
+				}
+				note += msg
+			}
+		}
+	}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
 		if errors.Is(err, agentapi.ErrInUse) {
 			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
@@ -331,11 +351,44 @@ func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.An
 	default:
 		ans = agentapi.AnswerNo
 	}
-	err := a.api.AnswerPassthrough(ctx, id, ans)
+	return answerError(a.api.AnswerPassthrough(ctx, id, ans))
+}
+
+// answerError is the agent API's error for an answer, marked for the
+// interface: as the end of its request, and as an Always allow that was not
+// saved. Both marks apply when the request ended too.
+func answerError(err error) error {
+	if errors.Is(err, agentapi.ErrAllowNotSaved) {
+		err = notSaved{err}
+	}
 	if errors.Is(err, agentapi.ErrPassEnded) {
-		return tui.RequestEnded(err)
+		err = tui.RequestEnded(err)
 	}
 	return err
+}
+
+// prune removes the grants of servers cfg no longer has, and returns the
+// message to show the user when it removed some or could not. It is "" when
+// there is nothing to say. It must only be given a config that loaded or
+// applied, because a config with no servers removes every grant.
+func (a *agents) prune(cfg *config.Config) string {
+	if a == nil || a.grants == nil {
+		return ""
+	}
+	keep := []string{config.LocalServer}
+	for _, s := range cfg.Servers {
+		keep = append(keep, s.Name)
+	}
+	n, err := a.grants.Prune(keep)
+	switch {
+	case err != nil:
+		return "Could not remove Always allow grants for servers no longer in Nearhost: " + err.Error() + "."
+	case n == 1:
+		return "Removed 1 Always allow grant for a server no longer in Nearhost."
+	case n > 1:
+		return fmt.Sprintf("Removed %d Always allow grants for servers no longer in Nearhost.", n)
+	}
+	return ""
 }
 
 // grantsErr says why grants cannot be listed or changed in this run, or is
@@ -628,3 +681,10 @@ func siteURL(alias string, httpsPort int) string {
 	}
 	return "https://" + alias + ":" + strconv.Itoa(httpsPort)
 }
+
+// notSaved is an error marked as tui.ErrAllowNotSaved; it reads as the error
+// it wraps.
+type notSaved struct{ error }
+
+// Unwrap is the error and tui.ErrAllowNotSaved.
+func (e notSaved) Unwrap() []error { return []error{e.error, tui.ErrAllowNotSaved} }

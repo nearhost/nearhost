@@ -71,6 +71,22 @@ func (s *Proposals) Opened(origin, requester string, remote int) {
 	s.push(passOpenedMsg{origin, requester, remote})
 }
 
+// Waiting returns a snapshot of the proposals and passthrough requests
+// queued and not yet sent to the interface, oldest first.
+func (s *Proposals) Waiting() (props []Proposal, passes []PassRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.waiting {
+		switch m := m.(type) {
+		case proposalMsg:
+			props = append(props, m.p)
+		case passMsg:
+			passes = append(passes, m.r)
+		}
+	}
+	return props, passes
+}
+
 // push queues msg for the sender goroutine and wakes it.
 func (s *Proposals) push(msg tea.Msg) {
 	s.mu.Lock()
