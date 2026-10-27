@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -941,5 +942,15 @@ func TestListenNamesTheSocketPathLimit(t *testing.T) {
 	want := fmt.Sprintf("socket path is too long (%d bytes; the limit is %d)", len(path), maxSocketPath)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("got %v, want %q", err, want)
+	}
+}
+
+func TestWaitQueryCapsHugeValues(t *testing.T) {
+	for _, v := range []string{"51", "9223372036854775807", "18446744073s"} {
+		r := httptest.NewRequest("GET", "/v1/proposals/x?wait="+v, nil)
+		got, ok := waitQuery(httptest.NewRecorder(), r)
+		if !ok || got != maxWait {
+			t.Errorf("wait=%s: %v, %v; want %v", v, got, ok, maxWait)
+		}
 	}
 }

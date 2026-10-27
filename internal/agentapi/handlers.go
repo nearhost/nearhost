@@ -405,7 +405,8 @@ func waitQuery(w http.ResponseWriter, r *http.Request) (wait time.Duration, ok b
 		fail(w, http.StatusBadRequest, fmt.Sprintf("wait must be a number of seconds, not %q", v))
 		return 0, false
 	}
-	return min(time.Duration(n)*time.Second, maxWait), true
+	// The cap comes before the multiply, which a huge n would overflow.
+	return time.Duration(min(n, int(maxWait/time.Second))) * time.Second, true
 }
 
 func (s *Server) proposal(w http.ResponseWriter, r *http.Request) {
