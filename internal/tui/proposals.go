@@ -72,7 +72,8 @@ func (s *Proposals) Opened(origin, requester string, remote int) {
 }
 
 // Waiting returns a snapshot of the proposals and passthrough requests
-// queued and not yet sent to the interface, oldest first.
+// queued and not yet sent to the interface, oldest first. It exists for
+// tests.
 func (s *Proposals) Waiting() (props []Proposal, passes []PassRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
