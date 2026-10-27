@@ -263,8 +263,11 @@ func TestFailedCancelOfClosedOpenKeepsPassthroughUntilChecked(t *testing.T) {
 	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil || !strings.Contains(err.Error(), "cancel") {
 		t.Fatalf("open err = %v, want the failed cancel", err)
 	}
-	if got := h.eng.Passthroughs(""); len(got) != 1 || got[0].ID != "p1" {
-		t.Fatalf("passthroughs = %v, want p1 kept so it can be closed", got)
+	if r := record(h, "p1"); r == nil || !r.closing || r.opening {
+		t.Fatalf("record = %+v, want p1 kept closing so it can be closed", r)
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("passthroughs = %v, want the closing p1 left out", got)
 	}
 	if h.eng.PortFree(port) {
 		t.Fatal("the port was freed while its forward is still live")
@@ -306,17 +309,24 @@ func TestFailedCancelOfClosedOpenDuringShutdownReleases(t *testing.T) {
 		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
 		done <- err
 	}()
-	// The undo waits inside its cancel while the engine shuts down, so
-	// Shutdown lets go of every passthrough before the cancel fails.
+	// The undo waits inside its cancel while the engine shuts down, so the
+	// cancel fails after Shutdown has begun. Shutdown waits for the open.
 	testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the undo to reach its cancel")
-	if err := h.eng.Shutdown(bg); err != nil {
-		t.Fatal(err)
-	}
+	shut := make(chan error, 1)
+	go func() { shut <- h.eng.Shutdown(bg) }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		h.eng.mu.Lock()
+		defer h.eng.mu.Unlock()
+		return h.eng.closed
+	}, "Shutdown to begin")
 	if err := os.Remove(waitFile); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err == nil {
 		t.Fatal("the open succeeded")
+	}
+	if err := <-shut; err != nil {
+		t.Fatal(err)
 	}
 	if got := h.eng.Passthroughs(""); len(got) != 0 {
 		t.Fatalf("passthroughs = %v after Shutdown", got)
@@ -744,5 +754,275 @@ func TestDefaultProbe(t *testing.T) {
 func TestPassthroughCheckIntervalDefault(t *testing.T) {
 	if got := New(&config.Config{}, Options{}).passEvery; got != 30*time.Second {
 		t.Fatalf("passEvery %v", got)
+	}
+}
+
+// cancelFiles returns the paths of the files that, while they exist, make
+// the fake ssh's cancels wait and fail. Neither exists yet.
+func cancelFiles(t *testing.T) (wait, fail string) {
+	t.Helper()
+	dir := t.TempDir()
+	return filepath.Join(dir, "cancel-waits"), filepath.Join(dir, "cancel-fails")
+}
+
+// touch creates the empty file path, and removes it when the test ends,
+// before the cleanups registered earlier run: the harness's Shutdown must
+// not find a cancel waiting on it.
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(path) })
+}
+
+// remove deletes the file path.
+func remove(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// closedEvents counts the close events of the passthrough on remote that are
+// waiting in events.
+func closedEvents(events <-chan Event, remote int) int {
+	n := 0
+	prefix := fmt.Sprintf("closed port %d for ", remote)
+	for len(events) > 0 {
+		if ev := <-events; strings.HasPrefix(ev.Message, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// record returns the engine's record of the passthrough id, or nil.
+func record(h *harness, id string) *passthrough {
+	h.eng.mu.Lock()
+	defer h.eng.mu.Unlock()
+	return h.eng.passthroughs[id]
+}
+
+func TestCloseKeepsRecordUntilCancelled(t *testing.T) {
+	port := testutil.FreePort(t)
+	wait, _ := cancelFiles(t)
+	h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_WAIT="+wait)
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, wait)
+	done := make(chan error, 1)
+	go func() { done <- h.eng.ClosePassthrough(bg, "p1", "done") }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the close to reach its cancel")
+
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("Passthroughs = %+v while it closes", got)
+	}
+	// A project's start claims its loopback ports this way. It cannot be
+	// started here: its web forward would wait for the session, which the
+	// cancel holds.
+	if holder, ok := h.eng.claimPortFor("one", port); ok || holder != "a passthrough for claude-code on apollo (session 1a2b3c4d)" {
+		t.Fatalf("a project's claim got ok %v, holder %q", ok, holder)
+	}
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil {
+		t.Fatal("an open with the id of a closing passthrough was accepted")
+	}
+	if h.eng.PortFree(port) {
+		t.Fatal("the port was freed before the cancel ended")
+	}
+
+	remove(t, wait)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if record(h, "p1") != nil {
+		t.Fatal("the record is kept after the cancel")
+	}
+	if !h.eng.PortFree(port) {
+		t.Fatal("the port is still held after the cancel")
+	}
+}
+
+func TestConcurrentClosesReleaseOnce(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failing=%v", failing), func(t *testing.T) {
+			wait, fail := cancelFiles(t)
+			h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_WAIT="+wait, "FAKE_SSH_CANCEL_FAIL="+fail)
+			events, cancel := h.eng.bus.Subscribe(64)
+			defer cancel()
+			p := openP1(t, h)
+			touch(t, wait)
+			if failing {
+				touch(t, fail)
+			}
+			first := make(chan error, 1)
+			go func() { first <- h.eng.ClosePassthrough(bg, "p1", "done") }()
+			testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the first close to reach its cancel")
+			// The second close returns while the first still waits.
+			if err := h.eng.ClosePassthrough(bg, "p1", "done again"); err != nil {
+				t.Fatalf("second close: %v", err)
+			}
+			remove(t, wait)
+			err := <-first
+			if failing {
+				if err == nil {
+					t.Fatal("the first close succeeded with a failing cancel")
+				}
+				if h.eng.PortFree(p.Local) {
+					t.Fatal("the port was freed by a failed close")
+				}
+				remove(t, fail)
+				h.eng.checkPassthroughs(bg)
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			assertClosed(t, h, p.Local)
+			if n := strings.Count(h.log(), "-O cancel"); n != 1+btoi(failing) {
+				t.Fatalf("%d cancels, want %d:\n%s", n, 1+btoi(failing), h.log())
+			}
+			if n := closedEvents(events, p.Remote); n != 1 {
+				t.Fatalf("%d close events, want 1", n)
+			}
+		})
+	}
+}
+
+// btoi is 1 for true and 0 for false.
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func TestFailedCloseStaysClosing(t *testing.T) {
+	_, fail := cancelFiles(t)
+	h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_FAIL="+fail)
+	events, cancel := h.eng.bus.Subscribe(64)
+	defer cancel()
+	p := openP1(t, h)
+	touch(t, fail)
+	if err := h.eng.ClosePassthrough(bg, "p1", "the agent finished"); err == nil {
+		t.Fatal("the close succeeded with a failing cancel")
+	}
+	if r := record(h, "p1"); r == nil || !r.closing {
+		t.Fatalf("record = %+v, want it kept with closing set", r)
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("Passthroughs = %+v, want the closing one left out", got)
+	}
+	if h.eng.PortFree(p.Local) {
+		t.Fatal("the port was freed by a failed close")
+	}
+	remove(t, fail)
+	h.eng.checkPassthroughs(bg)
+	if record(h, "p1") != nil {
+		t.Fatal("the check did not close it")
+	}
+	assertClosed(t, h, p.Local)
+	waitClosedEvent(t, events, p.Remote, "the agent finished")
+}
+
+func TestOpenedPublishedBeforeClose(t *testing.T) {
+	h, _ := endHarness(t, "")
+	events, cancel := h.eng.bus.Subscribe(64)
+	defer cancel()
+	// The open reads the clock once its forward is made, as it marks the
+	// passthrough open. Taking the bus there keeps it from publishing its
+	// event until the test lets go.
+	at := h.eng.now()
+	var once sync.Once
+	held := make(chan struct{})
+	h.eng.now = func() time.Time {
+		once.Do(func() {
+			h.eng.bus.mu.Lock()
+			close(held)
+		})
+		return at
+	}
+	port := testutil.FreePort(t)
+	opened := make(chan error, 1)
+	go func() {
+		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		opened <- err
+	}()
+	<-held
+	// A close can begin once the passthrough is listed, so it must not be
+	// listed before its event is published.
+	visible := make(chan struct{})
+	closed := make(chan error, 1)
+	go func() {
+		for len(h.eng.Passthroughs("")) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		close(visible)
+		closed <- h.eng.ClosePassthrough(bg, "p1", "done")
+	}()
+	early := false
+	select {
+	case <-visible:
+		early = true
+	case <-time.After(300 * time.Millisecond):
+	}
+	h.eng.bus.mu.Unlock()
+	if err := <-opened; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if early {
+		t.Fatal("the passthrough was listed, so could be closed, before its open was published")
+	}
+	var order []string
+	for len(events) > 0 {
+		ev := <-events
+		switch {
+		case strings.HasPrefix(ev.Message, fmt.Sprintf("opened port %d ", port)):
+			order = append(order, "opened")
+		case strings.HasPrefix(ev.Message, fmt.Sprintf("closed port %d ", port)):
+			order = append(order, "closed")
+		}
+	}
+	if strings.Join(order, ",") != "opened,closed" {
+		t.Fatalf("events = %v, want opened then closed", order)
+	}
+}
+
+func TestShutdownWaitsForInFlightOpen(t *testing.T) {
+	h, _ := endHarness(t, "")
+	reached, release := holdOpen(h)
+	port := testutil.FreePort(t)
+	opened := make(chan error, 1)
+	go func() {
+		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		opened <- err
+	}()
+	<-reached
+	shut := make(chan error, 1)
+	go func() { shut <- h.eng.Shutdown(bg) }()
+	select {
+	case err := <-shut:
+		release()
+		t.Fatalf("Shutdown returned (%v) while an open was in flight", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	<-opened
+	if err := <-shut; err != nil {
+		t.Fatal(err)
+	}
+	h.eng.mu.Lock()
+	records, ports, relays := len(h.eng.passthroughs), len(h.eng.ports), len(h.eng.relays)
+	h.eng.mu.Unlock()
+	if records != 0 || ports != 0 || relays != 0 {
+		t.Fatalf("after Shutdown: %d passthroughs, %d ports, %d relays", records, ports, relays)
+	}
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); !errors.Is(err, errShutDown) {
+		t.Fatalf("open after Shutdown: err = %v, want errShutDown", err)
+	}
+	if err := h.eng.ClosePassthrough(bg, "p1", "done"); !errors.Is(err, errShutDown) {
+		t.Fatalf("close after Shutdown: err = %v, want errShutDown", err)
 	}
 }
