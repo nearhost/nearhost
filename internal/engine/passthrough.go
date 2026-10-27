@@ -492,11 +492,11 @@ func (e *Engine) closeOnFailureLocked(server string) {
 	e.closeLaterLocked(e.sessionPassthroughsLocked(c.sess, failedReason(server, c.sess)))
 }
 
-// watchPassthroughs runs checkPassthroughs every passCheckEvery until ctx
-// ends. It is counted in passWork.
+// watchPassthroughs runs checkPassthroughs every e.passEvery, by default
+// passCheckEvery, until ctx ends. It is counted in passWork.
 func (e *Engine) watchPassthroughs(ctx context.Context) {
 	defer e.passWork.Done()
-	t := time.NewTicker(passCheckEvery)
+	t := time.NewTicker(e.passEvery)
 	defer t.Stop()
 	for {
 		select {

@@ -295,6 +295,9 @@ func endHarness(t *testing.T, sshPath string, sshEnv ...string) (h *harness, at 
 			o.SSHPath = sshPath
 		}
 	}, sshEnv...)
+	// The tests run the checks themselves on the fixed clock; one the loop
+	// ran as well, on real time, would land at whatever time was set.
+	h.eng.passEvery = 1000 * time.Hour
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
@@ -653,5 +656,11 @@ func TestDefaultProbe(t *testing.T) {
 		if got := probePassthroughPort(bg, tc.port); got != tc.want {
 			t.Errorf("%s: probe = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+func TestPassthroughsAreCheckedEveryThirtySeconds(t *testing.T) {
+	if got := New(&config.Config{}, Options{}).passEvery; got != 30*time.Second {
+		t.Fatalf("passEvery %v", got)
 	}
 }
