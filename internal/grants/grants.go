@@ -83,10 +83,37 @@ func (s *Store) load() (fileData, error) {
 	return d, nil
 }
 
-// save writes d to a temporary file beside the grants file, then renames it
-// into place, so a reader never sees half of it.
+// syncFile flushes f to disk. Tests replace it to see when it runs.
+var syncFile = (*os.File).Sync
+
+// target is the path a save writes to. When the grants file is a symlink it
+// is the file the link points to, so the link survives the save. A link whose
+// target is missing is an error: a save would otherwise make a new file the
+// link was never meant to have.
+func (s *Store) target() (string, error) {
+	info, err := os.Lstat(s.path)
+	if err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		return s.path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%s is a symlink to a file that does not exist", s.path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", s.path, err)
+	}
+	return resolved, nil
+}
+
+// save writes d to a temporary file beside the grants file, syncs it, then
+// renames it into place, so a reader never sees half of it and a crash does
+// not leave an empty file.
 func (s *Store) save(d fileData) error {
-	dir := filepath.Dir(s.path)
+	path, err := s.target()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -103,8 +130,11 @@ func (s *Store) save(d fileData) error {
 	if err == nil {
 		_, err = tmp.Write(append(data, '\n'))
 	}
+	if err == nil {
+		err = syncFile(tmp)
+	}
 	if err = errors.Join(err, tmp.Close()); err == nil {
-		err = os.Rename(tmp.Name(), s.path)
+		err = os.Rename(tmp.Name(), path)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
@@ -211,4 +241,44 @@ func (s *Store) Revoke(server, requester, kind string) error {
 	}
 	d.Grants = kept
 	return s.save(d)
+}
+
+// Prune removes every grant whose server is not in keep and returns how many
+// it removed. The file is not written when nothing is removed, and a missing
+// file counts as none.
+func (s *Store) Prune(keep []string) (removed int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.load()
+	if err != nil {
+		return 0, err
+	}
+	known := make(map[string]bool, len(keep))
+	for _, server := range keep {
+		known[server] = true
+	}
+	kept := d.Grants[:0]
+	for _, r := range d.Grants {
+		if known[r.Server] {
+			kept = append(kept, r)
+		}
+	}
+	removed = len(d.Grants) - len(kept)
+	if removed == 0 {
+		return 0, nil
+	}
+	d.Grants = kept
+	if err := s.save(d); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+// Validate loads the file and returns the error if it cannot be read or
+// parsed. A missing file is valid.
+func (s *Store) Validate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.load()
+	return err
 }
