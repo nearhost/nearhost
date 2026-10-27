@@ -116,8 +116,8 @@ func (f *fakeBackend) AnswerPassthrough(_ context.Context, id string, a Answer) 
 	if err, ok := f.passEnded[id]; ok {
 		return err
 	}
-	if errors.Is(f.passErr, ErrAllowNotSaved) {
-		return f.passErr // the port opened, and the request was answered
+	if a == AnswerAlways && errors.Is(f.passErr, ErrAllowNotSaved) {
+		return f.passErr // the port opened, and the request was answered; only Always allow saves
 	}
 	if f.passErr != nil && a != AnswerNo && !f.passErrKeeps {
 		// A failed open ends the request.
