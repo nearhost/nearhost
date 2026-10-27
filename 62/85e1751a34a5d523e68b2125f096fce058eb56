@@ -1,0 +1,25 @@
+internal/tui/keys.go
+  s_81ad364fe15b72::t_7081ad5fc6bbcc 309
+internal/tui/model.go
+  s_81ad364fe15b72::t_c458704d05f421 69-70,73
+internal/tui/server_pass.go
+  s_81ad364fe15b72::t_09f58b344a9aab 25-33,39-42,60-64,66-68,166,169
+internal/tui/server_pass_test.go
+  s_81ad364fe15b72::t_88d98685dfb614 181-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6285e1751a34a5d523e68b2125f096fce058eb56",
+  "prompts": {},
+  "sessions": {
+    "s_81ad364fe15b72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "047f1bbe-a859-4471-ae3c-0288f1e01a7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
