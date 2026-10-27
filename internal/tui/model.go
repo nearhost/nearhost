@@ -66,9 +66,11 @@ type Model struct {
 	routeFocus bool // the project panel's routes have the keys
 	routeRow   int  // the route selected there
 	// passFocus is set while the server panel's passthroughs and grants have
-	// the keys, and passRow is the row selected there.
+	// the keys, and passRow is the row selected there. passSel is the key of
+	// that row, by which passRows finds it again in rows read afresh.
 	passFocus bool
 	passRow   int
+	passSel   string
 	// grantCache is the grants last read for each server.
 	grantCache map[string]*grantsEntry
 	// showIgnored lists a project's ignored routes in its panel; without

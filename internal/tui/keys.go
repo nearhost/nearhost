@@ -306,7 +306,7 @@ func (m *Model) action(s string) tea.Cmd {
 			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
 		} else if kind == rowServer && name != config.LocalServer {
 			if rows, _ := m.passRows(name); len(rows) > 0 {
-				m.passFocus, m.passRow, m.panelErr = true, 0, ""
+				m.passFocus, m.passRow, m.passSel, m.panelErr = true, 0, rows[0].key(), ""
 			}
 		}
 	case "y":

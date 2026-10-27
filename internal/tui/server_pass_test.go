@@ -178,6 +178,23 @@ func TestPassFocusRowGone(t *testing.T) {
 	}
 }
 
+func TestPassSelectionFollowsItsPassthrough(t *testing.T) {
+	m, f := passModel(t)
+	pass := func(id string, remote int) engine.Passthrough {
+		return engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: id, Server: "apollo", Requester: "codex", Remote: remote}, Local: remote}
+	}
+	f.passes = []engine.Passthrough{pass("p3000", 3000), pass("p4000", 4000)}
+	press(m, "tab")
+	press(m, "down") // 4000
+	f.mu.Lock()
+	f.passes = append(f.passes, pass("p2000", 2000)) // opened without a prompt
+	f.mu.Unlock()
+	run(m, press(m, "x"))
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close p4000"}) {
+		t.Fatalf("calls %v, want 4000's passthrough closed", got)
+	}
+}
+
 func TestServerPanelSilentWithoutAgents(t *testing.T) {
 	m, f := passModel(t)
 	f.passes, f.grantList, f.passErr = nil, nil, errBoom
