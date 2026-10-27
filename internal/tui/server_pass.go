@@ -139,7 +139,7 @@ func (m *Model) passLines(name string, width int) []string {
 		if !shown["always allowed"] {
 			lines = append(lines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
-		for _, l := range wrap(sentence(err.Error()), width-2) {
+		for _, l := range wrap(sentence(clean(err.Error())), width-2) {
 			lines = append(lines, "  "+styleAmber.Render(l))
 		}
 	}
