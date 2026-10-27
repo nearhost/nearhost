@@ -94,6 +94,18 @@ const (
 // connected.
 var ErrNotConnected = errors.New("the server isn't connected")
 
+// ErrPassEnded is wrapped by AnswerPassthrough's error when the request is
+// no longer waiting for an answer: it expired, its session ended, it was
+// answered already, or opening it failed, which ends it declined.
+var ErrPassEnded = errors.New("the request has ended")
+
+// passEnded is an error that ended the request it answered, or found it
+// ended. Its message is the error's own; it also wraps ErrPassEnded.
+type passEnded struct{ error }
+
+// Unwrap is the error and ErrPassEnded.
+func (e passEnded) Unwrap() []error { return []error{e.error, ErrPassEnded} }
+
 // passRecord is a passthrough request and what became of it. done is
 // closed when it leaves StatePending.
 type passRecord struct {
@@ -128,8 +140,10 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // AnswerPassthrough answers the request id with the user's answer. On Yes
 // and Always allow it opens the passthrough, blocking while it does, and
 // returns Open's error, which also ends the request declined with it as the
-// reason. It errors for an id that is unknown or has ended, and for Always
-// allow on a request that may not have it.
+// reason. It errors for Yes or Always allow on an id that is unknown or has
+// ended, and for Always allow on a request that may not have it. No on such
+// an id does nothing and returns nil, as the request is over either way.
+// Every error for a request that is no longer waiting wraps ErrPassEnded.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
 	if s.opts.Passer == nil || s.opts.Grants == nil {
 		return errors.New("this nearhost has no passthroughs")
@@ -138,16 +152,19 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	s.sweepPassesLocked()
 	r := s.passes[id]
 	switch {
+	case a == AnswerNo && (r == nil || !r.prompted || r.state != StatePending):
+		s.mu.Unlock()
+		return nil
 	case r == nil || !r.prompted:
 		s.mu.Unlock()
-		return fmt.Errorf("no passthrough request %s; it may have ended over 10 minutes ago", id)
+		return passEnded{fmt.Errorf("no passthrough request %s; it may have ended over 10 minutes ago", id)}
 	case r.opening:
 		s.mu.Unlock()
 		return fmt.Errorf("the request for port %d is already being answered", r.Remote)
 	case r.state != StatePending:
 		state := r.state
 		s.mu.Unlock()
-		return fmt.Errorf("the request for port %d has ended: %s", r.Remote, state)
+		return passEnded{fmt.Errorf("the request for port %d has ended: %s", r.Remote, state)}
 	case a == AnswerAlways && !r.CanAlways:
 		s.mu.Unlock()
 		return fmt.Errorf("%s can't be always allowed, as it didn't say which tool it is", r.Requester)
@@ -166,14 +183,14 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		r.opening = false
 		s.endPassLocked(r, StateDeclined, err.Error())
 		s.mu.Unlock()
-		return err
+		return passEnded{err}
 	}
 	if r.state != StatePending {
 		// Its session was closed while it opened: close the forward, and
 		// give no grant, which would replace the one the agent holds.
 		r.opening = false
 		s.mu.Unlock()
-		return closedWhileOpening(r, s.closeOpened(ctx, r))
+		return passEnded{closedWhileOpening(r, s.closeOpened(ctx, r))}
 	}
 	s.mu.Unlock()
 
@@ -190,7 +207,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	r.token = token
 	if r.state != StatePending {
 		s.mu.Unlock()
-		return closedWhileOpening(r, s.closeOpened(ctx, r))
+		return passEnded{closedWhileOpening(r, s.closeOpened(ctx, r))}
 	}
 	s.openPassLocked(r, local, token)
 	s.mu.Unlock()

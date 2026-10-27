@@ -841,3 +841,19 @@ func TestAgentsServeWithoutPassthroughsWhenGrantsFail(t *testing.T) {
 		t.Fatalf("advertises passthrough: %v", out)
 	}
 }
+
+func TestAnswerPassthroughMarksAnEndedRequest(t *testing.T) {
+	home := agentHome(t)
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	err := a.answerPassthrough(context.Background(), "gone", tui.AnswerYes)
+	if !errors.Is(err, tui.ErrRequestEnded) || !strings.Contains(err.Error(), "no passthrough request gone") {
+		t.Fatalf("yes: %v", err)
+	}
+	if err := a.answerPassthrough(context.Background(), "gone", tui.AnswerNo); err != nil {
+		t.Fatalf("no: %v", err)
+	}
+}

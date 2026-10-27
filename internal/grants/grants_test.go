@@ -33,7 +33,8 @@ func TestAllowThenCheck(t *testing.T) {
 	}{
 		{"right token", "apollo", "claude-code", token, true},
 		{"empty token", "apollo", "claude-code", "", false},
-		{"other token", "apollo", "claude-code", "x" + token[1:], false},
+		// "!" is not in the base64url alphabet, so this always differs.
+		{"other token", "apollo", "claude-code", "!" + token[1:], false},
 		{"other server", "mini", "claude-code", token, false},
 		{"other requester", "apollo", "codex", token, false},
 	} {
@@ -46,7 +47,10 @@ func TestAllowThenCheck(t *testing.T) {
 
 func TestAllowReplacesToken(t *testing.T) {
 	s, _ := tempStore(t)
-	first, _ := s.Allow("apollo", "claude-code", KindPassthrough)
+	first, err := s.Allow("apollo", "claude-code", KindPassthrough)
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := s.Allow("apollo", "claude-code", KindPassthrough)
 	if err != nil {
 		t.Fatal(err)

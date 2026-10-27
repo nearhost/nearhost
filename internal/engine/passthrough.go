@@ -50,7 +50,9 @@ type passthrough struct {
 	opening bool
 	// closing is set by a close that arrives while the passthrough is
 	// opening. The open then undoes itself and fails, so the caller's close
-	// is honoured and nothing is left forwarded.
+	// is honoured and nothing is left forwarded. When that undo cannot
+	// cancel the forward, closing stays set on a record that is no longer
+	// opening, and the next check closes it.
 	closing bool
 	// checked is when a check last found the server connected, or when the
 	// passthrough opened.
@@ -138,8 +140,32 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 	if p.closing {
 		e.mu.Unlock()
 		// The forward was just made, so the cancel uses a context that the
-		// caller's cancellation cannot cut short.
-		_ = c.sess.CancelForward(context.WithoutCancel(ctx), local, spec.Remote)
+		// caller's cancellation cannot cut short, bounded like any other
+		// close run on the engine's behalf.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), passCloseWait)
+		err := c.sess.CancelForward(cctx, local, spec.Remote)
+		cancel()
+		if err != nil {
+			err = fmt.Errorf("passthrough %q was closed while it opened, and cancelling port %d on %s failed: %w", spec.ID, spec.Remote, spec.Server, err)
+			e.mu.Lock()
+			if e.closed {
+				// Shutdown may have let go of the passthroughs already, and
+				// the check loop has ended, so nothing would close this one.
+				// Its session is gone or going, and the forward with it.
+				e.mu.Unlock()
+				e.releasePort(local)
+				forget()
+				return Passthrough{}, err
+			}
+			// The session keeps a forward it could not cancel, and puts it
+			// back on a reconnect, so the record and port stay. The record
+			// is listed now, and the next check closes it again.
+			p.opening = false
+			p.Opened = e.now()
+			p.checked = p.Opened
+			e.mu.Unlock()
+			return Passthrough{}, err
+		}
 		e.releasePort(local)
 		forget()
 		return Passthrough{}, fmt.Errorf("passthrough %q was closed while it opened", spec.ID)
@@ -331,7 +357,8 @@ type passClose struct {
 // back after a reconnect closes, and the others have their port checked;
 // one that has not answered for passFailFor of connected time closes. A
 // server that failed for good, or whose session is gone, closes its
-// passthroughs at once. The loop runs this every passCheckEvery.
+// passthroughs at once, as does a close that its open could not finish. The
+// loop runs this every passCheckEvery.
 func (e *Engine) checkPassthroughs(ctx context.Context) {
 	now := e.now()
 	var closes []passClose
@@ -345,6 +372,12 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 	for _, id := range ids {
 		p := e.passthroughs[id]
 		if p.opening {
+			continue
+		}
+		if p.closing {
+			// A close arrived while it opened and the undo could not cancel
+			// the forward, so the close is tried again.
+			closes = append(closes, passClose{id, "it was closed while it opened"})
 			continue
 		}
 		if c := e.servers[p.Server]; c == nil || c.sess != p.sess {
@@ -492,11 +525,11 @@ func (e *Engine) closeOnFailureLocked(server string) {
 	e.closeLaterLocked(e.sessionPassthroughsLocked(c.sess, failedReason(server, c.sess)))
 }
 
-// watchPassthroughs runs checkPassthroughs every passCheckEvery until ctx
-// ends. It is counted in passWork.
+// watchPassthroughs runs checkPassthroughs every e.passEvery, by default
+// passCheckEvery, until ctx ends. It is counted in passWork.
 func (e *Engine) watchPassthroughs(ctx context.Context) {
 	defer e.passWork.Done()
-	t := time.NewTicker(passCheckEvery)
+	t := time.NewTicker(e.passEvery)
 	defer t.Stop()
 	for {
 		select {

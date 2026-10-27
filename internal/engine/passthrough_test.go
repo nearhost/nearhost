@@ -248,6 +248,88 @@ func TestClosePassthroughDuringOpen(t *testing.T) {
 	}
 }
 
+func TestFailedCancelOfClosedOpenKeepsPassthroughUntilChecked(t *testing.T) {
+	failFile := filepath.Join(t.TempDir(), "cancel-fails")
+	if err := os.WriteFile(failFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_FAIL="+failFile)
+	h.eng.beforeForward = func(id string) {
+		if err := h.eng.ClosePassthrough(bg, id, "done"); err != nil {
+			t.Error(err)
+		}
+	}
+	port := testutil.FreePort(t)
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil || !strings.Contains(err.Error(), "cancel") {
+		t.Fatalf("open err = %v, want the failed cancel", err)
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 1 || got[0].ID != "p1" {
+		t.Fatalf("passthroughs = %v, want p1 kept so it can be closed", got)
+	}
+	if h.eng.PortFree(port) {
+		t.Fatal("the port was freed while its forward is still live")
+	}
+	if err := os.Remove(failFile); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.checkPassthroughs(bg)
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("passthroughs = %v after the check", got)
+	}
+	if !h.eng.PortFree(port) {
+		t.Fatal("the port is still held after the check closed it")
+	}
+	if got := h.forwards("apollo"); len(got) != 0 {
+		t.Fatalf("forwards = %v", got)
+	}
+}
+
+func TestFailedCancelOfClosedOpenDuringShutdownReleases(t *testing.T) {
+	dir := t.TempDir()
+	failFile, waitFile := filepath.Join(dir, "cancel-fails"), filepath.Join(dir, "cancel-waits")
+	if err := os.WriteFile(failFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := endHarness(t, "", "FAKE_SSH_CANCEL_FAIL="+failFile, "FAKE_SSH_CANCEL_WAIT="+waitFile)
+	t.Cleanup(func() { os.Remove(waitFile) }) // never leave a cancel waiting
+	h.eng.beforeForward = func(id string) {
+		if err := h.eng.ClosePassthrough(bg, id, "done"); err != nil {
+			t.Error(err)
+		}
+		if err := os.WriteFile(waitFile, nil, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	port := testutil.FreePort(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		done <- err
+	}()
+	// The undo waits inside its cancel while the engine shuts down, so
+	// Shutdown lets go of every passthrough before the cancel fails.
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return strings.Contains(h.log(), "-O cancel") }, "the undo to reach its cancel")
+	if err := h.eng.Shutdown(bg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(waitFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("the open succeeded")
+	}
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("passthroughs = %v after Shutdown", got)
+	}
+	h.eng.mu.Lock()
+	_, held := h.eng.ports[port]
+	_, relay := h.eng.relays[port]
+	h.eng.mu.Unlock()
+	if held || relay {
+		t.Fatalf("after Shutdown the port is held %v, relayed %v", held, relay)
+	}
+}
+
 func TestOwnerTextDuringOpen(t *testing.T) {
 	port := testutil.FreePort(t)
 	h, _ := passthroughHarness(t, remoteProject("one", "apollo", port))
@@ -295,6 +377,9 @@ func endHarness(t *testing.T, sshPath string, sshEnv ...string) (h *harness, at 
 			o.SSHPath = sshPath
 		}
 	}, sshEnv...)
+	// The tests run the checks themselves on the fixed clock; one the loop
+	// ran as well, on real time, would land at whatever time was set.
+	h.eng.passEvery = 1000 * time.Hour
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
@@ -653,5 +738,11 @@ func TestDefaultProbe(t *testing.T) {
 		if got := probePassthroughPort(bg, tc.port); got != tc.want {
 			t.Errorf("%s: probe = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+func TestPassthroughCheckIntervalDefault(t *testing.T) {
+	if got := New(&config.Config{}, Options{}).passEvery; got != 30*time.Second {
+		t.Fatalf("passEvery %v", got)
 	}
 }

@@ -236,6 +236,9 @@ type Engine struct {
 	// probePass checks that something answers on the local port of a
 	// passthrough. Tests replace it.
 	probePass func(ctx context.Context, local int) bool
+	// passEvery is how often the loop checks the passthroughs:
+	// passCheckEvery, unless a test that runs the checks itself stops it.
+	passEvery time.Duration
 	// passWork counts the passthrough check loop and the closes run in the
 	// background. Shutdown waits for them.
 	passWork sync.WaitGroup
@@ -261,6 +264,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		passthroughs: map[string]*passthrough{},
 		now:          time.Now,
 		probePass:    probePassthroughPort,
+		passEvery:    passCheckEvery,
 	}
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {

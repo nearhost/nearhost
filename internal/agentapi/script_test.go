@@ -590,6 +590,14 @@ func TestScriptPassthroughOpen(t *testing.T) {
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	home := shortDir(t)
 	s, _, g, rv := passScript(t, home, "mini", true)
+	// The skill's directories are made private even when they exist already.
+	tokens := filepath.Join(home, ".local", "state", "nearhost", "tokens")
+	if err := os.MkdirAll(tokens, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(tokens), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	r := runScript(t, home, claudeEnv, "passthrough", "3000")
 	m := proposalID.FindStringSubmatch(r.stdout)
 	if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"expires_at"`) || strings.Contains(r.stdout, `"state"`) {
@@ -613,8 +621,10 @@ func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	if m := mode(t, tokenPath(home, "claude-code")); m != 0o600 {
 		t.Fatalf("token mode %v", m)
 	}
-	if m := mode(t, filepath.Dir(tokenPath(home, "claude-code"))); m != 0o700 {
-		t.Fatalf("token directory mode %v", m)
+	for _, dir := range []string{filepath.Dir(tokenPath(home, "claude-code")), tokens, filepath.Dir(tokens)} {
+		if m := mode(t, dir); m != 0o700 {
+			t.Fatalf("%s mode %v", dir, m)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")); err != nil {
 		t.Fatalf("no marker: %v", err)
@@ -660,7 +670,7 @@ func TestScriptPassthroughDeclinedExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
+	if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.Contains(r.stdout, `"reason"`) || r.stderr != "" {
 		t.Fatalf("declined: %+v", r)
 	}
 	r = runScript(t, home, claudeEnv, "passthrough", "3001")
@@ -669,6 +679,54 @@ func TestScriptPassthroughDeclinedExpired(t *testing.T) {
 	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
 	if r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
 		t.Fatalf("expired: %+v", r)
+	}
+}
+
+func TestScriptPassthroughOpenFailedIsNoDecline(t *testing.T) {
+	home := shortDir(t)
+	s, p, _, _ := passScript(t, home, "mini", true)
+	p.err = errors.New(`ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`)
+	r := runScript(t, home, claudeEnv, "passthrough", "3000")
+	id := proposalID.FindStringSubmatch(r.stdout)[1]
+	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+		t.Fatal("the open did not fail")
+	}
+	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
+	want := `Nearhost could not open the port: ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`
+	if r.code != 1 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.TrimSpace(r.stderr) != want {
+		t.Fatalf("failed open: %+v", r)
+	}
+}
+
+func TestScriptPassthroughTokenNotInArguments(t *testing.T) {
+	home := shortDir(t)
+	_, _, g, _ := passScript(t, home, "mini", false)
+	g.tokens[[2]string{"mini", "claude-code"}] = "tok-secret"
+	storeToken(t, home, "claude-code", "tok-secret")
+	// A curl that records its arguments, as ps would show them.
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	args := filepath.Join(home, "args")
+	real, err := exec.LookPath("curl")
+	if err != nil {
+		t.Skip("no curl")
+	}
+	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + args + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, home, append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, claudeEnv...), "passthrough", "3000")
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+		t.Fatalf("passthrough: %+v", r)
+	}
+	seen, err := os.ReadFile(args)
+	if err != nil || !strings.Contains(string(seen), "/v1/passthroughs") {
+		t.Fatalf("curl was not called: %q %v", seen, err)
+	}
+	if strings.Contains(string(seen), "tok-secret") {
+		t.Fatalf("the token is in curl's arguments:\n%s", seen)
 	}
 }
 

@@ -171,9 +171,10 @@ type agentEnv struct {
 
 // serveAgents starts the agent API for a run of nearhost, and sets opts so
 // that the engine forwards it to each server. Call attach with the engine
-// once it exists. The note says why agents cannot reach nearhost,
-// when they cannot; the agents returned are then nil, and their methods do
-// nothing.
+// once it exists. The note says why agents cannot reach nearhost, when
+// they cannot; the agents returned are then nil, and their methods do
+// nothing. When only passthroughs are off, the agents come back with a
+// note that says why.
 func serveAgents(b agentsBackend, opts *engine.Options, cfgPath string, httpsPort int, env agentEnv) (*agents, string) {
 	src := &agentSource{cfgPath: cfgPath, httpsPort: httpsPort, env: env}
 	a, note := startAgents(b, src, opts.RunDir)
@@ -330,7 +331,11 @@ func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.An
 	default:
 		ans = agentapi.AnswerNo
 	}
-	return a.api.AnswerPassthrough(ctx, id, ans)
+	err := a.api.AnswerPassthrough(ctx, id, ans)
+	if errors.Is(err, agentapi.ErrPassEnded) {
+		return tui.RequestEnded(err)
+	}
+	return err
 }
 
 // grantsErr says why grants cannot be listed or changed in this run, or is

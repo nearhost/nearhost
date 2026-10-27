@@ -58,6 +58,10 @@ type fakeBackend struct {
 	// passCalls records the passthrough calls, and passErr is what they return.
 	passCalls []string
 	passErr   error
+	// passEnded holds the requests that have ended, with the error a Yes or
+	// Always allow on them returns, as the agent API does once an answer
+	// fails or the request expires or its session ends.
+	passEnded map[string]error
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -105,7 +109,27 @@ func (f *fakeBackend) AnswerPassthrough(_ context.Context, id string, a Answer) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.passCalls = append(f.passCalls, fmt.Sprintf("answer %s %d", id, a))
+	if err, ok := f.passEnded[id]; ok {
+		if a == AnswerNo {
+			return nil // no on an ended request does nothing
+		}
+		return err
+	}
+	if f.passErr != nil && a != AnswerNo {
+		// A failed open ends the request.
+		f.endPass(id, f.passErr)
+		return f.passEnded[id]
+	}
 	return f.passErr
+}
+
+// endPass ends the request id, so a Yes or Always allow on it returns err,
+// marked as ending it. The caller holds f.mu.
+func (f *fakeBackend) endPass(id string, err error) {
+	if f.passEnded == nil {
+		f.passEnded = map[string]error{}
+	}
+	f.passEnded[id] = RequestEnded(err)
 }
 
 func (f *fakeBackend) Grants(server string) ([]grants.Grant, error) {
@@ -113,7 +137,7 @@ func (f *fakeBackend) Grants(server string) ([]grants.Grant, error) {
 	defer f.mu.Unlock()
 	var out []grants.Grant
 	for _, g := range f.grantList {
-		if server == "" || g.Server == server {
+		if g.Server == server { // an empty server matches none, as in Backend
 			out = append(out, g)
 		}
 	}

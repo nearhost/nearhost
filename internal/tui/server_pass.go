@@ -22,13 +22,24 @@ type passRow struct {
 	grant *grants.Grant
 }
 
+// key names the row's passthrough or grant, so the selection can follow it
+// while rows come and go around it.
+func (r passRow) key() string {
+	if r.grant != nil {
+		return "grant " + r.grant.Requester
+	}
+	return "pass " + r.pass.ID
+}
+
 // passRows are the rows of the server called name: its open passthroughs,
 // sorted by remote port, then its grants, sorted by requester. They are read
 // from the backend each time, so what the engine closes is gone at once. The
 // error is why the grants could not be read, when they could not. The grants
 // are those fetchGrants last read, since reading them blocks. The
-// focus on the rows ends when none are left, and the selected row stays
-// within them.
+// focus on the rows ends when none are left. The selected row is found
+// again by its key, so a row opened or closed meanwhile does not move the
+// selection onto another; when it is gone, the selection stays at its place
+// within the rows.
 func (m *Model) passRows(name string) ([]passRow, error) {
 	passes := slices.Clone(m.b.Passthroughs(name))
 	sort.SliceStable(passes, func(i, j int) bool { return passes[i].Remote < passes[j].Remote })
@@ -46,8 +57,15 @@ func (m *Model) passRows(name string) ([]passRow, error) {
 		rows = append(rows, passRow{grant: &gs[i]})
 	}
 	if m.passFocus {
-		m.passRow = max(min(m.passRow, len(rows)-1), 0)
+		if i := slices.IndexFunc(rows, func(r passRow) bool { return r.key() == m.passSel }); i >= 0 {
+			m.passRow = i
+		} else {
+			m.passRow = max(min(m.passRow, len(rows)-1), 0)
+		}
 		m.passFocus = len(rows) > 0
+		if m.passFocus {
+			m.passSel = rows[m.passRow].key()
+		}
 	}
 	return rows, err
 }
@@ -121,7 +139,7 @@ func (m *Model) passLines(name string, width int) []string {
 		if !shown["always allowed"] {
 			lines = append(lines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
-		for _, l := range wrap(sentence(err.Error()), width-2) {
+		for _, l := range wrap(sentence(clean(err.Error())), width-2) {
 			lines = append(lines, "  "+styleAmber.Render(l))
 		}
 	}
@@ -136,18 +154,27 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		m.passFocus = false
 		return nil, false
 	}
+	sel := m.passSel
 	rows, _ := m.passRows(name)
 	if !m.passFocus {
 		return nil, false // the rows were all closed
 	}
+	// The selected row was closed since it was drawn, and the selection
+	// moved to a row the user has not seen selected yet.
+	moved := rows[m.passRow].key() != sel
 	switch s {
 	case "tab", "esc":
 		m.passFocus, m.panelErr = false, ""
 	case "up", "k":
 		m.passRow = max(m.passRow-1, 0)
+		m.passSel = rows[m.passRow].key()
 	case "down", "j":
 		m.passRow = min(m.passRow+1, len(rows)-1)
+		m.passSel = rows[m.passRow].key()
 	case "x":
+		if moved {
+			return nil, true // the next draw shows the row x would close
+		}
 		return m.closeRow(name, rows[m.passRow]), true
 	default:
 		return nil, false
