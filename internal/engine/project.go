@@ -362,15 +362,22 @@ func (e *Engine) ensureHosts(ctx context.Context, web []config.WebHosts) error {
 	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, names, e.opts.Lookup))
 }
 
-// claimPort reserves a local port for a forward of run. It returns the name
-// of the project holding the port when another one does.
+// claimPort reserves a local port for a forward of run. It describes the
+// holder of the port, as ownerTextLocked does, when another one has it.
 func (e *Engine) claimPort(run *projectRun, port int) (owner string, ok bool) {
+	return e.claimPortFor(run.name, port)
+}
+
+// claimPortFor reserves a local port for owner, a project name or the owner
+// of a passthrough. It describes the holder of the port, as ownerTextLocked
+// does, when another owner has it.
+func (e *Engine) claimPortFor(owner string, port int) (holder string, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if owner, taken := e.ports[port]; taken && owner != run.name {
-		return owner, false
+	if held, taken := e.ports[port]; taken && held != owner {
+		return e.ownerTextLocked(held), false
 	}
-	e.ports[port] = run.name
+	e.ports[port] = owner
 	return "", true
 }
 
@@ -396,8 +403,8 @@ func (e *Engine) forwardWeb(ctx context.Context, sess *transport.Session, run *p
 		if err != nil {
 			return 0, err
 		}
-		if _, ok := e.claimPort(run, local); !ok {
-			last = fmt.Errorf("local port %d is held by another project", local)
+		if holder, ok := e.claimPort(run, local); !ok {
+			last = fmt.Errorf("local port %d is held by %s", local, holder)
 			continue
 		}
 		if err := sess.AddForward(ctx, local, remote); err != nil {
@@ -439,7 +446,7 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	// Two projects may not share a local port: the session would treat the
 	// second forward as the first, and stopping either would cancel it.
 	if owner, ok := e.claimPort(run, port); !ok {
-		return fmt.Errorf("loopback port %d is already forwarded for project %q", port, owner)
+		return fmt.Errorf("loopback port %d is already forwarded for %s", port, owner)
 	}
 	if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
 		e.releasePort(port)

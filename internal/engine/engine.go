@@ -212,13 +212,17 @@ type Engine struct {
 	// their sessions behind the user's back. It is kept by name, not on the
 	// session, so a reload that replaces the session keeps it.
 	held  map[string]bool
-	ports map[int]string // local port held by a forward -> project
+	ports map[int]string // local port held by a forward -> project name or passthroughOwner
 	// relays are the [::1] listeners of loopback forwards, by port; they
 	// go when the port is released.
 	relays map[int]net.Listener
 	// docker is what is known of the local Docker networks, shared by every
 	// project that opts in, as they share the machine's Docker.
 	docker dockerState
+	// passthroughs are the temporary passthroughs that are open, by id.
+	passthroughs map[string]*passthrough
+	// now is the clock; tests replace it.
+	now func() time.Time
 }
 
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
@@ -238,6 +242,8 @@ func New(cfg *config.Config, opts Options) *Engine {
 		held:         map[string]bool{},
 		ports:        map[int]string{},
 		relays:       map[int]net.Listener{},
+		passthroughs: map[string]*passthrough{},
+		now:          time.Now,
 	}
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {
