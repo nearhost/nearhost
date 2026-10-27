@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -997,20 +998,24 @@ func writeMarker(t *testing.T, home, sid, sock string) string {
 }
 
 // answerDelete serves every request on a socket in home with status and
-// returns the socket's path.
-func answerDelete(t *testing.T, home string, status int) string {
+// returns the socket's path and a count of the DELETE requests served.
+func answerDelete(t *testing.T, home string, status int) (string, *atomic.Int32) {
 	t.Helper()
 	sock := filepath.Join(home, "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
+	deletes := new(atomic.Int32)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes.Add(1)
+		}
 		w.WriteHeader(status)
 	})}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
-	return sock
+	return sock, deletes
 }
 
 func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
@@ -1018,10 +1023,14 @@ func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
 		t.Skip("curl is not installed")
 	}
 	home := shortDir(t)
-	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusBadGateway))
+	sock, deletes := answerDelete(t, home, http.StatusBadGateway)
+	marker := writeMarker(t, home, "s1", sock)
 	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
 	if r.code != 0 {
 		t.Fatalf("close: %+v", r)
+	}
+	if n := deletes.Load(); n != 1 {
+		t.Fatalf("%d DELETE requests, want 1", n)
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("marker lost after a failed close: %v", err)
@@ -1047,7 +1056,8 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 		t.Skip("curl is not installed")
 	}
 	home := shortDir(t)
-	marker := writeMarker(t, home, "s1", answerDelete(t, home, http.StatusNoContent))
+	sock, _ := answerDelete(t, home, http.StatusNoContent)
+	marker := writeMarker(t, home, "s1", sock)
 	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
 	if r.code != 0 {
 		t.Fatalf("close: %+v", r)
