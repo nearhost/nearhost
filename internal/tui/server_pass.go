@@ -100,50 +100,116 @@ func (r passRow) text(now time.Time) string {
 	return strings.Join(append(parts, age(now, p.Opened)), " · ")
 }
 
-// passLines draws the server's passthroughs and grants for its panel: a label
-// line, then a line a row, the selected one filled while the rows have the
-// focus. The labels are longer than a field's, so they have lines of their
-// own.
-func (m *Model) passLines(name string, width int) []string {
+// minPassRows is the fewest passthrough rows the panel shows, however
+// low the window.
+const minPassRows = 3
+
+// passLines draws the server's passthroughs and grants for its panel, in at
+// most room lines where it can: a label line, then a line a row, the
+// selected one filled while the rows have the focus. The labels are longer
+// than a field's, so they have lines of their own. When the rows do not
+// fit, a window of them that holds the selection is shown, with at least
+// minPassRows rows, and a dim "+N more" line says how many are hidden above
+// it, under the first row's label, and below it.
+func (m *Model) passLines(name string, width, room int) []string {
 	rows, err := m.passRows(name)
-	var lines []string
-	shown := map[string]bool{}
-	section := func(label string, in func(passRow) bool) {
-		for i, r := range rows {
-			if !in(r) {
-				continue
-			}
-			if !shown[label] {
-				lines = append(lines, styleLabel.UnsetWidth().Render(label))
-				shown[label] = true
-			}
-			sel := m.passFocus && i == m.passRow
-			for j, l := range wrap(r.text(m.now()), width-2) {
-				lead, style := "  ", styleText
-				if sel {
-					style = style.Background(colourSelected)
-					if j == 0 {
-						lead = styleBeacon.Render("▌") + " "
-					}
-				}
-				lines = append(lines, lead+style.Render(l))
-			}
-		}
-	}
-	section("passthroughs", func(r passRow) bool { return r.pass != nil })
-	section("always allowed", func(r passRow) bool { return r.grant != nil })
 	// A grants error is news only beside passthroughs, or with the rows
 	// selected; otherwise every server panel of a run without agents would
 	// carry it.
+	var errLines []string
 	if err != nil && (m.passFocus || slices.ContainsFunc(rows, func(r passRow) bool { return r.pass != nil })) {
-		if !shown["always allowed"] {
-			lines = append(lines, styleLabel.UnsetWidth().Render("always allowed"))
+		if !slices.ContainsFunc(rows, func(r passRow) bool { return r.grant != nil }) {
+			errLines = append(errLines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
 		for _, l := range wrap(sentence(clean(err.Error())), width-2) {
-			lines = append(lines, "  "+styleAmber.Render(l))
+			errLines = append(errLines, "  "+styleAmber.Render(l))
 		}
 	}
-	return lines
+	label := func(r passRow) string {
+		if r.grant != nil {
+			return "always allowed"
+		}
+		return "passthroughs"
+	}
+	drawn := make([][]string, len(rows))
+	labels, total := map[string]bool{}, len(errLines)
+	for i, r := range rows {
+		sel := m.passFocus && i == m.passRow
+		for j, l := range wrap(r.text(m.now()), width-2) {
+			lead, style := "  ", styleText
+			if sel {
+				style = style.Background(colourSelected)
+				if j == 0 {
+					lead = styleBeacon.Render("▌") + " "
+				}
+			}
+			drawn[i] = append(drawn[i], lead+style.Render(l))
+		}
+		if !labels[label(r)] {
+			labels[label(r)] = true
+			total++
+		}
+		total += len(drawn[i])
+	}
+	from, to := 0, len(rows)
+	if total > room && len(rows) > 0 {
+		from, to = m.passWindow(drawn, room-(total-lineCount(drawn))-2)
+	}
+	var lines []string
+	shown := map[string]bool{}
+	for i := from; i < to; i++ {
+		if l := label(rows[i]); !shown[l] {
+			lines = append(lines, styleLabel.UnsetWidth().Render(l))
+			shown[l] = true
+		}
+		if i == from && from > 0 {
+			lines = append(lines, "  "+styleDim.Render(fmt.Sprintf("+%d more", from)))
+		}
+		lines = append(lines, drawn[i]...)
+	}
+	if to < len(rows) {
+		lines = append(lines, "  "+styleDim.Render(fmt.Sprintf("+%d more", len(rows)-to)))
+	}
+	return append(lines, errLines...)
+}
+
+// lineCount is how many lines the rows drawn take.
+func lineCount(drawn [][]string) int {
+	n := 0
+	for _, d := range drawn {
+		n += len(d)
+	}
+	return n
+}
+
+// passWindow is the rows from and up to to that are shown of those drawn,
+// in room lines: the selected row, and as many around it as fit, but never
+// fewer than minPassRows. The window moves only as far as the selection
+// needs it to, so it stays put while the selection moves within it, and it
+// is filled again from above when rows below it go.
+func (m *Model) passWindow(drawn [][]string, room int) (int, int) {
+	fits := func(from, to int) bool {
+		return to-from <= minPassRows || lineCount(drawn[from:to]) <= room
+	}
+	sel := 0
+	if m.passFocus {
+		sel = m.passRow
+	} else {
+		m.passTop = 0
+	}
+	top := max(min(m.passTop, sel), 0)
+	for !fits(top, sel+1) {
+		top++
+	}
+	end := sel + 1
+	for end < len(drawn) && fits(top, end+1) {
+		end++
+	}
+	for top > 0 && fits(top-1, end) {
+		top--
+	}
+	m.passTop = top
+	return top, end
 }
 
 // passKey handles a key while the server panel's passthroughs have the
@@ -175,6 +241,9 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		if moved {
 			return nil, true // the next draw shows the row x would close
 		}
+		if p := rows[m.passRow].pass; p != nil && m.passClosing[p.ID] {
+			return nil, true // its close is running
+		}
 		return m.closeRow(name, rows[m.passRow]), true
 	default:
 		return nil, false
@@ -191,6 +260,10 @@ func (m *Model) closeRow(server string, r passRow) tea.Cmd {
 		return nil
 	}
 	b, p, key := m.b, *r.pass, rowKey(rowServer, server)
+	if m.passClosing == nil {
+		m.passClosing = map[string]bool{}
+	}
+	m.passClosing[p.ID] = true
 	return m.work.do(func(ctx context.Context) tea.Msg {
 		return passClosedMsg{key, p, b.ClosePassthrough(ctx, p.ID)}
 	})
@@ -205,8 +278,9 @@ type passClosedMsg struct {
 }
 
 // passClosed logs a passthrough closed from the panel, or shows why it could
-// not be.
+// not be. Either way, x may close it again.
 func (m *Model) passClosed(msg passClosedMsg) {
+	delete(m.passClosing, msg.p.ID)
 	if msg.err != nil {
 		m.refused(msg.key, msg.err)
 		return
@@ -293,7 +367,12 @@ func (m *Model) revoked(msg revokedMsg) {
 	}
 	m.form = nil
 	if e := m.grantCache[msg.server]; e != nil {
-		e.at = time.Time{} // read again at once
+		// A read still running began before the revoke, and may hold the
+		// grant: its outcome is dropped, and the grants read again at
+		// once.
+		e.gen++
+		e.list = slices.DeleteFunc(slices.Clone(e.list), func(g grants.Grant) bool { return g.Requester == msg.requester })
+		e.at, e.busy = time.Time{}, false
 	}
 	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s.", requesterName(msg.requester)))
 }
@@ -340,13 +419,18 @@ type grantsEntry struct {
 	err  error
 	at   time.Time // when they were read; zero when they must be read again
 	busy bool      // a read is running
+	// gen counts the revokes made on the server; a read begun before the
+	// latest is stale.
+	gen int
 }
 
-// grantsMsg is the outcome of reading a server's grants.
+// grantsMsg is the outcome of reading a server's grants, a read begun at
+// generation gen of its entry.
 type grantsMsg struct {
 	server string
 	list   []grants.Grant
 	err    error
+	gen    int
 }
 
 // fetchGrants reads the selected server's grants on the worker when they are
@@ -369,17 +453,25 @@ func (m *Model) fetchGrants() tea.Cmd {
 		return nil
 	}
 	e.busy = true
-	b := m.b
+	b, gen := m.b, e.gen
 	return m.work.do(func(context.Context) tea.Msg {
 		list, err := b.Grants(name)
-		return grantsMsg{name, list, err}
+		return grantsMsg{name, list, err, gen}
 	})
 }
 
-// gotGrants keeps the grants that were read.
+// gotGrants keeps the grants that were read, unless a revoke was made
+// since the read began, as the read may still hold the grant revoked.
 func (m *Model) gotGrants(msg grantsMsg) {
 	if m.grantCache == nil {
 		m.grantCache = map[string]*grantsEntry{}
 	}
-	m.grantCache[msg.server] = &grantsEntry{list: msg.list, err: msg.err, at: m.now()}
+	gen := 0
+	if e := m.grantCache[msg.server]; e != nil {
+		if msg.gen < e.gen {
+			return
+		}
+		gen = e.gen
+	}
+	m.grantCache[msg.server] = &grantsEntry{list: msg.list, err: msg.err, at: m.now(), gen: gen}
 }

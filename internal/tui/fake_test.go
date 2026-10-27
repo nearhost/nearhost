@@ -60,8 +60,12 @@ type fakeBackend struct {
 	passErr   error
 	// passEnded holds the requests that have ended, with the error a Yes or
 	// Always allow on them returns, as the agent API does once an answer
-	// fails or the request expires or its session ends.
+	// fails or the request expires or its session ends. A No on them
+	// returns it too.
 	passEnded map[string]error
+	// passErrKeeps makes a failed Yes or Always allow leave its request
+	// waiting, as an error that is not the request's leaves it.
+	passErrKeeps bool
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -110,12 +114,12 @@ func (f *fakeBackend) AnswerPassthrough(_ context.Context, id string, a Answer) 
 	defer f.mu.Unlock()
 	f.passCalls = append(f.passCalls, fmt.Sprintf("answer %s %d", id, a))
 	if err, ok := f.passEnded[id]; ok {
-		if a == AnswerNo {
-			return nil // no on an ended request does nothing
-		}
 		return err
 	}
-	if f.passErr != nil && a != AnswerNo {
+	if errors.Is(f.passErr, ErrAllowNotSaved) {
+		return f.passErr // the port opened, and the request was answered
+	}
+	if f.passErr != nil && a != AnswerNo && !f.passErrKeeps {
 		// A failed open ends the request.
 		f.endPass(id, f.passErr)
 		return f.passEnded[id]

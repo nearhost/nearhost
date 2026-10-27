@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func TestPassPromptLabel(t *testing.T) {
 	r := passReq(m)
 	r.Label = "browser preview"
 	ask(m, r)
-	wantScreen(t, m, "Claude Code on apollo wants to open port 41873 on this laptop (browser", "preview).")
+	wantText(t, m, "Claude Code on apollo wants to open port 41873 on this laptop (browser preview).")
 }
 
 func TestPassPromptNoAlwaysForAgent(t *testing.T) {
@@ -196,8 +197,8 @@ func TestPassPromptErrorNotEndedSaysNothingOfEnding(t *testing.T) {
 		t.Fatalf("lines:\n%s", text)
 	}
 	settle(m, press(m, "esc"))
-	if m.form != nil || len(f.passthroughCalls()) != 1 {
-		t.Fatalf("form %T, calls %v", m.form, f.passthroughCalls())
+	if got := f.passthroughCalls(); m.form != nil || !slices.Equal(got, []string{"answer r1 0", "answer r1 0"}) {
+		t.Fatalf("form %T, calls %v, want the No sent again on close", m.form, got)
 	}
 }
 
@@ -310,5 +311,57 @@ func TestPassAnsweredWithAnotherFormOpenKeepsIt(t *testing.T) {
 	}
 	if !strings.Contains(logText(m, homeKey), "Declined to open port 41873 for Claude Code on apollo.") {
 		t.Fatalf("log:\n%s", logText(m, homeKey))
+	}
+}
+
+func TestAlwaysNotSavedStillLogsOpen(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	f.passErr = fmt.Errorf("%w: disk full", ErrAllowNotSaved)
+	ask(m, passReq(m))
+	settle(m, press(m, "a"))
+	if _, ok := m.form.(*passForm); !ok {
+		t.Fatalf("form %T", m.form)
+	}
+	wantText(t, m, "Always allow was not saved: disk full")
+	if !strings.Contains(logText(m, homeKey), "Opened port 41873 for Claude Code on apollo, but Always allow was not saved.") {
+		t.Fatalf("log:\n%s", logText(m, homeKey))
+	}
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 2"}) {
+		t.Fatalf("calls %v, want no No after the port opened", got)
+	}
+}
+
+func TestNoOnEndedLogsEnded(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	f.mu.Lock()
+	f.endPass("r1", errors.New("the request for port 41873 has ended: expired"))
+	f.mu.Unlock()
+	settle(m, press(m, "n"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	log := logText(m, homeKey)
+	if !strings.Contains(log, "The request to open port 41873 for Claude Code on apollo had already ended.") || strings.Contains(log, "Declined") {
+		t.Fatalf("log:\n%s", log)
+	}
+}
+
+func TestCloseAfterNonEndingErrorSendsNo(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	f.passErr, f.passErrKeeps = errors.New("the server isn't connected"), true
+	ask(m, passReq(m))
+	settle(m, press(m, "y"))
+	wantText(t, m, "The server isn't connected")
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatalf("form %T still open", m.form)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1", "answer r1 0"}) {
+		t.Fatalf("calls %v, want one No after the failed Yes", got)
 	}
 }

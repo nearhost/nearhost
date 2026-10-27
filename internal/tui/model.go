@@ -71,6 +71,12 @@ type Model struct {
 	passFocus bool
 	passRow   int
 	passSel   string
+	// passTop is the first of the rows the panel shows when they do not
+	// all fit.
+	passTop int
+	// passClosing holds the passthroughs, by ID, whose close from the
+	// panel is running, so x does not close one twice.
+	passClosing map[string]bool
 	// grantCache is the grants last read for each server.
 	grantCache map[string]*grantsEntry
 	// showIgnored lists a project's ignored routes in its panel; without
@@ -561,7 +567,7 @@ func (m *Model) main(width, height int) ([]string, []string) {
 	kind, name := m.selected()
 	switch kind {
 	case rowServer:
-		details = m.serverPanel(name, width)
+		details = m.serverPanel(name, width, height-3)
 	case rowProject:
 		details = m.projectPanel(name, width)
 	default:
