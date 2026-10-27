@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/nearhost/nearhost/compare/v0.9.0...v0.9.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **engine:** serve docker_clients projects to no Docker range until Docker answers ([#265](https://github.com/nearhost/nearhost/issues/265)) ([e6c3ed5](https://github.com/nearhost/nearhost/commit/e6c3ed5ed30aebd0710537281b86a8f6d22679f5))
+* **trust:** untrust deletes the root from the macOS System keychain ([#264](https://github.com/nearhost/nearhost/issues/264)) ([0467239](https://github.com/nearhost/nearhost/commit/0467239126c387cb810eb967cbfee13e034eebd9))
+
 ## [0.9.0](https://github.com/nearhost/nearhost/compare/v0.8.0...v0.9.0) (2026-10-22)
 
 
