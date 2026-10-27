@@ -417,14 +417,15 @@ func (s *Server) passDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // closePasses closes open passthroughs, without s.mu held and detached
-// from the agent hanging up (see closeTimeout), and records them
-// closed. It returns the first error.
+// from the agent hanging up, each with its own closeTimeout, and records
+// them closed. It returns the first error.
 func (s *Server) closePasses(r *http.Request, recs []*passRecord) error {
-	ctx, cancel := detached(r.Context(), closeTimeout)
-	defer cancel()
 	var first error
 	for _, rec := range recs {
-		if err := s.opts.Passer.Close(ctx, rec.ID); err != nil {
+		ctx, cancel := detached(r.Context(), closeTimeout)
+		err := s.opts.Passer.Close(ctx, rec.ID)
+		cancel()
+		if err != nil {
 			if first == nil {
 				first = err
 			}
