@@ -37,15 +37,45 @@ func (p Proposal) where() string {
 // waits for it.
 type Proposals struct {
 	mu      sync.Mutex
-	waiting []Proposal
+	waiting []tea.Msg
 	wake    chan struct{} // nil until attached
 }
 
+// PassRequest is a passthrough a coding agent asks for: one port of a
+// server, forwarded to this machine, waiting for the user's answer.
+type PassRequest struct {
+	ID        string
+	Origin    string // the server whose port is asked for
+	Requester string // the tool that asked, such as claude-code
+	Session   string // the requester's session; may be empty
+	Label     string // what the port is for, as the requester said
+	Remote    int    // the port on the server
+	// LocalTaken is set when the same port here is taken, so another is used.
+	LocalTaken bool
+	// CanAlways is set when Always allow may be offered.
+	CanAlways bool
+	// Expires is when the agent stops waiting for the answer.
+	Expires time.Time
+}
+
 // Propose gives the interface p. It never blocks.
-func (s *Proposals) Propose(p Proposal) {
+func (s *Proposals) Propose(p Proposal) { s.push(proposalMsg{p}) }
+
+// Pass gives the interface a passthrough request, in order with the
+// proposals. It never blocks.
+func (s *Proposals) Pass(r PassRequest) { s.push(passMsg{r}) }
+
+// Opened tells the interface that a passthrough of remote on origin opened
+// for requester without asking, because of an Always allow. It never blocks.
+func (s *Proposals) Opened(origin, requester string, remote int) {
+	s.push(passOpenedMsg{origin, requester, remote})
+}
+
+// push queues msg for the sender goroutine and wakes it.
+func (s *Proposals) push(msg tea.Msg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.waiting = append(s.waiting, p)
+	s.waiting = append(s.waiting, msg)
 	if s.wake != nil {
 		select {
 		case s.wake <- struct{}{}:
@@ -72,16 +102,25 @@ func (s *Proposals) attach(send func(tea.Msg)) {
 				<-wake
 				continue
 			}
-			p := s.waiting[0]
+			msg := s.waiting[0]
 			s.waiting = s.waiting[1:]
 			s.mu.Unlock()
-			send(proposalMsg{p})
+			send(msg)
 		}
 	}()
 }
 
 // proposalMsg is a proposal arriving.
 type proposalMsg struct{ p Proposal }
+
+// passMsg is a passthrough request arriving.
+type passMsg struct{ r PassRequest }
+
+// passOpenedMsg is a passthrough that opened without asking.
+type passOpenedMsg struct {
+	origin, requester string
+	remote            int
+}
 
 // proposing is the proposal whose form is open.
 type proposing struct {
