@@ -36,8 +36,34 @@ type fakeSource map[string][]Project
 func (f fakeSource) Projects(origin string) []Project { return f[origin] }
 
 type fakeReviewer struct {
-	mu   sync.Mutex
-	seen []Proposal
+	mu     sync.Mutex
+	seen   []Proposal
+	passes []PassRequest
+	opened []Passthrough
+}
+
+func (f *fakeReviewer) ReviewPassthrough(r PassRequest) {
+	f.mu.Lock()
+	f.passes = append(f.passes, r)
+	f.mu.Unlock()
+}
+
+func (f *fakeReviewer) Opened(p Passthrough) {
+	f.mu.Lock()
+	f.opened = append(f.opened, p)
+	f.mu.Unlock()
+}
+
+func (f *fakeReviewer) prompts() []PassRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]PassRequest(nil), f.passes...)
+}
+
+func (f *fakeReviewer) notices() []Passthrough {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Passthrough(nil), f.opened...)
 }
 
 func (f *fakeReviewer) Review(p Proposal) {

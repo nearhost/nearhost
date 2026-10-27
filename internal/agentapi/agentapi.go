@@ -116,9 +116,16 @@ type Proposal struct {
 	Expires time.Time
 }
 
-// Reviewer is shown each proposal as it arrives. Review must not block.
+// Reviewer is shown each proposal and passthrough request as it arrives.
+// None of its methods may block.
 type Reviewer interface {
 	Review(p Proposal)
+	// ReviewPassthrough asks the user about a passthrough, answered with
+	// Server.AnswerPassthrough.
+	ReviewPassthrough(r PassRequest)
+	// Opened tells the user of a passthrough that opened without asking,
+	// with an Always allow token.
+	Opened(p Passthrough)
 }
 
 // State is where a proposal is.
@@ -149,6 +156,14 @@ type Options struct {
 	Doctor Doctor
 	// Reload answers POST /v1/projects/reload; nil means no reload.
 	Reload Reloader
+	// ID is this install's id, reported by GET /v1 with passthroughs so a
+	// tool keeps its tokens for each laptop apart.
+	ID string
+	// Passer opens the forwards behind passthroughs. Passthroughs need it
+	// and Grants; without both there are none.
+	Passer Passer
+	// Grants keeps the grants given with Always allow.
+	Grants Grants
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -161,9 +176,12 @@ type Server struct {
 
 	mu        sync.Mutex
 	reviewer  Reviewer
-	listeners map[string]*listener // by origin
-	proposals map[string]*proposal // by ID
-	accepting map[change]int       // changes being accepted, by holds on each
+	listeners map[string]*listener   // by origin
+	proposals map[string]*proposal   // by ID
+	accepting map[change]int         // changes being accepted, by holds on each
+	passes    map[string]*passRecord // passthrough requests, by ID
+	passGen   uint64                 // counts opens: see syncLocked
+	passSeq   uint64                 // counts requests, for their order
 	closed    bool
 }
 
@@ -203,7 +221,7 @@ func New(opts Options) *Server {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}}
+	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}}
 	s.handler = s.routes()
 	return s
 }

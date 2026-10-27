@@ -26,6 +26,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/proposals/{id}", s.proposal)
 	mux.HandleFunc("GET /v1/doctor", s.doctor)
 	mux.HandleFunc("POST /v1/projects/reload", s.reload)
+	mux.HandleFunc("POST /v1/passthroughs", s.passRequest)
+	mux.HandleFunc("GET /v1/passthroughs", s.passList)
+	mux.HandleFunc("GET /v1/passthroughs/{id}", s.passGet)
+	mux.HandleFunc("DELETE /v1/passthroughs", s.passDeleteSession)
+	mux.HandleFunc("DELETE /v1/passthroughs/{id}", s.passDelete)
 	mux.HandleFunc("/", noSuchCall)
 	return mux
 }
@@ -54,10 +59,14 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	review := s.reviewer != nil
 	s.mu.Unlock()
-	reply(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"api": Version, "origin": origin(r), "laptop": s.opts.Laptop, "interface": review,
 		"capabilities": s.capabilities(),
-	})
+	}
+	if s.passing() {
+		out["id"] = s.opts.ID
+	}
+	reply(w, http.StatusOK, out)
 }
 
 // capabilities lists, sorted, the calls beyond API 1's first ones that this
@@ -70,6 +79,9 @@ func (s *Server) capabilities() []string {
 	}
 	if s.opts.Reload != nil {
 		caps = append(caps, "reload")
+	}
+	if s.passing() {
+		caps = append(caps, "passthrough")
 	}
 	slices.Sort(caps)
 	return caps
@@ -381,15 +393,25 @@ func plainName(name string) bool {
 	return true
 }
 
+// waitQuery reads the wait parameter, a number of seconds capped at
+// maxWait. ok is false when it is not one, and the request has been answered.
+func waitQuery(w http.ResponseWriter, r *http.Request) (wait time.Duration, ok bool) {
+	v := r.URL.Query().Get("wait")
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(v, "s"))
+	if err != nil || n < 0 {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("wait must be a number of seconds, not %q", v))
+		return 0, false
+	}
+	return min(time.Duration(n)*time.Second, maxWait), true
+}
+
 func (s *Server) proposal(w http.ResponseWriter, r *http.Request) {
-	wait := time.Duration(0)
-	if v := r.URL.Query().Get("wait"); v != "" {
-		n, err := strconv.Atoi(strings.TrimSuffix(v, "s"))
-		if err != nil || n < 0 {
-			fail(w, http.StatusBadRequest, fmt.Sprintf("wait must be a number of seconds, not %q", v))
-			return
-		}
-		wait = min(time.Duration(n)*time.Second, maxWait)
+	wait, ok := waitQuery(w, r)
+	if !ok {
+		return
 	}
 	o := origin(r)
 	s.mu.Lock()
