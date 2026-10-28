@@ -41,6 +41,32 @@ type fakeReviewer struct {
 	seen   []Proposal
 	passes []PassRequest
 	opened []Passthrough
+	docs   []DocRequest
+	shown  [][3]string // origin, requester, doc
+}
+
+func (f *fakeReviewer) ReviewDocument(r DocRequest) {
+	f.mu.Lock()
+	f.docs = append(f.docs, r)
+	f.mu.Unlock()
+}
+
+func (f *fakeReviewer) Shown(origin, requester, doc string) {
+	f.mu.Lock()
+	f.shown = append(f.shown, [3]string{origin, requester, doc})
+	f.mu.Unlock()
+}
+
+func (f *fakeReviewer) docPrompts() []DocRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]DocRequest(nil), f.docs...)
+}
+
+func (f *fakeReviewer) shownDocs() [][3]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][3]string(nil), f.shown...)
 }
 
 func (f *fakeReviewer) ReviewPassthrough(r PassRequest) {

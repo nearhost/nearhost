@@ -280,6 +280,13 @@ func (r reviewer) ReviewPassthrough(p agentapi.PassRequest) {
 // Opened tells the interface of a passthrough that opened without asking.
 func (r reviewer) Opened(p agentapi.Passthrough) { r.to.Opened(p.Origin, p.Requester, p.Remote) }
 
+// ReviewDocument does nothing yet: the interface has no document prompt,
+// and documents stay off until it does, as Options.Shower is left nil.
+func (r reviewer) ReviewDocument(agentapi.DocRequest) {}
+
+// Shown does nothing yet, as documents stay off.
+func (r reviewer) Shown(origin, requester, doc string) {}
+
 // passer opens passthroughs on the engine, once it is attached.
 type passer struct {
 	eng *atomic.Pointer[engine.Engine]
