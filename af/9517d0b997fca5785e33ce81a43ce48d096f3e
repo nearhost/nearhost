@@ -1,0 +1,35 @@
+internal/sudo/sudo_windows.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-10
+internal/transport/procgroup_windows.go
+  s_cc6c1166ddaad7::t_b0fd4a978746b4 1-17
+internal/sudo/sudo_unix.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-22
+go.mod
+  s_cc6c1166ddaad7::t_b0fd4a978746b4 27
+internal/config/lock_windows.go
+  s_cc6c1166ddaad7::t_791ee3a1d89a67 1-33
+internal/config/lock_windows_test.go
+  s_cc6c1166ddaad7::t_743dcf31d8a977 1-49
+internal/transport/procgroup_other.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1
+internal/transport/procgroup_windows_test.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-20
+.github/workflows/ci.yml
+  s_cc6c1166ddaad7::t_2848dca037706b 22-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af9517d0b997fca5785e33ce81a43ce48d096f3e",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
