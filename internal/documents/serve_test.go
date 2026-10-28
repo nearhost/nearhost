@@ -448,3 +448,23 @@ func TestMethods(t *testing.T) {
 	}
 	checkHeaders(t, rec, htmlCSP)
 }
+
+func TestSourceFilesAreTextWhateverTheHostSays(t *testing.T) {
+	// macOS's /etc/apache2/mime.types maps .ts and .mts to video/mp2t; a
+	// host that says so for every extension must not turn source into video.
+	old := typeByExtension
+	typeByExtension = func(string) string { return "video/mp2t" }
+	t.Cleanup(func() { typeByExtension = old })
+	f := newFixture(t)
+	for _, p := range []string{"src/app.ts", "src/view.tsx", "src/mod.mts", "src/app.jsx", "lib.rs", "conf.yaml", "notes.weird"} {
+		f.write(t, p, "export const x = 1;\n")
+		rec := f.do(t, "GET", p)
+		if rec.Code != 200 {
+			t.Errorf("%s: status %d", p, rec.Code)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+			t.Errorf("%s: Content-Type = %q", p, ct)
+		}
+	}
+}

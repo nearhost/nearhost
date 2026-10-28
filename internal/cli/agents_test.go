@@ -904,7 +904,7 @@ func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
 	}
 	defer a.close()
 	a.review(&tui.Proposals{})
-	if !strings.Contains(note, grantFile(home)) || !strings.Contains(note, "passthrough is off") {
+	if !strings.Contains(note, grantFile(home)) || !strings.Contains(note, "passthrough and documents are off") {
 		t.Fatalf("note %q", note)
 	}
 	out := getJSON(t, a.sock, "/v1")
