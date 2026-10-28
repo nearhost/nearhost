@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -249,16 +248,6 @@ func (s *Server) SetReviewer(r Reviewer) {
 	s.reviewer = r
 	s.mu.Unlock()
 }
-
-// maxSocketPath is the longest Unix socket path the running OS accepts: the
-// size of sockaddr_un's sun_path less its terminating NUL. sun_path is 104
-// bytes on macOS and the BSDs and 108 on Linux, so the limits are 103 and 107.
-var maxSocketPath = func() int {
-	if runtime.GOOS == "linux" {
-		return 107
-	}
-	return 103
-}()
 
 // Listen serves the API for origin on a Unix socket at path, creating its
 // directory with mode 0700. A socket left at path by a process that has gone
