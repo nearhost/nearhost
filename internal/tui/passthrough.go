@@ -230,5 +230,8 @@ func (a asked) expires() time.Time {
 	if a.pass != nil {
 		return a.pass.Expires
 	}
+	if a.doc != nil {
+		return a.doc.Expires
+	}
 	return a.prop.Expires
 }

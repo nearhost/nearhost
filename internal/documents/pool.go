@@ -12,8 +12,9 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// localServer is the server name of the laptop itself.
-const localServer = "local"
+// LocalServer is the server name of the laptop itself, as config.LocalServer
+// names it.
+const LocalServer = "local"
 
 // errPoolClosed is returned by a pool after Close.
 var errPoolClosed = errors.New("the documents pool is closed")
@@ -69,7 +70,7 @@ func NewPool(dial func(ctx context.Context, server string) (FS, io.Closer, error
 // client and is tried once more on a fresh one, so a client that died while
 // cached costs nothing. Open is an Opener.
 func (p *Pool) Open(ctx context.Context, server string) (FS, error) {
-	if server == localServer {
+	if server == LocalServer {
 		return LocalFS{}, nil
 	}
 	c, err := p.acquire(ctx, server)

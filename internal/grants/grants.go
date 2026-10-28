@@ -24,6 +24,10 @@ import (
 // be forwarded without a prompt.
 const KindPassthrough = "passthrough"
 
+// KindDocuments is the kind of grant that lets an agent show documents in
+// the laptop's browser without a prompt.
+const KindDocuments = "documents"
+
 // Grant is one "Always allow" answer. The token hash is kept in the file and
 // is never returned.
 type Grant struct {

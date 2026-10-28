@@ -58,6 +58,23 @@ type PassRequest struct {
 	Expires time.Time
 }
 
+// DocRequest is a document a coding agent asks to show: a file on a server,
+// or on this machine, served with the folder it is in, waiting for the
+// user's answer.
+type DocRequest struct {
+	ID        string
+	Origin    string // the server the document is on, or config.LocalServer
+	Requester string // the tool that asked, such as claude-code
+	Session   string // the requester's session; may be empty
+	Label     string // what the document is, as the requester said
+	Root      string // the folder that will be served, absolute on the origin
+	Doc       string // the document, relative to Root
+	// CanAlways is set when Always allow may be offered.
+	CanAlways bool
+	// Expires is when the agent stops waiting for the answer.
+	Expires time.Time
+}
+
 // Propose gives the interface p. It never blocks.
 func (s *Proposals) Propose(p Proposal) { s.push(proposalMsg{p}) }
 
@@ -71,11 +88,24 @@ func (s *Proposals) Opened(origin, requester string, remote int) {
 	s.push(passOpenedMsg{origin, requester, remote})
 }
 
-// Waiting returns a snapshot of the proposals, passthrough requests and
-// notices of passthroughs opened without asking that are queued and not yet
-// sent to the interface, oldest first. Each opened notice is given as a
-// request with only Origin, Requester and Remote set. It exists for tests.
-func (s *Proposals) Waiting() (props []Proposal, passes, opened []PassRequest) {
+// Doc gives the interface a request to show a document, in order with the
+// proposals. It never blocks.
+func (s *Proposals) Doc(r DocRequest) { s.push(docMsg{r}) }
+
+// Shown tells the interface that doc opened in the browser for requester on
+// origin without asking, because of an Always allow or a tree already
+// served. It never blocks.
+func (s *Proposals) Shown(origin, requester, doc string) {
+	s.push(docShownMsg{origin, requester, doc})
+}
+
+// Waiting returns a snapshot of the proposals, passthrough requests, notices
+// of passthroughs opened without asking, document requests and notices of
+// documents shown without asking that are queued and not yet sent to the
+// interface, oldest first. Each opened notice is given as a request with
+// only Origin, Requester and Remote set, and each shown notice as one with
+// only Origin, Requester and Doc set. It exists for tests.
+func (s *Proposals) Waiting() (props []Proposal, passes, opened []PassRequest, docs, shown []DocRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, m := range s.waiting {
@@ -86,9 +116,13 @@ func (s *Proposals) Waiting() (props []Proposal, passes, opened []PassRequest) {
 			passes = append(passes, m.r)
 		case passOpenedMsg:
 			opened = append(opened, PassRequest{Origin: m.origin, Requester: m.requester, Remote: m.remote})
+		case docMsg:
+			docs = append(docs, m.r)
+		case docShownMsg:
+			shown = append(shown, DocRequest{Origin: m.origin, Requester: m.requester, Doc: m.doc})
 		}
 	}
-	return props, passes, opened
+	return props, passes, opened, docs, shown
 }
 
 // push queues msg for the sender goroutine and wakes it.
@@ -142,6 +176,12 @@ type passOpenedMsg struct {
 	remote            int
 }
 
+// docMsg is a document request arriving.
+type docMsg struct{ r DocRequest }
+
+// docShownMsg is a document that opened without asking.
+type docShownMsg struct{ origin, requester, doc string }
+
 // proposing is the proposal whose form is open.
 type proposing struct {
 	p    Proposal
@@ -156,10 +196,12 @@ func (m *Model) gotProposal(p Proposal) tea.Cmd {
 	return m.notify(text)
 }
 
-// asked is a request waiting to be reviewed: a proposal or a passthrough.
+// asked is a request waiting to be reviewed: a proposal, a passthrough or a
+// document.
 type asked struct {
 	prop *Proposal
 	pass *PassRequest
+	doc  *DocRequest
 }
 
 // nextAsked opens the oldest request still waiting, when nothing else is
@@ -179,6 +221,15 @@ func (m *Model) nextAsked() tea.Cmd {
 				continue
 			}
 			m.form = &passForm{b: m.b, w: m.work, r: r}
+			return nil
+		}
+		if a.doc != nil {
+			r := *a.doc
+			if !m.now().Before(r.Expires) {
+				m.logs.note(fmt.Sprintf("The request from %s to show %s expired before it was reviewed.", r.who(), clean(r.Doc)))
+				continue
+			}
+			m.form = &docForm{b: m.b, w: m.work, r: r, root: m.shownRoot(r)}
 			return nil
 		}
 		p := *a.prop

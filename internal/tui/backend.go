@@ -140,6 +140,12 @@ type Backend interface {
 	// ErrRequestEnded when the request is no longer waiting for an answer.
 	// No on such a request does nothing and returns nil.
 	AnswerPassthrough(ctx context.Context, id string, a Answer) error
+	// AnswerDocument answers the agent's request id to show a document. On
+	// Yes and Always allow it blocks while the document is served and
+	// opened, and returns the error that stopped it, which wraps
+	// ErrRequestEnded when the request is no longer waiting for an answer.
+	// No on such a request does nothing and returns nil.
+	AnswerDocument(ctx context.Context, id string, a Answer) error
 	// Grants are the passthrough grants given on server. An empty server
 	// matches no grant.
 	Grants(server string) ([]grants.Grant, error)
