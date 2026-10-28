@@ -1,0 +1,76 @@
+internal/sudo/sudo_windows.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-10
+internal/transport/procgroup_windows.go
+  s_cc6c1166ddaad7::t_b0fd4a978746b4 1-17
+internal/sudo/sudo_unix.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-22
+go.mod
+  s_cc6c1166ddaad7::t_b0fd4a978746b4 27
+internal/config/lock_windows.go
+  s_cc6c1166ddaad7::t_791ee3a1d89a67 1-33
+internal/config/lock_windows_test.go
+  s_cc6c1166ddaad7::t_743dcf31d8a977 1-49
+internal/transport/procgroup_other.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1
+internal/transport/procgroup_windows_test.go
+  s_cc6c1166ddaad7::t_f737f14cc1da2a 1-20
+.github/workflows/ci.yml
+  s_cc6c1166ddaad7::t_2848dca037706b 22-33,36
+  s_cc6c1166ddaad7::t_80f6fac2535e09 34-35
+internal/proxy/proxy.go
+  s_cc6c1166ddaad7::t_f8305b0d893227 16,156
+internal/engine/project.go
+  s_cc6c1166ddaad7::t_f8305b0d893227 16,469-470
+internal/oserr/oserr_windows_test.go
+  s_cc6c1166ddaad7::t_6359449b28e302 1-19
+  s_cc6c1166ddaad7::t_e8a4c085a148c3 20-26
+internal/oserr/oserr_windows.go
+  s_cc6c1166ddaad7::t_da5a07aee2c762 1-9,13-17,19
+  s_cc6c1166ddaad7::t_a43975a2fec4ec 10-12,18
+internal/config/paths.go
+  s_cc6c1166ddaad7::t_f8305b0d893227 11-12,208
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 15-22,26-28,36-45,64-65,76-78
+internal/oserr/oserr_unix.go
+  s_cc6c1166ddaad7::t_da5a07aee2c762 1-13
+internal/oserr/oserr_unix_test.go
+  s_cc6c1166ddaad7::t_7b11af6b5c84a2 7,17-23
+  s_cc6c1166ddaad7::t_6359449b28e302 1-6,8-16,24-27
+internal/oserr/oserr_test.go
+  s_cc6c1166ddaad7::t_6359449b28e302 1-77
+internal/oserr/oserr.go
+  s_cc6c1166ddaad7::t_da5a07aee2c762 1-35
+internal/discovery/reader.go
+  s_cc6c1166ddaad7::t_f8305b0d893227 10-11,67
+internal/dockernet/dockernet.go
+  s_cc6c1166ddaad7::t_f8305b0d893227 21-22
+  s_cc6c1166ddaad7::t_bc6b3048c7d849 138
+internal/update/method.go
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 93-95
+  s_cc6c1166ddaad7::t_28504cc2862f3c 92
+internal/update/method_test.go
+  s_cc6c1166ddaad7::t_ddf843a183fe29 4,56-66
+  s_cc6c1166ddaad7::t_9b1b23a8f07f6d 67
+internal/update/update_test.go
+  s_cc6c1166ddaad7::t_ddf843a183fe29 121-147
+internal/update/update.go
+  s_cc6c1166ddaad7::t_d3105cb62eaa3d 13,152-157,161-166
+  s_cc6c1166ddaad7::t_30a8c6775ad31d 167
+internal/config/paths_test.go
+  s_cc6c1166ddaad7::t_ec01499778be31 9,338-386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93e49606ea4a0de3b806185b379a4e320c52ff37",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
