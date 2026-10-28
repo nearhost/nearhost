@@ -18,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -308,17 +309,28 @@ func (u *uiEngine) AnswerDocument(ctx context.Context, id string, a tui.Answer) 
 	return u.agents.answerDocument(ctx, id, a)
 }
 
-// Grants lists the passthrough grants on server, or says why they cannot be
-// read in this run.
+// Grants lists the grants of every kind on server, or says why they cannot
+// be read in this run.
 func (u *uiEngine) Grants(server string) ([]grants.Grant, error) {
-	return u.agents.passthroughGrants(server)
+	return u.agents.grantsOf(server)
 }
 
-// RevokeGrant takes back requester's passthrough grant on server, or says why
+// RevokeGrant takes back requester's grant of kind on server, or says why
 // it cannot be taken back in this run.
-func (u *uiEngine) RevokeGrant(server, requester string) error {
-	return u.agents.revokeGrant(server, requester)
+func (u *uiEngine) RevokeGrant(server, requester, kind string) error {
+	return u.agents.revokeGrant(server, requester, kind)
 }
+
+// Documents lists the trees of documents served on server, newest first.
+func (u *uiEngine) Documents(server string) []documents.Tree {
+	return u.agents.documents(server)
+}
+
+// OpenDocument opens the newest document of the tree id in the browser.
+func (u *uiEngine) OpenDocument(id string) error { return u.agents.openDocument(id) }
+
+// RemoveDocuments stops serving the tree id.
+func (u *uiEngine) RemoveDocuments(id string) error { return u.agents.removeDocuments(id) }
 
 func (u *uiEngine) ConfigPath() string { return u.path }
 

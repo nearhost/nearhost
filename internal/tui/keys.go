@@ -8,6 +8,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 )
 
 // footerItem is one action shown in the footer: the key and what it does.
@@ -30,11 +31,14 @@ func (m *Model) footerItems() []footerItem {
 	if m.passFocus {
 		if kind, name := m.selected(); kind == rowServer {
 			if rows, _ := m.passRows(name); m.passFocus {
-				verb := "close"
-				if rows[m.passRow].grant != nil {
-					verb = "revoke"
+				r := rows[m.passRow]
+				switch {
+				case r.grant != nil:
+					return []footerItem{{"↑↓", "select"}, {"x", "revoke"}, {"tab", "done"}}
+				case r.tree != nil:
+					return []footerItem{{"↑↓", "select"}, {"enter", "open"}, {"x", "remove"}, {"tab", "done"}}
 				}
-				return []footerItem{{"↑↓", "select"}, {"x", verb}, {"tab", "done"}}
+				return []footerItem{{"↑↓", "select"}, {"x", "close"}, {"tab", "done"}}
 			}
 		}
 	}
@@ -69,9 +73,11 @@ func (m *Model) footerItems() []footerItem {
 				verb = "connect"
 			}
 			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb})
-			if rows, _ := m.passRows(name); len(rows) > 0 {
-				items = append(items, footerItem{"tab", "passthroughs"})
-			}
+		}
+		if rows, _ := m.passRows(name); len(rows) > 0 {
+			items = append(items, footerItem{"tab", agentsTab(rows)})
+		}
+		if name != config.LocalServer {
 			items = append(items, footerItem{"e", "edit"}, footerItem{"d", "remove"})
 		}
 	}
@@ -83,7 +89,19 @@ func (m *Model) footerItems() []footerItem {
 // first first; ? lists them all.
 var minorKeys = []footerItem{
 	{"q", "quit"}, {"n", "add"}, {"s", "server"}, {"enter", "collapse"},
-	{"tab", "routes"}, {"tab", "passthroughs"}, {"d", "remove"}, {"e", "edit"},
+	{"tab", "routes"}, {"tab", "passthroughs"}, {"tab", "documents"}, {"d", "remove"}, {"e", "edit"},
+}
+
+// agentsTab is what tab on a server's panel selects among its rows: its
+// passthroughs, while it has any or a passthrough grant, and otherwise its
+// documents.
+func agentsTab(rows []passRow) string {
+	for _, r := range rows {
+		if r.pass != nil || (r.grant != nil && r.grant.Kind == grants.KindPassthrough) {
+			return "passthroughs"
+		}
+	}
+	return "documents"
 }
 
 // shownFooterItems are the footer items that fit in width cells: on the
@@ -304,7 +322,7 @@ func (m *Model) action(s string) tea.Cmd {
 	case "tab":
 		if kind, name := m.selected(); kind == rowProject {
 			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
-		} else if kind == rowServer && name != config.LocalServer {
+		} else if kind == rowServer {
 			if rows, _ := m.passRows(name); len(rows) > 0 {
 				m.passFocus, m.passRow, m.passSel, m.panelErr = true, 0, rows[0].key(), ""
 			}

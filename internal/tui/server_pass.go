@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -10,30 +11,48 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 )
 
-// passRow is a row of a server panel's passthroughs: an open passthrough or
-// an Always allow grant, one of the two.
+// passRow is a row of a server panel's agent sections: an open
+// passthrough, a served tree of documents or an Always allow grant, one of
+// the three.
 type passRow struct {
 	pass  *engine.Passthrough
+	tree  *documents.Tree
 	grant *grants.Grant
 }
 
-// key names the row's passthrough or grant, so the selection can follow it
-// while rows come and go around it.
+// key names the row's passthrough, tree or grant, so the selection can
+// follow it while rows come and go around it.
 func (r passRow) key() string {
-	if r.grant != nil {
-		return "grant " + r.grant.Requester
+	switch {
+	case r.grant != nil:
+		return "grant " + r.grant.Kind + " " + r.grant.Requester
+	case r.tree != nil:
+		return "tree " + r.tree.ID
 	}
 	return "pass " + r.pass.ID
 }
 
+// kindOrder places passthrough grants before documents grants, and any
+// other kind after both.
+func kindOrder(kind string) int {
+	switch kind {
+	case grants.KindPassthrough:
+		return 0
+	case grants.KindDocuments:
+		return 1
+	}
+	return 2
+}
+
 // passRows are the rows of the server called name: its open passthroughs,
-// sorted by remote port, then its grants, sorted by requester. They are read
-// from the backend each time, so what the engine closes is gone at once. The
+// sorted by remote port, then its served trees, newest first, then its
+// grants, sorted by requester and kind. They are read from the backend
+// each time, so what the engine closes is gone at once. The
 // error is why the grants could not be read, when they could not. The grants
 // are those fetchGrants last read, since reading them blocks. The
 // focus on the rows ends when none are left. The selected row is found
@@ -48,10 +67,19 @@ func (m *Model) passRows(name string) ([]passRow, error) {
 	if e := m.grantCache[name]; e != nil {
 		gs, err = slices.Clone(e.list), e.err
 	}
-	sort.SliceStable(gs, func(i, j int) bool { return gs[i].Requester < gs[j].Requester })
+	sort.SliceStable(gs, func(i, j int) bool {
+		if gs[i].Requester != gs[j].Requester {
+			return gs[i].Requester < gs[j].Requester
+		}
+		return kindOrder(gs[i].Kind) < kindOrder(gs[j].Kind)
+	})
+	trees := m.b.Documents(name)
 	var rows []passRow
 	for i := range passes {
 		rows = append(rows, passRow{pass: &passes[i]})
+	}
+	for i := range trees {
+		rows = append(rows, passRow{tree: &trees[i]})
 	}
 	for i := range gs {
 		rows = append(rows, passRow{grant: &gs[i]})
@@ -84,10 +112,14 @@ func age(now, t time.Time) string {
 	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 }
 
-// text is the row's line.
-func (r passRow) text(now time.Time) string {
+// rowText is the row's line.
+func (m *Model) rowText(r passRow) string {
+	now := m.now()
 	if g := r.grant; g != nil {
-		return requesterName(g.Requester) + " · since " + g.Created.Local().Format("2 Jan")
+		return requesterName(g.Requester) + " · " + clean(g.Kind) + " · since " + g.Created.Local().Format("2 Jan")
+	}
+	if tr := r.tree; tr != nil {
+		return m.treeText(*tr)
 	}
 	p := r.pass
 	parts := []string{fmt.Sprintf("%d → localhost:%d", p.Remote, p.Local), requesterName(p.Requester)}
@@ -100,8 +132,9 @@ func (r passRow) text(now time.Time) string {
 	return strings.Join(append(parts, age(now, p.Opened)), " · ")
 }
 
-// passLines draws the server's passthroughs and grants for its panel, in at
-// most room lines where it can: a label line, then a line a row, the
+// passLines draws the server's passthroughs, trees and grants for its
+// panel, in at most room lines where it can: a label line, then a line a
+// row, the
 // selected one filled while the rows have the focus. The labels are longer
 // than a field's, so they have lines of their own. When the rows do not
 // fit, a window of them that holds the selection is shown, as many rows as
@@ -109,11 +142,11 @@ func (r passRow) text(now time.Time) string {
 // are hidden above it, under the first row's label, and below it.
 func (m *Model) passLines(name string, width, room int) []string {
 	rows, err := m.passRows(name)
-	// A grants error is news only beside passthroughs, or with the rows
-	// selected; otherwise every server panel of a run without agents would
-	// carry it.
+	// A grants error is news only beside passthroughs or trees, or with
+	// the rows selected; otherwise every server panel of a run without
+	// agents would carry it.
 	var errLines []string
-	if err != nil && (m.passFocus || slices.ContainsFunc(rows, func(r passRow) bool { return r.pass != nil })) {
+	if err != nil && (m.passFocus || slices.ContainsFunc(rows, func(r passRow) bool { return r.pass != nil || r.tree != nil })) {
 		if !slices.ContainsFunc(rows, func(r passRow) bool { return r.grant != nil }) {
 			errLines = append(errLines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
@@ -122,8 +155,11 @@ func (m *Model) passLines(name string, width, room int) []string {
 		}
 	}
 	label := func(r passRow) string {
-		if r.grant != nil {
+		switch {
+		case r.grant != nil:
 			return "always allowed"
+		case r.tree != nil:
+			return "documents"
 		}
 		return "passthroughs"
 	}
@@ -131,7 +167,7 @@ func (m *Model) passLines(name string, width, room int) []string {
 	labels, total := map[string]bool{}, len(errLines)
 	for i, r := range rows {
 		sel := m.passFocus && i == m.passRow
-		for j, l := range wrap(r.text(m.now()), width-2) {
+		for j, l := range wrap(m.rowText(r), width-2) {
 			lead, style := "  ", styleText
 			if sel {
 				style = style.Background(colourSelected)
@@ -249,6 +285,15 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 	case "down", "j":
 		m.passRow = min(m.passRow+1, len(rows)-1)
 		m.passSel = rows[m.passRow].key()
+	case "enter":
+		tr := rows[m.passRow].tree
+		if tr == nil {
+			return nil, false
+		}
+		if moved {
+			return nil, true // the next draw shows the tree enter would open
+		}
+		return m.openTree(name, *tr), true
 	case "x":
 		if moved {
 			return nil, true // the next draw shows the row x would close
@@ -264,11 +309,15 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 }
 
 // closeRow closes the selected passthrough, or asks before revoking the
-// selected grant.
+// selected grant or no longer serving the selected tree.
 func (m *Model) closeRow(server string, r passRow) tea.Cmd {
 	m.panelErr = ""
 	if g := r.grant; g != nil {
-		m.form = &revokeForm{b: m.b, w: m.work, server: server, requester: g.Requester}
+		m.form = &revokeForm{b: m.b, w: m.work, server: server, requester: g.Requester, kind: g.Kind}
+		return nil
+	}
+	if tr := r.tree; tr != nil {
+		m.form = &treeForm{b: m.b, w: m.work, server: server, id: tr.ID, root: m.treeRoot(*tr)}
 		return nil
 	}
 	b, p, key := m.b, *r.pass, rowKey(rowServer, server)
@@ -303,19 +352,19 @@ func (m *Model) passClosed(msg passClosedMsg) {
 // revokeForm asks before taking back a grant, and takes it back on yes. It is
 // not a confirmForm, which edits the config file.
 type revokeForm struct {
-	b                 Backend
-	w                 *worker
-	server, requester string
-	busy              bool
-	err               string
-	seq               int
+	b                       Backend
+	w                       *worker
+	server, requester, kind string
+	busy                    bool
+	err                     string
+	seq                     int
 }
 
 // revokedMsg is the outcome of taking back a grant.
 type revokedMsg struct {
-	seq               int
-	server, requester string
-	err               error
+	seq                     int
+	server, requester, kind string
+	err                     error
 }
 
 // update answers y by taking the grant back, on the worker, and n or esc by
@@ -329,9 +378,9 @@ func (f *revokeForm) update(msg tea.Msg) tea.Cmd {
 	case "y":
 		f.seq = nextSeq()
 		f.busy, f.err = true, ""
-		seq, b, server, requester := f.seq, f.b, f.server, f.requester
+		seq, b, server, requester, kind := f.seq, f.b, f.server, f.requester, f.kind
 		return f.w.do(func(context.Context) tea.Msg {
-			return revokedMsg{seq, server, requester, b.RevokeGrant(server, requester)}
+			return revokedMsg{seq, server, requester, kind, b.RevokeGrant(server, requester, kind)}
 		})
 	case "n", "esc":
 		return closeForm
@@ -341,7 +390,11 @@ func (f *revokeForm) update(msg tea.Msg) tea.Cmd {
 
 // lines draws what the question adds to its title.
 func (f *revokeForm) lines(width int) []string {
-	lines := wrap("Open passthroughs stay open.", width)
+	note := "Open passthroughs stay open."
+	if f.kind == grants.KindDocuments {
+		note = "Documents being served stay served."
+	}
+	lines := wrap(note, width)
 	if f.busy {
 		lines = append(lines, "", busyLine("Revoking…"))
 	}
@@ -354,7 +407,7 @@ func (f *revokeForm) lines(width int) []string {
 
 // heading is the question.
 func (f *revokeForm) heading() heading {
-	return heading{title: "Stop always allowing " + requesterName(f.requester) + " on " + clean(f.server) + "?"}
+	return heading{title: "Stop always allowing " + requesterName(f.requester) + grantWhat(f.kind) + " " + docWhere(f.server) + "?"}
 }
 
 // keys are y and n, and none while the revoke runs.
@@ -363,6 +416,16 @@ func (f *revokeForm) keys() []footerItem {
 		return nil
 	}
 	return []footerItem{{"y", "revoke"}, {"n", "keep"}}
+}
+
+// grantWhat is what a grant of kind lets its requester do, as words that
+// follow the requester's name: " to show documents" for a documents grant,
+// and nothing for a passthrough grant, the first kind there was.
+func grantWhat(kind string) string {
+	if kind == grants.KindDocuments {
+		return " to show documents"
+	}
+	return ""
 }
 
 // revoked takes the outcome of a revoke: the question closes when it was
@@ -383,43 +446,42 @@ func (m *Model) revoked(msg revokedMsg) {
 		// grant: its outcome is dropped, and the grants read again at
 		// once.
 		e.gen++
-		e.list = slices.DeleteFunc(slices.Clone(e.list), func(g grants.Grant) bool { return g.Requester == msg.requester })
+		e.list = slices.DeleteFunc(slices.Clone(e.list), func(g grants.Grant) bool {
+			return g.Requester == msg.requester && g.Kind == msg.kind
+		})
 		e.at, e.busy = time.Time{}, false
 	}
-	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s.", requesterName(msg.requester)))
+	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s%s.", requesterName(msg.requester), grantWhat(msg.kind)))
 }
 
-// passCounts are the lines of Home's passthroughs: how many are open on each
-// server, by name; none when none are open.
-func (m *Model) passCounts(width int) []string {
-	n := map[string]int{}
+// agentCounts are the lines of Home's agents: how many passthroughs are
+// open and trees served on each server, by name; none when there are none.
+func (m *Model) agentCounts(width int) []string {
+	passes, trees := map[string]int{}, map[string]int{}
+	names := map[string]bool{}
 	for _, p := range m.b.Passthroughs("") {
-		n[p.Server]++
+		passes[p.Server]++
+		names[p.Server] = true
 	}
-	var names []string
-	for s := range n {
-		names = append(names, s)
+	for _, tr := range m.b.Documents("") {
+		trees[tr.Server]++
+		names[tr.Server] = true
 	}
-	sort.Strings(names)
 	var parts []string
-	for _, s := range names {
-		parts = append(parts, fmt.Sprintf("%s %d", clean(s), n[s]))
+	for _, s := range slices.Sorted(maps.Keys(names)) {
+		var counts []string
+		if n := passes[s]; n > 0 {
+			counts = append(counts, plural(n, "passthrough"))
+		}
+		if n := trees[s]; n > 0 {
+			counts = append(counts, plural(n, "document"))
+		}
+		parts = append(parts, clean(s)+" "+strings.Join(counts, ", "))
 	}
 	if len(parts) == 0 {
 		return nil
 	}
-	// The label is longer than a field's, so the values start after it.
-	const label = "passthroughs"
-	lead := strings.Repeat(" ", len(label)+1)
-	ls := wrap(strings.Join(parts, " · "), width-len(lead))
-	for i, l := range ls {
-		if i == 0 {
-			ls[i] = styleLabel.UnsetWidth().Render(label) + " " + l
-		} else {
-			ls[i] = lead + l
-		}
-	}
-	return ls
+	return field("agents", strings.Join(parts, " · "), width)
 }
 
 // grantsEvery is how long the grants read for a server are fresh.
@@ -450,7 +512,7 @@ type grantsMsg struct {
 // from what was last read.
 func (m *Model) fetchGrants() tea.Cmd {
 	kind, name := m.selected()
-	if kind != rowServer || name == config.LocalServer || m.quitting {
+	if kind != rowServer || m.quitting {
 		return nil
 	}
 	if m.grantCache == nil {

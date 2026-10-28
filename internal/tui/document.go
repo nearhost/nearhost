@@ -38,12 +38,15 @@ func docWhere(origin string) string {
 // who names the requester and its machine: "Claude Code on apollo".
 func (r DocRequest) who() string { return requesterName(r.Requester) + " " + docWhere(r.Origin) }
 
-// shownRoot is the folder r would serve as the prompt shows it: below this
-// machine's home as ~ for a document on this machine, and as it was sent
-// for one on a server, whose home is not this one.
-func (m *Model) shownRoot(r DocRequest) string {
-	root := r.Root
-	if r.Origin != config.LocalServer || m.homeDir == nil {
+// shownRoot is the folder r would serve as the prompt shows it (see
+// shortRoot).
+func (m *Model) shownRoot(r DocRequest) string { return m.shortRoot(r.Origin, r.Root) }
+
+// shortRoot is a folder on origin as Nearhost shows it: below this
+// machine's home as ~ for a folder on this machine, and as it was sent for
+// one on a server, whose home is not this one.
+func (m *Model) shortRoot(origin, root string) string {
+	if origin != config.LocalServer || m.homeDir == nil {
 		return clean(root)
 	}
 	home, err := m.homeDir()

@@ -17,6 +17,7 @@ import (
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -504,7 +505,7 @@ func (a *agents) pruneTrees(keep []string) {
 // nil when they can.
 func (a *agents) grantsErr() error {
 	if a != nil && a.grantsOff != "" {
-		return errors.New("passthrough grants are off: " + a.grantsOff)
+		return errors.New("grants are off: " + a.grantsOff)
 	}
 	if a == nil || a.grants == nil {
 		return errors.New("Nearhost isn't serving coding agents in this run, so grants can't be changed here")
@@ -512,27 +513,49 @@ func (a *agents) grantsErr() error {
 	return nil
 }
 
-// passthroughGrants are the passthrough grants on server.
-func (a *agents) passthroughGrants(server string) ([]grants.Grant, error) {
+// grantsOf are the grants of every kind on server.
+func (a *agents) grantsOf(server string) ([]grants.Grant, error) {
 	if err := a.grantsErr(); err != nil {
 		return nil, err
 	}
-	all, err := a.grants.List(server)
-	var out []grants.Grant
-	for _, g := range all {
-		if g.Kind == grants.KindPassthrough {
-			out = append(out, g)
-		}
-	}
-	return out, err
+	return a.grants.List(server)
 }
 
-// revokeGrant takes back requester's passthrough grant on server.
-func (a *agents) revokeGrant(server, requester string) error {
+// revokeGrant takes back requester's grant of kind on server.
+func (a *agents) revokeGrant(server, requester, kind string) error {
 	if err := a.grantsErr(); err != nil {
 		return err
 	}
-	return a.grants.Revoke(server, requester, grants.KindPassthrough)
+	return a.grants.Revoke(server, requester, kind)
+}
+
+// errNoDocuments says documents can't be opened or removed in this run.
+var errNoDocuments = errors.New("Nearhost isn't serving documents in this run")
+
+// documents are the trees served on server, newest first, or on every
+// server when it is empty; none when this run serves no documents.
+func (a *agents) documents(server string) []documents.Tree {
+	if a == nil || a.docs == nil {
+		return nil
+	}
+	return a.docs.table.List(server)
+}
+
+// openDocument opens the newest document of the tree id in the browser.
+func (a *agents) openDocument(id string) error {
+	if a == nil || a.docs == nil {
+		return errNoDocuments
+	}
+	return a.docs.openNewest(id)
+}
+
+// removeDocuments stops serving the tree id.
+func (a *agents) removeDocuments(id string) error {
+	if a == nil || a.docs == nil {
+		return errNoDocuments
+	}
+	a.docs.table.Remove(id)
+	return nil
 }
 
 // close stops serving agents and their documents, and removes the sockets
