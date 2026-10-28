@@ -2,6 +2,7 @@ package documents
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"html"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"syscall"
 )
 
 // The Content-Security-Policy values for tree responses. Neither allows
@@ -128,7 +130,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	}
 	real, err := fsys.RealPath(ctx, path.Join(root, rel))
 	if err != nil {
-		return err
+		return explain(ctx, fsys, root, rel, err)
 	}
 	if path.Clean(real) != path.Clean(root) {
 		if _, ok := Below(root, real); !ok {
@@ -146,11 +148,11 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 			return nil
 		}
 		real, err = fsys.RealPath(ctx, path.Join(real, "index.html"))
-		if errors.Is(err, fs.ErrNotExist) {
-			return errRefused
+		if errors.Is(err, ErrNotConnected) {
+			return err
 		}
 		if err != nil {
-			return err
+			return errRefused
 		}
 		if _, ok := Below(root, real); !ok {
 			return errRefused
@@ -171,6 +173,38 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	}
 	defer f.Close()
 	return sendFile(w, r, f, name)
+}
+
+// explain turns err, from resolving rel below root, into what the request
+// may learn. It walks up from rel to the nearest folder that resolves. When
+// that folder is outside the root, or on a dot segment, the path went out
+// through a symlink, and the result is errRefused whatever err was, so a page
+// can't probe what lies outside. Inside the root, a missing file or a path
+// through a file (ENOTDIR) is fs.ErrNotExist, and other errors are kept.
+func explain(ctx context.Context, fsys FS, root, rel string, err error) error {
+	if errors.Is(err, ErrNotConnected) {
+		return err
+	}
+	for dir := path.Dir(rel); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		real, derr := fsys.RealPath(ctx, path.Join(root, dir))
+		if errors.Is(derr, ErrNotConnected) {
+			return derr
+		}
+		if derr != nil {
+			continue
+		}
+		if path.Clean(real) == path.Clean(root) {
+			break
+		}
+		if _, ok := Below(root, real); !ok {
+			return errRefused
+		}
+		break
+	}
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return fs.ErrNotExist
+	}
+	return err
 }
 
 // sendFile sends the open file f named name: markdown rendered unless ?raw
@@ -257,9 +291,10 @@ func webType(ext string) string {
 
 // redirectSlash sends a folder request to the same folder with a trailing
 // slash, so relative links in its index.html resolve inside it. last is the
-// escaped final segment of the request path.
+// escaped final segment of the request path. The "./" prefix keeps a name
+// with a colon, such as "https:evil.com", from reading as a scheme.
 func redirectSlash(w http.ResponseWriter, r *http.Request, last string) {
-	loc := last + "/"
+	loc := "./" + last + "/"
 	if q := r.URL.RawQuery; q != "" {
 		loc += "?" + q
 	}

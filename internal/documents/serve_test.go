@@ -235,6 +235,11 @@ func TestDotfilesAndEscapes404(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.dir, "outside", "x.md"), []byte(secret), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	locked := filepath.Join(f.dir, "outside", "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
 	if err := os.Symlink("../outside", filepath.Join(f.root, "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -244,16 +249,33 @@ func TestDotfilesAndEscapes404(t *testing.T) {
 	for _, p := range []string{
 		".env", "a/.git/config", "%2e%2e/outside.md", "%2E%2E/outside.md",
 		"../outside.md", "a/%2e%2e/%2e%2e/outside.md", "%2e%2e%2Foutside.md",
-		"link/x.md", "env.txt", "a/.git/config?raw",
+		"link/x.md", "link/nope.md", "link/x.md/y", "link/locked/x.md",
+		"link/x.md?raw", "env.txt", "a/.git/config?raw",
 	} {
 		rec := f.do(t, "GET", p)
 		if rec.Code != 404 {
 			t.Errorf("%s: status %d, want 404", p, rec.Code)
 		}
+		if body := rec.Body.String(); body != "404 page not found\n" {
+			t.Errorf("%s: body %q, want the plain 404", p, body)
+		}
 		if strings.Contains(rec.Body.String(), secret) {
 			t.Errorf("%s: response contains the file", p)
 		}
 		checkHeaders(t, rec, mdCSP)
+	}
+}
+
+func TestJunkBelowFileIsMissing(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, "plan.md", "x")
+	rec := f.do(t, "GET", "plan.md/anything")
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+		t.Errorf("got %d %q", rec.Code, rec.Body.String())
+	}
+	rec = f.do(t, "GET", "nowhere/deeper/x.md")
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+		t.Errorf("missing folder: got %d %q", rec.Code, rec.Body.String())
 	}
 }
 
@@ -315,8 +337,16 @@ func TestUnknownTree404(t *testing.T) {
 	}
 	checkHeaders(t, rec, htmlCSP)
 	rec = f.do(t, "GET", "site")
-	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "site/" {
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "./site/" {
 		t.Errorf("folder without slash: got %d Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	for name, want := range map[string]string{"https:evil.com": "./https:evil.com/", "a:b": "./a:b/"} {
+		f.write(t, name+"/index.html", "x")
+		rec := f.do(t, "GET", name)
+		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != want {
+			t.Errorf("%s: got %d Location %q, want %q", name, rec.Code, rec.Header().Get("Location"), want)
+		}
 	}
 
 	f.write(t, "index.html", "<p>root</p>")
@@ -325,7 +355,7 @@ func TestUnknownTree404(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	f.h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+f.tree.ID, nil))
-	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != f.tree.ID+"/" {
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "./"+f.tree.ID+"/" {
 		t.Errorf("root without slash: got %d Location %q", rec.Code, rec.Header().Get("Location"))
 	}
 }
