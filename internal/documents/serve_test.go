@@ -515,4 +515,24 @@ func TestHeadReadsNoBody(t *testing.T) {
 	if read != 0 {
 		t.Errorf("HEAD read %d bytes of the file, want none", read)
 	}
+
+	// Markdown gets the type GET would, rendered or raw, without being read.
+	f.write(t, "plan.md", "# Plan\n")
+	f.write(t, "huge.md", strings.Repeat("x", markdownLimit+1))
+	for p, want := range map[string]string{
+		"plan.md": "text/html; charset=utf-8", "plan.md?raw": textPlain, "huge.md": textPlain,
+	} {
+		read = 0
+		rec := f.do(t, "HEAD", p)
+		if read != 0 {
+			t.Errorf("HEAD %s read %d bytes of the file, want none", p, read)
+		}
+		get := f.do(t, "GET", p)
+		if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != want || get.Header().Get("Content-Type") != want {
+			t.Errorf("HEAD %s: %d, %d bytes, %q (GET %q), want %q", p, rec.Code, rec.Body.Len(), rec.Header().Get("Content-Type"), get.Header().Get("Content-Type"), want)
+		}
+		if got, wantCSP := rec.Header().Get("Content-Security-Policy"), get.Header().Get("Content-Security-Policy"); got != wantCSP {
+			t.Errorf("HEAD %s: CSP %q, GET has %q", p, got, wantCSP)
+		}
+	}
 }

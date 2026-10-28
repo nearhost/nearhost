@@ -58,6 +58,12 @@ type headWriter struct{ http.ResponseWriter }
 // Write discards b.
 func (headWriter) Write(b []byte) (int, error) { return len(b), nil }
 
+// isHead reports whether w answers a HEAD request.
+func isHead(w http.ResponseWriter) bool {
+	_, ok := w.(headWriter)
+	return ok
+}
+
 // notFound sends a plain 404 that names nothing.
 func notFound(w http.ResponseWriter) {
 	http.Error(w, "404 page not found", http.StatusNotFound)
@@ -173,7 +179,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 		return err
 	}
 	defer f.Close()
-	return sendFile(w, r, f, name)
+	return sendFile(w, r, f, name, info.Size())
 }
 
 // explain turns err, from resolving rel below root, into what the request
@@ -208,13 +214,19 @@ func explain(ctx context.Context, fsys FS, root, rel string, err error) error {
 	return err
 }
 
-// sendFile sends the open file f named name: markdown rendered unless ?raw
-// or too big, anything else streamed with its type.
-func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string) error {
+// sendFile sends the open file f named name, size bytes long: markdown
+// rendered unless ?raw or too big, anything else streamed with its type. For
+// HEAD, markdown's type is chosen by size, so the file isn't read.
+func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, size int64) error {
 	ext := strings.ToLower(path.Ext(name))
 	if ext == ".md" || ext == ".markdown" {
-		if r.URL.Query().Has("raw") {
+		if r.URL.Query().Has("raw") || (isHead(w) && size > markdownLimit) {
 			return stream(w, f, textPlain, nil)
+		}
+		if isHead(w) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			return nil
 		}
 		head, err := io.ReadAll(io.LimitReader(f, markdownLimit+1))
 		if err != nil {
@@ -250,13 +262,14 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string) 
 }
 
 // stream sends head and then the rest of f as ctype, with the files' CSP. A
-// HEAD request reads no more of f. A failure once the body has begun can't
-// be reported, so it is dropped.
+// HEAD request reads no more of f; an unknown type has had its first 512
+// bytes read to sniff it. A failure once the body has begun can't be
+// reported, so it is dropped.
 func stream(w http.ResponseWriter, f io.Reader, ctype string, head []byte) error {
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Security-Policy", fileCSP)
 	w.WriteHeader(http.StatusOK)
-	if _, ok := w.(headWriter); ok {
+	if isHead(w) {
 		return nil
 	}
 	_, _ = io.Copy(w, io.MultiReader(bytes.NewReader(head), f))

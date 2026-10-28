@@ -203,16 +203,20 @@ func TestEvalLinksTrailingSlashOnFile(t *testing.T) {
 
 func TestEvalLinksFollowsAsManyLinksAsEvalSymlinks(t *testing.T) {
 	// filepath.EvalSymlinks, which LocalFS uses, follows up to 255 links.
+	// /l0 to /l255 is a chain of 256 links to /f, so /l1 passes 255.
 	l := linkFS{files: map[string]bool{"/f": true}, links: map[string]string{}}
-	for i := range 100 {
+	for i := range 256 {
 		next := fmt.Sprintf("/l%d", i+1)
-		if i == 99 {
+		if i == 255 {
 			next = "/f"
 		}
 		l.links[fmt.Sprintf("/l%d", i)] = next
 	}
-	if got, err := evalLinks("/l0", l.lstat, l.readlink); err != nil || got != "/f" {
-		t.Errorf("evalLinks through 100 links = %q, %v; want /f", got, err)
+	if got, err := evalLinks("/l1", l.lstat, l.readlink); err != nil || got != "/f" {
+		t.Errorf("evalLinks through 255 links = %q, %v; want /f", got, err)
+	}
+	if _, err := evalLinks("/l0", l.lstat, l.readlink); !errors.Is(err, syscall.ELOOP) {
+		t.Errorf("evalLinks through 256 links err = %v, want ELOOP", err)
 	}
 	l.links["/loop"] = "/loop"
 	if _, err := evalLinks("/loop", l.lstat, l.readlink); !errors.Is(err, syscall.ELOOP) {
