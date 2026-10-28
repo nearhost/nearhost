@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -211,4 +212,24 @@ func (e *Engine) ServerStatus(name string) (transport.Status, string) {
 		return transport.StatusDisconnected, ""
 	}
 	return c.sess.Status(), c.sess.LastError()
+}
+
+// OpenFiles opens an SFTP client on server's session, for reading files
+// there. It refuses with an error wrapping ErrNotConnected unless the server
+// is connected now, and never starts a session. ctx bounds the handshake
+// only; the client lives until it is closed.
+func (e *Engine) OpenFiles(ctx context.Context, server string) (*transport.SFTP, error) {
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return nil, errShutDown
+	}
+	c := e.servers[server]
+	if c == nil || c.sess.Status() != transport.StatusConnected {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("%w: Nearhost isn't connected to %s", ErrNotConnected, server)
+	}
+	sess := c.sess
+	e.mu.Unlock()
+	return sess.OpenSFTP(ctx)
 }
