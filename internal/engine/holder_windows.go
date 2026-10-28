@@ -4,14 +4,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nearhost/nearhost/internal/winsys"
 	"golang.org/x/sys/windows"
 )
 
-// netstatTool asks netstat, which every Windows has, and names the process
+// netstatTool asks netstat, from the system directory, and names the process
 // itself: netstat gives only the pid. Without -p, which would limit it to
 // IPv4, it lists IPv6 listeners too.
 var netstatTool = holderTool{
-	name: "netstat",
+	name: winsys.Tool("netstat.exe"),
 	args: func(int) []string { return []string{"-ano"} },
 	parse: func(out string, port int) string {
 		pid := parseNetstat(out, port)
