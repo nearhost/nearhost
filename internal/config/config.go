@@ -265,7 +265,8 @@ type Config struct {
 	RegistryPrompt *bool       `yaml:"registry_prompt,omitempty"`
 	Presets        []PresetRef `yaml:"presets,omitempty"`
 	// Notifications false stops the interface notifying the terminal when a
-	// coding agent proposes a project. Absent means notify.
+	// coding agent asks to add a project, open a passthrough or show a
+	// document. The prompts still open. Absent means notify.
 	Notifications *bool `yaml:"notifications,omitempty"`
 }
 
