@@ -188,11 +188,11 @@ npx skills add nearhost/nearhost -g
 
 Then ask the agent to add the project, with `/nearhost add` in Claude Code or `$nearhost add` in Codex. The agent proposes it, and Nearhost opens the add form over its interface with the server and path filled in, for you to save or dismiss. It notifies the terminal it runs in when the proposal arrives. `/nearhost status` tells the agent where a project is served and whether it is running.
 
-Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs to reach `~/.nearhost/*.sock`: approve the skill's command when the agent asks to run it outside the sandbox, which opens nothing else. The [documentation](https://nearhost.dev/docs/getting-started/use-a-coding-agent/) covers the settings, and what the broader ones open. Set `notifications: false` in the config to keep the terminal quiet.
+Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this machine, and forwards one there on each server over its own SSH connection. That directory is the only thing Nearhost creates on a server. A server whose sshd sets `AllowStreamLocalForwarding no` cannot take the forward, and `nearhost doctor` says so. An agent that runs commands in a sandbox needs to reach `~/.nearhost/*.sock`: approve the skill's command when the agent asks to run it outside the sandbox, which opens nothing else. The [documentation](https://nearhost.dev/docs/coding-agents/troubleshooting/) covers the settings, and what the broader ones open. Set `notifications: false` in the config to keep the terminal quiet.
 
-On a server, the skill can also open a browser preview on your laptop for the rest of the session, after you approve it in Nearhost. See [browser previews from a server](https://nearhost.dev/docs/getting-started/use-a-coding-agent/#browser-previews-from-a-server).
+On a server, the skill can also open a browser preview on your laptop for the rest of the session, after you approve it in Nearhost. See [browser previews from a server](https://nearhost.dev/docs/coding-agents/browser-previews/).
 
-An agent can also open a document it wrote, such as a plan, spec or HTML mockup, in your browser on this laptop, after you approve it in Nearhost. See [documents from coding agents](https://nearhost.dev/docs/getting-started/use-a-coding-agent/#documents-from-coding-agents).
+An agent can also open a document it wrote, such as a plan, spec or HTML mockup, in your browser on this laptop, after you approve it in Nearhost. See [documents from coding agents](https://nearhost.dev/docs/coding-agents/documents/).
 
 ### Useful commands
 
