@@ -48,6 +48,7 @@ type Home struct {
 	// none.
 	WebPort int `json:"web_port,omitempty"`
 
+	// page is the page with no documents listed, rendered in Provision.
 	page []byte
 }
 
@@ -59,10 +60,20 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision implements caddy.Provisioner. The page depends only on the
-// version and the web port, so it is rendered once per config load, not per
-// request.
+// Provision implements caddy.Provisioner. Without documents the page
+// depends only on the version and the web port, so it is rendered once per
+// config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
+	page, err := h.render(nil)
+	if err != nil {
+		return err
+	}
+	h.page = page
+	return nil
+}
+
+// render renders the page with trees listed under its links.
+func (h *Home) render(trees []HomeTree) ([]byte, error) {
 	v := h.Version
 	if v == "" {
 		v = "dev"
@@ -71,16 +82,22 @@ func (h *Home) Provision(caddy.Context) error {
 	if err := homePage.Execute(&buf, struct {
 		Version string
 		WebPort int
-	}{v, h.WebPort}); err != nil {
-		return err
+		Trees   []HomeTree
+	}{v, h.WebPort, trees}); err != nil {
+		return nil, err
 	}
-	h.page = buf.Bytes()
-	return nil
+	return buf.Bytes(), nil
 }
 
-// ServeHTTP implements caddyhttp.MiddlewareHandler. Only / exists, and only
-// GET and HEAD read it.
+// ServeHTTP implements caddyhttp.MiddlewareHandler. Paths below /d/ go to
+// the documents handler SetDocuments stored, which sets its own headers.
+// Otherwise only / exists, and only GET and HEAD read it. It lists the
+// documents' trees, rendered per request, while there are any.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	if isDocumentPath(r.URL.Path) {
+		serveDocument(w, r)
+		return nil
+	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return nil
@@ -90,9 +107,16 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return nil
 	}
+	page := h.page
+	if trees := homeTrees(); len(trees) > 0 {
+		var err error
+		if page, err = h.render(trees); err != nil {
+			return err
+		}
+	}
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
-	hdr.Set("Content-Length", strconv.Itoa(len(h.page)))
+	hdr.Set("Content-Length", strconv.Itoa(len(page)))
 	hdr.Set("Content-Security-Policy", homeCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	// The footer names the running version, which changes on upgrade.
@@ -101,7 +125,7 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	_, err := w.Write(h.page)
+	_, err := w.Write(page)
 	return err
 }
 

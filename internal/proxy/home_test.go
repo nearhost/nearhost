@@ -3,6 +3,7 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,5 +80,60 @@ func TestHomeRefusesOtherPathsAndMethods(t *testing.T) {
 	w := serveHome(t, "1.2.3", "POST", "/")
 	if w.Code != 405 || w.Header().Get("Allow") != "GET, HEAD" {
 		t.Errorf("POST /: status %d, Allow %q, want 405 allowing GET, HEAD", w.Code, w.Header().Get("Allow"))
+	}
+}
+
+func TestHomeListsTrees(t *testing.T) {
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	plain := serveHome(t, "1.2.3", "GET", "/")
+
+	SetDocuments(http.NotFoundHandler(), func() []HomeTree {
+		return []HomeTree{{Server: "apollo", Root: "/srv/app", Docs: []HomeDoc{
+			{Path: "docs/plan.md", URL: "https://localhost:6327/d/abc/docs/plan.md"},
+			{Path: "notes.html", URL: "https://localhost:6327/d/abc/notes.html"},
+		}}}
+	})
+	w := serveHome(t, "1.2.3", "GET", "/")
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("GET /: status %d", w.Code)
+	}
+	last := -1
+	for _, want := range []string{"apollo", "/srv/app", `href="https://localhost:6327/d/abc/docs/plan.md"`, "docs/plan.md", `href="https://localhost:6327/d/abc/notes.html"`, "notes.html"} {
+		i := strings.Index(body, want)
+		if i < 0 {
+			t.Fatalf("page does not hold %q:\n%s", want, body)
+		}
+		if i < last {
+			t.Errorf("%q is out of order", want)
+		}
+		last = i
+	}
+	if got, want := w.Header().Get("Content-Security-Policy"), plain.Header().Get("Content-Security-Policy"); got != want {
+		t.Errorf("Content-Security-Policy = %q, want the home page's %q", got, want)
+	}
+	if w.Header().Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q for %d bytes", w.Header().Get("Content-Length"), len(body))
+	}
+
+	// With no trees the page is what it is without a list, with no empty
+	// heading.
+	SetDocuments(http.NotFoundHandler(), func() []HomeTree { return nil })
+	if got := serveHome(t, "1.2.3", "GET", "/").Body.String(); got != plain.Body.String() {
+		t.Errorf("an empty list changed the page:\n%s", got)
+	}
+}
+
+func TestHomeListEscapes(t *testing.T) {
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.NotFoundHandler(), func() []HomeTree {
+		return []HomeTree{{Server: "local", Root: "/tmp/<script>", Docs: []HomeDoc{{Path: "a.md", URL: "https://localhost/d/abc/a.md"}}}}
+	})
+	body := serveHome(t, "1.2.3", "GET", "/").Body.String()
+	if strings.Contains(body, "<script>") {
+		t.Error("the root reached the page unescaped")
+	}
+	if !strings.Contains(body, "/tmp/&lt;script&gt;") {
+		t.Errorf("page does not hold the escaped root:\n%s", body)
 	}
 }

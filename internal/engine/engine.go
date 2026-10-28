@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -354,6 +355,35 @@ func (e *Engine) WebPort() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.webPort
+}
+
+// errPageHeld is PageURL's error when Nearhost's page is served nowhere: a
+// project serves localhost on the HTTPS port and there is no web port.
+var errPageHeld = errors.New("Nearhost's page isn't served: a project holds localhost and --web-port is 0")
+
+// PageURL returns the base URL of Nearhost's page, which documents are
+// given out below: https://localhost:<web port> while the page has a port of
+// its own, and otherwise https://localhost, with the HTTPS port when it
+// isn't 443, while no running project serves localhost. A project serves it
+// when one of its published sites lists the host, in any case, as the proxy
+// decides when it leaves the page out. With neither, it returns errPageHeld.
+func (e *Engine) PageURL() (string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.webPort != 0 {
+		return fmt.Sprintf("https://localhost:%d", e.webPort), nil
+	}
+	for _, s := range e.sitesLocked(nil) {
+		for _, h := range s.Hosts {
+			if strings.EqualFold(h, "localhost") {
+				return "", errPageHeld
+			}
+		}
+	}
+	if p := e.opts.HTTPSPort; p != 0 && p != 443 {
+		return fmt.Sprintf("https://localhost:%d", p), nil
+	}
+	return "https://localhost", nil
 }
 
 // Config returns a copy of the engine's configuration.
