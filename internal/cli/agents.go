@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -93,6 +94,9 @@ type agents struct {
 	// grantsOff says why there are no grants when the file could not be
 	// read; empty otherwise.
 	grantsOff string
+	// docs serves the documents agents show; nil when there are no grants,
+	// so no documents.
+	docs *shower
 }
 
 // defaultConfigPath is the config file whose servers grants follow. Tests
@@ -124,6 +128,7 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 	sock := agentSocket(home, id)
 	opts := agentapi.Options{Laptop: laptop, Source: src}
 	var store *grants.Store
+	var docs *shower
 	var note, grantsOff string
 	if as, ok := src.(*agentSource); ok && b.grants != nil {
 		if path, err := b.grants(); err != nil {
@@ -142,6 +147,9 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 				opts.ID = id
 				opts.Passer = passer{eng: &as.eng}
 				opts.Grants = passGrants{store}
+				docs = newShower(&as.eng)
+				opts.Shower = docs
+				opts.DocGrants = docGrants{store}
 			}
 		}
 	}
@@ -151,12 +159,19 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 	if r, ok := src.(agentapi.Reloader); ok {
 		opts.Reload = r
 	}
-	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store, grantsOff: grantsOff}
+	a := &agents{api: agentapi.New(opts), id: id, runDir: runDir, sock: sock, grants: store, grantsOff: grantsOff, docs: docs}
 	if err := a.api.Listen(config.LocalServer, sock); err != nil {
+		if docs != nil {
+			docs.pool.Close()
+		}
 		if errors.Is(err, agentapi.ErrInUse) {
 			return nil, "Another Nearhost is already serving coding agents on this machine, so this one does not."
 		}
 		return nil, "Coding agents cannot reach Nearhost: " + err.Error() + "."
+	}
+	// Only the run that serves agents serves their documents on its page.
+	if docs != nil {
+		docs.serve()
 	}
 	// Only a run that serves agents prunes, and against the config the run
 	// loaded and validated, never a second read of the file that may have
@@ -211,15 +226,28 @@ func serveAgents(b agentsBackend, opts *engine.Options, cfg *config.Config, cfgP
 	if a != nil {
 		a.src = src
 		opts.Agent = a.forward
-		opts.AgentDone = a.api.Unlisten
+		opts.AgentDone = a.serverGone
 	}
 	return a, note
 }
 
-// attach gives the status calls the engine's state.
+// serverGone is the engine's AgentDone: server's session has gone for good,
+// so its private socket closes, and its documents client is dropped.
+func (a *agents) serverGone(server string) {
+	a.api.Unlisten(server)
+	if a.docs != nil {
+		a.docs.pool.Drop(server)
+	}
+}
+
+// attach gives the status calls the engine's state, and has the documents
+// drop the client of a server that disconnects.
 func (a *agents) attach(eng *engine.Engine) {
 	if a != nil {
 		a.src.eng.Store(eng)
+		if a.docs != nil {
+			a.docs.watch(eng)
+		}
 	}
 }
 
@@ -280,12 +308,16 @@ func (r reviewer) ReviewPassthrough(p agentapi.PassRequest) {
 // Opened tells the interface of a passthrough that opened without asking.
 func (r reviewer) Opened(p agentapi.Passthrough) { r.to.Opened(p.Origin, p.Requester, p.Remote) }
 
-// ReviewDocument does nothing yet: the interface has no document prompt,
-// and documents stay off until it does, as Options.Shower is left nil.
-func (r reviewer) ReviewDocument(agentapi.DocRequest) {}
+// ReviewDocument shows the interface a request to show a document.
+func (r reviewer) ReviewDocument(d agentapi.DocRequest) {
+	r.to.Doc(tui.DocRequest{
+		ID: d.ID, Origin: d.Origin, Requester: d.Requester, Session: d.Session, Label: d.Label,
+		Root: d.Root, Doc: d.Doc, CanAlways: d.CanAlways, Expires: d.Expires,
+	})
+}
 
-// Shown does nothing yet, as documents stay off.
-func (r reviewer) Shown(origin, requester, doc string) {}
+// Shown tells the interface of a document opened without asking.
+func (r reviewer) Shown(origin, requester, doc string) { r.to.Shown(origin, requester, doc) }
 
 // passer opens passthroughs on the engine, once it is attached.
 type passer struct {
@@ -354,21 +386,46 @@ func (g passGrants) Check(server, requester, token string) (bool, error) {
 	return g.s.Check(server, requester, grants.KindPassthrough, token)
 }
 
+// docGrants keeps the agent API's documents grants in the run's store,
+// apart from the passthrough grants.
+type docGrants struct{ s *grants.Store }
+
+// Allow gives requester a documents grant on server.
+func (g docGrants) Allow(server, requester string) (string, error) {
+	return g.s.Allow(server, requester, grants.KindDocuments)
+}
+
+// Check reports whether token is requester's documents token on server.
+func (g docGrants) Check(server, requester, token string) (bool, error) {
+	return g.s.Check(server, requester, grants.KindDocuments, token)
+}
+
+// agentAnswer is the interface's answer as the agent API takes it.
+func agentAnswer(answer tui.Answer) agentapi.Answer {
+	switch answer {
+	case tui.AnswerYes:
+		return agentapi.AnswerYes
+	case tui.AnswerAlways:
+		return agentapi.AnswerAlways
+	}
+	return agentapi.AnswerNo
+}
+
 // answerPassthrough tells the agent API the user's answer to request id.
 func (a *agents) answerPassthrough(ctx context.Context, id string, answer tui.Answer) error {
 	if a == nil {
 		return errors.New("no coding agent can reach Nearhost")
 	}
-	var ans agentapi.Answer
-	switch answer {
-	case tui.AnswerYes:
-		ans = agentapi.AnswerYes
-	case tui.AnswerAlways:
-		ans = agentapi.AnswerAlways
-	default:
-		ans = agentapi.AnswerNo
+	return answerError(a.api.AnswerPassthrough(ctx, id, agentAnswer(answer)))
+}
+
+// answerDocument tells the agent API the user's answer to the document
+// request id.
+func (a *agents) answerDocument(ctx context.Context, id string, answer tui.Answer) error {
+	if a == nil {
+		return errors.New("no coding agent can reach Nearhost")
 	}
-	return answerError(a.api.AnswerPassthrough(ctx, id, ans))
+	return answerError(a.api.AnswerDocument(ctx, id, agentAnswer(answer)))
 }
 
 // answerError is the agent API's error for an answer, marked for the
@@ -384,17 +441,27 @@ func answerError(err error) error {
 	return err
 }
 
-// prune removes the grants of servers cfg no longer has, and returns the
-// message to show the user when it removed some or could not. It is "" when
-// there is nothing to say. It must only be given a config that loaded or
-// applied, because a config with no servers removes every grant.
+// prune removes the grants and served trees of servers cfg no longer has,
+// and returns the message about the grants to show the user when it removed
+// some or could not. It is "" when there is nothing to say. It must only be
+// given a config that loaded or applied, because a config with no servers
+// removes every grant and tree.
 //
 // Only the default config, and only while its file exists, decides which
 // servers keep their grants: grants.json is one file for the machine, so a
 // run with another --config, or a config file missing for a moment, must not
-// remove grants of servers that are still configured elsewhere.
+// remove grants of servers that are still configured elsewhere. Trees are
+// this run's own, so they follow cfg whichever file it came from.
 func (a *agents) prune(cfgPath string, cfg *config.Config) string {
-	if a == nil || a.grants == nil || cfgPath == "" {
+	if a == nil || cfg == nil {
+		return ""
+	}
+	keep := []string{config.LocalServer}
+	for _, s := range cfg.Servers {
+		keep = append(keep, s.Name)
+	}
+	a.pruneTrees(keep)
+	if a.grants == nil || cfgPath == "" {
 		return ""
 	}
 	if def, err := defaultConfigPath(); err != nil || def != cfgPath {
@@ -402,10 +469,6 @@ func (a *agents) prune(cfgPath string, cfg *config.Config) string {
 	}
 	if _, err := os.Stat(cfgPath); err != nil {
 		return ""
-	}
-	keep := []string{config.LocalServer}
-	for _, s := range cfg.Servers {
-		keep = append(keep, s.Name)
 	}
 	n, err := a.grants.Prune(keep)
 	switch {
@@ -417,6 +480,24 @@ func (a *agents) prune(cfgPath string, cfg *config.Config) string {
 		return fmt.Sprintf("Removed %d Always allow grants for servers no longer in Nearhost.", n)
 	}
 	return ""
+}
+
+// pruneTrees stops serving the trees of servers not in keep, and drops their
+// documents clients.
+func (a *agents) pruneTrees(keep []string) {
+	if a.docs == nil {
+		return
+	}
+	var gone []string
+	for _, tr := range a.docs.table.List("") {
+		if !slices.Contains(keep, tr.Server) && !slices.Contains(gone, tr.Server) {
+			gone = append(gone, tr.Server)
+		}
+	}
+	a.docs.table.Prune(keep)
+	for _, s := range gone {
+		a.docs.pool.Drop(s)
+	}
 }
 
 // grantsErr says why grants cannot be listed or changed in this run, or is
@@ -454,10 +535,14 @@ func (a *agents) revokeGrant(server, requester string) error {
 	return a.grants.Revoke(server, requester, grants.KindPassthrough)
 }
 
-// close stops serving agents and removes the sockets on this machine.
+// close stops serving agents and their documents, and removes the sockets
+// on this machine.
 func (a *agents) close() {
 	if a != nil {
 		a.api.Close()
+		if a.docs != nil {
+			a.docs.close()
+		}
 	}
 }
 

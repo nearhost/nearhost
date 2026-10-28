@@ -302,6 +302,12 @@ func (u *uiEngine) AnswerPassthrough(ctx context.Context, id string, a tui.Answe
 	return u.agents.answerPassthrough(ctx, id, a)
 }
 
+// AnswerDocument gives the user's answer to a coding agent's request to
+// show a document to the agent API.
+func (u *uiEngine) AnswerDocument(ctx context.Context, id string, a tui.Answer) error {
+	return u.agents.answerDocument(ctx, id, a)
+}
+
 // Grants lists the passthrough grants on server, or says why they cannot be
 // read in this run.
 func (u *uiEngine) Grants(server string) ([]grants.Grant, error) {

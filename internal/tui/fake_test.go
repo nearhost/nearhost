@@ -66,6 +66,11 @@ type fakeBackend struct {
 	// passErrKeeps makes a failed Yes or Always allow leave its request
 	// waiting, as an error that is not the request's leaves it.
 	passErrKeeps bool
+
+	// docCalls records the document answers, and docErr is what a Yes or
+	// Always allow returns, marked as ending its request.
+	docCalls []string
+	docErr   error
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -153,6 +158,25 @@ func (f *fakeBackend) RevokeGrant(server, requester string) error {
 	defer f.mu.Unlock()
 	f.passCalls = append(f.passCalls, "revoke "+server+" "+requester)
 	return f.passErr
+}
+
+// AnswerDocument records the answer. A failed Yes or Always allow ends the
+// request, as showing it failing does in the agent API.
+func (f *fakeBackend) AnswerDocument(_ context.Context, id string, a Answer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.docCalls = append(f.docCalls, fmt.Sprintf("answer %s %d", id, a))
+	if f.docErr != nil && a != AnswerNo {
+		return RequestEnded(f.docErr)
+	}
+	return nil
+}
+
+// documentCalls are the document answers given, in order.
+func (f *fakeBackend) documentCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.docCalls...)
 }
 
 // passthroughCalls are the passthrough calls made, in order.

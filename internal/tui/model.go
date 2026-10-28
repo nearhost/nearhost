@@ -122,6 +122,9 @@ type Model struct {
 	// getenv reads the environment, to tell which terminal this is; tests
 	// set their own.
 	getenv func(string) string
+	// homeDir is this machine's home folder, which a document's folder on it
+	// is shown below as ~; tests set their own.
+	homeDir func() (string, error)
 }
 
 // New creates the interface for b. dir is where `nearhost` was started.
@@ -137,6 +140,7 @@ func New(b Backend, dir string) *Model {
 		since:     map[string]time.Time{},
 		now:       time.Now,
 		getenv:    os.Getenv,
+		homeDir:   realHome,
 		events:    events, unsubscribe: unsubscribe,
 		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), caExpires: b.CAExpires(), hostsState: b.HostsState(),
@@ -364,6 +368,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.gotPass(msg.r)
 	case passOpenedMsg:
 		return m, m.passOpened(msg)
+	case docMsg:
+		return m, m.gotDoc(msg.r)
+	case docShownMsg:
+		return m, m.docShown(msg)
+	case docAnsweredMsg:
+		return m, m.docAnswered(msg)
 	case grantsMsg:
 		m.gotGrants(msg)
 	case passClosedMsg:
