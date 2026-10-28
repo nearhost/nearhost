@@ -248,7 +248,13 @@ func TestDocRequestsKeepTheOrderWithProposals(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	if _, ok := got[0].(proposalMsg); !ok {
+		t.Fatalf("first %#v", got[0])
+	}
 	if m, ok := got[1].(docMsg); !ok || m.r.ID != "d1" {
 		t.Fatalf("second %#v", got[1])
+	}
+	if _, ok := got[2].(passMsg); !ok {
+		t.Fatalf("third %#v", got[2])
 	}
 }

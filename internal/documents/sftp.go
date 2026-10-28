@@ -121,11 +121,17 @@ func mapError(op, p string, err error) error {
 	return err
 }
 
-// sshFxNoSuchFile is SFTP's status code for a missing file.
-const sshFxNoSuchFile = 2
+// SFTP's status codes for a missing file, and for a client with no
+// connection or one that lost it.
+const (
+	sshFxNoSuchFile     = 2
+	sshFxNoConnection   = 6
+	sshFxConnectionLost = 7
+)
 
-// maxLinks is how many symlinks one path may pass through, as on Linux.
-const maxLinks = 40
+// maxLinks is how many symlinks one path may pass through, as many as
+// filepath.EvalSymlinks follows for LocalFS.
+const maxLinks = 255
 
 // evalLinks resolves every symlink in the absolute slash-separated path p
 // with lstat and readlink, as filepath.EvalSymlinks does on disk. Every
@@ -152,7 +158,7 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 			return "", err
 		}
 		if info.Mode()&fs.ModeSymlink == 0 {
-			if !info.IsDir() && strings.Join(rest, "") != "" {
+			if !info.IsDir() && len(rest) > 0 {
 				return "", &fs.PathError{Op: "realpath", Path: p, Err: syscall.ENOTDIR}
 			}
 			resolved = next

@@ -99,7 +99,7 @@ func TestHomeListsTrees(t *testing.T) {
 		t.Fatalf("GET /: status %d", w.Code)
 	}
 	last := -1
-	for _, want := range []string{"apollo", "/srv/app", `href="https://localhost:6327/d/abc/docs/plan.md"`, "docs/plan.md", `href="https://localhost:6327/d/abc/notes.html"`, "notes.html"} {
+	for _, want := range []string{"apollo", "/srv/app", `<a href="https://localhost:6327/d/abc/docs/plan.md">docs/plan.md</a>`, `<a href="https://localhost:6327/d/abc/notes.html">notes.html</a>`} {
 		i := strings.Index(body, want)
 		if i < 0 {
 			t.Fatalf("page does not hold %q:\n%s", want, body)
@@ -127,13 +127,17 @@ func TestHomeListsTrees(t *testing.T) {
 func TestHomeListEscapes(t *testing.T) {
 	t.Cleanup(func() { SetDocuments(nil, nil) })
 	SetDocuments(http.NotFoundHandler(), func() []HomeTree {
-		return []HomeTree{{Server: "local", Root: "/tmp/<script>", Docs: []HomeDoc{{Path: "a.md", URL: "https://localhost/d/abc/a.md"}}}}
+		return []HomeTree{{Server: "<b>srv</b>", Root: "/tmp/<script>", Docs: []HomeDoc{{Path: "<i>a</i>.md", URL: `/d/abc/a.md"onmouseover="x`}}}}
 	})
 	body := serveHome(t, "1.2.3", "GET", "/").Body.String()
-	if strings.Contains(body, "<script>") {
-		t.Error("the root reached the page unescaped")
+	for _, raw := range []string{"<script>", "<b>srv", "<i>a", `"onmouseover`} {
+		if strings.Contains(body, raw) {
+			t.Errorf("%q reached the page unescaped:\n%s", raw, body)
+		}
 	}
-	if !strings.Contains(body, "/tmp/&lt;script&gt;") {
-		t.Errorf("page does not hold the escaped root:\n%s", body)
+	for _, want := range []string{"/tmp/&lt;script&gt;", "&lt;b&gt;srv&lt;/b&gt;", "&lt;i&gt;a&lt;/i&gt;.md", `href="/d/abc/a.md%22onmouseover=%22x"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page does not hold the escaped %q:\n%s", want, body)
+		}
 	}
 }

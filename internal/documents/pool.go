@@ -71,6 +71,11 @@ func NewPool(dial func(ctx context.Context, server string) (FS, io.Closer, error
 // cached costs nothing. Open is an Opener.
 func (p *Pool) Open(ctx context.Context, server string) (FS, error) {
 	if server == LocalServer {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.closed {
+			return nil, errPoolClosed
+		}
 		return LocalFS{}, nil
 	}
 	c, err := p.acquire(ctx, server)
@@ -213,7 +218,7 @@ func (p *Pool) Close() error {
 // reap closes idle clients, checking every half idle time, until Close.
 func (p *Pool) reap() {
 	defer close(p.done)
-	tick := time.NewTicker(p.idle / 2)
+	tick := time.NewTicker(max(p.idle/2, time.Nanosecond))
 	defer tick.Stop()
 	for {
 		select {
@@ -303,15 +308,19 @@ func use[T any](ctx context.Context, f pooledFS, call func(FS) (T, error), hold 
 }
 
 // brokenClient reports whether err, from a call made under ctx, says the
-// client itself failed, such as an SFTP session whose ssh died. An answer
-// from the server (a missing file, a path through a file, no permission, any
-// SFTP status), a server that isn't connected, and the caller's own
-// cancellation leave the client be.
+// client itself failed, such as an SFTP session whose ssh died, or one whose
+// status says it has no connection or lost it. An answer from the server (a
+// missing file, a path through a file, no permission, any other SFTP status),
+// a server that isn't connected, and the caller's own cancellation leave the
+// client be.
 func brokenClient(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return false
 	}
 	var status *sftp.StatusError
+	if errors.As(err, &status) && (status.Code == sshFxNoConnection || status.Code == sshFxConnectionLost) {
+		return true
+	}
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, ErrNotConnected), errors.Is(err, fs.ErrNotExist),

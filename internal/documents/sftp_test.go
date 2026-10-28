@@ -3,6 +3,7 @@ package documents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -151,5 +153,104 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 				t.Errorf("%s: over SFTP %d %q, locally %d %q", p, got.Code, got.Body.String(), want.Code, want.Body.String())
 			}
 		}
+	}
+}
+
+// linkFS is a fake server tree for evalLinks: dirs and files by path, and
+// symlinks by path to their targets.
+type linkFS struct {
+	dirs, files map[string]bool
+	links       map[string]string
+}
+
+// fakeInfo is the file information linkFS answers with.
+type fakeInfo struct {
+	fs.FileInfo
+	mode fs.FileMode
+}
+
+// Mode is the fake's mode.
+func (i fakeInfo) Mode() fs.FileMode { return i.mode }
+
+// IsDir reports whether the fake is a folder.
+func (i fakeInfo) IsDir() bool { return i.mode.IsDir() }
+
+// lstat answers for p without following a link.
+func (l linkFS) lstat(p string) (fs.FileInfo, error) {
+	switch {
+	case p == "/" || l.dirs[p]:
+		return fakeInfo{mode: fs.ModeDir}, nil
+	case l.files[p]:
+		return fakeInfo{}, nil
+	case l.links[p] != "":
+		return fakeInfo{mode: fs.ModeSymlink}, nil
+	}
+	return nil, fs.ErrNotExist
+}
+
+// readlink returns p's target.
+func (l linkFS) readlink(p string) (string, error) { return l.links[p], nil }
+
+func TestEvalLinksTrailingSlashOnFile(t *testing.T) {
+	l := linkFS{dirs: map[string]bool{"/d": true}, files: map[string]bool{"/d/f": true}}
+	if _, err := evalLinks("/d/f/", l.lstat, l.readlink); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("evalLinks(/d/f/) err = %v, want ENOTDIR as filepath.EvalSymlinks gives", err)
+	}
+	if got, err := evalLinks("/d/", l.lstat, l.readlink); err != nil || got != "/d" {
+		t.Errorf("evalLinks(/d/) = %q, %v; want /d", got, err)
+	}
+}
+
+func TestEvalLinksFollowsAsManyLinksAsEvalSymlinks(t *testing.T) {
+	// filepath.EvalSymlinks, which LocalFS uses, follows up to 255 links.
+	l := linkFS{files: map[string]bool{"/f": true}, links: map[string]string{}}
+	for i := range 100 {
+		next := fmt.Sprintf("/l%d", i+1)
+		if i == 99 {
+			next = "/f"
+		}
+		l.links[fmt.Sprintf("/l%d", i)] = next
+	}
+	if got, err := evalLinks("/l0", l.lstat, l.readlink); err != nil || got != "/f" {
+		t.Errorf("evalLinks through 100 links = %q, %v; want /f", got, err)
+	}
+	l.links["/loop"] = "/loop"
+	if _, err := evalLinks("/loop", l.lstat, l.readlink); !errors.Is(err, syscall.ELOOP) {
+		t.Errorf("evalLinks(loop) err = %v, want ELOOP", err)
+	}
+}
+
+func TestWithContextCancelsInFlight(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	started := make(chan struct{})
+	discarded := make(chan string, 1)
+	errc := make(chan error, 1)
+	go func() {
+		_, err := withContext(ctx, func() (string, error) {
+			close(started)
+			<-release
+			return "late file", nil
+		}, func(v string) { discarded <- v })
+		errc <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("withContext did not return when ctx ended mid-call")
+	}
+	close(release)
+	select {
+	case v := <-discarded:
+		if v != "late file" {
+			t.Errorf("discarded %q", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the result that came after cancellation was not discarded")
 	}
 }

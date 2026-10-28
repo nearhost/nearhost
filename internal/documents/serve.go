@@ -17,10 +17,11 @@ import (
 
 // The Content-Security-Policy values for tree responses. Neither allows
 // same-origin, so every page gets an opaque origin. Rendered markdown and
-// Nearhost's own pages run no scripts at all.
+// Nearhost's own pages run no scripts at all, and their raw HTML can't add a
+// <base> that sends relative links elsewhere.
 const (
 	fileCSP     = "sandbox allow-scripts allow-popups allow-forms"
-	markdownCSP = "sandbox allow-popups; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: https:"
+	markdownCSP = "sandbox allow-popups; default-src 'none'; base-uri 'none'; style-src 'unsafe-inline'; img-src 'self' data: https:"
 )
 
 // markdownLimit is the largest markdown file that is rendered. Bigger ones
@@ -249,11 +250,15 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string) 
 }
 
 // stream sends head and then the rest of f as ctype, with the files' CSP. A
-// failure once the body has begun can't be reported, so it is dropped.
+// HEAD request reads no more of f. A failure once the body has begun can't
+// be reported, so it is dropped.
 func stream(w http.ResponseWriter, f io.Reader, ctype string, head []byte) error {
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Security-Policy", fileCSP)
 	w.WriteHeader(http.StatusOK)
+	if _, ok := w.(headWriter); ok {
+		return nil
+	}
 	_, _ = io.Copy(w, io.MultiReader(bytes.NewReader(head), f))
 	return nil
 }

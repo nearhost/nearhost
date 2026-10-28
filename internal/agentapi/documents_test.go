@@ -494,3 +494,20 @@ func TestDocumentExpires(t *testing.T) {
 		t.Fatalf("from local: %d", st)
 	}
 }
+
+func TestDocumentListShowsTheLastOpened(t *testing.T) {
+	e := newDocServer(t, true)
+	_, a := e.ask(t, docBody("a.md", "claude-code", ""))
+	_, b := e.ask(t, docBody("b.md", "claude-code", ""))
+	// b is answered first, so a, asked earlier, is the one opened last.
+	for _, id := range []string{b["id"].(string), a["id"].(string)} {
+		if err := e.s.AnswerDocument(context.Background(), id, AnswerYes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, list := call(t, e.remote, "GET", "/v1/documents", "")
+	docs, _ := list["documents"].([]any)
+	if len(docs) != 1 || docs[0].(map[string]any)["path"] != "a.md" {
+		t.Fatalf("list %v, want a.md, the document opened last", list)
+	}
+}

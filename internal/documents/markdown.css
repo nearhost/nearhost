@@ -151,7 +151,7 @@ summary { cursor: pointer; }
 @media (prefers-color-scheme: dark) {
   :root .chroma span { color: inherit; background-color: transparent; font-weight: normal; font-style: normal; }
   /* Error */ .chroma span.err { color: #f85149 }
-  /* LineHighlight */ .chroma span.hl { background-color: #6e7681 }
+  /* LineHighlight */ .chroma span.hl { background-color: #3b434c }
   /* LineNumbersTable */ .chroma span.lnt { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #737679 }
   /* LineNumbers */ .chroma span.ln { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #6e7681 }
   /* Line */ .chroma span.line { display: flex; }

@@ -176,7 +176,7 @@ func (f *fakeBackend) RevokeGrant(server, requester, kind string) error {
 }
 
 // Documents records nothing and lists the fake's trees on server, or every
-// tree when it is empty.
+// tree when it is empty, newest first as the backend does.
 func (f *fakeBackend) Documents(server string) []documents.Tree {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -186,6 +186,12 @@ func (f *fakeBackend) Documents(server string) []documents.Tree {
 			out = append(out, tr)
 		}
 	}
+	slices.SortStableFunc(out, func(a, b documents.Tree) int {
+		if c := b.Opened.Compare(a.Opened); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 	return out
 }
 
