@@ -57,15 +57,19 @@ h1 {
 h1 span { color: var(--accent); }
 p { margin: 20px 0 0; color: var(--muted); max-width: 32rem; text-wrap: pretty; }
 nav { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 8px 28px; }
-nav a {
+nav a, .docs a {
   color: var(--accent);
   font-weight: 500;
   text-decoration: none;
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
 }
-nav a:hover { text-decoration: underline; }
-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+nav a:hover, .docs a:hover { text-decoration: underline; }
+nav a:focus-visible, .docs a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+h2 { margin: 40px 0 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+h2 + p { margin-top: 4px; font-size: 14px; }
+.docs ul { margin: 12px 0 0; padding: 0; list-style: none; }
+.docs li + li { margin-top: 4px; }
 footer {
   margin-top: 48px;
   padding-top: 20px;
@@ -92,6 +96,17 @@ footer {
     <a href="https://nearhost.dev/docs/">Docs</a>
     <a href="https://github.com/nearhost/nearhost">GitHub</a>
   </nav>
+  {{- range .Trees}}
+  <section class="docs">
+    <h2>{{.Server}}</h2>
+    <p>{{.Root}}</p>
+    <ul>
+      {{- range .Docs}}
+      <li><a href="{{.URL}}">{{.Path}}</a></li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- end}}
   <footer>Nearhost {{.Version}}</footer>
 </main>
 </body>

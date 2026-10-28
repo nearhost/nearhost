@@ -2613,3 +2613,43 @@ func TestPortErrorSaysEPERMNeedsPermission(t *testing.T) {
 		}
 	}
 }
+
+func TestPageURL(t *testing.T) {
+	// holding is a running project whose site serves localhost.
+	holding := func(host string, site bool) map[string]*projectRun {
+		return map[string]*projectRun{"app": {name: "app", server: config.LocalServer, alias: "app", site: site, web: []config.WebHosts{{Port: 3000, Hosts: []string{host}}}, webLocals: []int{3000}}}
+	}
+	for _, tc := range []struct {
+		name      string
+		webPort   int
+		httpsPort int
+		runs      map[string]*projectRun
+		want      string
+		wantErr   string
+	}{
+		{name: "web port", webPort: 6327, runs: holding("localhost", true), want: "https://localhost:6327"},
+		{name: "https 443", httpsPort: 443, want: "https://localhost"},
+		{name: "https default", want: "https://localhost"},
+		{name: "https 8443", httpsPort: 8443, want: "https://localhost:8443"},
+		{name: "stopped project on localhost", runs: holding("localhost", false), want: "https://localhost"},
+		{name: "project holds localhost", httpsPort: 443, runs: holding("localhost", true), wantErr: "Nearhost's page isn't served: a project holds localhost and --web-port is 0"},
+		{name: "project holds LOCALHOST", runs: holding("LOCALHOST", true), wantErr: "Nearhost's page isn't served: a project holds localhost and --web-port is 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &Engine{opts: Options{HTTPSPort: tc.httpsPort}, webPort: tc.webPort, runs: tc.runs}
+			for name := range tc.runs {
+				e.order = append(e.order, name)
+			}
+			got, err := e.PageURL()
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("PageURL = %q, %v, want error %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("PageURL = %q, %v, want %q", got, err, tc.want)
+			}
+		})
+	}
+}
