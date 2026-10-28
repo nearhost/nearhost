@@ -69,6 +69,23 @@ internal/tui/clipboard.go
   s_cc6c1166ddaad7::t_3a25a7a438cbb2 4-5,8,38-42,49,57-66
 internal/tui/mouse.go
   s_cc6c1166ddaad7::t_28f58bc4a3d0c1 13,78
+internal/cli/documents.go
+  s_ac2778d64c8ab3::t_f268193667bba5 42
+  s_ac2778d64c8ab3::t_911d2d1e923407 14
+internal/desktop/open_darwin.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-4
+internal/tui/clipboard_unix.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-9
+internal/tui/clipboard_darwin.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-7
+internal/tui/clipboard_windows.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-8
+internal/desktop/open_windows.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-7
+internal/desktop/open_unix.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-6
+internal/desktop/desktop.go
+  s_ac2778d64c8ab3::t_68a29a9b8b182f 1-11
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -76,6 +93,14 @@ internal/tui/mouse.go
   "base_commit_sha": "6ce1b7496f0bc8d4c44f8b5fec83bd87bb3d221f",
   "prompts": {},
   "sessions": {
+    "s_ac2778d64c8ab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0978f4df-8796-4554-b840-450611bf8ae6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    },
     "s_cc6c1166ddaad7": {
       "agent_id": {
         "tool": "claude",
