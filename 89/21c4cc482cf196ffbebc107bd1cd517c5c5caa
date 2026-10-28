@@ -1,0 +1,22 @@
+internal/tui/clipboard.go
+  s_cc6c1166ddaad7::t_576e4ab17a061b 6,42
+internal/tui/clipboard_windows.go
+  s_cc6c1166ddaad7::t_08364085d94838 25,62-63
+  s_cc6c1166ddaad7::t_576e4ab17a061b 3-8,10-24,26-36,38-61,64-70,73-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8921c4cc482cf196ffbebc107bd1cd517c5c5caa",
+  "prompts": {},
+  "sessions": {
+    "s_cc6c1166ddaad7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f79e453-4647-425d-b199-2a03b94842ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
