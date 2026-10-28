@@ -55,7 +55,7 @@ func TestServerPanelListsPassthroughs(t *testing.T) {
 		"5173 → localhost:5173 · Codex · 2h",
 		"41873 → localhost:41873 · Claude Code · browser preview · 1a2b3c4d · 12m",
 		"always allowed",
-		"Claude Code · since 27 Oct",
+		"Claude Code · passthrough · since 27 Oct",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("panel lacks %q:\n%s", want, s)
@@ -93,7 +93,7 @@ func TestServerPassFocus(t *testing.T) {
 		t.Fatalf("footer %q", got)
 	}
 	settle(m, press(m, "y"))
-	want := []string{"close id-not-shown", "revoke apollo claude-code"}
+	want := []string{"close id-not-shown", "revoke apollo claude-code passthrough"}
 	if got := f.passthroughCalls(); !slices.Equal(got, want) {
 		t.Fatalf("calls %v", got)
 	}
@@ -149,11 +149,11 @@ func TestHomePassthroughCount(t *testing.T) {
 	m, f := passModel(t)
 	f.passes = append(f.passes, engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: "m1", Server: "mini", Requester: "codex", Remote: 3000}})
 	m.selectRow(homeKey)
-	if s := screenText(m); !strings.Contains(s, "passthroughs apollo 2 · mini 1") {
+	if s := screenText(m); !strings.Contains(s, "agents apollo 2 passthroughs · mini 1 passthrough") {
 		t.Errorf("home lacks the count:\n%s", s)
 	}
 	f.passes = nil
-	if s := screenText(m); strings.Contains(s, "passthroughs") {
+	if s := screenText(m); strings.Contains(s, "agents") || strings.Contains(s, "passthroughs") {
 		t.Errorf("home shows a count of none:\n%s", s)
 	}
 }
@@ -354,7 +354,7 @@ func TestRevokeBeatsStaleGrantsRead(t *testing.T) {
 	f.mu.Unlock()
 	settle(m, press(m, "y"))
 	m.Update(old)
-	if s := screenText(m); strings.Contains(s, "Claude Code · since") {
+	if s := screenText(m); strings.Contains(s, "Claude Code · passthrough") {
 		t.Fatalf("the revoked grant came back:\n%s", s)
 	}
 }
@@ -424,5 +424,32 @@ func TestPassLinesCountBottomMarker(t *testing.T) {
 		if last := lines[len(lines)-1]; !strings.Contains(text, "localhost:3012") && !strings.Contains(last, " more") {
 			t.Errorf("room %d: no marker below the rows:\n%s", room, text)
 		}
+	}
+}
+
+func TestGrantsShowKind(t *testing.T) {
+	m, f := passModel(t)
+	f.passes = nil
+	f.grantList = append(f.grantList, grants.Grant{Server: "apollo", Requester: "claude-code", Kind: grants.KindDocuments,
+		Created: time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)})
+	m.grantCache["apollo"].at = time.Time{}
+	run(m, m.fetchGrants())
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	s := screenText(m)
+	for _, want := range []string{"always allowed", "Claude Code · passthrough · since 27 Oct", "Claude Code · documents · since 28 Oct"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("panel lacks %q:\n%s", want, s)
+		}
+	}
+	press(m, "tab")
+	press(m, "down") // the documents grant
+	press(m, "x")
+	wantText(t, m, "Stop always allowing Claude Code to show documents on apollo?", "Documents being served stay served.")
+	settle(m, press(m, "y"))
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"revoke apollo claude-code documents"}) {
+		t.Fatalf("calls %v", got)
+	}
+	if s := screenText(m); !strings.Contains(s, "Claude Code · passthrough") || strings.Contains(s, "Claude Code · documents") {
+		t.Fatalf("revoked the wrong grant:\n%s", s)
 	}
 }

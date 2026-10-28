@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -146,11 +147,17 @@ type Backend interface {
 	// ErrRequestEnded when the request is no longer waiting for an answer.
 	// No on such a request does nothing and returns nil.
 	AnswerDocument(ctx context.Context, id string, a Answer) error
-	// Grants are the passthrough grants given on server. An empty server
+	// Grants are the grants of every kind given on server. An empty server
 	// matches no grant.
 	Grants(server string) ([]grants.Grant, error)
-	// RevokeGrant takes back requester's passthrough grant on server.
-	RevokeGrant(server, requester string) error
+	// RevokeGrant takes back requester's grant of kind on server.
+	RevokeGrant(server, requester, kind string) error
+	// Documents are the trees served on server, newest first.
+	Documents(server string) []documents.Tree
+	// OpenDocument opens the newest document of the tree id in the browser.
+	OpenDocument(id string) error
+	// RemoveDocuments stops serving the tree id.
+	RemoveDocuments(id string) error
 }
 
 // ErrRequestEnded is wrapped by Backend.AnswerPassthrough's error when the

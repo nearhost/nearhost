@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -71,6 +73,12 @@ type fakeBackend struct {
 	// Always allow returns, marked as ending its request.
 	docCalls []string
 	docErr   error
+
+	// trees are what Documents lists, treeCalls records the calls on them,
+	// and treeErr is what those calls return.
+	trees     []documents.Tree
+	treeCalls []string
+	treeErr   error
 }
 
 func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
@@ -153,11 +161,59 @@ func (f *fakeBackend) Grants(server string) ([]grants.Grant, error) {
 	return out, f.passErr
 }
 
-func (f *fakeBackend) RevokeGrant(server, requester string) error {
+// RevokeGrant records the revoke and drops the grant, unless it fails.
+func (f *fakeBackend) RevokeGrant(server, requester, kind string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.passCalls = append(f.passCalls, "revoke "+server+" "+requester)
-	return f.passErr
+	f.passCalls = append(f.passCalls, "revoke "+server+" "+requester+" "+kind)
+	if f.passErr != nil {
+		return f.passErr
+	}
+	f.grantList = slices.DeleteFunc(f.grantList, func(g grants.Grant) bool {
+		return g.Server == server && g.Requester == requester && g.Kind == kind
+	})
+	return nil
+}
+
+// Documents records nothing and lists the fake's trees on server, or every
+// tree when it is empty.
+func (f *fakeBackend) Documents(server string) []documents.Tree {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []documents.Tree
+	for _, tr := range f.trees {
+		if server == "" || tr.Server == server {
+			out = append(out, tr)
+		}
+	}
+	return out
+}
+
+// OpenDocument records the open.
+func (f *fakeBackend) OpenDocument(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.treeCalls = append(f.treeCalls, "open "+id)
+	return f.treeErr
+}
+
+// RemoveDocuments records the removal and drops the tree, unless it fails.
+func (f *fakeBackend) RemoveDocuments(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.treeCalls = append(f.treeCalls, "remove "+id)
+	if f.treeErr != nil {
+		return f.treeErr
+	}
+	f.trees = slices.DeleteFunc(f.trees, func(tr documents.Tree) bool { return tr.ID == id })
+	return nil
+}
+
+// documentTreeCalls are the calls made on served trees, in order.
+func (f *fakeBackend) documentTreeCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.treeCalls...)
 }
 
 // AnswerDocument records the answer. A failed Yes or Always allow ends the

@@ -23,11 +23,19 @@ func agentFix(p transport.AgentProblem) string {
 // where it can be.
 func (m *Model) serverPanel(name string, width, height int) []string {
 	if name == config.LocalServer {
-		return []string{
+		lines := []string{
 			styleTitle.Render("local"),
 			"",
 			"Projects on this machine. There is nothing to connect to.",
 		}
+		if m.panelErr != "" {
+			lines = append(lines, "")
+			lines = append(lines, errorLines(m.panelErr, width)...)
+		}
+		if rows := m.passLines(name, width, height-len(lines)-1); len(rows) > 0 {
+			lines = append(append(lines, ""), rows...)
+		}
+		return lines
 	}
 	srv, ok := m.cfg.Server(name)
 	if !ok {

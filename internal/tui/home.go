@@ -43,7 +43,7 @@ func (m *Model) home(width int) []string {
 	lines = append(lines, field("config", clean(m.b.ConfigPath()), width)...)
 	lines = append(lines, field("running", fmt.Sprintf("%d of %d projects %s %d of %d servers", running, len(m.cfg.Projects),
 		styleDim.Render("on"), len(serversUsed), len(m.cfg.Servers)+1), width)...)
-	lines = append(lines, m.passCounts(width)...)
+	lines = append(lines, m.agentCounts(width)...)
 	lines = append(lines, m.proposalsWaiting(width)...)
 	return append(lines, m.problemLines(width)...)
 }

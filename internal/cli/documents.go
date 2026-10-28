@@ -166,6 +166,29 @@ func (s *shower) Show(ctx context.Context, origin, root, doc, requester string) 
 	return url, nil
 }
 
+// openNewest opens the newest document of the tree id in the laptop's
+// browser. A tree no longer served, or one with no documents, has nothing
+// to open.
+func (s *shower) openNewest(id string) error {
+	tr, ok := s.table.Get(id)
+	if !ok || len(tr.Docs) == 0 {
+		return errors.New("that folder isn't served any more")
+	}
+	eng := s.eng.Load()
+	if eng == nil {
+		return errors.New("nearhost is still starting; try again")
+	}
+	base, err := eng.PageURL()
+	if err != nil {
+		return err
+	}
+	url := documents.URLFor(base, tr, tr.Docs[0].Path)
+	if err := s.open(url); err != nil {
+		return fmt.Errorf("could not open %s in the browser: %w", url, err)
+	}
+	return nil
+}
+
 // homeTrees are the served trees as Nearhost's page lists them, leaving out
 // any with no documents. Their links are relative to the page, so they work
 // on whichever address it is served at.

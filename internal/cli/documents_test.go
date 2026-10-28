@@ -382,3 +382,84 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 		t.Fatalf("passthrough token: %d %v", status, out)
 	}
 }
+
+// The interface lists the served trees, opens a tree's newest document at
+// the page's address, and stops serving a tree.
+func TestInterfaceOpensAndRemovesTrees(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 8443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	var opened []string
+	a.docs.open = func(url string) error {
+		opened = append(opened, url)
+		return nil
+	}
+	a.docs.table.Add("mini", "/code/app", "claude-code", "spec.md")
+	tr := a.docs.table.Add("mini", "/code/app", "claude-code", "plans/a b.md")
+	a.docs.table.Add(config.LocalServer, "/Users/dev/app", "codex", "x.md")
+
+	if err := a.openDocument(tr.ID); err == nil {
+		t.Fatal("opened a document before the engine started")
+	}
+	a.attach(engine.New(&config.Config{}, opts))
+	if got := a.documents("mini"); len(got) != 1 || got[0].ID != tr.ID {
+		t.Fatalf("trees on mini: %#v", got)
+	}
+	if got := a.documents(""); len(got) != 2 {
+		t.Fatalf("every tree: %#v", got)
+	}
+	if err := a.openDocument(tr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://localhost:8443/d/" + tr.ID + "/plans/a%20b.md"; !slices.Equal(opened, []string{want}) {
+		t.Fatalf("opened %v, want %s", opened, want)
+	}
+	a.docs.open = func(string) error { return errors.New("no browser") }
+	if err := a.openDocument(tr.ID); err == nil || !strings.Contains(err.Error(), "no browser") {
+		t.Fatalf("a browser that fails: %v", err)
+	}
+	if err := a.removeDocuments(tr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.documents("mini"); len(got) != 0 {
+		t.Fatalf("the removed tree is listed: %#v", got)
+	}
+	if err := a.openDocument(tr.ID); err == nil {
+		t.Fatal("opened a removed tree")
+	}
+
+	var none *agents
+	if none.documents("") != nil || none.openDocument("x") == nil || none.removeDocuments("x") == nil {
+		t.Fatal("documents without agents")
+	}
+}
+
+// The interface lists grants of both kinds, and revokes one kind alone.
+func TestInterfaceGrantsOfEachKind(t *testing.T) {
+	home := agentHome(t)
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	for _, kind := range []string{grants.KindPassthrough, grants.KindDocuments} {
+		if _, err := a.grants.Allow("mini", "claude-code", kind); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := a.grantsOf("mini")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("grants %#v, %v", got, err)
+	}
+	if err := a.revokeGrant("mini", "claude-code", grants.KindDocuments); err != nil {
+		t.Fatal(err)
+	}
+	got, err = a.grantsOf("mini")
+	if err != nil || len(got) != 1 || got[0].Kind != grants.KindPassthrough {
+		t.Fatalf("after revoking documents: %#v, %v", got, err)
+	}
+}

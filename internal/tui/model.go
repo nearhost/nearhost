@@ -380,6 +380,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.passClosed(msg)
 	case revokedMsg:
 		m.revoked(msg)
+	case treeOpenedMsg:
+		m.treeOpened(msg)
+	case treeRemovedMsg:
+		m.treeRemoved(msg)
 	case passAnsweredMsg:
 		return m, m.passAnswered(msg)
 	case projectAddedMsg:

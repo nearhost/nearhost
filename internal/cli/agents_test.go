@@ -789,19 +789,19 @@ func TestReviewerForwardsOpened(t *testing.T) {
 
 func TestGrantsErrorWithoutAgents(t *testing.T) {
 	var none *agents // this run serves no coding agents
-	if _, err := none.passthroughGrants("mini"); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
+	if _, err := none.grantsOf("mini"); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
 		t.Fatalf("grants: %v", err)
 	}
-	if err := none.revokeGrant("mini", "claude-code"); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
+	if err := none.revokeGrant("mini", "claude-code", grants.KindPassthrough); err == nil || !strings.Contains(err.Error(), "isn't serving coding agents") {
 		t.Fatalf("revoke: %v", err)
 	}
 	// Agents without a grants file keep no grants, which is no empty list.
 	a, _ := serveAgents(fakeAgents(agentHome(t)), &engine.Options{}, nil, "", 443, agentEnv{})
 	defer a.close()
-	if _, err := a.passthroughGrants("mini"); err == nil {
+	if _, err := a.grantsOf("mini"); err == nil {
 		t.Fatal("listed grants without a store")
 	}
-	if err := a.revokeGrant("mini", "claude-code"); err == nil {
+	if err := a.revokeGrant("mini", "claude-code", grants.KindPassthrough); err == nil {
 		t.Fatal("revoked a grant without a store")
 	}
 }
