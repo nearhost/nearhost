@@ -192,6 +192,8 @@ Agents reach Nearhost on `~/.nearhost/<id>.sock`. Nearhost listens there on this
 
 On a server, the skill can also open a browser preview on your laptop for the rest of the session, after you approve it in Nearhost. See [browser previews from a server](https://nearhost.dev/docs/getting-started/use-a-coding-agent/#browser-previews-from-a-server).
 
+An agent can also open a document it wrote, such as a plan, spec or HTML mockup, in your browser on this laptop, after you approve it in Nearhost. See [documents from coding agents](https://nearhost.dev/docs/getting-started/use-a-coding-agent/#documents-from-coding-agents).
+
 ### Useful commands
 
 | Command | What it does |
