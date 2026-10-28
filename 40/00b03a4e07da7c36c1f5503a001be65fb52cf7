@@ -1,0 +1,23 @@
+npm/cli/README.md
+  s_f4e5f254be91ba::t_14a47c26a67fc5 70
+README.md
+  s_f4e5f254be91ba::t_14a47c26a67fc5 191,193,195
+agents/nearhost/skills/nearhost/SKILL.md
+  s_f4e5f254be91ba::t_14a47c26a67fc5 90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4000b03a4e07da7c36c1f5503a001be65fb52cf7",
+  "prompts": {},
+  "sessions": {
+    "s_f4e5f254be91ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a44b06e0-2635-49c9-9f5c-26fe1b6ff124",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
