@@ -145,7 +145,9 @@ type Backend interface {
 	// Yes and Always allow it blocks while the document is served and
 	// opened, and returns the error that stopped it, which wraps
 	// ErrRequestEnded when the request is no longer waiting for an answer.
-	// No on such a request does nothing and returns nil.
+	// No on an unknown id, or on one that opened without asking, does
+	// nothing and returns nil; No on a request shown for approval that has
+	// ended returns the error Yes would.
 	AnswerDocument(ctx context.Context, id string, a Answer) error
 	// Grants are the grants of every kind given on server. An empty server
 	// matches no grant.

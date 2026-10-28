@@ -72,8 +72,11 @@ type docRecord struct {
 	// token is the Always allow token, until the agent has read it.
 	token string
 	seq   uint64 // creation order, for lists
-	ended time.Time
-	done  chan struct{}
+	// opened is the order the request opened in, among all document
+	// requests, so the latest open one is the one shown last.
+	opened uint64
+	ended  time.Time
+	done   chan struct{}
 }
 
 // documenting reports whether this server has documents.
@@ -163,7 +166,8 @@ func (s *Server) openDocLocked(r *docRecord, url, token string) {
 	if r.state != StatePending {
 		return
 	}
-	r.state, r.url, r.token, r.ended = StateOpen, url, token, s.opts.Now()
+	s.docOpens++
+	r.state, r.url, r.token, r.ended, r.opened = StateOpen, url, token, s.opts.Now(), s.docOpens
 	close(r.done)
 }
 
@@ -177,8 +181,10 @@ func (s *Server) expireDocLocked(r *docRecord) {
 }
 
 // sweepDocsLocked expires requests and forgets those that ended long enough
-// ago, except the latest open one of each served tree, which GET
-// /v1/documents lists while its tree is served.
+// ago, except the latest open one of each tree, which GET /v1/documents
+// lists while its tree is served. It keeps that one whether or not the tree
+// is still served; GET /v1/documents forgets those of trees no longer
+// served.
 func (s *Server) sweepDocsLocked() {
 	now := s.opts.Now()
 	latest := s.latestDocsLocked()
@@ -196,14 +202,14 @@ type tree struct{ origin, root string }
 // treeOf is the tree r's document is shown from.
 func treeOf(r *docRecord) tree { return tree{r.Origin, r.Root} }
 
-// latestDocsLocked is the latest open record of each tree.
+// latestDocsLocked is the record of each tree that opened last.
 func (s *Server) latestDocsLocked() map[tree]*docRecord {
 	latest := map[tree]*docRecord{}
 	for _, r := range s.docs {
 		if r.state != StateOpen {
 			continue
 		}
-		if l := latest[treeOf(r)]; l == nil || l.seq < r.seq {
+		if l := latest[treeOf(r)]; l == nil || l.opened < r.opened {
 			latest[treeOf(r)] = r
 		}
 	}

@@ -13,12 +13,13 @@ import (
 	"time"
 )
 
-// IsDocument reports whether name has one of the document extensions: .md,
-// .markdown, .html or .htm, in any case.
+// IsDocument reports whether name's base name has one of the document
+// extensions, .md, .markdown, .html or .htm in any case, and more before it:
+// ".md" alone, in any folder, is not a document.
 func IsDocument(name string) bool {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".md", ".markdown", ".html", ".htm":
-		return name != path.Ext(name)
+		return path.Base(name) != path.Ext(name)
 	}
 	return false
 }

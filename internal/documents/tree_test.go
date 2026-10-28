@@ -14,7 +14,7 @@ func TestIsDocument(t *testing.T) {
 			t.Errorf("IsDocument(%q) = false, want true", n)
 		}
 	}
-	for _, n := range []string{"x.txt", "md", ".md", "x.md.bak"} {
+	for _, n := range []string{"x.txt", "md", ".md", "x.md.bak", "/dir/.md", "dir/.HTML"} {
 		if IsDocument(n) {
 			t.Errorf("IsDocument(%q) = true, want false", n)
 		}

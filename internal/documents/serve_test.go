@@ -17,7 +17,7 @@ import (
 // htmlCSP and mdCSP are the policies every tree response must carry.
 const (
 	htmlCSP = "sandbox allow-scripts allow-popups allow-forms"
-	mdCSP   = "sandbox allow-popups; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: https:"
+	mdCSP   = "sandbox allow-popups; default-src 'none'; base-uri 'none'; style-src 'unsafe-inline'; img-src 'self' data: https:"
 )
 
 // fakeFS wraps LocalFS and, when err is set, fails every call with it, as a
@@ -224,23 +224,29 @@ func TestDotfilesAndEscapes404(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.dir, "outside", "x.md"), []byte(secret), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	locked := filepath.Join(f.dir, "outside", "locked")
-	if err := os.Mkdir(locked, 0o000); err != nil {
-		t.Fatal(err)
+	// Root reads a 0o000 folder anyway, so the EACCES case only holds for
+	// other users.
+	paths := []string{
+		".env", "a/.git/config", "%2e%2e/outside.md", "%2E%2E/outside.md",
+		"../outside.md", "a/%2e%2e/%2e%2e/outside.md", "%2e%2e%2Foutside.md",
+		"link/x.md", "link/nope.md", "link/x.md/y",
+		"link/x.md?raw", "env.txt", "a/.git/config?raw",
 	}
-	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(f.dir, "outside", "locked")
+		if err := os.Mkdir(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(locked, 0o755) })
+		paths = append(paths, "link/locked/x.md")
+	}
 	if err := os.Symlink("../outside", filepath.Join(f.root, "link")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(".env", filepath.Join(f.root, "env.txt")); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{
-		".env", "a/.git/config", "%2e%2e/outside.md", "%2E%2E/outside.md",
-		"../outside.md", "a/%2e%2e/%2e%2e/outside.md", "%2e%2e%2Foutside.md",
-		"link/x.md", "link/nope.md", "link/x.md/y", "link/locked/x.md",
-		"link/x.md?raw", "env.txt", "a/.git/config?raw",
-	} {
+	for _, p := range paths {
 		rec := f.do(t, "GET", p)
 		if rec.Code != 404 {
 			t.Errorf("%s: status %d, want 404", p, rec.Code)
@@ -465,6 +471,68 @@ func TestSourceFilesAreTextWhateverTheHostSays(t *testing.T) {
 		}
 		if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
 			t.Errorf("%s: Content-Type = %q", p, ct)
+		}
+	}
+}
+
+// countingFS is LocalFS whose opened files count the bytes read from them.
+type countingFS struct {
+	LocalFS
+	read *int64
+}
+
+// Open opens p and counts what is read from it.
+func (f countingFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
+	r, err := f.LocalFS.Open(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return countingReader{r, f.read}, nil
+}
+
+// countingReader adds the bytes read through it to n.
+type countingReader struct {
+	io.ReadCloser
+	n *int64
+}
+
+// Read reads into b and counts it.
+func (c countingReader) Read(b []byte) (int, error) {
+	k, err := c.ReadCloser.Read(b)
+	*c.n += int64(k)
+	return k, err
+}
+
+func TestHeadReadsNoBody(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, "big.css", strings.Repeat("a{}\n", 1<<16))
+	var read int64
+	f.h = NewHandler(f.table, func(context.Context, string) (FS, error) { return countingFS{read: &read}, nil })
+	rec := f.do(t, "HEAD", "big.css")
+	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "text/css; charset=utf-8" {
+		t.Fatalf("HEAD: %d, %d bytes, %q", rec.Code, rec.Body.Len(), rec.Header().Get("Content-Type"))
+	}
+	if read != 0 {
+		t.Errorf("HEAD read %d bytes of the file, want none", read)
+	}
+
+	// Markdown gets the type GET would, rendered or raw, without being read.
+	f.write(t, "plan.md", "# Plan\n")
+	f.write(t, "huge.md", strings.Repeat("x", markdownLimit+1))
+	for p, want := range map[string]string{
+		"plan.md": "text/html; charset=utf-8", "plan.md?raw": textPlain, "huge.md": textPlain,
+	} {
+		read = 0
+		rec := f.do(t, "HEAD", p)
+		if read != 0 {
+			t.Errorf("HEAD %s read %d bytes of the file, want none", p, read)
+		}
+		get := f.do(t, "GET", p)
+		if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != want || get.Header().Get("Content-Type") != want {
+			t.Errorf("HEAD %s: %d, %d bytes, %q (GET %q), want %q", p, rec.Code, rec.Body.Len(), rec.Header().Get("Content-Type"), get.Header().Get("Content-Type"), want)
+		}
+		if got, wantCSP := rec.Header().Get("Content-Security-Policy"), get.Header().Get("Content-Security-Policy"); got != wantCSP {
+			t.Errorf("HEAD %s: CSP %q, GET has %q", p, got, wantCSP)
 		}
 	}
 }

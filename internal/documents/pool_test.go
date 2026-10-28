@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 // stubFS is an FS whose Stat answers with err, or with nothing when err is
@@ -229,5 +231,33 @@ func TestPoolDropAndClose(t *testing.T) {
 	}
 	if _, err := p.Open(ctx, "apollo"); err == nil {
 		t.Error("Open after Close worked")
+	}
+}
+
+func TestPoolLocalFailsAfterClose(t *testing.T) {
+	p := NewPool((&dialer{}).dial, time.Minute)
+	p.Close()
+	if _, err := p.Open(context.Background(), "local"); !errors.Is(err, errPoolClosed) {
+		t.Errorf("Open(local) after Close err = %v, want errPoolClosed", err)
+	}
+}
+
+func TestPoolTinyIdleDoesNotPanic(t *testing.T) {
+	p := NewPool((&dialer{}).dial, time.Nanosecond)
+	time.Sleep(time.Millisecond)
+	p.Close()
+}
+
+func TestBrokenClientOnLostConnectionStatus(t *testing.T) {
+	ctx := context.Background()
+	for _, code := range []uint32{6, 7} {
+		if !brokenClient(ctx, &sftp.StatusError{Code: code}) {
+			t.Errorf("SFTP status %d: brokenClient = false, want true", code)
+		}
+	}
+	for _, code := range []uint32{2, 3, 4} {
+		if brokenClient(ctx, &sftp.StatusError{Code: code}) {
+			t.Errorf("SFTP status %d: brokenClient = true, want false", code)
+		}
 	}
 }

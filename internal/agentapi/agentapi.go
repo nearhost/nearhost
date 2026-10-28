@@ -197,6 +197,7 @@ type Server struct {
 	passSeq   uint64                 // counts requests, for their order
 	docs      map[string]*docRecord  // document requests, by ID
 	docSeq    uint64                 // counts document requests, for their order
+	docOpens  uint64                 // counts document requests that opened
 	closed    bool
 }
 

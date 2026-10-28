@@ -340,6 +340,13 @@ EOF
 	done
 }
 
+# refused exits 1 for a document Nearhost refused to show, leaving the agent
+# with its path to give the user.
+refused() {
+	printf '%s\n' "Nothing was opened. Tell the user the document is at $DOCUMENT." >&2
+	exit 1
+}
+
 # doc_find finds Nearhost and checks that it shows documents.
 doc_find() {
 	find_socket
@@ -638,11 +645,11 @@ open)
 		*"isn't connected"*) die 2 "$msg" ;;
 		esac
 		printf '%s\n' "$BODY"
-		exit 1
+		refused
 		;;
 	*)
 		printf '%s\n' "$BODY"
-		exit 1
+		refused
 		;;
 	esac
 	;;

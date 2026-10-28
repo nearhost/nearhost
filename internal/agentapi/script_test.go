@@ -1324,3 +1324,30 @@ func TestScriptOpenAgentKeepsNoToken(t *testing.T) {
 		t.Fatalf("the agent's token file changed: %q", tok)
 	}
 }
+
+func TestScriptOpenRefusedGivesThePath(t *testing.T) {
+	home := shortDir(t)
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	sh := &fakeShower{served: map[[2]string]string{}, resolveErr: fmt.Errorf("%w: Nearhost won't serve your whole home folder", ErrBadDocument)}
+	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+	r := runScript(t, home, claudeEnv, "open", p)
+	if r.code != 1 || !strings.Contains(r.stdout, "whole home folder") || !strings.Contains(r.stderr, "Nothing was opened") || !strings.Contains(r.stderr, p) {
+		t.Fatalf("refused: %+v", r)
+	}
+}
+
+func TestScriptOpenWaitExpired(t *testing.T) {
+	home := shortDir(t)
+	sh := &fakeShower{served: map[[2]string]string{}}
+	_, c := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	r := runScript(t, home, claudeEnv, "open", p)
+	m := proposalID.FindStringSubmatch(r.stdout)
+	if m == nil {
+		t.Fatalf("open: %+v", r)
+	}
+	c.add(11 * time.Minute)
+	if r := runScript(t, home, claudeEnv, "open-wait", m[1]); r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
+		t.Fatalf("expired: %+v", r)
+	}
+}
