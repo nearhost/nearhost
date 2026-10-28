@@ -12,6 +12,8 @@
 #   nearhost.sh passthrough <port> [--label X]          open a server's port on the laptop
 #   nearhost.sh passthrough-wait <id>                   wait up to 50s for the answer
 #   nearhost.sh passthrough-close --session <id> | <id> close a session's passthroughs, or one
+#   nearhost.sh open <path> [--label X]                 open a document in the user's browser
+#   nearhost.sh open-wait <id>                          wait up to 50s for the answer
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
@@ -27,6 +29,14 @@ die() {
 	code=$1
 	shift
 	printf '%s\n' "$*" >&2
+	# DOCUMENT is set by open, which must leave the agent with the path to
+	# give the user when Nearhost cannot show it.
+	if [ -n "${DOCUMENT:-}" ]; then
+		case $code in
+		2) [ "${1#curl}" = "$1" ] && printf '%s\n' "Nearhost isn't running or connected, so nothing was opened. Tell the user the document is at $DOCUMENT." >&2 ;;
+		3 | 5) printf '%s\n' "Nothing was opened. Tell the user the document is at $DOCUMENT." >&2 ;;
+		esac
+	fi
 	# SOFT is set by passthrough-close, which always exits 0.
 	[ -n "${SOFT:-}" ] && exit 0
 	exit "$code"
@@ -242,15 +252,27 @@ token_file() {
 	printf '%s/tokens/%s/%s' "$(state_dir)" "$lid" "$REQUESTER"
 }
 
-# save_token stores the token in BODY, if it has one. An agent that can't be
-# told apart from others never keeps one.
+# doc_token_file prints the path of this requester's documents token for
+# this laptop, next to the passthrough token and apart from it.
+doc_token_file() {
+	dtf=$(token_file) || return 1
+	printf '%s.documents' "$dtf"
+}
+
+# save_token [FILE] stores the token in BODY, if it has one, in FILE or by
+# default in the passthrough token file. An agent that can't be told apart
+# from others never keeps one.
 save_token() {
 	[ "$REQUESTER" = agent ] && return 0
 	tok=$(field token "$BODY")
 	case $tok in
 	'' | *[!A-Za-z0-9_-]*) return 0 ;;
 	esac
-	tf=$(token_file) || return 0
+	if [ $# -gt 0 ]; then
+		tf=$1
+	else
+		tf=$(token_file) || return 0
+	fi
 	private_dir "$(state_dir)" "$(state_dir)/tokens" "$(dirname "$tf")" || return 0
 	private_file "$tf" "$tok"
 }
@@ -305,6 +327,46 @@ pass_post() {
 		# The body goes on stdin, as it holds the token, which an argument
 		# would show to anyone who lists this machine's processes.
 		call "$SOCK" 60 -X POST -H 'Content-Type: application/json' --data-binary @- http://nearhost/v1/passthroughs <<EOF ||
+$body}
+EOF
+			die 2 "Nearhost stopped answering."
+		if [ "$STATUS" = 401 ] && [ -n "$tok" ] && [ $attempt -eq 0 ]; then
+			rm -f "$tf"
+			tok=""
+			attempt=1
+			continue
+		fi
+		break
+	done
+}
+
+# doc_find finds Nearhost and checks that it shows documents.
+doc_find() {
+	find_socket
+	need documents
+	REQUESTER=$(requester)
+	SESSION=${CLAUDE_CODE_SESSION_ID:-}
+}
+
+# doc_post POSTS the request for DOC under ROOT, with the stored documents
+# token. A token Nearhost no longer knows is dropped and the request asked
+# again without it.
+doc_post() {
+	tok=""
+	tf=""
+	if [ "$REQUESTER" != agent ] && tf=$(doc_token_file) && [ -f "$tf" ]; then
+		IFS= read -r tok <"$tf" || :
+		case $tok in
+		*[!A-Za-z0-9_-]*) tok="" ;;
+		esac
+	fi
+	attempt=0
+	while :; do
+		body="{\"path\":$(quote "$DOC"),\"root\":$(quote "$ROOT"),\"requester\":$(quote "$REQUESTER"),\"session\":$(quote "$SESSION")"
+		[ -n "$LABEL" ] && body="$body,\"label\":$(quote "$LABEL")"
+		[ -n "$tok" ] && body="$body,\"token\":$(quote "$tok")"
+		# The body goes on stdin, as it holds the token.
+		call "$SOCK" 60 -X POST -H 'Content-Type: application/json' --data-binary @- http://nearhost/v1/documents <<EOF ||
 $body}
 EOF
 			die 2 "Nearhost stopped answering."
@@ -531,7 +593,84 @@ passthrough-close)
 	[ "$STATUS" = 204 ] || printf '%s\n' "$BODY"
 	exit 0
 	;;
+open)
+	LABEL=""
+	file=""
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--label)
+			[ $# -ge 2 ] || die 1 "--label needs a name"
+			LABEL=$2
+			shift 2
+			;;
+		*)
+			[ -z "$file" ] || die 1 "open takes one document"
+			file=$1
+			shift
+			;;
+		esac
+	done
+	[ -n "$file" ] || die 1 "open needs the document's path, such as: open docs/plan.md"
+	[ -f "$file" ] || die 1 "$file is not a file here."
+	# The folder is resolved, as git reports the root that way.
+	fdir=$(cd "$(dirname "$file")" && pwd -P) || die 1 "$file is not a file here."
+	DOC="$fdir/$(basename "$file")"
+	DOCUMENT=$DOC
+	ROOT=$(git -C "$fdir" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
+	[ -n "$ROOT" ] || ROOT=$fdir
+	doc_find
+	doc_post
+	case $STATUS in
+	200 | 201)
+		save_token "$(doc_token_file)"
+		show_body
+		exit 0
+		;;
+	202)
+		printf '%s\n' "$BODY"
+		exit 0
+		;;
+	409)
+		# Nearhost runs as nearhost up, or the server dropped off.
+		msg=$(text_field error "$BODY")
+		case $BODY in
+		*"nearhost up"*) die 3 "${msg:-Nearhost runs as nearhost up, which cannot show prompts.}" ;;
+		*"isn't connected"*) die 2 "$msg" ;;
+		esac
+		printf '%s\n' "$BODY"
+		exit 1
+		;;
+	*)
+		printf '%s\n' "$BODY"
+		exit 1
+		;;
+	esac
+	;;
+open-wait)
+	id=${1:-}
+	case $id in
+	'' | *[!0-9a-f]*) die 1 "open-wait needs the id open printed" ;;
+	esac
+	doc_find
+	call "$SOCK" 60 "http://nearhost/v1/documents/$id?wait=50" || die 2 "Nearhost stopped answering: it may have quit."
+	[ "$STATUS" = 200 ] || {
+		printf '%s\n' "$BODY"
+		exit 1
+	}
+	[ "$(field state "$BODY")" = open ] && save_token "$(doc_token_file)"
+	show_body
+	case $(field state "$BODY") in
+	declined)
+		# The user's No has no reason. A reason means the user said yes and
+		# showing the document failed.
+		reason=$(text_field reason "$BODY")
+		[ -n "$reason" ] && die 1 "Nearhost could not show the document: $reason"
+		exit 6
+		;;
+	expired) exit 7 ;;
+	esac
+	;;
 *)
-	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] | passthrough-wait <id> | passthrough-close --session <id> | <id>"
+	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] | passthrough-wait <id> | passthrough-close --session <id> | <id> | open <path> [--label X] | open-wait <id>"
 	;;
 esac
