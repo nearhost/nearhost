@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/nearhost/nearhost/compare/v0.10.0...v0.11.0) (2026-10-28)
+
+
+### Features
+
+* **agentapi:** let agents ask to show a document ([#293](https://github.com/nearhost/nearhost/issues/293)) ([6a6f85d](https://github.com/nearhost/nearhost/commit/6a6f85d745b34d2d27a72a007dbcffa6ad4f2859))
+* ask in nearhost before showing an agent's document, and open it ([#294](https://github.com/nearhost/nearhost/issues/294)) ([5012b7b](https://github.com/nearhost/nearhost/commit/5012b7b0ffe3b88abfdaba1d2fcdaed6203078d9))
+* **documents:** choose a document's tree and keep the served trees ([#287](https://github.com/nearhost/nearhost/issues/287)) ([f5aa89d](https://github.com/nearhost/nearhost/commit/f5aa89d7b8216278de2e66623b0f06d1a0bd6a4d))
+* **documents:** read trees on servers over the session's sftp ([#291](https://github.com/nearhost/nearhost/issues/291)) ([1ec0b31](https://github.com/nearhost/nearhost/commit/1ec0b316d531c8d89461227531046ea8a73f9e1f))
+* **documents:** render markdown documents in nearhost's style ([#290](https://github.com/nearhost/nearhost/issues/290)) ([bf319f5](https://github.com/nearhost/nearhost/commit/bf319f57c9ef1066346b6e6034f6ae94c72d8c27))
+* **documents:** serve a tree's files live, sandboxed, without dotfiles ([#288](https://github.com/nearhost/nearhost/issues/288)) ([0c8c8bf](https://github.com/nearhost/nearhost/commit/0c8c8bfca6aff17a251f303fb14fa352e04ce556))
+* **proxy:** serve agents' documents and list them on nearhost's page ([#292](https://github.com/nearhost/nearhost/issues/292)) ([0bcde0d](https://github.com/nearhost/nearhost/commit/0bcde0d960540fa0353750a8d6d82783dbcba696))
+* **skill:** offer documents the agent wrote in the user's browser ([#296](https://github.com/nearhost/nearhost/issues/296)) ([7e19567](https://github.com/nearhost/nearhost/commit/7e195677d49a769acbffc2e3d3b823513d548bb6))
+* **tui:** list served documents and grants of each kind on the server panel ([#295](https://github.com/nearhost/nearhost/issues/295)) ([a9f524f](https://github.com/nearhost/nearhost/commit/a9f524fed854e4b60fd246ac369a91c57f8a9056))
+
+
+### Bug Fixes
+
+* **documents:** cubic review fixes ([#299](https://github.com/nearhost/nearhost/issues/299)) ([6919487](https://github.com/nearhost/nearhost/commit/6919487ebfef02d91a8350b3efeecfcdfaaf5556))
+* **documents:** serve typescript as text, and final review fixes ([#298](https://github.com/nearhost/nearhost/issues/298)) ([2f61071](https://github.com/nearhost/nearhost/commit/2f6107130df91f81e661b9da0e8fcdcdc83261b9))
+
 ## [0.10.0](https://github.com/nearhost/nearhost/compare/v0.9.1...v0.10.0) (2026-10-27)
 
 
