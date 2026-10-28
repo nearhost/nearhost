@@ -1,0 +1,61 @@
+internal/cli/documents.go
+  s_ac2778d64c8ab3::t_e36b633dbd5a8e 169-191
+internal/tui/server_pass_test.go
+  s_ac2778d64c8ab3::t_b3d573f59b15d5 58,96,152,156,357,429-454
+  s_ac2778d64c8ab3::t_e0ea027101550e 455
+internal/tui/server_pass.go
+  s_ac2778d64c8ab3::t_1c98ac4db7a80f 474,477
+  s_ac2778d64c8ab3::t_4a03114e422bb3 6,410,457-461,463-464,466-468,471-473,475-476,478-479,484
+  s_ac2778d64c8ab3::t_ff139cc9eccf20 359-360
+  s_ac2778d64c8ab3::t_f5705476896965 54-55,135-137
+  s_ac2778d64c8ab3::t_5cc60e2645bb18 14,19-21,24,28-29,31-35,40-51,53,70-76,81-83,115-117,119-122,145-147,149,158-159,161-162,170,288-296,312,316-320,355-358,365-367,381,383,393-397,421-430,449-451,454,515
+internal/tui/model.go
+  s_ac2778d64c8ab3::t_7d7d689a3c14c1 383-386
+internal/tui/home.go
+  s_ac2778d64c8ab3::t_4a03114e422bb3 46
+internal/tui/document.go
+  s_ac2778d64c8ab3::t_7d7d689a3c14c1 41-49
+internal/tui/help.go
+  s_ac2778d64c8ab3::t_1e151094af39c7 45
+internal/tui/server_docs_test.go
+  s_ac2778d64c8ab3::t_30d9854b6c2960 1-10,12-133,137
+  s_ac2778d64c8ab3::t_595efe14477c62 11,134-136
+internal/tui/keys.go
+  s_ac2778d64c8ab3::t_be81246e516227 11,34-39,41,76-80,92-104,325
+internal/tui/server_docs.go
+  s_ac2778d64c8ab3::t_6ee8995b22fa49 1-5,7-26,28-143
+  s_ac2778d64c8ab3::t_0cf49bf3163010 6,27
+internal/tui/server.go
+  s_ac2778d64c8ab3::t_be81246e516227 26,31-38
+internal/cli/agents_test.go
+  s_ac2778d64c8ab3::t_e36b633dbd5a8e 792,795,801,804
+internal/tui/fake_test.go
+  s_ac2778d64c8ab3::t_4a03114e422bb3 178-179,185
+  s_ac2778d64c8ab3::t_08aeab5ec9adc0 8,18,76-81,165,168,176-177,180-184,186-216
+  s_ac2778d64c8ab3::t_1e151094af39c7 164,169-175
+internal/cli/documents_test.go
+  s_ac2778d64c8ab3::t_61395f879e76c9 385-465
+internal/cli/agents.go
+  s_ac2778d64c8ab3::t_e36b633dbd5a8e 20,508,516-517,521,524-525,529-558
+internal/tui/backend.go
+  s_ac2778d64c8ab3::t_4038b2afa5f429 17,150,153-160
+internal/cli/ui.go
+  s_ac2778d64c8ab3::t_e36b633dbd5a8e 21,312-313,315,318,320-321,324-333
+  s_ac2778d64c8ab3::t_9d683708ae01dd 334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "575fd2fa8eb522d2ca16a92341743466165c03cb",
+  "prompts": {},
+  "sessions": {
+    "s_ac2778d64c8ab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0978f4df-8796-4554-b840-450611bf8ae6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
