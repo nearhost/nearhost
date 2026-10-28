@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
+	"github.com/nearhost/nearhost/internal/desktop"
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -38,7 +39,7 @@ type shower struct {
 // newShower returns a shower with no trees, reading servers' files through
 // eng once it is attached.
 func newShower(eng *atomic.Pointer[engine.Engine]) *shower {
-	s := &shower{table: documents.NewTable(time.Now), eng: eng, open: openBrowser}
+	s := &shower{table: documents.NewTable(time.Now), eng: eng, open: desktop.OpenURL}
 	s.pool = documents.NewPool(s.dial, documentsIdle)
 	return s
 }
