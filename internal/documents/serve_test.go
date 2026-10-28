@@ -1,7 +1,6 @@
 package documents
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -208,16 +207,6 @@ func TestMarkdownIsRendered(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
 		t.Errorf("big Content-Type = %q", ct)
-	}
-}
-
-func TestDefaultRenderMarkdownEscapes(t *testing.T) {
-	out, err := renderMarkdown([]byte("<script>x</script>"), "t")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(out, []byte("<script>")) || !bytes.Contains(out, []byte("<pre>")) {
-		t.Errorf("renderMarkdown = %q", out)
 	}
 }
 
