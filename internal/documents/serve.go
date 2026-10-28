@@ -267,13 +267,33 @@ var webTypes = map[string]bool{
 	"application/pdf": true, "image/svg+xml": true,
 }
 
+// sourceExts are extensions of source and config files, served as plain text
+// whatever the host's MIME tables say: macOS's maps .ts and .mts to
+// video/mp2t, which would open a TypeScript file in a video player.
+var sourceExts = map[string]bool{
+	".ts": true, ".mts": true, ".cts": true, ".tsx": true, ".jsx": true,
+	".go": true, ".rs": true, ".py": true, ".rb": true, ".php": true,
+	".java": true, ".kt": true, ".swift": true, ".c": true, ".h": true,
+	".cpp": true, ".cs": true, ".sh": true, ".sql": true, ".vue": true,
+	".svelte": true, ".toml": true, ".yaml": true, ".yml": true, ".ini": true,
+	".txt": true, ".log": true,
+}
+
+// typeByExtension looks up an extension's media type in the host's tables.
+// Tests replace it to stand in for a host's odd mappings.
+var typeByExtension = mime.TypeByExtension
+
 // webType returns the type for ext when it is one browsers handle (a web text
 // or document type, or an image, font, audio or video), with charset=utf-8
-// added to text types that lack one. Otherwise it returns "".
+// added to text types that lack one. Source files are text/plain. Otherwise,
+// including for video/mp2t, which some hosts give .ts, it returns "".
 func webType(ext string) string {
-	t := mime.TypeByExtension(ext)
+	if sourceExts[strings.ToLower(ext)] {
+		return textPlain
+	}
+	t := typeByExtension(ext)
 	mt, params, err := mime.ParseMediaType(t)
-	if t == "" || err != nil {
+	if t == "" || err != nil || mt == "video/mp2t" {
 		return ""
 	}
 	switch {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -136,6 +137,10 @@ func (s *shower) Resolve(ctx context.Context, origin, p, root string) (agentapi.
 	if !ok {
 		return agentapi.Resolved{}, badDocument(p + " is a dotfile, which Nearhost doesn't serve")
 	}
+	// The served pages refuse a backslash in a name, so its URL would only 404.
+	if strings.Contains(rel, "\\") {
+		return agentapi.Resolved{}, badDocument(p + ": Nearhost can't serve a file whose name contains a backslash")
+	}
 	return agentapi.Resolved{Root: chosen, Doc: rel}, nil
 }
 
@@ -152,7 +157,7 @@ func (s *shower) Served(origin, root string) (string, bool) {
 func (s *shower) Show(ctx context.Context, origin, root, doc, requester string) (string, error) {
 	eng := s.eng.Load()
 	if eng == nil {
-		return "", errors.New("nearhost is still starting; try again")
+		return "", noPage{errors.New("Nearhost is still starting; try again")}
 	}
 	base, err := eng.PageURL()
 	if err != nil {
@@ -176,7 +181,7 @@ func (s *shower) openNewest(id string) error {
 	}
 	eng := s.eng.Load()
 	if eng == nil {
-		return errors.New("nearhost is still starting; try again")
+		return errors.New("Nearhost is still starting; try again")
 	}
 	base, err := eng.PageURL()
 	if err != nil {

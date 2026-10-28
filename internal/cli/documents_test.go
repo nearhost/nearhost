@@ -463,3 +463,25 @@ func TestInterfaceGrantsOfEachKind(t *testing.T) {
 		t.Fatalf("after revoking documents: %#v, %v", got, err)
 	}
 }
+
+func TestShowerRefusesABackslashInTheName(t *testing.T) {
+	var eng atomic.Pointer[engine.Engine]
+	s := newShower(&eng)
+	defer s.pool.Close()
+	repo := gitRepo(t)
+	writeFile(t, filepath.Join(repo, `my\plans`, "p.md"), "# Plan\n")
+	_, err := s.Resolve(context.Background(), config.LocalServer, filepath.Join(repo, `my\plans`, "p.md"), repo)
+	if !errors.Is(err, agentapi.ErrBadDocument) || !strings.Contains(err.Error(), "backslash") {
+		t.Fatalf("backslash: %v", err)
+	}
+}
+
+func TestShowerShowBeforeStartIsNoPage(t *testing.T) {
+	var eng atomic.Pointer[engine.Engine]
+	s := newShower(&eng)
+	defer s.pool.Close()
+	_, err := s.Show(context.Background(), config.LocalServer, "/code/app", "docs/p.md", "claude-code")
+	if !errors.Is(err, agentapi.ErrNoPage) || err.Error() != "Nearhost is still starting; try again" {
+		t.Fatalf("no engine: %v", err)
+	}
+}

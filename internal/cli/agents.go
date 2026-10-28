@@ -133,16 +133,17 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 	var note, grantsOff string
 	if as, ok := src.(*agentSource); ok && b.grants != nil {
 		if path, err := b.grants(); err != nil {
-			// Agents are served without passthroughs, and the user is told why.
-			note = "Coding agents cannot ask for passthroughs: " + err.Error() + "."
+			// Agents are served without passthroughs or documents, and the
+			// user is told why.
+			note = "Coding agents cannot ask for passthroughs or show documents: " + err.Error() + "."
 		} else {
 			st := grants.Open(path)
 			if err := st.Validate(); err != nil {
 				// A file that cannot be read would fail every grant check, so
-				// agents are served without passthroughs, and the user is told
-				// which file to look at.
-				grantsOff = fmt.Sprintf("%s cannot be read (%v), so passthrough is off", path, err)
-				note = "Coding agents cannot ask for passthroughs: " + grantsOff + "."
+				// agents are served without passthroughs or documents, and the
+				// user is told which file to look at.
+				grantsOff = fmt.Sprintf("%s cannot be read (%v), so passthrough and documents are off", path, err)
+				note = "Coding agents cannot ask for passthroughs or show documents: " + grantsOff + "."
 			} else {
 				store = st
 				opts.ID = id
