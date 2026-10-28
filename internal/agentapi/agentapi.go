@@ -116,8 +116,8 @@ type Proposal struct {
 	Expires time.Time
 }
 
-// Reviewer is shown each proposal and passthrough request as it arrives.
-// None of its methods may block.
+// Reviewer is shown each proposal, passthrough request and document request
+// as it arrives. None of its methods may block.
 type Reviewer interface {
 	Review(p Proposal)
 	// ReviewPassthrough asks the user about a passthrough, answered with
@@ -126,6 +126,13 @@ type Reviewer interface {
 	// Opened tells the user of a passthrough that opened without asking,
 	// with an Always allow token.
 	Opened(p Passthrough)
+	// ReviewDocument asks the user about showing a document, answered with
+	// Server.AnswerDocument.
+	ReviewDocument(r DocRequest)
+	// Shown tells the user of a document opened in the browser without
+	// asking: with an Always allow token, or in a tree already served for
+	// its requester. doc is relative to its tree's root.
+	Shown(origin, requester, doc string)
 }
 
 // State is where a proposal is.
@@ -156,14 +163,20 @@ type Options struct {
 	Doctor Doctor
 	// Reload answers POST /v1/projects/reload; nil means no reload.
 	Reload Reloader
-	// ID is this install's id, reported by GET /v1 with passthroughs so a
-	// tool keeps its tokens for each laptop apart.
+	// ID is this install's id, reported by GET /v1 with passthroughs or
+	// documents so a tool keeps its tokens for each laptop apart.
 	ID string
 	// Passer opens the forwards behind passthroughs. Passthroughs need it
 	// and Grants; without both there are none.
 	Passer Passer
 	// Grants keeps the grants given with Always allow.
 	Grants Grants
+	// Shower serves the documents agents ask to show. Documents need it
+	// and DocGrants; without both there are none.
+	Shower Shower
+	// DocGrants keeps the documents grants given with Always allow, apart
+	// from the passthrough grants in Grants.
+	DocGrants Grants
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -182,6 +195,8 @@ type Server struct {
 	passes    map[string]*passRecord // passthrough requests, by ID
 	passGen   uint64                 // counts opens: see syncLocked
 	passSeq   uint64                 // counts requests, for their order
+	docs      map[string]*docRecord  // document requests, by ID
+	docSeq    uint64                 // counts document requests, for their order
 	closed    bool
 }
 
@@ -221,7 +236,7 @@ func New(opts Options) *Server {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}}
+	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}}
 	s.handler = s.routes()
 	return s
 }

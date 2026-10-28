@@ -180,8 +180,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		s.endPassLocked(rec, StateDeclined, err.Error())
 		s.mu.Unlock()
 		if errors.Is(err, ErrNotConnected) {
-			fail(w, http.StatusConflict, fmt.Sprintf(
-				"Nearhost isn't connected to %s. On %s, select %s in Nearhost and press c, then ask again", o, s.laptop(), o))
+			s.notConnected(w, o)
 			return
 		}
 		fail(w, http.StatusBadGateway, err.Error())

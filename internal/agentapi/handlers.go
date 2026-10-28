@@ -14,7 +14,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 )
 
@@ -31,6 +30,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/passthroughs/{id}", s.passGet)
 	mux.HandleFunc("DELETE /v1/passthroughs", s.passDeleteSession)
 	mux.HandleFunc("DELETE /v1/passthroughs/{id}", s.passDelete)
+	mux.HandleFunc("POST /v1/documents", s.docRequest)
+	mux.HandleFunc("GET /v1/documents", s.docList)
+	mux.HandleFunc("GET /v1/documents/{id}", s.docGet)
 	mux.HandleFunc("/", noSuchCall)
 	return mux
 }
@@ -63,7 +65,7 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 		"api": Version, "origin": origin(r), "laptop": s.opts.Laptop, "interface": review,
 		"capabilities": s.capabilities(),
 	}
-	if s.passing() {
+	if s.passing() || s.documenting() {
 		out["id"] = s.opts.ID
 	}
 	reply(w, http.StatusOK, out)
@@ -82,6 +84,9 @@ func (s *Server) capabilities() []string {
 	}
 	if s.passing() {
 		caps = append(caps, "passthrough")
+	}
+	if s.documenting() {
+		caps = append(caps, "documents")
 	}
 	slices.Sort(caps)
 	return caps
@@ -145,11 +150,7 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	findings, err := s.opts.Doctor.Doctor(ctx, o, name, dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		machine := o
-		if o == config.LocalServer {
-			machine = s.laptop()
-		}
-		fail(w, http.StatusNotFound, fmt.Sprintf("%s is not a directory on %s", dir, machine))
+		fail(w, http.StatusNotFound, fmt.Sprintf("%s is not a directory on %s", dir, s.machine(o)))
 		return
 	}
 	if err != nil {
