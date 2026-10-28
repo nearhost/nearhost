@@ -67,7 +67,7 @@ Coding agents can add the project they work in, on this machine or on a server N
 npx skills add nearhost/nearhost -g
 ```
 
-Then ask the agent to add the project, with `/nearhost add` in Claude Code. Nearhost opens the add form already filled in, and nothing changes until you save it. [Read more](https://nearhost.dev/docs/getting-started/use-a-coding-agent/).
+Then ask the agent to add the project, with `/nearhost add` in Claude Code. Nearhost opens the add form already filled in, and nothing changes until you save it. [Read more](https://nearhost.dev/docs/coding-agents/).
 
 ## Commands
 
