@@ -898,9 +898,13 @@ func TestScriptPassthroughXDGStateHome(t *testing.T) {
 
 // countPosts proxies home's socket k3f9q2 through a second socket the
 // script finds instead, and returns a func counting the POSTs to
-// /v1/passthroughs that went through it.
-func countPosts(t *testing.T, home string) (posts func() int, front string) {
+// the given path that went through it, /v1/passthroughs by default.
+func countPosts(t *testing.T, home string, path ...string) (posts func() int, front string) {
 	t.Helper()
+	counted := "/v1/passthroughs"
+	if len(path) > 0 {
+		counted = path[0]
+	}
 	real := filepath.Join(home, ".nearhost", "k3f9q2.sock")
 	front = filepath.Join(home, "front.sock")
 	ln, err := net.Listen("unix", front)
@@ -910,7 +914,7 @@ func countPosts(t *testing.T, home string) (posts func() int, front string) {
 	var mu sync.Mutex
 	n := 0
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && r.URL.Path == "/v1/passthroughs" {
+		if r.Method == "POST" && r.URL.Path == counted {
 			mu.Lock()
 			n++
 			mu.Unlock()
@@ -1083,5 +1087,240 @@ func TestScriptDecodesHTMLEscapes(t *testing.T) {
 	want := "Nearhost could not open the port: port <3000> & more on lines"
 	if strings.TrimSpace(r.stderr) != want {
 		t.Fatalf("stderr %q, want %q", r.stderr, want)
+	}
+}
+
+// docScript serves origin like scriptServerWith, with a fake Shower and
+// DocGrants and the install id "lid".
+func docScript(t *testing.T, home, origin string, review bool) (*Server, *fakeShower, *fakeGrants, *fakeReviewer) {
+	t.Helper()
+	sh := &fakeShower{served: map[[2]string]string{}}
+	g := &fakeGrants{tokens: map[[2]string]string{}}
+	s, _ := scriptServerWith(t, home, "k3f9q2", origin, review, Options{ID: "lid", Source: fakeSource{origin: mini}, Shower: sh, DocGrants: g})
+	rv := &fakeReviewer{}
+	if review {
+		s.SetReviewer(rv)
+	}
+	return s, sh, g, rv
+}
+
+// docToken is where the skill keeps requester's documents token for "lid".
+func docToken(home, requester string) string {
+	return tokenPath(home, requester) + ".documents"
+}
+
+// docFile writes a document at rel under dir and returns its resolved path.
+func docFile(t *testing.T, dir, rel string) string {
+	t.Helper()
+	p := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("# plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// realDir is dir with its symlinks resolved, as the script reports paths.
+func realDir(t *testing.T, dir string) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestScriptOpenSendsRoot(t *testing.T) {
+	home := shortDir(t)
+	_, sh, g, rv := docScript(t, home, "mini", true)
+	repo := filepath.Join(realDir(t, home), "repo")
+	docFile(t, repo, "docs/p.md")
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git: %v %s", err, out)
+	}
+
+	// Without a token the prompt carries the session, label and requester.
+	r := runScript(t, home, claudeEnv, "open", "repo/docs/p.md", "--label", "plan")
+	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
+		t.Fatalf("open: %+v", r)
+	}
+	got := rv.docPrompts()
+	if len(got) != 1 || got[0].Requester != "claude-code" || got[0].Session != "s1" || got[0].Label != "plan" || got[0].Root != repo || got[0].Doc != "docs/p.md" {
+		t.Fatalf("prompts %+v", got)
+	}
+
+	// With a documents token the same request opens at once.
+	g.tokens[[2]string{"mini", "claude-code"}] = "doc-tok"
+	if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docToken(home, "claude-code"), []byte("doc-tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = runScript(t, home, claudeEnv, "open", filepath.Join(repo, "docs", "p.md"))
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"https://localhost:8443/d/tree/docs/p.md"`) || strings.Contains(r.stdout, "doc-tok") {
+		t.Fatalf("open: %+v", r)
+	}
+	if shows := sh.showed(); len(shows) != 1 || shows[0].Root != repo || shows[0].Doc != "docs/p.md" || shows[0].Requester != "claude-code" {
+		t.Fatalf("shows %+v", shows)
+	}
+}
+
+func TestScriptOpenWithoutGit(t *testing.T) {
+	home := shortDir(t)
+	_, _, _, rv := docScript(t, home, "mini", true)
+	dir := filepath.Join(realDir(t, home), "notes")
+	docFile(t, dir, "p.html")
+	r := runScript(t, home, claudeEnv, "open", filepath.Join(dir, "p.html"))
+	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
+		t.Fatalf("open: %+v", r)
+	}
+	got := rv.docPrompts()
+	if len(got) != 1 || got[0].Root != dir || got[0].Doc != "p.html" {
+		t.Fatalf("prompts %+v", got)
+	}
+}
+
+func TestScriptOpenWaitStoresDocToken(t *testing.T) {
+	home := shortDir(t)
+	s, _, _, _ := docScript(t, home, "mini", true)
+	storeToken(t, home, "claude-code", "pass-tok")
+	dir := filepath.Join(realDir(t, home), "notes")
+	p := docFile(t, dir, "p.md")
+	r := runScript(t, home, claudeEnv, "open", p)
+	m := proposalID.FindStringSubmatch(r.stdout)
+	if r.code != 0 || m == nil {
+		t.Fatalf("open: %+v", r)
+	}
+	if err := s.AnswerDocument(context.Background(), m[1], AnswerAlways); err != nil {
+		t.Fatal(err)
+	}
+	r = runScript(t, home, claudeEnv, "open-wait", m[1])
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout, "token") {
+		t.Fatalf("open-wait: %+v", r)
+	}
+	tok, err := os.ReadFile(docToken(home, "claude-code"))
+	if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
+		t.Fatalf("documents token %q: %v", tok, err)
+	}
+	if m := mode(t, docToken(home, "claude-code")); m != 0o600 {
+		t.Fatalf("token mode %v", m)
+	}
+	if pt, _ := os.ReadFile(tokenPath(home, "claude-code")); strings.TrimSpace(string(pt)) != "pass-tok" {
+		t.Fatalf("the passthrough token changed: %q", pt)
+	}
+}
+
+func TestScriptOpenWaitDeclinedExpired(t *testing.T) {
+	home := shortDir(t)
+	s, _, _, _ := docScript(t, home, "mini", true)
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	r := runScript(t, home, claudeEnv, "open", p)
+	m := proposalID.FindStringSubmatch(r.stdout)
+	if m == nil {
+		t.Fatalf("open: %+v", r)
+	}
+	if err := s.AnswerDocument(context.Background(), m[1], AnswerNo); err != nil {
+		t.Fatal(err)
+	}
+	if r := runScript(t, home, claudeEnv, "open-wait", m[1]); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
+		t.Fatalf("declined: %+v", r)
+	}
+}
+
+func TestScriptOpenRetriesOn401(t *testing.T) {
+	home := shortDir(t)
+	_, _, _, rv := docScript(t, home, "mini", true)
+	storeToken(t, home, "claude-code", "pass-tok")
+	if err := os.WriteFile(docToken(home, "claude-code"), []byte("revoked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	posts, front := countPosts(t, home, "/v1/documents")
+	r := runScript(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "open", p)
+	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
+		t.Fatalf("open: %+v", r)
+	}
+	if _, err := os.Stat(docToken(home, "claude-code")); !os.IsNotExist(err) {
+		t.Fatalf("the revoked token stayed: %v", err)
+	}
+	if _, err := os.Stat(tokenPath(home, "claude-code")); err != nil {
+		t.Fatalf("the passthrough token went: %v", err)
+	}
+	if got := rv.docPrompts(); len(got) != 1 {
+		t.Fatalf("prompts %+v", got)
+	}
+	if n := posts(); n != 2 {
+		t.Fatalf("the server saw %d requests, want 2", n)
+	}
+}
+
+func TestScriptOpenOldNearhost(t *testing.T) {
+	home := shortDir(t)
+	scriptServer(t, home, "k3f9q2", "mini", true)
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	r := runScript(t, home, nil, "open", p)
+	if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, p) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestScriptOpenNoNearhost(t *testing.T) {
+	home := shortDir(t)
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	r := runScript(t, home, nil, "open", p)
+	if r.code != 2 || !strings.Contains(r.stderr, "isn't running or connected") || !strings.Contains(r.stderr, p) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestScriptOpenNotConnectedAndUp(t *testing.T) {
+	home := shortDir(t)
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	sh := &fakeShower{served: map[[2]string]string{}, resolveErr: ErrNotConnected}
+	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+	r := runScript(t, home, nil, "open", p)
+	if r.code != 2 || !strings.Contains(r.stderr, "isn't connected") || !strings.Contains(r.stderr, p) {
+		t.Fatalf("not connected: %+v", r)
+	}
+	home = shortDir(t)
+	p = docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	docScript(t, home, "mini", false)
+	r = runScript(t, home, nil, "open", p)
+	if r.code != 3 || !strings.Contains(r.stderr, "nearhost up") || !strings.Contains(r.stderr, p) {
+		t.Fatalf("up: %+v", r)
+	}
+}
+
+func TestScriptOpenAgentKeepsNoToken(t *testing.T) {
+	home := shortDir(t)
+	s, sh, g, rv := docScript(t, home, "mini", true)
+	g.tokens[[2]string{"mini", "agent"}] = "tok-agent"
+	if err := os.MkdirAll(filepath.Dir(docToken(home, "agent")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docToken(home, "agent"), []byte("tok-agent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+	r := runScript(t, home, nil, "open", p)
+	m := proposalID.FindStringSubmatch(r.stdout)
+	if r.code != 0 || m == nil || strings.Contains(r.stdout, `"state"`) {
+		t.Fatalf("a token was sent: %+v", r)
+	}
+	if got := rv.docPrompts(); len(got) != 1 || got[0].Requester != "agent" || got[0].Session != "" || got[0].CanAlways {
+		t.Fatalf("prompts %+v", got)
+	}
+	if err := s.AnswerDocument(context.Background(), m[1], AnswerYes); err != nil {
+		t.Fatal(err)
+	}
+	r = runScript(t, home, nil, "open-wait", m[1])
+	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(sh.showed()) != 1 {
+		t.Fatalf("open-wait: %+v", r)
+	}
+	if tok, _ := os.ReadFile(docToken(home, "agent")); strings.TrimSpace(string(tok)) != "tok-agent" {
+		t.Fatalf("the agent's token file changed: %q", tok)
 	}
 }

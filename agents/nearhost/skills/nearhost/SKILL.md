@@ -1,7 +1,7 @@
 ---
 name: nearhost
-description: Serve the project you are working in at its own domain (https://<name>.test by default) with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add, /nearhost status or /nearhost doctor, or asks to add, serve or set up this project in Nearhost, or asks for its URL, or when a project isn't served as expected, or when you start a dev server or are about to give the user a localhost URL on a server reached over SSH, to open it on the user's laptop. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
-argument-hint: "add [--web <port>] [--name <name>] | status [--all] | doctor | passthrough <port>"
+description: Serve the project you are working in at its own domain (https://<name>.test by default) with Nearhost, or say whether and where it is served. Use when the user runs /nearhost add, /nearhost status or /nearhost doctor, or asks to add, serve or set up this project in Nearhost, or asks for its URL, or when a project isn't served as expected, or when you start a dev server or are about to give the user a localhost URL on a server reached over SSH, to open it on the user's laptop, or when you have written a document for the user to read, such as a plan, spec or report, to open it in their browser. Works on the laptop that runs Nearhost and on servers that Nearhost reaches over SSH.
+argument-hint: "add [--web <port>] [--name <name>] | status [--all] | doctor | passthrough <port> | open <path>"
 allowed-tools: Bash(sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh *)
 ---
 
@@ -13,7 +13,7 @@ Run it as `sh <this skill's directory>/scripts/nearhost.sh <command>`; in Claude
 
 The user asked for: $ARGUMENTS
 
-If that is empty or reads as a placeholder, take `add`, `status`, `doctor` or `passthrough` from what the user asked.
+If that is empty or reads as a placeholder, take `add`, `status`, `doctor`, `passthrough` or `open` from what the user asked.
 
 ## add
 
@@ -62,6 +62,18 @@ Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev s
 6. Never run `passthrough-close` yourself, unless the user asks you to close one. Nearhost closes a session's passthroughs when the session ends.
 
 When the user picks "Always allow" in Nearhost, the script keeps the token it is given under `$XDG_STATE_HOME/nearhost/tokens` (by default `~/.local/state/nearhost`) and later asks without a prompt. Do not read, print or edit those files.
+
+## open
+
+Use this when you have written a document for the user to read, such as a plan, spec, report, write-up or HTML mockup, and are about to tell them where it is. It works on the laptop and on a server. Never use it for code or config files.
+
+1. Before you tell the user where the document is, run `sh .../nearhost.sh open <path> --label "<what it is>"`. The path is a `.md`, `.markdown`, `.html` or `.htm` file. Do not ask the user in chat first: Nearhost asks them.
+2. If the JSON has an `id` and no `state`, it is waiting. Tell the user: "Approve it in Nearhost on <laptop>." Get `<laptop>` from `sh .../nearhost.sh socket`. Then run `sh .../nearhost.sh open-wait <id>`, and again while it prints `"state":"pending"`, as in add.
+3. On `"state":"open"`, give the user the returned `url` as well as the document's path, and say it is open in their browser.
+4. Exit status 6 means the user said No: do not offer that folder or its project again in this session, and give them the path only. Exit status 1 with `Nearhost could not show the document: <reason>` means the user said yes but showing it failed: pass on the reason. Exit status 7 means nobody answered within 10 minutes.
+5. On exit status 2 and 5, pass on the message the script printed as it is; it repeats the document's path, so still give the user that path. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop, and give them the path.
+
+When the user picks "Always allow" in Nearhost, the script keeps the token it is given next to the passthrough token, in a file ending in `.documents`, and later asks without a prompt. Do not read, print or edit those files.
 
 ## When the script fails
 
