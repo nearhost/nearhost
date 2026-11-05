@@ -1,0 +1,23 @@
+internal/agentapi/documents_handlers.go
+  s_8d6383ee1da9a6::t_d23454396f21ed 10,49-51
+internal/cli/documents_test.go
+  s_8d6383ee1da9a6::t_d23454396f21ed 11,73,81,96,107,475-477
+internal/cli/export_test.go
+  s_8d6383ee1da9a6::t_5ad6c94268e506 91,117,312
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9085fa95b490c28ea515f14f45908eefc3bc32aa",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
