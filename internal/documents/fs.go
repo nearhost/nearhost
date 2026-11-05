@@ -34,9 +34,15 @@ type Opener func(ctx context.Context, server string) (FS, error)
 // LocalFS is the laptop's own file system.
 type LocalFS struct{}
 
-// RealPath resolves p's symlinks with filepath.EvalSymlinks.
+// RealPath resolves p's symlinks with filepath.EvalSymlinks and returns the
+// result in slash form, as the documents package works in slash form. The
+// other methods take slash or native form, as Windows' file APIs accept both.
 func (LocalFS) RealPath(_ context.Context, p string) (string, error) {
-	return filepath.EvalSymlinks(p)
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(real), nil
 }
 
 // Stat returns os.Stat(p).
@@ -49,7 +55,11 @@ func (LocalFS) Open(_ context.Context, p string) (io.ReadCloser, error) {
 	return os.Open(p)
 }
 
-// Home returns os.UserHomeDir().
+// Home returns os.UserHomeDir() in slash form.
 func (LocalFS) Home(context.Context) (string, error) {
-	return os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(home), nil
 }

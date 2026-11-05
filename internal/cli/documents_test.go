@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -68,7 +70,7 @@ func TestShowerResolvesLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Root != real || got.Doc != "docs/p.md" {
+	if got.Root != filepath.ToSlash(real) || got.Doc != "docs/p.md" {
 		t.Fatalf("resolved %#v, want root %s", got, real)
 	}
 
@@ -76,7 +78,7 @@ func TestShowerResolvesLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(real, ".superpowers", "b"); got.Root != want || got.Doc != "x.html" {
+	if want := filepath.ToSlash(filepath.Join(real, ".superpowers", "b")); got.Root != want || got.Doc != "x.html" {
 		t.Fatalf("under a dot-folder: %#v, want root %s", got, want)
 	}
 
@@ -91,7 +93,7 @@ func TestShowerResolvesLocal(t *testing.T) {
 	}
 	// A root that isn't there is set aside for the document's folder.
 	got, err = s.Resolve(ctx, config.LocalServer, filepath.Join(repo, "docs", "p.md"), filepath.Join(repo, "nope"))
-	if err != nil || got.Root != filepath.Join(real, "docs") || got.Doc != "p.md" {
+	if err != nil || got.Root != filepath.ToSlash(filepath.Join(real, "docs")) || got.Doc != "p.md" {
 		t.Fatalf("missing root: %#v %v", got, err)
 	}
 }
@@ -102,6 +104,7 @@ func TestShowerRefusesTheHomeFolder(t *testing.T) {
 	defer s.pool.Close()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	writeFile(t, filepath.Join(home, "p.md"), "# Plan\n")
 	_, err := s.Resolve(context.Background(), config.LocalServer, filepath.Join(home, "p.md"), home)
 	if !errors.Is(err, agentapi.ErrBadDocument) ||
@@ -333,11 +336,15 @@ func TestAnswerDocumentMarksAnEndedRequest(t *testing.T) {
 // token when it is not empty.
 func postDoc(t *testing.T, sock, path, root, token string) (int, map[string]any) {
 	t.Helper()
-	body := `{"path": "` + path + `", "root": "` + root + `", "requester": "claude-code", "session": "s1"`
+	req := map[string]string{"path": path, "root": root, "requester": "claude-code", "session": "s1"}
 	if token != "" {
-		body += `, "token": "` + token + `"`
+		req["token"] = token
 	}
-	return postJSON(t, sock, "/v1/documents", body+"}")
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return postJSON(t, sock, "/v1/documents", string(body))
 }
 
 // Headless `nearhost up` has no one to prompt, so it shows a document only
@@ -465,6 +472,9 @@ func TestInterfaceGrantsOfEachKind(t *testing.T) {
 }
 
 func TestShowerRefusesABackslashInTheName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a backslash separates folders on Windows, so no name has one")
+	}
 	var eng atomic.Pointer[engine.Engine]
 	s := newShower(&eng)
 	defer s.pool.Close()
