@@ -37,6 +37,23 @@ type docReqBody struct {
 	Token     string `json:"token"`
 }
 
+// plainDrivePath turns a Windows extended-length drive path into its plain
+// form: \\?\C:\x becomes C:\x and //?/C:/x becomes C:/x. It strips the
+// prefix only when a drive letter, a colon and a slash or backslash follow;
+// anything else, such as \\?\UNC\s\sh, is returned unchanged.
+func plainDrivePath(v string) string {
+	for _, p := range []string{`\\?\`, `//?/`} {
+		rest, ok := strings.CutPrefix(v, p)
+		if !ok || len(rest) < 3 || rest[1] != ':' || (rest[2] != '\\' && rest[2] != '/') {
+			continue
+		}
+		if c := rest[0] | 0x20; c >= 'a' && c <= 'z' {
+			return rest
+		}
+	}
+	return v
+}
+
 // badDocPath is why v can't be the field called name of a document
 // request, or "" when it can: it must be absolute, without NUL, not a
 // network path, and at most maxDocPath bytes. The Shower checks the rest.
@@ -46,6 +63,12 @@ func badDocPath(name, v string) string {
 		return name + " must not contain NUL"
 	case len(v) > maxDocPath:
 		return fmt.Sprintf("%s must be at most %d bytes", name, maxDocPath)
+	// \\?\UNC\server\share is a network path in extended-length form.
+	case hasPrefixFold(v, `\\?\UNC\`) || hasPrefixFold(v, `//?/UNC/`):
+		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
+	// Device paths and extended-length forms plainDrivePath left alone.
+	case strings.HasPrefix(v, `\\.\`) || strings.HasPrefix(v, `\\?\`):
+		return name + ` is a Windows device path (\\.\ or \\?\); send the plain C:\… form`
 	// A network path resolves as neither a slash path nor a drive path.
 	// filepath.VolumeName is "" everywhere but Windows, where it is
 	// \\server\share for //server/share too.
@@ -57,6 +80,11 @@ func badDocPath(name, v string) string {
 		return fmt.Sprintf("%s must be absolute, not %q", name, v)
 	}
 	return ""
+}
+
+// hasPrefixFold reports whether v starts with prefix, ignoring case.
+func hasPrefixFold(v, prefix string) bool {
+	return len(v) >= len(prefix) && strings.EqualFold(v[:len(prefix)], prefix)
 }
 
 // machine names origin's machine for a message.
@@ -84,6 +112,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &req) {
 		return
 	}
+	req.Path, req.Root = plainDrivePath(req.Path), plainDrivePath(req.Root)
 	if msg := cmp.Or(badDocPath("path", req.Path), badDocPath("root", req.Root)); msg != "" {
 		fail(w, http.StatusBadRequest, msg)
 		return

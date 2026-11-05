@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -525,5 +526,42 @@ func TestDocumentRefusesANetworkPath(t *testing.T) {
 	}
 	if msg := badDocPath("path", "/srv/app/plan.md"); msg != "" {
 		t.Errorf("badDocPath(/srv/app/plan.md) = %q", msg)
+	}
+}
+
+func TestPlainDrivePath(t *testing.T) {
+	for in, want := range map[string]string{
+		`\\?\C:\x`:       `C:\x`,
+		`//?/D:/y`:       `D:/y`,
+		`\\?\UNC\s\sh\x`: `\\?\UNC\s\sh\x`,
+		`\\?\C:`:         `\\?\C:`,
+		`/srv/x`:         `/srv/x`,
+		`C:\x`:           `C:\x`,
+	} {
+		if got := plainDrivePath(in); got != want {
+			t.Errorf("plainDrivePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBadDocPathWindowsForms(t *testing.T) {
+	for _, v := range []string{`\\?\UNC\s\sh\p.md`, `//?/UNC/s/sh/p.md`, `\\s\sh\p.md`} {
+		if msg := badDocPath("path", v); !strings.Contains(msg, "network path") {
+			t.Errorf("badDocPath(%q) = %q; want a network path message", v, msg)
+		}
+	}
+	for _, v := range []string{`\\.\pipe\x`, `\\?\Volume{1}\x`} {
+		if msg := badDocPath("path", v); !strings.Contains(msg, "Windows device path") {
+			t.Errorf("badDocPath(%q) = %q; want a device path message", v, msg)
+		}
+	}
+}
+
+func TestDocumentAcceptsAnExtendedLengthDrivePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("C:\\ paths are absolute only on Windows")
+	}
+	if msg := badDocPath("path", plainDrivePath(`\\?\C:\Users\me\notes\plan.md`)); msg != "" {
+		t.Errorf("badDocPath = %q", msg)
 	}
 }
