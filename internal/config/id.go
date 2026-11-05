@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -142,24 +140,10 @@ func validID(id string) bool {
 	return true
 }
 
-// machineFingerprint is a short hash of what identifies this machine: its
-// machine-id on Linux, its platform UUID on macOS. It is "" where neither
-// can be read.
+// machineFingerprint is a short hash of what identifies this machine (see
+// machineID). It is "" where nothing can be read.
 func machineFingerprint() string {
-	var raw string
-	switch runtime.GOOS {
-	case "linux":
-		for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
-			if data, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(data)) != "" {
-				raw = strings.TrimSpace(string(data))
-				break
-			}
-		}
-	case "darwin":
-		if out, err := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output(); err == nil {
-			raw = platformUUID(string(out))
-		}
-	}
+	raw := machineID()
 	if raw == "" {
 		return ""
 	}

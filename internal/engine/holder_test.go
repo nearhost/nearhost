@@ -105,3 +105,31 @@ func TestPortHolderFindsThisProcess(t *testing.T) {
 		t.Fatalf("PortHolder = %q, want this process (pid %d)", got, os.Getpid())
 	}
 }
+
+func TestParseNetstat(t *testing.T) {
+	english := `
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING       4
+  TCP    127.0.0.1:8080         127.0.0.1:52011        ESTABLISHED     7777
+  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       4242
+  TCP    [::]:9090              [::]:0                 LISTENING       5151
+`
+	german := `
+Aktive Verbindungen
+
+  Proto  Lokale Adresse         Remoteadresse          Status           PID
+  TCP    0.0.0.0:80             0.0.0.0:0              ABHÖREN          4
+  TCP    127.0.0.1:8080         127.0.0.1:52011        HERGESTELLT      7777
+  TCP    0.0.0.0:8080           0.0.0.0:0              ABHÖREN          4242
+  TCP    [::]:9090              [::]:0                 ABHÖREN          5151
+`
+	for name, out := range map[string]string{"english": english, "german": german} {
+		for port, want := range map[int]int{8080: 4242, 9090: 5151, 80: 4, 52011: 0, 443: 0} {
+			if got := parseNetstat(out, port); got != want {
+				t.Errorf("%s: parseNetstat(port %d) = %d, want %d", name, port, got, want)
+			}
+		}
+	}
+}
