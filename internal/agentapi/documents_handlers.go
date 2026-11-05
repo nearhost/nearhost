@@ -38,18 +38,16 @@ type docReqBody struct {
 }
 
 // plainDrivePath turns a Windows extended-length drive path into its plain
-// form: \\?\C:\x becomes C:\x and //?/C:/x becomes C:/x. It strips the
-// prefix only when a drive letter, a colon and a slash or backslash follow;
-// anything else, such as \\?\UNC\s\sh, is returned unchanged.
+// form: \\?\C:\x becomes C:\x. Only the backslash form is touched, since
+// //?/C:/x is a legal Unix path. It strips the prefix only when a drive
+// letter, a colon and a slash or backslash follow; anything else, such as \\?\UNC\s\sh, is returned unchanged.
 func plainDrivePath(v string) string {
-	for _, p := range []string{`\\?\`, `//?/`} {
-		rest, ok := strings.CutPrefix(v, p)
-		if !ok || len(rest) < 3 || rest[1] != ':' || (rest[2] != '\\' && rest[2] != '/') {
-			continue
-		}
-		if c := rest[0] | 0x20; c >= 'a' && c <= 'z' {
-			return rest
-		}
+	rest, ok := strings.CutPrefix(v, `\\?\`)
+	if !ok || len(rest) < 3 || rest[1] != ':' || (rest[2] != '\\' && rest[2] != '/') {
+		return v
+	}
+	if c := rest[0] | 0x20; c >= 'a' && c <= 'z' {
+		return rest
 	}
 	return v
 }
@@ -64,7 +62,7 @@ func badDocPath(name, v string) string {
 	case len(v) > maxDocPath:
 		return fmt.Sprintf("%s must be at most %d bytes", name, maxDocPath)
 	// \\?\UNC\server\share is a network path in extended-length form.
-	case hasPrefixFold(v, `\\?\UNC\`) || hasPrefixFold(v, `//?/UNC/`):
+	case hasPrefixFold(v, `\\?\UNC\`):
 		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
 	// Device paths and extended-length forms plainDrivePath left alone.
 	case strings.HasPrefix(v, `\\.\`) || strings.HasPrefix(v, `\\?\`):

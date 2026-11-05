@@ -532,7 +532,7 @@ func TestDocumentRefusesANetworkPath(t *testing.T) {
 func TestPlainDrivePath(t *testing.T) {
 	for in, want := range map[string]string{
 		`\\?\C:\x`:       `C:\x`,
-		`//?/D:/y`:       `D:/y`,
+		`//?/D:/y`:       `//?/D:/y`,
 		`\\?\UNC\s\sh\x`: `\\?\UNC\s\sh\x`,
 		`\\?\C:`:         `\\?\C:`,
 		`/srv/x`:         `/srv/x`,
@@ -545,12 +545,12 @@ func TestPlainDrivePath(t *testing.T) {
 }
 
 func TestBadDocPathWindowsForms(t *testing.T) {
-	for _, v := range []string{`\\?\UNC\s\sh\p.md`, `//?/UNC/s/sh/p.md`, `\\s\sh\p.md`} {
+	for _, v := range []string{`\\?\UNC\s\sh\p.md`, `\\?\unc\s\sh\p.md`, `\\s\sh\p.md`} {
 		if msg := badDocPath("path", v); !strings.Contains(msg, "network path") {
 			t.Errorf("badDocPath(%q) = %q; want a network path message", v, msg)
 		}
 	}
-	for _, v := range []string{`\\.\pipe\x`, `\\?\Volume{1}\x`} {
+	for _, v := range []string{`\\.\pipe\x`, `\\?\Volume{1}\x`, `\\?\1:\x`} {
 		if msg := badDocPath("path", v); !strings.Contains(msg, "Windows device path") {
 			t.Errorf("badDocPath(%q) = %q; want a device path message", v, msg)
 		}
@@ -563,5 +563,19 @@ func TestDocumentAcceptsAnExtendedLengthDrivePath(t *testing.T) {
 	}
 	if msg := badDocPath("path", plainDrivePath(`\\?\C:\Users\me\notes\plan.md`)); msg != "" {
 		t.Errorf("badDocPath = %q", msg)
+	}
+}
+
+func TestUnixSlashQuestionPathsPass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("//?/ is a Windows prefix there")
+	}
+	for _, v := range []string{`//?/C:/x`, `//?/unc/s/x`} {
+		if plainDrivePath(v) != v {
+			t.Errorf("plainDrivePath(%q) changed it", v)
+		}
+		if msg := badDocPath("path", v); msg != "" {
+			t.Errorf("badDocPath(%q) = %q", v, msg)
+		}
 	}
 }
