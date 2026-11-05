@@ -18,7 +18,7 @@ type Command struct {
 }
 
 // ErrDeclined is Run's error when the user declined the elevation prompt.
-var ErrDeclined = errors.New("the request to run as administrator was declined")
+var ErrDeclined = errors.New("the Windows prompt was declined")
 
 // Elevator is how privileged steps are run on this OS.
 type Elevator interface {

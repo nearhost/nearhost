@@ -114,6 +114,28 @@ func TestSudoRunDoesNotStartSudoWhenAlreadyCancelled(t *testing.T) {
 	}
 }
 
+// Run hands Command.Input to sudo on its standard input.
+func TestSudoRunPassesInputOnStdin(t *testing.T) {
+	dir := t.TempDir()
+	got := filepath.Join(dir, "stdin")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ncat > '"+got+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useSudo(t, fake)
+	err := System().Run(context.Background(), Command{
+		Path:  "/bin/nearhost",
+		Args:  []string{"hosts", "apply"},
+		Input: "a.test\nb.test\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(got); string(data) != "a.test\nb.test\n" {
+		t.Errorf("sudo read %q on stdin, want the command's input", data)
+	}
+}
+
 // Run can run sudo so it never prompts, for credentials already cached, or
 // prompt with words of the caller's.
 func TestSudoRunPromptAndNoPrompt(t *testing.T) {

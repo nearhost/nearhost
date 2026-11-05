@@ -21,7 +21,10 @@ func TestListenSeesEveryHolderOnWindows(t *testing.T) {
 		t.Run(h.name, func(t *testing.T) {
 			holder, err := net.Listen(h.network, h.addr)
 			if err != nil {
-				t.Skipf("cannot hold %s: %v", h.addr, err)
+				if h.name == "[::1]" {
+					t.Skipf("cannot hold %s: %v", h.addr, err)
+				}
+				t.Fatalf("cannot hold %s: %v", h.addr, err)
 			}
 			defer holder.Close()
 			port := holder.Addr().(*net.TCPAddr).Port

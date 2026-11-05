@@ -13,5 +13,6 @@ const (
 )
 
 // systemSudo is the production findSudo. Windows has no sudo to find: the
-// trust store library adds the CA to the current user's store itself.
+// trust store library adds the CA to the current user's store itself. It is
+// nil, which tells the trust command to skip the sudo check.
 var systemSudo func() error
