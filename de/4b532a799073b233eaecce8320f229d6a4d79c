@@ -1,0 +1,42 @@
+internal/cli/doctor_system_test.go
+  s_8d6383ee1da9a6::t_7558a5a2041407 9,25,36
+internal/engine/engine.go
+  s_8d6383ee1da9a6::t_2db269701c61ed 18
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 268-269
+internal/netbind/netbind_windows_test.go
+  s_8d6383ee1da9a6::t_c8fff3e00acf25 1-89
+internal/netbind/listen_unix.go
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 1-18
+internal/cli/doctor_system.go
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 7-8,16,22
+internal/netbind/netbind_test.go
+  s_8d6383ee1da9a6::t_c8fff3e00acf25 1-52
+internal/engine/project.go
+  s_8d6383ee1da9a6::t_2db269701c61ed 15
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 456
+internal/netbind/listen_windows.go
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 1-40
+internal/proxy/proxy.go
+  s_8d6383ee1da9a6::t_2db269701c61ed 15
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 151
+.github/workflows/ci.yml
+  s_8d6383ee1da9a6::t_2db269701c61ed 35
+internal/netbind/netbind.go
+  s_8d6383ee1da9a6::t_54ffded72f1b5a 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de4b532a799073b233eaecce8320f229d6a4d79c",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
