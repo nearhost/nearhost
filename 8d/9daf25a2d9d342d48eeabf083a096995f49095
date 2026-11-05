@@ -1,0 +1,21 @@
+internal/documents/serve_test.go
+  s_8d6383ee1da9a6::t_e5260a47efbf06 11,68-71,343-347,390
+internal/documents/sftp_test.go
+  s_8d6383ee1da9a6::t_e5260a47efbf06 12,27-71,78,96,100-101,105,108,111,114,118-119,122,125,128,131,134,137,153,184,186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d9daf25a2d9d342d48eeabf083a096995f49095",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
