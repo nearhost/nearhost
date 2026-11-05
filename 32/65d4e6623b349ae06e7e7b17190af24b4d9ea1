@@ -1,0 +1,46 @@
+internal/transport/sftp.go
+  s_8d6383ee1da9a6::t_1b144064444853 172-179,224-227,234-242
+  s_8d6383ee1da9a6::t_5578811dbcc8f7 189-193,221-223
+  s_8d6383ee1da9a6::t_32ce460cfedc8c 377-382
+  s_8d6383ee1da9a6::t_b4319a3487baf6 243-244
+internal/cli/documents.go
+  s_8d6383ee1da9a6::t_1d3fed8a69b1d7 9,96-100
+.github/workflows/ci.yml
+  s_8d6383ee1da9a6::t_3e9333a294b166 35
+internal/cli/documents_test.go
+  s_8d6383ee1da9a6::t_750760ecd3f751 5,339,341,343-347
+  s_8d6383ee1da9a6::t_d23454396f21ed 11,73,81,96,107,475-477
+internal/transport/linked_volume_test.go
+  s_8d6383ee1da9a6::t_5578811dbcc8f7 13-19,21-23,25-30,61-100
+  s_8d6383ee1da9a6::t_8061184cdd051a 1-12,20,24,31-60,101-102
+internal/documents/serve_test.go
+  s_8d6383ee1da9a6::t_e5260a47efbf06 11,68-71,343-347,390
+  s_8d6383ee1da9a6::t_5bb072f8a67833 13
+  s_8d6383ee1da9a6::t_3e9333a294b166 433-436
+internal/documents/sftp_test.go
+  s_8d6383ee1da9a6::t_e5260a47efbf06 12,27-71,78,96,100-101,105,108,111,114,118-119,122,125,128,131,134,137,153,184,186
+internal/agentapi/documents_handlers.go
+  s_8d6383ee1da9a6::t_d23454396f21ed 10,49-51
+internal/cli/export_test.go
+  s_8d6383ee1da9a6::t_5ad6c94268e506 91,117,312
+internal/documents/tree_test.go
+  s_8d6383ee1da9a6::t_8061184cdd051a 148-169
+internal/documents/fs.go
+  s_8d6383ee1da9a6::t_034d7d5802bdb2 37-39,41-45,58,60-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3265d4e6623b349ae06e7e7b17190af24b4d9ea1",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
