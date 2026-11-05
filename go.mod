@@ -20,7 +20,7 @@ require (
 	github.com/pkg/sftp v1.13.12
 	github.com/smallstep/truststore v0.13.0
 	github.com/spf13/cobra v1.10.2
-	github.com/yuin/goldmark v1.8.6
+	github.com/yuin/goldmark v1.8.7
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.61.0
