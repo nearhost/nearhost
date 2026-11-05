@@ -1,0 +1,41 @@
+internal/cli/input_unix.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 17-20,25
+internal/elevate/uac_windows.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 51-52,116,122,124
+internal/elevate/elevate.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 21
+internal/cli/elevation_unix.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 1
+internal/cli/elevation_windows.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 16-17
+internal/hosts/prefix_unix.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 1
+internal/netbind/netbind_windows_test.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 24-27
+internal/elevate/sudo_unix_test.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 117-138
+internal/hosts/hosts.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 310-313
+internal/cli/input_windows.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 19-22
+internal/proxy/trust_sudo_unix.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 1
+internal/cli/trust.go
+  s_8d6383ee1da9a6::t_52927e0434b5fc 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db6f0c6deb561502f77f80d0d0ad832e49857564",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "unknown"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
