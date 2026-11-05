@@ -173,8 +173,9 @@ type Engine struct {
 	// holderOf names the process listening on a local TCP port, or returns ""
 	// when it cannot tell or ctx ends first. Tests replace it.
 	holderOf func(ctx context.Context, port int) string
-	// listen and listenPacket are net.Listen and net.ListenPacket, which
-	// probePort binds the proxy's ports with. Tests replace them.
+	// listen and listenPacket are netbind.Listen and netbind.ListenPacket
+	// (exclusive binds on Windows), which probePort binds the proxy's ports
+	// with. Tests replace them.
 	listen       func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
 	// applySites gives the proxy the set of sites that includes a project

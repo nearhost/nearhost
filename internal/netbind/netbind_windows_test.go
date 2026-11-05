@@ -66,6 +66,7 @@ func TestListenAfterServingIsFreeOnWindows(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")
 	})}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.SetKeepAlivesEnabled(false)
 	go srv.Serve(l)
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}

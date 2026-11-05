@@ -152,7 +152,8 @@ func updateHTTP() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 
 // shouldCheckForUpdate reports whether this run of nearhost checks for a new
 // release in the background: not for the commands about versions and help,
-// not as root, which is sudo running the hosts helper, not when stderr is
+// not elevated (as root, or an elevated Windows process), which is the
+// hosts helper running with administrator rights, not when stderr is
 // not a terminal to say so on, not for a development build, and not when
 // NEARHOST_NO_UPDATE_CHECK is set.
 func shouldCheckForUpdate(args []string, getenv func(string) string, version string, elevated bool, tty bool) bool {

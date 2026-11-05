@@ -511,3 +511,19 @@ func TestDocumentListShowsTheLastOpened(t *testing.T) {
 		t.Fatalf("list %v, want a.md, the document opened last", list)
 	}
 }
+
+func TestDocumentRefusesANetworkPath(t *testing.T) {
+	unc := `\\server\share\plan.md`
+	if msg := badDocPath("path", unc); !strings.Contains(msg, "network paths") {
+		t.Errorf("badDocPath(%q) = %q; want a network path message", unc, msg)
+	}
+	e := newDocServer(t, true)
+	body := fmt.Sprintf(`{"path": %q, "root": "/srv/app", "requester": "claude-code"}`, unc)
+	st, out := e.ask(t, body)
+	if msg, _ := out["error"].(string); st != 400 || !strings.Contains(msg, `\\server\share`) {
+		t.Errorf("%d %v", st, out)
+	}
+	if msg := badDocPath("path", "/srv/app/plan.md"); msg != "" {
+		t.Errorf("badDocPath(/srv/app/plan.md) = %q", msg)
+	}
+}

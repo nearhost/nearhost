@@ -38,17 +38,22 @@ type docReqBody struct {
 }
 
 // badDocPath is why v can't be the field called name of a document
-// request, or "" when it can: it must be absolute, without NUL, and at
-// most maxDocPath bytes. The Shower checks the rest.
+// request, or "" when it can: it must be absolute, without NUL, not a
+// network path, and at most maxDocPath bytes. The Shower checks the rest.
 func badDocPath(name, v string) string {
 	switch {
 	case strings.ContainsRune(v, 0):
 		return name + " must not contain NUL"
 	case len(v) > maxDocPath:
 		return fmt.Sprintf("%s must be at most %d bytes", name, maxDocPath)
+	// A network path resolves as neither a slash path nor a drive path.
+	// filepath.VolumeName is "" everywhere but Windows, where it is
+	// \\server\share for //server/share too.
+	case strings.HasPrefix(v, `\\`) || len(filepath.VolumeName(v)) > 2:
+		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
 	// filepath.IsAbs is path.IsAbs everywhere but Windows, where it also
 	// takes C:\proj, a path on the laptop.
-	case !path.IsAbs(v) && !filepath.IsAbs(v):
+	case !path.IsAbs(v) && !(filepath.IsAbs(v) && len(filepath.VolumeName(v)) == 2):
 		return fmt.Sprintf("%s must be absolute, not %q", name, v)
 	}
 	return ""

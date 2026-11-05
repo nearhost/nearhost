@@ -59,7 +59,7 @@ func systemTrust() trustBackend {
 		nss:        proxy.CheckNSS,
 		installNSS: proxy.InstallNSS,
 		uninstall:  proxy.Uninstall,
-		findSudo:   systemSudo, // nil on Windows, which skips the sudo check.
+		findSudo:   systemSudo,
 	}
 }
 

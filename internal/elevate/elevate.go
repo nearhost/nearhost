@@ -1,6 +1,6 @@
-// Package elevate runs the steps that need administrator rights: the hosts
-// file and the system trust store. On macOS and Linux that is sudo; the
-// Elevator hides which, so the callers do not know.
+// Package elevate runs the steps that need administrator rights, such as
+// writing the hosts file. On macOS and Linux that is sudo; the Elevator
+// hides which, so the callers do not know.
 package elevate
 
 import (
