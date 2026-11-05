@@ -13,21 +13,22 @@ import (
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
-// rootBackend is how the interface reaches sudo; tests use a fake.
+// rootBackend is how the interface reaches the elevator (sudo, or the UAC
+// prompt on Windows); tests use a fake.
 type rootBackend struct {
-	// needed reports whether steps that need root go through sudo.
+	// needed reports whether steps that need root go through the elevator.
 	needed func() bool
 	// takesPassword reports whether Nearhost collects the password itself.
 	takesPassword func() bool
-	// cached reports whether sudo has the user's credentials, without
-	// asking.
+	// cached reports whether the elevator has the user's credentials,
+	// without asking.
 	cached func(ctx context.Context) bool
 	// validate checks a password and caches the credentials; a refused
 	// password is tui.ErrWrongPassword.
 	validate func(ctx context.Context, password string) error
 }
 
-// systemRoot is the production backend: e's.
+// systemRoot is the production backend, built from the elevator e.
 func systemRoot(e elevate.Elevator) rootBackend {
 	return rootBackend{
 		needed:        e.Needed,
@@ -67,8 +68,10 @@ const terminalPrompt = " Password for %p: "
 // run runs step, which needs root, for the reason why: at once when sudo has
 // the user's credentials, after the password box when it does not, and in
 // the terminal when they are not cached even then, under Nearhost's header,
-// saying done when it went well. step is given the terminal when it runs
-// there, where it may prompt; otherwise nil, and it must not prompt.
+// saying done when it went well. An elevator that takes no password (the
+// UAC prompt) is run with neither the box nor the terminal, one step at a
+// time. step is given the terminal when it runs there, where it may prompt;
+// otherwise nil, and it must not prompt.
 func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context.Context, terminal io.Writer) error) error {
 	if !r.sudo.needed() {
 		return step(ctx, nil)
@@ -80,6 +83,9 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 		case <-ctx.Done():
 			return ctx.Err() // the start ended while another step asked
 		}
+	}
+	if !r.sudo.takesPassword() {
+		return step(ctx, nil)
 	}
 	// Checked with the turn held: a step that waited finds the credentials
 	// the one before it cached.

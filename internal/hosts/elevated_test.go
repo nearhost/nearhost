@@ -40,7 +40,7 @@ func TestElevatedApplierRunsTheHostsHelper(t *testing.T) {
 		t.Errorf("command %+v, want %+v", f.got, want)
 	}
 	f.err = errors.New("boom")
-	if err := ElevatedApplier(context.Background(), f, "x", "y", "", false)(nil); err == nil || err.Error() != "sudo hosts apply: boom" {
+	if err := ElevatedApplier(context.Background(), f, "x", "y", "", false)(nil); err == nil || err.Error() != elevatedApplyPrefix+"boom" {
 		t.Errorf("err = %v", err)
 	}
 }

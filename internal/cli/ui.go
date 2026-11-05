@@ -202,7 +202,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 
 // hostsThrough is an EnsureHosts for the interface: when the hosts block has
 // to change, it runs the privileged write as root, asking for the password
-// in the interface when sudo needs it.
+// in the interface when sudo needs it (on Windows, Windows asks).
 func hostsThrough(root asRoot, path string, applier func(ctx context.Context, prompt bool) hosts.Applier) func(context.Context, []string) error {
 	return func(ctx context.Context, aliases []string) error {
 		_, err := hosts.Ensure(path, aliases, func(want []string) error {
@@ -215,12 +215,15 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 			err := root.run(ctx, why, "Added to "+path+".", func(ctx context.Context, terminal io.Writer) error {
 				return applier(ctx, terminal != nil)(want)
 			})
+			verb := "were"
+			if len(want) == 1 {
+				verb = "was"
+			}
 			if errors.Is(err, tui.ErrPasswordCancelled) {
-				verb := "were"
-				if len(want) == 1 {
-					verb = "was"
-				}
 				return fmt.Errorf("you cancelled the password, so %s %s not added to %s", names, verb, path)
+			}
+			if errors.Is(err, elevate.ErrDeclined) {
+				return fmt.Errorf("you declined the Windows prompt, so %s %s not added to %s", names, verb, path)
 			}
 			return err
 		})

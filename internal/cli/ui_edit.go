@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -150,6 +151,9 @@ func (u *uiEngine) Trust(ctx context.Context) error {
 	})
 	if errors.Is(err, tui.ErrPasswordCancelled) {
 		return errors.New("you cancelled the password; the CA is not trusted yet")
+	}
+	if errors.Is(err, elevate.ErrDeclined) {
+		return errors.New("you declined the Windows prompt; the CA is not trusted yet")
 	}
 	return err
 }

@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -28,35 +32,34 @@ func newHostsCmd() *cobra.Command {
 		Short: "Manage the nearhost block in /etc/hosts",
 		Long: `Manage the nearhost block in /etc/hosts.
 
-Asks for your password, as it runs sudo.`,
+` + elevationNote,
 	}
 	var file string
 	cmd.PersistentFlags().StringVar(&file, "file", hosts.DefaultPath, "hosts file to edit")
 
+	var input, report string
 	apply := &cobra.Command{
 		Use:    "apply",
 		Hidden: true,
 		Args:   cobra.NoArgs,
-		Short:  "Set the managed block to the aliases read from stdin (one per line)",
+		Short:  "Set the managed block to the aliases read from stdin or --input (one per line)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var aliases []string
-			sc := bufio.NewScanner(cmd.InOrStdin())
-			for sc.Scan() {
-				if a := strings.TrimSpace(sc.Text()); a != "" {
-					aliases = append(aliases, a)
+			err := applyAliases(cmd.InOrStdin(), file, input)
+			if err != nil && report != "" {
+				if rerr := writeReport(report, err); rerr != nil {
+					return errors.Join(err, rerr)
 				}
 			}
-			if err := sc.Err(); err != nil {
-				return err
-			}
-			return hosts.Apply(file, aliases)
+			return err
 		},
 	}
+	apply.Flags().StringVar(&input, "input", "", "read the aliases from this file instead of stdin (at most 1 MiB)")
+	apply.Flags().StringVar(&report, "report", "", "when apply fails, write the error's text to this file")
 
 	clean := &cobra.Command{
 		Use:   "clean",
 		Args:  cobra.NoArgs,
-		Short: "Remove the managed block (prompts for sudo)",
+		Short: cleanShort,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			exe, err := os.Executable()
 			if err != nil {
@@ -77,4 +80,63 @@ Asks for your password, as it runs sudo.`,
 
 	cmd.AddCommand(apply, clean)
 	return cmd
+}
+
+// maxInput is the most `hosts apply --input` reads: a hosts block never
+// holds anything near it.
+const maxInput = 1 << 20
+
+// applyAliases reads aliases, one per line, from the file input, or from
+// stdin when input is empty, and sets the managed block of file to them.
+func applyAliases(stdin io.Reader, file, input string) error {
+	r := stdin
+	if input != "" {
+		f, err := os.Open(input)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		// One byte more than the limit tells a file at the limit from one
+		// over it.
+		data, err := io.ReadAll(io.LimitReader(f, maxInput+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxInput {
+			return fmt.Errorf("%s is over %d bytes", input, maxInput)
+		}
+		r = bytes.NewReader(data)
+	}
+	var aliases []string
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		if a := strings.TrimSpace(sc.Text()); a != "" {
+			aliases = append(aliases, a)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	return hosts.Apply(file, aliases)
+}
+
+// writeReport writes err's text to a new file at path. The elevated process
+// that calls it is handed a path in the user's temp directory, which other
+// processes of that user can write to, so the file is created with
+// O_EXCL, which fails on an existing file or link rather than following it,
+// and the directory holding it must not be a symlink or a junction.
+func writeReport(path string, err error) error {
+	dir, derr := os.Lstat(filepath.Dir(path))
+	if derr != nil {
+		return derr
+	}
+	if dir.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return fmt.Errorf("report directory %s is a link", filepath.Dir(path))
+	}
+	f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if ferr != nil {
+		return ferr
+	}
+	_, werr := fmt.Fprintln(f, err)
+	return errors.Join(werr, f.Close())
 }
