@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -332,5 +333,54 @@ func TestLeftoverCaddyDirOnlyWhenBothExist(t *testing.T) {
 	caddyTree(t, filepath.Join(data, "caddy"), "new key")
 	if got, ok := LeftoverCaddyDir(); !ok || got != old {
 		t.Fatalf("both exist: %q, %v; want %q", got, ok, old)
+	}
+}
+
+func TestDirsForEachOS(t *testing.T) {
+	home, appData, localAppData, xdgConfig, xdgData := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("LOCALAPPDATA", localAppData)
+	for _, tc := range []struct {
+		goos   string
+		xdg    bool
+		config string
+		data   string
+	}{
+		{"darwin", false, filepath.Join(home, ".config", "nearhost"), filepath.Join(home, "Library", "Application Support", "nearhost")},
+		{"linux", false, filepath.Join(home, ".config", "nearhost"), filepath.Join(home, ".local", "share", "nearhost")},
+		{"windows", false, filepath.Join(appData, "nearhost"), filepath.Join(localAppData, "nearhost")},
+		{"darwin", true, filepath.Join(xdgConfig, "nearhost"), filepath.Join(xdgData, "nearhost")},
+		{"linux", true, filepath.Join(xdgConfig, "nearhost"), filepath.Join(xdgData, "nearhost")},
+		{"windows", true, filepath.Join(xdgConfig, "nearhost"), filepath.Join(xdgData, "nearhost")},
+	} {
+		if tc.xdg {
+			t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+			t.Setenv("XDG_DATA_HOME", xdgData)
+		} else {
+			t.Setenv("XDG_CONFIG_HOME", "")
+			t.Setenv("XDG_DATA_HOME", "")
+		}
+		if got, err := configDirFor(tc.goos); err != nil || got != tc.config {
+			t.Errorf("configDirFor(%s), XDG %v: got %q, %v; want %q", tc.goos, tc.xdg, got, err, tc.config)
+		}
+		if got, err := dataDirFor(tc.goos); err != nil || got != tc.data {
+			t.Errorf("dataDirFor(%s), XDG %v: got %q, %v; want %q", tc.goos, tc.xdg, got, err, tc.data)
+		}
+	}
+}
+
+func TestDirsForWindowsNeedAppData(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	for _, v := range []string{"", "relative"} {
+		t.Setenv("APPDATA", v)
+		t.Setenv("LOCALAPPDATA", v)
+		if _, err := configDirFor("windows"); err == nil || !strings.Contains(err.Error(), "APPDATA") {
+			t.Errorf("configDirFor with APPDATA=%q: error %v, want one naming APPDATA", v, err)
+		}
+		if _, err := dataDirFor("windows"); err == nil || !strings.Contains(err.Error(), "LOCALAPPDATA") {
+			t.Errorf("dataDirFor with LOCALAPPDATA=%q: error %v, want one naming LOCALAPPDATA", v, err)
+		}
 	}
 }
