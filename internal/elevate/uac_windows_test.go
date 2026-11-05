@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // TestMain lets the test binary act as the elevated helper. An elevated
@@ -117,11 +119,12 @@ func TestUACRunSucceedsOnWindows(t *testing.T) {
 }
 
 func TestUACRunGivesTheExitCodeWithoutAReportOnWindows(t *testing.T) {
-	tempDir(t)
+	dir := tempDir(t)
 	err := System().Run(context.Background(), helperCommand(t, "", "exit", "4"))
 	if err == nil || err.Error() != "exited with code 4" {
 		t.Fatalf("Run: %v, want exited with code 4", err)
 	}
+	leftOver(t, dir)
 }
 
 func TestUACRunStopsWaitingWhenTheContextEndsOnWindows(t *testing.T) {
@@ -138,4 +141,42 @@ func TestUACRunStopsWaitingWhenTheContextEndsOnWindows(t *testing.T) {
 		t.Fatalf("Run took %v", took)
 	}
 	leftOver(t, dir)
+}
+
+func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
+	dir := tempDir(t)
+	asked, release, returned := make(chan string, 1), make(chan struct{}), make(chan struct{})
+	orig := runAs
+	runAs = func(_ string, args []string) (windows.Handle, error) {
+		defer close(returned)
+		asked <- args[slices.Index(args, "--input")+1]
+		<-release // the prompt is up until the test answers it
+		return 0, nil
+	}
+	t.Cleanup(func() { runAs = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+	start := time.Now()
+	err := System().Run(ctx, helperCommand(t, "a.test\n", "exit", "0"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run: %v, want context.Canceled", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("Run took %v", took)
+	}
+	input := <-asked
+	if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("input still there for a late approval: %v", err)
+	}
+	leftOver(t, dir)
+
+	close(release) // a late answer with no process to close
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runAs did not return after release")
+	}
+	time.Sleep(100 * time.Millisecond) // let the goroutine finish; a panic would fail the run
 }

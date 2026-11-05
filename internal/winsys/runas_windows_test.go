@@ -1,6 +1,7 @@
 package winsys
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -114,5 +115,42 @@ func TestRunAsKeepsArgumentsIntactOnWindows(t *testing.T) {
 	}
 	if string(got) != want {
 		t.Fatalf("argument = %q, want %q", got, want)
+	}
+}
+
+func TestRunAsStartsAProgramUnderASpacedPathOnWindows(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Zoë Smith")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "nearhost test.exe")
+	copyFile(t, self(t), path)
+	h, err := RunAs(path, []string{"--elevate-helper", "exit", "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := exitCode(t, h); code != 5 {
+		t.Fatalf("exit code = %d, want 5", code)
+	}
+}
+
+// copyFile copies the file at from to a new file at to.
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	src, err := os.Open(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		t.Fatal(err)
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

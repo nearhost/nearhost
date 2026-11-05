@@ -14,6 +14,15 @@ import (
 	"github.com/nearhost/nearhost/internal/winsys"
 )
 
+// runAs starts a program as administrator; tests replace it.
+var runAs = winsys.RunAs
+
+// started is what runAs gave back.
+type started struct {
+	h   windows.Handle
+	err error
+}
+
 // System is this OS's Elevator.
 func System() Elevator { return uac{} }
 
@@ -36,10 +45,10 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 
 // Run runs c through the UAC prompt and waits for it to finish. c.Input is
 // written to a file named by --input, and when the child fails, the last
-// line of the file named by --report is the error. When ctx ends Run stops
-// waiting and removes both files, without killing the child: one that has
-// not read its input yet then fails, so an approval given after a stop
-// changes nothing. c.Prompt and c.Interactive are ignored, as the prompt is
+// line of the file named by --report is the error. When ctx ends, while the
+// prompt is up or while the child runs, Run stops waiting and removes both
+// files, without killing the child: one that has not read its input yet
+// then fails, so an approval given after a stop changes nothing. c.Prompt and c.Interactive are ignored, as the prompt is
 // Windows' own.
 func (uac) Run(ctx context.Context, c Command) error {
 	if err := ctx.Err(); err != nil {
@@ -56,7 +65,28 @@ func (uac) Run(ctx context.Context, c Command) error {
 	}
 	report := filepath.Join(dir, "report")
 	args := append(slices.Clip(c.Args), "--input", input, "--report", report)
-	h, err := winsys.RunAs(c.Path, args)
+	// RunAs does not return while the prompt is up, so it runs on its own
+	// goroutine and Run can stop waiting for it. When Run has given up, the
+	// goroutine closes the handle of a child that was approved late.
+	result, abandoned := make(chan started), make(chan struct{})
+	go func() {
+		h, err := runAs(c.Path, args)
+		select {
+		case result <- started{h, err}:
+		case <-abandoned:
+			if err == nil && h != 0 {
+				windows.CloseHandle(h)
+			}
+		}
+	}()
+	var h windows.Handle
+	select {
+	case r := <-result:
+		h, err = r.h, r.err
+	case <-ctx.Done():
+		close(abandoned)
+		return ctx.Err()
+	}
 	if errors.Is(err, windows.ERROR_CANCELLED) {
 		return ErrDeclined
 	}

@@ -1,6 +1,8 @@
 package winsys
 
 import (
+	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -49,8 +51,20 @@ type shellExecuteInfo struct {
 // that shows the UAC prompt when this process is not elevated, and returns
 // the started process's handle, which the caller closes. Each argument
 // reaches the program as it is given. A declined prompt is
-// windows.ERROR_CANCELLED.
+// windows.ERROR_CANCELLED. It does not return while the prompt is up.
 func RunAs(file string, args []string) (windows.Handle, error) {
+	// ShellExecuteEx wants COM set up on the thread that calls it.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	switch err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err {
+	case nil, syscall.Errno(windows.S_FALSE):
+		defer windows.CoUninitialize()
+	case syscall.Errno(windows.RPC_E_CHANGED_MODE):
+		// COM is already set up on this thread in another mode, which
+		// ShellExecuteEx accepts.
+	default:
+		return 0, fmt.Errorf("initialise COM: %w", err)
+	}
 	verb, err := windows.UTF16PtrFromString("runas")
 	if err != nil {
 		return 0, err
@@ -76,6 +90,11 @@ func RunAs(file string, args []string) (windows.Handle, error) {
 	}
 	info.cbSize = uint32(unsafe.Sizeof(info))
 	if ok, _, err := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info))); ok == 0 {
+		if err == windows.Errno(0) {
+			// It failed without saying why; hInstApp holds its old-style
+			// error code.
+			return 0, fmt.Errorf("%w (ShellExecuteEx code %d)", windows.ERROR_GEN_FAILURE, info.hInstApp)
+		}
 		return 0, err
 	}
 	if info.hProcess == 0 {
