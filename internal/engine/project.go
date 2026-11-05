@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -453,7 +453,7 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, r
 	if owner, ok := e.claimPort(run, port); !ok {
 		return fmt.Errorf("loopback port %d is already forwarded for %s", port, owner)
 	}
-	if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
+	if l, err := netbind.Listen("tcp", netbind.LoopbackProbe(port)); err != nil {
 		e.releasePort(port)
 		return fmt.Errorf("loopback port %d is already in use on this machine%s: %w", port, e.heldBy(ctx, port), err)
 	} else if err := l.Close(); err != nil {
