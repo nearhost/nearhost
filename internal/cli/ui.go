@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/desktop"
 	"github.com/nearhost/nearhost/internal/documents"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -81,9 +82,9 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			}
 			// The applier ends sudo when ctx does, so a project stopped
 			// during the password prompt stops waiting for it.
-			return hosts.SudoApplierWith(ctx, exe, hosts.DefaultPath, terminalPrompt, !prompt)
+			return hosts.ElevatedApplier(ctx, elevate.System(), exe, hosts.DefaultPath, terminalPrompt, prompt)
 		},
-		root: systemRoot(),
+		root: systemRoot(elevate.System()),
 		readHosts: func() (string, error) {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err

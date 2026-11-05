@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
 
@@ -32,7 +32,7 @@ var security = func(asRoot bool, args ...string) ([]byte, error) {
 		case err == nil:
 			args = append([]string{"--", name}, args...)
 			name = path
-		case !errors.Is(err, sudo.ErrNotFound) || os.Geteuid() != 0:
+		case !errors.Is(err, sudo.ErrNotFound) || !elevate.Elevated():
 			return nil, err
 		}
 	}

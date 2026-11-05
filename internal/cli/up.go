@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 )
@@ -60,7 +61,7 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			}
 			// The applier ends sudo when ctx does, so an interrupt during
 			// the password prompt shuts down instead of waiting for it.
-			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.SudoApplierContext(ctx, exe, hosts.DefaultPath))
+			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.ElevatedApplier(ctx, elevate.System(), exe, hosts.DefaultPath, hostsPrompt, true))
 			return err
 		},
 		notify: notifyStop,

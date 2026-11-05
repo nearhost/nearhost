@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/sudo"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -16,6 +17,8 @@ import (
 type rootBackend struct {
 	// needed reports whether steps that need root go through sudo.
 	needed func() bool
+	// takesPassword reports whether Nearhost collects the password itself.
+	takesPassword func() bool
 	// cached reports whether sudo has the user's credentials, without
 	// asking.
 	cached func(ctx context.Context) bool
@@ -24,13 +27,14 @@ type rootBackend struct {
 	validate func(ctx context.Context, password string) error
 }
 
-// systemRoot is the production backend.
-func systemRoot() rootBackend {
+// systemRoot is the production backend: e's.
+func systemRoot(e elevate.Elevator) rootBackend {
 	return rootBackend{
-		needed: sudo.Needed,
-		cached: sudo.Cached,
+		needed:        e.Needed,
+		takesPassword: e.TakesPassword,
+		cached:        e.Cached,
 		validate: func(ctx context.Context, password string) error {
-			return wrongPassword(sudo.Validate(ctx, password))
+			return wrongPassword(e.Validate(ctx, password))
 		},
 	}
 }

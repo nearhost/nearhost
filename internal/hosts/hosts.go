@@ -2,22 +2,18 @@
 package hosts
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
-	"time"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hostname"
-	"github.com/nearhost/nearhost/internal/sudo"
 )
 
 const (
@@ -250,7 +246,7 @@ func replaceFile(path, content string) (err error) {
 	if _, err = tmp.WriteString(content); err != nil {
 		return fmt.Errorf("write %s: %w", tmpName, err)
 	}
-	if info != nil && os.Geteuid() == 0 {
+	if info != nil && elevate.Elevated() {
 		if err = chownLike(tmp, info); err != nil {
 			return fmt.Errorf("write %s: %w", tmpName, err)
 		}
@@ -304,79 +300,26 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 	return true, nil
 }
 
-// sudoStopDelay is how long sudo gets to leave after it was asked to
-// terminate before it is killed.
-const sudoStopDelay = 2 * time.Second
-
-// SudoApplier runs `sudo <executable> hosts apply --file <path>` with aliases on stdin.
-// Nothing interrupts it while sudo waits for a password; a caller that must
-// be able to give up uses SudoApplierContext.
-func SudoApplier(executable, path string) Applier {
-	return SudoApplierContext(context.Background(), executable, path)
-}
-
-// SudoApplierContext is SudoApplier bound to ctx. When ctx ends while sudo
-// runs, which includes sudo waiting for a password, sudo is asked to
-// terminate (and killed if it stays), and the applier returns ctx's error.
-// When ctx has already ended sudo is not started.
-func SudoApplierContext(ctx context.Context, executable, path string) Applier {
-	return SudoApplierWith(ctx, executable, path, sudoPrompt, false)
-}
-
-// sudoPrompt is the password prompt of SudoApplierContext.
-const sudoPrompt = "nearhost needs your password to update /etc/hosts: "
-
-// SudoApplierWith is SudoApplierContext with prompt as sudo's password
-// prompt, or, with noPrompt, never prompting: for credentials sudo has
-// cached, where a prompt could only land on a terminal in use. sudo then
-// fails if it needs a password.
-func SudoApplierWith(ctx context.Context, executable, path, prompt string, noPrompt bool) Applier {
+// ElevatedApplier runs `<executable> hosts apply --file <path>` with aliases
+// on stdin, through e. prompt is sudo's password prompt, used when
+// interactive; otherwise sudo never prompts, for credentials it has cached,
+// where a prompt could only land on a terminal in use, and fails if it needs
+// a password. When ctx ends while the command runs, which includes sudo
+// waiting for a password, it is asked to terminate (and killed if it stays),
+// and the applier returns ctx's error. When ctx has already ended nothing is
+// started.
+func ElevatedApplier(ctx context.Context, e elevate.Elevator, executable, path, prompt string, interactive bool) Applier {
 	return func(aliases []string) error {
-		cmd, err := sudoCommand(ctx, executable, path, prompt, noPrompt, aliases)
+		err := e.Run(ctx, elevate.Command{
+			Path:        executable,
+			Args:        []string{"hosts", "apply", "--file", path},
+			Input:       strings.Join(aliases, "\n") + "\n",
+			Prompt:      prompt,
+			Interactive: interactive,
+		})
 		if err != nil {
-			return fmt.Errorf("sudo hosts apply: %w", err)
-		}
-		// Without a prompt the terminal is in use by someone else (the
-		// interface): what sudo and the command say is kept for the error.
-		var said bytes.Buffer
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if noPrompt {
-			cmd.Stdout, cmd.Stderr = &said, &said
-		}
-		if err := cmd.Run(); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return fmt.Errorf("sudo hosts apply: %w", ctxErr)
-			}
-			if line := lastLine(said.String()); line != "" {
-				return fmt.Errorf("sudo hosts apply: %s", line)
-			}
 			return fmt.Errorf("sudo hosts apply: %w", err)
 		}
 		return nil
 	}
-}
-
-// lastLine is the last line of what a command said that is not empty: the
-// error it ended with.
-func lastLine(said string) string {
-	lines := strings.Split(strings.TrimSpace(said), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
-func sudoCommand(ctx context.Context, executable, path, prompt string, noPrompt bool, aliases []string) (*exec.Cmd, error) {
-	bin, err := sudo.Binary()
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"-p", prompt}
-	if noPrompt {
-		args = []string{"-n"}
-	}
-	cmd := exec.CommandContext(ctx, bin, append(args, executable, "hosts", "apply", "--file", path)...)
-	cmd.Stdin = strings.NewReader(strings.Join(aliases, "\n") + "\n")
-	// Terminate rather than kill: at its password prompt sudo then puts the
-	// terminal back the way it was.
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = sudoStopDelay
-	return cmd, nil
 }
