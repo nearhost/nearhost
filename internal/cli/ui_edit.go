@@ -130,7 +130,8 @@ func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvic
 }
 
 // Trust runs what `nearhost trust` does, as root, asking for the password
-// in the interface when sudo needs it. Its output goes to the terminal only
+// in the interface when the elevator takes one (sudo; on Windows, Windows
+// asks). Its output goes to the terminal only
 // when it runs there.
 func (u *uiEngine) Trust(ctx context.Context) error {
 	if u.root.ask == nil {

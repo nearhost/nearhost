@@ -91,7 +91,7 @@ const maxInput = 1 << 20
 func applyAliases(stdin io.Reader, file, input string) error {
 	r := stdin
 	if input != "" {
-		f, err := os.Open(input)
+		f, err := openInput(input)
 		if err != nil {
 			return err
 		}
@@ -120,18 +120,30 @@ func applyAliases(stdin io.Reader, file, input string) error {
 	return hosts.Apply(file, aliases)
 }
 
+// refuseLinkedDir returns an error when dir is a symlink or a junction.
+func refuseLinkedDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return fmt.Errorf("%s is a link", dir)
+	}
+	return nil
+}
+
 // writeReport writes err's text to a new file at path. The elevated process
 // that calls it is handed a path in the user's temp directory, which other
-// processes of that user can write to, so the file is created with
-// O_EXCL, which fails on an existing file or link rather than following it,
-// and the directory holding it must not be a symlink or a junction.
+// processes of that user can write to. The file is created with O_EXCL,
+// which fails on an existing file or link rather than following it, and the
+// directory holding it must not be a symlink or a junction when it is
+// checked. That check and the create are two steps, so a directory swapped
+// for a junction between them could still redirect the new file; that is
+// safe enough because O_EXCL means nothing is overwritten and the content is
+// only the error's text, which the caller already has.
 func writeReport(path string, err error) error {
-	dir, derr := os.Lstat(filepath.Dir(path))
-	if derr != nil {
-		return derr
-	}
-	if dir.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return fmt.Errorf("report directory %s is a link", filepath.Dir(path))
+	if derr := refuseLinkedDir(filepath.Dir(path)); derr != nil {
+		return fmt.Errorf("report directory: %w", derr)
 	}
 	f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if ferr != nil {

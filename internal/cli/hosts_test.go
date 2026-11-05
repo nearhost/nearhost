@@ -107,6 +107,8 @@ func runApply(t *testing.T, args ...string) (string, error) {
 	return path, root.Execute()
 }
 
+// writeTemp writes content to a new file in a temp directory and returns its
+// path.
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "in")
@@ -193,5 +195,39 @@ func TestHostsHelpUsesTheElevationCopy(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), elevationNote) || !strings.Contains(out.String(), cleanShort) {
 		t.Fatalf("help:\n%s", out)
+	}
+}
+
+func TestHostsApplyRefusesASymlinkedInput(t *testing.T) {
+	secret := writeTemp(t, "secret line\n")
+	link := filepath.Join(t.TempDir(), "input")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("cannot make a symlink: %v", err)
+	}
+	report := filepath.Join(t.TempDir(), "report")
+	path, err := runApply(t, "--input", link, "--report", report)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	data, _ := os.ReadFile(report)
+	if strings.Contains(err.Error(), "secret line") || strings.Contains(string(data), "secret line") {
+		t.Fatalf("leaked: err %v, report %q", err, data)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "127.0.0.1 localhost\n" {
+		t.Fatalf("file modified:\n%s", got)
+	}
+}
+
+func TestHostsApplyRefusesAnInputInALinkedDirectory(t *testing.T) {
+	real := t.TempDir()
+	if err := os.WriteFile(filepath.Join(real, "in"), []byte("secret line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "dir")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot make a symlink: %v", err)
+	}
+	if _, err := runApply(t, "--input", filepath.Join(link, "in")); err == nil || strings.Contains(err.Error(), "secret line") {
+		t.Fatalf("err %v", err)
 	}
 }

@@ -17,7 +17,7 @@ import (
 type fakeRoot struct {
 	needed    bool
 	cached    bool
-	noBox     bool // whether the elevator takes no password (the UAC prompt)
+	noBox     bool  // whether the elevator takes no password (the UAC prompt)
 	sticks    bool  // whether a password the box takes stays cached
 	askErr    error // what the password box answers
 	asked     []string
@@ -31,7 +31,7 @@ func (f *fakeRoot) root() asRoot {
 		sudo: rootBackend{
 			needed:        func() bool { return f.needed },
 			takesPassword: func() bool { return !f.noBox },
-			cached: func(context.Context) bool { return f.cached },
+			cached:        func(context.Context) bool { return f.cached },
 			validate: func(context.Context, string) error {
 				return nil
 			},
