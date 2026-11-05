@@ -1,0 +1,24 @@
+internal/elevate/uac_windows_test.go
+  s_8d6383ee1da9a6::t_ff39f2068a0120 1-128,130,132,134-141
+  s_8d6383ee1da9a6::t_8df37fd5baed95 129,131,133
+internal/elevate/sudo_unix_test.go
+  s_8d6383ee1da9a6::t_ae9ddc141a60d6 37
+internal/winsys/runas_windows_test.go
+  s_8d6383ee1da9a6::t_5cf0678ed69a82 1-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f69bdfb2b7ff430d5a14d6dbe4de9d73010338d2",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
