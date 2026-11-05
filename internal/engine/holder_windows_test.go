@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestPortHolderFindsThisProcessOnWindows(t *testing.T) {
@@ -19,5 +22,15 @@ func TestPortHolderFindsThisProcessOnWindows(t *testing.T) {
 	want := fmt.Sprintf("engine.test (pid %d)", os.Getpid())
 	if !strings.Contains(got, want) {
 		t.Fatalf("PortHolder = %q, want %q", got, want)
+	}
+}
+
+func TestNetstatFromSystem32OnWindows(t *testing.T) {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "NETSTAT.EXE"); !strings.EqualFold(netstatTool.name, want) {
+		t.Fatalf("netstat is run as %q, want %q", netstatTool.name, want)
 	}
 }

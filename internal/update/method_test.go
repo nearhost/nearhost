@@ -11,7 +11,8 @@ func TestDetect(t *testing.T) {
 	env := func(vars map[string]string) func(string) string {
 		return func(k string) string { return vars[k] }
 	}
-	home := map[string]string{"HOME": "/Users/me"}
+	// Go's default GOPATH is under USERPROFILE on Windows.
+	home := map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}
 	for _, tc := range []struct {
 		name, exe string
 		env       map[string]string
@@ -27,7 +28,7 @@ func TestDetect(t *testing.T) {
 		{"npx", "/Users/me/.npm/_npx/1a2b3c/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost", home, Ephemeral, ""},
 		{"bunx", "/private/tmp/bunx-501-@nearhost/cli@latest/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost", home, Ephemeral, ""},
 		{"go default", "/Users/me/go/bin/nearhost", home, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
-		{"go GOPATH", "/work/gopath/bin/nearhost", map[string]string{"HOME": "/Users/me", "GOPATH": "/work/gopath:/other"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
+		{"go GOPATH", "/work/gopath/bin/nearhost", map[string]string{"HOME": "/Users/me", "GOPATH": "/work/gopath" + string(filepath.ListSeparator) + "/other"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"go GOBIN", "/opt/gobin/nearhost", map[string]string{"HOME": "/Users/me", "GOBIN": "/opt/gobin"}, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"script usr local", "/usr/local/bin/nearhost", home, Script, "curl -fsSL https://nearhost.dev/install.sh | sh"},
 		{"script local bin", "/Users/me/.local/bin/nearhost", home, Script, "curl -fsSL https://nearhost.dev/install.sh | sh"},
@@ -45,8 +46,9 @@ func TestDetect(t *testing.T) {
 }
 
 func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
-	m := Detect("/opt/tools/bin/nearhost", func(string) string { return "" })
-	if !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR=/opt/tools/bin") {
+	dir := filepath.Join("/opt", "tools", "bin")
+	m := Detect(filepath.Join(dir, "nearhost"), func(string) string { return "" })
+	if !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR="+dir) {
 		t.Fatalf("Env = %v, want the binary's directory as NEARHOST_INSTALL_DIR", m.Env)
 	}
 	if m.Args[0] != "sh" || !strings.Contains(m.Args[2], "install.sh | sh") {
@@ -71,5 +73,23 @@ func TestGoBinHomeForEachOS(t *testing.T) {
 		if got := goBin(tc.dir, getenv, tc.goos); got != tc.want {
 			t.Errorf("goBin(%s) on %s = %v, want %v", tc.dir, tc.goos, got, tc.want)
 		}
+	}
+}
+
+func TestGoBinIgnoresCaseOnWindows(t *testing.T) {
+	// No drive letters: the test runs on Unix too, where GOPATH lists split
+	// on the colon.
+	env := map[string]string{"USERPROFILE": `\Users\Ada`}
+	getenv := func(name string) string { return env[name] }
+	dir := filepath.Join(`\users\ada`, "go", "bin")
+	if !goBin(dir, getenv, "windows") {
+		t.Errorf("goBin(%s) on windows = false for USERPROFILE %s", dir, env["USERPROFILE"])
+	}
+	if goBin(dir, getenv, "linux") {
+		t.Errorf("goBin(%s) on linux = true, though case matters there", dir)
+	}
+	env = map[string]string{"GOBIN": `\Go\Bin`}
+	if !goBin(`\go\bin`, getenv, "windows") {
+		t.Error("goBin on windows = false for GOBIN differing only in case")
 	}
 }

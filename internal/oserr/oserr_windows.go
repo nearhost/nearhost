@@ -7,11 +7,14 @@ import (
 )
 
 // Winsock reports its own WSAE codes, not the POSIX ones syscall defines for
-// Windows, so those would never match. Reading a directory fails with
+// Windows, so those would never match. A bind to a port in a range Hyper-V
+// or WinNAT has reserved, or held with SO_EXCLUSIVEADDRUSE, is WSAEACCES:
+// taken, as far as Nearhost can tell. Reading a directory fails with
 // ERROR_INVALID_FUNCTION; a path beneath a regular file is
-// ERROR_PATH_NOT_FOUND, which callers see as fs.ErrNotExist.
+// ERROR_PATH_NOT_FOUND, which syscall defines as ENOTDIR and which is also
+// fs.ErrNotExist. So is a path whose directory is missing.
 var (
-	addrInUse        = []syscall.Errno{windows.WSAEADDRINUSE}
+	addrInUse        = []syscall.Errno{windows.WSAEADDRINUSE, windows.WSAEACCES}
 	noLoopbackFamily = []syscall.Errno{windows.WSAEADDRNOTAVAIL, windows.WSAEAFNOSUPPORT}
 	nothingListening = []syscall.Errno{windows.WSAECONNREFUSED, windows.ERROR_FILE_NOT_FOUND, windows.ERROR_PATH_NOT_FOUND}
 	crossDevice      = []syscall.Errno{windows.ERROR_NOT_SAME_DEVICE}
