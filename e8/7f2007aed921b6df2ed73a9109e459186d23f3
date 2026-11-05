@@ -1,0 +1,35 @@
+internal/cli/documents.go
+  s_8d6383ee1da9a6::t_1d3fed8a69b1d7 9,96-100
+.github/workflows/ci.yml
+  s_8d6383ee1da9a6::t_3e9333a294b166 35
+internal/documents/fs.go
+  s_8d6383ee1da9a6::t_034d7d5802bdb2 37-39,41-45,58,60-64
+internal/documents/tree_test.go
+  s_8d6383ee1da9a6::t_8061184cdd051a 148-169
+internal/documents/serve_test.go
+  s_8d6383ee1da9a6::t_3e9333a294b166 426-429
+  s_8d6383ee1da9a6::t_5bb072f8a67833 12
+internal/transport/linked_volume_test.go
+  s_8d6383ee1da9a6::t_8061184cdd051a 1-51
+internal/transport/sftp.go
+  s_8d6383ee1da9a6::t_1b144064444853 172-179,216-220,227-235
+  s_8d6383ee1da9a6::t_b4319a3487baf6 236-237
+internal/cli/documents_test.go
+  s_8d6383ee1da9a6::t_750760ecd3f751 5,337,339,341-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e87f2007aed921b6df2ed73a9109e459186d23f3",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
