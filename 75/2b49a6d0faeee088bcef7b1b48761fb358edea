@@ -1,0 +1,49 @@
+internal/cli/trust.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 62
+internal/cli/elevation_windows_test.go
+  s_8d6383ee1da9a6::t_72163bd2fa2ce2 30
+  s_8d6383ee1da9a6::t_9e0517d15c7acc 8,12-15,58-142
+internal/cli/input_windows.go
+  s_8d6383ee1da9a6::t_c436dd66b990f6 6,10,15-140,147,161-195
+internal/engine/engine.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 176-178
+internal/cli/elevation_windows.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 12,15-19
+internal/transport/linked_volume_test.go
+  s_8d6383ee1da9a6::t_e06e2482238c60 59-61,106-179
+internal/transport/sftp.go
+  s_8d6383ee1da9a6::t_365bc7ff472def 171-175,177-182,192-195,226-230,234,246,252-263,284-285,288-290
+internal/elevate/elevate.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 1-3
+internal/netbind/netbind_windows_test.go
+  s_8d6383ee1da9a6::t_72163bd2fa2ce2 69
+internal/agentapi/documents_test.go
+  s_8d6383ee1da9a6::t_1565a2694dd68d 514-529
+internal/agentapi/documents_handlers.go
+  s_8d6383ee1da9a6::t_204f40abe7c343 41-42,49-52,56
+  s_8d6383ee1da9a6::t_44896b61a46b5d 53
+internal/cli/input_unix.go
+  s_8d6383ee1da9a6::t_a492351e05adfd 12-18,22-28,48-72
+internal/cli/update.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 155-156
+internal/proxy/trust_sudo_windows.go
+  s_8d6383ee1da9a6::t_ce63df9d0a3df7 5-7
+internal/cli/hosts.go
+  s_8d6383ee1da9a6::t_0cc5587600fd9e 46-50,52,94-95,98,127-131,133-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "752b49a6d0faeee088bcef7b1b48761fb358edea",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
