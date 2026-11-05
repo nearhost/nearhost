@@ -1,0 +1,25 @@
+internal/winsys/runas_windows.go
+  s_8d6383ee1da9a6::t_28818a6298d340 1-85
+internal/elevate/uac_windows.go
+  s_8d6383ee1da9a6::t_703d0cffbae71f 1-101
+.github/workflows/ci.yml
+  s_8d6383ee1da9a6::t_07a9406deacecb 35
+internal/winsys/doc.go
+  s_8d6383ee1da9a6::t_75bdfc2e5121b4 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c51b6de94f01525ac6ac851d8873f1bc187373d3",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
