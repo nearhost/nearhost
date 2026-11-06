@@ -2,8 +2,11 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // Listening on loopback only keeps Windows from asking the user to let
@@ -30,14 +33,18 @@ func TestServersListenOnLoopbackOnWindows(t *testing.T) {
 	if len(servers) != 3 {
 		t.Fatalf("servers = %v, want the HTTPS, HTTP and web servers", servers)
 	}
+	ports := map[string]int{"nearhost": 8443, "nearhost_http": 8080, "nearhost_web": 6327}
 	for name, s := range servers {
-		for _, addr := range s.Listen {
-			if !slices.Contains([]string{"127.0.0.1", "[::1]"}, addr[:len(addr)-5]) {
-				t.Errorf("server %s listens on %s, want 127.0.0.1 or [::1]", name, addr)
-			}
+		port, ok := ports[name]
+		if !ok {
+			t.Errorf("unexpected server %s", name)
+			continue
 		}
-		if len(s.Listen) != 2 {
-			t.Errorf("server %s listens on %q, want 127.0.0.1 and [::1]", name, s.Listen)
+		if want := netbind.ServeAddrs(port); !slices.Equal(s.Listen, want) {
+			t.Errorf("server %s listens on %q, want %q", name, s.Listen, want)
+		}
+		if !slices.Contains(s.Listen, fmt.Sprintf("127.0.0.1:%d", port)) {
+			t.Errorf("server %s listens on %q, without 127.0.0.1", name, s.Listen)
 		}
 	}
 }

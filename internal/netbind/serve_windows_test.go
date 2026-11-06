@@ -11,6 +11,11 @@ import (
 
 func TestServeAddrsIsLoopbackOnWindows(t *testing.T) {
 	want := []string{"127.0.0.1:443", "[::1]:443"}
+	if l, err := net.Listen("tcp", "[::1]:0"); err != nil {
+		want = want[:1] // no IPv6 loopback here
+	} else {
+		l.Close()
+	}
 	if got := netbind.ServeAddrs(443); !slices.Equal(got, want) {
 		t.Errorf("ServeAddrs(443) = %q, want %q", got, want)
 	}

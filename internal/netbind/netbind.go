@@ -24,11 +24,13 @@ func LoopbackProbe(port int) string {
 // drops clients that aren't on loopback or in a site's extra ranges. On
 // Windows it is 127.0.0.1 and [::1], as a program that listens on any other
 // address makes Windows ask the user to let it through the firewall, and
-// Docker Desktop delivers container requests from loopback.
+// Docker Desktop delivers container requests from loopback. A machine
+// without the IPv6 loopback serves on 127.0.0.1 alone.
 func ServeAddrs(port int) []string {
 	p := strconv.Itoa(port)
-	out := make([]string, len(serveHosts))
-	for i, h := range serveHosts {
+	hosts := serveHosts()
+	out := make([]string, len(hosts))
+	for i, h := range hosts {
 		out[i] = net.JoinHostPort(h, p)
 	}
 	return out

@@ -8,7 +8,7 @@ import "net"
 const loopbackHost = "127.0.0.1"
 
 // serveHosts are the hosts ServeAddrs binds: the wildcard address.
-var serveHosts = []string{""}
+func serveHosts() []string { return []string{""} }
 
 // Listen is net.Listen.
 func Listen(network, address string) (net.Listener, error) {
