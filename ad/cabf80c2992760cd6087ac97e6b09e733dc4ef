@@ -1,0 +1,29 @@
+internal/netbind/listen_unix.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 11
+internal/netbind/serve_windows_test.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 14-18
+internal/proxy/listen_windows_test.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 5,8-9,36,38-44,46-47
+internal/netbind/netbind.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 27-28,31-33
+internal/engine/engine_test.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 2446,2546
+internal/netbind/listen_windows.go
+  s_8d6383ee1da9a6::t_08b373d2450d40 6,15-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "adcabf80c2992760cd6087ac97e6b09e733dc4ef",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
