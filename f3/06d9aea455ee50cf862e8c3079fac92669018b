@@ -1,0 +1,38 @@
+internal/cli/trust.go
+  s_8d6383ee1da9a6::t_7c65c7e8ff4361 104,124,129,131,146,153,179,199
+  s_8d6383ee1da9a6::t_212dda0e973785 105-106,180-181
+  s_8d6383ee1da9a6::t_1bbd28d6a2f22d 169-170
+internal/cli/elevation_unix.go
+  s_8d6383ee1da9a6::t_7c65c7e8ff4361 18-25
+internal/cli/doctor.go
+  s_8d6383ee1da9a6::t_7c65c7e8ff4361 411,413,455
+  s_8d6383ee1da9a6::t_62b589399d954f 422-423
+internal/cli/elevation_windows.go
+  s_8d6383ee1da9a6::t_7c65c7e8ff4361 13-21
+internal/cli/elevation_windows_test.go
+  s_8d6383ee1da9a6::t_cf10dbae95fda3 35-52
+internal/proxy/trust.go
+  s_8d6383ee1da9a6::t_62b589399d954f 101-104,116-118
+internal/proxy/nss_windows.go
+  s_8d6383ee1da9a6::t_62b589399d954f 1-6
+internal/proxy/nss_windows_test.go
+  s_8d6383ee1da9a6::t_692e9f6b3d45d8 1-9
+internal/proxy/nss_other.go
+  s_8d6383ee1da9a6::t_62b589399d954f 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f306d9aea455ee50cf862e8c3079fac92669018b",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
