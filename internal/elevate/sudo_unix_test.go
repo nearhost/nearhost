@@ -34,7 +34,7 @@ func useSudo(t *testing.T, path string) {
 	t.Cleanup(func() { sudo.Candidates, sudo.OwnedByRoot = origCandidates, origOwned })
 }
 
-func TestSudoRunCarriesArgsAndInput(t *testing.T) {
+func TestSudoCommandCarriesArgsAndInput(t *testing.T) {
 	fakeSudo := filepath.Join(t.TempDir(), "sudo")
 	if err := os.WriteFile(fakeSudo, nil, 0o755); err != nil {
 		t.Fatal(err)
