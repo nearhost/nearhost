@@ -1,0 +1,43 @@
+internal/proxy/listen_windows_test.go
+  s_8d6383ee1da9a6::t_d0533a0cb4bbb0 1-43
+internal/netbind/serve_windows_test.go
+  s_8d6383ee1da9a6::t_81335a01c134ae 4,9,16-35
+  s_8d6383ee1da9a6::t_f5a1b881e2ff39 1-3,5-8,10-15,36-37
+internal/cli/doctor_system.go
+  s_8d6383ee1da9a6::t_3f7dea2faaf1ac 12,14-23
+internal/engine/engine.go
+  s_8d6383ee1da9a6::t_6056e16b99c4c0 537-546
+internal/netbind/netbind.go
+  s_8d6383ee1da9a6::t_cdb7319b703146 8-11,20-34
+  s_8d6383ee1da9a6::t_b1e62d1b836b97 35
+internal/proxy/config.go
+  s_8d6383ee1da9a6::t_3f7dea2faaf1ac 14,24-25,218,533
+  s_8d6383ee1da9a6::t_53ffb2a2eff5ba 315
+internal/netbind/serve_unix_test.go
+  s_8d6383ee1da9a6::t_f5a1b881e2ff39 1-16
+internal/proxy/proxy.go
+  s_8d6383ee1da9a6::t_6056e16b99c4c0 165-166
+  s_8d6383ee1da9a6::t_3f7dea2faaf1ac 150-152,159-161
+  s_8d6383ee1da9a6::t_c001a152e164e9 162-164,167-174
+  s_8d6383ee1da9a6::t_7dfb710dd2a1f2 175-177
+internal/netbind/listen_unix.go
+  s_8d6383ee1da9a6::t_cdb7319b703146 10-12
+internal/netbind/listen_windows.go
+  s_8d6383ee1da9a6::t_cdb7319b703146 14-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4353b7f5b1f63e24ac676f3bdb3dfcdf0d4ed0fa",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
