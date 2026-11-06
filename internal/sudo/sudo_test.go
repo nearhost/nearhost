@@ -103,17 +103,6 @@ func TestValidateSaysWhySudoFailed(t *testing.T) {
 	}
 }
 
-func TestNeededWhenSudoIsThere(t *testing.T) {
-	fake(t, "secret")
-	if got, want := Needed(), os.Geteuid() != 0; got != want {
-		t.Errorf("Needed() = %v, want %v", got, want)
-	}
-	Candidates = []string{filepath.Join(t.TempDir(), "no-sudo")}
-	if Needed() {
-		t.Error("needed without a sudo to run")
-	}
-}
-
 // A sudo that speaks the user's language still has its refusal read as a
 // wrong password: sudo is asked in the C locale.
 func TestValidateReadsATranslatedSudo(t *testing.T) {

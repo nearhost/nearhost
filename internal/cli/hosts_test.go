@@ -31,9 +31,9 @@ func TestHostsCleanPassesFilePathToApplier(t *testing.T) {
 	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
 	os.WriteFile(path, []byte(content), 0o644)
 	var gotPath string
-	orig := newSudoApplier
-	t.Cleanup(func() { newSudoApplier = orig })
-	newSudoApplier = func(exe, p string) hosts.Applier {
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	newElevatedApplier = func(exe, p string) hosts.Applier {
 		gotPath = p
 		return func(aliases []string) error { return hosts.Apply(p, aliases) }
 	}
@@ -69,9 +69,9 @@ func TestHostsApplyRejectsInvalidAliasAndWritesNothing(t *testing.T) {
 }
 
 func TestHostsSubcommandsRejectPositionalArguments(t *testing.T) {
-	orig := newSudoApplier
-	t.Cleanup(func() { newSudoApplier = orig })
-	newSudoApplier = func(exe, p string) hosts.Applier {
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	newElevatedApplier = func(exe, p string) hosts.Applier {
 		return func(aliases []string) error { return hosts.Apply(p, aliases) }
 	}
 	for _, sub := range []string{"apply", "clean"} {

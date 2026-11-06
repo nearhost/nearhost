@@ -11,6 +11,7 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/smallstep/truststore"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
 
@@ -92,7 +93,7 @@ func Uninstall(cert *x509.Certificate) error {
 func withTrustedSudo(fn func() error) error {
 	path, err := sudo.Binary()
 	if err != nil {
-		if os.Geteuid() == 0 {
+		if elevate.Elevated() {
 			return fn()
 		}
 		return err

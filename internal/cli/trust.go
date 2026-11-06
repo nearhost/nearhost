@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
@@ -34,7 +34,7 @@ type trustBackend struct {
 
 // systemSudo is the production findSudo.
 func systemSudo() error {
-	if os.Geteuid() == 0 {
+	if elevate.Elevated() {
 		return nil
 	}
 	_, err := sudo.Binary()

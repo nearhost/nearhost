@@ -155,8 +155,8 @@ func updateHTTP() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 // not as root, which is sudo running the hosts helper, not when stderr is
 // not a terminal to say so on, not for a development build, and not when
 // NEARHOST_NO_UPDATE_CHECK is set.
-func shouldCheckForUpdate(args []string, getenv func(string) string, version string, euid int, tty bool) bool {
-	if getenv("NEARHOST_NO_UPDATE_CHECK") != "" || euid == 0 || !tty {
+func shouldCheckForUpdate(args []string, getenv func(string) string, version string, elevated bool, tty bool) bool {
+	if getenv("NEARHOST_NO_UPDATE_CHECK") != "" || elevated || !tty {
 		return false
 	}
 	if !update.IsRelease(version) {

@@ -38,16 +38,6 @@ func Binary() (string, error) {
 // ErrWrongPassword is the error of a password sudo refused.
 var ErrWrongPassword = errors.New("sorry, try again")
 
-// Needed reports whether a command that needs root goes through sudo: it
-// does unless Nearhost runs as root, or there is no sudo to run.
-func Needed() bool {
-	if os.Geteuid() == 0 {
-		return false
-	}
-	_, err := Binary()
-	return err == nil
-}
-
 // Cached reports whether sudo has the user's credentials now, so a command
 // run through it will not prompt. It never prompts itself.
 func Cached(ctx context.Context) bool {

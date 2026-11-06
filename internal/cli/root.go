@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
 )
 
@@ -175,7 +176,7 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 // Main runs the CLI with the given arguments and returns the process exit code.
 func Main(args []string) int {
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
-	if shouldCheckForUpdate(args, os.Getenv, Version, os.Geteuid(), tty) {
+	if shouldCheckForUpdate(args, os.Getenv, Version, elevate.Elevated(), tty) {
 		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root := NewRoot()

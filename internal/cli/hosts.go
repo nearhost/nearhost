@@ -2,17 +2,25 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
 )
 
-// newSudoApplier is a variable so tests can avoid real sudo.
-var newSudoApplier = func(exe, path string) hosts.Applier { return hosts.SudoApplier(exe, path) }
+// hostsPrompt is the password prompt of the commands that update /etc/hosts.
+const hostsPrompt = "nearhost needs your password to update /etc/hosts: "
+
+// newElevatedApplier is a variable so tests can avoid real sudo. Nothing
+// interrupts it while sudo waits for a password.
+var newElevatedApplier = func(exe, path string) hosts.Applier {
+	return hosts.ElevatedApplier(context.Background(), elevate.System(), exe, path, hostsPrompt, true)
+}
 
 func newHostsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -54,7 +62,7 @@ Asks for your password, as it runs sudo.`,
 			if err != nil {
 				return err
 			}
-			changed, err := hosts.Ensure(file, nil, newSudoApplier(exe, file))
+			changed, err := hosts.Ensure(file, nil, newElevatedApplier(exe, file))
 			if err != nil {
 				return err
 			}

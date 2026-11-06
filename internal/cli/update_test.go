@@ -163,31 +163,31 @@ func TestUpdateLinuxRemindsSetcap(t *testing.T) {
 func TestShouldCheckForUpdate(t *testing.T) {
 	ok := func(string) string { return "" }
 	for _, tc := range []struct {
-		name    string
-		args    []string
-		getenv  func(string) string
-		version string
-		euid    int
-		tty     bool
-		want    bool
+		name     string
+		args     []string
+		getenv   func(string) string
+		version  string
+		elevated bool
+		tty      bool
+		want     bool
 	}{
-		{"ui", nil, ok, "0.5.0", 501, true, true},
-		{"up", []string{"up"}, ok, "0.5.0", 501, true, true},
-		{"update itself", []string{"update"}, ok, "0.5.0", 501, true, false},
-		{"version", []string{"version"}, ok, "0.5.0", 501, true, false},
-		{"help", []string{"--help"}, ok, "0.5.0", 501, true, false},
-		{"completion", []string{"completion", "zsh"}, ok, "0.5.0", 501, true, false},
-		{"hosts helper under sudo", []string{"hosts", "apply"}, ok, "0.5.0", 0, true, false},
-		{"not a terminal", []string{"ls"}, ok, "0.5.0", 501, false, false},
-		{"dev build", []string{"ls"}, ok, "dev", 501, true, false},
+		{"ui", nil, ok, "0.5.0", false, true, true},
+		{"up", []string{"up"}, ok, "0.5.0", false, true, true},
+		{"update itself", []string{"update"}, ok, "0.5.0", false, true, false},
+		{"version", []string{"version"}, ok, "0.5.0", false, true, false},
+		{"help", []string{"--help"}, ok, "0.5.0", false, true, false},
+		{"completion", []string{"completion", "zsh"}, ok, "0.5.0", false, true, false},
+		{"hosts helper under sudo", []string{"hosts", "apply"}, ok, "0.5.0", true, true, false},
+		{"not a terminal", []string{"ls"}, ok, "0.5.0", false, false, false},
+		{"dev build", []string{"ls"}, ok, "dev", false, true, false},
 		{"opted out", []string{"ls"}, func(k string) string {
 			if k == "NEARHOST_NO_UPDATE_CHECK" {
 				return "1"
 			}
 			return ""
-		}, "0.5.0", 501, true, false},
+		}, "0.5.0", false, true, false},
 	} {
-		if got := shouldCheckForUpdate(tc.args, tc.getenv, tc.version, tc.euid, tc.tty); got != tc.want {
+		if got := shouldCheckForUpdate(tc.args, tc.getenv, tc.version, tc.elevated, tc.tty); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
