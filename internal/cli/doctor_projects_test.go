@@ -122,7 +122,7 @@ func TestDoctorProjectSection(t *testing.T) {
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
 		"ok    port 6327        free\n" +
-		"ok    local CA         trusted by the system trust store\n" +
+		"ok    local CA         trusted by " + trustStore + "\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"ok    hosts block      3 names\n" +
 		"\n" +
