@@ -2,9 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // probePort reports whether port can be bound on network ("tcp" or "udp"). It
@@ -12,13 +13,13 @@ import (
 func probePort(network string, port int) error {
 	addr := fmt.Sprintf(":%d", port)
 	if network == "udp" {
-		pc, err := net.ListenPacket(network, addr)
+		pc, err := netbind.ListenPacket(network, addr)
 		if err != nil {
 			return err
 		}
 		return pc.Close()
 	}
-	l, err := net.Listen(network, addr)
+	l, err := netbind.Listen(network, addr)
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -264,8 +265,8 @@ func New(cfg *config.Config, opts Options) *Engine {
 		proxy:        proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
 		connectWait:  30 * time.Second,
 		holderOf:     PortHolder,
-		listen:       net.Listen,
-		listenPacket: net.ListenPacket,
+		listen:       netbind.Listen,
+		listenPacket: netbind.ListenPacket,
 		hostsTurn:    make(chan struct{}, 1),
 		servers:      map[string]*serverConn{},
 		held:         map[string]bool{},

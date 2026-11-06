@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"net"
-	"syscall"
 	"testing"
 
+	"github.com/nearhost/nearhost/internal/oserr"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -23,7 +22,7 @@ func TestProbePortFindsATakenPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	if err := probePort("tcp", port); !errors.Is(err, syscall.EADDRINUSE) {
+	if err := probePort("tcp", port); !oserr.AddrInUse(err) {
 		t.Fatalf("taken TCP port: %v", err)
 	}
 	if err := probePort("udp", port); err != nil {
@@ -34,7 +33,7 @@ func TestProbePortFindsATakenPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pc.Close()
-	if err := probePort("udp", port); !errors.Is(err, syscall.EADDRINUSE) {
+	if err := probePort("udp", port); !oserr.AddrInUse(err) {
 		t.Fatalf("taken UDP port: %v", err)
 	}
 }

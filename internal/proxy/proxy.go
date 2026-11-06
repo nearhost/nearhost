@@ -5,7 +5,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 )
 
@@ -148,7 +148,7 @@ func waitReleased(ports []int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for _, port := range ports {
 		for {
-			l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			l, err := netbind.Listen("tcp", fmt.Sprintf(":%d", port))
 			if err == nil {
 				l.Close()
 				break
