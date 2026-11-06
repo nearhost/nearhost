@@ -100,7 +100,8 @@ const (
 	NSSMissing
 	// NSSNotNeeded means no browser here needs NSS set up: on Windows,
 	// Chromium-family browsers use the Windows store, and Firefox 120 and
-	// later read the roots a user adds there.
+	// later read the roots a user adds there unless that setting is turned
+	// off. Nearhost can't set up NSS on Windows either way.
 	NSSNotNeeded
 )
 
@@ -114,7 +115,7 @@ type NSSStatus struct {
 // reads: it never installs anything.
 func CheckNSS(cert *x509.Certificate) NSSStatus {
 	if !nssNeeded {
-		return NSSStatus{State: NSSNotNeeded, Detail: "Firefox and Chromium-family browsers use the Windows certificate store"}
+		return NSSStatus{State: NSSNotNeeded, Detail: "Chromium-family browsers and Firefox 120 or later use the Windows certificate store"}
 	}
 	t, err := truststore.NewNSSTrust()
 	if err != nil {
