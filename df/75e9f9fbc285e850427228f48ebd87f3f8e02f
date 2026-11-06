@@ -1,0 +1,14 @@
+internal/engine/engine_test.go
+  h_13c4e797d6e9d2 26,2449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df75e9f9fbc285e850427228f48ebd87f3f8e02f",
+  "prompts": {},
+  "humans": {
+    "h_13c4e797d6e9d2": {
+      "author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
