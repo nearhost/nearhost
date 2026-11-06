@@ -32,6 +32,24 @@ func TestElevationCopyOnWindows(t *testing.T) {
 	}
 }
 
+func TestTrustCopyOnWindows(t *testing.T) {
+	root := NewRoot()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetArgs([]string{"trust", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "your Windows certificate store") || strings.Contains(out.String(), "system trust store") {
+		t.Fatalf("trust --help:\n%s", out)
+	}
+	for _, s := range []string{trustInstalling, trustDeclined, hostsFix} {
+		if strings.Contains(s, "password") {
+			t.Errorf("%q asks for a password; Windows asks for none", s)
+		}
+	}
+}
+
 func TestHostsApplyRefusesASymlinkedInputOnWindows(t *testing.T) {
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret")
