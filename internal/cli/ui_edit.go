@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -129,7 +130,8 @@ func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvic
 }
 
 // Trust runs what `nearhost trust` does, as root, asking for the password
-// in the interface when sudo needs it. Its output goes to the terminal only
+// in the interface when the elevator takes one (sudo; on Windows, Windows
+// asks). Its output goes to the terminal only
 // when it runs there.
 func (u *uiEngine) Trust(ctx context.Context) error {
 	if u.root.ask == nil {
@@ -150,6 +152,9 @@ func (u *uiEngine) Trust(ctx context.Context) error {
 	})
 	if errors.Is(err, tui.ErrPasswordCancelled) {
 		return errors.New("you cancelled the password; the CA is not trusted yet")
+	}
+	if errors.Is(err, elevate.ErrDeclined) {
+		return errors.New("you declined the Windows prompt; the CA is not trusted yet")
 	}
 	return err
 }

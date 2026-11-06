@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
-	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
@@ -30,15 +29,6 @@ type trustBackend struct {
 	// changed: no root-owned sudo, and Nearhost is not root. nil skips the
 	// check.
 	findSudo func() error
-}
-
-// systemSudo is the production findSudo.
-func systemSudo() error {
-	if elevate.Elevated() {
-		return nil
-	}
-	_, err := sudo.Binary()
-	return err
 }
 
 // noSudo says what to do about a missing sudo, for the command name.
@@ -114,7 +104,7 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 		Short: "Install the Nearhost Local CA into the system trust store",
 		Long: `Install the Nearhost Local CA into the system trust store.
 
-Asks for your password, as it runs sudo.`,
+` + elevationNote,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())
@@ -189,7 +179,7 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 		Short: "Remove the Nearhost Local CA from the system trust store",
 		Long: `Remove the Nearhost Local CA from the system trust store.
 
-Asks for your password, as it runs sudo.`,
+` + elevationNote,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())

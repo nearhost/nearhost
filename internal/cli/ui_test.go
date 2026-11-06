@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
@@ -363,5 +365,22 @@ func TestBareNearhostPrintsTheMoveWarningWhenItFailsEarly(t *testing.T) {
 	}
 	if !strings.Contains(out, "could not move its local CA") {
 		t.Errorf("no warning on stderr:\n%s", out)
+	}
+}
+
+func TestHostsThroughSaysTheUserDeclined(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRoot{needed: true, noBox: true}
+	applier := func(context.Context, bool) hosts.Applier {
+		return func([]string) error { return fmt.Errorf("hosts apply: %w", elevate.ErrDeclined) }
+	}
+	ensure := hostsThrough(f.root(), path, applier)
+	err := ensure(context.Background(), []string{"a.test"})
+	want := "you declined the Windows prompt, so a.test was not added to " + path
+	if err == nil || err.Error() != want {
+		t.Fatalf("err %v, want %q", err, want)
 	}
 }

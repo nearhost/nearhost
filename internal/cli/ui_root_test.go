@@ -17,6 +17,7 @@ import (
 type fakeRoot struct {
 	needed    bool
 	cached    bool
+	noBox     bool  // whether the elevator takes no password (the UAC prompt)
 	sticks    bool  // whether a password the box takes stays cached
 	askErr    error // what the password box answers
 	asked     []string
@@ -28,8 +29,9 @@ func (f *fakeRoot) root() asRoot {
 	return asRoot{
 		width: func() int { return 60 },
 		sudo: rootBackend{
-			needed: func() bool { return f.needed },
-			cached: func(context.Context) bool { return f.cached },
+			needed:        func() bool { return f.needed },
+			takesPassword: func() bool { return !f.noBox },
+			cached:        func(context.Context) bool { return f.cached },
 			validate: func(context.Context, string) error {
 				return nil
 			},
@@ -193,5 +195,25 @@ func TestAsRootTakesTurns(t *testing.T) {
 	}
 	if strings.Join(f.asked, "|") != "First." || first.runs != 1 || second.runs != 1 {
 		t.Errorf("asked %v; runs %d, %d", f.asked, first.runs, second.runs)
+	}
+}
+
+func TestRootRunWithoutAPasswordSkipsTheBox(t *testing.T) {
+	f := &fakeRoot{needed: true, noBox: true}
+	var st step
+	terminals := []bool{}
+	err := f.root().run(context.Background(), "why", "done", func(_ context.Context, terminal io.Writer) error {
+		st.runs++
+		terminals = append(terminals, terminal != nil)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.asked) != 0 || f.suspended != 0 {
+		t.Fatalf("asked %v, suspended %d", f.asked, f.suspended)
+	}
+	if st.runs != 1 || terminals[0] {
+		t.Fatalf("runs %d, terminals %v", st.runs, terminals)
 	}
 }

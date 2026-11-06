@@ -82,7 +82,7 @@ Getting started:
 		return err
 	})
 	root.SetVersionTemplate("nearhost {{.Version}}\n")
-	root.PersistentFlags().String("config", "", "config file (default $XDG_CONFIG_HOME/nearhost/config.yaml, or ~/.config/nearhost/config.yaml when XDG_CONFIG_HOME is not an absolute path)")
+	root.PersistentFlags().String("config", "", configFlagUsage)
 	return root
 }
 

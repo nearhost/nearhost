@@ -301,12 +301,14 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 }
 
 // ElevatedApplier runs `<executable> hosts apply --file <path>` with aliases
-// on stdin, through e. prompt is sudo's password prompt, used when
-// interactive; otherwise sudo never prompts, for credentials it has cached,
-// where a prompt could only land on a terminal in use, and fails if it needs
-// a password. When ctx ends while the command runs, which includes sudo
-// waiting for a password, it is asked to terminate (and killed if it stays),
-// and the applier returns ctx's error. When ctx has already ended nothing is
+// on its input, through e. Where e takes a password (sudo), prompt is its
+// prompt, used when interactive; otherwise it never prompts, for credentials
+// it has cached, where a prompt could only land on a terminal in use, and
+// fails if it needs a password. Where it does not (the UAC prompt on
+// Windows), Windows asks for consent itself and prompt and interactive are
+// unused. When ctx ends while the command runs, which includes waiting for
+// a password, it is asked to terminate (and killed if it stays), and the
+// applier returns ctx's error. When ctx has already ended nothing is
 // started.
 func ElevatedApplier(ctx context.Context, e elevate.Elevator, executable, path, prompt string, interactive bool) Applier {
 	return func(aliases []string) error {
@@ -318,7 +320,7 @@ func ElevatedApplier(ctx context.Context, e elevate.Elevator, executable, path, 
 			Interactive: interactive,
 		})
 		if err != nil {
-			return fmt.Errorf("sudo hosts apply: %w", err)
+			return fmt.Errorf(elevatedApplyPrefix+"%w", err)
 		}
 		return nil
 	}
