@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -509,5 +510,90 @@ func TestDocumentListShowsTheLastOpened(t *testing.T) {
 	docs, _ := list["documents"].([]any)
 	if len(docs) != 1 || docs[0].(map[string]any)["path"] != "a.md" {
 		t.Fatalf("list %v, want a.md, the document opened last", list)
+	}
+}
+
+func TestDocumentRefusesANetworkPath(t *testing.T) {
+	unc := `\\server\share\plan.md`
+	if msg := badDocPath("path", unc); !strings.Contains(msg, "network paths") {
+		t.Errorf("badDocPath(%q) = %q; want a network path message", unc, msg)
+	}
+	e := newDocServer(t, true)
+	body := fmt.Sprintf(`{"path": %q, "root": "/srv/app", "requester": "claude-code"}`, unc)
+	st, out := e.ask(t, body)
+	if msg, _ := out["error"].(string); st != 400 || !strings.Contains(msg, `\\server\share`) {
+		t.Errorf("%d %v", st, out)
+	}
+	if msg := badDocPath("path", "/srv/app/plan.md"); msg != "" {
+		t.Errorf("badDocPath(/srv/app/plan.md) = %q", msg)
+	}
+}
+
+func TestPlainDrivePath(t *testing.T) {
+	for in, want := range map[string]string{
+		`\\?\C:\x`:       `C:\x`,
+		`//?/D:/y`:       `//?/D:/y`,
+		`\\?\UNC\s\sh\x`: `\\?\UNC\s\sh\x`,
+		`\\?\C:`:         `\\?\C:`,
+		`/srv/x`:         `/srv/x`,
+		`C:\x`:           `C:\x`,
+	} {
+		if got := plainDrivePath(in); got != want {
+			t.Errorf("plainDrivePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBadDocPathWindowsForms(t *testing.T) {
+	for _, v := range []string{`\\?\UNC\s\sh\p.md`, `\\?\unc\s\sh\p.md`, `\\s\sh\p.md`} {
+		if msg := badDocPath("path", v); !strings.Contains(msg, "network path") {
+			t.Errorf("badDocPath(%q) = %q; want a network path message", v, msg)
+		}
+	}
+	for _, v := range []string{`\\.\pipe\x`, `\\?\Volume{1}\x`, `\\?\1:\x`} {
+		if msg := badDocPath("path", v); !strings.Contains(msg, "Windows device path") {
+			t.Errorf("badDocPath(%q) = %q; want a device path message", v, msg)
+		}
+	}
+}
+
+func TestDocumentAcceptsAnExtendedLengthDrivePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("C:\\ paths are absolute only on Windows")
+	}
+	if msg := badDocPath("path", plainDrivePath(`\\?\C:\Users\me\notes\plan.md`)); msg != "" {
+		t.Errorf("badDocPath = %q", msg)
+	}
+}
+
+func TestUnixSlashQuestionPathsPass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("//?/ is a Windows prefix there")
+	}
+	for _, v := range []string{`//?/C:/x`, `//?/unc/s/x`} {
+		if plainDrivePath(v) != v {
+			t.Errorf("plainDrivePath(%q) changed it", v)
+		}
+		if msg := badDocPath("path", v); msg != "" {
+			t.Errorf("badDocPath(%q) = %q", v, msg)
+		}
+	}
+}
+
+func TestDocumentRefusesADrivePathFromAServer(t *testing.T) {
+	e := newDocServer(t, true)
+	for _, v := range []string{`C:\srv\plan.md`, `\\?\C:\srv\plan.md`} {
+		body := fmt.Sprintf(`{"path": %q, "root": "/srv/app", "requester": "claude-code"}`, v)
+		if st, out := e.ask(t, body); st != 400 {
+			t.Errorf("%s: %d %v, want 400", v, st, out)
+		}
+	}
+	if msg := remoteDrivePath("apollo", "path", `C:\x`); !strings.Contains(msg, "slash path") {
+		t.Errorf("remoteDrivePath(apollo, C:\\x) = %q", msg)
+	}
+	for _, c := range [][2]string{{"local", `C:\x`}, {"apollo", "/srv/x"}} {
+		if msg := remoteDrivePath(c[0], "path", c[1]); msg != "" {
+			t.Errorf("remoteDrivePath(%s, %s) = %q", c[0], c[1], msg)
+		}
 	}
 }

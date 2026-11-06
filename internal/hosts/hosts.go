@@ -307,9 +307,10 @@ func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 // fails if it needs a password. Where it does not (the UAC prompt on
 // Windows), Windows asks for consent itself and prompt and interactive are
 // unused. When ctx ends while the command runs, which includes waiting for
-// a password, it is asked to terminate (and killed if it stays), and the
-// applier returns ctx's error. When ctx has already ended nothing is
-// started.
+// a password, sudo is asked to terminate (and killed if it stays), and the
+// UAC elevator stops waiting and withdraws the input, so a later approval
+// changes nothing; either way the applier returns ctx's error. When ctx has
+// already ended nothing is started.
 func ElevatedApplier(ctx context.Context, e elevate.Elevator, executable, path, prompt string, interactive bool) Applier {
 	return func(aliases []string) error {
 		err := e.Run(ctx, elevate.Command{

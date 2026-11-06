@@ -48,8 +48,8 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 // line of the file named by --report is the error. When ctx ends, while the
 // prompt is up or while the child runs, Run stops waiting and removes both
 // files, without killing the child: one that has not read its input yet
-// then fails, so an approval given after a stop changes nothing. c.Prompt and c.Interactive are ignored, as the prompt is
-// Windows' own.
+// then fails, so an approval given after a stop changes nothing. c.Prompt
+// and c.Interactive are ignored, as the prompt is Windows' own.
 func (uac) Run(ctx context.Context, c Command) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -113,15 +113,15 @@ func (uac) Run(ctx context.Context, c Command) error {
 	if code == 0 {
 		return nil
 	}
-	if line := lastLine(report); line != "" {
+	if line := reportLine(report); line != "" {
 		return errors.New(line)
 	}
 	return fmt.Errorf("exited with code %d", code)
 }
 
-// lastLine is the last non-blank line of the file at path, or "" when there
+// reportLine is the last non-blank line of the file at path, or "" when there
 // is none or the file cannot be read.
-func lastLine(path string) string {
+func reportLine(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""

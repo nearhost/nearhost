@@ -21,7 +21,10 @@ func TestListenSeesEveryHolderOnWindows(t *testing.T) {
 		t.Run(h.name, func(t *testing.T) {
 			holder, err := net.Listen(h.network, h.addr)
 			if err != nil {
-				t.Skipf("cannot hold %s: %v", h.addr, err)
+				if h.name == "[::1]" {
+					t.Skipf("cannot hold %s: %v", h.addr, err)
+				}
+				t.Fatalf("cannot hold %s: %v", h.addr, err)
 			}
 			defer holder.Close()
 			port := holder.Addr().(*net.TCPAddr).Port
@@ -63,6 +66,7 @@ func TestListenAfterServingIsFreeOnWindows(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")
 	})}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.SetKeepAlivesEnabled(false)
 	go srv.Serve(l)
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}

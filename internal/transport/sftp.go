@@ -168,15 +168,18 @@ func NewSFTPWriter(c *sftp.Client, root string) FileWriter {
 // directory and ".." after the links before it, except that a missing
 // element ends the walk: the rest is joined on as it is, so a dangling link
 // resolves to where it points. A ".." after a missing element is an error.
+// A path that starts with a drive (C:/proj) walks a volume: a link may move
+// the walk to another drive, and ".." and a target that starts with a slash
+// then work on that drive. A drive-relative target (C: or C:proj, which
+// means the drive's current directory) is an error, as where it leads
+// depends on the process.
 func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(string) (string, error)) (string, error) {
-	// A path with a drive letter (C:/proj) starts from the drive, so the
-	// walk never asks for /C:.
-	base := "/"
-	if vol := slashVolume(p); vol != "" {
-		base = vol + "/"
-		p = strings.TrimPrefix(p, vol)
-	}
-	resolved := base
+	// vol is the drive the walk is on, or "" for a walk from "/". A path
+	// with a drive letter (C:/proj) starts from the drive, so the walk never
+	// asks for /C:.
+	vol := slashVolume(p)
+	p = strings.TrimPrefix(p, vol)
+	resolved := vol + "/"
 	rest := strings.Split(p, "/")
 	for links := 0; len(rest) > 0; {
 		elem := rest[0]
@@ -186,10 +189,10 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 			continue
 		case "..":
 			resolved = path.Dir(resolved)
-			if base != "/" && !strings.HasPrefix(resolved, base[:2]+"/") {
-				// A bare "C:" (or ".") means the drive's root, where ".."
-				// stays, as the kernel does.
-				resolved = base
+			if vol != "" && !strings.HasPrefix(resolved, vol+"/") {
+				// A bare "C:" (or ".") is above the drive's root, where
+				// ".." stays, as the kernel does.
+				resolved = vol + "/"
 			}
 			continue
 		}
@@ -220,11 +223,15 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 		}
 		// A drive-shaped target is a drive path only in a walk that has a
 		// drive; on a Unix server "a:" is a folder's name.
-		if vol := slashVolume(dest); vol != "" && base != "/" {
+		if vol != "" && driveRelative(dest) {
+			return "", fmt.Errorf("%s is a link to %s, a drive-relative path, which isn't supported", next, dest)
+		}
+		if dv := slashVolume(dest); dv != "" && vol != "" {
+			vol = dv
 			resolved = vol + "/"
 			dest = strings.TrimPrefix(dest, vol)
 		} else if path.IsAbs(dest) {
-			resolved = base
+			resolved = vol + "/"
 		}
 		rest = append(strings.Split(dest, "/"), rest...)
 	}
@@ -236,10 +243,22 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 // with a drive letter followed by a slash or nothing count, so a relative name
 // like "a:b" on a Unix server is not mistaken for one.
 func slashVolume(p string) string {
-	if len(p) >= 2 && p[1] == ':' && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') && (len(p) == 2 || p[2] == '/') {
+	if len(p) >= 2 && p[1] == ':' && isDriveLetter(p[0]) && (len(p) == 2 || p[2] == '/') {
 		return p[:2]
 	}
 	return ""
+}
+
+// isDriveLetter reports whether c is an ASCII letter, as a drive is named.
+func isDriveLetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// driveRelative reports whether the link target dest names a drive without
+// starting from its root: "C:" or "C:proj", which Windows resolves against
+// that drive's current directory.
+func driveRelative(dest string) bool {
+	return len(dest) >= 2 && dest[1] == ':' && isDriveLetter(dest[0]) && (len(dest) == 2 || dest[2] != '/')
 }
 
 // linkedTarget is where writing name under root lands, every link followed,
@@ -262,8 +281,13 @@ func linkedTarget(root, name string, lstat func(string) (fs.FileInfo, error), re
 
 // withinSFTPRoot reports whether target is root itself or inside it, using
 // slash-separated paths and whole path elements, so /proj2 is not inside /proj.
+// A root on a drive (C:/proj) is compared without case, as Windows names
+// are; a root from "/" (a Unix server or the Mac) keeps case.
 func withinSFTPRoot(root, target string) bool {
 	root, target = path.Clean(root), path.Clean(target)
+	if slashVolume(root) != "" {
+		root, target = strings.ToLower(root), strings.ToLower(target)
+	}
 	return target == root || strings.HasPrefix(target, strings.TrimSuffix(root, "/")+"/")
 }
 

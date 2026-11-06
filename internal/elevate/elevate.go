@@ -1,6 +1,6 @@
-// Package elevate runs the steps that need administrator rights: the hosts
-// file and the system trust store. On macOS and Linux that is sudo; the
-// Elevator hides which, so the callers do not know.
+// Package elevate runs the steps that need administrator rights, such as
+// writing the hosts file. On macOS and Linux that is sudo; the Elevator
+// hides which, so the callers do not know.
 package elevate
 
 import (
@@ -18,7 +18,7 @@ type Command struct {
 }
 
 // ErrDeclined is Run's error when the user declined the elevation prompt.
-var ErrDeclined = errors.New("the request to run as administrator was declined")
+var ErrDeclined = errors.New("the Windows prompt was declined")
 
 // Elevator is how privileged steps are run on this OS.
 type Elevator interface {
