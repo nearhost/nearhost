@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,8 +65,10 @@ type fixture struct {
 // and serves it with LocalFS.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	dir := t.TempDir()
-	root := filepath.Join(dir, "root")
+	// The documents package works in slash form, so a Windows folder is
+	// given as C:/…, not C:\….
+	dir := filepath.ToSlash(t.TempDir())
+	root := dir + "/root"
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +340,11 @@ func TestUnknownTree404(t *testing.T) {
 		t.Errorf("folder without slash: got %d Location %q", rec.Code, rec.Header().Get("Location"))
 	}
 
-	for name, want := range map[string]string{"https:evil.com": "./https:evil.com/", "a:b": "./a:b/"} {
+	names := map[string]string{"https:evil.com": "./https:evil.com/", "a:b": "./a:b/"}
+	if runtime.GOOS == "windows" {
+		names = nil // Windows forbids a colon in a folder name.
+	}
+	for name, want := range names {
 		f.write(t, name+"/index.html", "x")
 		rec := f.do(t, "GET", name)
 		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != want {
@@ -379,7 +387,7 @@ func TestLiveReads(t *testing.T) {
 		t.Fatalf("after delete: status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"isn't there any more", "local", filepath.Join(f.root, "p.md")} {
+	for _, want := range []string{"isn't there any more", "local", path.Join(f.root, "p.md")} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing page lacks %q:\n%s", want, body)
 		}
@@ -422,6 +430,10 @@ func TestNotConnectedPage(t *testing.T) {
 func TestOddNames(t *testing.T) {
 	f := newFixture(t)
 	name := "2026 plan (v2) #1?%é.md"
+	if runtime.GOOS == "windows" {
+		// Windows forbids ? in a file name.
+		name = strings.ReplaceAll(name, "?", "")
+	}
 	f.write(t, "sub dir/"+name, "odd")
 	srv := httptest.NewServer(f.h)
 	defer srv.Close()

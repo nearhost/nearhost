@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -23,13 +24,58 @@ type pipeRWC struct {
 	io.WriteCloser
 }
 
+// serverPath is p as an SFTP server on Windows names it: /C:/proj for C:/proj.
+// Other paths are returned as they are.
+func serverPath(p string) string {
+	if len(p) >= 2 && p[1] == ':' {
+		return "/" + p
+	}
+	return p
+}
+
+// volumeFS lets the tests give SFTPFS the C:/proj paths the documents package
+// uses. pkg/sftp's server on Windows takes /C:/proj, so volumeFS adds the
+// slash going in and takes it off coming out. On other systems no path has a
+// volume and it changes nothing.
+type volumeFS struct{ FS }
+
+// RealPath is SFTPFS's, with the server's spelling of the volume.
+func (v volumeFS) RealPath(ctx context.Context, p string) (string, error) {
+	got, err := v.FS.RealPath(ctx, serverPath(p))
+	return clientPath(got), err
+}
+
+// Stat is SFTPFS's, with the server's spelling of the volume.
+func (v volumeFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
+	return v.FS.Stat(ctx, serverPath(p))
+}
+
+// Open is SFTPFS's, with the server's spelling of the volume.
+func (v volumeFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
+	return v.FS.Open(ctx, serverPath(p))
+}
+
+// Home is SFTPFS's, with the volume spelt as the documents package does.
+func (v volumeFS) Home(ctx context.Context) (string, error) {
+	got, err := v.FS.Home(ctx)
+	return clientPath(got), err
+}
+
+// clientPath undoes serverPath.
+func clientPath(p string) string {
+	if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
+		return p[1:]
+	}
+	return p
+}
+
 // inProcessSFTP starts pkg/sftp's server over a pipe, with its working
 // folder set to dir, and returns a client of it.
 func inProcessSFTP(t *testing.T, dir string) *sftp.Client {
 	t.Helper()
 	serverReader, clientWriter := io.Pipe()
 	clientReader, serverWriter := io.Pipe()
-	server, err := sftp.NewServer(pipeRWC{serverReader, serverWriter}, sftp.WithServerWorkingDirectory(dir))
+	server, err := sftp.NewServer(pipeRWC{serverReader, serverWriter}, sftp.WithServerWorkingDirectory(serverPath(filepath.ToSlash(dir))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,47 +93,48 @@ func inProcessSFTP(t *testing.T, dir string) *sftp.Client {
 }
 
 func TestSFTPFS(t *testing.T) {
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	resolved, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(dir, "real")
+	dir := filepath.ToSlash(resolved)
+	real := dir + "/real"
 	if err := os.Mkdir(real, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(real, "p.md"), []byte("# P"), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(real, "p.md"), []byte("# P"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("real", filepath.Join(dir, "link")); err != nil {
+	if err := os.Symlink("real", path.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	fsys := SFTPFS(inProcessSFTP(t, dir))
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
 	ctx := context.Background()
 
-	got, err := fsys.RealPath(ctx, filepath.Join(dir, "link"))
+	got, err := fsys.RealPath(ctx, path.Join(dir, "link"))
 	if err != nil || got != real {
 		t.Errorf("RealPath(link) = %q, %v; want %q", got, err, real)
 	}
-	got, err = fsys.RealPath(ctx, filepath.Join(dir, "link", "p.md"))
-	if err != nil || got != filepath.Join(real, "p.md") {
+	got, err = fsys.RealPath(ctx, path.Join(dir, "link", "p.md"))
+	if err != nil || got != path.Join(real, "p.md") {
 		t.Errorf("RealPath(link/p.md) = %q, %v", got, err)
 	}
-	if _, err := fsys.RealPath(ctx, filepath.Join(dir, "link", "nope.md")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := fsys.RealPath(ctx, path.Join(dir, "link", "nope.md")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("RealPath(missing) err = %v, want fs.ErrNotExist", err)
 	}
-	if _, err := fsys.RealPath(ctx, filepath.Join(dir, "link", "p.md", "x")); !errors.Is(err, syscall.ENOTDIR) {
+	if _, err := fsys.RealPath(ctx, path.Join(dir, "link", "p.md", "x")); !errors.Is(err, syscall.ENOTDIR) {
 		t.Errorf("RealPath(through a file) err = %v, want ENOTDIR", err)
 	}
-	if _, err := fsys.Stat(ctx, filepath.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := fsys.Stat(ctx, path.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Stat(missing) err = %v, want fs.ErrNotExist", err)
 	}
-	if info, err := fsys.Stat(ctx, filepath.Join(dir, "link")); err != nil || !info.IsDir() {
+	if info, err := fsys.Stat(ctx, path.Join(dir, "link")); err != nil || !info.IsDir() {
 		t.Errorf("Stat(link) = %v, %v; want the folder it points to", info, err)
 	}
-	if _, err := fsys.Open(ctx, filepath.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := fsys.Open(ctx, path.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Open(missing) err = %v, want fs.ErrNotExist", err)
 	}
-	f, err := fsys.Open(ctx, filepath.Join(real, "p.md"))
+	f, err := fsys.Open(ctx, path.Join(real, "p.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +150,7 @@ func TestSFTPFS(t *testing.T) {
 
 func TestSFTPFSHonoursCancel(t *testing.T) {
 	dir := t.TempDir()
-	fsys := SFTPFS(inProcessSFTP(t, dir))
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := fsys.Stat(ctx, dir); !errors.Is(err, context.Canceled) {
@@ -134,9 +181,9 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := inProcessSFTP(t, f.dir)
-	viaLink := f.table.Add("apollo", filepath.Join(f.dir, "rootlink"), "claude", "plan.md")
+	viaLink := f.table.Add("apollo", path.Join(f.dir, "rootlink"), "claude", "plan.md")
 	local := NewHandler(f.table, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
-	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return SFTPFS(client), nil })
+	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return volumeFS{SFTPFS(client)}, nil })
 
 	for _, id := range []string{f.tree.ID, viaLink.ID} {
 		for _, p := range []string{

@@ -169,7 +169,14 @@ func NewSFTPWriter(c *sftp.Client, root string) FileWriter {
 // element ends the walk: the rest is joined on as it is, so a dangling link
 // resolves to where it points. A ".." after a missing element is an error.
 func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(string) (string, error)) (string, error) {
-	resolved := "/"
+	// A path with a drive letter (C:/proj) starts from the drive, so the
+	// walk never asks for /C:.
+	base := "/"
+	if vol := slashVolume(p); vol != "" {
+		base = vol + "/"
+		p = strings.TrimPrefix(p, vol)
+	}
+	resolved := base
 	rest := strings.Split(p, "/")
 	for links := 0; len(rest) > 0; {
 		elem := rest[0]
@@ -179,6 +186,11 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 			continue
 		case "..":
 			resolved = path.Dir(resolved)
+			if base != "/" && !strings.HasPrefix(resolved, base[:2]+"/") {
+				// A bare "C:" (or ".") means the drive's root, where ".."
+				// stays, as the kernel does.
+				resolved = base
+			}
 			continue
 		}
 		next := path.Join(resolved, elem)
@@ -206,12 +218,28 @@ func evalLinks(p string, lstat func(string) (fs.FileInfo, error), readlink func(
 		if err != nil {
 			return "", err
 		}
-		if path.IsAbs(dest) {
-			resolved = "/"
+		// A drive-shaped target is a drive path only in a walk that has a
+		// drive; on a Unix server "a:" is a folder's name.
+		if vol := slashVolume(dest); vol != "" && base != "/" {
+			resolved = vol + "/"
+			dest = strings.TrimPrefix(dest, vol)
+		} else if path.IsAbs(dest) {
+			resolved = base
 		}
 		rest = append(strings.Split(dest, "/"), rest...)
 	}
 	return resolved, nil
+}
+
+// slashVolume returns the drive letter and colon that start p ("C:" in
+// "C:/proj"), or "" when p has none. Only slash-separated paths that start
+// with a drive letter followed by a slash or nothing count, so a relative name
+// like "a:b" on a Unix server is not mistaken for one.
+func slashVolume(p string) string {
+	if len(p) >= 2 && p[1] == ':' && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') && (len(p) == 2 || p[2] == '/') {
+		return p[:2]
+	}
+	return ""
 }
 
 // linkedTarget is where writing name under root lands, every link followed,
@@ -346,7 +374,12 @@ func (w dirWriter) WriteFile(name string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	target, err := linkedTarget(filepath.ToSlash(root), filepath.ToSlash(name), os.Lstat, os.Readlink)
+	// On Windows a link's target comes back with backslashes.
+	readlink := func(p string) (string, error) {
+		dest, err := os.Readlink(p)
+		return filepath.ToSlash(dest), err
+	}
+	target, err := linkedTarget(filepath.ToSlash(root), filepath.ToSlash(name), os.Lstat, readlink)
 	if err != nil {
 		return err
 	}

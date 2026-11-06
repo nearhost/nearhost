@@ -88,7 +88,7 @@ func TestExportWritesLocalProjectFromSubdirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v\n%s", err, out)
 	}
-	if want := "Wrote " + dir + "/.nearhostrc. " + exportSuccess; out != want {
+	if want := "Wrote " + filepath.Join(dir, ".nearhostrc") + ". " + exportSuccess; out != want {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 	data := readFile(t, filepath.Join(dir, nearhostrc.FileName))
@@ -114,7 +114,7 @@ func TestExportPicksDeepestProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v\n%s", err, out)
 	}
-	wantContains(t, out, "Wrote "+inner+"/.nearhostrc.")
+	wantContains(t, out, "Wrote "+filepath.Join(inner, ".nearhostrc")+".")
 	if _, err := os.Stat(filepath.Join(outer, nearhostrc.FileName)); !os.IsNotExist(err) {
 		t.Errorf("the outer project was written too: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestExportReplacesPendingChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v\n%s", err, out)
 	}
-	wantContains(t, out, "replaced the .nearhostrc change that was waiting for approval with what is served now\n", "Wrote "+dir+"/.nearhostrc. "+exportSuccess)
+	wantContains(t, out, "replaced the .nearhostrc change that was waiting for approval with what is served now\n", "Wrote "+filepath.Join(dir, ".nearhostrc")+". "+exportSuccess)
 	wantSnapshotOf(t, cfgPath, "shop", dir)
 
 	// With the file now matching its snapshot, nothing is waiting.

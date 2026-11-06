@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -45,7 +46,9 @@ func badDocPath(name, v string) string {
 		return name + " must not contain NUL"
 	case len(v) > maxDocPath:
 		return fmt.Sprintf("%s must be at most %d bytes", name, maxDocPath)
-	case !path.IsAbs(v):
+	// filepath.IsAbs is path.IsAbs everywhere but Windows, where it also
+	// takes C:\proj, a path on the laptop.
+	case !path.IsAbs(v) && !filepath.IsAbs(v):
 		return fmt.Sprintf("%s must be absolute, not %q", name, v)
 	}
 	return ""

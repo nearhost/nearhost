@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -92,6 +93,11 @@ func notConnected(err error) error {
 // resolved, and the tree it is shown from: root when the root rules accept
 // it, and otherwise the document's folder.
 func (s *shower) Resolve(ctx context.Context, origin, p, root string) (agentapi.Resolved, error) {
+	// The documents package works in slash form; a path on the laptop may
+	// arrive in the laptop's own form (C:\proj on Windows).
+	if origin == documents.LocalServer {
+		p, root = filepath.ToSlash(p), filepath.ToSlash(root)
+	}
 	fsys, err := s.pool.Open(ctx, origin)
 	if err != nil {
 		return agentapi.Resolved{}, notConnected(err)

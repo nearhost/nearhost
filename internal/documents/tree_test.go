@@ -145,3 +145,25 @@ func TestURLForEscapes(t *testing.T) {
 		t.Fatal("differs from PathEscape per segment")
 	}
 }
+
+func TestBelowWithAVolume(t *testing.T) {
+	rel, ok := Below("C:/Users/me/proj", "C:/Users/me/proj/docs/p.md")
+	if !ok || rel != "docs/p.md" {
+		t.Fatalf("Below = %q, %v; want docs/p.md, true", rel, ok)
+	}
+	if rel, ok := Below("C:/Users/me/proj", "C:/Users/me/proj/.git/p.md"); ok {
+		t.Errorf("Below under .git = %q, true; want false", rel)
+	}
+}
+
+func TestChooseRootWithAVolume(t *testing.T) {
+	noGit := func(string) bool { return false }
+	got, ok := ChooseRoot("", "C:/Users/me/notes/p.md", "C:/Users/me", noGit)
+	if !ok || got != "C:/Users/me/notes" {
+		t.Errorf("ChooseRoot = %q, %v; want C:/Users/me/notes, true", got, ok)
+	}
+	got, ok = ChooseRoot("", "C:/Users/me/p.md", "C:/Users/me", noGit)
+	if ok || got != "" {
+		t.Errorf("ChooseRoot in home = %q, %v; want empty, false", got, ok)
+	}
+}
