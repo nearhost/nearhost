@@ -2446,7 +2446,7 @@ func TestStartRetriesThePagePort(t *testing.T) {
 	h.eng.listen = func(network, addr string) (net.Listener, error) {
 		if strings.HasSuffix(addr, fmt.Sprintf(":%d", web)) { // any of netbind.ServeAddrs(web)
 			var err error
-			if https, err = net.Listen("tcp", netbind.ServeAddrs(h.httpsPort)[0]); err != nil {
+			if https, err = netbind.Listen("tcp", netbind.ServeAddrs(h.httpsPort)[0]); err != nil {
 				t.Fatal(err)
 			}
 			return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
