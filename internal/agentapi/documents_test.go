@@ -579,3 +579,21 @@ func TestUnixSlashQuestionPathsPass(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentRefusesADrivePathFromAServer(t *testing.T) {
+	e := newDocServer(t, true)
+	for _, v := range []string{`C:\srv\plan.md`, `\\?\C:\srv\plan.md`} {
+		body := fmt.Sprintf(`{"path": %q, "root": "/srv/app", "requester": "claude-code"}`, v)
+		if st, out := e.ask(t, body); st != 400 {
+			t.Errorf("%s: %d %v, want 400", v, st, out)
+		}
+	}
+	if msg := remoteDrivePath("apollo", "path", `C:\x`); !strings.Contains(msg, "slash path") {
+		t.Errorf("remoteDrivePath(apollo, C:\\x) = %q", msg)
+	}
+	for _, c := range [][2]string{{"local", `C:\x`}, {"apollo", "/srv/x"}} {
+		if msg := remoteDrivePath(c[0], "path", c[1]); msg != "" {
+			t.Errorf("remoteDrivePath(%s, %s) = %q", c[0], c[1], msg)
+		}
+	}
+}

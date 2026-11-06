@@ -80,6 +80,18 @@ func badDocPath(name, v string) string {
 	return ""
 }
 
+// remoteDrivePath is why v can't be the field called name of a document
+// request from origin, or "" when it can. badDocPath takes C:\proj as
+// absolute on a Windows laptop, but a server resolves paths over SFTP, which
+// would read C:\proj as relative to the home folder, so a server's request
+// must use a slash path.
+func remoteDrivePath(origin, name, v string) string {
+	if origin == config.LocalServer || path.IsAbs(v) {
+		return ""
+	}
+	return fmt.Sprintf("%s must be a slash path such as /srv/app on %s, not %q", name, origin, v)
+}
+
 // hasPrefixFold reports whether v starts with prefix, ignoring case.
 func hasPrefixFold(v, prefix string) bool {
 	return len(v) >= len(prefix) && strings.EqualFold(v[:len(prefix)], prefix)
@@ -127,6 +139,10 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := origin(r)
+	if msg := cmp.Or(remoteDrivePath(o, "path", req.Path), remoteDrivePath(o, "root", req.Root)); msg != "" {
+		fail(w, http.StatusBadRequest, msg)
+		return
+	}
 	doc := path.Clean(req.Path)
 
 	ctx, cancel := detached(r.Context(), openTimeout)
