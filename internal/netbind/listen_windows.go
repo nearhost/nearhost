@@ -11,6 +11,9 @@ import (
 // loopbackHost is the host LoopbackProbe binds: none, which is every address.
 const loopbackHost = ""
 
+// serveHosts are the hosts ServeAddrs binds: loopback only.
+var serveHosts = []string{"127.0.0.1", "::1"}
+
 // soExclusiveAddrUse is SO_EXCLUSIVEADDRUSE, ^SO_REUSEADDR in winsock2.h. It has
 // no constant in x/sys.
 const soExclusiveAddrUse = ^int(4)

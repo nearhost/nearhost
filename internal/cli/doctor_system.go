@@ -9,9 +9,18 @@ import (
 )
 
 // probePort reports whether port can be bound on network ("tcp" or "udp"). It
-// binds every interface, as the proxy does, and lets go at once.
+// binds the addresses the proxy serves on, and lets go of each at once.
 func probePort(network string, port int) error {
-	addr := fmt.Sprintf(":%d", port)
+	for _, addr := range netbind.ServeAddrs(port) {
+		if err := probeAddr(network, addr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probeAddr reports whether addr can be bound on network.
+func probeAddr(network, addr string) error {
 	if network == "udp" {
 		pc, err := netbind.ListenPacket(network, addr)
 		if err != nil {
