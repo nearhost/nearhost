@@ -419,6 +419,8 @@ func checkCAAt(b trustBackend, dir string) []check {
 	switch st := b.nss(cert); st.State {
 	case proxy.NSSCovered:
 		nss.detail = "the NSS stores trust the CA"
+	case proxy.NSSNotNeeded:
+		nss.detail = "not needed: " + st.Detail
 	case proxy.NSSMissing:
 		nss.level, nss.detail, nss.fix = levelWarn, "the NSS stores (Firefox, and on Linux the shared database Chromium-family browsers use) do not trust the CA", fix
 	default:

@@ -98,6 +98,11 @@ const (
 	NSSCovered
 	// NSSMissing means NSS can be configured and lacks the root.
 	NSSMissing
+	// NSSNotNeeded means no browser here needs NSS set up: on Windows,
+	// Chromium-family browsers use the Windows store, and Firefox 120 and
+	// later read the roots a user adds there unless that setting is turned
+	// off. Nearhost can't set up NSS on Windows either way.
+	NSSNotNeeded
 )
 
 // NSSStatus is a NSSState with a human-readable reason when unavailable.
@@ -109,6 +114,9 @@ type NSSStatus struct {
 // CheckNSS reports whether the NSS stores already have cert. It only
 // reads: it never installs anything.
 func CheckNSS(cert *x509.Certificate) NSSStatus {
+	if !nssNeeded {
+		return NSSStatus{State: NSSNotNeeded, Detail: "Chromium-family browsers and Firefox 120 or later use the Windows certificate store"}
+	}
 	t, err := truststore.NewNSSTrust()
 	if err != nil {
 		detail := "NSS support is not available on this platform"

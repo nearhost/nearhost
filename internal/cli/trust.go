@@ -166,6 +166,8 @@ func nssLine(st proxy.NSSStatus) string {
 		return "The " + nssStores + " already trust the Nearhost Local CA."
 	case proxy.NSSMissing:
 		return "The " + nssStores + " do not trust the Nearhost Local CA yet; run `nearhost trust` again."
+	case proxy.NSSNotNeeded:
+		return st.Detail + ", so they trust it too."
 	default:
 		return "The " + nssStores + " were not configured: " + st.Detail + "."
 	}
