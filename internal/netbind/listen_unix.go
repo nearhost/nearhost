@@ -7,6 +7,9 @@ import "net"
 // loopbackHost is the host LoopbackProbe binds.
 const loopbackHost = "127.0.0.1"
 
+// serveHosts are the hosts ServeAddrs binds: the wildcard address.
+func serveHosts() []string { return []string{""} }
+
 // Listen is net.Listen.
 func Listen(network, address string) (net.Listener, error) {
 	return net.Listen(network, address)

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // CAName is the display name of the local certificate authority.
@@ -20,8 +21,8 @@ const CAName = "Nearhost Local CA"
 const writerModule = "nearhost"
 
 // loopbackRanges are the client addresses sites are served to. The proxy
-// listens on every interface (a non-root process on macOS can bind a low port
-// only on the wildcard address) while every alias resolves to loopback, so no
+// listens on netbind.ServeAddrs (every interface on Unix, as a non-root
+// process on macOS can bind a low port only on the wildcard address) while every alias resolves to loopback, so no
 // legitimate client comes from anywhere else. Caddy compares the remote
 // address as written and does not unmap, so the IPv4-mapped form of the
 // loopback network is listed too.
@@ -214,7 +215,7 @@ func homeRoute(opts Options) map[string]any {
 // HTTP/3, so it needs no UDP port, and no redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
-		"listen": []string{fmt.Sprintf(":%d", opts.WebPort)},
+		"listen": netbind.ServeAddrs(opts.WebPort),
 		"tls_connection_policies": []any{map[string]any{
 			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 		}},
@@ -311,7 +312,7 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 	}
 	routes = append(routes, map[string]any{"handle": abort})
 	return map[string]any{
-		"listen": []string{fmt.Sprintf(":%d", httpPort)},
+		"listen": netbind.ServeAddrs(httpPort),
 		"routes": routes,
 		// This server is plain HTTP by design. Saying so stops Caddy
 		// warning on every reload that it cannot have automatic HTTPS (it
@@ -529,7 +530,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 
 	server := map[string]any{
-		"listen": []string{fmt.Sprintf(":%d", httpsPort)},
+		"listen": netbind.ServeAddrs(httpsPort),
 		// Policies are first-match. The first is for loopback clients; the
 		// others, one per set of extra client ranges, are for those clients
 		// and the hosts of the sites that opted in. A handshake from
