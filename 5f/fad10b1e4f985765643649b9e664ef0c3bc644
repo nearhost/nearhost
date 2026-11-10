@@ -1,0 +1,45 @@
+internal/testutil/fakessh/pgid_unix.go
+  s_8d6383ee1da9a6::t_c05b3f1371fe7f 1-24
+internal/transport/sftp_test.go
+  s_8d6383ee1da9a6::t_3037c800a99cbc 16
+  s_8d6383ee1da9a6::t_b434875585ddcc 105-106
+.github/workflows/ci.yml
+  s_8d6383ee1da9a6::t_bd65fc0528cfbc 35
+internal/testutil/fakessh/main.go
+  s_8d6383ee1da9a6::t_eb58dad8873c75 1-265
+internal/testutil/fakessh/pgid_windows.go
+  s_8d6383ee1da9a6::t_c05b3f1371fe7f 1-33
+internal/testutil/testutil.go
+  s_8d6383ee1da9a6::t_2f78f9617f07e5 15,20,157-160,163-194,204-205,217,221-222,224-235,237-238,240-256,258-265,267
+  s_8d6383ee1da9a6::t_0cde4a55e0ec1b 195-203,206-216,218-220,223,257
+internal/testutil/fakessh_test.go
+  s_8d6383ee1da9a6::t_5821501311b7a2 86-87,96-97,109-110
+  s_8d6383ee1da9a6::t_5704fd9d05d285 1-85,88-95,98-108,111-131
+internal/transport/session_test.go
+  s_8d6383ee1da9a6::t_a01729797ca619 13-14
+  s_8d6383ee1da9a6::t_5665cb378226b3 17,20
+internal/cli/add_stages_test.go
+  s_8d6383ee1da9a6::t_b0f2779dfef736 77-81
+internal/cli/ssh_test.go
+  s_8d6383ee1da9a6::t_e1d681d732a955 113-117,228,235-239
+internal/engine/harness_test.go
+  s_8d6383ee1da9a6::t_39a1df9f2f0120 48-51,55-59
+internal/engine/passthrough_test.go
+  s_8d6383ee1da9a6::t_0054f5ce634137 363-365,368-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ffad10b1e4f985765643649b9e664ef0c3bc644",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
