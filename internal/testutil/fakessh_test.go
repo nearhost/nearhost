@@ -107,18 +107,29 @@ func TestFakeSSHFailsOneForward(t *testing.T) {
 }
 
 // TestFakeSSHBuildsOnceInParallel asks for the fake from several goroutines
-// at once: all get the same program, and it runs.
+// at once: all get the same program, and it runs. The goroutines call
+// buildOnce, which returns its error, because only the test goroutine may
+// fail the test.
 func TestFakeSSHBuildsOnceInParallel(t *testing.T) {
 	paths := make([]string, 8)
+	errs := make([]error, len(paths))
 	var wg sync.WaitGroup
 	for i := range paths {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			paths[i] = FakeSSH(t)
+			paths[i], errs[i] = buildOnce("github.com/nearhost/nearhost/internal/testutil/fakessh", "ssh")
 		}()
 	}
 	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if FakeSSH(t) != paths[0] {
+		t.Fatalf("FakeSSH = %q, want %q", FakeSSH(t), paths[0])
+	}
 	for _, p := range paths {
 		if p != paths[0] || p == "" {
 			t.Fatalf("paths = %v", paths)

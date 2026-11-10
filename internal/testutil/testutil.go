@@ -231,6 +231,17 @@ func buildEnv() []string {
 // one on PATH, which go test puts first.
 func build(t testing.TB, pkg, name string) string {
 	t.Helper()
+	path, err := buildOnce(pkg, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// buildOnce is build without the test: it returns the reason the program
+// could not be built rather than failing the test, so any goroutine may call
+// it.
+func buildOnce(pkg, name string) (string, error) {
 	builtMu.Lock()
 	b, ok := builds[pkg]
 	if !ok {
@@ -261,10 +272,7 @@ func build(t testing.TB, pkg, name string) string {
 		}
 		b.path = path
 	})
-	if b.err != nil {
-		t.Fatal(b.err)
-	}
-	return b.path
+	return b.path, b.err
 }
 
 // Upstream starts a local HTTP server answering "<name>:<host>" and returns
