@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -217,13 +218,17 @@ var (
 	builds = map[string]*built{}
 )
 
-// userDirs are the variables that place the user's home, configuration and
-// caches, as they were when the package was initialised. Some TestMain
-// functions move them before the first build, and the go command finds its
-// settings and build caches through them, so the build is handed these.
+// userDirNames are the variables that place the user's home, configuration
+// and caches. The go command finds its settings and build caches through them
+// (on Windows through LOCALAPPDATA and USERPROFILE).
+var userDirNames = []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "LOCALAPPDATA", "USERPROFILE"}
+
+// userDirs holds the userDirNames variables as they were when the package was
+// initialised. Some TestMain functions move them before the first build, so
+// the build is handed these.
 var userDirs = func() map[string]string {
 	dirs := map[string]string{}
-	for _, k := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"} {
+	for _, k := range userDirNames {
 		if v, ok := os.LookupEnv(k); ok {
 			dirs[k] = v
 		}
@@ -237,7 +242,7 @@ func buildEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if k != "HOME" && k != "XDG_CONFIG_HOME" && k != "XDG_CACHE_HOME" {
+		if !slices.Contains(userDirNames, k) {
 			env = append(env, kv)
 		}
 	}
@@ -290,6 +295,14 @@ func buildOnce(pkg, name string) (string, error) {
 		}
 		path := filepath.Join(dir, name)
 		cmd := exec.Command(goTool, "build", "-o", path, pkg)
+		// Run in testutil's own directory, which is inside the module, so
+		// the build works after a test has changed to a directory outside it.
+		_, self, _, ok := runtime.Caller(0)
+		if !ok {
+			b.err = fmt.Errorf("build %s: cannot find the source directory", pkg)
+			return
+		}
+		cmd.Dir = filepath.Dir(self)
 		cmd.Env = buildEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			b.err = fmt.Errorf("build %s: %v\n%s", pkg, err, out)

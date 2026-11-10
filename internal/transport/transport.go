@@ -44,6 +44,7 @@ var _ Transport = (*Session)(nil)
 
 // Config says which server a Transport reaches and how.
 type Config struct {
+	// Name and Host are the server's name and the host to connect to.
 	Name, Host string
 	// RunDir is where a transport keeps its sockets; "" for Check only.
 	RunDir string
