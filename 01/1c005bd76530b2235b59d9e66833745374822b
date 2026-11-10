@@ -1,0 +1,27 @@
+internal/testutil/faketool/main.go
+  s_8d6383ee1da9a6::t_74ad1dda9b37b8 50
+  s_8d6383ee1da9a6::t_b9edb67126c3b8 1-49,51-54
+internal/testutil/testutil.go
+  s_8d6383ee1da9a6::t_b9edb67126c3b8 166-190
+internal/tui/mouse_test.go
+  s_8d6383ee1da9a6::t_e1a3adf41da28e 16
+  s_8d6383ee1da9a6::t_b9edb67126c3b8 253-254,267
+internal/testutil/fakessh_test.go
+  s_8d6383ee1da9a6::t_5872018a7817cc 143-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "011c005bd76530b2235b59d9e66833745374822b",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
