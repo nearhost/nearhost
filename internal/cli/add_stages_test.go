@@ -74,15 +74,11 @@ func TestLocalFiles(t *testing.T) {
 // sftpOnly is an ssh client whose servers allow SFTP only, served from home.
 func sftpOnly(t *testing.T, home string) sshClient {
 	t.Helper()
-	server := sftpServer(t)
-	wrapper := filepath.Join(t.TempDir(), "ssh")
-	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
-		"if [ \"$last\" = sftp ]; then exec '" + server + "' -R -d '" + home + "'; fi\n" +
-		"exec '" + testutil.FakeSSH(t) + "' \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return sshClient{path: wrapper, env: []string{"FAKE_SSH_LOG=" + filepath.Join(t.TempDir(), "ssh.log")}}
+	return sshClient{path: testutil.FakeSSH(t), env: []string{
+		"FAKE_SSH_LOG=" + filepath.Join(t.TempDir(), "ssh.log"),
+		"FAKE_SSH_SFTP_SERVER=" + testutil.SFTPServer(t),
+		"FAKE_SSH_SFTP_HOME=" + home,
+	}}
 }
 
 func TestServerFilesOverSFTP(t *testing.T) {

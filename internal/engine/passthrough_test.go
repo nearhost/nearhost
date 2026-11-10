@@ -360,20 +360,14 @@ func TestOwnerTextDuringOpen(t *testing.T) {
 	}
 }
 
-// downWrapper writes an ssh stand-in that, while the returned flag file
-// exists, fails every master with a refused connection, which the session
-// keeps retrying. Otherwise it behaves like the fake ssh.
+// downWrapper returns the fake ssh set, for the rest of the test, to fail
+// every master with a refused connection while the returned flag file
+// exists, which the session keeps retrying. Otherwise it behaves as usual.
 func downWrapper(t *testing.T) (path, flag string) {
 	t.Helper()
-	dir := t.TempDir()
-	path, flag = filepath.Join(dir, "ssh"), filepath.Join(dir, "down")
-	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = -M ] && [ -e '" + flag + "' ]; then\n" +
-		"    echo 'ssh: connect to host apollo port 22: Connection refused' >&2; exit 255\n  fi\ndone\n" +
-		"exec '" + fakeSSH(t) + "' \"$@\"\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path, flag
+	flag = filepath.Join(t.TempDir(), "down")
+	t.Setenv("FAKE_SSH_MASTER_DOWN", flag)
+	return fakeSSH(t), flag
 }
 
 // endHarness is an engine with a connected server "apollo" run by sshPath,

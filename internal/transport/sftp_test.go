@@ -13,6 +13,7 @@ import (
 	"github.com/pkg/sftp"
 
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 type pipeRWC struct {
@@ -100,22 +101,9 @@ func TestKillOnCancelKillsStuckHandshake(t *testing.T) {
 // ssh going first, it has already closed its end of the pipe, and closing it
 // again is refused. That is not a failure of the close.
 func TestSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
-	var server string
-	for _, p := range []string{"/usr/libexec/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server", "/usr/lib/ssh/sftp-server"} {
-		if _, err := os.Stat(p); err == nil {
-			server = p
-			break
-		}
-	}
-	if server == "" {
-		t.Skip("no sftp-server binary on this machine")
-	}
-	wrapper := filepath.Join(t.TempDir(), "ssh")
-	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec '"+server+"' -R\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	s := NewSession("mini", "mini", t.TempDir())
-	s.SSHPath = wrapper
+	s.SSHPath = testutil.FakeSSH(t)
+	s.Env = []string{"FAKE_SSH_SFTP_SERVER=" + testutil.SFTPServer(t)}
 	f, err := s.OpenSFTP(context.Background())
 	if err != nil {
 		t.Fatal(err)
