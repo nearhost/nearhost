@@ -101,11 +101,9 @@ func migrateWarning(err error) string {
 func newTrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "trust",
-		Short: "Install the Nearhost Local CA into the system trust store",
-		Long: `Install the Nearhost Local CA into the system trust store.
-
-` + elevationNote,
-		Args: cobra.NoArgs,
+		Short: "Install the Nearhost Local CA into " + trustStore,
+		Long:  "Install the Nearhost Local CA into " + trustStore + ".\n\n" + elevationNote,
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()
@@ -123,14 +121,14 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 			if err := b.sudoProblem("trust"); err != nil {
 				return err
 			}
-			fmt.Fprintln(out, "Installing Nearhost Local CA. You may be asked for your password.")
+			fmt.Fprintln(out, trustInstalling)
 			if err := b.install(cert); err != nil {
 				if errors.Is(err, sudo.ErrNotFound) {
 					return noSudo(err, "trust") // no prompt was shown, and another try won't find sudo
 				}
-				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost trust` again and approve it)", err)
+				return fmt.Errorf("%w ("+trustDeclined+", run `nearhost trust` again and approve it)", err)
 			}
-			fmt.Fprintln(out, "Done. Nearhost Local CA is in the system trust store.")
+			fmt.Fprintln(out, "Done. Nearhost Local CA is in "+trustStore+".")
 			// The library installs into the NSS stores when it can and skips them
 			// silently otherwise, so check what actually happened.
 			fmt.Fprintln(out, nssLine(b.nss(cert)))
@@ -145,14 +143,14 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 func trustNSSOnly(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 	st := b.nss(cert)
 	if st.State == proxy.NSSMissing {
-		fmt.Fprintln(out, "Nearhost Local CA is already trusted by the system. Installing it into the "+nssStores+".")
+		fmt.Fprintln(out, "Nearhost Local CA is already in "+trustStore+". Installing it into the "+nssStores+".")
 		if err := b.installNSS(cert); err != nil {
 			return fmt.Errorf("%w (the system store already trusts the CA; fix the NSS stores and run `nearhost trust` again)", err)
 		}
 		fmt.Fprintln(out, "Done. The "+nssStores+" now trust the Nearhost Local CA.")
 		return nil
 	}
-	fmt.Fprintln(out, "Nearhost Local CA is already trusted by the system.")
+	fmt.Fprintln(out, "Nearhost Local CA is already in "+trustStore+".")
 	fmt.Fprintln(out, nssLine(st))
 	return nil
 }
@@ -176,11 +174,9 @@ func nssLine(st proxy.NSSStatus) string {
 func newUntrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "untrust",
-		Short: "Remove the Nearhost Local CA from the system trust store",
-		Long: `Remove the Nearhost Local CA from the system trust store.
-
-` + elevationNote,
-		Args: cobra.NoArgs,
+		Short: "Remove the Nearhost Local CA from " + trustStore,
+		Long:  "Remove the Nearhost Local CA from " + trustStore + ".\n\n" + elevationNote,
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			migrateCA(cmd.ErrOrStderr())
 			dir, err := config.CaddyDir()
@@ -198,7 +194,7 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 				if errors.Is(err, sudo.ErrNotFound) {
 					return noSudo(err, "untrust")
 				}
-				return fmt.Errorf("%w (if you declined the password prompt or the OS refused, run `nearhost untrust` again and approve it)", err)
+				return fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Nearhost Local CA removed from the trust store.")
 			return nil

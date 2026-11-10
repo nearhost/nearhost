@@ -408,9 +408,9 @@ func checkCAAt(b trustBackend, dir string) []check {
 	case err != nil:
 		return []check{{name, levelFail, err.Error(), "remove " + proxy.RootCertPath(dir) + " if it is damaged, then " + fix}}
 	}
-	ca := check{name: name, detail: "trusted by the system trust store"}
+	ca := check{name: name, detail: "trusted by " + trustStore}
 	if !b.isTrusted(cert) {
-		ca = check{name, levelFail, "exists, but the system trust store does not trust it", fix}
+		ca = check{name, levelFail, "exists, but " + trustStore + " does not trust it", fix}
 	}
 	if !cert.NotAfter.IsZero() {
 		ca.detail += "; expires " + cert.NotAfter.Format("2006-01-02")
@@ -450,7 +450,7 @@ func checkAliases(cfg *config.Config, path string) []check {
 // to this machine. It returns too the names it reports missing from the
 // block, none unless it fails.
 func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check, []string) {
-	const name, fix = "hosts block", "run `nearhost up`; it updates the block and asks for your password"
+	const name, fix = "hosts block", hostsFix
 	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.env.lookup)
 	existing, err := b.env.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

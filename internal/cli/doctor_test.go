@@ -114,7 +114,7 @@ func TestDoctorReportsEveryCheckPassing(t *testing.T) {
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
 		"ok    port 6327        free\n" +
-		"ok    local CA         trusted by the system trust store\n" +
+		"ok    local CA         trusted by " + trustStore + "\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"ok    hosts block      2 names\n" +
 		"ok    server mini      ssh mini.lan works without a prompt\n" +
@@ -228,10 +228,10 @@ func TestDoctorReportsTheCAAndTheBrowserStoresSeparately(t *testing.T) {
 		{"unreadable CA", func(f *fakeTrust) { f.rootErr = errors.New("root.crt is not PEM") },
 			[]string{"FAIL  local CA         root.crt is not PEM\n"}, "browser stores", "1 check failed"},
 		{"CA not trusted", func(f *fakeTrust) { f.trusted = false },
-			[]string{"FAIL  local CA         exists, but the system trust store does not trust it\n" + trustFix,
+			[]string{"FAIL  local CA         exists, but " + trustStore + " does not trust it\n" + trustFix,
 				"ok    browser stores   the NSS stores trust the CA\n"}, "", "1 check failed"},
 		{"browser stores lack it", func(f *fakeTrust) { f.nss = proxy.NSSStatus{State: proxy.NSSMissing} },
-			[]string{"ok    local CA         trusted by the system trust store\n",
+			[]string{"ok    local CA         trusted by " + trustStore + "\n",
 				"warn  browser stores   the NSS stores (Firefox, and on Linux the shared database Chromium-family browsers use) do not trust the CA\n" + trustFix,
 				"\nNo failures, 1 warning.\n"}, "", ""},
 		{"browser stores unknown", func(f *fakeTrust) {
@@ -258,7 +258,7 @@ func TestDoctorReportsTheCAAndTheBrowserStoresSeparately(t *testing.T) {
 }
 
 func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
-	const fix = "      fix: Run `nearhost up`; it updates the block and asks for your password\n"
+	fix := "      fix: R" + hostsFix[1:] + "\n" // doctor capitalises the fix
 	cases := []struct {
 		name  string
 		hosts string
@@ -349,7 +349,7 @@ func TestDoctorKeepsCheckingAfterAnInvalidConfig(t *testing.T) {
 		"ok    port 443         free\n" +
 		"ok    port 80          free\n" +
 		"ok    port 6327        free\n" +
-		"ok    local CA         trusted by the system trust store\n" +
+		"ok    local CA         trusted by " + trustStore + "\n" +
 		"ok    browser stores   the NSS stores trust the CA\n" +
 		"warn  hosts block      " + unread +
 		"warn  servers          " + unread +
@@ -406,7 +406,7 @@ func TestDoctorSaysWhenTheCAExpires(t *testing.T) {
 	f := healthy()
 	f.trust.cert.NotAfter = time.Date(2036, 10, 13, 0, 0, 0, 0, time.UTC)
 	out, _ := execute(t, newDoctorCmd(f.backend()), "doctor")
-	if !strings.Contains(out, "ok    local CA         trusted by the system trust store; expires 2036-10-13\n") {
+	if !strings.Contains(out, "ok    local CA         trusted by "+trustStore+"; expires 2036-10-13\n") {
 		t.Errorf("doctor printed:\n%s", out)
 	}
 }
