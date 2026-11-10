@@ -36,7 +36,7 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
-		"-s", "--", s.Host, "sftp")
+		"-s", "--", s.host, "sftp")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 	if err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
-		return nil, fmt.Errorf("sftp handshake with %s: %w", s.Host, err)
+		return nil, fmt.Errorf("sftp handshake with %s: %w", s.host, err)
 	}
 	return &SFTP{Client: client, cmd: cmd}, nil
 }

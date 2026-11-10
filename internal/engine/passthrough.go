@@ -44,7 +44,7 @@ type Passthrough struct {
 // it opens. Its fields other than Passthrough are guarded by Engine.mu.
 type passthrough struct {
 	Passthrough
-	sess *transport.Session
+	sess transport.Transport
 	// opening is true until the forward is in place. Passthroughs does not
 	// list the passthrough until then.
 	opening bool
@@ -511,7 +511,7 @@ func forwardApplied(states []transport.ForwardState, local, remote int) bool {
 
 // failedReason is why the passthroughs of a server whose connection failed
 // for good are closed.
-func failedReason(server string, sess *transport.Session) string {
+func failedReason(server string, sess transport.Transport) string {
 	return fmt.Sprintf("%s's connection failed: %s", server, sess.LastError())
 }
 
@@ -535,7 +535,7 @@ func (e *Engine) closePassthroughs(ctx context.Context, closes []passClose) {
 
 // sessionPassthroughsLocked lists the passthroughs carried by sess, opening
 // ones included, each with reason. It must be called with e.mu held.
-func (e *Engine) sessionPassthroughsLocked(sess *transport.Session, reason string) []passClose {
+func (e *Engine) sessionPassthroughsLocked(sess transport.Transport, reason string) []passClose {
 	var out []passClose
 	for id, p := range e.passthroughs {
 		if p.sess == sess {

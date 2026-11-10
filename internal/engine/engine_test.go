@@ -518,7 +518,7 @@ func TestStartRevivesAServerThatGaveUpUnderARunningProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.eng.mu.Lock()
-	sock := h.eng.servers["mini"].sess.SocketPath()
+	sock := h.eng.servers["mini"].sess.(*transport.Session).SocketPath()
 	h.eng.mu.Unlock()
 	if err := os.Remove(sock); err != nil {
 		t.Fatal(err)

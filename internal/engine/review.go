@@ -41,7 +41,7 @@ type Review struct {
 // machine when sess is nil and over SFTP through sess otherwise. A server
 // whose files cannot be reached gives a Problem, so the start goes on with
 // what was approved. The caller holds no lock: SFTP and the review can block.
-func (e *Engine) readRc(ctx context.Context, p config.Project, sess *transport.Session) Review {
+func (e *Engine) readRc(ctx context.Context, p config.Project, sess transport.Transport) Review {
 	// The review gets a copy of its own, so nothing it does to the routes
 	// reaches the engine's configuration, which is never changed in place.
 	p.Routes = cloneRoutes(p.Routes)
@@ -128,7 +128,7 @@ func (e *Engine) adoptLocked(run *projectRun, updated config.Project) *config.Pr
 // reviewStart reviews p's .nearhostrc for a start and returns the project to
 // go on with: the updated one when the change needed no approval, p itself
 // otherwise. The caller holds run.op and not mu.
-func (e *Engine) reviewStart(ctx context.Context, run *projectRun, p *config.Project, sess *transport.Session) *config.Project {
+func (e *Engine) reviewStart(ctx context.Context, run *projectRun, p *config.Project, sess transport.Transport) *config.Project {
 	if e.opts.Review == nil {
 		return p
 	}
@@ -167,7 +167,7 @@ func (e *Engine) Reread(ctx context.Context, name string) (Review, error) {
 		return Review{}, fmt.Errorf("unknown project %q", name)
 	}
 	run := e.runs[name]
-	var sess *transport.Session
+	var sess transport.Transport
 	if p.Server != config.LocalServer {
 		c := e.servers[p.Server]
 		if c == nil || c.sess.Status() != transport.StatusConnected {

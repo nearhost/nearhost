@@ -19,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // TestMain points every directory Caddy or ssh might touch at a throwaway
@@ -310,7 +311,7 @@ func (h *harness) forwards(server string) [][2]int {
 func (h *harness) dropMaster(t *testing.T, server string) {
 	t.Helper()
 	h.eng.mu.Lock()
-	sock := h.eng.servers[server].sess.SocketPath()
+	sock := h.eng.servers[server].sess.(*transport.Session).SocketPath()
 	h.eng.mu.Unlock()
 	if err := os.Remove(sock); err != nil {
 		t.Fatal(err)

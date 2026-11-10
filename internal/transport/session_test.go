@@ -478,8 +478,8 @@ func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
 	if got := s.SocketPath(); got != filepath.Join(dir, fits+".sock") || len(got) != 86 {
 		t.Fatalf("a name that still fits must be kept: %q (%d bytes)", got, len(got))
 	}
-	if err := s.CheckSocketPath(); err != nil {
-		t.Fatalf("CheckSocketPath for a path of 86 bytes: %v", err)
+	if err := s.Preflight(); err != nil {
+		t.Fatalf("Preflight for a path of 86 bytes: %v", err)
 	}
 
 	s = NewSession(tooLong, "mini", dir)
@@ -490,8 +490,8 @@ func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
 	if len(got)+17 >= 104 {
 		t.Fatalf("hashed socket path %q (%d bytes) does not fit either", got, len(got))
 	}
-	if err := s.CheckSocketPath(); err != nil {
-		t.Fatalf("CheckSocketPath: %v", err)
+	if err := s.Preflight(); err != nil {
+		t.Fatalf("Preflight: %v", err)
 	}
 	if again := NewSession(tooLong, "other-host", dir).SocketPath(); again != got {
 		t.Fatalf("the socket of one name changed: %q then %q", got, again)
@@ -501,15 +501,15 @@ func TestSocketPathOfALongNameFallsBackToTheHashedName(t *testing.T) {
 	}
 }
 
-func TestStartFailsAtOnceWhenTheRunDirectoryIsTooLong(t *testing.T) {
+func TestPreflightRefusesALongRunDir(t *testing.T) {
 	s, logPath := newFakeSession(t)
 	long := filepath.Join(shortDir(t), strings.Repeat("d", 70))
 	s.runDir = long
 	s.connectTimeout = time.Minute // a wait for ssh would outlast the test
 
-	err := s.CheckSocketPath()
+	err := s.Preflight()
 	if err == nil {
-		t.Fatalf("CheckSocketPath accepted %q", s.SocketPath())
+		t.Fatalf("Preflight accepted %q", s.SocketPath())
 	}
 	for _, want := range []string{s.SocketPath(), "86 bytes", "XDG_CONFIG_HOME"} {
 		if !strings.Contains(err.Error(), want) {

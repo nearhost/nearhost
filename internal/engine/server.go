@@ -16,7 +16,7 @@ var errShutDown = errors.New("engine is shut down")
 // time a project on the server starts and lives until Shutdown.
 type serverConn struct {
 	ensure sync.Mutex // serialises (re)starting the session
-	sess   *transport.Session
+	sess   transport.Transport
 	// agentAsked is set once Options.Agent has been asked for the
 	// session's agent socket. It is guarded by ensure.
 	agentAsked bool
@@ -26,18 +26,20 @@ type serverConn struct {
 // session whose supervisor gave up (authentication failed) is started afresh,
 // so starting a project again retries the connection. After Shutdown it
 // starts nothing and returns an error.
-func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
+func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 	e.mu.Lock()
 	c := e.servers[srv.Name]
 	if c == nil && !e.closed {
-		s := transport.NewSession(srv.Name, srv.SSHHost, e.opts.RunDir)
-		if e.opts.SSHPath != "" {
-			s.SSHPath = e.opts.SSHPath
-		}
-		s.Env = e.opts.SSHEnv
-		s.Logf = func(format string, args ...any) {
-			e.serverLog(srv.Name, fmt.Sprintf(format, args...))
-		}
+		s := transport.New(transport.Config{
+			Name:    srv.Name,
+			Host:    srv.SSHHost,
+			RunDir:  e.opts.RunDir,
+			SSHPath: e.opts.SSHPath,
+			Env:     e.opts.SSHEnv,
+			Logf: func(format string, args ...any) {
+				e.serverLog(srv.Name, fmt.Sprintf(format, args...))
+			},
+		})
 		c = &serverConn{sess: s}
 		e.servers[srv.Name] = c
 	}
@@ -67,7 +69,7 @@ func (e *Engine) ensureSession(srv config.Server) (*transport.Session, error) {
 	}
 	// A run directory too long for a control socket fails the start with
 	// that reason, not after a wait for a connection that cannot come.
-	if err := c.sess.CheckSocketPath(); err != nil {
+	if err := c.sess.Preflight(); err != nil {
 		return nil, err
 	}
 	if !c.agentAsked && e.opts.Agent != nil {
