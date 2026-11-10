@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // reversed matches an SGR sequence that turns reverse video on.
@@ -249,14 +250,8 @@ func TestCopyTextUsesTheSystemClipboardToo(t *testing.T) {
 // to the next one, and one not installed is passed over.
 func TestCopyWithTriesTheNextTool(t *testing.T) {
 	dir, out := t.TempDir(), filepath.Join(t.TempDir(), "copied")
-	for name, script := range map[string]string{
-		"wl-copy": "#!/bin/sh\nexit 1\n",
-		"xclip":   "#!/bin/sh\n/bin/cat > " + out + "\n",
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	testutil.FakeTool(t, dir, "wl-copy", "exit 1")
+	testutil.FakeTool(t, dir, "xclip", "copy "+out)
 	t.Setenv("PATH", dir)
 	if err := copyWith([][]string{{"nh-not-installed"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"}}, "ssh mini"); err != nil {
 		t.Fatal(err)
@@ -269,9 +264,7 @@ func TestCopyWithTriesTheNextTool(t *testing.T) {
 // With every tool failing, the last failure is reported.
 func TestCopyWithReportsAFailure(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "wl-copy"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.FakeTool(t, dir, "wl-copy", "exit 1")
 	t.Setenv("PATH", dir)
 	if err := copyWith([][]string{{"wl-copy"}}, "x"); err == nil || !strings.HasPrefix(err.Error(), "wl-copy: ") {
 		t.Errorf("err = %v", err)

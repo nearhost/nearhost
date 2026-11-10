@@ -163,6 +163,31 @@ func FakeSSH(t testing.TB) string {
 	return build(t, "github.com/nearhost/nearhost/internal/testutil/fakessh", "ssh")
 }
 
+// FakeTool puts a copy of the fake command-line tool, the program in
+// internal/testutil/faketool, in dir as name (name.exe on Windows), built on
+// the first call in this test process, and writes does to dir/name.does for
+// it to read. does is "exit N", to exit with code N, or "copy PATH", to copy
+// standard input to PATH and exit 0. The program is copied, not linked, so
+// looking name up on PATH finds it on every system.
+func FakeTool(t testing.TB, dir, name, does string) {
+	t.Helper()
+	src := build(t, "github.com/nearhost/nearhost/internal/testutil/faketool", "faketool")
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		dst += ".exe"
+	}
+	if err := os.WriteFile(dst, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".does"), []byte(does), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // SFTPServer finds the OpenSSH SFTP server binary, which speaks the protocol
 // on its standard streams and so can stand in for `ssh -s host sftp`, and
 // skips the test when there is none.
