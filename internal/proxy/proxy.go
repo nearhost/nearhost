@@ -147,22 +147,32 @@ var releasePorts = waitReleased
 func waitReleased(ports []int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for _, port := range ports {
-		for {
-			l, err := netbind.Listen("tcp", fmt.Sprintf(":%d", port))
-			if err == nil {
-				l.Close()
-				break
+		for _, addr := range netbind.ServeAddrs(port) {
+			if err := waitAddr(addr, port, deadline); err != nil {
+				return err
 			}
-			if !oserr.AddrInUse(err) {
-				break
-			}
-			if time.Now().After(deadline) {
-				return fmt.Errorf("port %d is still in use after the proxy stopped", port)
-			}
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	return nil
+}
+
+// waitAddr waits until addr, an address of port, is free on TCP, or deadline
+// has passed.
+func waitAddr(addr string, port int, deadline time.Time) error {
+	for {
+		l, err := netbind.Listen("tcp", addr)
+		if err == nil {
+			l.Close()
+			return nil
+		}
+		if !oserr.AddrInUse(err) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("port %d is still in use after the proxy stopped", port)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // Running reports whether this Proxy's configuration is the one running.

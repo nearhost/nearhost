@@ -23,6 +23,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -2443,9 +2444,9 @@ func TestStartRetriesThePagePort(t *testing.T) {
 		}
 	})
 	h.eng.listen = func(network, addr string) (net.Listener, error) {
-		if addr == fmt.Sprintf(":%d", web) {
+		if strings.HasSuffix(addr, fmt.Sprintf(":%d", web)) { // any of netbind.ServeAddrs(web)
 			var err error
-			if https, err = net.Listen("tcp", fmt.Sprintf(":%d", h.httpsPort)); err != nil {
+			if https, err = netbind.Listen("tcp", netbind.ServeAddrs(h.httpsPort)[0]); err != nil {
 				t.Fatal(err)
 			}
 			return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
@@ -2543,7 +2544,7 @@ func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
 	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
 	web := h.eng.opts.WebPort
 	h.eng.listen = func(network, addr string) (net.Listener, error) {
-		if addr == fmt.Sprintf(":%d", web) {
+		if strings.HasSuffix(addr, fmt.Sprintf(":%d", web)) { // any of netbind.ServeAddrs(web)
 			return nil, deniedListen(network, addr)
 		}
 		return net.Listen(network, addr)

@@ -534,7 +534,16 @@ func (e *Engine) probePort(ctx context.Context, what string, port, def int) erro
 	if port == 0 {
 		port = def
 	}
-	addr := fmt.Sprintf(":%d", port)
+	for _, addr := range netbind.ServeAddrs(port) {
+		if err := e.probeAddr(ctx, what, port, addr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probeAddr is probePort for one of the addresses the proxy serves port on.
+func (e *Engine) probeAddr(ctx context.Context, what string, port int, addr string) error {
 	l, err := e.listen("tcp", addr)
 	if err != nil {
 		pe := &portError{what: what, port: port, err: err}
