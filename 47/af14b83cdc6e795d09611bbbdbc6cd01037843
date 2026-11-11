@@ -1,0 +1,29 @@
+internal/testutil/processalive_windows_test.go
+  s_8d6383ee1da9a6::t_1063ff8f31e46f 1-14
+internal/testutil/processalive_unix_test.go
+  s_8d6383ee1da9a6::t_1063ff8f31e46f 1-11
+internal/testutil/fakessh/main.go
+  s_8d6383ee1da9a6::t_0ba6faed95b73c 39,154,215-217,271-273,275-283,285-287,293-294,296,312,345-365,367
+internal/testutil/fakessh_test.go
+  s_8d6383ee1da9a6::t_1063ff8f31e46f 326-380
+internal/testutil/fakessh/parent_unix.go
+  s_8d6383ee1da9a6::t_1063ff8f31e46f 1-12
+internal/testutil/fakessh/parent_windows.go
+  s_8d6383ee1da9a6::t_1063ff8f31e46f 1-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47af14b83cdc6e795d09611bbbdbc6cd01037843",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
