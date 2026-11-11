@@ -44,6 +44,9 @@ type perProcess struct {
 	// Logf is called with it held, so a Logf callback must not call
 	// AddForward or CancelForward; Status and ForwardStates are fine.
 	fwdMu sync.Mutex
+	// launchSlots holds a token for each forward that is starting, at most
+	// maxForwardLaunches.
+	launchSlots chan struct{}
 
 	// agent is the socket forwarded for coding agents; nil for none.
 	agent *AgentForward
@@ -58,10 +61,11 @@ var _ Transport = (*perProcess)(nil)
 // connect.
 func newPerProcess(c Config) *perProcess {
 	p := &perProcess{
-		SSHPath:    c.SSHPath,
-		Env:        c.Env,
-		Foreground: c.Foreground,
-		forwards:   map[string]*perProcessForward{},
+		SSHPath:     c.SSHPath,
+		Env:         c.Env,
+		Foreground:  c.Foreground,
+		forwards:    map[string]*perProcessForward{},
+		launchSlots: make(chan struct{}, maxForwardLaunches),
 	}
 	p.init(c.Name, c.Host)
 	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
@@ -504,11 +508,18 @@ type sshProc struct {
 	exited chan struct{}
 }
 
+// procWaitDelay bounds how long reaping a killed link or forward waits for
+// its stderr to close. A ProxyCommand or ProxyJump child that inherited the
+// pipe would otherwise hold Wait, and with it CancelForward and Stop, until
+// it exits.
+const procWaitDelay = 5 * time.Second
+
 // startProc starts a long-lived ssh with args, its stderr going to stderr,
 // and reaps it when it exits; running counts it until then.
 func (p *perProcess) startProc(args []string, stderr *linkStderr) (*sshProc, error) {
 	cmd := p.longLived(context.Background(), args...) // not tied to a context: we stop it ourselves
 	cmd.Stderr = stderr
+	cmd.WaitDelay = procWaitDelay
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

@@ -46,7 +46,7 @@ func (p *perProcess) AddForward(ctx context.Context, localPort, remotePort int) 
 	if !connected {
 		return nil
 	}
-	first := p.superviseLocked(linkCtx, f)
+	first := p.superviseLocked(linkCtx, f, false)
 	var err error
 	select {
 	case err = <-first:
@@ -115,8 +115,8 @@ func (p *perProcess) Forwards() [][2]int {
 // ForwardStates returns the connection status together with the desired
 // forwards, sorted by local port, each with whether its ssh listens, from
 // one snapshot. As with Session, the status is connected only after the
-// re-apply pass, so a forward that is not applied then has failed, or has
-// been lost and is being relaunched.
+// re-apply pass has tried every forward once, so a forward that is not
+// applied then has failed, or has been lost, and is being retried.
 func (p *perProcess) ForwardStates() (Status, []ForwardState) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -144,11 +144,12 @@ func (p *perProcess) sortedForwardsLocked() []*perProcessForward {
 }
 
 // markConnected starts every desired forward on the link whose context is
-// linkCtx, all at once, waits for each to listen or fail, then reports the
-// transport connected. It holds fwdMu throughout, so AddForward and
-// CancelForward run wholly before or after it, and whoever sees the
-// connected status sees every forward settled. A forward that fails is
-// logged and stays tracked but unapplied until the next reconnect. It
+// linkCtx, at most maxForwardLaunches at a time, waits for each first
+// attempt to listen or fail, then reports the transport connected. It
+// holds fwdMu throughout, so AddForward and CancelForward run wholly before
+// or after it, and whoever sees the connected status sees every forward
+// settled. A forward that fails is logged and stays tracked but unapplied,
+// while its supervisor goes on trying with its own backoff. It
 // reports false, leaving the status alone, when the link went down or the
 // transport is stopping during the pass.
 func (p *perProcess) markConnected(linkCtx context.Context) bool {
@@ -160,11 +161,10 @@ func (p *perProcess) markConnected(linkCtx context.Context) bool {
 	p.mu.Unlock()
 	firsts := make([]<-chan error, len(todo))
 	for i, f := range todo {
-		firsts[i] = p.superviseLocked(linkCtx, f)
+		firsts[i] = p.superviseLocked(linkCtx, f, true)
 	}
-	for i, f := range todo {
+	for i := range todo {
 		if err := <-firsts[i]; err != nil {
-			p.unsupervise(f)
 			if linkCtx.Err() == nil {
 				p.Logf("%s: reapply failed: %v", p.Name, err)
 			}
@@ -204,16 +204,17 @@ func (p *perProcess) endForwards() {
 }
 
 // superviseLocked starts f's supervisor on the link whose context is
-// linkCtx and returns the channel that gets its first launch's result. The
+// linkCtx and returns the channel that gets its first launch's result. A
+// supervisor that keepTrying goes on after a first launch that fails. The
 // caller holds fwdMu.
-func (p *perProcess) superviseLocked(linkCtx context.Context, f *perProcessForward) <-chan error {
+func (p *perProcess) superviseLocked(linkCtx context.Context, f *perProcessForward, keepTrying bool) <-chan error {
 	ctx, cancel := context.WithCancel(linkCtx)
 	first := make(chan error, 1)
 	done := make(chan struct{})
 	p.mu.Lock()
 	f.cancel, f.done = cancel, done
 	p.mu.Unlock()
-	go p.superviseForward(ctx, f, first, done)
+	go p.superviseForward(ctx, f, first, done, keepTrying)
 	return first
 }
 
@@ -232,24 +233,31 @@ func (p *perProcess) unsupervise(f *perProcessForward) {
 }
 
 // superviseForward runs f's ssh until ctx ends. The first launch's result
-// goes to first, and a first launch that fails ends the supervisor. Once
-// the forward has listened, a process that exits is relaunched after the
-// forward's own backoff, for as long as ctx lasts.
-func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, first chan<- error, done chan struct{}) {
+// goes to first; a first launch that fails ends the supervisor unless
+// keepTrying. Otherwise a launch that fails, or a process that exits, is
+// relaunched after the forward's own backoff, for as long as ctx lasts.
+func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, first chan<- error, done chan struct{}, keepTrying bool) {
 	defer close(done)
 	spec := forwardSpec(f.local, f.remote)
 	backoff := p.baseBackoff
 	for {
 		proc, err := p.launchForward(ctx, f.local, f.remote)
 		if err != nil {
-			if first != nil {
-				first <- err
-				return
-			}
 			if ctx.Err() != nil {
+				if first != nil {
+					first <- err
+				}
 				return
 			}
-			p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
+			if first != nil {
+				first <- err // the caller says why
+				first = nil
+				if !keepTrying {
+					return
+				}
+			} else {
+				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
+			}
 			if !p.sleep(ctx, backoff) {
 				return
 			}
@@ -287,11 +295,22 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 	}
 }
 
+// maxForwardLaunches is how many forwards may be logging in at once. Each
+// is a whole ssh login, and sshd by default (MaxStartups 10:30:100) starts
+// dropping unauthenticated connections beyond 10.
+const maxForwardLaunches = 4
+
 // launchForward starts an `ssh -N -L` for the forward from local to remote
-// and waits until it listens. It fails when the port is taken, when ssh
-// exits first, after connectTimeout, or when ctx ends; the process is then
-// reaped.
+// and waits until it listens, holding one of the launch slots while it
+// does. It fails when the port is taken, when ssh exits first, after
+// connectTimeout, or when ctx ends; the process is then reaped.
 func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*sshProc, error) {
+	select {
+	case p.launchSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-p.launchSlots }()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

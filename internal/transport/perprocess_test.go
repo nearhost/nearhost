@@ -853,7 +853,7 @@ func TestPerProcessStopLeavesNoProcess(t *testing.T) {
 
 func TestPerProcessAnAgentForwardNeverAnsweredCountsAsRefused(t *testing.T) {
 	p := newTestPerProcess(t, "FAKE_SSH_RFORWARD_SILENT=1")
-	p.connectTimeout = 300 * time.Millisecond
+	p.connectTimeout = 1500 * time.Millisecond
 	withPerProcessAgent(p, agentRemote, nil)
 	p.Start()
 	waitPerProcessConnected(t, p)
@@ -870,5 +870,71 @@ func TestPerProcessAnAgentForwardNeverAnsweredCountsAsRefused(t *testing.T) {
 	}
 	if p.running() != 1 {
 		t.Fatalf("running = %d, want only the second link", p.running())
+	}
+}
+
+func TestPerProcessRetriesAForwardThatFailedOnReconnect(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+
+	// Take the forward's port while the link reconnects.
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.drop(t, p.linkPid())
+	waitFor(t, 5*time.Second, func() bool { return p.Status() != StatusConnected }, "the link to drop")
+	waitFor(t, 5*time.Second, func() bool { return portFree(local) }, "the forward to end with the link")
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(hold)
+	waitPerProcessConnected(t, p)
+	if st, fs := p.ForwardStates(); st != StatusConnected || len(fs) != 1 || fs[0].Applied {
+		l.Close()
+		t.Fatalf("with the port taken, ForwardStates = %s, want it unapplied", forwardStatesString(st, fs))
+	}
+	linkPid := p.linkPid()
+	l.Close()
+	waitFor(t, 5*time.Second, func() bool {
+		st, fs := p.ForwardStates()
+		return st == StatusConnected && len(fs) == 1 && fs[0].Applied
+	}, "the forward to be applied once its port is free")
+	if p.linkPid() != linkPid {
+		t.Fatalf("the link went from %d to %d", linkPid, p.linkPid())
+	}
+}
+
+func TestPerProcessLaunchesAtMostFourForwardsAtOnce(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	// Four launches under way take every slot.
+	for range 4 {
+		p.launchSlots <- struct{}{}
+	}
+	local := freePort(t)
+	added := make(chan error, 1)
+	go func() { added <- p.AddForward(context.Background(), local, 80) }()
+	select {
+	case err := <-added:
+		t.Fatalf("AddForward returned %v with every launch slot taken", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if strings.Contains(readLog(t, p.log), " -L ") {
+		t.Fatalf("a forward launched with every slot taken: %q", readLog(t, p.log))
+	}
+	<-p.launchSlots
+	if err := <-added; err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+	for range 3 {
+		<-p.launchSlots
 	}
 }
