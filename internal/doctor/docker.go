@@ -140,9 +140,13 @@ func hostGatewayFinding(file string, s service, missing []string) Finding {
 func dockerClientsFinding(goos string) Finding {
 	sev := SeverityWarning
 	text := "Add docker_clients: true to .nearhostrc and approve it in Nearhost; with no .nearhostrc yet, `nearhost export` writes one."
-	if goos == "darwin" {
+	switch goos {
+	case "darwin":
 		sev = SeverityInfo
 		text += " Docker Desktop on macOS already delivers container requests from 127.0.0.1, so this matters on Linux."
+	case "windows":
+		sev = SeverityInfo
+		text += " Docker Desktop on Windows already delivers container requests from 127.0.0.1, so this matters on Linux."
 	}
 	return Finding{
 		ID:       "docker.clients",
