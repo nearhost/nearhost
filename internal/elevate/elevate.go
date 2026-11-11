@@ -18,7 +18,9 @@ type Command struct {
 }
 
 // ErrDeclined is Run's error when the user declined the elevation prompt.
-var ErrDeclined = errors.New("the Windows prompt was declined")
+// Windows reports a prompt that timed out after about 2 minutes as
+// ERROR_CANCELLED, just as it reports a No, so it may have gone unanswered.
+var ErrDeclined = errors.New("the Windows prompt was declined or went unanswered")
 
 // Elevator is how privileged steps are run on this OS.
 type Elevator interface {
