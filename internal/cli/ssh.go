@@ -57,10 +57,9 @@ const shortTempDir = "/tmp"
 
 // privateSession returns a session to srv with a run directory of its own,
 // that directory's path, and a function that stops the session and removes the
-// directory. The
-// directory is created for this one session, readable by this user only, and
-// its socket has a fixed short name: the path does not grow with the
-// server's name.
+// directory. The directory is created for this one session, readable by this
+// user only, and its socket has a fixed short name: the path does not grow
+// with the server's name.
 func (c sshClient) privateSession(srv config.Server) (transport.Transport, string, func() error, error) {
 	runDir, err := os.MkdirTemp(shortTempDir, "nh-")
 	if err != nil {

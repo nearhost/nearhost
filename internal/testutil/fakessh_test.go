@@ -140,3 +140,26 @@ func TestFakeSSHBuildsOnceInParallel(t *testing.T) {
 		t.Fatalf("check of a missing socket = %d %q", code, stderr)
 	}
 }
+
+// TestFakeToolDoesWhatItIsTold checks both instructions the fake tool
+// understands: exiting with a code, and copying its standard input to a file.
+func TestFakeToolDoesWhatItIsTold(t *testing.T) {
+	dir := TempDir(t, "nh-")
+	FakeTool(t, dir, "failing", "exit 3")
+	err := exec.Command(filepath.Join(dir, "failing")).Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Errorf("exit tool: err = %v, want exit code 3", err)
+	}
+
+	out := filepath.Join(dir, "copied")
+	FakeTool(t, dir, "copying", "copy "+out)
+	cmd := exec.Command(filepath.Join(dir, "copying"))
+	cmd.Stdin = strings.NewReader("ssh mini")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(out); err != nil || string(b) != "ssh mini" {
+		t.Errorf("copy tool wrote %q, %v", b, err)
+	}
+}
