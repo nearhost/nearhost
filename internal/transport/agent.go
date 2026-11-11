@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,13 @@ import (
 // AgentDir is the directory in the server account's home that holds the
 // sockets agents reach nearhost on.
 const AgentDir = ".nearhost"
+
+// RuntimeRoot holds each user's runtime directory, /run/user/<uid>, on a
+// server with systemd. Where the server account has a private one, the
+// socket goes in it and ~/.nearhost holds a link to it: SELinux on Fedora
+// and its relatives keeps sshd from making sockets in home folders, but not
+// there.
+const RuntimeRoot = "/run/user"
 
 // AgentForward is the socket a session forwards to its server, so that a
 // coding agent there reaches nearhost on this machine.
@@ -181,20 +189,24 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (s
 		}
 		probe = filepath.Base(p.Name())
 	}
-	return PrepareAgentDir(f.Client, home, fwd.Name, fwd.Own, probe)
+	return PrepareAgentDir(f.Client, home, RuntimeRoot, fwd.Name, fwd.Own, probe)
 }
 
 // PrepareAgentDir makes ~/.nearhost in home with mode 0700 if it is not
 // there, and removes the socket called name in it, left by an earlier run of
 // this install, so that sshd can bind it again. It returns the socket's
 // path. Only that one socket is ever removed: the others are other installs'.
+// When the server account has a private runtime directory under runRoot,
+// the socket is made ready in a nearhost directory there instead, and its
+// path returned, with a link to it at its place in ~/.nearhost; an empty
+// runRoot uses none.
 // When that path is own, this machine's own socket, and the server sees
 // probe, a file the caller has made beside own on this machine, the server
 // is this machine: the socket is left alone and ErrThisMachine returned. A
 // server that reports probe not found is another machine with its home at
 // the same path, and is readied as any other. Without a probe, or when the
 // server cannot say, nothing is removed and an error returned.
-func PrepareAgentDir(c *sftp.Client, home, name, own, probe string) (string, error) {
+func PrepareAgentDir(c *sftp.Client, home, runRoot, name, own, probe string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
 		return "", fmt.Errorf("agent socket name %q is not a file name", name)
 	}
@@ -223,8 +235,64 @@ func PrepareAgentDir(c *sftp.Client, home, name, own, probe string) (string, err
 			return "", fmt.Errorf("cannot tell whether the server is this machine: %w", err)
 		}
 	}
-	if err := c.Remove(sock); err != nil && !isNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+	if err := removeIfThere(c, sock); err != nil {
 		return "", fmt.Errorf("remove the old socket %s: %w", sock, err)
 	}
-	return sock, nil
+	run := privateRuntimeDir(c, home, runRoot)
+	if run == "" {
+		return sock, nil
+	}
+	dir = path.Join(run, "nearhost")
+	if err := c.Mkdir(dir); err != nil {
+		info, statErr := c.Lstat(dir)
+		if statErr != nil || !info.IsDir() {
+			return "", fmt.Errorf("make %s: %w", dir, err)
+		}
+	}
+	if err := c.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("make %s private: %w", dir, err)
+	}
+	runSock := path.Join(dir, name)
+	if err := removeIfThere(c, runSock); err != nil {
+		return "", fmt.Errorf("remove the old socket %s: %w", runSock, err)
+	}
+	if err := c.Symlink(runSock, sock); err != nil {
+		return "", fmt.Errorf("link %s to %s: %w", sock, runSock, err)
+	}
+	return runSock, nil
+}
+
+// removeIfThere removes the file at p, a socket or a link, if there is one.
+func removeIfThere(c *sftp.Client, p string) error {
+	if err := c.Remove(p); err != nil && !isNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// privateRuntimeDir is the runtime directory under root of the account
+// that owns home, when it is a directory, not a link, that the account owns
+// and only it can open; otherwise "". The server's environment is not seen
+// over SFTP, so the account is told by its home's owner.
+func privateRuntimeDir(c *sftp.Client, home, root string) string {
+	if root == "" {
+		return ""
+	}
+	h, err := c.Stat(home)
+	if err != nil {
+		return ""
+	}
+	owner, ok := h.Sys().(*sftp.FileStat)
+	if !ok {
+		return ""
+	}
+	dir := path.Join(root, strconv.FormatUint(uint64(owner.UID), 10))
+	info, err := c.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return ""
+	}
+	if st, ok := info.Sys().(*sftp.FileStat); !ok || st.UID != owner.UID {
+		return ""
+	}
+	return dir
 }
