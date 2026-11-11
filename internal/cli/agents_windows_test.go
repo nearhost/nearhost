@@ -43,9 +43,12 @@ func TestServerAgentsUnavailableIsReportedEvenBeforeAttachOnWindows(t *testing.T
 		}
 	}
 	eng := engine.New(&config.Config{}, engine.Options{})
+	// The order of up and the interface: attach, then subscribe, and only
+	// then are the held events sent.
+	a.attach(eng)
 	events, unsubscribe := eng.Events().Subscribe(8)
 	defer unsubscribe()
-	a.attach(eng)
+	a.publishHeld(eng)
 	select {
 	case ev := <-events:
 		if ev.Server != "mini" || ev.Message != "mini: agents unavailable: coding agents on servers cannot reach Nearhost on Windows yet" {

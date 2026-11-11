@@ -219,7 +219,7 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 }
 
 // notice publishes ev to the log. Before the engine is attached there is no
-// log, so it is kept and sent on attach, once however often it is raised.
+// log, so it is kept and sent by publishHeld, once however often it is raised.
 func (a *agents) notice(ev engine.Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -275,15 +275,26 @@ func (a *agents) attach(eng *engine.Engine) {
 	if a != nil {
 		a.mu.Lock()
 		a.src.eng.Store(eng)
-		for _, ev := range a.unsent {
-			eng.Events().Publish(ev)
-		}
-		a.unsent = nil
 		a.mu.Unlock()
 		if a.docs != nil {
 			a.docs.watch(eng)
 		}
 	}
+}
+
+// publishHeld sends the events held from before the engine was attached to
+// the log. Call it once the log has a subscriber: the bus keeps no history,
+// so an event published before then reaches no one.
+func (a *agents) publishHeld(eng *engine.Engine) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, ev := range a.unsent {
+		eng.Events().Publish(ev)
+	}
+	a.unsent = nil
 }
 
 // review has the interface review the agents' proposals, and the changes

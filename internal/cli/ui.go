@@ -186,6 +186,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 			eng.Events().Publish(engine.Event{Message: note})
 		}
 	}
+	ag.publishHeld(eng)
 	migrateNote = "" // in the log now
 	if b.updateNotice != nil {
 		go func() {
