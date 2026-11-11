@@ -55,8 +55,11 @@ type projectRun struct {
 
 // heldPort is what is known about the local port of a lost forward.
 type heldPort struct {
-	lookup uint64 // the lookup that may still name the holder
+	lookup uint64 // the lookup that may still name the holder; 0 for none
 	holder string // the process holding the port; empty while not known
+	// reconnecting is set while the forward is being relaunched for a
+	// reason other than its port: nobody is asked who holds the port then.
+	reconnecting bool
 }
 
 // StartProject brings a project up: it connects the project's server, makes

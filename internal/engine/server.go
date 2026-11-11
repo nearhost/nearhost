@@ -106,7 +106,8 @@ func (e *Engine) serverLog(server, msg string) {
 
 // reviewServerLocked announces the effective state of every project on
 // server. A forward found lost is announced at once, naming its port; who
-// holds that port is asked in the background.
+// holds that port is asked in the background, unless the forward is only
+// reconnecting.
 func (e *Engine) reviewServerLocked(server string) {
 	for _, name := range e.order {
 		run := e.runs[name]
@@ -115,16 +116,22 @@ func (e *Engine) reviewServerLocked(server string) {
 		}
 		lost := e.lostLocked(run)
 		for port := range run.holders {
-			if !lost[port] {
+			if _, ok := lost[port]; !ok {
 				delete(run.holders, port) // forwarded again, or gone
 			}
 		}
-		for port := range lost {
-			if _, reviewed := run.holders[port]; reviewed {
+		for port, f := range lost {
+			if held, reviewed := run.holders[port]; reviewed && held.reconnecting == f.reconnecting {
 				continue
 			}
 			if run.holders == nil {
 				run.holders = map[int]heldPort{}
+			}
+			if f.reconnecting {
+				// Its port is not the trouble: no holder is asked for, and
+				// a lookup under way for it is no longer waited for.
+				run.holders[port] = heldPort{reconnecting: true}
+				continue
 			}
 			e.lookup++
 			run.holders[port] = heldPort{lookup: e.lookup}
@@ -152,16 +159,16 @@ func (e *Engine) lookupHolder(run *projectRun, port int, lookup uint64) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if run.holders[port].lookup != lookup || !e.lostLocked(run)[port] {
+	if f, lost := e.lostLocked(run)[port]; run.holders[port].lookup != lookup || !lost || f.reconnecting {
 		return
 	}
 	run.holders[port] = heldPort{lookup: lookup, holder: holder}
 	e.announceLocked(run)
 }
 
-// lostLocked is the set of local ports whose forward a project that follows
-// its session has lost on a connected session.
-func (e *Engine) lostLocked(run *projectRun) map[int]bool {
+// lostLocked is the forwards a project that follows its session has lost on
+// a connected session, by local port.
+func (e *Engine) lostLocked(run *projectRun) map[int]lostForward {
 	c := e.servers[run.server]
 	if !run.followsSession() || c == nil {
 		return nil
@@ -170,9 +177,9 @@ func (e *Engine) lostLocked(run *projectRun) map[int]bool {
 	if status != transport.StatusConnected {
 		return nil
 	}
-	lost := map[int]bool{}
+	lost := map[int]lostForward{}
 	for _, f := range lostForwards(run, states) {
-		lost[f.local] = true
+		lost[f.local] = f
 	}
 	return lost
 }
