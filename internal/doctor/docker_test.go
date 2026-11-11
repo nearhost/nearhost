@@ -116,6 +116,10 @@ func TestDockerClientsFinding(t *testing.T) {
 	if mac.Severity != SeverityInfo || !strings.Contains(mac.Fix.Text, "Docker Desktop on macOS already delivers container requests from 127.0.0.1") {
 		t.Errorf("darwin finding = %+v", mac)
 	}
+	win := byID(t, dockerCheck(dockerProject(), f, func(in *Input) { in.GOOS = "windows" }), "docker.clients")
+	if win.Severity != SeverityInfo || !strings.Contains(win.Fix.Text, "Docker Desktop on Windows already delivers container requests from 127.0.0.1") {
+		t.Errorf("windows finding = %+v", win)
+	}
 
 	approved := dockerProject()
 	approved.Nearhostrc = &config.RcSnapshot{SHA256: "h", DockerClients: true}
