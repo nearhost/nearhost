@@ -106,13 +106,24 @@ no_nearhost() {
 			die 2 "Nearhost isn't connected to this server. On your laptop, select ${host:-<server>} in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L $PASSPORT:localhost:$PASSPORT ${host:-<server>}"
 		fi
 		# Nearhost forwards its socket only while it holds a connection to
-		# the server, which it makes when one of the server's projects starts.
-		die 2 "No Nearhost reaches this server. On your laptop, start nearhost there and connect this server (select it and press c). If this server is not in Nearhost yet, run this on the laptop instead: nearhost add --server ${host:-<server>} ${TARGET:-$PWD}"
+		# the server, which it makes when one of the server's projects starts
+		# or when the user connects it.
+		die 2 "No Nearhost reaches this server. On your laptop, start nearhost there and connect this server: $(connect_steps "${host:-<server>}") If this server is not in Nearhost yet, run this on the laptop instead: nearhost add --server ${host:-<server>} ${TARGET:-$PWD}"
 	fi
 	if command -v nearhost >/dev/null 2>&1; then
 		die 2 "Nearhost is not running on this machine. Run: nearhost add <path>, then start nearhost to serve it."
 	fi
-	die 2 "Nearhost is not installed here. See https://nearhost.dev/docs/"
+	# No ssh, and no nearhost command: this is a server an agent reaches some
+	# other way, such as a remote session of its own, or a machine without
+	# Nearhost. The script cannot tell which, so it says both.
+	host=$(hostname 2>/dev/null | cut -d. -f1)
+	die 2 "No Nearhost reaches this machine. If you reach it from a laptop that runs Nearhost, connect it there: start nearhost, $(connect_steps "${host:-<server>}") Then ask again. If ${host:-this machine} is not in Nearhost yet, run this on the laptop: nearhost add --server ${host:-<server>} ${TARGET:-$PWD}. To serve projects on this machine itself, install Nearhost here: https://nearhost.dev/docs/"
+}
+
+# connect_steps says how to connect the server called $1 in Nearhost: from
+# its row, or from the first screen while there is nothing to serve.
+connect_steps() {
+	printf 'select %s and press c, or, while Nearhost has nothing to serve, press c on its first screen and choose %s.' "$1" "$1"
 }
 
 # find_socket sets SOCK and HELLO, the answer to GET /v1, or exits.
