@@ -101,6 +101,12 @@ type ForwardState struct {
 	// tracked (added while disconnected, or whose re-apply failed after a
 	// reconnect) is not applied.
 	Applied bool
+	// Retrying is true while the forward is not applied and something is
+	// relaunching it, and Err is then ssh's error from the last attempt:
+	// why its process died, or why its launch failed. Only the per-process
+	// transport retries a forward on its own; Session leaves both zero.
+	Retrying bool
+	Err      string
 }
 
 // ForwardStates returns the connection status together with the desired

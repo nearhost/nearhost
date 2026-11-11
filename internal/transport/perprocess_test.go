@@ -285,7 +285,7 @@ func TestPerProcessArgs(t *testing.T) {
 }
 
 func TestPerProcessStderrKeepsTheLastLines(t *testing.T) {
-	w := newLinkStderr("")
+	w := newSSHStderr("", "mini")
 	for i := range 30 {
 		w.Write([]byte("debug1: line " + strconv.Itoa(i) + "\n\n"))
 	}
@@ -330,7 +330,7 @@ func TestPerProcessConnectTimeoutKillsTheLinkAndRetries(t *testing.T) {
 // At DEBUG1 ssh goes on writing after the line that says why it left: the
 // byte counts, then debug1 lines. The error is the line before them.
 func TestPerProcessExitMessageSkipsTheDebugTrailer(t *testing.T) {
-	w := newLinkStderr("")
+	w := newSSHStderr("", "mini")
 	w.Write([]byte("debug1: client_input_channel_req: channel 0 rtype exit-status reply 0\n" +
 		"Connection to mini closed by remote host.\n" +
 		"Transferred: sent 2352, received 3016 bytes, in 4.1 seconds\n" +
@@ -512,7 +512,7 @@ func TestPerProcessAgentNotReady(t *testing.T) {
 // OpenSSH writes the stream forward's outcome with a port of -2 after the
 // path, and newer releases put the function's name before it.
 func TestPerProcessStderrSeesTheAgentForwardAsSSHWritesIt(t *testing.T) {
-	w := newLinkStderr(agentRemote)
+	w := newSSHStderr(agentRemote, "mini")
 	w.Write([]byte("Authenticated to mini ([127.0.0.1]:22) using \"publickey\".\n"))
 	select {
 	case <-w.ready:
@@ -526,7 +526,7 @@ func TestPerProcessStderrSeesTheAgentForwardAsSSHWritesIt(t *testing.T) {
 		t.Fatal("ready was not closed")
 	}
 
-	refused := newLinkStderr(agentRemote)
+	refused := newSSHStderr(agentRemote, "mini")
 	refused.Write([]byte("Error: remote port forwarding failed for listen path " + agentRemote + "\ndebug1: Exit status 255\n"))
 	if got := refused.Refusal(); got != "Error: remote port forwarding failed for listen path "+agentRemote {
 		t.Fatalf("Refusal = %q", got)
@@ -685,7 +685,10 @@ func TestPerProcessForwardOnATakenPortIsNotApplied(t *testing.T) {
 	os.Remove(hold)
 	waitPerProcessConnected(t, p)
 	st, fs := p.ForwardStates()
-	want := []ForwardState{{Local: taken, Remote: 80}, {Local: free, Remote: 80, Applied: true}}
+	want := []ForwardState{
+		{Local: taken, Remote: 80, Retrying: true, Err: fmt.Sprintf("bind [127.0.0.1]:%d: Address already in use", taken)},
+		{Local: free, Remote: 80, Applied: true},
+	}
 	if taken > free {
 		want[0], want[1] = want[1], want[0]
 	}
@@ -996,4 +999,191 @@ func TestPerProcessAFailingConfigReadIsClassified(t *testing.T) {
 			t.Fatalf("LastError = %q", p.LastError())
 		}
 	})
+}
+
+// ssh at DEBUG1 says it has authenticated, then writes debug lines on its
+// way out. Neither is why it exited.
+func TestPerProcessErrorSkipsTheAuthenticatedLine(t *testing.T) {
+	lines := []string{
+		"Authenticated to mini ([127.0.0.1]:22) using \"publickey\".",
+		"debug1: Exit status 255",
+	}
+	if got := exitMessage(lines); got != "ssh exited" {
+		t.Fatalf("exit message = %q, want %q", got, "ssh exited")
+	}
+	lines = append([]string{"ssh: connect to host mini port 22: Connection refused"}, lines...)
+	if got := exitMessage(lines); got != "ssh: connect to host mini port 22: Connection refused" {
+		t.Fatalf("exit message = %q, want the error line", got)
+	}
+	if got := exitMessage([]string{"debug1: Authentication succeeded (publickey).", "debug1: one"}); got != "ssh exited" {
+		t.Fatalf("exit message = %q, want %q", got, "ssh exited")
+	}
+}
+
+// Through a ProxyJump, ssh says it has authenticated to the jump host
+// before the target. The link is ready only at the target's line.
+func TestPerProcessWaitsForTheTargetsAuthentication(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestPerProcess(t,
+		"FAKE_SSH_G_CONFIG=hostname target.example",
+		"FAKE_SSH_AUTH_JUMP=jump.example",
+		"FAKE_SSH_LINK_HOLD="+hold)
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.link == nil {
+			return false
+		}
+		w, ok := p.link.Stderr.(*sshStderr)
+		return ok && slices.ContainsFunc(w.Lines(), func(l string) bool {
+			return strings.HasPrefix(l, "Authenticated to jump.example ")
+		})
+	}, "the jump host's authentication")
+	time.Sleep(200 * time.Millisecond)
+	if st := p.Status(); st == StatusConnected {
+		t.Fatalf("status = %s after only the jump host's authentication", st)
+	}
+	os.Remove(hold)
+	waitPerProcessConnected(t, p)
+}
+
+func TestPerProcessForwardStatesSayARetryAndWhy(t *testing.T) {
+	p := newTestPerProcess(t)
+	var mu sync.Mutex
+	var whileLost []ForwardState
+	p.Logf = func(format string, args ...any) {
+		if !strings.Contains(fmt.Sprintf(format, args...), " lost: ") {
+			return
+		}
+		_, fs := p.ForwardStates()
+		mu.Lock()
+		whileLost = fs
+		mu.Unlock()
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+	pid := p.forwardPid(local, 80)
+	p.drop(t, pid)
+	waitFor(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return whileLost != nil
+	}, "the forward to be lost")
+	mu.Lock()
+	fs := whileLost
+	mu.Unlock()
+	if len(fs) != 1 || fs[0].Applied || !fs[0].Retrying || !strings.Contains(fs[0].Err, "Broken pipe") {
+		t.Fatalf("while lost, ForwardStates = %+v, want it retrying with the drop's message", fs)
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		pid2 := p.forwardPid(local, 80)
+		return pid2 != 0 && pid2 != pid
+	}, "the forward to be relaunched")
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 1 || fs[0] != (ForwardState{Local: local, Remote: 80, Applied: true}) {
+		t.Fatalf("once back, ForwardStates = %s, want it applied and not retrying", forwardStatesString(st, fs))
+	}
+}
+
+// heldPerProcessForward starts p with a forward whose port is held, so it
+// is tracked and retrying, and returns the port and the listener holding
+// it.
+func heldPerProcessForward(t *testing.T, p *perProcessFake) (int, net.Listener) {
+	t.Helper()
+	local := freePort(t)
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward before Start: %v", err)
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied || !fs[0].Retrying {
+		t.Fatalf("with the port held, ForwardStates = %s, want it retrying", forwardStatesString(st, fs))
+	}
+	return local, l
+}
+
+func TestPerProcessAddForwardRetriesAForwardBeingRetried(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.baseBackoff = time.Minute // a retry only when asked for
+	local, l := heldPerProcessForward(t, p)
+	start := time.Now()
+	err := p.AddForward(t.Context(), local, 80)
+	if err == nil || !strings.Contains(err.Error(), "Address already in use") {
+		t.Fatalf("AddForward on a held port = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("AddForward took %s", d)
+	}
+	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied || !fs[0].Retrying {
+		t.Fatalf("after a failed AddForward, ForwardStates = %s, want it tracked and retrying", forwardStatesString(st, fs))
+	}
+	l.Close()
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward with the port free: %v", err)
+	}
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 1 || fs[0] != (ForwardState{Local: local, Remote: 80, Applied: true}) {
+		t.Fatalf("ForwardStates = %s, want it applied", forwardStatesString(st, fs))
+	}
+}
+
+func TestPerProcessReportsAListenErrorAsItIs(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.listen = func(network, address string) (net.Listener, error) {
+		return nil, errors.New("listen tcp " + address + ": socket: too many open files")
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	err := p.AddForward(t.Context(), local, 80)
+	if err == nil || !strings.Contains(err.Error(), "too many open files") || strings.Contains(err.Error(), "Address already in use") {
+		t.Fatalf("AddForward = %v, want the listen error as it is", err)
+	}
+	if want := fmt.Sprintf("bind [127.0.0.1]:%d: ", local); !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("AddForward = %v, want it to start %q", err, want)
+	}
+}
+
+func TestPerProcessLogsARetryFailureOnlyWhenItChanges(t *testing.T) {
+	p := newTestPerProcess(t)
+	var calls atomic.Int32
+	var other atomic.Bool
+	p.listen = func(network, address string) (net.Listener, error) {
+		calls.Add(1)
+		if other.Load() {
+			return nil, errors.New("socket: too many open files")
+		}
+		return net.Listen(network, address)
+	}
+	logs := logged(p)
+	local, _ := heldPerProcessForward(t, p)
+	spec := forwardSpec(local, 80)
+	failed := func() int { return strings.Count(logs(), "forward "+spec+" failed: ") }
+	n := calls.Load()
+	waitFor(t, 10*time.Second, func() bool { return calls.Load() >= n+5 }, "five retries")
+	if got := failed(); got != 1 {
+		t.Fatalf("logged %d retry failures over five retries, want 1:\n%s", got, logs())
+	}
+	other.Store(true)
+	n = calls.Load()
+	waitFor(t, 10*time.Second, func() bool { return calls.Load() >= n+5 }, "five more retries")
+	if got := failed(); got != 2 {
+		t.Fatalf("logged %d retry failures, want 2 after the message changed:\n%s", got, logs())
+	}
+	if !strings.Contains(logs(), "too many open files") {
+		t.Fatalf("the new message was not logged:\n%s", logs())
+	}
 }

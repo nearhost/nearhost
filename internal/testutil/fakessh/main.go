@@ -257,14 +257,17 @@ func windowsRForward(args []string) string {
 }
 
 // printConfig answers `ssh -G host`: the host name, then the lines of
-// $FAKE_SSH_G_CONFIG. It makes no connection. $FAKE_SSH_G_FAIL makes it
-// fail instead, with that as its message.
+// $FAKE_SSH_G_CONFIG, where a hostname line takes the place of the first.
+// It makes no connection. $FAKE_SSH_G_FAIL makes it fail instead, with
+// that as its message.
 func printConfig(host string) int {
 	if msg := os.Getenv("FAKE_SSH_G_FAIL"); msg != "" {
 		fmt.Fprintln(os.Stderr, msg)
 		return 255
 	}
-	fmt.Printf("hostname %s\n", host)
+	if configHostname() == "" {
+		fmt.Printf("hostname %s\n", host)
+	}
 	if cfg := os.Getenv("FAKE_SSH_G_CONFIG"); cfg != "" {
 		for _, line := range strings.Split(cfg, "\n") {
 			fmt.Println(line)
@@ -273,14 +276,28 @@ func printConfig(host string) int {
 	return 0
 }
 
+// configHostname is the value of the hostname line in $FAKE_SSH_G_CONFIG,
+// or "" for none.
+func configHostname() string {
+	for _, line := range strings.Split(os.Getenv("FAKE_SSH_G_CONFIG"), "\n") {
+		if f := strings.Fields(line); len(f) == 2 && strings.EqualFold(f[0], "hostname") {
+			return f[1]
+		}
+	}
+	return ""
+}
+
 // runPlain is a plain `ssh -N host` with the -L and -R forwards given. It
 // waits while $FAKE_SSH_LINK_HOLD exists, then reports the connection and
-// sets the forwards up. A forward that fails ends it with 255 when exitOnFail
-// is set (ExitOnForwardFailure=yes). It logs its pid to $FAKE_SSH_PID_LOG and
-// stays up until TERM or INT, until the file $FAKE_SSH_DROP_DIR/<pid>
-// exists, or until its parent process ends (then it exits 255, so a crashed
-// test leaves no ssh behind). It polls for that file rather than relying on signals, which
-// Windows lacks.
+// sets the forwards up. It names the host it reports authenticating to as
+// ssh does, by the hostname in $FAKE_SSH_G_CONFIG when that has one, and
+// $FAKE_SSH_AUTH_JUMP=<name> has it first report authenticating to <name>,
+// as through a ProxyJump, before the hold. A forward that fails ends it
+// with 255 when exitOnFail is set (ExitOnForwardFailure=yes). It logs its
+// pid to $FAKE_SSH_PID_LOG and stays up until TERM or INT, until the file
+// $FAKE_SSH_DROP_DIR/<pid> exists, or until its parent process ends (then
+// it exits 255, so a crashed test leaves no ssh behind). It polls for that
+// file rather than relying on signals, which Windows lacks.
 func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, parentGone func() bool) int {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
@@ -289,6 +306,9 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 			fmt.Fprintf(os.Stderr, "Bad local forwarding specification '%s'\n", l)
 			return 255
 		}
+	}
+	if jump := os.Getenv("FAKE_SSH_AUTH_JUMP"); jump != "" {
+		fmt.Fprintf(os.Stderr, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", jump)
 	}
 	for exists(os.Getenv("FAKE_SSH_LINK_HOLD")) {
 		if parentGone() {
@@ -300,6 +320,9 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 			return 255
 		case <-time.After(50 * time.Millisecond):
 		}
+	}
+	if name := configHostname(); name != "" {
+		host = name
 	}
 	// What the process prints is held until it is up, so its pid is in the
 	// log before a test sees a line that reports a link or forward ready.
