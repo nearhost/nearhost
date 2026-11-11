@@ -1,0 +1,323 @@
+package transport
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"sort"
+	"time"
+)
+
+// perProcessForward is one desired forward of a per-process transport.
+// Its fields other than local and remote are guarded by the transport's mu.
+type perProcessForward struct {
+	local, remote int
+	// proc is the ssh carrying the forward, nil when none.
+	proc *sshProc
+	// applied is whether proc has said it listens. It is reported only
+	// while the transport is connected.
+	applied bool
+	// cancel ends the forward's supervisor, and done closes once it has
+	// ended with its process reaped; both nil when there is none.
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// AddForward records a desired -L forward and, while connected, starts the
+// ssh that carries it and returns its error. Forwards recorded while
+// disconnected are started once the link is up.
+func (p *perProcess) AddForward(ctx context.Context, localPort, remotePort int) error {
+	p.fwdMu.Lock()
+	defer p.fwdMu.Unlock()
+	key := forwardKey(localPort, remotePort)
+	p.mu.Lock()
+	f, existed := p.forwards[key]
+	linkCtx := p.linkCtx
+	connected := p.status == StatusConnected && linkCtx != nil
+	if existed && (f.done != nil || !connected) {
+		p.mu.Unlock()
+		return nil // running on this link already, or started once it is up
+	}
+	if !existed {
+		f = &perProcessForward{local: localPort, remote: remotePort}
+		p.forwards[key] = f
+	}
+	p.mu.Unlock()
+	if !connected {
+		return nil
+	}
+	first := p.superviseLocked(linkCtx, f)
+	var err error
+	select {
+	case err = <-first:
+	case <-ctx.Done():
+		select {
+		case err = <-first:
+		default:
+			err = ctx.Err()
+		}
+	}
+	if err == nil {
+		return nil
+	}
+	p.unsupervise(f)
+	if ctx.Err() == nil && linkCtx.Err() != nil {
+		return nil // the link went down: the forward starts when it is back
+	}
+	p.mu.Lock()
+	wasApplied := f.applied
+	if existed {
+		f.applied = false
+	} else {
+		delete(p.forwards, key)
+	}
+	p.mu.Unlock()
+	if wasApplied {
+		p.Logf("%s: cancel %s", p.Name, forwardSpec(localPort, remotePort))
+	}
+	return err
+}
+
+// CancelForward removes a forward and ends the ssh that carries it.
+func (p *perProcess) CancelForward(ctx context.Context, localPort, remotePort int) error {
+	p.fwdMu.Lock()
+	defer p.fwdMu.Unlock()
+	key := forwardKey(localPort, remotePort)
+	p.mu.Lock()
+	f, ok := p.forwards[key]
+	delete(p.forwards, key)
+	p.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	p.unsupervise(f)
+	p.mu.Lock()
+	wasApplied := f.applied
+	p.mu.Unlock()
+	if wasApplied {
+		p.Logf("%s: cancel %s", p.Name, forwardSpec(localPort, remotePort))
+	}
+	return nil
+}
+
+// Forwards lists desired forwards as (local, remote) pairs sorted by local port.
+func (p *perProcess) Forwards() [][2]int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([][2]int, 0, len(p.forwards))
+	for _, f := range p.forwards {
+		out = append(out, [2]int{f.local, f.remote})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
+	return out
+}
+
+// ForwardStates returns the connection status together with the desired
+// forwards, sorted by local port, each with whether its ssh listens, from
+// one snapshot. As with Session, the status is connected only after the
+// re-apply pass, so a forward that is not applied then has failed, or has
+// been lost and is being relaunched.
+func (p *perProcess) ForwardStates() (Status, []ForwardState) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]ForwardState, 0, len(p.forwards))
+	for _, f := range p.forwards {
+		out = append(out, ForwardState{
+			Local:   f.local,
+			Remote:  f.remote,
+			Applied: p.status == StatusConnected && f.applied,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
+	return p.status, out
+}
+
+// sortedForwardsLocked returns the desired forwards sorted by local port.
+// The caller holds mu.
+func (p *perProcess) sortedForwardsLocked() []*perProcessForward {
+	out := make([]*perProcessForward, 0, len(p.forwards))
+	for _, f := range p.forwards {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].local < out[j].local })
+	return out
+}
+
+// markConnected starts every desired forward on the link whose context is
+// linkCtx, all at once, waits for each to listen or fail, then reports the
+// transport connected. It holds fwdMu throughout, so AddForward and
+// CancelForward run wholly before or after it, and whoever sees the
+// connected status sees every forward settled. A forward that fails is
+// logged and stays tracked but unapplied until the next reconnect. It
+// reports false, leaving the status alone, when the link went down or the
+// transport is stopping during the pass.
+func (p *perProcess) markConnected(linkCtx context.Context) bool {
+	p.fwdMu.Lock()
+	defer p.fwdMu.Unlock()
+	p.mu.Lock()
+	p.linkCtx = linkCtx
+	todo := p.sortedForwardsLocked()
+	p.mu.Unlock()
+	firsts := make([]<-chan error, len(todo))
+	for i, f := range todo {
+		firsts[i] = p.superviseLocked(linkCtx, f)
+	}
+	for i, f := range todo {
+		if err := <-firsts[i]; err != nil {
+			p.unsupervise(f)
+			if linkCtx.Err() == nil {
+				p.Logf("%s: reapply failed: %v", p.Name, err)
+			}
+		}
+	}
+	if linkCtx.Err() != nil {
+		return false
+	}
+	p.setStatus(StatusConnected, "")
+	return true
+}
+
+// endForwards ends every forward's ssh, once the link has gone, and marks
+// the forwards unapplied; they stay desired, to start with the next link.
+func (p *perProcess) endForwards() {
+	p.fwdMu.Lock()
+	defer p.fwdMu.Unlock()
+	p.mu.Lock()
+	p.linkCtx = nil
+	all := p.sortedForwardsLocked()
+	p.mu.Unlock()
+	for _, f := range all {
+		p.unsupervise(f)
+	}
+	changed := false
+	p.mu.Lock()
+	for _, f := range all {
+		if f.applied {
+			f.applied = false
+			changed = true
+		}
+	}
+	p.mu.Unlock()
+	if changed {
+		p.Logf("%s: forwards closed with the link", p.Name)
+	}
+}
+
+// superviseLocked starts f's supervisor on the link whose context is
+// linkCtx and returns the channel that gets its first launch's result. The
+// caller holds fwdMu.
+func (p *perProcess) superviseLocked(linkCtx context.Context, f *perProcessForward) <-chan error {
+	ctx, cancel := context.WithCancel(linkCtx)
+	first := make(chan error, 1)
+	done := make(chan struct{})
+	p.mu.Lock()
+	f.cancel, f.done = cancel, done
+	p.mu.Unlock()
+	go p.superviseForward(ctx, f, first, done)
+	return first
+}
+
+// unsupervise ends f's supervisor, if it has one, waits until its process
+// is reaped, and forgets it. It leaves applied alone.
+func (p *perProcess) unsupervise(f *perProcessForward) {
+	p.mu.Lock()
+	cancel, done := f.cancel, f.done
+	f.cancel, f.done = nil, nil
+	p.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done
+}
+
+// superviseForward runs f's ssh until ctx ends. The first launch's result
+// goes to first, and a first launch that fails ends the supervisor. Once
+// the forward has listened, a process that exits is relaunched after the
+// forward's own backoff, for as long as ctx lasts.
+func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, first chan<- error, done chan struct{}) {
+	defer close(done)
+	spec := forwardSpec(f.local, f.remote)
+	backoff := p.baseBackoff
+	for {
+		proc, err := p.launchForward(ctx, f.local, f.remote)
+		if err != nil {
+			if first != nil {
+				first <- err
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
+			if !p.sleep(ctx, backoff) {
+				return
+			}
+			backoff = p.nextBackoff(backoff)
+			continue
+		}
+		backoff = p.baseBackoff
+		p.mu.Lock()
+		f.proc, f.applied = proc, true
+		p.mu.Unlock()
+		p.Logf("%s: forward %s", p.Name, spec)
+		if first != nil {
+			first <- nil
+			first = nil
+		}
+		select {
+		case <-ctx.Done():
+		case <-proc.exited:
+		}
+		if ctx.Err() != nil {
+			proc.stop()
+			p.mu.Lock()
+			f.proc = nil
+			p.mu.Unlock()
+			return
+		}
+		p.mu.Lock()
+		f.proc, f.applied = nil, false
+		p.mu.Unlock()
+		p.Logf("%s: forward %s lost: %s", p.Name, spec, exitMessage(proc.stderr.Lines()))
+		if !p.sleep(ctx, backoff) {
+			return
+		}
+		backoff = p.nextBackoff(backoff)
+	}
+}
+
+// launchForward starts an `ssh -N -L` for the forward from local to remote
+// and waits until it listens. It fails when the port is taken, when ssh
+// exits first, after connectTimeout, or when ctx ends; the process is then
+// reaped.
+func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*sshProc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if err != nil {
+		return nil, fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)
+	}
+	l.Close()
+	spec := forwardSpec(local, remote)
+	stderr := newForwardStderr(local)
+	proc, err := p.startProc(p.args("-N", "-L", spec), stderr)
+	if err != nil {
+		return nil, fmt.Errorf("start ssh: %w", err)
+	}
+	timeout := time.NewTimer(p.connectTimeout)
+	defer timeout.Stop()
+	select {
+	case <-stderr.ready:
+		return proc, nil
+	case <-proc.exited:
+		return nil, fmt.Errorf("ssh -L %s: %s", spec, exitMessage(stderr.Lines()))
+	case <-timeout.C:
+		proc.stop()
+		return nil, fmt.Errorf("ssh -L %s: timed out after %s", spec, p.connectTimeout)
+	case <-ctx.Done():
+		proc.stop()
+		return nil, ctx.Err()
+	}
+}

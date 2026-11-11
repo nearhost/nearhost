@@ -272,6 +272,11 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
 	}
 	for _, r := range rforwards {
 		listen, connect, _ := strings.Cut(r, ":")
+		// $FAKE_SSH_RFORWARD_SILENT makes the server never answer a -R:
+		// neither success nor refusal is printed, and the process stays up.
+		if os.Getenv("FAKE_SSH_RFORWARD_SILENT") != "" {
+			continue
+		}
 		if os.Getenv("FAKE_SSH_RFORWARD_FAIL") != "" {
 			fmt.Fprintf(os.Stderr, "Error: remote port forwarding failed for listen path %s\n", listen)
 			return 255
