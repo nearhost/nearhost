@@ -1,0 +1,29 @@
+internal/cli/agents_windows_test.go
+  s_8d6383ee1da9a6::t_c4007d2be54e19 36-63
+internal/transport/transport_test.go
+  s_8d6383ee1da9a6::t_55b89b6688f98e 55
+  s_8d6383ee1da9a6::t_c4007d2be54e19 53-54
+internal/cli/agents_test.go
+  s_8d6383ee1da9a6::t_fa62abefa36dac 168-198
+internal/cli/agents.go
+  s_8d6383ee1da9a6::t_55b89b6688f98e 15,102-106,207,215,221-234,276,278-282
+internal/cli/trust_windows_test.go
+  s_8d6383ee1da9a6::t_c4007d2be54e19 7,9-10,31-36
+  s_8d6383ee1da9a6::t_74c1194032b081 37-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9dd84d5fb02b03a31d6592334217d5af5c2e707f",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
