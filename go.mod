@@ -9,7 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/caddyserver/caddy/v2 v2.11.7
+	github.com/caddyserver/caddy/v2 v2.11.9
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/coder/websocket v1.8.15
@@ -179,7 +179,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/crypto/x509roots/fallback v0.0.0-20260929172509-b39ff6d641ec // indirect
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261030153154-30a33513ff6d // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
