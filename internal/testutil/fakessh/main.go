@@ -6,12 +6,19 @@
 // A master (-N -M -S sock host) creates its socket and stays up until the
 // socket is removed, `-O exit` asks it to, or it gets TERM or INT. It polls
 // every 0.1 s, as the shell script it replaces did.
+//
+// A plain process (-N with neither -M nor -S) acts as a per-process ssh: it
+// listens on each -L, reports each -R, and stays up until it is killed or a
+// file named for its pid appears in $FAKE_SSH_DROP_DIR. `-G host` prints the
+// configuration and exits before anything else.
 package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,6 +34,9 @@ func main() {
 // SFTP subsystem request may replace this process with the SFTP server.
 func run(args []string) int {
 	all := strings.Join(args, " ")
+	if hasArg(args, "-G") {
+		return printConfig(args[len(args)-1])
+	}
 	appendLine(os.Getenv("FAKE_SSH_LOG"), all)
 	// $FAKE_SSH_PGID_LOG gets one line per invocation: this process's group,
 	// then argv.
@@ -36,6 +46,8 @@ func run(args []string) int {
 
 	sock, mode, larg, rarg, last, master := "", "", "", "", "", false
 	prev := ""
+	var lforwards, rforwards []string
+	plain := hasArg(args, "-N") && !hasArg(args, "-M") && !hasArg(args, "-S")
 	for _, a := range args {
 		switch prev {
 		case "-S":
@@ -44,8 +56,10 @@ func run(args []string) int {
 			mode = a
 		case "-L":
 			larg = a
+			lforwards = append(lforwards, a)
 		case "-R":
 			rarg = a
+			rforwards = append(rforwards, a)
 		}
 		if a == "-M" {
 			master = true
@@ -56,7 +70,7 @@ func run(args []string) int {
 
 	// While the file named by $FAKE_SSH_MASTER_DOWN exists, every master
 	// fails with a refused connection.
-	if f := os.Getenv("FAKE_SSH_MASTER_DOWN"); f != "" && master && exists(f) {
+	if f := os.Getenv("FAKE_SSH_MASTER_DOWN"); f != "" && (master || plain) && exists(f) {
 		fmt.Fprintf(os.Stderr, "ssh: connect to host %s port 22: Connection refused\n", last)
 		return 255
 	}
@@ -65,7 +79,7 @@ func run(args []string) int {
 	// file named by $FAKE_SSH_AUTH_FAIL_FILE exists, fails authentication.
 	authFail := os.Getenv("FAKE_SSH_AUTH_FAIL") != ""
 	if host := os.Getenv("FAKE_SSH_AUTH_FAIL_HOST"); host != "" && last == host {
-		if hold := os.Getenv("FAKE_SSH_AUTH_HOLD"); hold != "" && master {
+		if hold := os.Getenv("FAKE_SSH_AUTH_HOLD"); hold != "" && (master || plain) {
 			for exists(hold) {
 				time.Sleep(50 * time.Millisecond)
 			}
@@ -126,6 +140,10 @@ func run(args []string) int {
 	if os.Getenv("FAKE_SSH_HOSTKEY_FAIL") != "" {
 		fmt.Fprintln(os.Stderr, "Host key verification failed.")
 		return 255
+	}
+
+	if plain {
+		return runPlain(last, lforwards, rforwards, hasArg(args, "ExitOnForwardFailure=yes"))
 	}
 
 	// BatchMode connectivity check: ssh ... host true
@@ -189,6 +207,98 @@ func run(args []string) int {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return 0
+}
+
+// hasArg reports whether args holds want as an argument.
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// printConfig answers `ssh -G host`: the host name, then the lines of
+// $FAKE_SSH_G_CONFIG. It makes no connection.
+func printConfig(host string) int {
+	fmt.Printf("hostname %s\n", host)
+	if cfg := os.Getenv("FAKE_SSH_G_CONFIG"); cfg != "" {
+		for _, line := range strings.Split(cfg, "\n") {
+			fmt.Println(line)
+		}
+	}
+	return 0
+}
+
+// runPlain is a plain `ssh -N host` with the -L and -R forwards given. It
+// waits while $FAKE_SSH_LINK_HOLD exists, then reports the connection and
+// sets the forwards up. A forward that fails ends it with 255 when exitOnFail
+// is set (ExitOnForwardFailure=yes). It logs its pid to $FAKE_SSH_PID_LOG and
+// stays up until TERM or INT, or until the file $FAKE_SSH_DROP_DIR/<pid>
+// exists. It polls for that file rather than relying on signals, which
+// Windows lacks.
+func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
+	for exists(os.Getenv("FAKE_SSH_LINK_HOLD")) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	fmt.Fprintf(os.Stderr, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", host)
+
+	for _, l := range lforwards {
+		// 127.0.0.1:LOCAL:host:REMOTE
+		f := strings.SplitN(l, ":", 3)
+		if len(f) < 3 {
+			continue
+		}
+		ln, err := net.Listen("tcp", f[0]+":"+f[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bind [%s]:%s: Address already in use\n", f[0], f[1])
+			if exitOnFail {
+				fmt.Fprintln(os.Stderr, "Could not request local forwarding.")
+				return 255
+			}
+			continue
+		}
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				c.Close()
+			}
+		}()
+		fmt.Fprintf(os.Stderr, "debug1: Local forwarding listening on %s port %s.\n", f[0], f[1])
+	}
+	for _, r := range rforwards {
+		listen, connect, _ := strings.Cut(r, ":")
+		if os.Getenv("FAKE_SSH_RFORWARD_FAIL") != "" {
+			fmt.Fprintf(os.Stderr, "Error: remote port forwarding failed for listen path %s\n", listen)
+			return 255
+		}
+		fmt.Fprintf(os.Stderr, "debug1: remote forward success for: listen %s, connect %s\n", listen, connect)
+	}
+
+	pid := os.Getpid()
+	appendLine(os.Getenv("FAKE_SSH_PID_LOG"), fmt.Sprintf("%d %s", pid, strings.Join(os.Args[1:], " ")))
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
+	drop := ""
+	if dir := os.Getenv("FAKE_SSH_DROP_DIR"); dir != "" {
+		drop = filepath.Join(dir, strconv.Itoa(pid))
+	}
+	for {
+		select {
+		case <-signals:
+			fmt.Fprintln(os.Stderr, "Killed by signal 15.")
+			return 255
+		case <-time.After(50 * time.Millisecond):
+		}
+		if exists(drop) {
+			fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
+			return 255
+		}
+	}
 }
 
 // forward answers `-O forward` with the local forward larg or the remote
