@@ -235,12 +235,24 @@ func (s *Session) control(ctx context.Context, args ...string) *exec.Cmd {
 // connection of its own: one borrowed from a master the user already has open
 // would say nothing about whether nearhost's master can log in.
 func (s *Session) Check(ctx context.Context) error {
-	cmd := s.command(ctx, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+	return checkHost(s.command(ctx, checkArgs(s.host)...), s.host)
+}
+
+// checkArgs are the arguments of the connectivity check: a connection of its
+// own that runs `true`, with nothing from the user's configuration that would
+// change it.
+func checkArgs(host string) []string {
+	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-o", "ControlPath=none",
-		"--", s.host, "true")
+		"--", host, "true"}
+}
+
+// checkHost runs the connectivity check cmd against host and returns a
+// *CheckError with ssh's message when it fails.
+func checkHost(cmd *exec.Cmd, host string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -248,7 +260,7 @@ func (s *Session) Check(ctx context.Context) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return &CheckError{Host: s.host, Stderr: msg}
+		return &CheckError{Host: host, Stderr: msg}
 	}
 	return nil
 }
