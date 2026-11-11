@@ -278,7 +278,8 @@ func (p *perProcess) unsupervise(f *perProcessForward) {
 // relaunched after the forward's own backoff, for as long as ctx lasts,
 // with the forward marked retrying meanwhile. A channel sent on kick asks
 // for an attempt now and gets its result. A failed retry is logged when
-// its message differs from the last one logged.
+// its message differs from the last failure reported, by a log line or to
+// the caller that waited for it.
 func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, kick <-chan chan error, first chan<- error, done chan struct{}, keepTrying bool) {
 	defer func() {
 		p.mu.Lock()
@@ -289,7 +290,7 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 	spec := forwardSpec(f.local, f.remote)
 	backoff := p.baseBackoff
 	// reply is the AddForward waiting for this attempt's result, nil for
-	// none; logged is the failure last logged.
+	// none; logged is the failure last reported.
 	var reply chan error
 	logged := ""
 	for {
@@ -308,17 +309,20 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 			p.mu.Lock()
 			f.retrying, f.err = true, err.Error()
 			p.mu.Unlock()
+			// The caller of the first attempt, or the AddForward that asked
+			// for this one, says why; a retry failing the same way again
+			// is not logged.
 			switch {
 			case first != nil:
-				first <- err // the caller says why
+				first <- err
 				first = nil
 			case reply != nil:
-				reply <- err // so does the AddForward that asked
+				reply <- err
 				reply = nil
 			case err.Error() != logged:
-				logged = err.Error()
 				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
 			}
+			logged = err.Error()
 			if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
 				return
 			}

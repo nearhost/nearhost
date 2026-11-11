@@ -582,23 +582,23 @@ func (p *perProcess) running() int {
 }
 
 // exitMessage picks why the link exited from the last lines of its stderr:
-// the last that is not ssh's DEBUG1 chatter, the byte counts it prints on
-// the way out, or its saying it has authenticated. Failing that, an ssh
-// that never said it authenticated gives its last line, and one that did
-// gives "ssh exited": what it wrote after is only chatter.
+// the last that is not ssh's DEBUG1 chatter or the byte counts it prints on
+// the way out. It looks no further back than ssh's saying it has
+// authenticated, since what came before (a banner, a known_hosts warning)
+// is not why a logged-in ssh exited: then it is "ssh exited". An ssh that
+// never said it authenticated and wrote only chatter gives its last line;
+// one that wrote nothing gives "ssh exited".
 func exitMessage(lines []string) string {
-	authed := false
 	for i := len(lines) - 1; i >= 0; i-- {
 		l := lines[i]
 		if saysAuthenticated(l) {
-			authed = true
-			continue
+			return "ssh exited"
 		}
 		if !strings.HasPrefix(l, "debug") && !strings.HasPrefix(l, "Transferred:") && !strings.HasPrefix(l, "Bytes per second:") {
 			return l
 		}
 	}
-	if len(lines) > 0 && !authed {
+	if len(lines) > 0 {
 		return lines[len(lines)-1]
 	}
 	return "ssh exited"
@@ -633,9 +633,10 @@ type sshStderr struct {
 	readyOn string
 	// agent is the agent socket's path on the server, "" for none.
 	agent string
-	// authenticatedOn is what the line that closes authenticated contains:
-	// ssh naming the host it was asked for, as `ssh -G` resolves it, or
-	// "Authentication succeeded" when that is not known.
+	// authenticatedOn is what the line that closes authenticated contains,
+	// lowercased, as ssh may write the host's name in another case: ssh
+	// naming the host it was asked for, as `ssh -G` resolves it, or
+	// "authentication succeeded" when that is not known.
 	authenticatedOn string
 
 	mu      sync.Mutex
@@ -661,12 +662,13 @@ func newSSHStderr(agent, hostname string) *sshStderr {
 }
 
 // authenticatedLine is what ssh's line saying it has logged in to hostname
-// contains, or, for "", the line it writes at DEBUG1 for any login.
+// contains, lowercased, or, for "", the line it writes at DEBUG1 for any
+// login.
 func authenticatedLine(hostname string) string {
 	if hostname == "" {
-		return "Authentication succeeded"
+		return "authentication succeeded"
 	}
-	return "Authenticated to " + hostname + " "
+	return "authenticated to " + strings.ToLower(hostname) + " "
 }
 
 // newForwardStderr returns an sshStderr for the process of the forward
@@ -709,7 +711,7 @@ func (w *sshStderr) endLine() {
 	if line == "" {
 		return
 	}
-	if !w.authed && strings.Contains(line, w.authenticatedOn) {
+	if !w.authed && strings.Contains(strings.ToLower(line), w.authenticatedOn) {
 		w.authed = true
 		close(w.authenticated)
 	}

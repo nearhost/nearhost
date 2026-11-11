@@ -1011,12 +1011,42 @@ func TestPerProcessErrorSkipsTheAuthenticatedLine(t *testing.T) {
 	if got := exitMessage(lines); got != "ssh exited" {
 		t.Fatalf("exit message = %q, want %q", got, "ssh exited")
 	}
-	lines = append([]string{"ssh: connect to host mini port 22: Connection refused"}, lines...)
-	if got := exitMessage(lines); got != "ssh: connect to host mini port 22: Connection refused" {
+	lines = []string{
+		"Authenticated to mini ([127.0.0.1]:22) using \"publickey\".",
+		"client_loop: send disconnect: Broken pipe",
+		"debug1: Exit status 255",
+	}
+	if got := exitMessage(lines); got != "client_loop: send disconnect: Broken pipe" {
 		t.Fatalf("exit message = %q, want the error line", got)
+	}
+	// What ssh wrote before it logged in is not why it exited after.
+	lines = []string{
+		"Warning: Permanently added 'mini' (ED25519) to the list of known hosts.",
+		"Authenticated to mini ([127.0.0.1]:22) using \"publickey\".",
+		"debug1: Exit status 255",
+	}
+	if got := exitMessage(lines); got != "ssh exited" {
+		t.Fatalf("exit message = %q, want %q", got, "ssh exited")
 	}
 	if got := exitMessage([]string{"debug1: Authentication succeeded (publickey).", "debug1: one"}); got != "ssh exited" {
 		t.Fatalf("exit message = %q, want %q", got, "ssh exited")
+	}
+}
+
+// ssh may name the host in another case than `ssh -G` does.
+func TestPerProcessStderrMatchesTheHostnameInAnyCase(t *testing.T) {
+	w := newSSHStderr("", "Target.Example")
+	w.Write([]byte("Authenticated to jump.example ([127.0.0.1]:22) using \"publickey\".\n"))
+	select {
+	case <-w.authenticated:
+		t.Fatal("authenticated at the jump host's line")
+	default:
+	}
+	w.Write([]byte("Authenticated to TARGET.example ([127.0.0.1]:22) using \"publickey\".\n"))
+	select {
+	case <-w.authenticated:
+	default:
+		t.Fatal("authenticated was not closed at the target's line")
 	}
 }
 
@@ -1172,16 +1202,19 @@ func TestPerProcessLogsARetryFailureOnlyWhenItChanges(t *testing.T) {
 	local, _ := heldPerProcessForward(t, p)
 	spec := forwardSpec(local, 80)
 	failed := func() int { return strings.Count(logs(), "forward "+spec+" failed: ") }
+	if !strings.Contains(logs(), "reapply failed: bind [127.0.0.1]:") {
+		t.Fatalf("the re-apply pass's failure was not logged:\n%s", logs())
+	}
 	n := calls.Load()
 	waitFor(t, 10*time.Second, func() bool { return calls.Load() >= n+5 }, "five retries")
-	if got := failed(); got != 1 {
-		t.Fatalf("logged %d retry failures over five retries, want 1:\n%s", got, logs())
+	if got := failed(); got != 0 {
+		t.Fatalf("logged %d retry failures over five retries failing as the re-apply did, want 0:\n%s", got, logs())
 	}
 	other.Store(true)
 	n = calls.Load()
 	waitFor(t, 10*time.Second, func() bool { return calls.Load() >= n+5 }, "five more retries")
-	if got := failed(); got != 2 {
-		t.Fatalf("logged %d retry failures, want 2 after the message changed:\n%s", got, logs())
+	if got := failed(); got != 1 {
+		t.Fatalf("logged %d retry failures, want 1 after the message changed:\n%s", got, logs())
 	}
 	if !strings.Contains(logs(), "too many open files") {
 		t.Fatalf("the new message was not logged:\n%s", logs())
