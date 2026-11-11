@@ -242,9 +242,10 @@ func (p *perProcess) Stop() {
 // connects to nothing, so it runs in nearhost's own process group. fatal
 // says whether a failure counts towards giving up: ssh that did not start
 // at all does, and ssh that ran and failed does when what it said does.
-// hostname is the name ssh connects to, which it names when it says it
-// has authenticated there.
-func (p *perProcess) readConfig(ctx context.Context) (hostname string, conflict error, fatal bool, err error) {
+// authHost is the name ssh connects to when it goes through a jump host,
+// which it names when it says it has authenticated there, and "" when it
+// goes straight to the host.
+func (p *perProcess) readConfig(ctx context.Context) (authHost string, conflict error, fatal bool, err error) {
 	cmd := p.command(ctx, "-G", "--", p.host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -257,18 +258,34 @@ func (p *perProcess) readConfig(ctx context.Context) (hostname string, conflict 
 		var exit *exec.ExitError
 		return "", nil, !errors.As(err, &exit) || isFatalSSHError(msg), errors.New("ssh -G: " + msg)
 	}
-	return configHostname(string(out)), configConflicts(p.host, string(out)), false, nil
+	return configAuthHost(string(out)), configConflicts(p.host, string(out)), false, nil
 }
 
-// configHostname is the value of the hostname line in `ssh -G` output, or
-// "" for none.
-func configHostname(config string) string {
+// configAuthHost is the value of the hostname line in `ssh -G` output when
+// that output sets a ProxyJump or ProxyCommand, so ssh logs in to another
+// host on the way, and "" when it sets neither or has no hostname line.
+func configAuthHost(config string) string {
+	hostname, jumped := "", false
 	for _, line := range strings.Split(config, "\n") {
-		if fields := strings.Fields(line); len(fields) == 2 && strings.EqualFold(fields[0], "hostname") {
-			return fields[1]
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch strings.ToLower(fields[0]) {
+		case "hostname":
+			if hostname == "" && len(fields) == 2 {
+				hostname = fields[1]
+			}
+		case "proxyjump", "proxycommand":
+			if !strings.EqualFold(fields[1], "none") {
+				jumped = true
+			}
 		}
 	}
-	return ""
+	if !jumped {
+		return ""
+	}
+	return hostname
 }
 
 // run supervises the link: it reads the host's configuration, launches
@@ -348,7 +365,7 @@ type linkEnd struct {
 // exits. ok is false when the supervisor is to stop, with the final status
 // set.
 func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, ok bool) {
-	hostname, conflict, fatal, err := p.readConfig(ctx)
+	authHost, conflict, fatal, err := p.readConfig(ctx)
 	if ctx.Err() != nil {
 		p.setStatus(StatusDisconnected, "")
 		return linkEnd{}, false
@@ -375,7 +392,7 @@ func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, 
 		}
 	}
 
-	stderr := newSSHStderr(remote, hostname)
+	stderr := newSSHStderr(remote, authHost)
 	link, err := p.startProc(p.args(args...), stderr)
 	if err != nil {
 		return linkEnd{msg: "start ssh: " + err.Error(), fatal: true}, true
@@ -618,8 +635,8 @@ const (
 
 // sshStderr takes a long-lived ssh's stderr for its whole life. It keeps
 // the last stderrLines non-empty lines and closes authenticated at the
-// first line that says ssh has logged in to the host it was asked for, not
-// to a jump host on the way. ready closes at the line that
+// first line that says ssh has logged in; through a jump host, the line
+// that names the host it was asked for, not the jump host. ready closes at the line that
 // says the process has done its job: for a link that forwards the agent
 // socket, that the server forwards it, and the line that says it refused is
 // kept; for a link without, ready is authenticated; for a forward's
@@ -635,8 +652,8 @@ type sshStderr struct {
 	agent string
 	// authenticatedOn is what the line that closes authenticated contains,
 	// lowercased, as ssh may write the host's name in another case: ssh
-	// naming the host it was asked for, as `ssh -G` resolves it, or
-	// "authentication succeeded" when that is not known.
+	// naming the host it was asked for, as `ssh -G` resolves it, when it
+	// goes through a jump host. For "", any line saysAuthenticated does.
 	authenticatedOn string
 
 	mu      sync.Mutex
@@ -648,11 +665,12 @@ type sshStderr struct {
 	badSpec string
 }
 
-// newSSHStderr returns an sshStderr for a link to hostname, as `ssh -G`
-// names it ("" when unknown), that forwards the agent socket to agent on
-// the server, or none for "".
-func newSSHStderr(agent, hostname string) *sshStderr {
-	w := &sshStderr{authenticated: make(chan struct{}), agent: agent, authenticatedOn: authenticatedLine(hostname)}
+// newSSHStderr returns an sshStderr for a link that forwards the agent
+// socket to agent on the server, or none for "". authHost is the host's
+// name, as `ssh -G` resolves it, when the link goes through a jump host,
+// and otherwise "", for any login to count.
+func newSSHStderr(agent, authHost string) *sshStderr {
+	w := &sshStderr{authenticated: make(chan struct{}), agent: agent, authenticatedOn: authenticatedLine(authHost)}
 	w.ready = w.authenticated
 	if agent != "" {
 		w.ready = make(chan struct{})
@@ -662,23 +680,30 @@ func newSSHStderr(agent, hostname string) *sshStderr {
 }
 
 // authenticatedLine is what ssh's line saying it has logged in to hostname
-// contains, lowercased, or, for "", the line it writes at DEBUG1 for any
-// login.
+// contains, lowercased, or "" for any login.
 func authenticatedLine(hostname string) string {
 	if hostname == "" {
-		return "authentication succeeded"
+		return ""
 	}
 	return "authenticated to " + strings.ToLower(hostname) + " "
+}
+
+// saysAuthenticatedTo reports whether line says ssh has logged in: to the
+// host whose authenticatedLine is on, or anywhere for "".
+func saysAuthenticatedTo(line, on string) bool {
+	if on == "" {
+		return saysAuthenticated(line)
+	}
+	return strings.Contains(strings.ToLower(line), on)
 }
 
 // newForwardStderr returns an sshStderr for the process of the forward
 // from local, ready once ssh listens there.
 func newForwardStderr(local int) *sshStderr {
 	return &sshStderr{
-		authenticated:   make(chan struct{}),
-		authenticatedOn: authenticatedLine(""),
-		ready:           make(chan struct{}),
-		readyOn:         fmt.Sprintf("Local forwarding listening on 127.0.0.1 port %d.", local),
+		authenticated: make(chan struct{}),
+		ready:         make(chan struct{}),
+		readyOn:       fmt.Sprintf("Local forwarding listening on 127.0.0.1 port %d.", local),
 	}
 }
 
@@ -711,7 +736,7 @@ func (w *sshStderr) endLine() {
 	if line == "" {
 		return
 	}
-	if !w.authed && strings.Contains(strings.ToLower(line), w.authenticatedOn) {
+	if !w.authed && saysAuthenticatedTo(line, w.authenticatedOn) {
 		w.authed = true
 		close(w.authenticated)
 	}

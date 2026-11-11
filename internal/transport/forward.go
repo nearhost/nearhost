@@ -103,10 +103,14 @@ type ForwardState struct {
 	Applied bool
 	// Retrying is true while the forward is not applied and something is
 	// relaunching it, and Err is then ssh's error from the last attempt:
-	// why its process died, or why its launch failed. Only the per-process
-	// transport retries a forward on its own; Session leaves both zero.
-	Retrying bool
-	Err      string
+	// why its process died, or why its launch failed. PortRefused is then
+	// whether that attempt failed because the local port could not be
+	// bound: it is in use, or the system refused it. Only the per-process
+	// transport retries a forward on its own; Session leaves all three
+	// zero.
+	Retrying    bool
+	Err         string
+	PortRefused bool
 }
 
 // ForwardStates returns the connection status together with the desired
