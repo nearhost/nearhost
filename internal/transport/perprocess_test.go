@@ -3,11 +3,14 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -281,7 +284,7 @@ func TestPerProcessArgs(t *testing.T) {
 }
 
 func TestPerProcessStderrKeepsTheLastLines(t *testing.T) {
-	w := newLinkStderr()
+	w := newLinkStderr("")
 	for i := range 30 {
 		w.Write([]byte("debug1: line " + strconv.Itoa(i) + "\n\n"))
 	}
@@ -326,7 +329,7 @@ func TestPerProcessConnectTimeoutKillsTheLinkAndRetries(t *testing.T) {
 // At DEBUG1 ssh goes on writing after the line that says why it left: the
 // byte counts, then debug1 lines. The error is the line before them.
 func TestPerProcessExitMessageSkipsTheDebugTrailer(t *testing.T) {
-	w := newLinkStderr()
+	w := newLinkStderr("")
 	w.Write([]byte("debug1: client_input_channel_req: channel 0 rtype exit-status reply 0\n" +
 		"Connection to mini closed by remote host.\n" +
 		"Transferred: sent 2352, received 3016 bytes, in 4.1 seconds\n" +
@@ -340,5 +343,191 @@ func TestPerProcessExitMessageSkipsTheDebugTrailer(t *testing.T) {
 	}
 	if got := exitMessage(nil); got != "ssh exited" {
 		t.Fatalf("with no lines, exit message = %q", got)
+	}
+}
+
+// withPerProcessAgent forwards the agent socket on p, with prepareAgent
+// answering remote, or err.
+func withPerProcessAgent(p *perProcessFake, remote string, err error) {
+	p.SetAgentForward(AgentForward{Name: "k3f9q2.sock", Local: "/tmp/a.sock"})
+	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
+		return remote, err
+	}
+}
+
+// logged collects what p logs.
+func logged(p *perProcessFake) func() string {
+	var mu sync.Mutex
+	var b strings.Builder
+	p.Logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		b.WriteString(fmt.Sprintf(format, args...) + "\n")
+	}
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return b.String()
+	}
+}
+
+func TestPerProcessForwardsTheAgentSocket(t *testing.T) {
+	p := newTestPerProcess(t)
+	withPerProcessAgent(p, agentRemote, nil)
+	logs := logged(p)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	lines := logLines(t, p.log)
+	if len(lines) != 1 || !strings.Contains(lines[0], " -R "+agentRemote+":/tmp/a.sock ") {
+		t.Fatalf("want one link with -R %s:/tmp/a.sock, got %q", agentRemote, lines)
+	}
+	if h := p.Health(); h.AgentPath != agentRemote || h.AgentErr != "" || h.AgentProblem != AgentOK {
+		t.Fatalf("Health = %+v, want the agent at %s", h, agentRemote)
+	}
+	if !strings.Contains(logs(), "agents reach nearhost at "+agentRemote) {
+		t.Fatalf("log %q lacks the agent line", logs())
+	}
+}
+
+func TestPerProcessARefusedAgentForwardLeavesTheLinkUp(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_RFORWARD_FAIL=1")
+	withPerProcessAgent(p, agentRemote, nil)
+	var mu sync.Mutex
+	var statuses []Status
+	p.Logf = func(format string, args ...any) {
+		if len(args) >= 2 {
+			if st, ok := args[1].(Status); ok {
+				mu.Lock()
+				statuses = append(statuses, st)
+				mu.Unlock()
+			}
+		}
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	lines := logLines(t, p.log)
+	if len(lines) != 2 || !strings.Contains(lines[0], " -R ") || strings.Contains(lines[1], " -R ") {
+		t.Fatalf("want a link with -R, then one without, got %q", lines)
+	}
+	h := p.Health()
+	if h.AgentProblem != AgentRefused || !strings.Contains(h.AgentErr, "remote port forwarding failed for listen path "+agentRemote) {
+		t.Fatalf("Health = %+v, want the refusal", h)
+	}
+	if h.AgentPath != "" {
+		t.Fatalf("AgentPath = %q after a refusal", h.AgentPath)
+	}
+	if h.Failures != 0 {
+		t.Fatalf("Failures = %d, want 0", h.Failures)
+	}
+	pids := p.linkPids(t)
+	time.Sleep(time.Second)
+	if again := p.linkPids(t); len(pids) != 1 || len(again) != 1 || again[0] != pids[0] {
+		t.Fatalf("link pids went from %v to %v, want one that stays", pids, again)
+	}
+	if p.Status() != StatusConnected {
+		t.Fatalf("status = %s", p.Status())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if slices.Contains(statuses, StatusReconnecting) {
+		t.Fatalf("the status went %v", statuses)
+	}
+}
+
+func TestPerProcessARefusedAgentForwardTooLong(t *testing.T) {
+	long := "/home/" + strings.Repeat("d", 100) + "/.nearhost/k3f9q2.sock"
+	p := newTestPerProcess(t, "FAKE_SSH_RFORWARD_FAIL=1")
+	withPerProcessAgent(p, long, nil)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	if h := p.Health(); h.AgentProblem != AgentTooLong || !strings.Contains(h.AgentErr, "longer than a Unix socket path") {
+		t.Fatalf("Health = %+v, want the path too long", h)
+	}
+}
+
+func TestPerProcessRetriesTheAgentForwardOnTheNextReconnect(t *testing.T) {
+	p := newTestPerProcess(t)
+	var calls atomic.Int32
+	p.SetAgentForward(AgentForward{Name: "k3f9q2.sock", Local: "/tmp/a.sock"})
+	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
+		calls.Add(1)
+		return agentRemote, nil
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	first := p.linkPids(t)
+	if err := os.WriteFile(filepath.Join(p.dropDir, strconv.Itoa(first[0])), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		return len(p.linkPids(t)) == 2 && p.Status() == StatusConnected
+	}, "a second link")
+	if calls.Load() != 2 {
+		t.Fatalf("prepareAgent ran %d times, want 2", calls.Load())
+	}
+	lines := logLines(t, p.log)
+	if !strings.Contains(lines[len(lines)-1], " -R "+agentRemote+":/tmp/a.sock ") {
+		t.Fatalf("the second link %q lacks the agent forward", lines[len(lines)-1])
+	}
+	if p.Health().AgentPath != agentRemote {
+		t.Fatalf("AgentPath = %q", p.Health().AgentPath)
+	}
+}
+
+func TestPerProcessAgentOnAServerThatIsThisMachine(t *testing.T) {
+	p := newTestPerProcess(t)
+	withPerProcessAgent(p, "", ErrThisMachine)
+	logs := logged(p)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	if log := readLog(t, p.log); strings.Contains(log, " -R ") {
+		t.Fatalf("the link forwards the agent socket: %q", log)
+	}
+	if h := p.Health(); h.AgentPath != "" || h.AgentErr != "" || h.AgentProblem != AgentOK {
+		t.Fatalf("Health = %+v, want no agent state", h)
+	}
+	if !strings.Contains(logs(), "agents here reach nearhost on this machine's own socket") {
+		t.Fatalf("log %q lacks the this-machine line", logs())
+	}
+}
+
+func TestPerProcessAgentNotReady(t *testing.T) {
+	p := newTestPerProcess(t)
+	withPerProcessAgent(p, "", errors.New("make /home/dev/.nearhost: permission denied"))
+	logs := logged(p)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	if log := readLog(t, p.log); strings.Contains(log, " -R ") {
+		t.Fatalf("the link forwards the agent socket: %q", log)
+	}
+	if h := p.Health(); h.AgentProblem != AgentNotReady || !strings.Contains(h.AgentErr, "permission denied") || h.AgentPath != "" {
+		t.Fatalf("Health = %+v, want not ready", h)
+	}
+	if !strings.Contains(logs(), "agents unavailable: make /home/dev/.nearhost: permission denied") {
+		t.Fatalf("log %q lacks the unavailable line", logs())
+	}
+}
+
+// OpenSSH writes the stream forward's outcome with a port of -2 after the
+// path, and newer releases put the function's name before it.
+func TestPerProcessStderrSeesTheAgentForwardAsSSHWritesIt(t *testing.T) {
+	w := newLinkStderr(agentRemote)
+	w.Write([]byte("Authenticated to mini ([127.0.0.1]:22) using \"publickey\".\n"))
+	select {
+	case <-w.ready:
+		t.Fatal("ready before the forward")
+	default:
+	}
+	w.Write([]byte("debug1: client_input_global_request: remote forward success for: listen " + agentRemote + ":-2, connect /tmp/a.sock:-2\n"))
+	select {
+	case <-w.ready:
+	default:
+		t.Fatal("ready was not closed")
+	}
+
+	refused := newLinkStderr(agentRemote)
+	refused.Write([]byte("Error: remote port forwarding failed for listen path " + agentRemote + "\ndebug1: Exit status 255\n"))
+	if got := refused.Refusal(); got != "Error: remote port forwarding failed for listen path "+agentRemote {
+		t.Fatalf("Refusal = %q", got)
 	}
 }
