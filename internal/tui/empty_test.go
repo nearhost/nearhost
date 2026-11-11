@@ -183,3 +183,56 @@ func TestEmptyHelpFits(t *testing.T) {
 		assertEmptyFits(t, m, sz[0], sz[1], "close help")
 	}
 }
+
+// With a server configured and nothing to serve, c connects the server and
+// opens the main screen on it, so that an agent there can reach Nearhost and
+// ask to add its project.
+func TestFirstRunScreenConnectsTheServer(t *testing.T) {
+	f := newFake(t, &config.Config{Servers: []config.Server{{Name: "leto", SSHHost: "leto"}}})
+	m := sized(f)
+	wantScreen(t, m, "Nothing to serve yet.", "c  connect a server, so its agents reach Nearhost",
+		" n add project · s add server · c connect server · ? help · q quit")
+	settle(m, press(m, "c"))
+	if got := f.edit.connected; len(got) != 1 || got[0] != "leto" {
+		t.Fatalf("connected %v, want [leto]", got)
+	}
+	if m.empty() || m.sel != rowKey(rowServer, "leto") {
+		t.Fatalf("empty %v, selected %q", m.empty(), m.sel)
+	}
+	wantScreen(t, m, "▾ leto", "Connecting leto.")
+}
+
+// With several servers, c asks which one to connect.
+func TestFirstRunScreenPicksTheServerToConnect(t *testing.T) {
+	f := newFake(t, &config.Config{Servers: []config.Server{{Name: "apollo", SSHHost: "apollo"}, {Name: "leto", SSHHost: "leto"}}})
+	m := sized(f)
+	press(m, "c")
+	wantScreen(t, m, "Connect a server", "▸ apollo", "leto")
+	settle(m, press(m, "esc"))
+	if m.form != nil || !m.empty() || len(f.edit.connected) != 0 {
+		t.Fatalf("esc left form %T, empty %v, connected %v", m.form, m.empty(), f.edit.connected)
+	}
+	press(m, "c")
+	press(m, "down")
+	wantScreen(t, m, "▸ leto")
+	settle(m, press(m, "enter"))
+	if got := f.edit.connected; len(got) != 1 || got[0] != "leto" {
+		t.Fatalf("connected %v, want [leto]", got)
+	}
+	if m.form != nil || m.empty() || m.sel != rowKey(rowServer, "leto") {
+		t.Fatalf("form %T, empty %v, selected %q", m.form, m.empty(), m.sel)
+	}
+}
+
+// With no server, there is nothing for c to connect.
+func TestFirstRunScreenWithoutAServerHasNoConnect(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	m := sized(f)
+	if strings.Contains(screen(m), "connect") {
+		t.Errorf("offers to connect with no server:\n%s", screen(m))
+	}
+	settle(m, press(m, "c"))
+	if m.form != nil || !m.empty() || len(f.edit.connected) != 0 {
+		t.Fatalf("c gave form %T, empty %v, connected %v", m.form, m.empty(), f.edit.connected)
+	}
+}

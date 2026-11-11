@@ -94,6 +94,9 @@ type Model struct {
 	proxyErr error // why the engine could not start
 	quitting bool
 	cutShort context.CancelFunc // ends the shutdown's context
+	// leftEmpty is set once a server is connected from the first-run
+	// screen: the main screen stays up for this run, with nothing to serve.
+	leftEmpty bool
 
 	events      <-chan engine.Event
 	unsubscribe func()
@@ -348,6 +351,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, pf.update(msg) // the add-server form opened from it
 		}
 		m.form = nil
+	case serverChosenMsg:
+		m.form = nil
+		return m, m.connectFromEmpty(msg.name)
 	case serverAddedMsg:
 		key := rowKey(rowServer, msg.srv.Name)
 		verb := "Added server "

@@ -137,18 +137,24 @@ func (m *Model) connectsOnC(name string) bool {
 // toggleConnection drops a server's connection and holds it closed, or
 // connects a server that is down.
 func (m *Model) toggleConnection(name string) tea.Cmd {
-	m.panelErr = ""
-	b, connect := m.b, m.connectsOnC(name)
-	note := "Dropping the connection to " + name + "."
-	if connect {
-		note = "Connecting " + name + "."
+	if m.connectsOnC(name) {
+		return m.connect(name)
 	}
-	m.logs.noteOn(rowKey(rowServer, name), note)
+	m.panelErr = ""
+	b := m.b
+	m.logs.noteOn(rowKey(rowServer, name), "Dropping the connection to "+name+".")
 	return m.work.do(func(ctx context.Context) tea.Msg {
-		if connect {
-			return reconnectedMsg{name, b.ConnectServer(ctx, name)}
-		}
 		return reconnectedMsg{name, b.DisconnectServer(ctx, name)}
+	})
+}
+
+// connect starts the connection of the server called name.
+func (m *Model) connect(name string) tea.Cmd {
+	m.panelErr = ""
+	b := m.b
+	m.logs.noteOn(rowKey(rowServer, name), "Connecting "+name+".")
+	return m.work.do(func(ctx context.Context) tea.Msg {
+		return reconnectedMsg{name, b.ConnectServer(ctx, name)}
 	})
 }
 
