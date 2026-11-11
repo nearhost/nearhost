@@ -332,9 +332,12 @@ func TestFakeSSHParentHelper(t *testing.T) {
 	if fake == "" {
 		t.Skip("helper for TestFakeSSHExitsWhenItsParentDies")
 	}
-	if err := exec.Command(fake, "-N", "mini").Start(); err != nil {
+	args := strings.Fields(os.Getenv("GO_TEST_FAKESSH_ARGS"))
+	cmd := exec.Command(fake, args...)
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	fmt.Printf("FAKEPID=%d\n", cmd.Process.Pid)
 }
 
 func TestFakeSSHExitsWhenItsParentDies(t *testing.T) {
@@ -345,7 +348,7 @@ func TestFakeSSHExitsWhenItsParentDies(t *testing.T) {
 		t.Fatal(err)
 	}
 	helper := exec.Command(self, "-test.run=^TestFakeSSHParentHelper$", "-test.count=1")
-	helper.Env = append(os.Environ(), "GO_TEST_FAKESSH_PARENT="+FakeSSH(t), "FAKE_SSH_PID_LOG="+pidLog)
+	helper.Env = append(os.Environ(), "GO_TEST_FAKESSH_PARENT="+FakeSSH(t), "GO_TEST_FAKESSH_ARGS=-N mini", "FAKE_SSH_PID_LOG="+pidLog)
 	if out, err := helper.CombinedOutput(); err != nil {
 		t.Fatalf("the intermediary failed: %v\n%s", err, out)
 	}
@@ -377,4 +380,34 @@ func TestFakeSSHRejectsAMalformedLocalForward(t *testing.T) {
 	if want := "Bad local forwarding specification 'nonsense'"; !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 	}
+}
+
+func TestFakeSSHHangingMasterExitsWhenItsParentDies(t *testing.T) {
+	dir := TempDir(t, "nh-")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := exec.Command(self, "-test.run=^TestFakeSSHParentHelper$", "-test.count=1", "-test.v")
+	helper.Env = append(os.Environ(), "GO_TEST_FAKESSH_PARENT="+FakeSSH(t),
+		"GO_TEST_FAKESSH_ARGS=-N -M -S "+filepath.Join(dir, "s")+" mini", "FAKE_SSH_HANG=1")
+	out, err := helper.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the intermediary failed: %v\n%s", err, out)
+	}
+	var pid int
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "FAKEPID="); ok {
+			pid, _ = strconv.Atoi(v)
+		}
+	}
+	if pid == 0 {
+		t.Fatalf("the intermediary did not print the fake's pid:\n%s", out)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			p.Kill()
+		}
+	})
+	WaitUntil(t, 2*time.Second, func() bool { return !processAlive(pid) }, "the hanging master to exit after its parent")
 }

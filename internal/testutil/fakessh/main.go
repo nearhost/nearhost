@@ -184,6 +184,9 @@ func run(args []string) int {
 	if os.Getenv("FAKE_SSH_HANG") != "" {
 		os.Remove(sock + ".exit")
 		for !exists(sock + ".exit") {
+			if parentGone() {
+				return 255
+			}
 			time.Sleep(100 * time.Millisecond)
 		}
 		return 0
@@ -195,7 +198,13 @@ func run(args []string) int {
 		touch(sock + ".flaked")
 		touch(sock)
 		secs, _ := strconv.ParseFloat(s, 64)
-		time.Sleep(time.Duration(secs * float64(time.Second)))
+		deadline := time.Now().Add(time.Duration(secs * float64(time.Second)))
+		for time.Now().Before(deadline) {
+			if parentGone() {
+				return 255
+			}
+			time.Sleep(min(50*time.Millisecond, time.Until(deadline)))
+		}
 		os.Remove(sock)
 		fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
 		return 255
@@ -285,7 +294,12 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 		if parentGone() {
 			return 255
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-signals:
+			fmt.Fprintln(os.Stderr, "Killed by signal 15.")
+			return 255
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	fmt.Fprintf(os.Stderr, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", host)
 
