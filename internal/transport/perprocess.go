@@ -18,28 +18,12 @@ import (
 // supervised as Session supervises its master; every other job runs an ssh of
 // its own.
 type perProcess struct {
-	Name       string
-	host       string
+	supervision
 	SSHPath    string
 	Env        []string
-	Logf       func(format string, args ...any)
 	Foreground bool
 
-	pollInterval    time.Duration
-	connectTimeout  time.Duration
-	baseBackoff     time.Duration
-	maxBackoff      time.Duration
-	maxAuthFailures int
-
 	lifecycle sync.Mutex // serialises Start and Stop; held while Stop waits for the supervisor
-	mu        sync.Mutex
-	status    Status
-	lastErr   string
-	// failures counts the attempts that failed since the link last
-	// connected or was started; nextAttempt is when the supervisor tries
-	// again, zero unless it is waiting to.
-	failures    int
-	nextAttempt time.Time
 	// link is the running `ssh -N`, nil while there is none.
 	link   *exec.Cmd
 	cancel context.CancelFunc
@@ -55,24 +39,16 @@ var _ Transport = (*perProcess)(nil)
 // connect.
 func newPerProcess(c Config) *perProcess {
 	p := &perProcess{
-		Name:            c.Name,
-		host:            c.Host,
-		SSHPath:         c.SSHPath,
-		Env:             c.Env,
-		Logf:            c.Logf,
-		Foreground:      c.Foreground,
-		pollInterval:    200 * time.Millisecond,
-		connectTimeout:  20 * time.Second,
-		baseBackoff:     time.Second,
-		maxBackoff:      30 * time.Second,
-		maxAuthFailures: 3,
-		status:          StatusDisconnected,
+		SSHPath:    c.SSHPath,
+		Env:        c.Env,
+		Foreground: c.Foreground,
+	}
+	p.init(c.Name, c.Host)
+	if c.Logf != nil {
+		p.Logf = c.Logf
 	}
 	if p.SSHPath == "" {
 		p.SSHPath = "ssh"
-	}
-	if p.Logf == nil {
-		p.Logf = func(string, ...any) {}
 	}
 	return p
 }
@@ -124,9 +100,6 @@ func configConflicts(host, config string) error {
 	}
 	return &ConfigError{Host: host, Options: options}
 }
-
-// Host is the ssh host the transport reaches.
-func (p *perProcess) Host() string { return p.host }
 
 // Preflight has nothing to check: there is no control socket to fit.
 func (p *perProcess) Preflight() error { return nil }
@@ -187,28 +160,6 @@ func (p *perProcess) OpenSFTP(ctx context.Context) (*SFTP, error) {
 	return openSFTP(ctx, cmd, p.host)
 }
 
-// Status returns the current connection state.
-func (p *perProcess) Status() Status {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.status
-}
-
-// LastError returns the most recent ssh error text.
-func (p *perProcess) LastError() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.lastErr
-}
-
-// Health returns the link's state, how many attempts have failed, and when
-// it tries again.
-func (p *perProcess) Health() Health {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return Health{Status: p.status, LastError: p.lastErr, Failures: p.failures, NextAttempt: p.nextAttempt}
-}
-
 // SetAgentForward chooses the socket forwarded for coding agents. Call it
 // before Start.
 func (p *perProcess) SetAgentForward(f AgentForward) {
@@ -236,44 +187,6 @@ func (p *perProcess) Forwards() [][2]int { return nil }
 
 // ForwardStates is the connection state and, as yet, no forwards.
 func (p *perProcess) ForwardStates() (Status, []ForwardState) { return p.Status(), nil }
-
-func (p *perProcess) setStatus(st Status, errText string) {
-	p.mu.Lock()
-	p.status = st
-	if errText != "" {
-		p.lastErr = errText
-	}
-	p.nextAttempt = time.Time{}
-	if st == StatusConnected {
-		p.failures = 0
-	}
-	p.mu.Unlock()
-	if errText != "" {
-		p.Logf("%s: %s: %s", p.Name, st, errText)
-	} else {
-		p.Logf("%s: %s", p.Name, st)
-	}
-}
-
-// retrying notes a failed attempt, that the link is reconnecting and when it
-// tries next, all at once, then logs it.
-func (p *perProcess) retrying(msg string, d time.Duration) {
-	p.mu.Lock()
-	p.status, p.lastErr = StatusReconnecting, msg
-	p.failures++
-	p.nextAttempt = time.Now().Add(d)
-	p.mu.Unlock()
-	p.Logf("%s: %s: %s", p.Name, StatusReconnecting, msg)
-}
-
-// giveUp notes a failed attempt and stops trying: the error is one that
-// trying again will not fix.
-func (p *perProcess) giveUp(msg string) {
-	p.mu.Lock()
-	p.failures++
-	p.mu.Unlock()
-	p.setStatus(StatusAuthFailed, msg)
-}
 
 // Start launches the supervisor. It is a no-op while a supervisor is
 // running; after the supervisor has given up, Start launches a fresh one.
@@ -308,44 +221,6 @@ func (p *perProcess) Stop() {
 	if p.Status() != StatusDisconnected {
 		p.setStatus(StatusDisconnected, "")
 	}
-}
-
-// WaitConnected blocks until the link is connected, the supervisor has given
-// up, or ctx ends.
-func (p *perProcess) WaitConnected(ctx context.Context) error {
-	for {
-		switch p.Status() {
-		case StatusConnected:
-			return nil
-		case StatusAuthFailed:
-			return fmt.Errorf("ssh %s: %s", p.host, p.LastError())
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(p.pollInterval):
-		}
-	}
-}
-
-// sleep waits d or until ctx ends; it reports whether the full wait elapsed.
-func (p *perProcess) sleep(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
-func (p *perProcess) nextBackoff(b time.Duration) time.Duration {
-	b *= 2
-	if b > p.maxBackoff {
-		b = p.maxBackoff
-	}
-	return b
 }
 
 // readConfig runs `ssh -G` for the host and returns a *ConfigError when its
@@ -398,18 +273,11 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 			backoff = p.baseBackoff
 			authFails = 0
 		}
-		if fatal {
-			// Fatal errors, and failures to start ssh at all, give up after
-			// maxAuthFailures in a row.
-			authFails++
-			if authFails >= p.maxAuthFailures {
-				p.giveUp(msg)
-				return
-			}
-		} else {
-			authFails = 0 // only consecutive fatal failures count
+		// Fatal errors, and failures to start ssh at all, give up after
+		// maxAuthFailures in a row.
+		if !p.attemptFailed(msg, fatal, &authFails, backoff) {
+			return
 		}
-		p.retrying(msg, backoff)
 		if !p.sleep(ctx, backoff) {
 			p.setStatus(StatusDisconnected, "")
 			return
@@ -487,11 +355,24 @@ func (p *perProcess) connect(ctx context.Context) (connected bool, msg string, f
 	}
 
 	lines := stderr.Lines()
-	msg = "ssh exited"
-	if len(lines) > 0 {
-		msg = lines[len(lines)-1]
-	}
+	msg = exitMessage(lines)
 	return connected, msg, isFatalSSHError(strings.Join(lines, "\n")), true
+}
+
+// exitMessage picks why the link exited from the last lines of its stderr:
+// the last that is not ssh's DEBUG1 chatter or the byte counts it prints on
+// the way out, else the last line, else "ssh exited".
+func exitMessage(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := lines[i]
+		if !strings.HasPrefix(l, "debug") && !strings.HasPrefix(l, "Transferred:") && !strings.HasPrefix(l, "Bytes per second:") {
+			return l
+		}
+	}
+	if len(lines) > 0 {
+		return lines[len(lines)-1]
+	}
+	return "ssh exited"
 }
 
 const (

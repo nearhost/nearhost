@@ -322,3 +322,23 @@ func TestPerProcessConnectTimeoutKillsTheLinkAndRetries(t *testing.T) {
 	os.Remove(hold)
 	waitPerProcessConnected(t, p)
 }
+
+// At DEBUG1 ssh goes on writing after the line that says why it left: the
+// byte counts, then debug1 lines. The error is the line before them.
+func TestPerProcessExitMessageSkipsTheDebugTrailer(t *testing.T) {
+	w := newLinkStderr()
+	w.Write([]byte("debug1: client_input_channel_req: channel 0 rtype exit-status reply 0\n" +
+		"Connection to mini closed by remote host.\n" +
+		"Transferred: sent 2352, received 3016 bytes, in 4.1 seconds\n" +
+		"Bytes per second: sent 573.4, received 735.3\n" +
+		"debug1: Exit status -1\n"))
+	if got := exitMessage(w.Lines()); got != "Connection to mini closed by remote host." {
+		t.Fatalf("exit message = %q", got)
+	}
+	if got := exitMessage([]string{"debug1: one", "debug1: two"}); got != "debug1: two" {
+		t.Fatalf("with only debug lines, exit message = %q, want the last", got)
+	}
+	if got := exitMessage(nil); got != "ssh exited" {
+		t.Fatalf("with no lines, exit message = %q", got)
+	}
+}
