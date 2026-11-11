@@ -212,13 +212,25 @@ func TestScriptSaysWhatToDoWhenNoNearhostAnswers(t *testing.T) {
 	}
 	home := shortDir(t)
 	r := runScript(t, home, []string{"SSH_CONNECTION=10.0.0.2 50000 10.0.0.9 22"}, "propose", home)
-	if r.code != 2 || !strings.Contains(r.stderr, "start nearhost there and connect this server (select it and press c)") ||
+	host, _ := os.Hostname()
+	host, _, _ = strings.Cut(host, ".")
+	if r.code != 2 || !strings.Contains(r.stderr, "start nearhost there and connect this server: select "+host+" and press c, or, while Nearhost has nothing to serve, press c on its first screen and choose "+host+".") ||
 		!strings.Contains(r.stderr, "nearhost add --server ") {
 		t.Fatalf("on a server: %+v", r)
 	}
+	// Without SSH_CONNECTION, as in an agent's remote session that is not
+	// ssh, this may be a server or a machine without Nearhost: the message
+	// gives both.
 	r = runScript(t, home, nil, "status")
-	if r.code != 2 || !strings.Contains(r.stderr, "Nearhost is not installed here") {
-		t.Fatalf("on a machine without it: %+v", r)
+	for _, want := range []string{
+		"No Nearhost reaches this machine.",
+		"If you reach it from a laptop that runs Nearhost, connect it there: start nearhost, select " + host + " and press c, or, while Nearhost has nothing to serve, press c on its first screen and choose " + host + ". Then ask again.",
+		"If " + host + " is not in Nearhost yet, run this on the laptop: nearhost add --server " + host + " ",
+		"To serve projects on this machine itself, install Nearhost here: https://nearhost.dev/docs/",
+	} {
+		if r.code != 2 || !strings.Contains(r.stderr, want) {
+			t.Fatalf("without ssh, want %q in %+v", want, r)
+		}
 	}
 }
 

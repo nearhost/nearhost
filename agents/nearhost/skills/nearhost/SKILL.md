@@ -80,6 +80,7 @@ When the user picks "Always allow" in Nearhost, the script keeps the token it is
 - **Exit status 2 from `wait`**: Nearhost stopped while the proposal waited, so the user never answered it. Say so and stop. Do not add the project any other way: the user reviews every add.
 - **Exit status 2 from `propose` or `status`**, no Nearhost answers. Pass on what the script printed.
   - On a server, it says what to do on the laptop: start `nearhost` and connect this server, or add the server first.
+  - Outside an ssh session, such as an agent's own remote session, the script cannot tell a server from a machine without Nearhost, so its message walks through both: connecting this machine from the laptop, and installing Nearhost here. Pass it on whole. Do not guess which one applies, and do not tell the user this machine is not reached from a laptop.
   - On the laptop, if it says the `nearhost` command is here and nothing was proposed yet: you may run `nearhost add <path>` yourself, since the user asked for the add at this machine. If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it.
 - **Exit status 2 and the script printed `curl is needed`**: this machine has no curl, so nothing was asked of Nearhost. Tell the user to install curl. Do not run `nearhost add` instead.
 - **Exit status 3**: Nearhost is running as `nearhost up`, which cannot show proposals. Tell the user to open `nearhost` on the laptop and try again.
