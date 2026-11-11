@@ -42,7 +42,7 @@ type forward struct {
 // Session supervises one OpenSSH ControlMaster connection to a server.
 type Session struct {
 	Name    string
-	Host    string
+	host    string
 	SSHPath string   // ssh binary, default "ssh"
 	Env     []string // extra environment for ssh (tests)
 	Logf    func(format string, args ...any)
@@ -96,7 +96,7 @@ type Session struct {
 func NewSession(name, host, runDir string) *Session {
 	s := &Session{
 		Name:            name,
-		Host:            host,
+		host:            host,
 		SSHPath:         "ssh",
 		Logf:            func(string, ...any) {},
 		runDir:          runDir,
@@ -127,7 +127,7 @@ const (
 // file directly inside the run directory. A name whose socket path would be
 // too long for ssh to bind is replaced by its short hashed form; whether the
 // result is usable at all (the run directory itself may be too long) is what
-// CheckSocketPath reports.
+// Preflight reports.
 func (s *Session) SocketPath() string {
 	path := filepath.Join(s.runDir, socketName(s.Name)+".sock")
 	if len(path) > maxSocketPath {
@@ -138,10 +138,13 @@ func (s *Session) SocketPath() string {
 	return path
 }
 
-// CheckSocketPath reports whether ssh can bind this session's control socket.
+// Host is the ssh host the session reaches.
+func (s *Session) Host() string { return s.host }
+
+// Preflight reports whether ssh can bind this session's control socket.
 // It fails when the run directory is so long that even the shortest socket
 // name does not fit. Start refuses to launch ssh in that case.
-func (s *Session) CheckSocketPath() error {
+func (s *Session) Preflight() error {
 	path := s.SocketPath()
 	if len(path) <= maxSocketPath {
 		return nil
@@ -237,7 +240,7 @@ func (s *Session) Check(ctx context.Context) error {
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-o", "ControlPath=none",
-		"--", s.Host, "true")
+		"--", s.host, "true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -245,7 +248,7 @@ func (s *Session) Check(ctx context.Context) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return &CheckError{Host: s.Host, Stderr: msg}
+		return &CheckError{Host: s.host, Stderr: msg}
 	}
 	return nil
 }
@@ -319,7 +322,7 @@ func (s *Session) setStatus(st Status, errText string) {
 
 // Start launches the supervisor. It is a no-op while a supervisor is running;
 // after the supervisor has given up, Start launches a fresh one. When the
-// control socket path is too long (see CheckSocketPath) it launches nothing
+// control socket path is too long (see Preflight) it launches nothing
 // and the session is at once in the state of a supervisor that gave up, with
 // that error as its last one.
 func (s *Session) Start() {
@@ -334,7 +337,7 @@ func (s *Session) Start() {
 	// ssh would fail on such a path every time, and say so only after it
 	// had connected. Give up here, as the supervisor does on an error that
 	// retrying cannot fix.
-	if err := s.CheckSocketPath(); err != nil {
+	if err := s.Preflight(); err != nil {
 		s.setStatus(StatusAuthFailed, err.Error())
 		return
 	}
@@ -374,7 +377,7 @@ func (s *Session) WaitConnected(ctx context.Context) error {
 		case StatusConnected:
 			return nil
 		case StatusAuthFailed:
-			return fmt.Errorf("ssh %s: %s", s.Host, s.LastError())
+			return fmt.Errorf("ssh %s: %s", s.host, s.LastError())
 		}
 		select {
 		case <-ctx.Done():
@@ -435,7 +438,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"-o", "ControlPersist=no",
 			"-o", "ClearAllForwardings=yes",
 			"-o", "RemoteCommand=none",
-			"--", s.Host)
+			"--", s.host)
 		var stderr bytes.Buffer
 		master.Stderr = &stderr
 		if err := master.Start(); err != nil {
@@ -585,7 +588,7 @@ func (s *Session) waitForSocket(ctx context.Context, exited <-chan struct{}) boo
 			return false
 		case <-time.After(s.pollInterval):
 		}
-		check := s.control(ctx, "-O", "check", "--", s.Host)
+		check := s.control(ctx, "-O", "check", "--", s.host)
 		if check.Run() == nil {
 			return true
 		}
@@ -599,13 +602,13 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 	if _, err := os.Stat(s.SocketPath()); err != nil {
 		return
 	}
-	check := s.control(ctx, "-O", "check", "--", s.Host)
+	check := s.control(ctx, "-O", "check", "--", s.host)
 	if check.Run() == nil {
 		// A master from a crashed run is still alive on this socket. Ask it
 		// to exit so the new master is the one we supervise.
 		exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.control(exitCtx, "-O", "exit", "--", s.Host).Run()
+		s.control(exitCtx, "-O", "exit", "--", s.host).Run()
 	}
 	os.Remove(s.SocketPath())
 }
@@ -615,7 +618,7 @@ func (s *Session) exitMaster(master *exec.Cmd, exited <-chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.cancelAgent(ctx)
-	s.control(ctx, "-O", "exit", "--", s.Host).Run()
+	s.control(ctx, "-O", "exit", "--", s.host).Run()
 	select {
 	case <-exited:
 	case <-time.After(3 * time.Second):

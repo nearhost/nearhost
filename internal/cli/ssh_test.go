@@ -173,15 +173,15 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 // `add` does not handle signals: Ctrl-C ends it at once. Its master and SFTP
 // process therefore stay in its process group and end with it.
 func TestPrivateSessionStaysInTheForegroundProcessGroup(t *testing.T) {
-	sess, end, err := sshClient{}.privateSession(config.Server{Name: "mini", SSHHost: "host.example"})
+	sess, _, end, err := sshClient{}.privateSession(config.Server{Name: "mini", SSHHost: "host.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer end()
-	if !sess.Foreground {
+	if !sess.(*transport.Session).Foreground {
 		t.Fatal("the session of a remote add would outlive an interrupted add")
 	}
-	if up := (sshClient{}).session(config.Server{Name: "mini", SSHHost: "host.example"}, "/tmp/nh-run"); up.Foreground {
+	if up := (sshClient{}).session(config.Server{Name: "mini", SSHHost: "host.example"}, "/tmp/nh-run"); up.(*transport.Session).Foreground {
 		t.Fatal("only the private session of add is a foreground one")
 	}
 }
@@ -189,11 +189,11 @@ func TestPrivateSessionStaysInTheForegroundProcessGroup(t *testing.T) {
 func TestPrivateSessionSocketPathIsShort(t *testing.T) {
 	const sunPath, sshSuffix, margin = 104, 17, 20
 	for _, name := range []string{"mini", strings.Repeat("build-server-", 6), "deploy@build host"} {
-		sess, end, err := sshClient{}.privateSession(config.Server{Name: name, SSHHost: "host.example"})
+		sess, _, end, err := sshClient{}.privateSession(config.Server{Name: name, SSHHost: "host.example"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		sock := sess.SocketPath()
+		sock := sess.(*transport.Session).SocketPath()
 		dir := filepath.Dir(sock)
 		if n := len(sock) + sshSuffix; n > sunPath-margin {
 			t.Errorf("server %q: ssh would bind %d bytes (%s plus its suffix); the limit is %d", name, n, sock, sunPath)

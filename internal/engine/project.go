@@ -226,7 +226,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		return StateError, fmt.Errorf("remove previous start: %w", err)
 	}
 
-	var sess *transport.Session
+	var sess transport.Transport
 	if p.Server != config.LocalServer {
 		// Refused before connecting, so a start that is doomed by the hosts
 		// already approved asks for no password. It is checked again below
@@ -311,12 +311,12 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 }
 
 // waitConnected waits for the server's session, for at most connectWait.
-func (e *Engine) waitConnected(ctx context.Context, sess *transport.Session) error {
+func (e *Engine) waitConnected(ctx context.Context, sess transport.Transport) error {
 	wctx, cancel := context.WithTimeout(ctx, e.connectWait)
 	defer cancel()
 	err := sess.WaitConnected(wctx)
 	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-		err = fmt.Errorf("ssh %s: not connected after %s", sess.Host, e.connectWait)
+		err = fmt.Errorf("ssh %s: not connected after %s", sess.Host(), e.connectWait)
 		if last := sess.LastError(); last != "" {
 			err = fmt.Errorf("%w: %s", err, last)
 		}
@@ -401,7 +401,7 @@ func (e *Engine) releasePortLocked(port int) {
 // forwardWeb forwards a web route's remote port to a free local port chosen
 // here and returns that port. The forward is recorded on run, so a rollback
 // cancels it; the proxy learns the port when the site is published.
-func (e *Engine) forwardWeb(ctx context.Context, sess *transport.Session, run *projectRun, remote int) (int, error) {
+func (e *Engine) forwardWeb(ctx context.Context, sess transport.Transport, run *projectRun, remote int) (int, error) {
 	var last error
 	for attempt := 0; attempt < webPortAttempts && ctx.Err() == nil; attempt++ {
 		local, err := transport.FreePort()
@@ -431,7 +431,7 @@ func (e *Engine) forwardWeb(ctx context.Context, sess *transport.Session, run *p
 // forwardLoopbacks forwards each loopback route to the same port on this
 // machine. A route that cannot be forwarded is reported, logged for the
 // project and skipped; the others still start.
-func (e *Engine) forwardLoopbacks(ctx context.Context, sess *transport.Session, run *projectRun, p *config.Project) []string {
+func (e *Engine) forwardLoopbacks(ctx context.Context, sess transport.Transport, run *projectRun, p *config.Project) []string {
 	var problems []string
 	done := map[int]bool{}
 	for _, r := range p.Routes {
@@ -447,7 +447,7 @@ func (e *Engine) forwardLoopbacks(ctx context.Context, sess *transport.Session, 
 	return problems
 }
 
-func (e *Engine) forwardLoopback(ctx context.Context, sess *transport.Session, run *projectRun, port int) error {
+func (e *Engine) forwardLoopback(ctx context.Context, sess transport.Transport, run *projectRun, port int) error {
 	// Two projects may not share a local port: the session would treat the
 	// second forward as the first, and stopping either would cancel it.
 	if owner, ok := e.claimPort(run, port); !ok {

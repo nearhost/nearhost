@@ -31,13 +31,8 @@ const (
 	remoteOpenTimeout = 30 * time.Second
 )
 
-func (c sshClient) session(srv config.Server, runDir string) *transport.Session {
-	s := transport.NewSession(srv.Name, srv.SSHHost, runDir)
-	if c.path != "" {
-		s.SSHPath = c.path
-	}
-	s.Env = c.env
-	return s
+func (c sshClient) session(srv config.Server, runDir string) transport.Transport {
+	return transport.New(transport.Config{Name: srv.Name, Host: srv.SSHHost, RunDir: runDir, SSHPath: c.path, Env: c.env})
 }
 
 // check reports whether ssh reaches srv without prompting. A refusal is a
@@ -61,20 +56,20 @@ func sshHint(host, then string) string {
 const shortTempDir = "/tmp"
 
 // privateSession returns a session to srv with a run directory of its own,
-// and a function that stops the session and removes the directory. The
+// that directory's path, and a function that stops the session and removes the
+// directory. The
 // directory is created for this one session, readable by this user only, and
 // its socket has a fixed short name: the path does not grow with the
 // server's name.
-func (c sshClient) privateSession(srv config.Server) (*transport.Session, func() error, error) {
+func (c sshClient) privateSession(srv config.Server) (transport.Transport, string, func() error, error) {
 	runDir, err := os.MkdirTemp(shortTempDir, "nh-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create run directory: %w", err)
+		return nil, "", nil, fmt.Errorf("create run directory: %w", err)
 	}
-	sess := c.session(config.Server{Name: "add", SSHHost: srv.SSHHost}, runDir)
 	// `add` does not handle signals, so Ctrl-C ends it on the spot. Its ssh
 	// stays in its process group and ends with it.
-	sess.Foreground = true
-	return sess, func() error {
+	sess := transport.New(transport.Config{Name: "add", Host: srv.SSHHost, RunDir: runDir, SSHPath: c.path, Env: c.env, Foreground: true})
+	return sess, runDir, func() error {
 		sess.Stop()
 		return os.RemoveAll(runDir)
 	}, nil
@@ -87,13 +82,13 @@ func (c sshClient) privateSession(srv config.Server) (*transport.Session, func()
 func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	sess, end, err := c.privateSession(srv)
+	sess, runDir, end, err := c.privateSession(srv)
 	if err != nil {
 		return err
 	}
 	defer end()
 	name := doctorSocketName()
-	sess.SetAgentForward(transport.AgentForward{Name: name, Local: filepath.Join(filepath.Dir(sess.SocketPath()), "agent.sock")})
+	sess.SetAgentForward(transport.AgentForward{Name: name, Local: filepath.Join(runDir, "agent.sock")})
 	sess.Start()
 	if err := connectOnce(ctx, sess); err != nil {
 		return err
@@ -134,7 +129,7 @@ func doctorSocketName() string {
 // session keeps trying after a failure; a one-off command has no use for
 // that, so this returns what ssh printed on the first attempt that failed, as
 // a *transport.CheckError.
-func connectOnce(ctx context.Context, sess *transport.Session) error {
+func connectOnce(ctx context.Context, sess transport.Transport) error {
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -143,7 +138,7 @@ func connectOnce(ctx context.Context, sess *transport.Session) error {
 		}
 		// A new session has no last error until an attempt fails.
 		if msg := sess.LastError(); msg != "" {
-			return &transport.CheckError{Host: sess.Host, Stderr: msg}
+			return &transport.CheckError{Host: sess.Host(), Stderr: msg}
 		}
 		select {
 		case <-ctx.Done():
@@ -195,7 +190,7 @@ func (c sshClient) openRemoteWritable(ctx context.Context, srv config.Server, pr
 // master it finds on its control socket, so sharing the directory of a
 // running `nearhost up` would cut that one off.
 func (c sshClient) openServer(ctx context.Context, srv config.Server, then string) (*sftpFiles, error) {
-	sess, end, err := c.privateSession(srv)
+	sess, _, end, err := c.privateSession(srv)
 	if err != nil {
 		return nil, err
 	}
