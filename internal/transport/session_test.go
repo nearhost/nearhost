@@ -10,18 +10,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
-// newFakeSession returns a Session wired to the fake ssh script.
+// newFakeSession returns a Session wired to the fake ssh.
 func newFakeSession(t *testing.T, env ...string) (*Session, string) {
 	t.Helper()
-	ssh, err := filepath.Abs("testdata/fakessh/ssh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(ssh, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	ssh := testutil.FakeSSH(t)
 	logPath := filepath.Join(t.TempDir(), "ssh.log")
 	s := NewSession("mini", "mini", shortDir(t))
 	s.SSHPath = ssh

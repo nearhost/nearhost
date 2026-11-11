@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,20 +154,125 @@ func TempDir(t testing.TB, prefix string) string {
 	return dir
 }
 
-// FakeSSH returns the path of the fake OpenSSH client kept with the transport
-// tests. It records its arguments to $FAKE_SSH_LOG and is steered by the
-// FAKE_SSH_* variables described in the script.
+// FakeSSH returns the path of the fake OpenSSH client, the program in
+// internal/testutil/fakessh, built on the first call in this test process.
+// It records its arguments to $FAKE_SSH_LOG and is steered by the FAKE_SSH_*
+// variables described in that program.
 func FakeSSH(t testing.TB) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate the testutil package")
+	return build(t, "github.com/nearhost/nearhost/internal/testutil/fakessh", "ssh")
+}
+
+// SFTPServer finds the OpenSSH SFTP server binary, which speaks the protocol
+// on its standard streams and so can stand in for `ssh -s host sftp`, and
+// skips the test when there is none.
+func SFTPServer(t testing.TB) string {
+	t.Helper()
+	for _, p := range []string{"/usr/libexec/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server", "/usr/lib/ssh/sftp-server", `C:\Windows\System32\OpenSSH\sftp-server.exe`} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
-	fake := filepath.Join(filepath.Dir(file), "..", "transport", "testdata", "fakessh", "ssh")
-	if err := os.Chmod(fake, 0o755); err != nil {
+	t.Skip("no sftp-server binary on this machine")
+	return ""
+}
+
+// A built is a test program built once per test process: its path, or the
+// reason it could not be built.
+type built struct {
+	once sync.Once
+	path string
+	err  error
+}
+
+var (
+	// builtMu guards builds.
+	builtMu sync.Mutex
+	// builds holds the test programs by package path.
+	builds = map[string]*built{}
+)
+
+// userDirs are the variables that place the user's home, configuration and
+// caches, as they were when the package was initialised. Some TestMain
+// functions move them before the first build, and the go command finds its
+// settings and build caches through them, so the build is handed these.
+var userDirs = func() map[string]string {
+	dirs := map[string]string{}
+	for _, k := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"} {
+		if v, ok := os.LookupEnv(k); ok {
+			dirs[k] = v
+		}
+	}
+	return dirs
+}()
+
+// buildEnv returns this process's environment with the variables in
+// userDirs as they were when the package was initialised.
+func buildEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "HOME" && k != "XDG_CONFIG_HOME" && k != "XDG_CACHE_HOME" {
+			env = append(env, kv)
+		}
+	}
+	for k, v := range userDirs {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
+
+// build returns the path of the program pkg built as name (name.exe on
+// Windows). The first call for pkg in this test process builds it into a
+// directory of its own, so test processes running side by side never share
+// a file; later calls, from any goroutine, return the same path. The
+// directory is left to the system's temporary file cleaning, as no test owns
+// it. A failed build fails this and every later call. The go command is the
+// one on PATH, which go test puts first.
+func build(t testing.TB, pkg, name string) string {
+	t.Helper()
+	path, err := buildOnce(pkg, name)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return fake
+	return path
+}
+
+// buildOnce is build without the test: it returns the reason the program
+// could not be built rather than failing the test, so any goroutine may call
+// it.
+func buildOnce(pkg, name string) (string, error) {
+	builtMu.Lock()
+	b, ok := builds[pkg]
+	if !ok {
+		b = &built{}
+		builds[pkg] = b
+	}
+	builtMu.Unlock()
+	b.once.Do(func() {
+		goTool, err := exec.LookPath("go")
+		if err != nil {
+			b.err = fmt.Errorf("build %s: the go command is not on PATH: %w", pkg, err)
+			return
+		}
+		dir, err := os.MkdirTemp("", "nearhost-"+filepath.Base(pkg)+"-*")
+		if err != nil {
+			b.err = fmt.Errorf("build %s: %w", pkg, err)
+			return
+		}
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		path := filepath.Join(dir, name)
+		cmd := exec.Command(goTool, "build", "-o", path, pkg)
+		cmd.Env = buildEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			b.err = fmt.Errorf("build %s: %v\n%s", pkg, err, out)
+			return
+		}
+		b.path = path
+	})
+	return b.path, b.err
 }
 
 // Upstream starts a local HTTP server answering "<name>:<host>" and returns

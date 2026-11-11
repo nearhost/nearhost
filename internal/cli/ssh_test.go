@@ -104,35 +104,17 @@ func TestOpenRemoteStopsTheMasterWhenSFTPIsUnavailable(t *testing.T) {
 	noAddLeftovers(t, log)
 }
 
-// sftpServer finds the OpenSSH SFTP server binary, which speaks the protocol
-// on its standard streams and so can stand in for `ssh -s host sftp`.
-func sftpServer(t *testing.T) string {
-	t.Helper()
-	for _, p := range []string{"/usr/libexec/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server", "/usr/lib/ssh/sftp-server"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	t.Skip("no sftp-server binary on this machine")
-	return ""
-}
-
 // TestAddRemoteOverSFTP runs the real remote path of `add`: a master
 // connection (the fake ssh) and the SFTP subsystem on it (a local sftp-server
 // reading the fixture directory). The account is one that may use SFTP only:
 // asked to run a command, the server refuses.
 func TestAddRemoteOverSFTP(t *testing.T) {
-	server := sftpServer(t)
-	wrapper := filepath.Join(t.TempDir(), "ssh")
-	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
-		"if [ \"$last\" = true ]; then printf '%s\\n' \"$*\" >> \"$FAKE_SSH_LOG\"; echo 'This service allows sftp connections only.' >&2; exit 1; fi\n" +
-		"if [ \"$last\" = sftp ]; then printf '%s\\n' \"$*\" >> \"$FAKE_SSH_LOG\"; exec '" + server + "' -R; fi\n" +
-		"exec '" + testutil.FakeSSH(t) + "' \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	log := filepath.Join(t.TempDir(), "ssh.log")
-	c := sshClient{path: wrapper, env: []string{"FAKE_SSH_LOG=" + log}}
+	c := sshClient{path: testutil.FakeSSH(t), env: []string{
+		"FAKE_SSH_LOG=" + log,
+		"FAKE_SSH_SFTP_SERVER=" + testutil.SFTPServer(t),
+		"FAKE_SSH_CHECK_REFUSE=This service allows sftp connections only.",
+	}}
 
 	cfgPath, _ := existing(t)
 	dir := fixture(t, "compose-literal")
@@ -243,21 +225,18 @@ func TestProjectPathOn(t *testing.T) {
 // path as the shell expands it on this machine, from the home directory of
 // the account on the server.
 func TestAddRemoteResolvesPathsUnderTheServerHome(t *testing.T) {
-	server := sftpServer(t)
+	server := testutil.SFTPServer(t)
 	remoteHome := t.TempDir()
 	project := filepath.Join(remoteHome, "blog")
 	if err := os.CopyFS(project, os.DirFS(fixture(t, "compose-literal"))); err != nil {
 		t.Fatal(err)
 	}
-	wrapper := filepath.Join(t.TempDir(), "ssh")
-	script := "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\n" +
-		"if [ \"$last\" = sftp ]; then exec '" + server + "' -R -d '" + remoteHome + "'; fi\n" +
-		"exec '" + testutil.FakeSSH(t) + "' \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	log := filepath.Join(t.TempDir(), "ssh.log")
-	c := sshClient{path: wrapper, env: []string{"FAKE_SSH_LOG=" + log}}
+	c := sshClient{path: testutil.FakeSSH(t), env: []string{
+		"FAKE_SSH_LOG=" + log,
+		"FAKE_SSH_SFTP_SERVER=" + server,
+		"FAKE_SSH_SFTP_HOME=" + remoteHome,
+	}}
 	localHome := "/nonexistent/home/dev"
 	t.Setenv("HOME", localHome)
 
