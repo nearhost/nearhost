@@ -50,10 +50,9 @@ func TestNewChoosesTheStrategy(t *testing.T) {
 	}
 	c := Config{Name: "mini", Host: "mini.lan", RunDir: t.TempDir()}
 	for _, tc := range []struct {
-		value string
-		want  string
-	}{{"", "session"}, {"bogus", "session"}, {"per-process", "per-process"}} {
-		t.Run(tc.value, func(t *testing.T) {
+		name, value, want string
+	}{{"unset", "", "session"}, {"bogus", "bogus", "session"}, {"per-process", "per-process", "per-process"}} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("NEARHOST_TRANSPORT", tc.value)
 			switch tr := New(c).(type) {
 			case *Session:

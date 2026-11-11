@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
@@ -98,6 +99,11 @@ type agents struct {
 	// docs serves the documents agents show; nil when there are no grants,
 	// so no documents.
 	docs *shower
+
+	// mu guards unsent: the events for the log from before the engine was
+	// attached, sent when it is.
+	mu     sync.Mutex
+	unsent []engine.Event
 }
 
 // defaultConfigPath is the config file whose servers grants follow. Tests
@@ -198,9 +204,7 @@ const noServerAgents = "coding agents on servers cannot reach Nearhost on Window
 // Where serverAgents is false it gives none, and says so.
 func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	if !serverAgents {
-		if eng := a.src.eng.Load(); eng != nil {
-			eng.Events().Publish(engine.Event{Server: server, Message: server + ": agents unavailable: " + noServerAgents})
-		}
+		a.notice(engine.Event{Server: server, Message: server + ": agents unavailable: " + noServerAgents})
 		return transport.AgentForward{}, false
 	}
 	// Named by a hash, so any server name makes a short plain file name.
@@ -208,12 +212,24 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	local := filepath.Join(a.runDir, name+".sock")
 	if err := a.api.Listen(server, local); err != nil {
 		// The session would say nothing: it has no forward to fail.
-		if eng := a.src.eng.Load(); eng != nil {
-			eng.Events().Publish(engine.Event{Server: server, Message: server + ": agents unavailable: " + err.Error()})
-		}
+		a.notice(engine.Event{Server: server, Message: server + ": agents unavailable: " + err.Error()})
 		return transport.AgentForward{}, false
 	}
 	return transport.AgentForward{Name: a.id + ".sock", Local: local, Own: a.sock}, true
+}
+
+// notice publishes ev to the log. Before the engine is attached there is no
+// log, so it is kept and sent on attach, once however often it is raised.
+func (a *agents) notice(ev engine.Event) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if eng := a.src.eng.Load(); eng != nil {
+		eng.Events().Publish(ev)
+		return
+	}
+	if !slices.Contains(a.unsent, ev) {
+		a.unsent = append(a.unsent, ev)
+	}
 }
 
 // agentEnv is what the agents' doctor needs of the run of nearhost.
@@ -257,7 +273,13 @@ func (a *agents) serverGone(server string) {
 // drop the client of a server that disconnects.
 func (a *agents) attach(eng *engine.Engine) {
 	if a != nil {
+		a.mu.Lock()
 		a.src.eng.Store(eng)
+		for _, ev := range a.unsent {
+			eng.Events().Publish(ev)
+		}
+		a.unsent = nil
+		a.mu.Unlock()
 		if a.docs != nil {
 			a.docs.watch(eng)
 		}
