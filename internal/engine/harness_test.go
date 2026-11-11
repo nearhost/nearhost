@@ -25,6 +25,8 @@ import (
 // TestMain points every directory Caddy or ssh might touch at a throwaway
 // location before any Caddy code runs, so tests never write into the real
 // user's directories.
+// It also unsets NEARHOST_TRANSPORT: these tests expect the ControlMaster
+// transport, whatever the developer's shell asks for.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "nearhost-engine-test-")
 	if err != nil {
@@ -34,6 +36,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("XDG_DATA_HOME", dir)
 	os.Setenv("XDG_CONFIG_HOME", dir)
 	os.Setenv("HOME", dir)
+	os.Unsetenv("NEARHOST_TRANSPORT")
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

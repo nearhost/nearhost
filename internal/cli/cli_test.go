@@ -30,6 +30,8 @@ import (
 // TestMain points every directory Caddy, ssh or the config package might
 // touch at a throwaway location before any test runs, so tests never read or
 // write the real user's directories.
+// It also unsets NEARHOST_TRANSPORT: these tests expect the ControlMaster
+// transport, whatever the developer's shell asks for.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "nh-cli-")
 	if err != nil {
@@ -39,6 +41,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("XDG_DATA_HOME", dir)
 	os.Setenv("XDG_CONFIG_HOME", dir)
 	os.Setenv("HOME", dir)
+	os.Unsetenv("NEARHOST_TRANSPORT")
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

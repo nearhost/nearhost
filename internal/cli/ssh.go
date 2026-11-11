@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/sftp"
+
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -103,7 +105,7 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 			// sshd leaves the socket behind when the forward ends: remove it
 			// while the connection is up.
 			if files, err := sess.OpenSFTP(ctx); err == nil {
-				files.Client.Remove(h.AgentPath)
+				removeDoctorSocket(files.Client, h.AgentPath, name)
 				files.Close()
 			}
 			return nil
@@ -112,6 +114,19 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
+		}
+	}
+}
+
+// removeDoctorSocket removes the doctor's socket at path on the server, and
+// the link called name to it in ~/.nearhost that a socket in the runtime
+// directory has. It removes nothing else, and what it cannot remove it
+// leaves.
+func removeDoctorSocket(c *sftp.Client, socket, name string) {
+	c.Remove(socket)
+	if home, err := c.Getwd(); err == nil {
+		if link := path.Join(home, transport.AgentDir, name); link != socket {
+			c.Remove(link)
 		}
 	}
 }
