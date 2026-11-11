@@ -36,6 +36,7 @@ func main() {
 // status. A master that is signalled exits from its signal handler, and an
 // SFTP subsystem request may replace this process with the SFTP server.
 func run(args []string) int {
+	parentGone := watchParent()
 	all := strings.Join(args, " ")
 	if hasArg(args, "-G") {
 		return printConfig(args[len(args)-1])
@@ -150,7 +151,7 @@ func run(args []string) int {
 	}
 
 	if plain {
-		return runPlain(last, lforwards, rforwards, hasArg(args, "ExitOnForwardFailure=yes"))
+		return runPlain(last, lforwards, rforwards, hasArg(args, "ExitOnForwardFailure=yes"), parentGone)
 	}
 
 	// BatchMode connectivity check: ssh ... host true
@@ -211,6 +212,9 @@ func run(args []string) int {
 		os.Exit(0)
 	}()
 	for exists(sock) {
+		if parentGone() {
+			return 255
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return 0
@@ -264,24 +268,32 @@ func printConfig(host string) int {
 // waits while $FAKE_SSH_LINK_HOLD exists, then reports the connection and
 // sets the forwards up. A forward that fails ends it with 255 when exitOnFail
 // is set (ExitOnForwardFailure=yes). It logs its pid to $FAKE_SSH_PID_LOG and
-// stays up until TERM or INT, or until the file $FAKE_SSH_DROP_DIR/<pid>
-// exists. It polls for that file rather than relying on signals, which
+// stays up until TERM or INT, until the file $FAKE_SSH_DROP_DIR/<pid>
+// exists, or until its parent process ends (then it exits 255, so a crashed
+// test leaves no ssh behind). It polls for that file rather than relying on signals, which
 // Windows lacks.
-func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
+func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, parentGone func() bool) int {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
+	for _, l := range lforwards {
+		if _, _, ok := parseLocalForward(l); !ok {
+			fmt.Fprintf(os.Stderr, "Bad local forwarding specification '%s'\n", l)
+			return 255
+		}
+	}
 	for exists(os.Getenv("FAKE_SSH_LINK_HOLD")) {
+		if parentGone() {
+			return 255
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	fmt.Fprintf(os.Stderr, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", host)
 
 	for _, l := range lforwards {
-		// 127.0.0.1:LOCAL:host:REMOTE
-		f := strings.SplitN(l, ":", 3)
-		if len(f) < 3 {
-			continue
-		}
-		ln, err := net.Listen("tcp", f[0]+":"+f[1])
+		bind, port, _ := parseLocalForward(l)
+		ln, err := net.Listen("tcp", bind+":"+port)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bind [%s]:%s: Address already in use\n", f[0], f[1])
+			fmt.Fprintf(os.Stderr, "bind [%s]:%s: Address already in use\n", bind, port)
 			if exitOnFail {
 				fmt.Fprintln(os.Stderr, "Could not request local forwarding.")
 				return 255
@@ -297,7 +309,7 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
 				c.Close()
 			}
 		}()
-		fmt.Fprintf(os.Stderr, "debug1: Local forwarding listening on %s port %s.\n", f[0], f[1])
+		fmt.Fprintf(os.Stderr, "debug1: Local forwarding listening on %s port %s.\n", bind, port)
 	}
 	for _, r := range rforwards {
 		listen, connect, _ := strings.Cut(r, ":")
@@ -315,8 +327,6 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
 
 	pid := os.Getpid()
 	appendLine(os.Getenv("FAKE_SSH_PID_LOG"), fmt.Sprintf("%d %s", pid, strings.Join(os.Args[1:], " ")))
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
 	drop := ""
 	if dir := os.Getenv("FAKE_SSH_DROP_DIR"); dir != "" {
 		drop = filepath.Join(dir, strconv.Itoa(pid))
@@ -332,7 +342,29 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool) int {
 			fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
 			return 255
 		}
+		if parentGone() {
+			return 255
+		}
 	}
+}
+
+// parseLocalForward splits a -L spec, 127.0.0.1:LOCAL:host:REMOTE or
+// LOCAL:host:REMOTE, into its bind address and local port. ok is false for
+// any other shape.
+func parseLocalForward(spec string) (bind, port string, ok bool) {
+	f := strings.Split(spec, ":")
+	switch len(f) {
+	case 4:
+		bind, port = f[0], f[1]
+	case 3:
+		bind, port = "127.0.0.1", f[0]
+	default:
+		return "", "", false
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return "", "", false
+	}
+	return bind, port, true
 }
 
 // forward answers `-O forward` with the local forward larg or the remote
