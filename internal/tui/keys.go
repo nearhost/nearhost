@@ -23,7 +23,7 @@ func (m *Model) footerItems() []footerItem {
 		return m.form.keys()
 	}
 	if m.empty() {
-		return emptyKeys
+		return m.emptyKeys()
 	}
 	if m.routeFocus {
 		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
@@ -257,20 +257,15 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.filtering {
 		return m.filterKey(k)
 	}
-	if m.empty() && !emptyKey(s) {
-		return nil // the rows these act on are not shown
-	}
-	return m.action(s)
-}
-
-// emptyKey reports whether s works on the first-run screen.
-func emptyKey(s string) bool {
-	for _, it := range emptyKeys {
-		if it.key == s {
-			return true
+	if m.empty() {
+		if s == "c" {
+			return m.connectFirst()
+		}
+		if !m.emptyKey(s) {
+			return nil // the rows these act on are not shown
 		}
 	}
-	return s == "esc"
+	return m.action(s)
 }
 
 // action runs what the key or footer action s does.
