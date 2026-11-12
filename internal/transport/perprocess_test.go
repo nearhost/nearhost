@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -529,5 +530,411 @@ func TestPerProcessStderrSeesTheAgentForwardAsSSHWritesIt(t *testing.T) {
 	refused.Write([]byte("Error: remote port forwarding failed for listen path " + agentRemote + "\ndebug1: Exit status 255\n"))
 	if got := refused.Refusal(); got != "Error: remote port forwarding failed for listen path "+agentRemote {
 		t.Fatalf("Refusal = %q", got)
+	}
+}
+
+// forwardPid is the pid of the process that carries the forward, or 0 for
+// none.
+func (f *perProcessFake) forwardPid(local, remote int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fw, ok := f.forwards[forwardKey(local, remote)]; ok && fw.proc != nil {
+		return fw.proc.cmd.Process.Pid
+	}
+	return 0
+}
+
+// linkPid is the pid of the running link, or 0 for none.
+func (f *perProcessFake) linkPid() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.link == nil {
+		return 0
+	}
+	return f.link.Process.Pid
+}
+
+// drop makes the fake's plain process pid exit as a dropped connection does.
+func (f *perProcessFake) drop(t *testing.T, pid int) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(f.dropDir, strconv.Itoa(pid)), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	port, err := FreePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+// portFree reports whether nothing listens on 127.0.0.1:port.
+func portFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	l.Close()
+	return true
+}
+
+func forwardStatesString(st Status, fs []ForwardState) string {
+	return fmt.Sprintf("%s %+v", st, fs)
+}
+
+func TestPerProcessAddsAForwardInItsOwnProcess(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 1 || fs[0] != (ForwardState{Local: local, Remote: 80, Applied: true}) {
+		t.Fatalf("ForwardStates = %s, want it applied", forwardStatesString(st, fs))
+	}
+	if got := p.Forwards(); len(got) != 1 || got[0] != [2]int{local, 80} {
+		t.Fatalf("Forwards = %v", got)
+	}
+	lines := logLines(t, p.log)
+	if len(lines) != 2 {
+		t.Fatalf("want the link and the forward, got %q", lines)
+	}
+	if strings.Contains(lines[0], " -L ") {
+		t.Fatalf("the link %q carries a forward", lines[0])
+	}
+	argv := " " + lines[1] + " "
+	if !strings.Contains(argv, " -N ") || !strings.Contains(argv, " -L "+forwardSpec(local, 80)+" ") {
+		t.Fatalf("the forward's argv %q lacks -N or -L %s", lines[1], forwardSpec(local, 80))
+	}
+	if p.forwardPid(local, 80) == 0 || p.forwardPid(local, 80) == p.linkPid() {
+		t.Fatalf("forward pid %d, link pid %d", p.forwardPid(local, 80), p.linkPid())
+	}
+	if p.running() != 2 {
+		t.Fatalf("running = %d, want 2", p.running())
+	}
+}
+
+func TestPerProcessCancelEndsOnlyThatForward(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	first, second := freePort(t), freePort(t)
+	for _, local := range []int{first, second} {
+		if err := p.AddForward(t.Context(), local, 80); err != nil {
+			t.Fatalf("AddForward %d: %v", local, err)
+		}
+	}
+	firstPid, secondPid := p.forwardPid(first, 80), p.forwardPid(second, 80)
+	if err := p.CancelForward(t.Context(), first, 80); err != nil {
+		t.Fatalf("CancelForward: %v", err)
+	}
+	if !processGone(firstPid) {
+		t.Fatalf("the cancelled forward's process %d is still running", firstPid)
+	}
+	if !portFree(first) {
+		t.Fatalf("port %d still listens", first)
+	}
+	if got := p.forwardPid(second, 80); got != secondPid {
+		t.Fatalf("the other forward's pid went from %d to %d", secondPid, got)
+	}
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 1 || fs[0] != (ForwardState{Local: second, Remote: 80, Applied: true}) {
+		t.Fatalf("ForwardStates = %s, want only the second, applied", forwardStatesString(st, fs))
+	}
+	if p.running() != 2 {
+		t.Fatalf("running = %d, want 2", p.running())
+	}
+}
+
+func TestPerProcessForwardOnATakenPortIsNotApplied(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	taken, free := freePort(t), freePort(t)
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", taken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	err = p.AddForward(t.Context(), taken, 80)
+	if err == nil || !strings.Contains(err.Error(), "Address already in use") {
+		t.Fatalf("AddForward on a taken port = %v", err)
+	}
+	if got := p.Forwards(); len(got) != 0 {
+		t.Fatalf("a failed forward is tracked: %v", got)
+	}
+	if err := p.AddForward(t.Context(), free, 80); err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+
+	// Hold the next link while the forward on the taken port is added.
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.drop(t, p.linkPid())
+	waitFor(t, 5*time.Second, func() bool { return p.Status() != StatusConnected }, "the link to drop")
+	if err := p.AddForward(t.Context(), taken, 80); err != nil {
+		t.Fatalf("AddForward while disconnected: %v", err)
+	}
+	os.Remove(hold)
+	waitPerProcessConnected(t, p)
+	st, fs := p.ForwardStates()
+	want := []ForwardState{{Local: taken, Remote: 80}, {Local: free, Remote: 80, Applied: true}}
+	if taken > free {
+		want[0], want[1] = want[1], want[0]
+	}
+	if st != StatusConnected || !slices.Equal(fs, want) {
+		t.Fatalf("ForwardStates = %s, want %+v", forwardStatesString(st, fs), want)
+	}
+}
+
+func TestPerProcessRelaunchesOnlyTheForwardThatDied(t *testing.T) {
+	p := newTestPerProcess(t)
+	var mu sync.Mutex
+	var sawLost bool
+	p.Logf = func(format string, args ...any) {
+		st, fs := p.ForwardStates()
+		for _, f := range fs {
+			if st == StatusConnected && !f.Applied {
+				mu.Lock()
+				sawLost = true
+				mu.Unlock()
+			}
+		}
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	dies, stays := freePort(t), freePort(t)
+	for _, local := range []int{dies, stays} {
+		if err := p.AddForward(t.Context(), local, 80); err != nil {
+			t.Fatalf("AddForward %d: %v", local, err)
+		}
+	}
+	diesPid, staysPid, linkPid := p.forwardPid(dies, 80), p.forwardPid(stays, 80), p.linkPid()
+	p.drop(t, diesPid)
+	waitFor(t, 5*time.Second, func() bool {
+		pid := p.forwardPid(dies, 80)
+		return pid != 0 && pid != diesPid
+	}, "the forward to be relaunched")
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 2 || !fs[0].Applied || !fs[1].Applied {
+		t.Fatalf("ForwardStates = %s, want both applied", forwardStatesString(st, fs))
+	}
+	mu.Lock()
+	lost := sawLost
+	mu.Unlock()
+	if !lost {
+		t.Fatal("the dead forward was never seen unapplied")
+	}
+	if p.forwardPid(stays, 80) != staysPid || p.linkPid() != linkPid {
+		t.Fatalf("the other forward went %d to %d, the link %d to %d",
+			staysPid, p.forwardPid(stays, 80), linkPid, p.linkPid())
+	}
+	if !processGone(diesPid) {
+		t.Fatalf("the dead forward's process %d is still running", diesPid)
+	}
+}
+
+func TestPerProcessReappliesForwardsAfterReconnect(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+	var mu sync.Mutex
+	var unsettled []string
+	connects := 0
+	p.Logf = func(format string, args ...any) {
+		st, fs := p.ForwardStates()
+		if st != StatusConnected {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(args) >= 2 && args[1] == StatusConnected {
+			connects++
+		}
+		for _, f := range fs {
+			if !f.Applied {
+				unsettled = append(unsettled, forwardStatesString(st, fs))
+			}
+		}
+	}
+	first, second := freePort(t), freePort(t)
+	if err := p.AddForward(t.Context(), first, 80); err != nil {
+		t.Fatalf("AddForward before Start: %v", err)
+	}
+	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied {
+		t.Fatalf("before Start, ForwardStates = %s", forwardStatesString(st, fs))
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	firstPid := p.forwardPid(first, 80)
+	if firstPid == 0 {
+		t.Fatal("the forward added before Start has no process")
+	}
+
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.drop(t, p.linkPid())
+	waitFor(t, 5*time.Second, func() bool { return p.Status() != StatusConnected }, "the link to drop")
+	if err := p.AddForward(t.Context(), second, 80); err != nil {
+		t.Fatalf("AddForward while disconnected: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return processGone(firstPid) }, "the forward to end with the link")
+	if st, fs := p.ForwardStates(); len(fs) != 2 || fs[0].Applied || fs[1].Applied {
+		t.Fatalf("while reconnecting, ForwardStates = %s", forwardStatesString(st, fs))
+	}
+	os.Remove(hold)
+	waitPerProcessConnected(t, p)
+	st, fs := p.ForwardStates()
+	if st != StatusConnected || len(fs) != 2 || !fs[0].Applied || !fs[1].Applied {
+		t.Fatalf("ForwardStates = %s, want both applied", forwardStatesString(st, fs))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if connects != 2 {
+		t.Fatalf("saw %d connects, want 2", connects)
+	}
+	if len(unsettled) > 0 {
+		t.Fatalf("connected with forwards unsettled: %q", unsettled)
+	}
+}
+
+func TestPerProcessStopLeavesNoProcess(t *testing.T) {
+	t.Run("connecting", func(t *testing.T) {
+		hold := filepath.Join(t.TempDir(), "hold")
+		if err := os.WriteFile(hold, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+		p.Start()
+		waitFor(t, 5*time.Second, func() bool { return p.linkPid() != 0 }, "the link to start")
+		pid := p.linkPid()
+		p.Stop()
+		if p.running() != 0 {
+			t.Fatalf("running = %d after Stop", p.running())
+		}
+		if !processGone(pid) {
+			t.Fatalf("the link %d outlived Stop", pid)
+		}
+	})
+	t.Run("with forwards", func(t *testing.T) {
+		p := newTestPerProcess(t)
+		p.Start()
+		waitPerProcessConnected(t, p)
+		for range 2 {
+			if err := p.AddForward(t.Context(), freePort(t), 80); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pids := p.linkPids(t)
+		if len(pids) != 3 {
+			t.Fatalf("want three processes, got %v", pids)
+		}
+		p.Stop()
+		if p.running() != 0 {
+			t.Fatalf("running = %d after Stop", p.running())
+		}
+		for _, pid := range pids {
+			if !processGone(pid) {
+				t.Fatalf("process %d outlived Stop", pid)
+			}
+		}
+		if st, fs := p.ForwardStates(); st != StatusDisconnected || len(fs) != 2 || fs[0].Applied || fs[1].Applied {
+			t.Fatalf("after Stop, ForwardStates = %s", forwardStatesString(st, fs))
+		}
+	})
+}
+
+func TestPerProcessAnAgentForwardNeverAnsweredCountsAsRefused(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_RFORWARD_SILENT=1")
+	p.connectTimeout = 1500 * time.Millisecond
+	withPerProcessAgent(p, agentRemote, nil)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	lines := logLines(t, p.log)
+	if len(lines) != 2 || !strings.Contains(lines[0], " -R ") || strings.Contains(lines[1], " -R ") {
+		t.Fatalf("want a link with -R, then one without, got %q", lines)
+	}
+	h := p.Health()
+	if h.AgentProblem != AgentRefused || h.AgentErr != "the server never answered the forward of "+agentRemote {
+		t.Fatalf("Health = %+v, want the silence as a refusal", h)
+	}
+	if h.Failures != 0 {
+		t.Fatalf("Failures = %d, want 0", h.Failures)
+	}
+	if p.running() != 1 {
+		t.Fatalf("running = %d, want only the second link", p.running())
+	}
+}
+
+func TestPerProcessRetriesAForwardThatFailedOnReconnect(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+
+	// Take the forward's port while the link reconnects.
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.drop(t, p.linkPid())
+	waitFor(t, 5*time.Second, func() bool { return p.Status() != StatusConnected }, "the link to drop")
+	waitFor(t, 5*time.Second, func() bool { return portFree(local) }, "the forward to end with the link")
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(hold)
+	waitPerProcessConnected(t, p)
+	if st, fs := p.ForwardStates(); st != StatusConnected || len(fs) != 1 || fs[0].Applied {
+		l.Close()
+		t.Fatalf("with the port taken, ForwardStates = %s, want it unapplied", forwardStatesString(st, fs))
+	}
+	linkPid := p.linkPid()
+	l.Close()
+	waitFor(t, 5*time.Second, func() bool {
+		st, fs := p.ForwardStates()
+		return st == StatusConnected && len(fs) == 1 && fs[0].Applied
+	}, "the forward to be applied once its port is free")
+	if p.linkPid() != linkPid {
+		t.Fatalf("the link went from %d to %d", linkPid, p.linkPid())
+	}
+}
+
+func TestPerProcessLaunchesAtMostFourForwardsAtOnce(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	// Four launches under way take every slot.
+	for range 4 {
+		p.launchSlots <- struct{}{}
+	}
+	local := freePort(t)
+	added := make(chan error, 1)
+	go func() { added <- p.AddForward(context.Background(), local, 80) }()
+	select {
+	case err := <-added:
+		t.Fatalf("AddForward returned %v with every launch slot taken", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if strings.Contains(readLog(t, p.log), " -L ") {
+		t.Fatalf("a forward launched with every slot taken: %q", readLog(t, p.log))
+	}
+	<-p.launchSlots
+	if err := <-added; err != nil {
+		t.Fatalf("AddForward: %v", err)
+	}
+	for range 3 {
+		<-p.launchSlots
 	}
 }
