@@ -8,12 +8,14 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 )
 
@@ -107,7 +109,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	found, ok := holdingEither(all, p, real)
 	if !ok {
-		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s", path.Clean(p)))
+		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s", cleanPath(p)))
 		return
 	}
 	reply(w, http.StatusOK, found)
@@ -117,15 +119,51 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 // given. ok is false when they are not, and the request has been answered.
 func pathQuery(w http.ResponseWriter, r *http.Request) (p, real string, ok bool) {
 	p, real = r.URL.Query().Get("path"), r.URL.Query().Get("real")
-	if !path.IsAbs(p) {
+	return p, real, absolutePaths(w, origin(r), p, real)
+}
+
+// absolutePaths answers the request with an error unless p is absolute, and
+// real too when given, on origin's machine.
+func absolutePaths(w http.ResponseWriter, origin, p, real string) bool {
+	if !absolutePath(origin, p) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", p))
-		return "", "", false
+		return false
 	}
-	if real != "" && !path.IsAbs(real) {
+	if real != "" && !absolutePath(origin, real) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", real))
-		return "", "", false
+		return false
 	}
-	return p, real, true
+	return true
+}
+
+// absolutePath reports whether v is an absolute path on origin's machine: a
+// slash path, or on a Windows laptop a drive path such as C:\proj. Servers
+// are Linux or macOS.
+func absolutePath(origin, v string) bool {
+	return path.IsAbs(v) || (origin == config.LocalServer && drivePath(v))
+}
+
+// drivePath reports whether v is a Windows drive path such as C:\proj. It
+// is false everywhere but Windows, where filepath.IsAbs takes it.
+func drivePath(v string) bool {
+	return !path.IsAbs(v) && filepath.IsAbs(v) && len(filepath.VolumeName(v)) == 2
+}
+
+// cleanPath is path.Clean, or filepath.Clean for a Windows drive path.
+func cleanPath(v string) string {
+	if drivePath(v) {
+		return filepath.Clean(v)
+	}
+	return path.Clean(v)
+}
+
+// within reports whether p is dir or inside it. Windows drive paths compare
+// without regard to case, as Windows names do.
+func within(p, dir string) bool {
+	if drivePath(dir) {
+		return strings.EqualFold(p, dir) || hasPrefixFold(p, strings.TrimSuffix(dir, `\`)+`\`)
+	}
+	return p == dir || strings.HasPrefix(p, strings.TrimSuffix(dir, "/")+"/")
 }
 
 // doctor checks the project holding the path, or the directory at it as it
@@ -142,7 +180,7 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	}
 	o := origin(r)
 	var project *Project
-	name, dir := "", path.Clean(p)
+	name, dir := "", cleanPath(p)
 	if found, ok := holdingEither(s.opts.Source.Projects(o), p, real); ok {
 		project, name, dir = &found, found.Name, found.Path
 	}
@@ -175,11 +213,11 @@ func holdingEither(projects []Project, p, real string) (Project, bool) {
 
 // holding finds the project whose path is p or the nearest parent of it.
 func holding(projects []Project, p string) (Project, bool) {
-	p = path.Clean(p)
+	p = cleanPath(p)
 	best, longest := -1, -1
 	for i, pr := range projects {
-		dir := path.Clean(pr.Path)
-		if (p == dir || strings.HasPrefix(p, strings.TrimSuffix(dir, "/")+"/")) && len(dir) > longest {
+		dir := cleanPath(pr.Path)
+		if within(p, dir) && len(dir) > longest {
 			best, longest = i, len(dir)
 		}
 	}
@@ -218,13 +256,10 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &req) {
 		return
 	}
+	if !absolutePaths(w, origin(r), req.Path, req.Real) {
+		return
+	}
 	switch {
-	case !path.IsAbs(req.Path):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", req.Path))
-		return
-	case req.Real != "" && !path.IsAbs(req.Real):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", req.Real))
-		return
 	case req.Web < 0 || req.Web > 65535:
 		fail(w, http.StatusBadRequest, fmt.Sprintf("web must be a port between 1 and 65535, not %d", req.Web))
 		return
@@ -259,7 +294,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	}
 	p := &proposal{
 		Proposal: Proposal{
-			ID: newID(), Origin: o, Path: path.Clean(req.Path), Name: req.Name, Web: req.Web,
+			ID: newID(), Origin: o, Path: cleanPath(req.Path), Name: req.Name, Web: req.Web,
 			Expires: s.opts.Now().Add(expiry),
 		},
 		state: StatePending,
@@ -290,18 +325,13 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &req) {
 		return
 	}
-	switch {
-	case !path.IsAbs(req.Path):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", req.Path))
-		return
-	case req.Real != "" && !path.IsAbs(req.Real):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", req.Real))
+	if !absolutePaths(w, origin(r), req.Path, req.Real) {
 		return
 	}
 	o := origin(r)
 	found, ok := holdingEither(s.opts.Source.Projects(o), req.Path, req.Real)
 	if !ok {
-		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s; add it first", path.Clean(req.Path)))
+		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s; add it first", cleanPath(req.Path)))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), reloadTimeout)
@@ -356,7 +386,7 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	if rec == nil {
 		rec = &proposal{
 			Proposal: Proposal{
-				ID: newID(), Origin: o, Path: path.Clean(found.Path), Name: found.Name,
+				ID: newID(), Origin: o, Path: cleanPath(found.Path), Name: found.Name,
 				Expires: s.opts.Now().Add(expiry),
 			},
 			state:  StatePending,

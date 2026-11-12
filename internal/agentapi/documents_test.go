@@ -32,6 +32,15 @@ func (f *fakeShower) Resolve(_ context.Context, origin, p, root string) (Resolve
 	if f.resolveErr != nil {
 		return Resolved{}, f.resolveErr
 	}
+	// A Windows laptop's paths are drive paths; the document is a slash
+	// path under its root either way.
+	if drivePath(p) {
+		rel, err := filepath.Rel(root, p)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return Resolved{Root: filepath.Dir(p), Doc: filepath.Base(p)}, nil
+		}
+		return Resolved{Root: root, Doc: filepath.ToSlash(rel)}, nil
+	}
 	rel := strings.TrimPrefix(p, strings.TrimSuffix(root, "/")+"/")
 	if rel == p {
 		return Resolved{Root: path.Dir(p), Doc: path.Base(p)}, nil
