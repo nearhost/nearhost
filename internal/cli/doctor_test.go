@@ -710,9 +710,11 @@ func jumpConfig(jump string) func(context.Context, string) (string, error) {
 		case "app":
 			return "hostname app.example.com\nproxyjump " + jump + "\n", nil
 		case "bastion":
-			return "hostname 10.0.0.9\nuser ecs\nport 2222\n", nil
+			return "hostname 10.0.0.9\nuser laptop\nport 2222\n", nil
 		}
-		return "hostname " + strings.TrimSuffix(strings.TrimPrefix(host, "ecs@"), ":22") + "\n", nil
+		// ssh -G echoes an address as given, without its user.
+		h := host[strings.LastIndex(host, "@")+1:]
+		return "hostname " + h + "\nport 22\n", nil
 	}
 }
 
@@ -726,10 +728,10 @@ func TestProxyJumpAliasWarnsOnNinePointFive(t *testing.T) {
 	// doctor fails; only the lines under test matter.
 	out, _ := execute(t, newDoctorCmd(b), "doctor", "--no-hosts")
 	for _, want := range []string{
-		"ProxyJump names the alias bastion, which ssh 9.5 for Windows does not resolve",
-		"in ~/.ssh/config, give ProxyJump bastion's address (ecs@10.0.0.9:2222) or use a ProxyCommand",
+		"warn  proxyjump app    ProxyJump names the alias bastion, which ssh 9.5 for Windows does not resolve",
+		"      fix: In ~/.ssh/config, give ProxyJump bastion's address (10.0.0.9:2222) or use a ProxyCommand",
 	} {
-		if !strings.Contains(out, want) && !strings.Contains(out, strings.ToUpper(want[:1])+want[1:]) {
+		if !strings.Contains(out, want+"\n") {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
 	}
@@ -747,6 +749,16 @@ func TestProxyJumpByAddressIsFine(t *testing.T) {
 	b.sshConfig = jumpConfig("bastion")
 	if a, ok := jumpAlias(context.Background(), b, config.Server{Name: "app", SSHHost: "app"}); !ok || a.name != "bastion" {
 		t.Fatalf("alias = %+v, ok = %v", a, ok)
+	}
+}
+
+func TestProxyJumpByAddressWithAPortIsFine(t *testing.T) {
+	b := sshWindows("OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2")
+	for _, hop := range []string{"ecs@10.0.0.9:2222", "10.0.0.9:2222", "ssh://ecs@10.0.0.9:2222", "[::1]:2222"} {
+		b.sshConfig = jumpConfig(hop)
+		if a, ok := jumpAlias(context.Background(), b, config.Server{Name: "app", SSHHost: "app"}); ok {
+			t.Errorf("%s: alias = %+v", hop, a)
+		}
 	}
 }
 

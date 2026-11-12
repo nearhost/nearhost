@@ -672,29 +672,52 @@ func jumpAlias(ctx context.Context, b doctorBackend, srv config.Server) (jumpTar
 		return jumpTarget{}, false
 	}
 	hop, _, _ := strings.Cut(jump, ",")
-	hop = strings.TrimPrefix(hop, "ssh://")
-	hostPart := hop
-	if i := strings.LastIndex(hostPart, "@"); i >= 0 {
-		hostPart = hostPart[i+1:]
+	user, host, hopPort := splitHop(hop)
+	query := host
+	if user != "" {
+		query = user + "@" + host
 	}
-	if i := strings.LastIndex(hostPart, ":"); i >= 0 && !strings.Contains(hostPart, "]") {
-		hostPart = hostPart[:i]
-	}
-	hostPart = strings.Trim(hostPart, "[]")
-	hopOut, err := b.sshConfig(ctx, hop)
+	hopOut, err := b.sshConfig(ctx, query)
 	if err != nil {
 		return jumpTarget{}, false
 	}
 	hostname := transport.ConfigValue(hopOut, "hostname")
-	if hostname == "" || strings.EqualFold(hostname, hostPart) {
+	if hostname == "" || strings.EqualFold(hostname, host) {
 		return jumpTarget{}, false
 	}
+	// ssh -G reports the local user when none is configured, which cannot be
+	// told from one configured, so the suggestion names a user only when the
+	// hop does.
 	addr := hostname
-	if u := transport.ConfigValue(hopOut, "user"); u != "" {
-		addr = u + "@" + addr
+	if user != "" {
+		addr = user + "@" + addr
 	}
-	if p := transport.ConfigValue(hopOut, "port"); p != "" && p != "22" {
-		addr += ":" + p
+	port := hopPort
+	if port == "" {
+		if p := transport.ConfigValue(hopOut, "port"); p != "22" {
+			port = p
+		}
 	}
-	return jumpTarget{name: hostPart, address: addr}, true
+	if port != "" {
+		addr += ":" + port
+	}
+	return jumpTarget{name: host, address: addr}, true
+}
+
+// splitHop splits a ProxyJump hop, [ssh://][user@]host[:port], where host may
+// be a bracketed IPv6 address.
+func splitHop(hop string) (user, host, port string) {
+	hop = strings.TrimPrefix(hop, "ssh://")
+	if i := strings.LastIndex(hop, "@"); i >= 0 {
+		user, hop = hop[:i], hop[i+1:]
+	}
+	if strings.HasPrefix(hop, "[") {
+		if end := strings.Index(hop, "]"); end > 0 {
+			return user, hop[1:end], strings.TrimPrefix(hop[end+1:], ":")
+		}
+	}
+	if strings.Count(hop, ":") == 1 {
+		hop, port, _ = strings.Cut(hop, ":")
+	}
+	return user, hop, port
 }
