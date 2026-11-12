@@ -333,10 +333,19 @@ func TestFakeSSHParentHelper(t *testing.T) {
 		t.Skip("helper for TestFakeSSHExitsWhenItsParentDies")
 	}
 	args := strings.Fields(os.Getenv("GO_TEST_FAKESSH_ARGS"))
+	// The fake notes its parent as it starts and logs its arguments just
+	// after. Returning before then would let it start with this helper
+	// already gone and note the wrong parent, so wait for the log.
+	started := filepath.Join(t.TempDir(), "started")
 	cmd := exec.Command(fake, args...)
+	cmd.Env = append(os.Environ(), "FAKE_SSH_LOG="+started)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	WaitUntil(t, 5*time.Second, func() bool {
+		b, _ := os.ReadFile(started)
+		return len(b) > 0
+	}, "the fake to start")
 	fmt.Printf("FAKEPID=%d\n", cmd.Process.Pid)
 }
 

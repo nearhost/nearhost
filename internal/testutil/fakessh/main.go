@@ -301,15 +301,20 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	fmt.Fprintf(os.Stderr, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", host)
+	// What the process prints is held until it is up, so its pid is in the
+	// log before a test sees a line that reports a link or forward ready.
+	// A process that fails prints it all and is never logged.
+	var out strings.Builder
+	fmt.Fprintf(&out, "Authenticated to %s ([127.0.0.1]:22) using \"publickey\".\n", host)
 
 	for _, l := range lforwards {
 		bind, port, _ := parseLocalForward(l)
 		ln, err := net.Listen("tcp", bind+":"+port)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bind [%s]:%s: Address already in use\n", bind, port)
+			fmt.Fprintf(&out, "bind [%s]:%s: Address already in use\n", bind, port)
 			if exitOnFail {
-				fmt.Fprintln(os.Stderr, "Could not request local forwarding.")
+				fmt.Fprintln(&out, "Could not request local forwarding.")
+				os.Stderr.WriteString(out.String())
 				return 255
 			}
 			continue
@@ -323,7 +328,7 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 				c.Close()
 			}
 		}()
-		fmt.Fprintf(os.Stderr, "debug1: Local forwarding listening on %s port %s.\n", bind, port)
+		fmt.Fprintf(&out, "debug1: Local forwarding listening on %s port %s.\n", bind, port)
 	}
 	for _, r := range rforwards {
 		listen, connect, _ := strings.Cut(r, ":")
@@ -333,14 +338,16 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 			continue
 		}
 		if os.Getenv("FAKE_SSH_RFORWARD_FAIL") != "" {
-			fmt.Fprintf(os.Stderr, "Error: remote port forwarding failed for listen path %s\n", listen)
+			fmt.Fprintf(&out, "Error: remote port forwarding failed for listen path %s\n", listen)
+			os.Stderr.WriteString(out.String())
 			return 255
 		}
-		fmt.Fprintf(os.Stderr, "debug1: remote forward success for: listen %s, connect %s\n", listen, connect)
+		fmt.Fprintf(&out, "debug1: remote forward success for: listen %s, connect %s\n", listen, connect)
 	}
 
 	pid := os.Getpid()
 	appendLine(os.Getenv("FAKE_SSH_PID_LOG"), fmt.Sprintf("%d %s", pid, strings.Join(os.Args[1:], " ")))
+	os.Stderr.WriteString(out.String())
 	drop := ""
 	if dir := os.Getenv("FAKE_SSH_DROP_DIR"); dir != "" {
 		drop = filepath.Join(dir, strconv.Itoa(pid))
