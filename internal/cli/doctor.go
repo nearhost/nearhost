@@ -233,13 +233,9 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 }
 
 // checkAgents reports whether coding agents on srv can reach Nearhost. They
-// are a convenience, so a server that refuses is a warning, and where no
-// server can have them yet the check says so and passes.
+// are a convenience, so a server that refuses is a warning.
 func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check {
 	name := "agents on " + srv.Name
-	if !serverAgents {
-		return check{name: name, detail: noServerAgents}
-	}
 	if err := b.checkAgents(ctx, srv); err != nil {
 		fix := "set AllowStreamLocalForwarding yes in the sshd_config of " + srv.SSHHost + ", or leave it: only coding agents there need it"
 		var agentErr *transport.AgentError

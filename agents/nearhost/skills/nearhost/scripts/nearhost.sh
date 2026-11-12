@@ -88,11 +88,17 @@ text_field() {
 }
 
 # call SOCKET SECONDS CURL-ARGS... sets STATUS and BODY, or fails when
-# nothing answers on SOCKET.
+# nothing answers on SOCKET. A Nearhost on Windows answers only requests
+# with its token, which it leaves beside the socket as a header line: curl
+# reads it from the file, so the token never shows on a command line.
 call() {
 	sock=$1
 	limit=$2
 	shift 2
+	headers=${sock%.sock}.token
+	if [ -r "$headers" ]; then
+		set -- -H "@$headers" "$@"
+	fi
 	out=$(curl -sS --unix-socket "$sock" --max-time "$limit" -w '\n%{http_code}' "$@" 2>/dev/null) || return 1
 	STATUS=$(printf '%s\n' "$out" | tail -n 1)
 	BODY=$(printf '%s\n' "$out" | sed '$d')
