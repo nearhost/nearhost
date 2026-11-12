@@ -5,13 +5,14 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"os"
-	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/miekg/dns"
 )
 
 func TestWantedSkipsNamesThatResolveToLoopback(t *testing.T) {
@@ -61,14 +62,8 @@ func TestDNSLookupTimesOut(t *testing.T) {
 		}
 	}()
 	host, port, _ := net.SplitHostPort(pc.LocalAddr().String())
-	conf := filepath.Join(t.TempDir(), "resolv.conf")
-	// resolv.conf cannot name a port, so dnsPort points the client at ours.
-	if err := os.WriteFile(conf, []byte("nameserver "+host+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	old := resolvConf
-	resolvConf = conf
-	defer func() { resolvConf = old }()
+	// The nameserver list cannot name a port, so dnsPort points the client at ours.
+	useNameservers(t, host)
 	oldPort := dnsPort
 	dnsPort = port
 	defer func() { dnsPort = oldPort }()
@@ -217,14 +212,8 @@ func TestCachedLookupIsSafeForConcurrentCallers(t *testing.T) {
 }
 
 func TestDNSLookupRefusesLoopbackNameserver(t *testing.T) {
-	old := resolvConf
-	defer func() { resolvConf = old }()
 	for _, server := range []string{"127.0.0.53", "::1"} {
-		conf := filepath.Join(t.TempDir(), "resolv.conf")
-		if err := os.WriteFile(conf, []byte("nameserver "+server+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		resolvConf = conf
+		useNameservers(t, server)
 		_, err := DNSLookup(context.Background(), "app.example.io")
 		if !errors.Is(err, errLocalResolver) {
 			t.Errorf("nameserver %s: err = %v, want errLocalResolver", server, err)
@@ -233,5 +222,45 @@ func TestDNSLookupRefusesLoopbackNameserver(t *testing.T) {
 		if !slices.Equal(got, []string{"app.example.io"}) {
 			t.Errorf("nameserver %s: Wanted = %v, want app.example.io kept", server, got)
 		}
+	}
+}
+
+// useNameservers makes clientConfig list servers until the test ends.
+func useNameservers(t *testing.T, servers ...string) {
+	t.Helper()
+	old := clientConfig
+	clientConfig = func() (*dns.ClientConfig, error) {
+		return &dns.ClientConfig{Servers: servers, Port: "53", Timeout: 5, Attempts: 2}, nil
+	}
+	t.Cleanup(func() { clientConfig = old })
+}
+
+func TestNameserversFromSkipsPlaceholdersAndDuplicates(t *testing.T) {
+	in := []netip.Addr{
+		netip.MustParseAddr("192.168.77.1"),
+		netip.MustParseAddr("fec0:0:0:ffff::1"),
+		netip.MustParseAddr("192.168.77.1"),
+		netip.MustParseAddr("::"),
+		netip.MustParseAddr("fe80::1"),
+		netip.MustParseAddr("2001:db8::53"),
+	}
+	want := []string{"192.168.77.1", "2001:db8::53"}
+	if got := nameserversFrom(in); !slices.Equal(got, want) {
+		t.Fatalf("nameserversFrom = %q, want %q", got, want)
+	}
+}
+
+func TestDNSLookupSaysWhenNoAdapterHasANameserver(t *testing.T) {
+	useNameservers(t)
+	_, err := DNSLookup(context.Background(), "app.example.io")
+	if err == nil || err.Error() != noNameserverMessage {
+		t.Fatalf("err = %v, want %q", err, noNameserverMessage)
+	}
+	want := "no nameserver in /etc/resolv.conf"
+	if runtime.GOOS == "windows" {
+		want = "no nameserver on any network adapter"
+	}
+	if noNameserverMessage != want {
+		t.Fatalf("noNameserverMessage = %q, want %q", noNameserverMessage, want)
 	}
 }
