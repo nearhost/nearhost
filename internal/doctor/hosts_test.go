@@ -70,7 +70,7 @@ func TestUnresolvedHosts(t *testing.T) {
 
 	got := byID(t, hostIn(p, &dns{addrs: loop}, nil), "hosts.unresolved")
 	if got.Severity != SeverityError || got.Fix.Kind != FixNearhost || !strings.Contains(got.Message, "app.test") ||
-		got.Fix.Text != "Start the project in Nearhost; it adds app.test to /etc/hosts." {
+		got.Fix.Text != "Start the project in Nearhost; it adds app.test to "+hosts.DefaultPath+"." {
 		t.Errorf("finding = %+v", got)
 	}
 	for _, f := range hostIn(p, &dns{addrs: loop}, nil) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/hosts"
 )
 
 // answer is what a lookup gave for one name.
@@ -167,7 +168,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 				ID:       "hosts.unresolved",
 				Severity: SeverityError,
 				Message:  n + " does not resolve to this machine, and is not in the hosts file",
-				Fix:      Fix{Kind: FixNearhost, Text: "Start the project in Nearhost; it adds " + n + " to /etc/hosts."},
+				Fix:      Fix{Kind: FixNearhost, Text: "Start the project in Nearhost; it adds " + n + " to " + hosts.DefaultPath + "."},
 				Host:     n,
 			})
 		}

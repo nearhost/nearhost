@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/nearhost/nearhost/internal/hosts"
 )
 
 // started is a model whose engine has started, with the CA trusted or not.
@@ -22,7 +24,7 @@ func TestFirstRunIsShownWhenTheCAIsUntrusted(t *testing.T) {
 	m, _ := started(t, false)
 	wantScreen(t, m, "Welcome to Nearhost", "Two things ask for your password:",
 		"• now: trusting the local certificate authority,", "so browsers accept HTTPS from Nearhost's web server",
-		"• later: adding names to /etc/hosts", "enter trust now · s skip")
+		"• later: adding names to "+hosts.DefaultPath, "enter trust now · s skip")
 	// The main screen's keys wait.
 	press(m, "n")
 	if _, ok := m.form.(*firstRunForm); !ok {

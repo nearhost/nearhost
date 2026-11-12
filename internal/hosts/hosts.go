@@ -1,4 +1,4 @@
-// Package hosts manages the nearhost block in /etc/hosts.
+// Package hosts manages the nearhost block in the system hosts file.
 package hosts
 
 import (
@@ -19,7 +19,6 @@ import (
 const (
 	StartMarker = "# nearhost:start"
 	EndMarker   = "# nearhost:end"
-	DefaultPath = "/etc/hosts"
 )
 
 // validEntry reports whether a is a name nearhost writes to the hosts file:
@@ -207,7 +206,13 @@ func Apply(path string, aliases []string) error {
 	if unchanged(existing, updated) {
 		return nil
 	}
-	return replaceFile(path, updated)
+	if err := replaceFile(path, updated); err != nil {
+		return err
+	}
+	// The file is right whether or not the flush works, and Windows' DNS
+	// client also watches the file, so a failed flush is not an error.
+	_ = flushDNS()
+	return nil
 }
 
 // replaceFile atomically replaces the file path resolves to with content.
