@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,35 +21,122 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 )
 
-// The skill's script, run against the API: it must find the socket, speak
-// the API and turn its answers into the exit statuses the skill reads.
+// The skill's scripts, run against the API: they must find the socket,
+// speak the API and turn its answers into the exit statuses the skill reads.
+// nearhost.sh serves Linux, macOS and servers; nearhost.ps1 serves Windows
+// laptops, so each laptop-side case runs against both.
 
-const script = "../../agents/nearhost/skills/nearhost/scripts/nearhost.sh"
+const (
+	script   = "../../agents/nearhost/skills/nearhost/scripts/nearhost.sh"
+	psScript = "../../agents/nearhost/skills/nearhost/scripts/nearhost.ps1"
+)
+
+// scriptShell is an interpreter and the skill script it runs.
+type scriptShell struct {
+	name   string
+	argv   []string
+	script string
+}
+
+// shScript runs nearhost.sh with sh.
+var shScript = scriptShell{"sh", []string{"sh"}, script}
+
+// origin is the machine the scripts' Nearhost serves in a test. nearhost.ps1
+// runs only on the laptop, so its Nearhost serves the laptop's own projects;
+// nearhost.sh's serves the server mini's.
+func (s scriptShell) origin() string {
+	if s.powerShell() {
+		return config.LocalServer
+	}
+	return "mini"
+}
+
+// powerShell reports whether s runs nearhost.ps1.
+func (s scriptShell) powerShell() bool { return s.script == psScript }
+
+// run runs s's script as runScript does.
+func (s scriptShell) run(t *testing.T, home string, env []string, args ...string) scriptResult {
+	t.Helper()
+	return runScriptIn(t, s, home, env, args...)
+}
+
+// testPowerShell names the PowerShell to run nearhost.ps1 with, as a path or
+// a command on PATH, in place of the ones found on PATH. Set it to
+// powershell.exe on Windows to test Windows PowerShell 5.1 alone.
+const testPowerShell = "NEARHOST_TEST_POWERSHELL"
+
+// powerShells are the PowerShells to run nearhost.ps1 with: pwsh where it
+// is installed and, on Windows, Windows PowerShell 5.1 too, which the skill
+// runs there. In CI, where the workflow installs one, finding none fails.
+func powerShells(t *testing.T) []scriptShell {
+	t.Helper()
+	names := []string{"pwsh"}
+	if runtime.GOOS == "windows" {
+		names = append(names, "powershell.exe")
+	}
+	if v := os.Getenv(testPowerShell); v != "" {
+		names = []string{v}
+	}
+	var shells []scriptShell
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		label := strings.TrimSuffix(strings.ToLower(filepath.Base(path)), ".exe")
+		shells = append(shells, scriptShell{label, []string{path, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"}, psScript})
+	}
+	if len(shells) == 0 && os.Getenv("CI") != "" {
+		t.Fatalf("no PowerShell (%s) to test nearhost.ps1 with", strings.Join(names, ", "))
+	}
+	return shells
+}
+
+// scriptShells are the shells each laptop-side case runs in: sh with
+// nearhost.sh, except on Windows, where only nearhost.ps1 runs, and each
+// PowerShell found with nearhost.ps1.
+func scriptShells(t *testing.T) []scriptShell {
+	t.Helper()
+	var shells []scriptShell
+	if runtime.GOOS != "windows" {
+		shells = append(shells, shScript)
+	}
+	shells = append(shells, powerShells(t)...)
+	if len(shells) == 0 {
+		t.Skip("no shell to run the skill's script in")
+	}
+	return shells
+}
 
 type scriptResult struct {
 	code           int
 	stdout, stderr string
 }
 
-// runScript runs the script with home as $HOME, a PATH without nearhost,
-// and env added.
+// runScript runs nearhost.sh with home as $HOME, a PATH without nearhost,
+// and env added. It skips on Windows, which has no sh to run it with.
 func runScript(t *testing.T, home string, env []string, args ...string) scriptResult {
 	t.Helper()
-	return runScriptIn(t, "sh", home, env, args...)
+	if runtime.GOOS == "windows" {
+		t.Skip("nearhost.sh serves Linux, macOS and servers, not Windows")
+	}
+	return runScriptIn(t, shScript, home, env, args...)
 }
 
-// runScriptIn is runScript with the interpreter shell.
-func runScriptIn(t *testing.T, shell, home string, env []string, args ...string) scriptResult {
+// runScriptIn is runScript with the interpreter and script of shell.
+func runScriptIn(t *testing.T, shell scriptShell, home string, env []string, args ...string) scriptResult {
 	t.Helper()
-	path, err := filepath.Abs(script)
+	path, err := filepath.Abs(shell.script)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(shell, append([]string{path}, args...)...)
-	cmd.Env = append([]string{"HOME=" + home, "PATH=/usr/bin:/bin"}, env...)
+	argv := append(append(append([]string{}, shell.argv...), path), args...)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(scriptEnv(t, shell, home), env...)
 	cmd.Dir = home
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -61,6 +149,64 @@ func runScriptIn(t *testing.T, shell, home string, env []string, args ...string)
 		t.Fatal(err)
 	}
 	return scriptResult{code, out.String(), errOut.String()}
+}
+
+// scriptEnv is the environment a script runs in, with home as the user's
+// home folder and a PATH without nearhost.
+func scriptEnv(t *testing.T, shell scriptShell, home string) []string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+		if shell.powerShell() {
+			// PowerShell keeps its caches under the XDG folders, which
+			// would otherwise land in home.
+			dir := filepath.Join(os.TempDir(), "nearhost-test-powershell")
+			env = append(env, "XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dir, "XDG_CACHE_HOME="+dir,
+				"POWERSHELL_TELEMETRY_OPTOUT=1", "POWERSHELL_UPDATECHECK=Off")
+		}
+		return env
+	}
+	// Windows needs much of its environment, such as SystemRoot, to run
+	// anything, so this keeps it but for what the scripts read.
+	drop := map[string]bool{"HOME": true, "USERPROFILE": true, "PATH": true, "NEARHOST_SOCKET": true, "CLAUDECODE": true,
+		"CLAUDE_CODE_SESSION_ID": true, "XDG_STATE_HOME": true, "SSH_CONNECTION": true}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !drop[strings.ToUpper(k)] {
+			env = append(env, kv)
+		}
+	}
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	path := []string{filepath.Join(root, "System32"), root, filepath.Join(root, "System32", "WindowsPowerShell", "v1.0")}
+	for _, name := range []string{shell.argv[0], "git"} {
+		if p, err := exec.LookPath(name); err == nil {
+			path = append(path, filepath.Dir(p))
+		}
+	}
+	return append(env, "HOME="+home, "USERPROFILE="+home, "PATH="+strings.Join(path, string(os.PathListSeparator)))
+}
+
+// eachShell runs f as a subtest in each of scriptShells.
+func eachShell(t *testing.T, f func(t *testing.T, shell scriptShell)) {
+	t.Helper()
+	for _, shell := range scriptShells(t) {
+		t.Run(shell.name, func(t *testing.T) { f(t, shell) })
+	}
+}
+
+// checkMode fails unless path has the permission bits want. Windows has no
+// such bits: the profile folder's ACL keeps the files private there.
+func checkMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if m := mode(t, path); m != want {
+		t.Fatalf("%s mode %v, want %v", path, m, want)
+	}
 }
 
 // scriptServer serves origin on home/.nearhost/<id>.sock, with mini's
@@ -98,112 +244,124 @@ func scriptServerWith(t *testing.T, home, id, origin string, review bool, opts O
 var proposalID = regexp.MustCompile(`"id":"([0-9a-f]+)"`)
 
 func TestScriptFindsTheSocketAndReadsStatus(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", true)
-	r := runScript(t, home, nil, "socket")
-	if r.code != 0 || !strings.Contains(r.stdout, home+"/.nearhost/k3f9q2.sock\n") || !strings.Contains(r.stdout, `"origin":"mini"`) {
-		t.Fatalf("socket: %+v", r)
-	}
-	os.MkdirAll(filepath.Join(home, "code", "myapp", "src"), 0o755)
-	r = runScript(t, home, nil, "status", "--all")
-	if r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
-		t.Fatalf("status --all: %+v", r)
-	}
-	r = runScript(t, home, nil, "status", "/home/dev/code/myapp/src")
-	if r.code != 1 || !strings.Contains(r.stderr, "is not a directory here") {
-		t.Fatalf("status of a path not here: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		r := shell.run(t, home, nil, "socket")
+		if r.code != 0 || !strings.Contains(r.stdout, filepath.Join(home, ".nearhost", "k3f9q2.sock")+"\n") || !strings.Contains(r.stdout, `"origin":"`+shell.origin()+`"`) {
+			t.Fatalf("socket: %+v", r)
+		}
+		os.MkdirAll(filepath.Join(home, "code", "myapp", "src"), 0o755)
+		r = shell.run(t, home, nil, "status", "--all")
+		if r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
+			t.Fatalf("status --all: %+v", r)
+		}
+		r = shell.run(t, home, nil, "status", "/home/dev/code/myapp/src")
+		if r.code != 1 || !strings.Contains(r.stderr, "is not a directory here") {
+			t.Fatalf("status of a path not here: %+v", r)
+		}
+	})
 }
 
 func TestScriptProposesAndWaitsForTheAnswer(t *testing.T) {
-	home := shortDir(t)
-	s, c := scriptServer(t, home, "k3f9q2", "mini", true)
-	app := filepath.Join(home, "my app")
-	os.Mkdir(app, 0o755)
-	r := runScript(t, home, nil, "propose", "--web", "5173", "--name", `the "app"`, app)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil {
-		t.Fatalf("propose: %+v", r)
-	}
-	id := m[1]
-	s.mu.Lock()
-	p := s.proposals[id]
-	s.mu.Unlock()
-	if p.Path != app || p.Web != 5173 || p.Name != `the "app"` {
-		t.Fatalf("proposed %+v", p.Proposal)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, c := scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		app := filepath.Join(home, "my app")
+		os.Mkdir(app, 0o755)
+		r := shell.run(t, home, nil, "propose", "--web", "5173", "--name", `the "app"`, app)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("propose: %+v", r)
+		}
+		id := m[1]
+		s.mu.Lock()
+		p := s.proposals[id]
+		s.mu.Unlock()
+		if p.Path != app || p.Web != 5173 || p.Name != `the "app"` {
+			t.Fatalf("proposed %+v", p.Proposal)
+		}
 
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.Accept(id, "myapp")
-	}()
-	r = runScript(t, home, nil, "wait", id)
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"accepted"`) || !strings.Contains(r.stdout, `"url":"https://myapp.test"`) {
-		t.Fatalf("wait: %+v", r)
-	}
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			s.Accept(id, "myapp")
+		}()
+		r = shell.run(t, home, nil, "wait", id)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"accepted"`) || !strings.Contains(r.stdout, `"url":"https://myapp.test"`) {
+			t.Fatalf("wait: %+v", r)
+		}
 
-	r = runScript(t, home, nil, "propose", app)
-	id = proposalID.FindStringSubmatch(r.stdout)[1]
-	s.Decline(id, "no ports found")
-	if r := runScript(t, home, nil, "wait", id); r.code != 6 || !strings.Contains(r.stdout, `"reason":"no ports found"`) {
-		t.Fatalf("declined: %+v", r)
-	}
+		r = shell.run(t, home, nil, "propose", app)
+		id = proposalID.FindStringSubmatch(r.stdout)[1]
+		s.Decline(id, "no ports found")
+		if r := shell.run(t, home, nil, "wait", id); r.code != 6 || !strings.Contains(r.stdout, `"reason":"no ports found"`) {
+			t.Fatalf("declined: %+v", r)
+		}
 
-	r = runScript(t, home, nil, "propose", app)
-	id = proposalID.FindStringSubmatch(r.stdout)[1]
-	c.add(10 * time.Minute)
-	if r := runScript(t, home, nil, "wait", id); r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
-		t.Fatalf("expired: %+v", r)
-	}
+		r = shell.run(t, home, nil, "propose", app)
+		id = proposalID.FindStringSubmatch(r.stdout)[1]
+		c.add(10 * time.Minute)
+		if r := shell.run(t, home, nil, "wait", id); r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
+			t.Fatalf("expired: %+v", r)
+		}
+	})
 }
 
 func TestScriptReportsAProjectThatExists(t *testing.T) {
-	home := shortDir(t)
-	dir := filepath.Join(home, "inner")
-	os.Mkdir(dir, 0o755)
-	real, _ := filepath.EvalSymlinks(dir)
-	scriptServerOf(t, home, "k3f9q2", "mini", true, fakeSource{"mini": {{Name: "inner", Path: real, URL: "https://inner.test", State: "running"}}})
-	r := runScript(t, home, nil, "propose", dir)
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"exists"`) || !strings.Contains(r.stdout, "https://inner.test") {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir := filepath.Join(home, "inner")
+		os.Mkdir(dir, 0o755)
+		real, _ := filepath.EvalSymlinks(dir)
+		scriptServerOf(t, home, "k3f9q2", shell.origin(), true, fakeSource{shell.origin(): {{Name: "inner", Path: real, URL: "https://inner.test", State: "running"}}})
+		r := shell.run(t, home, nil, "propose", dir)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"exists"`) || !strings.Contains(r.stdout, "https://inner.test") {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptSaysWhenNearhostRunsWithoutItsInterface(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", false)
-	if r := runScript(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "open nearhost on dev@k3f9q2") {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", shell.origin(), false)
+		if r := shell.run(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "open nearhost on dev@k3f9q2") {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptAsksWhichLaptopWhenSeveralAnswer(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "aaaaaa", "mini", true)
-	scriptServer(t, home, "bbbbbb", "mini", true)
-	r := runScript(t, home, nil, "socket")
-	if r.code != 4 || !strings.Contains(r.stderr, "aaaaaa.sock  (dev@aaaaaa)") || !strings.Contains(r.stderr, "bbbbbb.sock  (dev@bbbbbb)") {
-		t.Fatalf("%+v", r)
-	}
-	chosen := filepath.Join(home, ".nearhost", "bbbbbb.sock")
-	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + chosen}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"laptop":"dev@bbbbbb"`) {
-		t.Fatalf("with NEARHOST_SOCKET: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "aaaaaa", shell.origin(), true)
+		scriptServer(t, home, "bbbbbb", shell.origin(), true)
+		r := shell.run(t, home, nil, "socket")
+		if r.code != 4 || !strings.Contains(r.stderr, "aaaaaa.sock  (dev@aaaaaa)") || !strings.Contains(r.stderr, "bbbbbb.sock  (dev@bbbbbb)") {
+			t.Fatalf("%+v", r)
+		}
+		chosen := filepath.Join(home, ".nearhost", "bbbbbb.sock")
+		if r := shell.run(t, home, []string{"NEARHOST_SOCKET=" + chosen}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"laptop":"dev@bbbbbb"`) {
+			t.Fatalf("with NEARHOST_SOCKET: %+v", r)
+		}
+	})
 }
 
 func TestScriptSkipsSocketsNothingAnswersOn(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", true)
-	// A socket a run that has ended left, as sshd leaves them.
-	l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "zzzzzz.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	l.(*net.UnixListener).SetUnlinkOnClose(false)
-	l.Close()
-	if r := runScript(t, home, nil, "socket"); r.code != 0 || !strings.Contains(r.stdout, "k3f9q2.sock") {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		// A socket a run that has ended left, as sshd leaves them.
+		l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "zzzzzz.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.(*net.UnixListener).SetUnlinkOnClose(false)
+		l.Close()
+		if r := shell.run(t, home, nil, "socket"); r.code != 0 || !strings.Contains(r.stdout, "k3f9q2.sock") {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptSaysWhatToDoWhenNoNearhostAnswers(t *testing.T) {
@@ -235,80 +393,93 @@ func TestScriptSaysWhatToDoWhenNoNearhostAnswers(t *testing.T) {
 }
 
 func TestScriptRefusesAnAPIItDoesNotSpeak(t *testing.T) {
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl is not installed")
-	}
-	home := shortDir(t)
-	os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
-	l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"api":2,"interface":true,"laptop":"dev@future","origin":"mini"}`))
-	})}
-	go srv.Serve(l)
-	defer srv.Close()
-	if r := runScript(t, home, nil, "socket"); r.code != 5 || !strings.Contains(r.stderr, "update the nearhost plugin") {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if _, err := exec.LookPath("curl"); err != nil {
+			t.Skip("curl is not installed")
+		}
+		home := shortDir(t)
+		os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
+		l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"api":2,"interface":true,"laptop":"dev@future","origin":"mini"}`))
+		})}
+		go srv.Serve(l)
+		defer srv.Close()
+		if r := shell.run(t, home, nil, "socket"); r.code != 5 || !strings.Contains(r.stderr, "update the nearhost plugin") {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptStatusFailsWhenNoProjectHoldsThePath(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", true)
-	r := runScript(t, home, nil, "status", home)
-	if r.code != 1 || !strings.Contains(r.stdout, "no project holds") {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		r := shell.run(t, home, nil, "status", home)
+		if r.code != 1 || !strings.Contains(r.stdout, "no project holds") {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptFindsAProjectFromASymlinkedDirectory(t *testing.T) {
-	home := shortDir(t)
-	real := filepath.Join(home, "code", "inner")
-	os.MkdirAll(real, 0o755)
-	resolved, _ := filepath.EvalSymlinks(real)
-	link := filepath.Join(home, "link")
-	os.Symlink(real, link)
-	s, _ := scriptServerOf(t, home, "k3f9q2", "mini", true, fakeSource{"mini": {{Name: "inner", Path: resolved, URL: "https://inner.test"}}})
-	if r := runScript(t, home, nil, "status", link); r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
-		t.Fatalf("status from the link: %+v", r)
-	}
-	if r := runScript(t, home, nil, "propose", link); r.code != 0 || !strings.Contains(r.stdout, `"state":"exists"`) {
-		t.Fatalf("propose from the link: %+v", r)
-	}
-	other := filepath.Join(home, "other")
-	os.Mkdir(other, 0o755)
-	os.Symlink(other, filepath.Join(home, "otherlink"))
-	r := runScript(t, home, nil, "propose", filepath.Join(home, "otherlink"))
-	id := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || id == nil {
-		t.Fatalf("propose a new one from a link: %+v", r)
-	}
-	s.mu.Lock()
-	got := s.proposals[id[1]].Path
-	s.mu.Unlock()
-	if got != filepath.Join(home, "otherlink") {
-		t.Fatalf("proposed %q, want the path as the agent sees it", got)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		real := filepath.Join(home, "code", "inner")
+		os.MkdirAll(real, 0o755)
+		resolved, _ := filepath.EvalSymlinks(real)
+		link := filepath.Join(home, "link")
+		if err := os.Symlink(real, link); err != nil {
+			t.Skipf("no symlinks here: %v", err)
+		}
+		s, _ := scriptServerOf(t, home, "k3f9q2", shell.origin(), true, fakeSource{shell.origin(): {{Name: "inner", Path: resolved, URL: "https://inner.test"}}})
+		if r := shell.run(t, home, nil, "status", link); r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
+			t.Fatalf("status from the link: %+v", r)
+		}
+		if r := shell.run(t, home, nil, "propose", link); r.code != 0 || !strings.Contains(r.stdout, `"state":"exists"`) {
+			t.Fatalf("propose from the link: %+v", r)
+		}
+		other := filepath.Join(home, "other")
+		os.Mkdir(other, 0o755)
+		os.Symlink(other, filepath.Join(home, "otherlink"))
+		r := shell.run(t, home, nil, "propose", filepath.Join(home, "otherlink"))
+		id := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || id == nil {
+			t.Fatalf("propose a new one from a link: %+v", r)
+		}
+		s.mu.Lock()
+		got := s.proposals[id[1]].Path
+		s.mu.Unlock()
+		if got != filepath.Join(home, "otherlink") {
+			t.Fatalf("proposed %q, want the path as the agent sees it", got)
+		}
+	})
 }
 
 func TestScriptProposesAPathWithATab(t *testing.T) {
-	home := shortDir(t)
-	s, _ := scriptServer(t, home, "k3f9q2", "mini", true)
-	dir := filepath.Join(home, "a\tb")
-	os.Mkdir(dir, 0o755)
-	r := runScript(t, home, nil, "propose", dir)
-	id := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || id == nil {
-		t.Fatalf("%+v", r)
-	}
-	s.mu.Lock()
-	got := s.proposals[id[1]].Path
-	s.mu.Unlock()
-	if !strings.HasSuffix(got, "/a\tb") {
-		t.Fatalf("proposed %q", got)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows names have no tabs")
+		}
+		s, _ := scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		dir := filepath.Join(home, "a\tb")
+		os.Mkdir(dir, 0o755)
+		r := shell.run(t, home, nil, "propose", dir)
+		id := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || id == nil {
+			t.Fatalf("%+v", r)
+		}
+		s.mu.Lock()
+		got := s.proposals[id[1]].Path
+		s.mu.Unlock()
+		if !strings.HasSuffix(got, string(filepath.Separator)+"a\tb") {
+			t.Fatalf("proposed %q", got)
+		}
+	})
 }
 
 func TestScriptNamesTheProposedPathWhenNoNearhostAnswers(t *testing.T) {
@@ -324,141 +495,232 @@ func TestScriptNamesTheProposedPathWhenNoNearhostAnswers(t *testing.T) {
 	}
 }
 
-// scriptProject makes a directory that Nearhost holds as the project myapp.
-func scriptProject(t *testing.T, home string) (dir string, src Source) {
+// scriptProject makes a directory that Nearhost holds as origin's project
+// myapp.
+func scriptProject(t *testing.T, home, origin string) (dir string, src Source) {
 	t.Helper()
 	dir = filepath.Join(home, "myapp")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	real, _ := filepath.EvalSymlinks(dir)
-	return dir, fakeSource{"mini": {{Name: "myapp", Path: real, URL: "https://myapp.test", State: "running"}}}
+	return dir, fakeSource{origin: {{Name: "myapp", Path: real, URL: "https://myapp.test", State: "running"}}}
 }
 
 func TestScriptDoctorPrintsFindings(t *testing.T) {
-	home := shortDir(t)
-	dir, src := scriptProject(t, home)
-	d := &fakeDoctor{findings: []doctor.Finding{{ID: "routes.stale-port", Severity: "warning", Project: "myapp", Message: "nothing listens"}}}
-	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Doctor: d})
-	r := runScript(t, home, nil, "doctor", dir)
-	if r.code != 0 || !strings.Contains(r.stdout, `"findings"`) || !strings.Contains(r.stdout, "routes.stale-port") {
-		t.Fatalf("doctor: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir, src := scriptProject(t, home, shell.origin())
+		d := &fakeDoctor{findings: []doctor.Finding{{ID: "routes.stale-port", Severity: "warning", Project: "myapp", Message: "nothing listens"}}}
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{Source: src, Doctor: d})
+		r := shell.run(t, home, nil, "doctor", dir)
+		if r.code != 0 || !strings.Contains(r.stdout, `"findings"`) || !strings.Contains(r.stdout, "routes.stale-port") {
+			t.Fatalf("doctor: %+v", r)
+		}
 
-	other := shortDir(t)
-	scriptServerWith(t, other, "z9", "mini", true, Options{Source: src})
-	r = runScript(t, other, nil, "doctor", ".")
-	if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, "doctor") {
-		t.Fatalf("without a doctor: %+v", r)
-	}
+		other := shortDir(t)
+		scriptServerWith(t, other, "z9", shell.origin(), true, Options{Source: src})
+		r = shell.run(t, other, nil, "doctor", ".")
+		if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, "doctor") {
+			t.Fatalf("without a doctor: %+v", r)
+		}
+	})
 }
 
 func TestScriptReloadAndWait(t *testing.T) {
-	home := shortDir(t)
-	dir, src := scriptProject(t, home)
-	rl := &fakeReloader{}
-	rl.answer(waiting, nil)
-	s, _ := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Reload: rl})
-	r := runScript(t, home, nil, "reload", dir)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"state":"pending"`) {
-		t.Fatalf("reload: %+v", r)
-	}
-	id := m[1]
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir, src := scriptProject(t, home, shell.origin())
+		rl := &fakeReloader{}
+		rl.answer(waiting, nil)
+		s, _ := scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{Source: src, Reload: rl})
+		r := shell.run(t, home, nil, "reload", dir)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"state":"pending"`) {
+			t.Fatalf("reload: %+v", r)
+		}
+		id := m[1]
 
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		s.ChangeAnswered("myapp", "b", true)
-	}()
-	if r := runScript(t, home, nil, "wait", id); r.code != 0 || !strings.Contains(r.stdout, `"state":"accepted"`) {
-		t.Fatalf("wait: %+v", r)
-	}
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			s.ChangeAnswered("myapp", "b", true)
+		}()
+		if r := shell.run(t, home, nil, "wait", id); r.code != 0 || !strings.Contains(r.stdout, `"state":"accepted"`) {
+			t.Fatalf("wait: %+v", r)
+		}
 
-	rl.answer(Reloaded{Items: []string{"a.example.com"}, SHA256: "c"}, nil)
-	first := proposalID.FindStringSubmatch(runScript(t, home, nil, "reload", dir).stdout)[1]
-	rl.answer(Reloaded{Items: []string{"b.example.com"}, SHA256: "d"}, nil)
-	if r := runScript(t, home, nil, "reload", dir); r.code != 0 || proposalID.FindStringSubmatch(r.stdout)[1] == first {
-		t.Fatalf("changed reload: %+v", r)
-	}
-	if r := runScript(t, home, nil, "wait", first); r.code != 8 || !strings.Contains(r.stdout, `"state":"superseded"`) {
-		t.Fatalf("superseded: %+v", r)
-	}
+		rl.answer(Reloaded{Items: []string{"a.example.com"}, SHA256: "c"}, nil)
+		first := proposalID.FindStringSubmatch(shell.run(t, home, nil, "reload", dir).stdout)[1]
+		rl.answer(Reloaded{Items: []string{"b.example.com"}, SHA256: "d"}, nil)
+		if r := shell.run(t, home, nil, "reload", dir); r.code != 0 || proposalID.FindStringSubmatch(r.stdout)[1] == first {
+			t.Fatalf("changed reload: %+v", r)
+		}
+		if r := shell.run(t, home, nil, "wait", first); r.code != 8 || !strings.Contains(r.stdout, `"state":"superseded"`) {
+			t.Fatalf("superseded: %+v", r)
+		}
+	})
 }
 
 func TestScriptReloadUnderUp(t *testing.T) {
-	home := shortDir(t)
-	dir, src := scriptProject(t, home)
-	rl := &fakeReloader{}
-	rl.answer(waiting, nil)
-	scriptServerWith(t, home, "k3f9q2", "mini", false, Options{Source: src, Reload: rl})
-	if r := runScript(t, home, nil, "reload", dir); r.code != 3 {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir, src := scriptProject(t, home, shell.origin())
+		rl := &fakeReloader{}
+		rl.answer(waiting, nil)
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), false, Options{Source: src, Reload: rl})
+		if r := shell.run(t, home, nil, "reload", dir); r.code != 3 {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptReloadDeclined(t *testing.T) {
-	home := shortDir(t)
-	dir, src := scriptProject(t, home)
-	rl := &fakeReloader{}
-	rl.answer(Reloaded{Declined: true}, nil)
-	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{Source: src, Reload: rl})
-	if r := runScript(t, home, nil, "reload", dir); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir, src := scriptProject(t, home, shell.origin())
+		rl := &fakeReloader{}
+		rl.answer(Reloaded{Declined: true}, nil)
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{Source: src, Reload: rl})
+		if r := shell.run(t, home, nil, "reload", dir); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 // A Nearhost from before the doctor answers GET /v1 without capabilities.
 // The skill runs doctor after an add and skips it on exit status 5.
 func TestScriptDoctorOnANearhostWithoutCapabilities(t *testing.T) {
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl is not installed")
-	}
-	home := shortDir(t)
-	os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
-	l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	var mu sync.Mutex
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if _, err := exec.LookPath("curl"); err != nil {
+			t.Skip("curl is not installed")
+		}
+		home := shortDir(t)
+		os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
+		l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls []string
+		var mu sync.Mutex
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			calls = append(calls, r.URL.Path)
+			mu.Unlock()
+			w.Write([]byte(`{"api":1,"interface":true,"laptop":"dev@older","origin":"mini"}`))
+		})}
+		go srv.Serve(l)
+		defer srv.Close()
+		for _, cmd := range []string{"doctor", "reload"} {
+			if r := shell.run(t, home, nil, cmd, home); r.code != 5 || !strings.Contains(r.stderr, "Nearhost on dev@older doesn't support "+cmd) {
+				t.Fatalf("%s: %+v", cmd, r)
+			}
+		}
 		mu.Lock()
-		calls = append(calls, r.URL.Path)
-		mu.Unlock()
-		w.Write([]byte(`{"api":1,"interface":true,"laptop":"dev@older","origin":"mini"}`))
-	})}
-	go srv.Serve(l)
-	defer srv.Close()
-	for _, cmd := range []string{"doctor", "reload"} {
-		if r := runScript(t, home, nil, cmd, home); r.code != 5 || !strings.Contains(r.stderr, "Nearhost on dev@older doesn't support "+cmd) {
-			t.Fatalf("%s: %+v", cmd, r)
+		defer mu.Unlock()
+		for _, c := range calls {
+			if c != "/v1" {
+				t.Fatalf("called %s", c)
+			}
 		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, c := range calls {
-		if c != "/v1" {
-			t.Fatalf("called %s", c)
-		}
-	}
+	})
 }
 
 // The script waits for the doctor and a reload longer than the server
 // gives them, so it reads the server's answer rather than giving up first.
 func TestScriptWaitsForTheDoctorAndReloadLongerThanTheServer(t *testing.T) {
-	data, err := os.ReadFile(script)
+	for file, call := range map[string]string{
+		script:   `(?s)\n%s\)\n.*?\bcall "\$SOCK" ([0-9]+) `,
+		psScript: `(?s)\n\t'%s' \{\n.*?\b(?:Invoke-PathCall '[^']*'|Invoke-Api \$script:Sock) ([0-9]+) `,
+	} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A Windows checkout may have CRLF line endings.
+		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+		for cmd, server := range map[string]time.Duration{"doctor": doctorTimeout, "reload": reloadTimeout} {
+			m := regexp.MustCompile(fmt.Sprintf(call, cmd)).FindSubmatch(data)
+			if m == nil {
+				t.Fatalf("no call in %s of %s", cmd, filepath.Base(file))
+			}
+			secs, _ := strconv.Atoi(string(m[1]))
+			if time.Duration(secs)*time.Second <= server {
+				t.Errorf("%s in %s: the script waits %ds, the server up to %s", cmd, filepath.Base(file), secs, server)
+			}
+		}
+	}
+}
+
+// The skill runs nearhost.ps1 on Windows and nearhost.sh everywhere else,
+// and lets Claude Code run either without asking, from Bash or PowerShell.
+func TestSkillRunsThePowerShellScriptOnWindows(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "..", "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for cmd, server := range map[string]time.Duration{"doctor": doctorTimeout, "reload": reloadTimeout} {
-		m := regexp.MustCompile(`(?s)\n` + cmd + `\)\n.*?\bcall "\$SOCK" ([0-9]+) `).FindSubmatch(data)
-		if m == nil {
-			t.Fatalf("no call in %s", cmd)
+	skill := strings.ReplaceAll(string(data), "\r\n", "\n")
+	front, _, ok := strings.Cut(strings.TrimPrefix(skill, "---\n"), "\n---\n")
+	if !ok {
+		t.Fatal("SKILL.md has no frontmatter")
+	}
+	ps := `powershell -NoProfile -ExecutionPolicy Bypass -File ${CLAUDE_SKILL_DIR}\scripts\nearhost.ps1 *`
+	for _, want := range []string{"Bash(sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh *)", "Bash(" + ps + ")", "PowerShell(" + ps + ")"} {
+		if !strings.Contains(front+"\n", "\n  - "+want+"\n") {
+			t.Errorf("allowed-tools lacks %s", want)
 		}
-		secs, _ := strconv.Atoi(string(m[1]))
-		if time.Duration(secs)*time.Second <= server {
-			t.Errorf("%s: the script waits %ds, the server up to %s", cmd, secs, server)
+	}
+	if !strings.Contains(skill, "On Windows (not inside WSL), run `powershell -NoProfile -ExecutionPolicy Bypass -File <this skill's directory>\\scripts\\nearhost.ps1 <command>`; everywhere else, `sh <this skill's directory>/scripts/nearhost.sh <command>`") {
+		t.Error("the skill does not say which script to run where")
+	}
+	if strings.Contains(skill, "sh .../nearhost.sh") {
+		t.Error("a step runs nearhost.sh on every platform")
+	}
+}
+
+// On the laptop with the nearhost program but no Nearhost running, both
+// scripts say to add the project and start it.
+func TestScriptSaysNearhostIsNotRunningHere(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		bin := filepath.Join(home, "bin")
+		if err := os.Mkdir(bin, 0o700); err != nil {
+			t.Fatal(err)
 		}
+		name, text := "nearhost", "#!/bin/sh\n"
+		if runtime.GOOS == "windows" {
+			name, text = "nearhost.cmd", "@echo off\r\n"
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(text), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := bin + string(os.PathListSeparator) + "/usr/bin:/bin"
+		if runtime.GOOS == "windows" {
+			path = bin + string(os.PathListSeparator) + filepath.Join(os.Getenv("SystemRoot"), "System32")
+		}
+		r := shell.run(t, home, []string{"PATH=" + path}, "status")
+		if r.code != 2 || r.stderr != "Nearhost is not running on this machine. Run: nearhost add <path>, then start nearhost to serve it.\n" {
+			t.Fatalf("%+v", r)
+		}
+	})
+}
+
+// Windows is only ever the laptop, so without the nearhost program
+// nearhost.ps1 says to install it, where nearhost.sh walks through a server
+// too.
+func TestPowerShellScriptSaysNearhostIsNotInstalled(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	for _, shell := range powerShells(t) {
+		t.Run(shell.name, func(t *testing.T) {
+			r := shell.run(t, shortDir(t), nil, "status")
+			if r.code != 2 || r.stderr != "Nearhost is not installed on this machine. To serve projects here, install it: https://nearhost.dev/docs/\n" {
+				t.Fatalf("%+v", r)
+			}
+		})
 	}
 }
 
@@ -472,7 +734,7 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	skill := string(data)
+	skill := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if regexp.MustCompile("kind `nearhost`, run[^\n]*reload").MatchString(skill) {
 		t.Error("the skill reloads for every fix of kind nearhost")
 	}
@@ -481,7 +743,7 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 		t.Error("the skill does not reload for nearhostrc.pending and nearhostrc.not-applied")
 	}
 	add := regexp.MustCompile("(?m)^6\\. On `\"state\":\"accepted\"`.*$").FindString(skill)
-	status, doctor := strings.Index(add, "nearhost.sh status"), strings.Index(add, "nearhost.sh doctor .")
+	status, doctor := strings.Index(add, "`nearhost status`"), strings.Index(add, "`nearhost doctor .`")
 	if status < 0 || doctor < status || !strings.Contains(add, "status 5") {
 		t.Errorf("after an add: %q", add)
 	}
@@ -496,16 +758,16 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 // first: it is a usage error (1), which the skill does not read as "no
 // Nearhost reachable" (2). Skipped where dash is absent.
 func TestScriptFlagWithoutItsValueIsAUsageErrorInEveryShell(t *testing.T) {
-	shells := []string{"sh"}
-	if _, err := exec.LookPath("dash"); err == nil {
-		shells = append(shells, "dash")
+	shells := scriptShells(t)
+	if _, err := exec.LookPath("dash"); err == nil && runtime.GOOS != "windows" {
+		shells = append(shells, scriptShell{"dash", []string{"dash"}, script})
 	}
 	home := shortDir(t)
 	for _, shell := range shells {
 		for flag, want := range map[string]string{"--web": "--web needs a port", "--name": "--name needs a name"} {
 			r := runScriptIn(t, shell, home, nil, "propose", flag)
 			if r.code != 1 || !strings.Contains(r.stderr, want) {
-				t.Fatalf("%s %s: %+v", shell, flag, r)
+				t.Fatalf("%s %s: %+v", shell.name, flag, r)
 			}
 		}
 	}
@@ -513,9 +775,9 @@ func TestScriptFlagWithoutItsValueIsAUsageErrorInEveryShell(t *testing.T) {
 
 // Without curl the script says so, rather than that Nearhost is not running.
 func TestScriptWithoutCurlSaysSo(t *testing.T) {
-	shells := []string{"sh"}
-	if _, err := exec.LookPath("dash"); err == nil {
-		shells = append(shells, "dash")
+	shells := scriptShells(t)
+	if _, err := exec.LookPath("dash"); err == nil && runtime.GOOS != "windows" {
+		shells = append(shells, scriptShell{"dash", []string{"dash"}, script})
 	}
 	home := shortDir(t)
 	for _, shell := range shells {
@@ -526,7 +788,7 @@ func TestScriptWithoutCurlSaysSo(t *testing.T) {
 			}
 			r := runScriptIn(t, shell, home, []string{"PATH=/nonexistent"}, args...)
 			if r.code != 2 || !strings.Contains(r.stderr, "curl is needed") || strings.Contains(r.stderr, "not running") {
-				t.Fatalf("%s %s: %+v", shell, cmd, r)
+				t.Fatalf("%s %s: %+v", shell.name, cmd, r)
 			}
 		}
 	}
@@ -578,217 +840,230 @@ func storeToken(t *testing.T, home, requester, tok string) {
 }
 
 func TestScriptPassthroughOpen(t *testing.T) {
-	home := shortDir(t)
-	_, p, g, _ := passScript(t, home, "mini", false)
-	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
-	storeToken(t, home, "claude-code", "tok-x")
-	r := runScript(t, home, claudeEnv, "passthrough", "3000", "--label", "browser preview")
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"http://localhost:3000/"`) {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	opens := p.opened()
-	if len(opens) != 1 || opens[0].Requester != "claude-code" || opens[0].Session != "s1" || opens[0].Remote != 3000 || opens[0].Label != "browser preview" {
-		t.Fatalf("opened %+v", opens)
-	}
-	marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
-	data, err := os.ReadFile(marker)
-	if err != nil || string(data) != filepath.Join(home, ".nearhost", "k3f9q2.sock")+"\n" {
-		t.Fatalf("marker %q: %v", data, err)
-	}
-	if m := mode(t, marker); m != 0o600 {
-		t.Fatalf("marker mode %v", m)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000", "--label", "browser preview")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"http://localhost:3000/"`) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		opens := p.opened()
+		if len(opens) != 1 || opens[0].Requester != "claude-code" || opens[0].Session != "s1" || opens[0].Remote != 3000 || opens[0].Label != "browser preview" {
+			t.Fatalf("opened %+v", opens)
+		}
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		data, err := os.ReadFile(marker)
+		if err != nil || string(data) != filepath.Join(home, ".nearhost", "k3f9q2.sock")+"\n" {
+			t.Fatalf("marker %q: %v", data, err)
+		}
+		checkMode(t, marker, 0o600)
+	})
 }
 
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
-	home := shortDir(t)
-	s, _, g, rv := passScript(t, home, "mini", true)
-	// The skill's directories are made private even when they exist already.
-	tokens := filepath.Join(home, ".local", "state", "nearhost", "tokens")
-	if err := os.MkdirAll(tokens, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Dir(tokens), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"expires_at"`) || strings.Contains(r.stdout, `"state"`) {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	id := m[1]
-	if got := rv.prompts(); len(got) != 1 || got[0].ID != id || got[0].Requester != "claude-code" {
-		t.Fatalf("prompts %+v", got)
-	}
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerAlways); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || !json.Valid([]byte(r.stdout)) {
-		t.Fatalf("passthrough-wait: %+v", r)
-	}
-	tok, err := os.ReadFile(tokenPath(home, "claude-code"))
-	if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
-		t.Fatalf("token %q: %v", tok, err)
-	}
-	if m := mode(t, tokenPath(home, "claude-code")); m != 0o600 {
-		t.Fatalf("token mode %v", m)
-	}
-	for _, dir := range []string{filepath.Dir(tokenPath(home, "claude-code")), tokens, filepath.Dir(tokens)} {
-		if m := mode(t, dir); m != 0o700 {
-			t.Fatalf("%s mode %v", dir, m)
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, g, rv := passScript(t, home, "mini", true)
+		// The skill's directories are made private even when they exist already.
+		tokens := filepath.Join(home, ".local", "state", "nearhost", "tokens")
+		if err := os.MkdirAll(tokens, 0o755); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")); err != nil {
-		t.Fatalf("no marker: %v", err)
-	}
-	if got := g.allowed(); len(got) != 1 {
-		t.Fatalf("allowed %v", got)
-	}
-	// The token now opens the next one at once, with no prompt.
-	r = runScript(t, home, claudeEnv, "passthrough", "3001")
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(rv.prompts()) != 1 {
-		t.Fatalf("with the token: %+v", r)
-	}
+		if err := os.Chmod(filepath.Dir(tokens), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil || !strings.Contains(r.stdout, `"expires_at"`) || strings.Contains(r.stdout, `"state"`) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		id := m[1]
+		if got := rv.prompts(); len(got) != 1 || got[0].ID != id || got[0].Requester != "claude-code" {
+			t.Fatalf("prompts %+v", got)
+		}
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", id)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || !json.Valid([]byte(r.stdout)) {
+			t.Fatalf("passthrough-wait: %+v", r)
+		}
+		tok, err := os.ReadFile(tokenPath(home, "claude-code"))
+		if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
+			t.Fatalf("token %q: %v", tok, err)
+		}
+		checkMode(t, tokenPath(home, "claude-code"), 0o600)
+		for _, dir := range []string{filepath.Dir(tokenPath(home, "claude-code")), tokens, filepath.Dir(tokens)} {
+			checkMode(t, dir, 0o700)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")); err != nil {
+			t.Fatalf("no marker: %v", err)
+		}
+		if got := g.allowed(); len(got) != 1 {
+			t.Fatalf("allowed %v", got)
+		}
+		// The token now opens the next one at once, with no prompt.
+		r = shell.run(t, home, claudeEnv, "passthrough", "3001")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(rv.prompts()) != 1 {
+			t.Fatalf("with the token: %+v", r)
+		}
+	})
 }
 
 func TestScriptPassthroughReplyToken(t *testing.T) {
-	home := shortDir(t)
-	s, _, _, _ := passScript(t, home, "mini", true)
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerAlways); err != nil {
-		t.Fatal(err)
-	}
-	// The repeat request is answered with the open record, token included.
-	r = runScript(t, home, claudeEnv, "passthrough", "3000")
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || strings.Contains(r.stdout, "token") {
-		t.Fatalf("repeat: %+v", r)
-	}
-	if json.Valid([]byte(r.stdout)) == false {
-		t.Fatalf("not JSON: %q", r.stdout)
-	}
-	if tok, err := os.ReadFile(tokenPath(home, "claude-code")); err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
-		t.Fatalf("token %q: %v", tok, err)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, _ := passScript(t, home, "mini", true)
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		// The repeat request is answered with the open record, token included.
+		r = shell.run(t, home, claudeEnv, "passthrough", "3000")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "tok-1") || strings.Contains(r.stdout, "token") {
+			t.Fatalf("repeat: %+v", r)
+		}
+		if json.Valid([]byte(r.stdout)) == false {
+			t.Fatalf("not JSON: %q", r.stdout)
+		}
+		if tok, err := os.ReadFile(tokenPath(home, "claude-code")); err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
+			t.Fatalf("token %q: %v", tok, err)
+		}
+	})
 }
 
 func TestScriptPassthroughDeclinedExpired(t *testing.T) {
-	home := shortDir(t)
-	s, c := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini},
-		Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: &fakeGrants{tokens: map[[2]string]string{}}})
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerNo); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.Contains(r.stdout, `"reason"`) || r.stderr != "" {
-		t.Fatalf("declined: %+v", r)
-	}
-	r = runScript(t, home, claudeEnv, "passthrough", "3001")
-	id = proposalID.FindStringSubmatch(r.stdout)[1]
-	c.add(11 * time.Minute)
-	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
-		t.Fatalf("expired: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, c := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini},
+			Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: &fakeGrants{tokens: map[[2]string]string{}}})
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerNo); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", id)
+		if r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.Contains(r.stdout, `"reason"`) || r.stderr != "" {
+			t.Fatalf("declined: %+v", r)
+		}
+		r = shell.run(t, home, claudeEnv, "passthrough", "3001")
+		id = proposalID.FindStringSubmatch(r.stdout)[1]
+		c.add(11 * time.Minute)
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", id)
+		if r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
+			t.Fatalf("expired: %+v", r)
+		}
+	})
 }
 
 func TestScriptPassthroughOpenFailedIsNoDecline(t *testing.T) {
-	home := shortDir(t)
-	s, p, _, _ := passScript(t, home, "mini", true)
-	p.err = errors.New(`ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`)
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
-		t.Fatal("the open did not fail")
-	}
-	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	want := `Nearhost could not open the port: ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`
-	if r.code != 1 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.TrimSpace(r.stderr) != want {
-		t.Fatalf("failed open: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, p, _, _ := passScript(t, home, "mini", true)
+		p.err = errors.New(`ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`)
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+			t.Fatal("the open did not fail")
+		}
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", id)
+		want := `Nearhost could not open the port: ssh: listen tcp 127.0.0.1:3000, "bind": address already in use`
+		if r.code != 1 || !strings.Contains(r.stdout, `"state":"declined"`) || strings.TrimSpace(r.stderr) != want {
+			t.Fatalf("failed open: %+v", r)
+		}
+	})
 }
 
 func TestScriptPassthroughTokenNotInArguments(t *testing.T) {
-	home := shortDir(t)
-	_, _, g, _ := passScript(t, home, "mini", false)
-	g.tokens[[2]string{"mini", "claude-code"}] = "tok-secret"
-	storeToken(t, home, "claude-code", "tok-secret")
-	// A curl that records its arguments, as ps would show them.
-	bin := filepath.Join(home, "bin")
-	if err := os.Mkdir(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	args := filepath.Join(home, "args")
-	real, err := exec.LookPath("curl")
-	if err != nil {
-		t.Skip("no curl")
-	}
-	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + args + "\nexec " + real + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	r := runScript(t, home, append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, claudeEnv...), "passthrough", "3000")
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	seen, err := os.ReadFile(args)
-	if err != nil || !strings.Contains(string(seen), "/v1/passthroughs") {
-		t.Fatalf("curl was not called: %q %v", seen, err)
-	}
-	if strings.Contains(string(seen), "tok-secret") {
-		t.Fatalf("the token is in curl's arguments:\n%s", seen)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-secret"
+		storeToken(t, home, "claude-code", "tok-secret")
+		if runtime.GOOS == "windows" {
+			t.Skip("the curl that records its arguments is a sh script")
+		}
+		// A curl that records its arguments, as ps would show them.
+		bin := filepath.Join(home, "bin")
+		if err := os.Mkdir(bin, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		args := filepath.Join(home, "args")
+		real, err := exec.LookPath("curl")
+		if err != nil {
+			t.Skip("no curl")
+		}
+		wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + args + "\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(wrapper), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		r := shell.run(t, home, append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, claudeEnv...), "passthrough", "3000")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		seen, err := os.ReadFile(args)
+		if err != nil || !strings.Contains(string(seen), "/v1/passthroughs") {
+			t.Fatalf("curl was not called: %q %v", seen, err)
+		}
+		if strings.Contains(string(seen), "tok-secret") {
+			t.Fatalf("the token is in curl's arguments:\n%s", seen)
+		}
+	})
 }
 
 func TestScriptPassthroughRevokedToken(t *testing.T) {
-	home := shortDir(t)
-	_, _, _, rv := passScript(t, home, "mini", true)
-	storeToken(t, home, "claude-code", "revoked")
-	posts, front := countPosts(t, home)
-	r := runScript(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "passthrough", "3000")
-	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	if _, err := os.Stat(tokenPath(home, "claude-code")); !os.IsNotExist(err) {
-		t.Fatalf("the revoked token stayed: %v", err)
-	}
-	if got := rv.prompts(); len(got) != 1 {
-		t.Fatalf("prompts %+v", got)
-	}
-	if n := posts(); n != 2 {
-		t.Fatalf("the server saw %d passthrough requests, want 2", n)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, _, rv := passScript(t, home, "mini", true)
+		storeToken(t, home, "claude-code", "revoked")
+		posts, front := countPosts(t, home)
+		r := shell.run(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "passthrough", "3000")
+		if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		if _, err := os.Stat(tokenPath(home, "claude-code")); !os.IsNotExist(err) {
+			t.Fatalf("the revoked token stayed: %v", err)
+		}
+		if got := rv.prompts(); len(got) != 1 {
+			t.Fatalf("prompts %+v", got)
+		}
+		if n := posts(); n != 2 {
+			t.Fatalf("the server saw %d passthrough requests, want 2", n)
+		}
+	})
 }
 
 func TestScriptPassthroughAgent(t *testing.T) {
-	home := shortDir(t)
-	s, p, g, _ := passScript(t, home, "mini", true)
-	g.tokens[[2]string{"mini", "agent"}] = "tok-agent"
-	storeToken(t, home, "agent", "tok-agent")
-	r := runScript(t, home, nil, "passthrough", "3000")
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil || strings.Contains(r.stdout, `"state"`) {
-		t.Fatalf("a token was sent: %+v", r)
-	}
-	if err := s.AnswerPassthrough(context.Background(), m[1], AnswerYes); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, nil, "passthrough-wait", m[1])
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
-		t.Fatalf("wait: %+v", r)
-	}
-	if got := p.opened(); len(got) != 1 || got[0].Requester != "agent" || got[0].Session != "" {
-		t.Fatalf("opened %+v", got)
-	}
-	if tok, _ := os.ReadFile(tokenPath(home, "agent")); strings.TrimSpace(string(tok)) != "tok-agent" {
-		t.Fatalf("the agent's token file changed: %q", tok)
-	}
-	if entries, _ := os.ReadDir(filepath.Join(home, ".local", "state", "nearhost", "sessions")); len(entries) != 0 {
-		t.Fatalf("a marker without a session: %v", entries)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, p, g, _ := passScript(t, home, "mini", true)
+		g.tokens[[2]string{"mini", "agent"}] = "tok-agent"
+		storeToken(t, home, "agent", "tok-agent")
+		r := shell.run(t, home, nil, "passthrough", "3000")
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil || strings.Contains(r.stdout, `"state"`) {
+			t.Fatalf("a token was sent: %+v", r)
+		}
+		if err := s.AnswerPassthrough(context.Background(), m[1], AnswerYes); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, nil, "passthrough-wait", m[1])
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+			t.Fatalf("wait: %+v", r)
+		}
+		if got := p.opened(); len(got) != 1 || got[0].Requester != "agent" || got[0].Session != "" {
+			t.Fatalf("opened %+v", got)
+		}
+		if tok, _ := os.ReadFile(tokenPath(home, "agent")); strings.TrimSpace(string(tok)) != "tok-agent" {
+			t.Fatalf("the agent's token file changed: %q", tok)
+		}
+		if entries, _ := os.ReadDir(filepath.Join(home, ".local", "state", "nearhost", "sessions")); len(entries) != 0 {
+			t.Fatalf("a marker without a session: %v", entries)
+		}
+	})
 }
 
 func TestScriptPassthroughNotConnected(t *testing.T) {
@@ -803,109 +1078,123 @@ func TestScriptPassthroughNotConnected(t *testing.T) {
 }
 
 func TestScriptPassthroughOldNearhost(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", true)
-	host, _ := os.Hostname()
-	host, _, _ = strings.Cut(host, ".")
-	r := runScript(t, home, nil, "passthrough", "3000")
-	want := "Nearhost on dev@k3f9q2 is too old for passthrough; update it there. Meanwhile, forward it yourself: ssh -N -L 3000:localhost:3000 " + host + "\n"
-	if r.code != 5 || r.stderr != want {
-		t.Fatalf("%+v, want %q", r, want)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", "mini", true)
+		host, _ := os.Hostname()
+		host, _, _ = strings.Cut(host, ".")
+		r := shell.run(t, home, nil, "passthrough", "3000")
+		want := "Nearhost on dev@k3f9q2 is too old for passthrough; update it there. Meanwhile, forward it yourself: ssh -N -L 3000:localhost:3000 " + host + "\n"
+		if r.code != 5 || r.stderr != want {
+			t.Fatalf("%+v, want %q", r, want)
+		}
+	})
 }
 
 func TestScriptPassthroughCloseSession(t *testing.T) {
-	home := shortDir(t)
-	_, p, g, _ := passScript(t, home, "mini", false)
-	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
-	storeToken(t, home, "claude-code", "tok-x")
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	if r.code != 0 {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
-	r = runScript(t, home, nil, "passthrough-close", "--session", "s1")
-	if r.code != 0 || len(p.closed()) != 1 {
-		t.Fatalf("close: %+v, closed %v", r, p.closed())
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker stayed: %v", err)
-	}
-
-	// With no marker it neither scans ~/.nearhost nor waits.
-	dead, err := net.Listen("unix", filepath.Join(home, ".nearhost", "dead.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dead.Close()
-	var mu sync.Mutex
-	dials := 0
-	go func() {
-		for {
-			c, err := dead.Accept()
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			dials++
-			mu.Unlock()
-			c.Close()
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		if r.code != 0 {
+			t.Fatalf("passthrough: %+v", r)
 		}
-	}()
-	start := time.Now()
-	r = runScript(t, home, nil, "passthrough-close", "--session", "none")
-	mu.Lock()
-	defer mu.Unlock()
-	if r.code != 0 || time.Since(start) > 1500*time.Millisecond || dials != 0 || len(p.closed()) != 1 {
-		t.Fatalf("no marker: %+v after %v, %d dials", r, time.Since(start), dials)
-	}
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		r = shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+		if r.code != 0 || len(p.closed()) != 1 {
+			t.Fatalf("close: %+v, closed %v", r, p.closed())
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed: %v", err)
+		}
+
+		// With no marker it neither scans ~/.nearhost nor waits.
+		dead, err := net.Listen("unix", filepath.Join(home, ".nearhost", "dead.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dead.Close()
+		var mu sync.Mutex
+		dials := 0
+		go func() {
+			for {
+				c, err := dead.Accept()
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				dials++
+				mu.Unlock()
+				c.Close()
+			}
+		}()
+		// PowerShell takes most of a second to start, more on Windows, but
+		// still well inside the hook's 3 seconds.
+		limit := 1500 * time.Millisecond
+		if shell.powerShell() {
+			limit = 2500 * time.Millisecond
+		}
+		start := time.Now()
+		r = shell.run(t, home, nil, "passthrough-close", "--session", "none")
+		mu.Lock()
+		defer mu.Unlock()
+		if r.code != 0 || time.Since(start) > limit || dials != 0 || len(p.closed()) != 1 {
+			t.Fatalf("no marker: %+v after %v, %d dials", r, time.Since(start), dials)
+		}
+	})
 }
 
 func TestScriptPassthroughCloseByID(t *testing.T) {
-	home := shortDir(t)
-	s, p, _, _ := passScript(t, home, "mini", true)
-	r := runScript(t, home, nil, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, nil, "passthrough-close", id)
-	if r.code != 0 || len(p.closed()) != 1 || p.closed()[0] != id {
-		t.Fatalf("close: %+v, closed %v", r, p.closed())
-	}
-	// An id nothing knows still exits 0.
-	if r = runScript(t, home, nil, "passthrough-close", "ffff"); r.code != 0 {
-		t.Fatalf("unknown id: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, p, _, _ := passScript(t, home, "mini", true)
+		r := shell.run(t, home, nil, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, nil, "passthrough-close", id)
+		if r.code != 0 || len(p.closed()) != 1 || p.closed()[0] != id {
+			t.Fatalf("close: %+v, closed %v", r, p.closed())
+		}
+		// An id nothing knows still exits 0.
+		if r = shell.run(t, home, nil, "passthrough-close", "ffff"); r.code != 0 {
+			t.Fatalf("unknown id: %+v", r)
+		}
+	})
 }
 
 func TestScriptPassthroughXDGStateHome(t *testing.T) {
-	home := shortDir(t)
-	state := filepath.Join(shortDir(t), "xdg")
-	_, _, g, _ := passScript(t, home, "mini", false)
-	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
-	path := filepath.Join(state, "nearhost", "tokens", "lid", "claude-code")
-	os.MkdirAll(filepath.Dir(path), 0o700)
-	os.WriteFile(path, []byte("tok-x\n"), 0o600)
-	env := append([]string{"XDG_STATE_HOME=" + state}, claudeEnv...)
-	r := runScript(t, home, env, "passthrough", "3000")
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
-		t.Fatalf("passthrough: %+v", r)
-	}
-	marker := filepath.Join(state, "nearhost", "sessions", "s1")
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("no marker under XDG_STATE_HOME: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".local")); err == nil {
-		t.Fatal("wrote under ~/.local")
-	}
-	r = runScript(t, home, env, "passthrough-close", "--session", "s1")
-	if r.code != 0 {
-		t.Fatalf("close: %+v", r)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker stayed: %v", err)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		state := filepath.Join(shortDir(t), "xdg")
+		_, _, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		path := filepath.Join(state, "nearhost", "tokens", "lid", "claude-code")
+		os.MkdirAll(filepath.Dir(path), 0o700)
+		os.WriteFile(path, []byte("tok-x\n"), 0o600)
+		env := append([]string{"XDG_STATE_HOME=" + state}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		marker := filepath.Join(state, "nearhost", "sessions", "s1")
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("no marker under XDG_STATE_HOME: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".local")); err == nil {
+			t.Fatal("wrote under ~/.local")
+		}
+		r = shell.run(t, home, env, "passthrough-close", "--session", "s1")
+		if r.code != 0 {
+			t.Fatalf("close: %+v", r)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed: %v", err)
+		}
+	})
 }
 
 // countPosts proxies home's socket k3f9q2 through a second socket the
@@ -955,48 +1244,54 @@ func countPosts(t *testing.T, home string, path ...string) (posts func() int, fr
 }
 
 func TestScriptPassthroughPendingMarker(t *testing.T) {
-	home := shortDir(t)
-	s, _, _, _ := passScript(t, home, "mini", true)
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("no marker while pending: %v", err)
-	}
-	if r = runScript(t, home, nil, "passthrough-close", "--session", "s1"); r.code != 0 {
-		t.Fatalf("close: %+v", r)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker stayed: %v", err)
-	}
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
-		t.Fatal("the request was still pending after its session closed")
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, _ := passScript(t, home, "mini", true)
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("no marker while pending: %v", err)
+		}
+		if r = shell.run(t, home, nil, "passthrough-close", "--session", "s1"); r.code != 0 {
+			t.Fatalf("close: %+v", r)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed: %v", err)
+		}
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+			t.Fatal("the request was still pending after its session closed")
+		}
+	})
 }
 
 func TestScriptPassthroughNotConnectedAnswer(t *testing.T) {
-	home := shortDir(t)
-	_, p, g, _ := passScript(t, home, "mini", false)
-	p.err = fmt.Errorf("dial: %w", ErrNotConnected)
-	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
-	storeToken(t, home, "claude-code", "tok-x")
-	host, _ := os.Hostname()
-	host, _, _ = strings.Cut(host, ".")
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	want := "Nearhost isn't connected to this server. On your laptop, select " + host + " in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L 3000:localhost:3000 " + host + "\n"
-	if r.code != 2 || r.stderr != want {
-		t.Fatalf("%+v, want %q", r, want)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		p.err = fmt.Errorf("dial: %w", ErrNotConnected)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		host, _ := os.Hostname()
+		host, _, _ = strings.Cut(host, ".")
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		want := "Nearhost isn't connected to this server. On your laptop, select " + host + " in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L 3000:localhost:3000 " + host + "\n"
+		if r.code != 2 || r.stderr != want {
+			t.Fatalf("%+v, want %q", r, want)
+		}
+	})
 }
 
 func TestScriptPassthroughBadPort(t *testing.T) {
-	home := shortDir(t)
-	passScript(t, home, "mini", true)
-	for _, port := range []string{"03000", "0", "70000", "abc"} {
-		if r := runScript(t, home, claudeEnv, "passthrough", port); r.code != 1 || r.stdout != "" {
-			t.Errorf("port %s: %+v", port, r)
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		passScript(t, home, "mini", true)
+		for _, port := range []string{"03000", "0", "70000", "abc"} {
+			if r := shell.run(t, home, claudeEnv, "passthrough", port); r.code != 1 || r.stdout != "" {
+				t.Errorf("port %s: %+v", port, r)
+			}
 		}
-	}
+	})
 }
 
 // writeMarker writes a session marker for session sid naming sock, the way
@@ -1035,71 +1330,79 @@ func answerDelete(t *testing.T, home string, status int) (string, *atomic.Int32)
 }
 
 func TestScriptCloseKeepsMarkerOnFailure(t *testing.T) {
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl is not installed")
-	}
-	home := shortDir(t)
-	sock, deletes := answerDelete(t, home, http.StatusBadGateway)
-	marker := writeMarker(t, home, "s1", sock)
-	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
-	if r.code != 0 {
-		t.Fatalf("close: %+v", r)
-	}
-	if n := deletes.Load(); n != 1 {
-		t.Fatalf("%d DELETE requests, want 1", n)
-	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("marker lost after a failed close: %v", err)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if _, err := exec.LookPath("curl"); err != nil {
+			t.Skip("curl is not installed")
+		}
+		home := shortDir(t)
+		sock, deletes := answerDelete(t, home, http.StatusBadGateway)
+		marker := writeMarker(t, home, "s1", sock)
+		r := shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+		if r.code != 0 {
+			t.Fatalf("close: %+v", r)
+		}
+		if n := deletes.Load(); n != 1 {
+			t.Fatalf("%d DELETE requests, want 1", n)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("marker lost after a failed close: %v", err)
+		}
+	})
 }
 
 // A marker whose socket is gone names a Nearhost that is no longer running,
 // whose passthroughs ended with it, so the marker goes.
 func TestScriptCloseRemovesMarkerWithoutSocket(t *testing.T) {
-	home := shortDir(t)
-	marker := writeMarker(t, home, "s1", filepath.Join(home, "gone.sock"))
-	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
-	if r.code != 0 || r.stdout != "" || r.stderr != "" {
-		t.Fatalf("close: %+v", r)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker stayed with its socket gone: %v", err)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		marker := writeMarker(t, home, "s1", filepath.Join(home, "gone.sock"))
+		r := shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+		if r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Fatalf("close: %+v", r)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed with its socket gone: %v", err)
+		}
+	})
 }
 
 func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl is not installed")
-	}
-	home := shortDir(t)
-	sock, _ := answerDelete(t, home, http.StatusNoContent)
-	marker := writeMarker(t, home, "s1", sock)
-	r := runScript(t, home, nil, "passthrough-close", "--session", "s1")
-	if r.code != 0 {
-		t.Fatalf("close: %+v", r)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker stayed after a close: %v", err)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if _, err := exec.LookPath("curl"); err != nil {
+			t.Skip("curl is not installed")
+		}
+		home := shortDir(t)
+		sock, _ := answerDelete(t, home, http.StatusNoContent)
+		marker := writeMarker(t, home, "s1", sock)
+		r := shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+		if r.code != 0 {
+			t.Fatalf("close: %+v", r)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed after a close: %v", err)
+		}
+	})
 }
 
 func TestScriptDecodesHTMLEscapes(t *testing.T) {
-	home := shortDir(t)
-	s, p, _, _ := passScript(t, home, "mini", true)
-	p.err = errors.New("port <3000> & more\u2028on\u2029lines")
-	r := runScript(t, home, claudeEnv, "passthrough", "3000")
-	id := proposalID.FindStringSubmatch(r.stdout)[1]
-	if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
-		t.Fatal("the open did not fail")
-	}
-	r = runScript(t, home, claudeEnv, "passthrough-wait", id)
-	if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more\u2028on\u2029lines`) {
-		t.Fatalf("body is not escaped: %q", r.stdout)
-	}
-	want := "Nearhost could not open the port: port <3000> & more on lines"
-	if strings.TrimSpace(r.stderr) != want {
-		t.Fatalf("stderr %q, want %q", r.stderr, want)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, p, _, _ := passScript(t, home, "mini", true)
+		p.err = errors.New("port <3000> & more\u2028on\u2029lines")
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), id, AnswerYes); err == nil {
+			t.Fatal("the open did not fail")
+		}
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", id)
+		if !strings.Contains(r.stdout, `\u003c3000\u003e \u0026 more\u2028on\u2029lines`) {
+			t.Fatalf("body is not escaped: %q", r.stdout)
+		}
+		want := "Nearhost could not open the port: port <3000> & more on lines"
+		if strings.TrimSpace(r.stderr) != want {
+			t.Fatalf("stderr %q, want %q", r.stderr, want)
+		}
+	})
 }
 
 // docScript serves origin like scriptServerWith, with a fake Shower and
@@ -1145,223 +1448,243 @@ func realDir(t *testing.T, dir string) string {
 }
 
 func TestScriptOpenSendsRoot(t *testing.T) {
-	home := shortDir(t)
-	_, sh, g, rv := docScript(t, home, "mini", true)
-	repo := filepath.Join(realDir(t, home), "repo")
-	docFile(t, repo, "docs/p.md")
-	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("git: %v %s", err, out)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, sh, g, rv := docScript(t, home, shell.origin(), true)
+		repo := filepath.Join(realDir(t, home), "repo")
+		docFile(t, repo, "docs/p.md")
+		if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+			t.Skipf("git: %v %s", err, out)
+		}
 
-	// Without a token the prompt carries the session, label and requester.
-	r := runScript(t, home, claudeEnv, "open", "repo/docs/p.md", "--label", "plan")
-	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
-		t.Fatalf("open: %+v", r)
-	}
-	got := rv.docPrompts()
-	if len(got) != 1 || got[0].Requester != "claude-code" || got[0].Session != "s1" || got[0].Label != "plan" || got[0].Root != repo || got[0].Doc != "docs/p.md" {
-		t.Fatalf("prompts %+v", got)
-	}
+		// Without a token the prompt carries the session, label and requester.
+		r := shell.run(t, home, claudeEnv, "open", "repo/docs/p.md", "--label", "plan")
+		if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		got := rv.docPrompts()
+		if len(got) != 1 || got[0].Requester != "claude-code" || got[0].Session != "s1" || got[0].Label != "plan" || got[0].Root != repo || got[0].Doc != "docs/p.md" {
+			t.Fatalf("prompts %+v", got)
+		}
 
-	// With a documents token the same request opens at once.
-	g.tokens[[2]string{"mini", "claude-code"}] = "doc-tok"
-	if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(docToken(home, "claude-code"), []byte("doc-tok\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, claudeEnv, "open", filepath.Join(repo, "docs", "p.md"))
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"https://localhost:8443/d/tree/docs/p.md"`) || strings.Contains(r.stdout, "doc-tok") {
-		t.Fatalf("open: %+v", r)
-	}
-	if shows := sh.showed(); len(shows) != 1 || shows[0].Root != repo || shows[0].Doc != "docs/p.md" || shows[0].Requester != "claude-code" {
-		t.Fatalf("shows %+v", shows)
-	}
+		// With a documents token the same request opens at once.
+		g.tokens[[2]string{shell.origin(), "claude-code"}] = "doc-tok"
+		if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(docToken(home, "claude-code"), []byte("doc-tok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "open", filepath.Join(repo, "docs", "p.md"))
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"https://localhost:8443/d/tree/docs/p.md"`) || strings.Contains(r.stdout, "doc-tok") {
+			t.Fatalf("open: %+v", r)
+		}
+		if shows := sh.showed(); len(shows) != 1 || shows[0].Root != repo || shows[0].Doc != "docs/p.md" || shows[0].Requester != "claude-code" {
+			t.Fatalf("shows %+v", shows)
+		}
+	})
 }
 
 func TestScriptOpenWithoutGit(t *testing.T) {
-	home := shortDir(t)
-	_, _, _, rv := docScript(t, home, "mini", true)
-	dir := filepath.Join(realDir(t, home), "notes")
-	docFile(t, dir, "p.html")
-	r := runScript(t, home, claudeEnv, "open", filepath.Join(dir, "p.html"))
-	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
-		t.Fatalf("open: %+v", r)
-	}
-	got := rv.docPrompts()
-	if len(got) != 1 || got[0].Root != dir || got[0].Doc != "p.html" {
-		t.Fatalf("prompts %+v", got)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, _, rv := docScript(t, home, shell.origin(), true)
+		dir := filepath.Join(realDir(t, home), "notes")
+		docFile(t, dir, "p.html")
+		r := shell.run(t, home, claudeEnv, "open", filepath.Join(dir, "p.html"))
+		if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		got := rv.docPrompts()
+		if len(got) != 1 || got[0].Root != dir || got[0].Doc != "p.html" {
+			t.Fatalf("prompts %+v", got)
+		}
+	})
 }
 
 func TestScriptOpenWaitStoresDocToken(t *testing.T) {
-	home := shortDir(t)
-	s, _, _, _ := docScript(t, home, "mini", true)
-	storeToken(t, home, "claude-code", "pass-tok")
-	dir := filepath.Join(realDir(t, home), "notes")
-	p := docFile(t, dir, "p.md")
-	r := runScript(t, home, claudeEnv, "open", p)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil {
-		t.Fatalf("open: %+v", r)
-	}
-	if err := s.AnswerDocument(context.Background(), m[1], AnswerAlways); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, claudeEnv, "open-wait", m[1])
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout, "token") {
-		t.Fatalf("open-wait: %+v", r)
-	}
-	tok, err := os.ReadFile(docToken(home, "claude-code"))
-	if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
-		t.Fatalf("documents token %q: %v", tok, err)
-	}
-	if m := mode(t, docToken(home, "claude-code")); m != 0o600 {
-		t.Fatalf("token mode %v", m)
-	}
-	if pt, _ := os.ReadFile(tokenPath(home, "claude-code")); strings.TrimSpace(string(pt)) != "pass-tok" {
-		t.Fatalf("the passthrough token changed: %q", pt)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, _ := docScript(t, home, shell.origin(), true)
+		storeToken(t, home, "claude-code", "pass-tok")
+		dir := filepath.Join(realDir(t, home), "notes")
+		p := docFile(t, dir, "p.md")
+		r := shell.run(t, home, claudeEnv, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		if err := s.AnswerDocument(context.Background(), m[1], AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "open-wait", m[1])
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout, "token") {
+			t.Fatalf("open-wait: %+v", r)
+		}
+		tok, err := os.ReadFile(docToken(home, "claude-code"))
+		if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
+			t.Fatalf("documents token %q: %v", tok, err)
+		}
+		checkMode(t, docToken(home, "claude-code"), 0o600)
+		if pt, _ := os.ReadFile(tokenPath(home, "claude-code")); strings.TrimSpace(string(pt)) != "pass-tok" {
+			t.Fatalf("the passthrough token changed: %q", pt)
+		}
+	})
 }
 
 func TestScriptOpenWaitDeclinedExpired(t *testing.T) {
-	home := shortDir(t)
-	s, _, _, _ := docScript(t, home, "mini", true)
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	r := runScript(t, home, claudeEnv, "open", p)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if m == nil {
-		t.Fatalf("open: %+v", r)
-	}
-	if err := s.AnswerDocument(context.Background(), m[1], AnswerNo); err != nil {
-		t.Fatal(err)
-	}
-	if r := runScript(t, home, claudeEnv, "open-wait", m[1]); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
-		t.Fatalf("declined: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, _ := docScript(t, home, shell.origin(), true)
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, claudeEnv, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if m == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		if err := s.AnswerDocument(context.Background(), m[1], AnswerNo); err != nil {
+			t.Fatal(err)
+		}
+		if r := shell.run(t, home, claudeEnv, "open-wait", m[1]); r.code != 6 || !strings.Contains(r.stdout, `"state":"declined"`) {
+			t.Fatalf("declined: %+v", r)
+		}
+	})
 }
 
 func TestScriptOpenRetriesOn401(t *testing.T) {
-	home := shortDir(t)
-	_, _, _, rv := docScript(t, home, "mini", true)
-	storeToken(t, home, "claude-code", "pass-tok")
-	if err := os.WriteFile(docToken(home, "claude-code"), []byte("revoked\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	posts, front := countPosts(t, home, "/v1/documents")
-	r := runScript(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "open", p)
-	if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
-		t.Fatalf("open: %+v", r)
-	}
-	if _, err := os.Stat(docToken(home, "claude-code")); !os.IsNotExist(err) {
-		t.Fatalf("the revoked token stayed: %v", err)
-	}
-	if _, err := os.Stat(tokenPath(home, "claude-code")); err != nil {
-		t.Fatalf("the passthrough token went: %v", err)
-	}
-	if got := rv.docPrompts(); len(got) != 1 {
-		t.Fatalf("prompts %+v", got)
-	}
-	if n := posts(); n != 2 {
-		t.Fatalf("the server saw %d requests, want 2", n)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, _, rv := docScript(t, home, shell.origin(), true)
+		storeToken(t, home, "claude-code", "pass-tok")
+		if err := os.WriteFile(docToken(home, "claude-code"), []byte("revoked\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		posts, front := countPosts(t, home, "/v1/documents")
+		r := shell.run(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "open", p)
+		if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil || strings.Contains(r.stdout, `"state"`) {
+			t.Fatalf("open: %+v", r)
+		}
+		if _, err := os.Stat(docToken(home, "claude-code")); !os.IsNotExist(err) {
+			t.Fatalf("the revoked token stayed: %v", err)
+		}
+		if _, err := os.Stat(tokenPath(home, "claude-code")); err != nil {
+			t.Fatalf("the passthrough token went: %v", err)
+		}
+		if got := rv.docPrompts(); len(got) != 1 {
+			t.Fatalf("prompts %+v", got)
+		}
+		if n := posts(); n != 2 {
+			t.Fatalf("the server saw %d requests, want 2", n)
+		}
+	})
 }
 
 func TestScriptOpenOldNearhost(t *testing.T) {
-	home := shortDir(t)
-	scriptServer(t, home, "k3f9q2", "mini", true)
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	r := runScript(t, home, nil, "open", p)
-	if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, p) {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "k3f9q2", shell.origin(), true)
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, nil, "open", p)
+		if r.code != 5 || !strings.Contains(r.stderr, "update Nearhost") || !strings.Contains(r.stderr, p) {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptOpenNoNearhost(t *testing.T) {
-	home := shortDir(t)
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	r := runScript(t, home, nil, "open", p)
-	if r.code != 2 || !strings.Contains(r.stderr, "isn't running or connected") || !strings.Contains(r.stderr, p) {
-		t.Fatalf("%+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, nil, "open", p)
+		if r.code != 2 || !strings.Contains(r.stderr, "isn't running or connected") || !strings.Contains(r.stderr, p) {
+			t.Fatalf("%+v", r)
+		}
+	})
 }
 
 func TestScriptOpenNotConnectedAndUp(t *testing.T) {
-	home := shortDir(t)
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	sh := &fakeShower{served: map[[2]string]string{}, resolveErr: ErrNotConnected}
-	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
-	r := runScript(t, home, nil, "open", p)
-	if r.code != 2 || !strings.Contains(r.stderr, "isn't connected") || !strings.Contains(r.stderr, p) {
-		t.Fatalf("not connected: %+v", r)
-	}
-	home = shortDir(t)
-	p = docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	docScript(t, home, "mini", false)
-	r = runScript(t, home, nil, "open", p)
-	if r.code != 3 || !strings.Contains(r.stderr, "nearhost up") || !strings.Contains(r.stderr, p) {
-		t.Fatalf("up: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		sh := &fakeShower{served: map[[2]string]string{}, resolveErr: ErrNotConnected}
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		r := shell.run(t, home, nil, "open", p)
+		if r.code != 2 || !strings.Contains(r.stderr, "isn't connected") || !strings.Contains(r.stderr, p) {
+			t.Fatalf("not connected: %+v", r)
+		}
+		home = shortDir(t)
+		p = docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		docScript(t, home, shell.origin(), false)
+		r = shell.run(t, home, nil, "open", p)
+		if r.code != 3 || !strings.Contains(r.stderr, "nearhost up") || !strings.Contains(r.stderr, p) {
+			t.Fatalf("up: %+v", r)
+		}
+	})
 }
 
 func TestScriptOpenAgentKeepsNoToken(t *testing.T) {
-	home := shortDir(t)
-	s, sh, g, rv := docScript(t, home, "mini", true)
-	g.tokens[[2]string{"mini", "agent"}] = "tok-agent"
-	if err := os.MkdirAll(filepath.Dir(docToken(home, "agent")), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(docToken(home, "agent"), []byte("tok-agent\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	r := runScript(t, home, nil, "open", p)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if r.code != 0 || m == nil || strings.Contains(r.stdout, `"state"`) {
-		t.Fatalf("a token was sent: %+v", r)
-	}
-	if got := rv.docPrompts(); len(got) != 1 || got[0].Requester != "agent" || got[0].Session != "" || got[0].CanAlways {
-		t.Fatalf("prompts %+v", got)
-	}
-	if err := s.AnswerDocument(context.Background(), m[1], AnswerYes); err != nil {
-		t.Fatal(err)
-	}
-	r = runScript(t, home, nil, "open-wait", m[1])
-	if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(sh.showed()) != 1 {
-		t.Fatalf("open-wait: %+v", r)
-	}
-	if tok, _ := os.ReadFile(docToken(home, "agent")); strings.TrimSpace(string(tok)) != "tok-agent" {
-		t.Fatalf("the agent's token file changed: %q", tok)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, sh, g, rv := docScript(t, home, shell.origin(), true)
+		g.tokens[[2]string{shell.origin(), "agent"}] = "tok-agent"
+		if err := os.MkdirAll(filepath.Dir(docToken(home, "agent")), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(docToken(home, "agent"), []byte("tok-agent\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, nil, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil || strings.Contains(r.stdout, `"state"`) {
+			t.Fatalf("a token was sent: %+v", r)
+		}
+		if got := rv.docPrompts(); len(got) != 1 || got[0].Requester != "agent" || got[0].Session != "" || got[0].CanAlways {
+			t.Fatalf("prompts %+v", got)
+		}
+		if err := s.AnswerDocument(context.Background(), m[1], AnswerYes); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, nil, "open-wait", m[1])
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(sh.showed()) != 1 {
+			t.Fatalf("open-wait: %+v", r)
+		}
+		if tok, _ := os.ReadFile(docToken(home, "agent")); strings.TrimSpace(string(tok)) != "tok-agent" {
+			t.Fatalf("the agent's token file changed: %q", tok)
+		}
+	})
 }
 
 func TestScriptOpenRefusedGivesThePath(t *testing.T) {
-	home := shortDir(t)
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	sh := &fakeShower{served: map[[2]string]string{}, resolveErr: fmt.Errorf("%w: Nearhost won't serve your whole home folder", ErrBadDocument)}
-	scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
-	r := runScript(t, home, claudeEnv, "open", p)
-	if r.code != 1 || !strings.Contains(r.stdout, "whole home folder") || !strings.Contains(r.stderr, "Nothing was opened") || !strings.Contains(r.stderr, p) {
-		t.Fatalf("refused: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		sh := &fakeShower{served: map[[2]string]string{}, resolveErr: fmt.Errorf("%w: Nearhost won't serve your whole home folder", ErrBadDocument)}
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		r := shell.run(t, home, claudeEnv, "open", p)
+		if r.code != 1 || !strings.Contains(r.stdout, "whole home folder") || !strings.Contains(r.stderr, "Nothing was opened") || !strings.Contains(r.stderr, p) {
+			t.Fatalf("refused: %+v", r)
+		}
+	})
 }
 
 func TestScriptOpenWaitExpired(t *testing.T) {
-	home := shortDir(t)
-	sh := &fakeShower{served: map[[2]string]string{}}
-	_, c := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
-	p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
-	r := runScript(t, home, claudeEnv, "open", p)
-	m := proposalID.FindStringSubmatch(r.stdout)
-	if m == nil {
-		t.Fatalf("open: %+v", r)
-	}
-	c.add(11 * time.Minute)
-	if r := runScript(t, home, claudeEnv, "open-wait", m[1]); r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
-		t.Fatalf("expired: %+v", r)
-	}
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		sh := &fakeShower{served: map[[2]string]string{}}
+		_, c := scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, claudeEnv, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if m == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		c.add(11 * time.Minute)
+		if r := shell.run(t, home, claudeEnv, "open-wait", m[1]); r.code != 7 || !strings.Contains(r.stdout, `"state":"expired"`) {
+			t.Fatalf("expired: %+v", r)
+		}
+	})
 }
 
 // relay accepts connections on a Unix socket at path and passes each to

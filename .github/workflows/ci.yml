@@ -37,13 +37,20 @@ jobs:
       - run: go test -count=1 -run 'PerProcess|TestNewChoosesTheStrategy|TestNewIsPerProcessOnWindows' ./internal/transport/
       # These packages' tests are written to pass on every OS.
       - run: go test ./internal/netbind/... ./internal/documents/... ./internal/oserr/... ./internal/desktop/... ./internal/winsys/... ./internal/update/... ./internal/elevate/... ./internal/testutil/...
+      # The skill's PowerShell script, under Windows PowerShell 5.1 and pwsh.
+      - run: go test -run 'TestScript|TestPowerShellScript' ./internal/agentapi/
 
-  # The agent skill's script runs on servers with nothing but sh and curl.
+  # The agent skill's script runs on servers with nothing but sh and curl,
+  # and its PowerShell twin on Windows laptops.
   skill:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: shellcheck -s sh agents/nearhost/skills/nearhost/scripts/nearhost.sh
+      - shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Invoke-ScriptAnalyzer -Path agents/nearhost/skills/nearhost/scripts/nearhost.ps1 -EnableExit -Severity Error,Warning
 
   # Run the official presets' fixtures through this build, so a change to the
   # preset engine that breaks a shipped preset fails here before it merges.
