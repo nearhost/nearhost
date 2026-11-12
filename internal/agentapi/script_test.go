@@ -630,7 +630,7 @@ func TestScriptDoctorOnANearhostWithoutCapabilities(t *testing.T) {
 func TestScriptWaitsForTheDoctorAndReloadLongerThanTheServer(t *testing.T) {
 	for file, call := range map[string]string{
 		script:   `(?s)\n%s\)\n.*?\bcall "\$SOCK" ([0-9]+) `,
-		psScript: `(?s)\n\t'%s' \{\n.*?\b(?:Invoke-PathCall '[^']*'|Invoke-Api \$script:Sock) ([0-9]+) `,
+		psScript: `(?s)\n\t'%s' \{\n.*?\b(?:Invoke-PathCall|Invoke-Api) [^\n]*?-Limit ([0-9]+) `,
 	} {
 		data, err := os.ReadFile(file)
 		if err != nil {
@@ -651,6 +651,19 @@ func TestScriptWaitsForTheDoctorAndReloadLongerThanTheServer(t *testing.T) {
 	}
 }
 
+// An id or port with a trailing newline is a usage error, not one the
+// script passes on: .NET's $ would match before that newline.
+func TestScriptRefusesATrailingNewline(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		for _, args := range [][]string{{"wait", "abc\n"}, {"passthrough-wait", "abc\n"}, {"open-wait", "abc\n"}, {"passthrough", "3000\n"}} {
+			if r := shell.run(t, home, nil, args...); r.code != 1 || r.stdout != "" {
+				t.Errorf("%q: %+v", args, r)
+			}
+		}
+	})
+}
+
 // The skill runs nearhost.ps1 on Windows and nearhost.sh everywhere else,
 // and lets Claude Code run either without asking, from Bash or PowerShell.
 func TestSkillRunsThePowerShellScriptOnWindows(t *testing.T) {
@@ -663,17 +676,28 @@ func TestSkillRunsThePowerShellScriptOnWindows(t *testing.T) {
 	if !ok {
 		t.Fatal("SKILL.md has no frontmatter")
 	}
-	ps := `powershell -NoProfile -ExecutionPolicy Bypass -File ${CLAUDE_SKILL_DIR}\scripts\nearhost.ps1 *`
+	// Git Bash would drop backslashes, so the path has slashes, quoted.
+	ps := `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/scripts/nearhost.ps1" *`
 	for _, want := range []string{"Bash(sh ${CLAUDE_SKILL_DIR}/scripts/nearhost.sh *)", "Bash(" + ps + ")", "PowerShell(" + ps + ")"} {
 		if !strings.Contains(front+"\n", "\n  - "+want+"\n") {
 			t.Errorf("allowed-tools lacks %s", want)
 		}
 	}
-	if !strings.Contains(skill, "On Windows (not inside WSL), run `powershell -NoProfile -ExecutionPolicy Bypass -File <this skill's directory>\\scripts\\nearhost.ps1 <command>`; everywhere else, `sh <this skill's directory>/scripts/nearhost.sh <command>`") {
+	if !strings.Contains(skill, "On Windows (not inside WSL), run `powershell -NoProfile -ExecutionPolicy Bypass -File \"<this skill's directory>/scripts/nearhost.ps1\" <command>`; everywhere else, `sh <this skill's directory>/scripts/nearhost.sh <command>`") {
 		t.Error("the skill does not say which script to run where")
 	}
 	if strings.Contains(skill, "sh .../nearhost.sh") {
 		t.Error("a step runs nearhost.sh on every platform")
+	}
+	// The nearhost program is on a Windows laptop's PATH too, so a step that
+	// means the script must not read as that program.
+	for _, cmd := range []string{"socket", "status", "propose", "wait", "doctor", "reload", "passthrough", "open"} {
+		if regexp.MustCompile("`nearhost " + cmd + "\\b").MatchString(skill) {
+			t.Errorf("a step names the script as `nearhost %s`, which is the nearhost program", cmd)
+		}
+	}
+	if strings.Contains(skill, `\scripts\`) {
+		t.Error("a path to the script has backslashes, which Git Bash drops")
 	}
 }
 
@@ -743,7 +767,7 @@ func TestSkillReloadsOnlyForTheFileAndDoctorsAfterTheStart(t *testing.T) {
 		t.Error("the skill does not reload for nearhostrc.pending and nearhostrc.not-applied")
 	}
 	add := regexp.MustCompile("(?m)^6\\. On `\"state\":\"accepted\"`.*$").FindString(skill)
-	status, doctor := strings.Index(add, "`nearhost status`"), strings.Index(add, "`nearhost doctor .`")
+	status, doctor := strings.Index(add, "`<script> status`"), strings.Index(add, "`<script> doctor .`")
 	if status < 0 || doctor < status || !strings.Contains(add, "status 5") {
 		t.Errorf("after an add: %q", add)
 	}

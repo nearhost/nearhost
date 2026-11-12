@@ -163,7 +163,7 @@ function Find-Socket {
 		Exit-Script 2 'curl is needed to reach Nearhost and is not installed here. Install curl, then run this again.'
 	}
 	if ($env:NEARHOST_SOCKET) {
-		if (-not (Invoke-Api $env:NEARHOST_SOCKET 2 @('http://nearhost/v1')) -or $script:Status -ne '200') {
+		if (-not (Invoke-Api -Sock $env:NEARHOST_SOCKET -Limit 2 -Arguments @('http://nearhost/v1')) -or $script:Status -ne '200') {
 			Exit-Script 2 "Nothing answers on NEARHOST_SOCKET ($($env:NEARHOST_SOCKET)). Unset it to look in $NearhostDir."
 		}
 		$script:Sock = $env:NEARHOST_SOCKET
@@ -175,7 +175,7 @@ function Find-Socket {
 			Where-Object { -not $_.PSIsContainer } | Sort-Object Name)
 		foreach ($s in $sockets) {
 			# Sockets that do not answer are left by runs that have ended.
-			if (-not (Invoke-Api $s.FullName 2 @('http://nearhost/v1'))) {
+			if (-not (Invoke-Api -Sock $s.FullName -Limit 2 -Arguments @('http://nearhost/v1'))) {
 				continue
 			}
 			if ($script:Status -ne '200') {
@@ -308,7 +308,7 @@ function ConvertTo-Body($Fields) {
 # the API's error.
 function Exit-Answer {
 	Write-Out $script:Body
-	if ($script:Status -match '^2\d\d$') {
+	if ($script:Status -match '^2\d\d\z') {
 		exit 0
 	}
 	if ($script:Status -eq '409') {
@@ -338,7 +338,7 @@ function Get-StateDirectory {
 # Test-PlainWord says whether Word is safe in a file name and a URL: letters,
 # digits, dot, underscore and dash, not starting with a dot.
 function Test-PlainWord([string]$Word) {
-	return $Word -cmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
+	return $Word -cmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*\z'
 }
 
 # Initialize-PrivateDirectory makes each directory, and gives it mode 0700
@@ -406,7 +406,7 @@ function Save-Token([string]$Path = '') {
 		return
 	}
 	$tok = Get-Field token $script:Body
-	if ($tok -cnotmatch '^[A-Za-z0-9_-]+$') {
+	if ($tok -cnotmatch '^[A-Za-z0-9_-]+\z') {
 		return
 	}
 	if (-not $Path) {
@@ -485,7 +485,7 @@ function Send-WithToken([string]$Url, $Fields, [string]$TokenFile) {
 	$tok = ''
 	if ($script:Requester -ne 'agent' -and $TokenFile -and (Test-Path -LiteralPath $TokenFile -PathType Leaf)) {
 		$tok = [string](Get-Content -LiteralPath $TokenFile -TotalCount 1 -ErrorAction SilentlyContinue)
-		if ($tok -cnotmatch '^[A-Za-z0-9_-]*$') {
+		if ($tok -cnotmatch '^[A-Za-z0-9_-]*\z') {
 			$tok = ''
 		}
 	}
@@ -499,7 +499,7 @@ function Send-WithToken([string]$Url, $Fields, [string]$TokenFile) {
 			$body['token'] = $tok
 		}
 		# The body goes on stdin, as it holds the token.
-		if (-not (Invoke-Api $script:Sock 60 @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', $Url) (ConvertTo-Body $body))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', $Url) -Data (ConvertTo-Body $body))) {
 			Exit-Script 2 'Nearhost stopped answering.'
 		}
 		if ($script:Status -eq '401' -and $tok -and $attempt -eq 0) {
@@ -521,14 +521,14 @@ function Exit-Refused {
 
 # Test-Id says whether Id looks like an id the API gave.
 function Test-Id([string]$Id) {
-	return $Id -cmatch '^[0-9a-f]+$'
+	return $Id -cmatch '^[0-9a-f]+\z'
 }
 
 # Invoke-PathCall asks Nearhost about the directory Dir with a GET to Url,
 # giving the path as the agent sees it and with its symlinks resolved.
 function Invoke-PathCall([string]$Url, [int]$Limit, [string]$Dir) {
 	$query = "path=$(ConvertTo-Query $Dir)&real=$(ConvertTo-Query (Get-ResolvedDirectory $Dir))"
-	if (-not (Invoke-Api $script:Sock $Limit @("${Url}?$query"))) {
+	if (-not (Invoke-Api -Sock $script:Sock -Limit $Limit -Arguments @("${Url}?$query"))) {
 		Exit-Script 2 'Nearhost stopped answering.'
 	}
 }
@@ -559,7 +559,7 @@ switch -CaseSensitive ($cmd) {
 		}
 		Find-Socket
 		if ($all) {
-			if (-not (Invoke-Api $script:Sock 10 @('http://nearhost/v1/projects'))) {
+			if (-not (Invoke-Api -Sock $script:Sock -Limit 10 -Arguments @('http://nearhost/v1/projects'))) {
 				Exit-Script 2 'Nearhost stopped answering.'
 			}
 		} else {
@@ -568,7 +568,7 @@ switch -CaseSensitive ($cmd) {
 				$path = [string]$argv[0]
 			}
 			$dir = Get-AbsoluteDirectory $path
-			Invoke-PathCall 'http://nearhost/v1/projects' 10 $dir
+			Invoke-PathCall -Url 'http://nearhost/v1/projects' -Limit 10 -Dir $dir
 		}
 		Write-Out $script:Body
 		# 404: no project holds the path, so it is not in Nearhost yet.
@@ -600,7 +600,7 @@ switch -CaseSensitive ($cmd) {
 			}
 		}
 		$port = 0
-		if ($web -cnotmatch '^[0-9]+$' -or -not [int]::TryParse($web, [ref]$port)) {
+		if ($web -cnotmatch '^[0-9]+\z' -or -not [int]::TryParse($web, [ref]$port)) {
 			Exit-Script 1 "--web must be a port number, not $web"
 		}
 		$path = '.'
@@ -613,7 +613,7 @@ switch -CaseSensitive ($cmd) {
 		if ($name) {
 			$fields['name'] = $name
 		}
-		if (-not (Invoke-Api $script:Sock 10 @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', 'http://nearhost/v1/proposals') (ConvertTo-Body $fields))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 10 -Arguments @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', 'http://nearhost/v1/proposals') -Data (ConvertTo-Body $fields))) {
 			Exit-Script 2 'Nearhost stopped answering.'
 		}
 		Exit-Answer
@@ -623,7 +623,7 @@ switch -CaseSensitive ($cmd) {
 			Exit-Script 1 'wait needs the id propose printed'
 		}
 		Find-Socket
-		if (-not (Invoke-Api $script:Sock 60 @("http://nearhost/v1/proposals/${first}?wait=50"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @("http://nearhost/v1/proposals/${first}?wait=50"))) {
 			Exit-Script 2 'Nearhost stopped answering: it may have quit.'
 		}
 		Write-Out $script:Body
@@ -645,7 +645,7 @@ switch -CaseSensitive ($cmd) {
 		$dir = Get-AbsoluteDirectory $path
 		Find-Socket
 		Assert-Capability doctor
-		Invoke-PathCall 'http://nearhost/v1/doctor' 60 $dir
+		Invoke-PathCall -Url 'http://nearhost/v1/doctor' -Limit 60 -Dir $dir
 		Write-Out $script:Body
 		if ($script:Status -ne '200') {
 			exit 1
@@ -661,7 +661,7 @@ switch -CaseSensitive ($cmd) {
 		Find-Socket
 		Assert-Capability reload
 		$fields = [ordered]@{ path = $dir; real = (Get-ResolvedDirectory $dir) }
-		if (-not (Invoke-Api $script:Sock 60 @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', 'http://nearhost/v1/projects/reload') (ConvertTo-Body $fields))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', 'http://nearhost/v1/projects/reload') -Data (ConvertTo-Body $fields))) {
 			Exit-Script 2 'Nearhost stopped answering.'
 		}
 		# 200 is either applied or declined: the user already refused this change.
@@ -691,7 +691,7 @@ switch -CaseSensitive ($cmd) {
 				$i++
 			}
 		}
-		if ($port -cnotmatch '^[1-9][0-9]*$') {
+		if ($port -cnotmatch '^[1-9][0-9]*\z') {
 			Exit-Script 1 "passthrough needs the server's port, such as: passthrough 3000"
 		}
 		if ($port.Length -gt 5 -or [int]$port -gt 65535) {
@@ -702,7 +702,7 @@ switch -CaseSensitive ($cmd) {
 		if ($label) {
 			$fields['label'] = $label
 		}
-		Send-WithToken 'http://nearhost/v1/passthroughs' $fields (Get-TokenFile)
+		Send-WithToken -Url 'http://nearhost/v1/passthroughs' -Fields $fields -TokenFile (Get-TokenFile)
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token
@@ -736,7 +736,7 @@ switch -CaseSensitive ($cmd) {
 			Exit-Script 1 'passthrough-wait needs the id passthrough printed'
 		}
 		Find-Passthrough ''
-		if (-not (Invoke-Api $script:Sock 60 @("http://nearhost/v1/passthroughs/${first}?wait=50"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @("http://nearhost/v1/passthroughs/${first}?wait=50"))) {
 			Exit-Script 2 'Nearhost stopped answering: it may have quit.'
 		}
 		if ($script:Status -ne '200') {
@@ -793,7 +793,7 @@ switch -CaseSensitive ($cmd) {
 			}
 			# Otherwise the marker stays until Nearhost confirms the close, so a
 			# later attempt can still find the socket.
-			if ((Invoke-Api $script:Sock 1 @('-X', 'DELETE', "http://nearhost/v1/passthroughs?session=$sid")) -and $script:Status -eq '204') {
+			if ((Invoke-Api -Sock $script:Sock -Limit 1 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs?session=$sid")) -and $script:Status -eq '204') {
 				Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
 			}
 			exit 0
@@ -802,7 +802,7 @@ switch -CaseSensitive ($cmd) {
 			Exit-Script 1 'usage: passthrough-close --session <id> | <id>'
 		}
 		Find-Socket
-		if (-not (Invoke-Api $script:Sock 20 @('-X', 'DELETE', "http://nearhost/v1/passthroughs/$first"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 20 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs/$first"))) {
 			exit 0
 		}
 		if ($script:Status -ne '204') {
@@ -862,7 +862,7 @@ switch -CaseSensitive ($cmd) {
 		if ($label) {
 			$fields['label'] = $label
 		}
-		Send-WithToken 'http://nearhost/v1/documents' $fields (Get-DocTokenFile)
+		Send-WithToken -Url 'http://nearhost/v1/documents' -Fields $fields -TokenFile (Get-DocTokenFile)
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token (Get-DocTokenFile)
@@ -895,7 +895,7 @@ switch -CaseSensitive ($cmd) {
 			Exit-Script 1 'open-wait needs the id open printed'
 		}
 		Find-NearhostForDocument
-		if (-not (Invoke-Api $script:Sock 60 @("http://nearhost/v1/documents/${first}?wait=50"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @("http://nearhost/v1/documents/${first}?wait=50"))) {
 			Exit-Script 2 'Nearhost stopped answering: it may have quit.'
 		}
 		if ($script:Status -ne '200') {
