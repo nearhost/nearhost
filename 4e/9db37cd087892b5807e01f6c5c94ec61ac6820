@@ -1,0 +1,36 @@
+internal/transport/perprocess.go
+  s_8d6383ee1da9a6::t_becf8e08ba2cf1 586-588,590,593-596,601
+  s_8d6383ee1da9a6::t_b28c93b989f225 8,57-59,73
+  s_8d6383ee1da9a6::t_2fcce53501409d 245-247,258,260-271,351,378,585,607-609,621-622,636-639,650-654,663-672,676-679,712
+  s_8d6383ee1da9a6::t_4f90693215a852 537,550,619,628,674-675,683,706,735,743,751
+  s_8d6383ee1da9a6::t_b72eb0742a04ea 610-611
+internal/transport/perprocess_test.go
+  s_8d6383ee1da9a6::t_619e2feaaf23b3 688-691
+  s_8d6383ee1da9a6::t_4c0bf075b29144 1003-1189
+  s_8d6383ee1da9a6::t_2fcce53501409d 288,333,515,529
+internal/transport/forward.go
+  s_8d6383ee1da9a6::t_432515bece1f1f 104-109
+internal/testutil/fakessh/main.go
+  s_8d6383ee1da9a6::t_8efa4c477e36ca 260-262,268-270,279-289,292-294,310-312,324-326
+  s_8d6383ee1da9a6::t_207027a9e78f2a 295-300
+internal/transport/perprocess_forward.go
+  s_8d6383ee1da9a6::t_01ea731d8b6fa4 8-9,21-24,26-27,30,35-37,46-50,89,95-116,152,163-167,253,255,257,266,278-288,291-294,304-312,315-319,322,327,329,336-349,358,360,362-363,366-382,406,409-411
+  s_8d6383ee1da9a6::t_b28c93b989f225 405
+  s_8d6383ee1da9a6::t_bd711f75a4fac2 153-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e9db37cd087892b5807e01f6c5c94ec61ac6820",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}

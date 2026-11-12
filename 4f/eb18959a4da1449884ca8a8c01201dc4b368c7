@@ -1,0 +1,24 @@
+internal/transport/perprocess_forward.go
+  s_8d6383ee1da9a6::t_5fe57d2c5bba92 281-282,293
+  s_8d6383ee1da9a6::t_31305aba33ff6a 312-314,317,320,325
+internal/transport/perprocess_test.go
+  s_8d6383ee1da9a6::t_5fe57d2c5bba92 1014-1019,1022-1030,1036-1052,1205-1207,1210-1211,1216-1217
+internal/transport/perprocess.go
+  s_8d6383ee1da9a6::t_31305aba33ff6a 585-590,595,601,636-639,665-666,669,671,714
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4feb18959a4da1449884ca8a8c01201dc4b368c7",
+  "prompts": {},
+  "sessions": {
+    "s_8d6383ee1da9a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6be04bd6-1d45-4be8-bc65-4cb88a28330e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Edward Coleridge Smith <edcoleridgesmith@gmail.com>"
+    }
+  }
+}
