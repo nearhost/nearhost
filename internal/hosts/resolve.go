@@ -21,23 +21,22 @@ type Lookup func(ctx context.Context, name string) ([]netip.Addr, error)
 // `nearhost up` by seconds, not minutes.
 const lookupTimeout = 2 * time.Second
 
-// resolvConf is where DNSLookup finds the nameservers. Tests replace it.
-var resolvConf = "/etc/resolv.conf"
-
-// dnsPort replaces the nameserver port (53) when set. resolv.conf cannot name
-// a port, so tests use it to reach a socket of their own.
+// dnsPort replaces the nameserver port (53) when set. Neither resolv.conf nor
+// the adapter table can name a port, so tests use it to reach a socket of
+// their own.
 var dnsPort string
 
-// allowLoopbackNameserver lets tests point resolv.conf at a nameserver on
-// 127.0.0.1, which DNSLookup otherwise refuses.
+// allowLoopbackNameserver lets tests point the nameserver list at 127.0.0.1,
+// which DNSLookup otherwise refuses.
 var allowLoopbackNameserver bool
 
 // errLocalResolver is what DNSLookup returns when the nameserver runs on this
 // machine.
 var errLocalResolver = errors.New("the nameserver is on this machine, so it may answer from the hosts file")
 
-// DNSLookup returns the A and AAAA records of name from the nameservers in
-// /etc/resolv.conf. It asks them directly rather than through the system
+// DNSLookup returns the A and AAAA records of name from the nameservers in the
+// system's network configuration: /etc/resolv.conf on Unix, the network
+// adapters on Windows. It asks them directly rather than through the system
 // resolver, because that would read the hosts file and so report the very
 // entries nearhost wrote as if DNS had supplied them. A nameserver on this
 // machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
@@ -45,12 +44,12 @@ var errLocalResolver = errors.New("the nameserver is on this machine, so it may 
 func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
-	conf, err := dns.ClientConfigFromFile(resolvConf)
+	conf, err := clientConfig()
 	if err != nil {
 		return nil, err
 	}
 	if len(conf.Servers) == 0 {
-		return nil, errors.New("no nameserver in " + resolvConf)
+		return nil, errors.New(noNameserverMessage)
 	}
 	if ip, err := netip.ParseAddr(conf.Servers[0]); err == nil && ip.IsLoopback() && !allowLoopbackNameserver {
 		return nil, errLocalResolver
