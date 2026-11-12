@@ -31,10 +31,13 @@ const (
 	levelOK level = iota
 	levelWarn
 	levelFail
+	// levelInfo is a note that needs no action. It sits last so the other
+	// levels keep their values.
+	levelInfo
 )
 
 func (l level) String() string {
-	return [...]string{"ok", "warn", "FAIL"}[l]
+	return [...]string{"ok", "warn", "FAIL", "info"}[l]
 }
 
 // check is one line of the report.
@@ -71,6 +74,10 @@ type doctorBackend struct {
 	exe string
 	// lowPorts reports whether this process may bind port on Linux.
 	lowPorts func(port int) (level, string)
+	// sshAgentService reports the state of the OpenSSH Authentication Agent
+	// service: "running", "stopped", "disabled" or "missing". It is nil
+	// except on Windows.
+	sshAgentService func() (state string, err error)
 }
 
 // systemDoctor is the production backend. Only NewRoot wires it in, with
@@ -87,10 +94,11 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		openFiles: func(ctx context.Context, srv config.Server) (serverFiles, error) {
 			return openFiles(ctx, sshClient{}, srv, "run `nearhost doctor` again")
 		},
-		checkServer: sshClient{}.check,
-		checkAgents: sshClient{}.checkAgents,
-		goos:        runtime.GOOS,
-		exe:         realExecutable(),
+		checkServer:     sshClient{}.check,
+		checkAgents:     sshClient{}.checkAgents,
+		goos:            runtime.GOOS,
+		exe:             realExecutable(),
+		sshAgentService: sshAgentService,
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
 		},
@@ -202,6 +210,9 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		checks = append(checks, c)
 	}
 	checks = append(checks, checkCA(b.trust)...)
+	if b.goos == "windows" && b.sshAgentService != nil {
+		checks = append(checks, checkSSHAgentService(b))
+	}
 	if cfg == nil {
 		// The checks above do not need the config. These do, and comparing
 		// with an empty one would report what is there as wrong.
@@ -345,7 +356,7 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		networks = append(networks, "udp")
 	}
 	var problems []string
-	denied, who := false, "the process using it"
+	denied, httpSys, who := false, false, "the process using it"
 	for _, network := range networks {
 		err := b.probePort(network, port)
 		if err == nil {
@@ -364,6 +375,11 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 			what = "UDP (for HTTP/3): " + what
 		} else if holder := b.holderOf(ctx, port); holder != "" {
 			what, who = "in use by "+holder, "that process"
+			// On Windows pid 4 is the kernel, which holds a port on behalf
+			// of HTTP.sys, so no process can be stopped to free it.
+			if b.goos == "windows" && holder == "System (pid 4)" {
+				what, httpSys = "in use by HTTP.sys (System, pid 4)", true
+			}
 		}
 		problems = append(problems, what)
 	}
@@ -377,6 +393,29 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 	case len(problems) > 0:
 		c.level, c.detail = levelFail, strings.Join(problems, "; ")
 		c.fix = fmt.Sprintf("stop %s (expected while `nearhost up` is running), or give `nearhost up` another %s", who, flag)
+		if httpSys {
+			c.fix = fmt.Sprintf("run `netsh http show servicestate` in an elevated terminal to see which service registered port %d, and stop it (often IIS: `net stop w3svc`), or give `nearhost up` another %s", port, flag)
+		}
+	}
+	return c
+}
+
+// checkSSHAgentService reports the OpenSSH Authentication Agent service on
+// Windows. Nearhost's own keys may need no agent, so anything but running
+// is only a note.
+func checkSSHAgentService(b doctorBackend) check {
+	c := check{name: "ssh agent"}
+	state, err := b.sshAgentService()
+	switch {
+	case err != nil:
+		c.level, c.detail = levelInfo, "could not query the service: "+err.Error()
+	case state == "missing":
+		c.level, c.detail = levelInfo, "the OpenSSH Authentication Agent is not installed"
+	case state == "running":
+		c.detail = state
+	default:
+		c.level, c.detail = levelInfo, state
+		c.fix = "only needed for keys with a passphrase: in an elevated PowerShell, `Get-Service ssh-agent | Set-Service -StartupType Automatic; Start-Service ssh-agent`, then `ssh-add`"
 	}
 	return c
 }
