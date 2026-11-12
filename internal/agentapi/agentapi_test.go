@@ -31,6 +31,14 @@ func shortDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	// A Windows TEMP may hold 8.3 names, such as C:\Users\RUNNER~1 on
+	// GitHub's runners, which .NET and so the PowerShell script expand.
+	// The long form is the one Windows users and Nearhost see.
+	if runtime.GOOS == "windows" {
+		if long, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = long
+		}
+	}
 	return dir
 }
 

@@ -40,12 +40,16 @@ if ($OnWindows) {
 }
 $NearhostDir = Join-Path $UserHome '.nearhost'
 
-# Nearhost speaks UTF-8, both in what curl prints and in what it reads.
+# Nearhost speaks UTF-8, both in what curl prints and in what it reads,
+# with no byte order mark. Windows PowerShell 5.1 writes a native command's
+# stdin in the console's input encoding, which under code page 65001 starts
+# with a byte order mark that no JSON parser takes, so that is set too.
 $Utf8 = New-Object System.Text.UTF8Encoding $false
 try {
 	[Console]::OutputEncoding = $Utf8
+	[Console]::InputEncoding = $Utf8
 } catch {
-	# Without a console the encoding stays as it is.
+	# Without a console the encodings stay as they are.
 	$null = $_
 }
 $OutputEncoding = $Utf8
