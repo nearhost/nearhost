@@ -3,9 +3,10 @@ package transport
 import (
 	"context"
 	"fmt"
-	"net"
 	"sort"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/oserr"
 )
 
 // perProcessForward is one desired forward of a per-process transport.
@@ -17,15 +18,23 @@ type perProcessForward struct {
 	// applied is whether proc has said it listens. It is reported only
 	// while the transport is connected.
 	applied bool
+	// retrying is whether the forward is unapplied with its supervisor
+	// relaunching it, and err is then ssh's error from the last attempt.
+	retrying bool
+	err      string
 	// cancel ends the forward's supervisor, and done closes once it has
-	// ended with its process reaped; both nil when there is none.
+	// ended with its process reaped; kick asks it for an attempt now,
+	// answered on the channel sent. All nil when there is none.
 	cancel context.CancelFunc
 	done   chan struct{}
+	kick   chan chan error
 }
 
 // AddForward records a desired -L forward and, while connected, starts the
 // ssh that carries it and returns its error. Forwards recorded while
-// disconnected are started once the link is up.
+// disconnected are started once the link is up. For a forward whose
+// supervisor is retrying it, AddForward has it try at once and returns
+// that attempt's error; the forward stays tracked and retrying either way.
 func (p *perProcess) AddForward(ctx context.Context, localPort, remotePort int) error {
 	p.fwdMu.Lock()
 	defer p.fwdMu.Unlock()
@@ -34,6 +43,11 @@ func (p *perProcess) AddForward(ctx context.Context, localPort, remotePort int) 
 	f, existed := p.forwards[key]
 	linkCtx := p.linkCtx
 	connected := p.status == StatusConnected && linkCtx != nil
+	if existed && connected && f.done != nil && f.retrying {
+		kick, done := f.kick, f.done
+		p.mu.Unlock()
+		return retryNow(ctx, kick, done)
+	}
 	if existed && (f.done != nil || !connected) {
 		p.mu.Unlock()
 		return nil // running on this link already, or started once it is up
@@ -72,10 +86,32 @@ func (p *perProcess) AddForward(ctx context.Context, localPort, remotePort int) 
 		delete(p.forwards, key)
 	}
 	p.mu.Unlock()
-	if wasApplied {
+	if wasApplied && !existed { // a forward kept tracked is not cancelled
 		p.Logf("%s: cancel %s", p.Name, forwardSpec(localPort, remotePort))
 	}
 	return err
+}
+
+// retryNow asks the supervisor whose kick and done these are for an
+// attempt now and returns its error. A supervisor that ends first, as the
+// link went down, retries the forward once it is back, so that is nil.
+func retryNow(ctx context.Context, kick chan chan error, done chan struct{}) error {
+	reply := make(chan error, 1)
+	select {
+	case kick <- reply:
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-reply:
+		return err
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // CancelForward removes a forward and ends the ssh that carries it.
@@ -113,19 +149,22 @@ func (p *perProcess) Forwards() [][2]int {
 }
 
 // ForwardStates returns the connection status together with the desired
-// forwards, sorted by local port, each with whether its ssh listens, from
-// one snapshot. As with Session, the status is connected only after the
-// re-apply pass has tried every forward once, so a forward that is not
-// applied then has failed, or has been lost, and is being retried.
+// forwards, sorted by local port, each with whether its ssh listens, or
+// whether it is being retried and why, from one snapshot. As with Session,
+// the status is connected only after the re-apply pass has tried every
+// forward once, so a forward that is not applied then has failed, or has
+// been lost, and is being retried.
 func (p *perProcess) ForwardStates() (Status, []ForwardState) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := make([]ForwardState, 0, len(p.forwards))
 	for _, f := range p.forwards {
 		out = append(out, ForwardState{
-			Local:   f.local,
-			Remote:  f.remote,
-			Applied: p.status == StatusConnected && f.applied,
+			Local:    f.local,
+			Remote:   f.remote,
+			Applied:  p.status == StatusConnected && f.applied,
+			Retrying: f.retrying,
+			Err:      f.err,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
@@ -211,10 +250,11 @@ func (p *perProcess) superviseLocked(linkCtx context.Context, f *perProcessForwa
 	ctx, cancel := context.WithCancel(linkCtx)
 	first := make(chan error, 1)
 	done := make(chan struct{})
+	kick := make(chan chan error)
 	p.mu.Lock()
-	f.cancel, f.done = cancel, done
+	f.cancel, f.done, f.kick = cancel, done, kick
 	p.mu.Unlock()
-	go p.superviseForward(ctx, f, first, done, keepTrying)
+	go p.superviseForward(ctx, f, kick, first, done, keepTrying)
 	return first
 }
 
@@ -223,7 +263,7 @@ func (p *perProcess) superviseLocked(linkCtx context.Context, f *perProcessForwa
 func (p *perProcess) unsupervise(f *perProcessForward) {
 	p.mu.Lock()
 	cancel, done := f.cancel, f.done
-	f.cancel, f.done = nil, nil
+	f.cancel, f.done, f.kick = nil, nil, nil
 	p.mu.Unlock()
 	if cancel == nil {
 		return
@@ -235,11 +275,24 @@ func (p *perProcess) unsupervise(f *perProcessForward) {
 // superviseForward runs f's ssh until ctx ends. The first launch's result
 // goes to first; a first launch that fails ends the supervisor unless
 // keepTrying. Otherwise a launch that fails, or a process that exits, is
-// relaunched after the forward's own backoff, for as long as ctx lasts.
-func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, first chan<- error, done chan struct{}, keepTrying bool) {
-	defer close(done)
+// relaunched after the forward's own backoff, for as long as ctx lasts,
+// with the forward marked retrying meanwhile. A channel sent on kick asks
+// for an attempt now and gets its result. A failed retry is logged when
+// its message differs from the last failure reported, by a log line or to
+// the caller that waited for it.
+func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, kick <-chan chan error, first chan<- error, done chan struct{}, keepTrying bool) {
+	defer func() {
+		p.mu.Lock()
+		f.retrying, f.err = false, ""
+		p.mu.Unlock()
+		close(done)
+	}()
 	spec := forwardSpec(f.local, f.remote)
 	backoff := p.baseBackoff
+	// reply is the AddForward waiting for this attempt's result, nil for
+	// none; logged is the failure last reported.
+	var reply chan error
+	logged := ""
 	for {
 		proc, err := p.launchForward(ctx, f.local, f.remote)
 		if err != nil {
@@ -249,33 +302,55 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 				}
 				return
 			}
-			if first != nil {
+			if first != nil && !keepTrying {
 				first <- err // the caller says why
-				first = nil
-				if !keepTrying {
-					return
-				}
-			} else {
-				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
-			}
-			if !p.sleep(ctx, backoff) {
 				return
 			}
-			backoff = p.nextBackoff(backoff)
+			p.mu.Lock()
+			f.retrying, f.err = true, err.Error()
+			p.mu.Unlock()
+			// The caller of the first attempt, or the AddForward that asked
+			// for this one, says why; a retry failing the same way again
+			// is not logged.
+			switch {
+			case first != nil:
+				first <- err
+				first = nil
+			case reply != nil:
+				reply <- err
+				reply = nil
+			case err.Error() != logged:
+				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
+			}
+			logged = err.Error()
+			if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
+				return
+			}
 			continue
 		}
-		backoff = p.baseBackoff
+		backoff, logged = p.baseBackoff, ""
 		p.mu.Lock()
-		f.proc, f.applied = proc, true
+		f.proc, f.applied, f.retrying, f.err = proc, true, false, ""
 		p.mu.Unlock()
 		p.Logf("%s: forward %s", p.Name, spec)
 		if first != nil {
 			first <- nil
 			first = nil
 		}
-		select {
-		case <-ctx.Done():
-		case <-proc.exited:
+		if reply != nil {
+			reply <- nil
+			reply = nil
+		}
+	running:
+		for {
+			select {
+			case <-ctx.Done():
+				break running
+			case <-proc.exited:
+				break running
+			case r := <-kick: // asked just as it got applied
+				r <- nil
+			}
 		}
 		if ctx.Err() != nil {
 			proc.stop()
@@ -284,14 +359,31 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 			p.mu.Unlock()
 			return
 		}
+		msg := exitMessage(proc.stderr.Lines())
 		p.mu.Lock()
-		f.proc, f.applied = nil, false
+		f.proc, f.applied, f.retrying, f.err = nil, false, true, msg
 		p.mu.Unlock()
-		p.Logf("%s: forward %s lost: %s", p.Name, spec, exitMessage(proc.stderr.Lines()))
-		if !p.sleep(ctx, backoff) {
+		p.Logf("%s: forward %s lost: %s", p.Name, spec, msg)
+		if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
 			return
 		}
-		backoff = p.nextBackoff(backoff)
+	}
+}
+
+// pause waits out *backoff, then lengthens it, or until a channel sent on
+// kick asks for an attempt now, which it returns with *backoff left as it
+// is; or until ctx ends.
+func (p *perProcess) pause(ctx context.Context, backoff *time.Duration, kick <-chan chan error) chan error {
+	t := time.NewTimer(*backoff)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-t.C:
+		*backoff = p.nextBackoff(*backoff)
+		return nil
+	case r := <-kick:
+		return r
 	}
 }
 
@@ -314,9 +406,12 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
-	if err != nil {
+	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if oserr.AddrInUse(err) {
 		return nil, fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)
 	}
 	l.Close()
 	spec := forwardSpec(local, remote)

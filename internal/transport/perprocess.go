@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"slices"
@@ -53,6 +54,9 @@ type perProcess struct {
 	// prepareAgent readies ~/.nearhost on the server and returns the path
 	// of the forward's socket there. Tests replace it.
 	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
+	// listen is net.Listen, for the check that a forward's local port is
+	// free before its ssh starts. Tests replace it.
+	listen func(network, address string) (net.Listener, error)
 }
 
 var _ Transport = (*perProcess)(nil)
@@ -66,6 +70,7 @@ func newPerProcess(c Config) *perProcess {
 		Foreground:  c.Foreground,
 		forwards:    map[string]*perProcessForward{},
 		launchSlots: make(chan struct{}, maxForwardLaunches),
+		listen:      net.Listen,
 	}
 	p.init(c.Name, c.Host)
 	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
@@ -237,7 +242,9 @@ func (p *perProcess) Stop() {
 // connects to nothing, so it runs in nearhost's own process group. fatal
 // says whether a failure counts towards giving up: ssh that did not start
 // at all does, and ssh that ran and failed does when what it said does.
-func (p *perProcess) readConfig(ctx context.Context) (conflict error, fatal bool, err error) {
+// hostname is the name ssh connects to, which it names when it says it
+// has authenticated there.
+func (p *perProcess) readConfig(ctx context.Context) (hostname string, conflict error, fatal bool, err error) {
 	cmd := p.command(ctx, "-G", "--", p.host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -248,9 +255,20 @@ func (p *perProcess) readConfig(ctx context.Context) (conflict error, fatal bool
 			msg = err.Error()
 		}
 		var exit *exec.ExitError
-		return nil, !errors.As(err, &exit) || isFatalSSHError(msg), errors.New("ssh -G: " + msg)
+		return "", nil, !errors.As(err, &exit) || isFatalSSHError(msg), errors.New("ssh -G: " + msg)
 	}
-	return configConflicts(p.host, string(out)), false, nil
+	return configHostname(string(out)), configConflicts(p.host, string(out)), false, nil
+}
+
+// configHostname is the value of the hostname line in `ssh -G` output, or
+// "" for none.
+func configHostname(config string) string {
+	for _, line := range strings.Split(config, "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 && strings.EqualFold(fields[0], "hostname") {
+			return fields[1]
+		}
+	}
+	return ""
 }
 
 // run supervises the link: it reads the host's configuration, launches
@@ -330,7 +348,7 @@ type linkEnd struct {
 // exits. ok is false when the supervisor is to stop, with the final status
 // set.
 func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, ok bool) {
-	conflict, fatal, err := p.readConfig(ctx)
+	hostname, conflict, fatal, err := p.readConfig(ctx)
 	if ctx.Err() != nil {
 		p.setStatus(StatusDisconnected, "")
 		return linkEnd{}, false
@@ -357,7 +375,7 @@ func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, 
 		}
 	}
 
-	stderr := newLinkStderr(remote)
+	stderr := newSSHStderr(remote, hostname)
 	link, err := p.startProc(p.args(args...), stderr)
 	if err != nil {
 		return linkEnd{msg: "start ssh: " + err.Error(), fatal: true}, true
@@ -516,7 +534,7 @@ func (p *perProcess) setAgentErr(err error, problem AgentProblem) {
 // sshProc is a long-lived ssh that has started: the link, or a forward's.
 type sshProc struct {
 	cmd    *exec.Cmd
-	stderr *linkStderr
+	stderr *sshStderr
 	// exited closes once the process has been reaped.
 	exited chan struct{}
 }
@@ -529,7 +547,7 @@ const procWaitDelay = 5 * time.Second
 
 // startProc starts a long-lived ssh with args, its stderr going to stderr,
 // and reaps it when it exits; running counts it until then.
-func (p *perProcess) startProc(args []string, stderr *linkStderr) (*sshProc, error) {
+func (p *perProcess) startProc(args []string, stderr *sshStderr) (*sshProc, error) {
 	cmd := p.longLived(context.Background(), args...) // not tied to a context: we stop it ourselves
 	cmd.Stderr = stderr
 	cmd.WaitDelay = procWaitDelay
@@ -565,10 +583,17 @@ func (p *perProcess) running() int {
 
 // exitMessage picks why the link exited from the last lines of its stderr:
 // the last that is not ssh's DEBUG1 chatter or the byte counts it prints on
-// the way out, else the last line, else "ssh exited".
+// the way out. It looks no further back than ssh's saying it has
+// authenticated, since what came before (a banner, a known_hosts warning)
+// is not why a logged-in ssh exited: then it is "ssh exited". An ssh that
+// never said it authenticated and wrote only chatter gives its last line;
+// one that wrote nothing gives "ssh exited".
 func exitMessage(lines []string) string {
 	for i := len(lines) - 1; i >= 0; i-- {
 		l := lines[i]
+		if saysAuthenticated(l) {
+			return "ssh exited"
+		}
 		if !strings.HasPrefix(l, "debug") && !strings.HasPrefix(l, "Transferred:") && !strings.HasPrefix(l, "Bytes per second:") {
 			return l
 		}
@@ -579,6 +604,11 @@ func exitMessage(lines []string) string {
 	return "ssh exited"
 }
 
+// saysAuthenticated reports whether line is ssh saying it has logged in.
+func saysAuthenticated(line string) bool {
+	return strings.Contains(line, "Authenticated to ") || strings.Contains(line, "Authentication succeeded")
+}
+
 const (
 	// stderrLines is how many of ssh's last non-empty stderr lines are kept.
 	stderrLines = 20
@@ -586,15 +616,16 @@ const (
 	maxStderrLine = 1024
 )
 
-// linkStderr takes a long-lived ssh's stderr for its whole life. It keeps
+// sshStderr takes a long-lived ssh's stderr for its whole life. It keeps
 // the last stderrLines non-empty lines and closes authenticated at the
-// first line that says ssh has logged in. ready closes at the line that
+// first line that says ssh has logged in to the host it was asked for, not
+// to a jump host on the way. ready closes at the line that
 // says the process has done its job: for a link that forwards the agent
 // socket, that the server forwards it, and the line that says it refused is
 // kept; for a link without, ready is authenticated; for a forward's
 // process, that it listens. It holds at most stderrLines lines of
 // maxStderrLine bytes, however long ssh writes.
-type linkStderr struct {
+type sshStderr struct {
 	authenticated chan struct{}
 	ready         chan struct{}
 	// readyOn is what the line that closes ready contains, "" when ready
@@ -602,6 +633,11 @@ type linkStderr struct {
 	readyOn string
 	// agent is the agent socket's path on the server, "" for none.
 	agent string
+	// authenticatedOn is what the line that closes authenticated contains,
+	// lowercased, as ssh may write the host's name in another case: ssh
+	// naming the host it was asked for, as `ssh -G` resolves it, or
+	// "authentication succeeded" when that is not known.
+	authenticatedOn string
 
 	mu      sync.Mutex
 	partial []byte // the line being written, cut at maxStderrLine
@@ -612,10 +648,11 @@ type linkStderr struct {
 	badSpec string
 }
 
-// newLinkStderr returns a linkStderr for a link that forwards the agent
-// socket to agent on the server, or none for "".
-func newLinkStderr(agent string) *linkStderr {
-	w := &linkStderr{authenticated: make(chan struct{}), agent: agent}
+// newSSHStderr returns an sshStderr for a link to hostname, as `ssh -G`
+// names it ("" when unknown), that forwards the agent socket to agent on
+// the server, or none for "".
+func newSSHStderr(agent, hostname string) *sshStderr {
+	w := &sshStderr{authenticated: make(chan struct{}), agent: agent, authenticatedOn: authenticatedLine(hostname)}
 	w.ready = w.authenticated
 	if agent != "" {
 		w.ready = make(chan struct{})
@@ -624,17 +661,28 @@ func newLinkStderr(agent string) *linkStderr {
 	return w
 }
 
-// newForwardStderr returns a linkStderr for the process of the forward
+// authenticatedLine is what ssh's line saying it has logged in to hostname
+// contains, lowercased, or, for "", the line it writes at DEBUG1 for any
+// login.
+func authenticatedLine(hostname string) string {
+	if hostname == "" {
+		return "authentication succeeded"
+	}
+	return "authenticated to " + strings.ToLower(hostname) + " "
+}
+
+// newForwardStderr returns an sshStderr for the process of the forward
 // from local, ready once ssh listens there.
-func newForwardStderr(local int) *linkStderr {
-	return &linkStderr{
-		authenticated: make(chan struct{}),
-		ready:         make(chan struct{}),
-		readyOn:       fmt.Sprintf("Local forwarding listening on 127.0.0.1 port %d.", local),
+func newForwardStderr(local int) *sshStderr {
+	return &sshStderr{
+		authenticated:   make(chan struct{}),
+		authenticatedOn: authenticatedLine(""),
+		ready:           make(chan struct{}),
+		readyOn:         fmt.Sprintf("Local forwarding listening on 127.0.0.1 port %d.", local),
 	}
 }
 
-func (w *linkStderr) Write(b []byte) (int, error) {
+func (w *sshStderr) Write(b []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n := len(b)
@@ -657,13 +705,13 @@ func (w *linkStderr) Write(b []byte) (int, error) {
 }
 
 // endLine files the line in partial.
-func (w *linkStderr) endLine() {
+func (w *sshStderr) endLine() {
 	line := strings.TrimSpace(string(w.partial))
 	w.partial = w.partial[:0]
 	if line == "" {
 		return
 	}
-	if !w.authed && (strings.Contains(line, "Authenticated to ") || strings.Contains(line, "Authentication succeeded")) {
+	if !w.authed && strings.Contains(strings.ToLower(line), w.authenticatedOn) {
 		w.authed = true
 		close(w.authenticated)
 	}
@@ -686,7 +734,7 @@ func (w *linkStderr) endLine() {
 
 // Refusal is the line in which ssh said the server refused to forward the
 // agent socket, or "".
-func (w *linkStderr) Refusal() string {
+func (w *sshStderr) Refusal() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.refusal
@@ -694,7 +742,7 @@ func (w *linkStderr) Refusal() string {
 
 // BadSpec is the line in which ssh said it could not parse the agent
 // socket's -R, or "".
-func (w *linkStderr) BadSpec() string {
+func (w *sshStderr) BadSpec() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.badSpec
@@ -702,7 +750,7 @@ func (w *linkStderr) BadSpec() string {
 
 // Lines returns the last non-empty lines ssh wrote, oldest first, a final
 // line without a newline included.
-func (w *linkStderr) Lines() []string {
+func (w *sshStderr) Lines() []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	out := append([]string(nil), w.lines...)
