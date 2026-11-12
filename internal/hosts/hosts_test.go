@@ -510,3 +510,43 @@ func TestEnsureRewritesOldBlockOnce(t *testing.T) {
 		t.Fatalf("second Ensure: changed=%v err=%v", changed, err)
 	}
 }
+
+func TestApplyFlushesDNSOnlyWhenTheFileChanges(t *testing.T) {
+	calls := 0
+	old := flushDNS
+	flushDNS = func() error { calls++; return nil }
+	t.Cleanup(func() { flushDNS = old })
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("flushDNS ran %d times, want 1 (after the change only)", calls)
+	}
+}
+
+func TestApplySucceedsWhenTheFlushFails(t *testing.T) {
+	old := flushDNS
+	flushDNS = func() error { return errors.New("flush failed") }
+	t.Cleanup(func() { flushDNS = old })
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatalf("Apply = %v, want nil", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "a.test") {
+		t.Fatalf("file lacks a.test:\n%s", data)
+	}
+}

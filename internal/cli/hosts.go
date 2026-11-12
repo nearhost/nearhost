@@ -16,8 +16,8 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 )
 
-// hostsPrompt is the password prompt of the commands that update /etc/hosts.
-const hostsPrompt = "nearhost needs your password to update /etc/hosts: "
+// hostsPrompt is the password prompt of the commands that update the hosts file.
+var hostsPrompt = "nearhost needs your password to update " + hosts.DefaultPath + ": "
 
 // newElevatedApplier is a variable so tests can avoid real sudo. Nothing
 // interrupts it while sudo waits for a password.
@@ -28,10 +28,8 @@ var newElevatedApplier = func(exe, path string) hosts.Applier {
 func newHostsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hosts",
-		Short: "Manage the nearhost block in /etc/hosts",
-		Long: `Manage the nearhost block in /etc/hosts.
-
-` + elevationNote,
+		Short: "Manage the nearhost block in " + hosts.DefaultPath,
+		Long:  "Manage the nearhost block in " + hosts.DefaultPath + ".\n\n" + elevationNote,
 	}
 	var file string
 	cmd.PersistentFlags().StringVar(&file, "file", hosts.DefaultPath, "hosts file to edit")

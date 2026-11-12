@@ -4,6 +4,8 @@ import (
 	"context"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/nearhost/nearhost/internal/hosts"
 )
 
 // firstRunForm explains the two password prompts and trusts the local CA.
@@ -62,7 +64,7 @@ func (f *firstRunForm) lines(width int) []string {
 		"Two things ask for your password:",
 		"• now: trusting the local certificate authority,",
 		"  so browsers accept HTTPS from Nearhost's web server",
-		"• later: adding names to /etc/hosts",
+		"• later: adding names to " + hosts.DefaultPath,
 	}
 	if f.busy {
 		lines = append(lines, "", busyLine("Trusting the local certificate authority…"))

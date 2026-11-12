@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -286,7 +287,7 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
 			"sudo hosts apply: exit status 1")
 	}
-	if n := strings.Count(out, "  fix: Run `nearhost up` again and approve the password prompt, or add the project's hosts to /etc/hosts yourself and pass --no-hosts\n"); n != 2 {
+	if n := strings.Count(out, "  fix: Run `nearhost up` again and approve the password prompt, or add the project's hosts to "+hosts.DefaultPath+" yourself and pass --no-hosts\n"); n != 2 {
 		t.Errorf("expected the fix once under each project, found %d:\n%s", n, out)
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {

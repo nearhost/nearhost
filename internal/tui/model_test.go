@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -143,7 +144,7 @@ func TestFixFor(t *testing.T) {
 	}{
 		{engine.StateRunning, "", true, ""},
 		{engine.StateStopped, "", true, ""},
-		{engine.StateStopped, "hosts not resolvable", true, "Press enter and approve the password prompt, or add the project's hosts to /etc/hosts yourself"},
+		{engine.StateStopped, "hosts not resolvable", true, "Press enter and approve the password prompt, or add the project's hosts to " + hosts.DefaultPath + " yourself"},
 		{engine.StateDegraded, "", false, "run `ssh mini.lan` once"},
 		{engine.StateError, "auth", false, "Run `ssh mini.lan` once in a terminal to fix access, then press enter."},
 		{engine.StateError, "port", true, "Resolve what is named above"},
