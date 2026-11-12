@@ -126,6 +126,9 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 				if errors.Is(err, sudo.ErrNotFound) {
 					return noSudo(err, "trust") // no prompt was shown, and another try won't find sudo
 				}
+				if trustRefused(err) {
+					return errors.New("Nearhost Local CA was not added: the Windows security warning was declined. Run `nearhost trust` again and choose Yes.")
+				}
 				return fmt.Errorf("%w ("+trustDeclined+", run `nearhost trust` again and approve it)", err)
 			}
 			fmt.Fprintln(out, "Done. Nearhost Local CA is in "+trustStore+".")
@@ -195,6 +198,9 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 			if err := b.uninstall(cert); err != nil {
 				if errors.Is(err, sudo.ErrNotFound) {
 					return noSudo(err, "untrust")
+				}
+				if trustRefused(err) {
+					return errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes.")
 				}
 				return fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err)
 			}

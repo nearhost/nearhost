@@ -189,9 +189,20 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 	return a, note
 }
 
+// noServerAgents says why coding agents on servers cannot reach Nearhost
+// where serverAgents is false.
+const noServerAgents = "coding agents on servers cannot reach Nearhost on Windows yet"
+
 // forward is the engine's Agent option: it listens on the server's private
 // socket and gives the session the forward to ~/.nearhost/<id>.sock there.
+// Where serverAgents is false it gives none, and says so.
 func (a *agents) forward(server string) (transport.AgentForward, bool) {
+	if !serverAgents {
+		if eng := a.src.eng.Load(); eng != nil {
+			eng.Events().Publish(engine.Event{Server: server, Message: server + ": agents unavailable: " + noServerAgents})
+		}
+		return transport.AgentForward{}, false
+	}
 	// Named by a hash, so any server name makes a short plain file name.
 	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte(server)))[:len("agent-")+12]
 	local := filepath.Join(a.runDir, name+".sock")

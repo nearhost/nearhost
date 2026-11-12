@@ -10,7 +10,9 @@
 // A plain process (-N with neither -M nor -S) acts as a per-process ssh: it
 // listens on each -L, reports each -R, and stays up until it is killed or a
 // file named for its pid appears in $FAKE_SSH_DROP_DIR. `-G host` prints the
-// configuration and exits before anything else.
+// configuration and exits before anything else. A -R whose local half is a
+// Windows path (C:\...) is logged, then rejected before any connection, as
+// OpenSSH, which splits the spec at its colons, rejects it.
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,6 +45,10 @@ func run(args []string) int {
 	// then argv.
 	if p := os.Getenv("FAKE_SSH_PGID_LOG"); p != "" {
 		appendLine(p, fmt.Sprintf("%d %s", pgid(), all))
+	}
+	if spec := windowsRForward(args); spec != "" {
+		fmt.Fprintf(os.Stderr, "Bad remote forwarding specification '%s'\n", spec)
+		return 255
 	}
 
 	sock, mode, larg, rarg, last, master := "", "", "", "", "", false
@@ -219,9 +226,31 @@ func hasArg(args []string, want string) bool {
 	return false
 }
 
+// windowsPath matches a path that starts with a Windows drive.
+var windowsPath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+
+// windowsRForward returns the first -R in args whose local half is a
+// Windows path, or "".
+func windowsRForward(args []string) string {
+	for i, a := range args[:max(0, len(args)-1)] {
+		if a != "-R" {
+			continue
+		}
+		if _, local, _ := strings.Cut(args[i+1], ":"); windowsPath.MatchString(local) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
 // printConfig answers `ssh -G host`: the host name, then the lines of
-// $FAKE_SSH_G_CONFIG. It makes no connection.
+// $FAKE_SSH_G_CONFIG. It makes no connection. $FAKE_SSH_G_FAIL makes it
+// fail instead, with that as its message.
 func printConfig(host string) int {
+	if msg := os.Getenv("FAKE_SSH_G_FAIL"); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return 255
+	}
 	fmt.Printf("hostname %s\n", host)
 	if cfg := os.Getenv("FAKE_SSH_G_CONFIG"); cfg != "" {
 		for _, line := range strings.Split(cfg, "\n") {

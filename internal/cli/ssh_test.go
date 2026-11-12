@@ -3,12 +3,15 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/testutil"
@@ -258,5 +261,61 @@ func TestAddRemoteResolvesPathsUnderTheServerHome(t *testing.T) {
 				t.Errorf("note %q shown wrongly:\n%s", note, out)
 			}
 		})
+	}
+}
+
+// With the socket in the server's runtime directory, doctor's check leaves
+// a link to it in ~/.nearhost: both go, and no other install's socket.
+func TestDoctorRemovesItsSocketAndItsLink(t *testing.T) {
+	home := t.TempDir()
+	const name = "0abcde.sock"
+	run := filepath.Join(home, "run", "nearhost")
+	agents := filepath.Join(home, transport.AgentDir)
+	for _, dir := range []string{run, agents} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	socket := filepath.Join(run, name)
+	other := filepath.Join(agents, "k3f9q2.sock")
+	for _, f := range []string{socket, other} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(socket, filepath.Join(agents, name)); err != nil {
+		t.Fatal(err)
+	}
+
+	// An SFTP server in this process, its working directory the home.
+	serverReader, clientWriter := io.Pipe()
+	clientReader, serverWriter := io.Pipe()
+	server, err := sftp.NewServer(struct {
+		io.Reader
+		io.WriteCloser
+	}{serverReader, serverWriter}, sftp.WithServerWorkingDirectory(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.Serve()
+	client, err := sftp.NewClientPipe(clientReader, clientWriter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		// Server first: client.Close waits on a reader only the server close unblocks.
+		server.Close()
+		client.Close()
+	}()
+
+	removeDoctorSocket(client, socket, name)
+
+	for _, gone := range []string{socket, filepath.Join(agents, name)} {
+		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+			t.Errorf("%s is still there: %v", gone, err)
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another install's socket went: %v", err)
 	}
 }

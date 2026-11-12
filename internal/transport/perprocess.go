@@ -163,6 +163,8 @@ func (p *perProcess) args(extra ...string) []string {
 		"-o", "ControlPath=none",
 		"-o", "RemoteCommand=none",
 		"-o", "LogLevel=DEBUG1",
+		"-o", "PermitLocalCommand=no",
+		"-o", "Tunnel=no",
 	}
 	a = append(a, extra...)
 	return append(a, "--", p.host)
@@ -232,8 +234,10 @@ func (p *perProcess) Stop() {
 
 // readConfig runs `ssh -G` for the host and returns a *ConfigError when its
 // configuration sets what a per-process connection cannot override. It
-// connects to nothing, so it runs in nearhost's own process group.
-func (p *perProcess) readConfig(ctx context.Context) (conflict error, err error) {
+// connects to nothing, so it runs in nearhost's own process group. fatal
+// says whether a failure counts towards giving up: ssh that did not start
+// at all does, and ssh that ran and failed does when what it said does.
+func (p *perProcess) readConfig(ctx context.Context) (conflict error, fatal bool, err error) {
 	cmd := p.command(ctx, "-G", "--", p.host)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -243,9 +247,10 @@ func (p *perProcess) readConfig(ctx context.Context) (conflict error, err error)
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, errors.New("ssh -G: " + msg)
+		var exit *exec.ExitError
+		return nil, !errors.As(err, &exit) || isFatalSSHError(msg), errors.New("ssh -G: " + msg)
 	}
-	return configConflicts(p.host, string(out)), nil
+	return configConflicts(p.host, string(out)), false, nil
 }
 
 // run supervises the link: it reads the host's configuration, launches
@@ -253,8 +258,9 @@ func (p *perProcess) readConfig(ctx context.Context) (conflict error, err error)
 // forwarded the agent socket and the forwards are re-applied, closes the
 // forwards when the link exits, and relaunches it with backoff when it exits,
 // until ctx ends or a failure that retrying cannot fix. A link that exits
-// because the server refused the agent socket is relaunched at once without
-// it, as the same attempt; the next full reconnect tries it again.
+// because the server refused the agent socket, or because ssh could not
+// parse its forward, is relaunched at once without it, as the same attempt;
+// the next full reconnect tries it again.
 func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done chan struct{}) {
 	defer func() {
 		// On self-exit, release the slot so a later Start can relaunch.
@@ -313,8 +319,9 @@ type linkEnd struct {
 	// giving up.
 	msg   string
 	fatal bool
-	// agentRefused is whether the link exited because the server refused
-	// the agent socket's forward, before it connected.
+	// agentRefused is whether the link exited, before it connected,
+	// because the server refused the agent socket's forward or ssh could
+	// not parse it.
 	agentRefused bool
 }
 
@@ -323,14 +330,13 @@ type linkEnd struct {
 // exits. ok is false when the supervisor is to stop, with the final status
 // set.
 func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, ok bool) {
-	conflict, err := p.readConfig(ctx)
+	conflict, fatal, err := p.readConfig(ctx)
 	if ctx.Err() != nil {
 		p.setStatus(StatusDisconnected, "")
 		return linkEnd{}, false
 	}
 	if err != nil {
-		// Usually a missing binary or a configuration ssh cannot parse.
-		return linkEnd{msg: err.Error(), fatal: true}, true
+		return linkEnd{msg: err.Error(), fatal: fatal}, true
 	}
 	if conflict != nil {
 		p.giveUp(conflict.Error())
@@ -421,6 +427,13 @@ wait:
 			err = errSocketTooLong(remote)
 		}
 		p.setAgentErr(err, problem)
+		return linkEnd{agentRefused: true}, true
+	}
+	// ssh rejects a -R it cannot parse before it connects: a local socket
+	// path holding a colon, as a Windows path does. That is no fault of
+	// the server, and the link goes on without the agent socket.
+	if bad := stderr.BadSpec(); bad != "" && !end.connected {
+		p.setAgentErr(fmt.Errorf("ssh cannot forward %s: %s", remote, bad), AgentNotReady)
 		return linkEnd{agentRefused: true}, true
 	}
 	lines := stderr.Lines()
@@ -596,6 +609,7 @@ type linkStderr struct {
 	authed  bool
 	isReady bool
 	refusal string
+	badSpec string
 }
 
 // newLinkStderr returns a linkStderr for a link that forwards the agent
@@ -660,6 +674,9 @@ func (w *linkStderr) endLine() {
 	if w.agent != "" && w.refusal == "" && strings.Contains(line, "remote port forwarding failed for listen path "+w.agent) {
 		w.refusal = line
 	}
+	if w.agent != "" && w.badSpec == "" && strings.Contains(line, "Bad remote forwarding specification") {
+		w.badSpec = line
+	}
 	if len(w.lines) == stderrLines {
 		copy(w.lines, w.lines[1:])
 		w.lines = w.lines[:stderrLines-1]
@@ -673,6 +690,14 @@ func (w *linkStderr) Refusal() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.refusal
+}
+
+// BadSpec is the line in which ssh said it could not parse the agent
+// socket's -R, or "".
+func (w *linkStderr) BadSpec() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.badSpec
 }
 
 // Lines returns the last non-empty lines ssh wrote, oldest first, a final

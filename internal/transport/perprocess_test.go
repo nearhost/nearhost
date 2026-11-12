@@ -278,7 +278,7 @@ func TestPerProcessArgs(t *testing.T) {
 	p := newTestPerProcess(t)
 	got := strings.Join(p.args("-N"), " ")
 	want := "-o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 " +
-		"-o ControlMaster=no -o ControlPath=none -o RemoteCommand=none -o LogLevel=DEBUG1 -N -- mini"
+		"-o ControlMaster=no -o ControlPath=none -o RemoteCommand=none -o LogLevel=DEBUG1 -o PermitLocalCommand=no -o Tunnel=no -N -- mini"
 	if got != want {
 		t.Fatalf("args = %q\nwant   %q", got, want)
 	}
@@ -937,4 +937,63 @@ func TestPerProcessLaunchesAtMostFourForwardsAtOnce(t *testing.T) {
 	for range 3 {
 		<-p.launchSlots
 	}
+}
+
+// OpenSSH splits a -R at its colons, so a Windows path as its local half is
+// a spec it cannot parse: it says so and exits before it connects. The link
+// goes on at once without the agent socket, and Health says why.
+func TestPerProcessAnUnparsableAgentForwardLeavesTheLinkUp(t *testing.T) {
+	p := newTestPerProcess(t)
+	local := `C:\Users\dev\AppData\Local\Temp\nh-1\agent-0123.sock`
+	p.SetAgentForward(AgentForward{Name: "k3f9q2.sock", Local: local})
+	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
+		return agentRemote, nil
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	lines := logLines(t, p.log)
+	if len(lines) != 2 || !strings.Contains(lines[0], " -R "+agentRemote+":"+local+" ") || strings.Contains(lines[1], " -R ") {
+		t.Fatalf("want a link with -R, then one without, got %q", lines)
+	}
+	h := p.Health()
+	want := "Bad remote forwarding specification '" + agentRemote + ":" + local + "'"
+	if h.AgentProblem != AgentNotReady || !strings.Contains(h.AgentErr, want) {
+		t.Fatalf("Health = %+v, want AgentNotReady with %q", h, want)
+	}
+	if h.AgentPath != "" || h.Failures != 0 {
+		t.Fatalf("Health = %+v, want no agent path and no failures", h)
+	}
+}
+
+// A failing `ssh -G` counts towards giving up only when what it said is an
+// error that retrying cannot fix.
+func TestPerProcessAFailingConfigReadIsClassified(t *testing.T) {
+	t.Run("transient", func(t *testing.T) {
+		p := newTestPerProcess(t, "FAKE_SSH_G_FAIL=ssh: Could not resolve hostname mini: nodename nor servname provided")
+		p.Start()
+		waitFor(t, 5*time.Second, func() bool { return p.Health().Failures >= 4 }, "four failed attempts")
+		if st := p.Status(); st == StatusAuthFailed {
+			t.Fatalf("status = %s after a transient failure", st)
+		}
+		if !strings.Contains(p.LastError(), "ssh -G: ssh: Could not resolve hostname mini") {
+			t.Fatalf("LastError = %q", p.LastError())
+		}
+	})
+	t.Run("fatal", func(t *testing.T) {
+		p := newTestPerProcess(t, "FAKE_SSH_G_FAIL=Host key verification failed.")
+		p.Start()
+		waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+		if h := p.Health(); h.Failures != 3 {
+			t.Fatalf("Failures = %d, want 3", h.Failures)
+		}
+	})
+	t.Run("no ssh", func(t *testing.T) {
+		p := newTestPerProcess(t)
+		p.SSHPath = filepath.Join(t.TempDir(), "no-such-ssh")
+		p.Start()
+		waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+		if !strings.Contains(p.LastError(), "ssh -G: ") {
+			t.Fatalf("LastError = %q", p.LastError())
+		}
+	})
 }

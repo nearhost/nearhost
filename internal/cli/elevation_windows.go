@@ -2,6 +2,13 @@
 
 package cli
 
+import (
+	"errors"
+	"strings"
+
+	"golang.org/x/sys/windows"
+)
+
 const (
 	// elevationNote is the help text's line about how a command asks for
 	// the rights it needs.
@@ -26,3 +33,10 @@ const (
 // without elevation, and Windows asks the user to confirm it, so there is
 // nothing to find and it always returns nil.
 func systemSudo() error { return nil }
+
+// trustRefused reports whether err is the user, or Windows, declining the
+// security warning. The trust store library flattens the errno into text,
+// so the message is checked as well.
+func trustRefused(err error) bool {
+	return errors.Is(err, windows.ERROR_CANCELLED) || strings.Contains(err.Error(), "canceled by the user")
+}

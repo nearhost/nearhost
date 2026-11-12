@@ -33,3 +33,6 @@ func systemSudo() error {
 	_, err := sudo.Binary()
 	return err
 }
+
+// trustRefused is always false here: sudo's refusals keep the generic wording.
+func trustRefused(error) bool { return false }
