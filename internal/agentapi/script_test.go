@@ -1763,9 +1763,22 @@ func TestScriptSendsTheTokenFileBesideTheSocket(t *testing.T) {
 	}
 	relay(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), addr)
 
-	// Without the token file nothing answers that the script can use.
-	if r := runScript(t, home, nil, "status", "--all"); r.code != 2 {
+	// Without the token file the listener refuses, and the script says
+	// what it was told rather than that no Nearhost reaches this machine.
+	if r := runScript(t, home, nil, "status", "--all"); r.code != 2 || !strings.Contains(r.stderr, noToken) || strings.Contains(r.stderr, "No Nearhost reaches") {
 		t.Fatalf("without the token file: %+v", r)
+	}
+	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + sock}, "socket"); r.code != 2 || !strings.Contains(r.stderr, noToken) {
+		t.Fatalf("without the token file, with NEARHOST_SOCKET: %+v", r)
+	}
+	doc := filepath.Join(home, "plan.md")
+	if err := os.WriteFile(doc, []byte("# Plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := runScript(t, home, nil, "open", doc); r.code != 2 || !strings.Contains(r.stderr, noToken) || strings.Contains(r.stderr, "isn't running") ||
+		!strings.Contains(r.stderr, "Tell the user the document is at") {
+		t.Fatalf("open without the token file: %+v", r)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".nearhost", "k3f9q2.token"), []byte("X-Nearhost-Token: "+token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1774,7 +1787,30 @@ func TestScriptSendsTheTokenFileBesideTheSocket(t *testing.T) {
 	if r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
 		t.Fatalf("with the token file: %+v", r)
 	}
-	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + filepath.Join(home, ".nearhost", "k3f9q2.sock")}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"origin":"leto"`) {
+	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + sock}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"origin":"leto"`) {
 		t.Fatalf("with NEARHOST_SOCKET: %+v", r)
+	}
+}
+
+// A socket that wants a token this machine lacks is reported only when no
+// other Nearhost answers.
+func TestScriptPrefersASocketThatAnswersToOneThatWantsAToken(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	s := New(Options{Laptop: "dev@hera", Source: fakeSource{"leto": mini}})
+	t.Cleanup(s.Close)
+	addr, _, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sorted after the one that answers, and before it, so the order of
+	// the glob does not decide.
+	relay(t, filepath.Join(home, ".nearhost", "aaaaaa.sock"), addr)
+	scriptServer(t, home, "k3f9q2", "leto", true)
+	relay(t, filepath.Join(home, ".nearhost", "zzzzzz.sock"), addr)
+	if r := runScript(t, home, nil, "socket"); r.code != 0 || !strings.Contains(r.stdout, "k3f9q2.sock") {
+		t.Fatalf("%+v", r)
 	}
 }

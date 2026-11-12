@@ -68,15 +68,33 @@ func nearhostRunning() bool {
 
 // laptopName is the user and the short host name, as in dev@laptop.
 func laptopName() string {
-	name := "you"
-	if u, err := user.Current(); err == nil && u.Username != "" {
-		name = u.Username
+	username := ""
+	if u, err := user.Current(); err == nil {
+		username = u.Username
 	}
 	host, err := os.Hostname()
-	if err != nil || host == "" {
-		return name
+	if err != nil {
+		host = ""
+	}
+	return laptopNameFrom(username, host)
+}
+
+// laptopNameFrom builds user@host from a user name and a host name. Windows
+// user names carry a domain or machine prefix, as in hera\ecs, which agents
+// should not see, so anything up to the last backslash is dropped. The host
+// is cut at its first dot, and an empty user name becomes "you".
+func laptopNameFrom(username, host string) string {
+	if i := strings.LastIndex(username, `\`); i >= 0 {
+		username = username[i+1:]
+	}
+	name := username
+	if name == "" {
+		name = "you"
 	}
 	host, _, _ = strings.Cut(host, ".")
+	if host == "" {
+		return name
+	}
 	return name + "@" + host
 }
 

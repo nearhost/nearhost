@@ -59,9 +59,27 @@ func (f *firstRunForm) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// firstRunAsk is what the first screen says its two steps ask for: on Windows a
+// prompt to approve each, elsewhere the user's password.
+func firstRunAsk() string {
+	if goos == "windows" {
+		return "your approval"
+	}
+	return "your password"
+}
+
+// approvePrompt is what to approve when Nearhost next asks to update the
+// hosts file: UAC's prompt on Windows, sudo's password prompt elsewhere.
+func approvePrompt() string {
+	if goos == "windows" {
+		return "approve the Windows prompt"
+	}
+	return "approve the password prompt"
+}
+
 func (f *firstRunForm) lines(width int) []string {
 	lines := []string{
-		"Two things ask for your password:",
+		"Two things ask for " + firstRunAsk() + ":",
 		"• now: trusting the local certificate authority,",
 		"  so browsers accept HTTPS from Nearhost's web server",
 		"• later: adding names to " + hosts.DefaultPath,

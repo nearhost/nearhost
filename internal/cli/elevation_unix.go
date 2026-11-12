@@ -23,6 +23,9 @@ const (
 	trustDeclined = "if you declined the password prompt or the OS refused"
 	// hostsFix is doctor's fix for a stale hosts block.
 	hostsFix = "run `nearhost up`; it updates the block and asks for your password"
+	// hostsApprove is what up's fix tells the user to do when it next asks
+	// to update the hosts file.
+	hostsApprove = "approve the password prompt"
 )
 
 // systemSudo is the production findSudo.

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -61,20 +60,11 @@ func badDocPath(name, v string) string {
 		return name + " must not contain NUL"
 	case len(v) > maxDocPath:
 		return fmt.Sprintf("%s must be at most %d bytes", name, maxDocPath)
-	// \\?\UNC\server\share is a network path in extended-length form.
-	case hasPrefixFold(v, `\\?\UNC\`):
-		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
-	// Device paths and extended-length forms plainDrivePath left alone.
-	case strings.HasPrefix(v, `\\.\`) || strings.HasPrefix(v, `\\?\`):
-		return name + ` is a Windows device path (\\.\ or \\?\); send the plain C:\… form`
-	// A network path resolves as neither a slash path nor a drive path.
-	// filepath.VolumeName is "" everywhere but Windows, where it is
-	// \\server\share for //server/share too.
-	case strings.HasPrefix(v, `\\`) || len(filepath.VolumeName(v)) > 2:
-		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
-	// filepath.IsAbs is path.IsAbs everywhere but Windows, where it also
-	// takes C:\proj, a path on the laptop.
-	case !path.IsAbs(v) && !(filepath.IsAbs(v) && len(filepath.VolumeName(v)) == 2):
+	}
+	if msg := windowsPathProblem(name, v); msg != "" {
+		return msg
+	}
+	if !path.IsAbs(v) && !drivePath(v) {
 		return fmt.Sprintf("%s must be absolute, not %q", name, v)
 	}
 	return ""

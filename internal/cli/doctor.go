@@ -257,15 +257,18 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	reachable := map[string]bool{config.LocalServer: true}
 	for _, srv := range cfg.Servers {
 		c := checkServer(ctx, b, srv)
-		checks = append(checks, c)
-		reachable[srv.Name] = c.level == levelOK
-		if c.level == levelOK && b.goos == "windows" && sshVer.known && sshVer.major == 9 && sshVer.minor == 5 {
+		// ssh 9.5 for Windows does not resolve an alias named as a ProxyJump
+		// hop. When the server check fails and its jump names one, that is
+		// the likely cause, so the fix says so; ssh's own words stay as the
+		// detail. A server that answers needs no advice.
+		if c.level == levelFail && b.goos == "windows" && sshVer.known && sshVer.major == 9 && sshVer.minor == 5 {
 			if alias, ok := jumpAlias(ctx, b, srv); ok {
-				checks = append(checks, check{"proxyjump " + srv.Name, levelWarn,
-					"ProxyJump names the alias " + alias.name + ", which ssh 9.5 for Windows does not resolve",
-					"in ~/.ssh/config, give ProxyJump " + alias.name + "'s address (" + alias.address + ") or use a ProxyCommand"})
+				c.fix = "ProxyJump names the alias " + alias.name + ", which ssh 9.5 for Windows does not resolve: in ~/.ssh/config, give ProxyJump " +
+					alias.name + "'s address (" + alias.address + ") or use a ProxyCommand, then run `nearhost doctor` again"
 			}
 		}
+		checks = append(checks, c)
+		reachable[srv.Name] = c.level == levelOK
 		if c.level == levelOK && b.checkAgents != nil {
 			checks = append(checks, checkAgents(ctx, b, srv))
 		}

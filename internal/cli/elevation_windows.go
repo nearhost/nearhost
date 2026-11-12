@@ -26,6 +26,9 @@ const (
 	trustDeclined = "if you chose No in the security warning or Windows refused"
 	// hostsFix is doctor's fix for a stale hosts block.
 	hostsFix = "run `nearhost up`; it updates the block and Windows asks you to approve it"
+	// hostsApprove is what up's fix tells the user to do when it next asks
+	// to update the hosts file.
+	hostsApprove = "approve the Windows prompt"
 )
 
 // systemSudo is the production findSudo. Windows needs no sudo for trust:

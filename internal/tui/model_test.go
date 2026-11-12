@@ -136,6 +136,7 @@ func TestProjectPanel(t *testing.T) {
 }
 
 func TestFixFor(t *testing.T) {
+	withGOOS(t, "linux")
 	for _, c := range []struct {
 		st       engine.State
 		reason   string
@@ -152,6 +153,14 @@ func TestFixFor(t *testing.T) {
 		if got := fixFor(c.st, c.reason, c.serverUp, "mini.lan"); !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
 			t.Errorf("fixFor(%s, %q, %v) = %q, want %q", c.st, c.reason, c.serverUp, got, c.want)
 		}
+	}
+}
+
+func TestFixForAHostsRefusalOnWindows(t *testing.T) {
+	withGOOS(t, "windows")
+	got := fixFor(engine.StateStopped, "hosts not resolvable", true, "mini.lan")
+	if !strings.HasPrefix(got, "Press enter and approve the Windows prompt, or add the project's hosts to ") || strings.Contains(got, "password") {
+		t.Errorf("fixFor = %q", got)
 	}
 }
 

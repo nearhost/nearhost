@@ -4,6 +4,7 @@ package hosts
 
 import (
 	"os/exec"
+	"path/filepath"
 
 	"golang.org/x/sys/windows"
 )
@@ -17,11 +18,26 @@ var flushDNS = flushResolverCache
 func flushResolverCache() error {
 	proc := windows.NewLazySystemDLL("dnsapi.dll").NewProc("DnsFlushResolverCache")
 	if err := proc.Find(); err != nil {
-		return exec.Command("ipconfig", "/flushdns").Run()
+		ipconfig, err := ipconfigPath()
+		if err != nil {
+			return err
+		}
+		return exec.Command(ipconfig, "/flushdns").Run()
 	}
 	// The call returns a BOOL: zero means the flush failed.
 	if r, _, callErr := proc.Call(); r == 0 {
 		return callErr
 	}
 	return nil
+}
+
+// ipconfigPath is ipconfig.exe in the system directory. This runs
+// elevated, so it never looks the program up on PATH, where a folder the
+// user can write to might come first.
+func ipconfigPath() (string, error) {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ipconfig.exe"), nil
 }
