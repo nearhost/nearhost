@@ -16,7 +16,7 @@
 #   nearhost.sh open-wait <id>                          wait up to 50s for the answer
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
-# 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
+# 2 no Nearhost reachable, no curl to reach it with or no token it accepts, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
 # by the user, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
@@ -33,7 +33,11 @@ die() {
 	# give the user when Nearhost cannot show it.
 	if [ -n "${DOCUMENT:-}" ]; then
 		case $code in
-		2) [ "${1#curl}" = "$1" ] && printf '%s\n' "Nearhost isn't running or connected, so nothing was opened. Tell the user the document is at $DOCUMENT." >&2 ;;
+		2) if [ -n "${DENIED:-}" ]; then
+			printf '%s\n' "Nothing was opened. Tell the user the document is at $DOCUMENT." >&2
+		elif [ "${1#curl}" = "$1" ]; then
+			printf '%s\n' "Nearhost isn't running or connected, so nothing was opened. Tell the user the document is at $DOCUMENT." >&2
+		fi ;;
 		3 | 5) printf '%s\n' "Nothing was opened. Tell the user the document is at $DOCUMENT." >&2 ;;
 		esac
 	fi
@@ -132,22 +136,40 @@ connect_steps() {
 	printf 'select %s and press c, or, while Nearhost has nothing to serve, press c on its first screen and choose %s.' "$1" "$1"
 }
 
+# no_token exits 2 with what a Nearhost that wants a token said when the
+# request had none it accepts: the error in BODY, a 401's.
+no_token() {
+	DENIED=1
+	msg=$(text_field error "$BODY")
+	die 2 "${msg:-this request has no valid Nearhost token: update the Nearhost skill on this machine}"
+}
+
 # find_socket sets SOCK and HELLO, the answer to GET /v1, or exits.
 find_socket() {
 	command -v curl >/dev/null 2>&1 || die 2 "curl is needed to reach Nearhost and is not installed here. Install curl, then run this again."
 	if [ -n "${NEARHOST_SOCKET:-}" ]; then
-		if ! call "$NEARHOST_SOCKET" 2 http://nearhost/v1 || [ "$STATUS" != 200 ]; then
+		if ! call "$NEARHOST_SOCKET" 2 http://nearhost/v1; then
 			die 2 "Nothing answers on NEARHOST_SOCKET ($NEARHOST_SOCKET). Unset it to look in ~/.nearhost."
 		fi
+		[ "$STATUS" = 401 ] && no_token
+		[ "$STATUS" = 200 ] || die 2 "Nothing answers on NEARHOST_SOCKET ($NEARHOST_SOCKET). Unset it to look in ~/.nearhost."
 		SOCK=$NEARHOST_SOCKET
 		HELLO=$BODY
 	else
 		found=0
 		list=""
+		# denied holds the answer of a socket that wants a token this
+		# machine lacks. It is the one to report only when no other
+		# socket answers.
+		denied=""
 		for s in "$HOME"/.nearhost/*.sock; do
 			[ -S "$s" ] || continue
 			# Sockets that do not answer are left by runs that have ended.
 			call "$s" 2 http://nearhost/v1 || continue
+			if [ "$STATUS" = 401 ]; then
+				denied=$BODY
+				continue
+			fi
 			[ "$STATUS" = 200 ] || continue
 			found=$((found + 1))
 			list="$list  NEARHOST_SOCKET=$s  ($(field laptop "$BODY"))
@@ -156,7 +178,13 @@ find_socket() {
 			HELLO=$BODY
 		done
 		case $found in
-		0) no_nearhost ;;
+		0)
+			if [ -n "$denied" ]; then
+				BODY=$denied
+				no_token
+			fi
+			no_nearhost
+			;;
 		1) ;;
 		*)
 			printf 'Nearhost answers here from %s laptops. Ask which one, then set NEARHOST_SOCKET:\n%s' "$found" "$list" >&2
