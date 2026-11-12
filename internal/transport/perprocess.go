@@ -31,6 +31,9 @@ type perProcess struct {
 
 	// agent is the socket forwarded for coding agents; nil for none.
 	agent *AgentForward
+	// prepareAgent readies ~/.nearhost on the server and returns the path
+	// of the forward's socket there. Tests replace it.
+	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
 }
 
 var _ Transport = (*perProcess)(nil)
@@ -44,6 +47,9 @@ func newPerProcess(c Config) *perProcess {
 		Foreground: c.Foreground,
 	}
 	p.init(c.Name, c.Host)
+	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
+		return prepareAgentWith(ctx, p.OpenSFTP, p.Name, f)
+	}
 	if c.Logf != nil {
 		p.Logf = c.Logf
 	}
@@ -242,9 +248,11 @@ func (p *perProcess) readConfig(ctx context.Context) (conflict error, err error)
 }
 
 // run supervises the link: it reads the host's configuration, launches
-// `ssh -N`, marks the transport connected once ssh has authenticated, and
-// relaunches it with backoff when it exits, until ctx ends or a failure
-// that retrying cannot fix.
+// `ssh -N`, marks the transport connected once ssh has authenticated and
+// forwarded the agent socket, and relaunches it with backoff when it exits,
+// until ctx ends or a failure that retrying cannot fix. A link that exits
+// because the server refused the agent socket is relaunched at once without
+// it, as the same attempt; the next full reconnect tries it again.
 func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done chan struct{}) {
 	defer func() {
 		// On self-exit, release the slot so a later Start can relaunch.
@@ -259,23 +267,30 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 	}()
 	backoff := p.baseBackoff
 	authFails := 0
+	withAgent := true
 	for {
 		if ctx.Err() != nil { // stopped before (re)launching the link
 			p.setStatus(StatusDisconnected, "")
 			return
 		}
-		p.setStatus(StatusConnecting, "")
-		connected, msg, fatal, ok := p.connect(ctx)
+		if withAgent { // a relaunch without the agent is still connecting
+			p.setStatus(StatusConnecting, "")
+		}
+		end, ok := p.connect(ctx, withAgent)
 		if !ok {
 			return // the status is set
 		}
-		if connected {
+		withAgent = !end.agentRefused
+		if end.agentRefused {
+			continue
+		}
+		if end.connected {
 			backoff = p.baseBackoff
 			authFails = 0
 		}
 		// Fatal errors, and failures to start ssh at all, give up after
 		// maxAuthFailures in a row.
-		if !p.attemptFailed(msg, fatal, &authFails, backoff) {
+		if !p.attemptFailed(end.msg, end.fatal, &authFails, backoff) {
 			return
 		}
 		if !p.sleep(ctx, backoff) {
@@ -286,30 +301,57 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 	}
 }
 
-// connect makes one attempt: it reads the configuration, then runs the link
-// until it exits. ok is false when the supervisor is to stop, with the final
-// status set. Otherwise msg says why the attempt ended, fatal whether it
-// counts towards giving up, and connected whether the link had connected.
-func (p *perProcess) connect(ctx context.Context) (connected bool, msg string, fatal, ok bool) {
+// linkEnd is how one launch of the link ended.
+type linkEnd struct {
+	// connected is whether the link had connected.
+	connected bool
+	// msg says why the link exited, and fatal whether that counts towards
+	// giving up.
+	msg   string
+	fatal bool
+	// agentRefused is whether the link exited because the server refused
+	// the agent socket's forward, before it connected.
+	agentRefused bool
+}
+
+// connect makes one attempt: it reads the configuration, readies the agent
+// socket on the server when withAgent is set, then runs the link until it
+// exits. ok is false when the supervisor is to stop, with the final status
+// set.
+func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, ok bool) {
 	conflict, err := p.readConfig(ctx)
 	if ctx.Err() != nil {
 		p.setStatus(StatusDisconnected, "")
-		return false, "", false, false
+		return linkEnd{}, false
 	}
 	if err != nil {
 		// Usually a missing binary or a configuration ssh cannot parse.
-		return false, err.Error(), true, true
+		return linkEnd{msg: err.Error(), fatal: true}, true
 	}
 	if conflict != nil {
 		p.giveUp(conflict.Error())
-		return false, "", false, false
+		return linkEnd{}, false
 	}
 
-	link := p.longLived(context.Background(), p.args("-N")...) // not tied to ctx: we stop it ourselves
-	stderr := newLinkStderr()
+	args := []string{"-N"}
+	remote := ""
+	if withAgent {
+		var local string
+		remote, local = p.readyAgent(ctx)
+		if ctx.Err() != nil {
+			p.setStatus(StatusDisconnected, "")
+			return linkEnd{}, false
+		}
+		if remote != "" {
+			args = append(args, "-R", remote+":"+local)
+		}
+	}
+
+	link := p.longLived(context.Background(), p.args(args...)...) // not tied to ctx: we stop it ourselves
+	stderr := newLinkStderr(remote)
 	link.Stderr = stderr
 	if err := link.Start(); err != nil {
-		return false, "start ssh: " + err.Error(), true, true
+		return linkEnd{msg: "start ssh: " + err.Error(), fatal: true}, true
 	}
 	p.mu.Lock()
 	p.link = link
@@ -317,6 +359,7 @@ func (p *perProcess) connect(ctx context.Context) (connected bool, msg string, f
 	defer func() {
 		p.mu.Lock()
 		p.link = nil
+		p.agentPath = "" // the server drops it with the link
 		p.mu.Unlock()
 	}()
 	exited := make(chan struct{})
@@ -335,28 +378,85 @@ func (p *perProcess) connect(ctx context.Context) (connected bool, msg string, f
 	case <-ctx.Done():
 		stop()
 		p.setStatus(StatusDisconnected, "")
-		return false, "", false, false
+		return linkEnd{}, false
 	case <-timeout.C:
-		// The link is alive but never authenticated. Kill it and retry.
+		// The link is alive but never got ready. Kill it and retry.
 		p.Logf("%s: connect timed out after %s", p.Name, p.connectTimeout)
 		stop()
-		return false, "connect timed out", false, true
-	case <-stderr.authenticated:
-		connected = true
+		return linkEnd{msg: "connect timed out"}, true
+	case <-stderr.ready:
+		end.connected = true
+		if remote != "" {
+			p.mu.Lock()
+			p.agentPath, p.agentErr, p.agentProblem = remote, "", AgentOK
+			p.mu.Unlock()
+		}
 		p.setStatus(StatusConnected, "")
+		if remote != "" {
+			p.Logf("%s: agents reach nearhost at %s", p.Name, remote)
+		}
 		select {
 		case <-ctx.Done():
 			stop()
 			p.setStatus(StatusDisconnected, "")
-			return true, "", false, false
+			return end, false
 		case <-exited:
 		}
 	case <-exited:
 	}
 
+	if refusal := stderr.Refusal(); refusal != "" && !end.connected {
+		err := fmt.Errorf("the server refused to forward %s: %s", remote, refusal)
+		problem := AgentRefused
+		if len(remote) > maxRemoteSocket {
+			problem = AgentTooLong
+			err = errSocketTooLong(remote)
+		}
+		p.setAgentErr(err, problem)
+		return linkEnd{agentRefused: true}, true
+	}
 	lines := stderr.Lines()
-	msg = exitMessage(lines)
-	return connected, msg, isFatalSSHError(strings.Join(lines, "\n")), true
+	end.msg = exitMessage(lines)
+	end.fatal = isFatalSSHError(strings.Join(lines, "\n"))
+	return end, true
+}
+
+// readyAgent readies the agent socket on the server for the link about to
+// launch, and returns its path there and the local socket it reaches, or
+// "" when the link is to forward none: there is no agent forward, the
+// server is this machine, or readying failed, which Health then says.
+func (p *perProcess) readyAgent(ctx context.Context) (remote, local string) {
+	p.mu.Lock()
+	f := p.agent
+	p.mu.Unlock()
+	if f == nil {
+		return "", ""
+	}
+	remote, err := p.prepareAgent(ctx, *f)
+	if ctx.Err() != nil {
+		return "", "" // stopping: what this pass found says nothing
+	}
+	if errors.Is(err, ErrThisMachine) {
+		p.mu.Lock()
+		p.agentPath, p.agentErr, p.agentProblem = "", "", AgentOK
+		p.mu.Unlock()
+		p.Logf("%s: agents here reach nearhost on this machine's own socket", p.Name)
+		return "", ""
+	}
+	if err != nil {
+		p.setAgentErr(err, AgentNotReady)
+		return "", ""
+	}
+	return remote, f.Local
+}
+
+// setAgentErr notes and logs why agents on the server cannot reach
+// nearhost.
+func (p *perProcess) setAgentErr(err error, problem AgentProblem) {
+	p.mu.Lock()
+	p.agentPath, p.agentErr, p.agentProblem = "", err.Error(), problem
+	p.mu.Unlock()
+	p.Logf("%s: agents unavailable: %v", p.Name, err)
 }
 
 // exitMessage picks why the link exited from the last lines of its stderr:
@@ -384,19 +484,33 @@ const (
 
 // linkStderr takes a link's stderr for its whole life. It keeps the last
 // stderrLines non-empty lines and closes authenticated at the first line
-// that says ssh has logged in. It holds at most stderrLines lines of
-// maxStderrLine bytes, however long ssh writes.
+// that says ssh has logged in. With an agent socket to forward, ready closes
+// at the line that says the server forwards it, and the line that says it
+// refused is kept; without, ready is authenticated. It holds at most
+// stderrLines lines of maxStderrLine bytes, however long ssh writes.
 type linkStderr struct {
 	authenticated chan struct{}
+	ready         chan struct{}
+	// agent is the agent socket's path on the server, "" for none.
+	agent string
 
-	mu      sync.Mutex
-	partial []byte // the line being written, cut at maxStderrLine
-	lines   []string
-	authed  bool
+	mu        sync.Mutex
+	partial   []byte // the line being written, cut at maxStderrLine
+	lines     []string
+	authed    bool
+	forwarded bool
+	refusal   string
 }
 
-func newLinkStderr() *linkStderr {
-	return &linkStderr{authenticated: make(chan struct{})}
+// newLinkStderr returns a linkStderr for a link that forwards the agent
+// socket to agent on the server, or none for "".
+func newLinkStderr(agent string) *linkStderr {
+	w := &linkStderr{authenticated: make(chan struct{}), agent: agent}
+	w.ready = w.authenticated
+	if agent != "" {
+		w.ready = make(chan struct{})
+	}
+	return w
 }
 
 func (w *linkStderr) Write(b []byte) (int, error) {
@@ -432,11 +546,28 @@ func (w *linkStderr) endLine() {
 		w.authed = true
 		close(w.authenticated)
 	}
+	if w.agent != "" {
+		switch {
+		case !w.forwarded && strings.Contains(line, "remote forward success for: listen "+w.agent):
+			w.forwarded = true
+			close(w.ready)
+		case w.refusal == "" && strings.Contains(line, "remote port forwarding failed for listen path "+w.agent):
+			w.refusal = line
+		}
+	}
 	if len(w.lines) == stderrLines {
 		copy(w.lines, w.lines[1:])
 		w.lines = w.lines[:stderrLines-1]
 	}
 	w.lines = append(w.lines, line)
+}
+
+// Refusal is the line in which ssh said the server refused to forward the
+// agent socket, or "".
+func (w *linkStderr) Refusal() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.refusal
 }
 
 // Lines returns the last non-empty lines ssh wrote, oldest first, a final

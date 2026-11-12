@@ -111,7 +111,7 @@ func (s *Session) applyAgent(ctx context.Context) {
 			// The mux client says only that the forward failed. A path this
 			// long is the likely reason, and one no sshd setting fixes.
 			problem = AgentTooLong
-			err = fmt.Errorf("the socket path %s is %d bytes, longer than a Unix socket path can be on most systems (103 on macOS, 107 on Linux)", remote, len(remote))
+			err = errSocketTooLong(remote)
 		}
 	}
 	if ctx.Err() != nil {
@@ -160,19 +160,32 @@ func (s *Session) controlAgent(ctx context.Context, op, remote, local string) er
 	return nil
 }
 
+// errSocketTooLong is why sshd refused to forward the agent socket to
+// remote, a path longer than a Unix socket path can be.
+func errSocketTooLong(remote string) error {
+	return fmt.Errorf("the socket path %s is %d bytes, longer than a Unix socket path can be on most systems (103 on macOS, 107 on Linux)", remote, len(remote))
+}
+
 // prepareAgentOverSFTP is the production prepareAgent: over an SFTP session
 // on the master, it finds the home directory and readies the socket there.
 func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (string, error) {
+	return prepareAgentWith(ctx, s.OpenSFTP, s.Name, fwd)
+}
+
+// prepareAgentWith readies the agent socket on the server called name over
+// an SFTP session from open: it finds the home directory and readies the
+// socket there, and returns its path.
+func prepareAgentWith(ctx context.Context, open func(context.Context) (*SFTP, error), name string, fwd AgentForward) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	f, err := s.OpenSFTP(ctx)
+	f, err := open(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 	home, err := f.Client.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("find the home directory on %s: %w", s.Name, err)
+		return "", fmt.Errorf("find the home directory on %s: %w", name, err)
 	}
 	probe := ""
 	if fwd.Own != "" {
@@ -181,11 +194,11 @@ func (s *Session) prepareAgentOverSFTP(ctx context.Context, fwd AgentForward) (s
 		// and going on could remove this machine's own socket, so it fails.
 		p, err := os.CreateTemp(filepath.Dir(fwd.Own), ".probe-*")
 		if err != nil {
-			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", name, err)
 		}
 		defer os.Remove(p.Name())
 		if err := p.Close(); err != nil {
-			return "", fmt.Errorf("make a file to tell %s from this machine: %w", s.Name, err)
+			return "", fmt.Errorf("make a file to tell %s from this machine: %w", name, err)
 		}
 		probe = filepath.Base(p.Name())
 	}
