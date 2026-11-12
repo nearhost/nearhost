@@ -4,7 +4,9 @@ import "context"
 
 // Transport is the connection Nearhost keeps to one server: it carries
 // the projects' forwards, the coding agents' socket and SFTP sessions,
-// and reconnects on its own until stopped.
+// and reconnects on its own until stopped. It has two strategies: *Session
+// shares one ssh ControlMaster, and *perProcess, for an ssh without one
+// (Windows), gives each job an ssh process of its own. New chooses.
 type Transport interface {
 	// Host is the ssh host the transport reaches.
 	Host() string
@@ -56,18 +58,4 @@ type Config struct {
 	Logf func(format string, args ...any)
 	// Foreground is as Session.Foreground.
 	Foreground bool
-}
-
-// New returns an idle Transport for c. Call Start to connect.
-func New(c Config) Transport {
-	s := NewSession(c.Name, c.Host, c.RunDir)
-	if c.SSHPath != "" {
-		s.SSHPath = c.SSHPath
-	}
-	s.Env = c.Env
-	if c.Logf != nil {
-		s.Logf = c.Logf
-	}
-	s.Foreground = c.Foreground
-	return s
 }

@@ -18,6 +18,9 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+      # Exercises the per-process transport (Windows' strategy) on Linux too.
+      - if: runner.os == 'Linux'
+        run: NEARHOST_TRANSPORT=per-process go test -count=1 -race -run 'PerProcess' ./internal/transport/
 
   # Windows is not released yet. This keeps it building and runs the tests
   # written for it, so the per-OS seams cannot rot while the rest lands.
@@ -31,6 +34,7 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test -run 'OnWindows$' ./internal/config/... ./internal/transport/... ./internal/engine/... ./internal/tui/... ./internal/cli/ ./internal/hosts/ ./internal/proxy/
+      - run: go test -count=1 -run 'PerProcess|TestNewChoosesTheStrategy|TestNewIsPerProcessOnWindows' ./internal/transport/
       # These packages' tests are written to pass on every OS.
       - run: go test ./internal/netbind/... ./internal/documents/... ./internal/oserr/... ./internal/desktop/... ./internal/winsys/... ./internal/update/... ./internal/elevate/... ./internal/testutil/...
 
