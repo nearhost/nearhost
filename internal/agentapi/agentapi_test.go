@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1122,5 +1124,44 @@ func TestCloseStopsLoopbackListeners(t *testing.T) {
 	}
 	if _, _, err := s.ListenLoopback("leto"); err == nil {
 		t.Fatal("listened after Close")
+	}
+}
+
+// On a Windows laptop the agent sends its own projects' paths as drive
+// paths, which Windows compares without regard to case. A server's
+// requests keep to slash paths.
+func TestProjectsTakeTheLaptopsDrivePathsOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("C:\\ paths are absolute only on Windows")
+	}
+	s := New(Options{Laptop: "dev@hera", Source: fakeSource{
+		"local": {{Name: "app", Path: `C:\proj`, URL: "https://app.test"}},
+		"leto":  {{Name: "srv", Path: "/srv/app", URL: "https://srv.test"}},
+	}})
+	s.SetReviewer(&fakeReviewer{})
+	dir := shortDir(t)
+	local, leto := filepath.Join(dir, "local.sock"), filepath.Join(dir, "leto.sock")
+	for origin, sock := range map[string]string{"local": local, "leto": leto} {
+		if err := s.Listen(origin, sock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(s.Close)
+	for _, p := range []string{`C:\proj`, `c:\PROJ\src\`, `C:\proj\src`} {
+		if st, out := call(t, local, "GET", "/v1/projects?path="+url.QueryEscape(p), ""); st != 200 || out["name"] != "app" {
+			t.Errorf("status of %s: %d %v", p, st, out)
+		}
+	}
+	if st, out := call(t, local, "GET", "/v1/projects?path="+url.QueryEscape(`C:\project`), ""); st != 404 {
+		t.Errorf("a sibling with the same prefix: %d %v", st, out)
+	}
+	if st, out := call(t, local, "POST", "/v1/proposals", `{"path": "C:\\proj\\src", "real": "C:\\proj\\src"}`); st != 200 || out["state"] != string(StateExists) {
+		t.Errorf("propose: %d %v", st, out)
+	}
+	if st, out := call(t, leto, "GET", "/v1/projects?path="+url.QueryEscape(`C:\srv\app`), ""); st != 400 {
+		t.Errorf("a server's drive path: %d %v", st, out)
+	}
+	if st, out := call(t, leto, "POST", "/v1/proposals", `{"path": "C:\\srv\\app"}`); st != 400 {
+		t.Errorf("a server's drive path proposed: %d %v", st, out)
 	}
 }
