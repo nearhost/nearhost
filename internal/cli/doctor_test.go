@@ -609,3 +609,65 @@ func TestDoctorFailureSummaryOnce(t *testing.T) {
 		t.Errorf("Main printed %q after the report", stderr.String())
 	}
 }
+
+func TestPortHeldBySystemNamesHTTPSys(t *testing.T) {
+	b := (&fakeMachine{}).backend()
+	b.goos = "windows"
+	b.probePort = func(string, int) error { return syscall.Errno(10048) } // WSAEADDRINUSE
+	b.holderOf = func(context.Context, int) string { return "System (pid 4)" }
+	c := checkPort(t.Context(), b, 80, "--http-port", false)
+	if c.detail != "in use by HTTP.sys (System, pid 4)" {
+		t.Fatalf("detail = %q", c.detail)
+	}
+	want := "run `netsh http show servicestate` in an elevated terminal to see which service registered port 80, and stop it (often IIS: `net stop w3svc`), or give `nearhost up` another --http-port"
+	if c.fix != want {
+		t.Fatalf("fix = %q", c.fix)
+	}
+}
+
+func TestSSHAgentServiceStates(t *testing.T) {
+	const fix = "only needed for keys with a passphrase: in an elevated PowerShell, `Get-Service ssh-agent | Set-Service -StartupType Automatic; Start-Service ssh-agent`, then `ssh-add`"
+	cases := []struct {
+		state  string
+		level  level
+		detail string
+		fix    string
+	}{
+		{"running", levelOK, "running", ""},
+		{"stopped", levelInfo, "stopped", fix},
+		{"disabled", levelInfo, "disabled", fix},
+		{"missing", levelInfo, "the OpenSSH Authentication Agent is not installed", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state, func(t *testing.T) {
+			b := (&fakeMachine{}).backend()
+			b.sshAgentService = func() (string, error) { return tc.state, nil }
+			c := checkSSHAgentService(b)
+			if c.name != "ssh agent" || c.level != tc.level || c.detail != tc.detail || c.fix != tc.fix {
+				t.Fatalf("check = %+v", c)
+			}
+		})
+	}
+	t.Run("error", func(t *testing.T) {
+		b := (&fakeMachine{}).backend()
+		b.sshAgentService = func() (string, error) { return "", errors.New("boom") }
+		if c := checkSSHAgentService(b); c.level != levelInfo || !strings.Contains(c.detail, "boom") {
+			t.Fatalf("check = %+v", c)
+		}
+	})
+}
+
+func TestDoctorChecksSSHAgentOnlyOnWindows(t *testing.T) {
+	doctorConfig(t)
+	for _, goos := range []string{"darwin", "windows"} {
+		f := healthy()
+		f.goos = goos
+		b := f.backend()
+		asked := false
+		b.sshAgentService = func() (string, error) { asked = true; return "running", nil }
+		out, _ := execute(t, newDoctorCmd(b), "doctor")
+		if asked != (goos == "windows") || strings.Contains(out, "ssh agent") != asked {
+			t.Errorf("%s: asked=%v\n%s", goos, asked, out)
+		}
+	}
+}

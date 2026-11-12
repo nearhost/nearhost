@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -211,6 +212,10 @@ func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
 	for name, backend := range map[string]any{"up": systemUp(hosts.DNSLookup), "add": systemAdd(), "doctor": systemDoctor(hosts.DNSLookup), "trust": systemTrust()} {
 		v := reflect.ValueOf(backend)
 		for i := 0; i < v.NumField(); i++ {
+			// The ssh-agent service query exists only on Windows.
+			if v.Type().Field(i).Name == "sshAgentService" && runtime.GOOS != "windows" {
+				continue
+			}
 			if f := v.Field(i); f.Kind() == reflect.Func && f.IsNil() {
 				t.Errorf("%s backend: %s is not set", name, v.Type().Field(i).Name)
 			}
