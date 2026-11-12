@@ -41,11 +41,9 @@ type forward struct {
 
 // Session supervises one OpenSSH ControlMaster connection to a server.
 type Session struct {
-	Name    string
-	host    string
+	supervision
 	SSHPath string   // ssh binary, default "ssh"
 	Env     []string // extra environment for ssh (tests)
-	Logf    func(format string, args ...any)
 	// Foreground keeps the master and the SFTP process in this process's
 	// group, so the terminal's Ctrl-C reaches them as it reaches nearhost.
 	// By default each runs in a process group of its own and only this
@@ -54,24 +52,11 @@ type Session struct {
 	// Foreground, or its master would outlive it.
 	Foreground bool
 
-	runDir          string
-	pollInterval    time.Duration
-	connectTimeout  time.Duration
-	baseBackoff     time.Duration
-	maxBackoff      time.Duration
-	maxAuthFailures int
+	runDir string
 
 	lifecycle sync.Mutex // serialises Start and Stop; held while Stop waits for the supervisor
-	mu        sync.Mutex
-	status    Status
-	lastErr   string
 	launches  int
 	forwards  map[string]forward
-	// failures counts the attempts that failed since the session last
-	// connected or was started; nextAttempt is when the supervisor tries
-	// again, zero unless it is waiting to.
-	failures    int
-	nextAttempt time.Time
 	// fwdMu serialises forward changes and the re-apply pass after a
 	// (re)connect. It is taken before mu and may be held across ssh calls.
 	// Logf is called with it held, so a Logf callback must not call
@@ -80,13 +65,8 @@ type Session struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	// agent is the socket forwarded for coding agents; nil for none. Once
-	// the master has connected, agentPath is where the server has it, or
-	// agentErr says why it has not.
-	agent        *AgentForward
-	agentPath    string
-	agentErr     string
-	agentProblem AgentProblem
+	// agent is the socket forwarded for coding agents; nil for none.
+	agent *AgentForward
 	// prepareAgent readies ~/.nearhost on the server and returns the path
 	// of the forward's socket there. Tests replace it.
 	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
@@ -95,19 +75,11 @@ type Session struct {
 // NewSession creates an idle session. Call Start to connect.
 func NewSession(name, host, runDir string) *Session {
 	s := &Session{
-		Name:            name,
-		host:            host,
-		SSHPath:         "ssh",
-		Logf:            func(string, ...any) {},
-		runDir:          runDir,
-		pollInterval:    200 * time.Millisecond,
-		connectTimeout:  20 * time.Second,
-		baseBackoff:     time.Second,
-		maxBackoff:      30 * time.Second,
-		maxAuthFailures: 3,
-		status:          StatusDisconnected,
-		forwards:        map[string]forward{},
+		SSHPath:  "ssh",
+		runDir:   runDir,
+		forwards: map[string]forward{},
 	}
+	s.init(name, host)
 	s.prepareAgent = s.prepareAgentOverSFTP
 	return s
 }
@@ -137,9 +109,6 @@ func (s *Session) SocketPath() string {
 	}
 	return path
 }
-
-// Host is the ssh host the session reaches.
-func (s *Session) Host() string { return s.host }
 
 // Preflight reports whether ssh can bind this session's control socket.
 // It fails when the run directory is so long that even the shortest socket
@@ -235,12 +204,24 @@ func (s *Session) control(ctx context.Context, args ...string) *exec.Cmd {
 // connection of its own: one borrowed from a master the user already has open
 // would say nothing about whether nearhost's master can log in.
 func (s *Session) Check(ctx context.Context) error {
-	cmd := s.command(ctx, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+	return checkHost(s.command(ctx, checkArgs(s.host)...), s.host)
+}
+
+// checkArgs are the arguments of the connectivity check: a connection of its
+// own that runs `true`, with nothing from the user's configuration that would
+// change it.
+func checkArgs(host string) []string {
+	return []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-o", "ControlPath=none",
-		"--", s.host, "true")
+		"--", host, "true"}
+}
+
+// checkHost runs the connectivity check cmd against host and returns a
+// *CheckError with ssh's message when it fails.
+func checkHost(cmd *exec.Cmd, host string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -248,23 +229,9 @@ func (s *Session) Check(ctx context.Context) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return &CheckError{Host: s.host, Stderr: msg}
+		return &CheckError{Host: host, Stderr: msg}
 	}
 	return nil
-}
-
-// Status returns the current connection state.
-func (s *Session) Status() Status {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.status
-}
-
-// LastError returns the most recent ssh error text.
-func (s *Session) LastError() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lastErr
 }
 
 // Launches counts how many times the master process has been started.
@@ -291,33 +258,6 @@ type Health struct {
 	AgentPath, AgentErr string
 	// AgentProblem is the kind of problem AgentErr describes.
 	AgentProblem AgentProblem
-}
-
-// Health returns the session's state, how many attempts have failed, and
-// when it tries again.
-func (s *Session) Health() Health {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return Health{Status: s.status, LastError: s.lastErr, Failures: s.failures, NextAttempt: s.nextAttempt,
-		AgentPath: s.agentPath, AgentErr: s.agentErr, AgentProblem: s.agentProblem}
-}
-
-func (s *Session) setStatus(st Status, errText string) {
-	s.mu.Lock()
-	s.status = st
-	if errText != "" {
-		s.lastErr = errText
-	}
-	s.nextAttempt = time.Time{}
-	if st == StatusConnected {
-		s.failures = 0
-	}
-	s.mu.Unlock()
-	if errText != "" {
-		s.Logf("%s: %s: %s", s.Name, st, errText)
-	} else {
-		s.Logf("%s: %s", s.Name, st)
-	}
 }
 
 // Start launches the supervisor. It is a no-op while a supervisor is running;
@@ -366,24 +306,6 @@ func (s *Session) Stop() {
 	// Also covers a supervisor that already gave up (auth failed).
 	if s.Status() != StatusDisconnected {
 		s.setStatus(StatusDisconnected, "")
-	}
-}
-
-// WaitConnected blocks until the session is connected, has failed
-// authentication, or ctx ends.
-func (s *Session) WaitConnected(ctx context.Context) error {
-	for {
-		switch s.Status() {
-		case StatusConnected:
-			return nil
-		case StatusAuthFailed:
-			return fmt.Errorf("ssh %s: %s", s.host, s.LastError())
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(s.pollInterval):
-		}
 	}
 }
 
@@ -444,13 +366,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		if err := master.Start(); err != nil {
 			// Usually a missing binary, occasionally a passing fork failure:
 			// retry, but give up after the same number of attempts.
-			msg := "start ssh: " + err.Error()
-			authFails++
-			if authFails >= s.maxAuthFailures {
-				s.giveUp(msg)
+			if !s.attemptFailed("start ssh: "+err.Error(), true, &authFails, backoff) {
 				return
 			}
-			s.retrying(msg, backoff)
 			if !s.sleep(ctx, backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
@@ -483,8 +401,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.Logf("%s: connect timed out after %s", s.Name, s.connectTimeout)
 			master.Process.Kill()
 			<-exited
-			authFails = 0
-			s.retrying("connect timed out", backoff)
+			s.attemptFailed("connect timed out", false, &authFails, backoff)
 			if !s.sleep(ctx, backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
@@ -506,16 +423,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			if msg == "" {
 				msg = "ssh exited"
 			}
-			if isFatalSSHError(msg) {
-				authFails++
-				if authFails >= s.maxAuthFailures {
-					s.giveUp(msg)
-					return
-				}
-			} else {
-				authFails = 0 // only consecutive fatal failures count
+			if !s.attemptFailed(msg, isFatalSSHError(msg), &authFails, backoff) {
+				return
 			}
-			s.retrying(msg, backoff)
 		}
 
 		if !s.sleep(ctx, backoff) {
@@ -526,27 +436,6 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 	}
 }
 
-// retrying notes a failed attempt, that the session is reconnecting and
-// that the next attempt is in d, all at once, then logs it, so whoever the
-// log tells sees them.
-func (s *Session) retrying(msg string, d time.Duration) {
-	s.mu.Lock()
-	s.status, s.lastErr = StatusReconnecting, msg
-	s.failures++
-	s.nextAttempt = time.Now().Add(d)
-	s.mu.Unlock()
-	s.Logf("%s: %s: %s", s.Name, StatusReconnecting, msg)
-}
-
-// giveUp notes a failed attempt and stops trying: the error is one that
-// trying again will not fix.
-func (s *Session) giveUp(msg string) {
-	s.mu.Lock()
-	s.failures++
-	s.mu.Unlock()
-	s.setStatus(StatusAuthFailed, msg)
-}
-
 func hasExited(exited <-chan struct{}) bool {
 	select {
 	case <-exited:
@@ -554,26 +443,6 @@ func hasExited(exited <-chan struct{}) bool {
 	default:
 		return false
 	}
-}
-
-// sleep waits d or until ctx ends; it reports whether the full wait elapsed.
-func (s *Session) sleep(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
-func (s *Session) nextBackoff(b time.Duration) time.Duration {
-	b *= 2
-	if b > s.maxBackoff {
-		b = s.maxBackoff
-	}
-	return b
 }
 
 // waitForSocket polls `ssh -O check` until the master answers, the process

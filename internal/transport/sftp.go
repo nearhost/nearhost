@@ -37,6 +37,12 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-s", "--", s.host, "sftp")
+	return openSFTP(ctx, cmd, s.host)
+}
+
+// openSFTP starts cmd, an ssh that runs the SFTP subsystem on host, and
+// speaks SFTP over its standard streams. ctx bounds the handshake only.
+func openSFTP(ctx context.Context, cmd *exec.Cmd, host string) (*SFTP, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -63,7 +69,7 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 	if err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
-		return nil, fmt.Errorf("sftp handshake with %s: %w", s.host, err)
+		return nil, fmt.Errorf("sftp handshake with %s: %w", host, err)
 	}
 	return &SFTP{Client: client, cmd: cmd}, nil
 }
