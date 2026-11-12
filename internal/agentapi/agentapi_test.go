@@ -1173,3 +1173,35 @@ func TestProjectsTakeTheLaptopsDrivePathsOnWindows(t *testing.T) {
 		t.Errorf("a server's drive path proposed: %d %v", st, out)
 	}
 }
+
+// A network or device path is named as one, as the documents call names
+// it, by status, propose and reload alike, rather than called relative.
+func TestProjectCallsNameNetworkAndDevicePaths(t *testing.T) {
+	_, _, _, local, remote := newServer(t, true)
+	for v, want := range map[string]string{
+		`\\server\share\app`:       "network paths (\\\\server\\share) aren't supported yet",
+		`\\?\UNC\server\share\app`: "network paths (\\\\server\\share) aren't supported yet",
+		`\\.\pipe\app`:             "is a Windows device path",
+	} {
+		for _, sock := range []string{local, remote} {
+			if st, out := call(t, sock, "GET", "/v1/projects?path="+url.QueryEscape(v), ""); st != 400 || !strings.Contains(fmt.Sprint(out["error"]), want) {
+				t.Errorf("status of %s on %s: %d %v", v, sock, st, out)
+			}
+			body := fmt.Sprintf(`{"path": %q}`, v)
+			if st, out := call(t, sock, "POST", "/v1/proposals", body); st != 400 || !strings.Contains(fmt.Sprint(out["error"]), want) {
+				t.Errorf("propose %s on %s: %d %v", v, sock, st, out)
+			}
+			body = fmt.Sprintf(`{"path": "/srv/app", "real": %q}`, v)
+			if st, out := call(t, sock, "POST", "/v1/proposals", body); st != 400 || !strings.Contains(fmt.Sprint(out["error"]), "real is a") {
+				t.Errorf("propose with real %s on %s: %d %v", v, sock, st, out)
+			}
+		}
+	}
+	// A slash path that starts with two slashes is a path on a server.
+	if msg := badPath("mini", "path", "//srv/app"); msg != "" {
+		t.Errorf("badPath(mini, //srv/app) = %q", msg)
+	}
+	if msg := badPath("mini", "path", "srv/app"); msg != `path must be absolute, not "srv/app"` {
+		t.Errorf("badPath(mini, srv/app) = %q", msg)
+	}
+}

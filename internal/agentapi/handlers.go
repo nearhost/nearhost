@@ -125,15 +125,54 @@ func pathQuery(w http.ResponseWriter, r *http.Request) (p, real string, ok bool)
 // absolutePaths answers the request with an error unless p is absolute, and
 // real too when given, on origin's machine.
 func absolutePaths(w http.ResponseWriter, origin, p, real string) bool {
-	if !absolutePath(origin, p) {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("path must be absolute, not %q", p))
+	if msg := badPath(origin, "path", p); msg != "" {
+		fail(w, http.StatusBadRequest, msg)
 		return false
 	}
-	if real != "" && !absolutePath(origin, real) {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("real must be absolute, not %q", real))
+	if real == "" {
+		return true
+	}
+	if msg := badPath(origin, "real", real); msg != "" {
+		fail(w, http.StatusBadRequest, msg)
 		return false
 	}
 	return true
+}
+
+// badPath is why v can't be the field called name of a request from
+// origin, or "" when it can: it must be absolute on origin's machine. A
+// network or device path is named as one, as documents name it, rather than
+// called relative. On a server //srv/app is a slash path, so there only a
+// path that is not absolute is checked for those forms.
+func badPath(origin, name, v string) string {
+	if origin == config.LocalServer || !absolutePath(origin, v) {
+		if msg := windowsPathProblem(name, v); msg != "" {
+			return msg
+		}
+	}
+	if !absolutePath(origin, v) {
+		return fmt.Sprintf("%s must be absolute, not %q", name, v)
+	}
+	return ""
+}
+
+// windowsPathProblem is why v, the field called name, is a Windows network
+// or device path Nearhost does not take, or "" when it is neither.
+func windowsPathProblem(name, v string) string {
+	switch {
+	// \\?\UNC\server\share is a network path in extended-length form.
+	case hasPrefixFold(v, `\\?\UNC\`):
+		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
+	// Device paths and extended-length forms plainDrivePath left alone.
+	case strings.HasPrefix(v, `\\.\`) || strings.HasPrefix(v, `\\?\`):
+		return name + ` is a Windows device path (\\.\ or \\?\); send the plain C:\… form`
+	// A network path resolves as neither a slash path nor a drive path.
+	// filepath.VolumeName is "" everywhere but Windows, where it is
+	// \\server\share for //server/share too.
+	case strings.HasPrefix(v, `\\`) || len(filepath.VolumeName(v)) > 2:
+		return name + ` is a network path: network paths (\\server\share) aren't supported yet`
+	}
+	return ""
 }
 
 // absolutePath reports whether v is an absolute path on origin's machine: a
