@@ -686,7 +686,7 @@ func TestPerProcessForwardOnATakenPortIsNotApplied(t *testing.T) {
 	waitPerProcessConnected(t, p)
 	st, fs := p.ForwardStates()
 	want := []ForwardState{
-		{Local: taken, Remote: 80, Retrying: true, Err: fmt.Sprintf("bind [127.0.0.1]:%d: Address already in use", taken)},
+		{Local: taken, Remote: 80, Retrying: true, Err: fmt.Sprintf("bind [127.0.0.1]:%d: Address already in use", taken), PortRefused: true},
 		{Local: free, Remote: 80, Applied: true},
 	}
 	if taken > free {
@@ -1058,7 +1058,7 @@ func TestPerProcessWaitsForTheTargetsAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := newTestPerProcess(t,
-		"FAKE_SSH_G_CONFIG=hostname target.example",
+		"FAKE_SSH_G_CONFIG=hostname target.example\nproxyjump jump.example",
 		"FAKE_SSH_AUTH_JUMP=jump.example",
 		"FAKE_SSH_LINK_HOLD="+hold)
 	p.Start()
@@ -1079,6 +1079,57 @@ func TestPerProcessWaitsForTheTargetsAuthentication(t *testing.T) {
 	}
 	os.Remove(hold)
 	waitPerProcessConnected(t, p)
+}
+
+// Without a ProxyJump or ProxyCommand, ssh logs in to no other host, so
+// any line saying it authenticated counts, whatever host it names.
+func TestPerProcessWithoutAJumpAnyAuthenticationCounts(t *testing.T) {
+	for _, cfg := range []string{"hostname target.example", "hostname target.example\nproxyjump none\nproxycommand none"} {
+		hold := filepath.Join(t.TempDir(), "hold")
+		if err := os.WriteFile(hold, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := newTestPerProcess(t,
+			"FAKE_SSH_G_CONFIG="+cfg,
+			"FAKE_SSH_AUTH_JUMP=other",
+			"FAKE_SSH_LINK_HOLD="+hold)
+		p.Start()
+		waitFor(t, 5*time.Second, func() bool {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if p.link == nil {
+				return false
+			}
+			w, ok := p.link.Stderr.(*sshStderr)
+			if !ok {
+				return false
+			}
+			select {
+			case <-w.authenticated:
+				return true
+			default:
+				return false
+			}
+		}, "the link to count \"Authenticated to other\" with "+strings.ReplaceAll(cfg, "\n", ", "))
+		p.Stop()
+	}
+}
+
+func TestPerProcessConfigAuthHost(t *testing.T) {
+	cases := []struct{ name, config, want string }{
+		{"no jump", "user ecs\nhostname target.example\nport 22", ""},
+		{"proxyjump", "hostname target.example\nproxyjump jump.example", "target.example"},
+		{"proxycommand", "hostname target.example\nproxycommand ssh -W %h:%p jump", "target.example"},
+		{"both none", "hostname target.example\nproxyjump none\nproxycommand none", ""},
+		{"none in another case", "hostname target.example\nProxyJump NONE", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := configAuthHost(c.config); got != c.want {
+				t.Fatalf("configAuthHost(%q) = %q, want %q", c.config, got, c.want)
+			}
+		})
+	}
 }
 
 func TestPerProcessForwardStatesSayARetryAndWhy(t *testing.T) {
@@ -1110,8 +1161,8 @@ func TestPerProcessForwardStatesSayARetryAndWhy(t *testing.T) {
 	mu.Lock()
 	fs := whileLost
 	mu.Unlock()
-	if len(fs) != 1 || fs[0].Applied || !fs[0].Retrying || !strings.Contains(fs[0].Err, "Broken pipe") {
-		t.Fatalf("while lost, ForwardStates = %+v, want it retrying with the drop's message", fs)
+	if len(fs) != 1 || fs[0].Applied || !fs[0].Retrying || fs[0].PortRefused || !strings.Contains(fs[0].Err, "Broken pipe") {
+		t.Fatalf("while lost, ForwardStates = %+v, want it retrying with the drop's message, its port not refused", fs)
 	}
 	waitFor(t, 5*time.Second, func() bool {
 		pid2 := p.forwardPid(local, 80)
@@ -1139,8 +1190,8 @@ func heldPerProcessForward(t *testing.T, p *perProcessFake) (int, net.Listener) 
 	}
 	p.Start()
 	waitPerProcessConnected(t, p)
-	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied || !fs[0].Retrying {
-		t.Fatalf("with the port held, ForwardStates = %s, want it retrying", forwardStatesString(st, fs))
+	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied || !fs[0].Retrying || !fs[0].PortRefused {
+		t.Fatalf("with the port held, ForwardStates = %s, want it retrying with its port refused", forwardStatesString(st, fs))
 	}
 	return local, l
 }
@@ -1218,5 +1269,93 @@ func TestPerProcessLogsARetryFailureOnlyWhenItChanges(t *testing.T) {
 	}
 	if !strings.Contains(logs(), "too many open files") {
 		t.Fatalf("the new message was not logged:\n%s", logs())
+	}
+}
+
+// A retry that the AddForward asking for it is handed is logged too when
+// it fails in a new way, since only a log line has the engine look at the
+// forward again; failing that way again is not.
+func TestPerProcessLogsANewFailureOfARetryAskedFor(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.baseBackoff = time.Minute // a retry only when asked for
+	var other atomic.Bool
+	p.listen = func(network, address string) (net.Listener, error) {
+		if other.Load() {
+			return nil, errors.New("socket: too many open files")
+		}
+		return net.Listen(network, address)
+	}
+	logs := logged(p)
+	local, _ := heldPerProcessForward(t, p)
+	spec := forwardSpec(local, 80)
+	failed := func() int { return strings.Count(logs(), "forward "+spec+" failed: ") }
+	if err := p.AddForward(t.Context(), local, 80); err == nil || !strings.Contains(err.Error(), "Address already in use") {
+		t.Fatalf("AddForward on a held port = %v", err)
+	}
+	if got := failed(); got != 0 {
+		t.Fatalf("logged %d failures for a retry failing as the re-apply did, want 0:\n%s", got, logs())
+	}
+	other.Store(true)
+	for range 2 {
+		if err := p.AddForward(t.Context(), local, 80); err == nil || !strings.Contains(err.Error(), "too many open files") {
+			t.Fatalf("AddForward = %v, want the new failure", err)
+		}
+	}
+	if got := failed(); got != 1 {
+		t.Fatalf("logged %d failures, want 1 for the new message:\n%s", got, logs())
+	}
+	if !strings.Contains(logs(), "too many open files") {
+		t.Fatalf("the new message was not logged:\n%s", logs())
+	}
+}
+
+// startRetriedForward adds a forward from a free port to 80 before p
+// starts, starts p and returns the port and the forward's state once
+// connected.
+func startRetriedForward(t *testing.T, p *perProcessFake, local int) ForwardState {
+	t.Helper()
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatalf("AddForward before Start: %v", err)
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	st, fs := p.ForwardStates()
+	if len(fs) != 1 {
+		t.Fatalf("ForwardStates = %s, want one forward", forwardStatesString(st, fs))
+	}
+	return fs[0]
+}
+
+// A local port the system refuses for a reason other than its being in
+// use, as Windows does with WSAEACCES for a reserved port, is refused too.
+func TestPerProcessAnyListenFailureRefusesThePort(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.baseBackoff = time.Minute
+	p.listen = func(network, address string) (net.Listener, error) {
+		return nil, errors.New("listen tcp " + address + ": bind: An attempt was made to access a socket in a way forbidden by its access permissions.")
+	}
+	fs := startRetriedForward(t, p, freePort(t))
+	if fs.Applied || !fs.Retrying || !fs.PortRefused || !strings.Contains(fs.Err, "forbidden by its access permissions") {
+		t.Fatalf("ForwardState = %+v, want it retrying with its port refused", fs)
+	}
+}
+
+// The port may be taken between the check and ssh's own bind; ssh then
+// says it could not request the forward, and the port is refused.
+func TestPerProcessSSHCouldNotRequestTheForwardRefusesThePort(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.baseBackoff = time.Minute
+	local := freePort(t)
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { held.Close() })
+	p.listen = func(network, _ string) (net.Listener, error) {
+		return net.Listen(network, "127.0.0.1:0") // the check passes
+	}
+	fs := startRetriedForward(t, p, local)
+	if fs.Applied || !fs.Retrying || !fs.PortRefused || !strings.Contains(fs.Err, "Could not request local forwarding") {
+		t.Fatalf("ForwardState = %+v, want ssh's refusal with its port refused", fs)
 	}
 }

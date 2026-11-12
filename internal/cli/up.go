@@ -178,6 +178,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if agentNote != "" {
 		eng.Events().Publish(engine.Event{Message: agentNote})
 	}
+	ag.publishHeld(eng)
 	ctx, again, release := b.notify(cmd.Context())
 	defer release()
 	if err := eng.Start(ctx); err != nil {

@@ -2,8 +2,10 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/oserr"
@@ -19,9 +21,11 @@ type perProcessForward struct {
 	// while the transport is connected.
 	applied bool
 	// retrying is whether the forward is unapplied with its supervisor
-	// relaunching it, and err is then ssh's error from the last attempt.
-	retrying bool
-	err      string
+	// relaunching it, err is then ssh's error from the last attempt, and
+	// portRefused whether that attempt could not bind the local port.
+	retrying    bool
+	err         string
+	portRefused bool
 	// cancel ends the forward's supervisor, and done closes once it has
 	// ended with its process reaped; kick asks it for an attempt now,
 	// answered on the channel sent. All nil when there is none.
@@ -160,11 +164,12 @@ func (p *perProcess) ForwardStates() (Status, []ForwardState) {
 	out := make([]ForwardState, 0, len(p.forwards))
 	for _, f := range p.forwards {
 		out = append(out, ForwardState{
-			Local:    f.local,
-			Remote:   f.remote,
-			Applied:  p.status == StatusConnected && f.applied,
-			Retrying: f.retrying,
-			Err:      f.err,
+			Local:       f.local,
+			Remote:      f.remote,
+			Applied:     p.status == StatusConnected && f.applied,
+			Retrying:    f.retrying,
+			Err:         f.err,
+			PortRefused: f.portRefused,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Local < out[j].Local })
@@ -277,13 +282,12 @@ func (p *perProcess) unsupervise(f *perProcessForward) {
 // keepTrying. Otherwise a launch that fails, or a process that exits, is
 // relaunched after the forward's own backoff, for as long as ctx lasts,
 // with the forward marked retrying meanwhile. A channel sent on kick asks
-// for an attempt now and gets its result. A failed retry is logged when
-// its message differs from the last failure reported, by a log line or to
-// the caller that waited for it.
+// for an attempt now and gets its result. A failed retry, asked for or
+// not, is logged when its message differs from the last failure reported.
 func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward, kick <-chan chan error, first chan<- error, done chan struct{}, keepTrying bool) {
 	defer func() {
 		p.mu.Lock()
-		f.retrying, f.err = false, ""
+		f.retrying, f.err, f.portRefused = false, "", false
 		p.mu.Unlock()
 		close(done)
 	}()
@@ -306,21 +310,23 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 				first <- err // the caller says why
 				return
 			}
+			var refused *portRefusedError
 			p.mu.Lock()
-			f.retrying, f.err = true, err.Error()
+			f.retrying, f.err, f.portRefused = true, err.Error(), errors.As(err, &refused)
 			p.mu.Unlock()
-			// The caller of the first attempt, or the AddForward that asked
-			// for this one, says why; a retry failing the same way again
-			// is not logged.
-			switch {
-			case first != nil:
+			// The caller of the first attempt says why. Any other failure
+			// is logged unless it fails as the last one reported did, and
+			// is handed to the AddForward that asked for it too, since
+			// only a log line has the engine look at the forward again.
+			if first != nil {
 				first <- err
 				first = nil
-			case reply != nil:
+			} else if err.Error() != logged {
+				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
+			}
+			if reply != nil {
 				reply <- err
 				reply = nil
-			case err.Error() != logged:
-				p.Logf("%s: forward %s failed: %v", p.Name, spec, err)
 			}
 			logged = err.Error()
 			if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
@@ -330,7 +336,7 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 		}
 		backoff, logged = p.baseBackoff, ""
 		p.mu.Lock()
-		f.proc, f.applied, f.retrying, f.err = proc, true, false, ""
+		f.proc, f.applied, f.retrying, f.err, f.portRefused = proc, true, false, "", false
 		p.mu.Unlock()
 		p.Logf("%s: forward %s", p.Name, spec)
 		if first != nil {
@@ -361,7 +367,7 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 		}
 		msg := exitMessage(proc.stderr.Lines())
 		p.mu.Lock()
-		f.proc, f.applied, f.retrying, f.err = nil, false, true, msg
+		f.proc, f.applied, f.retrying, f.err, f.portRefused = nil, false, true, msg, false
 		p.mu.Unlock()
 		p.Logf("%s: forward %s lost: %s", p.Name, spec, msg)
 		if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
@@ -392,10 +398,25 @@ func (p *perProcess) pause(ctx context.Context, backoff *time.Duration, kick <-c
 // dropping unauthenticated connections beyond 10.
 const maxForwardLaunches = 4
 
+// portRefusedError is a forward's launch failing because its local port
+// could not be bound: the check before ssh starts could not listen there,
+// or ssh said it could not.
+type portRefusedError struct{ err error }
+
+func (e *portRefusedError) Error() string { return e.err.Error() }
+func (e *portRefusedError) Unwrap() error { return e.err }
+
+// refusesPort reports whether msg, why a forward's ssh exited, is ssh
+// saying it could not bind the local port.
+func refusesPort(msg string) bool {
+	return strings.Contains(msg, "Could not request local forwarding") || strings.Contains(msg, "bind [")
+}
+
 // launchForward starts an `ssh -N -L` for the forward from local to remote
 // and waits until it listens, holding one of the launch slots while it
 // does. It fails when the port is taken, when ssh exits first, after
-// connectTimeout, or when ctx ends; the process is then reaped.
+// connectTimeout, or when ctx ends; the process is then reaped. A failure
+// to bind the local port is a *portRefusedError.
 func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*sshProc, error) {
 	select {
 	case p.launchSlots <- struct{}{}:
@@ -408,10 +429,10 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	}
 	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
 	if oserr.AddrInUse(err) {
-		return nil, fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)
+		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)
+		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)}
 	}
 	l.Close()
 	spec := forwardSpec(local, remote)
@@ -426,7 +447,12 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	case <-stderr.ready:
 		return proc, nil
 	case <-proc.exited:
-		return nil, fmt.Errorf("ssh -L %s: %s", spec, exitMessage(stderr.Lines()))
+		msg := exitMessage(stderr.Lines())
+		err := fmt.Errorf("ssh -L %s: %s", spec, msg)
+		if refusesPort(msg) {
+			return nil, &portRefusedError{err}
+		}
+		return nil, err
 	case <-timeout.C:
 		proc.stop()
 		return nil, fmt.Errorf("ssh -L %s: timed out after %s", spec, p.connectTimeout)

@@ -108,7 +108,7 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 
 // lostForward is a forward of a project that its connected session lacks.
 // It is reconnecting while the transport relaunches it for a reason other
-// than its local port being in use, with err the reason; otherwise ssh
+// than its local port being refused, with err the reason; otherwise ssh
 // could not bind its local port.
 type lostForward struct {
 	forward
@@ -129,7 +129,7 @@ func lostForwards(run *projectRun, states []transport.ForwardState) []lostForwar
 		if st.Applied {
 			continue
 		}
-		reconnecting := st.Retrying && !strings.Contains(st.Err, "Address already in use")
+		reconnecting := st.Retrying && !st.PortRefused
 		lost = append(lost, lostForward{forward: f, reconnecting: reconnecting, err: st.Err})
 	}
 	return lost
