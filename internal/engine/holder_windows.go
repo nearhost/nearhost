@@ -29,6 +29,11 @@ func holderTools() []holderTool { return []holderTool{netstatTool} }
 // imageName is the name of the program pid runs, without its directory or
 // .exe, or "" when it cannot be read, as for some system processes.
 func imageName(pid int) string {
+	// The System process (pid 4) has no image file: opening it works, but
+	// QueryFullProcessImageName fails. It holds ports for HTTP.sys, so name it.
+	if pid == 4 {
+		return "System"
+	}
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return ""

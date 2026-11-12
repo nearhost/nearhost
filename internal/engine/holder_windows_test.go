@@ -34,3 +34,9 @@ func TestNetstatFromSystem32OnWindows(t *testing.T) {
 		t.Fatalf("netstat is run as %q, want %q", netstatTool.name, want)
 	}
 }
+
+func TestSystemProcessIsNamedOnWindows(t *testing.T) {
+	if got := describeHolder(imageName(4), 4); got != "System (pid 4)" {
+		t.Fatalf("holder = %q", got)
+	}
+}
