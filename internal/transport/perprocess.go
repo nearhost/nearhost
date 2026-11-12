@@ -288,6 +288,19 @@ func configAuthHost(config string) string {
 	return hostname
 }
 
+// ConfigValue is the first value of key in `ssh -G` output, with the rest of
+// the line joined by single spaces, or "" when the output does not set it.
+// ssh prints keys in lower case.
+func ConfigValue(config, key string) string {
+	for _, line := range strings.Split(config, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.EqualFold(fields[0], key) {
+			return strings.Join(fields[1:], " ")
+		}
+	}
+	return ""
+}
+
 // run supervises the link: it reads the host's configuration, launches
 // `ssh -N`, marks the transport connected once ssh has authenticated and
 // forwarded the agent socket and the forwards are re-applied, closes the

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -42,6 +43,37 @@ func (c sshClient) check(ctx context.Context, srv config.Server) error {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 	return c.session(srv, "").Check(ctx)
+}
+
+// version runs `ssh -V` and returns the first line it prints, which ssh
+// writes on stderr.
+func (c sshClient) version(ctx context.Context) (string, error) {
+	path := c.path
+	if path == "" {
+		path = "ssh"
+	}
+	cmd := exec.CommandContext(ctx, path, "-V")
+	cmd.Env = append(os.Environ(), c.env...)
+	out, err := cmd.CombinedOutput()
+	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	line = strings.TrimSpace(line)
+	if err != nil && line == "" {
+		return "", err
+	}
+	return line, nil
+}
+
+// config runs `ssh -G` for host and returns what it prints. It connects to
+// nothing.
+func (c sshClient) config(ctx context.Context, host string) (string, error) {
+	path := c.path
+	if path == "" {
+		path = "ssh"
+	}
+	cmd := exec.CommandContext(ctx, path, "-G", "--", host)
+	cmd.Env = append(os.Environ(), c.env...)
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 // sshHint says how to repair access to host; then is what to do afterwards.
