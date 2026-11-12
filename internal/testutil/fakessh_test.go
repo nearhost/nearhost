@@ -323,3 +323,100 @@ func TestFakeSSHPrintsConfig(t *testing.T) {
 		t.Errorf("-G output = %q, want %q", lines, want)
 	}
 }
+
+// TestFakeSSHParentHelper is not a test: TestFakeSSHExitsWhenItsParentDies
+// runs the test binary on it. It starts the fake as a plain `-N mini` and
+// returns at once, without waiting for it.
+func TestFakeSSHParentHelper(t *testing.T) {
+	fake := os.Getenv("GO_TEST_FAKESSH_PARENT")
+	if fake == "" {
+		t.Skip("helper for TestFakeSSHExitsWhenItsParentDies")
+	}
+	args := strings.Fields(os.Getenv("GO_TEST_FAKESSH_ARGS"))
+	// The fake notes its parent as it starts and logs its arguments just
+	// after. Returning before then would let it start with this helper
+	// already gone and note the wrong parent, so wait for the log.
+	started := filepath.Join(t.TempDir(), "started")
+	cmd := exec.Command(fake, args...)
+	cmd.Env = append(os.Environ(), "FAKE_SSH_LOG="+started)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	WaitUntil(t, 5*time.Second, func() bool {
+		b, _ := os.ReadFile(started)
+		return len(b) > 0
+	}, "the fake to start")
+	fmt.Printf("FAKEPID=%d\n", cmd.Process.Pid)
+}
+
+func TestFakeSSHExitsWhenItsParentDies(t *testing.T) {
+	dir := TempDir(t, "nh-")
+	pidLog := filepath.Join(dir, "pids")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := exec.Command(self, "-test.run=^TestFakeSSHParentHelper$", "-test.count=1")
+	helper.Env = append(os.Environ(), "GO_TEST_FAKESSH_PARENT="+FakeSSH(t), "GO_TEST_FAKESSH_ARGS=-N mini", "FAKE_SSH_PID_LOG="+pidLog)
+	if out, err := helper.CombinedOutput(); err != nil {
+		t.Fatalf("the intermediary failed: %v\n%s", err, out)
+	}
+
+	var pid int
+	WaitUntil(t, 3*time.Second, func() bool {
+		b, _ := os.ReadFile(pidLog)
+		f := strings.Fields(string(b))
+		if len(f) == 0 {
+			return false
+		}
+		pid, _ = strconv.Atoi(f[0])
+		return pid > 0
+	}, "the fake to log its pid")
+	// Whatever the outcome, the fake must not outlive this test.
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			p.Kill()
+		}
+	})
+	WaitUntil(t, 2*time.Second, func() bool { return !processAlive(pid) }, "the fake to exit after its parent")
+}
+
+func TestFakeSSHRejectsAMalformedLocalForward(t *testing.T) {
+	code, stderr := runFake(t, nil, "-N", "-L", "nonsense", "mini")
+	if code != 255 {
+		t.Errorf("exit code = %d, want 255", code)
+	}
+	if want := "Bad local forwarding specification 'nonsense'"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
+func TestFakeSSHHangingMasterExitsWhenItsParentDies(t *testing.T) {
+	dir := TempDir(t, "nh-")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := exec.Command(self, "-test.run=^TestFakeSSHParentHelper$", "-test.count=1", "-test.v")
+	helper.Env = append(os.Environ(), "GO_TEST_FAKESSH_PARENT="+FakeSSH(t),
+		"GO_TEST_FAKESSH_ARGS=-N -M -S "+filepath.Join(dir, "s")+" mini", "FAKE_SSH_HANG=1")
+	out, err := helper.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the intermediary failed: %v\n%s", err, out)
+	}
+	var pid int
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "FAKEPID="); ok {
+			pid, _ = strconv.Atoi(v)
+		}
+	}
+	if pid == 0 {
+		t.Fatalf("the intermediary did not print the fake's pid:\n%s", out)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			p.Kill()
+		}
+	})
+	WaitUntil(t, 2*time.Second, func() bool { return !processAlive(pid) }, "the hanging master to exit after its parent")
+}
