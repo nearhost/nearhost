@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -78,6 +80,13 @@ type doctorBackend struct {
 	// service: "running", "stopped", "disabled" or "missing". It is nil
 	// except on Windows.
 	sshAgentService func() (state string, err error)
+	// sshVersion runs `ssh -V` and returns its first line.
+	sshVersion func(ctx context.Context) (string, error)
+	// sshConfig returns the output of `ssh -G` for a host.
+	sshConfig func(ctx context.Context, host string) (string, error)
+	// firefoxRootsOff reports whether Firefox is set not to read Windows'
+	// trusted roots, and where that is set. It is nil except on Windows.
+	firefoxRootsOff func() (where string, off bool)
 }
 
 // systemDoctor is the production backend. Only NewRoot wires it in, with
@@ -99,6 +108,9 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		goos:            runtime.GOOS,
 		exe:             realExecutable(),
 		sshAgentService: sshAgentService,
+		sshVersion:      sshClient{}.version,
+		sshConfig:       sshClient{}.config,
+		firefoxRootsOff: firefoxRootsOff,
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
 		},
@@ -213,6 +225,17 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	if b.goos == "windows" && b.sshAgentService != nil {
 		checks = append(checks, checkSSHAgentService(b))
 	}
+	var sshVer sshVersion
+	if b.goos == "windows" && b.sshVersion != nil {
+		var c check
+		c, sshVer = checkSSHVersion(ctx, b)
+		checks = append(checks, c)
+	}
+	if b.goos == "windows" && b.firefoxRootsOff != nil {
+		if where, off := b.firefoxRootsOff(); off {
+			checks = append(checks, firefoxRootsCheck(where))
+		}
+	}
 	if cfg == nil {
 		// The checks above do not need the config. These do, and comparing
 		// with an empty one would report what is there as wrong.
@@ -236,6 +259,13 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		c := checkServer(ctx, b, srv)
 		checks = append(checks, c)
 		reachable[srv.Name] = c.level == levelOK
+		if c.level == levelOK && b.goos == "windows" && sshVer.known && sshVer.major == 9 && sshVer.minor == 5 {
+			if alias, ok := jumpAlias(ctx, b, srv); ok {
+				checks = append(checks, check{"proxyjump " + srv.Name, levelWarn,
+					"ProxyJump names the alias " + alias.name + ", which ssh 9.5 for Windows does not resolve",
+					"in ~/.ssh/config, give ProxyJump " + alias.name + "'s address (" + alias.address + ") or use a ProxyCommand"})
+			}
+		}
 		if c.level == levelOK && b.checkAgents != nil {
 			checks = append(checks, checkAgents(ctx, b, srv))
 		}
@@ -564,4 +594,130 @@ func checkServer(ctx context.Context, b doctorBackend, srv config.Server) check 
 		detail = refused.Stderr // what OpenSSH printed, as it printed it
 	}
 	return check{name, levelFail, detail, sshHint(srv.SSHHost, "run `nearhost doctor` again")}
+}
+
+// sshVersion is the version of the ssh on PATH, parsed from `ssh -V`.
+type sshVersion struct {
+	known        bool
+	major, minor int
+}
+
+var sshVersionPattern = regexp.MustCompile(`OpenSSH_(?:for_Windows_)?(\d+)\.(\d+)`)
+
+// parseSSHVersion reads the version from a line such as
+// "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2" or "OpenSSH_9.6p1 ...".
+func parseSSHVersion(line string) sshVersion {
+	m := sshVersionPattern.FindStringSubmatch(line)
+	if m == nil {
+		return sshVersion{}
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	return sshVersion{known: true, major: major, minor: minor}
+}
+
+// checkSSHVersion reports the ssh on PATH on Windows, where Nearhost needs
+// the one Windows 11 ships. A version it cannot read is only a note.
+func checkSSHVersion(ctx context.Context, b doctorBackend) (check, sshVersion) {
+	c := check{name: "ssh"}
+	line, err := b.sshVersion(ctx)
+	if err != nil {
+		c.level, c.detail = levelFail, "could not run ssh: "+err.Error()
+		c.fix = "install the OpenSSH Client in Settings > System > Optional features"
+		return c, sshVersion{}
+	}
+	c.detail = line
+	v := parseSSHVersion(line)
+	switch {
+	case !v.known:
+		c.level = levelInfo
+	case v.major < 9 || (v.major == 9 && v.minor < 5):
+		c.level = levelWarn
+		c.detail = line + ": Windows 11's ssh (9.5 or later) is needed"
+		c.fix = "update Windows, or install the current OpenSSH for Windows and put it first on PATH"
+	}
+	return c, v
+}
+
+// firefoxRootsCheck is the warning for Firefox set not to read Windows'
+// trusted roots, which is where the local CA is trusted. where is "policy"
+// or names a profile.
+func firefoxRootsCheck(where string) check {
+	fix := "set ImportEnterpriseRoots to 1, or remove that policy"
+	if where != "policy" {
+		fix = "set security.enterprise_roots.enabled to true in about:config"
+	}
+	return check{"firefox", levelWarn, "Firefox does not read Windows' trusted roots (" + where + ")", fix}
+}
+
+// jumpTarget is a ProxyJump hop that names an alias of ssh's configuration.
+type jumpTarget struct {
+	name    string // the alias
+	address string // user@host:port the alias stands for
+}
+
+// jumpAlias reports the first ProxyJump hop of srv when it names an alias,
+// that is when `ssh -G` resolves the hop to another hostname. A hop given as
+// an address resolves to itself.
+func jumpAlias(ctx context.Context, b doctorBackend, srv config.Server) (jumpTarget, bool) {
+	if b.sshConfig == nil {
+		return jumpTarget{}, false
+	}
+	out, err := b.sshConfig(ctx, srv.SSHHost)
+	if err != nil {
+		return jumpTarget{}, false
+	}
+	jump := transport.ConfigValue(out, "proxyjump")
+	if jump == "" || strings.EqualFold(jump, "none") {
+		return jumpTarget{}, false
+	}
+	hop, _, _ := strings.Cut(jump, ",")
+	user, host, hopPort := splitHop(hop)
+	query := host
+	if user != "" {
+		query = user + "@" + host
+	}
+	hopOut, err := b.sshConfig(ctx, query)
+	if err != nil {
+		return jumpTarget{}, false
+	}
+	hostname := transport.ConfigValue(hopOut, "hostname")
+	if hostname == "" || strings.EqualFold(hostname, host) {
+		return jumpTarget{}, false
+	}
+	// ssh -G reports the local user when none is configured, which cannot be
+	// told from one configured, so the suggestion names a user only when the
+	// hop does.
+	addr := hostname
+	if user != "" {
+		addr = user + "@" + addr
+	}
+	port := hopPort
+	if port == "" {
+		if p := transport.ConfigValue(hopOut, "port"); p != "22" {
+			port = p
+		}
+	}
+	if port != "" {
+		addr += ":" + port
+	}
+	return jumpTarget{name: host, address: addr}, true
+}
+
+// splitHop splits a ProxyJump hop, [ssh://][user@]host[:port], where host may
+// be a bracketed IPv6 address.
+func splitHop(hop string) (user, host, port string) {
+	hop = strings.TrimPrefix(hop, "ssh://")
+	if i := strings.LastIndex(hop, "@"); i >= 0 {
+		user, hop = hop[:i], hop[i+1:]
+	}
+	if strings.HasPrefix(hop, "[") {
+		if end := strings.Index(hop, "]"); end > 0 {
+			return user, hop[1:end], strings.TrimPrefix(hop[end+1:], ":")
+		}
+	}
+	if strings.Count(hop, ":") == 1 {
+		hop, port, _ = strings.Cut(hop, ":")
+	}
+	return user, hop, port
 }

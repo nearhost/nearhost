@@ -212,8 +212,9 @@ func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
 	for name, backend := range map[string]any{"up": systemUp(hosts.DNSLookup), "add": systemAdd(), "doctor": systemDoctor(hosts.DNSLookup), "trust": systemTrust()} {
 		v := reflect.ValueOf(backend)
 		for i := 0; i < v.NumField(); i++ {
-			// The ssh-agent service query exists only on Windows.
-			if v.Type().Field(i).Name == "sshAgentService" && runtime.GOOS != "windows" {
+			// The ssh-agent service query and the Firefox check exist only on
+			// Windows.
+			if name := v.Type().Field(i).Name; (name == "sshAgentService" || name == "firefoxRootsOff") && runtime.GOOS != "windows" {
 				continue
 			}
 			if f := v.Field(i); f.Kind() == reflect.Func && f.IsNil() {
