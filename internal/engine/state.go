@@ -21,11 +21,13 @@ func (run *projectRun) followsSession() bool {
 // except for a project on a remote server that follows its session (see
 // followsSession): that is degraded while the server's session is not
 // connected, and in error while the session is connected but lacks one of
-// the project's forwards. Both are derived from the session each time, so
-// Status and the events always agree, and both end by themselves when a
-// reconnect restores what was missing. The error names the process holding a
-// port once lookupHolder has found it. A project recorded in error keeps the
-// reason for that in whatever it shows, and shows it alone again afterwards.
+// the project's forwards, or degraded again when each forward it lacks is
+// one the transport is relaunching by itself (see lostForward). These are
+// derived from the session each time, so Status and the events always
+// agree, and they end by themselves when a reconnect restores what was
+// missing. The error names the process holding a port once lookupHolder has
+// found it. A project recorded in error keeps the reason for that in
+// whatever it shows, and shows it alone again afterwards.
 func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if run.tearing && run.announced != "" {
 		// Being torn down: the last announced state stands until the state
@@ -57,45 +59,78 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 		return run.state, run.message
 	}
 	for _, f := range dead {
-		if _, reviewed := run.holders[f.local]; !reviewed && run.announced != "" {
-			// Just lost: the session has changed but its message has not
-			// reached reviewServerLocked yet. Until that announces the
-			// error, the last announced state stands, so Status never runs
-			// ahead of the events.
+		if held, reviewed := run.holders[f.local]; (!reviewed || held.reconnecting != f.reconnecting) && run.announced != "" {
+			// Just lost, or lost another way: the session has changed but
+			// its message has not reached reviewServerLocked yet. Until
+			// that announces it, the last announced state stands, so
+			// Status never runs ahead of the events.
 			return run.announced, run.shownMsg
 		}
 	}
-	// The session is connected, so its re-apply pass is over and each of
-	// these was refused by ssh: the local port could not be bound.
-	problems := make([]string, 0, len(dead)+1)
-	if run.state == StateError {
-		problems = append(problems, run.message)
-	}
+	// The session is connected, so its re-apply pass is over. A forward
+	// being relaunched for a reason other than its port is reconnecting;
+	// each other one was refused by ssh: the local port could not be bound.
+	var refused, reconnecting []string
 	for _, f := range dead {
+		web := slices.Contains(run.webLocals, f.local)
+		if f.reconnecting {
+			what := fmt.Sprintf("loopback port %d is reconnecting: %s", f.local, f.err)
+			if web {
+				what = fmt.Sprintf("the web route for port %d is reconnecting: %s", f.remote, f.err)
+			}
+			reconnecting = append(reconnecting, what)
+			continue
+		}
 		what := fmt.Sprintf("loopback port %d is not forwarded: ssh could not bind it on this machine", f.local)
-		if slices.Contains(run.webLocals, f.local) {
+		if web {
 			what = fmt.Sprintf("the web route for port %d is not forwarded: ssh could not bind local port %d", f.remote, f.local)
 		}
 		if holder := run.holders[f.local].holder; holder != "" {
 			what += " (in use by " + holder + ")"
 		}
-		problems = append(problems, what)
+		refused = append(refused, what)
 	}
+	if len(refused) == 0 {
+		msg := strings.Join(reconnecting, "; ")
+		if run.state == StateError {
+			msg += "; " + run.message
+		}
+		return StateDegraded, msg
+	}
+	problems := make([]string, 0, len(dead)+1)
+	if run.state == StateError {
+		problems = append(problems, run.message)
+	}
+	problems = append(problems, refused...)
+	problems = append(problems, reconnecting...)
 	return StateError, strings.Join(problems, "; ")
+}
+
+// lostForward is a forward of a project that its connected session lacks.
+// It is reconnecting while the transport relaunches it for a reason other
+// than its local port being in use, with err the reason; otherwise ssh
+// could not bind its local port.
+type lostForward struct {
+	forward
+	reconnecting bool
+	err          string
 }
 
 // lostForwards lists the forwards of run that are missing from states or not
 // applied there.
-func lostForwards(run *projectRun, states []transport.ForwardState) []forward {
-	applied := make(map[forward]bool, len(states))
+func lostForwards(run *projectRun, states []transport.ForwardState) []lostForward {
+	byForward := make(map[forward]transport.ForwardState, len(states))
 	for _, st := range states {
-		applied[forward{st.Local, st.Remote}] = st.Applied
+		byForward[forward{st.Local, st.Remote}] = st
 	}
-	var lost []forward
+	var lost []lostForward
 	for _, f := range run.forwards {
-		if !applied[f] {
-			lost = append(lost, f)
+		st := byForward[f]
+		if st.Applied {
+			continue
 		}
+		reconnecting := st.Retrying && !strings.Contains(st.Err, "Address already in use")
+		lost = append(lost, lostForward{forward: f, reconnecting: reconnecting, err: st.Err})
 	}
 	return lost
 }
