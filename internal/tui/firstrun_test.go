@@ -20,7 +20,16 @@ func started(t *testing.T, trusted bool) (*Model, *fakeBackend) {
 	return m, f
 }
 
+// withGOOS makes the interface word its copy as on os until the test ends.
+func withGOOS(t *testing.T, os string) {
+	t.Helper()
+	old := goos
+	goos = os
+	t.Cleanup(func() { goos = old })
+}
+
 func TestFirstRunIsShownWhenTheCAIsUntrusted(t *testing.T) {
+	withGOOS(t, "linux")
 	m, _ := started(t, false)
 	wantScreen(t, m, "Welcome to Nearhost", "Two things ask for your password:",
 		"• now: trusting the local certificate authority,", "so browsers accept HTTPS from Nearhost's web server",
@@ -29,6 +38,17 @@ func TestFirstRunIsShownWhenTheCAIsUntrusted(t *testing.T) {
 	press(m, "n")
 	if _, ok := m.form.(*firstRunForm); !ok {
 		t.Errorf("n opened %T over the first-run screen", m.form)
+	}
+}
+
+// Windows asks for no password: UAC and the certificate warning ask the
+// user to approve each step.
+func TestFirstRunAsksForApprovalOnWindows(t *testing.T) {
+	withGOOS(t, "windows")
+	m, _ := started(t, false)
+	wantScreen(t, m, "Two things ask for your approval:", "• later: adding names to "+hosts.DefaultPath)
+	if got := approvePrompt(); got != "approve the Windows prompt" {
+		t.Errorf("approvePrompt() = %q", got)
 	}
 }
 

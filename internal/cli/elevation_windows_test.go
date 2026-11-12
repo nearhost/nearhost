@@ -43,7 +43,7 @@ func TestTrustCopyOnWindows(t *testing.T) {
 	if !strings.Contains(out.String(), "your Windows certificate store") || strings.Contains(out.String(), "system trust store") {
 		t.Fatalf("trust --help:\n%s", out)
 	}
-	for _, s := range []string{trustInstalling, trustDeclined, hostsFix} {
+	for _, s := range []string{trustInstalling, trustDeclined, hostsFix, hostsApprove} {
 		if strings.Contains(s, "password") {
 			t.Errorf("%q asks for a password; Windows asks for none", s)
 		}
