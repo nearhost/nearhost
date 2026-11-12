@@ -22,7 +22,7 @@ import (
 	"github.com/nearhost/nearhost/internal/oserr"
 )
 
-// timeout bounds asking Docker, over every socket tried. A daemon that is
+// timeout bounds asking Docker, over every endpoint tried. A daemon that is
 // slower than this is treated as not answering; a start waits on it.
 const timeout = 2 * time.Second
 
@@ -31,59 +31,19 @@ const maxBody = 16 << 20
 
 // Ranges returns the subnets of the local Docker daemon's networks, IPv4
 // and IPv6, deduplicated and sorted with IPv4 first. It tries each place a
-// daemon's socket lives, in order (see sockets), and uses the first that
-// answers. It returns an error when none answers with a network list within
-// 2s. An empty list with no error means the daemon has no subnets.
+// daemon listens, in order (see endpoints), and uses the first that answers.
+// It returns an error when none answers with a network list within 2s. An
+// empty list with no error means the daemon has no subnets.
 func Ranges(ctx context.Context) ([]string, error) {
-	return rangesFrom(ctx, sockets())
+	return rangesFrom(ctx, endpoints())
 }
 
-// sockets lists where a daemon's socket may be, most specific first:
-// DOCKER_HOST when it names a unix socket, the current docker context's
-// socket, then Docker Desktop's, OrbStack's, Rancher Desktop's, every Colima
-// profile's (default first), a rootless Docker's, Podman's and the system
-// one. A DOCKER_HOST or context that is not a unix socket (tcp, ssh) is
-// skipped: that daemon's networks are not on this machine, so its containers
-// do not come from them. Each place is listed once.
-func sockets() []string {
-	var out []string
-	if host, ok := strings.CutPrefix(os.Getenv("DOCKER_HOST"), "unix://"); ok && host != "" {
-		out = append(out, host)
-	}
-	home, homeErr := os.UserHomeDir()
-	if sock := contextSocket(home); sock != "" {
-		out = append(out, sock)
-	}
-	if homeErr == nil {
-		out = append(out,
-			filepath.Join(home, ".docker", "run", "docker.sock"),
-			filepath.Join(home, ".orbstack", "run", "docker.sock"),
-			filepath.Join(home, ".rd", "docker.sock"),
-			filepath.Join(home, ".colima", "default", "docker.sock"))
-		others, _ := filepath.Glob(filepath.Join(home, ".colima", "*", "docker.sock"))
-		out = append(out, others...) // Glob sorts; duplicates are dropped below
-	}
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		out = append(out,
-			filepath.Join(dir, "docker.sock"),
-			filepath.Join(dir, "podman", "podman.sock"))
-	}
-	out = append(out, "/var/run/docker.sock")
-	var unique []string
-	for _, path := range out {
-		if !slices.Contains(unique, path) {
-			unique = append(unique, path)
-		}
-	}
-	return unique
-}
-
-// contextSocket returns the unix socket of the current docker context, or ""
-// when there is none. DOCKER_CONTEXT overrides the config file's
-// currentContext, and DOCKER_CONFIG replaces ~/.docker. It is best effort: a
-// missing or unparsable file, the "default" context and a non-unix host all
-// give "".
-func contextSocket(home string) string {
+// contextHost returns the host of the current docker context's endpoint, as
+// written (unix://…, npipe://…, tcp://…), or "" when there is none.
+// DOCKER_CONTEXT overrides the config file's currentContext, and
+// DOCKER_CONFIG replaces ~/.docker. It is best effort: a missing or
+// unparsable file and the "default" context give "".
+func contextHost(home string) string {
 	dir := os.Getenv("DOCKER_CONFIG")
 	if dir == "" {
 		if home == "" {
@@ -118,19 +78,44 @@ func contextSocket(home string) string {
 	if json.Unmarshal(data, &meta) != nil {
 		return ""
 	}
-	sock, _ := strings.CutPrefix(meta.Endpoints.Docker.Host, "unix://")
-	if sock == meta.Endpoints.Docker.Host {
-		return ""
-	}
-	return sock
+	return meta.Endpoints.Docker.Host
 }
 
-// rangesFrom is Ranges over the given sockets, tried in order.
-func rangesFrom(ctx context.Context, sockets []string) ([]string, error) {
+// pipePath turns a docker host naming a named pipe on this machine, such as
+// npipe:////./pipe/docker_engine, into the pipe's Windows path,
+// \\.\pipe\docker_engine. Docker writes the pipe with either two or one
+// leading slashes after the scheme, so both are taken. It reports false for
+// any other host, including a pipe on another machine: that daemon's
+// networks are not on this one.
+func pipePath(host string) (string, bool) {
+	rest, ok := strings.CutPrefix(host, "npipe://")
+	if !ok {
+		return "", false
+	}
+	parts := strings.SplitN(strings.TrimLeft(rest, "/"), "/", 3)
+	if len(parts) != 3 || parts[0] != "." || !strings.EqualFold(parts[1], "pipe") || parts[2] == "" {
+		return "", false
+	}
+	return `\\.\pipe\` + strings.ReplaceAll(parts[2], "/", `\`), true
+}
+
+// unique returns list without repeats, keeping the first of each.
+func unique(list []string) []string {
+	var out []string
+	for _, s := range list {
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// rangesFrom is Ranges over the given endpoints, tried in order.
+func rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var failed error // the first socket that was there but did not answer well
-	for _, path := range sockets {
+	var failed error // the first endpoint that was there but did not answer well
+	for _, path := range endpoints {
 		ranges, err := ask(ctx, path)
 		if err == nil {
 			return ranges, nil
@@ -148,7 +133,7 @@ func rangesFrom(ctx context.Context, sockets []string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("no Docker daemon at %s", strings.Join(sockets, ", "))
+	return nil, fmt.Errorf("no Docker daemon at %s", strings.Join(endpoints, ", "))
 }
 
 // network is the part of a network in the daemon's list that is read.
@@ -160,15 +145,15 @@ type network struct {
 	}
 }
 
-// ask fetches the network list from the daemon at path and returns its
-// subnets. Empty and unparsable subnets are skipped.
-func ask(ctx context.Context, path string) ([]string, error) {
+// ask fetches the network list from the daemon at endpoint (a unix socket's
+// path, or a named pipe's on Windows) and returns its subnets. Empty and
+// unparsable subnets are skipped.
+func ask(ctx context.Context, endpoint string) ([]string, error) {
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", path)
+				return dial(ctx, endpoint)
 			},
 			DisableKeepAlives: true,
 		},
