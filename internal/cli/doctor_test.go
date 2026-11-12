@@ -718,25 +718,62 @@ func jumpConfig(jump string) func(context.Context, string) (string, error) {
 	}
 }
 
-func TestProxyJumpAliasWarnsOnNinePointFive(t *testing.T) {
+// A server reached through a ProxyJump alias that ssh 9.5 for Windows
+// cannot resolve fails its check; the fix names the alias and its address.
+func TestProxyJumpAliasAdvisesWhenTheServerFailsOnNinePointFive(t *testing.T) {
+	path := configHome(t)
+	f := healthy()
+	f.goos = "windows"
+	f.serverErr = map[string]error{"app": &transport.CheckError{Host: "app", Stderr: "ssh: Could not resolve hostname bastion: No such host is known."}}
+	b := f.backend()
+	b.sshVersion = func(context.Context) (string, error) { return "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2", nil }
+	b.sshConfig = jumpConfig("bastion")
+	cfg := &config.Config{Servers: []config.Server{{Name: "app", SSHHost: "app"}}}
+	saveConfig(t, path, cfg)
+	out, _ := execute(t, newDoctorCmd(b), "doctor", "--no-hosts")
+	for _, want := range []string{
+		"ssh: Could not resolve hostname bastion: No such host is known.",
+		"fix: ProxyJump names the alias bastion, which ssh 9.5 for Windows does not resolve: in ~/.ssh/config, give ProxyJump bastion's address (10.0.0.9:2222) or use a ProxyCommand, then run `nearhost doctor` again",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "proxyjump app") || strings.Contains(out, "Run `ssh app` once") {
+		t.Errorf("unexpected advice in\n%s", out)
+	}
+}
+
+// When the server answers, the alias did not get in the way, so doctor
+// says nothing about it.
+func TestProxyJumpAliasIsQuietWhenTheServerWorks(t *testing.T) {
 	path := configHome(t)
 	b := sshWindows("OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2")
 	b.sshConfig = jumpConfig("bastion")
 	cfg := &config.Config{Servers: []config.Server{{Name: "app", SSHHost: "app"}}}
 	saveConfig(t, path, cfg)
-	// The hosts block of the healthy fake does not match this config, so
-	// doctor fails; only the lines under test matter.
 	out, _ := execute(t, newDoctorCmd(b), "doctor", "--no-hosts")
-	for _, want := range []string{
-		"warn  proxyjump app    ProxyJump names the alias bastion, which ssh 9.5 for Windows does not resolve",
-		"      fix: In ~/.ssh/config, give ProxyJump bastion's address (10.0.0.9:2222) or use a ProxyCommand",
-	} {
-		if !strings.Contains(out, want+"\n") {
-			t.Errorf("missing %q in\n%s", want, out)
-		}
-	}
 	if !strings.Contains(out, "server app") {
 		t.Errorf("server check missing\n%s", out)
+	}
+	if strings.Contains(out, "ProxyJump") || strings.Contains(out, "proxyjump") {
+		t.Errorf("alias advice for a working server\n%s", out)
+	}
+}
+
+// Another ssh version resolves the alias, so a failure keeps the usual fix.
+func TestProxyJumpAliasKeepsTheUsualFixOnOtherVersions(t *testing.T) {
+	path := configHome(t)
+	f := healthy()
+	f.goos = "windows"
+	f.serverErr = map[string]error{"app": &transport.CheckError{Host: "app", Stderr: "Permission denied (publickey)."}}
+	b := f.backend()
+	b.sshVersion = func(context.Context) (string, error) { return "OpenSSH_for_Windows_9.8p1, LibreSSL 3.8.2", nil }
+	b.sshConfig = jumpConfig("bastion")
+	saveConfig(t, path, &config.Config{Servers: []config.Server{{Name: "app", SSHHost: "app"}}})
+	out, _ := execute(t, newDoctorCmd(b), "doctor", "--no-hosts")
+	if strings.Contains(out, "ProxyJump") || !strings.Contains(out, "Run `ssh app` once") {
+		t.Errorf("fix in\n%s", out)
 	}
 }
 
