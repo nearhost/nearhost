@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -85,8 +86,15 @@ func sshHint(host, then string) string {
 // holds 104 bytes on macOS, of which OpenSSH needs 17 beyond the control
 // path while it binds, and the usual temporary directory there
 // (/var/folders/...) already takes about fifty. /tmp exists on macOS and
-// Linux alike.
-const shortTempDir = "/tmp"
+// Linux alike. Windows has no /tmp, which would name \tmp on the current
+// drive, and its sessions bind no control socket, so the usual temporary
+// directory serves there.
+func shortTempDir() string {
+	if runtime.GOOS == "windows" {
+		return os.TempDir()
+	}
+	return "/tmp"
+}
 
 // privateSession returns a session to srv with a run directory of its own,
 // that directory's path, and a function that stops the session and removes the
@@ -94,7 +102,7 @@ const shortTempDir = "/tmp"
 // user only, and its socket has a fixed short name: the path does not grow
 // with the server's name.
 func (c sshClient) privateSession(srv config.Server) (transport.Transport, string, func() error, error) {
-	runDir, err := os.MkdirTemp(shortTempDir, "nh-")
+	runDir, err := os.MkdirTemp(shortTempDir(), "nh-")
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("create run directory: %w", err)
 	}
