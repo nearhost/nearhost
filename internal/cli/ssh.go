@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -89,7 +88,7 @@ func (c sshClient) checkAgents(ctx context.Context, srv config.Server) error {
 	}
 	defer end()
 	name := doctorSocketName()
-	sess.SetAgentForward(transport.AgentForward{Name: name, Local: filepath.Join(runDir, "agent.sock")})
+	sess.SetAgentForward(transport.AgentForward{Name: name, Local: doctorAgentLocal(runDir)})
 	sess.Start()
 	if err := connectOnce(ctx, sess); err != nil {
 		return err

@@ -1363,3 +1363,71 @@ func TestScriptOpenWaitExpired(t *testing.T) {
 		t.Fatalf("expired: %+v", r)
 	}
 }
+
+// relay accepts connections on a Unix socket at path and passes each to
+// the TCP address addr, as sshd and ssh do for a forward to a loopback
+// listener.
+func relay(t *testing.T, path, addr string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			in, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer in.Close()
+				out, err := net.Dial("tcp", addr)
+				if err != nil {
+					return
+				}
+				defer out.Close()
+				go func() {
+					io.Copy(out, in)
+					out.(*net.TCPConn).CloseWrite()
+				}()
+				io.Copy(in, out)
+			}()
+		}
+	}()
+}
+
+// On a server forwarded to a Windows laptop the socket reaches a loopback
+// listener that answers only with the token, which the script sends from
+// the file beside the socket.
+func TestScriptSendsTheTokenFileBesideTheSocket(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	home := shortDir(t)
+	s := New(Options{Laptop: "dev@hera", Source: fakeSource{"leto": mini}})
+	t.Cleanup(s.Close)
+	addr, token, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay(t, filepath.Join(home, ".nearhost", "k3f9q2.sock"), addr)
+
+	// Without the token file nothing answers that the script can use.
+	if r := runScript(t, home, nil, "status", "--all"); r.code != 2 {
+		t.Fatalf("without the token file: %+v", r)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".nearhost", "k3f9q2.token"), []byte("X-Nearhost-Token: "+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, home, nil, "status", "--all")
+	if r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
+		t.Fatalf("with the token file: %+v", r)
+	}
+	if r := runScript(t, home, []string{"NEARHOST_SOCKET=" + filepath.Join(home, ".nearhost", "k3f9q2.sock")}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"origin":"leto"`) {
+		t.Fatalf("with NEARHOST_SOCKET: %+v", r)
+	}
+}

@@ -7,12 +7,16 @@
 // It serves JSON on Unix sockets, one per origin: "local" for this machine's
 // own socket, or a server's name for the socket nearhost forwards to that
 // server. A request is attributed to the socket it arrives on, so a request
-// from a server sees and proposes only that server's projects.
+// from a server sees and proposes only that server's projects. Where ssh
+// cannot forward to a Unix socket, as on Windows, a server's origin is
+// served on a loopback port instead, and only to requests carrying its
+// token, which nearhost leaves on the server beside the forwarded socket.
 package agentapi
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -204,9 +208,14 @@ type Server struct {
 // the change's hash.
 type change struct{ name, sha string }
 
+// listener is where one origin is served: a Unix socket at path, or a
+// loopback port at addr, whose requests must carry token.
 type listener struct {
-	path string
-	srv  *http.Server
+	path  string
+	addr  string
+	token string
+	srv   *http.Server
+	l     net.Listener
 }
 
 // proposal is a Proposal and what became of it. done is closed when it is
@@ -279,8 +288,68 @@ func (s *Server) Listen(origin, path string) error {
 		l.Close()
 		return err
 	}
-	srv := &http.Server{
-		Handler:           s.handler,
+	return s.serve(origin, l, &listener{path: path}, s.handler)
+}
+
+// tokenHeader is the header a request to a loopback listener carries its
+// token in.
+const tokenHeader = "X-Nearhost-Token"
+
+// noToken is what a request to a loopback listener without its token is
+// told. Only the skill's script reads the token file, so an old copy of it
+// is the likely reason.
+const noToken = "this request has no valid Nearhost token: update the Nearhost skill on this machine"
+
+// ListenLoopback serves the API for origin on a port of 127.0.0.1, for
+// where ssh cannot forward a server's socket to a Unix socket here, and
+// returns its address and the token every request on it must carry in the
+// X-Nearhost-Token header. Any process on this machine can connect to the
+// port, so a request without the token is refused: only one that came
+// through nearhost's own forward has it. Listening again for an origin
+// already on a loopback port returns the same address and token; one on a
+// socket moves to a port.
+func (s *Server) ListenLoopback(origin string) (addr, token string, err error) {
+	s.mu.Lock()
+	if cur := s.listeners[origin]; cur != nil && cur.addr != "" {
+		s.mu.Unlock()
+		return cur.addr, cur.token, nil
+	}
+	s.mu.Unlock()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	token = hex.EncodeToString(b)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", "", err
+	}
+	addr = l.Addr().String()
+	if err := s.serve(origin, l, &listener{addr: addr, token: token}, requireToken(token, s.handler)); err != nil {
+		return "", "", err
+	}
+	return addr, token, nil
+}
+
+// requireToken serves next only to requests that carry token, compared in
+// constant time so the time taken tells nothing of it.
+func requireToken(token string, next http.Handler) http.Handler {
+	want := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get(tokenHeader)), want) != 1 {
+			fail(w, http.StatusUnauthorized, noToken)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// serve serves h for origin on l, as ln, in place of whatever served origin
+// before.
+func (s *Server) serve(origin string, l net.Listener, ln *listener, h http.Handler) error {
+	ln.l = l
+	ln.srv = &http.Server{
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
 			return context.WithValue(context.Background(), originKey{}, origin)
@@ -293,16 +362,17 @@ func (s *Server) Listen(origin, path string) error {
 		return errors.New("the agent API is closed")
 	}
 	old := s.listeners[origin]
-	s.listeners[origin] = &listener{path: path, srv: srv}
+	s.listeners[origin] = ln
 	s.mu.Unlock()
 	if old != nil {
 		old.close()
 	}
-	go srv.Serve(l)
+	go ln.srv.Serve(l)
 	return nil
 }
 
-// Unlisten stops serving origin and removes its socket.
+// Unlisten stops serving origin and removes its socket, or closes its
+// loopback port.
 func (s *Server) Unlisten(origin string) {
 	s.mu.Lock()
 	l := s.listeners[origin]
@@ -320,8 +390,9 @@ func (s *Server) Listening(origin string) bool {
 	return s.listeners[origin] != nil
 }
 
-// Close stops serving everywhere and removes the sockets. Proposals still
-// waiting end their long polls: the connections close with the servers.
+// Close stops serving everywhere, removes the sockets and closes the
+// loopback ports. Proposals still waiting end their long polls: the
+// connections close with the servers.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
@@ -333,9 +404,14 @@ func (s *Server) Close() {
 	}
 }
 
+// close stops serving. The listener is closed here as well as by the
+// server, which closes it only once Serve has started.
 func (l *listener) close() {
 	l.srv.Close()
-	os.Remove(l.path)
+	l.l.Close()
+	if l.path != "" {
+		os.Remove(l.path)
+	}
 }
 
 // Answers reports whether something accepts connections on the socket at

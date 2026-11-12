@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -195,27 +194,17 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 	return a, note
 }
 
-// noServerAgents says why coding agents on servers cannot reach Nearhost
-// where serverAgents is false.
-const noServerAgents = "coding agents on servers cannot reach Nearhost on Windows yet"
-
-// forward is the engine's Agent option: it listens on the server's private
-// socket and gives the session the forward to ~/.nearhost/<id>.sock there.
-// Where serverAgents is false it gives none, and says so.
+// forward is the engine's Agent option: it listens for the server, on a
+// private socket or, on Windows, a loopback port, and gives the session the
+// forward to ~/.nearhost/<id>.sock there.
 func (a *agents) forward(server string) (transport.AgentForward, bool) {
-	if !serverAgents {
-		a.notice(engine.Event{Server: server, Message: server + ": agents unavailable: " + noServerAgents})
-		return transport.AgentForward{}, false
-	}
-	// Named by a hash, so any server name makes a short plain file name.
-	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte(server)))[:len("agent-")+12]
-	local := filepath.Join(a.runDir, name+".sock")
-	if err := a.api.Listen(server, local); err != nil {
+	local, token, err := a.listenAgent(server)
+	if err != nil {
 		// The session would say nothing: it has no forward to fail.
 		a.notice(engine.Event{Server: server, Message: server + ": agents unavailable: " + err.Error()})
 		return transport.AgentForward{}, false
 	}
-	return transport.AgentForward{Name: a.id + ".sock", Local: local, Own: a.sock}, true
+	return transport.AgentForward{Name: a.id + ".sock", Local: local, Token: token, Own: a.sock}, true
 }
 
 // notice publishes ev to the log. Before the engine is attached there is no

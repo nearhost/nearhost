@@ -32,8 +32,13 @@ type AgentForward struct {
 	// Name is the socket's file name in ~/.nearhost on the server: the
 	// install id and ".sock".
 	Name string
-	// Local is the socket on this machine that it reaches.
+	// Local is what it reaches on this machine: a Unix socket, or on
+	// Windows, where ssh cannot forward to one, a loopback address.
 	Local string
+	// Token is what a request must carry to be served at a loopback Local,
+	// and "" for a socket. It is left on the server beside the socket, in
+	// a file only the account can read, for the skill's script to send.
+	Token string
 	// Own is this machine's own agent socket. A server whose socket would
 	// be at that path, and that sees the same files there, shares this
 	// machine's home: it is not forwarded to, and its agents reach Nearhost
@@ -57,6 +62,10 @@ const (
 	// longer than a Unix socket path can be on most systems.
 	AgentTooLong
 )
+
+// tokenHeader is the header a request to a loopback agent listener carries
+// its token in, as agentapi checks it.
+const tokenHeader = "X-Nearhost-Token"
 
 // maxRemoteSocket is the longest socket path every common system binds:
 // sun_path holds 104 bytes on macOS and the BSDs and 108 on Linux, the
@@ -202,7 +211,7 @@ func prepareAgentWith(ctx context.Context, open func(context.Context) (*SFTP, er
 		}
 		probe = filepath.Base(p.Name())
 	}
-	return PrepareAgentDir(f.Client, home, RuntimeRoot, fwd.Name, fwd.Own, probe)
+	return PrepareAgentDir(f.Client, home, RuntimeRoot, fwd.Name, fwd.Own, probe, fwd.Token)
 }
 
 // PrepareAgentDir makes ~/.nearhost in home with mode 0700 if it is not
@@ -219,7 +228,10 @@ func prepareAgentWith(ctx context.Context, open func(context.Context) (*SFTP, er
 // server that reports probe not found is another machine with its home at
 // the same path, and is readied as any other. Without a probe, or when the
 // server cannot say, nothing is removed and an error returned.
-func PrepareAgentDir(c *sftp.Client, home, runRoot, name, own, probe string) (string, error) {
+// When token is not "", the socket's token file, its name with .token in
+// place of .sock, is written in ~/.nearhost with mode 0600, holding the
+// header that carries token; when it is "", that file is removed if there.
+func PrepareAgentDir(c *sftp.Client, home, runRoot, name, own, probe, token string) (string, error) {
 	if name == "" || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
 		return "", fmt.Errorf("agent socket name %q is not a file name", name)
 	}
@@ -251,6 +263,9 @@ func PrepareAgentDir(c *sftp.Client, home, runRoot, name, own, probe string) (st
 	if err := removeIfThere(c, sock); err != nil {
 		return "", fmt.Errorf("remove the old socket %s: %w", sock, err)
 	}
+	if err := writeAgentToken(c, path.Join(dir, strings.TrimSuffix(name, ".sock")+".token"), token); err != nil {
+		return "", err
+	}
 	run := privateRuntimeDir(c, home, runRoot)
 	if run == "" {
 		return sock, nil
@@ -273,6 +288,51 @@ func PrepareAgentDir(c *sftp.Client, home, runRoot, name, own, probe string) (st
 		return "", fmt.Errorf("link %s to %s: %w", sock, runSock, err)
 	}
 	return runSock, nil
+}
+
+// writeAgentToken writes the token file at p, holding the header line
+// that carries token, as curl reads headers from a file: so the token
+// never shows on a command line. It is written beside p, readable only by
+// the account, and renamed into place, so the script never reads half of
+// it. An empty token removes the file, if there is one.
+func writeAgentToken(c *sftp.Client, p, token string) error {
+	if token == "" {
+		if err := removeIfThere(c, p); err != nil {
+			return fmt.Errorf("remove the old token %s: %w", p, err)
+		}
+		return nil
+	}
+	tmp := p + ".new"
+	if err := removeIfThere(c, tmp); err != nil {
+		return fmt.Errorf("write the token %s: %w", p, err)
+	}
+	f, err := c.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return fmt.Errorf("write the token %s: %w", p, err)
+	}
+	// The mode is set before anything is written: the server's umask
+	// decides the mode a file is created with.
+	err = f.Chmod(0o600)
+	if err == nil {
+		_, err = f.Write([]byte(tokenHeader + ": " + token + "\n"))
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		if err = c.PosixRename(tmp, p); err != nil {
+			// An SFTP server without the posix-rename extension renames
+			// only onto nothing.
+			if rerr := removeIfThere(c, p); rerr == nil {
+				err = c.Rename(tmp, p)
+			}
+		}
+	}
+	if err != nil {
+		c.Remove(tmp)
+		return fmt.Errorf("write the token %s: %w", p, err)
+	}
+	return nil
 }
 
 // removeIfThere removes the file at p, a socket or a link, if there is one.

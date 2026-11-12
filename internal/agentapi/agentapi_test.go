@@ -980,3 +980,147 @@ func TestWaitQueryCapsHugeValues(t *testing.T) {
 		}
 	}
 }
+
+// loopbackGet asks for path on the loopback listener at addr, with the
+// token tok when it is not "", and returns the status and the decoded body.
+func loopbackGet(t *testing.T, addr, tok, method, path, body string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://"+addr+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "" {
+		req.Header.Set("X-Nearhost-Token", tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("%s %s: not JSON: %q", method, path, data)
+	}
+	return resp.StatusCode, out
+}
+
+func TestLoopbackListenerServesOnlyWithTheToken(t *testing.T) {
+	s, _, _, _, _ := newServer(t, false)
+	addr, token, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(addr, "127.0.0.1:") || len(token) != 64 {
+		t.Fatalf("addr %q, token %q", addr, token)
+	}
+	get := func(tok string) int {
+		req, _ := http.NewRequest("GET", "http://"+addr+"/v1", nil)
+		if tok != "" {
+			req.Header.Set("X-Nearhost-Token", tok)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := get(token); got != http.StatusOK {
+		t.Fatalf("with the token: %d", got)
+	}
+	if got := get(strings.Repeat("0", len(token))); got != http.StatusUnauthorized {
+		t.Fatalf("with a wrong token: %d", got)
+	}
+	if got := get(token[:10]); got != http.StatusUnauthorized {
+		t.Fatalf("with part of the token: %d", got)
+	}
+}
+
+func TestLoopbackListenerRefusesAMissingToken(t *testing.T) {
+	s, _, _, _, _ := newServer(t, false)
+	addr, _, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, out := loopbackGet(t, addr, "", "GET", "/v1", "")
+	if status != http.StatusUnauthorized || out["error"] != "this request has no valid Nearhost token: update the Nearhost skill on this machine" {
+		t.Fatalf("%d %v", status, out)
+	}
+}
+
+func TestLoopbackListenerIsPerOriginAndStable(t *testing.T) {
+	s, _, _, _, _ := newServer(t, false)
+	addr, token, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr2, token2, err := s.ListenLoopback("leto")
+	if err != nil || addr2 != addr || token2 != token {
+		t.Fatalf("again: %q %q %v, first %q %q", addr2, token2, err, addr, token)
+	}
+	other, otherToken, err := s.ListenLoopback("hera")
+	if err != nil || other == addr || otherToken == token {
+		t.Fatalf("another origin: %q %q %v, leto's %q %q", other, otherToken, err, addr, token)
+	}
+	// Each listener takes only its own origin's token.
+	if status, _ := loopbackGet(t, other, token, "GET", "/v1", ""); status != http.StatusUnauthorized {
+		t.Fatalf("hera's listener with leto's token: %d", status)
+	}
+	if _, out := loopbackGet(t, other, otherToken, "GET", "/v1", ""); out["origin"] != "hera" {
+		t.Fatalf("hera's listener: %v", out)
+	}
+	if !s.Listening("leto") || !s.Listening("hera") {
+		t.Fatal("the loopback origins are not listed as listening")
+	}
+}
+
+func TestLoopbackRequestsCarryTheirOrigin(t *testing.T) {
+	s, r, _, _, _ := newServer(t, true)
+	addr, token, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, out := loopbackGet(t, addr, token, "POST", "/v1/proposals", `{"path": "/srv/app"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("propose: %d %v", status, out)
+	}
+	if seen := r.all(); len(seen) != 1 || seen[0].Origin != "leto" {
+		t.Fatalf("the reviewer saw %+v", seen)
+	}
+}
+
+func TestListenLoopbackReplacesASocketForTheOrigin(t *testing.T) {
+	s, _, _, _, remote := newServer(t, false)
+	if _, _, err := s.ListenLoopback("mini"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(remote); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("mini's socket is still there: %v", err)
+	}
+}
+
+func TestCloseStopsLoopbackListeners(t *testing.T) {
+	s, _, _, _, _ := newServer(t, false)
+	addr, _, err := s.ListenLoopback("leto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := s.ListenLoopback("hera")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Unlisten("hera")
+	if c, err := net.DialTimeout("tcp", other, time.Second); err == nil {
+		c.Close()
+		t.Fatal("hera's listener still answers after Unlisten")
+	}
+	s.Close()
+	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		c.Close()
+		t.Fatal("leto's listener still answers after Close")
+	}
+	if _, _, err := s.ListenLoopback("leto"); err == nil {
+		t.Fatal("listened after Close")
+	}
+}
