@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -25,9 +26,13 @@ const networks = `[
 ]`
 
 // socketPath is a path for a unix socket in a short temporary directory, as
-// macOS limits socket paths to 104 bytes.
+// macOS limits socket paths to 104 bytes. Windows dials named pipes, not
+// unix sockets, so a test that needs one is skipped there.
 func socketPath(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows asks Docker over a named pipe")
+	}
 	return filepath.Join(testutil.TempDir(t, "dn-"), "docker.sock")
 }
 
@@ -123,9 +128,12 @@ func TestRangesTriesSocketsInOrder(t *testing.T) {
 	}
 }
 
-// TestSocketsOrder checks every place a daemon's socket is looked for, and
+// TestEndpointsOrder checks every place a daemon's socket is looked for, and
 // the order they are tried in.
-func TestSocketsOrder(t *testing.T) {
+func TestEndpointsOrder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows looks for named pipes; see TestEndpointsOnWindows")
+	}
 	home := t.TempDir()
 	xdg := t.TempDir()
 	t.Setenv("HOME", home)
@@ -162,15 +170,29 @@ func TestSocketsOrder(t *testing.T) {
 		filepath.Join(xdg, "podman", "podman.sock"),
 		"/var/run/docker.sock",
 	}
-	if got := sockets(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("sockets() = %q, want %q", got, want)
+	if got := endpoints(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("endpoints() = %q, want %q", got, want)
 	}
 
 	// DOCKER_CONTEXT wins over the config file, and "default" adds nothing.
 	t.Setenv("DOCKER_CONTEXT", "default")
-	for _, s := range sockets() {
+	for _, s := range endpoints() {
 		if s == "/x/orb.sock" {
 			t.Fatalf("default context still added %q", s)
 		}
+	}
+}
+
+func TestPipePath(t *testing.T) {
+	for in, want := range map[string]string{
+		"npipe:////./pipe/docker_engine":           `\\.\pipe\docker_engine`,
+		"npipe:///./pipe/dockerDesktopLinuxEngine": `\\.\pipe\dockerDesktopLinuxEngine`,
+	} {
+		if got, ok := pipePath(in); !ok || got != want {
+			t.Errorf("pipePath(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := pipePath("unix:///var/run/docker.sock"); ok {
+		t.Error("a unix host is not a pipe")
 	}
 }
