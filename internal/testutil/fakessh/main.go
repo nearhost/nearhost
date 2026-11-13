@@ -163,6 +163,21 @@ func run(args []string) int {
 		return 255
 	}
 
+	// $FAKE_SSH_ALTERNATE_FILE makes plain launches alternate between an
+	// authentication failure and a plain connection failure, starting with
+	// the former, as $FAKE_SSH_ALTERNATE does for masters; the file it
+	// names exists while the next one is to be the connection failure.
+	if f := os.Getenv("FAKE_SSH_ALTERNATE_FILE"); f != "" && plain {
+		if exists(f) {
+			os.Remove(f)
+			fmt.Fprintln(os.Stderr, "ssh: connect to host mini port 22: Connection refused")
+			return 255
+		}
+		touch(f)
+		fmt.Fprintln(os.Stderr, "user@host: Permission denied (publickey).")
+		return 255
+	}
+
 	if plain {
 		return runPlain(last, lforwards, rforwards, hasArg(args, "ExitOnForwardFailure=yes"), parentGone)
 	}
