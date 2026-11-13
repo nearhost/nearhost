@@ -136,7 +136,7 @@ func TestEndpointsOrder(t *testing.T) {
 	}
 	home := t.TempDir()
 	xdg := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	t.Setenv("DOCKER_CONFIG", "")
 	t.Setenv("DOCKER_CONTEXT", "")
 	t.Setenv("DOCKER_HOST", "unix:///x/host.sock")

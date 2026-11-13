@@ -97,7 +97,9 @@ func TestDoctorSkipsTheWebPortWhenThereIsNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "6327") || strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80" {
+	// The check's own line, not the bare number, which the temporary
+	// config path printed above can hold.
+	if strings.Contains(out, "port 6327") || strings.Join(f.probed, "; ") != "tcp 443; udp 443; tcp 80" {
 		t.Errorf("ports probed: %v\n%s", f.probed, out)
 	}
 }

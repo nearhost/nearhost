@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,12 +56,84 @@ func newUpRun(t *testing.T, cfg *config.Config) *upRun {
 	// holds.
 	u.webPort = testutil.ProxyPort(t)
 	saveConfig(t, u.cfgPath, cfg)
+	if err := os.MkdirAll(u.dropDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return u
+}
+
+// pidLog is where the fake ssh logs the pid and arguments of each plain
+// process it starts: the link and the forwards of the per-process transport,
+// which is all Windows has.
+func (u *upRun) pidLog() string { return filepath.Join(filepath.Dir(u.cfgPath), "pid.log") }
+
+// dropDir is where a file named for a plain process's pid makes it exit as a
+// lost connection does.
+func (u *upRun) dropDir() string { return filepath.Join(filepath.Dir(u.cfgPath), "drop") }
+
+// sshPids returns the pid and arguments of each plain process the fake ssh
+// started, oldest first.
+func (u *upRun) sshPids() (pids []int, argvs []string) {
+	b, _ := os.ReadFile(u.pidLog())
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		first, argv, _ := strings.Cut(line, " ")
+		if pid, err := strconv.Atoi(first); err == nil {
+			pids, argvs = append(pids, pid), append(argvs, argv)
+		}
+	}
+	return pids, argvs
+}
+
+// dropLink makes the connection to the server mini.lan drop, as a lost
+// network does. The ControlMaster leaves when its socket disappears; the
+// per-process transport's link is the newest plain ssh with neither a -L nor
+// a -R, which an agent forward would have.
+func (u *upRun) dropLink() {
+	u.t.Helper()
+	sock := filepath.Join(filepath.Dir(u.cfgPath), "run", "mini.sock")
+	if _, err := os.Stat(sock); err == nil {
+		if err := os.Remove(sock); err != nil {
+			u.t.Fatal(err)
+		}
+		return
+	}
+	pids, argvs := u.sshPids()
+	for i := len(pids) - 1; i >= 0; i-- {
+		if argv := " " + argvs[i] + " "; !strings.Contains(argv, " -L ") && !strings.Contains(argv, " -R ") && strings.HasSuffix(argv, " mini.lan ") {
+			if err := os.WriteFile(filepath.Join(u.dropDir(), strconv.Itoa(pids[i])), nil, 0o600); err != nil {
+				u.t.Fatal(err)
+			}
+			return
+		}
+	}
+	u.t.Fatalf("no connection to mini.lan to drop: no master socket, and plain processes %q", argvs)
+}
+
+// wantSSHEnded checks, after stop, that the shutdown ended the forward and
+// the connection. The ControlMaster is asked to, with `-O cancel` and
+// `-O exit`; the per-process transport ends its own processes, and stop has
+// checked that every one of them has exited.
+func (u *upRun) wantSSHEnded() {
+	u.t.Helper()
+	log := sshLog(u.t, filepath.Join(filepath.Dir(u.cfgPath), "ssh.log"))
+	if !strings.Contains(log, " -M ") {
+		if pids, _ := u.sshPids(); len(pids) == 0 {
+			u.t.Errorf("no master and no per-process ssh was started:\n%s", log)
+		}
+		return
+	}
+	if !strings.Contains(log, "-O cancel") || !strings.Contains(log, "-O exit -- mini.lan") {
+		u.t.Errorf("the shutdown did not cancel the forward and end the master:\n%s", log)
+	}
 }
 
 func (u *upRun) backend() upBackend {
 	return upBackend{
-		ssh: sshClient{path: testutil.FakeSSH(u.t), env: append([]string{"FAKE_SSH_LOG=" + filepath.Join(filepath.Dir(u.cfgPath), "ssh.log")}, u.sshEnv...)},
+		ssh: sshClient{path: testutil.FakeSSH(u.t), env: append([]string{
+			"FAKE_SSH_LOG=" + filepath.Join(filepath.Dir(u.cfgPath), "ssh.log"),
+			"FAKE_SSH_PID_LOG=" + u.pidLog(),
+			"FAKE_SSH_DROP_DIR=" + u.dropDir(),
+		}, u.sshEnv...)},
 		ensureHosts: func(ctx context.Context, aliases []string) error {
 			u.mu.Lock()
 			u.ensured = append(u.ensured, append([]string(nil), aliases...))
@@ -109,6 +183,9 @@ func (u *upRun) start(extra ...string) {
 
 // stop interrupts the command as a signal would and checks that nothing of it
 // is left: no listener on the proxy ports, no ssh process, no engine goroutine.
+// The ControlMaster's processes are found by their run directory with pgrep,
+// where there is one; the per-process transport's by the pids the fake ssh
+// logged, on every OS.
 func (u *upRun) stop() error {
 	u.t.Helper()
 	u.cancel()
@@ -131,6 +208,10 @@ func (u *upRun) stop() error {
 			return strings.TrimSpace(string(out)) == ""
 		}, "ssh processes to exit")
 	}
+	pids, _ := u.sshPids()
+	testutil.WaitUntil(u.t, 5*time.Second, func() bool {
+		return !slices.ContainsFunc(pids, testutil.ProcessAlive)
+	}, "per-process ssh processes to exit")
 	testutil.WaitUntil(u.t, 5*time.Second, func() bool { return leftoverGoroutines() == "" }, "engine, session and up goroutines to end")
 	return err
 }
@@ -149,13 +230,13 @@ func (u *upRun) interruptAgain() {
 }
 
 // leftoverGoroutines returns the stacks of goroutines still running engine,
-// session or command code.
+// transport or command code.
 func leftoverGoroutines() string {
 	buf := make([]byte, 4<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	var out []string
 	for _, g := range strings.Split(string(buf), "\n\n") {
-		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") || strings.Contains(g, "cli.runUp") {
+		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") || strings.Contains(g, "transport.(*perProcess)") || strings.Contains(g, "cli.runUp") {
 			out = append(out, g)
 		}
 	}

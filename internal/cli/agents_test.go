@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -45,13 +47,46 @@ func fakeAgents(home string) agentsBackend {
 	}
 }
 
+// agentClient is a client of the agent API where f reaches it: the socket
+// f.Local, or, for a server's forward on Windows, the loopback port f.Local,
+// whose requests must carry f.Token.
+func agentClient(f transport.AgentForward) *http.Client {
+	network := "unix"
+	if f.Token != "" {
+		network = "tcp"
+	}
+	var rt http.RoundTripper = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, f.Local)
+	}}
+	if f.Token != "" {
+		rt = withToken{token: f.Token, next: rt}
+	}
+	return &http.Client{Transport: rt}
+}
+
+// withToken adds the agent API's token to each request, as the session's
+// side of a loopback forward does.
+type withToken struct {
+	token string
+	next  http.RoundTripper
+}
+
+func (w withToken) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("X-Nearhost-Token", w.token)
+	return w.next.RoundTrip(r)
+}
+
 // getJSON asks the agent API on sock for path.
 func getJSON(t *testing.T, sock, path string) map[string]any {
 	t.Helper()
-	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-	}}}
-	resp, err := c.Get("http://nearhost" + path)
+	return getAgentJSON(t, transport.AgentForward{Local: sock}, path)
+}
+
+// getAgentJSON asks the agent API where f reaches it for path.
+func getAgentJSON(t *testing.T, f transport.AgentForward, path string) map[string]any {
+	t.Helper()
+	resp, err := agentClient(f).Get("http://nearhost" + path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +121,17 @@ func TestAgentsListenOnTheLaptopsSocketAndForwardEachServer(t *testing.T) {
 		t.Fatalf("GET /v1: %v", out)
 	}
 	f, ok := opts.Agent("mini")
-	if !ok || f.Name != "k3f9q2.sock" || !strings.HasPrefix(f.Local, opts.RunDir+"/agent-") || f.Own != sock {
+	if !ok || f.Name != "k3f9q2.sock" || f.Own != sock {
 		t.Fatalf("forward %+v %v", f, ok)
 	}
-	if out := getJSON(t, f.Local, "/v1"); out["origin"] != "mini" {
+	// A server's forward reaches a private socket in the run directory.
+	// Windows' ssh cannot forward to a socket whose path holds a drive's
+	// colon, so there it reaches a loopback port with a token, as
+	// TestServersGetALoopbackAgentForwardOnWindows checks.
+	if runtime.GOOS != "windows" && (!strings.HasPrefix(f.Local, opts.RunDir+"/agent-") || f.Token != "") {
+		t.Fatalf("forward %+v", f)
+	}
+	if out := getAgentJSON(t, f, "/v1"); out["origin"] != "mini" {
 		t.Fatalf("mini's socket: %v", out)
 	}
 	a.close()
@@ -141,52 +183,23 @@ func TestAgentStatusComesFromTheConfigFile(t *testing.T) {
 	}
 }
 
-func TestAServersSocketThatCannotBeListenedOnIsLogged(t *testing.T) {
-	home := agentHome(t)
-	blocked := filepath.Join(home, "run")
-	os.WriteFile(blocked, []byte("a file where the run directory should be"), 0o600)
-	opts := engine.Options{RunDir: blocked}
-	a, _ := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
-	defer a.close()
+// A server's notice from before the engine is attached is held, sent once
+// however often it was raised, and a notice after that goes straight to the
+// log. The tests that raise it by blocking the run directory, which only a
+// Unix socket needs, are in agents_unix_test.go.
+func TestAgentNoticesAreHeldUntilTheEngineIsAttached(t *testing.T) {
+	a := &agents{src: &agentSource{}}
+	held := engine.Event{Server: "mini", Message: "mini: agents unavailable: held"}
+	a.notice(held)
+	a.notice(held)
 	eng := engine.New(&config.Config{}, engine.Options{})
-	a.attach(eng)
-	events, unsubscribe := eng.Events().Subscribe(8)
-	defer unsubscribe()
-	if _, ok := opts.Agent("mini"); ok {
-		t.Fatal("a forward without a socket to reach")
-	}
-	select {
-	case ev := <-events:
-		if ev.Server != "mini" || !strings.Contains(ev.Message, "mini: agents unavailable: ") {
-			t.Fatalf("event %+v", ev)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("nothing was logged")
-	}
-}
-
-func TestAServersSocketThatCannotBeListenedOnIsLoggedOnceTheEngineIsAttached(t *testing.T) {
-	home := agentHome(t)
-	blocked := filepath.Join(home, "run")
-	os.WriteFile(blocked, []byte("a file where the run directory should be"), 0o600)
-	opts := engine.Options{RunDir: blocked}
-	a, _ := serveAgents(fakeAgents(home), &opts, nil, filepath.Join(home, "config.yaml"), 443, agentEnv{})
-	defer a.close()
-	for range 2 {
-		if _, ok := opts.Agent("mini"); ok {
-			t.Fatal("a forward without a socket to reach")
-		}
-	}
-	eng := engine.New(&config.Config{}, engine.Options{})
-	// The order of up and the interface: attach, then subscribe, and only
-	// then are the held events sent.
 	a.attach(eng)
 	events, unsubscribe := eng.Events().Subscribe(8)
 	defer unsubscribe()
 	a.publishHeld(eng)
 	select {
 	case ev := <-events:
-		if ev.Server != "mini" || !strings.Contains(ev.Message, "mini: agents unavailable: ") {
+		if ev.Server != held.Server || ev.Message != held.Message {
 			t.Fatalf("event %+v", ev)
 		}
 	case <-time.After(time.Second):
@@ -196,6 +209,16 @@ func TestAServersSocketThatCannotBeListenedOnIsLoggedOnceTheEngineIsAttached(t *
 	case ev := <-events:
 		t.Fatalf("second event %+v", ev)
 	case <-time.After(50 * time.Millisecond):
+	}
+	later := engine.Event{Server: "mini", Message: "mini: agents unavailable: later"}
+	a.notice(later)
+	select {
+	case ev := <-events:
+		if ev.Server != later.Server || ev.Message != later.Message {
+			t.Fatalf("event %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a notice after attach was not logged")
 	}
 }
 
@@ -587,10 +610,13 @@ func TestAgentDoctorTellsTheAgentToRunItAgain(t *testing.T) {
 // postJSON posts body to path on the agent API on sock.
 func postJSON(t *testing.T, sock, path, body string) (int, map[string]any) {
 	t.Helper()
-	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-	}}}
-	resp, err := c.Post("http://nearhost"+path, "application/json", strings.NewReader(body))
+	return postAgentJSON(t, transport.AgentForward{Local: sock}, path, body)
+}
+
+// postAgentJSON posts body to path on the agent API where f reaches it.
+func postAgentJSON(t *testing.T, f transport.AgentForward, path, body string) (int, map[string]any) {
+	t.Helper()
+	resp, err := agentClient(f).Post("http://nearhost"+path, "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,13 +742,13 @@ func withGrants(b agentsBackend, dir string) agentsBackend {
 
 // postPass posts a passthrough request to the agent API on sock, with token
 // when it is not empty.
-func postPass(t *testing.T, sock, token string) (int, map[string]any) {
+func postPass(t *testing.T, f transport.AgentForward, token string) (int, map[string]any) {
 	t.Helper()
 	body := `{"port": 5173, "requester": "claude-code", "session": "s1", "label": "vite"`
 	if token != "" {
 		body += `, "token": "` + token + `"`
 	}
-	return postJSON(t, sock, "/v1/passthroughs", body+"}")
+	return postAgentJSON(t, f, "/v1/passthroughs", body+"}")
 }
 
 func TestAgentsAdvertisePassthrough(t *testing.T) {
@@ -772,7 +798,7 @@ func TestUpHonoursGrants(t *testing.T) {
 	defer a.close() // no a.review: this is `nearhost up`
 	f, _ := opts.Agent("mini")
 
-	if status, out := postPass(t, f.Local, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
+	if status, out := postPass(t, f, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
 		t.Fatalf("no token: %d %v", status, out)
 	}
 	token, err := a.grants.Allow("mini", "claude-code", grants.KindPassthrough)
@@ -781,10 +807,10 @@ func TestUpHonoursGrants(t *testing.T) {
 	}
 	// The grant is honoured: the request reaches the engine, which is not
 	// attached, rather than being refused for want of a prompt.
-	if status, out := postPass(t, f.Local, token); status != 409 || !strings.Contains(out["error"].(string), "isn't connected to mini") {
+	if status, out := postPass(t, f, token); status != 409 || !strings.Contains(out["error"].(string), "isn't connected to mini") {
 		t.Fatalf("token: %d %v", status, out)
 	}
-	if status, out := postPass(t, f.Local, "not-the-token"); status != 401 {
+	if status, out := postPass(t, f, "not-the-token"); status != 401 {
 		t.Fatalf("wrong token: %d %v", status, out)
 	}
 }
