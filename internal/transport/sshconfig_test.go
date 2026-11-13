@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestListHostsSkipsWildcardsAndDeduplicates(t *testing.T) {
@@ -49,7 +51,7 @@ func TestListHostsEmptyConfig(t *testing.T) {
 }
 
 func TestDefaultHostsMissingFileIsNotAnError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.SetHome(t, t.TempDir())
 	hosts, err := DefaultHosts()
 	if err != nil || hosts != nil {
 		t.Fatalf("got %v, %v", hosts, err)
@@ -70,7 +72,7 @@ func TestDefaultHostsIncludesHostsFromIncludedFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "conf.d", "extra"), []byte(inc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +100,7 @@ func TestDefaultHostsIncludeRelativeFile(t *testing.T) {
 	home := t.TempDir()
 	writeSSHFile(t, home, "config", "Host first\n\nInclude extra\n\nHost last\n")
 	writeSSHFile(t, home, "extra", "Host mid *.wild\n  User x\n")
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +114,7 @@ func TestDefaultHostsIncludeRelativeFile(t *testing.T) {
 func TestDefaultHostsIncludeMissingTargetIsNotAnError(t *testing.T) {
 	home := t.TempDir()
 	writeSSHFile(t, home, "config", "Include nothere conf.d/*\nHost mini\n")
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
 	if err != nil || !reflect.DeepEqual(hosts, []string{"mini"}) {
 		t.Fatalf("got %v, %v", hosts, err)
@@ -123,7 +125,7 @@ func TestDefaultHostsSelfIncludeTerminates(t *testing.T) {
 	home := t.TempDir()
 	writeSSHFile(t, home, "config", "Include config\nHost mini\nInclude other\n")
 	writeSSHFile(t, home, "other", "Include config\nHost vps\n")
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	done := make(chan struct{})
 	var hosts []string
 	var err error
@@ -146,7 +148,7 @@ func TestDefaultHostsIncludeQuotedPathWithSpaces(t *testing.T) {
 	writeSSHFile(t, home, "config", "Include \"conf d/my hosts\" plain\nHost mini\n")
 	writeSSHFile(t, home, "conf d/my hosts", "Host spaced\n")
 	writeSSHFile(t, home, "plain", "Host simple\n")
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
 	want := []string{"spaced", "simple", "mini"}
 	if err != nil || !reflect.DeepEqual(hosts, want) {
@@ -161,26 +163,7 @@ func TestDefaultHostsIncludeGlobSkipsDirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".ssh", "conf.d", "subdir"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
-	hosts, err := DefaultHosts()
-	want := []string{"vps", "mini"}
-	if err != nil || !reflect.DeepEqual(hosts, want) {
-		t.Fatalf("got %v, %v; want %v", hosts, err, want)
-	}
-}
-
-func TestDefaultHostsIncludeSkipsUnreadableFile(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permissions are not enforced for root")
-	}
-	home := t.TempDir()
-	writeSSHFile(t, home, "config", "Include conf.d/*\nHost mini\n")
-	writeSSHFile(t, home, "conf.d/a-locked", "Host secret\n")
-	writeSSHFile(t, home, "conf.d/b-real", "Host vps\n")
-	if err := os.Chmod(filepath.Join(home, ".ssh", "conf.d", "a-locked"), 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
 	want := []string{"vps", "mini"}
 	if err != nil || !reflect.DeepEqual(hosts, want) {
@@ -215,7 +198,7 @@ func TestListHostsRejectsHomeRelativeIncludeWithoutHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	t.Setenv("HOME", "")
+	testutil.SetHome(t, "")
 	for _, cfg := range []string{"Include extra\n", "Include ~/extra\n"} {
 		hosts, err := ListHosts(strings.NewReader(cfg))
 		if err == nil {

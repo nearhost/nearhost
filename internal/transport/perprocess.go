@@ -569,10 +569,10 @@ type sshProc struct {
 	exited chan struct{}
 }
 
-// procWaitDelay bounds how long reaping a killed link or forward waits for
-// its stderr to close. A ProxyCommand or ProxyJump child that inherited the
-// pipe would otherwise hold Wait, and with it CancelForward and Stop, until
-// it exits.
+// procWaitDelay bounds how long reaping a killed link, forward or SFTP
+// session waits for its stderr to close. A ProxyCommand or ProxyJump child
+// that inherited the pipe would otherwise hold Wait, and with it
+// CancelForward, Stop and SFTP's Close, until it exits.
 const procWaitDelay = 5 * time.Second
 
 // startProc starts a long-lived ssh with args, its stderr going to stderr,

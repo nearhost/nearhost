@@ -239,6 +239,371 @@ func TestPerProcessOpenSFTPWorksOnItsOwnConnection(t *testing.T) {
 	}
 }
 
+func TestPerProcessOpenSFTPFailsCleanlyWhenSubsystemUnavailable(t *testing.T) {
+	p := newTestPerProcess(t)
+	f, err := p.OpenSFTP(t.Context())
+	if err == nil {
+		f.Close()
+		t.Fatal("fake ssh does not provide sftp; expected an error")
+	}
+}
+
+// Close kills ssh before it closes the client. When the client has noticed
+// ssh going first, it has already closed its end of the pipe, and closing it
+// again is refused. That is not a failure of the close.
+func TestPerProcessSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_SFTP_SERVER="+testutil.SFTPServer(t))
+	f, err := p.OpenSFTP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Client.Getwd(); err != nil {
+		t.Fatal(err)
+	}
+	// What Close does first, and then the client's reader running to its
+	// end before Close gets to the client. The reader ends when nothing
+	// holds ssh's output open any more; if something still did, Wait would
+	// never return.
+	f.cmd.Process.Kill()
+	waited := make(chan struct{})
+	go func() {
+		f.Client.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the client never saw ssh go: its output is still held open")
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// A ProxyCommand or ProxyJump child of ssh can inherit its stderr and
+// outlive it. Closing SFTP kills ssh and must not then wait for that child.
+func TestPerProcessSFTPCloseDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Last in, so it runs first: the holder ends once the file is gone.
+	defer os.Remove(hold)
+	p := newTestPerProcess(t, "FAKE_SSH_SFTP_SERVER="+testutil.SFTPServer(t), "FAKE_SSH_STDERR_HOLDER="+hold)
+	f, err := p.OpenSFTP(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Client.Getwd(); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- f.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(3 * procWaitDelay):
+		t.Fatal("Close waited on the child that holds ssh's stderr")
+	}
+}
+
+// An ssh that cannot be launched is retried, and Health says when the next
+// attempt is; once ssh launches, it connects and the count is cleared.
+func TestPerProcessRetriesWhenSSHCannotBeLaunched(t *testing.T) {
+	// Made before the transport, so its cleanup runs after Stop: Windows
+	// cannot remove a program that is running.
+	dir := t.TempDir()
+	p := newTestPerProcess(t)
+	fake := p.SSHPath
+	// The fake's own extension: Windows runs only a file named .exe.
+	p.SSHPath = filepath.Join(dir, "ssh"+filepath.Ext(fake))
+	p.baseBackoff = time.Second
+	p.maxBackoff = time.Second
+	before := time.Now()
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusReconnecting || p.Status() == StatusAuthFailed }, "a failed launch")
+	h := p.Health()
+	if p.Status() == StatusAuthFailed {
+		t.Fatalf("one launch failure ended supervision: %q", p.LastError())
+	}
+	if !strings.Contains(p.LastError(), "ssh -G") {
+		t.Fatalf("LastError = %q", p.LastError())
+	}
+	if h.Failures != 1 || h.NextAttempt.Before(before.Add(time.Second)) || h.NextAttempt.After(time.Now().Add(time.Second)) {
+		t.Errorf("health %+v", h)
+	}
+	// Put ssh in place whole, so no attempt finds half of it.
+	data, err := os.ReadFile(fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.SSHPath+".tmp", data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p.SSHPath+".tmp", p.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	waitPerProcessConnected(t, p)
+	if h := p.Health(); h.Failures != 0 || !h.NextAttempt.IsZero() {
+		t.Errorf("health once connected %+v", h)
+	}
+}
+
+// linkLaunches counts the links the fake ssh was started as: the plain
+// processes that carry no forward.
+func (f *perProcessFake) linkLaunches(t *testing.T) int {
+	t.Helper()
+	n := 0
+	for _, line := range logLines(t, f.log) {
+		argv := " " + line + " "
+		if strings.Contains(argv, " -N ") && !strings.Contains(argv, " -L ") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPerProcessStopIsIdempotentBeforeStart(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Stop()
+	p.Stop()
+	if p.Status() != StatusDisconnected {
+		t.Fatalf("status = %s", p.Status())
+	}
+}
+
+func TestPerProcessStartThenImmediateStopLeavesItDisconnected(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		p := newTestPerProcess(t)
+		p.Start()
+		p.Stop()
+		if p.Status() != StatusDisconnected {
+			t.Fatalf("iteration %d: status = %s", i, p.Status())
+		}
+		p.Stop()
+	}
+}
+
+func TestPerProcessStartStopStartAgain(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	p.Stop()
+	p.Start()
+	waitPerProcessConnected(t, p)
+}
+
+// A Start while Stop is ending the supervisor starts a new one only once
+// the old one has exited.
+func TestPerProcessStartDuringStopWaitsForTheOldSupervisor(t *testing.T) {
+	p := newTestPerProcess(t)
+	var mu sync.Mutex
+	var events []string
+	p.Logf = func(format string, args ...any) {
+		mu.Lock()
+		events = append(events, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	stopped := make(chan struct{})
+	go func() { p.Stop(); close(stopped) }()
+	// Start as soon as Stop has detached the running supervisor.
+	waitFor(t, 2*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.cancel == nil
+	}, "stop to begin")
+	p.Start()
+	<-stopped
+	waitPerProcessConnected(t, p)
+	p.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	disc, conn := -1, -1
+	for i, e := range events {
+		if e == "mini: disconnected" && disc < 0 {
+			disc = i
+		}
+		if e == "mini: connecting" && i > 0 && conn < 0 && disc < 0 {
+			conn = i // a second "connecting" before the first disconnect
+		}
+	}
+	if conn >= 0 {
+		t.Fatalf("new supervisor started before old one exited: %v", events)
+	}
+}
+
+func TestPerProcessStartAfterGivingUpRestarts(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1")
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+	if n := p.linkLaunches(t); n != 3 {
+		t.Fatalf("link launches = %d, want 3", n)
+	}
+	// Status and error stay visible until the next Start.
+	time.Sleep(50 * time.Millisecond)
+	if p.Status() != StatusAuthFailed || !strings.Contains(p.LastError(), "Permission denied") {
+		t.Fatalf("status=%s err=%q", p.Status(), p.LastError())
+	}
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.linkLaunches(t) > 3 }, "launches to grow after restart")
+}
+
+func TestPerProcessStopAfterGivingUpReportsDisconnected(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1")
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+	p.Stop()
+	if p.Status() != StatusDisconnected {
+		t.Fatalf("status after stop = %s", p.Status())
+	}
+}
+
+func TestPerProcessGivesUpWhenSSHNeverLaunches(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.SSHPath = filepath.Join(t.TempDir(), "ssh"+filepath.Ext(p.SSHPath))
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "terminal status")
+	if _, err := os.Stat(p.log); !os.IsNotExist(err) {
+		t.Fatalf("an ssh ran: %q", readLog(t, p.log))
+	}
+	if h := p.Health(); h.Failures != 3 || !strings.Contains(p.LastError(), "ssh -G") {
+		t.Fatalf("health %+v", h)
+	}
+}
+
+// Giving up leaves no next attempt, and a fresh Start counts afresh.
+func TestPerProcessHealthCountsFailuresAfreshAfterAStart(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1")
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+	h := p.Health()
+	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+		t.Errorf("health %+v", h)
+	}
+	p.Stop()
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed && p.Health().Failures == 3 }, "auth failed again")
+}
+
+func TestPerProcessAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_ALTERNATE_FILE="+filepath.Join(t.TempDir(), "turn"))
+	p.Start()
+	waitFor(t, 10*time.Second, func() bool { return p.linkLaunches(t) >= 8 || p.Status() == StatusAuthFailed }, "eight launches")
+	if p.Status() == StatusAuthFailed {
+		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", p.linkLaunches(t))
+	}
+}
+
+func TestPerProcessGivesUpOnHostKeyFailure(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_HOSTKEY_FAIL=1")
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+	if n := p.linkLaunches(t); n != 3 || !strings.Contains(p.LastError(), "Host key verification failed") {
+		t.Fatalf("launches=%d lastErr=%q", n, p.LastError())
+	}
+}
+
+func TestPerProcessAddForwardTwiceStartsOneProcess(t *testing.T) {
+	p := newTestPerProcess(t)
+	p.Start()
+	waitPerProcessConnected(t, p)
+	local := freePort(t)
+	for i := 0; i < 2; i++ {
+		if err := p.AddForward(t.Context(), local, 80); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(readLog(t, p.log), " -L "+forwardSpec(local, 80)+" "); n != 1 {
+		t.Fatalf("the forward was started %d times, want 1", n)
+	}
+	pid := p.forwardPid(local, 80)
+	if err := p.CancelForward(t.Context(), local, 80); err != nil {
+		t.Fatal(err)
+	}
+	if !processGone(pid) || len(p.Forwards()) != 0 {
+		t.Fatalf("the forward was not cancelled: pid %d, Forwards %v", pid, p.Forwards())
+	}
+}
+
+func TestPerProcessCancelForwardWhileDisconnectedForgetsWithoutSSH(t *testing.T) {
+	p := newTestPerProcess(t)
+	if err := p.AddForward(t.Context(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CancelForward(t.Context(), 8080, 80); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Forwards()) != 0 || readLog(t, p.log) != "" {
+		t.Fatalf("forwards=%v log=%q", p.Forwards(), readLog(t, p.log))
+	}
+}
+
+// A forward added while disconnected is tracked, not applied, until the
+// link is up; the transport is connected only once it has been tried.
+func TestPerProcessForwardStatesNotAppliedWhileDisconnected(t *testing.T) {
+	p := newTestPerProcess(t)
+	local := freePort(t)
+	if err := p.AddForward(t.Context(), local, 80); err != nil {
+		t.Fatal(err)
+	}
+	if st, fs := p.ForwardStates(); len(fs) != 1 || fs[0].Applied {
+		t.Fatalf("ForwardStates = %s, want it tracked and not applied", forwardStatesString(st, fs))
+	}
+	p.Start()
+	waitPerProcessConnected(t, p)
+	if st, fs := p.ForwardStates(); st != StatusConnected || len(fs) != 1 || !fs[0].Applied {
+		t.Fatalf("ForwardStates = %s, want it applied once connected", forwardStatesString(st, fs))
+	}
+}
+
+// The re-apply pass reports the transport connected only when the link it
+// ran for is still there: not when it was stopped before the pass ended,
+// nor when the link went during it.
+func TestPerProcessLinkGoneDuringReapplyIsNotReportedConnected(t *testing.T) {
+	for name, during := range map[string]bool{"before the pass": false, "during the pass": true} {
+		t.Run(name, func(t *testing.T) {
+			hold := filepath.Join(t.TempDir(), "hold")
+			p := newTestPerProcess(t, "FAKE_SSH_LINK_HOLD="+hold)
+			log := logged(p)
+			if err := p.AddForward(t.Context(), freePort(t), 80); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if during {
+				// The forward's ssh holds before it listens, so the pass
+				// waits on it until the link goes.
+				if err := os.WriteFile(hold, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(hold)
+				go func() {
+					// Not waitFor: it may not fail the test from here. If
+					// the forward's ssh never starts, the cancel still comes.
+					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+						if b, _ := os.ReadFile(p.log); strings.Contains(string(b), " -L ") {
+							break
+						}
+					}
+					cancel()
+				}()
+			} else {
+				cancel()
+			}
+			if p.markConnected(ctx) {
+				t.Fatal("markConnected reported success for a link that went")
+			}
+			if p.Status() == StatusConnected || strings.Contains(log(), "mini: connected") {
+				t.Fatalf("reported connected: status %s, log:\n%s", p.Status(), log())
+			}
+		})
+	}
+}
+
 func TestPerProcessCheck(t *testing.T) {
 	p := newTestPerProcess(t)
 	if err := p.Check(context.Background()); err != nil {
