@@ -15,7 +15,7 @@ func TestReconnectServerStartsTheMasterAgain(t *testing.T) {
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
 		t.Fatal(err)
 	}
-	masters := func() int { return strings.Count(h.log(), "-N -M ") }
+	masters := h.connections
 	if n := masters(); n != 1 {
 		t.Fatalf("%d masters before reconnecting", n)
 	}
@@ -55,7 +55,7 @@ func TestDisconnectAndConnectServer(t *testing.T) {
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
 		t.Fatal(err)
 	}
-	masters := func() int { return strings.Count(h.log(), "-N -M ") }
+	masters := h.connections
 	if err := h.eng.DisconnectServer("mini"); err != nil {
 		t.Fatalf("DisconnectServer: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestAReloadKeepsADroppedServerDropped(t *testing.T) {
 	if err := h.eng.StartProject(bg, "myapp"); err != nil {
 		t.Fatal(err)
 	}
-	masters := func() int { return strings.Count(h.log(), "-N -M ") }
+	masters := h.connections
 	if err := h.eng.DisconnectServer("mini"); err != nil {
 		t.Fatal(err)
 	}

@@ -258,6 +258,27 @@ func TestFakeSSHPlainForwardOnATakenPortExits(t *testing.T) {
 	}
 }
 
+// The forward-failure variables fail a plain -L as they fail an
+// `-O forward`, so a test fails a forward the same way on either transport.
+func TestFakeSSHPlainForwardFailsAsTold(t *testing.T) {
+	port := FreePort(t)
+	spec := fmt.Sprintf("127.0.0.1:%d:localhost:81", port)
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(port)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string][]string{
+		"by local port":  {"FAKE_SSH_FORWARD_FAIL=" + strconv.Itoa(port)},
+		"by remote port": {"FAKE_SSH_FORWARD_FAIL_REMOTE=81"},
+		"by file":        {"FAKE_SSH_FORWARD_FAIL_FILE=" + flag},
+	} {
+		code, stderr := runFake(t, env, "-N", "-o", "ExitOnForwardFailure=yes", "-L", spec, "mini")
+		if code != 255 || !strings.Contains(stderr, "Could not request local forwarding.") {
+			t.Errorf("%s: exit %d, stderr %q", name, code, stderr)
+		}
+	}
+}
+
 func TestFakeSSHPlainRemoteForward(t *testing.T) {
 	p := startPlain(t, nil, "-N", "-R", "/x/a.sock:/y/b.sock", "mini")
 	WaitUntil(t, 3*time.Second, func() bool {

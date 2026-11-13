@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -77,6 +78,20 @@ func (f *perProcessFake) linkPid(t *testing.T) int {
 		}
 	}
 	t.Fatalf("no link process in %q", argvs)
+	return 0
+}
+
+// hostLinkPid returns the pid of the newest link process to host.
+func (f *perProcessFake) hostLinkPid(t *testing.T, host string) int {
+	t.Helper()
+	pids, argvs := f.pids()
+	for i := len(pids) - 1; i >= 0; i-- {
+		argv := " " + argvs[i] + " "
+		if !strings.Contains(argv, " -L ") && strings.HasSuffix(argv, " "+host+" ") {
+			return pids[i]
+		}
+	}
+	t.Fatalf("no link process to %s in %q", host, argvs)
 	return 0
 }
 
@@ -350,4 +365,131 @@ func TestPerProcessRevivesAServerThatGaveUp(t *testing.T) {
 	if !portOpen(running.WebLocalPort) {
 		t.Fatalf("the web forward from %d does not listen", running.WebLocalPort)
 	}
+}
+
+// A running project whose server's link drops is degraded, saying why,
+// until the link is back, and then runs again on the local ports it had.
+// A local project is not affected.
+func TestPerProcessRunningProjectBecomesDegradedWhenItsLinkDrops(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	fake, env := newPerProcessFake(t)
+	cfg := remoteConfig(testutil.FreePort(t))
+	cfg.Projects = append(cfg.Projects, localProject("web", upstream(t, "ok")))
+	h := newHarness(t, cfg, env...)
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	mustStart(t, h, "myapp")
+	mustStart(t, h, "web")
+	running := h.eng.Status("myapp")
+
+	fake.drop(t, fake.linkPid(t))
+	testutil.WaitUntil(t, 20*time.Second, func() bool {
+		return h.connections() == 2 && h.eng.Status("myapp").State == StateRunning
+	}, "the project to run again on a new link")
+	if got := h.eng.Status("myapp"); got.Message != "" || got.WebLocalPort != running.WebLocalPort || len(h.forwards("mini")) != 2 {
+		t.Fatalf("status = %+v (was %+v), forwards %v", got, running, h.forwards("mini"))
+	}
+	if !portOpen(running.WebLocalPort) {
+		t.Fatalf("the web forward from %d does not listen", running.WebLocalPort)
+	}
+	states, last := stateEvents(events, "myapp")
+	if want := []State{StateStarting, StateRunning, StateDegraded, StateRunning}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events = %v, want %v", states, want)
+	}
+	if !strings.Contains(last[StateDegraded], "Broken pipe") {
+		t.Fatalf("degraded event %q does not say why the link dropped", last[StateDegraded])
+	}
+	if states, _ := stateEvents(events, "web"); len(states) != 0 {
+		t.Fatalf("the local project's state changed with the link: %v", states)
+	}
+	if st := h.eng.Status("web"); st.State != StateRunning {
+		t.Fatalf("a local project is not affected by a server dropping: %+v", st)
+	}
+}
+
+// Shutdown does not wait for a start whose link has not come up.
+func TestPerProcessShutdownInterruptsAStartInProgress(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	_, env := newPerProcessFake(t)
+	hold := filepath.Join(t.TempDir(), "link-holds")
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)), append(env, "FAKE_SSH_LINK_HOLD="+hold)...)
+	t.Cleanup(func() { os.Remove(hold) }) // before the harness shuts down: never leave ssh waiting
+	started := make(chan error, 1)
+	go func() { started <- h.eng.StartProject(bg, "myapp") }()
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		return h.eng.Status("myapp").State == StateStarting && h.connections() == 1
+	}, "the start to be waiting for ssh")
+	begin := time.Now()
+	if err := h.eng.Shutdown(bg); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if d := time.Since(begin); d > 10*time.Second {
+		t.Fatalf("Shutdown waited %s for a start that could not finish", d)
+	}
+	if err := <-started; err == nil {
+		t.Fatal("the interrupted start must report an error")
+	}
+	if st := h.eng.Status("myapp"); st.State != StateStopped || len(h.eng.Sites()) != 0 {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+// A loopback forward answers on [::1] too, through a relay to 127.0.0.1,
+// until the project stops. The fake ssh's forward on 127.0.0.1 accepts a
+// connection and closes it, so a connection on [::1] is accepted and ends.
+func TestPerProcessLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	_, env := newPerProcessFake(t)
+	probe, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	lb := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	h := newHarness(t, remoteConfig(lb), env...)
+	mustStart(t, h, "myapp")
+	h.eng.mu.Lock()
+	_, relayed := h.eng.relays[lb]
+	h.eng.mu.Unlock()
+	if !relayed {
+		t.Fatalf("no relay on [::1] for the loopback forward from %d", lb)
+	}
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("[::1]:%d", lb), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial [::1]: %v", err)
+	}
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = io.ReadAll(c)
+	c.Close()
+	if err != nil {
+		t.Fatalf("the connection on [::1] did not end as the forward ended it: %v", err)
+	}
+	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := net.DialTimeout("tcp", fmt.Sprintf("[::1]:%d", lb), time.Second); err == nil {
+		c.Close()
+		t.Error("[::1] still answers after the project stopped")
+	}
+}
+
+// A server that gives up on authentication closes its passthroughs.
+func TestPerProcessAuthFailedClosesPassthroughs(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	fake, env := newPerProcessFake(t)
+	ssh, flag, _ := authWrapper(t)
+	h, _ := endHarness(t, ssh, env...)
+	events, cancel := h.eng.bus.Subscribe(256)
+	defer cancel()
+	p := openP1(t, h)
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake.drop(t, fake.linkPid(t))
+	waitStatus(t, h, "auth failed", func(st transport.Status) bool { return st == transport.StatusAuthFailed })
+	waitClosedEvent(t, events, p.Remote, "apollo's connection failed: user@host: Permission denied (publickey).")
+	assertClosed(t, h, p.Local)
 }
