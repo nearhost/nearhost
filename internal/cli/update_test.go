@@ -128,7 +128,12 @@ func TestUpdateNotATerminalNeedsYes(t *testing.T) {
 func TestUpdateScriptIntoUnwritableDir(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", tty: true}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	// The directory is the binary's, in this OS's path form.
+	// On Windows this pins a known-wrong message: install-script advice
+	// (`curl ... | sudo ... sh`, meaningless there) for a binary that npm or
+	// go did not install. Windows self-update and install.ps1 arrive in stage
+	// 7 of the Windows work and will replace it; this test is expected to
+	// change then. Until then it only builds the directory in this OS's path
+	// form, as update.Detect does.
 	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR="+filepath.Dir(f.exe)+" sh") {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}

@@ -65,11 +65,18 @@ func sshLog(t *testing.T, path string) string {
 
 // isLinkLaunch reports whether line, from the fake ssh's log, starts the
 // connection to host that a session keeps up: the ControlMaster's
-// `-N -M ... -- host`, or the per-process transport's `... -N -- host`,
-// which is all Windows has.
+// `-N -M ... -- host`, or the per-process transport's
+// `... -o ControlMaster=no ... -N -- host`, which is all Windows has. A line
+// with a forward (-L or -R) or a control command (-O) is not one.
 func isLinkLaunch(line, host string) bool {
 	fields := strings.Fields(line)
-	return slices.Contains(fields, "-N") && !slices.Contains(fields, "-O") && strings.HasSuffix(line, " -- "+host)
+	for _, f := range []string{"-O", "-L", "-R"} {
+		if slices.Contains(fields, f) {
+			return false
+		}
+	}
+	link := slices.Contains(fields, "-M") || slices.Contains(fields, "ControlMaster=no")
+	return link && slices.Contains(fields, "-N") && strings.HasSuffix(line, " -- "+host)
 }
 
 // noAddLeftovers checks that an `add` over ssh left no master process and no
@@ -219,6 +226,9 @@ func foreground(t *testing.T, tr transport.Transport) bool {
 	v := reflect.ValueOf(tr)
 	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		t.Fatalf("%T is not a struct, so it has no Foreground setting", tr)
 	}
 	f := v.FieldByName("Foreground")
 	if f.Kind() != reflect.Bool {

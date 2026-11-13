@@ -86,7 +86,8 @@ func (u *upRun) sshPids() (pids []int, argvs []string) {
 
 // dropLink makes the connection to the server mini.lan drop, as a lost
 // network does. The ControlMaster leaves when its socket disappears; the
-// per-process transport's link is the newest plain ssh without a -L.
+// per-process transport's link is the newest plain ssh with neither a -L nor
+// a -R, which an agent forward would have.
 func (u *upRun) dropLink() {
 	u.t.Helper()
 	sock := filepath.Join(filepath.Dir(u.cfgPath), "run", "mini.sock")
@@ -98,7 +99,7 @@ func (u *upRun) dropLink() {
 	}
 	pids, argvs := u.sshPids()
 	for i := len(pids) - 1; i >= 0; i-- {
-		if argv := " " + argvs[i] + " "; !strings.Contains(argv, " -L ") && strings.HasSuffix(argv, " mini.lan ") {
+		if argv := " " + argvs[i] + " "; !strings.Contains(argv, " -L ") && !strings.Contains(argv, " -R ") && strings.HasSuffix(argv, " mini.lan ") {
 			if err := os.WriteFile(filepath.Join(u.dropDir(), strconv.Itoa(pids[i])), nil, 0o600); err != nil {
 				u.t.Fatal(err)
 			}
