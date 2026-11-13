@@ -280,14 +280,7 @@ func (h *harness) proxyState(alias string) string {
 		fmt.Fprintf(&b, "lock file %s (modified %s): %s\n", filepath.Base(l), mod.Format(time.RFC3339Nano), strings.TrimSpace(string(data)))
 	}
 	h.mu.Lock()
-	for drained := false; !drained; {
-		select {
-		case ev := <-h.events:
-			h.seen = append(h.seen, ev)
-		default:
-			drained = true
-		}
-	}
+	h.seen = append(h.seen, drainEvents(h.events)...)
 	var lines []string
 	for _, ev := range h.seen {
 		if (ev.Project == "" && ev.Server == "") || ev.Project == project {
@@ -413,17 +406,31 @@ func (h *harness) unapplied(server string) []int {
 // announced again because its reason changed is listed once.
 func stateEvents(events <-chan Event, project string) (states []State, last map[State]string) {
 	last = map[State]string{}
+	for _, ev := range drainEvents(events) {
+		if ev.Project == project && ev.State != "" {
+			if len(states) == 0 || states[len(states)-1] != ev.State {
+				states = append(states, ev.State)
+			}
+			last[ev.State] = ev.Message
+		}
+	}
+	return states, last
+}
+
+// drainEvents returns what is buffered on events without waiting for more.
+// It stops at a closed channel too: unsubscribing closes it, and a closed
+// channel would otherwise yield zero events for ever.
+func drainEvents(events <-chan Event) []Event {
+	var out []Event
 	for {
 		select {
-		case ev := <-events:
-			if ev.Project == project && ev.State != "" {
-				if len(states) == 0 || states[len(states)-1] != ev.State {
-					states = append(states, ev.State)
-				}
-				last[ev.State] = ev.Message
+		case ev, ok := <-events:
+			if !ok {
+				return out
 			}
+			out = append(out, ev)
 		default:
-			return states, last
+			return out
 		}
 	}
 }
@@ -457,18 +464,7 @@ func waitStateEvent(t *testing.T, events <-chan Event, project, message string) 
 func (h *harness) transportLines(server string) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for drained := false; !drained; {
-		select {
-		case ev, ok := <-h.events:
-			if !ok {
-				drained = true
-				break
-			}
-			h.seen = append(h.seen, ev)
-		default:
-			drained = true
-		}
-	}
+	h.seen = append(h.seen, drainEvents(h.events)...)
 	var out []string
 	for _, ev := range h.seen {
 		if ev.Project == "" && ev.Server == server {
