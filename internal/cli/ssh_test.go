@@ -315,9 +315,7 @@ func TestDoctorRemovesItsSocketAndItsLink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Symlink(socket, filepath.Join(agents, name)); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, socket, filepath.Join(agents, name))
 
 	// An SFTP server in this process, its working directory the home.
 	serverReader, clientWriter := io.Pipe()
@@ -325,7 +323,7 @@ func TestDoctorRemovesItsSocketAndItsLink(t *testing.T) {
 	server, err := sftp.NewServer(struct {
 		io.Reader
 		io.WriteCloser
-	}{serverReader, serverWriter}, sftp.WithServerWorkingDirectory(home))
+	}{serverReader, serverWriter}, sftp.WithServerWorkingDirectory(serverPath(home)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +338,8 @@ func TestDoctorRemovesItsSocketAndItsLink(t *testing.T) {
 		client.Close()
 	}()
 
-	removeDoctorSocket(client, socket, name)
+	// The server's paths are POSIX: on Windows C:\x is /C:/x to it.
+	removeDoctorSocket(client, serverPath(socket), name)
 
 	for _, gone := range []string{socket, filepath.Join(agents, name)} {
 		if _, err := os.Lstat(gone); !os.IsNotExist(err) {

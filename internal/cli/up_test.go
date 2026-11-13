@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -227,7 +227,10 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 
 func TestUpRefusesWhenAProxyPortIsTaken(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", u.httpsPort))
+	// Held where the proxy binds: the wildcard address on Unix, loopback on
+	// Windows, where a hold on the wildcard address does not stop a bind to
+	// loopback.
+	l, err := netbind.Listen("tcp", netbind.ServeAddrs(u.httpsPort)[0])
 	if err != nil {
 		t.Fatal(err)
 	}
