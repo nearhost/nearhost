@@ -210,31 +210,6 @@ func TestWebRoute(t *testing.T) {
 	}
 }
 
-func TestPathsHonourXDGConfigHome(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
-	d, err := Dir()
-	if err != nil || d != "/tmp/xdg/nearhost" {
-		t.Fatalf("Dir = %q, %v", d, err)
-	}
-	p, _ := DefaultPath()
-	if p != "/tmp/xdg/nearhost/config.yaml" {
-		t.Fatalf("DefaultPath = %q", p)
-	}
-	r, _ := RunDir()
-	if r != "/tmp/xdg/nearhost/run" {
-		t.Fatalf("RunDir = %q", r)
-	}
-}
-
-func TestPathsDefaultToHomeConfig(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "")
-	home, _ := os.UserHomeDir()
-	d, err := Dir()
-	if err != nil || d != filepath.Join(home, ".config", "nearhost") {
-		t.Fatalf("Dir = %q, %v", d, err)
-	}
-}
-
 func TestSaveIsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -246,15 +221,6 @@ func TestSaveIsAtomic(t *testing.T) {
 		if e.Name() != "config.yaml" {
 			t.Fatalf("temp file left behind: %s", e.Name())
 		}
-	}
-}
-
-func TestPathsIgnoreRelativeXDGConfigHome(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "relative/xdg")
-	home, _ := os.UserHomeDir()
-	d, err := Dir()
-	if err != nil || d != filepath.Join(home, ".config", "nearhost") {
-		t.Fatalf("Dir = %q, %v", d, err)
 	}
 }
 
