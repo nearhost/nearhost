@@ -417,7 +417,7 @@ func TestFakeSSHExitsWhenItsParentDies(t *testing.T) {
 			p.Kill()
 		}
 	})
-	WaitUntil(t, 2*time.Second, func() bool { return !processAlive(pid) }, "the fake to exit after its parent")
+	WaitUntil(t, 2*time.Second, func() bool { return !ProcessAlive(pid) }, "the fake to exit after its parent")
 }
 
 func TestFakeSSHRejectsAMalformedLocalForward(t *testing.T) {
@@ -457,5 +457,5 @@ func TestFakeSSHHangingMasterExitsWhenItsParentDies(t *testing.T) {
 			p.Kill()
 		}
 	})
-	WaitUntil(t, 2*time.Second, func() bool { return !processAlive(pid) }, "the hanging master to exit after its parent")
+	WaitUntil(t, 2*time.Second, func() bool { return !ProcessAlive(pid) }, "the hanging master to exit after its parent")
 }

@@ -2,8 +2,8 @@ package testutil
 
 import "golang.org/x/sys/windows"
 
-// processAlive reports whether the process with pid is still running.
-func processAlive(pid int) bool {
+// ProcessAlive reports whether the process with pid is still running.
+func ProcessAlive(pid int) bool {
 	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		return false
