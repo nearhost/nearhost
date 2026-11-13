@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -36,6 +37,9 @@ func main() {
 // status. A master that is signalled exits from its signal handler, and an
 // SFTP subsystem request may replace this process with the SFTP server.
 func run(args []string) int {
+	if len(args) == 2 && args[0] == holdStderrArg {
+		return holdStderr(args[1])
+	}
 	parentGone := watchParent()
 	all := strings.Join(args, " ")
 	if hasArg(args, "-G") {
@@ -105,7 +109,16 @@ func run(args []string) int {
 	}
 	// $FAKE_SSH_SFTP_SERVER is an sftp-server that serves the SFTP subsystem,
 	// from the directory $FAKE_SSH_SFTP_HOME when that is set.
+	// $FAKE_SSH_STDERR_HOLDER names a file: while it exists, a child of
+	// this process holds its stderr open and outlives it, as a ProxyCommand
+	// or ProxyJump child of ssh can.
 	if server := os.Getenv("FAKE_SSH_SFTP_SERVER"); server != "" && last == "sftp" {
+		if hold := os.Getenv("FAKE_SSH_STDERR_HOLDER"); hold != "" {
+			if err := startStderrHolder(hold); err != nil {
+				fmt.Fprintf(os.Stderr, "fake ssh: stderr holder: %v\n", err)
+				return 255
+			}
+		}
 		argv := []string{server, "-R"}
 		if home := os.Getenv("FAKE_SSH_SFTP_HOME"); home != "" {
 			argv = append(argv, "-d", home)
@@ -482,4 +495,31 @@ func touch(path string) {
 	if f, err := os.Create(path); err == nil {
 		f.Close()
 	}
+}
+
+// holdStderrArg is the first argument of the fake run as a stderr holder.
+const holdStderrArg = "--fake-ssh-hold-stderr"
+
+// startStderrHolder starts this program again as a child that holds this
+// process's stderr, and nothing else, until the file hold is gone. It is
+// started before anything that would tie the child's life to this one's,
+// so killing this process leaves it running.
+func startStderrHolder(hold string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, holdStderrArg, hold)
+	cmd.Stderr = os.Stderr
+	return cmd.Start()
+}
+
+// holdStderr waits while the file hold exists, for two minutes at most so
+// that a test that fails to remove it leaves nothing behind for long.
+func holdStderr(hold string) int {
+	deadline := time.Now().Add(2 * time.Minute)
+	for exists(hold) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return 0
 }

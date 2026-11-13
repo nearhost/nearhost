@@ -52,6 +52,10 @@ func openSFTP(ctx context.Context, cmd *exec.Cmd, host string) (*SFTP, error) {
 		return nil, err
 	}
 	cmd.Stderr = io.Discard
+	// Discarding stderr still copies it from a pipe, which a ProxyCommand or
+	// ProxyJump child can hold open after ssh is killed: Wait gives up on it
+	// after procWaitDelay rather than wait for that child to exit.
+	cmd.WaitDelay = procWaitDelay
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start sftp: %w", err)
 	}

@@ -280,6 +280,35 @@ func TestPerProcessSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
 	}
 }
 
+// A ProxyCommand or ProxyJump child of ssh can inherit its stderr and
+// outlive it. Closing SFTP kills ssh and must not then wait for that child.
+func TestPerProcessSFTPCloseDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Last in, so it runs first: the holder ends once the file is gone.
+	defer os.Remove(hold)
+	p := newTestPerProcess(t, "FAKE_SSH_SFTP_SERVER="+testutil.SFTPServer(t), "FAKE_SSH_STDERR_HOLDER="+hold)
+	f, err := p.OpenSFTP(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Client.Getwd(); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- f.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(3 * procWaitDelay):
+		t.Fatal("Close waited on the child that holds ssh's stderr")
+	}
+}
+
 // An ssh that cannot be launched is retried, and Health says when the next
 // attempt is; once ssh launches, it connects and the count is cleared.
 func TestPerProcessRetriesWhenSSHCannotBeLaunched(t *testing.T) {
