@@ -235,16 +235,18 @@ func TestLoopbackBindFailureIsReportedButWebStillServed(t *testing.T) {
 	if f := h.forwards("mini"); len(f) != 1 || f[0] != [2]int{st.WebLocalPort, 80} {
 		t.Fatalf("forwards = %v, want only the web forward", f)
 	}
-	// The forward error is a log line of the project.
+	// The forward error is a log line of the project, with ssh's reason:
+	// ControlMaster's `-O forward` says the address is in use; a per-process
+	// ssh ends on its last line, that it could not request the forward.
+	reason := "Address already in use"
+	if perProcessTransport() {
+		reason = "Could not request local forwarding"
+	}
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case ev := <-events:
-			// ssh's reason: ControlMaster's `-O forward` says the address is
-			// in use; a per-process ssh ends on its last line, that it could
-			// not request the forward.
-			if ev.Project == "myapp" && ev.State == "" && strings.Contains(ev.Message, strconv.Itoa(lb)) &&
-				(strings.Contains(ev.Message, "Address already in use") || strings.Contains(ev.Message, "Could not request local forwarding")) {
+			if ev.Project == "myapp" && ev.State == "" && strings.Contains(ev.Message, strconv.Itoa(lb)) && strings.Contains(ev.Message, reason) {
 				return
 			}
 		case <-deadline:

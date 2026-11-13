@@ -118,11 +118,12 @@ func TestFailedCancelOfClosedOpenDuringShutdownReleases(t *testing.T) {
 	}
 }
 
-// Unix only: it holds a close inside a ControlMaster `-O cancel`
-// (FAKE_SSH_CANCEL_WAIT) to check that the server's log is not blocked
-// meanwhile; a per-process cancel cannot be held. Every OS:
-// TestPerProcessAuthFailedClosesPassthroughs checks that an authentication
-// failure closes the passthroughs.
+// Unix only: it holds a close inside the ControlMaster fake's own
+// `-O cancel` (FAKE_SSH_CANCEL_WAIT), which the per-process ssh does not
+// have. Every OS: TestPerProcessAuthFailedClosesPassthroughs checks both
+// halves, the passthroughs closing and the server's log not blocked while a
+// close is cancelling, holding the cancel through a wrapper of the
+// transport (harness.holdCancels).
 func TestAuthFailedClosesPassthroughs(t *testing.T) {
 	ssh, flag, _ := authWrapper(t)
 	wait := filepath.Join(t.TempDir(), "cancel-waits")
@@ -167,11 +168,10 @@ func TestAuthFailedClosesPassthroughs(t *testing.T) {
 	assertClosed(t, h, p.Local)
 }
 
-// Unix only: it holds the teardown inside a ControlMaster `-O cancel`
-// (FAKE_SSH_CANCEL_WAIT). The per-process transport, the only one on Windows,
-// cancels a forward by ending the ssh it owns; nothing there can be held, so
-// the test cannot be built on it. What it checks is the engine's own
-// bookkeeping around a teardown, which is the same code on either transport.
+// Unix only: it holds the cancel inside the ControlMaster fake's own
+// `-O cancel` (FAKE_SSH_CANCEL_WAIT), which the per-process ssh does not
+// have. Every OS: TestPerProcessCloseKeepsRecordUntilCancelled holds it
+// through a wrapper of the transport (harness.holdCancels).
 func TestCloseKeepsRecordUntilCancelled(t *testing.T) {
 	port := testutil.FreePort(t)
 	wait, _ := cancelFiles(t)
@@ -212,12 +212,11 @@ func TestCloseKeepsRecordUntilCancelled(t *testing.T) {
 	}
 }
 
-// Unix only: it holds the teardown inside a ControlMaster `-O cancel`
-// (FAKE_SSH_CANCEL_WAIT). The per-process transport, the only one on Windows,
-// cancels a forward by ending the ssh it owns; nothing there can be held, so
-// the test cannot be built on it. What it checks is the engine's own
-// bookkeeping around a teardown, which is the same code on either transport.
-// Its failing variant also needs a failed cancel.
+// Unix only: it holds the cancel inside the ControlMaster fake's own
+// `-O cancel` (FAKE_SSH_CANCEL_WAIT), which the per-process ssh does not
+// have. Every OS: TestPerProcessConcurrentClosesReleaseOnce holds it
+// through a wrapper of the transport (harness.holdCancels).
+// The failing variant needs a failed cancel, which per-process cannot have.
 func TestConcurrentClosesReleaseOnce(t *testing.T) {
 	for _, failing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("failing=%v", failing), func(t *testing.T) {

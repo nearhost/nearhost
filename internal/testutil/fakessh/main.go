@@ -388,6 +388,12 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 				if err != nil {
 					return
 				}
+				// $FAKE_SSH_FORWARD_GREETING is what the far end of each
+				// forward says before it hangs up. Without it nothing
+				// answers there, and the connection just ends.
+				if greeting := os.Getenv("FAKE_SSH_FORWARD_GREETING"); greeting != "" {
+					c.Write([]byte(greeting))
+				}
 				c.Close()
 			}
 		}()

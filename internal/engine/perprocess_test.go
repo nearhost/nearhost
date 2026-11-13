@@ -438,11 +438,13 @@ func TestPerProcessShutdownInterruptsAStartInProgress(t *testing.T) {
 }
 
 // A loopback forward answers on [::1] too, through a relay to 127.0.0.1,
-// until the project stops. The fake ssh's forward on 127.0.0.1 accepts a
-// connection and closes it, so a connection on [::1] is accepted and ends.
+// until the project stops. The fake ssh's forward on 127.0.0.1 greets each
+// connection and closes it, so the greeting read on [::1] has come through
+// the relay and the forward.
 func TestPerProcessLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 	t.Setenv("NEARHOST_TRANSPORT", "per-process")
 	_, env := newPerProcessFake(t)
+	env = append(env, "FAKE_SSH_FORWARD_GREETING=hello from 127.0.0.1")
 	probe, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
 		t.Skipf("no IPv6 loopback: %v", err)
@@ -462,10 +464,10 @@ func TestPerProcessLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 		t.Fatalf("dial [::1]: %v", err)
 	}
 	c.SetDeadline(time.Now().Add(5 * time.Second))
-	_, err = io.ReadAll(c)
+	got, err := io.ReadAll(c)
 	c.Close()
-	if err != nil {
-		t.Fatalf("the connection on [::1] did not end as the forward ended it: %v", err)
+	if err != nil || string(got) != "hello from 127.0.0.1" {
+		t.Fatalf("read %q, %v on [::1]; want the forward's greeting", got, err)
 	}
 	if err := h.eng.StopProject(bg, "myapp"); err != nil {
 		t.Fatal(err)
@@ -476,20 +478,230 @@ func TestPerProcessLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 	}
 }
 
-// A server that gives up on authentication closes its passthroughs.
+// A server that gives up on authentication closes its passthroughs, and
+// its log lines are not held up by a close that is still cancelling.
 func TestPerProcessAuthFailedClosesPassthroughs(t *testing.T) {
 	t.Setenv("NEARHOST_TRANSPORT", "per-process")
 	fake, env := newPerProcessFake(t)
 	ssh, flag, _ := authWrapper(t)
 	h, _ := endHarness(t, ssh, env...)
+	held := h.holdCancels(t, "apollo")
 	events, cancel := h.eng.bus.Subscribe(256)
 	defer cancel()
 	p := openP1(t, h)
+	other := passthroughSpec(testutil.FreePort(t))
+	other.ID = "p2"
+	if _, err := h.eng.OpenPassthrough(bg, other); err != nil {
+		t.Fatal(err)
+	}
+	// Closing p2 waits inside its cancel until the hold is released.
+	held.hold()
+	closing := make(chan error, 1)
+	go func() { closing <- h.eng.ClosePassthrough(bg, "p2", "the agent finished") }()
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return held.asked.Load() > 0 }, "p2's cancel to start")
 	if err := os.WriteFile(flag, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fake.drop(t, fake.linkPid(t))
 	waitStatus(t, h, "auth failed", func(st transport.Status) bool { return st == transport.StatusAuthFailed })
+	logged := make(chan struct{})
+	go func() {
+		h.eng.serverLog("apollo", "still failing")
+		close(logged)
+	}()
+	select {
+	case <-logged:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serverLog blocked while a close was cancelling")
+	}
+	held.release()
+	if err := <-closing; err != nil {
+		t.Fatal(err)
+	}
 	waitClosedEvent(t, events, p.Remote, "apollo's connection failed: user@host: Permission denied (publickey).")
 	assertClosed(t, h, p.Local)
+}
+
+// While a project is torn down, Status keeps what was last announced and
+// nothing is announced; the stop then announces stopped. The teardown is
+// held inside its first forward cancel by a wrapper of the transport.
+func TestPerProcessStatusDuringTeardownKeepsTheAnnouncedState(t *testing.T) {
+	for _, variant := range []string{"healthy", "after a lost forward"} {
+		t.Run(variant, func(t *testing.T) {
+			t.Setenv("NEARHOST_TRANSPORT", "per-process")
+			flag := filepath.Join(t.TempDir(), "forward-fails")
+			lb := testutil.FreePort(t)
+			h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
+			events, unsub := h.eng.Events().Subscribe(1024)
+			defer unsub()
+			var before ProjectStatus
+			if variant == "healthy" {
+				mustStart(t, h, "myapp")
+				before = h.eng.Status("myapp")
+			} else {
+				before = loseLoopbackForward(t, h, flag, lb)
+			}
+			stateEvents(events, "myapp") // drop what led here
+
+			held := h.holdCancels(t, "mini")
+			held.hold()
+			stopped := make(chan error, 1)
+			go func() { stopped <- h.eng.StopProject(bg, "myapp") }()
+			testutil.WaitUntil(t, 10*time.Second, func() bool { return held.asked.Load() > 0 }, "the teardown to reach a cancel")
+			for i := 0; i < 20; i++ {
+				during := h.eng.Status("myapp")
+				if during.State != before.State || during.Message != before.Message {
+					t.Fatalf("status during the teardown = %+v, want what was last announced: %+v", during, before)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if states, _ := stateEvents(events, "myapp"); len(states) != 0 {
+				t.Fatalf("state events during the teardown: %v", states)
+			}
+
+			held.release()
+			if err := <-stopped; err != nil {
+				t.Fatal(err)
+			}
+			if st := h.eng.Status("myapp"); st.State != StateStopped {
+				t.Fatalf("status = %+v", st)
+			}
+			if states, _ := stateEvents(events, "myapp"); fmt.Sprint(states) != fmt.Sprint([]State{StateStopped}) {
+				t.Fatalf("state events of the stop = %v, want [stopped]", states)
+			}
+		})
+	}
+}
+
+// A start asked for while the project is being stopped waits for the stop,
+// then starts it with all its forwards.
+func TestPerProcessStartDuringAStopWaitsForItAndThenStarts(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	events, unsub := h.eng.Events().Subscribe(1024)
+	defer unsub()
+	mustStart(t, h, "myapp")
+	stateEvents(events, "myapp") // drop what led here
+
+	// The stop is held inside its first forward cancel.
+	held := h.holdCancels(t, "mini")
+	held.hold()
+	stopped := make(chan error, 1)
+	go func() { stopped <- h.eng.StopProject(bg, "myapp") }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return held.asked.Load() > 0 }, "the teardown to reach a cancel")
+
+	started := make(chan error, 1)
+	go func() { started <- h.eng.StartProject(bg, "myapp") }()
+	// It has nothing to report while the stop is under way. (A start that
+	// only gets going after this pause is caught by what follows.)
+	select {
+	case err := <-started:
+		t.Fatalf("StartProject returned %v while the project was being stopped", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	held.release()
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-started:
+		if err != nil {
+			t.Fatalf("StartProject after the stop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the start never finished")
+	}
+	if st := h.eng.Status("myapp"); st.State != StateRunning || st.WebLocalPort == 0 {
+		t.Fatalf("status = %+v: the start requested during the stop was lost", st)
+	}
+	if f := h.forwards("mini"); len(f) != 2 || len(h.unapplied("mini")) != 0 || len(h.eng.Sites()) != 1 {
+		t.Fatalf("forwards = %v, unapplied %v, sites %v", f, h.unapplied("mini"), h.eng.Sites())
+	}
+	states, _ := stateEvents(events, "myapp")
+	if want := []State{StateStopped, StateStarting, StateRunning}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("state events = %v, want %v", states, want)
+	}
+}
+
+// A closing passthrough keeps its record, its id and its port until its
+// cancel is done.
+func TestPerProcessCloseKeepsRecordUntilCancelled(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	port := testutil.FreePort(t)
+	h, _ := endHarness(t, "")
+	held := h.holdCancels(t, "apollo")
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err != nil {
+		t.Fatal(err)
+	}
+	held.hold()
+	done := make(chan error, 1)
+	go func() { done <- h.eng.ClosePassthrough(bg, "p1", "done") }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return held.asked.Load() > 0 }, "the close to reach its cancel")
+
+	if got := h.eng.Passthroughs(""); len(got) != 0 {
+		t.Fatalf("Passthroughs = %+v while it closes", got)
+	}
+	// A project's start claims its loopback ports this way.
+	if holder, ok := h.eng.claimPortFor("one", port); ok || holder != "a passthrough for claude-code on apollo (session 1a2b3c4d)" {
+		t.Fatalf("a project's claim got ok %v, holder %q", ok, holder)
+	}
+	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err == nil {
+		t.Fatal("an open with the id of a closing passthrough was accepted")
+	}
+	if h.eng.PortFree(port) {
+		t.Fatal("the port was freed before the cancel ended")
+	}
+
+	held.release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.eng.mu.Lock()
+	_, kept := h.eng.passthroughs["p1"]
+	h.eng.mu.Unlock()
+	if kept {
+		t.Fatal("the record is kept after the cancel")
+	}
+	if !h.eng.PortFree(port) {
+		t.Fatal("the port is still held after the cancel")
+	}
+}
+
+// A second close of a passthrough whose first close is still cancelling
+// returns at once, and the passthrough is cancelled and announced closed
+// once. (The per-process transport's cancel cannot fail, so the Unix test's
+// failing variant has no counterpart here.)
+func TestPerProcessConcurrentClosesReleaseOnce(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "per-process")
+	h, _ := endHarness(t, "")
+	held := h.holdCancels(t, "apollo")
+	events, cancel := h.eng.bus.Subscribe(64)
+	defer cancel()
+	p := openP1(t, h)
+	held.hold()
+	first := make(chan error, 1)
+	go func() { first <- h.eng.ClosePassthrough(bg, "p1", "done") }()
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return held.asked.Load() > 0 }, "the first close to reach its cancel")
+	// The second close returns while the first still waits.
+	if err := h.eng.ClosePassthrough(bg, "p1", "done again"); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	held.release()
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	assertClosed(t, h, p.Local)
+	if n := held.asked.Load(); n != 1 {
+		t.Fatalf("%d cancels, want 1", n)
+	}
+	n := 0
+	prefix := fmt.Sprintf("closed port %d for ", p.Remote)
+	for len(events) > 0 {
+		if ev := <-events; strings.HasPrefix(ev.Message, prefix) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d close events, want 1", n)
+	}
 }

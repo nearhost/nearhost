@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,8 +329,15 @@ func (h *harness) forwards(server string) [][2]int {
 func (h *harness) dropMaster(t *testing.T, server string) {
 	t.Helper()
 	h.eng.mu.Lock()
-	sess := h.eng.servers[server].sess
+	var sess transport.Transport
+	c := h.eng.servers[server]
+	if c != nil {
+		sess = c.sess
+	}
 	h.eng.mu.Unlock()
+	if c == nil {
+		t.Fatalf("dropMaster: nothing is connected to %s", server)
+	}
 	if s, ok := sess.(*transport.Session); ok {
 		if err := os.Remove(s.SocketPath()); err != nil {
 			t.Fatal(err)
@@ -487,4 +495,75 @@ func (h *harness) connectionEnded(host string) bool {
 		}
 	}
 	return false
+}
+
+// perProcessTransport reports whether the engine's servers get the
+// per-process transport, as transport.New decides: always on Windows, and
+// on Unix when NEARHOST_TRANSPORT asks for it.
+func perProcessTransport() bool {
+	return runtime.GOOS == "windows" || os.Getenv("NEARHOST_TRANSPORT") == "per-process"
+}
+
+// heldTransport wraps a server's transport so that its CancelForward waits
+// while it is held, before it cancels anything, on either transport. It
+// counts the cancels asked of it.
+type heldTransport struct {
+	transport.Transport
+	mu    sync.Mutex
+	gate  chan struct{} // nil while not held
+	asked atomic.Int32
+}
+
+func (w *heldTransport) CancelForward(ctx context.Context, local, remote int) error {
+	w.asked.Add(1)
+	w.mu.Lock()
+	gate := w.gate
+	w.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return w.Transport.CancelForward(ctx, local, remote)
+}
+
+// hold makes the cancels asked from now on wait until release.
+func (w *heldTransport) hold() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gate == nil {
+		w.gate = make(chan struct{})
+	}
+}
+
+// release lets every waiting cancel go on, and those asked later too.
+func (w *heldTransport) release() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gate != nil {
+		close(w.gate)
+		w.gate = nil
+	}
+}
+
+// holdCancels puts a heldTransport in place of the transport of server,
+// whose connection must exist. A passthrough keeps the transport it was
+// opened on, so this comes before any passthrough opens. The hold is
+// released when the test ends, before the harness shuts down.
+func (h *harness) holdCancels(t *testing.T, server string) *heldTransport {
+	t.Helper()
+	h.eng.mu.Lock()
+	var w *heldTransport
+	if c := h.eng.servers[server]; c != nil {
+		w = &heldTransport{Transport: c.sess}
+		c.sess = w
+	}
+	h.eng.mu.Unlock()
+	if w == nil {
+		t.Fatalf("holdCancels: nothing is connected to %s", server)
+	}
+	t.Cleanup(w.release)
+	return w
 }

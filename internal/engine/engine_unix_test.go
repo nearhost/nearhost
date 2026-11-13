@@ -159,11 +159,10 @@ func TestMasterDyingDuringReapplyIsNotALostForward(t *testing.T) {
 	}
 }
 
-// Unix only: it holds the teardown inside a ControlMaster `-O cancel`
-// (FAKE_SSH_CANCEL_WAIT). The per-process transport, the only one on Windows,
-// cancels a forward by ending the ssh it owns; nothing there can be held, so
-// the test cannot be built on it. What it checks is the engine's own
-// bookkeeping around a teardown, which is the same code on either transport.
+// Unix only: it holds the cancel inside the ControlMaster fake's own
+// `-O cancel` (FAKE_SSH_CANCEL_WAIT), which the per-process ssh does not
+// have. Every OS: TestPerProcessStatusDuringTeardownKeepsTheAnnouncedState holds it
+// through a wrapper of the transport (harness.holdCancels).
 func TestStatusDuringTeardownKeepsTheAnnouncedState(t *testing.T) {
 	for _, variant := range []string{"healthy", "after a lost forward"} {
 		t.Run(variant, func(t *testing.T) {
@@ -219,11 +218,10 @@ func TestStatusDuringTeardownKeepsTheAnnouncedState(t *testing.T) {
 	}
 }
 
-// Unix only: it holds the teardown inside a ControlMaster `-O cancel`
-// (FAKE_SSH_CANCEL_WAIT). The per-process transport, the only one on Windows,
-// cancels a forward by ending the ssh it owns; nothing there can be held, so
-// the test cannot be built on it. What it checks is the engine's own
-// bookkeeping around a teardown, which is the same code on either transport.
+// Unix only: it holds the cancel inside the ControlMaster fake's own
+// `-O cancel` (FAKE_SSH_CANCEL_WAIT), which the per-process ssh does not
+// have. Every OS: TestPerProcessStartDuringAStopWaitsForItAndThenStarts holds it
+// through a wrapper of the transport (harness.holdCancels).
 func TestStartDuringAStopWaitsForItAndThenStarts(t *testing.T) {
 	wait := filepath.Join(t.TempDir(), "cancel-waits")
 	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_CANCEL_WAIT="+wait)

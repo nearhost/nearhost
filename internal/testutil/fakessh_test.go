@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -239,6 +240,23 @@ func TestFakeSSHPlainForwardListensAndSaysSo(t *testing.T) {
 		}
 		return true
 	}, "the forwarded port to close")
+}
+
+func TestFakeSSHPlainForwardSaysTheGreeting(t *testing.T) {
+	port := FreePort(t)
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+	p := startPlain(t, []string{"FAKE_SSH_FORWARD_GREETING=hello"}, "-N", "-o", "LogLevel=DEBUG1", "-L", addr+":localhost:80", "mini")
+	WaitUntil(t, 3*time.Second, func() bool { return strings.Contains(p.stderr.String(), "Local forwarding listening") }, "the forward to listen")
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	got, err := io.ReadAll(conn)
+	conn.Close()
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("read %q, %v; want the greeting", got, err)
+	}
 }
 
 func TestFakeSSHPlainForwardOnATakenPortExits(t *testing.T) {
