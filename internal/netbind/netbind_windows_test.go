@@ -91,3 +91,23 @@ func TestListenAfterServingIsFreeOnWindows(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// The question behind the proxy's TestWaitReleased: can something else hold
+// 0.0.0.0:P while Nearhost binds 127.0.0.1:P and serves, unaware? Yes.
+// Listen sets SO_EXCLUSIVEADDRUSE, but Windows lets a loopback bind succeed
+// beside a plain wildcard holder (the more specific address wins, observed on
+// windows-latest). This pins that fact; stage 8's gate must note that a
+// wildcard holder of 443 is not seen.
+func TestListenSucceedsBesideAWildcardHolderOnWindows(t *testing.T) {
+	holder, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	port := holder.Addr().(*net.TCPAddr).Port
+	l, err := netbind.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatalf("Listen(127.0.0.1:%d) beside a wildcard holder failed: %v; Windows used to allow it", port, err)
+	}
+	l.Close()
+}

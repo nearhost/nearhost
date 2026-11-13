@@ -5,9 +5,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 func dig(t *testing.T, v any, path ...any) any {
@@ -53,8 +56,8 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 		t.Error("ports not set")
 	}
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost")
-	if dig(t, srv, "listen", 0) != ":8443" {
-		t.Error("listen not set")
+	if got := strs(dig(t, srv, "listen")); !slices.Equal(got, netbind.ServeAddrs(8443)) {
+		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(8443))
 	}
 	if dig(t, srv, "routes", 0, "match", 0, "host", 0) != "a.test" {
 		t.Error("route host mismatch")
@@ -218,8 +221,8 @@ func TestBuildConfigKeepsAutomaticHTTPSRedirect(t *testing.T) {
 	if a, ok := srv["automatic_https"]; ok {
 		t.Errorf("automatic_https must stay default so port 80 redirects: %v", a)
 	}
-	if l := srv["listen"].([]any); len(l) != 1 || l[0] != ":443" {
-		t.Errorf("listen = %v, want only :443", l)
+	if got := strs(srv["listen"]); !slices.Equal(got, netbind.ServeAddrs(443)) {
+		t.Errorf("listen = %v, want only %v", got, netbind.ServeAddrs(443))
 	}
 }
 
@@ -539,8 +542,8 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost_http").(map[string]any)
-	if got := strs(srv["listen"]); !slices.Equal(got, []string{":8080"}) {
-		t.Errorf("listen = %v, want :8080", got)
+	if got := strs(srv["listen"]); !slices.Equal(got, netbind.ServeAddrs(8080)) {
+		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(8080))
 	}
 	routes := srv["routes"].([]any)
 	if len(routes) != 5 {
@@ -681,8 +684,8 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
-	if got := strs(web["listen"]); !slices.Equal(got, []string{":6327"}) {
-		t.Errorf("listen = %v, want :6327", got)
+	if got := strs(web["listen"]); !slices.Equal(got, netbind.ServeAddrs(6327)) {
+		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(6327))
 	}
 	if got := strs(web["protocols"]); !slices.Equal(got, []string{"h1", "h2"}) {
 		t.Errorf("protocols = %v, want h1 and h2, so no UDP port", got)
@@ -944,7 +947,25 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != string(want) {
-		t.Errorf("config without clients changed:\n got %s\nwant %s", raw, want)
+	// The golden file records Unix's wildcard listeners; Windows listens on
+	// loopback only, so the expected listen values come from ServeAddrs.
+	var gotCfg, wantCfg map[string]any
+	if err := json.Unmarshal(raw, &gotCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want, &wantCfg); err != nil {
+		t.Fatal(err)
+	}
+	servers := dig(t, wantCfg, "apps", "http", "servers").(map[string]any)
+	for name, port := range map[string]int{"nearhost": 8443, "nearhost_http": 8080} {
+		listen := []any{}
+		for _, a := range netbind.ServeAddrs(port) {
+			listen = append(listen, a)
+		}
+		servers[name].(map[string]any)["listen"] = listen
+	}
+	if !reflect.DeepEqual(gotCfg, wantCfg) {
+		wantRaw, _ := json.Marshal(wantCfg)
+		t.Errorf("config without clients changed:\n got %s\nwant %s", raw, wantRaw)
 	}
 }
