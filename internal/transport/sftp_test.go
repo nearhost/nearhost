@@ -67,16 +67,6 @@ func TestDiscoveryWorksOverSFTP(t *testing.T) {
 	}
 }
 
-func TestOpenSFTPFailsCleanlyWhenSubsystemUnavailable(t *testing.T) {
-	s, _ := newFakeSession(t)
-	connected(t, s)
-	f, err := s.OpenSFTP(t.Context())
-	if err == nil {
-		f.Close()
-		t.Fatal("fake ssh does not provide sftp; expected an error")
-	}
-}
-
 func TestKillOnCancelNeverKillsAfterHandshake(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -94,29 +84,6 @@ func TestKillOnCancelKillsStuckHandshake(t *testing.T) {
 	killOnCancel(ctx, make(chan struct{}), func() { killed = true })
 	if !killed {
 		t.Fatal("a handshake still in flight should be killed when ctx ends")
-	}
-}
-
-// Close kills ssh before it closes the client. When the client has noticed
-// ssh going first, it has already closed its end of the pipe, and closing it
-// again is refused. That is not a failure of the close.
-func TestSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
-	s := NewSession("mini", "mini", t.TempDir())
-	s.SSHPath = testutil.FakeSSH(t)
-	s.Env = []string{"FAKE_SSH_SFTP_SERVER=" + testutil.SFTPServer(t)}
-	f, err := s.OpenSFTP(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.Client.Getwd(); err != nil {
-		t.Fatal(err)
-	}
-	// What Close does first, and then the client's reader running to its
-	// end before Close gets to the client.
-	f.cmd.Process.Kill()
-	f.Client.Wait()
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
 	}
 }
 

@@ -239,6 +239,89 @@ func TestPerProcessOpenSFTPWorksOnItsOwnConnection(t *testing.T) {
 	}
 }
 
+func TestPerProcessOpenSFTPFailsCleanlyWhenSubsystemUnavailable(t *testing.T) {
+	p := newTestPerProcess(t)
+	f, err := p.OpenSFTP(t.Context())
+	if err == nil {
+		f.Close()
+		t.Fatal("fake ssh does not provide sftp; expected an error")
+	}
+}
+
+// Close kills ssh before it closes the client. When the client has noticed
+// ssh going first, it has already closed its end of the pipe, and closing it
+// again is refused. That is not a failure of the close.
+func TestPerProcessSFTPCloseAfterTheClientSawSSHGoReportsNoError(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_SFTP_SERVER="+testutil.SFTPServer(t))
+	f, err := p.OpenSFTP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Client.Getwd(); err != nil {
+		t.Fatal(err)
+	}
+	// What Close does first, and then the client's reader running to its
+	// end before Close gets to the client. The reader ends when nothing
+	// holds ssh's output open any more; if something still did, Wait would
+	// never return.
+	f.cmd.Process.Kill()
+	waited := make(chan struct{})
+	go func() {
+		f.Client.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the client never saw ssh go: its output is still held open")
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// An ssh that cannot be launched is retried, and Health says when the next
+// attempt is; once ssh launches, it connects and the count is cleared.
+func TestPerProcessRetriesWhenSSHCannotBeLaunched(t *testing.T) {
+	// Made before the transport, so its cleanup runs after Stop: Windows
+	// cannot remove a program that is running.
+	dir := t.TempDir()
+	p := newTestPerProcess(t)
+	fake := p.SSHPath
+	// The fake's own extension: Windows runs only a file named .exe.
+	p.SSHPath = filepath.Join(dir, "ssh"+filepath.Ext(fake))
+	p.baseBackoff = time.Second
+	p.maxBackoff = time.Second
+	before := time.Now()
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusReconnecting || p.Status() == StatusAuthFailed }, "a failed launch")
+	h := p.Health()
+	if p.Status() == StatusAuthFailed {
+		t.Fatalf("one launch failure ended supervision: %q", p.LastError())
+	}
+	if !strings.Contains(p.LastError(), "ssh -G") {
+		t.Fatalf("LastError = %q", p.LastError())
+	}
+	if h.Failures != 1 || h.NextAttempt.Before(before.Add(time.Second)) || h.NextAttempt.After(time.Now().Add(time.Second)) {
+		t.Errorf("health %+v", h)
+	}
+	// Put ssh in place whole, so no attempt finds half of it.
+	data, err := os.ReadFile(fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.SSHPath+".tmp", data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p.SSHPath+".tmp", p.SSHPath); err != nil {
+		t.Fatal(err)
+	}
+	waitPerProcessConnected(t, p)
+	if h := p.Health(); h.Failures != 0 || !h.NextAttempt.IsZero() {
+		t.Errorf("health once connected %+v", h)
+	}
+}
+
 func TestPerProcessCheck(t *testing.T) {
 	p := newTestPerProcess(t)
 	if err := p.Check(context.Background()); err != nil {

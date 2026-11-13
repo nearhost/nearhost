@@ -1,46 +1,11 @@
 package transport
 
 import (
-	"path/filepath"
+	"net"
 	"runtime"
+	"strconv"
 	"testing"
 )
-
-// TestNewGivesASessionAsConfigured checks that New builds today's Session with
-// the configuration applied.
-func TestNewGivesASessionAsConfigured(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("New is per-process on Windows")
-	}
-	t.Setenv("NEARHOST_TRANSPORT", "")
-	dir := t.TempDir()
-	tr := New(Config{Name: "mini", Host: "mini.lan", RunDir: dir, SSHPath: "/x/ssh", Env: []string{"A=1"}, Foreground: true})
-	s, ok := tr.(*Session)
-	if !ok {
-		t.Fatalf("New returned %T, want *Session", tr)
-	}
-	if s.Host() != "mini.lan" || tr.Host() != "mini.lan" {
-		t.Errorf("Host() = %q", s.Host())
-	}
-	if s.SSHPath != "/x/ssh" {
-		t.Errorf("SSHPath = %q", s.SSHPath)
-	}
-	if len(s.Env) != 1 || s.Env[0] != "A=1" {
-		t.Errorf("Env = %v", s.Env)
-	}
-	if !s.Foreground {
-		t.Error("Foreground = false")
-	}
-	if filepath.Dir(s.SocketPath()) != dir {
-		t.Errorf("SocketPath = %q, want it inside %q", s.SocketPath(), dir)
-	}
-
-	d := New(Config{Name: "mini", Host: "mini.lan", RunDir: dir}).(*Session)
-	if d.SSHPath != "ssh" {
-		t.Errorf("default SSHPath = %q, want ssh", d.SSHPath)
-	}
-	d.Logf("ignored %d", 1) // a nil Config.Logf must not panic
-}
 
 // TestNewChoosesTheStrategy checks that NEARHOST_TRANSPORT=per-process selects
 // the per-process transport off Windows, and any other value is ignored.
@@ -81,4 +46,39 @@ func TestNewIsPerProcessOnWindows(t *testing.T) {
 	if _, ok := tr.(*perProcess); !ok {
 		t.Fatalf("New returned %T, want *perProcess", tr)
 	}
+}
+
+func TestIsFatalSSHError(t *testing.T) {
+	fatal := []string{
+		"user@host: Permission denied (publickey).",
+		"Host key verification failed.",
+		"Too many authentication failures",
+	}
+	for _, m := range fatal {
+		if !isFatalSSHError(m) {
+			t.Errorf("%q should be fatal", m)
+		}
+	}
+	retry := []string{
+		"Warning: Identity file /x/id_missing not accessible: No such file or directory.",
+		"client_loop: send disconnect: Broken pipe",
+		"ssh exited",
+	}
+	for _, m := range retry {
+		if isFatalSSHError(m) {
+			t.Errorf("%q should be retried", m)
+		}
+	}
+}
+
+func TestFreePortIsBindable(t *testing.T) {
+	p, err := FreePort()
+	if err != nil || p < 1024 || p > 65535 {
+		t.Fatalf("FreePort = %d, %v", p, err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p))
+	if err != nil {
+		t.Fatalf("port %d not bindable: %v", p, err)
+	}
+	l.Close()
 }

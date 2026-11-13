@@ -1,3 +1,10 @@
+//go:build unix
+
+// Session is the ControlMaster transport, which Windows does not have:
+// transport.New always gives the per-process one there, so these tests of
+// Session, its control socket and its -O commands run on Unix only.
+// perprocess_test.go tests the per-process transport on every OS.
+
 package transport
 
 import (
@@ -40,24 +47,6 @@ func shortDir(t *testing.T) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return dir
-}
-
-func readLog(t *testing.T, path string) string {
-	t.Helper()
-	b, _ := os.ReadFile(path)
-	return string(b)
-}
-
-func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timeout waiting for %s", msg)
 }
 
 func TestCheckSucceedsAndUsesBatchMode(t *testing.T) {
@@ -165,29 +154,6 @@ func TestStartStopStartAgain(t *testing.T) {
 	defer cancel()
 	if err := s.WaitConnected(ctx); err != nil {
 		t.Fatalf("WaitConnected after restart: %v", err)
-	}
-}
-
-func TestIsFatalSSHError(t *testing.T) {
-	fatal := []string{
-		"user@host: Permission denied (publickey).",
-		"Host key verification failed.",
-		"Too many authentication failures",
-	}
-	for _, m := range fatal {
-		if !isFatalSSHError(m) {
-			t.Errorf("%q should be fatal", m)
-		}
-	}
-	retry := []string{
-		"Warning: Identity file /x/id_missing not accessible: No such file or directory.",
-		"client_loop: send disconnect: Broken pipe",
-		"ssh exited",
-	}
-	for _, m := range retry {
-		if isFatalSSHError(m) {
-			t.Errorf("%q should be retried", m)
-		}
 	}
 }
 
@@ -361,12 +327,6 @@ func TestSocketPathStaysInsideRunDir(t *testing.T) {
 		}
 		paths[p] = name
 	}
-}
-
-// logLines returns the argv lines the fake ssh recorded.
-func logLines(t *testing.T, path string) []string {
-	t.Helper()
-	return strings.Split(strings.TrimSpace(readLog(t, path)), "\n")
 }
 
 // The user's ssh_config applies to every ssh nearhost runs. These pin the
@@ -604,4 +564,37 @@ func TestHealthSaysWhenTheNextAttemptIs(t *testing.T) {
 	if h := s.Health(); h.Failures != 0 || !h.NextAttempt.IsZero() {
 		t.Errorf("health once connected %+v", h)
 	}
+}
+
+// TestNewGivesASessionAsConfigured checks that New builds today's Session with
+// the configuration applied.
+func TestNewGivesASessionAsConfigured(t *testing.T) {
+	t.Setenv("NEARHOST_TRANSPORT", "")
+	dir := t.TempDir()
+	tr := New(Config{Name: "mini", Host: "mini.lan", RunDir: dir, SSHPath: "/x/ssh", Env: []string{"A=1"}, Foreground: true})
+	s, ok := tr.(*Session)
+	if !ok {
+		t.Fatalf("New returned %T, want *Session", tr)
+	}
+	if s.Host() != "mini.lan" || tr.Host() != "mini.lan" {
+		t.Errorf("Host() = %q", s.Host())
+	}
+	if s.SSHPath != "/x/ssh" {
+		t.Errorf("SSHPath = %q", s.SSHPath)
+	}
+	if len(s.Env) != 1 || s.Env[0] != "A=1" {
+		t.Errorf("Env = %v", s.Env)
+	}
+	if !s.Foreground {
+		t.Error("Foreground = false")
+	}
+	if filepath.Dir(s.SocketPath()) != dir {
+		t.Errorf("SocketPath = %q, want it inside %q", s.SocketPath(), dir)
+	}
+
+	d := New(Config{Name: "mini", Host: "mini.lan", RunDir: dir}).(*Session)
+	if d.SSHPath != "ssh" {
+		t.Errorf("default SSHPath = %q, want ssh", d.SSHPath)
+	}
+	d.Logf("ignored %d", 1) // a nil Config.Logf must not panic
 }

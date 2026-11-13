@@ -1,11 +1,15 @@
+//go:build unix
+
+// These test Session's forwards, which it adds and cancels on its master with
+// ssh -O forward and -O cancel. Windows has no ControlMaster, so they run on
+// Unix only; perprocess_test.go tests the per-process forwards on every OS.
+
 package transport
 
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,18 +134,6 @@ func TestFailedReAddRestoresTrackedForward(t *testing.T) {
 	if len(s.Forwards()) != 1 {
 		t.Fatalf("pre-existing forward dropped after failed re-add: %v", s.Forwards())
 	}
-}
-
-func TestFreePortIsBindable(t *testing.T) {
-	p, err := FreePort()
-	if err != nil || p < 1024 || p > 65535 {
-		t.Fatalf("FreePort = %d, %v", p, err)
-	}
-	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p))
-	if err != nil {
-		t.Fatalf("port %d not bindable: %v", p, err)
-	}
-	l.Close()
 }
 
 func TestFailedCancelKeepsForwardTrackedForRetry(t *testing.T) {
