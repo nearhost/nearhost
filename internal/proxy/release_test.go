@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // Caddy's Stop can return a moment before its servers have closed their
@@ -13,7 +15,7 @@ import (
 // bound, and says so when they cannot be in time.
 func TestWaitReleased(t *testing.T) {
 	port := freePort(t)
-	held, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	held, err := netbind.Listen("tcp", netbind.ServeAddrs(port)[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +36,7 @@ func TestWaitReleased(t *testing.T) {
 		l.Close()
 	}
 
-	stuck, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	stuck, err := netbind.Listen("tcp", netbind.ServeAddrs(port)[0])
 	if err != nil {
 		t.Fatal(err)
 	}
