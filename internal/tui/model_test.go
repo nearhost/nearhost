@@ -269,7 +269,11 @@ func TestChangedConfigFileIsApplied(t *testing.T) {
 	if cmd := m.checkConfig(); cmd != nil {
 		t.Error("a refused change was applied again")
 	}
-	wantScreen(t, m, "Ignored a change to", "config.yaml: boom")
+	wantScreen(t, m, "Ignored a change to")
+	// The path is long on Windows and wraps on screen, so read the log entry.
+	if log := logText(m, homeKey); !strings.Contains(log, "Ignored a change to "+f.path+": boom. Save the file again to apply it.") {
+		t.Errorf("log:\n%s", log)
+	}
 }
 
 func TestQuitStopsEverythingAndASecondQuitCutsItShort(t *testing.T) {
