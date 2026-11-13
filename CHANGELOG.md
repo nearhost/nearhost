@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.12.0](https://github.com/nearhost/nearhost/compare/v0.11.0...v0.12.0) (2026-11-13)
+
+
+### Features
+
+* a per-process ssh link that needs no controlmaster ([#334](https://github.com/nearhost/nearhost/issues/334)) ([ecd6fd9](https://github.com/nearhost/nearhost/commit/ecd6fd96067168d0e8d3aeffa298d7fe779439ca))
+* a powershell skill script for windows laptops ([#350](https://github.com/nearhost/nearhost/issues/350)) ([17dd643](https://github.com/nearhost/nearhost/commit/17dd643f5630d148d4aa2729789b4fbd4cd67432))
+* coding agents on servers reach nearhost on windows through a token-checked loopback listener ([#347](https://github.com/nearhost/nearhost/issues/347)) ([1b9c4db](https://github.com/nearhost/nearhost/commit/1b9c4dbead3a988f2cd599ea31db9fcf0221a20a))
+* connect a server from the first-run screen ([#329](https://github.com/nearhost/nearhost/issues/329)) ([673eaef](https://github.com/nearhost/nearhost/commit/673eaefd0a31d7478ca63944661e05e3365595d4))
+* doctor checks ssh.exe, proxyjump aliases and firefox's roots on windows ([#349](https://github.com/nearhost/nearhost/issues/349)) ([4582d7d](https://github.com/nearhost/nearhost/commit/4582d7d2324c0a610031f94a2e0e71cb26add150))
+* doctor names http.sys on port 80 and checks the ssh agent service on windows ([#348](https://github.com/nearhost/nearhost/issues/348)) ([0ba24b2](https://github.com/nearhost/nearhost/commit/0ba24b24efb12d3797c76916541be2f1930c056f))
+* find docker desktop's named pipe on windows ([#346](https://github.com/nearhost/nearhost/issues/346)) ([a502b1b](https://github.com/nearhost/nearhost/commit/a502b1b172ecd6002ba3dc6e4756260c5686aa5c))
+* on windows, manage the system hosts file and flush the dns cache after a change ([#344](https://github.com/nearhost/nearhost/issues/344)) ([5a8ce56](https://github.com/nearhost/nearhost/commit/5a8ce56886c36923596018c61061209be6337735))
+* one ssh process per forward in the per-process transport ([#336](https://github.com/nearhost/nearhost/issues/336)) ([940de72](https://github.com/nearhost/nearhost/commit/940de7202357120b9a0a6b7833a480e9e2d670a0))
+* read nameservers from the network adapters on windows ([#345](https://github.com/nearhost/nearhost/issues/345)) ([6e28de6](https://github.com/nearhost/nearhost/commit/6e28de697dac0efae967bf3f90af9a52edf60fb9))
+* the per-process link carries the agent socket ([#335](https://github.com/nearhost/nearhost/issues/335)) ([2c19a93](https://github.com/nearhost/nearhost/commit/2c19a93d703a3c2d368a992e1727ce8b0cfe7b06))
+* windows uses the per-process transport, and NEARHOST_TRANSPORT=per-process opts in elsewhere ([#337](https://github.com/nearhost/nearhost/issues/337)) ([aa094ca](https://github.com/nearhost/nearhost/commit/aa094ca0044b8f7964d625f4eddea5af75a65cf5))
+
+
+### Bug Fixes
+
+* a per-process forward that is reconnecting shows as degraded, not as a port in use ([#342](https://github.com/nearhost/nearhost/issues/342)) ([691a6ef](https://github.com/nearhost/nearhost/commit/691a6ef1790f52f281d8b23cbb31748b31ac7ce7))
+* doctor notes, not warns, that docker clients need the opt-in on windows ([#326](https://github.com/nearhost/nearhost/issues/326)) ([9c05471](https://github.com/nearhost/nearhost/commit/9c0547142d0e1bb3601f3f146b9386a5b7fa9d21))
+* name the windows certificate store and its prompt in trust and doctor ([#318](https://github.com/nearhost/nearhost/issues/318)) ([6555ce1](https://github.com/nearhost/nearhost/commit/6555ce1a2794cc713acc8d64f21279ec3b625b9c))
+* per-process forwards say when they are being retried, and the link waits for the target's login ([#341](https://github.com/nearhost/nearhost/issues/341)) ([99948cf](https://github.com/nearhost/nearhost/commit/99948cf9219396a48100cd57466c26d895d7db48))
+* put the agent socket in the server's runtime directory, where selinux lets sshd create it ([#332](https://github.com/nearhost/nearhost/issues/332)) ([ca6ae61](https://github.com/nearhost/nearhost/commit/ca6ae61f96ce8d9b8a1af17130711702aed920e2))
+* say when a windows prompt was declined or went unanswered, and forward no agent socket from windows yet ([#338](https://github.com/nearhost/nearhost/issues/338)) ([708a03a](https://github.com/nearhost/nearhost/commit/708a03a8d9472d51c8d74e7393bb24b61b51c938))
+* send held agent notices once the log has a subscriber, and flag a refused port on per-process forwards ([#343](https://github.com/nearhost/nearhost/issues/343)) ([7c747ef](https://github.com/nearhost/nearhost/commit/7c747ef0d0b7850f14ca1705766e63eb36d33799))
+* serve on loopback only on windows, so no firewall prompt ([#317](https://github.com/nearhost/nearhost/issues/317)) ([346c0e8](https://github.com/nearhost/nearhost/commit/346c0e8e1a7fe165ac6ba3c3668e0c6ee87d05ad))
+* skip the nss stores on windows, where firefox reads the windows store ([#319](https://github.com/nearhost/nearhost/issues/319)) ([db5d74b](https://github.com/nearhost/nearhost/commit/db5d74b72bde384721157c8a00b0d334270495c2))
+* the skill walks through connecting a machine that no nearhost reaches ([#330](https://github.com/nearhost/nearhost/issues/330)) ([56cf6cd](https://github.com/nearhost/nearhost/commit/56cf6cd80be0a5226c1bb5157a318bcd42cf3da3))
+* windows run folder, proxyjump advice, token message and copy from the stage 5 review ([#352](https://github.com/nearhost/nearhost/issues/352)) ([4087c9f](https://github.com/nearhost/nearhost/commit/4087c9f494ba035835ff9c4f181b0cad1f4c5577))
+
 ## [0.11.0](https://github.com/nearhost/nearhost/compare/v0.10.0...v0.11.0) (2026-10-28)
 
 
