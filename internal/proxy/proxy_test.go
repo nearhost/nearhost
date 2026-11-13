@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("XDG_DATA_HOME", dir)
 	os.Setenv("XDG_CONFIG_HOME", dir)
 	os.Setenv("HOME", dir)
+	os.Setenv("USERPROFILE", dir) // os.UserHomeDir on Windows
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
