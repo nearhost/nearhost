@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // shortDir is a temp directory short enough for a Unix socket path: the one
@@ -397,12 +398,8 @@ func TestListenReplacesAStaleSocketAndStepsAsideForALiveOne(t *testing.T) {
 	if err := a.Listen("local", path); err != nil {
 		t.Fatalf("over a stale socket: %v", err)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
-		t.Fatalf("socket mode %v", info.Mode().Perm())
-	}
-	if info, _ := os.Stat(filepath.Dir(path)); info.Mode().Perm() != 0o700 {
-		t.Fatalf("directory mode %v", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, path, 0o600)
+	testutil.WantPerm(t, filepath.Dir(path), 0o700)
 	b := New(Options{Source: fakeSource{}})
 	defer b.Close()
 	if err := b.Listen("local", path); err != ErrInUse {

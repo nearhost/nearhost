@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 const agentRemote = "/home/dev/.nearhost/k3f9q2.sock"
@@ -120,9 +122,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 	if _, err := os.Stat(other); err != nil {
 		t.Fatalf("another install's socket went: %v", err)
 	}
-	if info, _ := os.Stat(filepath.Join(home, AgentDir)); info.Mode().Perm() != 0o700 {
-		t.Fatalf("mode %v", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, filepath.Join(home, AgentDir), 0o700)
 	// Again, with nothing to remove.
 	if _, err := PrepareAgentDir(client, home, "", "k3f9q2.sock", "", "", ""); err != nil {
 		t.Fatal(err)
@@ -282,9 +282,7 @@ func TestPrepareAgentDirUsesTheRuntimeDirectory(t *testing.T) {
 	if _, err := os.Lstat(want); !os.IsNotExist(err) {
 		t.Fatalf("the old socket in the runtime directory is still there: %v", err)
 	}
-	if info, _ := os.Stat(filepath.Join(run, "nearhost")); info.Mode().Perm() != 0o700 {
-		t.Fatalf("runtime directory mode %v", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, filepath.Join(run, "nearhost"), 0o700)
 	if to, err := os.Readlink(filepath.Join(home, AgentDir, "k3f9q2.sock")); err != nil || to != want {
 		t.Fatalf("~/.nearhost/k3f9q2.sock links to %q (%v), want %q", to, err, want)
 	}
@@ -336,9 +334,10 @@ func tokenAt(t *testing.T, home string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	if !info.Mode().IsRegular() {
 		t.Fatalf("the token file's mode is %v", info.Mode())
 	}
+	testutil.WantPerm(t, p, 0o600)
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)

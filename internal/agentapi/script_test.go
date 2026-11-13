@@ -23,6 +23,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // The skill's scripts, run against the API: they must find the socket,
@@ -194,18 +195,6 @@ func eachShell(t *testing.T, f func(t *testing.T, shell scriptShell)) {
 	t.Helper()
 	for _, shell := range scriptShells(t) {
 		t.Run(shell.name, func(t *testing.T) { f(t, shell) })
-	}
-}
-
-// checkMode fails unless path has the permission bits want. Windows has no
-// such bits: the profile folder's ACL keeps the files private there.
-func checkMode(t *testing.T, path string, want os.FileMode) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		return
-	}
-	if m := mode(t, path); m != want {
-		t.Fatalf("%s mode %v, want %v", path, m, want)
 	}
 }
 
@@ -836,16 +825,6 @@ func passScript(t *testing.T, home, origin string, review bool) (*Server, *fakeP
 // claudeEnv is the environment of a Claude Code session s1.
 var claudeEnv = []string{"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=s1"}
 
-// mode is the permission bits of path.
-func mode(t *testing.T, path string) os.FileMode {
-	t.Helper()
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fi.Mode().Perm()
-}
-
 // tokenPath is where the skill keeps requester's token for install id lid.
 func tokenPath(home, requester string) string {
 	return filepath.Join(home, ".local", "state", "nearhost", "tokens", "lid", requester)
@@ -882,7 +861,7 @@ func TestScriptPassthroughOpen(t *testing.T) {
 		if err != nil || string(data) != filepath.Join(home, ".nearhost", "k3f9q2.sock")+"\n" {
 			t.Fatalf("marker %q: %v", data, err)
 		}
-		checkMode(t, marker, 0o600)
+		testutil.WantPerm(t, marker, 0o600)
 	})
 }
 
@@ -918,9 +897,9 @@ func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
 			t.Fatalf("token %q: %v", tok, err)
 		}
-		checkMode(t, tokenPath(home, "claude-code"), 0o600)
+		testutil.WantPerm(t, tokenPath(home, "claude-code"), 0o600)
 		for _, dir := range []string{filepath.Dir(tokenPath(home, "claude-code")), tokens, filepath.Dir(tokens)} {
-			checkMode(t, dir, 0o700)
+			testutil.WantPerm(t, dir, 0o700)
 		}
 		if _, err := os.Stat(filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")); err != nil {
 			t.Fatalf("no marker: %v", err)
@@ -1549,7 +1528,7 @@ func TestScriptOpenWaitStoresDocToken(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(tok)) != "tok-1" {
 			t.Fatalf("documents token %q: %v", tok, err)
 		}
-		checkMode(t, docToken(home, "claude-code"), 0o600)
+		testutil.WantPerm(t, docToken(home, "claude-code"), 0o600)
 		if pt, _ := os.ReadFile(tokenPath(home, "claude-code")); strings.TrimSpace(string(pt)) != "pass-tok" {
 			t.Fatalf("the passthrough token changed: %q", pt)
 		}

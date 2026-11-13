@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestInstallIDIsMadeOnceAndKept(t *testing.T) {
@@ -20,9 +22,7 @@ func TestInstallIDIsMadeOnceAndKept(t *testing.T) {
 		t.Fatalf("again: %q %v, want %q", again, err, first)
 	}
 	path, _ := sub("id")
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, path, 0o600)
 }
 
 func TestInstallIDRefusesAFileThatIsNotOne(t *testing.T) {

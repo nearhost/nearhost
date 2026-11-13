@@ -12,6 +12,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -95,9 +96,7 @@ func TestExportWritesLocalProjectFromSubdirectory(t *testing.T) {
 	if !strings.Contains(string(data), "port: ${APP_PORT:-3000}") {
 		t.Errorf("the port does not follow APP_PORT:\n%s", data)
 	}
-	if info, err := os.Stat(filepath.Join(dir, nearhostrc.FileName)); err != nil || info.Mode().Perm() != 0o644 {
-		t.Errorf("mode = %v %v, want 0644", info, err)
-	}
+	testutil.WantPerm(t, filepath.Join(dir, nearhostrc.FileName), 0o644)
 	wantSnapshotOf(t, cfgPath, "shop", dir)
 }
 
@@ -174,9 +173,7 @@ func TestExportRefusesExistingFileWithoutForce(t *testing.T) {
 	if bytes.Equal(readFile(t, file), hand) {
 		t.Error("--force left the file as it was")
 	}
-	if info, _ := os.Stat(file); info.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v, want the replaced file's 0600", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, file, 0o600) // the replaced file's mode
 	wantSnapshotOf(t, cfgPath, "shop", dir)
 }
 

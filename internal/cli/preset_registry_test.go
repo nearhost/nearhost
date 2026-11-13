@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/registry"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 const (
@@ -490,11 +491,5 @@ func TestInstallLeavesNoTempFile(t *testing.T) {
 		}
 		t.Errorf("directory holds %v, want only stack.yaml", names)
 	}
-	info, err := os.Stat(filepath.Join(dir, "stack.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o644 {
-		t.Errorf("preset mode = %v, want 0644", info.Mode().Perm())
-	}
+	testutil.WantPerm(t, filepath.Join(dir, "stack.yaml"), 0o644)
 }
