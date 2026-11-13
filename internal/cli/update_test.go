@@ -29,9 +29,10 @@ type fakeUpdate struct {
 
 func (f *fakeUpdate) backend() updateBackend {
 	return updateBackend{
-		latest:      func(context.Context) (string, error) { return f.latest, f.err },
-		exe:         func() string { return f.exe },
-		getenv:      func(k string) string { return map[string]string{"HOME": "/Users/me"}[k] },
+		latest: func(context.Context) (string, error) { return f.latest, f.err },
+		exe:    func() string { return f.exe },
+		// Go's default GOPATH is under USERPROFILE on Windows.
+		getenv:      func(k string) string { return map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}[k] },
 		writable:    func(string) bool { return f.writable },
 		interactive: func() bool { return f.tty },
 		goos:        f.goos,
@@ -127,7 +128,8 @@ func TestUpdateNotATerminalNeedsYes(t *testing.T) {
 func TestUpdateScriptIntoUnwritableDir(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", tty: true}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR=/usr/local/bin sh") {
+	// The directory is the binary's, in this OS's path form.
+	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR="+filepath.Dir(f.exe)+" sh") {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}
 }
