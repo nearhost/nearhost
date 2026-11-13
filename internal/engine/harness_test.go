@@ -250,11 +250,56 @@ func (h *harness) getEventually(t *testing.T, alias, path string) (int, string) 
 	t.Helper()
 	var code int
 	var body string
-	testutil.WaitUntil(t, 10*time.Second, func() bool {
-		code, body = h.get(t, alias, path)
-		return code != 0
-	}, "HTTPS response for "+alias)
-	return code, body
+	start := time.Now()
+	for deadline := start.Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if code, body = h.get(t, alias, path); code != 0 {
+			return code, body
+		}
+	}
+	t.Fatalf("timed out after %v waiting for HTTPS response for %s; the last error: %s\n%s",
+		time.Since(start).Round(time.Millisecond), alias, body, h.proxyState(alias))
+	return 0, ""
+}
+
+// proxyState describes, for a failure message, what the proxy has for alias:
+// the engine's sites and the project's status, the certificate in storage,
+// certmagic's lock files, and Caddy's own log lines.
+func (h *harness) proxyState(alias string) string {
+	var b strings.Builder
+	project := strings.TrimSuffix(alias, ".test")
+	fmt.Fprintf(&b, "status of %s: %+v\nsites: %+v\nproxy running: %v\n", project, h.eng.Status(project), h.eng.Sites(), h.eng.proxy.Running())
+	certs, _ := filepath.Glob(filepath.Join(h.storage, "certificates", "*", alias, "*"))
+	fmt.Fprintf(&b, "certificate files for %s: %q\n", alias, certs)
+	locks, _ := filepath.Glob(filepath.Join(h.storage, "locks", "*"))
+	for _, l := range locks {
+		data, _ := os.ReadFile(l)
+		var mod time.Time
+		if fi, err := os.Stat(l); err == nil {
+			mod = fi.ModTime()
+		}
+		fmt.Fprintf(&b, "lock file %s (modified %s): %s\n", filepath.Base(l), mod.Format(time.RFC3339Nano), strings.TrimSpace(string(data)))
+	}
+	h.mu.Lock()
+	for drained := false; !drained; {
+		select {
+		case ev := <-h.events:
+			h.seen = append(h.seen, ev)
+		default:
+			drained = true
+		}
+	}
+	var lines []string
+	for _, ev := range h.seen {
+		if (ev.Project == "" && ev.Server == "") || ev.Project == project {
+			lines = append(lines, ev.Time.Format("15:04:05.000")+" "+ev.Project+": "+ev.Message)
+		}
+	}
+	h.mu.Unlock()
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	fmt.Fprintf(&b, "now %s; the last log lines of the proxy and of %s:\n%s", time.Now().Format(time.RFC3339Nano), project, strings.Join(lines, "\n"))
+	return b.String()
 }
 
 // upstream starts a local HTTP server answering "<name>:<host>" and returns

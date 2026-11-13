@@ -1067,11 +1067,13 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 				localProject("alpha", upstream(t, "alpha")),
 				localProject("beta", upstream(t, "beta")),
 			}}
-			entered := make(chan struct{}, 8)
+			// Each update says what it was for and whether it was already
+			// interrupted when it began.
+			entered := make(chan string, 8)
 			h := buildHarness(t, cfg, func(o *Options) {
 				// Like sudo waiting for a password: it only ends when told to.
-				o.EnsureHosts = func(ctx context.Context, _ []string) error {
-					entered <- struct{}{}
+				o.EnsureHosts = func(ctx context.Context, names []string) error {
+					entered <- fmt.Sprintf("%v at %s (interrupted: %v)", names, time.Now().Format("15:04:05.000000"), ctx.Err())
 					<-ctx.Done()
 					return ctx.Err()
 				}
@@ -1091,6 +1093,7 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 			testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.Status("beta").State == StateStarting }, "beta to be starting")
 
 			done := make(chan error, 1)
+			interrupted := time.Now().Format("15:04:05.000000")
 			go func() {
 				if how == "Shutdown" {
 					done <- h.eng.Shutdown(bg)
@@ -1126,7 +1129,7 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 				}
 			}
 			if len(entered) != 0 {
-				t.Fatal("a hosts update began for a start that had already been interrupted")
+				t.Fatalf("a hosts update began for a start that had already been interrupted: %s (interrupts at %s)", <-entered, interrupted)
 			}
 			if len(h.eng.Sites()) != 0 {
 				t.Fatalf("Sites = %+v", h.eng.Sites())
@@ -1187,7 +1190,7 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if code, body := h.get(t, "beta.test", "/"); code != 200 || !strings.HasPrefix(body, "beta:") {
-		t.Fatalf("beta after alpha stopped: %d %q", code, body)
+		t.Fatalf("beta after alpha stopped: %d %q\n%s", code, body, h.proxyState("beta.test"))
 	}
 	if code, body := h.get(t, "alpha.test", "/"); code == 200 && strings.HasPrefix(body, "alpha:") {
 		t.Fatal("alpha still served after stop")
