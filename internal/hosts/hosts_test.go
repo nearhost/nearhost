@@ -291,9 +291,7 @@ func TestApplyThroughSymlinkedFileKeepsSymlink(t *testing.T) {
 	if err := os.WriteFile(real, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("real", link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "real", link)
 	if err := Apply(link, []string{"a.test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,9 +316,7 @@ func TestApplyThroughSymlinkedParentDirectory(t *testing.T) {
 	if err := os.Mkdir(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("private", filepath.Join(root, "etc")); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "private", filepath.Join(root, "etc"))
 	if err := os.WriteFile(filepath.Join(realDir, "hosts"), []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -397,9 +393,7 @@ func TestApplyRefusesADanglingSymlinkAndLeavesIt(t *testing.T) {
 	for _, dest := range []string{"missing", filepath.Join(t.TempDir(), "elsewhere", "hosts")} {
 		dir := t.TempDir()
 		link := filepath.Join(dir, "hosts")
-		if err := os.Symlink(dest, link); err != nil {
-			t.Fatal(err)
-		}
+		testutil.Symlink(t, dest, link)
 		err := Apply(link, []string{"a.test"})
 		if err == nil {
 			t.Fatalf("Apply through a link to %s succeeded", dest)

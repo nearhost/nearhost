@@ -182,9 +182,7 @@ func TestMigrateCopiesASymlinkedOldDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Relative, as dotfiles managers often make them.
-	if err := os.Symlink(filepath.Join("..", "..", "dotfiles", "caddy"), old); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, filepath.Join("..", "..", "dotfiles", "caddy"), old)
 	new := filepath.Join(base, "data", "nearhost", "caddy")
 	if err := migrateCaddyDir(old, new); err != nil {
 		t.Fatal(err)

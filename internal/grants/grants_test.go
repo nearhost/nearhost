@@ -183,9 +183,7 @@ func TestSaveThroughSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "grants.json")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, real, link)
 	s := Open(link)
 	token, err := s.Allow("apollo", "claude-code", KindPassthrough)
 	if err != nil {
@@ -207,9 +205,7 @@ func TestDanglingSymlinkIsAnError(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "missing", "grants.json")
 	link := filepath.Join(dir, "grants.json")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, target, link)
 	_, err := Open(link).Allow("apollo", "claude-code", KindPassthrough)
 	if err == nil || !strings.Contains(err.Error(), link) {
 		t.Fatalf("Allow error = %v, want one naming %s", err, link)
@@ -291,9 +287,7 @@ func TestValidate(t *testing.T) {
 func TestValidateDanglingSymlink(t *testing.T) {
 	dir := t.TempDir()
 	link := filepath.Join(dir, "grants.json")
-	if err := os.Symlink(filepath.Join(dir, "missing", "grants.json"), link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, filepath.Join(dir, "missing", "grants.json"), link)
 	if err := Open(link).Validate(); err == nil || !strings.Contains(err.Error(), link) {
 		t.Errorf("Validate error = %v, want one naming %s", err, link)
 	}

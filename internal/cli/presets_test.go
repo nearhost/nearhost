@@ -95,9 +95,7 @@ func TestWriteFileAtomicWritesThroughALink(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "preset.yaml")
-	if err := os.Symlink("mine.yaml", link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "mine.yaml", link)
 	if err := writeFileAtomic(link, []byte("new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

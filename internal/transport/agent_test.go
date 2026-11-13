@@ -48,7 +48,7 @@ func TestPrepareAgentDirMakesThePrivateDirectoryAndRemovesOnlyItsOwnSocket(t *te
 func TestPrepareAgentDirTakesASymlinkToADirectory(t *testing.T) {
 	client, home := inProcessSFTP(t)
 	os.Mkdir(filepath.Join(home, "elsewhere"), 0o700)
-	os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(home, AgentDir))
+	testutil.Symlink(t, filepath.Join(home, "elsewhere"), filepath.Join(home, AgentDir))
 	if _, err := PrepareAgentDir(client, home, "", "k3f9q2.sock", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestPrepareAgentDirRemovesAnOldLinkWhenTheSocketStaysHome(t *testing.T) {
 	client, home := inProcessSFTP(t)
 	os.MkdirAll(filepath.Join(home, AgentDir), 0o700)
 	link := filepath.Join(home, AgentDir, "k3f9q2.sock")
-	os.Symlink("/run/user/1000/nearhost/k3f9q2.sock", link)
+	testutil.Symlink(t, "/run/user/1000/nearhost/k3f9q2.sock", link)
 	if _, err := PrepareAgentDir(client, home, t.TempDir(), "k3f9q2.sock", "", "", ""); err != nil {
 		t.Fatal(err)
 	}

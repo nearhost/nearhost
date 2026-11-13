@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestHostsApplyReadsAliasesFromStdin(t *testing.T) {
@@ -201,9 +202,7 @@ func TestHostsHelpUsesTheElevationCopy(t *testing.T) {
 func TestHostsApplyRefusesASymlinkedInput(t *testing.T) {
 	secret := writeTemp(t, "secret line\n")
 	link := filepath.Join(t.TempDir(), "input")
-	if err := os.Symlink(secret, link); err != nil {
-		t.Skipf("cannot make a symlink: %v", err)
-	}
+	testutil.Symlink(t, secret, link)
 	report := filepath.Join(t.TempDir(), "report")
 	path, err := runApply(t, "--input", link, "--report", report)
 	if err == nil {
@@ -224,9 +223,7 @@ func TestHostsApplyRefusesAnInputInALinkedDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(t.TempDir(), "dir")
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("cannot make a symlink: %v", err)
-	}
+	testutil.Symlink(t, real, link)
 	if _, err := runApply(t, "--input", filepath.Join(link, "in")); err == nil || strings.Contains(err.Error(), "secret line") {
 		t.Fatalf("err %v", err)
 	}
