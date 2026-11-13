@@ -529,8 +529,14 @@ func TestDegradedProjectAnnouncesEachNewReason(t *testing.T) {
 		st, _ := h.eng.ServerStatus("mini")
 		return st == transport.StatusAuthFailed
 	}, "the server to give up")
-	st := h.eng.Status("myapp")
-	if st.State != StateDegraded || !strings.Contains(st.Message, "auth failed") {
+	// ServerStatus reads the session itself; the project hears of the
+	// change from the supervisor a moment later.
+	var st ProjectStatus
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		st = h.eng.Status("myapp")
+		return strings.Contains(st.Message, "auth failed")
+	}, "the project to say the server gave up")
+	if st.State != StateDegraded {
 		t.Fatalf("status = %+v", st)
 	}
 	// The supervisor logs after it changed the status; its last line is what
@@ -1067,11 +1073,13 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 				localProject("alpha", upstream(t, "alpha")),
 				localProject("beta", upstream(t, "beta")),
 			}}
-			entered := make(chan struct{}, 8)
+			// Each update says what it was for and whether it was already
+			// interrupted when it began.
+			entered := make(chan string, 8)
 			h := buildHarness(t, cfg, func(o *Options) {
 				// Like sudo waiting for a password: it only ends when told to.
-				o.EnsureHosts = func(ctx context.Context, _ []string) error {
-					entered <- struct{}{}
+				o.EnsureHosts = func(ctx context.Context, names []string) error {
+					entered <- fmt.Sprintf("%v at %s (interrupted: %v)", names, time.Now().Format("15:04:05.000000"), ctx.Err())
 					<-ctx.Done()
 					return ctx.Err()
 				}
@@ -1091,6 +1099,7 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 			testutil.WaitUntil(t, 10*time.Second, func() bool { return h.eng.Status("beta").State == StateStarting }, "beta to be starting")
 
 			done := make(chan error, 1)
+			interrupted := time.Now().Format("15:04:05.000000")
 			go func() {
 				if how == "Shutdown" {
 					done <- h.eng.Shutdown(bg)
@@ -1126,7 +1135,7 @@ func TestStoppingInterruptsAHostsUpdateThatWaits(t *testing.T) {
 				}
 			}
 			if len(entered) != 0 {
-				t.Fatal("a hosts update began for a start that had already been interrupted")
+				t.Fatalf("a hosts update began for a start that had already been interrupted: %s (interrupts at %s)", <-entered, interrupted)
 			}
 			if len(h.eng.Sites()) != 0 {
 				t.Fatalf("Sites = %+v", h.eng.Sites())
@@ -1187,7 +1196,7 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if code, body := h.get(t, "beta.test", "/"); code != 200 || !strings.HasPrefix(body, "beta:") {
-		t.Fatalf("beta after alpha stopped: %d %q", code, body)
+		t.Fatalf("beta after alpha stopped: %d %q\n%s", code, body, h.proxyState("beta.test"))
 	}
 	if code, body := h.get(t, "alpha.test", "/"); code == 200 && strings.HasPrefix(body, "alpha:") {
 		t.Fatal("alpha still served after stop")
@@ -1203,25 +1212,26 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 // so beside a holder of the wildcard address, so a test holds loopback.
 func proxyAddr(port int) string { return netbind.ServeAddrs(port)[0] }
 
-// holdUDPOnly holds a UDP port whose TCP twin was free when it was taken, so
-// the engine's TCP bind on that port number succeeds and its UDP bind fails.
-// A UDP port picked alone may be in use on TCP by another test.
+// heldProxyPort is a port for the test to hold, free on TCP and UDP, from
+// outside the range the system hands out. The proxy binds its HTTPS port on
+// both, so a port the system picked for TCP alone may have its UDP twin in
+// use or, on Windows, inside a range the system reserves for UDP (Hyper-V
+// and WinNAT do), and the start after the holder lets go fails.
+func heldProxyPort(t *testing.T) int {
+	t.Helper()
+	return testutil.ProxyPort(t)
+}
+
+// holdUDPOnly holds a UDP port whose TCP twin is free, so the engine's TCP
+// bind on that port number succeeds and its UDP bind fails.
 func holdUDPOnly(t *testing.T) (net.PacketConn, int) {
 	t.Helper()
-	for range 20 {
-		l, err := net.Listen("tcp", proxyAddr(0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := l.Addr().(*net.TCPAddr).Port
-		pc, err := net.ListenPacket("udp", proxyAddr(port))
-		l.Close()
-		if err == nil {
-			return pc, port
-		}
+	port := heldProxyPort(t)
+	pc, err := net.ListenPacket("udp", proxyAddr(port))
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("no port free on both TCP and UDP")
-	return nil, 0
+	return pc, port
 }
 
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
@@ -1234,11 +1244,12 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			if which == "https-udp" {
 				holder, held = holdUDPOnly(t)
 			} else {
-				l, err := net.Listen("tcp", proxyAddr(0))
+				port := heldProxyPort(t)
+				l, err := net.Listen("tcp", proxyAddr(port))
 				if err != nil {
 					t.Fatal(err)
 				}
-				holder, held = l, l.Addr().(*net.TCPAddr).Port
+				holder, held = l, port
 			}
 			defer holder.Close()
 			h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, func(o *Options) {

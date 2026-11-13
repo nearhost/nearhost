@@ -373,7 +373,10 @@ func TestPerProcessRevivesAServerThatGaveUp(t *testing.T) {
 func TestPerProcessRunningProjectBecomesDegradedWhenItsLinkDrops(t *testing.T) {
 	t.Setenv("NEARHOST_TRANSPORT", "per-process")
 	fake, env := newPerProcessFake(t)
-	cfg := remoteConfig(testutil.FreePort(t))
+	// The loopback forward is bound again on the new link. A port the system
+	// hands out (FreePort) can be given to another process meanwhile; one
+	// from below that range cannot.
+	cfg := remoteConfig(testutil.ProxyPort(t))
 	cfg.Projects = append(cfg.Projects, localProject("web", upstream(t, "ok")))
 	h := newHarness(t, cfg, env...)
 	events, unsub := h.eng.Events().Subscribe(1024)

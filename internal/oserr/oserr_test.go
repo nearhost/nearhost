@@ -70,3 +70,28 @@ func TestCrossDevice(t *testing.T) {
 		t.Error("CrossDevice(os.ErrPermission) = true")
 	}
 }
+
+// Removing a file another handle has open is refused on Windows and allowed
+// on Unix; either way, other errors are not InUse.
+func TestInUse(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "held")
+	if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Remove(name)
+	f.Close()
+	if refused := err != nil; InUse(err) != refused {
+		t.Errorf("removing an open file returned %v; InUse = %v", err, InUse(err))
+	}
+	if _, statErr := os.Stat(name); err != nil && statErr != nil {
+		t.Errorf("the refused removal removed the file: %v", statErr)
+	}
+	_, err = os.ReadFile(filepath.Join(t.TempDir(), "missing"))
+	if InUse(err) || InUse(nil) || InUse(io.EOF) {
+		t.Errorf("InUse is true for a missing file (%v), nil or io.EOF", err)
+	}
+}

@@ -559,7 +559,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// Caddy install.
 		"admin":   map[string]any{"disabled": true, "config": map[string]any{"persist": false}},
 		"logging": map[string]any{"logs": logs},
-		"storage": map[string]any{"module": "file_system", "root": opts.StorageRoot},
+		"storage": map[string]any{"module": storageModule, "root": opts.StorageRoot},
 		"apps": map[string]any{
 			"http": map[string]any{
 				"https_port": httpsPort,
