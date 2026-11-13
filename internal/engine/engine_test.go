@@ -1195,18 +1195,24 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 	}
 }
 
+// proxyAddr is the address to hold port on so that the proxy cannot bind
+// it: the first address the proxy serves on. That is the wildcard address
+// on Unix. On Windows the proxy binds loopback only, and Windows lets it do
+// so beside a holder of the wildcard address, so a test holds loopback.
+func proxyAddr(port int) string { return netbind.ServeAddrs(port)[0] }
+
 // holdUDPOnly holds a UDP port whose TCP twin was free when it was taken, so
 // the engine's TCP bind on that port number succeeds and its UDP bind fails.
 // A UDP port picked alone may be in use on TCP by another test.
 func holdUDPOnly(t *testing.T) (net.PacketConn, int) {
 	t.Helper()
 	for range 20 {
-		l, err := net.Listen("tcp", ":0")
+		l, err := net.Listen("tcp", proxyAddr(0))
 		if err != nil {
 			t.Fatal(err)
 		}
 		port := l.Addr().(*net.TCPAddr).Port
-		pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		pc, err := net.ListenPacket("udp", proxyAddr(port))
 		l.Close()
 		if err == nil {
 			return pc, port
@@ -1226,7 +1232,7 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			if which == "https-udp" {
 				holder, held = holdUDPOnly(t)
 			} else {
-				l, err := net.Listen("tcp", ":0")
+				l, err := net.Listen("tcp", proxyAddr(0))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1981,7 +1987,7 @@ func TestProxyHomePageShowsTheVersion(t *testing.T) {
 }
 
 func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", proxyAddr(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2056,7 +2062,7 @@ func TestStartRetriesThePagePort(t *testing.T) {
 }
 
 func TestStartStillFailsWhenHTTPSPortBusy(t *testing.T) {
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", proxyAddr(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2152,7 +2158,7 @@ func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
 
 // A taken page port names its holder from the one lookup the probe made.
 func TestStartLooksUpThePagePortsHolderOnce(t *testing.T) {
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", proxyAddr(0))
 	if err != nil {
 		t.Fatal(err)
 	}
