@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // tempStore opens a store on a file in a directory that does not exist yet.
@@ -90,20 +92,8 @@ func TestFileModes(t *testing.T) {
 	if _, err := s.Allow("apollo", "claude-code", KindPassthrough); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Errorf("file mode %v, want 0600", fi.Mode().Perm())
-	}
-	di, err := os.Stat(filepath.Dir(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if di.Mode().Perm() != 0o700 {
-		t.Errorf("directory mode %v, want 0700", di.Mode().Perm())
-	}
+	testutil.WantPerm(t, path, 0o600)
+	testutil.WantPerm(t, filepath.Dir(path), 0o700)
 }
 
 func TestRevoke(t *testing.T) {

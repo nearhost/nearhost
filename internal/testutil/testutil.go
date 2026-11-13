@@ -24,6 +24,14 @@ import (
 	"time"
 )
 
+// SetHome points the user's home folder at dir: os.UserHomeDir reads HOME on
+// Unix and USERPROFILE on Windows, so both are set.
+func SetHome(t testing.TB, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 // FreePort returns a loopback TCP port that was unused a moment ago. The
 // system picks it, so any process may be given the same one next: use it for
 // what is bound at once or may fail to bind, and ProxyPort for a proxy.

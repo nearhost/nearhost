@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 const base = "127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1             localhost\n"
@@ -264,13 +266,7 @@ func TestApplyPreservesMode(t *testing.T) {
 		if err := Apply(path, []string{"a.test"}); err != nil {
 			t.Fatal(err)
 		}
-		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi.Mode().Perm() != mode {
-			t.Fatalf("mode %v, want %v", fi.Mode().Perm(), mode)
-		}
+		testutil.WantPerm(t, path, mode)
 	}
 }
 
@@ -280,13 +276,7 @@ func TestApplyCreatesMissingFileWith0644(t *testing.T) {
 	if err := Apply(path, []string{"a.test"}); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o644 {
-		t.Fatalf("mode %v, want 0644", fi.Mode().Perm())
-	}
+	testutil.WantPerm(t, path, 0o644)
 	got, _ := os.ReadFile(path)
 	if string(got) != "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n" {
 		t.Fatalf("got %q", got)

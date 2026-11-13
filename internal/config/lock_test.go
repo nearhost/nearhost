@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // appendProject is the change each writer in TestUpdateSerialisesWriters
@@ -179,13 +181,7 @@ func TestUpdateSavesNothingOnError(t *testing.T) {
 	if string(after) != string(before) {
 		t.Errorf("config changed:\n%s\nwant\n%s", after, before)
 	}
-	info, err := os.Stat(path + ".lock")
-	if err != nil {
-		t.Fatalf("lock file: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("lock file mode = %v, want 0600", perm)
-	}
+	testutil.WantPerm(t, path+".lock", 0o600)
 }
 
 // A lock file left with a wider mode is narrowed to 0600.
@@ -200,11 +196,5 @@ func TestUpdateNarrowsTheLockFileMode(t *testing.T) {
 	if err := Update(path, appendProject("myapp")); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path + ".lock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("lock file mode = %v, want 0600", perm)
-	}
+	testutil.WantPerm(t, path+".lock", 0o600)
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestDataDirXDG(t *testing.T) {
@@ -90,31 +92,19 @@ func checkMoved(t *testing.T, old, new, key string) {
 	if _, err := os.Lstat(old); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("old directory still there: %v", err)
 	}
-	fi, err := os.Stat(filepath.Join(new, key))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("root.key mode %v, want 0600", fi.Mode().Perm())
-	}
+	testutil.WantPerm(t, filepath.Join(new, key), 0o600)
 	data, err := os.ReadFile(filepath.Join(new, key))
 	if err != nil || string(data) != "the key" {
 		t.Fatalf("root.key = %q, %v", data, err)
 	}
-	fi, err = os.Stat(filepath.Join(new, "pki", "authorities", "local", "root.crt"))
-	if err != nil || fi.Mode().Perm() != 0o644 {
-		t.Fatalf("root.crt: %v, %v", fi, err)
-	}
+	testutil.WantPerm(t, filepath.Join(new, "pki", "authorities", "local", "root.crt"), 0o644)
 	for _, d := range []string{new, filepath.Join(new, "pki"), filepath.Join(new, "pki", "authorities", "local")} {
-		fi, err := os.Stat(d)
-		if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
-			t.Fatalf("%s: %v, %v; want a 0700 directory", d, fi, err)
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			t.Fatalf("%s: %v, %v; want a directory", d, fi, err)
 		}
+		testutil.WantPerm(t, d, 0o700)
 	}
-	fi, err = os.Stat(filepath.Dir(new))
-	if err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("parent of new: %v, %v; want 0700", fi, err)
-	}
+	testutil.WantPerm(t, filepath.Dir(new), 0o700)
 }
 
 func TestMigrateMovesOldCaddyDir(t *testing.T) {

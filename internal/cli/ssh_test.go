@@ -183,9 +183,10 @@ func TestPrivateSessionSocketPathIsShort(t *testing.T) {
 		if n := len(sock) + sshSuffix; n > sunPath-margin {
 			t.Errorf("server %q: ssh would bind %d bytes (%s plus its suffix); the limit is %d", name, n, sock, sunPath)
 		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
-			t.Errorf("server %q: run directory %s is not a private directory: %v %v", name, dir, info, err)
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			t.Errorf("server %q: run directory %s is not a directory: %v %v", name, dir, info, err)
 		}
+		testutil.WantPerm(t, dir, 0o700)
 		if err := end(); err != nil {
 			t.Errorf("server %q: %v", name, err)
 		}

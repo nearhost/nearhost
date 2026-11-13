@@ -157,10 +157,10 @@ func assertOnly(t *testing.T, root string, want ...string) {
 
 func checkFile(t *testing.T, p, content string, mode os.FileMode) {
 	t.Helper()
-	info, err := os.Stat(p)
-	if err != nil || info.Mode().Perm() != mode {
-		t.Fatalf("stat %s: %v %v, want mode %v", p, info, err, mode)
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal(err)
 	}
+	testutil.WantPerm(t, p, mode)
 	if b, _ := os.ReadFile(p); string(b) != content {
 		t.Fatalf("%s content %q, want %q", p, b, content)
 	}
