@@ -93,11 +93,12 @@ func TestListenAfterServingIsFreeOnWindows(t *testing.T) {
 }
 
 // The question behind the proxy's TestWaitReleased: can something else hold
-// 0.0.0.0:P while Nearhost binds 127.0.0.1:P and serves, unaware? Listen sets
-// SO_EXCLUSIVEADDRUSE, but whether that makes a loopback bind fail beside a
-// plain wildcard holder is Windows' call, so the first run only reports what
-// it did.
-func TestListenRefusesAPortHeldOnTheWildcardOnWindows(t *testing.T) {
+// 0.0.0.0:P while Nearhost binds 127.0.0.1:P and serves, unaware? Yes.
+// Listen sets SO_EXCLUSIVEADDRUSE, but Windows lets a loopback bind succeed
+// beside a plain wildcard holder (the more specific address wins, observed on
+// windows-latest). This pins that fact; stage 8's gate must note that a
+// wildcard holder of 443 is not seen.
+func TestListenSucceedsBesideAWildcardHolderOnWindows(t *testing.T) {
 	holder, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
@@ -105,12 +106,8 @@ func TestListenRefusesAPortHeldOnTheWildcardOnWindows(t *testing.T) {
 	defer holder.Close()
 	port := holder.Addr().(*net.TCPAddr).Port
 	l, err := netbind.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
-	if err == nil {
-		l.Close()
-		t.Fatalf("OBSERVED: Listen(127.0.0.1:%d) succeeded beside a holder on 0.0.0.0:%d", port, port)
+	if err != nil {
+		t.Fatalf("Listen(127.0.0.1:%d) beside a wildcard holder failed: %v; Windows used to allow it", port, err)
 	}
-	t.Logf("OBSERVED: Listen(127.0.0.1:%d) beside a wildcard holder failed: %v", port, err)
-	if !oserr.AddrInUse(err) {
-		t.Fatalf("OBSERVED: error = %v, want address in use", err)
-	}
+	l.Close()
 }
