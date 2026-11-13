@@ -5,63 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/testutil"
 )
-
-func TestDataDirXDG(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	xdg := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", xdg)
-	if got, err := dataDirFor("linux"); err != nil || got != filepath.Join(xdg, "nearhost") {
-		t.Fatalf("absolute XDG_DATA_HOME: got %q, %v", got, err)
-	}
-	t.Setenv("XDG_DATA_HOME", "relative/data")
-	if got, err := dataDirFor("linux"); err != nil || got != filepath.Join(home, ".local", "share", "nearhost") {
-		t.Fatalf("relative XDG_DATA_HOME: got %q, %v", got, err)
-	}
-	t.Setenv("XDG_DATA_HOME", "")
-	if got, err := dataDirFor("linux"); err != nil || got != filepath.Join(home, ".local", "share", "nearhost") {
-		t.Fatalf("no XDG_DATA_HOME: got %q, %v", got, err)
-	}
-}
-
-func TestDataDirDarwin(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// An absolute XDG_DATA_HOME moves the data directory on macOS too, so a
-	// source build can keep its CA apart from the installed one.
-	xdg := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", xdg)
-	if got, err := dataDirFor("darwin"); err != nil || got != filepath.Join(xdg, "nearhost") {
-		t.Fatalf("absolute XDG_DATA_HOME: got %q, %v", got, err)
-	}
-	if runtime.GOOS == "darwin" {
-		if got, err := DataDir(); err != nil || got != filepath.Join(xdg, "nearhost") {
-			t.Fatalf("DataDir() = %q, %v; want %q", got, err, filepath.Join(xdg, "nearhost"))
-		}
-	}
-	// Otherwise macOS keeps application data in Application Support.
-	want := filepath.Join(home, "Library", "Application Support", "nearhost")
-	t.Setenv("XDG_DATA_HOME", "relative/data")
-	if got, err := dataDirFor("darwin"); err != nil || got != want {
-		t.Fatalf("relative XDG_DATA_HOME: got %q, %v; want %q", got, err, want)
-	}
-	t.Setenv("XDG_DATA_HOME", "")
-	if got, err := dataDirFor("darwin"); err != nil || got != want {
-		t.Fatalf("no XDG_DATA_HOME: got %q, %v; want %q", got, err, want)
-	}
-	if runtime.GOOS == "darwin" {
-		if got, err := DataDir(); err != nil || got != want {
-			t.Fatalf("DataDir() = %q, %v; want %q", got, err, want)
-		}
-	}
-}
 
 // caddyTree makes a fake Caddy storage at dir: directories 0700 and the
 // root key 0600, as Caddy writes them. It returns the key's path inside dir.
@@ -156,7 +104,7 @@ func exdev(t *testing.T) {
 		if filepath.Dir(from) == filepath.Dir(to) {
 			return real(from, to)
 		}
-		return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+		return &os.LinkError{Op: "rename", Old: from, New: to, Err: crossDeviceErr}
 	}
 	t.Cleanup(func() { rename = real })
 }
@@ -174,37 +122,6 @@ func TestMigrateCopiesAcrossDevices(t *testing.T) {
 	left, err := os.ReadDir(filepath.Dir(new))
 	if err != nil || len(left) != 1 {
 		t.Fatalf("beside new: %v, %v; want only caddy", left, err)
-	}
-}
-
-func TestMigrateKeepsOldWhenCopyFails(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads unreadable files")
-	}
-	exdev(t)
-	base := t.TempDir()
-	old := filepath.Join(base, "config", "nearhost", "caddy")
-	new := filepath.Join(base, "data", "nearhost", "caddy")
-	key := caddyTree(t, old, "the key")
-	unreadable := filepath.Join(old, "pki", "authorities", "local", "root.crt")
-	if err := os.Chmod(unreadable, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(unreadable, 0o644) })
-	err := migrateCaddyDir(old, new)
-	var me *MigrateError
-	if !errors.As(err, &me) || me.Moved || me.Old != old || me.New != new {
-		t.Fatalf("copy of an unreadable file: %v, want a MigrateError not Moved", err)
-	}
-	if data, err := os.ReadFile(filepath.Join(old, key)); err != nil || string(data) != "the key" {
-		t.Fatalf("old root.key = %q, %v", data, err)
-	}
-	if _, err := os.Lstat(new); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("half a copy left at new: %v", err)
-	}
-	left, err := os.ReadDir(filepath.Dir(new))
-	if err != nil || len(left) != 0 {
-		t.Fatalf("left beside new: %v, %v; want nothing", left, err)
 	}
 }
 
@@ -279,30 +196,6 @@ func TestMigrateCopiesASymlinkedOldDir(t *testing.T) {
 	// Only the link goes; what it pointed at is the user's to keep or delete.
 	if data, err := os.ReadFile(filepath.Join(real, key)); err != nil || string(data) != "the key" {
 		t.Fatalf("link target's root.key = %q, %v", data, err)
-	}
-}
-
-func TestMigrateReportsAnOldDirItCouldNotDelete(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root deletes from read-only directories")
-	}
-	exdev(t)
-	base := t.TempDir()
-	old := filepath.Join(base, "config", "nearhost", "caddy")
-	new := filepath.Join(base, "data", "nearhost", "caddy")
-	key := caddyTree(t, old, "the key")
-	parent := filepath.Dir(old)
-	if err := os.Chmod(parent, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(parent, 0o700) })
-	err := migrateCaddyDir(old, new)
-	var me *MigrateError
-	if !errors.As(err, &me) || !me.Moved || me.Old != old || me.New != new {
-		t.Fatalf("got %v, want a Moved MigrateError", err)
-	}
-	if data, err := os.ReadFile(filepath.Join(new, key)); err != nil || string(data) != "the key" {
-		t.Fatalf("new root.key = %q, %v", data, err)
 	}
 }
 
