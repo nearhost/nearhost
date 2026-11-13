@@ -3,7 +3,7 @@
 // Two kinds of test here run on Unix only. Most drive a Session, the
 // ControlMaster transport Windows does not have, which forwards the agent
 // socket with ssh -O forward; perprocess_test.go has the per-process ones.
-// The two PrepareAgentDir tests left need a private runtime directory,
+// The two PrepareAgentDir tests here need a private runtime directory,
 // /run/user/<uid>: one named for this user's uid, owned by the account that
 // owns home, with a mode only it can open. Windows has none of those: the
 // uid is -1, the in-process SFTP server reports no owner, and a folder's

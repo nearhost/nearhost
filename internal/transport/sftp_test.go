@@ -6,7 +6,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,7 +93,18 @@ type newWriterFunc func(t *testing.T, root string) FileWriter
 
 func sftpWriterFor(t *testing.T, root string) FileWriter {
 	client, _ := inProcessSFTP(t)
-	return NewSFTPWriter(client, root)
+	return NewSFTPWriter(client, sftpRoot(root))
+}
+
+// sftpRoot is the local folder root as the in-process SFTP server names it.
+// A server's paths are POSIX and absolute, so on Windows, where the server
+// runs on this machine's folders, C:\x is /C:/x, as OpenSSH's sftp-server
+// for Windows names it too. On Unix it is root.
+func sftpRoot(root string) string {
+	if runtime.GOOS == "windows" {
+		return "/" + filepath.ToSlash(root)
+	}
+	return root
 }
 
 // sftpNoPosixWriterFor is a writer for a server without posix-rename, so the
@@ -306,23 +319,19 @@ func checkWritesUnderALinkedRoot(t *testing.T, nw newWriterFunc) {
 	assertOnly(t, real, ".nearhostrc")
 }
 
-func TestWritersRefuseLinksOutsideRoot(t *testing.T) {
-	for name, nw := range map[string]newWriterFunc{"sftp": sftpWriterFor, "dir": dirWriterFor} {
-		t.Run(name, func(t *testing.T) {
-			t.Run("dotdot", func(t *testing.T) { checkRefusesDotDotOutsideRoot(t, nw) })
-			t.Run("dangling", func(t *testing.T) { checkRefusesDanglingLinkOutsideRoot(t, nw) })
-			t.Run("dotdot past missing", func(t *testing.T) { checkRefusesDotDotPastAMissingElement(t, nw) })
-			t.Run("linked root", func(t *testing.T) { checkWritesUnderALinkedRoot(t, nw) })
-		})
-	}
+// checkLinksOutsideRoot runs the link checks above on the writer nw makes.
+func checkLinksOutsideRoot(t *testing.T, nw newWriterFunc) {
+	t.Run("dotdot", func(t *testing.T) { checkRefusesDotDotOutsideRoot(t, nw) })
+	t.Run("dangling", func(t *testing.T) { checkRefusesDanglingLinkOutsideRoot(t, nw) })
+	t.Run("dotdot past missing", func(t *testing.T) { checkRefusesDotDotPastAMissingElement(t, nw) })
+	t.Run("linked root", func(t *testing.T) { checkWritesUnderALinkedRoot(t, nw) })
 }
 
-func TestSFTPWriterRefusesLinkOutsideRoot(t *testing.T) {
-	checkRefusesLinkOutsideRoot(t, sftpWriterFor)
+// The SFTP writer's run of these is in sftp_unix_test.go.
+func TestDirWriterRefusesLinksOutsideRoot(t *testing.T) {
+	checkLinksOutsideRoot(t, dirWriterFor)
 }
-func TestSFTPWriterWritesThroughLinkInsideRoot(t *testing.T) {
-	checkWritesThroughLinkInsideRoot(t, sftpWriterFor)
-}
+
 func TestDirWriterRefusesLinkOutsideRoot(t *testing.T) {
 	checkRefusesLinkOutsideRoot(t, dirWriterFor)
 }
@@ -359,8 +368,9 @@ func TestSFTPWriterRestoresTheOriginalWhenTheSecondRenameFails(t *testing.T) {
 	w := sftpNoPosixWriterFor(t, root).(sftpWriter)
 	real := w.c.Rename
 	toTarget := 0
+	target := path.Join(sftpRoot(root), ".nearhostrc") // p as the server names it
 	w.rename = func(oldname, newname string) error {
-		if newname == p {
+		if newname == target {
 			toTarget++
 			if toTarget == 1 { // a strict server refuses to replace the file
 				return errors.New("file exists")
