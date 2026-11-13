@@ -42,6 +42,18 @@ jobs:
       # The skill's PowerShell script, under Windows PowerShell 5.1 and pwsh.
       - run: go test -run 'TestScript|TestPowerShellScript' ./internal/agentapi/
 
+  # The whole suite on Windows. It reports and does not gate until stage 6's
+  # last PR moves windows-latest into the matrix above.
+  windows-suite:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 -timeout 10m ./...
+
   # The agent skill's script runs on servers with nothing but sh and curl,
   # and its PowerShell twin on Windows laptops.
   skill:
