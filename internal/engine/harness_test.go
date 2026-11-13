@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,8 +26,10 @@ import (
 // TestMain points every directory Caddy or ssh might touch at a throwaway
 // location before any Caddy code runs, so tests never write into the real
 // user's directories.
-// It also unsets NEARHOST_TRANSPORT: these tests expect the ControlMaster
-// transport, whatever the developer's shell asks for.
+// It also unsets NEARHOST_TRANSPORT, so the tests get the platform's own
+// transport whatever the developer's shell asks for: ControlMaster on Unix,
+// per-process on Windows, which has no ControlMaster. Tests that only make
+// sense on ControlMaster are in the _unix_test.go files.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "nearhost-engine-test-")
 	if err != nil {
@@ -70,10 +73,17 @@ type harness struct {
 	storage   string
 	runDir    string
 	sshLog    string
+	// links is where the per-process fake ssh reports its processes and
+	// is told to drop one; a test's own newPerProcessFake overrides it.
+	links *perProcessFake
 
 	mu       sync.Mutex
 	ensured  [][]string
 	hostsErr error
+	// events holds every event since the harness was built; seen is what
+	// transportLines has read of it.
+	events <-chan Event
+	seen   []Event
 }
 
 // buildHarness creates an engine that uses the fake ssh, free high ports, temp
@@ -90,11 +100,13 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 		runDir:    tempDir(t, "nh-run-"),
 		sshLog:    filepath.Join(t.TempDir(), "ssh.log"),
 	}
+	links, linkEnv := newPerProcessFake(t)
+	h.links = links
 	h.opts = Options{
 		RunDir:      h.runDir,
 		StorageRoot: h.storage,
 		SSHPath:     fakeSSH(t),
-		SSHEnv:      append([]string{"FAKE_SSH_LOG=" + h.sshLog}, sshEnv...),
+		SSHEnv:      append(append([]string{"FAKE_SSH_LOG=" + h.sshLog}, linkEnv...), sshEnv...),
 		HTTPSPort:   h.httpsPort,
 		HTTPPort:    h.httpPort,
 		EnsureHosts: func(_ context.Context, aliases []string) error {
@@ -110,7 +122,10 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 	h.eng = New(cfg, h.opts)
 	// Tests that care about the holder of a port set their own lookup.
 	h.eng.holderOf = func(context.Context, int) string { return "" }
+	events, unsub := h.eng.Events().Subscribe(1 << 16)
+	h.events = events
 	t.Cleanup(func() {
+		unsub()
 		if err := h.eng.Shutdown(context.Background()); err != nil {
 			t.Errorf("Shutdown: %v", err)
 		}
@@ -161,14 +176,16 @@ func (h *harness) assertNothingLeft(t *testing.T) {
 	}
 }
 
-// engineGoroutines returns the stacks of goroutines running engine or session
-// code, other than the calling test's own.
+// engineGoroutines returns the stacks of goroutines running engine or
+// transport code, other than the calling test's own. The per-process
+// transport waits for each ssh it starts in a goroutine of its own, so none
+// left means none of its ssh processes is either.
 func engineGoroutines() string {
 	buf := make([]byte, 4<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	var out []string
 	for _, g := range strings.Split(string(buf), "\n\n") {
-		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") {
+		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") || strings.Contains(g, "transport.(*perProcess)") {
 			out = append(out, g)
 		}
 	}
@@ -305,16 +322,29 @@ func (h *harness) forwards(server string) [][2]int {
 	return c.sess.Forwards()
 }
 
-// dropMaster makes the fake ssh master of a server exit, as a lost connection
-// would: it leaves when its socket file disappears.
+// dropMaster makes the connection to a server drop, as a lost connection
+// would: a ControlMaster's fake master leaves when its socket file
+// disappears, and a per-process fake link when it is told to through the
+// drop directory.
 func (h *harness) dropMaster(t *testing.T, server string) {
 	t.Helper()
 	h.eng.mu.Lock()
-	sock := h.eng.servers[server].sess.(*transport.Session).SocketPath()
-	h.eng.mu.Unlock()
-	if err := os.Remove(sock); err != nil {
-		t.Fatal(err)
+	var sess transport.Transport
+	c := h.eng.servers[server]
+	if c != nil {
+		sess = c.sess
 	}
+	h.eng.mu.Unlock()
+	if c == nil {
+		t.Fatalf("dropMaster: nothing is connected to %s", server)
+	}
+	if s, ok := sess.(*transport.Session); ok {
+		if err := os.Remove(s.SocketPath()); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	h.links.drop(t, h.links.hostLinkPid(t, sess.Host()))
 }
 
 // unapplied lists the forwards of a server that its current master lacks.
@@ -372,4 +402,168 @@ func waitStateEvent(t *testing.T, events <-chan Event, project, message string) 
 			t.Fatalf("no state event %q for %s; got %q", message, project, seen)
 		}
 	}
+}
+
+// transportLines returns the lines the transport of server has logged
+// since the harness was built. Both transports log "<server>: forward
+// <spec>" when a forward is set up, and "<server>: cancel <spec>" when one
+// is cancelled, so these say what was forwarded on either.
+func (h *harness) transportLines(server string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for drained := false; !drained; {
+		select {
+		case ev, ok := <-h.events:
+			if !ok {
+				drained = true
+				break
+			}
+			h.seen = append(h.seen, ev)
+		default:
+			drained = true
+		}
+	}
+	var out []string
+	for _, ev := range h.seen {
+		if ev.Project == "" && ev.Server == server {
+			out = append(out, ev.Message)
+		}
+	}
+	return out
+}
+
+// forwarded returns the specs (127.0.0.1:LOCAL:localhost:REMOTE) of the
+// forwards set up on server, once for each time one was set up.
+func (h *harness) forwarded(server string) []string { return h.specsLogged(server, "forward") }
+
+// cancelled returns the specs of the forwards cancelled on server, once for
+// each cancel.
+func (h *harness) cancelled(server string) []string { return h.specsLogged(server, "cancel") }
+
+func (h *harness) specsLogged(server, op string) []string {
+	var out []string
+	for _, line := range h.transportLines(server) {
+		spec, ok := strings.CutPrefix(line, server+": "+op+" ")
+		if ok && !strings.Contains(spec, " ") {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+// spec is the forward spec of a local and remote port, as ssh's -L takes it.
+func spec(local, remote int) string {
+	return fmt.Sprintf("127.0.0.1:%d:localhost:%d", local, remote)
+}
+
+// connections counts the ssh connections launched: ControlMaster masters
+// (-N -M) or per-process links (-N with no -L), whichever the platform's
+// transport runs.
+func (h *harness) connections() int {
+	n := 0
+	for _, line := range strings.Split(h.log(), "\n") {
+		argv := " " + line + " "
+		if strings.Contains(argv, " -N ") && !strings.Contains(argv, " -L ") {
+			n++
+		}
+	}
+	return n
+}
+
+// countSpec counts the times want appears in specs.
+func countSpec(specs []string, want string) int {
+	n := 0
+	for _, s := range specs {
+		if s == want {
+			n++
+		}
+	}
+	return n
+}
+
+// connectionEnded reports whether the connection to host was ended: a
+// ControlMaster's master is asked to exit with `-O exit`; the per-process
+// transport ends its own ssh processes, and has ended them all once none of
+// its goroutines, each waiting for one of them, is left.
+func (h *harness) connectionEnded(host string) bool {
+	if runtime.GOOS != "windows" && os.Getenv("NEARHOST_TRANSPORT") != "per-process" {
+		return strings.Contains(h.log(), "-O exit -- "+host)
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if !strings.Contains(engineGoroutines(), "transport.(*perProcess)") {
+			return true
+		}
+	}
+	return false
+}
+
+// perProcessTransport reports whether the engine's servers get the
+// per-process transport, as transport.New decides: always on Windows, and
+// on Unix when NEARHOST_TRANSPORT asks for it.
+func perProcessTransport() bool {
+	return runtime.GOOS == "windows" || os.Getenv("NEARHOST_TRANSPORT") == "per-process"
+}
+
+// heldTransport wraps a server's transport so that its CancelForward waits
+// while it is held, before it cancels anything, on either transport. It
+// counts the cancels asked of it.
+type heldTransport struct {
+	transport.Transport
+	mu    sync.Mutex
+	gate  chan struct{} // nil while not held
+	asked atomic.Int32
+}
+
+func (w *heldTransport) CancelForward(ctx context.Context, local, remote int) error {
+	w.asked.Add(1)
+	w.mu.Lock()
+	gate := w.gate
+	w.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return w.Transport.CancelForward(ctx, local, remote)
+}
+
+// hold makes the cancels asked from now on wait until release.
+func (w *heldTransport) hold() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gate == nil {
+		w.gate = make(chan struct{})
+	}
+}
+
+// release lets every waiting cancel go on, and those asked later too.
+func (w *heldTransport) release() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gate != nil {
+		close(w.gate)
+		w.gate = nil
+	}
+}
+
+// holdCancels puts a heldTransport in place of the transport of server,
+// whose connection must exist. A passthrough keeps the transport it was
+// opened on, so this comes before any passthrough opens. The hold is
+// released when the test ends, before the harness shuts down.
+func (h *harness) holdCancels(t *testing.T, server string) *heldTransport {
+	t.Helper()
+	h.eng.mu.Lock()
+	var w *heldTransport
+	if c := h.eng.servers[server]; c != nil {
+		w = &heldTransport{Transport: c.sess}
+		c.sess = w
+	}
+	h.eng.mu.Unlock()
+	if w == nil {
+		t.Fatalf("holdCancels: nothing is connected to %s", server)
+	}
+	t.Cleanup(w.release)
+	return w
 }

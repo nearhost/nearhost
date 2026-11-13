@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -241,6 +242,23 @@ func TestFakeSSHPlainForwardListensAndSaysSo(t *testing.T) {
 	}, "the forwarded port to close")
 }
 
+func TestFakeSSHPlainForwardSaysTheGreeting(t *testing.T) {
+	port := FreePort(t)
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+	p := startPlain(t, []string{"FAKE_SSH_FORWARD_GREETING=hello"}, "-N", "-o", "LogLevel=DEBUG1", "-L", addr+":localhost:80", "mini")
+	WaitUntil(t, 3*time.Second, func() bool { return strings.Contains(p.stderr.String(), "Local forwarding listening") }, "the forward to listen")
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	got, err := io.ReadAll(conn)
+	conn.Close()
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("read %q, %v; want the greeting", got, err)
+	}
+}
+
 func TestFakeSSHPlainForwardOnATakenPortExits(t *testing.T) {
 	port := FreePort(t)
 	addr := "127.0.0.1:" + strconv.Itoa(port)
@@ -255,6 +273,27 @@ func TestFakeSSHPlainForwardOnATakenPortExits(t *testing.T) {
 	}
 	if want := fmt.Sprintf("bind [127.0.0.1]:%d: Address already in use", port); !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
+// The forward-failure variables fail a plain -L as they fail an
+// `-O forward`, so a test fails a forward the same way on either transport.
+func TestFakeSSHPlainForwardFailsAsTold(t *testing.T) {
+	port := FreePort(t)
+	spec := fmt.Sprintf("127.0.0.1:%d:localhost:81", port)
+	flag := filepath.Join(t.TempDir(), "forward-fails")
+	if err := os.WriteFile(flag, []byte(strconv.Itoa(port)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string][]string{
+		"by local port":  {"FAKE_SSH_FORWARD_FAIL=" + strconv.Itoa(port)},
+		"by remote port": {"FAKE_SSH_FORWARD_FAIL_REMOTE=81"},
+		"by file":        {"FAKE_SSH_FORWARD_FAIL_FILE=" + flag},
+	} {
+		code, stderr := runFake(t, env, "-N", "-o", "ExitOnForwardFailure=yes", "-L", spec, "mini")
+		if code != 255 || !strings.Contains(stderr, "Could not request local forwarding.") {
+			t.Errorf("%s: exit %d, stderr %q", name, code, stderr)
+		}
 	}
 }
 

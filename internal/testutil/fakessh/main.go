@@ -8,11 +8,12 @@
 // every 0.1 s, as the shell script it replaces did.
 //
 // A plain process (-N with neither -M nor -S) acts as a per-process ssh: it
-// listens on each -L, reports each -R, and stays up until it is killed or a
-// file named for its pid appears in $FAKE_SSH_DROP_DIR. `-G host` prints the
-// configuration and exits before anything else. A -R whose local half is a
-// Windows path (C:\...) is logged, then rejected before any connection, as
-// OpenSSH, which splits the spec at its colons, rejects it.
+// listens on each -L (failing those the FAKE_SSH_FORWARD_FAIL* variables
+// name, as an `-O forward` does), reports each -R, and stays up until it is
+// killed or a file named for its pid appears in $FAKE_SSH_DROP_DIR. `-G
+// host` prints the configuration and exits before anything else. A -R whose
+// local half is a Windows path (C:\...) is logged, then rejected before any
+// connection, as OpenSSH, which splits the spec at its colons, rejects it.
 package main
 
 import (
@@ -360,6 +361,17 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 
 	for _, l := range lforwards {
 		bind, port, _ := parseLocalForward(l)
+		// The forward-failure variables fail a plain -L as they fail an
+		// `-O forward`, so a test can fail a forward on either transport.
+		if msg := forwardFailure(l); msg != "" {
+			fmt.Fprintln(&out, msg)
+			if exitOnFail {
+				fmt.Fprintln(&out, "Could not request local forwarding.")
+				os.Stderr.WriteString(out.String())
+				return 255
+			}
+			continue
+		}
 		ln, err := net.Listen("tcp", bind+":"+port)
 		if err != nil {
 			fmt.Fprintf(&out, "bind [%s]:%s: Address already in use\n", bind, port)
@@ -375,6 +387,12 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 				c, err := ln.Accept()
 				if err != nil {
 					return
+				}
+				// $FAKE_SSH_FORWARD_GREETING is what the far end of each
+				// forward says before it hangs up. Without it nothing
+				// answers there, and the connection just ends.
+				if greeting := os.Getenv("FAKE_SSH_FORWARD_GREETING"); greeting != "" {
+					c.Write([]byte(greeting))
 				}
 				c.Close()
 			}
@@ -448,15 +466,8 @@ func forward(sock, larg, rarg string) int {
 		fmt.Fprintln(os.Stderr, msg)
 		return 255
 	}
-	// Fail only the forward whose local port equals $FAKE_SSH_FORWARD_FAIL.
-	if port := os.Getenv("FAKE_SSH_FORWARD_FAIL"); port != "" && strings.HasPrefix(larg, "127.0.0.1:"+port+":") {
-		fmt.Fprintf(os.Stderr, "bind [127.0.0.1]:%s: Address already in use\n", port)
-		return 255
-	}
-	// Fail every local forward to the remote port
-	// $FAKE_SSH_FORWARD_FAIL_REMOTE.
-	if port := os.Getenv("FAKE_SSH_FORWARD_FAIL_REMOTE"); port != "" && strings.HasSuffix(larg, ":localhost:"+port) {
-		fmt.Fprintf(os.Stderr, "channel_setup_fwd_listener_tcpip: cannot listen to port: %s\n", port)
+	if msg := fixedForwardFailure(larg); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
 		return 255
 	}
 	// If the file named by $FAKE_SSH_FORWARD_KILLS_MASTER exists, the master
@@ -468,17 +479,47 @@ func forward(sock, larg, rarg string) int {
 		fmt.Fprintln(os.Stderr, "mux_client_forward: read from master failed: Broken pipe")
 		return 255
 	}
-	// While the file named by $FAKE_SSH_FORWARD_FAIL_FILE exists, fail the
-	// forward whose local port is the file's content.
+	if msg := fileForwardFailure(larg); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return 255
+	}
+	return 0
+}
+
+// forwardFailure returns the error that fails the local forward spec, or ""
+// for one that goes through. A plain -L fails as an `-O forward` does.
+func forwardFailure(spec string) string {
+	if msg := fixedForwardFailure(spec); msg != "" {
+		return msg
+	}
+	return fileForwardFailure(spec)
+}
+
+// fixedForwardFailure fails the forward from the local port
+// $FAKE_SSH_FORWARD_FAIL, and every forward to the remote port
+// $FAKE_SSH_FORWARD_FAIL_REMOTE.
+func fixedForwardFailure(spec string) string {
+	if port := os.Getenv("FAKE_SSH_FORWARD_FAIL"); port != "" && strings.HasPrefix(spec, "127.0.0.1:"+port+":") {
+		return fmt.Sprintf("bind [127.0.0.1]:%s: Address already in use", port)
+	}
+	if port := os.Getenv("FAKE_SSH_FORWARD_FAIL_REMOTE"); port != "" && spec != "" && strings.HasSuffix(spec, ":localhost:"+port) {
+		return fmt.Sprintf("channel_setup_fwd_listener_tcpip: cannot listen to port: %s", port)
+	}
+	return ""
+}
+
+// fileForwardFailure fails, while the file named by
+// $FAKE_SSH_FORWARD_FAIL_FILE exists, the forward from the local port that
+// is its content.
+func fileForwardFailure(spec string) string {
 	if f := os.Getenv("FAKE_SSH_FORWARD_FAIL_FILE"); f != "" && exists(f) {
 		b, _ := os.ReadFile(f)
 		port := strings.TrimRight(string(b), "\n")
-		if strings.HasPrefix(larg, "127.0.0.1:"+port+":") {
-			fmt.Fprintf(os.Stderr, "bind [127.0.0.1]:%s: Address already in use\n", port)
-			return 255
+		if strings.HasPrefix(spec, "127.0.0.1:"+port+":") {
+			return fmt.Sprintf("bind [127.0.0.1]:%s: Address already in use", port)
 		}
 	}
-	return 0
+	return ""
 }
 
 // appendLine appends line and a newline to the file at path. An empty path
