@@ -1212,25 +1212,26 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 // so beside a holder of the wildcard address, so a test holds loopback.
 func proxyAddr(port int) string { return netbind.ServeAddrs(port)[0] }
 
-// holdUDPOnly holds a UDP port whose TCP twin was free when it was taken, so
-// the engine's TCP bind on that port number succeeds and its UDP bind fails.
-// A UDP port picked alone may be in use on TCP by another test.
+// heldProxyPort is a port for the test to hold, free on TCP and UDP, from
+// outside the range the system hands out. The proxy binds its HTTPS port on
+// both, so a port the system picked for TCP alone may have its UDP twin in
+// use or, on Windows, inside a range the system reserves for UDP (Hyper-V
+// and WinNAT do), and the start after the holder lets go fails.
+func heldProxyPort(t *testing.T) int {
+	t.Helper()
+	return testutil.ProxyPort(t)
+}
+
+// holdUDPOnly holds a UDP port whose TCP twin is free, so the engine's TCP
+// bind on that port number succeeds and its UDP bind fails.
 func holdUDPOnly(t *testing.T) (net.PacketConn, int) {
 	t.Helper()
-	for range 20 {
-		l, err := net.Listen("tcp", proxyAddr(0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := l.Addr().(*net.TCPAddr).Port
-		pc, err := net.ListenPacket("udp", proxyAddr(port))
-		l.Close()
-		if err == nil {
-			return pc, port
-		}
+	port := heldProxyPort(t)
+	pc, err := net.ListenPacket("udp", proxyAddr(port))
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("no port free on both TCP and UDP")
-	return nil, 0
+	return pc, port
 }
 
 func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
@@ -1243,11 +1244,12 @@ func TestStartFailsWhenAProxyPortIsTaken(t *testing.T) {
 			if which == "https-udp" {
 				holder, held = holdUDPOnly(t)
 			} else {
-				l, err := net.Listen("tcp", proxyAddr(0))
+				port := heldProxyPort(t)
+				l, err := net.Listen("tcp", proxyAddr(port))
 				if err != nil {
 					t.Fatal(err)
 				}
-				holder, held = l, l.Addr().(*net.TCPAddr).Port
+				holder, held = l, port
 			}
 			defer holder.Close()
 			h := buildHarness(t, &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}, func(o *Options) {
