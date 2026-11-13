@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +68,7 @@ func authWrapper(t *testing.T) (path, flag, hold string) {
 }
 
 type harness struct {
+	t         testing.TB
 	eng       *Engine
 	opts      Options
 	httpsPort int
@@ -95,6 +97,7 @@ func buildHarness(t *testing.T, cfg *config.Config, mutate func(*Options), sshEn
 	// nothing takes one between here and the engine binding it.
 	httpsPort, httpPort := testutil.ProxyPorts(t)
 	h := &harness{
+		t:         t,
 		httpsPort: httpsPort,
 		httpPort:  httpPort,
 		storage:   tempDir(t, "nh-caddy-"),
@@ -482,15 +485,65 @@ func (h *harness) forwarded(server string) []string { return h.specsLogged(serve
 // each cancel.
 func (h *harness) cancelled(server string) []string { return h.specsLogged(server, "cancel") }
 
+// specsLogged returns the specs the transport of server logged for op. The
+// ControlMaster transport logs only a `-O <op>` command that succeeded, so
+// there it also checks the fake ssh's own log, which records every attempt,
+// and fails the test if an attempt the transport did not log is there: an
+// extra failed attempt would otherwise go unseen.
 func (h *harness) specsLogged(server, op string) []string {
-	var out []string
-	for _, line := range h.transportLines(server) {
-		spec, ok := strings.CutPrefix(line, server+": "+op+" ")
-		if ok && !strings.Contains(spec, " ") {
-			out = append(out, spec)
+	logged := func() []string {
+		var out []string
+		for _, line := range h.transportLines(server) {
+			spec, ok := strings.CutPrefix(line, server+": "+op+" ")
+			if ok && !strings.Contains(spec, " ") {
+				out = append(out, spec)
+			}
 		}
+		return out
+	}
+	out := logged()
+	if perProcessTransport() {
+		return out
+	}
+	host := server
+	h.eng.mu.Lock()
+	if srv, ok := h.eng.cfg.Server(server); ok {
+		host = srv.SSHHost
+	}
+	h.eng.mu.Unlock()
+	attempted := func() []string {
+		var out []string
+		for _, line := range strings.Split(h.log(), "\n") {
+			rest, ok := strings.CutSuffix(line, " -- "+host)
+			if !ok {
+				continue
+			}
+			if _, spec, ok := strings.Cut(rest, " -O "+op+" -L "); ok && !strings.Contains(spec, " ") {
+				out = append(out, spec)
+			}
+		}
+		return out
+	}
+	// The fake ssh records a command before it runs and the transport logs
+	// it after, so an attempt still under way may be in the one and not yet
+	// in the other: give it a moment before calling it a mismatch.
+	tried := attempted()
+	for deadline := time.Now().Add(5 * time.Second); !sameSpecs(tried, out) && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		out, tried = logged(), attempted()
+	}
+	if !sameSpecs(tried, out) {
+		h.t.Errorf("ssh was asked to %s %q on %s, but the transport logged only %q succeeding", op, tried, server, out)
 	}
 	return out
+}
+
+// sameSpecs reports whether a and b hold the same specs, as many times each,
+// in any order.
+func sameSpecs(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 // spec is the forward spec of a local and remote port, as ssh's -L takes it.
