@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,10 +39,16 @@ func TestVersionCommandRejectsArguments(t *testing.T) {
 	}
 }
 
-// With XDG_CONFIG_HOME unset or relative the config is under ~/.config.
+// With XDG_CONFIG_HOME unset or relative the config is under ~/.config, or
+// %APPDATA% on Windows, as config.Dir has it; the help names each OS's
+// locations in its own path form.
 func TestConfigFlagHelpNamesBothDefaultLocations(t *testing.T) {
 	usage := newRootCmd().PersistentFlags().Lookup("config").Usage
-	for _, want := range []string{"$XDG_CONFIG_HOME/nearhost/config.yaml", "~/.config/nearhost/config.yaml"} {
+	locations := []string{"$XDG_CONFIG_HOME/nearhost/config.yaml", "~/.config/nearhost/config.yaml"}
+	if runtime.GOOS == "windows" {
+		locations = []string{`$XDG_CONFIG_HOME\nearhost\config.yaml`, `%APPDATA%\nearhost\config.yaml`}
+	}
+	for _, want := range locations {
 		if !strings.Contains(usage, want) {
 			t.Errorf("--config help %q does not name %s", usage, want)
 		}

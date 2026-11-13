@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -43,16 +44,13 @@ func TestNameAndAliasProblems(t *testing.T) {
 
 func TestLocalFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	for _, d := range []string{"code/blog", "code/shop", "code/.hidden"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(home, "code", "notes.txt"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(home, "code", "blog"), filepath.Join(home, "code", "linked")); err != nil {
 		t.Fatal(err)
 	}
 	var f serverFiles = localFiles{}
@@ -65,6 +63,8 @@ func TestLocalFiles(t *testing.T) {
 	if _, err := f.resolve("~/code/missing"); err == nil || err.Error() != filepath.Join(home, "code", "missing")+" on this machine: no such directory" {
 		t.Errorf("resolve of a missing directory = %v", err)
 	}
+	// Last, as it skips the rest where Windows refuses to make a link.
+	testutil.Symlink(t, filepath.Join(home, "code", "blog"), filepath.Join(home, "code", "linked"))
 	got, err := f.listDirs(filepath.Join(home, "code"))
 	if want := []string{".hidden", "blog", "linked", "shop"}; err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("listDirs = %v, %v; want %v", got, err, want)
@@ -72,6 +72,8 @@ func TestLocalFiles(t *testing.T) {
 }
 
 // sftpOnly is an ssh client whose servers allow SFTP only, served from home.
+// The server is this machine's sftp-server, so its paths are this machine's
+// folders as serverDir names them.
 func sftpOnly(t *testing.T, home string) sshClient {
 	t.Helper()
 	return sshClient{path: testutil.FakeSSH(t), env: []string{
@@ -93,14 +95,14 @@ func TestServerFilesOverSFTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer files.close()
-	real, _ := filepath.EvalSymlinks(home) // sftp-server reports the real path
-	if got, err := files.resolve("~/code/blog"); err != nil || got != filepath.Join(real, "code", "blog") {
+	real := serverDir(t, home)
+	if got, err := files.resolve("~/code/blog"); err != nil || got != path.Join(real, "code", "blog") {
 		t.Errorf("resolve = %q, %v", got, err)
 	}
 	if _, err := files.resolve("~/code/missing"); err == nil || !strings.Contains(err.Error(), "on server mini") {
 		t.Errorf("resolve of a missing directory = %v", err)
 	}
-	if got, err := files.listDirs(filepath.Join(real, "code")); err != nil || !reflect.DeepEqual(got, []string{"blog", "shop"}) {
+	if got, err := files.listDirs(path.Join(real, "code")); err != nil || !reflect.DeepEqual(got, []string{"blog", "shop"}) {
 		t.Errorf("listDirs = %v, %v", got, err)
 	}
 }
@@ -185,8 +187,7 @@ func TestServerFilesCleanPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer files.close()
-	real, _ := filepath.EvalSymlinks(home)
-	want := filepath.Join(real, "code", "blog")
+	want := path.Join(serverDir(t, home), "code", "blog")
 	for _, p := range []string{"~/code/blog/", "code/blog", "code//blog/./", want + "/"} {
 		if got, err := files.resolve(p); err != nil || got != want {
 			t.Errorf("resolve(%q) = %q, %v; want %q", p, got, err, want)

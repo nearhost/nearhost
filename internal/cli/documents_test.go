@@ -20,6 +20,7 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
+	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -103,8 +104,7 @@ func TestShowerRefusesTheHomeFolder(t *testing.T) {
 	s := newShower(&eng)
 	defer s.pool.Close()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	testutil.SetHome(t, home)
 	writeFile(t, filepath.Join(home, "p.md"), "# Plan\n")
 	_, err := s.Resolve(context.Background(), config.LocalServer, filepath.Join(home, "p.md"), home)
 	if !errors.Is(err, agentapi.ErrBadDocument) ||

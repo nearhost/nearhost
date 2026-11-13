@@ -1,11 +1,10 @@
 package cli
 
 import (
-	"fmt"
 	"io/fs"
-	"net"
 	"testing"
 
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -17,7 +16,11 @@ func TestProbePortFindsATakenPort(t *testing.T) {
 			t.Fatalf("free %s port: %v", network, err)
 		}
 	}
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	// Held where the proxy binds, as product code binds: the wildcard
+	// address on Unix, loopback on Windows, where a hold on the wildcard
+	// address does not stop a bind to loopback.
+	addr := netbind.ServeAddrs(port)[0]
+	l, err := netbind.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +31,7 @@ func TestProbePortFindsATakenPort(t *testing.T) {
 	if err := probePort("udp", port); err != nil {
 		t.Fatalf("UDP is free while TCP is taken: %v", err)
 	}
-	pc, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+	pc, err := netbind.ListenPacket("udp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

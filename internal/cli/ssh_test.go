@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +27,33 @@ func fakeClient(t *testing.T, env ...string) (sshClient, string) {
 	return sshClient{path: testutil.FakeSSH(t), env: append([]string{"FAKE_SSH_LOG=" + log}, env...)}, log
 }
 
+// serverPath is the local folder dir as a server path: a server's paths are
+// POSIX, so on Windows, where this machine's sftp-server serves its own
+// folders, C:\x is /C:/x, as OpenSSH's sftp-server for Windows names it.
+// Elsewhere it is dir.
+func serverPath(dir string) string {
+	if runtime.GOOS == "windows" {
+		return "/" + filepath.ToSlash(dir)
+	}
+	return dir
+}
+
+// serverDir is the local folder dir as this machine's sftp-server reports it
+// when it resolves a path there: the real path (under /private on macOS),
+// as a server path. sftp-server for Windows keeps the folder as it was given
+// (a short 8.3 name stays short), so on Windows it is serverPath(dir).
+func serverDir(t *testing.T, dir string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return serverPath(dir)
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
 func sshLog(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -33,8 +63,20 @@ func sshLog(t *testing.T, path string) string {
 	return string(data)
 }
 
+// isLinkLaunch reports whether line, from the fake ssh's log, starts the
+// connection to host that a session keeps up: the ControlMaster's
+// `-N -M ... -- host`, or the per-process transport's `... -N -- host`,
+// which is all Windows has.
+func isLinkLaunch(line, host string) bool {
+	fields := strings.Fields(line)
+	return slices.Contains(fields, "-N") && !slices.Contains(fields, "-O") && strings.HasSuffix(line, " -- "+host)
+}
+
 // noAddLeftovers checks that an `add` over ssh left no master process and no
-// temporary run directory behind.
+// temporary run directory behind. It finds the run directory from the
+// master's -S; the per-process transport (Windows) passes none, and that its
+// run directory goes with the session is
+// TestPrivateSessionRunDirIsUnderTempDirOnWindows.
 func noAddLeftovers(t *testing.T, log string) {
 	t.Helper()
 	for _, line := range strings.Split(sshLog(t, log), "\n") {
@@ -92,7 +134,7 @@ func TestOpenRemoteReportsRefusedAccessWithTheHint(t *testing.T) {
 	// One connection attempt and nothing else: no command was run on the
 	// server to test it, and a server that refuses is not tried again.
 	lines := strings.Split(strings.TrimSpace(sshLog(t, log)), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "-N -M ") || !strings.HasSuffix(lines[0], " -- mini.lan") {
+	if len(lines) != 1 || !isLinkLaunch(lines[0], "mini.lan") {
 		t.Fatalf("ssh was run as:\n%s", strings.Join(lines, "\n"))
 	}
 	noAddLeftovers(t, log)
@@ -120,7 +162,7 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	}}
 
 	cfgPath, _ := existing(t)
-	dir := fixture(t, "compose-literal")
+	dir := serverPath(fixture(t, "compose-literal"))
 	out, err := execute(t, newAddCmd(addBackend{openRemote: c.openRemote}), "--config", cfgPath, "add", dir, "--server", "mini", "--name", "blog", "--web", "8080")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
@@ -137,7 +179,7 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(sshLog(t, log)), "\n") {
 		switch {
 		case strings.HasSuffix(line, " -s -- mini.lan sftp"),
-			strings.Contains(line, " -O "), strings.HasPrefix(line, "-N -M ") && strings.HasSuffix(line, " -- mini.lan"):
+			strings.Contains(line, " -O "), isLinkLaunch(line, "mini.lan"):
 		default:
 			t.Errorf("unexpected ssh invocation: %s", line)
 		}
@@ -151,49 +193,38 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	}
 }
 
-// A Unix socket path holds 104 bytes on macOS (108 on Linux), and OpenSSH
-// binds a master at its control path plus a 17-byte temporary suffix. The
-// run directory of `add` must leave room whatever the server is called and
-// wherever the system keeps temporary files.
 // `add` does not handle signals: Ctrl-C ends it at once. Its master and SFTP
-// process therefore stay in its process group and end with it.
+// process therefore stay in its process group and end with it. Both
+// transports have the setting (Windows has process groups too, and puts a
+// background ssh in a new one), so this reads it from whichever transport
+// the OS gets.
 func TestPrivateSessionStaysInTheForegroundProcessGroup(t *testing.T) {
 	sess, _, end, err := sshClient{}.privateSession(config.Server{Name: "mini", SSHHost: "host.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer end()
-	if !sess.(*transport.Session).Foreground {
+	if !foreground(t, sess) {
 		t.Fatal("the session of a remote add would outlive an interrupted add")
 	}
-	if up := (sshClient{}).session(config.Server{Name: "mini", SSHHost: "host.example"}, "/tmp/nh-run"); up.(*transport.Session).Foreground {
+	if foreground(t, sshClient{}.session(config.Server{Name: "mini", SSHHost: "host.example"}, "/tmp/nh-run")) {
 		t.Fatal("only the private session of add is a foreground one")
 	}
 }
 
-func TestPrivateSessionSocketPathIsShort(t *testing.T) {
-	const sunPath, sshSuffix, margin = 104, 17, 20
-	for _, name := range []string{"mini", strings.Repeat("build-server-", 6), "deploy@build host"} {
-		sess, _, end, err := sshClient{}.privateSession(config.Server{Name: name, SSHHost: "host.example"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sock := sess.(*transport.Session).SocketPath()
-		dir := filepath.Dir(sock)
-		if n := len(sock) + sshSuffix; n > sunPath-margin {
-			t.Errorf("server %q: ssh would bind %d bytes (%s plus its suffix); the limit is %d", name, n, sock, sunPath)
-		}
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			t.Errorf("server %q: run directory %s is not a directory: %v %v", name, dir, info, err)
-		}
-		testutil.WantPerm(t, dir, 0o700)
-		if err := end(); err != nil {
-			t.Errorf("server %q: %v", name, err)
-		}
-		if _, err := os.Stat(dir); err == nil {
-			t.Errorf("server %q: run directory %s was left behind", name, dir)
-		}
+// foreground reads the Foreground setting of tr. Both transports have the
+// field, but the per-process one is not exported from its package.
+func foreground(t *testing.T, tr transport.Transport) bool {
+	t.Helper()
+	v := reflect.ValueOf(tr)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
 	}
+	f := v.FieldByName("Foreground")
+	if f.Kind() != reflect.Bool {
+		t.Fatalf("%T has no Foreground setting", tr)
+	}
+	return f.Bool()
 }
 
 func TestProjectPathOn(t *testing.T) {
@@ -242,7 +273,7 @@ func TestAddRemoteResolvesPathsUnderTheServerHome(t *testing.T) {
 		"FAKE_SSH_SFTP_HOME=" + remoteHome,
 	}}
 	localHome := "/nonexistent/home/dev"
-	t.Setenv("HOME", localHome)
+	testutil.SetHome(t, localHome)
 
 	for name, given := range map[string]string{"tilde": "~/blog", "expanded": localHome + "/blog"} {
 		t.Run(name, func(t *testing.T) {
@@ -254,7 +285,7 @@ func TestAddRemoteResolvesPathsUnderTheServerHome(t *testing.T) {
 			// sftp-server reports the real path, which on macOS is under
 			// /private.
 			p, ok := loadSaved(t, cfgPath).Project("blog")
-			if real, _ := filepath.EvalSymlinks(project); !ok || p.Path != real {
+			if real := serverDir(t, project); !ok || p.Path != real {
 				t.Fatalf("project = %+v %v, want path %s", p, ok, real)
 			}
 			wantContains(t, out, "Routes found for blog (mini:"+p.Path+"):")

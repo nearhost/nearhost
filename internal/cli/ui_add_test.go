@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -95,7 +96,7 @@ func TestFormDiscoveryOffersPresetsAndEnablesThem(t *testing.T) {
 
 func TestFormListsAndResolvesUnderHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	if err := os.MkdirAll(filepath.Join(home, "code", "blog"), 0o755); err != nil {
 		t.Fatal(err)
 	}

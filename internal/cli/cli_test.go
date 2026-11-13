@@ -31,8 +31,10 @@ import (
 // TestMain points every directory Caddy, ssh or the config package might
 // touch at a throwaway location before any test runs, so tests never read or
 // write the real user's directories.
-// It also unsets NEARHOST_TRANSPORT: these tests expect the ControlMaster
-// transport, whatever the developer's shell asks for.
+// It also unsets NEARHOST_TRANSPORT, so the tests get the platform's own
+// transport whatever the developer's shell asks for: ControlMaster on Unix,
+// per-process on Windows, which has no ControlMaster. Tests that only make
+// sense on ControlMaster are in the _unix_test.go files.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "nh-cli-")
 	if err != nil {
@@ -42,6 +44,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("XDG_DATA_HOME", dir)
 	os.Setenv("XDG_CONFIG_HOME", dir)
 	os.Setenv("HOME", dir)
+	os.Setenv("USERPROFILE", dir) // os.UserHomeDir on Windows
 	os.Unsetenv("NEARHOST_TRANSPORT")
 	code := m.Run()
 	os.RemoveAll(dir)
