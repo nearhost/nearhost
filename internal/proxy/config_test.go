@@ -49,7 +49,7 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 	if dig(t, cfg, "admin", "disabled") != true {
 		t.Error("admin should be disabled")
 	}
-	if dig(t, cfg, "storage", "root") != "/tmp/store" || dig(t, cfg, "storage", "module") != "file_system" {
+	if dig(t, cfg, "storage", "root") != "/tmp/store" || dig(t, cfg, "storage", "module") != storageModule {
 		t.Error("storage not set")
 	}
 	if dig(t, cfg, "apps", "http", "https_port") != float64(8443) || dig(t, cfg, "apps", "http", "http_port") != float64(8080) {

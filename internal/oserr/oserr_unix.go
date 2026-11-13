@@ -10,4 +10,5 @@ var (
 	nothingListening = []syscall.Errno{syscall.ENOENT, syscall.ECONNREFUSED}
 	crossDevice      = []syscall.Errno{syscall.EXDEV}
 	notAFile         = []syscall.Errno{syscall.EISDIR, syscall.ENOTDIR}
+	inUse            []syscall.Errno
 )

@@ -31,3 +31,19 @@ func TestAddrInUseForAnAccessDeniedBindOnWindows(t *testing.T) {
 		t.Errorf("AddrInUse(%v) = false", err)
 	}
 }
+
+// Go opens files without FILE_SHARE_DELETE, so a reader stops a removal.
+func TestRemovingAFileAnotherHandleHoldsIsInUseOnWindows(t *testing.T) {
+	name := t.TempDir() + `\held`
+	if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := os.Remove(name); !InUse(err) {
+		t.Errorf("removing a file that is open returned %v, want a sharing violation", err)
+	}
+}

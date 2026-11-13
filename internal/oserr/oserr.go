@@ -25,6 +25,11 @@ func CrossDevice(err error) bool { return isAny(err, crossDevice) }
 // a regular file, where a file was wanted.
 func NotAFile(err error) bool { return isAny(err, notAFile) }
 
+// InUse reports whether err says another handle has a file open in a way
+// that excludes this access, as Windows reports when a file another process
+// or goroutine is reading is removed or replaced. Unix has no such refusal.
+func InUse(err error) bool { return isAny(err, inUse) }
+
 func isAny(err error, codes []syscall.Errno) bool {
 	for _, code := range codes {
 		if errors.Is(err, code) {
