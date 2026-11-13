@@ -529,8 +529,14 @@ func TestDegradedProjectAnnouncesEachNewReason(t *testing.T) {
 		st, _ := h.eng.ServerStatus("mini")
 		return st == transport.StatusAuthFailed
 	}, "the server to give up")
-	st := h.eng.Status("myapp")
-	if st.State != StateDegraded || !strings.Contains(st.Message, "auth failed") {
+	// ServerStatus reads the session itself; the project hears of the
+	// change from the supervisor a moment later.
+	var st ProjectStatus
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		st = h.eng.Status("myapp")
+		return strings.Contains(st.Message, "auth failed")
+	}, "the project to say the server gave up")
+	if st.State != StateDegraded {
 		t.Fatalf("status = %+v", st)
 	}
 	// The supervisor logs after it changed the status; its last line is what
