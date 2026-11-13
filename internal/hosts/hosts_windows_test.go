@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // TestElevatedApplyEndToEndOnWindows builds nearhost.exe and applies a block
@@ -54,8 +55,10 @@ func TestApplyReadOnlyFileNamesTheFileOnWindows(t *testing.T) {
 	// A read-only file cannot be removed with the folder that holds it.
 	t.Cleanup(func() { os.Chmod(path, 0o644) })
 	err := Apply(path, []string{"a.test"})
-	if err == nil || !strings.Contains(err.Error(), path) {
-		t.Fatalf("err = %v, want one naming %s", err, path)
+	// The error names the long form of the path; the runner's TEMP is 8.3.
+	long := testutil.LongPath(t, path)
+	if err == nil || !strings.Contains(err.Error(), long) {
+		t.Fatalf("err = %v, want one naming %s", err, long)
 	}
 	got, _ := os.ReadFile(path)
 	if string(got) != content {
