@@ -67,7 +67,10 @@ func sshLog(t *testing.T, path string) string {
 // connection to host that a session keeps up: the ControlMaster's
 // `-N -M ... -- host`, or the per-process transport's
 // `... -o ControlMaster=no ... -N -- host`, which is all Windows has. A line
-// with a forward (-L or -R) or a control command (-O) is not one.
+// with a forward (-L or -R) or a control command (-O) is not one. Only the
+// shape of the transport this run uses counts: TestMain unsets
+// NEARHOST_TRANSPORT, so off Windows that is the ControlMaster, the same
+// choice transport.New makes.
 func isLinkLaunch(line, host string) bool {
 	fields := strings.Fields(line)
 	for _, f := range []string{"-O", "-L", "-R"} {
@@ -75,7 +78,10 @@ func isLinkLaunch(line, host string) bool {
 			return false
 		}
 	}
-	link := slices.Contains(fields, "-M") || slices.Contains(fields, "ControlMaster=no")
+	link := slices.Contains(fields, "-M")
+	if runtime.GOOS == "windows" || os.Getenv("NEARHOST_TRANSPORT") == "per-process" {
+		link = slices.Contains(fields, "ControlMaster=no")
+	}
 	return link && slices.Contains(fields, "-N") && strings.HasSuffix(line, " -- "+host)
 }
 

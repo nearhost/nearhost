@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // pipeRWC joins the two pipe ends the in-process SFTP server talks over.
@@ -105,9 +107,7 @@ func TestSFTPFS(t *testing.T) {
 	if err := os.WriteFile(path.Join(real, "p.md"), []byte("# P"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("real", path.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "real", path.Join(dir, "link"))
 	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
 	ctx := context.Background()
 
@@ -174,12 +174,8 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.dir, "outside", "x.md"), []byte("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../outside", filepath.Join(f.root, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("root", filepath.Join(f.dir, "rootlink")); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "../outside", filepath.Join(f.root, "link"))
+	testutil.Symlink(t, "root", filepath.Join(f.dir, "rootlink"))
 	client := inProcessSFTP(t, f.dir)
 	viaLink := f.table.Add("apollo", path.Join(f.dir, "rootlink"), "claude", "plan.md")
 	local := NewHandler(f.table, func(context.Context, string) (FS, error) { return LocalFS{}, nil })

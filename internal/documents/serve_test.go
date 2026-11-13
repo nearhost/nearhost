@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // htmlCSP and mdCSP are the policies every tree response must carry.
@@ -244,12 +246,8 @@ func TestDotfilesAndEscapes404(t *testing.T) {
 		t.Cleanup(func() { os.Chmod(locked, 0o755) })
 		paths = append(paths, "link/locked/x.md")
 	}
-	if err := os.Symlink("../outside", filepath.Join(f.root, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(".env", filepath.Join(f.root, "env.txt")); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, "../outside", filepath.Join(f.root, "link"))
+	testutil.Symlink(t, ".env", filepath.Join(f.root, "env.txt"))
 	for _, p := range paths {
 		rec := f.do(t, "GET", p)
 		if rec.Code != 404 {
@@ -288,9 +286,7 @@ func TestSymlinkedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, real, link)
 	tbl := NewTable(time.Now)
 	tr := tbl.Add("local", link, "claude", "docs/p.md")
 	h := NewHandler(tbl, func(context.Context, string) (FS, error) { return LocalFS{}, nil })

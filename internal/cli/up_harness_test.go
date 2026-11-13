@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -37,6 +38,9 @@ type upRun struct {
 	// trust stands for the system trust store. It trusts the local CA unless
 	// a test says otherwise.
 	trust *fakeTrust
+
+	// adjust, when set, changes the backend before up starts.
+	adjust func(*upBackend)
 
 	mu      sync.Mutex
 	ensured [][]string
@@ -156,6 +160,7 @@ func (u *upRun) backend() upBackend {
 			u.mu.Unlock()
 			return ctx, again, cancel
 		},
+		shutdown: (*engine.Engine).Shutdown,
 	}
 }
 
@@ -173,7 +178,11 @@ func (u *upRun) start(extra ...string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel = cancel
 	u.done = make(chan error, 1)
-	go func() { u.done <- executeInto(ctx, &u.out, newUpCmd(u.backend()), u.args(extra...)...) }()
+	b := u.backend()
+	if u.adjust != nil {
+		u.adjust(&b)
+	}
+	go func() { u.done <- executeInto(ctx, &u.out, newUpCmd(b), u.args(extra...)...) }()
 	u.t.Cleanup(func() {
 		if u.done != nil {
 			u.stop()

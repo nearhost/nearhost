@@ -9,6 +9,7 @@ jobs:
   # The whole suite on every OS Nearhost ships for.
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}

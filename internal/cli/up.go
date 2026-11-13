@@ -46,6 +46,10 @@ type upBackend struct {
 	notify func(parent context.Context) (ctx context.Context, again <-chan struct{}, release func())
 	// agents reaches what the agent API needs; a zero one serves no agents.
 	agents agentsBackend
+	// shutdown stops the engine once up has been interrupted, giving up
+	// when ctx ends: eng.Shutdown, which tests hold open for a second
+	// interrupt.
+	shutdown func(eng *engine.Engine, ctx context.Context) error
 }
 
 // systemUp is the production backend. Only NewRoot wires it in, with the
@@ -64,8 +68,9 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.ElevatedApplier(ctx, elevate.System(), exe, hosts.DefaultPath, hostsPrompt, true))
 			return err
 		},
-		notify: notifyStop,
-		agents: systemAgents(),
+		notify:   notifyStop,
+		shutdown: (*engine.Engine).Shutdown,
+		agents:   systemAgents(),
 	}
 }
 
@@ -217,7 +222,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	stopped := make(chan error, 1)
-	go func() { stopped <- eng.Shutdown(stopCtx) }()
+	go func() { stopped <- b.shutdown(eng, stopCtx) }()
 	var stopErr error
 	hurry := again
 	for stopping := true; stopping; {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -947,8 +948,15 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if runtime.GOOS != "windows" {
+		if string(raw) != string(want) {
+			t.Errorf("config without clients changed:\n got %s\nwant %s", raw, want)
+		}
+		return
+	}
 	// The golden file records Unix's wildcard listeners; Windows listens on
-	// loopback only, so the expected listen values come from ServeAddrs.
+	// loopback only, so there the expected listen values come from
+	// ServeAddrs and the rest is compared as JSON.
 	var gotCfg, wantCfg map[string]any
 	if err := json.Unmarshal(raw, &gotCfg); err != nil {
 		t.Fatal(err)

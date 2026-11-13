@@ -421,9 +421,7 @@ func TestScriptFindsAProjectFromASymlinkedDirectory(t *testing.T) {
 		os.MkdirAll(real, 0o755)
 		resolved, _ := filepath.EvalSymlinks(real)
 		link := filepath.Join(home, "link")
-		if err := os.Symlink(real, link); err != nil {
-			t.Skipf("no symlinks here: %v", err)
-		}
+		testutil.Symlink(t, real, link)
 		s, _ := scriptServerOf(t, home, "k3f9q2", shell.origin(), true, fakeSource{shell.origin(): {{Name: "inner", Path: resolved, URL: "https://inner.test"}}})
 		if r := shell.run(t, home, nil, "status", link); r.code != 0 || !strings.Contains(r.stdout, `"name":"inner"`) {
 			t.Fatalf("status from the link: %+v", r)
@@ -433,7 +431,7 @@ func TestScriptFindsAProjectFromASymlinkedDirectory(t *testing.T) {
 		}
 		other := filepath.Join(home, "other")
 		os.Mkdir(other, 0o755)
-		os.Symlink(other, filepath.Join(home, "otherlink"))
+		testutil.Symlink(t, other, filepath.Join(home, "otherlink"))
 		r := shell.run(t, home, nil, "propose", filepath.Join(home, "otherlink"))
 		id := proposalID.FindStringSubmatch(r.stdout)
 		if r.code != 0 || id == nil {
