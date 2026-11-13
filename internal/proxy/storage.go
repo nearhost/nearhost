@@ -29,6 +29,14 @@ func init() {
 // whose certificate is still being issued, so starting and stopping projects
 // in quick succession gets there. A certificate file read while it is being
 // replaced fails the same way.
+//
+// Two sharing failures are outside it. Store replaces a file by renaming a
+// temporary one onto it, and on Windows that rename is refused
+// (ACCESS_DENIED) while a reader has the file open. And certmagic removes a
+// stale lock file inside its own lock acquisition, which this wrapper cannot
+// reach, so that removal can fail against a waiter's read. Both only fail
+// that attempt: nothing is left behind, and certmagic retries the issuance
+// after a minute.
 type Storage struct {
 	Root string `json:"root,omitempty"`
 }
