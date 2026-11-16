@@ -62,13 +62,14 @@ jobs:
           test "$(grep -cE '_(darwin|linux)_(amd64|arm64)\.tar\.gz$' ../archives.txt)" -eq 4
           if [ "$NEARHOST_WINDOWS" = on ]; then
             test "$(grep -cE '_windows_(amd64|arm64)\.zip$' ../archives.txt)" -eq 2
+            test "$(grep -cE '_windows_(amd64|arm64)\.zip$' checksums.txt)" -eq 2
             for z in *_windows_*.zip; do
               unzip -Z1 "$z" | grep -qx nearhost.exe
               unzip -Z1 "$z" | grep -qx LICENSE
               unzip -Z1 "$z" | grep -qx README.md
             done
           else
-            ! grep -q windows ../archives.txt
+            if grep -q windows ../archives.txt; then exit 1; fi
           fi
 
   # The agent skill's script runs on servers with nothing but sh and curl,

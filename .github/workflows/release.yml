@@ -63,7 +63,8 @@ jobs:
           version: v2.18.3
           args: release --clean
         env:
-          NEARHOST_WINDOWS: ${{ env.NEARHOST_WINDOWS }}
+          # Build the release's own tag, even if another tag shares its commit.
+          GORELEASER_CURRENT_TAG: ${{ github.event.release.tag_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}

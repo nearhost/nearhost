@@ -18,7 +18,9 @@ builds:
 
   # Windows is built only while NEARHOST_WINDOWS is "on" (release.yml sets it:
   # on for prereleases, and for every release once Windows ships). With it off
-  # a release is exactly the darwin and linux build above.
+  # a release is exactly the darwin and linux build above. An unset
+  # NEARHOST_WINDOWS fails the run, on purpose: release.yml and CI must always
+  # set it.
   - id: windows
     main: ./cmd/nearhost
     binary: nearhost
@@ -68,10 +70,14 @@ sboms:
   - artifacts: archive
 
 # release-please writes the notes; keep them and only add the assets.
+# prerelease: auto marks a tag with a prerelease part (v1.0.0-rc.1) as a
+# prerelease and never "latest" when GoReleaser updates the release, so the
+# prerelease that prerelease.yml created stays one.
 changelog:
   disable: true
 release:
   mode: keep-existing
+  prerelease: auto
 
 homebrew_casks:
   - name: nearhost
