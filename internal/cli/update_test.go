@@ -170,6 +170,21 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 	}
 }
 
+// A pre-release build installs a named version, so the run-as-root advice
+// must name it too, or it would install the latest normal release.
+func TestUpdateUnwritableAdviceNamesThePrereleaseVersion(t *testing.T) {
+	for _, tc := range []struct{ goos, exe, want string }{
+		{"linux", "/usr/local/bin/nearhost", "  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=/usr/local/bin NEARHOST_VERSION=v0.13.0-rc.2 sh\n"},
+		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
+	} {
+		f := &fakeUpdate{latest: "0.13.0-rc.2", exe: tc.exe, goos: tc.goos}
+		out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
+		if err != nil || len(f.events) != 0 || !strings.HasSuffix(out, tc.want) {
+			t.Errorf("%s: out %q, err %v, events %v", tc.goos, out, err, f.events)
+		}
+	}
+}
+
 // On Windows the running nearhost.exe is moved out of the way before the
 // installer runs, since Windows will not let anything overwrite it.
 func TestUpdateOnWindowsStepsAsideFirst(t *testing.T) {

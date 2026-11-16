@@ -137,7 +137,8 @@ func highest(body io.Reader) (string, error) {
 	}
 	var best *semver.Version
 	for _, r := range rels {
-		v, err := semver.NewVersion(r.TagName)
+		// Strictly, so a loose tag such as 2024.1 cannot win.
+		v, err := semver.StrictNewVersion(strings.TrimPrefix(r.TagName, "v"))
 		if r.Draft || err != nil {
 			continue
 		}

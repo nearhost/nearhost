@@ -173,6 +173,7 @@ const releaseList = `[
  {"tag_name":"v0.14.0","draft":true,"prerelease":false},
  {"tag_name":"v0.13.0-rc.2","draft":false,"prerelease":true},
  {"tag_name":"nightly","draft":false,"prerelease":false},
+ {"tag_name":"2024.1","draft":false,"prerelease":false},
  {"tag_name":"v0.13.0-rc.1","draft":false,"prerelease":true},
  {"tag_name":"v0.12.0","draft":false,"prerelease":false}]`
 
@@ -189,7 +190,7 @@ func TestLatestOnThePrereleaseLineReadsTheList(t *testing.T) {
 	c := Checker{Current: "0.13.0-rc.1", URL: listServer(t, releaseList, &hits, nil).URL}
 	got, err := c.Latest(context.Background())
 	if err != nil || got != "0.13.0-rc.2" {
-		t.Fatalf("Latest = %q, %v; want 0.13.0-rc.2 (not the draft)", got, err)
+		t.Fatalf("Latest = %q, %v; want 0.13.0-rc.2 (not the draft, nor the loose tag 2024.1)", got, err)
 	}
 }
 

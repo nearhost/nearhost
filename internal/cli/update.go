@@ -134,10 +134,18 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir) && b.goos == "windows":
-		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s\n", m.Dir, psQuote(m.Dir), update.InstallScriptWindows)
+		pin := ""
+		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
+			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
+		}
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
-		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s sh\n", m.Dir, m.Dir)
+		pin := ""
+		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
+			pin = " NEARHOST_VERSION=" + v
+		}
+		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s%s sh\n", m.Dir, m.Dir, pin)
 		return nil
 	}
 
@@ -200,6 +208,17 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 		return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
 	}
 	return nil
+}
+
+// envOf is the value m sets name to, or "". A pre-release build's method
+// sets NEARHOST_VERSION.
+func envOf(m update.Method, name string) string {
+	for _, e := range m.Env {
+		if v, ok := strings.CutPrefix(e, name+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // psQuote is s for a single-quoted PowerShell string.
