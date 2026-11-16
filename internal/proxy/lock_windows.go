@@ -14,6 +14,11 @@ import (
 // right to; only the second lasts, and it is the one this reports false for.
 // A read refused by another handle (a sharing violation) is transient, and
 // passes too, as the file can be read again once that handle closes.
+//
+// This is deliberately broad: pending deletion, missing, readable again and
+// in use all pass, so any of certmagic's failures around an unlock is tried
+// again. Lock bounds that, returning the original error at its deadline, and
+// a lasting ACCESS_DENIED (no right to the file) fails at once.
 func lockSettling(file string) bool {
 	if oserr.DeletePending(file) {
 		return true

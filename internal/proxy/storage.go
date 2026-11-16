@@ -76,7 +76,13 @@ const inUseWait = 5 * time.Second
 
 // Lock implements certmagic.Locker. When certmagic's attempt fails while the
 // lock file may just be finishing its removal (see lockSettling), it tries
-// again, for up to inUseWait or until ctx ends.
+// again, for up to inUseWait from that first failure or until ctx ends.
+//
+// The retry is deliberately broad: it goes on while the lock file is pending
+// deletion, gone, readable again, or held by another handle, since certmagic
+// reports none of these apart. At the deadline the last attempt's own error
+// is returned. An ACCESS_DENIED that lasts, from a file the process has no
+// right to, is none of these, and fails at once.
 func (s *fileStorage) Lock(ctx context.Context, name string) error {
 	lockStarts()
 	file := filepath.Join(s.Path, "locks", certmagic.StorageKeys.Safe(name)+".lock")
@@ -89,12 +95,20 @@ func (s *fileStorage) Lock(ctx context.Context, name string) error {
 var lockRetryWindow = inUseWait
 
 // retryLock calls lock until it succeeds, ctx ends, or it fails while
-// settling reports false or window has passed.
+// settling reports false or window has passed since its first failure. The
+// window starts there, not at the call: certmagic's Lock can wait for the
+// holder for many seconds before an attempt fails, and that waiter must
+// still get its retries.
 func retryLock(ctx context.Context, window time.Duration, lock func() error, settling func() bool) error {
-	deadline := time.Now().Add(window)
+	var deadline time.Time
 	for {
 		err := lock()
-		if err == nil || ctx.Err() != nil || time.Now().After(deadline) || !settling() {
+		if err == nil || ctx.Err() != nil || !settling() {
+			return err
+		}
+		if now := time.Now(); deadline.IsZero() {
+			deadline = now.Add(window)
+		} else if now.After(deadline) {
 			return err
 		}
 		lockWaits()
