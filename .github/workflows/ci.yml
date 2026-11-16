@@ -31,7 +31,7 @@ jobs:
       matrix:
         what:
           - name: lockdiag
-            cmd: NEARHOST_LOCK_DIAG=1 go test -count=1 -v -run 'TestDiag' ./internal/proxy/
+            cmd: NEARHOST_LOCK_DIAG=1 go test -count=1 -v -run 'TestDiagGo' ./internal/proxy/
           - name: reload
             cmd: go test -count=5 -timeout 30m -run '^TestARequestJustAfterAReloadIsServedOnWindows$' ./internal/proxy/
           - name: proxy

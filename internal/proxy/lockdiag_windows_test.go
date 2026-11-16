@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -163,4 +164,100 @@ func TestDiagCertmagicLockContentionOnWindows(t *testing.T) {
 	}
 	sort.Strings(lines)
 	t.Logf("%d locks taken; failures:\n%s", ok, strings.Join(lines, "\n"))
+}
+
+var rtlGetLastNtStatus = windows.NewLazySystemDLL("ntdll.dll").NewProc("RtlGetLastNtStatus")
+
+// lastStatus runs f on a locked thread and, if it fails, reads the NT status
+// Win32 last saw on that thread.
+func lastStatus(f func() error) (error, uint32) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	err := f()
+	if err == nil {
+		return nil, 0
+	}
+	st, _, _ := rtlGetLastNtStatus.Call()
+	return err, uint32(st)
+}
+
+// certmagic's lock file operations, through Go's os package as certmagic
+// makes them, with the NT status behind every failure.
+func TestDiagGoLockFileStatusesOnWindows(t *testing.T) {
+	if os.Getenv("NEARHOST_LOCK_DIAG") == "" {
+		t.Skip("set NEARHOST_LOCK_DIAG")
+	}
+	if err := rtlGetLastNtStatus.Find(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "issue_cert_a.test.lock")
+	var mu sync.Mutex
+	counts := map[string]int{}
+	note := func(what string, err error, st uint32) {
+		var en windows.Errno
+		errors.As(err, &en)
+		mu.Lock()
+		counts[fmt.Sprintf("%s: errno %d, NT status %#x", what, uint32(en), st)]++
+		mu.Unlock()
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(deadline) {
+				var f *os.File
+				err, st := lastStatus(func() (err error) {
+					f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+					return err
+				})
+				if err == nil {
+					f.Write([]byte(`{"created":"2026-11-16T00:00:00Z"}`))
+					f.Sync()
+					f.Close()
+					if err, st := lastStatus(func() error {
+						f, err := os.OpenFile(path, os.O_RDWR, 0o644)
+						if err == nil {
+							f.Truncate(0)
+							f.Write([]byte(`{"created":"2026-11-16T00:00:00Z"}`))
+							f.Sync()
+							f.Close()
+						}
+						return err
+					}); err != nil {
+						note("refresh", err, st)
+					}
+					for i := 0; i < 1000; i++ {
+						err, st := lastStatus(func() error { return os.Remove(path) })
+						if err == nil {
+							break
+						}
+						note("remove", err, st)
+					}
+					continue
+				}
+				if os.IsExist(err) {
+					if err, st := lastStatus(func() error {
+						f, err := os.Open(path)
+						if err == nil {
+							f.Close()
+						}
+						return err
+					}); err != nil && !os.IsNotExist(err) {
+						note("read", err, st)
+					}
+					continue
+				}
+				note("create", err, st)
+			}
+		}()
+	}
+	wg.Wait()
+	var lines []string
+	for k, v := range counts {
+		lines = append(lines, fmt.Sprintf("%6d %s", v, k))
+	}
+	sort.Strings(lines)
+	t.Logf("failures:\n%s", strings.Join(lines, "\n"))
 }
