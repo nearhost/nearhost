@@ -30,12 +30,11 @@ func NotAFile(err error) bool { return isAny(err, notAFile) }
 // or goroutine is reading is removed or replaced. Unix has no such refusal.
 func InUse(err error) bool { return isAny(err, inUse) }
 
-// DeletePending reports whether path names a file that was removed while
-// another handle, one that shares deletion such as an antivirus scanner's,
-// had it open. Windows keeps such a file until that handle closes, and until
-// then it can be neither opened nor created again: both fail as
-// ACCESS_DENIED, which says nothing else about why. Unix removes a file at
-// once, so there it is always false.
+// DeletePending reports whether path names a file that is being removed:
+// DeleteFile opens the file, marks it for deletion and then closes its
+// handle, and until that close the file can be neither opened nor created
+// again. Windows reports both as ACCESS_DENIED, which says nothing else about
+// why. Unix removes a file at once, so there it is always false.
 func DeletePending(path string) bool { return deletePending(path) }
 
 func isAny(err error, codes []syscall.Errno) bool {
