@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/update"
 )
 
 // dnsTTL is how long a DNS answer about a host is used, and dnsFailTTL how
@@ -176,7 +177,9 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 // Main runs the CLI with the given arguments and returns the process exit code.
 func Main(args []string) int {
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
-	if shouldCheckForUpdate(args, os.Getenv, Version, elevate.Elevated(), tty) {
+	elevated := elevate.Elevated()
+	clearOldCopies(elevated)
+	if shouldCheckForUpdate(args, os.Getenv, Version, elevated, tty) {
 		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root := NewRoot()
@@ -212,6 +215,21 @@ func exitCode(err error, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stderr, "nearhost:", err)
 	return 1
+}
+
+// cleanOld deletes the copies earlier updates moved aside. Tests of Main
+// replace it, so they leave the real %LOCALAPPDATA% alone.
+var cleanOld = update.CleanOld
+
+// clearOldCopies starts cleanOld in the background, so no command waits on
+// it, and reports whether it did. An elevated run, as the hosts helper is,
+// leaves it to the user's own runs. It does nothing off Windows.
+func clearOldCopies(elevated bool) bool {
+	if elevated {
+		return false
+	}
+	go cleanOld(realExecutable())
+	return true
 }
 
 // updates is this run's check for a new release, or nil when it makes none.

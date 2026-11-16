@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
 	"time"
@@ -33,6 +34,11 @@ type updateBackend struct {
 	goos        string
 	// run runs the update command.
 	run func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error
+	// stepAside moves the running binary out of the way, on Windows only,
+	// and returns a function that moves it back.
+	stepAside func(exe string) (restore func() error, err error)
+	// exists reports whether there is a file at path.
+	exists func(path string) bool
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -60,6 +66,11 @@ func systemUpdate() updateBackend {
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
+		stepAside: update.StepAside,
+		exists: func(path string) bool {
+			_, err := os.Stat(path)
+			return err == nil
+		},
 	}
 }
 
@@ -69,7 +80,8 @@ func newUpdateCmd(b updateBackend) *cobra.Command {
 		Use:   "update",
 		Short: "Update nearhost to the latest release",
 		Long: "Update nearhost to the latest release, the way this copy was installed:\n" +
-			"with Homebrew, npm, pnpm, bun, go install or the install script.\n\n" +
+			"with Homebrew, npm, pnpm, bun, go install, the install script, or on\n" +
+			"Windows the PowerShell installer.\n\n" +
 			"nearhost also checks for a new release at most once a day and says so\n" +
 			"when one is out. Set NEARHOST_NO_UPDATE_CHECK=1 to turn that off.",
 		Args: cobra.NoArgs,
@@ -121,6 +133,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		}
 		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)
 		return nil
+	case m.Kind == update.Script && !b.writable(m.Dir) && b.goos == "windows":
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s\n", m.Dir, psQuote(m.Dir), update.InstallScriptWindows)
+		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
 		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s sh\n", m.Dir, m.Dir)
 		return nil
@@ -140,8 +155,12 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 			return nil
 		}
 	}
-	if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
-		return fmt.Errorf("`%s` failed: %w", m, err)
+	if b.goos != "windows" {
+		if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
+			return fmt.Errorf("`%s` failed: %w", m, err)
+		}
+	} else if err := runAside(ctx, cmd, b, m, exe); err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
 	if b.goos == "linux" {
@@ -154,6 +173,37 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	}
 	return nil
 }
+
+// runAside runs the update on Windows, which will not let anything overwrite
+// or delete the running exe: it moves exe out of the way first, and puts it
+// back when the update fails, so there is always a working nearhost.
+func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe string) error {
+	restore, err := b.stepAside(exe)
+	if err != nil {
+		return fmt.Errorf("nothing was updated, as the running nearhost could not be moved out of the way: %w", err)
+	}
+	// A Ctrl-C reaches the installer too, which then fails, and the old
+	// copy goes back; nearhost must not end before it does.
+	held := make(chan os.Signal, 1)
+	signal.Notify(held, os.Interrupt)
+	defer signal.Stop(held)
+	failed := func(err error) error {
+		if rerr := restore(); rerr != nil {
+			return fmt.Errorf("%w, and the old nearhost could not be put back: %v", err, rerr)
+		}
+		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
+	}
+	if err := b.run(ctx, m, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+		return failed(fmt.Errorf("`%s` failed: %w", m, err))
+	}
+	if !b.exists(exe) {
+		return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
+	}
+	return nil
+}
+
+// psQuote is s for a single-quoted PowerShell string.
+func psQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // updateHTTP is the client for update checks, short enough that a slow
 // network never holds anything up for long.

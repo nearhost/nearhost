@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/nearhost/nearhost/internal/elevate"
 )
 
 func TestVersionCommandPrintsVersion(t *testing.T) {
@@ -24,8 +28,73 @@ func TestVersionCommandPrintsVersion(t *testing.T) {
 }
 
 func TestMainReturnsNonZeroOnUnknownCommand(t *testing.T) {
+	noCleanOld(t)
 	if code := Main([]string{"definitely-not-a-command"}); code == 0 {
 		t.Fatal("expected non-zero exit code for unknown command")
+	}
+}
+
+// noCleanOld stops Main from clearing the real %LOCALAPPDATA%\nearhost\old.
+func noCleanOld(t *testing.T) chan string {
+	t.Helper()
+	orig := cleanOld
+	t.Cleanup(func() { cleanOld = orig })
+	called := make(chan string, 1)
+	cleanOld = func(exe string) { called <- exe }
+	return called
+}
+
+// quiet sends this process's stdout and stderr to nowhere until the test ends.
+func quiet(t *testing.T) {
+	t.Helper()
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = null, null
+	t.Cleanup(func() {
+		os.Stdout, os.Stderr = stdout, stderr
+		null.Close()
+	})
+}
+
+// Every run clears the copies earlier updates moved aside, without waiting
+// for it, unless it is elevated (the CI's Windows runner is).
+func TestMainClearsOldCopies(t *testing.T) {
+	called := noCleanOld(t)
+	quiet(t)
+	Main([]string{"version"})
+	if elevate.Elevated() {
+		select {
+		case exe := <-called:
+			t.Fatalf("an elevated run cleared old copies beside %s", exe)
+		default:
+		}
+		return
+	}
+	select {
+	case exe := <-called:
+		if exe != realExecutable() {
+			t.Fatalf("cleaned %q, want %q", exe, realExecutable())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Main did not clear old copies")
+	}
+}
+
+func TestClearOldCopiesSkipsAnElevatedRun(t *testing.T) {
+	called := noCleanOld(t)
+	if clearOldCopies(true) {
+		t.Fatal("an elevated run cleared old copies")
+	}
+	if !clearOldCopies(false) {
+		t.Fatal("a normal run did not clear old copies")
+	}
+	select {
+	case <-called:
+	case <-time.After(10 * time.Second):
+		t.Fatal("cleanOld was not called")
 	}
 }
 
