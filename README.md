@@ -63,7 +63,7 @@ The script downloads the matching release from GitHub, checks it against the pub
 
 **Windows requirements**
 
-Nearhost needs Windows 11 and Windows Terminal. It uses Microsoft's OpenSSH client (`ssh.exe`) and your `~/.ssh/config`. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose More info, then Run anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
+Nearhost needs Windows 11 and Windows Terminal. It uses Microsoft's OpenSSH client (`ssh.exe`) and your `~/.ssh/config`. A `Host` entry that Nearhost uses must not set `LocalForward`, `RemoteForward`, `DynamicForward`, `ForkAfterAuthentication yes` or `ClearAllForwardings yes`, and Nearhost names the setting if one does. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose More info, then Run anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
 
 **npm**
 
@@ -111,7 +111,7 @@ Trust the local certificate authority. This asks for your password once. On Wind
 nearhost trust
 ```
 
-The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On Windows it is in `%LOCALAPPDATA%\nearhost\caddy`. On macOS and Linux, an absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy`. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
+The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On Windows it is in `%LOCALAPPDATA%\nearhost\caddy`. An absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy` on all three systems. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
 
 Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml` (`%APPDATA%\nearhost\config.yaml` on Windows). Nothing in the project is changed.
 
