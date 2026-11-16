@@ -119,15 +119,17 @@ func TestDetectOnWindows(t *testing.T) {
 	}
 	m := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv)
 	wantArgs := []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://nearhost.dev/install.ps1 | iex"}
-	// NEARHOST_NO_PATH: an update never changes the user's PATH.
-	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1"}) || m.Dir != `C:\Tools` {
+	// NEARHOST_NO_PATH: an update never changes the user's PATH. An empty
+	// NEARHOST_VERSION: a version pinned in the user's session is not
+	// reinstalled.
+	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) || m.Dir != `C:\Tools` {
 		t.Fatalf("Args %q Env %q Dir %q", m.Args, m.Env, m.Dir)
 	}
 	if InstallScriptWindows != "irm https://nearhost.dev/install.ps1 | iex" {
 		t.Fatalf("InstallScriptWindows = %q", InstallScriptWindows)
 	}
 	spaced := DetectOn("windows", `C:\Users\José Núñez\bin\nearhost.exe`, getenv)
-	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`, "NEARHOST_NO_PATH=1"}) {
+	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) {
 		t.Fatalf("Env = %q", spaced.Env)
 	}
 }
@@ -159,8 +161,11 @@ func TestPinned(t *testing.T) {
 	if want := `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
 		t.Errorf("windows Pinned = %q, want %q", w.String(), want)
 	}
-	if !slices.Contains(w.Env, "NEARHOST_VERSION=v0.13.0-rc.2") || !slices.Contains(w.Env, `NEARHOST_INSTALL_DIR=C:\Tools`) {
-		t.Errorf("Env = %q", w.Env)
+	if !slices.Equal(w.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.2"}) {
+		t.Errorf("Env = %q, want NEARHOST_VERSION set once, to the version", w.Env)
+	}
+	if again := w.Pinned("0.13.0-rc.3"); !slices.Equal(again.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.3"}) {
+		t.Errorf("Pinned twice: Env = %q", again.Env)
 	}
 	for _, exe := range []string{"/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost", "/Users/me/.npm/_npx/a/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"} {
 		base := DetectOn("darwin", exe, getenv)

@@ -93,6 +93,7 @@ func (m Method) Pinned(version string) Method {
 	case Go:
 		out.Args[len(out.Args)-1] = "github.com/nearhost/nearhost/cmd/nearhost@v" + version
 	case Script:
+		out.Env = slices.DeleteFunc(out.Env, func(e string) bool { return strings.HasPrefix(e, "NEARHOST_VERSION=") })
 		out.Env = append(out.Env, "NEARHOST_VERSION=v"+version)
 	}
 	return out
@@ -135,8 +136,10 @@ func DetectOn(goos, exe string, getenv func(string) string) Method {
 		m.Kind = Script
 		m.Args = []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", InstallScriptWindows}
 		// An update replaces the binary in place and leaves PATH alone,
-		// whichever PATH the folder is on, or none.
-		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir, "NEARHOST_NO_PATH=1"}
+		// whichever PATH the folder is on, or none. NEARHOST_VERSION is
+		// empty, which install.ps1 reads as unset, so a version pinned in the
+		// user's session does not stand in for the latest; Pinned sets it.
+		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}
 	default:
 		m.Kind = Script
 		m.Args = []string{"sh", "-c", InstallScript}
