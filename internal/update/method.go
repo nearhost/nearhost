@@ -32,6 +32,20 @@ const InstallScript = "curl -fsSL https://nearhost.dev/install.sh | sh"
 // InstallScriptWindows is the PowerShell installer's one-liner.
 const InstallScriptWindows = "irm https://nearhost.dev/install.ps1 | iex"
 
+// psQuotes doubles each character that ends a single-quoted PowerShell
+// string: the apostrophe and the four curly single quotes, U+2018 to U+201B.
+// PowerShell reads each one doubled as itself.
+var psQuotes = strings.NewReplacer(
+	"'", "''",
+	"\u2018", "\u2018\u2018",
+	"\u2019", "\u2019\u2019",
+	"\u201a", "\u201a\u201a",
+	"\u201b", "\u201b\u201b",
+)
+
+// PSQuote is s for the inside of a single-quoted PowerShell string.
+func PSQuote(s string) string { return psQuotes.Replace(s) }
+
 // Method is how to update a copy of nearhost.
 type Method struct {
 	Kind Kind

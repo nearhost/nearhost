@@ -178,6 +178,22 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 	}
 }
 
+// A folder whose name has an apostrophe, straight or curly, is quoted for
+// PowerShell, which would otherwise end the string there.
+func TestUpdateUnwritableAdviceQuotesTheFolder(t *testing.T) {
+	for _, tc := range []struct{ dir, quoted string }{
+		{`C:\Users\Seán O'Brien\bin`, `C:\Users\Seán O''Brien\bin`},
+		{"C:\\Users\\Seán O\u2019Brien\\bin", "C:\\Users\\Seán O\u2019\u2019Brien\\bin"},
+	} {
+		f := &fakeUpdate{latest: "0.6.0", exe: tc.dir + `\nearhost.exe`, goos: "windows"}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		want := "  $env:NEARHOST_INSTALL_DIR='" + tc.quoted + "'; $env:NEARHOST_NO_PATH='1'; irm https://nearhost.dev/install.ps1 | iex\n"
+		if err != nil || len(f.events) != 0 || !strings.HasSuffix(out, want) {
+			t.Errorf("out %q, err %v; want it to end %q", out, err, want)
+		}
+	}
+}
+
 // A pre-release build installs a named version, so the run-as-root advice
 // must name it too, or it would install the latest normal release.
 func TestUpdateUnwritableAdviceNamesThePrereleaseVersion(t *testing.T) {

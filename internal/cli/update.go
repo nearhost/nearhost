@@ -137,9 +137,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	case m.Kind == update.Script && b.goos == "windows" && !b.writable(m.Dir):
 		pin := ""
 		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
-			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
+			pin = "$env:NEARHOST_VERSION='" + update.PSQuote(v) + "'; "
 		}
-		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; $env:NEARHOST_NO_PATH='1'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; $env:NEARHOST_NO_PATH='1'; %s%s\n", m.Dir, update.PSQuote(m.Dir), pin, update.InstallScriptWindows)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
 		pin := ""
@@ -243,9 +243,6 @@ func envOf(m update.Method, name string) string {
 	}
 	return ""
 }
-
-// psQuote is s for a single-quoted PowerShell string.
-func psQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // updateHTTP is the client for update checks, short enough that a slow
 // network never holds anything up for long.

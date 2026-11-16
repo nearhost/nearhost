@@ -174,3 +174,20 @@ func TestPinned(t *testing.T) {
 		}
 	}
 }
+
+// PowerShell ends a single-quoted string on any of five quote marks, and
+// reads each one doubled as itself.
+func TestPSQuote(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`C:\Tools`, `C:\Tools`},
+		{`C:\Users\José Núñez\bin`, `C:\Users\José Núñez\bin`},
+		{`C:\Users\Seán O'Brien\bin`, `C:\Users\Seán O''Brien\bin`},
+		{"C:\\Users\\Seán O\u2019Brien\\bin", "C:\\Users\\Seán O\u2019\u2019Brien\\bin"},
+		{"\u2018\u2019\u201a\u201b'", "\u2018\u2018\u2019\u2019\u201a\u201a\u201b\u201b''"},
+		{`say "hi" $x`, `say "hi" $x`},
+	} {
+		if got := PSQuote(tc.in); got != tc.want {
+			t.Errorf("PSQuote(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
