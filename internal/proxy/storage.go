@@ -76,7 +76,7 @@ const inUseWait = 5 * time.Second
 
 // Lock implements certmagic.Locker. When certmagic's attempt fails while the
 // lock file may just be finishing its removal (see lockSettling), it tries
-// again, for up to inUseWait from that first failure or until ctx ends.
+// again, pausing for up to inUseWait in all or until ctx ends.
 //
 // The retry is deliberately broad: it goes on while the lock file is pending
 // deletion, gone, readable again, or held by another handle, since certmagic
@@ -94,28 +94,28 @@ func (s *fileStorage) Lock(ctx context.Context, name string) error {
 // lockRetryWindow is how long Lock goes on trying again; tests shorten it.
 var lockRetryWindow = inUseWait
 
+// lockRetryPause is the pause between attempts at a lock.
+const lockRetryPause = 10 * time.Millisecond
+
 // retryLock calls lock until it succeeds, ctx ends, or it fails while
-// settling reports false or window has passed since its first failure. The
-// window starts there, not at the call: certmagic's Lock can wait for the
-// holder for many seconds before an attempt fails, and that waiter must
-// still get its retries.
+// settling reports false or it has paused for window in all. Only the pauses
+// count towards window, not the time inside an attempt: certmagic's Lock can
+// wait many seconds for a holder before it fails on that holder's unlock, at
+// the first attempt or at a later one, and that waiter must still get its
+// retries.
 func retryLock(ctx context.Context, window time.Duration, lock func() error, settling func() bool) error {
-	var deadline time.Time
+	var paused time.Duration
 	for {
 		err := lock()
-		if err == nil || ctx.Err() != nil || !settling() {
-			return err
-		}
-		if now := time.Now(); deadline.IsZero() {
-			deadline = now.Add(window)
-		} else if now.After(deadline) {
+		if err == nil || ctx.Err() != nil || !settling() || paused >= window {
 			return err
 		}
 		lockWaits()
 		select {
 		case <-ctx.Done():
 			return err
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(lockRetryPause):
+			paused += lockRetryPause
 		}
 	}
 }

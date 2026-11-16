@@ -68,10 +68,9 @@ func TestStorageModuleKeepsFilesInTheRoot(t *testing.T) {
 }
 
 // A Lock call can wait a long time inside certmagic for the holder before
-// its attempt fails on a lock file being removed. The retry window starts at
-// that failure, not when Lock was called, so that late waiter still tries
-// again.
-func TestRetryLockWindowStartsAtTheFirstFailure(t *testing.T) {
+// its attempt fails on a lock file being removed. The retry window counts only
+// the pauses between attempts, so that late waiter still tries again.
+func TestRetryLockRetriesAfterALongFirstAttempt(t *testing.T) {
 	const window = 20 * time.Millisecond
 	errSettling := errors.New("lock file being removed")
 	calls := 0
@@ -86,6 +85,26 @@ func TestRetryLockWindowStartsAtTheFirstFailure(t *testing.T) {
 	}, func() bool { return true })
 	if err != nil || calls != 2 {
 		t.Fatalf("retryLock after a long wait = %v in %d attempts, want success on the second", err, calls)
+	}
+}
+
+// A retry that itself waits for a new holder, past the window, and then meets
+// that holder's unlock is still retried: time spent inside an attempt is not
+// time spent retrying.
+func TestRetryLockDoesNotCountTimeInsideAnAttempt(t *testing.T) {
+	const window = 20 * time.Millisecond
+	errSettling := errors.New("lock file being removed")
+	calls := 0
+	err := retryLock(context.Background(), window, func() error {
+		calls++
+		if calls <= 2 {
+			time.Sleep(3 * window)
+			return errSettling
+		}
+		return nil
+	}, func() bool { return true })
+	if err != nil || calls != 3 {
+		t.Fatalf("retryLock after two long waits = %v in %d attempts, want success on the third", err, calls)
 	}
 }
 

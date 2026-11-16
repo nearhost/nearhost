@@ -164,8 +164,8 @@ func TestStorageLockGivesUpWithItsContextOnWindows(t *testing.T) {
 // certmagic's Lock waits for a held lock, polling every second, and a waiter
 // can be kept there far longer than the retry window. When the holder's
 // unlock then leaves the lock file pending deletion just as the waiter looks
-// again, the waiter still tries again: the window starts at that failure,
-// not when Lock was called.
+// again, the waiter still tries again: the window counts only the
+// pauses between attempts, not the wait inside one.
 func TestStorageLockRetriesAfterALongWaitOnWindows(t *testing.T) {
 	root := t.TempDir()
 	st, _ := Storage{Root: root}.CertMagicStorage()
