@@ -16,13 +16,16 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// GOOS/GOARCH as goreleaser names the tarballs, and the platform and arch
-// Node reports for them.
+// GOOS/GOARCH as goreleaser names the archives, and the platform and arch
+// Node reports for them. Windows is built only when the release has its
+// archives (a release made with the Windows switch off does not).
 const targets = [
   { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', label: 'macOS on Intel' },
   { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', label: 'macOS on Apple silicon' },
   { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', label: 'Linux on x64' },
   { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', label: 'Linux on ARM64' },
+  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', label: 'Windows on x64', optional: true },
+  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', label: 'Windows on ARM64', optional: true },
 ];
 
 const version = (process.argv[2] ?? '').replace(/^v/, '');
@@ -61,8 +64,14 @@ rmSync(out, { recursive: true, force: true });
 const work = mkdtempSync(join(tmpdir(), 'nearhost-npm-'));
 
 try {
+  const built = [];
   for (const t of targets) {
-    const asset = `nearhost_${version}_${t.goos}_${t.goarch}.tar.gz`;
+    const zip = t.goos === 'windows';
+    const ext = zip ? 'zip' : 'tar.gz';
+    const exe = zip ? 'nearhost.exe' : 'nearhost';
+    const asset = `nearhost_${version}_${t.goos}_${t.goarch}.${ext}`;
+    if (t.optional && !sums.has(asset)) continue;
+    built.push(t);
     const tarball = await download(asset);
     const sum = createHash('sha256').update(tarball).digest('hex');
     if (!sums.has(asset)) throw new Error(`${asset} is not in checksums.txt`);
@@ -72,8 +81,9 @@ try {
     const dir = join(out, name);
     mkdirSync(join(dir, 'bin'), { recursive: true });
     writeFileSync(join(work, asset), tarball);
-    execFileSync('tar', ['-xzf', join(work, asset), '-C', join(dir, 'bin'), 'nearhost']);
-    chmodSync(join(dir, 'bin', 'nearhost'), 0o755);
+    if (zip) execFileSync('unzip', ['-q', '-o', join(work, asset), exe, '-d', join(dir, 'bin')]);
+    else execFileSync('tar', ['-xzf', join(work, asset), '-C', join(dir, 'bin'), exe]);
+    if (!zip) chmodSync(join(dir, 'bin', exe), 0o755);
 
     const pkg = {
       name: `@nearhost/${name}`,
@@ -86,7 +96,7 @@ try {
       preferUnplugged: true,
     };
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
-    const fields = { name, label: t.label, version, goos: t.goos, goarch: t.goarch };
+    const fields = { name, label: t.label, version, goos: t.goos, goarch: t.goarch, ext };
     writeFileSync(join(dir, 'README.md'), readme.replace(/{{(\w+)}}/g, (_, k) => fields[k]));
     launcher.optionalDependencies[pkg.name] = version;
     console.log(`${pkg.name}@${version}`);
@@ -96,7 +106,7 @@ try {
   cpSync(join(here, 'cli'), dir, { recursive: true });
   cpSync(join(here, '..', 'LICENSE'), join(dir, 'LICENSE'));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ ...launcher, version }, null, 2) + '\n');
-  for (const t of targets) cpSync(join(here, '..', 'LICENSE'), join(out, `cli-${t.os}-${t.cpu}`, 'LICENSE'));
+  for (const t of built) cpSync(join(here, '..', 'LICENSE'), join(out, `cli-${t.os}-${t.cpu}`, 'LICENSE'));
   console.log(`${launcher.name}@${version}`);
 } finally {
   rmSync(work, { recursive: true, force: true });
