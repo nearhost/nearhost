@@ -8,6 +8,12 @@ Nearhost is a terminal app that opens a dev server running on one of your other 
 curl -fsSL https://nearhost.dev/install.sh | sh
 ```
 
+On Windows 11, in PowerShell:
+
+```powershell
+irm https://nearhost.dev/install.ps1 | iex
+```
+
 [Website](https://nearhost.dev) · [Docs](https://nearhost.dev/docs/getting-started/introduction/) · [Releases](https://github.com/nearhost/nearhost/releases) · [npm](https://www.npmjs.com/package/@nearhost/cli)
 
 ![The Nearhost terminal interface: servers and projects on the left, and the selected project's address, routes and request log on the right.](https://raw.githubusercontent.com/nearhost/.github/main/assets/tui.png)
@@ -31,7 +37,7 @@ Nearhost gives each project a name, a certificate your browser trusts and forwar
 
 ## Install
 
-Nearhost is a single binary for macOS and Linux, on Intel and ARM.
+Nearhost is a single binary for macOS, Linux and Windows 11, on Intel and ARM.
 
 **Homebrew**
 
@@ -46,6 +52,14 @@ curl -fsSL https://nearhost.dev/install.sh | sh
 ```
 
 The script downloads the matching release from GitHub, checks it against the published checksums and installs to `/usr/local/bin` when that is writable, otherwise to `~/.local/bin`. On Linux it also offers to let the binary bind ports 80 and 443, and runs `sudo setcap` only if you say yes. It asks only when it can read your answer from a terminal, as when you run a downloaded copy; through `curl | sh` it prints the command instead.
+
+**PowerShell installer** (Windows)
+
+```powershell
+irm https://nearhost.dev/install.ps1 | iex
+```
+
+The script downloads the matching release from GitHub, checks it against the published checksums and installs to `%LOCALAPPDATA%\Programs\nearhost`. It adds that folder to your user `PATH`, so open a new terminal afterwards. Set `NEARHOST_INSTALL_DIR` to install elsewhere, or `NEARHOST_VERSION` to install a specific version. You can also download `nearhost_<version>_windows_<amd64|arm64>.zip` from the [release](https://github.com/nearhost/nearhost/releases) and put `nearhost.exe` on your `PATH`.
 
 **npm**
 
@@ -69,6 +83,8 @@ On Linux, allow the binary to bind ports 80 and 443. Run this again after each u
 sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 ```
 
+On Windows, Nearhost needs Windows 11 and Windows Terminal. It uses Microsoft's OpenSSH client (`ssh.exe`) and your `~/.ssh/config`. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose to run it anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed. Homebrew is for macOS and Linux only.
+
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
 From Nearhost 0.9.0 the macOS binaries are signed with a Developer ID certificate and notarised by Apple, so Gatekeeper runs them however you download them. A copy downloaded in a browser may need an internet connection the first time it runs, while macOS checks the notarisation with Apple.
@@ -81,7 +97,7 @@ Releases carry build provenance attestations, and a software bill of materials (
 nearhost update
 ```
 
-updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pnpm add -g`, `bun add -g`, `go install`, or the install script into the same directory. It shows the command and asks first; `--yes` skips the question, and `--check` only reports, exiting 1 when a newer release is out.
+updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pnpm add -g`, `bun add -g`, `go install`, or the install script into the same directory (on Windows, the PowerShell installer). It shows the command and asks first; `--yes` skips the question, and `--check` only reports, exiting 1 when a newer release is out.
 
 Nearhost also asks GitHub for the latest release at most once a day and prints a line when one is out. Set `NEARHOST_NO_UPDATE_CHECK=1` to turn that off.
 

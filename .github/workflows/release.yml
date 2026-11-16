@@ -4,9 +4,8 @@ on:
     types: [published]
 permissions: {}
 env:
-  # Whether a normal release also builds Windows. Prereleases always do. Set
-  # this to "on" in the PR that ships Windows, together with its docs.
-  WINDOWS_RELEASES: "off"
+  # Whether a normal release also builds Windows. Prereleases always do.
+  WINDOWS_RELEASES: "on"
 concurrency:
   group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false

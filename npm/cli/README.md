@@ -42,13 +42,17 @@ npm install -g @nearhost/cli
 nearhost
 ```
 
-pnpm (`pnpm add -g @nearhost/cli`) and bun (`bun add -g @nearhost/cli`) work too. Nearhost runs on macOS and Linux, on Apple silicon, Intel and ARM.
+pnpm (`pnpm add -g @nearhost/cli`) and bun (`bun add -g @nearhost/cli`) work too. Nearhost runs on macOS, Linux and Windows 11, on Apple silicon, Intel and ARM.
 
-The binary also ships through Homebrew (`brew install nearhost/tap/nearhost`) and a shell installer (`curl -fsSL https://nearhost.dev/install.sh | sh`). The [install guide](https://nearhost.dev/docs/getting-started/install/) covers each one.
+The binary also ships through Homebrew (`brew install nearhost/tap/nearhost`) and a shell installer (`curl -fsSL https://nearhost.dev/install.sh | sh`). On Windows there is a PowerShell installer (`irm https://nearhost.dev/install.ps1 | iex`). The [install guide](https://nearhost.dev/docs/getting-started/install/) covers each one.
 
 ### On Linux
 
 Nearhost serves HTTPS on port 443 and redirects port 80, and a normal user cannot bind either. Run `nearhost doctor`: it prints the `setcap` command that grants the binary that one capability, with the binary's path inside `node_modules` filled in. Run it again after each upgrade.
+
+### On Windows
+
+Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose to run it anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
 
 ## Quick start
 
@@ -94,7 +98,7 @@ Nearhost serves your own machines to your own browser. To show work to someone e
 
 ## How this package works
 
-`@nearhost/cli` holds a small Node launcher. The Go binary comes in a platform package, `@nearhost/cli-darwin-arm64`, `@nearhost/cli-darwin-x64`, `@nearhost/cli-linux-arm64` or `@nearhost/cli-linux-x64`, and npm installs only the one that matches your machine. No install script runs, so `--ignore-scripts` works. Each binary matches the one on the [GitHub release](https://github.com/nearhost/nearhost/releases) byte for byte, and versions published by the release workflow carry npm provenance.
+`@nearhost/cli` holds a small Node launcher. The Go binary comes in a platform package, `@nearhost/cli-darwin-arm64`, `@nearhost/cli-darwin-x64`, `@nearhost/cli-linux-arm64`, `@nearhost/cli-linux-x64`, `@nearhost/cli-win32-arm64` or `@nearhost/cli-win32-x64`, and npm installs only the one that matches your machine. No install script runs, so `--ignore-scripts` works. Each binary matches the one on the [GitHub release](https://github.com/nearhost/nearhost/releases) byte for byte, and versions published by the release workflow carry npm provenance.
 
 ## Licence
 
