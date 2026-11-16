@@ -134,7 +134,9 @@ func DetectOn(goos, exe string, getenv func(string) string) Method {
 	case windows:
 		m.Kind = Script
 		m.Args = []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", InstallScriptWindows}
-		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir}
+		// An update replaces the binary in place and leaves PATH alone,
+		// whichever PATH the folder is on, or none.
+		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir, "NEARHOST_NO_PATH=1"}
 	default:
 		m.Kind = Script
 		m.Args = []string{"sh", "-c", InstallScript}

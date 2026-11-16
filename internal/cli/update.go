@@ -139,7 +139,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
 			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
 		}
-		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; $env:NEARHOST_NO_PATH='1'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
 		pin := ""

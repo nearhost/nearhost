@@ -169,7 +169,7 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Program Files\José Núñez\nearhost.exe`, tty: true, goos: "windows"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
 	want := "You cannot write to C:\\Program Files\\José Núñez. Open Windows Terminal as administrator and run:\n\n" +
-		"  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\José Núñez'; irm https://nearhost.dev/install.ps1 | iex\n"
+		"  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\José Núñez'; $env:NEARHOST_NO_PATH='1'; irm https://nearhost.dev/install.ps1 | iex\n"
 	if err != nil || len(f.ran) != 0 || len(f.events) != 0 || !strings.HasSuffix(out, want) {
 		t.Fatalf("out %q, err %v, events %v", out, err, f.events)
 	}
@@ -183,7 +183,7 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 func TestUpdateUnwritableAdviceNamesThePrereleaseVersion(t *testing.T) {
 	for _, tc := range []struct{ goos, exe, want string }{
 		{"linux", "/usr/local/bin/nearhost", "  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=/usr/local/bin NEARHOST_VERSION=v0.13.0-rc.2 sh\n"},
-		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
+		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_NO_PATH='1'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
 	} {
 		f := &fakeUpdate{latest: "0.13.0-rc.2", exe: tc.exe, goos: tc.goos}
 		out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")

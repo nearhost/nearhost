@@ -119,14 +119,15 @@ func TestDetectOnWindows(t *testing.T) {
 	}
 	m := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv)
 	wantArgs := []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://nearhost.dev/install.ps1 | iex"}
-	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`}) || m.Dir != `C:\Tools` {
+	// NEARHOST_NO_PATH: an update never changes the user's PATH.
+	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1"}) || m.Dir != `C:\Tools` {
 		t.Fatalf("Args %q Env %q Dir %q", m.Args, m.Env, m.Dir)
 	}
 	if InstallScriptWindows != "irm https://nearhost.dev/install.ps1 | iex" {
 		t.Fatalf("InstallScriptWindows = %q", InstallScriptWindows)
 	}
 	spaced := DetectOn("windows", `C:\Users\José Núñez\bin\nearhost.exe`, getenv)
-	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`}) {
+	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`, "NEARHOST_NO_PATH=1"}) {
 		t.Fatalf("Env = %q", spaced.Env)
 	}
 }
