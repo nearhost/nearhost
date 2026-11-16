@@ -49,9 +49,10 @@ func TestRemovingAFileAnotherHandleHoldsIsInUseOnWindows(t *testing.T) {
 	}
 }
 
-// A file removed while another handle that shares deletion has it open, as
-// an antivirus scanner opens new files, stays until that handle closes, and
-// cannot be opened or created meanwhile: Windows says ACCESS_DENIED.
+// While DeleteFile removes a file, between marking it for deletion and
+// closing its handle, the file is pending deletion: it can be neither
+// opened nor created, and Windows says ACCESS_DENIED. The test holds it
+// there as DeleteFile does, through a handle with its disposition set.
 func TestDeletePendingOnWindows(t *testing.T) {
 	name := t.TempDir() + `\pending`
 	if DeletePending(name) {
@@ -61,22 +62,27 @@ func TestDeletePendingOnWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if DeletePending(name) {
-		t.Error("DeletePending of a file nobody removed = true")
+		t.Error("DeletePending of a file nobody removes = true")
 	}
 	p, _ := windows.UTF16PtrFromString(name)
-	h, err := windows.CreateFile(p, windows.GENERIC_READ,
+	h, err := windows.CreateFile(p, windows.DELETE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer windows.CloseHandle(h)
-	if err := os.Remove(name); err != nil {
+	del := byte(1)
+	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, &del, 1); err != nil {
+		windows.CloseHandle(h)
 		t.Fatal(err)
 	}
 	if _, err := os.Open(name); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-		t.Fatalf("opening a file pending deletion returned %v, want ACCESS_DENIED", err)
+		t.Errorf("opening a file pending deletion returned %v, want ACCESS_DENIED", err)
 	}
 	if !DeletePending(name) {
-		t.Error("DeletePending of a removed file another handle holds = false")
+		t.Error("DeletePending of a file being removed = false")
+	}
+	windows.CloseHandle(h)
+	if DeletePending(name) {
+		t.Error("DeletePending of a removed file = true")
 	}
 }
