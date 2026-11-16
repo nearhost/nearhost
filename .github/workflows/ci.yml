@@ -24,6 +24,32 @@ jobs:
       - if: runner.os == 'Linux'
         run: NEARHOST_TRANSPORT=per-process go test -count=1 -race -run 'PerProcess' ./internal/transport/
 
+  # TEMPORARY: repeats the two Windows flakes. Removed before merge.
+  flakes:
+    strategy:
+      fail-fast: false
+      matrix:
+        what:
+          - name: trace
+            cmd: NEARHOST_TRACE_RELOADS=3000 go test -count=1 -timeout 30m -v -run '^TestTraceRequestJustAfterReload$' ./internal/proxy/
+          - name: proxy
+            cmd: go test -count=500 -timeout 40m -run '^TestApplyAndStopAreSafeConcurrently$' ./internal/proxy/
+          - name: engine
+            cmd: go test -count=400 -timeout 40m -run '^TestStoppingOneProjectKeepsOthersServing$' ./internal/engine/
+    name: flakes (${{ matrix.what.name }})
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - shell: bash
+        run: |
+          status=0
+          ${{ matrix.what.cmd }} 2>&1 | tee out.txt || status=$?
+          echo "FAILURES: $(grep -c -- '^--- FAIL' out.txt)"
+          exit $status
+
   # The agent skill's script runs on servers with nothing but sh and curl,
   # and its PowerShell twin on Windows laptops.
   skill:
