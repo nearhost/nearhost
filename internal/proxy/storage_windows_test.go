@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -72,5 +73,82 @@ func TestStorageLoadWaitsForAWriterOnWindows(t *testing.T) {
 	}
 	if got, err := st.Load(ctx, key); err != nil || string(got) != "{}" {
 		t.Fatalf("Load beside a writer = %q, %v", got, err)
+	}
+}
+
+// holdSharingDelete opens name as an antivirus scanner opens a new file,
+// sharing every access, deletion included, until the test ends or release
+// is called.
+func holdSharingDelete(t *testing.T, name string) (release func()) {
+	t.Helper()
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release = func() { once.Do(func() { windows.CloseHandle(h) }) }
+	t.Cleanup(release)
+	return release
+}
+
+// A lock file removed while another handle has it open stays, pending
+// deletion, until that handle closes, and certmagic's lock acquisition,
+// which can neither open it nor create a new one meanwhile, fails outright.
+// That failure is not retried: the name got no certificate until the next
+// reload. Lock waits for the removal to finish instead.
+func TestStorageLockWaitsForALockFileBeingRemovedOnWindows(t *testing.T) {
+	root := t.TempDir()
+	st, _ := Storage{Root: root}.CertMagicStorage()
+	ctx := context.Background()
+	if err := st.Lock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(root, "locks", "issue_cert_a.test.lock")
+	release := holdSharingDelete(t, lock)
+	if err := st.Unlock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+	if !oserr.DeletePending(lock) {
+		t.Fatal("the lock file is not pending deletion")
+	}
+
+	// What Windows does to certmagic's own storage.
+	short, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := (&certmagic.FileStorage{Path: root}).Lock(short, "issue_cert_a.test"); err == nil || short.Err() != nil {
+		t.Fatalf("certmagic's Lock of a lock file pending deletion returned %v, want it to fail at once", err)
+	}
+
+	// The handle lets go once Lock has found the file pending deletion.
+	lockWaits = release
+	t.Cleanup(func() { lockWaits = func() {} })
+	if err := st.Lock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatalf("Lock of a lock file pending deletion: %v", err)
+	}
+	if err := st.Unlock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The wait for a removal to finish ends with the context.
+func TestStorageLockGivesUpWithItsContextOnWindows(t *testing.T) {
+	root := t.TempDir()
+	st, _ := Storage{Root: root}.CertMagicStorage()
+	if err := st.Lock(context.Background(), "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+	holdSharingDelete(t, filepath.Join(root, "locks", "issue_cert_a.test.lock"))
+	if err := st.Unlock(context.Background(), "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := st.Lock(ctx, "issue_cert_a.test"); err == nil {
+		t.Fatal("Lock with a cancelled context succeeded while the lock file was pending deletion")
 	}
 }

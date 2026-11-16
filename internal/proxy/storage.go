@@ -83,6 +83,10 @@ func (s *fileStorage) Load(ctx context.Context, key string) ([]byte, error) {
 	return data, err
 }
 
+// lockWaits is called each time Lock waits for a lock file's removal to
+// finish; tests watch it.
+var lockWaits = func() {}
+
 // whileInUse calls f until it does not fail for a file another handle holds,
 // or inUseWait has passed.
 func whileInUse(f func() error) error {
