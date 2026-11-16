@@ -138,7 +138,9 @@ func TestStorageLockWaitsForALockFileBeingRemovedOnWindows(t *testing.T) {
 	}
 }
 
-// The wait for a removal to finish ends with the context.
+// A wait for a removal to finish ends with the context: cancelled while Lock
+// waits, Lock returns without another attempt, though the lock file stays
+// pending deletion and the retry window has long to run.
 func TestStorageLockGivesUpWithItsContextOnWindows(t *testing.T) {
 	root := t.TempDir()
 	st, _ := Storage{Root: root}.CertMagicStorage()
@@ -147,9 +149,15 @@ func TestStorageLockGivesUpWithItsContextOnWindows(t *testing.T) {
 	}
 	pendingDeletion(t, filepath.Join(root, "locks", "issue_cert_a.test.lock"))
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
+	waits := 0
+	lockWaits = func() { waits++; cancel() }
+	t.Cleanup(func() { lockWaits = func() {} })
 	if err := st.Lock(ctx, "issue_cert_a.test"); err == nil {
-		t.Fatal("Lock with a cancelled context succeeded while the lock file was pending deletion")
+		t.Fatal("Lock succeeded while the lock file was pending deletion")
+	}
+	if waits != 1 {
+		t.Fatalf("Lock waited %d times, want it to stop at the cancel during its first wait", waits)
 	}
 }
 
