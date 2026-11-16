@@ -33,7 +33,7 @@ jobs:
           - name: reload
             cmd: go test -count=5 -timeout 30m -run '^TestARequestJustAfterAReloadIsServedOnWindows$' ./internal/proxy/
           - name: proxy
-            cmd: go test -count=1000 -timeout 50m -run '^TestApplyAndStopAreSafeConcurrently$' ./internal/proxy/
+            cmd: go test -count=2000 -timeout 80m -run '^TestApplyAndStopAreSafeConcurrently$' ./internal/proxy/
           - name: engine
             cmd: go test -count=400 -timeout 40m -run '^TestStoppingOneProjectKeepsOthersServing$' ./internal/engine/
     name: flakes (${{ matrix.what.name }})
