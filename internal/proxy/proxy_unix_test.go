@@ -135,3 +135,13 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 		t.Skip("this machine has no reachable address besides loopback, so a non-loopback client cannot be simulated")
 	}
 }
+
+// On Unix each configuration binds its own sockets, so servers have no
+// listener wrappers of Nearhost's.
+func TestServersHaveNoListenerWrappersOnUnix(t *testing.T) {
+	for name, w := range serverWrappers(t) {
+		if len(w) != 0 {
+			t.Errorf("server %s has listener wrappers %q, want none", name, w)
+		}
+	}
+}

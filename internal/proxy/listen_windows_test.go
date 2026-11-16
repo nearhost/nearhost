@@ -91,3 +91,13 @@ func TestARequestJustAfterAReloadIsServedOnWindows(t *testing.T) {
 		t.Errorf("%d of %d requests made just after a reload failed", failed, reloads)
 	}
 }
+
+// Each server hands its connections over through Handoff, before TLS, so
+// a stopping server is given none (see Handoff).
+func TestServersHandConnectionsToTheNewestConfigOnWindows(t *testing.T) {
+	for name, w := range serverWrappers(t) {
+		if !slices.Equal(w, []string{handoffModule, "tls"}) {
+			t.Errorf("server %s has listener wrappers %q, want %q then tls", name, w, handoffModule)
+		}
+	}
+}
