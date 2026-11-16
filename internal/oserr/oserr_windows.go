@@ -48,7 +48,8 @@ func deletePending(path string) bool {
 	if err != nil {
 		return false
 	}
-	oa := windows.OBJECT_ATTRIBUTES{ObjectName: name}
+	// Case-insensitive, as Win32's CreateFile opens a path.
+	oa := windows.OBJECT_ATTRIBUTES{ObjectName: name, Attributes: windows.OBJ_CASE_INSENSITIVE}
 	oa.Length = uint32(unsafe.Sizeof(oa))
 	var h windows.Handle
 	var iosb windows.IO_STATUS_BLOCK
