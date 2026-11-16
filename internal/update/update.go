@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,22 +21,34 @@ import (
 // ReleasesURL is GitHub's API for the latest published release.
 const ReleasesURL = "https://api.github.com/repos/nearhost/nearhost/releases/latest"
 
+// ReleasesListURL is GitHub's API for recent releases of every kind, which a
+// prerelease build reads to find the highest version.
+const ReleasesListURL = "https://api.github.com/repos/nearhost/nearhost/releases?per_page=30"
+
 // TTL is how long a check is remembered before nearhost asks GitHub again.
 const TTL = 24 * time.Hour
 
 // Newer reports whether latest is a later release than current. A current
-// that is not a version, as in a `dev` build, is never out of date, and a
-// pre-release is never offered.
+// that is not a version, as in a `dev` build, is never out of date. A
+// pre-release latest is offered only when current is itself a pre-release,
+// so a normal build never leaves the normal releases.
 func Newer(current, latest string) bool {
 	c, err := semver.NewVersion(current)
 	if err != nil {
 		return false
 	}
 	l, err := semver.NewVersion(latest)
-	if err != nil || l.Prerelease() != "" {
+	if err != nil || (l.Prerelease() != "" && c.Prerelease() == "") {
 		return false
 	}
 	return l.GreaterThan(c)
+}
+
+// IsPrerelease reports whether v is a version with a pre-release part, such
+// as 0.13.0-rc.1.
+func IsPrerelease(v string) bool {
+	sv, err := semver.NewVersion(v)
+	return err == nil && sv.Prerelease() != ""
 }
 
 // Checker asks GitHub for the latest release, remembering the answer in a
@@ -43,7 +56,11 @@ func Newer(current, latest string) bool {
 type Checker struct {
 	// HTTP is the client; nil means one with a short timeout.
 	HTTP *http.Client
-	// URL is the releases endpoint; empty means ReleasesURL.
+	// Current is the running version. When it is a pre-release, Latest is
+	// the highest version of any kind, not only GitHub's latest release.
+	Current string
+	// URL is the releases endpoint; empty means ReleasesURL, or
+	// ReleasesListURL when Current is a pre-release.
 	URL string
 	// CachePath is where the last check is kept; empty means no cache.
 	CachePath string
@@ -51,13 +68,31 @@ type Checker struct {
 	Now func() time.Time
 }
 
-// Latest asks GitHub for the latest release and returns its version without
-// the leading v.
-func (c Checker) Latest(ctx context.Context) (string, error) {
-	url := c.URL
-	if url == "" {
-		url = ReleasesURL
+// url is the endpoint to ask.
+func (c Checker) url() string {
+	switch {
+	case c.URL != "":
+		return c.URL
+	case IsPrerelease(strings.TrimPrefix(c.Current, "v")):
+		return ReleasesListURL
 	}
+	return ReleasesURL
+}
+
+// line names the line of releases the checker follows, kept in the cache so
+// one line's answer is never read as the other's.
+func (c Checker) line() string {
+	if IsPrerelease(strings.TrimPrefix(c.Current, "v")) {
+		return "pre"
+	}
+	return ""
+}
+
+// Latest asks GitHub for the latest release and returns its version without
+// the leading v. On the pre-release line it returns the highest version among
+// the published releases, drafts excluded.
+func (c Checker) Latest(ctx context.Context) (string, error) {
+	url := c.url()
 	client := c.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
@@ -75,6 +110,9 @@ func (c Checker) Latest(ctx context.Context) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub answered %s when asked for the latest nearhost release", resp.Status)
 	}
+	if c.line() == "pre" {
+		return highest(resp.Body)
+	}
 	var rel struct {
 		TagName string `json:"tag_name"`
 	}
@@ -87,11 +125,39 @@ func (c Checker) Latest(ctx context.Context) (string, error) {
 	return strings.TrimPrefix(rel.TagName, "v"), nil
 }
 
+// highest reads a list of releases and returns the greatest version among
+// those that are not drafts, without the leading v.
+func highest(body io.Reader) (string, error) {
+	var rels []struct {
+		TagName string `json:"tag_name"`
+		Draft   bool   `json:"draft"`
+	}
+	if err := json.NewDecoder(body).Decode(&rels); err != nil {
+		return "", fmt.Errorf("could not read GitHub's list of releases: %w", err)
+	}
+	var best *semver.Version
+	for _, r := range rels {
+		v, err := semver.NewVersion(r.TagName)
+		if r.Draft || err != nil {
+			continue
+		}
+		if best == nil || v.GreaterThan(best) {
+			best = v
+		}
+	}
+	if best == nil {
+		return "", errors.New("GitHub's list of releases has no nearhost version")
+	}
+	return best.String(), nil
+}
+
 // cache is the cache file's content. A failed check is kept too, with no
 // version, so a machine offline asks once a day rather than on every run.
 type cache struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Latest    string    `json:"latest,omitempty"`
+	// Line is "pre" for an answer found on the pre-release line.
+	Line string `json:"line,omitempty"`
 }
 
 // fresh reads the cache and reports it, with whether it is less than TTL old.
@@ -108,7 +174,7 @@ func (c Checker) fresh() (cache, bool) {
 		return cache{}, false
 	}
 	var kept cache
-	if json.Unmarshal(data, &kept) != nil || now().Sub(kept.CheckedAt) >= TTL || now().Before(kept.CheckedAt) {
+	if json.Unmarshal(data, &kept) != nil || now().Sub(kept.CheckedAt) >= TTL || now().Before(kept.CheckedAt) || kept.Line != c.line() {
 		return cache{}, false
 	}
 	return kept, true
@@ -128,7 +194,7 @@ func (c Checker) Cached(ctx context.Context) (string, error) {
 	}
 	latest, err := c.Latest(ctx)
 	if c.CachePath != "" && ctx.Err() == nil {
-		c.save(cache{CheckedAt: now(), Latest: latest})
+		c.save(cache{CheckedAt: now(), Latest: latest, Line: c.line()})
 	}
 	return latest, err
 }
