@@ -59,6 +59,10 @@ var handoffs = &handoffSet{addrs: map[string]*handoffAddr{}}
 type handoffSet struct {
 	mu    sync.Mutex
 	addrs map[string]*handoffAddr
+
+	// delivering, when set, is called as the accepting goroutine offers a
+	// connection to l; tests watch it.
+	delivering func(l *handoffListener)
 }
 
 type handoffAddr struct {
@@ -163,6 +167,9 @@ func (s *handoffSet) deliver(key string, c net.Conn) {
 		if l == nil {
 			c.Close()
 			return
+		}
+		if s.delivering != nil {
+			s.delivering(l)
 		}
 		select {
 		case l.conns <- c:

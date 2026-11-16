@@ -3,6 +3,7 @@ package proxy
 import (
 	"errors"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func newSharedSocket(port int) *sharedSocket {
 
 // view is one server's listener on the shared socket.
 func (s *sharedSocket) view() *socketView {
-	return &socketView{s: s, done: make(chan struct{})}
+	return &socketView{s: s, done: make(chan struct{}), errs: make(chan error)}
 }
 
 // connect makes a connection arrive on the socket and returns the server's
@@ -43,6 +44,7 @@ func (s *sharedSocket) connect(t *testing.T) (net.Conn, net.Conn) {
 type socketView struct {
 	s         *sharedSocket
 	done      chan struct{}
+	errs      chan error // an error the next Accept returns
 	closeOnce sync.Once
 }
 
@@ -55,8 +57,20 @@ func (v *socketView) Accept() (net.Conn, error) {
 	select {
 	case c := <-v.s.pending:
 		return c, nil
+	case err := <-v.errs:
+		return nil, err
 	case <-v.done:
 		return nil, net.ErrClosed
+	}
+}
+
+// fail makes an Accept through v return err.
+func (v *socketView) fail(t *testing.T, err error) {
+	t.Helper()
+	select {
+	case v.errs <- err:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no one accepted through the view")
 	}
 }
 
@@ -138,14 +152,71 @@ func TestHandoffFallsBackWhenTheNewestServerCloses(t *testing.T) {
 // A connection taken while no server is ready to accept it waits for one,
 // and goes to the next newest if the one it waited for closes.
 func TestHandoffPassesAWaitingConnectionOnWhenItsServerCloses(t *testing.T) {
-	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	offered := make(chan *handoffListener, 1)
+	set := &handoffSet{addrs: map[string]*handoffAddr{}, delivering: func(l *handoffListener) {
+		select {
+		case offered <- l:
+		default:
+		}
+	}}
 	sock := newSharedSocket(1)
 	older := set.wrap(sock.view())
 	newer := set.wrap(sock.view())
-	c, _ := sock.connect(t) // taken by the pump, waiting for newer's accept
+	c, _ := sock.connect(t)
+	// The pump has taken c and offers it to newer, whose server is not
+	// accepting, before newer closes.
+	select {
+	case l := <-offered:
+		if l != newer {
+			t.Fatal("the connection was offered to the older server first")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the connection was never offered")
+	}
 	newer.Close()
 	takes(t, accepted(older), c, "the older server")
 	older.Close()
+}
+
+// A deadline another server's close sets on the shared socket wakes the
+// accept with a timeout. That is not the server's error: it keeps accepting,
+// and is given the next connection.
+func TestHandoffSwallowsATimeoutFromTheSharedSocket(t *testing.T) {
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	view := sock.view()
+	ln := set.wrap(view)
+	got := accepted(ln)
+	view.fail(t, &net.OpError{Op: "accept", Net: "tcp", Err: os.ErrDeadlineExceeded})
+	c, _ := sock.connect(t)
+	takes(t, got, c, "the server, after the timeout")
+	ln.Close()
+}
+
+// Any other accept error reaches the server's Accept, and accepting goes on.
+func TestHandoffPassesAnAcceptErrorToTheServer(t *testing.T) {
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	view := sock.view()
+	ln := set.wrap(view)
+	boom := errors.New("too many open files")
+	errs := make(chan error, 1)
+	go func() {
+		_, err := ln.Accept()
+		errs <- err
+	}()
+	view.fail(t, boom)
+	select {
+	case err := <-errs:
+		if err != boom {
+			t.Fatalf("Accept = %v, want the socket's error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the socket's error never reached Accept")
+	}
+	c, _ := sock.connect(t)
+	takes(t, accepted(ln), c, "the server, after the error")
+	ln.Close()
 }
 
 // Once every server has closed, the accepting goroutine ends, and a later
