@@ -24,6 +24,53 @@ jobs:
       - if: runner.os == 'Linux'
         run: NEARHOST_TRANSPORT=per-process go test -count=1 -race -run 'PerProcess' ./internal/transport/
 
+  # The release config, checked without publishing anything: GoReleaser's own
+  # check, then a snapshot of the archives with the Windows switch off and on.
+  # Off must produce today's four archives and nothing for Windows.
+  release-config:
+    strategy:
+      fail-fast: false
+      matrix:
+        windows: ["off", "on"]
+    runs-on: ubuntu-latest
+    env:
+      NEARHOST_WINDOWS: ${{ matrix.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          install-only: true
+      - run: goreleaser check
+      # No signing secrets or syft here, so notarising and SBOMs are skipped.
+      - run: goreleaser release --snapshot --clean --skip=publish,notarize,sbom,homebrew
+      - name: Check the archives
+        run: |
+          set -eu
+          cd dist
+          ls -1 *.tar.gz *.zip 2>/dev/null | sort > ../archives.txt || true
+          cat ../archives.txt
+          want=4
+          if [ "$NEARHOST_WINDOWS" = on ]; then want=6; fi
+          test "$(wc -l < ../archives.txt)" -eq "$want"
+          test "$(grep -cE '_(darwin|linux)_(amd64|arm64)\.tar\.gz$' ../archives.txt)" -eq 4
+          if [ "$NEARHOST_WINDOWS" = on ]; then
+            test "$(grep -cE '_windows_(amd64|arm64)\.zip$' ../archives.txt)" -eq 2
+            for z in *_windows_*.zip; do
+              unzip -Z1 "$z" | grep -qx nearhost.exe
+              unzip -Z1 "$z" | grep -qx LICENSE
+              unzip -Z1 "$z" | grep -qx README.md
+            done
+          else
+            ! grep -q windows ../archives.txt
+          fi
+
   # The agent skill's script runs on servers with nothing but sh and curl,
   # and its PowerShell twin on Windows laptops.
   skill:
