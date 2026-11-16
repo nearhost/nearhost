@@ -108,7 +108,8 @@ func TestDetectOnWindows(t *testing.T) {
 		{"npx", `C:\Users\x\AppData\Local\npm-cache\_npx\1a2b\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`, Ephemeral, ""},
 		{"go", `C:\Users\José Núñez\go\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"go other case", `c:\users\josé núñez\GO\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
-		{"script", `C:\Tools\nearhost.exe`, Script, InstallScriptWindows},
+		{"script", `C:\Tools\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Tools'; irm https://nearhost.dev/install.ps1 | iex`},
+		{"script, quoted folder", `C:\Users\Seán O'Brien\bin\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Users\Seán O''Brien\bin'; irm https://nearhost.dev/install.ps1 | iex`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := DetectOn("windows", tc.exe, getenv)
@@ -158,7 +159,7 @@ func TestPinned(t *testing.T) {
 		t.Errorf("Env = %q", m.Env)
 	}
 	w := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv).Pinned("v0.13.0-rc.2")
-	if want := `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
+	if want := `$env:NEARHOST_INSTALL_DIR='C:\Tools'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
 		t.Errorf("windows Pinned = %q, want %q", w.String(), want)
 	}
 	if !slices.Equal(w.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.2"}) {

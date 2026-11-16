@@ -80,12 +80,16 @@ func (m Method) String() string {
 	}
 	if m.Kind == Script {
 		v := m.envValue("NEARHOST_VERSION")
-		switch {
-		case m.powershell() && v != "":
-			return "$env:NEARHOST_VERSION='" + v + "'; " + InstallScriptWindows
-		case m.powershell():
-			return InstallScriptWindows
-		case v != "":
+		if m.powershell() {
+			// The folder, so that the command run by hand updates this
+			// copy rather than installing another in the default folder.
+			shown := "$env:NEARHOST_INSTALL_DIR='" + PSQuote(m.envValue("NEARHOST_INSTALL_DIR")) + "'; "
+			if v != "" {
+				shown += "$env:NEARHOST_VERSION='" + PSQuote(v) + "'; "
+			}
+			return shown + InstallScriptWindows
+		}
+		if v != "" {
 			return "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=" + v + " sh"
 		}
 		return InstallScript

@@ -482,7 +482,7 @@ func TestUpdateOnWindowsRunsPowerShell(t *testing.T) {
 	f := &fakeUpdate{latest: "0.13.0-rc.2", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true}
 	out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
 	if err != nil || len(f.ran) != 1 || f.ran[0].Args[0] != "powershell.exe" ||
-		f.ran[0].String() != `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex` {
+		f.ran[0].String() != `$env:NEARHOST_INSTALL_DIR='C:\Tools'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex` {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}
 }
@@ -537,5 +537,21 @@ func TestWindowsPrereleaseBuildIsNotOfferedAReleaseWithoutAWindowsBuild(t *testi
 	c := startBackgroundCheck("0.13.0-rc.1", checker.Latest)
 	if got, want := c.notice(time.Second), "A new nearhost is available: 0.13.0-rc.1 → 0.13.0-rc.2. Run `nearhost update` to update."; got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
+// On Windows the command nearhost shows names the folder, so a user who runs
+// it by hand updates this copy rather than installing a second one.
+func TestUpdateOnWindowsShowsTheFolder(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Users\José Núñez\bin\nearhost.exe`, goos: "windows", writable: true}
+	out, err := runUpdate(t, f, "0.5.0", "")
+	want := "Run `$env:NEARHOST_INSTALL_DIR='C:\\Users\\José Núñez\\bin'; irm https://nearhost.dev/install.ps1 | iex`, or `nearhost update --yes` to have nearhost run it.\n"
+	if err != nil || len(f.ran) != 0 || !strings.HasSuffix(out, want) {
+		t.Fatalf("out %q, err %v; want it to end %q", out, err, want)
+	}
+	f = &fakeUpdate{latest: "0.6.0", exe: `C:\Users\José Núñez\bin\nearhost.exe`, goos: "windows", writable: true, tty: true}
+	out, _ = runUpdate(t, f, "0.5.0", "n\n")
+	if !strings.Contains(out, "Run `$env:NEARHOST_INSTALL_DIR='C:\\Users\\José Núñez\\bin'; irm https://nearhost.dev/install.ps1 | iex`? [Y/n] ") {
+		t.Fatalf("prompt %q does not name the folder", out)
 	}
 }
