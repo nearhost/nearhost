@@ -55,7 +55,7 @@ var _ caddy.ListenerWrapper = Handoff{}
 var handoffs = &handoffSet{addrs: map[string]*handoffAddr{}}
 
 // handoffSet holds, per address, the open wrappers of that address, oldest
-// first, and whether a goroutine accepts for them.
+// first. An address has an entry exactly while a goroutine accepts for it.
 type handoffSet struct {
 	mu    sync.Mutex
 	addrs map[string]*handoffAddr
@@ -66,8 +66,7 @@ type handoffSet struct {
 }
 
 type handoffAddr struct {
-	open    []*handoffListener
-	pumping bool
+	open []*handoffListener
 }
 
 // handoffListener is one server's listener. Its Accept returns what the
@@ -97,12 +96,9 @@ func (s *handoffSet) wrap(ln net.Listener) net.Listener {
 	if a == nil {
 		a = &handoffAddr{}
 		s.addrs[l.key] = a
-	}
-	a.open = append(a.open, l)
-	if !a.pumping {
-		a.pumping = true
 		go s.pump(l.key)
 	}
+	a.open = append(a.open, l)
 	return l
 }
 
