@@ -339,3 +339,40 @@ func TestStepAsideFallsBackBesideTheExeOnWindows(t *testing.T) {
 		})
 	}
 }
+
+// When the old copy cannot go back (here a folder full of files sits at the
+// path), it moves to a name CleanOld leaves alone, and the error names it.
+func TestRestoreThatFailsKeepsTheOldCopyOnWindows(t *testing.T) {
+	for _, tc := range []struct{ name string }{{"old folder"}, {"beside the exe"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "old folder" {
+				localAppData(t)
+			} else {
+				t.Setenv("LOCALAPPDATA", "")
+			}
+			exe, _ := runningCopy(t)
+			self, _ := os.Executable()
+			restore, err := StepAside(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(exe, "in the way"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err = restore()
+			if err == nil {
+				t.Fatal("restore over a folder succeeded")
+			}
+			_, after, ok := strings.Cut(err.Error(), "the old nearhost is at ")
+			kept, _, _ := strings.Cut(after, "; move it back")
+			if !ok || !strings.Contains(filepath.Base(kept), "nearhost-kept-") || strings.Contains(err.Error(), "before running nearhost again") {
+				t.Fatalf("restore error %q does not name a kept copy", err)
+			}
+			CleanOld(exe)
+			if !sameFile(t, self, kept) {
+				t.Fatalf("the kept copy at %s is gone or not the old one", kept)
+			}
+			os.Remove(kept)
+		})
+	}
+}

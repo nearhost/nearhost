@@ -39,14 +39,28 @@ func StepAside(exe string) (restore func() error, err error) {
 		// npm may have removed the package folder; a failed installer may
 		// have left a partial file at exe. The old copy is known to work,
 		// so it goes back in either case.
-		if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
-			return fmt.Errorf("the old nearhost is at %s; move it back to %s: %w", moved, exe, err)
+		err := os.MkdirAll(filepath.Dir(exe), 0o755)
+		if err == nil {
+			err = os.Rename(moved, exe)
 		}
-		if err := os.Rename(moved, exe); err != nil {
-			return fmt.Errorf("the old nearhost is at %s; move it back to %s: %w", moved, exe, err)
+		if err == nil {
+			return nil
 		}
-		return nil
+		return keep(moved, exe, err)
 	}, nil
+}
+
+// keep moves the old copy, which could not go back to exe, to a name
+// CleanOld leaves alone, and says where it is.
+func keep(moved, exe string, err error) error {
+	kept := filepath.Join(filepath.Dir(moved), fmt.Sprintf("nearhost-kept-%d-%s.exe", os.Getpid(), randomHex()))
+	if dir := oldDir(); dir != "" && strings.EqualFold(filepath.Dir(moved), dir) {
+		kept = filepath.Join(filepath.Dir(dir), filepath.Base(kept)) // %LOCALAPPDATA%\nearhost
+	}
+	if os.Rename(moved, kept) == nil {
+		return fmt.Errorf("the old nearhost is at %s; move it back to %s: %w", kept, exe, err)
+	}
+	return fmt.Errorf("the old nearhost is at %s; move it back to %s before running nearhost again, which would delete it: %w", moved, exe, err)
 }
 
 func moveAside(exe string) (string, error) {

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -133,7 +134,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		}
 		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)
 		return nil
-	case m.Kind == update.Script && !b.writable(m.Dir) && b.goos == "windows":
+	case m.Kind == update.Script && b.goos == "windows" && !b.writable(m.Dir):
 		pin := ""
 		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
 			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
@@ -186,15 +187,17 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 // or delete the running exe: it moves exe out of the way first, and puts it
 // back when the update fails, so there is always a working nearhost.
 func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe string) error {
+	// A Ctrl-C reaches the installer too, which then fails; closing the
+	// console window (SIGTERM to Go) ends the installer and gives nearhost a
+	// few seconds. Either way nearhost must not end before the old copy is
+	// back, so both are held from before it moves.
+	held := make(chan os.Signal, 1)
+	signal.Notify(held, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(held)
 	restore, err := b.stepAside(exe)
 	if err != nil {
 		return fmt.Errorf("nothing was updated, as the running nearhost could not be moved out of the way: %w", err)
 	}
-	// A Ctrl-C reaches the installer too, which then fails, and the old
-	// copy goes back; nearhost must not end before it does.
-	held := make(chan os.Signal, 1)
-	signal.Notify(held, os.Interrupt)
-	defer signal.Stop(held)
 	failed := func(err error) error {
 		if rerr := restore(); rerr != nil {
 			return fmt.Errorf("%w, and the old nearhost could not be put back: %v", err, rerr)
@@ -204,10 +207,30 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 	if err := b.run(ctx, m, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 		return failed(fmt.Errorf("`%s` failed: %w", m, err))
 	}
-	if !b.exists(exe) {
-		return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
+	if !samePathEveryVersion(m.Kind) || b.exists(exe) {
+		return nil
 	}
-	return nil
+	// A copy renamed from nearhost.exe: the installer put the new version
+	// at <dir>\nearhost.exe, and the renamed one is the old one again.
+	if installed := m.Dir + `\nearhost.exe`; (m.Kind == update.Script || m.Kind == update.Go) &&
+		!strings.EqualFold(installed, exe) && b.exists(installed) {
+		if rerr := restore(); rerr != nil {
+			return fmt.Errorf("`%s` installed the new nearhost at %s, not at %s, and the old nearhost could not be put back: %v", m, installed, exe, rerr)
+		}
+		return fmt.Errorf("`%s` installed the new nearhost at %s; %s is still the old one", m, installed, exe)
+	}
+	return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
+}
+
+// samePathEveryVersion reports whether an update of kind puts the new binary
+// at the running one's path. pnpm's global store has the version in the
+// path, so its new binary is elsewhere and only its exit status counts.
+func samePathEveryVersion(k update.Kind) bool {
+	switch k {
+	case update.Script, update.Go, update.NPM, update.Bun:
+		return true
+	}
+	return false
 }
 
 // envOf is the value m sets name to, or "". A pre-release build's method

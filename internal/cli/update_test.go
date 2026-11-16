@@ -32,6 +32,9 @@ type fakeUpdate struct {
 	restoreErr error
 	// missing is whether the installer left no file at exe.
 	missing bool
+	// present, when set, lists the paths that exist instead.
+	present       map[string]bool
+	writableCalls int
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -40,7 +43,7 @@ func (f *fakeUpdate) backend() updateBackend {
 		exe:    func() string { return f.exe },
 		// Go's default GOPATH is under USERPROFILE on Windows.
 		getenv:      func(k string) string { return map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}[k] },
-		writable:    func(string) bool { return f.writable },
+		writable:    func(string) bool { f.writableCalls++; return f.writable },
 		interactive: func() bool { return f.tty },
 		goos:        f.goos,
 		run: func(_ context.Context, m update.Method, _, _ io.Writer) error {
@@ -58,7 +61,12 @@ func (f *fakeUpdate) backend() updateBackend {
 				return f.restoreErr
 			}, nil
 		},
-		exists: func(string) bool { return !f.missing },
+		exists: func(p string) bool {
+			if f.present != nil {
+				return f.present[p]
+			}
+			return !f.missing
+		},
 	}
 }
 
@@ -239,6 +247,55 @@ func TestUpdateOnWindowsRunsNothingWhenItCannotStepAside(t *testing.T) {
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "access denied") || len(f.ran) != 0 || strings.Contains(out, "Updated") {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+}
+
+// pnpm's global store has the version in the path, so the new binary is
+// never at the old one's path; its exit status is what counts.
+func TestUpdateOnWindowsTrustsPnpm(t *testing.T) {
+	exe := `C:\Users\x\AppData\Local\pnpm\global\5\node_modules\.pnpm\@nearhost+cli-win32-x64@0.13.0\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`
+	f := &fakeUpdate{latest: "0.14.0", exe: exe, goos: "windows", missing: true}
+	out, err := runUpdate(t, f, "0.13.0", "", "--yes")
+	if err != nil || !strings.Contains(out, "Updated to 0.14.0") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if want := []string{"stepAside " + exe, "run"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+}
+
+// A copy renamed from nearhost.exe: the installer puts the new version at
+// nearhost.exe, and the renamed copy goes back to being the old one. The
+// copy the user runs was not updated, so the command fails and says where
+// the new one is.
+func TestUpdateOnWindowsRenamedCopy(t *testing.T) {
+	for _, tc := range []struct {
+		kind update.Kind
+		exe  string
+	}{
+		{update.Script, `C:\Tools\nh.exe`},
+		{update.Go, `/Users/me/go/bin/nh.exe`}, // %USERPROFILE%\go\bin in the fake
+	} {
+		dir := tc.exe[:strings.LastIndexAny(tc.exe, `\/`)]
+		installed := dir + `\nearhost.exe`
+		f := &fakeUpdate{latest: "0.6.0", exe: tc.exe, goos: "windows", writable: true, present: map[string]bool{installed: true}}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		if want := []string{"stepAside " + tc.exe, "run", "restore"}; !slices.Equal(f.events, want) || f.ran[0].Kind != tc.kind {
+			t.Fatalf("%s: events %v, want %v, ran %v", tc.kind, f.events, want, f.ran)
+		}
+		if err == nil || !strings.Contains(err.Error(), "installed the new nearhost at "+installed) ||
+			!strings.Contains(err.Error(), tc.exe+" is still the old one") || strings.Contains(out, "Updated") {
+			t.Fatalf("%s: out %q, err %v", tc.kind, out, err)
+		}
+	}
+}
+
+// The Windows advice must not add a second write test to the folder off
+// Windows.
+func TestUpdateTestsTheFolderOnce(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true}
+	if _, err := runUpdate(t, f, "0.5.0", "", "--yes"); err != nil || f.writableCalls != 1 {
+		t.Fatalf("err %v, writable called %d times", err, f.writableCalls)
 	}
 }
 

@@ -228,7 +228,7 @@ func clearOldCopies(elevated bool) bool {
 	if elevated {
 		return false
 	}
-	go cleanOld(realExecutable())
+	go func() { cleanOld(realExecutable()) }()
 	return true
 }
 
