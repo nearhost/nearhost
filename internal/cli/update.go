@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -63,7 +64,7 @@ func systemUpdate() updateBackend {
 		goos: runtime.GOOS,
 		run: func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error {
 			c := exec.CommandContext(ctx, m.Args[0], m.Args[1:]...)
-			c.Env = append(os.Environ(), m.Env...)
+			c.Env = updateEnv(os.Environ(), m)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
@@ -231,6 +232,21 @@ func samePathEveryVersion(k update.Kind) bool {
 		return true
 	}
 	return false
+}
+
+// updateEnv is the environment the update command m runs with: environ and
+// m.Env. Windows PowerShell gets no PSModulePath, as when PowerShell 7 starts
+// it itself: inherited from a PowerShell 7 terminal, it can make Windows
+// PowerShell load PowerShell 7's modules and fail.
+func updateEnv(environ []string, m update.Method) []string {
+	env := slices.Clone(environ)
+	if len(m.Args) > 0 && strings.EqualFold(m.Args[0], "powershell.exe") {
+		env = slices.DeleteFunc(env, func(e string) bool {
+			name, _, _ := strings.Cut(e, "=")
+			return strings.EqualFold(name, "PSModulePath")
+		})
+	}
+	return append(env, m.Env...)
 }
 
 // envOf is the value m sets name to, or "". A pre-release build's method

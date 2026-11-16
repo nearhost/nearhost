@@ -555,3 +555,27 @@ func TestUpdateOnWindowsShowsTheFolder(t *testing.T) {
 		t.Fatalf("prompt %q does not name the folder", out)
 	}
 }
+
+// Windows PowerShell started from a PowerShell 7 terminal would inherit
+// PowerShell 7's module path and could load its modules and fail, so it gets
+// none, as when pwsh starts it itself. Every other command keeps the
+// environment as it is.
+func TestUpdateEnv(t *testing.T) {
+	environ := []string{"PATH=C:\\Windows", "PSModulePath=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}
+	for _, name := range []string{"PSModulePath", "PSMODULEPATH", "psmodulepath"} {
+		env := []string{"PATH=C:\\Windows", name + "=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}
+		got := updateEnv(env, update.Method{Args: []string{"powershell.exe", "-Command", "x"}, Env: []string{"NEARHOST_NO_PATH=1"}})
+		if want := []string{"PATH=C:\\Windows", "HOME=x", "NEARHOST_NO_PATH=1"}; !slices.Equal(got, want) {
+			t.Errorf("%s: env = %q, want %q", name, got, want)
+		}
+		if !slices.Equal(env, []string{"PATH=C:\\Windows", name + "=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}) {
+			t.Errorf("updateEnv changed its argument: %q", env)
+		}
+	}
+	for _, args := range [][]string{{"npm", "install", "-g", "@nearhost/cli@latest"}, {"sh", "-c", update.InstallScript}} {
+		got := updateEnv(environ, update.Method{Args: args, Env: []string{"NEARHOST_INSTALL_DIR=/usr/local/bin"}})
+		if want := append(slices.Clone(environ), "NEARHOST_INSTALL_DIR=/usr/local/bin"); !slices.Equal(got, want) {
+			t.Errorf("%s: env = %q, want %q", args[0], got, want)
+		}
+	}
+}
