@@ -266,21 +266,96 @@ func (h *harness) url(alias, path string) string {
 
 // getEventually retries a GET until it succeeds: Caddy issues the leaf
 // certificate asynchronously after Load returns, so early handshakes fail.
+// If none does, it fails with the last error and what the proxy has for
+// alias.
 func (h *harness) getEventually(c *http.Client, alias, path string) (*http.Response, string) {
 	h.t.Helper()
-	var resp *http.Response
-	var body string
-	waitUntil(h.t, 10*time.Second, func() bool {
+	start := time.Now()
+	var last error
+	for deadline := start.Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		r, err := c.Get(h.url(alias, path))
 		if err != nil {
-			return false
+			last = err
+			continue
 		}
 		b, _ := io.ReadAll(r.Body)
 		r.Body.Close()
-		resp, body = r, string(b)
-		return true
-	}, "HTTPS response for "+alias)
-	return resp, body
+		return r, string(b)
+	}
+	h.t.Fatalf("timed out after %v waiting for HTTPS response for %s; the last error: %v\n%s",
+		time.Since(start).Round(time.Millisecond), alias, last, h.state(alias))
+	return nil, ""
+}
+
+// state describes, for a failure message, what the proxy has for alias:
+// whether it runs, the hosts and certificate subjects of the configuration
+// Caddy runs, the certificate files for alias and certmagic's lock files,
+// and Caddy's own log lines, which are its warnings and errors.
+func (h *harness) state(alias string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "proxy running: %v\n", h.p.Running())
+	ctx := caddy.ActiveContext()
+	if app, err := ctx.AppIfConfigured("http"); err == nil && app != nil {
+		for name, srv := range app.(*caddyhttp.App).Servers {
+			var hosts []string
+			for _, r := range srv.Routes {
+				for _, set := range r.MatcherSets {
+					for _, m := range set {
+						switch mh := m.(type) {
+						case *caddyhttp.MatchHost:
+							hosts = append(hosts, *mh...)
+						case caddyhttp.MatchHost:
+							hosts = append(hosts, mh...)
+						}
+					}
+				}
+			}
+			fmt.Fprintf(&b, "server %s listens on %q for hosts %q\n", name, srv.Listen, hosts)
+		}
+	} else {
+		fmt.Fprintf(&b, "no http app: %v\n", err)
+	}
+	if app, err := ctx.AppIfConfigured("tls"); err == nil && app != nil {
+		if a := app.(*caddytls.TLS).Automation; a != nil {
+			for _, p := range a.Policies {
+				fmt.Fprintf(&b, "certificate policy for subjects %q (on demand: %v)\n", p.SubjectsRaw, p.OnDemand)
+			}
+		}
+	}
+	describe := func(kind, pattern string, contents bool) {
+		files, _ := filepath.Glob(pattern)
+		if len(files) == 0 {
+			fmt.Fprintf(&b, "no %s\n", kind)
+		}
+		for _, f := range files {
+			fi, err := os.Stat(f)
+			if err != nil {
+				fmt.Fprintf(&b, "%s %s: %v\n", kind, f, err)
+				continue
+			}
+			fmt.Fprintf(&b, "%s %s: %d bytes, modified %s", kind, filepath.Base(f), fi.Size(), fi.ModTime().Format("15:04:05.000000"))
+			if contents {
+				data, err := os.ReadFile(f)
+				fmt.Fprintf(&b, ": %s %v", strings.TrimSpace(string(data)), err)
+			}
+			b.WriteString("\n")
+		}
+	}
+	describe("certificate file", filepath.Join(h.storage, "certificates", "*", alias, "*"), false)
+	describe("lock file", filepath.Join(h.storage, "locks", "*"), true)
+	h.rec.mu.Lock()
+	var lines []string
+	for _, l := range h.rec.lines {
+		if strings.HasPrefix(l, " ") { // Caddy's own, under no alias
+			lines = append(lines, strings.TrimPrefix(l, " "))
+		}
+	}
+	h.rec.mu.Unlock()
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	fmt.Fprintf(&b, "now %s; Caddy's last log lines:\n%s", time.Now().Format("15:04:05.000000"), strings.Join(lines, "\n"))
+	return b.String()
 }
 
 func TestProxyRuntime(t *testing.T) {
