@@ -16,8 +16,28 @@ builds:
       - -s -w -X github.com/nearhost/nearhost/internal/cli.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+  # Windows is built only while NEARHOST_WINDOWS is "on" (release.yml sets it:
+  # on for prereleases, and for every release once Windows ships). With it off
+  # a release is exactly the darwin and linux build above.
+  - id: windows
+    main: ./cmd/nearhost
+    binary: nearhost
+    env:
+      - CGO_ENABLED=0
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/nearhost/nearhost/internal/cli.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    skip: '{{ ne .Env.NEARHOST_WINDOWS "on" }}'
+
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
@@ -63,3 +83,5 @@ homebrew_casks:
     description: Reach local and remote development servers at their own domain (https://<name>.test by default)
     license: MIT
     commit_msg_template: "feat: update nearhost to {{ .Tag }}"
+    # A prerelease tag (v1.0.0-rc.1) never reaches the tap.
+    skip_upload: auto
