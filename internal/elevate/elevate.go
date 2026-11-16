@@ -1,6 +1,6 @@
 // Package elevate runs the steps that need administrator rights, such as
-// writing the hosts file. On macOS and Linux that is sudo, and on Windows a UAC prompt; the Elevator
-// hides which, so the callers do not know.
+// writing the hosts file. On macOS and Linux that is sudo, and on Windows a
+// UAC prompt; the Elevator hides which, so the callers do not know.
 package elevate
 
 import (

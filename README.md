@@ -32,14 +32,14 @@ Nearhost gives each project a name, a certificate your browser trusts and forwar
 - **Local projects too.** The `local` server needs no setup. Projects on your laptop get the same alias and certificate, so one tool covers the laptop and the servers.
 - **Presets when you want them.** Framework-specific setups, such as Docker Compose, Laravel Sail or Vite, come from preset registries. No registry is trusted until you add one, and you can publish and trust your own.
 - **Your traffic stays yours.** No relay, no account and no public URL. Requests travel over your own SSH connection.
-- **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts`, with each name on `127.0.0.1` and `::1`, asks for `sudo` only when that block changes, and removes it again with `nearhost hosts clean`.
+- **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts` (`C:\Windows\System32\drivers\etc\hosts` on Windows), with each name on `127.0.0.1` and `::1`, asks for `sudo` only when that block changes (on Windows, you approve the change in a prompt), and removes it again with `nearhost hosts clean`.
 - **Runs in the foreground.** `nearhost up` serves until you press Ctrl-C, and the forwards close with it. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
 
 ## Install
 
 Nearhost is a single binary for macOS, Linux and Windows 11, on Intel and ARM.
 
-**Homebrew**
+**Homebrew** (macOS and Linux)
 
 ```sh
 brew install nearhost/tap/nearhost
@@ -60,6 +60,10 @@ irm https://nearhost.dev/install.ps1 | iex
 ```
 
 The script downloads the matching release from GitHub, checks it against the published checksums and installs to `%LOCALAPPDATA%\Programs\nearhost`. It adds that folder to your user `PATH`, so open a new terminal afterwards. Set `NEARHOST_INSTALL_DIR` to install elsewhere, or `NEARHOST_VERSION` to install a specific version. You can also download `nearhost_<version>_windows_<amd64|arm64>.zip` from the [release](https://github.com/nearhost/nearhost/releases) and put `nearhost.exe` on your `PATH`.
+
+**Windows requirements**
+
+Nearhost needs Windows 11 and Windows Terminal. It uses Microsoft's OpenSSH client (`ssh.exe`) and your `~/.ssh/config`. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose More info, then Run anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
 
 **npm**
 
@@ -83,8 +87,6 @@ On Linux, allow the binary to bind ports 80 and 443. Run this again after each u
 sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"
 ```
 
-On Windows, Nearhost needs Windows 11 and Windows Terminal. It uses Microsoft's OpenSSH client (`ssh.exe`) and your `~/.ssh/config`. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose to run it anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed. Homebrew is for macOS and Linux only.
-
 Installed from npm, `command -v nearhost` finds the Node launcher rather than the binary, so run the command `nearhost doctor` prints instead: it names the binary itself.
 
 From Nearhost 0.9.0 the macOS binaries are signed with a Developer ID certificate and notarised by Apple, so Gatekeeper runs them however you download them. A copy downloaded in a browser may need an internet connection the first time it runs, while macOS checks the notarisation with Apple.
@@ -103,15 +105,15 @@ Nearhost also asks GitHub for the latest release at most once a day and prints a
 
 ## Quick start
 
-Trust the local certificate authority. This asks for your password once:
+Trust the local certificate authority. This asks for your password once. On Windows it shows a Windows security prompt instead, with no password:
 
 ```sh
 nearhost trust
 ```
 
-The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On either, an absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy`. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
+The local CA's key is in `~/Library/Application Support/nearhost/caddy` (macOS) or `~/.local/share/nearhost/caddy` (Linux). On Windows it is in `%LOCALAPPDATA%\nearhost\caddy`. On macOS and Linux, an absolute `XDG_DATA_HOME` moves it to `$XDG_DATA_HOME/nearhost/caddy`. Anyone with the key can sign certificates your browser trusts, so keep it out of dotfiles repos and shared backups. Nearhost 0.7 and earlier kept it in `~/.config/nearhost/caddy` (or `$XDG_CONFIG_HOME/nearhost/caddy`). That copy is moved the next time `nearhost`, `nearhost up`, `nearhost trust` or `nearhost untrust` runs while no other Nearhost is running, and `nearhost doctor` warns if one is left behind. `nearhost untrust` removes the CA from the system trust store.
 
-Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml`. Nothing in the project is changed.
+Add a project from its directory. Nearhost reads the ports from its `.env` and saves the routes to `~/.config/nearhost/config.yaml` (`%APPDATA%\nearhost\config.yaml` on Windows). Nothing in the project is changed.
 
 ```text
 $ cd /home/dev/code/myapp
@@ -140,7 +142,7 @@ nearhost
 
 To show bodies and send requests again, the proxy keeps each request and its response in memory while Nearhost runs: bodies up to 64 KiB, the last thousand or so exchanges, never written to disk or to the log. `--no-capture` turns it off.
 
-Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two password prompts and trusts it for you. When Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the interface; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the interface afterwards.
+Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two prompts and trusts it for you. On macOS and Linux, when Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the interface; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the interface afterwards. On Windows, Nearhost asks you to approve the Windows prompt each time it updates the hosts file.
 
 For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
 
@@ -222,8 +224,8 @@ An agent can also open a document it wrote, such as a plan, spec or HTML mockup,
 | `nearhost preset` | Manage presets and the registries you trust |
 | `nearhost update` | Update Nearhost the way you installed it |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block, server access and whether agents there reach Nearhost |
-| `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
-| `nearhost trust` | Trust the local certificate authority; asks for your password |
+| `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts`, or your hosts file on Windows |
+| `nearhost trust` | Trust the local certificate authority; asks for your password, or on Windows for your confirmation |
 | `nearhost untrust` | Remove the certificate authority from the trust store |
 
 `nearhost --version` prints the version. Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.

@@ -25,7 +25,7 @@ Nearhost gives each project a name, a certificate your browser trusts and SSH fo
 - **Hot reload and WebSockets.** Upgrades travel through the same SSH connection as the page. Nearhost can forward a dev server's port to the same number on your laptop, so asset URLs that point at `localhost` still resolve.
 - **Any stack.** If it listens on a port, Nearhost can serve it. It reads port variables from `.env` and proposes routes. Presets from a registry you trust add Docker Compose, Vite and Laravel Sail.
 - **Local projects too.** Projects on your laptop get the same name and certificate, so one tool covers the laptop and the servers.
-- **Your traffic stays yours.** No relay, no account and no public URL. Nearhost owns one marked block in `/etc/hosts` and asks for `sudo` only when that block changes.
+- **Your traffic stays yours.** No relay, no account and no public URL. Nearhost owns one marked block in `/etc/hosts` (the hosts file on Windows) and asks for `sudo` only when that block changes (on Windows, you approve the change in a prompt).
 
 ## Install
 
@@ -52,11 +52,11 @@ Nearhost serves HTTPS on port 443 and redirects port 80, and a normal user canno
 
 ### On Windows
 
-Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose to run it anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
+Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose More info, then Run anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
 
 ## Quick start
 
-1. **Start Nearhost.** Run `nearhost`. On first run it explains its local certificate authority and trusts it for you, asking for your password through `sudo`.
+1. **Start Nearhost.** Run `nearhost`. On first run it explains its local certificate authority and trusts it for you, asking for your password through `sudo` (on Windows, you confirm a Windows security prompt).
 2. **Add a server.** Press `s` and pick a host alias from `~/.ssh/config`, or type `user@host`. Nearhost checks that it connects without a prompt. The `local` server needs no setup.
 3. **Add a project.** Press `n` and give the project's path. Nearhost reads its `.env` over SFTP and proposes the ports: which one serves the web app, which need a loopback forward and which to ignore.
 4. **Open it.** Nearhost adds a hosts entry, issues a certificate and routes `https://myapp.test` through the SSH connection. Press `o` to open it in your browser.
