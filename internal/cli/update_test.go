@@ -489,3 +489,37 @@ func TestBackgroundNoticeAlongThePrereleaseLine(t *testing.T) {
 		}
 	}
 }
+
+// A Windows pre-release build is never offered a normal release that has no
+// Windows build, by `nearhost update` or by the background notice.
+func TestWindowsPrereleaseBuildIsNotOfferedAReleaseWithoutAWindowsBuild(t *testing.T) {
+	const list = `[
+ {"tag_name":"v0.13.0","draft":false,"prerelease":false,"assets":[{"name":"nearhost_0.13.0_linux_amd64.tar.gz"}]},
+ {"tag_name":"v0.13.0-rc.2","draft":false,"prerelease":true,"assets":[{"name":"nearhost_0.13.0-rc.2_windows_amd64.zip"}]}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, list) }))
+	defer srv.Close()
+	checker := update.Checker{Current: "0.13.0-rc.1", URL: srv.URL, GOOS: "windows", GOARCH: "amd64"}
+
+	f := &fakeUpdate{exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true}
+	b := f.backend()
+	b.latest = checker.Latest
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+	Version = "0.13.0-rc.1"
+	cmd := newUpdateCmd(b)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil || len(f.ran) != 1 || envOf(f.ran[0], "NEARHOST_VERSION") != "v0.13.0-rc.2" {
+		t.Fatalf("out %q, err %v, ran %v; want the update to 0.13.0-rc.2", out.String(), err, f.ran)
+	}
+	if strings.Contains(out.String(), "0.13.0 ") || strings.Contains(out.String(), "0.13.0.") {
+		t.Fatalf("offered 0.13.0, which has no Windows build:\n%s", out.String())
+	}
+
+	c := startBackgroundCheck("0.13.0-rc.1", checker.Latest)
+	if got, want := c.notice(time.Second), "A new nearhost is available: 0.13.0-rc.1 → 0.13.0-rc.2. Run `nearhost update` to update."; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}

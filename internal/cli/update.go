@@ -45,7 +45,7 @@ type updateBackend struct {
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
-		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v")}.Latest,
+		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
 		exe:    realExecutable,
 		getenv: os.Getenv,
 		writable: func(dir string) bool {
@@ -354,5 +354,5 @@ func cachedLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v")}.Cached(ctx)
+	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Cached(ctx)
 }

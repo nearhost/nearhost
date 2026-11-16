@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,6 +67,26 @@ type Checker struct {
 	CachePath string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// GOOS and GOARCH are the platform a pre-release build looks for a
+	// build of; empty means the running one's.
+	GOOS, GOARCH string
+}
+
+// asset is the name of this platform's archive in the release of version, as
+// .goreleaser.yaml names it: a zip on Windows, a tar.gz elsewhere.
+func (c Checker) asset(version string) string {
+	goos, goarch := c.GOOS, c.GOARCH
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	ext := ".tar.gz"
+	if goos == "windows" {
+		ext = ".zip"
+	}
+	return "nearhost_" + version + "_" + goos + "_" + goarch + ext
 }
 
 // url is the endpoint to ask.
@@ -90,7 +111,8 @@ func (c Checker) line() string {
 
 // Latest asks GitHub for the latest release and returns its version without
 // the leading v. On the pre-release line it returns the highest version among
-// the published releases, drafts excluded.
+// the published releases that have a build for this platform, drafts
+// excluded.
 func (c Checker) Latest(ctx context.Context) (string, error) {
 	url := c.url()
 	client := c.HTTP
@@ -111,7 +133,7 @@ func (c Checker) Latest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("GitHub answered %s when asked for the latest nearhost release", resp.Status)
 	}
 	if c.line() == "pre" {
-		return highest(resp.Body)
+		return c.highest(resp.Body)
 	}
 	var rel struct {
 		TagName string `json:"tag_name"`
@@ -126,11 +148,15 @@ func (c Checker) Latest(ctx context.Context) (string, error) {
 }
 
 // highest reads a list of releases and returns the greatest version among
-// those that are not drafts, without the leading v.
-func highest(body io.Reader) (string, error) {
+// those that are not drafts and carry this platform's archive, without the
+// leading v. A release without it has no build here, such as a normal
+// release while Windows ships only in pre-releases, or one whose assets are
+// not uploaded yet.
+func (c Checker) highest(body io.Reader) (string, error) {
 	var rels []struct {
-		TagName string `json:"tag_name"`
-		Draft   bool   `json:"draft"`
+		TagName string         `json:"tag_name"`
+		Draft   bool           `json:"draft"`
+		Assets  []releaseAsset `json:"assets"`
 	}
 	if err := json.NewDecoder(body).Decode(&rels); err != nil {
 		return "", fmt.Errorf("could not read GitHub's list of releases: %w", err)
@@ -142,14 +168,23 @@ func highest(body io.Reader) (string, error) {
 		if r.Draft || err != nil {
 			continue
 		}
+		want := c.asset(v.String())
+		if !slices.ContainsFunc(r.Assets, func(a releaseAsset) bool { return a.Name == want }) {
+			continue
+		}
 		if best == nil || v.GreaterThan(best) {
 			best = v
 		}
 	}
 	if best == nil {
-		return "", errors.New("GitHub's list of releases has no nearhost version")
+		return "", errors.New("GitHub's list of releases has no nearhost version with a build for this platform")
 	}
 	return best.String(), nil
+}
+
+// releaseAsset is a file attached to a release.
+type releaseAsset struct {
+	Name string `json:"name"`
 }
 
 // cache is the cache file's content. A failed check is kept too, with no
