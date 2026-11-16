@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/netbind"
@@ -55,8 +57,19 @@ func TestServersListenOnLoopbackOnWindows(t *testing.T) {
 // connection made just after the reload could reach that server, which read
 // the request and closed the connection unanswered, as net/http does while
 // shutting down. Each request here is on a new connection, made as soon as
-// a reload returns.
+// a reload returns. Without the fix 0.4-2.9% of such requests failed on the
+// CI runner, so the default 500 reloads catch it on most runs (at 0.4%, all
+// but about one in seven); NEARHOST_RELOAD_TEST_COUNT sets another count, to
+// look harder.
 func TestARequestJustAfterAReloadIsServedOnWindows(t *testing.T) {
+	reloads := 500
+	if v := os.Getenv("NEARHOST_RELOAD_TEST_COUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			t.Fatalf("NEARHOST_RELOAD_TEST_COUNT = %q, want a positive count", v)
+		}
+		reloads = n
+	}
 	upA, upB := upstream(t, "a"), upstream(t, "b")
 	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
 	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}
@@ -64,7 +77,6 @@ func TestARequestJustAfterAReloadIsServedOnWindows(t *testing.T) {
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 	c := h.client("b.test", false)
 	h.getEventually(c, "b.test", "/hello")
-	const reloads = 2000
 	failed := 0
 	for i := 0; i < reloads; i++ {
 		sites := []Site{b}
