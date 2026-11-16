@@ -152,3 +152,49 @@ func TestStorageLockGivesUpWithItsContextOnWindows(t *testing.T) {
 		t.Fatal("Lock with a cancelled context succeeded while the lock file was pending deletion")
 	}
 }
+
+// certmagic's Lock waits for a held lock, polling every second, and a waiter
+// can be kept there far longer than the retry window. When the holder's
+// unlock then leaves the lock file pending deletion just as the waiter looks
+// again, the waiter still tries again: the window starts at that failure,
+// not when Lock was called.
+func TestStorageLockRetriesAfterALongWaitOnWindows(t *testing.T) {
+	root := t.TempDir()
+	st, _ := Storage{Root: root}.CertMagicStorage()
+	ctx := context.Background()
+	if err := st.Lock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(root, "locks", "issue_cert_a.test.lock")
+
+	const window = 100 * time.Millisecond
+	lockRetryWindow = window
+	started := make(chan struct{}, 1)
+	lockStarts = func() { started <- struct{}{} }
+	releases := make(chan func(), 1)
+	lockWaits = func() {
+		select {
+		case release := <-releases:
+			release()
+		default:
+		}
+	}
+	t.Cleanup(func() { lockRetryWindow, lockStarts, lockWaits = inUseWait, func() {}, func() {} })
+
+	waiter, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- st.Lock(waiter, "issue_cert_a.test") }()
+	<-started
+	// The waiter is blocked on the held lock for longer than the window...
+	time.Sleep(3 * window)
+	// ...when the holder's unlock leaves the file pending deletion. The
+	// waiter's next look fails on it, and its retry lets the file go.
+	releases <- pendingDeletion(t, lock)
+	if err := <-result; err != nil {
+		t.Fatalf("Lock that waited past the window, then met a lock file pending deletion: %v", err)
+	}
+	if err := st.Unlock(ctx, "issue_cert_a.test"); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -78,11 +78,23 @@ const inUseWait = 5 * time.Second
 // lock file may just be finishing its removal (see lockSettling), it tries
 // again, for up to inUseWait or until ctx ends.
 func (s *fileStorage) Lock(ctx context.Context, name string) error {
-	deadline := time.Now().Add(inUseWait)
+	lockStarts()
 	file := filepath.Join(s.Path, "locks", certmagic.StorageKeys.Safe(name)+".lock")
+	return retryLock(ctx, lockRetryWindow,
+		func() error { return s.FileStorage.Lock(ctx, name) },
+		func() bool { return lockSettling(file) })
+}
+
+// lockRetryWindow is how long Lock goes on trying again; tests shorten it.
+var lockRetryWindow = inUseWait
+
+// retryLock calls lock until it succeeds, ctx ends, or it fails while
+// settling reports false or window has passed.
+func retryLock(ctx context.Context, window time.Duration, lock func() error, settling func() bool) error {
+	deadline := time.Now().Add(window)
 	for {
-		err := s.FileStorage.Lock(ctx, name)
-		if err == nil || ctx.Err() != nil || time.Now().After(deadline) || !lockSettling(file) {
+		err := lock()
+		if err == nil || ctx.Err() != nil || time.Now().After(deadline) || !settling() {
 			return err
 		}
 		lockWaits()
@@ -113,6 +125,9 @@ func (s *fileStorage) Load(ctx context.Context, key string) ([]byte, error) {
 // lockWaits is called each time Lock waits for a lock file's removal to
 // finish; tests watch it.
 var lockWaits = func() {}
+
+// lockStarts is called as Lock starts; tests watch it.
+var lockStarts = func() {}
 
 // whileInUse calls f until it does not fail for a file another handle holds,
 // or inUseWait has passed.
