@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -30,13 +31,19 @@ func init() {
 // in quick succession gets there. A certificate file read while it is being
 // replaced fails the same way.
 //
-// Two sharing failures are outside it. Store replaces a file by renaming a
-// temporary one onto it, and on Windows that rename is refused
-// (ACCESS_DENIED) while a reader has the file open. And certmagic removes a
-// stale lock file inside its own lock acquisition, which this wrapper cannot
-// reach, so that removal can fail against a waiter's read. Both only fail
-// that attempt: nothing is left behind, and certmagic retries the issuance
-// after a minute.
+// An unlock that succeeds still leaves a moment in which the lock file is
+// pending deletion: DeleteFile marks the file and then closes its handle, and
+// in between the file can be neither opened nor created (ACCESS_DENIED).
+// A goroutine waiting for the lock reads the file, and one taking it creates
+// it, so either can land there, and certmagic's lock acquisition then fails
+// outright, outside the retries of an issuance: that name had no certificate
+// until the next reload. So does certmagic's removal of a stale lock file
+// when a waiter's read refuses it. Lock tries again instead (see
+// lockSettling).
+//
+// Store replaces a file by renaming a temporary one onto it, and on Windows
+// that rename is refused (ACCESS_DENIED) while a reader has the file open;
+// that only fails the attempt, which certmagic retries after a minute.
 type Storage struct {
 	Root string `json:"root,omitempty"`
 }
@@ -56,8 +63,8 @@ func (s Storage) CertMagicStorage() (certmagic.Storage, error) {
 
 var _ caddy.StorageConverter = (*Storage)(nil)
 
-// fileStorage is certmagic's file storage with Unlock and Load waiting out
-// another handle on the file.
+// fileStorage is certmagic's file storage with Lock, Unlock and Load
+// waiting out another handle on the file.
 type fileStorage struct {
 	*certmagic.FileStorage
 }
@@ -66,6 +73,26 @@ type fileStorage struct {
 // go of its file. The handles in question are a lock file's read by a
 // waiting goroutine or a certificate's replacement, which take moments.
 const inUseWait = 5 * time.Second
+
+// Lock implements certmagic.Locker. When certmagic's attempt fails while the
+// lock file may just be finishing its removal (see lockSettling), it tries
+// again, for up to inUseWait or until ctx ends.
+func (s *fileStorage) Lock(ctx context.Context, name string) error {
+	deadline := time.Now().Add(inUseWait)
+	file := filepath.Join(s.Path, "locks", certmagic.StorageKeys.Safe(name)+".lock")
+	for {
+		err := s.FileStorage.Lock(ctx, name)
+		if err == nil || ctx.Err() != nil || time.Now().After(deadline) || !lockSettling(file) {
+			return err
+		}
+		lockWaits()
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
 
 // Unlock implements certmagic.Locker.
 func (s *fileStorage) Unlock(ctx context.Context, name string) error {
