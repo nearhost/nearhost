@@ -956,7 +956,8 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 	}
 	// The golden file records Unix's wildcard listeners; Windows listens on
 	// loopback only, so there the expected listen values come from
-	// ServeAddrs and the rest is compared as JSON.
+	// ServeAddrs, each server hands its connections over (see Handoff), and
+	// the rest is compared as JSON.
 	var gotCfg, wantCfg map[string]any
 	if err := json.Unmarshal(raw, &gotCfg); err != nil {
 		t.Fatal(err)
@@ -971,6 +972,10 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 			listen = append(listen, a)
 		}
 		servers[name].(map[string]any)["listen"] = listen
+		servers[name].(map[string]any)["listener_wrappers"] = []any{
+			map[string]any{"wrapper": handoffModule},
+			map[string]any{"wrapper": "tls"},
+		}
 	}
 	if !reflect.DeepEqual(gotCfg, wantCfg) {
 		wantRaw, _ := json.Marshal(wantCfg)

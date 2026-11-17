@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -30,13 +31,19 @@ func init() {
 // in quick succession gets there. A certificate file read while it is being
 // replaced fails the same way.
 //
-// Two sharing failures are outside it. Store replaces a file by renaming a
-// temporary one onto it, and on Windows that rename is refused
-// (ACCESS_DENIED) while a reader has the file open. And certmagic removes a
-// stale lock file inside its own lock acquisition, which this wrapper cannot
-// reach, so that removal can fail against a waiter's read. Both only fail
-// that attempt: nothing is left behind, and certmagic retries the issuance
-// after a minute.
+// An unlock that succeeds still leaves a moment in which the lock file is
+// pending deletion: DeleteFile marks the file and then closes its handle, and
+// in between the file can be neither opened nor created (ACCESS_DENIED).
+// A goroutine waiting for the lock reads the file, and one taking it creates
+// it, so either can land there, and certmagic's lock acquisition then fails
+// outright, outside the retries of an issuance: that name had no certificate
+// until the next reload. So does certmagic's removal of a stale lock file
+// when a waiter's read refuses it. Lock tries again instead (see
+// lockSettling).
+//
+// Store replaces a file by renaming a temporary one onto it, and on Windows
+// that rename is refused (ACCESS_DENIED) while a reader has the file open;
+// that only fails the attempt, which certmagic retries after a minute.
 type Storage struct {
 	Root string `json:"root,omitempty"`
 }
@@ -56,8 +63,8 @@ func (s Storage) CertMagicStorage() (certmagic.Storage, error) {
 
 var _ caddy.StorageConverter = (*Storage)(nil)
 
-// fileStorage is certmagic's file storage with Unlock and Load waiting out
-// another handle on the file.
+// fileStorage is certmagic's file storage with Lock, Unlock and Load
+// waiting out another handle on the file.
 type fileStorage struct {
 	*certmagic.FileStorage
 }
@@ -66,6 +73,52 @@ type fileStorage struct {
 // go of its file. The handles in question are a lock file's read by a
 // waiting goroutine or a certificate's replacement, which take moments.
 const inUseWait = 5 * time.Second
+
+// Lock implements certmagic.Locker. When certmagic's attempt fails while the
+// lock file may just be finishing its removal (see lockSettling), it tries
+// again, pausing for up to inUseWait in all or until ctx ends.
+//
+// The retry is deliberately broad: it goes on while the lock file is pending
+// deletion, gone, readable again, or held by another handle, since certmagic
+// reports none of these apart. At the deadline the last attempt's own error
+// is returned. An ACCESS_DENIED that lasts, from a file the process has no
+// right to, is none of these, and fails at once.
+func (s *fileStorage) Lock(ctx context.Context, name string) error {
+	lockStarts()
+	file := filepath.Join(s.Path, "locks", certmagic.StorageKeys.Safe(name)+".lock")
+	return retryLock(ctx, lockRetryWindow,
+		func() error { return s.FileStorage.Lock(ctx, name) },
+		func() bool { return lockSettling(file) })
+}
+
+// lockRetryWindow is how long Lock goes on trying again; tests shorten it.
+var lockRetryWindow = inUseWait
+
+// lockRetryPause is the pause between attempts at a lock.
+const lockRetryPause = 10 * time.Millisecond
+
+// retryLock calls lock until it succeeds, ctx ends, or it fails while
+// settling reports false or it has paused for window in all. Only the pauses
+// count towards window, not the time inside an attempt: certmagic's Lock can
+// wait many seconds for a holder before it fails on that holder's unlock, at
+// the first attempt or at a later one, and that waiter must still get its
+// retries.
+func retryLock(ctx context.Context, window time.Duration, lock func() error, settling func() bool) error {
+	var paused time.Duration
+	for {
+		err := lock()
+		if err == nil || ctx.Err() != nil || !settling() || paused >= window {
+			return err
+		}
+		lockWaits()
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(lockRetryPause):
+			paused += lockRetryPause
+		}
+	}
+}
 
 // Unlock implements certmagic.Locker.
 func (s *fileStorage) Unlock(ctx context.Context, name string) error {
@@ -82,6 +135,13 @@ func (s *fileStorage) Load(ctx context.Context, key string) ([]byte, error) {
 	})
 	return data, err
 }
+
+// lockWaits is called each time Lock waits for a lock file's removal to
+// finish; tests watch it.
+var lockWaits = func() {}
+
+// lockStarts is called as Lock starts; tests watch it.
+var lockStarts = func() {}
 
 // whileInUse calls f until it does not fail for a file another handle holds,
 // or inUseWait has passed.

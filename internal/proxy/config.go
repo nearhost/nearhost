@@ -324,6 +324,18 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 	}
 }
 
+// listenerWrappers sets server's listener wrappers: Handoff, before TLS,
+// where configurations share their sockets, and none elsewhere.
+func listenerWrappers(server map[string]any) map[string]any {
+	if sharedSockets {
+		server["listener_wrappers"] = []any{
+			map[string]any{"wrapper": handoffModule},
+			map[string]any{"wrapper": "tls"},
+		}
+	}
+	return server
+}
+
 // BuildConfig renders the complete Caddy JSON (admin, storage, logging, PKI,
 // TLS automation and HTTP server) for the given sites. It is the single place
 // the config shape is defined; call it with no sites to get just the base
@@ -542,16 +554,16 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// says which project the line is for.
 		"logs": map[string]any{"default_logger_name": accessLogger},
 	}
-	servers := map[string]any{"nearhost": server}
+	servers := map[string]any{"nearhost": listenerWrappers(server)}
 	if len(patterns) > 0 {
 		// Automatic HTTPS would otherwise try to manage the patterns as
 		// subjects. Its redirects stay on, but on the http port our own
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = httpServer(hosts, union, httpPort)
+	servers["nearhost_http"] = listenerWrappers(httpServer(hosts, union, httpPort))
 	if web {
-		servers["nearhost_web"] = webServer(opts)
+		servers["nearhost_web"] = listenerWrappers(webServer(opts))
 	}
 
 	cfg := map[string]any{

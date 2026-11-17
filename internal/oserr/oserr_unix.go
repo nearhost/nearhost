@@ -12,3 +12,5 @@ var (
 	notAFile         = []syscall.Errno{syscall.EISDIR, syscall.ENOTDIR}
 	inUse            []syscall.Errno
 )
+
+func deletePending(string) bool { return false }

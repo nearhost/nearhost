@@ -3,9 +3,11 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 )
@@ -62,5 +64,81 @@ func TestStorageModuleKeepsFilesInTheRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
 		t.Fatalf("the lock file is still there after Unlock: %v", err)
+	}
+}
+
+// A Lock call can wait a long time inside certmagic for the holder before
+// its attempt fails on a lock file being removed. The retry window counts only
+// the pauses between attempts, so that late waiter still tries again.
+func TestRetryLockRetriesAfterALongFirstAttempt(t *testing.T) {
+	const window = 20 * time.Millisecond
+	errSettling := errors.New("lock file being removed")
+	calls := 0
+	err := retryLock(context.Background(), window, func() error {
+		calls++
+		if calls == 1 {
+			// Waiting for the holder, past the whole window.
+			time.Sleep(3 * window)
+			return errSettling
+		}
+		return nil
+	}, func() bool { return true })
+	if err != nil || calls != 2 {
+		t.Fatalf("retryLock after a long wait = %v in %d attempts, want success on the second", err, calls)
+	}
+}
+
+// A retry that itself waits for a new holder, past the window, and then meets
+// that holder's unlock is still retried: time spent inside an attempt is not
+// time spent retrying.
+func TestRetryLockDoesNotCountTimeInsideAnAttempt(t *testing.T) {
+	const window = 20 * time.Millisecond
+	errSettling := errors.New("lock file being removed")
+	calls := 0
+	err := retryLock(context.Background(), window, func() error {
+		calls++
+		if calls <= 2 {
+			time.Sleep(3 * window)
+			return errSettling
+		}
+		return nil
+	}, func() bool { return true })
+	if err != nil || calls != 3 {
+		t.Fatalf("retryLock after two long waits = %v in %d attempts, want success on the third", err, calls)
+	}
+}
+
+// Failures that go on past the window end the retry with the last attempt's
+// own error.
+func TestRetryLockReturnsTheErrorAtTheDeadline(t *testing.T) {
+	const window = 50 * time.Millisecond
+	errSettling := errors.New("lock file being removed")
+	calls := 0
+	start := time.Now()
+	err := retryLock(context.Background(), window, func() error {
+		calls++
+		return errSettling
+	}, func() bool { return true })
+	if err != errSettling {
+		t.Fatalf("retryLock = %v, want the attempt's own error", err)
+	}
+	if calls < 2 {
+		t.Fatalf("retryLock made %d attempts, want it to retry within the window", calls)
+	}
+	if elapsed := time.Since(start); elapsed < window {
+		t.Fatalf("retryLock gave up after %v, before the %v window", elapsed, window)
+	}
+}
+
+// A failure that is not a lock file settling fails at once.
+func TestRetryLockFailsAtOnceWhenNotSettling(t *testing.T) {
+	errDenied := errors.New("access denied")
+	calls := 0
+	err := retryLock(context.Background(), time.Minute, func() error {
+		calls++
+		return errDenied
+	}, func() bool { return false })
+	if err != errDenied || calls != 1 {
+		t.Fatalf("retryLock = %v in %d attempts, want the error after one", err, calls)
 	}
 }
