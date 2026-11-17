@@ -24,25 +24,15 @@ jobs:
           fetch-depth: 0
       # NEARHOST_WINDOWS is read by .goreleaser.yaml. A tag with a prerelease
       # part must be a GitHub prerelease, and the reverse, or npm and Homebrew
-      # would treat the release wrongly.
+      # would treat the release wrongly. CI's release-config job checks the
+      # script for each combination.
       - name: Set NEARHOST_WINDOWS
         env:
           TAG: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          case "$TAG" in
-            *-*) tag_pre=true ;;
-            *) tag_pre=false ;;
-          esac
-          if [ "$tag_pre" != "$PRERELEASE" ]; then
-            echo "::error::tag $TAG and the release's prerelease flag ($PRERELEASE) disagree"
-            exit 1
-          fi
-          if [ "$PRERELEASE" = true ] || [ "$WINDOWS_RELEASES" = on ]; then
-            echo "NEARHOST_WINDOWS=on" >> "$GITHUB_ENV"
-          else
-            echo "NEARHOST_WINDOWS=off" >> "$GITHUB_ENV"
-          fi
+          windows=$(sh .github/scripts/windows-switch.sh) || { echo "$windows"; exit 1; }
+          echo "NEARHOST_WINDOWS=$windows" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

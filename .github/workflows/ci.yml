@@ -47,6 +47,26 @@ jobs:
           distribution: goreleaser
           version: v2.18.3
           install-only: true
+      # The step in release.yml that sets NEARHOST_WINDOWS for a release.
+      - name: Check the release switch
+        run: |
+          set -u
+          check() {
+            got=$(TAG=$1 PRERELEASE=$2 WINDOWS_RELEASES=$3 sh .github/scripts/windows-switch.sh) || got=fails
+            echo "$1 prerelease=$2 WINDOWS_RELEASES=$3: $got"
+            if [ "$got" != "$4" ]; then
+              echo "::error::windows-switch.sh for $1 prerelease=$2 WINDOWS_RELEASES=$3 gave $got, want $4"
+              exit 1
+            fi
+          }
+          check v0.13.0 false off off
+          check v0.13.0 false on on
+          check v0.13.0-rc.1 true off on
+          check v0.13.0-rc.1 true on on
+          check v0.13.0-rc.1 false off fails
+          check v0.13.0-rc.1 false on fails
+          check v0.13.0 true off fails
+          check v0.13.0 true on fails
       - run: goreleaser check
       # No signing secrets or syft here, so notarising and SBOMs are skipped.
       - run: goreleaser release --snapshot --clean --skip=publish,notarize,sbom,homebrew
@@ -97,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck -s sh agents/nearhost/skills/nearhost/scripts/nearhost.sh
+      - run: shellcheck -s sh agents/nearhost/skills/nearhost/scripts/nearhost.sh .github/scripts/windows-switch.sh
       - shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Force -Scope CurrentUser

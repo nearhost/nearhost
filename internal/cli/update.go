@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -45,7 +46,7 @@ type updateBackend struct {
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
-		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v")}.Latest,
+		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
 		exe:    realExecutable,
 		getenv: os.Getenv,
 		writable: func(dir string) bool {
@@ -63,7 +64,7 @@ func systemUpdate() updateBackend {
 		goos: runtime.GOOS,
 		run: func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error {
 			c := exec.CommandContext(ctx, m.Args[0], m.Args[1:]...)
-			c.Env = append(os.Environ(), m.Env...)
+			c.Env = updateEnv(os.Environ(), m)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
@@ -137,9 +138,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	case m.Kind == update.Script && b.goos == "windows" && !b.writable(m.Dir):
 		pin := ""
 		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
-			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
+			pin = "$env:NEARHOST_VERSION='" + update.PSQuote(v) + "'; "
 		}
-		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; $env:NEARHOST_NO_PATH='1'; %s%s\n", m.Dir, update.PSQuote(m.Dir), pin, update.InstallScriptWindows)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
 		pin := ""
@@ -233,6 +234,21 @@ func samePathEveryVersion(k update.Kind) bool {
 	return false
 }
 
+// updateEnv is the environment the update command m runs with: environ and
+// m.Env. Windows PowerShell gets no PSModulePath, as when PowerShell 7 starts
+// it itself: inherited from a PowerShell 7 terminal, it can make Windows
+// PowerShell load PowerShell 7's modules and fail.
+func updateEnv(environ []string, m update.Method) []string {
+	env := slices.Clone(environ)
+	if len(m.Args) > 0 && strings.EqualFold(m.Args[0], "powershell.exe") {
+		env = slices.DeleteFunc(env, func(e string) bool {
+			name, _, _ := strings.Cut(e, "=")
+			return strings.EqualFold(name, "PSModulePath")
+		})
+	}
+	return append(env, m.Env...)
+}
+
 // envOf is the value m sets name to, or "". A pre-release build's method
 // sets NEARHOST_VERSION.
 func envOf(m update.Method, name string) string {
@@ -243,9 +259,6 @@ func envOf(m update.Method, name string) string {
 	}
 	return ""
 }
-
-// psQuote is s for a single-quoted PowerShell string.
-func psQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // updateHTTP is the client for update checks, short enough that a slow
 // network never holds anything up for long.
@@ -354,5 +367,5 @@ func cachedLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v")}.Cached(ctx)
+	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Cached(ctx)
 }

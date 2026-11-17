@@ -169,7 +169,7 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Program Files\José Núñez\nearhost.exe`, tty: true, goos: "windows"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
 	want := "You cannot write to C:\\Program Files\\José Núñez. Open Windows Terminal as administrator and run:\n\n" +
-		"  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\José Núñez'; irm https://nearhost.dev/install.ps1 | iex\n"
+		"  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\José Núñez'; $env:NEARHOST_NO_PATH='1'; irm https://nearhost.dev/install.ps1 | iex\n"
 	if err != nil || len(f.ran) != 0 || len(f.events) != 0 || !strings.HasSuffix(out, want) {
 		t.Fatalf("out %q, err %v, events %v", out, err, f.events)
 	}
@@ -178,12 +178,28 @@ func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
 	}
 }
 
+// A folder whose name has an apostrophe, straight or curly, is quoted for
+// PowerShell, which would otherwise end the string there.
+func TestUpdateUnwritableAdviceQuotesTheFolder(t *testing.T) {
+	for _, tc := range []struct{ dir, quoted string }{
+		{`C:\Users\Seán O'Brien\bin`, `C:\Users\Seán O''Brien\bin`},
+		{"C:\\Users\\Seán O\u2019Brien\\bin", "C:\\Users\\Seán O\u2019\u2019Brien\\bin"},
+	} {
+		f := &fakeUpdate{latest: "0.6.0", exe: tc.dir + `\nearhost.exe`, goos: "windows"}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		want := "  $env:NEARHOST_INSTALL_DIR='" + tc.quoted + "'; $env:NEARHOST_NO_PATH='1'; irm https://nearhost.dev/install.ps1 | iex\n"
+		if err != nil || len(f.events) != 0 || !strings.HasSuffix(out, want) {
+			t.Errorf("out %q, err %v; want it to end %q", out, err, want)
+		}
+	}
+}
+
 // A pre-release build installs a named version, so the run-as-root advice
 // must name it too, or it would install the latest normal release.
 func TestUpdateUnwritableAdviceNamesThePrereleaseVersion(t *testing.T) {
 	for _, tc := range []struct{ goos, exe, want string }{
 		{"linux", "/usr/local/bin/nearhost", "  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=/usr/local/bin NEARHOST_VERSION=v0.13.0-rc.2 sh\n"},
-		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
+		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_NO_PATH='1'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
 	} {
 		f := &fakeUpdate{latest: "0.13.0-rc.2", exe: tc.exe, goos: tc.goos}
 		out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
@@ -466,7 +482,7 @@ func TestUpdateOnWindowsRunsPowerShell(t *testing.T) {
 	f := &fakeUpdate{latest: "0.13.0-rc.2", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true}
 	out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
 	if err != nil || len(f.ran) != 1 || f.ran[0].Args[0] != "powershell.exe" ||
-		f.ran[0].String() != `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex` {
+		f.ran[0].String() != `$env:NEARHOST_INSTALL_DIR='C:\Tools'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex` {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}
 }
@@ -486,6 +502,80 @@ func TestBackgroundNoticeAlongThePrereleaseLine(t *testing.T) {
 		got := c.notice(time.Second) != ""
 		if got != tc.want {
 			t.Errorf("notice for %s -> %s = %v, want %v", tc.current, tc.latest, got, tc.want)
+		}
+	}
+}
+
+// A Windows pre-release build is never offered a normal release that has no
+// Windows build, by `nearhost update` or by the background notice.
+func TestWindowsPrereleaseBuildIsNotOfferedAReleaseWithoutAWindowsBuild(t *testing.T) {
+	const list = `[
+ {"tag_name":"v0.13.0","draft":false,"prerelease":false,"assets":[{"name":"nearhost_0.13.0_linux_amd64.tar.gz"}]},
+ {"tag_name":"v0.13.0-rc.2","draft":false,"prerelease":true,"assets":[{"name":"nearhost_0.13.0-rc.2_windows_amd64.zip"}]}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, list) }))
+	defer srv.Close()
+	checker := update.Checker{Current: "0.13.0-rc.1", URL: srv.URL, GOOS: "windows", GOARCH: "amd64"}
+
+	f := &fakeUpdate{exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true}
+	b := f.backend()
+	b.latest = checker.Latest
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+	Version = "0.13.0-rc.1"
+	cmd := newUpdateCmd(b)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err != nil || len(f.ran) != 1 || envOf(f.ran[0], "NEARHOST_VERSION") != "v0.13.0-rc.2" {
+		t.Fatalf("out %q, err %v, ran %v; want the update to 0.13.0-rc.2", out.String(), err, f.ran)
+	}
+	if strings.Contains(out.String(), "0.13.0 ") || strings.Contains(out.String(), "0.13.0.") {
+		t.Fatalf("offered 0.13.0, which has no Windows build:\n%s", out.String())
+	}
+
+	c := startBackgroundCheck("0.13.0-rc.1", checker.Latest)
+	if got, want := c.notice(time.Second), "A new nearhost is available: 0.13.0-rc.1 → 0.13.0-rc.2. Run `nearhost update` to update."; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
+// On Windows the command nearhost shows names the folder, so a user who runs
+// it by hand updates this copy rather than installing a second one.
+func TestUpdateOnWindowsShowsTheFolder(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Users\José Núñez\bin\nearhost.exe`, goos: "windows", writable: true}
+	out, err := runUpdate(t, f, "0.5.0", "")
+	want := "Run `$env:NEARHOST_INSTALL_DIR='C:\\Users\\José Núñez\\bin'; irm https://nearhost.dev/install.ps1 | iex`, or `nearhost update --yes` to have nearhost run it.\n"
+	if err != nil || len(f.ran) != 0 || !strings.HasSuffix(out, want) {
+		t.Fatalf("out %q, err %v; want it to end %q", out, err, want)
+	}
+	f = &fakeUpdate{latest: "0.6.0", exe: `C:\Users\José Núñez\bin\nearhost.exe`, goos: "windows", writable: true, tty: true}
+	out, _ = runUpdate(t, f, "0.5.0", "n\n")
+	if !strings.Contains(out, "Run `$env:NEARHOST_INSTALL_DIR='C:\\Users\\José Núñez\\bin'; irm https://nearhost.dev/install.ps1 | iex`? [Y/n] ") {
+		t.Fatalf("prompt %q does not name the folder", out)
+	}
+}
+
+// Windows PowerShell started from a PowerShell 7 terminal would inherit
+// PowerShell 7's module path and could load its modules and fail, so it gets
+// none, as when pwsh starts it itself. Every other command keeps the
+// environment as it is.
+func TestUpdateEnv(t *testing.T) {
+	environ := []string{"PATH=C:\\Windows", "PSModulePath=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}
+	for _, name := range []string{"PSModulePath", "PSMODULEPATH", "psmodulepath"} {
+		env := []string{"PATH=C:\\Windows", name + "=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}
+		got := updateEnv(env, update.Method{Args: []string{"powershell.exe", "-Command", "x"}, Env: []string{"NEARHOST_NO_PATH=1"}})
+		if want := []string{"PATH=C:\\Windows", "HOME=x", "NEARHOST_NO_PATH=1"}; !slices.Equal(got, want) {
+			t.Errorf("%s: env = %q, want %q", name, got, want)
+		}
+		if !slices.Equal(env, []string{"PATH=C:\\Windows", name + "=C:\\Program Files\\PowerShell\\7\\Modules", "HOME=x"}) {
+			t.Errorf("updateEnv changed its argument: %q", env)
+		}
+	}
+	for _, args := range [][]string{{"npm", "install", "-g", "@nearhost/cli@latest"}, {"sh", "-c", update.InstallScript}} {
+		got := updateEnv(environ, update.Method{Args: args, Env: []string{"NEARHOST_INSTALL_DIR=/usr/local/bin"}})
+		if want := append(slices.Clone(environ), "NEARHOST_INSTALL_DIR=/usr/local/bin"); !slices.Equal(got, want) {
+			t.Errorf("%s: env = %q, want %q", args[0], got, want)
 		}
 	}
 }

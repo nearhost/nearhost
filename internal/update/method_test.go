@@ -108,7 +108,8 @@ func TestDetectOnWindows(t *testing.T) {
 		{"npx", `C:\Users\x\AppData\Local\npm-cache\_npx\1a2b\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`, Ephemeral, ""},
 		{"go", `C:\Users\José Núñez\go\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"go other case", `c:\users\josé núñez\GO\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
-		{"script", `C:\Tools\nearhost.exe`, Script, InstallScriptWindows},
+		{"script", `C:\Tools\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Tools'; irm https://nearhost.dev/install.ps1 | iex`},
+		{"script, quoted folder", `C:\Users\Seán O'Brien\bin\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Users\Seán O''Brien\bin'; irm https://nearhost.dev/install.ps1 | iex`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := DetectOn("windows", tc.exe, getenv)
@@ -119,14 +120,17 @@ func TestDetectOnWindows(t *testing.T) {
 	}
 	m := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv)
 	wantArgs := []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://nearhost.dev/install.ps1 | iex"}
-	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`}) || m.Dir != `C:\Tools` {
+	// NEARHOST_NO_PATH: an update never changes the user's PATH. An empty
+	// NEARHOST_VERSION: a version pinned in the user's session is not
+	// reinstalled.
+	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) || m.Dir != `C:\Tools` {
 		t.Fatalf("Args %q Env %q Dir %q", m.Args, m.Env, m.Dir)
 	}
 	if InstallScriptWindows != "irm https://nearhost.dev/install.ps1 | iex" {
 		t.Fatalf("InstallScriptWindows = %q", InstallScriptWindows)
 	}
 	spaced := DetectOn("windows", `C:\Users\José Núñez\bin\nearhost.exe`, getenv)
-	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`}) {
+	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) {
 		t.Fatalf("Env = %q", spaced.Env)
 	}
 }
@@ -155,16 +159,36 @@ func TestPinned(t *testing.T) {
 		t.Errorf("Env = %q", m.Env)
 	}
 	w := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv).Pinned("v0.13.0-rc.2")
-	if want := `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
+	if want := `$env:NEARHOST_INSTALL_DIR='C:\Tools'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
 		t.Errorf("windows Pinned = %q, want %q", w.String(), want)
 	}
-	if !slices.Contains(w.Env, "NEARHOST_VERSION=v0.13.0-rc.2") || !slices.Contains(w.Env, `NEARHOST_INSTALL_DIR=C:\Tools`) {
-		t.Errorf("Env = %q", w.Env)
+	if !slices.Equal(w.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.2"}) {
+		t.Errorf("Env = %q, want NEARHOST_VERSION set once, to the version", w.Env)
+	}
+	if again := w.Pinned("0.13.0-rc.3"); !slices.Equal(again.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.3"}) {
+		t.Errorf("Pinned twice: Env = %q", again.Env)
 	}
 	for _, exe := range []string{"/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost", "/Users/me/.npm/_npx/a/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"} {
 		base := DetectOn("darwin", exe, getenv)
 		if got := base.Pinned("0.13.0-rc.2"); !slices.Equal(got.Args, base.Args) || got.String() != base.String() {
 			t.Errorf("Pinned changed %v", base.Kind)
+		}
+	}
+}
+
+// PowerShell ends a single-quoted string on any of five quote marks, and
+// reads each one doubled as itself.
+func TestPSQuote(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`C:\Tools`, `C:\Tools`},
+		{`C:\Users\José Núñez\bin`, `C:\Users\José Núñez\bin`},
+		{`C:\Users\Seán O'Brien\bin`, `C:\Users\Seán O''Brien\bin`},
+		{"C:\\Users\\Seán O\u2019Brien\\bin", "C:\\Users\\Seán O\u2019\u2019Brien\\bin"},
+		{"\u2018\u2019\u201a\u201b'", "\u2018\u2018\u2019\u2019\u201a\u201a\u201b\u201b''"},
+		{`say "hi" $x`, `say "hi" $x`},
+	} {
+		if got := PSQuote(tc.in); got != tc.want {
+			t.Errorf("PSQuote(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

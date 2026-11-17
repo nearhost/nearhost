@@ -32,6 +32,20 @@ const InstallScript = "curl -fsSL https://nearhost.dev/install.sh | sh"
 // InstallScriptWindows is the PowerShell installer's one-liner.
 const InstallScriptWindows = "irm https://nearhost.dev/install.ps1 | iex"
 
+// psQuotes doubles each character that ends a single-quoted PowerShell
+// string: the apostrophe and the four curly single quotes, U+2018 to U+201B.
+// PowerShell reads each one doubled as itself.
+var psQuotes = strings.NewReplacer(
+	"'", "''",
+	"\u2018", "\u2018\u2018",
+	"\u2019", "\u2019\u2019",
+	"\u201a", "\u201a\u201a",
+	"\u201b", "\u201b\u201b",
+)
+
+// PSQuote is s for the inside of a single-quoted PowerShell string.
+func PSQuote(s string) string { return psQuotes.Replace(s) }
+
 // Method is how to update a copy of nearhost.
 type Method struct {
 	Kind Kind
@@ -66,12 +80,16 @@ func (m Method) String() string {
 	}
 	if m.Kind == Script {
 		v := m.envValue("NEARHOST_VERSION")
-		switch {
-		case m.powershell() && v != "":
-			return "$env:NEARHOST_VERSION='" + v + "'; " + InstallScriptWindows
-		case m.powershell():
-			return InstallScriptWindows
-		case v != "":
+		if m.powershell() {
+			// The folder, so that the command run by hand updates this
+			// copy rather than installing another in the default folder.
+			shown := "$env:NEARHOST_INSTALL_DIR='" + PSQuote(m.envValue("NEARHOST_INSTALL_DIR")) + "'; "
+			if v != "" {
+				shown += "$env:NEARHOST_VERSION='" + PSQuote(v) + "'; "
+			}
+			return shown + InstallScriptWindows
+		}
+		if v != "" {
 			return "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=" + v + " sh"
 		}
 		return InstallScript
@@ -93,6 +111,7 @@ func (m Method) Pinned(version string) Method {
 	case Go:
 		out.Args[len(out.Args)-1] = "github.com/nearhost/nearhost/cmd/nearhost@v" + version
 	case Script:
+		out.Env = slices.DeleteFunc(out.Env, func(e string) bool { return strings.HasPrefix(e, "NEARHOST_VERSION=") })
 		out.Env = append(out.Env, "NEARHOST_VERSION=v"+version)
 	}
 	return out
@@ -134,7 +153,11 @@ func DetectOn(goos, exe string, getenv func(string) string) Method {
 	case windows:
 		m.Kind = Script
 		m.Args = []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", InstallScriptWindows}
-		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir}
+		// An update replaces the binary in place and leaves PATH alone,
+		// whichever PATH the folder is on, or none. NEARHOST_VERSION is
+		// empty, which install.ps1 reads as unset, so a version pinned in the
+		// user's session does not stand in for the latest; Pinned sets it.
+		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}
 	default:
 		m.Kind = Script
 		m.Args = []string{"sh", "-c", InstallScript}

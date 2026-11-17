@@ -27,9 +27,10 @@ after(() => rmSync(work, { recursive: true, force: true }));
 
 // A node_modules tree as npm lays it out: the launcher, and optionally the
 // platform package for this machine. `deps` is the launcher's
-// optionalDependencies.
+// optionalDependencies. The tree is in a folder with a space and non-ASCII
+// letters in its name, as under C:\Users\José Núñez on Windows.
 function install(name, { deps, withPlatform = true }) {
-  const modules = join(work, name, 'node_modules', '@nearhost');
+  const modules = join(work, 'José Núñez', name, 'node_modules', '@nearhost');
   mkdirSync(join(modules, 'cli', 'bin'), { recursive: true });
   cpSync(join(root, 'npm', 'cli', 'bin', 'nearhost.js'), join(modules, 'cli', 'bin', 'nearhost.js'));
   writeFileSync(
@@ -68,13 +69,12 @@ test('a missing platform package is named, with the flag to avoid', () => {
 });
 
 test('a platform this release has no build for says so and lists the builds it has', () => {
-  const deps = { '@nearhost/cli-linux-x64': '1.2.3', '@nearhost/cli-darwin-arm64': '1.2.3' };
-  delete deps[`@nearhost/cli-${platform}`];
+  // Platforms no CI runner has, so the list is never the runner's own name.
+  const deps = { '@nearhost/cli-freebsd-x64': '1.2.3', '@nearhost/cli-aix-ppc64': '1.2.3' };
   const r = launch(install('absent', { deps, withPlatform: false }), 'version');
   assert.equal(r.status, 1);
-  assert.ok(r.stderr.includes('this release has no build for'), r.stderr);
-  assert.ok(r.stderr.includes(`${process.platform} on ${process.arch}`), r.stderr);
-  assert.ok(r.stderr.includes('linux on x64') && r.stderr.includes('darwin on arm64'), r.stderr);
+  assert.ok(r.stderr.includes(`this release has no build for ${process.platform} on ${process.arch}.`), r.stderr);
+  assert.ok(r.stderr.includes('It has builds for freebsd on x64, aix on ppc64.'), r.stderr);
   assert.ok(!r.stderr.includes('macOS and Linux'), r.stderr);
   assert.ok(!r.stderr.includes('--omit=optional'), r.stderr);
 });
