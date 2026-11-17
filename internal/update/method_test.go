@@ -108,8 +108,8 @@ func TestDetectOnWindows(t *testing.T) {
 		{"npx", `C:\Users\x\AppData\Local\npm-cache\_npx\1a2b\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`, Ephemeral, ""},
 		{"go", `C:\Users\José Núñez\go\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
 		{"go other case", `c:\users\josé núñez\GO\bin\nearhost.exe`, Go, "go install github.com/nearhost/nearhost/cmd/nearhost@latest"},
-		{"script", `C:\Tools\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Tools'; irm https://nearhost.dev/install.ps1 | iex`},
-		{"script, quoted folder", `C:\Users\Seán O'Brien\bin\nearhost.exe`, Script, `$env:NEARHOST_INSTALL_DIR='C:\Users\Seán O''Brien\bin'; irm https://nearhost.dev/install.ps1 | iex`},
+		{"script", `C:\Tools\nearhost.exe`, Script, ""},
+		{"script, quoted folder", `C:\Users\Seán O'Brien\bin\nearhost.exe`, Script, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := DetectOn("windows", tc.exe, getenv)
@@ -118,20 +118,14 @@ func TestDetectOnWindows(t *testing.T) {
 			}
 		})
 	}
-	m := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv)
-	wantArgs := []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://nearhost.dev/install.ps1 | iex"}
-	// NEARHOST_NO_PATH: an update never changes the user's PATH. An empty
-	// NEARHOST_VERSION: a version pinned in the user's session is not
-	// reinstalled.
-	if !slices.Equal(m.Args, wantArgs) || !slices.Equal(m.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) || m.Dir != `C:\Tools` {
+	// A copy from the PowerShell installer or a zip has no command: nearhost
+	// downloads the release itself, and never starts PowerShell.
+	m := DetectOn("windows", `C:\Users\José Núñez\bin\nearhost.exe`, getenv)
+	if m.Args != nil || m.Env != nil || m.Dir != `C:\Users\José Núñez\bin` {
 		t.Fatalf("Args %q Env %q Dir %q", m.Args, m.Env, m.Dir)
 	}
 	if InstallScriptWindows != "irm https://nearhost.dev/install.ps1 | iex" {
 		t.Fatalf("InstallScriptWindows = %q", InstallScriptWindows)
-	}
-	spaced := DetectOn("windows", `C:\Users\José Núñez\bin\nearhost.exe`, getenv)
-	if !slices.Equal(spaced.Env, []string{`NEARHOST_INSTALL_DIR=C:\Users\José Núñez\bin`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}) {
-		t.Fatalf("Env = %q", spaced.Env)
 	}
 }
 
@@ -158,14 +152,13 @@ func TestPinned(t *testing.T) {
 	if !slices.Contains(m.Env, "NEARHOST_VERSION=v0.13.0-rc.2") || !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR=/usr/local/bin") {
 		t.Errorf("Env = %q", m.Env)
 	}
+	// The version a Windows copy is pinned to is what the advice for a
+	// folder the user cannot write to names.
 	w := DetectOn("windows", `C:\Tools\nearhost.exe`, getenv).Pinned("v0.13.0-rc.2")
-	if want := `$env:NEARHOST_INSTALL_DIR='C:\Tools'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex`; w.String() != want {
-		t.Errorf("windows Pinned = %q, want %q", w.String(), want)
+	if w.Args != nil || !slices.Equal(w.Env, []string{"NEARHOST_VERSION=v0.13.0-rc.2"}) {
+		t.Errorf("windows Pinned: Args %q Env %q", w.Args, w.Env)
 	}
-	if !slices.Equal(w.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.2"}) {
-		t.Errorf("Env = %q, want NEARHOST_VERSION set once, to the version", w.Env)
-	}
-	if again := w.Pinned("0.13.0-rc.3"); !slices.Equal(again.Env, []string{`NEARHOST_INSTALL_DIR=C:\Tools`, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION=v0.13.0-rc.3"}) {
+	if again := w.Pinned("0.13.0-rc.3"); !slices.Equal(again.Env, []string{"NEARHOST_VERSION=v0.13.0-rc.3"}) {
 		t.Errorf("Pinned twice: Env = %q", again.Env)
 	}
 	for _, exe := range []string{"/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost", "/Users/me/.npm/_npx/a/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"} {
