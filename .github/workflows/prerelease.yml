@@ -1,0 +1,44 @@
+# Cuts a prerelease. Run it from the Actions tab (or `gh workflow run
+# prerelease.yml -f version=0.13.0-rc.1`) with a version such as 0.13.0-rc.1.
+# It creates the tag v<version> on main and a GitHub prerelease with it, which
+# starts release.yml. That builds darwin, linux and Windows archives and
+# attaches them to the prerelease, and publishes the npm packages under a
+# prerelease version. The release is never "latest", npm's "latest" tag and
+# the Homebrew tap are untouched.
+name: prerelease
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Prerelease version without the v, for example 0.13.0-rc.1
+        required: true
+        type: string
+permissions: {}
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      # The app's token, unlike GITHUB_TOKEN, starts the release workflow.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.NH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NH_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Create the prerelease
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$'; then
+            echo "::error::version must look like 0.13.0-rc.1, got: $VERSION"
+            exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::tag v$VERSION already exists"
+            exit 1
+          fi
+          gh release create "v$VERSION" --prerelease --target main \
+            --title "v$VERSION" \
+            --notes "Prerelease v$VERSION, built from main. Not for general use."
