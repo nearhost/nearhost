@@ -14,4 +14,4 @@ Nearhost is a terminal app that opens a dev server running on one of your other 
 
 [Website](https://nearhost.dev) · [Docs](https://nearhost.dev/docs/getting-started/introduction/) · [GitHub](https://github.com/nearhost/nearhost)
 
-This binary matches the `nearhost_{{version}}_{{goos}}_{{goarch}}.tar.gz` asset on the [v{{version}} release](https://github.com/nearhost/nearhost/releases/tag/v{{version}}) byte for byte. MIT licence.
+This binary matches the `nearhost_{{version}}_{{goos}}_{{goarch}}.{{ext}}` asset on the [v{{version}} release](https://github.com/nearhost/nearhost/releases/tag/v{{version}}) byte for byte. MIT licence.

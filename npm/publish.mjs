@@ -4,7 +4,13 @@
 // A package whose version is already on the registry is skipped, so a run
 // that failed partway can be run again.
 //
-//   node npm/publish.mjs [out dir] [-- extra npm publish flags]
+// A version with a prerelease part (0.13.0-rc.1) is published under the
+// `next` tag, so it never becomes what `npm install` picks.
+//
+//   node npm/publish.mjs [out dir] [--dry-run] [-- extra npm publish flags]
+//
+// --dry-run prints each npm publish command and touches no registry, not
+// even for npm view.
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,7 +20,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const split = args.indexOf('--');
 const extra = split === -1 ? [] : args.slice(split + 1);
-const out = (split === -1 ? args : args.slice(0, split))[0] ?? join(here, 'dist');
+const own = split === -1 ? args : args.slice(0, split);
+const dryRun = own.includes('--dry-run');
+const out = own.find((a) => a !== '--dry-run') ?? join(here, 'dist');
 
 const dirs = readdirSync(out)
   .filter((d) => d.startsWith('cli-'))
@@ -24,6 +32,11 @@ const dirs = readdirSync(out)
 
 for (const dir of dirs) {
   const { name, version } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+  const publish = [dir, '--access', 'public', ...(version.includes('-') ? ['--tag', 'next'] : []), ...extra];
+  if (dryRun) {
+    console.log(['npm', 'publish', ...publish].join(' '));
+    continue;
+  }
   let published = false;
   try {
     execFileSync('npm', ['view', `${name}@${version}`, 'version'], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -35,5 +48,5 @@ for (const dir of dirs) {
     console.log(`${name}@${version} is already published; skipping`);
     continue;
   }
-  execFileSync('npm', ['publish', dir, '--access', 'public', ...extra], { stdio: 'inherit' });
+  execFileSync('npm', ['publish', ...publish], { stdio: 'inherit' });
 }

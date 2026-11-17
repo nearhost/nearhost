@@ -7,16 +7,27 @@
 const { spawn } = require('node:child_process');
 
 const pkg = `@nearhost/cli-${process.platform}-${process.arch}`;
+const exe = process.platform === 'win32' ? 'nearhost.exe' : 'nearhost';
+
+// The builds this release has are the platform packages npm/build.mjs put in
+// our own optionalDependencies, so a release without a Windows build says so.
+const builds = Object.keys(require('../package.json').optionalDependencies ?? {}).map((n) =>
+  n.replace('@nearhost/cli-', '').replace('-', ' on '),
+);
+
+const supported = builds.includes(`${process.platform} on ${process.arch}`);
 
 let bin;
 try {
-  bin = require.resolve(`${pkg}/bin/nearhost`);
+  if (supported) bin = require.resolve(`${pkg}/bin/${exe}`);
 } catch {
-  const supported = ['darwin', 'linux'].includes(process.platform) && ['x64', 'arm64'].includes(process.arch);
+  // Reported below.
+}
+if (!bin) {
   console.error(
     supported
       ? `nearhost: ${pkg} is not installed. It is an optional dependency of @nearhost/cli; reinstall without --no-optional or --omit=optional.`
-      : `nearhost: there is no build for ${process.platform} on ${process.arch}. Nearhost runs on macOS and Linux, on x64 and arm64.`,
+      : `nearhost: this release has no build for ${process.platform} on ${process.arch}. It has builds for ${builds.join(', ')}.`,
   );
   process.exit(1);
 }
@@ -30,6 +41,8 @@ const child = spawn(bin, process.argv.slice(2), { stdio: 'inherit' });
 process.on('SIGINT', () => {});
 process.on('SIGHUP', () => {});
 process.on('SIGTERM', () => child.kill('SIGTERM'));
+// On Windows, Ctrl-Break reaches nearhost.exe directly, as Ctrl-C does.
+if (process.platform === 'win32') process.on('SIGBREAK', () => {});
 
 child.on('error', (err) => {
   console.error(`nearhost: could not run ${bin}: ${err.message}`);
