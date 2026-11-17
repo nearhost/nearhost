@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,7 +135,7 @@ func TestUpdateScriptIntoUnwritableDir(t *testing.T) {
 	// 7 of the Windows work and will replace it; this test is expected to
 	// change then. Until then it only builds the directory in this OS's path
 	// form, as update.Detect does.
-	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR="+filepath.Dir(f.exe)+" sh") {
+	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR="+path.Dir(f.exe)+" sh") {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}
 }
@@ -264,5 +265,53 @@ func TestHungCheckSavesTheCacheWithinTheGrace(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the failed check was not cached: %v", err)
+	}
+}
+
+func TestUpdatePrereleaseBuildInstallsThePinnedVersion(t *testing.T) {
+	f := &fakeUpdate{latest: "0.13.0", exe: "/usr/local/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"}
+	out, err := runUpdate(t, f, "0.13.0-rc.2", "", "--yes")
+	if err != nil || len(f.ran) != 1 || f.ran[0].String() != "npm install -g @nearhost/cli@0.13.0" {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+	f = &fakeUpdate{latest: "0.13.0", exe: "/usr/local/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"}
+	if _, err := runUpdate(t, f, "0.12.0", "", "--yes"); err != nil || len(f.ran) != 1 || f.ran[0].String() != "npm install -g @nearhost/cli@latest" {
+		t.Fatalf("normal build ran %v, err %v", f.ran, err)
+	}
+}
+
+func TestUpdatePrereleaseNpxNamesTheVersion(t *testing.T) {
+	f := &fakeUpdate{latest: "0.13.0-rc.2", exe: "/Users/me/.npm/_npx/abc/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"}
+	out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
+	if err != nil || !strings.Contains(out, "npx @nearhost/cli@0.13.0-rc.2") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestUpdateOnWindowsRunsPowerShell(t *testing.T) {
+	f := &fakeUpdate{latest: "0.13.0-rc.2", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true}
+	out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
+	if err != nil || len(f.ran) != 1 || f.ran[0].Args[0] != "powershell.exe" ||
+		f.ran[0].String() != `$env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex` {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+}
+
+func TestBackgroundNoticeAlongThePrereleaseLine(t *testing.T) {
+	for _, tc := range []struct {
+		current, latest string
+		want            bool
+	}{
+		{"0.13.0-rc.1", "0.13.0-rc.2", true},
+		{"0.13.0-rc.2", "0.13.0", true},
+		{"0.13.0-rc.2", "0.12.5", false},
+		{"0.12.0", "0.13.0-rc.1", false},
+	} {
+		tc := tc
+		c := startBackgroundCheck(tc.current, func(context.Context) (string, error) { return tc.latest, nil })
+		got := c.notice(time.Second) != ""
+		if got != tc.want {
+			t.Errorf("notice for %s -> %s = %v, want %v", tc.current, tc.latest, got, tc.want)
+		}
 	}
 }

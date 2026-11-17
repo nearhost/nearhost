@@ -38,7 +38,7 @@ type updateBackend struct {
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
-		latest: update.Checker{HTTP: updateHTTP()}.Latest,
+		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v")}.Latest,
 		exe:    realExecutable,
 		getenv: os.Getenv,
 		writable: func(dir string) bool {
@@ -102,7 +102,12 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		return nil
 	}
 	exe := b.exe()
-	m := update.Detect(exe, b.getenv)
+	m := update.DetectOn(b.goos, exe, b.getenv)
+	prerelease := update.IsPrerelease(current)
+	if prerelease {
+		// "latest" never means a pre-release, so name the version.
+		m = m.Pinned(latest)
+	}
 	if check {
 		return fmt.Errorf("%s is available (this is %s, installed with %s). Run `nearhost update` to update", latest, current, m.Kind)
 	}
@@ -110,7 +115,11 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 
 	switch {
 	case m.Kind == update.Ephemeral:
-		fmt.Fprintln(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@latest` to use the latest.")
+		tag := "latest"
+		if prerelease {
+			tag = latest
+		}
+		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)
 		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
 		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s sh\n", m.Dir, m.Dir)
@@ -253,5 +262,5 @@ func cachedLatest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return update.Checker{HTTP: backgroundHTTP(), CachePath: path}.Cached(ctx)
+	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v")}.Cached(ctx)
 }

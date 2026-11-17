@@ -1,8 +1,9 @@
 package update
 
 import (
-	"path/filepath"
+	"path"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -28,6 +29,9 @@ func (k Kind) String() string {
 // InstallScript is the shell installer's one-liner.
 const InstallScript = "curl -fsSL https://nearhost.dev/install.sh | sh"
 
+// InstallScriptWindows is the PowerShell installer's one-liner.
+const InstallScriptWindows = "irm https://nearhost.dev/install.ps1 | iex"
+
 // Method is how to update a copy of nearhost.
 type Method struct {
 	Kind Kind
@@ -40,22 +44,76 @@ type Method struct {
 	Dir string
 }
 
+// powershell reports whether the method runs the PowerShell installer.
+func (m Method) powershell() bool {
+	return m.Kind == Script && len(m.Args) > 0 && m.Args[0] == "powershell.exe"
+}
+
+// envValue is the value of name in Env, or "".
+func (m Method) envValue(name string) string {
+	for _, e := range m.Env {
+		if v, ok := strings.CutPrefix(e, name+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // String is the command as the user would type it, or "" when there is none.
 func (m Method) String() string {
 	if m.Args == nil {
 		return ""
 	}
 	if m.Kind == Script {
+		v := m.envValue("NEARHOST_VERSION")
+		switch {
+		case m.powershell() && v != "":
+			return "$env:NEARHOST_VERSION='" + v + "'; " + InstallScriptWindows
+		case m.powershell():
+			return InstallScriptWindows
+		case v != "":
+			return "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=" + v + " sh"
+		}
 		return InstallScript
 	}
 	return strings.Join(m.Args, " ")
 }
 
+// Pinned is the method installing exactly version rather than the latest
+// release, which a pre-release build needs because "latest" never means a
+// pre-release. Homebrew and npx copies are unchanged.
+func (m Method) Pinned(version string) Method {
+	version = strings.TrimPrefix(version, "v")
+	out := m
+	out.Args = slices.Clone(m.Args)
+	out.Env = slices.Clone(m.Env)
+	switch m.Kind {
+	case NPM, PNPM, Bun:
+		out.Args[len(out.Args)-1] = "@nearhost/cli@" + version
+	case Go:
+		out.Args[len(out.Args)-1] = "github.com/nearhost/nearhost/cmd/nearhost@v" + version
+	case Script:
+		out.Env = append(out.Env, "NEARHOST_VERSION=v"+version)
+	}
+	return out
+}
+
 // Detect works out from exe, the running binary's path with symlinks
 // resolved, how it was installed. getenv reads the environment.
 func Detect(exe string, getenv func(string) string) Method {
-	dir := filepath.Dir(exe)
-	slashed := filepath.ToSlash(exe)
+	return DetectOn(runtime.GOOS, exe, getenv)
+}
+
+// DetectOn is Detect for a binary on the operating system goos, whatever
+// system the code runs on, so a Windows path is read with Windows rules.
+func DetectOn(goos, exe string, getenv func(string) string) Method {
+	windows := goos == "windows"
+	dir := path.Dir(exe)
+	slashed := exe
+	if windows {
+		dir = winDir(exe)
+		slashed = strings.ToLower(strings.ReplaceAll(exe, `\`, "/")) // Windows paths ignore case
+	}
 	m := Method{Dir: dir}
 	switch {
 	case strings.Contains(slashed, "/Caskroom/nearhost/"):
@@ -71,8 +129,12 @@ func Detect(exe string, getenv func(string) string) Method {
 		default:
 			m.Kind, m.Args = NPM, []string{"npm", "install", "-g", "@nearhost/cli@latest"}
 		}
-	case goBin(dir, getenv, runtime.GOOS):
+	case goBin(dir, getenv, goos):
 		m.Kind, m.Args = Go, []string{"go", "install", "github.com/nearhost/nearhost/cmd/nearhost@latest"}
+	case windows:
+		m.Kind = Script
+		m.Args = []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", InstallScriptWindows}
+		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir}
 	default:
 		m.Kind = Script
 		m.Args = []string{"sh", "-c", InstallScript}
@@ -81,30 +143,60 @@ func Detect(exe string, getenv func(string) string) Method {
 	return m
 }
 
+// winDir is the directory of a Windows path, whichever system this runs on.
+func winDir(p string) string {
+	i := strings.LastIndexAny(p, `\/`)
+	if i < 0 {
+		return "."
+	}
+	if i == 2 && p[1] == ':' { // C:\nearhost.exe is in C:\
+		return p[:3]
+	}
+	return p[:i]
+}
+
+// winPath is p in one spelling, to compare Windows paths: backslashes, no
+// trailing separator.
+func winPath(p string) string {
+	return strings.TrimRight(strings.ReplaceAll(p, "/", `\`), `\`)
+}
+
 // goBin reports whether dir is where `go install` puts binaries on the
 // operating system goos: GOBIN, or the bin directory of the first GOPATH
 // entry, which defaults to ~/go, or %USERPROFILE%\go on Windows whatever
 // HOME says.
 func goBin(dir string, getenv func(string) string, goos string) bool {
-	same := func(a, b string) bool { return a == b }
 	if goos == "windows" {
-		same = strings.EqualFold // Windows paths ignore case
+		return goBinWindows(dir, getenv)
 	}
 	if gobin := getenv("GOBIN"); gobin != "" {
-		return same(filepath.Clean(gobin), dir)
+		return path.Clean(gobin) == dir
 	}
 	gopath := getenv("GOPATH")
 	if gopath == "" {
-		homeVar := "HOME"
-		if goos == "windows" {
-			homeVar = "USERPROFILE"
-		}
-		home := getenv(homeVar)
+		home := getenv("HOME")
 		if home == "" {
 			return false
 		}
-		gopath = filepath.Join(home, "go")
+		gopath = path.Join(home, "go")
 	}
-	first := filepath.SplitList(gopath)[0]
-	return same(filepath.Join(first, "bin"), dir)
+	first, _, _ := strings.Cut(gopath, ":")
+	return path.Join(first, "bin") == dir
+}
+
+func goBinWindows(dir string, getenv func(string) string) bool {
+	same := func(a, b string) bool { return strings.EqualFold(winPath(a), winPath(b)) }
+	if gobin := getenv("GOBIN"); gobin != "" {
+		return same(gobin, dir)
+	}
+	gopath := getenv("GOPATH")
+	if gopath == "" {
+		home := getenv("USERPROFILE")
+		if home == "" {
+			return false
+		}
+		gopath = winPath(home) + `\go`
+	}
+	first, _, _ := strings.Cut(gopath, ";") // a Windows path list is split on ;
+	return same(winPath(first)+`\bin`, dir)
 }
