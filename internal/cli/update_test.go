@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +26,15 @@ type fakeUpdate struct {
 	goos     string
 	ran      []update.Method
 	runErr   error
+	// events is stepAside, run and restore in the order they were called.
+	events     []string
+	asideErr   error
+	restoreErr error
+	// missing is whether the installer left no file at exe.
+	missing bool
+	// present, when set, lists the paths that exist instead.
+	present       map[string]bool
+	writableCalls int
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -34,12 +43,29 @@ func (f *fakeUpdate) backend() updateBackend {
 		exe:    func() string { return f.exe },
 		// Go's default GOPATH is under USERPROFILE on Windows.
 		getenv:      func(k string) string { return map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}[k] },
-		writable:    func(string) bool { return f.writable },
+		writable:    func(string) bool { f.writableCalls++; return f.writable },
 		interactive: func() bool { return f.tty },
 		goos:        f.goos,
 		run: func(_ context.Context, m update.Method, _, _ io.Writer) error {
 			f.ran = append(f.ran, m)
+			f.events = append(f.events, "run")
 			return f.runErr
+		},
+		stepAside: func(exe string) (func() error, error) {
+			f.events = append(f.events, "stepAside "+exe)
+			if f.asideErr != nil {
+				return nil, f.asideErr
+			}
+			return func() error {
+				f.events = append(f.events, "restore")
+				return f.restoreErr
+			}, nil
+		},
+		exists: func(p string) bool {
+			if f.present != nil {
+				return f.present[p]
+			}
+			return !f.missing
 		},
 	}
 }
@@ -127,16 +153,164 @@ func TestUpdateNotATerminalNeedsYes(t *testing.T) {
 }
 
 func TestUpdateScriptIntoUnwritableDir(t *testing.T) {
-	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", tty: true}
+	for _, goos := range []string{"linux", "darwin"} {
+		f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", tty: true, goos: goos}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		want := "nearhost 0.5.0 → 0.6.0 is available. This copy was installed with the install script.\n" +
+			"You cannot write to /usr/local/bin, so run the installer as root:\n\n" +
+			"  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=/usr/local/bin sh\n"
+		if err != nil || len(f.ran) != 0 || len(f.events) != 0 || out != want {
+			t.Fatalf("%s: out %q, err %v, events %v", goos, out, err, f.events)
+		}
+	}
+}
+
+func TestUpdateScriptIntoUnwritableDirOnWindowsNamesPowerShell(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Program Files\José Núñez\nearhost.exe`, tty: true, goos: "windows"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	// On Windows this pins a known-wrong message: install-script advice
-	// (`curl ... | sudo ... sh`, meaningless there) for a binary that npm or
-	// go did not install. Windows self-update and install.ps1 arrive in stage
-	// 7 of the Windows work and will replace it; this test is expected to
-	// change then. Until then it only builds the directory in this OS's path
-	// form, as update.Detect does.
-	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "sudo NEARHOST_INSTALL_DIR="+path.Dir(f.exe)+" sh") {
+	want := "You cannot write to C:\\Program Files\\José Núñez. Open Windows Terminal as administrator and run:\n\n" +
+		"  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\José Núñez'; irm https://nearhost.dev/install.ps1 | iex\n"
+	if err != nil || len(f.ran) != 0 || len(f.events) != 0 || !strings.HasSuffix(out, want) {
+		t.Fatalf("out %q, err %v, events %v", out, err, f.events)
+	}
+	if strings.Contains(out, "curl") || strings.Contains(out, "sudo") {
+		t.Fatalf("a Windows user was told to use curl or sudo:\n%s", out)
+	}
+}
+
+// A pre-release build installs a named version, so the run-as-root advice
+// must name it too, or it would install the latest normal release.
+func TestUpdateUnwritableAdviceNamesThePrereleaseVersion(t *testing.T) {
+	for _, tc := range []struct{ goos, exe, want string }{
+		{"linux", "/usr/local/bin/nearhost", "  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=/usr/local/bin NEARHOST_VERSION=v0.13.0-rc.2 sh\n"},
+		{"windows", `C:\Program Files\nearhost\nearhost.exe`, "  $env:NEARHOST_INSTALL_DIR='C:\\Program Files\\nearhost'; $env:NEARHOST_VERSION='v0.13.0-rc.2'; irm https://nearhost.dev/install.ps1 | iex\n"},
+	} {
+		f := &fakeUpdate{latest: "0.13.0-rc.2", exe: tc.exe, goos: tc.goos}
+		out, err := runUpdate(t, f, "0.13.0-rc.1", "", "--yes")
+		if err != nil || len(f.events) != 0 || !strings.HasSuffix(out, tc.want) {
+			t.Errorf("%s: out %q, err %v, events %v", tc.goos, out, err, f.events)
+		}
+	}
+}
+
+// On Windows the running nearhost.exe is moved out of the way before the
+// installer runs, since Windows will not let anything overwrite it.
+func TestUpdateOnWindowsStepsAsideFirst(t *testing.T) {
+	exe := `C:\Users\José Núñez\AppData\Roaming\npm\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`
+	f := &fakeUpdate{latest: "0.6.0", exe: exe, goos: "windows"}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err != nil || !strings.Contains(out, "Updated to 0.6.0") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if want := []string{"stepAside " + exe, "run"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+}
+
+func TestUpdateOnWindowsRestoresWhenTheInstallerFails(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true, runErr: errors.New("exit status 1")}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if want := []string{`stepAside C:\Tools\nearhost.exe`, "run", "restore"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+	if err == nil || !strings.Contains(err.Error(), "install.ps1") || !strings.Contains(err.Error(), "exit status 1") ||
+		!strings.Contains(err.Error(), `the old nearhost is back at C:\Tools\nearhost.exe`) || strings.Contains(out, "Updated") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestUpdateOnWindowsRestoresWhenTheInstallerLeavesNoBinary(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true, missing: true}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if want := []string{`stepAside C:\Tools\nearhost.exe`, "run", "restore"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+	if err == nil || !strings.Contains(err.Error(), `left no nearhost at C:\Tools\nearhost.exe`) ||
+		!strings.Contains(err.Error(), "the old nearhost is back") || strings.Contains(out, "Updated") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+// If the old copy cannot be put back either, the error says where it is.
+func TestUpdateOnWindowsSaysWhenRestoreFails(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true,
+		runErr: errors.New("exit status 1"), restoreErr: errors.New(`move C:\old\nearhost-1.exe back to C:\Tools\nearhost.exe: access denied`)}
+	_, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "could not be put back") || !strings.Contains(err.Error(), `C:\old\nearhost-1.exe`) ||
+		strings.Contains(err.Error(), "is back") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUpdateOnWindowsRunsNothingWhenItCannotStepAside(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true, asideErr: errors.New("access denied")}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "access denied") || len(f.ran) != 0 || strings.Contains(out, "Updated") {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+}
+
+// pnpm's global store has the version in the path, so the new binary is
+// never at the old one's path; its exit status is what counts.
+func TestUpdateOnWindowsTrustsPnpm(t *testing.T) {
+	exe := `C:\Users\x\AppData\Local\pnpm\global\5\node_modules\.pnpm\@nearhost+cli-win32-x64@0.13.0\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`
+	f := &fakeUpdate{latest: "0.14.0", exe: exe, goos: "windows", missing: true}
+	out, err := runUpdate(t, f, "0.13.0", "", "--yes")
+	if err != nil || !strings.Contains(out, "Updated to 0.14.0") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if want := []string{"stepAside " + exe, "run"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+}
+
+// A copy renamed from nearhost.exe: the installer puts the new version at
+// nearhost.exe, and the renamed copy goes back to being the old one. The
+// copy the user runs was not updated, so the command fails and says where
+// the new one is.
+func TestUpdateOnWindowsRenamedCopy(t *testing.T) {
+	for _, tc := range []struct {
+		kind update.Kind
+		exe  string
+	}{
+		{update.Script, `C:\Tools\nh.exe`},
+		{update.Go, `/Users/me/go/bin/nh.exe`}, // %USERPROFILE%\go\bin in the fake
+	} {
+		dir := tc.exe[:strings.LastIndexAny(tc.exe, `\/`)]
+		installed := dir + `\nearhost.exe`
+		f := &fakeUpdate{latest: "0.6.0", exe: tc.exe, goos: "windows", writable: true, present: map[string]bool{installed: true}}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		if want := []string{"stepAside " + tc.exe, "run", "restore"}; !slices.Equal(f.events, want) || f.ran[0].Kind != tc.kind {
+			t.Fatalf("%s: events %v, want %v, ran %v", tc.kind, f.events, want, f.ran)
+		}
+		if err == nil || !strings.Contains(err.Error(), "installed the new nearhost at "+installed) ||
+			!strings.Contains(err.Error(), tc.exe+" is still the old one") || strings.Contains(out, "Updated") {
+			t.Fatalf("%s: out %q, err %v", tc.kind, out, err)
+		}
+	}
+}
+
+// The Windows advice must not add a second write test to the folder off
+// Windows.
+func TestUpdateTestsTheFolderOnce(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true}
+	if _, err := runUpdate(t, f, "0.5.0", "", "--yes"); err != nil || f.writableCalls != 1 {
+		t.Fatalf("err %v, writable called %d times", err, f.writableCalls)
+	}
+}
+
+func TestUpdateOffWindowsNeverStepsAside(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, runErr := range []error{nil, errors.New("exit status 1")} {
+			f := &fakeUpdate{latest: "0.6.0", exe: "/Users/me/go/bin/nearhost", goos: goos, missing: true, runErr: runErr}
+			_, err := runUpdate(t, f, "0.5.0", "", "--yes")
+			if want := []string{"run"}; !slices.Equal(f.events, want) {
+				t.Fatalf("%s: events %v, want %v", goos, f.events, want)
+			}
+			if (err != nil) != (runErr != nil) {
+				t.Fatalf("%s: err %v", goos, err)
+			}
+		}
 	}
 }
 

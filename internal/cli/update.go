@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,6 +35,11 @@ type updateBackend struct {
 	goos        string
 	// run runs the update command.
 	run func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error
+	// stepAside moves the running binary out of the way, on Windows only,
+	// and returns a function that moves it back.
+	stepAside func(exe string) (restore func() error, err error)
+	// exists reports whether there is a file at path.
+	exists func(path string) bool
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -60,6 +67,11 @@ func systemUpdate() updateBackend {
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
+		stepAside: update.StepAside,
+		exists: func(path string) bool {
+			_, err := os.Stat(path)
+			return err == nil
+		},
 	}
 }
 
@@ -69,7 +81,8 @@ func newUpdateCmd(b updateBackend) *cobra.Command {
 		Use:   "update",
 		Short: "Update nearhost to the latest release",
 		Long: "Update nearhost to the latest release, the way this copy was installed:\n" +
-			"with Homebrew, npm, pnpm, bun, go install or the install script.\n\n" +
+			"with Homebrew, npm, pnpm, bun, go install, the install script, or on\n" +
+			"Windows the PowerShell installer.\n\n" +
 			"nearhost also checks for a new release at most once a day and says so\n" +
 			"when one is out. Set NEARHOST_NO_UPDATE_CHECK=1 to turn that off.",
 		Args: cobra.NoArgs,
@@ -121,8 +134,19 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		}
 		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)
 		return nil
+	case m.Kind == update.Script && b.goos == "windows" && !b.writable(m.Dir):
+		pin := ""
+		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
+			pin = "$env:NEARHOST_VERSION='" + psQuote(v) + "'; "
+		}
+		fmt.Fprintf(out, "You cannot write to %s. Open Windows Terminal as administrator and run:\n\n  $env:NEARHOST_INSTALL_DIR='%s'; %s%s\n", m.Dir, psQuote(m.Dir), pin, update.InstallScriptWindows)
+		return nil
 	case m.Kind == update.Script && !b.writable(m.Dir):
-		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s sh\n", m.Dir, m.Dir)
+		pin := ""
+		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
+			pin = " NEARHOST_VERSION=" + v
+		}
+		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s%s sh\n", m.Dir, m.Dir, pin)
 		return nil
 	}
 
@@ -140,8 +164,12 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 			return nil
 		}
 	}
-	if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
-		return fmt.Errorf("`%s` failed: %w", m, err)
+	if b.goos != "windows" {
+		if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
+			return fmt.Errorf("`%s` failed: %w", m, err)
+		}
+	} else if err := runAside(ctx, cmd, b, m, exe); err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
 	if b.goos == "linux" {
@@ -154,6 +182,70 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	}
 	return nil
 }
+
+// runAside runs the update on Windows, which will not let anything overwrite
+// or delete the running exe: it moves exe out of the way first, and puts it
+// back when the update fails, so there is always a working nearhost.
+func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe string) error {
+	// A Ctrl-C reaches the installer too, which then fails; closing the
+	// console window (SIGTERM to Go) ends the installer and gives nearhost a
+	// few seconds. Either way nearhost must not end before the old copy is
+	// back, so both are held from before it moves.
+	held := make(chan os.Signal, 1)
+	signal.Notify(held, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(held)
+	restore, err := b.stepAside(exe)
+	if err != nil {
+		return fmt.Errorf("nothing was updated, as the running nearhost could not be moved out of the way: %w", err)
+	}
+	failed := func(err error) error {
+		if rerr := restore(); rerr != nil {
+			return fmt.Errorf("%w, and the old nearhost could not be put back: %v", err, rerr)
+		}
+		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
+	}
+	if err := b.run(ctx, m, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+		return failed(fmt.Errorf("`%s` failed: %w", m, err))
+	}
+	if !samePathEveryVersion(m.Kind) || b.exists(exe) {
+		return nil
+	}
+	// A copy renamed from nearhost.exe: the installer put the new version
+	// at <dir>\nearhost.exe, and the renamed one is the old one again.
+	if installed := m.Dir + `\nearhost.exe`; (m.Kind == update.Script || m.Kind == update.Go) &&
+		!strings.EqualFold(installed, exe) && b.exists(installed) {
+		if rerr := restore(); rerr != nil {
+			return fmt.Errorf("`%s` installed the new nearhost at %s, not at %s, and the old nearhost could not be put back: %v", m, installed, exe, rerr)
+		}
+		return fmt.Errorf("`%s` installed the new nearhost at %s; %s is still the old one", m, installed, exe)
+	}
+	return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
+}
+
+// samePathEveryVersion reports whether an update of kind puts the new binary
+// at the running one's path. pnpm's global store has the version in the
+// path, so its new binary is elsewhere and only its exit status counts.
+func samePathEveryVersion(k update.Kind) bool {
+	switch k {
+	case update.Script, update.Go, update.NPM, update.Bun:
+		return true
+	}
+	return false
+}
+
+// envOf is the value m sets name to, or "". A pre-release build's method
+// sets NEARHOST_VERSION.
+func envOf(m update.Method, name string) string {
+	for _, e := range m.Env {
+		if v, ok := strings.CutPrefix(e, name+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// psQuote is s for a single-quoted PowerShell string.
+func psQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // updateHTTP is the client for update checks, short enough that a slow
 // network never holds anything up for long.
