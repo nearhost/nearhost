@@ -25,7 +25,7 @@ Nearhost gives each project a name, a certificate your browser trusts and SSH fo
 - **Hot reload and WebSockets.** Upgrades travel through the same SSH connection as the page. Nearhost can forward a dev server's port to the same number on your laptop, so asset URLs that point at `localhost` still resolve.
 - **Any stack.** If it listens on a port, Nearhost can serve it. It reads port variables from `.env` and proposes routes. Presets from a registry you trust add Docker Compose, Vite and Laravel Sail.
 - **Local projects too.** Projects on your laptop get the same name and certificate, so one tool covers the laptop and the servers.
-- **Your traffic stays yours.** No relay, no account and no public URL. Nearhost owns one marked block in `/etc/hosts` and asks for `sudo` only when that block changes.
+- **Your traffic stays yours.** No relay, no account and no public URL. Nearhost owns one marked block in `/etc/hosts` (the hosts file on Windows) and asks for `sudo` only when that block changes (on Windows, you approve the change in a prompt).
 
 ## Install
 
@@ -42,17 +42,21 @@ npm install -g @nearhost/cli
 nearhost
 ```
 
-pnpm (`pnpm add -g @nearhost/cli`) and bun (`bun add -g @nearhost/cli`) work too. Nearhost runs on macOS and Linux, on Apple silicon, Intel and ARM.
+pnpm (`pnpm add -g @nearhost/cli`) and bun (`bun add -g @nearhost/cli`) work too. Nearhost runs on macOS, Linux and Windows 11, on Apple silicon, Intel and ARM.
 
-The binary also ships through Homebrew (`brew install nearhost/tap/nearhost`) and a shell installer (`curl -fsSL https://nearhost.dev/install.sh | sh`). The [install guide](https://nearhost.dev/docs/getting-started/install/) covers each one.
+The binary also ships through Homebrew (`brew install nearhost/tap/nearhost`) and a shell installer (`curl -fsSL https://nearhost.dev/install.sh | sh`). On Windows there is a PowerShell installer (`irm https://nearhost.dev/install.ps1 | iex`). The [install guide](https://nearhost.dev/docs/getting-started/install/) covers each one.
 
 ### On Linux
 
 Nearhost serves HTTPS on port 443 and redirects port 80, and a normal user cannot bind either. Run `nearhost doctor`: it prints the `setcap` command that grants the binary that one capability, with the binary's path inside `node_modules` filled in. Run it again after each upgrade.
 
+### On Windows
+
+Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. The binary is not code signed, so SmartScreen may warn the first time it runs: choose More info, then Run anyway. Where Smart App Control is on, Windows can block the binary because it is unsigned, and Nearhost cannot run there until its Windows binaries are signed.
+
 ## Quick start
 
-1. **Start Nearhost.** Run `nearhost`. On first run it explains its local certificate authority and trusts it for you, asking for your password through `sudo`.
+1. **Start Nearhost.** Run `nearhost`. On first run it explains its local certificate authority and trusts it for you, asking for your password through `sudo` (on Windows, you confirm a Windows security prompt).
 2. **Add a server.** Press `s` and pick a host alias from `~/.ssh/config`, or type `user@host`. Nearhost checks that it connects without a prompt. The `local` server needs no setup.
 3. **Add a project.** Press `n` and give the project's path. Nearhost reads its `.env` over SFTP and proposes the ports: which one serves the web app, which need a loopback forward and which to ignore.
 4. **Open it.** Nearhost adds a hosts entry, issues a certificate and routes `https://myapp.test` through the SSH connection. Press `o` to open it in your browser.
@@ -94,7 +98,7 @@ Nearhost serves your own machines to your own browser. To show work to someone e
 
 ## How this package works
 
-`@nearhost/cli` holds a small Node launcher. The Go binary comes in a platform package, `@nearhost/cli-darwin-arm64`, `@nearhost/cli-darwin-x64`, `@nearhost/cli-linux-arm64` or `@nearhost/cli-linux-x64`, and npm installs only the one that matches your machine. No install script runs, so `--ignore-scripts` works. Each binary matches the one on the [GitHub release](https://github.com/nearhost/nearhost/releases) byte for byte, and versions published by the release workflow carry npm provenance.
+`@nearhost/cli` holds a small Node launcher. The Go binary comes in a platform package, `@nearhost/cli-darwin-arm64`, `@nearhost/cli-darwin-x64`, `@nearhost/cli-linux-arm64`, `@nearhost/cli-linux-x64`, `@nearhost/cli-win32-arm64` or `@nearhost/cli-win32-x64`, and npm installs only the one that matches your machine. No install script runs, so `--ignore-scripts` works. Each binary matches the one on the [GitHub release](https://github.com/nearhost/nearhost/releases) byte for byte, and versions published by the release workflow carry npm provenance.
 
 ## Licence
 
