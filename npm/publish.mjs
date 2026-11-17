@@ -2,7 +2,9 @@
 // Publishes the packages npm/build.mjs assembled: the platform packages
 // first, so @nearhost/cli never points at a version that is not there yet.
 // A package whose version is already on the registry is skipped, so a run
-// that failed partway can be run again.
+// that failed partway can be run again. npm takes a few minutes to show a
+// version it has accepted, and refuses a second copy meanwhile (E409,
+// "previously staged version"): that version is skipped too.
 //
 // A version with a prerelease part (0.13.0-rc.1) is published under the
 // `next` tag, so it never becomes what `npm install` picks.
@@ -11,7 +13,7 @@
 //
 // --dry-run prints each npm publish command and touches no registry, not
 // even for npm view.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,5 +50,13 @@ for (const dir of dirs) {
     console.log(`${name}@${version} is already published; skipping`);
     continue;
   }
-  execFileSync('npm', ['publish', ...publish], { stdio: 'inherit' });
+  const res = spawnSync('npm', ['publish', ...publish], { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' });
+  if (res.error) throw res.error;
+  process.stderr.write(res.stderr);
+  if (res.status === 0) continue;
+  if (/\bE409\b/.test(res.stderr) && /previously staged version/i.test(res.stderr)) {
+    console.log(`${name}@${version} is already with npm, which is still processing it; skipping`);
+    continue;
+  }
+  process.exit(res.status ?? 1);
 }
