@@ -36,6 +36,9 @@ type updateBackend struct {
 	goos        string
 	// run runs the update command.
 	run func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error
+	// download fetches the release of version and writes its nearhost.exe
+	// to exe: the update of a Windows copy that no package manager owns.
+	download func(ctx context.Context, version, exe string) error
 	// stepAside moves the running binary out of the way, on Windows only,
 	// and returns a function that moves it back.
 	stepAside func(exe string) (restore func() error, err error)
@@ -68,6 +71,7 @@ func systemUpdate() updateBackend {
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
+		download:  update.Downloader{}.Install,
 		stepAside: update.StepAside,
 		exists: func(path string) bool {
 			_, err := os.Stat(path)
@@ -82,8 +86,10 @@ func newUpdateCmd(b updateBackend) *cobra.Command {
 		Use:   "update",
 		Short: "Update nearhost to the latest release",
 		Long: "Update nearhost to the latest release, the way this copy was installed:\n" +
-			"with Homebrew, npm, pnpm, bun, go install, the install script, or on\n" +
-			"Windows the PowerShell installer.\n\n" +
+			"with Homebrew, npm, pnpm, bun, go install or the install script. On\n" +
+			"Windows, a copy from the PowerShell installer or a zip is replaced with\n" +
+			"the release's nearhost.exe, downloaded from GitHub and checked against\n" +
+			"the release's checksums.\n\n" +
 			"nearhost also checks for a new release at most once a day and says so\n" +
 			"when one is out. Set NEARHOST_NO_UPDATE_CHECK=1 to turn that off.",
 		Args: cobra.NoArgs,
@@ -151,12 +157,22 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		return nil
 	}
 
+	// A Windows copy from the PowerShell installer or a zip: nearhost
+	// downloads the release itself.
+	native := m.Kind == update.Script && b.goos == "windows"
 	if !yes {
-		if !b.interactive() {
+		switch {
+		case !b.interactive() && native:
+			fmt.Fprintf(out, "Run `nearhost update --yes` to have nearhost download %s from GitHub and replace %s.\n", latest, exe)
+			return nil
+		case !b.interactive():
 			fmt.Fprintf(out, "Run `%s`, or `nearhost update --yes` to have nearhost run it.\n", m)
 			return nil
+		case native:
+			fmt.Fprintf(out, "Download %s from GitHub and replace %s? [Y/n] ", latest, exe)
+		default:
+			fmt.Fprintf(out, "Run `%s`? [Y/n] ", m)
 		}
-		fmt.Fprintf(out, "Run `%s`? [Y/n] ", m)
 		answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "", "y", "yes":
@@ -169,7 +185,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
 			return fmt.Errorf("`%s` failed: %w", m, err)
 		}
-	} else if err := runAside(ctx, cmd, b, m, exe); err != nil {
+	} else if err := runAside(ctx, cmd, b, m, exe, latest, native); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
@@ -187,7 +203,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 // runAside runs the update on Windows, which will not let anything overwrite
 // or delete the running exe: it moves exe out of the way first, and puts it
 // back when the update fails, so there is always a working nearhost.
-func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe string) error {
+func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe, latest string, native bool) error {
 	// A Ctrl-C reaches the installer too, which then fails; closing the
 	// console window (SIGTERM to Go) ends the installer and gives nearhost a
 	// few seconds. Either way nearhost must not end before the old copy is
@@ -205,15 +221,32 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 		}
 		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
 	}
+	if native {
+		// There is no installer for a Ctrl-C to reach, so it ends the
+		// download here, and the old copy goes back.
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-held:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		if err := b.download(ctx, latest, exe); err != nil {
+			return failed(fmt.Errorf("nearhost %s could not be downloaded: %w", latest, err))
+		}
+		return nil
+	}
 	if err := b.run(ctx, m, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 		return failed(fmt.Errorf("`%s` failed: %w", m, err))
 	}
 	if !samePathEveryVersion(m.Kind) || b.exists(exe) {
 		return nil
 	}
-	// A copy renamed from nearhost.exe: the installer put the new version
+	// A copy renamed from nearhost.exe: `go install` put the new version
 	// at <dir>\nearhost.exe, and the renamed one is the old one again.
-	if installed := m.Dir + `\nearhost.exe`; (m.Kind == update.Script || m.Kind == update.Go) &&
+	if installed := m.Dir + `\nearhost.exe`; m.Kind == update.Go &&
 		!strings.EqualFold(installed, exe) && b.exists(installed) {
 		if rerr := restore(); rerr != nil {
 			return fmt.Errorf("`%s` installed the new nearhost at %s, not at %s, and the old nearhost could not be put back: %v", m, installed, exe, rerr)
@@ -235,18 +268,9 @@ func samePathEveryVersion(k update.Kind) bool {
 }
 
 // updateEnv is the environment the update command m runs with: environ and
-// m.Env. Windows PowerShell gets no PSModulePath, as when PowerShell 7 starts
-// it itself: inherited from a PowerShell 7 terminal, it can make Windows
-// PowerShell load PowerShell 7's modules and fail.
+// m.Env.
 func updateEnv(environ []string, m update.Method) []string {
-	env := slices.Clone(environ)
-	if len(m.Args) > 0 && strings.EqualFold(m.Args[0], "powershell.exe") {
-		env = slices.DeleteFunc(env, func(e string) bool {
-			name, _, _ := strings.Cut(e, "=")
-			return strings.EqualFold(name, "PSModulePath")
-		})
-	}
-	return append(env, m.Env...)
+	return append(slices.Clone(environ), m.Env...)
 }
 
 // envOf is the value m sets name to, or "". A pre-release build's method

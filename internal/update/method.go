@@ -50,17 +50,13 @@ func PSQuote(s string) string { return psQuotes.Replace(s) }
 type Method struct {
 	Kind Kind
 	// Args is the command that installs the latest release, or nil when
-	// there is nothing to run.
+	// there is nothing to run: an npx copy, or a Windows copy from the
+	// PowerShell installer or a zip, which nearhost replaces itself.
 	Args []string
 	// Env is added to the command's environment.
 	Env []string
 	// Dir is the directory the binary is in.
 	Dir string
-}
-
-// powershell reports whether the method runs the PowerShell installer.
-func (m Method) powershell() bool {
-	return m.Kind == Script && len(m.Args) > 0 && m.Args[0] == "powershell.exe"
 }
 
 // envValue is the value of name in Env, or "".
@@ -80,15 +76,6 @@ func (m Method) String() string {
 	}
 	if m.Kind == Script {
 		v := m.envValue("NEARHOST_VERSION")
-		if m.powershell() {
-			// The folder, so that the command run by hand updates this
-			// copy rather than installing another in the default folder.
-			shown := "$env:NEARHOST_INSTALL_DIR='" + PSQuote(m.envValue("NEARHOST_INSTALL_DIR")) + "'; "
-			if v != "" {
-				shown += "$env:NEARHOST_VERSION='" + PSQuote(v) + "'; "
-			}
-			return shown + InstallScriptWindows
-		}
 		if v != "" {
 			return "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=" + v + " sh"
 		}
@@ -151,13 +138,9 @@ func DetectOn(goos, exe string, getenv func(string) string) Method {
 	case goBin(dir, getenv, goos):
 		m.Kind, m.Args = Go, []string{"go", "install", "github.com/nearhost/nearhost/cmd/nearhost@latest"}
 	case windows:
+		// The PowerShell installer or a zip. There is no command to run:
+		// nearhost fetches the release itself (Downloader).
 		m.Kind = Script
-		m.Args = []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", InstallScriptWindows}
-		// An update replaces the binary in place and leaves PATH alone,
-		// whichever PATH the folder is on, or none. NEARHOST_VERSION is
-		// empty, which install.ps1 reads as unset, so a version pinned in the
-		// user's session does not stand in for the latest; Pinned sets it.
-		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir, "NEARHOST_NO_PATH=1", "NEARHOST_VERSION="}
 	default:
 		m.Kind = Script
 		m.Args = []string{"sh", "-c", InstallScript}
