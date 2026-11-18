@@ -11,8 +11,8 @@ const (
 	Nothing Kind = iota
 	// Updated: the file changed only what needs no approval.
 	Updated
-	// Pending: the file asks for a host or main name that needs the
-	// user's approval.
+	// Pending: the file asks for a host, main name, loopback port or
+	// option that needs the user's approval.
 	Pending
 	// Problem: the file cannot be read or merged, or is gone after being
 	// approved.

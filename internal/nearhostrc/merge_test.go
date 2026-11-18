@@ -312,3 +312,59 @@ func TestMergeWithoutRoutesDropsTheAliasFromOtherRoutes(t *testing.T) {
 		t.Errorf("Validate() = %v", err)
 	}
 }
+
+// A loopback port the file lists binds localhost on this machine, so one a
+// project did not already forward as loopback is asked about, after the hosts
+// and before docker_clients. A relabel of an approved loopback port asks
+// nothing, and so does a loopback port the file does not list, as one a
+// preset gave.
+func TestNeedsApprovalListsNewLoopbackPorts(t *testing.T) {
+	web := config.Route{Port: 80, Role: config.RoleWeb, Hosts: []string{"app.example.com"}}
+	loopback := func(port int, label string) config.Route {
+		return config.Route{Port: port, Role: config.RoleLoopback, Label: label}
+	}
+	// project is a project whose routes all come from its file.
+	project := func(routes ...config.Route) config.Project {
+		return config.Project{Routes: routes, Nearhostrc: &config.RcSnapshot{Routes: routes}}
+	}
+	old := project(web, loopback(5173, "vite"), config.Route{Port: 6379, Role: config.RoleIgnore})
+	want5432 := Item{Option: OptionLoopback, Port: 5432, Why: "binds localhost:5432 on this machine"}
+
+	next := project(web, loopback(5173, "vite"), config.Route{Port: 6379, Role: config.RoleIgnore}, loopback(5432, "db"))
+	if got := NeedsApproval(old, next); !reflect.DeepEqual(got, []Item{want5432}) {
+		t.Fatalf("new port: %+v", got)
+	}
+	if got := want5432.Name(); got != "localhost:5432" {
+		t.Fatalf("Name = %q", got)
+	}
+
+	next = project(web, loopback(5173, "vite dev server"), config.Route{Port: 6379, Role: config.RoleIgnore})
+	if got := NeedsApproval(old, next); len(got) != 0 {
+		t.Fatalf("same port, new label: %+v", got)
+	}
+
+	next = project(web, loopback(5173, "vite"), loopback(6379, "redis"))
+	want := []Item{{Option: OptionLoopback, Port: 6379, Why: "binds localhost:6379 on this machine"}}
+	if got := NeedsApproval(old, next); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ignore to loopback: %+v", got)
+	}
+
+	next = project(web)
+	next.Routes = append(next.Routes, loopback(5174, "Assets"))
+	if got := NeedsApproval(config.Project{}, next); len(got) != 1 || got[0].Host != "app.example.com" {
+		t.Fatalf("a loopback port the file does not list: %+v", got)
+	}
+
+	// A new project lists its hosts, then its loopback ports by port, then
+	// docker_clients.
+	next = project(web, loopback(6379, ""), loopback(5432, ""))
+	next.Nearhostrc.DockerClients = true
+	got := NeedsApproval(config.Project{}, next)
+	names := make([]string, len(got))
+	for i, it := range got {
+		names[i] = it.Name()
+	}
+	if want := []string{"app.example.com", "localhost:5432", "localhost:6379", "docker_clients"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("order = %v", names)
+	}
+}

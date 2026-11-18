@@ -229,34 +229,44 @@ func containsFold(list []string, h string) bool {
 // OptionDockerClients is the Item.Option for the docker_clients opt-in.
 const OptionDockerClients = "docker_clients"
 
+// OptionLoopback is the Item.Option for a loopback port, which binds
+// localhost:<Port> on this machine.
+const OptionLoopback = "loopback"
+
 // Item is one host, or one option, that needs the user's approval before it
-// takes effect. An option item has an empty Host, Port 0 and its name in
-// Option.
+// takes effect. An option item has an empty Host and its name in Option; its
+// Port is 0, but for a loopback item, where it is the port bound.
 type Item struct {
 	Port int
 	Host string
-	// Why says what makes the host risky: "a real domain", "a wildcard" or
-	// "localhost".
+	// Why says what makes the item risky: for a host "a real domain", "a
+	// wildcard" or "localhost".
 	Why string
 	// Option names the option being approved, or is empty for a host.
 	Option string
 }
 
-// Name is what the item is about: its host, or its option when it has no host.
+// Name is what the item is about: its host, localhost:<port> for a loopback
+// port, or its option.
 func (it Item) Name() string {
-	if it.Host == "" {
-		return it.Option
+	switch {
+	case it.Host != "":
+		return it.Host
+	case it.Option == OptionLoopback:
+		return fmt.Sprintf("localhost:%d", it.Port)
 	}
-	return it.Host
+	return it.Option
 }
 
 // NeedsApproval lists every host on a web route of next that is risky and
 // wasn't on a web route of old. Hosts ending in .test can only resolve on
 // this machine, so they are safe; a real domain, a wildcard or localhost
-// would take over traffic the user may want to reach elsewhere. Turning on
-// docker_clients is listed too, after the hosts, since it opens the project to
-// containers. Pass the zero Project as old for a new project. The hosts are
-// sorted by port, then host.
+// would take over traffic the user may want to reach elsewhere. Each loopback
+// port of next that next's .nearhostrc snapshot lists and old did not have as
+// loopback is listed after the hosts, sorted by port, since it binds
+// localhost on this machine. Turning on docker_clients is listed last, since
+// it opens the project to containers. Pass the zero Project as old for a new
+// project. The hosts are sorted by port, then host.
 func NeedsApproval(old, next config.Project) []Item {
 	had := map[string]bool{}
 	for _, r := range old.Routes {
@@ -303,6 +313,32 @@ func NeedsApproval(old, next config.Project) []Item {
 			items = append(items, Item{Port: web.Port, Host: alias, Why: "a real domain"})
 		}
 	}
+	// A loopback port binds localhost on this machine, where it can stand in
+	// for a service the user runs there, so each one the file lists that old
+	// did not forward as loopback is asked about. A new label on the same
+	// port asks nothing. One a preset gave, or the user chose, is theirs.
+	wasLoopback := map[int]bool{}
+	for _, r := range old.Routes {
+		if r.Role == config.RoleLoopback {
+			wasLoopback[r.Port] = true
+		}
+	}
+	inFile := map[int]bool{}
+	if next.Nearhostrc != nil {
+		for _, r := range next.Nearhostrc.Routes {
+			if r.Role == config.RoleLoopback {
+				inFile[r.Port] = true
+			}
+		}
+	}
+	var loopbacks []Item
+	for _, r := range next.Routes {
+		if r.Role == config.RoleLoopback && inFile[r.Port] && !wasLoopback[r.Port] {
+			loopbacks = append(loopbacks, Item{Option: OptionLoopback, Port: r.Port, Why: fmt.Sprintf("binds localhost:%d on this machine", r.Port)})
+		}
+	}
+	sort.Slice(loopbacks, func(i, j int) bool { return loopbacks[i].Port < loopbacks[j].Port })
+	items = append(items, loopbacks...)
 	if next.DockerClients() && !old.DockerClients() {
 		items = append(items, Item{Option: OptionDockerClients, Why: "lets local Docker containers reach this project"})
 	}

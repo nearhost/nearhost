@@ -707,6 +707,18 @@ func TestAddAsksBeforeDockerClients(t *testing.T) {
 	}
 }
 
+// A loopback port the file lists binds localhost on this machine, so it is
+// asked about by the address it binds.
+func TestAddAsksBeforeLoopbackPort(t *testing.T) {
+	dir := rcProject(t, "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.test]\n  - port: 5173\n    role: loopback\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err == nil {
+		t.Fatalf("a declined add succeeded\n%s", out)
+	}
+	wantContains(t, out, "  localhost:5173 (binds localhost:5173 on this machine)\n", "Approve these? [y/N] ")
+}
+
 func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
 	dir := rcProject(t, rcDockerClients)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")

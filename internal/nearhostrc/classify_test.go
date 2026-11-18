@@ -39,6 +39,7 @@ func TestClassify(t *testing.T) {
 		{"no file, none approved", unapproved, nil, false, nil, Nothing, ""},
 		{"port moved", p, read("version: 1\nroutes:\n  - port: 3001\n    hosts: [app.test]\n"), true, nil, Updated, ""},
 		{"real domain host", p, read("version: 1\nroutes:\n  - port: 3000\n    hosts: [app.test, app.example.com]\n"), true, nil, Pending, ""},
+		{"new loopback port", p, read("version: 1\nroutes:\n  - port: 3000\n    hosts: [app.test]\n  - port: 5173\n    role: loopback\n"), true, nil, Pending, ""},
 		{"read error", p, nil, false, errors.New(".nearhostrc: bad"), Problem, ".nearhostrc: bad"},
 		{"file gone", p, nil, false, nil, Problem, ".nearhostrc is gone; serving what was last approved"},
 	}
@@ -47,7 +48,7 @@ func TestClassify(t *testing.T) {
 		if got.Kind != c.want || got.Problem != c.prob {
 			t.Errorf("%s: Kind %d Problem %q, want %d %q", c.name, got.Kind, got.Problem, c.want, c.prob)
 		}
-		if c.want == Pending && (len(got.Items) != 1 || !strings.Contains(got.Items[0].Host, "example.com")) {
+		if c.want == Pending && (len(got.Items) != 1 || !strings.Contains(got.Items[0].Name(), "example.com") && got.Items[0].Name() != "localhost:5173") {
 			t.Errorf("%s: items %+v", c.name, got.Items)
 		}
 		if c.want == Updated && got.Next.Routes[0].Port != 3001 {
