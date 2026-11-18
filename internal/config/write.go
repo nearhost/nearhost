@@ -21,15 +21,29 @@ const (
 // that another program holds open for a moment.
 var renameIntoPlace = retryRename(os.Rename, renameBusy, time.Sleep)
 
+// stillBusyError is a rename that another program still blocked when the
+// retries ran out.
+type stillBusyError struct{ err error }
+
+// Error returns the rename's own error.
+func (e *stillBusyError) Error() string { return e.err.Error() }
+
+// Unwrap returns the rename's own error.
+func (e *stillBusyError) Unwrap() error { return e.err }
+
 // retryRename returns a rename that calls try and, while busy reports its
 // error as one that passes, sleeps renameRetryEvery and calls it again, for
-// up to renameRetryFor of sleeping. Any other error returns at once.
+// up to renameRetryFor of sleeping. Any other error returns at once; one
+// still busy at the end returns as a *stillBusyError.
 func retryRename(try func(oldpath, newpath string) error, busy func(error) bool, sleep func(time.Duration)) func(oldpath, newpath string) error {
 	return func(oldpath, newpath string) error {
 		err := try(oldpath, newpath)
 		for waited := time.Duration(0); err != nil && busy(err) && waited < renameRetryFor; waited += renameRetryEvery {
 			sleep(renameRetryEvery)
 			err = try(oldpath, newpath)
+		}
+		if err != nil && busy(err) {
+			return &stillBusyError{err}
 		}
 		return err
 	}
@@ -41,8 +55,7 @@ func retryRename(try func(oldpath, newpath string) error, busy func(error) bool,
 // that does not exist is an error. It writes a temp file beside that file,
 // so the rename stays on one file system, gives it the existing file's mode
 // (or mode for a new file), syncs it, renames it into place and syncs the
-// directory, as far as it can: the file is in place by then. The temp file
-// is removed on any error.
+// directory (see syncDir). The temp file is removed on any error.
 func WriteFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	target, err := filepath.EvalSymlinks(path)
 	switch {
@@ -56,8 +69,7 @@ func WriteFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 		return err
 	default:
 		if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
-			dest, _ := os.Readlink(path)
-			return fmt.Errorf("%s is a link to %s, which does not exist. Restore that file, or remove the link to start afresh.", path, dest)
+			return fmt.Errorf("%s is a link to %s, which does not exist. Restore that file, or remove the link to start afresh.", path, missingEnd(path))
 		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
@@ -84,11 +96,33 @@ func WriteFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 		return err
 	}
 	if err = renameIntoPlace(tmpName, path); err != nil {
+		if _, held := errors.AsType[*stillBusyError](err); held {
+			return fmt.Errorf("%s is open in another program. Close it and try again.", path)
+		}
 		return err
 	}
-	if dir, err := os.Open(filepath.Dir(path)); err == nil {
-		dir.Sync()
-		dir.Close()
+	return syncDir(filepath.Dir(path))
+}
+
+// maxLinkHops bounds how far missingEnd follows a chain of links.
+const maxLinkHops = 40
+
+// missingEnd follows the chain of links that starts at path and returns the
+// first path in it that does not exist, so an error names the file that is
+// missing rather than a link on the way to it.
+func missingEnd(path string) string {
+	for range maxLinkHops {
+		dest, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(path), dest)
+		}
+		if _, err := os.Lstat(dest); err != nil {
+			return dest
+		}
+		path = dest
 	}
-	return nil
+	return path
 }

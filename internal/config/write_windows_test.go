@@ -11,7 +11,7 @@ import (
 // A rename that Windows refuses because another program has the file open
 // counts as busy, so it is tried again, whether Windows says so with a
 // sharing violation or access denied; a missing file does not.
-func TestRenameBusyKnowsASharingViolation(t *testing.T) {
+func TestRenameBusyKnowsAFileHeldOpen(t *testing.T) {
 	busy := &os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_SHARING_VIOLATION}
 	if !renameBusy(busy) {
 		t.Error("a sharing violation is not busy")

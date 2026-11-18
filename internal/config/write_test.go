@@ -133,12 +133,13 @@ func TestWriteFileAtomicCreatesAFile(t *testing.T) {
 	}
 }
 
-// errBusy stands in for a Windows sharing violation.
+// errBusy stands in for a rename Windows refuses because another program
+// holds the file open: a sharing violation or access denied.
 var errBusy = errors.New("busy")
 
-// A rename that fails twice with a sharing violation is tried again, 50 ms
+// A rename that fails twice because the file is held open is tried again, 50 ms
 // apart, and succeeds on the third try.
-func TestRetryRenameRetriesASharingViolation(t *testing.T) {
+func TestRetryRenameRetriesWhileBusy(t *testing.T) {
 	calls := 0
 	var slept []time.Duration
 	rename := retryRename(func(string, string) error {
@@ -159,7 +160,7 @@ func TestRetryRenameRetriesASharingViolation(t *testing.T) {
 	}
 }
 
-// A sharing violation that lasts gives up after 500 ms of waiting and
+// A file held open for longer gives up after 500 ms of waiting and
 // returns the error.
 func TestRetryRenameGivesUp(t *testing.T) {
 	calls := 0
@@ -183,7 +184,7 @@ func TestRetryRenameReturnsOtherErrors(t *testing.T) {
 	rename := retryRename(func(string, string) error {
 		calls++
 		return other
-	}, func(err error) bool { return errors.Is(err, errBusy) }, func(time.Duration) { t.Error("slept on an error that is not a sharing violation") })
+	}, func(err error) bool { return errors.Is(err, errBusy) }, func(time.Duration) { t.Error("slept on an error that is not busy") })
 	if err := rename("a", "b"); !errors.Is(err, other) || calls != 1 {
 		t.Fatalf("rename = %v after %d tries", err, calls)
 	}
@@ -213,4 +214,41 @@ func TestWriteFileAtomicWritesThroughARelativeLink(t *testing.T) {
 		t.Fatalf("linked file = %q, %v", data, err)
 	}
 	testutil.WantPerm(t, real, 0o600)
+}
+
+// A rename that is still busy when the retries run out says which file is
+// open and what to do, and leaves no temp file.
+func TestWriteFileAtomicNamesAFileHeldOpen(t *testing.T) {
+	saved := renameIntoPlace
+	t.Cleanup(func() { renameIntoPlace = saved })
+	renameIntoPlace = retryRename(func(string, string) error { return errBusy },
+		func(err error) bool { return errors.Is(err, errBusy) }, func(time.Duration) {})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := WriteFileAtomic(path, []byte("new\n"), 0o644)
+	want := path + " is open in another program. Close it and try again."
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("dir holds %d entries, want 0", len(entries))
+	}
+}
+
+// A chain of links whose last link dangles names the path that is missing,
+// not the first hop, which exists.
+func TestSaveNamesTheMissingEndOfALinkChain(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "config.yaml")
+	link2 := filepath.Join(dir, "middle.yaml")
+	testutil.Symlink(t, "middle.yaml", link)
+	testutil.Symlink(t, filepath.Join(dir, "sub", "gone.yaml"), link2)
+	err := Save(link, sample())
+	if err == nil {
+		t.Fatal("Save wrote through a chain that ends nowhere")
+	}
+	want := link + " is a link to " + filepath.Join(dir, "sub", "gone.yaml") + ", which does not exist."
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q should contain %q", err, want)
+	}
 }

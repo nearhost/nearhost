@@ -198,7 +198,7 @@ func (c *Client) Cached() (*Index, time.Duration, error) {
 
 // store saves the index, with the source line first (see cachePath).
 func (c *Client) store(data []byte) error {
-	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(c.Dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(c.Dir, ".index-*.yaml")
