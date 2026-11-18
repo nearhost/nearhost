@@ -1786,19 +1786,26 @@ func TestPerProcessTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
 }
 
 func TestCheckLocalPortReportsAHeldPortRefusedAndAFreeOneFree(t *testing.T) {
-	p := newPerProcess(Config{})
-	holder, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := holder.Addr().(*net.TCPAddr).Port
-	err = p.checkLocalPort(port)
-	var refused *portRefusedError
-	if !errors.As(err, &refused) {
-		t.Fatalf("checkLocalPort on a held port = %v, want a *portRefusedError", err)
-	}
-	holder.Close()
-	if err := p.checkLocalPort(port); err != nil {
-		t.Fatalf("checkLocalPort on a free port = %v, want nil", err)
+	for _, h := range []struct{ name, network, addr string }{
+		{"127.0.0.1", "tcp", "127.0.0.1:0"},
+		{"0.0.0.0", "tcp4", "0.0.0.0:0"},
+	} {
+		t.Run(h.name, func(t *testing.T) {
+			p := newPerProcess(Config{})
+			holder, err := net.Listen(h.network, h.addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Close()
+			port := holder.Addr().(*net.TCPAddr).Port
+			var refused *portRefusedError
+			if err := p.checkLocalPort(port); !errors.As(err, &refused) {
+				t.Fatalf("checkLocalPort beside a holder on %s = %v, want a *portRefusedError", h.addr, err)
+			}
+			holder.Close()
+			if err := p.checkLocalPort(port); err != nil {
+				t.Fatalf("checkLocalPort on a free port = %v, want nil", err)
+			}
+		})
 	}
 }
