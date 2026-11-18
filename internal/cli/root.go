@@ -84,6 +84,11 @@ func NewRoot() *cobra.Command {
 		newUpdateCmd(systemUpdate()),
 	)
 	bindUI(root, systemUI(lookup))
+	// Cobra adds completion, a group of its own, when the command runs.
+	root.InitDefaultCompletionCmd()
+	if c, _, err := root.Find([]string{"completion"}); err == nil && c != root {
+		c.RunE = groupRun
+	}
 	return root
 }
 
@@ -286,4 +291,23 @@ func upperFirst(s string) string {
 	}
 	r, n := utf8.DecodeRuneInString(s)
 	return string(unicode.ToUpper(r)) + s[n:]
+}
+
+// groupRun is the run function of a command that only holds subcommands. Cobra
+// reaches it only when no subcommand matched: with no arguments it prints the
+// group's help, and with any it fails as the root does for an unknown command,
+// with the commands the first argument may have meant.
+func groupRun(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	msg := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
+	// Only the root sets how near a name must be; a group asks it.
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = cmd.Root().SuggestionsMinimumDistance
+	}
+	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+		msg += "\n\nDid you mean this?\n\t" + strings.Join(s, "\n\t")
+	}
+	return errors.New(msg)
 }
