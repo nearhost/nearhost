@@ -3,6 +3,7 @@ package proxy
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -167,7 +168,7 @@ func TestEnsureCAWarnsWhenStorageCannotBeMadePrivate(t *testing.T) {
 	if _, err := EnsureCA(storage); err != nil {
 		t.Fatalf("EnsureCA: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "could not make its local CA folder "+storage+" private") || !strings.Contains(got, "not supported") {
+	if got := out.String(); !strings.Contains(got, "could not make its CA folder "+storage+" private") || !strings.Contains(got, "not supported") {
 		t.Fatalf("warning = %q", got)
 	}
 }
@@ -192,8 +193,35 @@ func TestProxyMakesStoragePrivateOnceAndLogsAFailure(t *testing.T) {
 		t.Fatalf("restrictStorage calls = %q, want %q", *calls, want)
 	}
 	if !slices.ContainsFunc(lines, func(l string) bool {
-		return strings.Contains(l, "could not make its local CA folder "+storage+" private")
+		return strings.Contains(l, "could not make its CA folder "+storage+" private")
 	}) {
 		t.Fatalf("no warning in the log: %q", lines)
+	}
+}
+
+// Each kind of failure gets its own advice, naming the folder.
+func TestStorageWarningAdvisesByKind(t *testing.T) {
+	const root = "/data/nearhost/caddy"
+	pathErr := func(kind storageFailure, msg string) error {
+		return &restrictError{kind: kind, err: &fs.PathError{Op: "set the access list of", Path: root, Err: errors.New(msg)}}
+	}
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{pathErr(failedDenied, "Access is denied."),
+			"Warning: Nearhost could not make its CA folder private: " + root + " belongs to another account. Run `nearhost trust` once from an administrator terminal to fix it."},
+		{&restrictError{kind: failedShared, err: errors.New(root + ": a folder other programs use too")},
+			"Warning: Nearhost could not make its CA folder private: its data folder is set to " + root + ", a location Nearhost will not change. Point XDG_DATA_HOME at a folder of its own."},
+		{pathErr(failedNoACLs, "The request is not supported."),
+			"Warning: Nearhost could not make its CA folder " + root + " private (The request is not supported.), so other users of this computer may be able to read the CA's private key. " +
+				"Keep Nearhost's data folder (%LOCALAPPDATA%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive."},
+		{pathErr(failedOther, "The system cannot find the file specified."),
+			"Warning: Nearhost could not make its CA folder " + root + " private: The system cannot find the file specified."},
+		{errors.New("plain"), "Warning: Nearhost could not make its CA folder " + root + " private: plain."},
+	} {
+		if got := storageWarning(root, c.err); got != c.want {
+			t.Errorf("storageWarning(%v):\n got %q\nwant %q", c.err, got, c.want)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package winsys
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -229,16 +230,36 @@ func TestRestrictToOwnerLetsTheUserInAfterAnElevatedRunOnWindows(t *testing.T) {
 	}
 }
 
-// A drive root and the user's profile are refused, and their access lists
-// are not touched.
+// A drive or share root, the user's profile and AppData folders are
+// refused, and their access lists are not touched.
 func TestRestrictToOwnerRefusesSharedFoldersOnWindows(t *testing.T) {
 	profile, err := windows.KnownFolderPath(windows.FOLDERID_Profile, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{filepath.VolumeName(profile) + `\`, profile, "relative"} {
-		if err := RestrictToOwner(dir); err == nil {
-			t.Errorf("RestrictToOwner(%q) = nil, want a refusal", dir)
+	local, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roaming, err := windows.KnownFolderPath(windows.FOLDERID_RoamingAppData, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.VolumeName(profile) + `\`, profile, local, roaming} {
+		if err := RestrictToOwner(dir); !errors.Is(err, ErrSharedFolder) {
+			t.Errorf("RestrictToOwner(%q) = %v, want ErrSharedFolder", dir, err)
 		}
+	}
+	if err := RestrictToOwner("relative"); err == nil {
+		t.Error("RestrictToOwner(relative) = nil, want a refusal")
+	}
+	// A share root is refused by its path alone, before anything opens it.
+	for _, dir := range []string{`\\server\share`, `\\server\share\`} {
+		if !shared(filepath.Clean(dir)) {
+			t.Errorf("shared(%q) = false, want true", dir)
+		}
+	}
+	if shared(filepath.Join(local, "nearhost", "caddy")) {
+		t.Error("Nearhost's own storage folder counts as shared")
 	}
 }

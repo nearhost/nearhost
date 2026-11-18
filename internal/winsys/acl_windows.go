@@ -1,6 +1,7 @@
 package winsys
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,16 +25,25 @@ import (
 // denies, must still get in.
 //
 // dir must be absolute. A drive or share root, the user's profile folder and
-// the user's AppData folders are refused, as other programs keep files there
-// that this list would close to them. A file system without access lists,
-// such as FAT32 or exFAT, fails.
+// the user's AppData folders are refused with ErrSharedFolder, as other
+// programs keep files there that this list would close to them. A volume
+// without access lists, such as FAT32 or exFAT, fails with ErrNoAccessLists.
+// A folder whose access list and owner the user may not change, such as one
+// another account owns, fails with ERROR_ACCESS_DENIED.
+//
+// When passing the list down fails part way, at a file the user may not
+// change, the call fails: the folder has its new list, and files the
+// system did not reach keep what they had. The next call tries them again.
 func RestrictToOwner(dir string) error {
 	dir = filepath.Clean(dir)
 	if !filepath.IsAbs(dir) {
 		return fmt.Errorf("%s is not an absolute path", dir)
 	}
 	if shared(dir) {
-		return fmt.Errorf("%s is a folder other programs use too; its access list is left alone", dir)
+		return fmt.Errorf("%s: %w", dir, ErrSharedFolder)
+	}
+	if !persistentACLs(dir) {
+		return fmt.Errorf("%s: %w", dir, ErrNoAccessLists)
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -60,9 +70,38 @@ func RestrictToOwner(dir string) error {
 	return nil
 }
 
+// ErrSharedFolder is RestrictToOwner's refusal of a folder other programs
+// use too.
+var ErrSharedFolder = errors.New("a folder other programs use too; its access list is left alone")
+
+// ErrNoAccessLists is RestrictToOwner's failure on a volume whose file
+// system keeps no access lists.
+var ErrNoAccessLists = errors.New("the drive's file system keeps no access lists")
+
+// persistentACLs reports whether the volume dir is on keeps access lists
+// (FILE_PERSISTENT_ACLS). When the volume cannot be asked, as some network
+// shares cannot, it reports true, and setting the list is what fails.
+func persistentACLs(dir string) bool {
+	name, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return true
+	}
+	root := make([]uint16, windows.MAX_PATH+1)
+	if err := windows.GetVolumePathName(name, &root[0], uint32(len(root))); err != nil {
+		return true
+	}
+	var flags uint32
+	if err := windows.GetVolumeInformation(&root[0], nil, 0, nil, nil, &flags, nil, 0); err != nil {
+		return true
+	}
+	return flags&windows.FILE_PERSISTENT_ACLS != 0
+}
+
 // shared reports whether dir, clean and absolute, is a drive or share root,
 // or the user's profile, AppData\Local or AppData\Roaming folder, compared
-// without case.
+// without case. It is a backstop: Nearhost's storage folder is always a
+// nearhost\caddy folder, never one of these. Names are compared as given,
+// so a short (8.3) name or a link to one of these folders is not caught.
 func shared(dir string) bool {
 	if dir == filepath.VolumeName(dir)+`\` || dir == filepath.VolumeName(dir) {
 		return true

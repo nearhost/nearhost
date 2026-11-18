@@ -113,7 +113,7 @@ func TestMigrateKeepsOldWhenCopyFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(unreadable, 0o644) })
-	err := migrateCaddyDir(old, new)
+	err := migrateCaddyDir(old, new, nil)
 	var me *MigrateError
 	if !errors.As(err, &me) || me.Moved || me.Old != old || me.New != new {
 		t.Fatalf("copy of an unreadable file: %v, want a MigrateError not Moved", err)
@@ -144,7 +144,7 @@ func TestMigrateReportsAnOldDirItCouldNotDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o700) })
-	err := migrateCaddyDir(old, new)
+	err := migrateCaddyDir(old, new, nil)
 	var me *MigrateError
 	if !errors.As(err, &me) || !me.Moved || me.Old != old || me.New != new {
 		t.Fatalf("got %v, want a Moved MigrateError", err)

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/caddyserver/caddy/v2"
@@ -82,12 +83,16 @@ var (
 	privateDone = map[string]bool{}
 )
 
+// MakeStoragePrivate makes dir, a folder that holds or will hold a copy of
+// the local CA's private key, private as privateStorage does, and returns
+// the warning for the user when that fails, "" otherwise.
+func MakeStoragePrivate(dir string) string { return privateStorage(dir) }
+
 // privateStorage makes the storage directory root, which holds the local
 // CA's private key, private with restrictStorage, once a process for each
 // root, so each start sets it again and a reload does not. It returns a
-// warning for the user when that fails, "" otherwise: a file system without
-// access lists, such as FAT32 or exFAT, cannot hold one, and the proxy works
-// all the same.
+// warning for the user when that fails, "" otherwise, worded by
+// storageWarning; the proxy works all the same.
 func privateStorage(root string) string {
 	if restrictStorage == nil {
 		return ""
@@ -99,14 +104,66 @@ func privateStorage(root string) string {
 	}
 	privateDone[root] = true
 	if err := restrictStorage(root); err != nil {
-		// The message names root already.
-		if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
-			err = pe.Err
-		}
-		return fmt.Sprintf("Warning: Nearhost could not make its local CA folder %s private (%v), so other users of this computer may be able to read the CA's private key. "+
-			"Keep Nearhost's data folder (%%LOCALAPPDATA%%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.", root, err)
+		return storageWarning(root, err)
 	}
 	return ""
+}
+
+// storageFailure is why restrictStorage failed, which decides what the user
+// is told to do.
+type storageFailure int
+
+const (
+	// failedOther is any failure not below.
+	failedOther storageFailure = iota
+	// failedDenied is a folder whose access list and owner this user may
+	// not change, as one another account owns.
+	failedDenied
+	// failedShared is a folder other programs use too, left alone.
+	failedShared
+	// failedNoACLs is a file system that keeps no access lists, such as
+	// FAT32, exFAT or some network shares.
+	failedNoACLs
+)
+
+// restrictError is a restrictStorage failure and its kind. The kind is
+// worked out where the system's error codes are known, in the Windows
+// restrictStorage.
+type restrictError struct {
+	kind storageFailure
+	err  error
+}
+
+// Error is the underlying error's.
+func (e *restrictError) Error() string { return e.err.Error() }
+
+// Unwrap returns the underlying error.
+func (e *restrictError) Unwrap() error { return e.err }
+
+// storageWarning words restrictStorage's failure err on root for the user.
+func storageWarning(root string, err error) string {
+	kind := failedOther
+	if re := (*restrictError)(nil); errors.As(err, &re) {
+		kind = re.kind
+	}
+	// The message names root already.
+	if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
+		err = pe.Err
+	}
+	switch kind {
+	case failedDenied:
+		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: %s belongs to another account. "+
+			"Run `nearhost trust` once from an administrator terminal to fix it.", root)
+	case failedShared:
+		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: its data folder is set to %s, a location Nearhost will not change. "+
+			"Point XDG_DATA_HOME at a folder of its own.", root)
+	case failedNoACLs:
+		return fmt.Sprintf("Warning: Nearhost could not make its CA folder %s private (%v), so other users of this computer may be able to read the CA's private key. "+
+			"Keep Nearhost's data folder (%%LOCALAPPDATA%%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.", root, err)
+	default:
+		// Windows' messages end in a full stop already.
+		return fmt.Sprintf("Warning: Nearhost could not make its CA folder %s private: %s.", root, strings.TrimSuffix(err.Error(), "."))
+	}
 }
 
 // trustInstall and trustUninstall are the trust store library's calls. Tests

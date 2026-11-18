@@ -140,7 +140,12 @@ func CaddyDir() (string, error) {
 // A Nearhost 0.7 or earlier started between the check and the move would find
 // no directory at the old path and make a fresh CA there. Nothing is deleted
 // in that case: this run moves the original, and the other uses its new one.
-func MigrateCaddyDir(running func() bool) error {
+//
+// private, when not nil, makes a folder private to the user. A move across
+// filesystems copies the CA into a new folder, and private is given that
+// folder before anything is copied into it, so the key's copy never sits
+// under the access list the data directory passes down.
+func MigrateCaddyDir(running func() bool, private func(dir string)) error {
 	current, old, err := caddyDirs()
 	if err != nil {
 		return err
@@ -148,7 +153,7 @@ func MigrateCaddyDir(running func() bool) error {
 	if exists(current) || !exists(old) || running() {
 		return nil
 	}
-	return migrateCaddyDir(old, current)
+	return migrateCaddyDir(old, current, private)
 }
 
 // MigrateError is a failure to move the Caddy storage from Old to New.
@@ -197,9 +202,10 @@ var rename = os.Rename
 // does not. Across filesystems, or when old is a symbolic link, it copies the
 // real directory, keeping every mode, into a temporary directory beside new,
 // renames that to new and only then removes old (only the link, when old is
-// one), so a failed copy leaves old as it was and nothing at new. Its errors
-// are *MigrateError.
-func migrateCaddyDir(old, new string) error {
+// one), so a failed copy leaves old as it was and nothing at new. The
+// temporary directory is given to private, when not nil, before the copy.
+// Its errors are *MigrateError.
+func migrateCaddyDir(old, new string, private func(dir string)) error {
 	if exists(new) || !exists(old) {
 		return nil
 	}
@@ -231,6 +237,9 @@ func migrateCaddyDir(old, new string) error {
 	tmp, err := os.MkdirTemp(filepath.Dir(new), "."+filepath.Base(new)+"-")
 	if err != nil {
 		return fail(err)
+	}
+	if private != nil {
+		private(tmp)
 	}
 	if err := copyTree(src, tmp); err != nil {
 		os.RemoveAll(tmp)
