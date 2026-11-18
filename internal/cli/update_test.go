@@ -59,6 +59,17 @@ type fakeUpdate struct {
 	onPath string
 	// env is added to the environment the backend reads.
 	env map[string]string
+	// links maps a path to what its symlinks resolve to; other paths
+	// resolve to themselves.
+	links map[string]string
+	// files is the content of the files readHead reads.
+	files map[string]string
+	// capped lists the paths that have cap_net_bind_service; capUnknown is
+	// that the probe cannot tell, and capProbed each path it was asked
+	// about.
+	capped     map[string]bool
+	capUnknown bool
+	capProbed  []string
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -137,6 +148,22 @@ func (f *fakeUpdate) backend() updateBackend {
 				return "", errors.New(name + " not found")
 			}
 			return f.onPath, nil
+		},
+		realPath: func(p string) (string, error) {
+			if to, ok := f.links[p]; ok {
+				return to, nil
+			}
+			return p, nil
+		},
+		readHead: func(p string) ([]byte, error) {
+			if c, ok := f.files[p]; ok {
+				return []byte(c), nil
+			}
+			return []byte("\x7fELF"), nil
+		},
+		netBindCap: func(p string) (bool, bool) {
+			f.capProbed = append(f.capProbed, p)
+			return f.capped[p], !f.capUnknown
 		},
 	}
 }
@@ -599,15 +626,99 @@ func TestUpdateRunFailure(t *testing.T) {
 }
 
 func TestUpdateLinuxRemindsSetcap(t *testing.T) {
-	f := &fakeUpdate{latest: "0.6.0", exe: "/Users/me/go/bin/nearhost", goos: "linux"}
+	const pnpmStore = "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost"
+	const setcap = "Let the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep "
+	shellShim := "#!/bin/sh\nexec node \"$basedir/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost/cli/bin/nearhost.js\" \"$@\"\n"
+	for _, tc := range []struct {
+		name string
+		f    *fakeUpdate
+		want string
+	}{
+		{"go", &fakeUpdate{exe: "/home/me/go/bin/nearhost", env: map[string]string{"HOME": "/home/me"}}, "'/home/me/go/bin/nearhost'"},
+		{"script", &fakeUpdate{exe: "/usr/local/bin/nearhost", writable: true}, "'/usr/local/bin/nearhost'"},
+		{"npm", &fakeUpdate{exe: "/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"}, "'/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost'"},
+		{"bun", &fakeUpdate{exe: "/home/me/.bun/install/global/node_modules/@nearhost/cli-linux-x64/bin/nearhost"}, "'/home/me/.bun/install/global/node_modules/@nearhost/cli-linux-x64/bin/nearhost'"},
+		{"homebrew", &fakeUpdate{exe: "/home/linuxbrew/.linuxbrew/Caskroom/nearhost/0.5.0/nearhost",
+			links: map[string]string{"/home/linuxbrew/.linuxbrew/bin/nearhost": "/home/linuxbrew/.linuxbrew/Caskroom/nearhost/0.6.0/nearhost"}},
+			"'/home/linuxbrew/.linuxbrew/Caskroom/nearhost/0.6.0/nearhost'"},
+		{"pnpm shell shim", &fakeUpdate{exe: "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli-linux-x64@0.5.0/node_modules/@nearhost/cli-linux-x64/bin/nearhost",
+			onPath: "/home/me/.local/share/pnpm/nearhost", files: map[string]string{"/home/me/.local/share/pnpm/nearhost": shellShim},
+			present: map[string]bool{pnpmStore + "/cli-linux-x64/bin/nearhost": true}},
+			"'" + pnpmStore + "/cli-linux-x64/bin/nearhost'"},
+		{"pnpm symlink to the launcher", &fakeUpdate{exe: "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli-linux-x64@0.5.0/node_modules/@nearhost/cli-linux-x64/bin/nearhost",
+			onPath: "/home/me/.local/share/pnpm/nearhost", links: map[string]string{"/home/me/.local/share/pnpm/nearhost": pnpmStore + "/cli/bin/nearhost.js"},
+			present: map[string]bool{pnpmStore + "/cli-linux-x64/bin/nearhost": true}},
+			"'" + pnpmStore + "/cli-linux-x64/bin/nearhost'"},
+		{"a directory with a space", &fakeUpdate{exe: "/home/me/my bin/it's/nearhost", env: map[string]string{"GOBIN": "/home/me/my bin/it's"}}, `'/home/me/my bin/it'\''s/nearhost'`},
+	} {
+		tc.f.latest, tc.f.goos = "0.6.0", "linux"
+		tc.f.writable = true
+		out, err := runUpdate(t, tc.f, "0.5.0", "", "--yes")
+		if err != nil || strings.Count(out, "setcap") != 1 || !strings.HasSuffix(out, "Updated to 0.6.0.\n"+setcap+tc.want+"\n") {
+			t.Errorf("%s: out %q, err %v; want it to end %q", tc.name, out, err, setcap+tc.want)
+		}
+	}
+}
+
+// A pnpm shim that cannot be followed to a binary is printed as the path
+// the user runs, with a warning that it may be a launcher script.
+func TestUpdateSetcapSaysWhenItCannotFindTheBinary(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", goos: "linux", writable: true,
+		exe:    "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli-linux-x64@0.5.0/node_modules/@nearhost/cli-linux-x64/bin/nearhost",
+		onPath: "/home/me/.local/share/pnpm/nearhost", files: map[string]string{"/home/me/.local/share/pnpm/nearhost": "#!/bin/sh\necho odd\n"}}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	if err != nil || !strings.Contains(out, "sudo setcap cap_net_bind_service=+ep '/Users/me/go/bin/nearhost'") {
+	if err != nil || !strings.Contains(out, "could not tell which file is the binary") ||
+		!strings.Contains(out, "sudo setcap cap_net_bind_service=+ep '/home/me/.local/share/pnpm/nearhost'") {
 		t.Fatalf("out %q, err %v", out, err)
 	}
-	f = &fakeUpdate{latest: "0.6.0", exe: "/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost", goos: "linux"}
+}
+
+func TestUpdateSetcapAdviceDependsOnTheCapability(t *testing.T) {
+	const exe = "/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"
+	// The new binary already has it: nothing to say.
+	f := &fakeUpdate{latest: "0.6.0", goos: "linux", exe: exe, writable: true, capped: map[string]bool{exe: true}}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err != nil || strings.Contains(out, "setcap") || !slices.Equal(f.capProbed, []string{exe}) {
+		t.Fatalf("out %q, err %v, probed %v", out, err, f.capProbed)
+	}
+	// The probe cannot tell: the command is printed without a check.
+	f = &fakeUpdate{latest: "0.6.0", goos: "linux", exe: exe, writable: true, capped: map[string]bool{exe: true}, capUnknown: true}
 	out, _ = runUpdate(t, f, "0.5.0", "", "--yes")
-	if strings.Contains(out, "setcap") {
-		t.Fatalf("npm update asked for setcap, which npm installs never need from here:\n%s", out)
+	if !strings.Contains(out, "sudo setcap cap_net_bind_service=+ep '"+exe+"'") {
+		t.Fatalf("out %q", out)
+	}
+	// Other systems have no file capabilities.
+	for _, goos := range []string{"darwin", "windows"} {
+		f = &fakeUpdate{latest: "0.6.0", goos: goos, exe: exe, writable: true}
+		out, _ = runUpdate(t, f, "0.5.0", "", "--yes")
+		if strings.Contains(out, "setcap") {
+			t.Fatalf("%s: %q", goos, out)
+		}
+	}
+	// An update that did not install says nothing about ports.
+	f = &fakeUpdate{latest: "0.6.0", goos: "linux", exe: exe, writable: true, installed: "0.5.0"}
+	out, err = runUpdate(t, f, "0.5.0", "", "--yes")
+	if err == nil || strings.Contains(out, "setcap") || len(f.capProbed) != 0 {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/usr/local/bin": "/usr/local/bin", "/opt/my bin": "'/opt/my bin'",
+		"/opt/it's": `'/opt/it'\''s'`, "": "''", "/a$b": "'/a$b'",
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestUpdateUnwritableScriptAdviceQuotesTheDirectory(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: "/opt/it's mine/nearhost", tty: true, goos: "linux"}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err != nil || !strings.Contains(out, `| sudo NEARHOST_INSTALL_DIR='/opt/it'\''s mine' sh`) {
+		t.Fatalf("out %q, err %v", out, err)
 	}
 }
 
