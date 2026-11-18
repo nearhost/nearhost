@@ -249,6 +249,10 @@ func run(args []string) int {
 			time.Sleep(min(50*time.Millisecond, time.Until(deadline)))
 		}
 		os.Remove(sock)
+		// $FAKE_SSH_LATE_LINE is written once the master has connected.
+		if l := os.Getenv("FAKE_SSH_LATE_LINE"); l != "" {
+			fmt.Fprintln(os.Stderr, l)
+		}
 		// $FAKE_SSH_EXIT_FLOOD=<n> makes it exit after n refused-channel
 		// lines and nothing else.
 		if os.Getenv("FAKE_SSH_EXIT_FLOOD") != "" {

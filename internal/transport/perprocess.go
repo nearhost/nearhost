@@ -454,6 +454,7 @@ wait:
 			return linkEnd{msg: "connect timed out"}, true
 		case <-stderr.ready:
 			end.connected = true
+			stderr.ForgetFatal()
 			if remote != "" {
 				p.mu.Lock()
 				p.agentPath, p.agentErr, p.agentProblem = remote, "", AgentOK
@@ -485,9 +486,7 @@ wait:
 		p.setAgentErr(fmt.Errorf("ssh cannot forward %s: %s", remote, bad), AgentNotReady)
 		return linkEnd{agentRefused: true}, true
 	}
-	lines := stderr.Lines()
-	end.msg = exitMessage(lines)
-	end.fatal = isFatalSSHError(strings.Join(lines, "\n"))
+	end.msg, end.fatal = stderr.ExitMessage()
 	return end, true
 }
 
@@ -832,6 +831,10 @@ func cleanLine(b []byte) string {
 
 // noteFatal remembers line if it is a fatal error or names a key to fix.
 func (w *sshStderr) noteFatal(line string) {
+	// A refused channel carries the server's error text, not ssh's own.
+	if refusedChannel.MatchString(line) {
+		return
+	}
 	if isFatalSSHError(line) {
 		w.fatal = line
 	}
@@ -856,6 +859,20 @@ func (w *sshStderr) Fatal() (fatal, offending string) {
 		}
 	}
 	return fatal, offending
+}
+
+// ExitMessage is why ssh exited and whether retrying cannot fix it. For a
+// fatal error it is the line that says so, and for a host key the line
+// naming the key to fix after it, however much ssh wrote since; otherwise
+// it is exitMessage of the last lines.
+func (w *sshStderr) ExitMessage() (msg string, fatal bool) {
+	if line, offending := w.Fatal(); line != "" {
+		if offending != "" {
+			line += "\n" + offending
+		}
+		return line, true
+	}
+	return exitMessage(w.Lines()), false
 }
 
 // ForgetFatal drops what Fatal remembers, once ssh has connected: what it

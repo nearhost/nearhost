@@ -441,17 +441,8 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.mu.Lock()
 			s.agentPath = "" // the server dropped it with the master
 			s.mu.Unlock()
-			msg := exitMessage(stderr.Lines())
-			fatalLine, offending := stderr.Fatal()
-			if fatalLine != "" {
-				// The line that says why, with the one naming the key to
-				// fix for a host key failure, however much ssh wrote since.
-				msg = fatalLine
-				if offending != "" {
-					msg += "\n" + offending
-				}
-			}
-			if !s.attemptFailed(msg, fatalLine != "", &authFails, backoff) {
+			msg, fatal := stderr.ExitMessage()
+			if !s.attemptFailed(msg, fatal, &authFails, backoff) {
 				return
 			}
 		}

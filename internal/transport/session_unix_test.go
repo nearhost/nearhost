@@ -147,6 +147,16 @@ func TestFatalLineBeforeConnectingIsForgotten(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect")
 }
 
+func TestRefusedChannelWithServerErrorIsNotAnAuthFailure(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.3", "FAKE_SSH_LATE_LINE=channel 3: open failed: connect failed: Permission denied")
+	s.baseBackoff, s.maxBackoff = 3*time.Second, 3*time.Second
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.LastError() != "" }, "an exit message")
+	if got := s.LastError(); !strings.Contains(got, "Broken pipe") {
+		t.Fatalf("LastError = %q, want the reason the master exited, not the refused channel", got)
+	}
+}
+
 func TestHostKeyMessageNamesTheOffendingKey(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
 	s.Start()
