@@ -153,9 +153,16 @@ type fronts struct{ h1, h2 *httptest.Server }
 // reports Caddy's count, which this handler does not touch.
 func captureFronts(t *testing.T, answer func(net.Conn, *http.Request)) fronts {
 	t.Helper()
+	return captureFrontsTo(t, "http://"+rawApp(t, answer), nil)
+}
+
+// captureFrontsTo is captureFronts proxying to the app at target, with gate,
+// when there is one, between the capture and the reverse proxy.
+func captureFrontsTo(t *testing.T, target string, gate *Gate) fronts {
+	t.Helper()
 	ClearCaptured()
 	t.Cleanup(ClearCaptured)
-	app, err := url.Parse("http://" + rawApp(t, answer))
+	app, err := url.Parse(target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,17 +173,24 @@ func captureFronts(t *testing.T, answer func(net.Conn, *http.Request)) fronts {
 	rp := httputil.NewSingleHostReverseProxy(app)
 	rp.Transport = tr
 	rp.ErrorLog = log.New(io.Discard, "", 0)
+	var next caddyhttp.Handler = caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		// As Caddy's proxy does, the body is left open: closing an
+		// HTTP/1.1 body waits for a read the transport still has going.
+		if r.Body != nil {
+			r.Body = io.NopCloser(r.Body)
+		}
+		rp.ServeHTTP(w, r)
+		return nil
+	})
+	if gate != nil {
+		proxied := next
+		next = caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+			return gate.ServeHTTP(w, r, proxied)
+		})
+	}
 	capture := &Capture{Alias: "a.test"}
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture.ServeHTTP(w, r, caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
-			// As Caddy's proxy does, the body is left open: closing an
-			// HTTP/1.1 body waits for a read the transport still has going.
-			if r.Body != nil {
-				r.Body = io.NopCloser(r.Body)
-			}
-			rp.ServeHTTP(w, r)
-			return nil
-		}))
+		capture.ServeHTTP(w, r, next)
 	})
 	f := fronts{h1: httptest.NewServer(h), h2: httptest.NewUnstartedServer(h)}
 	f.h2.EnableHTTP2 = true
@@ -250,8 +264,55 @@ func TestCaptureMarksABodyNeverRead(t *testing.T) {
 	if !e.ReqBodyShort || e.ReqBodySize != 0 || e.ReqBodyLength != 30<<10 {
 		t.Errorf("kept short=%v, %d bytes of %d", e.ReqBodyShort, e.ReqBodySize, e.ReqBodyLength)
 	}
-	if err := CanReplay(e); err == nil {
-		t.Error("a body never read can be replayed")
+	if err := CanReplay(e); !errors.Is(err, ErrBodyNeverReached) {
+		t.Errorf("CanReplay = %v", err)
+	}
+}
+
+// A body the app never got, as its port is closed or its forward is down,
+// is not blamed on the app.
+func TestCaptureMarksABodyThatNeverReachedTheApp(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := ln.Addr().String()
+	ln.Close()
+	for _, tc := range []struct {
+		name string
+		f    fronts
+	}{
+		{"closed port", captureFrontsTo(t, "http://"+closed, nil)},
+		{"forward down", captureFrontsTo(t, "http://"+closed, &Gate{Upstream: closed})},
+	} {
+		e := sendPart(t, tc.f.h1, "/upload", nil, bytes.Repeat([]byte("x"), 8<<10), 30<<10, false)
+		if e.Status != http.StatusBadGateway || !e.ReqBodyShort || e.ReqBodyAborted || e.ReqBodySize != 0 || !e.ReqBodyNeverReached() {
+			t.Errorf("%s: kept %d, short=%v aborted=%v never=%v, %d bytes", tc.name, e.Status, e.ReqBodyShort, e.ReqBodyAborted, e.ReqBodyNeverReached(), e.ReqBodySize)
+		}
+		const want = "this request's body never reached the app, so Nearhost has none of it to send again"
+		if err := CanReplay(e); err == nil || err.Error() != want {
+			t.Errorf("%s: CanReplay = %v", tc.name, err)
+		}
+		ClearCaptured()
+	}
+}
+
+// An upgraded exchange, such as an HTTP/2 WebSocket whose stream is the
+// request body, is never marked short.
+func TestCaptureDoesNotMarkAnUpgrade(t *testing.T) {
+	ClearCaptured()
+	t.Cleanup(ClearCaptured)
+	req := httptest.NewRequest("GET", "/ws", strings.NewReader("frames the app has not read yet"))
+	req.ContentLength = -1
+	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		w.WriteHeader(http.StatusSwitchingProtocols)
+		return nil
+	})
+	if err := (&Capture{Alias: "a.test"}).ServeHTTP(httptest.NewRecorder(), req, next); err != nil {
+		t.Fatal(err)
+	}
+	if e := keptFor(t, "/ws"); !e.Upgraded || e.ReqBodyShort {
+		t.Errorf("kept upgraded=%v short=%v", e.Upgraded, e.ReqBodyShort)
 	}
 }
 

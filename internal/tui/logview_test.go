@@ -313,10 +313,16 @@ func TestLogViewMarksAShortBody(t *testing.T) {
 	f.edit.captured["ab12"] = ex
 	wantScreen(t, m, "(app read 8.2 kB, then stopped)")
 
-	// A body never read at all still says so.
+	// A body that never reached the app is not blamed on it.
 	ex.ReqBody, ex.ReqBodySize, ex.ReqBodyLength = nil, 0, 30720
 	f.edit.captured["ab12"] = ex
-	wantScreen(t, m, "(app read 0 B of 30.7 kB)")
+	wantScreen(t, m, "(none of 30.7 kB reached the app)")
+	press(m, "r")
+	wantScreen(t, m, "This request's body never reached the app, so Nearhost has none of it to send again.")
+	ex.ReqBodyLength = -1
+	f.edit.captured["ab12"] = ex
+	wantScreen(t, m, "(none of the body reached the app)")
+	ex.ReqBodyLength = 30720
 
 	// A client that gave up is named as the one that stopped.
 	ex.ReqBody, ex.ReqBodySize, ex.ReqBodyAborted = []byte(strings.Repeat("x", 8192)), 8192, true
@@ -326,6 +332,33 @@ func TestLogViewMarksAShortBody(t *testing.T) {
 	wantScreen(t, m, "The client stopped sending this request's body, so Nearhost cannot send it again.")
 	if got := clipboardOf(press(m, "c")); strings.Contains(got, "--data-binary") {
 		t.Errorf("copied the short body, %d bytes of command", len(got))
+	}
+	wantScreen(t, m, "Copied POST /api/projects as curl, without its body: the client stopped sending it.")
+}
+
+// Copying a request whose body was cut says why the command has none.
+func TestLogViewSaysWhyACurlHasNoBody(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	ex := f.edit.captured["ab12"]
+	ex.ReqBodySize = 100000
+	f.edit.captured["ab12"] = ex
+	press(m, "k")
+	press(m, "c")
+	wantScreen(t, m, "as curl, without its body: only its start was kept.")
+}
+
+// An upgraded exchange carries no marker, even with a body flagged short.
+func TestLogViewNoMarkerOnAnUpgrade(t *testing.T) {
+	m := capturedModel(t)
+	f := m.b.(*fakeBackend)
+	ex := f.edit.captured["ab12"]
+	ex.Upgraded, ex.ReqBodyShort, ex.ReqBodyLength = true, true, -1
+	f.edit.captured["ab12"] = ex
+	press(m, "k")
+	press(m, "enter")
+	if s := screen(m); strings.Contains(s, "reached the app") || strings.Contains(s, "app read") {
+		t.Errorf("an upgrade shows a marker:\n%s", s)
 	}
 }
 

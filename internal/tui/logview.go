@@ -193,10 +193,14 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	case "c":
 		if at >= 0 && shown[at].req != nil {
 			a := shown[at].req
-			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				return tea.Batch(copyText(v.key, curlForExchange(ex)), note)
+				said := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+				if why := bodyLeftOut(ex); why != "" {
+					said = strings.TrimSuffix(said, ".") + ", without its body: " + why + "."
+				}
+				return tea.Batch(copyText(v.key, curlForExchange(ex)), m.alert(v.key, said))
 			}
+			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			return tea.Batch(copyText(v.key, curlFor(*a)), note)
 		}
 	case "v":
@@ -569,8 +573,13 @@ func sizeText(n int) string {
 // shortBodyNote says how much of a request body reached the app, when not
 // all of it did, or is empty.
 func shortBodyNote(ex proxy.Exchange) string {
-	if !ex.ReqBodyShort {
+	switch {
+	case !ex.ReqBodyShort || ex.Upgraded:
 		return ""
+	case ex.ReqBodyNeverReached() && ex.ReqBodyLength >= 0:
+		return "(none of " + sizeText(int(ex.ReqBodyLength)) + " reached the app)"
+	case ex.ReqBodyNeverReached():
+		return "(none of the body reached the app)"
 	}
 	n := sizeText(int(ex.ReqBodySize))
 	if n == "" {
@@ -587,6 +596,24 @@ func shortBodyNote(ex proxy.Exchange) string {
 		return "(" + who + n + " of " + sizeText(int(ex.ReqBodyLength)) + ")"
 	}
 	return "(" + who + n + ", then stopped)"
+}
+
+// bodyLeftOut says why a curl command for ex has no body when it had one,
+// or is empty.
+func bodyLeftOut(ex proxy.Exchange) string {
+	switch {
+	case ex.Upgraded:
+		return ""
+	case ex.ReqBodyAborted:
+		return "the client stopped sending it"
+	case ex.ReqBodyNeverReached():
+		return "it never reached the app"
+	case ex.ReqBodyShort:
+		return "the app stopped reading it"
+	case ex.ReqBodyCut():
+		return "only its start was kept"
+	}
+	return ""
 }
 
 // skipInCurl are the headers a curl command leaves out: the URL carries
@@ -705,7 +732,7 @@ func (m *Model) askReplay(e logEntry) tea.Cmd {
 		return nil
 	case proxy.CanReplay(ex) != nil:
 		why := proxy.CanReplay(ex)
-		if errors.Is(why, proxy.ErrAppStoppedReading) || errors.Is(why, proxy.ErrClientStoppedSending) {
+		if errors.Is(why, proxy.ErrAppStoppedReading) || errors.Is(why, proxy.ErrClientStoppedSending) || errors.Is(why, proxy.ErrBodyNeverReached) {
 			v.said = styleAmber.Render(sentence(why.Error()) + ".") // already says it cannot be sent
 		} else {
 			v.said = styleAmber.Render(sentence(why.Error()) + ", so it cannot be sent again.")

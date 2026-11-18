@@ -51,6 +51,13 @@ type Exchange struct {
 // ReqBodyCut reports whether the request body is longer than what was kept.
 func (e Exchange) ReqBodyCut() bool { return int64(len(e.ReqBody)) < e.ReqBodySize }
 
+// ReqBodyNeverReached reports whether none of a request body reached the
+// app, through no fault of the client: the app was down, or answered
+// without reading any of it.
+func (e Exchange) ReqBodyNeverReached() bool {
+	return e.ReqBodyShort && !e.ReqBodyAborted && e.ReqBodySize == 0
+}
+
 // RespBodyCut reports whether the response body is longer than what was
 // kept.
 func (e Exchange) RespBodyCut() bool { return int64(len(e.RespBody)) < e.RespBodySize }
@@ -172,12 +179,16 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		// and keep no more. From here the tee hands the transport nothing
 		// more either, so what was counted is all the app was sent.
 		e.ReqBody, e.ReqBodySize = reqBody.done()
-		eof, failed := reqBody.ending()
-		e.ReqBodyAborted = failed
-		if r.ContentLength >= 0 {
-			e.ReqBodyShort = e.ReqBodySize < r.ContentLength
-		} else {
-			e.ReqBodyShort = !eof
+		// An upgrade, such as an HTTP/2 WebSocket, carries its stream as
+		// the body: it has no end to reach.
+		if !e.Upgraded {
+			eof, failed := reqBody.ending()
+			e.ReqBodyAborted = failed
+			if r.ContentLength >= 0 {
+				e.ReqBodyShort = e.ReqBodySize < r.ContentLength
+			} else {
+				e.ReqBodyShort = !eof
+			}
 		}
 	}
 	e.RespBody, e.RespBodySize = cw.body.done()
