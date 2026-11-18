@@ -918,3 +918,69 @@ func TestUpCommand(t *testing.T) {
 		}
 	}
 }
+
+// pairConfig is a config saved before an exact host under another project's
+// pattern was refused: a serves *.myapp.test, b serves api.myapp.test, and c
+// serves x.other.test.
+func pairConfig() *Config {
+	return &Config{Projects: []Project{
+		{Name: "a", Server: LocalServer, Alias: "myapp.test", Enabled: true, Routes: []Route{{Port: 80, Role: RoleWeb, Hosts: []string{"*.myapp.test"}}}},
+		{Name: "b", Server: LocalServer, Alias: "b.test", Enabled: true, Routes: []Route{{Port: 81, Role: RoleWeb, Hosts: []string{"api.myapp.test"}}}},
+		{Name: "c", Server: LocalServer, Alias: "c.test", Enabled: true, Routes: []Route{{Port: 82, Role: RoleWeb, Hosts: []string{"x.other.test"}}}},
+	}}
+}
+
+// A change that keeps a pair the config already had is saved, renames
+// included; one that brings in a new pair is refused with the conflict.
+func TestUpdateRefusesOnlyANewPatternConflict(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*Config)
+		want   string // "" means saved
+	}{
+		{"a gains a loopback port", func(c *Config) {
+			c.Projects[0].Routes = append(c.Projects[0].Routes, Route{Port: 5432, Role: RoleLoopback})
+		}, ""},
+		{"b is renamed", func(c *Config) { c.Projects[1].Name = "b2" }, ""},
+		{"a is renamed", func(c *Config) { c.Projects[0].Name = "a2" }, ""},
+		{"b adds www.myapp.test", func(c *Config) {
+			c.Projects[1].Routes[0].Hosts = append(c.Projects[1].Routes[0].Hosts, "www.myapp.test")
+		}, `host www.myapp.test of project "b" falls under *.myapp.test, which project "a" serves, so "b" would take requests and cookies meant for "a"; serve www.myapp.test from "a", or remove it from "b"`},
+		{"a adds *.other.test", func(c *Config) {
+			c.Projects[0].Routes[0].Hosts = append(c.Projects[0].Routes[0].Hosts, "*.other.test")
+		}, `host x.other.test of project "c" falls under *.other.test, which project "a" serves, so "c" would take requests and cookies meant for "a"; serve x.other.test from "a", or remove it from "c"`},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := Save(path, pairConfig()); err != nil {
+			t.Fatal(err)
+		}
+		err := Update(path, func(cfg *Config) error { c.change(cfg); return nil })
+		if c.want == "" && err != nil || c.want != "" && (err == nil || err.Error() != c.want) {
+			t.Errorf("%s: Update = %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+// HostConflictSince lets through a pair the projects before the change had,
+// whatever the projects are called now, and refuses a new pair or two equal
+// hosts.
+func TestHostConflictSince(t *testing.T) {
+	before := pairConfig().Projects
+	after := pairConfig()
+	after.Projects[1].Name = "b2"
+	if hc, clash := after.HostConflictSince(before, after.Projects[1]); clash {
+		t.Errorf("a renamed project with the pair it had: %v", hc)
+	}
+	if _, clash := after.HostConflict(after.Projects[1]); !clash {
+		t.Error("HostConflict let the pair through with no before")
+	}
+	after.Projects[1].Routes[0].Hosts = append(after.Projects[1].Routes[0].Hosts, "x.other.test")
+	if hc, clash := after.HostConflictSince(before, after.Projects[1]); !clash || hc.Other != "c" || hc.Host != "x.other.test" {
+		t.Errorf("an equal host: HostConflictSince = %+v %v", hc, clash)
+	}
+	// Two equal hosts the projects already had are still refused.
+	if _, clash := after.HostConflictSince(after.Projects, after.Projects[1]); !clash {
+		t.Error("an equal host before had was let through")
+	}
+}

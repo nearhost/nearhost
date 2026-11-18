@@ -196,12 +196,54 @@ func (h HostConflict) Error() string {
 
 // HostConflict is HostClash with both sides of the clash.
 func (c *Config) HostConflict(p Project) (HostConflict, bool) {
+	return c.HostConflictSince(nil, p)
+}
+
+// HostConflictSince is HostConflict for a change to c from before, the
+// projects as they were: it finds a clash p brings in that before did not
+// have. An exact host under another project's pattern that two enabled
+// projects of before already had is let through, so a pair saved before such
+// pairs were refused does not block other changes, renames included; doctor
+// warns about it. Two equal hosts are refused whether before had them or not,
+// as they always were. With no before it is HostConflict.
+func (c *Config) HostConflictSince(before []Project, p Project) (HostConflict, bool) {
+	had := patternPairs((&Config{Projects: before}).PatternConflicts())
 	for _, h := range p.AllHosts() {
-		if other, otherHost, ok := c.ClaimedBy(p.Name, h); ok {
-			return HostConflict{Project: p.Name, Host: h, Other: other, OtherHost: otherHost}, true
+		for _, q := range c.Projects {
+			if q.Name == p.Name || !q.Enabled {
+				continue
+			}
+			for _, qh := range q.AllHosts() {
+				if !hostsClash(h, qh) {
+					continue
+				}
+				hc := HostConflict{Project: p.Name, Host: h, Other: q.Name, OtherHost: qh}
+				if !strings.EqualFold(h, qh) && had[hc.pair()] {
+					continue
+				}
+				return hc, true
+			}
 		}
 	}
 	return HostConflict{}, false
+}
+
+// pair is the exact host and the pattern of a clash between the two, lower
+// case, whichever project each belongs to.
+func (h HostConflict) pair() [2]string {
+	if hostname.IsPattern(h.Host) {
+		return [2]string{strings.ToLower(h.OtherHost), strings.ToLower(h.Host)}
+	}
+	return [2]string{strings.ToLower(h.Host), strings.ToLower(h.OtherHost)}
+}
+
+// patternPairs is the set of the pairs of conflicts.
+func patternPairs(conflicts []HostConflict) map[[2]string]bool {
+	set := map[[2]string]bool{}
+	for _, hc := range conflicts {
+		set[hc.pair()] = true
+	}
+	return set
 }
 
 // ClaimedBy finds the first enabled project other than the one named name
@@ -220,9 +262,9 @@ func (c *Config) ClaimedBy(name, host string) (other, otherHost string, ok bool)
 	return "", "", false
 }
 
-// PatternConflicts lists each exact host of an enabled project that a
-// pattern of another enabled project matches, in project and host order,
-// the exact host's project first. A config saved before such a pair was
+// PatternConflicts lists each exact host of an enabled project with each
+// pattern of another enabled project that matches it, in project and host
+// order, the exact host's project first. A config saved before such a pair was
 // refused may hold one; the proxy sends the exact host to its own project.
 func (c *Config) PatternConflicts() []HostConflict {
 	var out []HostConflict
@@ -234,7 +276,6 @@ func (c *Config) PatternConflicts() []HostConflict {
 			if hostname.IsPattern(h) {
 				continue
 			}
-		others:
 			for _, q := range c.Projects {
 				if q.Name == p.Name || !q.Enabled {
 					continue
@@ -242,7 +283,6 @@ func (c *Config) PatternConflicts() []HostConflict {
 				for _, qh := range q.AllHosts() {
 					if hostname.IsPattern(qh) && hostname.Match(strings.ToLower(qh), h) {
 						out = append(out, HostConflict{Project: p.Name, Host: h, Other: q.Name, OtherHost: qh})
-						break others
 					}
 				}
 			}
@@ -707,9 +747,12 @@ func (c *Config) RemoveProject(name string) bool {
 
 // validateChange checks what a change must not bring in although a config
 // already holding it still loads, so a config that loaded before keeps
-// loading: a main name of a project that is new since before, or changed,
-// that ValidProjectAlias refuses. The engine does not start a project with
-// such a name, and doctor reports one already in the file.
+// loading and saving:
+//   - a main name that ValidProjectAlias refuses, of a project that is new
+//     since before or whose main name changed. The engine does not start a
+//     project with such a name, and doctor reports one already in the file.
+//   - an exact host of an enabled project under a pattern of another, a pair
+//     before did not have. Doctor warns about one already in the file.
 func (c *Config) validateChange(before *Config) error {
 	for _, p := range c.Projects {
 		if old, ok := before.Project(p.Name); ok && old.Alias == p.Alias {
@@ -717,6 +760,12 @@ func (c *Config) validateChange(before *Config) error {
 		}
 		if err := ValidProjectAlias(p.Alias); err != nil {
 			return fmt.Errorf("project %q: %w", p.Name, err)
+		}
+	}
+	had := patternPairs(before.PatternConflicts())
+	for _, hc := range c.PatternConflicts() {
+		if !had[hc.pair()] {
+			return hc
 		}
 	}
 	return nil

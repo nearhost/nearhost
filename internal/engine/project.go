@@ -635,8 +635,10 @@ func (e *Engine) hostClash(run *projectRun, web []config.WebHosts) error {
 // hostClashLocked refuses a host of web that another project's published site
 // already serves. Hosts are compared ignoring case, so two exact hosts clash
 // when they are the same name and two patterns when written the same. An
-// exact host under another project's pattern does not clash: the proxy sends
-// it to the more specific match, as config.HostClash allows.
+// exact host under another project's pattern does not clash here: the proxy
+// sends it to the more specific match. config.HostClash refuses such a pair
+// when a change brings it in, but a config saved before then may hold one,
+// and it keeps serving.
 func (e *Engine) hostClashLocked(run *projectRun, web []config.WebHosts) error {
 	taken := map[string]string{}
 	for _, name := range e.order {

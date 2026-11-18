@@ -546,10 +546,10 @@ func checkAliases(cfg *config.Config, path string) []check {
 }
 
 // checkPatternConflicts warns about each exact host of an enabled project
-// under another enabled project's pattern. Nearhost refuses such a pair when
-// a project is added or changed, but a config saved before then may hold one,
-// and it still serves: the proxy sends the exact host to its own project. It
-// adds no line when there is none.
+// under another enabled project's pattern. Nearhost refuses a change that
+// brings in such a pair, but a config saved before then may hold one, and it
+// still serves: the proxy sends the exact host to its own project. It adds no
+// line when there is none.
 func checkPatternConflicts(cfg *config.Config, path string) []check {
 	var lines []string
 	for _, c := range cfg.PatternConflicts() {
@@ -560,7 +560,7 @@ func checkPatternConflicts(cfg *config.Config, path string) []check {
 		return nil
 	}
 	return []check{{"host patterns", levelWarn, strings.Join(lines, "\n"),
-		"in " + path + ", remove the exact host from its project or serve it from the pattern's project; Nearhost refuses to add or change either project while both claim the host"}}
+		"to end the overlap, remove the exact host from the project that gets its requests, or move it to the pattern's project, in " + path}}
 }
 
 // checkOwnLoopbacks reports each enabled project with a loopback route on a

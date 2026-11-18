@@ -60,6 +60,7 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 		if now := u.Status(project).Pending; now == nil || now.SHA256 != sha || approvedRc(cfg, project) != approved {
 			return stale
 		}
+		before := append([]config.Project(nil), cfg.Projects...)
 		if err := takeRc(cfg, change.Project, u.path); err != nil {
 			return err
 		}
@@ -67,8 +68,8 @@ func (u *uiEngine) AcceptChange(project, sha string) error {
 			u.acceptSaving()
 		}
 		p, _ := cfg.Project(project)
-		if host, other, clash := cfg.HostClash(*p); clash {
-			return fmt.Errorf("host %s is already served by project %q", host, other)
+		if hc, clash := cfg.HostConflictSince(before, *p); clash {
+			return hc
 		}
 		return nil
 	})

@@ -443,7 +443,7 @@ func TestDoctorReportsPatternConflictsAndOwnPortLoopbacks(t *testing.T) {
 	}
 	wantContains(t, out,
 		"warn  host patterns    project \"api\" serves api.shop.test, under the pattern *.shop.test of project \"shop\": requests for api.shop.test go to \"api\", not \"shop\"\n"+
-			"      fix: In "+path+", remove the exact host from its project or serve it from the pattern's project; Nearhost refuses to add or change either project while both claim the host\n",
+			"      fix: To end the overlap, remove the exact host from the project that gets its requests, or move it to the pattern's project, in "+path+"\n",
 		"FAIL  loopback ports   project \"db\": loopback port 6327 is Nearhost's own port\n")
 	if strings.Contains(out, `"off"`) {
 		t.Errorf("a disabled project was reported:\n%s", out)

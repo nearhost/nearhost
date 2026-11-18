@@ -85,6 +85,7 @@ func takeRc(cfg *config.Config, p config.Project, path string) error {
 // project's alias or one of its hosts, and two projects cannot serve the same
 // host, so the change is refused and the approved routes keep serving.
 func takeServedRc(cfg *config.Config, p config.Project, path string) error {
+	before := append([]config.Project(nil), cfg.Projects...)
 	if err := takeRc(cfg, p, path); err != nil {
 		return err
 	}
@@ -92,16 +93,16 @@ func takeServedRc(cfg *config.Config, p config.Project, path string) error {
 	if !q.Enabled {
 		return nil
 	}
-	if host, other, clash := cfg.HostClash(*q); clash {
-		return &hostClashError{host: host, other: other}
+	if hc, clash := cfg.HostConflictSince(before, *q); clash {
+		return &hostClashError{hc}
 	}
 	return nil
 }
 
 // hostClashError says a host is already served by another project, so the
 // review can say so in its own words.
-type hostClashError struct{ host, other string }
+type hostClashError struct{ hc config.HostConflict }
 
 func (e *hostClashError) Error() string {
-	return fmt.Sprintf("host %s is already served by project %q", e.host, e.other)
+	return e.hc.Error()
 }

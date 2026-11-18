@@ -300,7 +300,32 @@ func untrustedCA(b trustBackend, storageRoot string) string {
 	return "The Nearhost Local CA is not trusted on this machine, so browsers will show a certificate warning. Run `nearhost trust` to fix that."
 }
 
-// upTargets is the projects to start: those named, or every enabled one.
+// disabledClash refuses the first disabled project among names that would
+// serve a host another enabled or named project serves.
+func disabledClash(cfg *config.Config, names []string) error {
+	started := *cfg
+	started.Projects = append([]config.Project(nil), cfg.Projects...)
+	for _, name := range names {
+		q, _ := started.Project(name)
+		q.Enabled = true
+	}
+	for _, name := range names {
+		if p, _ := cfg.Project(name); p.Enabled {
+			continue
+		}
+		q, _ := started.Project(name)
+		if hc, clash := started.HostConflict(*q); clash {
+			return fmt.Errorf("cannot start disabled project %q: %w", name, hc)
+		}
+	}
+	return nil
+}
+
+// upTargets is the projects to start: those named, or every enabled one. A
+// disabled project named is checked as if it were enabled, beside the other
+// projects named: it is refused when it would serve a host another of them
+// serves, as enabling it would be. A pair of enabled projects is left to
+// serve, as it did before such pairs were refused.
 func upTargets(cfg *config.Config, args []string) ([]string, error) {
 	if len(cfg.Projects) == 0 {
 		return nil, errors.New("no projects to start; add one with `nearhost add <path>`")
@@ -317,7 +342,7 @@ func upTargets(cfg *config.Config, args []string) ([]string, error) {
 		}
 	}
 	if len(args) > 0 {
-		return names, nil
+		return names, disabledClash(cfg, names)
 	}
 	for _, p := range cfg.Projects {
 		if p.Enabled {
