@@ -266,3 +266,34 @@ func TestServerFormListFitsTheSmallestWindow(t *testing.T) {
 	}
 	wantScreen(t, m, "host      ", "↑ 4 more", "▸ h12", "enter next")
 }
+
+// hyphenHostsModel is the form at 80x20 with 12 hosts that all hold a hyphen.
+func hyphenHostsModel(t *testing.T) *Model {
+	t.Helper()
+	f := newFake(t, sampleConfig())
+	for i := 1; i <= 12; i++ {
+		f.forms.hosts = append(f.forms.hosts, fmt.Sprintf("h-%02d", i))
+	}
+	m := sized(f)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	settle(m, press(m, "s"))
+	return m
+}
+
+func TestServerFormErrorShowsWithTheFieldAndAShorterList(t *testing.T) {
+	m := hyphenHostsModel(t)
+	typeText(m, "-")
+	press(m, "enter")
+	wantScreen(t, m, "host      -▏", "An SSH host cannot be empty", "h-01", "↓ 8 more", "enter next")
+	press(m, "down")
+	for range 6 {
+		press(m, "down")
+	}
+	wantScreen(t, m, "host      -", "An SSH host cannot be empty", "▸ h-07", "↑ 3 more", "↓ 5 more")
+	press(m, "backspace") // the host field is back to "-" and the hosts match again
+	typeText(m, "0")
+	s := screen(m)
+	if strings.Contains(s, "An SSH host") || !strings.Contains(s, "h-08") || strings.Contains(s, "h-09") {
+		t.Errorf("after an edit the list should show eight rows and no error:\n%s", s)
+	}
+}

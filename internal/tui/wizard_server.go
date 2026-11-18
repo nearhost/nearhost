@@ -92,21 +92,34 @@ func (f *serverForm) shown() []string {
 	return out
 }
 
-// hostRows is how many hosts the list shows at once.
-const hostRows = 8
+const (
+	// hostRows is how many hosts the list shows at once.
+	hostRows = 8
+	// hostRowsWithError is how many it shows while an error is under it, so
+	// the field, the list and the error fit the smallest window together.
+	hostRowsWithError = 4
+)
+
+// rows is how many hosts the list shows now.
+func (f *serverForm) rows() int {
+	if f.err != "" {
+		return hostRowsWithError
+	}
+	return hostRows
+}
 
 // scroll moves the window the least that keeps the selection in it, and
 // keeps the window inside the shown hosts.
 func (f *serverForm) scroll() {
-	n := len(f.shown())
+	n, rows := len(f.shown()), f.rows()
 	if f.pick >= 0 {
 		if f.pick < f.top {
 			f.top = f.pick
-		} else if f.pick >= f.top+hostRows {
-			f.top = f.pick - hostRows + 1
+		} else if f.pick >= f.top+rows {
+			f.top = f.pick - rows + 1
 		}
 	}
-	f.top = max(min(f.top, n-hostRows), 0)
+	f.top = max(min(f.top, n-rows), 0)
 }
 
 // hostName is the name a server reached at host gets unless one is typed:
@@ -205,6 +218,7 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 			// The rule nearhost add applies.
 			if host == "" || strings.HasPrefix(host, "-") || strings.IndexFunc(host, unicode.IsSpace) >= 0 {
 				f.err = "an SSH host cannot be empty, start with - or contain spaces"
+				f.scroll() // the list shrinks to make room for the error
 				return nil
 			}
 			f.host.set(host)
@@ -281,10 +295,10 @@ func (f *serverForm) lines(width int) []string {
 	lines := field("host", f.host.view(f.step == serverStepHost), width)
 	if f.step == serverStepHost {
 		shown := f.shown()
-		f.scroll()
+		rows := f.rows()
 		// A list longer than the window reserves a line above and below
 		// for the "more" notes, so the box keeps its height as you move.
-		long := len(shown) > hostRows
+		long := len(shown) > rows
 		pad := strings.Repeat(" ", labelWidth)
 		if long {
 			note := ""
@@ -293,7 +307,7 @@ func (f *serverForm) lines(width int) []string {
 			}
 			lines = append(lines, pad+"  "+styleDim.Render(note))
 		}
-		for i := f.top; i < min(f.top+hostRows, len(shown)); i++ {
+		for i := f.top; i < min(f.top+rows, len(shown)); i++ {
 			mark := "  "
 			if i == f.pick {
 				mark = styleBeacon.Render("▸ ")
@@ -302,7 +316,7 @@ func (f *serverForm) lines(width int) []string {
 		}
 		if long {
 			note := ""
-			if below := len(shown) - f.top - hostRows; below > 0 {
+			if below := len(shown) - f.top - rows; below > 0 {
 				note = fmt.Sprintf("↓ %d more", below)
 			}
 			lines = append(lines, pad+"  "+styleDim.Render(note))
