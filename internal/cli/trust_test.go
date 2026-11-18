@@ -44,11 +44,17 @@ type fakeTrust struct {
 	// foreign makes the fake system store hold no anchor of Nearhost's even
 	// though trusted is true: trust comes from somewhere else.
 	foreign bool
-	// running is whether another Nearhost answers; interactive is whether a
-	// question can be asked; removeErr fails the CA's removal, which
-	// otherwise goes to proxy.RemoveCA.
+	// running is whether another Nearhost answers, and runningFn, when set,
+	// answers instead; runningChecks counts the checks. interactive is
+	// whether a question can be asked. removeErr fails the CA's removal, and
+	// removeFn, when set, does it instead of proxy.RemoveCA.
 	running, interactive bool
+	runningFn            func(call int) (bool, error)
+	runningChecks        int
 	removeErr            error
+	removeFn             func(dir string) error
+	// sudoErr is what findSudo returns.
+	sudoErr error
 }
 
 func (f *fakeTrust) backend() trustBackend {
@@ -76,11 +82,21 @@ func (f *fakeTrust) backend() trustBackend {
 		systemHolds:  func(*x509.Certificate) bool { return (f.present || f.trusted) && !f.foreign },
 		stillTrusted: func(*x509.Certificate) bool { return f.stillTrusted },
 		anchorHelp:   func() (string, string) { return "/usr/local/share/ca-certificates", "update-ca-certificates" },
-		findSudo:     func() error { f.sudoChecks++; return nil },
-		running:      func() bool { return f.running },
+		findSudo:     func() error { f.sudoChecks++; return f.sudoErr },
+		running: func() (bool, error) {
+			f.runningChecks++
+			if f.runningFn != nil {
+				return f.runningFn(f.runningChecks)
+			}
+			return f.running, nil
+		},
 		interactive:  func() bool { return f.interactive },
+		ownerProblem: func(string) error { return nil },
 		removeCA: func(dir string) error {
-			if f.removeErr != nil {
+			switch {
+			case f.removeFn != nil:
+				return f.removeFn(dir)
+			case f.removeErr != nil:
 				return f.removeErr
 			}
 			return proxy.RemoveCA(dir)

@@ -442,80 +442,76 @@ func removeCertFiles(dir *os.Root, files []string) error {
 
 // RemoveCA deletes the local CA from Caddy's storage under storageRoot: the
 // authority's directory, which holds its root and intermediate certificates
-// and their private keys, and the site certificates it issued. Those would
-// otherwise be served until they came up for renewal, under a root nobody
-// trusts any more. Nothing else in storageRoot is touched, and with no CA
-// there is nothing to do.
+// and their private keys, and then the site certificates it issued. Those
+// would otherwise be served until they came up for renewal, under a root
+// nobody trusts any more. Nothing else in storageRoot is touched, and with no
+// CA there is nothing to do.
 //
-// storageRoot comes from the environment, so each path is resolved through
-// any links and removed only when it lies inside storageRoot, itself
-// resolved. A link that leads elsewhere inside it is removed with its
-// target; one that leads out of it, or to a directory above the link, is
-// refused. A removal that leaves anything
-// behind is an error naming what is left.
+// storageRoot comes from the environment. It may itself be a link, as into a
+// dotfiles repository, but no link below it is followed: each directory on
+// the way to the two that go must be a plain directory, or nothing is
+// removed. The removal goes through an os.Root, so it cannot leave
+// storageRoot even if a link appears after that check. A removal that leaves
+// anything behind is an error naming what is left.
 func RemoveCA(storageRoot string) error {
 	if !filepath.IsAbs(storageRoot) {
 		return fmt.Errorf("Caddy's storage directory %q is not an absolute path; Nearhost deletes nothing there", storageRoot)
 	}
-	root, err := filepath.EvalSymlinks(storageRoot)
+	root, err := os.OpenRoot(storageRoot)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	ca := filepath.Dir(RootCertPath(storageRoot))
-	issued := filepath.Join(storageRoot, filepath.FromSlash(certmagic.StorageKeys.CertsPrefix(filepath.Base(ca))))
-	for _, dir := range []string{ca, issued} {
-		if err := removeInside(root, dir); err != nil {
+	defer root.Close()
+	ca, err := filepath.Rel(storageRoot, filepath.Dir(RootCertPath(storageRoot)))
+	if err != nil {
+		return err
+	}
+	issued := filepath.FromSlash(strings.TrimSuffix(certmagic.StorageKeys.CertsPrefix(filepath.Base(ca)), "/"))
+	dirs := []string{ca, issued}
+	for _, dir := range dirs {
+		if err := noLinks(root, storageRoot, dir); err != nil {
+			return err
+		}
+	}
+	for _, dir := range dirs {
+		if err := removeChecked(root, storageRoot, dir); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// removeInside removes the directory at path, and the directory a link there
-// leads to, when that lies inside root, a resolved path. Anything left behind
-// is an error that names it.
-func removeInside(root, path string) error {
-	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	target, err := filepath.EvalSymlinks(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		// A link to nothing: only the link itself is left.
-		return removeChecked(path, path)
-	}
-	if err != nil {
-		return err
-	}
-	if !within(root, target) {
-		return fmt.Errorf("%s leads to %s, outside Nearhost's Caddy directory %s, so Nearhost did not delete it. "+
-			"If that is Nearhost's local CA, delete it yourself", path, target, root)
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	if within(target, filepath.Join(parent, filepath.Base(path))) {
-		// A link to a directory above it, which holds more than the CA.
-		return fmt.Errorf("%s leads to %s, which holds it, so Nearhost did not delete it. "+
-			"If that is Nearhost's local CA, delete it yourself", path, target)
-	}
-	if err := removeChecked(target, target); err != nil {
-		return err
-	}
-	if target != path {
-		return removeChecked(path, path)
+// noLinks returns an error when dir, a path relative to root, or a directory
+// on the way to it is a link (on Windows also a junction or another reparse
+// point). A part that does not exist ends the check: nothing below it is
+// there to remove.
+func noLinks(root *os.Root, shownRoot, dir string) error {
+	part := ""
+	for _, name := range strings.Split(dir, string(filepath.Separator)) {
+		part = filepath.Join(part, name)
+		fi, err := root.Lstat(part)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("%s is a link, and Nearhost deletes the local CA only where Caddy keeps it, so it deleted nothing. "+
+				"If that link leads to Nearhost's local CA, delete the CA yourself", filepath.Join(shownRoot, part))
+		}
 	}
 	return nil
 }
 
-// removeChecked removes path and everything under it, then checks it is
-// gone. What is left is reported under shown.
-func removeChecked(path, shown string) error {
-	err := os.RemoveAll(path)
-	left := leftUnder(path)
+// removeChecked removes dir, a path relative to root, and everything under
+// it, then checks it is gone. What is left is reported under shownRoot.
+func removeChecked(root *os.Root, shownRoot, dir string) error {
+	err := root.RemoveAll(dir)
+	left := leftUnder(root, shownRoot, dir)
 	if err == nil && len(left) == 0 {
 		return nil
 	}
@@ -523,31 +519,29 @@ func removeChecked(path, shown string) error {
 		err = errors.New("files remain")
 	}
 	if len(left) == 0 {
-		left = []string{shown}
+		left = []string{filepath.Join(shownRoot, dir)}
 	}
 	return fmt.Errorf("Nearhost could not delete all of %s (%v). Still there: %s. Delete them by hand",
-		shown, err, strings.Join(left, ", "))
+		filepath.Join(shownRoot, dir), err, strings.Join(left, ", "))
 }
 
 // maxLeft is how many leftover paths an error names.
 const maxLeft = 10
 
-// leftUnder lists the files and directories still at or under path, up to
-// maxLeft, files first since they hold the data.
-func leftUnder(path string) []string {
+// leftUnder lists the files and directories still at or under dir in root,
+// up to maxLeft, files first since they hold the data, as paths under
+// shownRoot.
+func leftUnder(root *os.Root, shownRoot, dir string) []string {
 	var files, dirs []string
-	filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if p == path && errors.Is(err, fs.ErrNotExist) {
-				return nil
-			}
-			files = append(files, p)
-			return nil
-		}
-		if d.IsDir() {
-			dirs = append(dirs, p)
-		} else {
-			files = append(files, p)
+	start := filepath.ToSlash(dir)
+	fs.WalkDir(root.FS(), start, func(p string, d fs.DirEntry, err error) error {
+		shown := filepath.Join(shownRoot, filepath.FromSlash(p))
+		switch {
+		case err != nil && p == start && errors.Is(err, fs.ErrNotExist):
+		case err != nil || !d.IsDir():
+			files = append(files, shown)
+		default:
+			dirs = append(dirs, shown)
 		}
 		return nil
 	})
@@ -556,14 +550,4 @@ func leftUnder(path string) []string {
 		left = append(left[:maxLeft], fmt.Sprintf("and %d more", len(left)-maxLeft))
 	}
 	return left
-}
-
-// within reports whether path lies strictly inside dir. Both are resolved
-// absolute paths.
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	if err != nil || rel == "." || filepath.IsAbs(rel) {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

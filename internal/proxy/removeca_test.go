@@ -110,7 +110,7 @@ func TestRemoveCARefusesALinkOutOfTheRoot(t *testing.T) {
 	link := filepath.Join(root, "pki", "authorities", "local")
 	symlinkOrSkip(t, outside, link)
 	err := RemoveCA(root)
-	if err == nil || !strings.Contains(err.Error(), "outside") || !strings.Contains(err.Error(), outside) {
+	if err == nil || !strings.Contains(err.Error(), link) {
 		t.Fatalf("err = %v", err)
 	}
 	if !exists(filepath.Join(outside, "root.key")) || !exists(link) {
@@ -132,21 +132,37 @@ func TestRemoveCARefusesAParentLinkOutOfTheRoot(t *testing.T) {
 	}
 }
 
-// An authority directory that links elsewhere inside the storage root is
-// removed with its link.
-func TestRemoveCAFollowsALinkInsideTheRoot(t *testing.T) {
-	root := t.TempDir()
-	writeFiles(t, root, "moved/ca/root.key", "moved/keep")
-	link := filepath.Join(root, "pki", "authorities", "local")
-	symlinkOrSkip(t, filepath.Join(root, "moved", "ca"), link)
-	if err := RemoveCA(root); err != nil {
-		t.Fatal(err)
-	}
-	if exists(link) || exists(filepath.Join(root, "moved", "ca")) {
-		t.Fatal("the link or its target is still there")
-	}
-	if !exists(filepath.Join(root, "moved", "keep")) {
-		t.Fatal("RemoveCA removed the target's sibling")
+// No link below the storage root is followed, even one that stays inside it:
+// a storage root that resolves to a broad directory would otherwise let a
+// link lead to something that is not the CA. Each directory on the way to
+// the CA and to its certificates is refused when it is a link, nothing is
+// removed, and the error names the link.
+func TestRemoveCARefusesEveryLinkOnTheWay(t *testing.T) {
+	for _, linked := range []string{
+		"pki", "pki/authorities", "pki/authorities/local",
+		"certificates", "certificates/local",
+	} {
+		t.Run(linked, func(t *testing.T) {
+			root := t.TempDir()
+			writeFiles(t, root, caFiles...)
+			writeFiles(t, root, "certificates/local/app.test/app.test.crt")
+			// Move the directory aside, inside the root, and link to it.
+			link := filepath.Join(root, filepath.FromSlash(linked))
+			moved := filepath.Join(root, "moved")
+			if err := os.Rename(link, moved); err != nil {
+				t.Fatal(err)
+			}
+			symlinkOrSkip(t, moved, link)
+			err := RemoveCA(root)
+			if err == nil || !strings.Contains(err.Error(), link) || !strings.Contains(err.Error(), "link") {
+				t.Fatalf("err = %v", err)
+			}
+			// Nothing went: neither side's files nor the link.
+			if !exists(link) || !exists(filepath.Join(root, "pki", "authorities", "local", "root.key")) ||
+				!exists(filepath.Join(root, "certificates", "local", "app.test", "app.test.crt")) {
+				t.Fatal("RemoveCA removed something")
+			}
+		})
 	}
 }
 

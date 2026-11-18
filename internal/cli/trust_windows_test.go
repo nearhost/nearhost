@@ -5,6 +5,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -50,5 +52,21 @@ func TestTrustSaysPlainlyWhenTheErrnoSaysCancelledOnWindows(t *testing.T) {
 	const wantUntrust = "Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."
 	if err == nil || err.Error() != wantUntrust {
 		t.Fatalf("untrust err = %v, want %q", err, wantUntrust)
+	}
+}
+
+// A declined warning is a failure a second run gets past, so --delete-key
+// deletes nothing.
+func TestUntrustDeleteKeyDeletesNothingWhenTheWarningWasDeclined(t *testing.T) {
+	ca, _ := localCA(t)
+	f := deleteFake(t)
+	f.trusted = true
+	f.uninstErr = fmt.Errorf("delete cert failed: %w", windows.ERROR_CANCELLED)
+	_, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+	if err == nil || !strings.HasPrefix(err.Error(), "Nothing was deleted. ") || !strings.Contains(err.Error(), "security warning") {
+		t.Fatalf("err = %v", err)
+	}
+	if !present(filepath.Join(ca, "root.key")) {
+		t.Fatal("the CA was deleted")
 	}
 }
