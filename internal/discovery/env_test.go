@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDirReaderReturnsNotExistForMissingFile(t *testing.T) {
@@ -103,6 +104,12 @@ var malformedEnvs = []malformedEnv{
 	{"unterminated single quote", "PASSWORD='hunter2\nSECRET=hunter2\n", 1, "hunter2"},
 	{"unterminated after secrets", "SECRET=hunter2\nPASSWORD=\"hunter2\nTOKEN=hunter2\n", 2, "hunter2"},
 	{"unterminated after a multi-line value", "A='x\nB=\"hunter2\n'\nMY KEY=\"hunter2\n", 4, "hunter2"},
+	// godotenv skips \v, \f and \r after the separator and fails on line 3,
+	// since line 1's quote closes on line 2. Lines 1 and 3 both fit, so no
+	// line is named; line 1 must never be.
+	{"vertical tab before quote", "A=\"hunter2\nB=\"\nC=\v\"hunter2\n", 0, "hunter2"},
+	{"form feed before quote", "A=\"hunter2\nB=\"\nC=\f\"hunter2\n", 0, "hunter2"},
+	{"carriage return before quote", "A=\"hunter2\nB=\"\nC=\r\"hunter2\n", 0, "hunter2"},
 	// The error starts inside a quoted value that ran past its line.
 	{"quote runs past its line", "SECRET=\"hunter2\"\nOTHER=\"hunter2\nMORE=\"hunter2\n", 0, "hunter2"},
 }
@@ -143,6 +150,28 @@ func TestReadEnvNamesTheFileAndLine(t *testing.T) {
 	_, err := ReadEnv(memReader{".env": "A=1\nB=2\nMY-PORT=3000\nSECRET=hunter2\n"})
 	if err == nil || err.Error() != ".env: line 3 could not be read" {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestParseEnvDoesNotPlaceAnUnterminatedQuoteInALargeFile(t *testing.T) {
+	big := strings.Repeat("A=1\n", maxPlaceSize/4+1) + "B=\"hunter2\n"
+	many := "X='\n" + strings.Repeat("K=\"abc\n", maxPlaceCandidates+1) + "'\nT=\"abc\n"
+	for name, data := range map[string]string{"over the size limit": big, "over the candidate limit": many} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan error, 1)
+			go func() {
+				_, err := ParseEnv([]byte(data))
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil || err.Error() != "could not be read" {
+					t.Fatalf("got %v, want could not be read", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("ParseEnv took longer than 5s")
+			}
+		})
 	}
 }
 

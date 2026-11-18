@@ -104,6 +104,14 @@ func nearText(msg string) (string, bool) {
 	return near, true
 }
 
+// maxPlaceSize and maxPlaceCandidates bound the work unterminatedStart does,
+// since each candidate line costs two parses of the file. Past either limit
+// the error names no line.
+const (
+	maxPlaceSize       = 64 << 10
+	maxPlaceCandidates = 100
+)
+
 // unterminatedStart finds the start of the line whose unterminated quoted
 // value godotenv reported. A candidate line has a key, then "=" or ":", then
 // value up to the end of the line. Because a candidate can sit inside an
@@ -111,7 +119,10 @@ func nearText(msg string) (string, bool) {
 // input before it parses and the input from it fails with the same error,
 // which is what godotenv saw. It reports false unless exactly one line counts.
 func unterminatedStart(src, value, msg string) (int, bool) {
-	found := -1
+	if len(src) > maxPlaceSize {
+		return 0, false
+	}
+	var candidates []int
 	for from := 0; ; {
 		i := strings.Index(src[from:], value)
 		if i < 0 {
@@ -127,6 +138,13 @@ func unterminatedStart(src, value, msg string) (int, bool) {
 		if !validKeyLine(src[lineStart:at]) {
 			continue
 		}
+		if len(candidates) == maxPlaceCandidates {
+			return 0, false
+		}
+		candidates = append(candidates, lineStart)
+	}
+	found := -1
+	for _, lineStart := range candidates {
 		if _, err := godotenv.Unmarshal(src[:lineStart]); err != nil {
 			continue
 		}
@@ -141,36 +159,49 @@ func unterminatedStart(src, value, msg string) (int, bool) {
 	return found, found >= 0
 }
 
+// isEnvSpace reports whether godotenv skips r as space around a key and its
+// separator. It matches godotenv's own isSpace.
+func isEnvSpace(r rune) bool {
+	switch r {
+	case '\t', '\v', '\f', '\r', ' ', 0x85, 0xA0:
+		return true
+	}
+	return false
+}
+
+// trimExport removes leading space and an "export" prefix from a statement,
+// as godotenv does.
+func trimExport(text string) string {
+	text = strings.TrimLeftFunc(text, isEnvSpace)
+	if rest, ok := strings.CutPrefix(text, "export"); ok && strings.IndexFunc(rest, isEnvSpace) == 0 {
+		text = strings.TrimLeftFunc(rest, isEnvSpace)
+	}
+	return text
+}
+
 // atStatementStart reports whether before, the input ahead of a statement,
 // ends at the start of a line, allowing indentation and an "export" prefix.
 func atStatementStart(before string) bool {
-	before = strings.TrimRight(before, " \t")
+	before = strings.TrimRightFunc(before, isEnvSpace)
 	before = strings.TrimSuffix(before, "export")
-	before = strings.TrimRight(before, " \t")
+	before = strings.TrimRightFunc(before, isEnvSpace)
 	return before == "" || strings.HasSuffix(before, "\n")
 }
 
 // validKeyLine reports whether head, a line up to its value, is a key godotenv
 // accepts followed by "=" or ":", so the line can be a statement.
 func validKeyLine(head string) bool {
-	head = strings.TrimLeft(head, " \t")
-	if rest, ok := strings.CutPrefix(head, "export"); ok && strings.IndexAny(rest, " \t") == 0 {
-		head = rest
-	}
-	head = strings.TrimRight(head, " \t")
+	head = strings.TrimRightFunc(trimExport(head), isEnvSpace)
 	key, ok := strings.CutSuffix(head, "=")
 	if !ok {
 		key, ok = strings.CutSuffix(head, ":")
 	}
-	key = strings.Trim(key, " \t")
+	key = strings.TrimRightFunc(key, isEnvSpace)
 	if !ok || key == "" {
 		return false
 	}
 	for _, r := range key {
-		switch {
-		case r == '_' || r == '.' || unicode.IsLetter(r) || unicode.IsNumber(r):
-		case r == ' ' || r == '\t' || r == '\v' || r == '\f' || r == '\r':
-		default:
+		if r != '_' && r != '.' && !unicode.IsLetter(r) && !unicode.IsNumber(r) && !isEnvSpace(r) {
 			return false
 		}
 	}
