@@ -59,6 +59,9 @@ type doctorBackend struct {
 	probePort func(network string, port int) error
 	// holderOf names the process listening on a port, or returns "".
 	holderOf func(ctx context.Context, port int) string
+	// running reports whether a Nearhost is serving on this machine. nil
+	// means none is.
+	running func() bool
 	// env is what the hosts check and the project checks need of the
 	// machine. Its lookup may be nil, which keeps every name in the hosts
 	// check.
@@ -96,6 +99,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		trust:     systemTrust(),
 		probePort: probePort,
 		holderOf:  engine.PortHolder,
+		running:   nearhostRunning,
 		// --no-hosts is a flag of the run, so it is applied then. A config
 		// directory that can't be found leaves the CA check out of the
 		// project section; the machine checks report it.
@@ -394,6 +398,9 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 	}
 	var problems []string
 	denied, httpSys, who := false, false, "the process using it"
+	// mine: Nearhost holds the TCP port. unsure: it is taken while a
+	// Nearhost runs, but nothing names the holder.
+	mine, unsure := false, false
 	for _, network := range networks {
 		err := b.probePort(network, port)
 		if err == nil {
@@ -408,15 +415,29 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		if errors.As(err, &errno) {
 			what = errno.Error() // "address already in use", without the listen address
 		}
+		inUse := isAddrInUse(err)
 		if network == "udp" {
+			// Nothing names a UDP holder. Nearhost holds UDP beside its TCP
+			// port for HTTP/3, so a UDP port taken beside a TCP port that
+			// Nearhost holds is Nearhost's too.
+			if inUse && mine {
+				continue
+			}
 			what = "UDP (for HTTP/3): " + what
 		} else if holder := b.holderOf(ctx, port); holder != "" {
+			if inUse && b.running != nil && b.running() && isNearhostHolder(holder) {
+				mine = true
+				continue
+			}
 			what, who = "in use by "+holder, "that process"
 			// On Windows pid 4 is the kernel, which holds a port on behalf
 			// of HTTP.sys, so no process can be stopped to free it.
 			if b.goos == "windows" && holder == "System (pid 4)" {
 				what, httpSys = "in use by HTTP.sys (System, pid 4)", true
 			}
+		} else if inUse && b.running != nil && b.running() {
+			unsure = true
+			continue
 		}
 		problems = append(problems, what)
 	}
@@ -427,6 +448,14 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		if b.goos == "linux" {
 			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
 		}
+	case len(problems) == 0 && mine:
+		c.detail = "in use by the running Nearhost"
+	case len(problems) == 0 && unsure:
+		// A taken port while Nearhost runs is most likely Nearhost's own,
+		// but with no holder named that is not proven. A warning keeps the
+		// exit status zero and still shows the line.
+		c.level, c.detail = levelWarn, "in use, probably by the running Nearhost; no tool could name the holder"
+		c.fix = "check with `" + holderCommand(b.goos, port) + "` that the holder is nearhost"
 	case len(problems) > 0:
 		c.level, c.detail = levelFail, strings.Join(problems, "; ")
 		c.fix = fmt.Sprintf("stop %s (expected while `nearhost up` is running), or give `nearhost up` another %s", who, flag)
@@ -435,6 +464,33 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		}
 	}
 	return c
+}
+
+// isAddrInUse reports whether err says the address is taken. Windows
+// reports WSAEADDRINUSE, which is not syscall.EADDRINUSE there.
+func isAddrInUse(err error) bool {
+	const wsaEADDRINUSE = syscall.Errno(10048)
+	var errno syscall.Errno
+	return errors.Is(err, syscall.EADDRINUSE) || (runtime.GOOS == "windows" && errors.As(err, &errno) && errno == wsaEADDRINUSE)
+}
+
+// isNearhostHolder reports whether a holder named by engine.PortHolder, as
+// "nearhost (pid 41)", is the nearhost program. The running Nearhost's pid
+// is not recorded anywhere doctor can read (it knows a Nearhost runs from
+// the agent socket answering), so the name decides: the whole name
+// "nearhost", which PortHolder gives without a directory or ".exe" on every
+// system and which fits ss's 15 and lsof's 9 character limits.
+func isNearhostHolder(holder string) bool {
+	name, _, ok := strings.Cut(holder, " (pid ")
+	return ok && name == "nearhost"
+}
+
+// holderCommand is the command that shows which process listens on port.
+func holderCommand(goos string, port int) string {
+	if goos == "windows" {
+		return fmt.Sprintf("netstat -ano | findstr :%d", port)
+	}
+	return fmt.Sprintf("lsof -nP -iTCP:%d -sTCP:LISTEN", port)
 }
 
 // checkSSHAgentService reports the OpenSSH Authentication Agent service on
