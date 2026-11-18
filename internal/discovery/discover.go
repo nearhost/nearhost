@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"sort"
@@ -55,15 +56,15 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	composeName, composeData, err := ReadCompose(files)
+	compose, err := ReadCompose(files)
 	if err != nil {
 		return nil, err
 	}
-	hasCompose := composeName != ""
+	hasCompose := len(compose) > 0
 
 	res := &Result{
 		Env:        env,
-		project:    &preset.Project{Env: env, Compose: string(composeData), Files: files},
+		project:    &preset.Project{Env: env, Compose: ComposeText(compose), Files: files},
 		files:      files,
 		hasCompose: hasCompose,
 		facts:      map[string]map[string]any{},
@@ -72,7 +73,12 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	res.activate(opts.Presets)
 	byPort := map[int]*Candidate{}
 	if hasCompose && res.wantsCompose() {
-		if byPort, err = composeCandidates(composeData, env); err != nil {
+		// Compose fills in its files from .env alone, never .env.local.
+		composeEnv, err := ReadComposeEnv(files)
+		if err != nil {
+			return nil, err
+		}
+		if byPort, err = composeCandidates(compose, composeEnv); err != nil {
 			return nil, err
 		}
 	}
@@ -80,7 +86,9 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		res.apply(p, byPort)
 	}
 	// The core's own .env rule comes last, for ports nothing else claimed.
-	for _, c := range envPorts(env) {
+	// A variable that sets a Compose published port is Compose's, and its
+	// value in .env.local is not a port Compose publishes.
+	for _, c := range envPorts(withoutComposeVars(env, byPort)) {
 		if _, claimed := byPort[c.Port]; !claimed {
 			byPort[c.Port] = &c
 		}
@@ -119,10 +127,10 @@ func (res *Result) wantsCompose() bool {
 	return false
 }
 
-// composeCandidates proposes a candidate for each port the Compose file
-// publishes, the first service in a stable order winning a shared port.
-func composeCandidates(data []byte, env map[string]string) (map[int]*Candidate, error) {
-	composePorts, err := ParseCompose(data, env)
+// composeCandidates proposes a candidate for each port the Compose files
+// publish, the first service in a stable order winning a shared port.
+func composeCandidates(files []ComposeFile, env map[string]string) (map[int]*Candidate, error) {
+	composePorts, err := ParseComposeFiles(files, env)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +160,18 @@ func composeCandidates(data []byte, env map[string]string) (map[int]*Candidate, 
 		byPort[c.Port] = c
 	}
 	return byPort, nil
+}
+
+// withoutComposeVars returns env less the variables that set a Compose
+// candidate's published port.
+func withoutComposeVars(env map[string]string, byPort map[int]*Candidate) map[string]string {
+	out := maps.Clone(env)
+	for _, c := range byPort {
+		if c.Var != "" && strings.HasPrefix(c.Source, "compose:") {
+			delete(out, c.Var)
+		}
+	}
+	return out
 }
 
 func (res *Result) warn(format string, a ...any) {
@@ -222,6 +242,9 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 				c.Label, c.Role, c.web, c.Preset = label, e.Role, e.Web, p.Key()
 			}
 		}
+		if setsComposePort(byPort, e.Var) {
+			continue // Compose publishes it, from .env alone
+		}
 		port, err := strconv.Atoi(strings.TrimSpace(res.Env[e.Var]))
 		if err != nil || port < 1 || port > 65535 {
 			continue
@@ -247,6 +270,17 @@ func (res *Result) apply(p *preset.Preset, byPort map[int]*Candidate) {
 		}
 		res.inferHosts(p, r.ID, c, r.Hosts)
 	}
+}
+
+// setsComposePort reports whether a Compose candidate's published port is set
+// by the variable name.
+func setsComposePort(byPort map[int]*Candidate, name string) bool {
+	for _, c := range byPort {
+		if c.Var == name && strings.HasPrefix(c.Source, "compose:") {
+			return true
+		}
+	}
+	return false
 }
 
 // hostClaim is a host a candidate on port was given.

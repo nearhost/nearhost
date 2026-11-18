@@ -3,6 +3,7 @@ package doctor
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -16,12 +17,14 @@ import (
 // service is what the container checks need to know of one Compose service.
 type service struct {
 	Name        string
-	Line        int               // line of the service's key
+	File        string            // the file a fix for the service goes in
+	Line        int               // line of the service's key in File
 	Env         map[string]string // environment, with ${VAR} expanded
 	EnvFiles    []string          // env_file paths
 	ExtraHosts  []string          // names in extra_hosts, lowercased
 	Sources     []string          // volume sources, expanded from the shell and .env only
 	HostNetwork bool              // network_mode: host
+	NetworkSet  bool              // network_mode is set, to host or not
 }
 
 // composeServices reads the services of a Compose file, sorted by name.
@@ -57,7 +60,10 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 			out = append(out, s)
 			continue
 		}
-		s.HostNetwork = scalar(w.mapGet(node, "network_mode")) == "host"
+		if mode := w.mapGet(node, "network_mode"); mode != nil {
+			s.NetworkSet = true
+			s.HostNetwork = scalar(mode) == "host"
+		}
 
 		for k, v := range w.keyValues(w.mapGet(node, "environment")) {
 			switch {
@@ -107,6 +113,40 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// mergeServices merges the services of an override file over those of the
+// Compose file, as Compose does: extra_hosts, env_file and volumes add to
+// the service's, environment replaces by key, and network_mode replaces.
+// A service the override names takes the override's file and line, as an
+// addition made there joins the rest; one it does not name keeps its own.
+// The result is sorted by name.
+func mergeServices(base, override []service) []service {
+	out := slices.Clone(base)
+	at := map[string]int{}
+	for i, s := range out {
+		at[s.Name] = i
+	}
+	for _, o := range override {
+		i, ok := at[o.Name]
+		if !ok {
+			out = append(out, o)
+			continue
+		}
+		s := &out[i]
+		env := maps.Clone(s.Env)
+		maps.Copy(env, o.Env)
+		s.Env = env
+		s.EnvFiles = slices.Concat(s.EnvFiles, o.EnvFiles)
+		s.ExtraHosts = slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.ExtraHosts, o.ExtraHosts))))
+		s.Sources = slices.Concat(s.Sources, o.Sources)
+		if o.NetworkSet {
+			s.HostNetwork, s.NetworkSet = o.HostNetwork, true
+		}
+		s.File, s.Line = o.File, o.Line
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // requiredVar matches ${VAR:?message} and ${VAR?message}, which Compose

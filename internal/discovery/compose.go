@@ -19,23 +19,96 @@ type ComposePort struct {
 	Var       string // variable that set the published port, if any
 }
 
-var composeFiles = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+// composeFiles are the names Compose looks for, in its order of preference:
+// the first one present is the project's Compose file. compose.yaml and
+// compose.yml are the canonical names and the docker-compose ones are kept
+// for older projects, the order compose-go's DefaultFileNames gives.
+var composeFiles = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
 
-// ReadCompose returns the first Compose file found and its name, so that a
-// caller can point at the file it read. When there is none, name is empty and
-// err is nil.
-func ReadCompose(r FileReader) (name string, data []byte, err error) {
-	for _, file := range composeFiles {
-		b, rerr := r.ReadFile(file)
-		if errors.Is(rerr, fs.ErrNotExist) {
+// composeOverrideFiles are the override names Compose looks for beside a
+// Compose file, in its order of preference. Compose merges the first one
+// present over the Compose file, whichever of composeFiles that is, as
+// compose-go's DefaultOverrideFileNames and WithDefaultConfigPath do.
+var composeOverrideFiles = []string{"compose.override.yml", "compose.override.yaml", "docker-compose.override.yml", "docker-compose.override.yaml"}
+
+// ComposeFile is one Compose file of a project, by name.
+type ComposeFile struct {
+	Name string
+	Data []byte
+}
+
+// ReadCompose returns the files Compose reads by default: the first
+// Compose file found, then the first override file found beside it, if
+// any. Both carry their names, so that a caller can point at the file it
+// read. With no Compose file it returns none, and no error, even when an
+// override file is present, as Compose reads an override only beside a
+// Compose file.
+func ReadCompose(r FileReader) ([]ComposeFile, error) {
+	base, err := readFirst(r, composeFiles)
+	if err != nil || base == nil {
+		return nil, err
+	}
+	override, err := readFirst(r, composeOverrideFiles)
+	if err != nil {
+		return nil, err
+	}
+	if override == nil {
+		return []ComposeFile{*base}, nil
+	}
+	return []ComposeFile{*base, *override}, nil
+}
+
+// readFirst reads the first of names that is present, or returns nil.
+func readFirst(r FileReader, names []string) (*ComposeFile, error) {
+	for _, file := range names {
+		b, err := r.ReadFile(file)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if rerr != nil {
-			return "", nil, ReadError(file, rerr)
+		if err != nil {
+			return nil, ReadError(file, err)
 		}
-		return file, b, nil
+		return &ComposeFile{Name: file, Data: b}, nil
 	}
-	return "", nil, nil
+	return nil, nil
+}
+
+// ComposeText joins the text of files, the Compose file then its override,
+// for the presets that look for words in a project's Compose setup.
+func ComposeText(files []ComposeFile) string {
+	parts := make([]string, 0, len(files))
+	for _, f := range files {
+		parts = append(parts, string(f.Data))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ParseComposeFiles extracts the published TCP ports of files, the Compose
+// file then its override, as Compose merges them: an override's ports add
+// to the service's. A port a service publishes in both files is listed
+// once, as it was first seen. An error names the file that did not parse.
+func ParseComposeFiles(files []ComposeFile, env map[string]string) ([]ComposePort, error) {
+	type key struct {
+		service   string
+		published int
+	}
+	seen := map[key]bool{}
+	var out []ComposePort
+	for _, f := range files {
+		ports, err := ParseCompose(f.Data, env)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f.Name, err)
+		}
+		for _, p := range ports {
+			k := key{p.Service, p.Published}
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 type composeDoc struct {

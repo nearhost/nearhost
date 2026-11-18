@@ -138,6 +138,62 @@ func TestDiscoverBadComposeFailsOnlyWhenAskedFor(t *testing.T) {
 	}
 }
 
+// A port published only in the override file, which Compose merges over
+// the Compose file, is found, and one both files publish is listed once.
+func TestDiscoverReadsTheComposeOverride(t *testing.T) {
+	res := discover(t, DirReader{Root: "testdata/compose-override"}, Options{Presets: testPresets(t, "compose")})
+	m := routeMap(res)
+	if len(res.Routes) != 2 || m[5433].Label != "db" || m[8080].Label != "web" {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+// Compose reads compose.yaml, its canonical name, over docker-compose.yml.
+func TestDiscoverComposeYAMLWins(t *testing.T) {
+	r := memReader{
+		"compose.yaml":       "services:\n  new:\n    ports:\n      - '8080:80'\n",
+		"docker-compose.yml": "services:\n  old:\n    ports:\n      - '9090:80'\n",
+	}
+	res := discover(t, r, Options{Presets: testPresets(t, "compose")})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 8080 || res.Routes[0].Label != "new" {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
+// Compose fills in its files from .env alone, so a value in .env.local is
+// not a port Compose publishes.
+func TestDiscoverComposeReadsOnlyDotEnv(t *testing.T) {
+	r := memReader{
+		"compose.yaml": "services:\n  web:\n    ports:\n      - '${WEB_PORT:-8000}:80'\n",
+		".env":         "WEB_PORT=8001\n",
+		".env.local":   "WEB_PORT=9000\n",
+	}
+	res := discover(t, r, Options{Presets: testPresets(t, "compose")})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 8001 || res.Routes[0].Source != "compose:web" {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+	delete(r, ".env")
+	res = discover(t, r, Options{Presets: testPresets(t, "compose")})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 8000 {
+		t.Fatalf("without .env: routes = %+v", res.Routes)
+	}
+}
+
+// A preset's port variable that the Compose file publishes keeps the
+// Compose value, and its .env.local value adds no route of its own.
+func TestDiscoverPresetPortVarFollowsCompose(t *testing.T) {
+	p := inline(t, "app", "detect: compose != \"\"\ncompose: ports\nports:\n  - var: APP_PORT\n    label: App\n    web: preferred\n")
+	r := memReader{
+		"compose.yaml": "services:\n  web:\n    ports:\n      - '${APP_PORT:-80}:80'\n",
+		".env":         "APP_PORT=8001\n",
+		".env.local":   "APP_PORT=9000\n",
+	}
+	res := discover(t, r, Options{Presets: []*preset.Preset{p}})
+	if len(res.Routes) != 1 || res.Routes[0].Port != 8001 || res.Routes[0].Label != "App (APP_PORT)" {
+		t.Fatalf("routes = %+v", res.Routes)
+	}
+}
+
 // A port 80 that is not a Compose candidate has no container port, so the
 // Compose rule does not make it web.
 func TestDiscoverEnvPort80IsNotWebOnItsOwn(t *testing.T) {

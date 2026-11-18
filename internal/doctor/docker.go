@@ -34,24 +34,40 @@ func dockerFindings(in Input) []Finding {
 	if p.Server != config.LocalServer {
 		return nil
 	}
-	file, data, err := discovery.ReadCompose(in.Files)
-	if err != nil || file == "" {
+	dotEnv := composeEnv(in.Files, in.Environ)
+	var out []Finding
+	compose, err := discovery.ReadCompose(in.Files)
+	if err != nil {
 		return nil
+	}
+	if dotEnv["COMPOSE_FILE"] != "" {
+		out = append(out, composeFileFinding(compose))
+	}
+	if len(compose) == 0 {
+		return out
 	}
 	env, err := discovery.ReadEnv(in.Files)
 	if err != nil {
 		env = nil
 	}
-	services, err := composeServices(data, env, composeEnv(in.Files, in.Environ))
-	if errors.Is(err, errComposeTooDeep) {
-		return []Finding{composeDepthFinding(file)}
-	}
-	if err != nil {
-		// discovery reports a Compose file that does not parse.
-		return nil
+	// Compose merges the override file over the Compose file, so the
+	// checks look at the services as merged.
+	var services []service
+	for _, f := range compose {
+		fileServices, err := composeServices(f.Data, env, dotEnv)
+		if errors.Is(err, errComposeTooDeep) {
+			return append(out, composeDepthFinding(f.Name))
+		}
+		if err != nil {
+			// discovery reports a Compose file that does not parse.
+			return out
+		}
+		for i := range fileServices {
+			fileServices[i].File = f.Name
+		}
+		services = mergeServices(services, fileServices)
 	}
 
-	var out []Finding
 	referenced := false
 	for _, s := range services {
 		if s.HostNetwork {
@@ -64,9 +80,9 @@ func dockerFindings(in Input) []Finding {
 		referenced = true
 
 		if missing := slices.DeleteFunc(slices.Clone(refs), func(n string) bool { return slices.Contains(s.ExtraHosts, n) }); len(missing) > 0 {
-			out = append(out, hostGatewayFinding(file, s, missing))
+			out = append(out, hostGatewayFinding(s, missing))
 		}
-		if f, ok := caFinding(in.CACert, file, s); ok {
+		if f, ok := caFinding(in.CACert, s); ok {
 			out = append(out, f)
 		}
 	}
@@ -161,7 +177,10 @@ func composeDepthFinding(file string) Finding {
 	}
 }
 
-func hostGatewayFinding(file string, s service, missing []string) Finding {
+// hostGatewayFinding reports a service that calls names Nearhost serves
+// with no extra_hosts entry that points them at the host. The fix goes in
+// the file that holds the service, the override when it names it.
+func hostGatewayFinding(s service, missing []string) Finding {
 	var b strings.Builder
 	fmt.Fprintf(&b, "services:\n  %s:\n    extra_hosts:", s.Name)
 	for _, n := range missing {
@@ -172,12 +191,35 @@ func hostGatewayFinding(file string, s service, missing []string) Finding {
 		Severity: SeverityWarning,
 		Message: fmt.Sprintf("%s uses %s, which a container resolves to itself or to the public internet, not to Nearhost",
 			s.Name, strings.Join(missing, ", ")),
-		File: file,
+		File: s.File,
 		Line: s.Line,
 		Fix: Fix{
 			Kind:    FixProject,
 			Text:    "Map each name to the host in " + s.Name + "'s extra_hosts, so the container reaches Nearhost.",
 			Snippet: b.String(),
+		},
+	}
+}
+
+// composeFileFinding says that COMPOSE_FILE is set, in .env or the shell,
+// and that Nearhost read the default files, read, and not the ones it
+// names.
+func composeFileFinding(read []discovery.ComposeFile) Finding {
+	what := "found none of them"
+	if len(read) > 0 {
+		names := make([]string, 0, len(read))
+		for _, f := range read {
+			names = append(names, f.Name)
+		}
+		what = "read " + strings.Join(names, " and ")
+	}
+	return Finding{
+		ID:       "docker.compose-file",
+		Severity: SeverityInfo,
+		Message:  "COMPOSE_FILE is set, and Nearhost checks only the Compose files Compose reads by default, not the ones COMPOSE_FILE names: it " + what,
+		Fix: Fix{
+			Kind: FixManual,
+			Text: "Check the services in the files COMPOSE_FILE names yourself: a service that calls a name Nearhost serves needs that name mapped to host-gateway in its extra_hosts.",
 		},
 	}
 }
@@ -217,7 +259,7 @@ func composeEnv(r discovery.FileReader, environ map[string]string) map[string]st
 
 // caFinding reports a service that calls a served name over HTTPS without
 // trusting Nearhost's root certificate.
-func caFinding(caCert, file string, s service) (Finding, bool) {
+func caFinding(caCert string, s service) (Finding, bool) {
 	if caCert == "" {
 		return Finding{}, false
 	}
@@ -235,7 +277,7 @@ func caFinding(caCert, file string, s service) (Finding, bool) {
 		ID:       "docker.ca",
 		Severity: SeverityWarning,
 		Message:  s.Name + " calls a name Nearhost serves, and does not trust Nearhost's root certificate",
-		File:     file,
+		File:     s.File,
 		Line:     s.Line,
 		Fix: Fix{
 			Kind: FixProject,

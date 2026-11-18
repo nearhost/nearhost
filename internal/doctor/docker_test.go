@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +216,78 @@ services:
 	}
 }
 
+// extra_hosts in the override file, which Compose merges over the Compose
+// file, maps the name for the service the Compose file defines.
+func TestHostGatewayHonoursTheOverride(t *testing.T) {
+	f := files{
+		"compose.yaml":          "services:\n  worker:\n    environment:\n      CALLBACK: https://api.local.x.io/hook\n",
+		"compose.override.yaml": "services:\n  worker:\n    extra_hosts:\n      - \"api.local.x.io:host-gateway\"\n",
+	}
+	if got := dockerCheck(dockerProject(), f, nil); has(got, "docker.host-gateway") {
+		t.Errorf("reported although the override maps the name: %+v", onlyID(got, "docker.host-gateway"))
+	}
+}
+
+// The fix for a service goes in the override when the override names the
+// service, and in the Compose file when it does not.
+func TestHostGatewayNamesTheFileToEdit(t *testing.T) {
+	f := files{
+		"docker-compose.yml":          "services:\n  worker:\n    image: x\n  api:\n    environment:\n      CALLBACK: https://api.local.x.io/hook\n",
+		"docker-compose.override.yml": "services:\n  db:\n    image: y\n\n  worker:\n    environment:\n      CALLBACK: https://api.local.x.io/hook\n",
+	}
+	got := onlyID(dockerCheck(dockerProject(), f, nil), "docker.host-gateway")
+	if len(got) != 2 {
+		t.Fatalf("findings = %+v", got)
+	}
+	byService := map[string]Finding{}
+	for _, g := range got {
+		byService[strings.Fields(g.Message)[0]] = g
+	}
+	if g := byService["api"]; g.File != "docker-compose.yml" || g.Line != 4 {
+		t.Errorf("api: file %s line %d, want docker-compose.yml line 4", g.File, g.Line)
+	}
+	if g := byService["worker"]; g.File != "docker-compose.override.yml" || g.Line != 5 {
+		t.Errorf("worker: file %s line %d, want docker-compose.override.yml line 5", g.File, g.Line)
+	}
+}
+
+// The override's environment replaces the Compose file's by key, in the
+// map form and the list form alike.
+func TestOverrideEnvironmentReplacesByKey(t *testing.T) {
+	const listed = "    environment:\n      - CALLBACK=%s\n"
+	const mapped = "    environment:\n      CALLBACK: %s\n"
+	for _, c := range []struct{ name, base, override string }{
+		{"map over list", listed, mapped},
+		{"list over map", mapped, listed},
+	} {
+		f := files{
+			"compose.yaml":          "services:\n  worker:\n" + fmt.Sprintf(c.base, "https://api.local.x.io/hook"),
+			"compose.override.yaml": "services:\n  worker:\n" + fmt.Sprintf(c.override, "https://example.com/hook"),
+		}
+		if got := dockerCheck(dockerProject(), f, nil); has(got, "docker.host-gateway") {
+			t.Errorf("%s: the override's value did not replace the Compose file's: %+v", c.name, onlyID(got, "docker.host-gateway"))
+		}
+		f["compose.override.yaml"] = "services:\n  worker:\n" + fmt.Sprintf(c.override, "https://api.local.x.io/hook")
+		f["compose.yaml"] = "services:\n  worker:\n" + fmt.Sprintf(c.base, "https://example.com/hook")
+		if got := dockerCheck(dockerProject(), f, nil); !has(got, "docker.host-gateway") {
+			t.Errorf("%s: the override's value was not checked", c.name)
+		}
+	}
+}
+
+// COMPOSE_FILE points Compose at files Nearhost does not read, and doctor
+// says so once.
+func TestComposeFileIsNoted(t *testing.T) {
+	f := files{"compose.yaml": composeFile, ".env": "COMPOSE_FILE=compose.yaml:compose.dev.yaml\n"}
+	got := onlyID(dockerCheck(dockerProject(), f, nil), "docker.compose-file")
+	if len(got) != 1 || got[0].Severity != SeverityInfo || !strings.HasSuffix(got[0].Message, "it read compose.yaml") {
+		t.Fatalf("findings = %+v", got)
+	}
+	if has(dockerCheck(dockerProject(), files{"compose.yaml": composeFile}, nil), "docker.compose-file") {
+		t.Error("reported with no COMPOSE_FILE")
+	}
+}
+
 func TestCAFindingHonoursMergedEnvironment(t *testing.T) {
 	const compose = `x-common: &common
   NODE_EXTRA_CA_CERTS: /ca.crt
@@ -295,7 +368,8 @@ func TestEnvFileOutsideTheProjectIsNotRead(t *testing.T) {
 		t.Errorf("a file outside the project was used: %+v", got)
 	}
 	for _, name := range r.read {
-		if name != "docker-compose.yml" && name != ".env" && name != ".env.local" && name != ".nearhostrc" {
+		if !slices.Contains([]string{"compose.yaml", "compose.yml", "docker-compose.yml", "compose.override.yml", "compose.override.yaml",
+			"docker-compose.override.yml", "docker-compose.override.yaml", ".env", ".env.local", ".nearhostrc"}, name) {
 			t.Errorf("read %s, outside the project", name)
 		}
 	}

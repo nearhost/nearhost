@@ -42,7 +42,7 @@ func TestComposeServicesReadsBothForms(t *testing.T) {
 			EnvFiles: []string{"one.env"}, ExtraHosts: []string{"api.x.io", "b.x.io"}, Sources: []string{"."}},
 		{Name: "b", Line: 12, Env: map[string]string{"K": "v", "FROM_ENV": "val"},
 			EnvFiles: []string{"two.env", "three.env"}, ExtraHosts: []string{"c.x.io"},
-			Sources: []string{"./", "/p/root.crt"}, HostNetwork: true},
+			Sources: []string{"./", "/p/root.crt"}, HostNetwork: true, NetworkSet: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
