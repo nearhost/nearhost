@@ -17,20 +17,11 @@ func TestDefaultPathIsTheSystemPath(t *testing.T) {
 	}
 }
 
-// A spelling of the system hosts file that cleans to it is the system hosts
-// file; any other file is not.
-func TestIsSystemPath(t *testing.T) {
+// Any other file, including a relative path and a link, is not the system
+// hosts file.
+func TestIsSystemPathRefusesOtherFiles(t *testing.T) {
 	sys := SystemPath()
 	dir, base := filepath.Dir(sys), filepath.Base(sys)
-	for _, p := range []string{
-		sys + string(filepath.Separator),
-		filepath.Join(dir, "..", filepath.Base(dir)) + string(filepath.Separator) + base,
-		dir + string(filepath.Separator) + "." + string(filepath.Separator) + base,
-	} {
-		if !IsSystemPath(p) {
-			t.Errorf("IsSystemPath(%q) = false, want true", p)
-		}
-	}
 	tmp := t.TempDir()
 	link := filepath.Join(tmp, "link")
 	if err := os.Symlink(filepath.Join(tmp, "other"), link); err != nil {
@@ -39,6 +30,7 @@ func TestIsSystemPath(t *testing.T) {
 	for _, p := range []string{
 		"",
 		base,
+		filepath.Join("etc", base),
 		dir,
 		sys + ".bak",
 		filepath.Join(tmp, "hosts"),

@@ -10,6 +10,9 @@ var DefaultPath = SystemPath()
 // /private/etc; the path keeps the /etc spelling Nearhost has always used.
 func SystemPath() string { return "/etc/hosts" }
 
-// samePath reports whether two clean absolute paths name the same entry.
-// Unix file names keep their case.
-func samePath(a, b string) bool { return a == b }
+// IsSystemPath reports whether path is SystemPath() exactly, as Nearhost
+// spells it. Nothing is cleaned: the kernel resolves a ".." element after
+// it follows the link before it, so a path that cleans to /etc/hosts can
+// open another file, and a relative path depends on the working directory.
+// /etc/hosts itself, and /etc, belong to root, who alone can make them links.
+func IsSystemPath(path string) bool { return path == SystemPath() }

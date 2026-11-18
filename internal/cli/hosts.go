@@ -83,11 +83,11 @@ func newHostsCmd() *cobra.Command {
 			if err := checkElevatedFile(file); err != nil {
 				return err
 			}
-			exe, err := os.Executable()
+			apply, err := cleanApplier(file)
 			if err != nil {
 				return err
 			}
-			changed, err := hosts.Ensure(file, nil, newElevatedApplier(exe, file))
+			changed, err := hosts.Ensure(file, nil, apply)
 			if err != nil {
 				return err
 			}
@@ -102,6 +102,21 @@ func newHostsCmd() *cobra.Command {
 
 	cmd.AddCommand(apply, clean)
 	return cmd
+}
+
+// cleanApplier is how `hosts clean` writes file: through the elevated
+// helper for the system hosts file, and in this process for any other file,
+// which the user names with --file and so must be able to write. The
+// elevated helper writes only the system hosts file.
+func cleanApplier(file string) (hosts.Applier, error) {
+	if !hosts.IsSystemPath(file) {
+		return func(aliases []string) error { return hosts.Apply(file, aliases) }, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return newElevatedApplier(exe, file), nil
 }
 
 // maxInput is the most `hosts apply --input` reads: a hosts block never

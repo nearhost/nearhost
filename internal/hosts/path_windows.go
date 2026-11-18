@@ -25,6 +25,11 @@ func SystemPath() string {
 	return filepath.Join(dir, "drivers", "etc", "hosts")
 }
 
-// samePath reports whether two clean absolute paths name the same entry.
-// NTFS compares names without case.
-func samePath(a, b string) bool { return strings.EqualFold(a, b) }
+// IsSystemPath reports whether path is absolute and, cleaned, names
+// SystemPath() without regard to case, as NTFS compares names. Windows
+// removes ".." elements from a path before it opens it, so the cleaned path
+// is the file that opens. A path that is not absolute, which includes one
+// with no drive, is refused, as it depends on the working directory.
+func IsSystemPath(path string) bool {
+	return filepath.IsAbs(path) && strings.EqualFold(filepath.Clean(path), SystemPath())
+}

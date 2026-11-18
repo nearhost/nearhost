@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,29 +28,51 @@ func TestHostsApplyReadsAliasesFromStdin(t *testing.T) {
 	}
 }
 
-func TestHostsCleanPassesFilePathToApplier(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hosts")
-	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
-	os.WriteFile(path, []byte(content), 0o644)
-	var gotPath string
+// noElevation makes the elevated helper fail the test if anything starts it.
+func noElevation(t *testing.T) {
+	t.Helper()
 	orig := newElevatedApplier
 	t.Cleanup(func() { newElevatedApplier = orig })
 	newElevatedApplier = func(exe, p string) hosts.Applier {
-		gotPath = p
-		return func(aliases []string) error { return hosts.Apply(p, aliases) }
+		t.Errorf("the elevated helper was started for %s", p)
+		return func([]string) error { return errors.New("elevated") }
 	}
+}
+
+// Clean writes a file other than the system hosts file in this process, with
+// no elevation: the elevated helper would refuse it.
+func TestHostsCleanWritesAnotherFileWithoutElevation(t *testing.T) {
+	noElevation(t)
+	path := filepath.Join(t.TempDir(), "hosts")
+	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
+	os.WriteFile(path, []byte(content), 0o644)
 	root := NewRoot()
 	root.SetOut(&bytes.Buffer{})
 	root.SetArgs([]string{"hosts", "clean", "--file", path})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != path {
-		t.Fatalf("applier got path %q, want %q", gotPath, path)
-	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "127.0.0.1 localhost\n" {
 		t.Fatalf("unexpected hosts:\n%s", data)
+	}
+}
+
+// Clean hands the system hosts file to the elevated helper.
+func TestHostsCleanElevatesForTheSystemFile(t *testing.T) {
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	var gotPath string
+	newElevatedApplier = func(exe, p string) hosts.Applier {
+		gotPath = p
+		return func([]string) error { return nil }
+	}
+	apply, err := cleanApplier(hosts.DefaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(nil); err != nil || gotPath != hosts.DefaultPath {
+		t.Fatalf("err %v, helper got %q, want %q", err, gotPath, hosts.DefaultPath)
 	}
 }
 
@@ -325,13 +348,10 @@ func TestElevatedHostsCleanWithoutFileUsesTheSystemFile(t *testing.T) {
 	}
 }
 
-// The elevated check passes the paths Nearhost hands the helper, and the
-// spellings of the system hosts file that clean to it.
+// The elevated check passes the path Nearhost hands the helper.
 func TestElevatedFileCheckAcceptsTheSystemFile(t *testing.T) {
 	runElevated(t)
-	sys := hosts.SystemPath()
-	sep := string(filepath.Separator)
-	for _, p := range []string{hosts.DefaultPath, sys, sys + sep, filepath.Dir(sys) + sep + ".." + sep + filepath.Base(filepath.Dir(sys)) + sep + filepath.Base(sys)} {
+	for _, p := range []string{hosts.DefaultPath, hosts.SystemPath()} {
 		if err := checkElevatedFile(p); err != nil {
 			t.Errorf("checkElevatedFile(%q) = %v", p, err)
 		}

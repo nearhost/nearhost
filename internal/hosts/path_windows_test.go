@@ -23,17 +23,30 @@ func TestSystemPathIsUnderTheSystemDirectoryOnWindows(t *testing.T) {
 	}
 }
 
-// Windows paths are compared without case, as NTFS does, and with either
-// slash.
-func TestIsSystemPathIgnoresCaseOnWindows(t *testing.T) {
+// Windows paths are compared cleaned and without case, as Windows removes
+// ".." before it opens a path and NTFS ignores case. A path that is not
+// absolute is refused.
+func TestIsSystemPathOnWindows(t *testing.T) {
 	sys := SystemPath()
-	for _, p := range []string{strings.ToUpper(sys), strings.ToLower(sys), strings.ReplaceAll(sys, `\`, "/")} {
+	dir := filepath.Dir(sys)
+	for _, p := range []string{
+		strings.ToUpper(sys),
+		strings.ToLower(sys),
+		strings.ReplaceAll(sys, `\`, "/"),
+		filepath.Dir(dir) + `\..\` + filepath.Base(filepath.Dir(dir)) + `\` + filepath.Base(dir) + `\hosts`,
+	} {
 		if !IsSystemPath(p) {
 			t.Errorf("IsSystemPath(%q) = false, want true", p)
 		}
 	}
-	if IsSystemPath(`D:\Win\System32\drivers\etc\hosts`) {
-		t.Error("IsSystemPath accepted a hosts file on another drive")
+	for _, p := range []string{
+		sys[len(filepath.VolumeName(sys)):],
+		`drivers\etc\hosts`,
+		`D:\Win\System32\drivers\etc\hosts`,
+	} {
+		if IsSystemPath(p) {
+			t.Errorf("IsSystemPath(%q) = true, want false", p)
+		}
 	}
 }
 
