@@ -75,7 +75,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "no-referrer")
 	hd.Set("Cache-Control", "no-cache")
-	hd.Set("Access-Control-Allow-Origin", "null")
 	hd.Set("Content-Security-Policy", markdownCSP)
 
 	switch r.Method {
@@ -258,7 +257,22 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 			ctype = textPlain
 		}
 	}
+	if webAsset(ext, ctype) {
+		w.Header().Set("Access-Control-Allow-Origin", "null")
+	}
 	return stream(w, f, ctype, head)
+}
+
+// webAsset reports whether a file with extension ext, served as ctype, is a
+// web asset a page may load: a script, stylesheet, font, image, audio, video
+// or wasm. Only these get Access-Control-Allow-Origin: null, which a page in
+// its opaque origin needs to load module scripts, fonts and other assets
+// through CORS, and which would also let its script read the file. Data,
+// source, HTML and markdown get none, so a page can't read the rest of its
+// tree. Both the extension and the type the response carries must agree.
+func webAsset(ext, ctype string) bool {
+	want, ok := assetTypes[strings.ToLower(ext)]
+	return ok && ctype == want
 }
 
 // stream sends head and then the rest of f as ctype, with the files' CSP. A
@@ -297,17 +311,40 @@ var sourceExts = map[string]bool{
 	".txt": true, ".log": true,
 }
 
+// assetTypes are the web asset extensions and the type each is served as,
+// whatever the host's MIME tables say: a Windows registry can map .js to
+// text/plain, which a browser refuses to run under nosniff, and fonts and most
+// media are missing from Go's built-in table.
+var assetTypes = map[string]string{
+	".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8", ".wasm": "application/wasm",
+	".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+	".webp": "image/webp", ".avif": "image/avif", ".svg": "image/svg+xml",
+	".ico": "image/x-icon", ".bmp": "image/bmp",
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+	".opus": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
+	".weba": "audio/webm",
+	".mp4":  "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+	".webm": "video/webm", ".ogv": "video/ogg",
+}
+
 // typeByExtension looks up an extension's media type in the host's tables.
 // Tests replace it to stand in for a host's odd mappings.
 var typeByExtension = mime.TypeByExtension
 
 // webType returns the type for ext when it is one browsers handle (a web text
 // or document type, or an image, font, audio or video), with charset=utf-8
-// added to text types that lack one. Source files are text/plain. Otherwise,
-// including for video/mp2t, which some hosts give .ts, it returns "".
+// added to text types that lack one. Source files are text/plain and web
+// assets have their type from assetTypes. Otherwise, including for
+// video/mp2t, which some hosts give .ts, it returns "".
 func webType(ext string) string {
-	if sourceExts[strings.ToLower(ext)] {
+	ext = strings.ToLower(ext)
+	if sourceExts[ext] {
 		return textPlain
+	}
+	if t, ok := assetTypes[ext]; ok {
+		return t
 	}
 	t := typeByExtension(ext)
 	mt, params, err := mime.ParseMediaType(t)

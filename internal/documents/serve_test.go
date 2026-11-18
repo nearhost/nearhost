@@ -103,14 +103,15 @@ func (f *fixture) do(t *testing.T, method, rawPath string) *httptest.ResponseRec
 }
 
 // checkHeaders fails unless rec carries the isolation headers and csp.
+// Access-Control-Allow-Origin depends on the type; TestOnlyAssetsAreReadable
+// covers it.
 func checkHeaders(t *testing.T, rec *httptest.ResponseRecorder, csp string) {
 	t.Helper()
 	want := map[string]string{
-		"X-Content-Type-Options":      "nosniff",
-		"Referrer-Policy":             "no-referrer",
-		"Cache-Control":               "no-cache",
-		"Access-Control-Allow-Origin": "null",
-		"Content-Security-Policy":     csp,
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "no-referrer",
+		"Cache-Control":           "no-cache",
+		"Content-Security-Policy": csp,
 	}
 	for k, v := range want {
 		if got := rec.Header().Get(k); got != v {
@@ -479,6 +480,92 @@ func TestSourceFilesAreTextWhateverTheHostSays(t *testing.T) {
 		}
 		if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
 			t.Errorf("%s: Content-Type = %q", p, ct)
+		}
+	}
+}
+
+// assetFiles are web assets a page may load in its opaque origin, with the
+// type each is served as.
+var assetFiles = map[string]string{
+	"app.js":     "text/javascript; charset=utf-8",
+	"mod.mjs":    "text/javascript; charset=utf-8",
+	"app.css":    "text/css; charset=utf-8",
+	"font.woff2": "font/woff2",
+	"logo.png":   "image/png",
+	"icon.svg":   "image/svg+xml",
+	"clip.mp4":   "video/mp4",
+	"sound.mp3":  "audio/mpeg",
+	"lib.wasm":   "application/wasm",
+}
+
+// dataFiles are requests for files a page's script must not read. "sub/"
+// serves sub/index.html.
+var dataFiles = []string{
+	"data.json", "app.js.map", "page.html", "notes.txt", "plan.md", "plan.md?raw",
+	"ci.yml", "rows.csv", "app.sqlite", "terraform.tfstate", "main.go", "blob.unknownext", "sub/",
+}
+
+// writeAssetsAndData writes every file of assetFiles and dataFiles below f's
+// root.
+func writeAssetsAndData(t *testing.T, f *fixture) {
+	t.Helper()
+	for p := range assetFiles {
+		f.write(t, p, "x")
+	}
+	for _, p := range dataFiles {
+		p = strings.TrimSuffix(p, "?raw")
+		if strings.HasSuffix(p, "/") {
+			p += "index.html"
+		}
+		f.write(t, p, "x")
+	}
+}
+
+func TestOnlyAssetsAreReadable(t *testing.T) {
+	f := newFixture(t)
+	writeAssetsAndData(t, f)
+	for p, ct := range assetFiles {
+		for _, method := range []string{"GET", "HEAD"} {
+			rec := f.do(t, method, p)
+			if rec.Code != 200 || rec.Header().Get("Content-Type") != ct {
+				t.Errorf("%s %s: %d %q, want 200 %q", method, p, rec.Code, rec.Header().Get("Content-Type"), ct)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "null" {
+				t.Errorf("%s %s: Access-Control-Allow-Origin = %q, want \"null\"", method, p, got)
+			}
+		}
+	}
+	for _, p := range append(dataFiles, "missing.js", "../x.js", "app.js/") {
+		for _, method := range []string{"GET", "HEAD", "POST"} {
+			rec := f.do(t, method, p)
+			if got, ok := rec.Header()["Access-Control-Allow-Origin"]; ok {
+				t.Errorf("%s %s (%d, %q): Access-Control-Allow-Origin = %q, want none", method, p, rec.Code, rec.Header().Get("Content-Type"), got)
+			}
+		}
+	}
+}
+
+func TestAssetsKeepTheirTypeWhateverTheHostSays(t *testing.T) {
+	// A host whose tables are wrong (a Windows registry can map .js to
+	// text/plain) must not break a page's assets, and one that calls
+	// everything a script must not make data readable.
+	old := typeByExtension
+	t.Cleanup(func() { typeByExtension = old })
+	f := newFixture(t)
+	writeAssetsAndData(t, f)
+	for _, host := range []string{"", "text/plain", "application/octet-stream", "text/javascript"} {
+		typeByExtension = func(string) string { return host }
+		for p, ct := range assetFiles {
+			rec := f.do(t, "GET", p)
+			if rec.Header().Get("Content-Type") != ct || rec.Header().Get("Access-Control-Allow-Origin") != "null" {
+				t.Errorf("host %q, %s: %q, Access-Control-Allow-Origin %q", host, p, rec.Header().Get("Content-Type"), rec.Header().Get("Access-Control-Allow-Origin"))
+			}
+		}
+		for _, p := range dataFiles {
+			rec := f.do(t, "GET", p)
+			if got, ok := rec.Header()["Access-Control-Allow-Origin"]; ok {
+				t.Errorf("host %q, %s (%q): Access-Control-Allow-Origin = %q, want none", host, p, rec.Header().Get("Content-Type"), got)
+			}
 		}
 	}
 }
