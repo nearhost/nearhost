@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	slashpath "path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -457,15 +458,16 @@ func pnpmBinary(b updateBackend, shim string) (string, bool) {
 		if m == nil {
 			return "", false
 		}
-		launcher = filepath.Join(filepath.Dir(real), string(m[1]))
+		launcher = slashpath.Join(slashpath.Dir(real), string(m[1]))
 		if resolved, err := b.realPath(launcher); err == nil {
 			launcher = resolved
 		}
 	}
 	// <...>/node_modules/@nearhost/cli/bin/nearhost.js
-	scope := filepath.Dir(filepath.Dir(filepath.Dir(launcher)))
+	// These are Linux paths, so they take slashes whatever system built this.
+	scope := slashpath.Dir(slashpath.Dir(slashpath.Dir(launcher)))
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
-	bin := filepath.Join(scope, "cli-linux-"+arch, "bin", "nearhost")
+	bin := slashpath.Join(scope, "cli-linux-"+arch, "bin", "nearhost")
 	return bin, b.isFile(bin)
 }
 
