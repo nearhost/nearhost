@@ -75,12 +75,7 @@ func sshVendorBackend(path string, err error) doctorBackend {
 	f.goos = "windows"
 	b := f.backend()
 	b.sshVersion = func(context.Context) (string, error) { return "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2", nil }
-	b.lookPath = func(name string) (string, error) {
-		if name != "ssh" {
-			return "", errors.New("unexpected lookup " + name)
-		}
-		return path, err
-	}
+	b.findSSH = func() (string, error) { return path, err }
 	b.getenv = func(k string) string {
 		return map[string]string{"SystemRoot": testSystemRoot, "ProgramFiles": testProgramFiles}[k]
 	}

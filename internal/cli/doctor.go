@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -97,10 +96,9 @@ type doctorBackend struct {
 	sshVersion func(ctx context.Context) (string, error)
 	// sshConfig returns the output of `ssh -G` for a host.
 	sshConfig func(ctx context.Context, host string) (string, error)
-	// lookPath finds a program on PATH as the ssh Nearhost runs is found
-	// (exec.Command("ssh") does exactly this). nil skips the ssh vendor
-	// check.
-	lookPath func(name string) (string, error)
+	// findSSH finds the ssh Nearhost runs, as transport.FindSSH does for
+	// every ssh command it starts. nil skips the ssh vendor check.
+	findSSH func() (string, error)
 	// getenv reads the environment for the ssh vendor check.
 	getenv func(key string) string
 	// firefoxRootsOff reports whether Firefox is set not to read Windows'
@@ -131,7 +129,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		sshAgentService: sshAgentService,
 		sshVersion:      sshClient{}.version,
 		sshConfig:       sshClient{}.config,
-		lookPath:        exec.LookPath,
+		findSSH:         transport.FindSSH,
 		getenv:          os.Getenv,
 		firefoxRootsOff: firefoxRootsOff,
 		lowPorts: func(port int) (level, string) {
@@ -271,11 +269,10 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 			return []check{c}
 		}, add)
 	}
-	if b.goos == "windows" && b.lookPath != nil && b.getenv != nil {
-		// Nearhost runs plain "ssh", which the system finds on PATH; this
-		// finds the same one. When it is not found, the check above has
-		// said so.
-		if path, err := b.lookPath("ssh"); err == nil {
+	if b.goos == "windows" && b.findSSH != nil && b.getenv != nil {
+		// Nearhost runs the ssh transport.FindSSH finds; this names the
+		// same one. When it is not found, the check above has said so.
+		if path, err := b.findSSH(); err == nil {
 			add(checkSSHVendor(path, b.getenv("SystemRoot"), b.getenv("ProgramFiles")))
 		}
 	}
