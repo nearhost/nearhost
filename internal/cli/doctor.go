@@ -415,12 +415,12 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		if errors.As(err, &errno) {
 			what = errno.Error() // "address already in use", without the listen address
 		}
-		inUse := isAddrInUse(err)
+		inUse := isAddrInUse(err, b.goos)
 		if network == "udp" {
 			// Nothing names a UDP holder. Nearhost holds UDP beside its TCP
 			// port for HTTP/3, so a UDP port taken beside a TCP port that
-			// Nearhost holds is Nearhost's too.
-			if inUse && mine {
+			// Nearhost holds, or may hold, follows the TCP result.
+			if inUse && (mine || unsure) {
 				continue
 			}
 			what = "UDP (for HTTP/3): " + what
@@ -454,7 +454,7 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		// A taken port while Nearhost runs is most likely Nearhost's own,
 		// but with no holder named that is not proven. A warning keeps the
 		// exit status zero and still shows the line.
-		c.level, c.detail = levelWarn, "in use, probably by the running Nearhost; no tool could name the holder"
+		c.level, c.detail = levelWarn, "Nearhost is running, but the holder of this port could not be named; probably Nearhost"
 		c.fix = "check with `" + holderCommand(b.goos, port) + "` that the holder is nearhost"
 	case len(problems) > 0:
 		c.level, c.detail = levelFail, strings.Join(problems, "; ")
@@ -468,10 +468,10 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 
 // isAddrInUse reports whether err says the address is taken. Windows
 // reports WSAEADDRINUSE, which is not syscall.EADDRINUSE there.
-func isAddrInUse(err error) bool {
+func isAddrInUse(err error, goos string) bool {
 	const wsaEADDRINUSE = syscall.Errno(10048)
 	var errno syscall.Errno
-	return errors.Is(err, syscall.EADDRINUSE) || (runtime.GOOS == "windows" && errors.As(err, &errno) && errno == wsaEADDRINUSE)
+	return errors.Is(err, syscall.EADDRINUSE) || (goos == "windows" && errors.As(err, &errno) && errno == wsaEADDRINUSE)
 }
 
 // isNearhostHolder reports whether a holder named by engine.PortHolder, as
@@ -489,6 +489,10 @@ func isNearhostHolder(holder string) bool {
 func holderCommand(goos string, port int) string {
 	if goos == "windows" {
 		return fmt.Sprintf("netstat -ano | findstr :%d", port)
+	}
+	if goos == "linux" {
+		// lsof is often missing there; ss is what PortHolder falls back to.
+		return fmt.Sprintf("ss -ltnp 'sport = :%d'", port)
 	}
 	return fmt.Sprintf("lsof -nP -iTCP:%d -sTCP:LISTEN", port)
 }

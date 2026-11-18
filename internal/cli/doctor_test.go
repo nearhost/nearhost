@@ -1003,7 +1003,7 @@ func TestDoctorWarnsWhenTheHolderIsUnknownWhileNearhostRuns(t *testing.T) {
 		t.Fatalf("doctor failed on an unnamed holder: %v\n%s", err, out)
 	}
 	line := portLine(out, "port 8080")
-	if !strings.HasPrefix(line, "warn  port 8080") || !strings.Contains(line, "probably by the running Nearhost") {
+	if !strings.HasPrefix(line, "warn  port 8080") || !strings.Contains(line, "probably Nearhost") {
 		t.Errorf("line = %q\n%s", line, out)
 	}
 	wantContains(t, out, "fix: Check with `lsof -nP -iTCP:8080 -sTCP:LISTEN`")
@@ -1025,5 +1025,48 @@ func TestDoctorAcceptsUDPOnlyBesideANearhostTCPHolder(t *testing.T) {
 	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
 	if err == nil {
 		t.Errorf("UDP alone passed\n%s", out)
+	}
+}
+
+// With the holder unnamed, a Nearhost's HTTP/3 listener makes UDP taken too.
+// UDP follows the TCP result, so the check is one warning, not a failure.
+func TestDoctorWarnsOnceWhenTCPAndUDPAreTakenAndTheHolderIsUnknown(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{"tcp 8443": syscall.EADDRINUSE, "udp 8443": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err != nil {
+		t.Fatalf("doctor failed on an unnamed holder with UDP taken: %v\n%s", err, out)
+	}
+	if line := portLine(out, "port 8443"); !strings.HasPrefix(line, "warn  port 8443") || strings.Contains(out, "UDP") {
+		t.Errorf("line = %q\n%s", line, out)
+	}
+}
+
+// The command that names a port's holder suits the system.
+func TestHolderCommand(t *testing.T) {
+	for goos, want := range map[string]string{
+		"linux":   "ss -ltnp 'sport = :443'",
+		"darwin":  "lsof -nP -iTCP:443 -sTCP:LISTEN",
+		"windows": "netstat -ano | findstr :443",
+	} {
+		if got := holderCommand(goos, 443); got != want {
+			t.Errorf("holderCommand(%q) = %q, want %q", goos, got, want)
+		}
+	}
+}
+
+// Windows reports WSAEADDRINUSE (10048), which is not syscall.EADDRINUSE there.
+func TestIsAddrInUse(t *testing.T) {
+	wsa := syscall.Errno(10048)
+	if !isAddrInUse(wsa, "windows") {
+		t.Error("WSAEADDRINUSE on windows is not in use")
+	}
+	if isAddrInUse(syscall.EACCES, "windows") || isAddrInUse(errors.New("x"), "linux") {
+		t.Error("another error counted as in use")
+	}
+	if !isAddrInUse(syscall.EADDRINUSE, "linux") {
+		t.Error("EADDRINUSE is in use")
 	}
 }
