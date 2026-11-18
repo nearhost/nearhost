@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -10,59 +11,71 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 )
 
-// upElevator stands for sudo: needed unless root, with its credentials cached
-// or not, recording what it is asked.
+// upElevator stands for sudo: Run records each command and fails with err.
 type upElevator struct {
 	elevate.Elevator
-	needed, cached bool
-	asked          int
-	runs           []elevate.Command
+	err  error
+	runs []elevate.Command
 }
 
-// Needed reports whether the step goes through sudo.
-func (e *upElevator) Needed() bool { return e.needed }
-
-// Cached reports whether sudo -n would run without a password, and counts
-// the question.
-func (e *upElevator) Cached(context.Context) bool { e.asked++; return e.cached }
-
-// Run records c.
+// Run records c and returns e.err.
 func (e *upElevator) Run(_ context.Context, c elevate.Command) error {
 	e.runs = append(e.runs, c)
-	return nil
+	return e.err
 }
 
 // up's hosts update prompts for sudo's password only when stdin is a
-// terminal. Without one it runs only what sudo -n can run, and otherwise
-// refuses without starting sudo.
+// terminal. Without one it runs the helper through sudo -n: a sudoers rule
+// that needs no password for it works, sudo's "a password is required" is
+// errNoTerminal, and any other failure keeps its own error.
 func TestUpHostsApplierPromptsOnlyOnATerminal(t *testing.T) {
+	other := errors.New("sudo: unable to resolve host mini: Name or service not known")
+	required := errors.New("sudo: a password is required")
 	cases := []struct {
-		name                     string
-		terminal, needed, cached bool
-		wantErr                  error
-		wantRun, wantInteractive bool
+		name            string
+		terminal        bool
+		runErr          error
+		wantErr         error
+		wantInteractive bool
 	}{
-		{"terminal", true, true, false, nil, true, true},
-		{"no terminal, password needed", false, true, false, errNoTerminal, false, false},
-		{"no terminal, credentials cached", false, true, true, nil, true, false},
-		{"no terminal, root", false, false, false, nil, true, false},
+		{"terminal", true, nil, nil, true},
+		{"terminal, password required", true, required, required, true},
+		{"no terminal, no password needed", false, nil, nil, false},
+		{"no terminal, password required", false, required, errNoTerminal, false},
+		{"no terminal, sudo-rs password required", false, errors.New("sudo: interactive authentication is required"), errNoTerminal, false},
+		{"no terminal, another failure", false, other, other, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e := &upElevator{needed: tc.needed, cached: tc.cached}
+			e := &upElevator{err: tc.runErr}
 			err := upHostsApplier(context.Background(), e, "/usr/local/bin/nearhost", tc.terminal)([]string{"web.test"})
-			if !errors.Is(err, tc.wantErr) {
+			if (err == nil) != (tc.wantErr == nil) || !errors.Is(err, tc.wantErr) {
 				t.Fatalf("applier returned %v, want %v", err, tc.wantErr)
 			}
-			if ran := len(e.runs) == 1; ran != tc.wantRun {
-				t.Fatalf("ran %d times, want run %v", len(e.runs), tc.wantRun)
+			if tc.wantErr != errNoTerminal && errors.Is(err, errNoTerminal) {
+				t.Fatalf("applier returned errNoTerminal for %v", tc.runErr)
 			}
-			if tc.wantRun && tc.needed && e.runs[0].Interactive != tc.wantInteractive {
-				t.Errorf("Interactive = %v, want %v", e.runs[0].Interactive, tc.wantInteractive)
-			}
-			if tc.terminal && e.asked != 0 {
-				t.Errorf("sudo -n was asked %d times with a terminal to prompt on", e.asked)
+			if len(e.runs) != 1 || e.runs[0].Interactive != tc.wantInteractive {
+				t.Fatalf("runs %+v, want one with Interactive %v", e.runs, tc.wantInteractive)
 			}
 		})
+	}
+}
+
+// Without a terminal, every update that sudo refuses for want of a password
+// fails, and up says why once.
+func TestUpHostsWithoutATerminalSaysSoOnce(t *testing.T) {
+	e := &upElevator{err: errors.New("sudo: a password is required")}
+	var out bytes.Buffer
+	ensure := warnNoTerminal(&out, func(ctx context.Context, aliases []string) error {
+		return upHostsApplier(ctx, e, "/usr/local/bin/nearhost", false)(aliases)
+	})
+	for range 3 {
+		if err := ensure(context.Background(), []string{"web.test"}); !errors.Is(err, errNoTerminal) {
+			t.Fatalf("ensure returned %v", err)
+		}
+	}
+	if got := out.String(); got != hostsNoTerminal+"\n" {
+		t.Errorf("printed %q, want the message once", got)
 	}
 }

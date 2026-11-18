@@ -370,10 +370,9 @@ func TestUpKeepsGoingWhileAProjectWaitsForItsServer(t *testing.T) {
 		Projects: []config.Project{remoteProject("api"), web},
 	})
 	u.noHosts = true
-	// web's server answers only once hold is gone, then refuses it; its
-	// retries then find every server down, so web's start ends in error
-	// after the engine's 30 second wait for its server.
-	u.sshEnv = []string{"FAKE_SSH_AUTH_FAIL_HOST=other.lan", "FAKE_SSH_AUTH_HOLD=" + hold, "FAKE_SSH_MASTER_DOWN=" + down}
+	// web's server answers only once hold is gone, then refuses it; only
+	// api's server goes down.
+	u.sshEnv = []string{"FAKE_SSH_AUTH_FAIL_HOST=other.lan", "FAKE_SSH_AUTH_HOLD=" + hold, "FAKE_SSH_MASTER_DOWN=" + down, "FAKE_SSH_MASTER_DOWN_HOST=mini.lan"}
 	u.start()
 	u.waitFor("[api] state: running")
 	// api's server goes away and stays away: its session keeps reconnecting.
@@ -385,10 +384,7 @@ func TestUpKeepsGoingWhileAProjectWaitsForItsServer(t *testing.T) {
 	if err := os.Remove(hold); err != nil {
 		t.Fatal(err)
 	}
-	// Longer than waitFor waits: web's start takes the engine's 30 seconds.
-	testutil.WaitUntil(t, 60*time.Second, func() bool {
-		return strings.Contains(u.out.String(), "Press Ctrl-C to stop.\n")
-	}, "the summary")
+	u.waitFor("Press Ctrl-C to stop.\n")
 	wantContains(t, u.out.String(), "\napi: degraded: ", "\nweb: error: ")
 	time.Sleep(300 * time.Millisecond)
 	u.stillRunning()

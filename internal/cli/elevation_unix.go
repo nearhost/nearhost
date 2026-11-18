@@ -46,15 +46,17 @@ func trustRefused(error) bool { return false }
 // upHostsApplier is the applier `nearhost up` updates the hosts file with,
 // through e. With terminal (stdin is a terminal) sudo may prompt for the
 // password. Without one (a service, CI, nohup, stdin redirected) it never
-// prompts: when sudo -n can run (the credentials are cached, or none are
-// needed) the update runs that way, and otherwise it fails with
-// errNoTerminal without starting sudo. As root no sudo runs at all.
+// prompts: the helper runs through sudo -n, which works when sudo needs no
+// password for it (cached credentials, or a NOPASSWD rule), and sudo's
+// refusal for want of a password becomes errNoTerminal. Any other failure
+// keeps its own error. As root no sudo runs at all.
 func upHostsApplier(ctx context.Context, e elevate.Elevator, exe string, terminal bool) hosts.Applier {
+	apply := hosts.ElevatedApplier(ctx, e, exe, hosts.DefaultPath, hostsPrompt, terminal)
 	return func(aliases []string) error {
-		interactive := terminal
-		if !terminal && e.Needed() && !e.Cached(ctx) {
+		err := apply(aliases)
+		if err != nil && !terminal && ctx.Err() == nil && sudo.PasswordRequired(err.Error()) {
 			return errNoTerminal
 		}
-		return hosts.ElevatedApplier(ctx, e, exe, hosts.DefaultPath, hostsPrompt, interactive)(aliases)
+		return err
 	}
 }

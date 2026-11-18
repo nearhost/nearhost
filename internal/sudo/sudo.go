@@ -114,6 +114,14 @@ func refusedPassword(said string) bool {
 	return false
 }
 
+// PasswordRequired reports whether said, what sudo -n said when it failed,
+// is its refusal to run without a password. sudo says "a password is
+// required"; sudo-rs says "interactive authentication is required". Only the
+// C locale's wording is known: a translated one reads as another failure.
+func PasswordRequired(said string) bool {
+	return strings.Contains(said, "a password is required") || strings.Contains(said, "interactive authentication is required")
+}
+
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return strings.TrimPrefix(line, "sudo: ")
