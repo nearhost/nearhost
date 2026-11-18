@@ -194,6 +194,23 @@ func TestPInTheLogSearchStaysInTheSearch(t *testing.T) {
 	}
 }
 
+// p from the log with its help open closes the help too, so the request
+// box does not open over a help screen whose keys cannot act.
+func TestPFromTheLogClosesItsHelp(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "l")
+	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
+	press(m, "?")
+	if !m.showHelp {
+		t.Fatal("? did not open the log's help")
+	}
+	settle(m, press(m, "p"))
+	wait(m, askGuard)
+	if m.logView != nil || m.proposing == nil || m.showHelp {
+		t.Fatalf("log view %v, proposing %v, help %v", m.logView, m.proposing, m.showHelp)
+	}
+}
+
 // A p while the log asks whether to send a replay keeps the replay unsent
 // and the log open, as any other key there does.
 func TestPWhileTheLogConfirmsAReplayKeepsTheLog(t *testing.T) {

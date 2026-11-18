@@ -251,7 +251,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		// A p typed into the search, or answering the replay question, is
 		// the log's own.
 		if s == "p" && len(m.waiting) > 0 && !m.logView.searching && m.logView.confirm == 0 {
-			m.logView = nil // the request opens over the main screen
+			// The request opens over the main screen, with the log's help
+			// closed with the log.
+			m.logView, m.showHelp = nil, false
 			return m.nextAsked()
 		}
 		return m.logViewKey(k)
