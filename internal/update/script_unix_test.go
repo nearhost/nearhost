@@ -92,3 +92,24 @@ func TestScriptCommandFailsWhenTheInstallerFails(t *testing.T) {
 		t.Fatal("a failed installer was reported as success")
 	}
 }
+
+// A temporary folder whose name has quotes or a command substitution is
+// cleaned up at exit, and nothing in its name runs.
+func TestScriptCommandCleansUpInAHostileTempDir(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), `t'"$(touch pwned)`)
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := DetectOn("linux", "/opt/tools/bin/nearhost", func(string) string { return "" })
+	m.Env = append(m.Env, "TMPDIR="+tmp)
+	work, err := runScriptMethod(t, m, `true`, 0)
+	if err != nil {
+		t.Fatalf("the command failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "pwned")); err == nil {
+		t.Fatal("the temporary folder's name ran a command")
+	}
+	if es, _ := os.ReadDir(tmp); len(es) != 0 {
+		t.Fatalf("%s still holds %v", tmp, es)
+	}
+}

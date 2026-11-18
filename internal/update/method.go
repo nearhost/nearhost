@@ -35,10 +35,12 @@ const InstallScript = "curl -fsSL https://nearhost.dev/install.sh | sh"
 // the installer to a temporary file and runs it only when curl has fetched
 // all of it, so a download that fails part-way runs nothing and the
 // command fails with curl's status, which `curl | sh` would hide behind
-// sh's. The file goes when the shell exits. NEARHOST_INSTALL_DIR and
+// sh's. The file goes when the shell exits; the trap is in single quotes,
+// so $t is read then and not parsed again, whatever TMPDIR holds.
+// NEARHOST_INSTALL_DIR and
 // NEARHOST_VERSION reach the installer through the environment (Env),
 // never through this text, so no directory name can change the command.
-const scriptRun = `t=$(mktemp) && trap "rm -f \"$t\"" EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`
+const scriptRun = `t=$(mktemp) && trap 'rm -f "$t"' EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`
 
 // InstallScriptWindows is the PowerShell installer's one-liner.
 const InstallScriptWindows = "irm https://nearhost.dev/install.ps1 | iex"

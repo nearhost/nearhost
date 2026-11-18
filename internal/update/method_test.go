@@ -53,7 +53,7 @@ func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
 	// The installer is downloaded to a file and run once the download is
 	// complete. The directory reaches it through the environment, never
 	// through the command's text.
-	want := []string{"sh", "-c", `t=$(mktemp) && trap "rm -f \"$t\"" EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`}
+	want := []string{"sh", "-c", `t=$(mktemp) && trap 'rm -f "$t"' EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`}
 	if !slices.Equal(m.Args, want) {
 		t.Fatalf("Args = %q, want %q", m.Args, want)
 	}

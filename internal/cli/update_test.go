@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -56,6 +57,8 @@ type fakeUpdate struct {
 	probed []string
 	// onPath is where `nearhost` is found on PATH, or "" when it is not.
 	onPath string
+	// env is added to the environment the backend reads.
+	env map[string]string
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -68,7 +71,12 @@ func (f *fakeUpdate) backend() updateBackend {
 		latest: func(context.Context) (string, error) { return f.latest, f.err },
 		exe:    func() string { return f.exe },
 		// Go's default GOPATH is under USERPROFILE on Windows.
-		getenv:      func(k string) string { return map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}[k] },
+		getenv: func(k string) string {
+			if v, ok := f.env[k]; ok {
+				return v
+			}
+			return map[string]string{"HOME": "/Users/me", "USERPROFILE": "/Users/me"}[k]
+		},
 		writable:    func(string) bool { f.writableCalls++; return f.writable },
 		interactive: func() bool { return f.tty },
 		goos:        f.goos,
@@ -825,7 +833,12 @@ func TestUpdateSaysWhenTheBinaryIsUnchanged(t *testing.T) {
 
 // A matching version, whatever its spelling, is the update done.
 func TestUpdateMatchingVersionSaysUpdated(t *testing.T) {
-	for _, installed := range []string{"0.6.0", "v0.6.0", "0.6.0+build.7"} {
+	// `go install …@latest` builds without the release's ldflags: its
+	// version comes from the module version Go records, v0.6.0.
+	goInstalled := buildVersion("dev", func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Path: "github.com/nearhost/nearhost", Version: "v0.6.0"}}, true
+	})
+	for _, installed := range []string{installedVersion("nearhost " + goInstalled + "\n"), "v0.6.0", "0.6.0+build.7"} {
 		f := &fakeUpdate{latest: "0.6.0", exe: "/Users/me/go/bin/nearhost", goos: "darwin", installed: installed}
 		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
 		if err != nil || !strings.HasSuffix(out, "Updated to 0.6.0.\n") {
@@ -880,6 +893,78 @@ func TestUpdatePnpmChecksTheShimOnPath(t *testing.T) {
 	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin"}
 	if out, err := runUpdate(t, f, "0.5.0", "", "--yes"); err != nil || !strings.Contains(out, "Updated to 0.6.0.") || len(f.probed) != 0 {
 		t.Fatalf("out %q, err %v, probed %v", out, err, f.probed)
+	}
+	// Another nearhost earlier on PATH than pnpm's shim is named as such.
+	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/usr/local/bin/nearhost", installed: "0.4.0",
+		env: map[string]string{"PNPM_HOME": "/Users/me/Library/pnpm"}}
+	out, _ := runUpdate(t, f, "0.5.0", "", "--yes")
+	if !strings.Contains(out, "The update ran, but /usr/local/bin/nearhost is still 0.4.0. Run it again, or install by hand: pnpm add -g @nearhost/cli@latest. Another nearhost comes before pnpm's on PATH.") {
+		t.Fatalf("out %q", out)
+	}
+	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/Users/me/Library/pnpm/nearhost", installed: "0.5.0",
+		env: map[string]string{"PNPM_HOME": "/Users/me/Library/pnpm"}}
+	if out, _ := runUpdate(t, f, "0.5.0", "", "--yes"); strings.Contains(out, "Another nearhost") {
+		t.Fatalf("pnpm's own shim was called another nearhost: %q", out)
+	}
+}
+
+// The version is the release's ldflags value; without one, a `go install`
+// build's module version; anything else stays dev.
+func TestBuildVersion(t *testing.T) {
+	info := func(v string) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{Main: debug.Module{Path: "github.com/nearhost/nearhost", Version: v}}, true
+		}
+	}
+	for _, tc := range []struct {
+		version string
+		read    func() (*debug.BuildInfo, bool)
+		want    string
+	}{
+		{"0.13.0", info("v0.6.0"), "0.13.0"},
+		{"dev", info("v0.6.0"), "0.6.0"},
+		{"dev", info("v0.13.0-rc.2"), "0.13.0-rc.2"},
+		{"dev", info("(devel)"), "dev"},
+		{"dev", info(""), "dev"},
+		{"dev", info("v0.13.1-0.20261118120000-abcdef123456"), "dev"},
+		{"dev", info("v0.13.1-rc.1.0.20261118120000-abcdef123456"), "dev"},
+		{"dev", info("v0.0.0-20261118120000-abcdef123456"), "dev"},
+		{"dev", info("v0.13.0+dirty"), "dev"},
+		{"dev", func() (*debug.BuildInfo, bool) { return nil, false }, "dev"},
+	} {
+		if got := buildVersion(tc.version, tc.read); got != tc.want {
+			v, _ := tc.read()
+			t.Errorf("buildVersion(%q, %v) = %q, want %q", tc.version, v, got, tc.want)
+		}
+	}
+}
+
+// The script installs exactly the version nearhost resolved and compares
+// with, whatever NEARHOST_VERSION the user's shell exports; the command
+// shown stays the plain one-liner.
+func TestUpdateScriptPinsTheResolvedVersion(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true, tty: true}
+	out, err := runUpdate(t, f, "0.5.0", "\n")
+	if err != nil || len(f.ran) != 1 || !slices.Contains(f.ran[0].Env, "NEARHOST_VERSION=v0.6.0") {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+	if !strings.Contains(out, "Run `curl -fsSL https://nearhost.dev/install.sh | sh`? [Y/n]") {
+		t.Fatalf("out %q", out)
+	}
+}
+
+// A stale installer variable in the user's shell cannot redirect, dry-run
+// or pin the script update; other commands keep their environment.
+func TestUpdateEnvDropsStaleInstallerVariables(t *testing.T) {
+	environ := []string{"PATH=/bin", "NEARHOST_VERSION=v0.1.0", "NEARHOST_BASE_URL=http://example.invalid", "NEARHOST_INSTALL_DRY_RUN=1", "NEARHOST_INSTALL_DIR=/elsewhere", "NEARHOST_SKIP_SETCAP=1"}
+	script := update.Method{Kind: update.Script, Args: []string{"sh", "-c", "x"}, Env: []string{"NEARHOST_INSTALL_DIR=/usr/local/bin", "NEARHOST_VERSION=v0.6.0"}}
+	want := []string{"PATH=/bin", "NEARHOST_SKIP_SETCAP=1", "NEARHOST_INSTALL_DIR=/usr/local/bin", "NEARHOST_VERSION=v0.6.0"}
+	if got := updateEnv(environ, script); !slices.Equal(got, want) {
+		t.Fatalf("env = %q, want %q", got, want)
+	}
+	npm := update.Method{Kind: update.NPM, Args: []string{"npm", "install", "-g", "@nearhost/cli@latest"}}
+	if got := updateEnv(environ, npm); !slices.Equal(got, environ) {
+		t.Fatalf("npm env = %q, want %q", got, environ)
 	}
 }
 

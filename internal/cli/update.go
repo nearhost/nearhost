@@ -168,6 +168,7 @@ func probePath(b updateBackend, m update.Method, exe string) string {
 		if prefix, _, ok := strings.Cut(exe, "/Caskroom/nearhost/"); ok {
 			return prefix + "/bin/nearhost"
 		}
+		// Not reached: Detect names Homebrew only for a Caskroom path.
 		fallthrough
 	case update.PNPM:
 		if p, err := b.lookPath("nearhost"); err == nil {
@@ -200,6 +201,9 @@ func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m up
 		msg = fmt.Sprintf("The update ran, but %s printed no version. Run it again, or install by hand: %s.", shown, byHand)
 	case !update.SameVersion(installed, latest):
 		msg = fmt.Sprintf("The update ran, but %s is still %s. Run it again, or install by hand: %s.", shown, printable(installed), byHand)
+		if m.Kind == update.PNPM && shadowsPnpm(b, path) {
+			msg += " Another nearhost comes before pnpm's on PATH."
+		}
 	default:
 		return nil
 	}
@@ -322,7 +326,14 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		}
 	}
 	if b.goos != "windows" {
-		if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
+		// The installer installs exactly the version checked below, whatever
+		// NEARHOST_VERSION the user's shell exports. The command shown stays
+		// the plain one.
+		run := m
+		if m.Kind == update.Script {
+			run = m.Pinned(latest)
+		}
+		if err := b.run(ctx, run, out, cmd.ErrOrStderr()); err != nil {
 			return fmt.Errorf("`%s` failed: %w", m, err)
 		}
 	} else if err := runAside(ctx, cmd, b, m, exe, latest, native); err != nil {
@@ -442,10 +453,42 @@ func samePathEveryVersion(k update.Kind) bool {
 	return false
 }
 
+// shadowsPnpm reports whether path, the nearhost found on PATH, is outside
+// pnpm's bin folder, PNPM_HOME, so another copy runs before pnpm's. It is
+// false when PNPM_HOME is not set.
+func shadowsPnpm(b updateBackend, path string) bool {
+	home := b.getenv("PNPM_HOME")
+	if home == "" {
+		return false
+	}
+	dir := path
+	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
+		dir = path[:i]
+	}
+	home = strings.TrimRight(home, `/\`)
+	if b.goos == "windows" {
+		return !strings.EqualFold(dir, home)
+	}
+	return dir != home
+}
+
+// installerVars are the install script's variables that would change what
+// it installs or where it downloads from. A script update sets the ones it
+// needs in m.Env and drops the rest from the environment it inherits, so a
+// variable left exported in the user's shell cannot pin, redirect or
+// dry-run the update.
+var installerVars = []string{"NEARHOST_VERSION=", "NEARHOST_BASE_URL=", "NEARHOST_INSTALL_DRY_RUN=", "NEARHOST_INSTALL_DIR="}
+
 // updateEnv is the environment the update command m runs with: environ and
-// m.Env.
+// m.Env, without installerVars from environ for the install script.
 func updateEnv(environ []string, m update.Method) []string {
-	return append(slices.Clone(environ), m.Env...)
+	env := slices.Clone(environ)
+	if m.Kind == update.Script {
+		env = slices.DeleteFunc(env, func(e string) bool {
+			return slices.ContainsFunc(installerVars, func(p string) bool { return strings.HasPrefix(e, p) })
+		})
+	}
+	return append(env, m.Env...)
 }
 
 // envOf is the value m sets name to, or "". A pre-release build's method
