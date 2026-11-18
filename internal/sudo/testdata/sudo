@@ -6,6 +6,7 @@
 # LC_ALL is C.
 # With FAKE_SUDO_WROTE set to a fifo, a validation that cached the
 # credentials then writes to the fifo and waits, to be interrupted.
+# FAKE_SUDO_SLOW makes one validation slow to leave; see below.
 # It understands -k (forget the credentials), -n, -S, -v, -p PROMPT and a command to run.
 nonint=0 stdin=0 validate=0 prompt="${SUDO_PROMPT:-Password:}"
 [ -n "$FAKE_SUDO_LOG" ] && echo "$*" >> "$FAKE_SUDO_LOG"
@@ -22,6 +23,18 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+# With FAKE_SUDO_SLOW set to a file that exists, the next validation that is
+# given a password removes the file, writes FAKE_SUDO_SLOW.waiting and waits;
+# asked to terminate, it takes a second to leave, as a slow sudo can.
+if [ "$validate" = 1 ] && [ "$stdin" = 1 ] && [ "$nonint" = 0 ] && [ -n "$FAKE_SUDO_SLOW" ] && [ -f "$FAKE_SUDO_SLOW" ]; then
+	rm -f "$FAKE_SUDO_SLOW"
+	sleep 30 &
+	pid=$!
+	trap 'kill $pid 2>/dev/null; sleep 1; exit 1' TERM
+	: > "$FAKE_SUDO_SLOW.waiting"
+	wait $pid
+	exit 1
+fi
 cached() { [ -z "$FAKE_SUDO_NOCACHE" ] && [ -f "$FAKE_SUDO_CACHE" ]; }
 if ! cached; then
 	if [ "$nonint" = 1 ]; then

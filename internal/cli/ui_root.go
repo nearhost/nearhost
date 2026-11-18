@@ -7,6 +7,7 @@ import (
 	"golang.org/x/term"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/sudo"
@@ -95,7 +96,16 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 	if r.sudo.cached(ctx) {
 		return step(ctx, nil)
 	}
-	if err := r.ask(ctx, why, r.sudo.validate); err != nil {
+	check, settled := r.checks()
+	err := r.ask(ctx, why, check)
+	// The box answers as soon as the user cancels, while the check it
+	// cancelled may still be waiting for sudo to leave, and then runs
+	// sudo -k. The turn is held until that has finished, so the -k cannot
+	// drop the credentials the next step's password caches. The wait is
+	// bounded: a cancelled sudo is killed after 2 s, and the forget gives
+	// up after 2 s more.
+	settled()
+	if err != nil {
 		if r.sudo.forget != nil {
 			// The check may have cached the credentials before the user
 			// cancelled, or the request ended; whatever the error, the
@@ -116,6 +126,35 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 		lipgloss.Fprint(out, tui.Told(err, done))
 		return err
 	})
+}
+
+// checks wraps the backend's validate for one password box. settled closes
+// it to new checks, which then fail at once, and waits for those running to
+// return.
+func (r asRoot) checks() (check func(context.Context, string) error, settled func()) {
+	var (
+		mu      sync.Mutex
+		closed  bool
+		running sync.WaitGroup
+	)
+	check = func(ctx context.Context, password string) error {
+		mu.Lock()
+		if closed {
+			mu.Unlock()
+			return context.Canceled // the box has answered; nobody reads this
+		}
+		running.Add(1)
+		mu.Unlock()
+		defer running.Done()
+		return r.sudo.validate(ctx, password)
+	}
+	settled = func() {
+		mu.Lock()
+		closed = true
+		mu.Unlock()
+		running.Wait()
+	}
+	return check, settled
 }
 
 // terminalWidth is the width of the terminal on standard output, or 80.

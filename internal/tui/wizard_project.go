@@ -1788,11 +1788,13 @@ func (f *projectForm) keys() []footerItem {
 		if len(f.candidates()) > 1 {
 			items = append(items, footerItem{"↑↓", "choose"})
 		}
-		items = append(items, footerItem{"enter", "next"})
+		// esc comes before ctrl+r: at 80 columns the last item is cut,
+		// and reconnecting is the rarer need.
+		items = append(items, footerItem{"enter", "next"}, footerItem{"esc", "back"})
 		if f.srv.Name != config.LocalServer {
 			items = append(items, footerItem{"ctrl+r", "reconnect"})
 		}
-		return append(items, footerItem{"esc", "back"})
+		return items
 	case projectStepRegistry:
 		return []footerItem{{"enter", "answer"}, {"↑↓", "choose"}, {"esc", "back"}}
 	case projectStepPresets:

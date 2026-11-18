@@ -166,3 +166,13 @@ func TestPathLateListingKeepsWhatTabFound(t *testing.T) {
 	settle(m, ahead)
 	wantScreen(t, m, "path      ~/code/▏blob/")
 }
+
+// At 80 columns, the smallest window, the path step on a server keeps
+// esc back in its footer while it lists matches to choose from.
+func TestPathStepFooterKeepsEscAt80Columns(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	toPath(t, m, 1) // mini
+	settle(m, press(m, "tab"))
+	wantScreen(t, m, "blob  blog  shop", "esc back")
+}
