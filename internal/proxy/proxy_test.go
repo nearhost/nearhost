@@ -268,6 +268,12 @@ func (h *harness) url(alias, path string) string {
 	return fmt.Sprintf("https://%s:%d%s", alias, h.httpsPort, path)
 }
 
+// httpsURL is the URL the redirect from the http port names for host and
+// path: the harness's https port is never 443, so it appears.
+func (h *harness) httpsURL(host, path string) string {
+	return fmt.Sprintf("https://%s:%d%s", host, h.httpsPort, path)
+}
+
 // getEventually retries a GET until it succeeds: Caddy issues the leaf
 // certificate asynchronously after Load returns, so early handshakes fail.
 // If none does, it fails with the last error and what the proxy has for
@@ -445,7 +451,7 @@ func TestProxyRuntime(t *testing.T) {
 		t.Fatalf("GET http: %v", err)
 	}
 	redir.Body.Close()
-	if loc := redir.Header.Get("Location"); redir.StatusCode != 307 || redir.Header.Get("Cache-Control") != "no-store" || !strings.HasPrefix(loc, "https://a.test") {
+	if loc := redir.Header.Get("Location"); redir.StatusCode != 307 || redir.Header.Get("Cache-Control") != "no-store" || !strings.HasPrefix(loc, h.httpsURL("a.test", "")) {
 		t.Fatalf("expected an uncacheable 307 to https, got %d %q %q", redir.StatusCode, redir.Header.Get("Cache-Control"), loc)
 	}
 
@@ -1076,8 +1082,8 @@ func TestPlainHTTPAnswers307ForEveryKindOfHost(t *testing.T) {
 	})
 	for _, host := range []string{"a.test", "localhost", "acme.local.example.pro", "internal.acme.local.example.pro"} {
 		resp := h.postHTTP(t, host, "/auth/callback", "x=1")
-		if resp.StatusCode != 307 || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Location") != "https://"+host+"/auth/callback" {
-			t.Errorf("%s: %d %q %q, want an uncacheable 307 to https://%s/auth/callback", host, resp.StatusCode, resp.Header.Get("Cache-Control"), resp.Header.Get("Location"), host)
+		if resp.StatusCode != 307 || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Location") != h.httpsURL(host, "/auth/callback") {
+			t.Errorf("%s: %d %q %q, want an uncacheable 307 to %s", host, resp.StatusCode, resp.Header.Get("Cache-Control"), resp.Header.Get("Location"), h.httpsURL(host, "/auth/callback"))
 		}
 	}
 	h.waitCerts(t, "a.test", "localhost")
@@ -1206,8 +1212,8 @@ func TestHomePageAtLocalhost(t *testing.T) {
 	if r.StatusCode != 405 {
 		t.Errorf("POST /: status %d, want 405", r.StatusCode)
 	}
-	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 307 || r.Header.Get("Location") != "https://localhost/" {
-		t.Errorf("http POST /: %d %q, want 307 to https://localhost/", r.StatusCode, r.Header.Get("Location"))
+	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 307 || r.Header.Get("Location") != h.httpsURL("localhost", "/") {
+		t.Errorf("http POST /: %d %q, want 307 to %s", r.StatusCode, r.Header.Get("Location"), h.httpsURL("localhost", "/"))
 	}
 	// The page is no project's, so its access lines are dropped like any
 	// untagged line. A tagged request afterwards is logged after them.

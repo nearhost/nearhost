@@ -361,7 +361,9 @@ func coversAll(ranges, union []string) bool {
 // URL over https, which carries Cache-Control: no-store so that a browser
 // keeps no memory of it (a 308 is cached for good, and a host that stops
 // being served or moves to another tool would stay stuck on https), and drops every other connection without an answer, as the
-// https server does. union is the union of all those ranges.
+// https server does. The redirect names httpsPort, the effective https port,
+// unless it is 443; {http.request.host} is the host without its port. union
+// is the union of all those ranges.
 //
 // Its routes are, in order: a drop for a client outside union; for each
 // host, its redirect, matched by the host and the ranges it is served to,
@@ -380,7 +382,12 @@ func coversAll(ranges, union []string) bool {
 // union has by then been redirected or, by a host's drop, refused, for
 // every host Caddy redirects. The last of our routes drops what is left, so
 // Caddy's catch-all after it is never reached.
-func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any {
+func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map[string]any {
+	location := "https://{http.request.host}"
+	if httpsPort != 443 {
+		location += ":" + strconv.Itoa(httpsPort)
+	}
+	location += "{http.request.uri}"
 	abort := []any{map[string]any{"handler": "static_response", "abort": true}}
 	routes := make([]any, 0, 2*len(hosts)+2)
 	routes = append(routes, map[string]any{
@@ -399,7 +406,7 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 				"handler":     "static_response",
 				"status_code": 307,
 				"headers": map[string]any{
-					"Location":      []string{"https://{http.request.host}{http.request.uri}"},
+					"Location":      []string{location},
 					"Cache-Control": []string{"no-store"},
 				},
 			}},
@@ -676,7 +683,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = listenerWrappers(httpServer(hosts, union, httpPort))
+	servers["nearhost_http"] = listenerWrappers(httpServer(hosts, union, httpPort, httpsPort))
 	if web {
 		servers["nearhost_web"] = listenerWrappers(webServer(opts))
 	}
