@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -52,6 +56,23 @@ type upBackend struct {
 	// when ctx ends: eng.Shutdown, which tests hold open for a second
 	// interrupt.
 	shutdown func(eng *engine.Engine, ctx context.Context) error
+	// start starts the engine: eng.Start, which tests replace to fail it.
+	start func(eng *engine.Engine, ctx context.Context) error
+	// bind is what up needs to say how to let the binary bind ports 80 and
+	// 443; the zero value says nothing.
+	bind bindEnv
+}
+
+// bindEnv is the machine's side of the advice printed when a proxy port
+// needs a privilege.
+type bindEnv struct {
+	goos     string // advice is for "linux" only
+	elevated func() bool
+	// exe is the running binary's path with symlinks resolved, or "".
+	exe    func() string
+	isFile func(path string) bool
+	// unprivilegedPortStart is as in updateBackend.
+	unprivilegedPortStart func() (int, bool)
 }
 
 // systemUp is the production backend. Only NewRoot wires it in, with the
@@ -74,8 +95,13 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			return err
 		},
 		notify:   notifyStop,
+		start:    (*engine.Engine).Start,
 		shutdown: (*engine.Engine).Shutdown,
 		agents:   systemAgents(),
+		bind: bindEnv{
+			goos: runtime.GOOS, elevated: isElevated, exe: realExecutable,
+			isFile: isRegularFile, unprivilegedPortStart: readUnprivilegedPortStart,
+		},
 	}
 }
 
@@ -191,8 +217,8 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	ag.publishHeld(eng)
 	ctx, again, release := b.notify(cmd.Context())
 	defer release()
-	if err := eng.Start(ctx); err != nil {
-		return err
+	if err := b.start(eng, ctx); err != nil {
+		return b.bind.advise(err)
 	}
 
 	// Projects start side by side: one whose server is slow to answer does
@@ -443,4 +469,57 @@ func askOnce(ensure func(context.Context, []string) error) func(context.Context,
 		}
 		return err
 	}
+}
+
+// bindAdvice is an error from a proxy port the user may not bind, with the
+// command that lets nearhost bind it.
+type bindAdvice struct {
+	err    error
+	advice string
+}
+
+// Error is the original error, a blank line, then the advice.
+func (e *bindAdvice) Error() string { return e.err.Error() + "\n\n" + e.advice }
+
+// Unwrap returns the error from the engine.
+func (e *bindAdvice) Unwrap() error { return e.err }
+
+// advise adds to err the command that lets the binary bind the proxy's ports,
+// when err is a port the user may not bind on Linux. Elsewhere, for root, on
+// a system that lets any program bind from port 80, and for every other
+// error, it returns err as it is.
+func (e bindEnv) advise(err error) error {
+	if e.goos != "linux" || !isBindPermission(err) {
+		return err
+	}
+	if e.elevated != nil && e.elevated() {
+		return err // root is refused for another reason
+	}
+	if e.unprivilegedPortStart != nil {
+		if first, ok := e.unprivilegedPortStart(); ok && first <= 80 {
+			return err // the capability is not what is missing
+		}
+	}
+	exe := ""
+	if e.exe != nil {
+		exe = e.exe()
+	}
+	var advice string
+	if exe != "" && e.isFile != nil && e.isFile(exe) {
+		advice = doctor.SetcapFix(exe)
+	} else {
+		// Same words as the update's advice: a path that is no regular
+		// file may be a launcher script, which a capability does nothing for.
+		advice = "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:\n\n" + doctor.SetcapFix("")
+	}
+	return &bindAdvice{err: err, advice: advice + "\nDo not run nearhost with sudo."}
+}
+
+// isBindPermission reports whether err is the engine's port error for a port
+// the user may not bind. A directory Nearhost could not create is also a
+// permission error, but a PathError, and no port's.
+func isBindPermission(err error) bool {
+	var pe *fs.PathError
+	return errors.Is(err, fs.ErrPermission) && !errors.As(err, &pe) &&
+		strings.Contains(err.Error(), "needs permission to bind")
 }

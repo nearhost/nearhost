@@ -83,6 +83,23 @@ type updateBackend struct {
 	unprivilegedPortStart func() (int, bool)
 }
 
+// isRegularFile reports whether path is an existing regular file.
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// readUnprivilegedPortStart is the first port any user may bind
+// (net.ipv4.ip_unprivileged_port_start), and whether it could be read.
+func readUnprivilegedPortStart() (int, bool) {
+	data, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	return n, err == nil
+}
+
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
@@ -120,24 +137,14 @@ func systemUpdate() updateBackend {
 			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 			return signals, func() { signal.Stop(signals) }
 		},
-		downloadLimit: downloadTimeLimit,
-		probe:         probeVersion,
-		lookPath:      exec.LookPath,
-		realPath:      filepath.EvalSymlinks,
-		readHead:      readHead,
-		netBindCap:    fileNetBindCap,
-		isFile: func(path string) bool {
-			info, err := os.Stat(path)
-			return err == nil && info.Mode().IsRegular()
-		},
-		unprivilegedPortStart: func() (int, bool) {
-			data, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
-			if err != nil {
-				return 0, false
-			}
-			n, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			return n, err == nil
-		},
+		downloadLimit:         downloadTimeLimit,
+		probe:                 probeVersion,
+		lookPath:              exec.LookPath,
+		realPath:              filepath.EvalSymlinks,
+		readHead:              readHead,
+		netBindCap:            fileNetBindCap,
+		isFile:                isRegularFile,
+		unprivilegedPortStart: readUnprivilegedPortStart,
 	}
 }
 
