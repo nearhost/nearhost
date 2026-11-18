@@ -189,9 +189,15 @@ func (m *Model) columns() []string {
 	return lines
 }
 
+// small reports whether the window is smaller than the interface needs. It
+// decides both what is drawn and whether input acts, so the two agree.
+func (m *Model) small() bool {
+	return m.width < minWidth || m.height < minHeight
+}
+
 // tooSmall is the screen drawn in a window smaller than the interface needs.
 func (m *Model) tooSmall() string {
-	msg := fmt.Sprintf("Make the window larger (%d×%d or more).", minWidth, minHeight)
+	msg := fmt.Sprintf("Make the window larger (%d×%d at least). q quits.", minWidth, minHeight)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 		lipgloss.NewStyle().Width(max(m.width, 1)).Render(msg))
 }

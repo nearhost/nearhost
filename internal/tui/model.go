@@ -479,6 +479,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.password.update(msg)
 		}
 	case tea.PasteMsg:
+		if m.small() {
+			return m, nil // the box it would go in is not drawn
+		}
 		if m.password != nil {
 			return m, m.password.update(msg)
 		}
@@ -489,10 +492,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearSelection()
 		return m, m.key(msg)
 	case tea.MouseClickMsg:
+		if m.small() {
+			return m, nil
+		}
 		m.mouseDown(msg.Mouse())
 	case tea.MouseMotionMsg:
+		if m.small() {
+			return m, nil
+		}
 		m.mouseMove(msg.Mouse())
 	case tea.MouseReleaseMsg:
+		if m.small() {
+			return m, nil
+		}
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
 		return m, m.alertProblem(msg.key, "Could not open "+msg.url+": "+msg.err.Error())
@@ -503,6 +515,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case copyFailedMsg:
 		return m, m.alertProblem(msg.key, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
 	case tea.MouseWheelMsg:
+		if m.small() {
+			return m, nil
+		}
 		m.clearSelection() // the text under it moves
 		m.wheel(msg.Mouse())
 	default:
@@ -614,7 +629,7 @@ func (m *Model) View() tea.View {
 // content is the screen as drawn, without the selection.
 func (m *Model) content() string {
 	var content string
-	if m.width < minWidth || m.height < minHeight {
+	if m.small() {
 		content = m.tooSmall()
 	} else {
 		if m.logView != nil {

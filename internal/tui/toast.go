@@ -64,7 +64,7 @@ func (m *Model) toastDone(msg toastDoneMsg) {
 // withToast draws the toast over content, at the right, just above the
 // footer's rule, and clear of the sidebar.
 func (m *Model) withToast(content string) string {
-	if m.toast.text == "" || m.width < minWidth || m.height < minHeight {
+	if m.toast.text == "" || m.small() {
 		return content
 	}
 	dot := styleBeacon.Render("●")
