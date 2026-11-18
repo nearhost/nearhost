@@ -70,6 +70,7 @@ func newLogView(key string) *logView {
 
 // openLog shows the full-screen log of the selected row.
 func (m *Model) openLog() {
+	m.showHelp = false
 	m.logView = newLogView(m.sel)
 }
 
@@ -120,6 +121,10 @@ func (v *logView) moveTo(shown []logEntry, i int) {
 func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	v := m.logView
 	s := k.String()
+	if m.showHelp && !v.searching && (s == "?" || s == "esc") {
+		m.showHelp = false // the log keeps its place and its search
+		return nil
+	}
 	if v.searching {
 		switch s {
 		case "enter":
@@ -152,6 +157,8 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil // any other key keeps the request unsent
 	}
 	switch s {
+	case "?":
+		m.showHelp = true
 	case "r":
 		if at >= 0 && shown[at].req != nil {
 			return m.askReplay(shown[at])
@@ -161,7 +168,7 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 			v.search.SetValue("")
 			return nil
 		}
-		m.logView = nil
+		m.logView, m.showHelp = nil, false
 	case "/":
 		v.searching = true
 		return v.search.Focus()
@@ -255,7 +262,11 @@ func (m *Model) logScreen() string {
 			lines = append(lines, m.requestLines(e, width)...)
 		}
 	}
-	height := m.height - 6 // the header and its rule, the tabs and a blank line, the rule and the footer
+	foot := 1
+	if m.showHelp {
+		foot = logHelpRows(m.width)
+	}
+	height := max(m.height-5-foot, 1) // the header and its rule, the tabs and a blank line, the rule and the footer
 	newer := 0
 	if !v.follow {
 		for _, e := range shown {
@@ -295,14 +306,68 @@ func (m *Model) logScreen() string {
 		out = append(out, m.bar(styleAmber.Render(fmt.Sprintf("▼ %d new lines below", newer)),
 			styleBeacon.Render("G")+" "+styleDim.Render("jump to the end and follow")))
 	}
-	return strings.Join(append(out, rule(m.width), m.bar(m.help.ShortHelpView(bindings(logViewKeys)), styleDim.Render(m.logName()))), "\n")
+	out = append(out, rule(m.width))
+	if m.showHelp {
+		return strings.Join(append(out, m.logHelp()), "\n")
+	}
+	right := styleDim.Render(m.logName())
+	m.help.SetWidth(m.width - 3 - ansi.StringWidth(m.logName()))
+	return strings.Join(append(out, m.bar(m.help.ShortHelpView(bindings(logFooterItems())), right)), "\n")
 }
 
-// logViewKeys are the full-screen log's keys.
-var logViewKeys = []footerItem{
-	{"j/k", "scroll"}, {"enter", "expand"}, {"tab", "kind"}, {"/", "search"},
-	{"G", "follow"}, {"w", "wrap"}, {"c", "copy curl"}, {"r", "replay"}, {"esc", "back"},
+// logKey is one key of the full-screen log: the group the full help lists
+// it under, the key and what it does.
+type logKey struct{ group, key, label string }
+
+// logViewKeys are every key of the full-screen log, the most useful first.
+// The footer shows as many as fit, in this order, and ? lists them all, by
+// group.
+var logViewKeys = []logKey{
+	{"move", "j/k", "scroll"}, {"view", "enter", "expand"}, {"view", "tab", "kind"}, {"search", "/", "search"},
+	{"log", "?", "keys"}, {"request", "c", "copy curl"}, {"request", "r", "replay"}, {"log", "esc", "back"},
+	{"move", "G", "follow"}, {"view", "w", "wrap"}, {"view", "v", "reveal cookies"}, {"move", "g", "top"},
+	{"move", "pgup/pgdn", "page"}, {"view", "shift+tab", "kind back"}, {"log", "q", "back"},
 }
+
+// logFooterItems are the log's keys as footer items.
+func logFooterItems() []footerItem {
+	items := make([]footerItem, len(logViewKeys))
+	for i, k := range logViewKeys {
+		items[i] = footerItem{k.key, k.label}
+	}
+	return items
+}
+
+// logHelpGroups are the log's keys by group, in the order the groups first
+// appear in logViewKeys, with ? as the key that closes the help.
+func logHelpGroups() []helpGroup {
+	var groups []helpGroup
+	for _, k := range logViewKeys {
+		label := k.label
+		if k.key == "?" {
+			label = "close this list"
+		}
+		at := -1
+		for i, g := range groups {
+			if g.title == k.group {
+				at = i
+			}
+		}
+		if at < 0 {
+			groups = append(groups, helpGroup{title: k.group})
+			at = len(groups) - 1
+		}
+		groups[at].keys = append(groups[at].keys, bindings([]footerItem{{k.key, label}})...)
+	}
+	return groups
+}
+
+// logHelpRows is how many rows the log's full help takes in a window of
+// width.
+func logHelpRows(width int) int { return helpRowsOf(logHelpGroups(), width) }
+
+// logHelp draws every key of the full-screen log in place of its footer.
+func (m *Model) logHelp() string { return m.helpOf(logHelpGroups()) }
 
 // logName names the row whose log is shown.
 func (m *Model) logName() string {

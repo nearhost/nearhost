@@ -514,9 +514,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.password != nil {
 			return m, m.password.update(msg)
 		}
-		if m.form != nil && !m.guarding() {
+		if m.form != nil {
+			if m.guarding() {
+				return m, nil
+			}
 			return m, m.form.update(msg)
 		}
+		return m, m.pasteText(msg.Content)
 	case tea.KeyPressMsg:
 		m.clearSelection()
 		return m, m.key(msg)
