@@ -366,6 +366,17 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			return
 		}
 		s.setStatus(StatusConnecting, "")
+		conflict := s.forkConflict(ctx)
+		if ctx.Err() != nil {
+			s.setStatus(StatusDisconnected, "")
+			return
+		}
+		if conflict != nil {
+			// No retry fixes the user's configuration, and no login was
+			// refused: give up as the per-process transport does.
+			s.giveUp(conflict.Error())
+			return
+		}
 		s.cleanStaleSocket(ctx)
 		master := s.longLived(context.Background(), // not tied to ctx: we stop it ourselves
 			"-N", "-M", "-S", s.SocketPath(),
@@ -453,6 +464,19 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			}
 		}
 	}
+}
+
+// configTimeout bounds the `ssh -G` that precedes each master.
+const configTimeout = 10 * time.Second
+
+// forkConflict returns a *ConfigError when the user's ssh configuration for
+// the host sets ForkAfterAuthentication yes: ssh would then put the master in
+// the background, where it cannot be supervised. It reads the configuration
+// with `ssh -G`, which connects to nothing, and returns nil when that fails.
+func (s *Session) forkConflict(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, configTimeout)
+	defer cancel()
+	return s.configConflict(s.command(ctx, "-G", "--", s.host), s.host, "forkafterauthentication")
 }
 
 func hasExited(exited <-chan struct{}) bool {

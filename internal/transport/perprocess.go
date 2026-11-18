@@ -106,8 +106,9 @@ func (e *ConfigError) Error() string {
 // forwards the configuration adds (ClearAllForwardings=yes would clear
 // Nearhost's own -L and -R with them), ClearAllForwardings itself, and
 // ForkAfterAuthentication, which would put the link in the background where
-// it cannot be supervised.
-func configConflicts(host, config string) error {
+// it cannot be supervised. With only given, it looks at those options
+// (lower case) and no others.
+func configConflicts(host, config string, only ...string) error {
 	var options []string
 	for _, line := range strings.Split(config, "\n") {
 		fields := strings.Fields(line)
@@ -115,6 +116,9 @@ func configConflicts(host, config string) error {
 			continue
 		}
 		key := strings.ToLower(fields[0])
+		if len(only) > 0 && !slices.Contains(only, key) {
+			continue
+		}
 		value := ""
 		if len(fields) > 1 {
 			value = strings.ToLower(fields[1])
