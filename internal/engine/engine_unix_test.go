@@ -483,3 +483,54 @@ func TestLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 		t.Error("[::1] still answers after the project stopped")
 	}
 }
+
+// Unix only: a master left by a crash is a ControlMaster, which Windows'
+// ssh does not have.
+func TestStartEndsMastersLeftInTheRunDirectory(t *testing.T) {
+	h := buildHarness(t, instanceConfig(t), nil)
+	// listen leaves a socket at name in the run directory, as a master left
+	// by a crashed run does; dead makes it one with nothing listening.
+	listen := func(name string, dead bool) string {
+		path := filepath.Join(h.runDir, name)
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln.(*net.UnixListener).SetUnlinkOnClose(false)
+		if dead {
+			ln.Close()
+		} else {
+			t.Cleanup(func() { ln.Close() })
+		}
+		return path
+	}
+	// No server in the config has any of these.
+	live := listen("gone.sock", false)
+	hashed := listen("h-0123456789abcdef.sock", false)
+	dead := listen("dead.sock", true)
+	agent := listen("agent-0123456789ab.sock", false)
+
+	if err := h.eng.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	log := h.log()
+	for _, path := range []string{live, hashed} {
+		if !strings.Contains(log, "-S "+path+" -O exit") {
+			t.Errorf("the master at %s was not asked to exit; ssh log:\n%s", path, log)
+		}
+	}
+	for _, path := range []string{live, hashed, dead} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s is still there after Start (%v)", path, err)
+		}
+	}
+	if strings.Contains(log, agent) {
+		t.Errorf("ssh was run on the agent socket; ssh log:\n%s", log)
+	}
+	if _, err := os.Stat(agent); err != nil {
+		t.Errorf("the agent socket is gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.runDir, instanceLockName)); err != nil {
+		t.Errorf("the lock file is gone: %v", err)
+	}
+}
