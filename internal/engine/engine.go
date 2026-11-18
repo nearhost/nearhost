@@ -517,7 +517,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.webPort = e.opts.WebPort
 	e.mu.Unlock()
 	if port := e.opts.WebPort; port != 0 {
-		if err := e.probePort(ctx, "Nearhost's page", port, 0, netbind.LoopbackAddrs); err != nil {
+		if err := e.probePort(ctx, "Nearhost's page", port, 0, netbind.PageAddrs); err != nil {
 			e.proxy.SetWebPort(0)
 			e.mu.Lock()
 			e.webPort = 0

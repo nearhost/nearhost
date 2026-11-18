@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // sourceSeen dials ip and reports the address the accepting side sees the
@@ -208,6 +210,39 @@ func TestPageRefusesConnectionsOffLoopback(t *testing.T) {
 	}
 	if tried == 0 {
 		t.Skip("this machine has no address but loopback")
+	}
+}
+
+// Where the page listens on the wildcard address, as on macOS for a port
+// below 1024, it answers on loopback and gives a client on another address
+// nothing: the connection is accepted and dropped.
+func TestWildcardPageDropsClientsOffLoopback(t *testing.T) {
+	orig := pageAddrs
+	pageAddrs = netbind.ServeAddrs
+	t.Cleanup(func() { pageAddrs = orig })
+	h := startProxyOpts(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "project"))}}, Options{WebPort: freePort(t)})
+	h.pageAnswers(t, "127.0.0.1")
+	tried := 0
+	for _, ip := range nonLoopbackAddrs(t) {
+		if _, ok := sourceSeen(t, ip); !ok {
+			continue
+		}
+		tried++
+		tr := &http.Transport{
+			TLSClientConfig:   &tls.Config{RootCAs: h.pool, ServerName: homeHost},
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), strconv.Itoa(h.webPort)))
+			},
+		}
+		c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+		if resp, err := c.Get(fmt.Sprintf("https://localhost:%d/", h.webPort)); err == nil {
+			resp.Body.Close()
+			t.Errorf("a client at %s got the page: status %d", ip, resp.StatusCode)
+		}
+	}
+	if tried == 0 {
+		t.Skip("this machine has no address but loopback that a client can come from")
 	}
 }
 

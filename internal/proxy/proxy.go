@@ -178,7 +178,7 @@ type listenPort struct {
 }
 
 // ports are the TCP ports the proxy listens on: the https and http ports on
-// netbind.ServeAddrs, and the page's on the loopback addresses alone.
+// netbind.ServeAddrs, and the page's on netbind.PageAddrs.
 func (p *Proxy) ports() []listenPort {
 	https, http := p.opts.HTTPSPort, p.opts.HTTPPort
 	if https == 0 {

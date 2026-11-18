@@ -1213,10 +1213,10 @@ func TestStoppingOneProjectKeepsOthersServing(t *testing.T) {
 func proxyAddr(port int) string { return netbind.ServeAddrs(port)[0] }
 
 // pageAddr is where a test holds Nearhost's page port: the first address the
-// page binds, which is loopback on every system. macOS lets the page bind
-// loopback beside a holder of the wildcard address, so holding that would
-// not keep the page out.
-func pageAddr(port int) string { return netbind.LoopbackAddrs(port)[0] }
+// page binds, which is loopback for a test's port on every system. macOS
+// lets the page bind loopback beside a holder of the wildcard address, so
+// holding that would not keep the page out.
+func pageAddr(port int) string { return netbind.PageAddrs(port)[0] }
 
 // heldProxyPort is a port for the test to hold, free on TCP and UDP, from
 // outside the range the system hands out. The proxy binds its HTTPS port on
@@ -2175,8 +2175,9 @@ func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
 	}
 }
 
-// The page's port is probed at the addresses the page listens on, the
-// loopback addresses, and the https and http ports at netbind.ServeAddrs.
+// The page's port is probed at the addresses the page listens on,
+// netbind.PageAddrs (loopback for a test's port), and the https and http
+// ports at netbind.ServeAddrs.
 // A probe at the wildcard address alone would miss a holder on 127.0.0.1 on
 // macOS, where both binds succeed.
 func TestStartProbesThePagePortOnLoopback(t *testing.T) {
@@ -2204,7 +2205,7 @@ func TestStartProbesThePagePortOnLoopback(t *testing.T) {
 			page = append(page, addr)
 		}
 	}
-	if want := netbind.LoopbackAddrs(web); !slices.Equal(page, want) {
+	if want := netbind.PageAddrs(web); !slices.Equal(page, want) {
 		t.Errorf("probed the page's port at %q, want %q", page, want)
 	}
 	for _, port := range []int{h.eng.opts.HTTPSPort, h.eng.opts.HTTPPort} {
