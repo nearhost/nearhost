@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 )
 
@@ -412,6 +413,25 @@ func refusesPort(msg string) bool {
 	return strings.Contains(msg, "Could not request local forwarding") || strings.Contains(msg, "bind [")
 }
 
+// checkLocalPort fails with a *portRefusedError when another process holds
+// the loopback port that a forward's ssh is about to bind, so ssh is not
+// started against it. The check binds netbind.LoopbackProbe, which on
+// Windows asks for exclusive use and so sees a holder that a plain bind
+// would not. Another process can still take the port before ssh binds it;
+// ssh then exits under ExitOnForwardFailure and launchForward reports that
+// as a refused port too.
+func (p *perProcess) checkLocalPort(local int) error {
+	l, err := p.listen("tcp", netbind.LoopbackProbe(local))
+	if oserr.AddrInUse(err) {
+		return &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
+	}
+	if err != nil {
+		return &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)}
+	}
+	l.Close()
+	return nil
+}
+
 // launchForward starts an `ssh -N -L` for the forward from local to remote
 // and waits until it listens, holding one of the launch slots while it
 // does. It fails when the port is taken, when ssh exits first, after
@@ -427,14 +447,9 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
-	if oserr.AddrInUse(err) {
-		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
+	if err := p.checkLocalPort(local); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)}
-	}
-	l.Close()
 	spec := forwardSpec(local, remote)
 	stderr := newForwardStderr(local)
 	proc, err := p.startProc(p.args("-N", "-L", spec), stderr)

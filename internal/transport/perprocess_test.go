@@ -1784,3 +1784,21 @@ func TestPerProcessStopEndsTheLongWait(t *testing.T) {
 func TestPerProcessTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
 	newSlowRetryPerProcess(t, refusing).triesWhenTheWallClockPasses(t)
 }
+
+func TestCheckLocalPortReportsAHeldPortRefusedAndAFreeOneFree(t *testing.T) {
+	p := newPerProcess(Config{})
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := holder.Addr().(*net.TCPAddr).Port
+	err = p.checkLocalPort(port)
+	var refused *portRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("checkLocalPort on a held port = %v, want a *portRefusedError", err)
+	}
+	holder.Close()
+	if err := p.checkLocalPort(port); err != nil {
+		t.Fatalf("checkLocalPort on a free port = %v, want nil", err)
+	}
+}
