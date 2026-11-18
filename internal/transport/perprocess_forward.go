@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 )
 
@@ -415,13 +414,18 @@ func refusesPort(msg string) bool {
 
 // checkLocalPort fails with a *portRefusedError when another process holds
 // the loopback port that a forward's ssh is about to bind, so ssh is not
-// started against it. The check binds netbind.LoopbackProbe, which on
-// Windows asks for exclusive use and so sees a holder that a plain bind
-// would not. Another process can still take the port before ssh binds it;
-// ssh then exits under ExitOnForwardFailure and launchForward reports that
-// as a refused port too.
+// started against it. It binds 127.0.0.1, the address ssh binds, with
+// p.listen, which is netbind.Listen: on Windows that asks for exclusive use
+// and so sees a holder there that a plain bind would not. It does not bind
+// the wildcard address, as netbind.LoopbackProbe does on Windows: that
+// would collide with the engine's own relay on [::1] for the same port, and
+// so refuse every loopback forward and passthrough. A holder on the
+// wildcard address alone is seen on Linux only; elsewhere ssh's bind
+// succeeds beside it too, and loopback clients reach ssh. Another process
+// can still take the port before ssh binds it; ssh then exits under
+// ExitOnForwardFailure and launchForward reports that as a refused port.
 func (p *perProcess) checkLocalPort(local int) error {
-	l, err := p.listen("tcp", netbind.LoopbackProbe(local))
+	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
 	if oserr.AddrInUse(err) {
 		return &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
 	}
