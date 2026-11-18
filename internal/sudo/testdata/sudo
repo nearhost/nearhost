@@ -3,7 +3,9 @@
 # are cached while the file FAKE_SUDO_CACHE exists, unless FAKE_SUDO_NOCACHE
 # is set (sudo set to always ask). FAKE_SUDO_LOG gets a line per call. With
 # FAKE_SUDO_GERMAN set it speaks German, as a translated sudo does, unless
-# LC_ALL is C.
+# LC_ALL is C. FAKE_SUDO_WRONG_FILE is a file whose text is printed on a
+# wrong password in place of sudo's own; FAKE_SUDO_REFUSE_FILE is one printed
+# for any password before one is read.
 # With FAKE_SUDO_WROTE set to a fifo, a validation that cached the
 # credentials then writes to the fifo and waits, to be interrupted.
 # FAKE_SUDO_SLOW makes one validation slow to leave; see below.
@@ -37,6 +39,12 @@ if [ "$validate" = 1 ] && [ "$stdin" = 1 ] && [ "$nonint" = 0 ] && [ -n "$FAKE_S
 fi
 cached() { [ -z "$FAKE_SUDO_NOCACHE" ] && [ -f "$FAKE_SUDO_CACHE" ]; }
 if ! cached; then
+	# FAKE_SUDO_REFUSE_FILE: sudo refuses with that stderr whatever the
+	# password is (a user sudoers does not allow).
+	if [ -n "$FAKE_SUDO_REFUSE_FILE" ]; then
+		cat "$FAKE_SUDO_REFUSE_FILE" >&2
+		exit 1
+	fi
 	if [ "$nonint" = 1 ]; then
 		echo "sudo: a password is required" >&2
 		exit 1
@@ -55,7 +63,10 @@ if ! cached; then
 		echo > /dev/tty
 	fi
 	if [ "$given" != "$FAKE_SUDO_PASSWORD" ]; then
-		if [ -n "$FAKE_SUDO_GERMAN" ] && [ "$LC_ALL" != C ]; then
+		if [ -n "$FAKE_SUDO_WRONG_FILE" ]; then
+			# The stderr of a sudo with other wording, such as sudo-rs.
+			cat "$FAKE_SUDO_WRONG_FILE" >&2
+		elif [ -n "$FAKE_SUDO_GERMAN" ] && [ "$LC_ALL" != C ]; then
 			echo "Entschuldigung, versuchen Sie es noch einmal." >&2
 			echo "sudo: 1 Fehlversuch bei der Passworteingabe" >&2
 		else
