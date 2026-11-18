@@ -48,11 +48,6 @@ type Options struct {
 	// the zero one is the real clock (tests set it).
 	SSHClock transport.Clock
 
-	// WakeClock is the clock of the watcher that notices the computer
-	// waking (see watchWake): its Now and NewTicker are used, and the zero
-	// one is the real clock (tests set it).
-	WakeClock transport.Clock
-
 	// WebPort is a port of the proxy's own that always serves Nearhost's
 	// page at https://localhost:<port>. 0 means none. If the port is taken
 	// when the engine starts, the proxy runs without the page.
@@ -214,16 +209,6 @@ type Engine struct {
 	// refreshSites gives the proxy the sites again when the Docker networks
 	// change, unless another engine has taken the proxy over. Tests wrap it.
 	refreshSites func(sites []proxy.Site) error
-	// renewSites gives the proxy the sites again after the wall clock
-	// jumped ahead, so certificates that came due meanwhile are renewed,
-	// and reports whether the proxy restarted. It is the proxy's Renew;
-	// tests replace it.
-	renewSites func(sites []proxy.Site) (bool, error)
-	// wakeEvery is how often the wake watcher reads the wall clock.
-	wakeEvery time.Duration
-	// wakeWork counts the wake watcher, which runs under ctx. Shutdown
-	// waits for it.
-	wakeWork sync.WaitGroup
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
 	ctx     context.Context
@@ -346,8 +331,6 @@ func New(cfg *config.Config, opts Options) *Engine {
 		_, err := e.proxy.ApplyIfRunning(sites)
 		return err
 	}
-	e.renewSites = e.proxy.Renew
-	e.wakeEvery = wakeCheckEvery
 	e.docker.source = &dockernet.Source{Logf: e.logDocker}
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	e.setConfigLocked(cloneConfig(cfg), nil)
@@ -560,8 +543,6 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.mu.Unlock()
 	e.passWork.Add(1) // under lifeMu, so before Shutdown can wait
 	go e.watchPassthroughs(e.ctx)
-	// After the first apply, so a jump before it renews nothing.
-	e.startWakeWatch()
 	e.bus.Publish(Event{Message: "proxy ready"})
 	return nil
 }
@@ -750,8 +731,6 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	// The last site that opted in is gone, which ends the refresh loop, and
 	// e.stop ended it in any case.
 	e.dockerLoops.Wait()
-	// e.stop ended the wake watcher; a renewal it began has returned.
-	e.wakeWork.Wait()
 	// Caddy and its log sink are process-global. If another engine has taken
 	// the proxy over since Start, both are that engine's now: leave them.
 	if started && e.proxy.Running() {

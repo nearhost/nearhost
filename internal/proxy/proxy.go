@@ -11,10 +11,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
-	"github.com/caddyserver/certmagic"
-	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 )
@@ -98,70 +95,6 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		_ = releasePorts(p.ports(), releaseWait)
 	}
 	return true, nil
-}
-
-// Renew restarts Caddy with the given sites if this Proxy owns it and a
-// certificate it serves for one of their exact hosts, or for localhost, is
-// due for renewal, and reports whether it did. Caddy renews certificates on
-// a timer, which does not run while the computer sleeps, so after a long
-// sleep it serves an expired certificate until the timer next fires. Loading
-// the same config again does not help: Caddy skips an unchanged config, and
-// a forced reload keeps the certificates it has cached. A restart empties
-// that cache, and Caddy checks each certificate as it loads it, renewing
-// the ones due. The restart drops open connections and, for a moment,
-// refuses new ones. Certificates of patterns are issued on demand and Caddy
-// renews those at the handshake, so they are not checked.
-func (p *Proxy) Renew(sites []Site) (bool, error) {
-	cfg, err := BuildConfig(sites, p.opts)
-	if err != nil {
-		return false, err
-	}
-	caddyMu.Lock()
-	defer caddyMu.Unlock()
-	if owner != p || !certsDue(sites, time.Now()) {
-		return false, nil
-	}
-	if err := caddy.Stop(); err != nil {
-		return false, fmt.Errorf("restart proxy: %w", err)
-	}
-	if listening {
-		// Caddy releases the ports in goroutines it does not wait for.
-		_ = releasePorts(p.ports(), releaseWait)
-	}
-	freshenIntermediate(p.opts.StorageRoot)
-	if err := caddy.Load(cfg, true); err != nil {
-		owner, listening = nil, false
-		return false, fmt.Errorf("restart proxy: %w", err)
-	}
-	listening = listens(sites, p.opts)
-	return true, nil
-}
-
-// certsDue reports whether a certificate cached for an exact host of sites,
-// or for localhost, is in the last third of its life at now, where Caddy's
-// timer renews it, or past it.
-func certsDue(sites []Site, now time.Time) bool {
-	hosts := []string{homeHost}
-	for _, s := range sites {
-		for _, h := range s.Hosts {
-			if !hostname.IsPattern(h) {
-				hosts = append(hosts, h)
-			}
-		}
-	}
-	for _, h := range hosts {
-		for _, c := range caddytls.AllMatchingCertificates(h) {
-			if c.Leaf == nil {
-				continue
-			}
-			life := c.Leaf.NotAfter.Sub(c.Leaf.NotBefore)
-			window := time.Duration(float64(life) * certmagic.DefaultRenewalWindowRatio)
-			if !now.Before(c.Leaf.NotAfter.Add(-window)) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // freshenIntermediate removes the local CA's intermediate from storage when

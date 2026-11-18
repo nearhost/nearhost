@@ -21,7 +21,9 @@ import (
 
 // Every certificate policy issues week-long leaves, and the CA's
 // intermediates last 30 days, long enough to sign them: the internal issuer
-// shortens a leaf to what is left of its intermediate.
+// shortens a leaf to what is left of its intermediate. Caddy checks for
+// renewals every minute, so a computer that wakes is served a due
+// certificate for a minute at most.
 func TestBuildConfigCertificateLifetimes(t *testing.T) {
 	raw, err := BuildConfig([]Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "*.local.x.io"}, Upstream: "127.0.0.1:1"},
@@ -44,6 +46,9 @@ func TestBuildConfigCertificateLifetimes(t *testing.T) {
 	}
 	if got := dig(t, cfg, "apps", "pki", "certificate_authorities", "local", "intermediate_lifetime"); got != "720h" {
 		t.Errorf("intermediate_lifetime = %v, want 720h", got)
+	}
+	if got := dig(t, cfg, "apps", "tls", "automation", "renew_interval"); got != "1m" {
+		t.Errorf("renew_interval = %v, want 1m", got)
 	}
 
 	// The config EnsureCA loads, with no sites, makes the CA's first
@@ -151,62 +156,52 @@ func writeIntermediate(t *testing.T, storage string, life time.Duration) *x509.C
 	return cert
 }
 
-// Caddy renews a certificate on its own timer, which a sleeping computer
-// stops. Renew, called after a wake, serves a new certificate once the one
-// served is due for renewal, and leaves a fresh one alone.
-func TestRenewReplacesACertificateDueForRenewal(t *testing.T) {
-	prev := leafLifetime
-	leafLifetime = 12 * time.Second
-	t.Cleanup(func() { leafLifetime = prev })
+// Caddy's own check replaces a certificate that comes due, with no restart:
+// a connection opened before the renewal still carries requests after it.
+func TestCaddyRenewsADueCertificateWithoutARestart(t *testing.T) {
+	prevLife, prevEvery := leafLifetime, renewInterval
+	// Caddy renews a certificate with less than 5 checks' worth of life
+	// left: this one after 3 s.
+	leafLifetime, renewInterval = 8*time.Second, time.Second
+	t.Cleanup(func() { leafLifetime, renewInterval = prevLife, prevEvery })
 
 	up := upstream(t, "a")
-	sites := []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}}
-	h := startProxy(t, sites)
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
 	h.waitCerts(t, "a.test")
 	first := h.leaf(t, "a.test")
 	if got := first.NotAfter.Sub(first.NotBefore); got != leafLifetime {
 		t.Fatalf("leaf lasts %v, want %v", got, leafLifetime)
 	}
 
-	if renewed, err := h.p.Renew(sites); err != nil || renewed {
-		t.Fatalf("Renew of a fresh certificate = %v, %v; want false, nil", renewed, err)
+	// One kept-alive connection, opened before the renewal.
+	kept := h.client("a.test", true)
+	resp, body := h.getEventually(kept, "a.test", "/hello")
+	if resp.StatusCode != 200 || body != "hello from a" {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
 	}
-	if got := h.leaf(t, "a.test"); got.SerialNumber.Cmp(first.SerialNumber) != 0 {
-		t.Fatal("a fresh certificate was replaced")
-	}
+	opened := resp.TLS.PeerCertificates[0]
 
-	// Into the last third of its life, where Caddy's timer would renew it.
-	time.Sleep(time.Until(first.NotAfter.Add(-leafLifetime / 4)))
-	renewed, err := h.p.Renew(sites)
-	if err != nil || !renewed {
-		t.Fatalf("Renew of a certificate due for renewal = %v, %v; want true, nil", renewed, err)
-	}
-	if !h.p.Running() {
-		t.Fatal("the proxy is not running after Renew")
-	}
 	var next *x509.Certificate
-	waitUntil(t, 10*time.Second, func() bool {
+	waitUntil(t, 8*time.Second, func() bool {
 		state, err := h.handshake(t, "a.test")
 		if err != nil || len(state.PeerCertificates) == 0 {
 			return false
 		}
 		next = state.PeerCertificates[0]
 		return next.SerialNumber.Cmp(first.SerialNumber) != 0
-	}, "a new certificate for a.test")
+	}, "Caddy to renew the certificate for a.test")
 	if !next.NotAfter.After(first.NotAfter) {
 		t.Errorf("the new certificate ends %v, not after the old one's %v", next.NotAfter, first.NotAfter)
 	}
-	resp, body := h.getEventually(h.client("a.test", false), "a.test", "/hello")
-	if resp.StatusCode != 200 || body != "hello from a" {
-		t.Fatalf("after Renew: status=%d body=%q", resp.StatusCode, body)
-	}
-}
 
-// Renew on a Proxy that does not own Caddy does nothing.
-func TestRenewLeavesAnotherOwnersProxyAlone(t *testing.T) {
-	p := New(Options{StorageRoot: t.TempDir()})
-	if renewed, err := p.Renew(nil); err != nil || renewed {
-		t.Fatalf("Renew = %v, %v; want false, nil", renewed, err)
+	// The same connection: its certificate is the one it opened with.
+	resp, err := kept.Get(h.url("a.test", "/hello"))
+	if err != nil {
+		t.Fatalf("the connection opened before the renewal: %v", err)
+	}
+	resp.Body.Close()
+	if !resp.TLS.PeerCertificates[0].Equal(opened) {
+		t.Error("the request went over a new connection: the old one was dropped")
 	}
 }
 

@@ -34,6 +34,13 @@ var leafLifetime = 168 * time.Hour
 // The root keeps Caddy's default of 10 years.
 const intermediateLifetime = 720 * time.Hour
 
+// renewInterval is how often Caddy checks its certificates for renewal,
+// where its default is 10 minutes. Its timer stands still while the computer
+// sleeps, so after a wake a certificate that came due, or expired, is served
+// until the next check: a minute at most. A check scans the certificates in
+// memory and reads storage only for one that is due. Tests shorten it.
+var renewInterval = time.Minute
+
 // caddyDuration writes d as Caddy reads a duration: 168h, 30s.
 func caddyDuration(d time.Duration) string {
 	s := d.String()
@@ -564,7 +571,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			"issuers":  []any{internalIssuer()},
 		})
 	}
-	automation := map[string]any{"policies": policies}
+	automation := map[string]any{"policies": policies, "renew_interval": caddyDuration(renewInterval)}
 	if len(patterns) > 0 {
 		// A certificate's wildcard can only be its leftmost label, so a
 		// pattern with * anywhere else, such as internal.*.local.example.io,
