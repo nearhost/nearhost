@@ -32,7 +32,7 @@ type service struct {
 // the shell and .env alone: Compose fills in the file from those, never
 // .env.local, so a mount that needs .env.local is not one. A value with a
 // variable that has no value stays as written. A file whose "<<" merges nest
-// deeper than maxMergeDepth, or repeat past maxMergeVisits, gives
+// deeper than maxMergeDepth, or repeat past maxMergeLookups, gives
 // errComposeTooDeep.
 func composeServices(data []byte, env, dotEnv map[string]string) ([]service, error) {
 	var root yaml.Node
@@ -167,28 +167,29 @@ func resolve(n *yaml.Node) *yaml.Node {
 // merge one another must not run doctor's walk on and on.
 const maxMergeDepth = 64
 
-// maxMergeVisits is how many mappings a walk of one Compose file looks at.
-// Merges that repeat an anchor, each level merging the one before twice,
-// double the walk at every level, so depth alone does not bound it.
-const maxMergeVisits = 10000
+// maxMergeLookups is how many lookups a walk of one Compose file makes,
+// each mapGet or mapPairs on a mapping counting one, found or not. Merges
+// that repeat an anchor, each level merging the one before twice, double
+// the walk at every level, so depth alone does not bound it.
+const maxMergeLookups = 100000
 
 // errComposeTooDeep is composeServices' error for a Compose file whose
-// merges nest deeper than maxMergeDepth or repeat past maxMergeVisits.
+// merges nest deeper than maxMergeDepth or repeat past maxMergeLookups.
 var errComposeTooDeep = errors.New("the compose file nests or repeats << merges too much to check")
 
 // walker walks the nodes of one Compose file. It follows "<<" merge entries
-// at most maxMergeDepth deep and looks at no more than maxMergeVisits
-// mappings, and records that it stopped at either.
+// at most maxMergeDepth deep and makes no more than maxMergeLookups
+// lookups, and records that it stopped at either.
 type walker struct {
-	visits  int
+	lookups int
 	tooDeep bool
 }
 
-// enter counts a visit to a mapping reached through depth merges, and
+// enter counts a lookup in a mapping reached through depth merges, and
 // reports whether the walk may go on.
 func (w *walker) enter(depth int) bool {
-	w.visits++
-	if w.tooDeep || depth > maxMergeDepth || w.visits > maxMergeVisits {
+	w.lookups++
+	if w.tooDeep || depth > maxMergeDepth || w.lookups > maxMergeLookups {
 		w.tooDeep = true
 		return false
 	}

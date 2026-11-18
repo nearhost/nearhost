@@ -16,7 +16,7 @@ func TestDirReaderRefusesALargeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := DirReader{Root: dir}.ReadFile(".env")
-	if err == nil || err.Error() != ".env is larger than 1 MiB" {
+	if err == nil || err.Error() != ".env is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -48,7 +48,7 @@ func (e *endless) Read(p []byte) (int, error) {
 func TestReadLimitedStopsAFileThatKeepsGoing(t *testing.T) {
 	r := &endless{}
 	_, err := ReadLimited(".env", r)
-	if err == nil || err.Error() != ".env is larger than 1 MiB" {
+	if err == nil || err.Error() != ".env is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Fatalf("err = %v", err)
 	}
 	if r.n > MaxProjectFile+64<<10 {
@@ -116,13 +116,13 @@ func TestARefusedFileIsNamedOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := Discover(DirReader{Root: dir}, Options{})
-		if err == nil || err.Error() != name+" is larger than 1 MiB" {
+		if err == nil || err.Error() != name+" is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
 	m := newMemo(DirReader{Root: t.TempDir()})
 	m.fail("vite.config.js", tooLarge("vite.config.js"))
-	if m.err == nil || m.err.Error() != "vite.config.js is larger than 1 MiB" {
+	if m.err == nil || m.err.Error() != "vite.config.js is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Errorf("memo: err = %v", m.err)
 	}
 }
@@ -131,7 +131,7 @@ func TestReadErrorNamesOtherErrors(t *testing.T) {
 	if got := ReadError(".env", errors.New("permission denied")).Error(); got != "read .env: permission denied" {
 		t.Errorf("got %q", got)
 	}
-	if got := ReadError(".env.local", tooLarge(".env")).Error(); got != "read .env.local: .env is larger than 1 MiB" {
+	if got := ReadError(".env.local", tooLarge(".env")).Error(); got != "read .env.local: .env is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Errorf("got %q", got)
 	}
 }

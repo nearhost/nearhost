@@ -66,7 +66,7 @@ func TestSFTPReaderRefusesALargeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := NewSFTPReader(client, root).ReadFile(".env")
-	if err == nil || err.Error() != ".env is larger than 1 MiB" {
+	if err == nil || err.Error() != ".env is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -38,7 +38,7 @@ func CheckFile(name string, info fs.FileInfo) error {
 	case info.IsDir():
 		return &fs.PathError{Op: "read", Path: name, Err: syscall.EISDIR}
 	case !info.Mode().IsRegular():
-		return &FileError{Name: name, Problem: "is not a regular file"}
+		return &FileError{Name: name, Problem: "is not a regular file, so Nearhost did not read it."}
 	case info.Size() > MaxProjectFile:
 		return tooLarge(name)
 	}
@@ -59,14 +59,14 @@ func ReadLimited(name string, r io.Reader) ([]byte, error) {
 }
 
 func tooLarge(name string) error {
-	return &FileError{Name: name, Problem: "is larger than 1 MiB"}
+	return &FileError{Name: name, Problem: "is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it."}
 }
 
 // FileError is a project file a FileReader refuses to read. Its message
 // names the file, so ReadError does not name it again.
 type FileError struct {
 	Name    string // the file, relative to the project
-	Problem string // what is wrong with it, such as "is not a regular file"
+	Problem string // what is wrong with it and what to do, after the name
 }
 
 func (e *FileError) Error() string { return e.Name + " " + e.Problem }

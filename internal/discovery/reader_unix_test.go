@@ -5,14 +5,17 @@ package discovery
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
 )
 
-// within runs read and fails the test binary when it has not returned by
-// the deadline. A read that runs away on /dev/zero or waits on a FIFO is
-// stopped there instead of filling memory or hanging the run.
+// within runs read and stops the test binary when it has not returned
+// within 500 ms, or when the heap passes 64 MiB while it runs. A read that
+// runs away on /dev/zero or waits on a FIFO is stopped there instead of
+// filling a shared machine's memory or hanging the run. The heap is checked
+// every 5 ms, and io.ReadAll at most doubles its buffer between checks.
 func within(t *testing.T, read func() ([]byte, error)) ([]byte, error) {
 	t.Helper()
 	type result struct {
@@ -24,11 +27,22 @@ func within(t *testing.T, read func() ([]byte, error)) ([]byte, error) {
 		data, err := read()
 		done <- result{data, err}
 	}()
-	select {
-	case r := <-done:
-		return r.data, r.err
-	case <-time.After(2 * time.Second):
-		panic(t.Name() + ": the read did not return; it read a device or waited on a FIFO")
+	deadline := time.After(500 * time.Millisecond)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case r := <-done:
+			return r.data, r.err
+		case <-deadline:
+			panic(t.Name() + ": the read did not return; it read a device or waited on a FIFO")
+		case <-tick.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > 64<<20 {
+				panic(t.Name() + ": the read passed 64 MiB; it read a device")
+			}
+		}
 	}
 }
 
@@ -38,11 +52,14 @@ func TestDirReaderRefusesALinkToADevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := within(t, func() ([]byte, error) { return DirReader{Root: dir}.ReadFile(".env") })
-	if err == nil || err.Error() != ".env is not a regular file" {
+	if err == nil || err.Error() != ".env is not a regular file, so Nearhost did not read it." {
 		t.Fatalf("err = %v", err)
 	}
-	_, err = Discover(DirReader{Root: dir}, Options{})
-	if err == nil || err.Error() != ".env is not a regular file" {
+	_, err = within(t, func() ([]byte, error) {
+		_, err := Discover(DirReader{Root: dir}, Options{})
+		return nil, err
+	})
+	if err == nil || err.Error() != ".env is not a regular file, so Nearhost did not read it." {
 		t.Fatalf("Discover: err = %v", err)
 	}
 }
@@ -53,7 +70,7 @@ func TestDirReaderDoesNotOpenAFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := within(t, func() ([]byte, error) { return DirReader{Root: dir}.ReadFile(".env") })
-	if err == nil || err.Error() != ".env is not a regular file" {
+	if err == nil || err.Error() != ".env is not a regular file, so Nearhost did not read it." {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -273,12 +273,21 @@ func (r *readLog) ReadFile(name string) ([]byte, error) {
 // An env_file outside the project is never read: the Compose file arrives
 // with the repository and must not point doctor at the rest of the machine.
 func TestEnvFileOutsideTheProjectIsNotRead(t *testing.T) {
-	const compose = "services:\n  worker:\n    env_file:\n      - ../../x\n      - /etc/x\n      - sub/../../y\n"
+	const compose = "services:\n  worker:\n    env_file:\n      - ../../x\n      - /etc/x\n      - sub/../../y\n" +
+		"      - '..\\..\\x'\n      - 'C:\\x'\n      - 'c:x'\n      - '\\\\host\\share\\x'\n"
+	const env = "CALLBACK=https://api.local.x.io/hook\n"
 	r := &readLog{files: files{
 		"docker-compose.yml": compose,
-		"../../x":            "CALLBACK=https://api.local.x.io/hook\n",
-		"/etc/x":             "CALLBACK=https://api.local.x.io/hook\n",
-		"../y":               "CALLBACK=https://api.local.x.io/hook\n",
+		"../../x":            env,
+		"/etc/x":             env,
+		"../y":               env,
+		`..\..\x`:            env,
+		"C:/x":               env,
+		`C:\x`:               env,
+		"c:x":                env,
+		"//host/share/x":     env,
+		"/host/share/x":      env,
+		`\\host\share\x`:     env,
 	}}
 	in := Input{Project: dockerProject(), Added: true, Files: r, GOOS: "linux"}
 	got := Check(context.Background(), in)
@@ -286,7 +295,7 @@ func TestEnvFileOutsideTheProjectIsNotRead(t *testing.T) {
 		t.Errorf("a file outside the project was used: %+v", got)
 	}
 	for _, name := range r.read {
-		if strings.HasPrefix(name, "..") || strings.HasPrefix(name, "/") {
+		if name != "docker-compose.yml" && name != ".env" && name != ".env.local" && name != ".nearhostrc" {
 			t.Errorf("read %s, outside the project", name)
 		}
 	}
@@ -327,7 +336,7 @@ func TestComposeNestedWithinTheLimit(t *testing.T) {
 
 // Merges that repeat an anchor double the walk at each level, so 30 levels
 // stay under the depth limit and would still never finish. The walk stops
-// at its visit budget and says so.
+// at its lookup budget and says so.
 func TestComposeRepeatedMergesStop(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")

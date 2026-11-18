@@ -127,13 +127,23 @@ func serviceReferences(in Input, s service, projectEnv map[string]string) []stri
 // insideProject cleans p, a path from the Compose file, and reports whether
 // it stays inside the project. One that leaves it is never read: the
 // Compose file comes with the repository, and must not point doctor at
-// files elsewhere on the machine.
+// files elsewhere on the machine. A backslash counts as a separator and a
+// drive (C:) or UNC start (\\host) is refused on every OS, as a file
+// written on Windows may be checked anywhere.
 func insideProject(p string) (string, bool) {
+	p = strings.ReplaceAll(p, `\`, "/")
+	if len(p) >= 2 && p[1] == ':' && isASCIILetter(p[0]) {
+		return "", false
+	}
 	p = path.Clean(p)
 	if path.IsAbs(p) || p == ".." || strings.HasPrefix(p, "../") {
 		return "", false
 	}
 	return p, true
+}
+
+func isASCIILetter(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
 // composeDepthFinding reports a Compose file whose << merges nest deeper,

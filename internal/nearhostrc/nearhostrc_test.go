@@ -285,7 +285,7 @@ func TestReadNamesARefusedFileOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := Read(discovery.DirReader{Root: dir})
-	if err == nil || err.Error() != ".nearhostrc is larger than 1 MiB" {
+	if err == nil || err.Error() != ".nearhostrc is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
 		t.Fatalf("err = %v", err)
 	}
 }
