@@ -975,10 +975,30 @@ func listPath(parent string, windowsLocal bool) string {
 		return "."
 	case !windowsLocal:
 		return parent
-	case strings.HasPrefix(parent, `~\`) || strings.HasPrefix(parent, "~/"):
-		return "~/" + strings.ReplaceAll(parent[2:], `\`, "/")
+	case isTildePath(parent):
+		return tildePath(parent)
 	}
 	return strings.ReplaceAll(parent, "/", `\`)
+}
+
+// isTildePath reports whether p is ~ or starts with ~ and a separator.
+func isTildePath(p string) bool {
+	return p == "~" || strings.HasPrefix(p, `~\`) || strings.HasPrefix(p, "~/")
+}
+
+// tildePath is a Windows path that starts with ~ in the form the local
+// files expand, ~/ and slashes, as they do not expand ~\.
+func tildePath(p string) string {
+	if p == "~" {
+		return p
+	}
+	return "~/" + strings.ReplaceAll(p[2:], `\`, "/")
+}
+
+// hiddenWindowsDir reports whether d is a system folder of a drive root that
+// a listing of the laptop's own files leaves out.
+func hiddenWindowsDir(d string) bool {
+	return strings.EqualFold(d, "$Recycle.Bin") || strings.EqualFold(d, "System Volume Information")
 }
 
 // hasNamePrefix reports whether the directory name d starts with part.
@@ -1038,7 +1058,8 @@ func (f *projectForm) candidates() []string {
 	}
 	var found []string
 	for _, d := range l.dirs {
-		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(part, ".")
+		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(part, ".") ||
+			f.winLocal() && hiddenWindowsDir(d)
 		if hasNamePrefix(d, part, f.winLocal()) && !hidden {
 			found = append(found, d)
 		}
@@ -1106,6 +1127,9 @@ func (f *projectForm) resolve() tea.Cmd {
 	f.seq = nextSeq()
 	f.busy, f.err, f.listNote = "Checking "+clean(f.path.value)+"…", "", ""
 	seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
+	if f.winLocal() && isTildePath(p) {
+		p = tildePath(p)
+	}
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		resolved, err := files.Resolve(ctx, p)
 		return resolvedMsg{seq, resolved, err == nil && b.RegistryQuestion(), err}

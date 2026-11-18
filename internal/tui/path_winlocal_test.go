@@ -13,6 +13,13 @@ type dirLister struct {
 	ServerFiles
 	dirs  map[string][]string
 	asked []string
+	// resolved is what Resolve was asked for.
+	resolved []string
+}
+
+func (d *dirLister) Resolve(_ context.Context, p string) (string, error) {
+	d.resolved = append(d.resolved, p)
+	return p, nil
 }
 
 func (d *dirLister) ListDirs(_ context.Context, dir string) ([]string, error) {
@@ -205,5 +212,32 @@ func TestShortHome(t *testing.T) {
 		if got := shortHome(c.root, c.home, c.win); got != c.want {
 			t.Errorf("shortHome(%q, %q, %v) = %q, want %q", c.root, c.home, c.win, got, c.want)
 		}
+	}
+}
+
+// Submitting the path hands the local files a ~ they expand: ~/ and slashes,
+// on a Windows laptop's own files only.
+func TestResolveTranslatesTildeOnWindowsLocal(t *testing.T) {
+	for _, c := range []struct {
+		srv, typed, want string
+	}{
+		{config.LocalServer, `~\code\`, "~/code/"},
+		{config.LocalServer, "~/code", "~/code"},
+		{config.LocalServer, "~", "~"},
+		{config.LocalServer, `C:\Users\me\app`, `C:\Users\me\app`},
+		{"mini", `~\code`, `~\code`},
+	} {
+		l := &dirLister{}
+		f := winForm(c.srv, c.typed, l)
+		f.b = &fakeBackend{}
+		f.resolve()()
+		if len(l.resolved) != 1 || l.resolved[0] != c.want {
+			t.Errorf("%s %q: Resolve got %q, want %q", c.srv, c.typed, l.resolved, c.want)
+		}
+	}
+	f := winForm(config.LocalServer, "C:\\", &dirLister{})
+	f.listings[`C:\`] = listing{true, []string{"$Recycle.Bin", "System Volume Information", "Users"}, nil}
+	if c := f.candidates(); len(c) != 1 || c[0] != "Users" {
+		t.Errorf("drive root candidates = %q", c)
 	}
 }
