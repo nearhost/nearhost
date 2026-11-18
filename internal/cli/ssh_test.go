@@ -210,8 +210,9 @@ func TestAddRemoteOverSFTP(t *testing.T) {
 	}
 }
 
-// `add` does not handle signals: Ctrl-C ends it at once. Its master and SFTP
-// process therefore stay in its process group and end with it. Both
+// `add` catches only the first Ctrl-C: a second one ends it at once. Its
+// master and SFTP process therefore stay in its process group and end with
+// it. Both
 // transports have the setting (Windows has process groups too, and puts a
 // background ssh in a new one), so this reads it from whichever transport
 // the OS gets.

@@ -17,7 +17,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -139,6 +141,11 @@ func run(args []string) int {
 		argv := []string{server, "-R"}
 		if home := os.Getenv("FAKE_SSH_SFTP_HOME"); home != "" {
 			argv = append(argv, "-d", home)
+		}
+		// $FAKE_SSH_SFTP_HOLD names a file: with it set, the subsystem stops
+		// answering at the first read of a file (see serveUntilRead).
+		if hold := os.Getenv("FAKE_SSH_SFTP_HOLD"); hold != "" {
+			return serveUntilRead(argv, hold, parentGone)
 		}
 		return execServer(argv)
 	}
@@ -594,6 +601,55 @@ func touch(path string) {
 	if f, err := os.Create(path); err == nil {
 		f.Close()
 	}
+}
+
+// sftpRead is the type of an SFTP request to read from an open file.
+const sftpRead = 5
+
+// serveUntilRead runs the SFTP server argv as a child and passes the client's
+// requests on to it, packet by packet, up to the first read of a file. That
+// read and everything after it are held: it writes this process's pid to the
+// file hold and answers nothing more, as a server that stopped answering in
+// the middle of a read would, until it is killed or its parent ends. The
+// server's answers go straight to this process's output.
+func serveUntilRead(argv []string, hold string, parentGone func() bool) int {
+	server := exec.Command(argv[0], argv[1:]...)
+	server.Stdout, server.Stderr = os.Stdout, os.Stderr
+	requests, err := server.StdinPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake ssh: %v\n", err)
+		return 255
+	}
+	if err := server.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "fake ssh: %s: %v\n", argv[0], err)
+		return 255
+	}
+	go func() {
+		for {
+			// A packet is its length (four bytes, big-endian), then that
+			// many bytes, the first of which is its type.
+			var size [4]byte
+			if _, err := io.ReadFull(os.Stdin, size[:]); err != nil {
+				requests.Close()
+				return
+			}
+			body := make([]byte, binary.BigEndian.Uint32(size[:]))
+			if _, err := io.ReadFull(os.Stdin, body); err != nil {
+				requests.Close()
+				return
+			}
+			if len(body) > 0 && body[0] == sftpRead {
+				os.WriteFile(hold, []byte(strconv.Itoa(os.Getpid())), 0o644)
+				return
+			}
+			requests.Write(size[:])
+			requests.Write(body)
+		}
+	}()
+	for !parentGone() {
+		time.Sleep(100 * time.Millisecond)
+	}
+	return 255
 }
 
 // holdStderrArg is the first argument of the fake run as a stderr holder.

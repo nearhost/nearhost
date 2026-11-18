@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -24,6 +25,9 @@ import (
 type sshClient struct {
 	path string
 	env  []string
+	// runDirParent is where a private session makes its run directory; ""
+	// is shortTempDir(). Tests point it at a directory they can look in.
+	runDirParent string
 }
 
 const (
@@ -92,12 +96,17 @@ func shortTempDir() string {
 // user only, and its socket has a fixed short name: the path does not grow
 // with the server's name.
 func (c sshClient) privateSession(srv config.Server) (transport.Transport, string, func() error, error) {
-	runDir, err := os.MkdirTemp(shortTempDir(), "nh-")
+	parent := c.runDirParent
+	if parent == "" {
+		parent = shortTempDir()
+	}
+	runDir, err := os.MkdirTemp(parent, "nh-")
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("create run directory: %w", err)
 	}
-	// `add` does not handle signals, so Ctrl-C ends it on the spot. Its ssh
-	// stays in its process group and ends with it.
+	// Its ssh stays in this process's group, so the terminal's Ctrl-C reaches
+	// it as well. `add` ends the session itself on a first interrupt; a
+	// second one ends `add` on the spot, and this ssh ends with it.
 	sess := transport.New(transport.Config{Name: "add", Host: srv.SSHHost, RunDir: runDir, SSHPath: c.path, Env: c.env, Foreground: true})
 	return sess, runDir, func() error {
 		sess.Stop()
@@ -193,17 +202,20 @@ func connectOnce(ctx context.Context, sess transport.Transport) error {
 
 // openRemote opens projectPath on srv for reading over SFTP, on an SSH
 // connection of its own that the returned function ends. It also returns the
-// directory it opened, as projectPathOn finds it.
+// directory it opened, as projectPathOn finds it. The connection also ends,
+// and its run directory goes, when ctx does: a read that waits on the server
+// then fails at once.
 func (c sshClient) openRemote(ctx context.Context, srv config.Server, projectPath string) (discovery.FileReader, string, func() error, error) {
 	files, err := c.openServer(ctx, srv, "add the project again")
 	if err != nil {
 		return nil, "", nil, err
 	}
+	end := endWithContext(ctx, files.close)
 	resolved, err := files.resolve(projectPath)
 	if err != nil {
-		return nil, "", nil, errors.Join(err, files.close())
+		return nil, "", nil, errors.Join(err, end())
 	}
-	return files.reader(resolved), resolved, files.close, nil
+	return files.reader(resolved), resolved, end, nil
 }
 
 // openRemoteWritable is openRemote for a command that also writes into the
@@ -283,4 +295,17 @@ func projectPathOn(given, localHome string, remoteHome func() (string, error), i
 		}
 	}
 	return given, nil
+}
+
+// endWithContext returns end, made to run once, and runs it when ctx ends
+// before the caller calls it. A call made while that run is under way waits
+// for it and returns what it returned, so once the caller's call returns the
+// connection has ended and its run directory is gone either way.
+func endWithContext(ctx context.Context, end func() error) func() error {
+	once := sync.OnceValue(end)
+	stop := context.AfterFunc(ctx, func() { once() })
+	return func() error {
+		stop()
+		return once()
+	}
 }
