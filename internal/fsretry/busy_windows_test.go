@@ -26,3 +26,14 @@ func TestBusyKnowsAFileHeldOpen(t *testing.T) {
 		t.Error("a plain error is busy")
 	}
 }
+
+// Only a sharing violation is Sharing: access denied also comes from a
+// read-only file.
+func TestSharingIsOnlyASharingViolation(t *testing.T) {
+	if !Sharing(&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_SHARING_VIOLATION}) {
+		t.Error("a sharing violation is not Sharing")
+	}
+	if Sharing(&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_ACCESS_DENIED}) {
+		t.Error("access denied is Sharing")
+	}
+}
