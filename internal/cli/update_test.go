@@ -819,7 +819,7 @@ func TestUpdateEnv(t *testing.T) {
 func TestUpdateSaysWhenTheBinaryIsUnchanged(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true, installed: "0.5.0"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	want := "The update ran, but /usr/local/bin/nearhost is still 0.5.0. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
+	want := "The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " is still 0.5.0. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
 	if !strings.HasSuffix(out, want) || strings.Contains(out, "Updated") {
 		t.Fatalf("out %q, want it to end %q", out, want)
 	}
@@ -854,7 +854,7 @@ func TestUpdateMatchingVersionSaysUpdated(t *testing.T) {
 func TestUpdateSaysWhenTheNewBinaryDoesNotStart(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true, probeErr: errors.New("exec format error")}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	want := "The update ran, but /usr/local/bin/nearhost did not start: exec format error. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
+	want := "The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " did not start: exec format error. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
 	if !strings.HasSuffix(out, want) || strings.Contains(out, "still") || strings.Contains(out, "Updated") || exitCode(err, io.Discard) != 1 {
 		t.Fatalf("out %q, err %v; want it to end %q", out, err, want)
 	}
@@ -875,7 +875,7 @@ func TestUpdateHomebrewChecksTheLinkedBinary(t *testing.T) {
 	}
 	f := &fakeUpdate{latest: "0.6.0", exe: "/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost", goos: "darwin", installed: "0.5.0"}
 	out, _ := runUpdate(t, f, "0.5.0", "", "--yes")
-	if !strings.Contains(out, "The update ran, but /opt/homebrew/bin/nearhost is still 0.5.0. Run it again, or install by hand: brew upgrade --cask nearhost/tap/nearhost.") {
+	if !strings.Contains(out, "The update ran, but "+filepath.FromSlash("/opt/homebrew/bin/nearhost")+" is still 0.5.0. Run it again, or install by hand: brew upgrade --cask nearhost/tap/nearhost.") {
 		t.Fatalf("out %q", out)
 	}
 }
@@ -898,7 +898,7 @@ func TestUpdatePnpmChecksTheShimOnPath(t *testing.T) {
 	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/usr/local/bin/nearhost", installed: "0.4.0",
 		env: map[string]string{"PNPM_HOME": "/Users/me/Library/pnpm"}}
 	out, _ := runUpdate(t, f, "0.5.0", "", "--yes")
-	if !strings.Contains(out, "The update ran, but /usr/local/bin/nearhost is still 0.4.0. Run it again, or install by hand: pnpm add -g @nearhost/cli@latest. Another nearhost comes before pnpm's on PATH.") {
+	if !strings.Contains(out, "The update ran, but "+filepath.FromSlash("/usr/local/bin/nearhost")+" is still 0.4.0. Run it again, or install by hand: pnpm add -g @nearhost/cli@latest. Another nearhost comes before pnpm's on PATH.") {
 		t.Fatalf("out %q", out)
 	}
 	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/Users/me/Library/pnpm/nearhost", installed: "0.5.0",
