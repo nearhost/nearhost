@@ -12,3 +12,6 @@ import (
 func ownGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
+
+// joinJob does nothing: Unix has no job objects.
+func joinJob(*exec.Cmd) error { return nil }

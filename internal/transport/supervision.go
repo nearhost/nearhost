@@ -3,9 +3,31 @@ package transport
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"sync"
 	"time"
 )
+
+// startSSH starts cmd, an ssh, and on Windows puts it in the job that ends
+// it when nearhost ends. A failure to do that is logged: ssh still runs,
+// though it may outlive a nearhost that is killed.
+func (v *supervision) startSSH(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := joinJob(cmd); err != nil {
+		v.Logf("%s: ssh (pid %d) may outlive Nearhost: %v", v.Name, cmd.Process.Pid, err)
+	}
+	return nil
+}
+
+// runSSH is cmd.Run for an ssh, started with startSSH.
+func (v *supervision) runSSH(cmd *exec.Cmd) error {
+	if err := v.startSSH(cmd); err != nil {
+		return err
+	}
+	return cmd.Wait()
+}
 
 // supervision is the state and bookkeeping both transports share: the
 // connection's status and last error, the failed attempts and when the
