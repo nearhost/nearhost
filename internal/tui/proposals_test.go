@@ -169,6 +169,44 @@ func TestPOpensAProposalFromTheLogView(t *testing.T) {
 	}
 }
 
+// A p typed into the log's search is text: the log stays open, the search
+// holds what was typed, and the request keeps waiting, even when the rest
+// of the word comes after the request box's guard would have ended.
+func TestPInTheLogSearchStaysInTheSearch(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "l")
+	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
+	press(m, "/")
+	typeText(m, "p")
+	wait(m, askGuard)
+	typeText(m, "ending")
+	if m.logView == nil || m.form != nil || m.proposing != nil || len(m.waiting) != 1 {
+		t.Fatalf("log view %v, form %T, proposing %v, waiting %d", m.logView, m.form, m.proposing, len(m.waiting))
+	}
+	if got := m.logView.search.Value(); got != "pending" {
+		t.Errorf("search %q, want pending", got)
+	}
+	press(m, "enter") // the search is kept and no longer typed
+	settle(m, press(m, "p"))
+	wait(m, askGuard)
+	if m.logView != nil || m.proposing == nil {
+		t.Fatalf("p after the search: log view %v, proposing %v", m.logView, m.proposing)
+	}
+}
+
+// A p while the log asks whether to send a replay keeps the replay unsent
+// and the log open, as any other key there does.
+func TestPWhileTheLogConfirmsAReplayKeepsTheLog(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	press(m, "l")
+	propose(m, Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog"})
+	m.logView.confirm = 1
+	press(m, "p")
+	if m.logView == nil || m.logView.confirm != 0 || m.proposing != nil || len(m.waiting) != 1 {
+		t.Fatalf("log view %v, proposing %v, waiting %d", m.logView, m.proposing, len(m.waiting))
+	}
+}
+
 func TestTheServerPanelSaysWhetherAgentsReachNearhost(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	f.servers["mini"] = transport.StatusConnected

@@ -248,13 +248,15 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.form.update(k)
 	}
 	if m.logView != nil {
-		if s == "p" && len(m.waiting) > 0 {
+		// A p typed into the search, or answering the replay question, is
+		// the log's own.
+		if s == "p" && len(m.waiting) > 0 && !m.logView.searching && m.logView.confirm == 0 {
 			m.logView = nil // the request opens over the main screen
 			return m.nextAsked()
 		}
 		return m.logViewKey(k)
 	}
-	if m.showHelp && (s == "?" || s == "esc") {
+	if m.showHelp && !m.filtering && (s == "?" || s == "esc") {
 		m.showHelp = false
 		return nil
 	}

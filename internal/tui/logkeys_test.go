@@ -84,6 +84,30 @@ func TestPasteIntoFilter(t *testing.T) {
 	}
 }
 
+// With the help open, ? and esc typed in the sidebar filter act on the
+// filter, as they do with the help closed.
+func TestFilterUnderTheHelpTakesItsKeys(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	press(m, "?")
+	press(m, "/")
+	typeText(m, "a?")
+	if got := m.filter.Value(); got != "a?" || !m.filtering {
+		t.Fatalf("filter %q, filtering %v", got, m.filtering)
+	}
+	press(m, "esc")
+	if m.filtering || m.filter.Value() != "" || !m.showHelp {
+		t.Errorf("esc: filtering %v, filter %q, help %v", m.filtering, m.filter.Value(), m.showHelp)
+	}
+}
+
+// The log lists p, the key that opens a waiting request from it.
+func TestLogViewListsP(t *testing.T) {
+	m, _ := logModel(t, 5)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	press(m, "?")
+	wantScreen(t, m, "p      review request")
+}
+
 // A paste into a window too small stays out of the filter.
 func TestPasteIntoFilterWhileSmall(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))

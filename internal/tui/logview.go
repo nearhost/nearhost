@@ -429,6 +429,7 @@ var logViewKeys = []logKey{
 	{"log", "?", "keys"}, {"request", "c", "copy curl"}, {"request", "r", "replay"}, {"log", "esc", "back"},
 	{"move", "G", "follow"}, {"view", "w", "wrap"}, {"view", "v", "reveal cookies"}, {"move", "g", "top"},
 	{"move", "pgup/pgdn", "page"}, {"view", "shift+tab", "kind back"}, {"log", "q", "back"},
+	{"log", "p", "review request"},
 }
 
 // logFooterItems are the log's keys as footer items.
