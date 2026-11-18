@@ -377,3 +377,62 @@ func TestCanReplayShortBodies(t *testing.T) {
 		t.Errorf("an aborted body: %v", err)
 	}
 }
+
+// An HTTP/3 request gives no length and has a body object even when the
+// client sent no body. When nothing reads it, as when the forward is down
+// and the gate answers, a method that has no body as a rule is not marked
+// short and can be sent again; one that carries a body still is. A body
+// some of which the app read is short whatever the method.
+func TestCaptureUnknownLengthByMethod(t *testing.T) {
+	ClearCaptured()
+	t.Cleanup(ClearCaptured)
+	const upstream = "127.0.0.1:1"
+	t.Cleanup(func() { ForgetForward(upstream) })
+	down := &Gate{Upstream: upstream}
+	readSome := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		io.ReadFull(r.Body, make([]byte, 3))
+		w.WriteHeader(http.StatusOK)
+		return nil
+	})
+	for _, tc := range []struct {
+		method, body string
+		readSome     bool
+		short, never bool
+	}{
+		{method: "GET"},
+		{method: "HEAD"},
+		{method: "OPTIONS"},
+		{method: "DELETE"},
+		{method: "TRACE"},
+		{method: "CONNECT"},
+		{method: "POST", short: true, never: true},
+		{method: "PUT", short: true, never: true},
+		{method: "PATCH", short: true, never: true},
+		// Not told apart from no body: the lesser error is a replay
+		// without it.
+		{method: "DELETE", body: "payload"},
+		{method: "GET", body: "payload", readSome: true, short: true},
+		{method: "POST", body: "payload", readSome: true, short: true},
+	} {
+		uri := fmt.Sprintf("/%s-%d-%v", strings.ToLower(tc.method), len(tc.body), tc.readSome)
+		req := httptest.NewRequest(tc.method, uri, nil)
+		req.Body = io.NopCloser(strings.NewReader(tc.body))
+		req.ContentLength = -1
+		var next caddyhttp.Handler = caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+			return down.ServeHTTP(w, r, nil)
+		})
+		if tc.readSome {
+			next = readSome
+		}
+		if err := (&Capture{Alias: "a.test"}).ServeHTTP(httptest.NewRecorder(), req, next); err != nil {
+			t.Fatal(err)
+		}
+		e := keptFor(t, uri)
+		if e.ReqBodyShort != tc.short || e.ReqBodyNeverReached() != tc.never || e.ReqBodyAborted {
+			t.Errorf("%s: kept short=%v never=%v aborted=%v, %d bytes", uri, e.ReqBodyShort, e.ReqBodyNeverReached(), e.ReqBodyAborted, e.ReqBodySize)
+		}
+		if err := CanReplay(e); (err == nil) == tc.short {
+			t.Errorf("%s: CanReplay = %v", uri, err)
+		}
+	}
+}
