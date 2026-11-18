@@ -66,8 +66,13 @@ p + p { margin-top: 8px; }
     <span class="wordmark">nearhost</span>
   </div>
   <h1>{{.Project}} is not answering</h1>
+{{- if .Reconnecting}}
+  <p>Nearhost is reconnecting to {{.Server}}.</p>
+  <p>Reload once it is back.</p>
+{{- else}}
   <p>Nearhost is running. Nothing answered on port {{.Port}} on {{.Server}}.</p>
   <p>Start the app, then reload.</p>
+{{- end}}
 </main>
 </body>
 </html>

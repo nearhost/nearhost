@@ -40,7 +40,9 @@ func init() {
 // Nearhost's page saying so, with that status, in place of an empty body.
 // Any other request, and any other error, gets the bare status, as it would
 // with no error route. An app that answers with 502 itself is no error, so
-// its answer never reaches this handler.
+// its answer never reaches this handler. When the 502 is a gate's, because
+// the site's forward to its server is down, the page says Nearhost is
+// reconnecting to the server instead.
 //
 // It is a module of its own, rather than a static response in the config,
 // because a static response's body goes through Caddy's placeholders, which
@@ -58,8 +60,10 @@ type Down struct {
 	// handle only at debug level.
 	LogOnly bool `json:"log_only,omitempty"`
 
-	page   []byte
-	logger *zap.Logger
+	page []byte
+	// reconnecting is the page for a forward that is down (see Gate).
+	reconnecting []byte
+	logger       *zap.Logger
 }
 
 // CaddyModule implements caddy.Module.
@@ -70,8 +74,8 @@ func (Down) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision implements caddy.Provisioner. The page depends only on the
-// handler's fields, so it is rendered once per config load.
+// Provision implements caddy.Provisioner. The pages depend only on the
+// handler's fields, so they are rendered once per config load.
 func (d *Down) Provision(ctx caddy.Context) error {
 	d.logger = ctx.Logger()
 	if d.LogOnly {
@@ -81,24 +85,31 @@ func (d *Down) Provision(ctx caddy.Context) error {
 	if server == "" {
 		server = thisMachine
 	}
-	var buf bytes.Buffer
-	if err := downPage.Execute(&buf, struct {
-		Project string
-		Port    int
-		Server  string
-	}{d.Project, d.Port, server}); err != nil {
+	render := func(reconnecting bool) ([]byte, error) {
+		var buf bytes.Buffer
+		err := downPage.Execute(&buf, struct {
+			Project      string
+			Port         int
+			Server       string
+			Reconnecting bool
+		}{d.Project, d.Port, server, reconnecting})
+		return buf.Bytes(), err
+	}
+	var err error
+	if d.page, err = render(false); err != nil {
 		return err
 	}
-	d.page = buf.Bytes()
-	return nil
+	d.reconnecting, err = render(true)
+	return err
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error at
 // the level Caddy uses for a server with no error routes, since Caddy logs
 // an error that an error route handled only at debug level. Then it serves the page
 // for a 502, 503 or 504 to a GET or HEAD that accepts HTML and asks for no
-// upgrade, and passes anything else, and everything in LogOnly mode, to
-// next, which writes the bare status.
+// upgrade, the reconnecting one when a gate failed the request, and passes
+// anything else, and everything in LogOnly mode, to next, which writes the
+// bare status.
 func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	err, _ := r.Context().Value(caddyhttp.ErrorCtxKey).(error)
 	status := http.StatusInternalServerError
@@ -124,9 +135,13 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if d.LogOnly || !downStatus(status) || !wantsPage(r) {
 		return next.ServeHTTP(w, r)
 	}
+	page := d.page
+	if errors.Is(err, errForwardDown) {
+		page = d.reconnecting
+	}
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
-	hdr.Set("Content-Length", strconv.Itoa(len(d.page)))
+	hdr.Set("Content-Length", strconv.Itoa(len(page)))
 	hdr.Set("Content-Security-Policy", homeCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Cache-Control", "no-store")
@@ -134,7 +149,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	_, err = w.Write(d.page)
+	_, err = w.Write(page)
 	return err
 }
 

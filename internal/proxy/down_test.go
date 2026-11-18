@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -255,5 +256,113 @@ func TestDownLogOnlyLogsAndLeavesStatusBare(t *testing.T) {
 		if len(got) != 1 || got[0].Level != want || got[0].Message != "it broke" || got[0].ContextMap()["status"] != int64(status) {
 			t.Errorf("status %d: logged %+v", status, got)
 		}
+	}
+}
+
+// A request a gate failed, because the site's forward is down, gets the
+// page that says Nearhost is reconnecting, with the same headers.
+func TestDownSaysReconnectingWhenTheForwardIsDown(t *testing.T) {
+	d := &Down{Project: "shop", Port: 3000, Server: "mini"}
+	if err := d.Provision(caddy.Context{Context: context.Background()}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	d.logger = zap.NewNop()
+	req := navigation("GET")
+	req = req.WithContext(context.WithValue(req.Context(), caddyhttp.ErrorCtxKey, caddyhttp.Error(502, errForwardDown)))
+	w := httptest.NewRecorder()
+	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
+		t.Error("the page passed the request on")
+		return nil
+	})
+	if err := d.ServeHTTP(w, req, next); err != nil {
+		t.Fatalf("ServeHTTP: %v", err)
+	}
+	body := w.Body.String()
+	if w.Code != 502 {
+		t.Errorf("code %d", w.Code)
+	}
+	for _, want := range []string{
+		"<h1>shop is not answering</h1>",
+		"<p>Nearhost is reconnecting to mini.</p>",
+		"<p>Reload once it is back.</p>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Nothing answered") || strings.Contains(body, "Start the app") || strings.Contains(body, "<script") {
+		t.Errorf("body has the other variant's copy or a script:\n%s", body)
+	}
+	if hdr := w.Header(); hdr.Get("Content-Security-Policy") != homeCSP || hdr.Get("Cache-Control") != "no-store" ||
+		hdr.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Errorf("headers %v", hdr)
+	}
+}
+
+// TestGateEndToEnd runs the proxy with a forwarded site whose forward is
+// down and a site that is Down: both answer 502 without dialling the
+// listener on their port, a browser getting the reconnecting page. Once the
+// forward is said to be up, the forwarded site proxies to it at once, with
+// no reload; said down again, it stops.
+func TestGateEndToEnd(t *testing.T) {
+	var dialled atomic.Int32
+	app := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "the app")
+	}))
+	app.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			dialled.Add(1)
+		}
+	}
+	app.Start()
+	t.Cleanup(app.Close)
+	up := addr(app)
+	t.Cleanup(func() { SetForwardUp(up, false) })
+	h := startProxyWith(t, []Site{
+		{Alias: "gated.test", Hosts: []string{"gated.test"}, Upstream: up, Forwarded: true, Project: "gated", Port: 80, Server: "mini"},
+		{Alias: "down.test", Hosts: []string{"down.test"}, Down: true, Project: "down", Port: 80, Server: "mini"},
+	}, false)
+	h.waitCerts(t, "gated.test", "down.test")
+
+	get := func(alias, accept string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest("GET", h.url(alias, "/"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Accept", accept)
+		resp, err := h.client(alias, false).Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", alias, err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	for _, alias := range []string{"gated.test", "down.test"} {
+		if code, body := get(alias, "text/html"); code != 502 || !strings.Contains(body, "Nearhost is reconnecting to mini.") {
+			t.Errorf("%s, browser: %d\n%s", alias, code, body)
+		}
+		if code, body := get(alias, "application/json"); code != 502 || body != "" {
+			t.Errorf("%s, json: %d %q", alias, code, body)
+		}
+	}
+	if n := dialled.Load(); n != 0 {
+		t.Fatalf("the app got %d connections while its forward was down", n)
+	}
+
+	if !SetForwardUp(up, true) || SetForwardUp(up, true) {
+		t.Error("SetForwardUp did not report the change once")
+	}
+	if code, body := get("gated.test", "text/html"); code != 200 || body != "the app" {
+		t.Errorf("forward up: %d %q", code, body)
+	}
+	SetForwardUp(up, false)
+	before := dialled.Load()
+	if code, _ := get("gated.test", "text/html"); code != 502 {
+		t.Errorf("forward down again: %d", code)
+	}
+	if n := dialled.Load(); n != before {
+		t.Errorf("the app got %d new connections once its forward was down again", n-before)
 	}
 }

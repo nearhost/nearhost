@@ -31,8 +31,9 @@ const writerModule = "nearhost"
 var loopbackRanges = []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
 
 // Site is one web route of a project: the hosts it is served at, proxied to
-// one upstream. A project with several web routes is several sites sharing
-// an Alias. No host may be on two sites.
+// one upstream, or answered with 502 while the site is Down. A project with
+// several web routes is several sites sharing an Alias. No host may be on
+// two sites.
 type Site struct {
 	// Alias is the project's main name: myapp.test by default, or any
 	// domain the user chose, e.g. app.local.example.io. It names the
@@ -40,8 +41,18 @@ type Site struct {
 	Alias string
 	// Hosts are the names served, exact or patterns such as
 	// *.local.example.io. There must be at least one.
-	Hosts    []string
-	Upstream string // host:port, e.g. 127.0.0.1:54321
+	Hosts []string
+	// Upstream is the address requests are sent to, host:port, e.g.
+	// 127.0.0.1:54321. It may be empty only while the site is Down.
+	Upstream string
+	// Down makes the site answer every request with 502 and dial nothing:
+	// its app's forward is not up. A browser asking for a page gets
+	// Nearhost's page saying the server is being reconnected to.
+	Down bool
+	// Forwarded marks an Upstream that is a forward to the app's server.
+	// The site then sends a request on only while SetForwardUp says the
+	// forward is up (see Gate), and answers as a Down site otherwise.
+	Forwarded bool
 	// Clients are extra client ranges, in CIDR form (IPv4 or IPv6), the
 	// site's hosts are served to besides loopback, such as the networks
 	// of local Docker containers. nil means loopback only.
@@ -140,10 +151,23 @@ func accessWriter() map[string]any {
 
 // siteRoute is the route serving one host of a site: it tags the request
 // with the site's alias, keeps the exchange when opts.Capture is on, and
-// proxies to the upstream, naming Nearhost in Via each way.
+// proxies to the upstream, naming Nearhost in Via each way. A Forwarded
+// site's gate comes just before the proxy. A Down site has a gate with no
+// upstream and no proxy at all, so it answers 502 and dials nothing.
 func siteRoute(s Site, host string, ranges []string, opts Options) map[string]any {
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
+	match := []any{map[string]any{
+		"host":      []string{host},
+		"remote_ip": map[string]any{"ranges": ranges},
+	}}
+	if s.Down {
+		return map[string]any{
+			"match":    match,
+			"handle":   append(handle, map[string]any{"handler": gateModule}),
+			"terminal": true,
+		}
+	}
 	// Caddy adds "Via: 1.1 Caddy" to the response after the proxy's own
 	// header operations, so its entry is renamed here, deferred to when the
 	// response is written. Hops the upstream's own proxies added stay.
@@ -151,6 +175,9 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 		"handler":  "headers",
 		"response": map[string]any{"replace": viaReplace(opts.Version), "deferred": true},
 	})
+	if s.Forwarded {
+		handle = append(handle, map[string]any{"handler": gateModule, "upstream": s.Upstream})
+	}
 	handle = append(handle, map[string]any{
 		"handler":        "reverse_proxy",
 		"upstreams":      []any{map[string]any{"dial": s.Upstream}},
@@ -174,10 +201,7 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	return map[string]any{
 		// One match set, so both must hold: the host is this one and the
 		// client is on this machine or in one of the site's extra ranges.
-		"match": []any{map[string]any{
-			"host":      []string{host},
-			"remote_ip": map[string]any{"ranges": ranges},
-		}},
+		"match":    match,
 		"handle":   handle,
 		"terminal": true,
 	}
@@ -408,7 +432,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	rangesOf := map[string][]string{} // lower-cased host to the client ranges it is served to
 	siteOf := map[string]int{}        // lower-cased host to the index of its site: names match without case
 	for i, s := range sites {
-		if s.Alias == "" || s.Upstream == "" || len(s.Hosts) == 0 {
+		if s.Alias == "" || s.Upstream == "" && !s.Down || len(s.Hosts) == 0 {
 			return nil, fmt.Errorf("proxy: site needs alias, hosts and upstream, got %+v", s)
 		}
 		ranges, err := siteRanges(s)

@@ -1887,8 +1887,8 @@ func TestRemoteProjectForwardsEveryWebRoute(t *testing.T) {
 		}
 	}
 	want := []proxy.Site{
-		{Alias: "myapp.test", Hosts: []string{"myapp.test"}, Upstream: "127.0.0.1:" + strconv.Itoa(l80), Project: "myapp", Port: 80, Server: "mini"},
-		{Alias: "myapp.test", Hosts: []string{"ws.local.example.io"}, Upstream: "127.0.0.1:" + strconv.Itoa(l81), Project: "myapp", Port: 81, Server: "mini"},
+		{Alias: "myapp.test", Hosts: []string{"myapp.test"}, Upstream: "127.0.0.1:" + strconv.Itoa(l80), Forwarded: true, Project: "myapp", Port: 80, Server: "mini"},
+		{Alias: "myapp.test", Hosts: []string{"ws.local.example.io"}, Upstream: "127.0.0.1:" + strconv.Itoa(l81), Forwarded: true, Project: "myapp", Port: 81, Server: "mini"},
 	}
 	if got := h.eng.Sites(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Sites() = %+v, want %+v", got, want)

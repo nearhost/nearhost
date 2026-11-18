@@ -134,8 +134,15 @@ func (e *Engine) serverLog(server, msg string) {
 // reconnecting. A project whose start waits for the server has that start
 // handed to resumeStart once the session is connected, whatever connected it:
 // the supervisor retrying, ReconnectServer, ConnectServer, or another start
-// reviving a session that gave up.
+// reviving a session that gave up. The proxy's gates follow each project's
+// forwards, and its sites are published again when one changed.
 func (e *Engine) reviewServerLocked(server string) {
+	republish := false
+	defer func() {
+		if republish {
+			e.republishLocked()
+		}
+	}()
 	for _, name := range e.order {
 		run := e.runs[name]
 		if run.server != server {
@@ -175,6 +182,11 @@ func (e *Engine) reviewServerLocked(server string) {
 			}
 			e.lookups.Add(1) // under mu and before closed is set, so before Shutdown waits
 			go e.lookupHolder(run, port, e.lookup)
+		}
+		// The gates first, so the proxy has stopped dialling a forward that
+		// went down by the time the change is announced.
+		if e.syncGatesLocked(run) {
+			republish = true
 		}
 		e.announceLocked(run)
 	}

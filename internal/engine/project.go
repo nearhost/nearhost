@@ -67,6 +67,10 @@ type projectRun struct {
 	// stopping is set while StopProject runs, from its first look at the
 	// project to the state it records.
 	stopping bool
+	// shut is set by a teardown, before it removes the site or cancels a
+	// forward, and cleared when the site is published again: until then
+	// the proxy dials none of the project's forwards (see webUpLocked).
+	shut bool
 }
 
 // heldPort is what is known about the local port of a lost forward.
@@ -575,13 +579,19 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		e.mu.Unlock()
 		return err
 	}
-	run.web, run.webLocals, run.site, run.docker = web, webLocals, true, docker
+	run.web, run.webLocals, run.site, run.docker, run.shut = web, webLocals, true, docker, false
+	// The forwards the session has applied may be dialled from here on;
+	// those it has not (the session dropped while they were added) give a
+	// site that is down until it applies them.
+	e.syncGatesLocked(run)
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
 	if err := e.applySites(sites); err != nil {
 		// The proxy keeps its previous configuration, which lacks this site.
 		e.mu.Lock()
-		run.web, run.webLocals, run.site, run.docker = nil, nil, false, false
+		run.site = false
+		e.syncGatesLocked(run)
+		run.web, run.webLocals, run.docker = nil, nil, false
 		e.mu.Unlock()
 		// The proxy's errors already say they are the proxy's.
 		return err

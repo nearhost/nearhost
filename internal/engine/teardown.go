@@ -31,8 +31,15 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 	// project shows what it showed last. Its site and forwards go one by one,
 	// and each forward cancel makes the session call back into the engine;
 	// none of those half-way points is a state of the project.
+	//
+	// The proxy stops dialling the site's forwards first, before the site
+	// is removed and long before a cancel frees a forward's port: the site
+	// may stay published if its removal fails, and a request that arrives
+	// while the proxy reloads still has the old routes.
 	e.mu.Lock()
 	run.tearing = true
+	run.shut = true
+	e.syncGatesLocked(run)
 	e.mu.Unlock()
 
 	e.applyMu.Lock()

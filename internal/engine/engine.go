@@ -180,6 +180,11 @@ type ProjectStatus struct {
 // ClosePassthrough needs it. Shutdown waits for all of them (passWork), then
 // lets go of the passthroughs that are left.
 //
+// A site whose forward goes down or comes back is published again by a
+// goroutine of its own (republish), which serverLog starts under mu and
+// which takes applyMu then mu, like a start. Shutdown waits for it. The
+// proxy's gates (see gate.go) are set under mu, as a leaf lock.
+//
 // The Docker networks are asked for the same way, with no lock held: by a
 // start, before it publishes, and by the refresh loop (refreshDocker). An
 // answer that changes them is applied under applyMu then mu, like a site
@@ -203,7 +208,8 @@ type Engine struct {
 	// being started. It is the proxy's Apply; tests wrap it.
 	applySites func(sites []proxy.Site) error
 	// refreshSites gives the proxy the sites again when the Docker networks
-	// change, unless another engine has taken the proxy over. Tests wrap it.
+	// change or a forward goes down or comes back, unless another engine
+	// has taken the proxy over. Tests wrap it.
 	refreshSites func(sites []proxy.Site) error
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
@@ -212,6 +218,8 @@ type Engine struct {
 	lookups sync.WaitGroup
 	// dockerLoops counts the Docker refresh loops, which run under ctx too.
 	dockerLoops sync.WaitGroup
+	// siteWork counts the republish goroutine. Shutdown waits for it.
+	siteWork sync.WaitGroup
 	// starts counts the project starts Apply has begun, and those of
 	// projects that waited for their server (resumeStart). Shutdown waits
 	// for them; each returns at once when it finds the engine closed.
@@ -253,6 +261,12 @@ type Engine struct {
 	// session, so a reload that replaces the session keeps it.
 	held  map[string]bool
 	ports map[int]string // local port held by a forward -> project name or passthroughOwner
+	// restarting names the servers whose session ReconnectServer is ending
+	// on purpose: their sites dial nothing until the session has stopped.
+	restarting map[string]bool
+	// republishing is set while republish runs, and republishAgain when a
+	// change came after it took the sites it is applying.
+	republishing, republishAgain bool
 	// relays are the [::1] listeners of loopback forwards, by port; they
 	// go when the port is released.
 	relays map[int]net.Listener
@@ -311,6 +325,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		hostsTurn:    make(chan struct{}, 1),
 		servers:      map[string]*serverConn{},
 		held:         map[string]bool{},
+		restarting:   map[string]bool{},
 		ports:        map[int]string{},
 		relays:       map[int]net.Listener{},
 		passthroughs: map[string]*passthrough{},
@@ -720,6 +735,8 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	}
 	e.mu.Unlock()
 	e.lookups.Wait()
+	// Every project is stopped and closed is set, so no republish begins.
+	e.siteWork.Wait()
 	// The last site that opted in is gone, which ends the refresh loop, and
 	// e.stop ended it in any case.
 	e.dockerLoops.Wait()
@@ -764,7 +781,8 @@ func (e *Engine) unlockRunDir() {
 	}
 }
 
-// Sites lists the sites published to the proxy, in config order.
+// Sites lists the sites published to the proxy, in config order. The site
+// of a forward that is not up is Down, with no upstream.
 func (e *Engine) Sites() []proxy.Site {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -772,7 +790,9 @@ func (e *Engine) Sites() []proxy.Site {
 }
 
 // sitesLocked lists the published sites, one per web route of each project,
-// leaving out those of skip.
+// leaving out those of skip. A remote project's site is Forwarded, so the
+// proxy's gate decides each request, and Down with no upstream while its
+// forward is not up (see webUpLocked).
 func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 	var sites []proxy.Site
 	for _, name := range e.order {
@@ -797,11 +817,16 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.docker {
 			clients = e.dockerClientsLocked()
 		}
+		up := e.webUpLocked(run)
 		for i, w := range run.web {
-			sites = append(sites, proxy.Site{
+			site := proxy.Site{
 				Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
-				Project: run.name, Port: w.Port, Server: server,
-			})
+				Forwarded: server != "", Project: run.name, Port: w.Port, Server: server,
+			}
+			if !up[i] {
+				site.Upstream, site.Down = "", true
+			}
+			sites = append(sites, site)
 		}
 	}
 	return sites
