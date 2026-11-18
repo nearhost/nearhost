@@ -173,12 +173,30 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	if !info.Mode().IsRegular() {
 		return errRefused
 	}
+	name = assetName(name, real)
 	f, err := fsys.Open(ctx, real)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	return sendFile(w, r, f, name, info.Size())
+}
+
+// assetName returns the name to serve the file at real as, when it was
+// requested as name. A name with an asset extension keeps it only when the
+// file it resolves to has the same one; otherwise the file is served under
+// its real name. So an in-tree symlink such as public/config.js pointing at
+// config/secrets.json is served as JSON, not as a script a page may read.
+func assetName(name, real string) string {
+	ext := strings.ToLower(path.Ext(name))
+	if _, ok := assetTypes[ext]; !ok {
+		return name
+	}
+	base := path.Base(real)
+	if strings.ToLower(path.Ext(base)) == ext {
+		return name
+	}
+	return base
 }
 
 // explain turns err, from resolving rel below root, into what the request
@@ -269,7 +287,9 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 // its opaque origin needs to load module scripts, fonts and other assets
 // through CORS, and which would also let its script read the file. Data,
 // source, HTML and markdown get none, so a page can't read the rest of its
-// tree. Both the extension and the type the response carries must agree.
+// tree. The type check is a guard: webType gives these extensions their
+// listed type today, and the check keeps a later change to how types are
+// chosen from handing the header to a response whose type isn't the asset's.
 func webAsset(ext, ctype string) bool {
 	want, ok := assetTypes[strings.ToLower(ext)]
 	return ok && ctype == want

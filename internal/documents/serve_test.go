@@ -545,6 +545,41 @@ func TestOnlyAssetsAreReadable(t *testing.T) {
 	}
 }
 
+func TestAssetSymlinkToDataIsNotAnAsset(t *testing.T) {
+	// The resolved file decides, so a script name can't make a secret
+	// readable through an in-tree symlink.
+	f := newFixture(t)
+	f.write(t, "config/secrets.json", `{"key":"x"}`)
+	f.write(t, "build/app.js", "export {}")
+	f.write(t, "notes/plan.md", "# Plan")
+	if err := os.MkdirAll(filepath.Join(f.root, "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Symlink(t, filepath.Join(f.root, "config", "secrets.json"), filepath.Join(f.root, "public", "config.js"))
+	testutil.Symlink(t, filepath.Join(f.root, "config", "secrets.json"), filepath.Join(f.root, "public", "x.css"))
+	testutil.Symlink(t, filepath.Join(f.root, "notes", "plan.md"), filepath.Join(f.root, "public", "plan.png"))
+	testutil.Symlink(t, filepath.Join(f.root, "build", "app.js"), filepath.Join(f.root, "public", "app.js"))
+	for p, want := range map[string]string{
+		"public/config.js": "application/json",
+		"public/x.css":     "application/json",
+		"public/plan.png":  "text/html; charset=utf-8",
+	} {
+		for _, method := range []string{"GET", "HEAD"} {
+			rec := f.do(t, method, p)
+			if rec.Code != 200 || rec.Header().Get("Content-Type") != want {
+				t.Errorf("%s %s: %d %q, want 200 %q", method, p, rec.Code, rec.Header().Get("Content-Type"), want)
+			}
+			if got, ok := rec.Header()["Access-Control-Allow-Origin"]; ok {
+				t.Errorf("%s %s: Access-Control-Allow-Origin = %q, want none", method, p, got)
+			}
+		}
+	}
+	rec := f.do(t, "GET", "public/app.js")
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/javascript; charset=utf-8" || rec.Header().Get("Access-Control-Allow-Origin") != "null" {
+		t.Errorf("public/app.js: %d %q, Access-Control-Allow-Origin %q", rec.Code, rec.Header().Get("Content-Type"), rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
 func TestAssetsKeepTheirTypeWhateverTheHostSays(t *testing.T) {
 	// A host whose tables are wrong (a Windows registry can map .js to
 	// text/plain) must not break a page's assets, and one that calls
