@@ -35,12 +35,22 @@ func TestMainReturnsNonZeroOnUnknownCommand(t *testing.T) {
 }
 
 // noCleanOld stops Main from clearing the real %LOCALAPPDATA%\nearhost\old.
+// Its cleanup waits for the runs Main started before it restores cleanOld.
 func noCleanOld(t *testing.T) chan string {
 	t.Helper()
 	orig := cleanOld
-	t.Cleanup(func() { cleanOld = orig })
+	t.Cleanup(func() {
+		clearingOld.Wait()
+		cleanOld = orig
+	})
 	called := make(chan string, 1)
-	cleanOld = func(exe string) { called <- exe }
+	// A second run drops its path rather than block the cleanup's wait.
+	cleanOld = func(exe string) {
+		select {
+		case called <- exe:
+		default:
+		}
+	}
 	return called
 }
 

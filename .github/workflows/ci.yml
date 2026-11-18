@@ -24,6 +24,31 @@ jobs:
       - if: runner.os == 'Linux'
         run: NEARHOST_TRANSPORT=per-process go test -count=1 -race -run 'PerProcess' ./internal/transport/
 
+  # The whole suite under the race detector, as `make race` runs it.
+  race:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race -timeout 15m ./...
+
+  # Known vulnerabilities in the code Nearhost calls, in its modules and in
+  # the Go standard library it builds with.
+  vuln:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
   # The release config, checked without publishing anything: GoReleaser's own
   # check, then a snapshot of the archives with the Windows switch off and on.
   # Off must produce today's four archives and nothing for Windows.
