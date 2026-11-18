@@ -82,9 +82,10 @@ func HTTPSClient(t testing.TB, root *x509.Certificate, alias string, port int) *
 // neither an outgoing connection nor a ":0" listener of any process can take
 // a port between the moment it is chosen here and the moment the proxy binds
 // it. Test binaries that run side by side share a block only when their pids
-// are a multiple of proxyPortBlocks apart, and then still clash only if both
-// are handed the same port within the moment before one of them binds it:
-// ProxyPort hands out no port that is bound.
+// are a multiple of proxyPortBlocks apart (Windows pids are all multiples of
+// 4, so there the pid is divided by 4 first), and then still clash only if
+// both are handed the same port within the moment before one of them binds
+// it: ProxyPort hands out no port that is bound.
 const (
 	proxyPortFirst  = 20000
 	proxyPortBlock  = 100
@@ -95,7 +96,11 @@ const (
 var proxyPortNext atomic.Uint32
 
 func proxyPortBase() int {
-	return proxyPortFirst + (os.Getpid()%proxyPortBlocks)*proxyPortBlock
+	pid := os.Getpid()
+	if runtime.GOOS == "windows" {
+		pid /= 4
+	}
+	return proxyPortFirst + (pid%proxyPortBlocks)*proxyPortBlock
 }
 
 // ProxyPort returns a port for a proxy listener: free for both TCP and UDP
@@ -115,19 +120,24 @@ func ProxyPort(t testing.TB) int {
 	return 0
 }
 
-// bindable reports whether port can be bound right now on TCP and on UDP.
+// bindable reports whether port can be bound right now on TCP and on UDP,
+// on every interface and on 127.0.0.1, where the proxy listens. Both are
+// tried because Windows lets a socket bind every interface on a port that
+// another process has bound on 127.0.0.1.
 func bindable(port int) bool {
-	addr := fmt.Sprintf(":%d", port)
-	l, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false
+	for _, host := range []string{"", "127.0.0.1"} {
+		addr := net.JoinHostPort(host, strconv.Itoa(port))
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return false
+		}
+		l.Close()
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return false
+		}
+		pc.Close()
 	}
-	l.Close()
-	pc, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		return false
-	}
-	pc.Close()
 	return true
 }
 
