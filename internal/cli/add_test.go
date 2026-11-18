@@ -1277,22 +1277,40 @@ func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 	}
 }
 
-// A lone port variable that names a service other than the app is the web
-// route, and add says so in a warning line as it does for other notes.
-func TestAddNotesALoneNonAppPort(t *testing.T) {
+// A lone port variable is the web route, and add says so in a warning line
+// as it does for other notes, unless --web already named the app's port.
+func TestAddNotesALonePortVariable(t *testing.T) {
 	note := "Warning: DB_PORT is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere.\n"
-	for env, want := range map[string]bool{"DB_PORT=5432\n": true, "APP_PORT=8080\n": false} {
+	cases := []struct {
+		env  string
+		args []string
+		want bool
+	}{
+		{"DB_PORT=5432\n", nil, true},
+		{"DB_PORT=5432\n", []string{"--web", "5432"}, false},
+		{"DB_PORT=5432\nAPP_PORT=8080\n", []string{"--web", "8080"}, false},
+	}
+	for _, c := range cases {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(c.env), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-		out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "myapp")
+		args := append([]string{"--config", cfgPath, "add", dir, "--name", "myapp"}, c.args...)
+		out, err := execute(t, newAddCmd(noRemote(t)), args...)
 		if err != nil {
 			t.Fatalf("add: %v\n%s", err, out)
 		}
-		if got := strings.Contains(out, note); got != want {
-			t.Errorf("%q: note printed = %v, want %v\n%s", env, got, want, out)
+		if got := strings.Contains(out, note); got != c.want {
+			t.Errorf("%q %v: note printed = %v, want %v\n%s", c.env, c.args, got, c.want, out)
 		}
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_PORT=8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute(t, newAddCmd(noRemote(t)), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--name", "myapp")
+	if err != nil || !strings.Contains(out, "Warning: APP_PORT is the only port Nearhost found") {
+		t.Errorf("APP_PORT alone: %v\n%s", err, out)
 	}
 }

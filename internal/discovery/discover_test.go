@@ -782,30 +782,26 @@ routes:
 	}
 }
 
-// A lone port variable becomes the web route, and when its name says it is
-// a service other than the app, discovery says so.
-func TestDiscoverLoneNonAppPortGetsANote(t *testing.T) {
-	res := discover(t, memReader{".env": "DB_PORT=5432\n"}, Options{})
-	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb {
-		t.Fatalf("the lone port should be web: %+v", res.Routes)
-	}
-	want := []string{"DB_PORT is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere."}
-	if !slices.Equal(res.Warnings, want) {
-		t.Errorf("Warnings = %q, want %q", res.Warnings, want)
-	}
-	for _, env := range []string{"REDIS_PORT=6379\n", "FORWARD_MAILPIT_PORT=1025\n"} {
-		if res := discover(t, memReader{".env": env}, Options{}); len(res.Warnings) != 1 {
-			t.Errorf("%q: Warnings = %q, want one note", env, res.Warnings)
+// A lone port variable of .env becomes the web route with no question, so
+// discovery says so, whatever the variable is called.
+func TestDiscoverLonePortVariableGetsANote(t *testing.T) {
+	for _, env := range []string{"DB_PORT=5432\n", "APP_PORT=8080\n", "PORT=3000\n"} {
+		res := discover(t, memReader{".env": env}, Options{})
+		name, _, _ := strings.Cut(env, "=")
+		want := []string{name + " is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere."}
+		if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb || res.LonePortNote != want[0] || len(res.Warnings) != 0 {
+			t.Errorf("%q: Routes = %+v, LonePortNote = %q, want %q", env, res.Routes, res.LonePortNote, want[0])
 		}
 	}
 }
 
-// The app's own port, or a name that says nothing, gets no note, and
-// neither does a project with several ports.
-func TestDiscoverLoneAppPortGetsNoNote(t *testing.T) {
-	for _, env := range []string{"APP_PORT=8080\n", "PORT=3000\n", "VITE_PORT=5173\n", "DB_PORT=5432\nAPP_PORT=8080\n"} {
-		if res := discover(t, memReader{".env": env}, Options{}); len(res.Warnings) != 0 {
-			t.Errorf("%q: Warnings = %q, want none", env, res.Warnings)
-		}
+// Several port variables, or a route that came from Compose, get no note.
+func TestDiscoverNoLonePortNote(t *testing.T) {
+	if res := discover(t, memReader{".env": "DB_PORT=5432\nAPP_PORT=8080\n"}, Options{}); res.LonePortNote != "" {
+		t.Errorf("two variables: LonePortNote = %q", res.LonePortNote)
+	}
+	res := discover(t, memReader{"compose.yaml": "services:\n  app:\n    ports:\n      - '4000:4000'\n"}, Options{Presets: testPresets(t, "compose")})
+	if len(res.Routes) != 1 || res.LonePortNote != "" {
+		t.Errorf("Compose: Routes = %+v, LonePortNote = %q", res.Routes, res.LonePortNote)
 	}
 }
