@@ -445,18 +445,28 @@ func TestTheResolvedPathAlsoFindsTheProject(t *testing.T) {
 	}
 }
 
-// fakeDoctor records its calls and answers with findings and err.
+// fakeDoctor records each call and answers with findings or err. When gate
+// is set, a call waits for it to close, or for its context to end.
 type fakeDoctor struct {
 	mu       sync.Mutex
 	calls    []string // origin|name|dir
 	findings []doctor.Finding
 	err      error
+	gate     chan struct{}
 }
 
-func (f *fakeDoctor) Doctor(_ context.Context, origin, name, dir string) ([]doctor.Finding, error) {
+func (f *fakeDoctor) Doctor(ctx context.Context, origin, name, dir string) ([]doctor.Finding, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, origin+"|"+name+"|"+dir)
+	gate := f.gate
 	f.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return f.findings, f.err
 }
 
@@ -526,6 +536,109 @@ func TestDoctorEndpointForADirectoryNotAdded(t *testing.T) {
 	}
 	if f, ok := out["findings"].([]any); !ok || len(f) != 0 {
 		t.Fatalf("findings %v", out)
+	}
+}
+
+// waitCalls waits until d has had n calls.
+func waitCalls(t *testing.T, d *fakeDoctor, n int) {
+	t.Helper()
+	for end := time.Now().Add(5 * time.Second); len(d.all()) < n; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("the doctor had %d calls, want %d", len(d.all()), n)
+		}
+	}
+}
+
+// Each run of the doctor on a server starts an ssh login from the laptop,
+// so a server gets one at a time.
+func TestDoctorRunsOneAtATimePerServer(t *testing.T) {
+	d := &fakeDoctor{gate: make(chan struct{})}
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini, "apollo": apollo}, Doctor: d})
+	dir := shortDir(t)
+	sock, other := filepath.Join(dir, "mini.sock"), filepath.Join(dir, "apollo.sock")
+	for origin, p := range map[string]string{"mini": sock, "apollo": other} {
+		if err := s.Listen(origin, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(s.Close)
+
+	first := make(chan int)
+	go func() {
+		st, _ := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
+		first <- st
+	}()
+	waitCalls(t, d, 1)
+	st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
+	if st != http.StatusTooManyRequests || out["error"] != "a doctor run is already going for this server" {
+		t.Fatalf("a second run: %d %v", st, out)
+	}
+	if n := len(d.all()); n != 1 {
+		t.Fatalf("the doctor ran %d times, want 1", n)
+	}
+
+	// Another server has its own run.
+	second := make(chan int)
+	go func() {
+		st, _ := call(t, other, "GET", "/v1/doctor?path=/srv/app", "")
+		second <- st
+	}()
+	waitCalls(t, d, 2)
+	close(d.gate)
+	if st := <-first; st != 200 {
+		t.Fatalf("the first run: %d", st)
+	}
+	if st := <-second; st != 200 {
+		t.Fatalf("the other server's run: %d", st)
+	}
+	// The run over, the next may start.
+	if st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", ""); st != 200 {
+		t.Fatalf("after the first: %d %v", st, out)
+	}
+}
+
+// The read timeout bounds a slow request, but a long poll or a doctor run
+// lasts past it, so it must not end them.
+func TestReadTimeoutSparesLongCalls(t *testing.T) {
+	old := readTimeout
+	readTimeout = 300 * time.Millisecond
+	defer func() { readTimeout = old }()
+	const past = 900 * time.Millisecond
+
+	d := &fakeDoctor{gate: make(chan struct{})}
+	time.AfterFunc(past, func() { close(d.gate) })
+	if st, out := call(t, doctorServer(t, d), "GET", "/v1/doctor?path=/home/dev/code/myapp", ""); st != 200 {
+		t.Fatalf("the doctor: %d %v", st, out)
+	}
+
+	e := newDocServer(t, true)
+	_, out := e.ask(t, docBody("plan.md", "claude-code", ""))
+	id := out["id"].(string)
+	time.AfterFunc(past, func() { e.s.AnswerDocument(context.Background(), id, AnswerYes) })
+	if st, out := call(t, e.remote, "GET", "/v1/documents/"+id+"?wait=5", ""); st != 200 || out["state"] != "open" {
+		t.Fatalf("a long poll: %d %v", st, out)
+	}
+
+	// A POST whose answer comes late.
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	e.sh.mu.Lock()
+	e.sh.gate = make(chan struct{})
+	e.sh.mu.Unlock()
+	time.AfterFunc(past, func() { close(e.sh.gate) })
+	if st, out := e.ask(t, docBody("spec.md", "claude-code", `, "token": "good"`)); st != 201 {
+		t.Fatalf("a slow open: %d %v", st, out)
+	}
+}
+
+// A socket's server bounds a request's read and an idle connection, and
+// leaves writes unbounded for the long polls.
+func TestServerTimeouts(t *testing.T) {
+	s, _, _, _, _ := newServer(t, true)
+	s.mu.Lock()
+	srv := s.listeners["mini"].srv
+	s.mu.Unlock()
+	if srv.ReadTimeout != 15*time.Second || srv.IdleTimeout != 2*time.Minute || srv.WriteTimeout != 0 {
+		t.Fatalf("read %v, idle %v, write %v", srv.ReadTimeout, srv.IdleTimeout, srv.WriteTimeout)
 	}
 }
 

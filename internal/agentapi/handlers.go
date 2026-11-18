@@ -207,7 +207,8 @@ func within(p, dir string) bool {
 
 // doctor checks the project holding the path, or the directory at it as it
 // would be added when no project does. The project is null then, so an
-// agent can tell a directory with nothing wrong from a failure.
+// agent can tell a directory with nothing wrong from a failure. An origin
+// gets one run at a time, as each starts an ssh login from the laptop.
 func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Doctor == nil {
 		noSuchCall(w, r)
@@ -223,6 +224,19 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	if found, ok := holdingEither(s.opts.Source.Projects(o), p, real); ok {
 		project, name, dir = &found, found.Name, found.Path
 	}
+	s.mu.Lock()
+	if s.doctoring[o] {
+		s.mu.Unlock()
+		fail(w, http.StatusTooManyRequests, doctorBusy)
+		return
+	}
+	s.doctoring[o] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.doctoring, o)
+		s.mu.Unlock()
+	}()
 	ctx, cancel := context.WithTimeout(r.Context(), doctorTimeout)
 	defer cancel()
 	findings, err := s.opts.Doctor.Doctor(ctx, o, name, dir)

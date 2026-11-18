@@ -16,10 +16,12 @@ import (
 )
 
 // fakeShower serves trees in memory. Resolve takes the sent root as the
-// tree's root, or fails with resolveErr; Show records each call and fails
-// with showErr, or serves the tree for the requester that first showed it.
+// tree's root, or fails with resolveErr; Show records each call, waits for
+// gate to close when set, and fails with showErr, or serves the tree for
+// the requester that first showed it.
 type fakeShower struct {
 	mu         sync.Mutex
+	gate       chan struct{}
 	resolveErr error
 	showErr    error
 	served     map[[2]string]string // requester, by origin and root
@@ -57,8 +59,14 @@ func (f *fakeShower) Served(origin, root string) (string, bool) {
 
 func (f *fakeShower) Show(_ context.Context, origin, root, doc, requester string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.shows = append(f.shows, DocRequest{Origin: origin, Root: root, Doc: doc, Requester: requester})
+	gate := f.gate
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.showErr != nil {
 		return "", f.showErr
 	}
@@ -437,6 +445,87 @@ func TestDocumentRepeats(t *testing.T) {
 			t.Fatalf("agent in a tree approved for agent: %d", st)
 		}
 	})
+}
+
+// A document opened again by the same requester on the same server within
+// reopenWindow gets the first answer again and opens no second tab.
+func TestDocumentOpenedTwiceOpensOnce(t *testing.T) {
+	e := newDocServer(t, true)
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	body := docBody("plan.md", "claude-code", `, "token": "good"`)
+	st, first := e.ask(t, body)
+	if st != 201 || first["state"] != "open" {
+		t.Fatalf("first: %d %v", st, first)
+	}
+	e.c.add(time.Second)
+	st, again := e.ask(t, body)
+	if st != 201 || fmt.Sprint(again) != fmt.Sprint(first) {
+		t.Fatalf("again: %d %v, first %v", st, again, first)
+	}
+	if n := len(e.sh.showed()); n != 1 {
+		t.Fatalf("%d shows, want 1", n)
+	}
+	if n := len(e.r.shownDocs()); n != 1 {
+		t.Fatalf("%d shown notices, want 1", n)
+	}
+
+	// Another document, or another requester, opens.
+	if st, out := e.ask(t, docBody("spec.md", "claude-code", `, "token": "good"`)); st != 201 || out["id"] == first["id"] {
+		t.Fatalf("another document: %d %v", st, out)
+	}
+	e.sh.mu.Lock()
+	e.sh.served[[2]string{"apollo", "/srv/app"}] = "codex"
+	e.sh.mu.Unlock()
+	if st, out := e.ask(t, docBody("plan.md", "codex", "")); st != 201 || out["id"] == first["id"] {
+		t.Fatalf("another requester: %d %v", st, out)
+	}
+	if n := len(e.sh.showed()); n != 3 {
+		t.Fatalf("%d shows, want 3", n)
+	}
+
+	// Past the window it opens again.
+	e.c.add(reopenWindow)
+	if st, out := e.ask(t, body); st != 201 || out["id"] == first["id"] {
+		t.Fatalf("after the window: %d %v", st, out)
+	}
+	if n := len(e.sh.showed()); n != 4 {
+		t.Fatalf("%d shows, want 4", n)
+	}
+}
+
+// A second open of a document still being shown waits for the first and
+// gets its answer.
+func TestDocumentOpenedTwiceAtOnceOpensOnce(t *testing.T) {
+	e := newDocServer(t, true)
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	gate := make(chan struct{})
+	e.sh.gate = gate
+	body := docBody("plan.md", "claude-code", `, "token": "good"`)
+	type result struct {
+		st  int
+		out map[string]any
+	}
+	results := make(chan result, 2)
+	ask := func() {
+		st, out := e.ask(t, body)
+		results <- result{st, out}
+	}
+	go ask()
+	for end := time.Now().Add(5 * time.Second); len(e.sh.showed()) == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the first open never reached Show")
+		}
+	}
+	go ask()
+	time.Sleep(100 * time.Millisecond)
+	close(gate)
+	a, b := <-results, <-results
+	if a.st != 201 || b.st != 201 || a.out["id"] == nil || fmt.Sprint(a.out) != fmt.Sprint(b.out) {
+		t.Fatalf("answers %v and %v", a, b)
+	}
+	if n := len(e.sh.showed()); n != 1 {
+		t.Fatalf("%d shows, want 1", n)
+	}
 }
 
 func TestDocumentLimit(t *testing.T) {
