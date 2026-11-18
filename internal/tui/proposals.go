@@ -220,7 +220,7 @@ func (m *Model) nextAsked() tea.Cmd {
 				m.logs.note(fmt.Sprintf("The request from %s to open port %d expired before it was reviewed.", r.who(), r.Remote))
 				continue
 			}
-			m.form = &passForm{b: m.b, w: m.work, r: r}
+			m.form = &passForm{b: m.b, w: m.work, r: r, guard: m.openGuard()}
 			return nil
 		}
 		if a.doc != nil {
@@ -229,7 +229,7 @@ func (m *Model) nextAsked() tea.Cmd {
 				m.logs.note(fmt.Sprintf("The request from %s to show %s expired before it was reviewed.", r.who(), clean(r.Doc)))
 				continue
 			}
-			m.form = &docForm{b: m.b, w: m.work, r: r, root: m.shownRoot(r)}
+			m.form = &docForm{b: m.b, w: m.work, r: r, root: m.shownRoot(r), guard: m.openGuard()}
 			return nil
 		}
 		p := *a.prop
@@ -250,6 +250,29 @@ func (m *Model) nextAsked() tea.Cmd {
 		return connect
 	}
 	return nil
+}
+
+// askGuard is how long a request box ignores keys after it opens, so that a
+// key meant for the main screen, pressed as the request arrives, cannot
+// answer it.
+const askGuard = 750 * time.Millisecond
+
+// askGuarded holds back the keys pressed as a request box opens.
+type askGuarded struct {
+	now    func() time.Time
+	opened time.Time
+}
+
+// openGuard starts the guard of a request box opening now, on the model's
+// clock.
+func (m *Model) openGuard() askGuarded {
+	now := func() time.Time { return m.now() }
+	return askGuarded{now: now, opened: now()}
+}
+
+// holding reports whether the box opened too recently to take a key.
+func (g askGuarded) holding() bool {
+	return g.now != nil && g.now().Sub(g.opened) < askGuard
 }
 
 // endProposal answers the proposal whose form has closed without saving.

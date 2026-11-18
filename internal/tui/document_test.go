@@ -22,8 +22,10 @@ func docReq(m *Model) DocRequest {
 }
 
 // askDoc gives the model r, as a request arriving, and runs what follows.
+// The clock then moves past the guard, as the user reads the box.
 func askDoc(m *Model, r DocRequest) {
 	settle(m, func() tea.Msg { return docMsg{r} })
+	wait(m, askGuard)
 }
 
 func TestDocPrompt(t *testing.T) {
@@ -36,7 +38,7 @@ func TestDocPrompt(t *testing.T) {
 	if got := df.heading().title; got != "Show a document" {
 		t.Fatalf("heading %q", got)
 	}
-	if got := keyLabels(df); !slices.Equal(got, []string{"y", "n", "a"}) {
+	if got := keyLabels(df); !slices.Equal(got, []string{"y", "n", "A"}) {
 		t.Fatalf("keys %v", got)
 	}
 	// A server's root is shown as it was sent.
@@ -67,7 +69,7 @@ func TestDocPromptAnswers(t *testing.T) {
 		log  string
 	}{
 		{"y", "answer d1 1", "Opened plans/x.md for Claude Code on apollo."},
-		{"a", "answer d1 2", "Opened plans/x.md for Claude Code on apollo."},
+		{"A", "answer d1 2", "Opened plans/x.md for Claude Code on apollo."},
 		{"n", "answer d1 0", "Declined to show plans/x.md for Claude Code on apollo."},
 		{"esc", "answer d1 0", "Declined to show plans/x.md for Claude Code on apollo."},
 	} {
@@ -97,7 +99,7 @@ func TestDocPromptNoAlwaysForAgent(t *testing.T) {
 	if got := keyLabels(m.form); !slices.Equal(got, []string{"y", "n"}) {
 		t.Fatalf("keys %v", got)
 	}
-	settle(m, press(m, "a"))
+	settle(m, press(m, "A"))
 	if _, ok := m.form.(*docForm); !ok || len(f.documentCalls()) != 0 {
 		t.Fatalf("form %T, calls %v", m.form, f.documentCalls())
 	}
@@ -152,11 +154,13 @@ func TestDocQueuesWithProposals(t *testing.T) {
 	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("second was %T", m.form)
 	}
+	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	settle(m, press(m, "p"))
 	if _, ok := m.form.(*docForm); !ok {
 		t.Fatalf("third was %T", m.form)
 	}
+	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	if got := f.documentCalls(); !slices.Equal(got, []string{"answer d1 0"}) {
 		t.Fatalf("calls %v", got)
