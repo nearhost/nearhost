@@ -24,6 +24,9 @@ import (
 // later run of the same user without elevation, in which Administrators only
 // denies, must still get in.
 //
+// Its refusals of dir and its failures to set the list or the owner are
+// *os.PathError naming dir.
+//
 // dir must be absolute. A drive or share root, the user's profile folder and
 // the user's AppData folders are refused with ErrSharedFolder, as other
 // programs keep files there that this list would close to them. A volume
@@ -40,10 +43,10 @@ func RestrictToOwner(dir string) error {
 		return fmt.Errorf("%s is not an absolute path", dir)
 	}
 	if shared(dir) {
-		return fmt.Errorf("%s: %w", dir, ErrSharedFolder)
+		return &os.PathError{Op: "restrict", Path: dir, Err: ErrSharedFolder}
 	}
 	if !persistentACLs(dir) {
-		return fmt.Errorf("%s: %w", dir, ErrNoAccessLists)
+		return &os.PathError{Op: "restrict", Path: dir, Err: ErrNoAccessLists}
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {

@@ -152,8 +152,8 @@ func storageWarning(root string, err error) string {
 	}
 	switch kind {
 	case failedDenied:
-		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: %s belongs to another account. "+
-			"Run `nearhost trust` once from an administrator terminal to fix it.", root)
+		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: %s cannot be changed by this account. "+
+			"Run `nearhost trust` once, as the same user, from an administrator terminal.", root)
 	case failedShared:
 		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: its data folder is set to %s, a location Nearhost will not change. "+
 			"Point XDG_DATA_HOME at a folder of its own.", root)

@@ -133,7 +133,11 @@ func migrateCA(w io.Writer) {
 // before copying into it. On Windows a folder otherwise takes its parent's
 // access list. A folder that cannot be made private is a warning too.
 func migrateCANote() string {
-	notes := []string{migrateWarning(config.MigrateCaddyDir(nearhostRunning, func(dir string) { makeStoragePrivate(dir) }))}
+	notes := []string{migrateWarning(config.MigrateCaddyDir(nearhostRunning, func(dir string) {
+		// The temporary folder's warning is dropped: the final folder is
+		// restricted, and warned about, just below.
+		makeStoragePrivate(dir)
+	}))}
 	var dirs []string
 	if dir, err := config.CaddyDir(); err == nil {
 		if _, err := os.Stat(dir); err == nil {

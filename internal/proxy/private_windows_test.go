@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
@@ -19,8 +18,8 @@ func TestFailureKindOnWindows(t *testing.T) {
 	}{
 		{&os.PathError{Op: "set the access list of", Path: `C:\x`, Err: windows.ERROR_ACCESS_DENIED}, failedDenied},
 		{&os.PathError{Op: "set the owner of", Path: `C:\x`, Err: windows.ERROR_ACCESS_DENIED}, failedDenied},
-		{fmt.Errorf(`C:\: %w`, winsys.ErrSharedFolder), failedShared},
-		{fmt.Errorf(`E:\x: %w`, winsys.ErrNoAccessLists), failedNoACLs},
+		{&os.PathError{Op: "restrict", Path: `C:\`, Err: winsys.ErrSharedFolder}, failedShared},
+		{&os.PathError{Op: "restrict", Path: `E:\x`, Err: winsys.ErrNoAccessLists}, failedNoACLs},
 		{&os.PathError{Op: "set the access list of", Path: `\\s\x`, Err: windows.ERROR_NOT_SUPPORTED}, failedNoACLs},
 		{&os.PathError{Op: "set the access list of", Path: `C:\x`, Err: windows.ERROR_FILE_NOT_FOUND}, failedOther},
 	} {
