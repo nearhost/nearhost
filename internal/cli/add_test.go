@@ -565,7 +565,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.dd.io on port 8220 (a real domain)", "Approve these? [y/N] ")
+	wantContains(t, out, approvalNote, "app.local.dd.io on port 8220 (a real domain): approve? [y/N] ")
 	p, ok := loadSaved(t, cfgPath).Project("rcapp")
 	if !ok || len(p.Routes) == 0 {
 		t.Fatalf("project = %+v %v", p, ok)
@@ -577,20 +577,27 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 		t.Fatalf("Nearhostrc = %+v", p.Nearhostrc)
 	}
 
-	declined := filepath.Join(t.TempDir(), "config.yaml")
+	// An empty answer and the end of input are both a no: the project is
+	// added without the host.
 	for _, answer := range []string{"\n", ""} {
+		declined := filepath.Join(t.TempDir(), "config.yaml")
 		out, err = executeWithInput(t, answer, newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
-		if err == nil || err.Error() != "not added: what this project asks for was not approved" {
+		if err != nil {
 			t.Fatalf("answer %q: err = %v\n%s", answer, err, out)
 		}
-	}
-	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
-		t.Fatalf("a declined add wrote the config: %v", statErr)
+		wantContains(t, out, "Left out, as you did not approve them: app.local.dd.io.\n")
+		if p, ok := loadSaved(t, declined).Project("rcapp"); !ok || len(p.AllHosts()) != 1 {
+			t.Fatalf("answer %q: project = %+v %v", answer, p, ok)
+		}
 	}
 
+	declined := filepath.Join(t.TempDir(), "config.yaml")
 	out, err = executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
 	if err == nil || !strings.Contains(err.Error(), "app.local.dd.io") || !strings.Contains(err.Error(), "run nearhost add in a terminal") {
 		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
+		t.Fatalf("an add without a terminal wrote the config: %v", statErr)
 	}
 }
 
@@ -601,10 +608,10 @@ func TestAddWarnsWhenAHostResolvesOnTheInternet(t *testing.T) {
 		return []netip.Addr{netip.MustParseAddr("203.0.113.7")}, nil
 	}
 	out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--no-presets")
-	if err == nil {
-		t.Fatalf("a declined add succeeded\n%s", out)
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "(a real domain, resolves to 203.0.113.7 on the internet)")
+	wantContains(t, out, "(a real domain, resolves to 203.0.113.7 on the internet): approve? [y/N] ")
 }
 
 func TestAddHostFlagIsApprovedByTyping(t *testing.T) {
@@ -614,7 +621,7 @@ func TestAddHostFlagIsApprovedByTyping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "Approve these?") {
+	if strings.Contains(out, "approve? [y/N]") {
 		t.Fatalf("asked about a typed host:\n%s", out)
 	}
 	p, _ := loadSaved(t, cfgPath).Project("typed")
@@ -660,7 +667,7 @@ func TestAddHostFlagApprovesAHostTheFileLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "Approve these?") {
+	if strings.Contains(out, "approve? [y/N]") {
 		t.Fatalf("asked about a typed host:\n%s", out)
 	}
 	p, _ := loadSaved(t, cfgPath).Project("rcapp")
@@ -683,19 +690,18 @@ func TestAddHostFlagTypedTwiceIsServedOnce(t *testing.T) {
 
 const rcDockerClients = "version: 1\ndocker_clients: true\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.test]\n"
 
-// docker_clients is asked about like a host: listed at the prompt, and saved
-// only on a yes.
+// docker_clients is asked about like a host, and saved only on a yes.
 func TestAddAsksBeforeDockerClients(t *testing.T) {
 	dir := rcProject(t, rcDockerClients)
 
 	declined := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil {
-		t.Fatalf("a declined add succeeded\n%s", out)
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "  docker_clients (lets local Docker containers reach this project)\n", "Approve these? [y/N] ")
-	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
-		t.Fatalf("a declined add wrote the config: %v", statErr)
+	wantContains(t, out, "docker_clients (lets local Docker containers reach this project): approve? [y/N] ")
+	if p, ok := loadSaved(t, declined).Project("rcapp"); !ok || p.DockerClients() {
+		t.Fatalf("declined: project = %+v %v, want it without docker_clients", p, ok)
 	}
 
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -713,10 +719,78 @@ func TestAddAsksBeforeLoopbackPort(t *testing.T) {
 	dir := rcProject(t, "version: 1\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.test]\n  - port: 5173\n    role: loopback\n")
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil {
-		t.Fatalf("a declined add succeeded\n%s", out)
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "  localhost:5173 (binds localhost:5173 on this machine)\n", "Approve these? [y/N] ")
+	wantContains(t, out, "localhost:5173 (binds localhost:5173 on this machine): approve? [y/N] ")
+}
+
+// Each item is asked about on its own, after one note on what approving
+// does; a no leaves that item out and the rest are added.
+func TestAddAsksAboutEachItem(t *testing.T) {
+	dir := rcProject(t, "version: 1\ndocker_clients: true\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.local.dd.io]\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "y\nn\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if strings.Count(out, approvalNote) != 1 {
+		t.Errorf("the note on approving is not said once:\n%s", out)
+	}
+	wantContains(t, out,
+		approvalNote+"\napp.local.dd.io on port 8220 (a real domain): approve? [y/N] ",
+		"docker_clients (lets local Docker containers reach this project): approve? [y/N] ",
+		"Left out, as you did not approve them: docker_clients.\n")
+	p, ok := loadSaved(t, cfgPath).Project("rcapp")
+	if !ok {
+		t.Fatalf("the project was not added:\n%s", out)
+	}
+	if web, _ := p.WebRoute(); !reflect.DeepEqual(web.Hosts, []string{"app.local.dd.io"}) {
+		t.Errorf("web hosts = %v", web.Hosts)
+	}
+	if p.DockerClients() {
+		t.Error("docker_clients was saved on a no")
+	}
+}
+
+// A project whose every item is refused is added without them, and the end
+// of input refuses what is left.
+func TestAddRefusingEveryItemAddsTheRest(t *testing.T) {
+	dir := rcProject(t, "version: 1\nalias: local.rcapp.com\ndocker_clients: true\nroutes:\n  - port: ${APP_PORT}\n    hosts: [app.local.dd.io]\n  - port: 5173\n    role: loopback\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "Added rcapp on local at https://rcapp.test\n",
+		"Left out, as you did not approve them: app.local.dd.io, local.rcapp.com, localhost:5173, docker_clients.\n")
+	p, ok := loadSaved(t, cfgPath).Project("rcapp")
+	if !ok {
+		t.Fatalf("the project was not added:\n%s", out)
+	}
+	if p.Alias != "rcapp.test" || len(p.AllHosts()) != 1 || p.DockerClients() {
+		t.Errorf("alias %q, hosts %v, docker_clients %v", p.Alias, p.AllHosts(), p.DockerClients())
+	}
+	for _, r := range p.Routes {
+		if r.Port == 5173 && r.Role != config.RoleIgnore {
+			t.Errorf("route 5173 = %+v, want ignore", r)
+		}
+	}
+}
+
+// A host whose DNS lookup fails says so, as the user cannot tell from it
+// whether serving the host hides a real site.
+func TestAddSaysWhenDNSCouldNotBeChecked(t *testing.T) {
+	dir := rcProject(t, rcRealDomain)
+	b := rcBackend(t, true)
+	b.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		return nil, errors.New("no nameserver")
+	}
+	out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--no-presets")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	wantContains(t, out, "app.local.dd.io on port 8220 (a real domain) (could not check DNS): approve? [y/N] ")
 }
 
 func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
@@ -779,7 +853,7 @@ func TestAddTakesAliasFromNearhostrc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add a real domain: %v\n%s", err, out)
 	}
-	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)", "Approve these? [y/N] ")
+	wantContains(t, out, approvalNote, "app.local.x.io on port 8220 (a real domain): approve? [y/N] ")
 	if p, _ := loadSaved(t, real).Project("rcapp"); p.Alias != "app.local.x.io" {
 		t.Fatalf("saved alias %q", p.Alias)
 	}
@@ -871,7 +945,7 @@ func TestAddApprovesInferredHosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "This project asks for these, which need your approval:", "app.local.x.io on port 8220 (a real domain)")
+	wantContains(t, out, approvalNote, "app.local.x.io on port 8220 (a real domain): approve? [y/N] ")
 
 	other := filepath.Join(t.TempDir(), "config.yaml")
 	saveConfig(t, other, &config.Config{})
@@ -888,7 +962,7 @@ func TestAddApprovesInferredHosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add --host: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "Approve these?") {
+	if strings.Contains(out, "approve? [y/N]") {
 		t.Errorf("--host still prompted:\n%s", out)
 	}
 }
@@ -916,17 +990,21 @@ func TestForceWebKeepsHostedRoutes(t *testing.T) {
 	}
 }
 
-func TestAddDecliningInferredHostsSavesNothing(t *testing.T) {
+func TestAddDecliningInferredHostsLeavesThemOut(t *testing.T) {
 	dir := envProject(t, hostedEnv)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	saveConfig(t, cfgPath, &config.Config{})
 	enableHostedPreset(t, cfgPath)
-	_, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "hostapp")
-	if err == nil || err.Error() != "not added: what this project asks for was not approved" {
-		t.Fatalf("err = %v", err)
+	out, err := executeWithInput(t, "n\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "hostapp")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
 	}
-	if _, ok := loadSaved(t, cfgPath).Project("hostapp"); ok {
-		t.Error("the project was saved")
+	p, ok := loadSaved(t, cfgPath).Project("hostapp")
+	if !ok {
+		t.Fatalf("the project was not saved:\n%s", out)
+	}
+	if hosts := p.AllHosts(); !reflect.DeepEqual(hosts, []string{"hostapp.test"}) {
+		t.Errorf("serves %v", hosts)
 	}
 }
 
@@ -995,7 +1073,7 @@ func TestAddSkipsInferredHostsAnotherProjectServes(t *testing.T) {
 	if want := "Not serving app.local.x.io: project \"first\" already serves it.\n"; !strings.Contains(stderr.String(), want) {
 		t.Errorf("stderr = %q, want %q", stderr.String(), want)
 	}
-	if strings.Contains(stdout.String(), "Approve these?") {
+	if strings.Contains(stdout.String(), "approve? [y/N]") {
 		t.Errorf("asked about the host:\n%s", stdout.String())
 	}
 	p, ok := loadSaved(t, cfgPath).Project("second")
@@ -1077,11 +1155,11 @@ func TestAddNearhostrcWithOnlyAnAlias(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	saveConfig(t, cfgPath, &config.Config{})
 	enableHostedPreset(t, cfgPath)
-	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "aliasapp")
+	out, err := executeWithInput(t, "y\ny\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--name", "aliasapp")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "This project asks for these, which need your approval:", "local.myapp.com", "app.local.x.io on port 8220")
+	wantContains(t, out, approvalNote, "local.myapp.com on port 8220 (a real domain): approve? [y/N] ", "app.local.x.io on port 8220 (a real domain): approve? [y/N] ")
 	p, _ := loadSaved(t, cfgPath).Project("aliasapp")
 	if p.Alias != "local.myapp.com" {
 		t.Errorf("alias = %q", p.Alias)

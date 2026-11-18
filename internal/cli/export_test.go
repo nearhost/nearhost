@@ -403,11 +403,11 @@ func TestExportThenAddOnAnotherMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveConfig(t, cfgPath, &config.Config{})
-	out, err := executeWithInput(t, "y\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--no-presets")
+	out, err := executeWithInput(t, "y\ny\ny\n", newAddCmd(rcBackend(t, true)), "--config", cfgPath, "add", dir, "--no-presets")
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "shop.example.com", "docker_clients", "Approve these? [y/N] ")
+	wantContains(t, out, "shop.example.com on port 3100 (a real domain): approve? [y/N] ", "localhost:5173 (", "docker_clients (")
 
 	got, ok := loadSaved(t, cfgPath).Project("shop")
 	if !ok {
