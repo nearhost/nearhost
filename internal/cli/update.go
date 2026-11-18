@@ -280,7 +280,8 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 // downloads the release to <exe>.new and checks it while exe stays where it
 // is; only a complete, checked file goes on to the swap: exe moves aside,
 // and <exe>.new is renamed to exe. A failed download, a Ctrl-C (held) or
-// the time limit during it leaves exe untouched and removes <exe>.new. Once
+// the time limit during it leaves exe untouched, and the download removes
+// <exe>.new. Once
 // the swap starts, a Ctrl-C no longer stops it: it finishes, or puts the old
 // copy back, so there is always a nearhost at exe.
 func replaceExe(ctx context.Context, b updateBackend, exe, latest string, held <-chan os.Signal) error {
@@ -296,8 +297,10 @@ func replaceExe(ctx context.Context, b updateBackend, exe, latest string, held <
 		case <-dctx.Done():
 		}
 	}()
+	// download removes what it wrote when it fails. A file at staged then
+	// is not this run's: another update running at the same moment may own
+	// it, so it stays.
 	if err := b.download(dctx, latest, staged); err != nil {
-		b.remove(staged)
 		if cause := context.Cause(dctx); errors.Is(cause, errDownloadSlow) || errors.Is(cause, errDownloadInterrupted) {
 			err = cause
 		}
@@ -310,11 +313,11 @@ func replaceExe(ctx context.Context, b updateBackend, exe, latest string, held <
 	}
 	if err := b.rename(staged, exe); err != nil {
 		err = fmt.Errorf("the new nearhost could not be moved to %s: %w", exe, err)
-		rerr := restore()
-		b.remove(staged)
-		if rerr != nil {
-			return fmt.Errorf("%w, and the old nearhost could not be put back: %v", err, rerr)
+		if rerr := restore(); rerr != nil {
+			// The checked new copy stays as a second way back.
+			return fmt.Errorf("%w, and the old nearhost could not be put back: %v. The new nearhost is at %s; rename it to %s", err, rerr, staged, exe)
 		}
+		b.remove(staged)
 		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
 	}
 	return nil

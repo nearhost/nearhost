@@ -312,12 +312,14 @@ func TestUpdateOnWindowsDownloadsAScriptCopyItself(t *testing.T) {
 }
 
 // A failed download, a checksum that does not match among them, moves
-// nothing: the running copy stays where it is and the new file goes.
+// nothing: the running copy stays where it is. The download removes what it
+// wrote; the update removes nothing, as a file left at <exe>.new may belong
+// to another update running at the same moment.
 func TestUpdateOnWindowsFailedDownloadMovesNothing(t *testing.T) {
 	exe := `C:\Tools\nearhost.exe`
 	f := &fakeUpdate{latest: "0.6.0", exe: exe, goos: "windows", writable: true, downloadErr: errors.New("checksum mismatch")}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	if want := []string{"download " + exe + ".new", "remove " + exe + ".new"}; !slices.Equal(f.events, want) {
+	if want := []string{"download " + exe + ".new"}; !slices.Equal(f.events, want) {
 		t.Fatalf("events %v, want %v", f.events, want)
 	}
 	if err == nil || !strings.Contains(err.Error(), "nearhost 0.6.0 could not be downloaded: checksum mismatch") ||
@@ -340,7 +342,7 @@ func TestUpdateOnWindowsCtrlCDuringTheDownloadLeavesTheExe(t *testing.T) {
 			}
 		}}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	if want := []string{"download " + exe + ".new", "remove " + exe + ".new"}; !slices.Equal(f.events, want) {
+	if want := []string{"download " + exe + ".new"}; !slices.Equal(f.events, want) {
 		t.Fatalf("events %v, want %v", f.events, want)
 	}
 	if err == nil || !strings.Contains(err.Error(), "cancelled") || !strings.Contains(err.Error(), exe+" is unchanged") ||
@@ -361,7 +363,7 @@ func TestUpdateOnWindowsDownloadTimeLimit(t *testing.T) {
 			return ctx.Err()
 		}}
 	_, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	if want := []string{"download " + exe + ".new", "remove " + exe + ".new"}; !slices.Equal(f.events, want) {
+	if want := []string{"download " + exe + ".new"}; !slices.Equal(f.events, want) {
 		t.Fatalf("events %v, want %v", f.events, want)
 	}
 	if err == nil || !strings.Contains(err.Error(), "the download took longer than 5 minutes") || strings.Contains(err.Error(), "deadline exceeded") {
@@ -399,14 +401,62 @@ func TestUpdateOnWindowsRestoresWhenTheRenameFails(t *testing.T) {
 	}
 }
 
-// If the old copy cannot be put back either, the error says where it is.
+// If the old copy cannot be put back either, the error says where it is,
+// and the checked new copy stays at <exe>.new as a second way back.
 func TestUpdateOnWindowsSaysWhenRestoreFails(t *testing.T) {
-	f := &fakeUpdate{latest: "0.6.0", exe: `C:\Tools\nearhost.exe`, goos: "windows", writable: true,
+	exe := `C:\Tools\nearhost.exe`
+	f := &fakeUpdate{latest: "0.6.0", exe: exe, goos: "windows", writable: true,
 		renameErr: errors.New("sharing violation"), restoreErr: errors.New(`move C:\old\nearhost-1.exe back to C:\Tools\nearhost.exe: access denied`)}
 	_, err := runUpdate(t, f, "0.5.0", "", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "could not be put back") || !strings.Contains(err.Error(), `C:\old\nearhost-1.exe`) ||
-		strings.Contains(err.Error(), "is back") {
+		!strings.Contains(err.Error(), "The new nearhost is at "+exe+".new; rename it to "+exe) || strings.Contains(err.Error(), "is back") {
 		t.Fatalf("err %v", err)
+	}
+	if want := []string{"download " + exe + ".new", "stepAside " + exe, "rename " + exe + ".new " + exe, "restore"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, want %v", f.events, want)
+	}
+}
+
+// Through the real download, a checksum that does not match leaves only
+// the running copy in its folder: the download's own cleanup removes
+// <exe>.new.
+func TestUpdateOnWindowsChecksumMismatchLeavesOnlyTheExe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/checksums.txt") {
+			io.WriteString(w, strings.Repeat("0", 64)+"  nearhost_0.6.0_windows_amd64.zip\n")
+			return
+		}
+		io.WriteString(w, "not the release")
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "nearhost.exe")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeUpdate{latest: "0.6.0", exe: exe, goos: "windows", writable: true}
+	b := f.backend()
+	b.download = update.Downloader{HTTP: srv.Client(), BaseURL: srv.URL, GOARCH: "amd64"}.Fetch
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+	Version = "0.5.0"
+	cmd := newUpdateCmd(b)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("out %q, err %v", out.String(), err)
+	}
+	if len(f.events) != 0 {
+		t.Fatalf("events %v, want none", f.events)
+	}
+	es, _ := os.ReadDir(dir)
+	if len(es) != 1 || es[0].Name() != "nearhost.exe" {
+		t.Fatalf("%s holds %v, want only nearhost.exe", dir, es)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "old" {
+		t.Fatalf("exe holds %q", got)
 	}
 }
 

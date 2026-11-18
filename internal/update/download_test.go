@@ -246,9 +246,33 @@ func TestRetryRenameWaitsOutABusyFile(t *testing.T) {
 		t.Fatalf("err %v after %d tries", err, tries)
 	}
 
+	var slept []time.Duration
 	rename = retryRename(func(string, string) error { return busy },
-		func(err error) bool { return err == busy }, func(time.Duration) {})
+		func(err error) bool { return err == busy }, func(d time.Duration) { slept = append(slept, d) })
 	if err := rename("a", "b"); !errors.Is(err, busy) {
 		t.Fatalf("err %v, want the busy error at the end", err)
+	}
+	// The update waits 100 ms at a time, for up to 2 s.
+	if len(slept) != 20 || slept[0] != 100*time.Millisecond {
+		t.Fatalf("slept %v, want 20 waits of 100ms", slept)
+	}
+}
+
+// A nearhost.exe that unpacks to more than maxExe is refused, and nothing
+// is left behind.
+func TestFetchRefusesAnOversizedExe(t *testing.T) {
+	saved := maxExe
+	t.Cleanup(func() { maxExe = saved })
+	maxExe = 16
+	d := release(t, "0.13.0", zipOf(t, map[string]string{"nearhost.exe": strings.Repeat("x", 17)}), "")
+	dest := filepath.Join(folder(t), "nearhost.exe.new")
+	err := d.Fetch(context.Background(), "0.13.0", dest)
+	if err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("err %v, want it refused as too large", err)
+	}
+	only(t, filepath.Dir(dest))
+	maxExe = 17
+	if err := d.Fetch(context.Background(), "0.13.0", dest); err != nil {
+		t.Fatalf("an exe of exactly maxExe was refused: %v", err)
 	}
 }

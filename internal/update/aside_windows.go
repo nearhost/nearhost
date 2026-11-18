@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/windows"
 )
 
 // Windows cannot overwrite or delete a running .exe, but it can rename one,
@@ -123,12 +121,4 @@ func CleanOld(exe string) {
 			os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
-}
-
-// renameBusy reports whether a rename failed because another program, such
-// as a virus scanner, has one of the files open, which passes once that
-// program lets go. Windows reports a sharing violation, or access denied
-// when the program opened the file without letting others delete it.
-func renameBusy(err error) bool {
-	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
 }

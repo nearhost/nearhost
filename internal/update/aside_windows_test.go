@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 // asideChild, in the environment of the copy, makes TestAsideChildOnWindows
@@ -405,21 +403,5 @@ func TestFetchThenSwapARunningExeOnWindows(t *testing.T) {
 	}
 	if _, err := os.Lstat(staged); !os.IsNotExist(err) {
 		t.Fatalf("%s is still there: %v", staged, err)
-	}
-}
-
-// renameBusy knows the errors a virus scanner holding a file open causes.
-func TestRenameBusyOnWindows(t *testing.T) {
-	for _, tc := range []struct {
-		err  error
-		want bool
-	}{
-		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_SHARING_VIOLATION}, true},
-		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_ACCESS_DENIED}, true},
-		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_FILE_NOT_FOUND}, false},
-	} {
-		if got := renameBusy(tc.err); got != tc.want {
-			t.Errorf("renameBusy(%v) = %v, want %v", tc.err, got, tc.want)
-		}
 	}
 }

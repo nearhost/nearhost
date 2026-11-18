@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/fsretry"
 )
 
 // DownloadURL is where a release's files are, under /v<version>/.
@@ -27,6 +29,10 @@ const (
 	maxChecksums = 1 << 20
 	maxArchive   = 512 << 20
 )
+
+// maxExe is the most writeExe takes from the archive's nearhost.exe once
+// unpacked. A release's is some 30 MB. Tests lower it.
+var maxExe int64 = 256 << 20
 
 // Downloader updates a Windows copy that came from the PowerShell installer
 // or a zip, by fetching the release itself. Starting PowerShell to run the
@@ -146,8 +152,12 @@ func writeExe(ctx context.Context, f *zip.File, dest string) (err error) {
 			os.Remove(dest)
 		}
 	}()
-	if _, err = io.Copy(out, src); err != nil {
+	n, err := io.Copy(out, io.LimitReader(src, maxExe+1))
+	if err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
+	}
+	if n > maxExe {
+		return fmt.Errorf("the release's nearhost.exe is larger than %d MB, so it was not installed", maxExe>>20)
 	}
 	if err = out.Sync(); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
@@ -170,19 +180,11 @@ const (
 // MoveIntoPlace renames from to to, waiting out a file that another program
 // holds open for a moment.
 func MoveIntoPlace(from, to string) error {
-	return retryRename(os.Rename, renameBusy, time.Sleep)(from, to)
+	return retryRename(os.Rename, fsretry.Busy, time.Sleep)(from, to)
 }
 
-// retryRename returns a rename that calls try and, while busy reports its
-// error as one that passes, sleeps renameRetryEvery and calls it again, for
-// up to renameRetryFor of sleeping. It returns the last error.
+// retryRename is fsretry.Retry with the update's waits: renameRetryEvery
+// apart, for up to renameRetryFor.
 func retryRename(try func(oldpath, newpath string) error, busy func(error) bool, sleep func(time.Duration)) func(oldpath, newpath string) error {
-	return func(oldpath, newpath string) error {
-		err := try(oldpath, newpath)
-		for waited := time.Duration(0); err != nil && busy(err) && waited < renameRetryFor; waited += renameRetryEvery {
-			sleep(renameRetryEvery)
-			err = try(oldpath, newpath)
-		}
-		return err
-	}
+	return fsretry.Retry(try, busy, sleep, renameRetryEvery, renameRetryFor)
 }

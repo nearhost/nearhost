@@ -10,7 +10,3 @@ func StepAside(exe string) (restore func() error, err error) {
 
 // CleanOld does nothing off Windows, where nothing is moved aside.
 func CleanOld(exe string) {}
-
-// renameBusy reports whether a rename failed in a way that passes. Only
-// Windows has such failures.
-func renameBusy(error) bool { return false }

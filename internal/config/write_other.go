@@ -9,10 +9,6 @@ import (
 	"syscall"
 )
 
-// renameBusy reports whether a rename failed in a way that passes. Only
-// Windows refuses to rename over a file that is open.
-func renameBusy(error) bool { return false }
-
 // syncFile is (*os.File).Sync, replaced in tests to fail as a file system
 // might.
 var syncFile = (*os.File).Sync
