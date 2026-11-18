@@ -10,7 +10,7 @@ import (
 // with a request open, as it is while someone reads back through a busy log.
 func benchLog(b *testing.B) *Model {
 	b.Helper()
-	m := goldenModel(b, 120, 40, homeKey)
+	m := goldenModel(b, 120, 40, homeKey, 2000)
 	press(m, "g")
 	for i := 0; i < 30; i++ {
 		press(m, "pgdown")

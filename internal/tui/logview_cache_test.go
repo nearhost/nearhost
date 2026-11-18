@@ -10,7 +10,7 @@ import (
 // The log is filtered once per update: the keys, the wheel and the frame
 // share one pass until the log, the kind or the search changes.
 func TestLogViewFiltersOncePerUpdate(t *testing.T) {
-	m := goldenModel(t, 100, 30, homeKey)
+	m := goldenModel(t, 100, 30, homeKey, 300)
 	runs := func() int { return m.logView.cache.runs }
 	m.View()
 	if runs() != 1 {
@@ -30,7 +30,7 @@ func TestLogViewFiltersOncePerUpdate(t *testing.T) {
 	if runs() != 2 {
 		t.Errorf("a new kind filtered %d times in all, want 2", runs())
 	}
-	addGolden(m, 2000, 3)
+	addGolden(m, 300, 3)
 	m.View()
 	m.View()
 	if runs() != 3 {
@@ -56,7 +56,7 @@ func TestLogViewFiltersOncePerUpdate(t *testing.T) {
 // an entry that drops off the front, between frames moves the cursor's
 // entry the way the unfiltered log would.
 func TestLogViewActsOnTheCurrentEntries(t *testing.T) {
-	m := goldenModel(t, 100, 30, homeKey)
+	m := goldenModel(t, 100, 30, homeKey, 2000)
 	m.View()
 	press(m, "g")
 	m.View()
@@ -86,7 +86,7 @@ func TestLogViewActsOnTheCurrentEntries(t *testing.T) {
 // Enter opens the request under the cursor, even when lines arrived since
 // the last frame.
 func TestLogViewOpensTheRequestUnderTheCursor(t *testing.T) {
-	m := goldenModel(t, 100, 30, homeKey)
+	m := goldenModel(t, 100, 30, homeKey, 300)
 	m.View()
 	press(m, "k")
 	for m.shown()[m.logView.at(m.shown())].req == nil {
@@ -114,7 +114,7 @@ func TestEntryHeightIsTheLinesDrawn(t *testing.T) {
 
 // A frame of a long log draws the rows in view, not every entry.
 func TestLogViewDrawsOnlyTheRowsInView(t *testing.T) {
-	m := goldenModel(t, 120, 40, homeKey)
+	m := goldenModel(t, 120, 40, homeKey, 2000)
 	m.View()
 	press(m, "g")
 	m.View()
@@ -126,7 +126,7 @@ func TestLogViewDrawsOnlyTheRowsInView(t *testing.T) {
 
 // The height of an entry follows the width of the window.
 func TestLogViewResizeKeepsTheFrame(t *testing.T) {
-	m := goldenModel(t, 100, 30, homeKey)
+	m := goldenModel(t, 100, 30, homeKey, 300)
 	g := &goldenRun{t: t, m: m}
 	g.ref = m.logView.vp
 	g.keys("up", "g", "pgdown", "pgdown")

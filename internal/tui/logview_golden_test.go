@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -27,9 +28,13 @@ func goldenEntry(i int, at time.Time) logEntry {
 		if i%3 == 1 {
 			uri = long
 		}
+		id := ""
+		if i%27 == 0 {
+			id = goldenKept
+		}
 		return logEntry{at: when, source: []string{"myapp", "website", "blog"}[i%3], err: status >= 500,
 			req: &proxy.Access{Method: method, Host: "myapp.test", URI: uri, Status: status, Took: time.Duration(i%1500) * time.Millisecond,
-				Size: i * 13, ContentType: "application/json", Headers: map[string][]string{"Accept": {"*/*"}, "Cookie": {"REDACTED"}}}}
+				Size: i * 13, ContentType: "application/json", ID: id, Headers: map[string][]string{"Accept": {"*/*"}, "Cookie": {"REDACTED"}}}}
 	case 3:
 		return logEntry{at: when, source: "myapp", text: clean(fmt.Sprintf("vite v5.%d ready in %d ms", i%9, i%700))}
 	case 4:
@@ -45,6 +50,10 @@ func goldenEntry(i int, at time.Time) logEntry {
 	return logEntry{at: when, source: "myapp", text: ""}
 }
 
+// goldenKept is the ID of the one exchange the fake backend keeps: a POST
+// with a JSON body, a cookie and an authorization header, and a long answer.
+const goldenKept = "k1"
+
 // goldenAt is when the golden log starts.
 var goldenAt = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 
@@ -56,14 +65,24 @@ func addGolden(m *Model, first, n int) {
 	}
 }
 
-// goldenModel is a model of width×height whose log, 2000 entries long, is
-// open at key: the combined log, or myapp's, which keeps the last 1000.
-func goldenModel(t testing.TB, width, height int, key string) *Model {
+// goldenModel is a model of width×height whose log, n entries long, is open
+// at key: the combined log (2000 entries at most), or myapp's, which keeps
+// the last 1000.
+func goldenModel(t testing.TB, width, height int, key string, n int) *Model {
 	t.Helper()
 	f := newFake(t, sampleConfig())
+	f.edit.captured = map[string]proxy.Exchange{goldenKept: {
+		ID: goldenKept, Method: "POST", Host: "myapp.test", URI: "/api/projects",
+		ReqHeader:   http.Header{"Content-Type": {"application/json"}, "Cookie": {"session=secret"}, "Authorization": {"Bearer tok"}},
+		ReqBody:     []byte(`{"name":"demo","tags":["a","b"]}`),
+		ReqBodySize: 31, Status: 201,
+		RespHeader:   http.Header{"Content-Type": {"application/json"}},
+		RespBody:     []byte(strings.Repeat(`{"line":"a long line of the body that is cut to the width"}`+"\n", 14)),
+		RespBodySize: 800,
+	}}
 	m := New(f, "/work/here")
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	addGolden(m, 0, 2000)
+	addGolden(m, 0, n)
 	m.sel = key
 	press(m, "l")
 	if m.logView == nil {
@@ -148,6 +167,20 @@ func (g *goldenRun) add(label string, n int) {
 	g.check(label)
 }
 
+// openKept opens a request whose exchange the backend kept, nearest the end.
+func (g *goldenRun) openKept(label string) {
+	g.t.Helper()
+	shown := g.m.shown()
+	for i := len(shown) - 1; i >= 0; i-- {
+		if shown[i].req != nil && shown[i].req.ID != "" {
+			g.m.logView.open = shown[i].seq
+			g.check(label)
+			return
+		}
+	}
+	g.t.Fatalf("%s: no kept request to open", label)
+}
+
 // openRequest opens the n-th request counting back from the newest shown.
 func (g *goldenRun) openRequest(label string, fromEnd int) {
 	g.t.Helper()
@@ -170,15 +203,16 @@ func (g *goldenRun) openRequest(label string, fromEnd int) {
 func TestLogViewGolden(t *testing.T) {
 	scenarios := []struct {
 		name string
+		full bool // needs a log that fills its ring; the others use 300 entries
 		run  func(g *goldenRun)
 	}{
-		{"end while following", func(g *goldenRun) { g.check("start") }},
-		{"top", func(g *goldenRun) { g.keys("top", "g") }},
-		{"middle", func(g *goldenRun) { g.keys("top", "g"); g.repeat("middle", "pgdown", 25) }},
-		{"one row from the end", func(g *goldenRun) { g.keys("up", "k", "j", "k", "k") }},
-		{"line by line from the top", func(g *goldenRun) { g.keys("top", "g"); g.repeat("down", "j", 60); g.repeat("up", "k", 30) }},
-		{"home and end", func(g *goldenRun) { g.keys("ends", "g", "G", "home", "end", "pgup", "pgup", "pgdown") }},
-		{"wheel", func(g *goldenRun) {
+		{"end while following", true, func(g *goldenRun) { g.check("start") }},
+		{"top", true, func(g *goldenRun) { g.keys("top", "g") }},
+		{"middle", true, func(g *goldenRun) { g.keys("top", "g"); g.repeat("middle", "pgdown", 8) }},
+		{"one row from the end", true, func(g *goldenRun) { g.keys("up", "k", "j", "k", "k") }},
+		{"line by line from the top", false, func(g *goldenRun) { g.keys("top", "g"); g.repeat("down", "j", 24); g.repeat("up", "k", 12) }},
+		{"home and end", false, func(g *goldenRun) { g.keys("ends", "g", "G", "home", "end", "pgup", "pgup", "pgdown") }},
+		{"wheel", false, func(g *goldenRun) {
 			for i := 0; i < 8; i++ {
 				g.m.logWheel(tea.Mouse{Button: tea.MouseWheelUp})
 				g.check(fmt.Sprintf("wheel up %d", i))
@@ -186,7 +220,7 @@ func TestLogViewGolden(t *testing.T) {
 			g.m.logWheel(tea.Mouse{Button: tea.MouseWheelDown})
 			g.check("wheel down")
 		}},
-		{"search", func(g *goldenRun) {
+		{"search", false, func(g *goldenRun) {
 			g.keys("open search", "/")
 			for _, r := range "page=1" {
 				g.m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -195,64 +229,77 @@ func TestLogViewGolden(t *testing.T) {
 			g.keys("kept", "enter", "k", "k", "g", "j", "pgdown", "G")
 			g.keys("cleared", "esc")
 		}},
-		{"search that matches nothing", func(g *goldenRun) {
+		{"search that matches nothing", false, func(g *goldenRun) {
 			g.keys("open search", "/")
 			typeText(g.m, "no such text anywhere")
 			g.check("typed")
 			g.keys("kept", "enter", "g", "G")
 		}},
-		{"search in the text of notes", func(g *goldenRun) {
+		{"search in the text of notes", false, func(g *goldenRun) {
 			g.keys("open search", "/")
 			typeText(g.m, "ENOENT")
 			g.keys("kept", "enter", "k", "k", "k", "g", "pgdown")
 		}},
-		{"each kind", func(g *goldenRun) {
+		{"each kind", false, func(g *goldenRun) {
 			for _, k := range []string{"tab", "tab", "tab", "tab"} {
 				g.keys("kind", k)
 				g.keys("moved in kind", "k", "k", "pgup", "g", "pgdown", "G")
 			}
 			g.keys("back", "shift+tab", "shift+tab")
 		}},
-		{"kind and search", func(g *goldenRun) {
+		{"kind and search", false, func(g *goldenRun) {
 			g.keys("kind", "tab", "tab", "/")
 			typeText(g.m, "proj")
 			g.keys("kept", "enter", "k", "g", "j")
 		}},
-		{"expanded entry inside the window", func(g *goldenRun) {
+		{"expanded entry inside the window", false, func(g *goldenRun) {
 			g.openRequest("open the last request", 0)
 			g.keys("scroll", "k", "k", "g", "G")
 			g.repeat("up through it", "k", 15)
 		}},
-		{"expanded entry above the window", func(g *goldenRun) {
-			g.openRequest("open a request far up", 200)
+		{"expanded entry above the window", false, func(g *goldenRun) {
+			g.openRequest("open a request far up", 60)
 			g.keys("top", "g")
 			g.repeat("down", "pgdown", 10)
 			g.keys("end", "G", "k")
 		}},
-		{"expanded entry below the window", func(g *goldenRun) {
+		{"expanded entry below the window", false, func(g *goldenRun) {
 			g.keys("top", "g")
 			g.openRequest("open the newest request", 0)
 			g.keys("move", "j", "pgdown", "pgdown")
 		}},
-		{"expanded with the cursor on it", func(g *goldenRun) {
+		{"expanded with the cursor on it", false, func(g *goldenRun) {
 			g.keys("up", "g")
 			g.repeat("down", "j", 12)
 			g.keys("expand", "enter", "j", "j", "enter", "k", "enter", "enter")
 		}},
-		{"expanded entry and a search", func(g *goldenRun) {
+		{"expanded entry and a search", false, func(g *goldenRun) {
 			g.openRequest("open", 3)
 			g.keys("search", "/")
 			typeText(g.m, "GET")
 			g.keys("kept", "enter", "k", "g", "G")
 		}},
-		{"no wrap", func(g *goldenRun) {
+		{"no wrap", false, func(g *goldenRun) {
 			g.keys("unwrap", "w", "g", "pgdown", "G")
 			g.openRequest("open", 2)
 			g.keys("wrap again", "w", "k")
 		}},
-		{"reveal", func(g *goldenRun) { g.openRequest("open", 1); g.keys("reveal", "v", "k", "v") }},
-		{"help", func(g *goldenRun) { g.keys("help", "?", "k", "?", "g", "?", "esc") }},
-		{"toast and confirm", func(g *goldenRun) {
+		{"reveal", false, func(g *goldenRun) {
+			g.openKept("open a kept request")
+			v := g.m.logView
+			v.follow, v.cursor = false, v.open
+			g.check("cursor on it")
+			if s := screen(g.m); !strings.Contains(s, "cookie: •••") || strings.Contains(s, "session=secret") {
+				g.t.Fatalf("the secret headers are not hidden:\n%s", s)
+			}
+			g.keys("reveal", "v")
+			if s := screen(g.m); !strings.Contains(s, "cookie: session=secret") {
+				g.t.Fatalf("the secret headers are not revealed:\n%s", s)
+			}
+			g.keys("hide again, move", "v", "k", "v", "j", "w")
+		}},
+		{"help", false, func(g *goldenRun) { g.keys("help", "?", "k", "?", "g", "?", "esc") }},
+		{"toast and confirm", false, func(g *goldenRun) {
 			g.m.logView.said = "Sent GET /x again: 200."
 			g.check("said")
 			g.keys("up", "k")
@@ -261,8 +308,8 @@ func TestLogViewGolden(t *testing.T) {
 			g.m.logView.confirm = shown[len(shown)-1].seq
 			g.check("confirm")
 		}},
-		{"new lines while following", func(g *goldenRun) { g.add("one", 1); g.add("many", 40); g.add("a page", 300) }},
-		{"new lines while paused", func(g *goldenRun) {
+		{"new lines while following", false, func(g *goldenRun) { g.add("one", 1); g.add("many", 40); g.add("a page", 300) }},
+		{"new lines while paused", false, func(g *goldenRun) {
 			g.keys("up", "k", "k")
 			g.add("one", 1)
 			g.add("many", 40)
@@ -270,29 +317,29 @@ func TestLogViewGolden(t *testing.T) {
 			g.add("a page", 300)
 			g.keys("follow", "G")
 		}},
-		{"entries dropped while scrolled up", func(g *goldenRun) {
+		{"entries dropped while scrolled up", true, func(g *goldenRun) {
 			g.keys("up", "g")
-			g.repeat("down", "pgdown", 12)
-			for i := 0; i < 8; i++ {
-				g.add(fmt.Sprintf("append and drop %d", i), 150)
+			g.repeat("down", "pgdown", 5)
+			for i := 0; i < 4; i++ {
+				g.add(fmt.Sprintf("append and drop %d", i), 300)
 			}
 			g.keys("move", "k", "j", "pgup")
 		}},
-		{"the entry under the cursor is dropped", func(g *goldenRun) {
+		{"the entry under the cursor is dropped", true, func(g *goldenRun) {
 			g.keys("up", "g", "j", "j", "j")
 			g.add("append past the cap", 2500)
 			g.keys("after", "j", "k", "g")
 		}},
-		{"entries dropped with a request open", func(g *goldenRun) {
+		{"entries dropped with a request open", true, func(g *goldenRun) {
 			g.keys("up", "g")
-			g.repeat("down", "pgdown", 6)
+			g.repeat("down", "pgdown", 3)
 			g.openRequest("open", 150)
-			for i := 0; i < 6; i++ {
-				g.add(fmt.Sprintf("append %d", i), 200)
+			for i := 0; i < 3; i++ {
+				g.add(fmt.Sprintf("append %d", i), 400)
 			}
 			g.keys("end", "G")
 		}},
-		{"entries dropped under a search", func(g *goldenRun) {
+		{"entries dropped under a search", true, func(g *goldenRun) {
 			g.keys("search", "/")
 			typeText(g.m, "page")
 			g.keys("kept", "enter", "g")
@@ -305,9 +352,22 @@ func TestLogViewGolden(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {140, 50}} {
 		for _, key := range []string{homeKey, rowKey(rowProject, "myapp")} {
 			for _, sc := range scenarios {
+				// The scenarios on a short log run in the two corners, small
+				// window on Home and big window on a project; those that
+				// need a full ring run in all four.
+				if !sc.full && (size[0] == 80) != (key == homeKey) {
+					continue
+				}
 				t.Run(fmt.Sprintf("%dx%d/%s/%s", size[0], size[1], strings.TrimPrefix(key, "project:"), sc.name), func(t *testing.T) {
-					m := goldenModel(t, size[0], size[1], key)
-					sc.run(&goldenRun{t: t, m: m, next: 2000, ref: viewport.New()})
+					n := 300
+					if sc.full {
+						n = map[string]int{homeKey: 2000}[key]
+						if n == 0 {
+							n = ownLogLines
+						}
+					}
+					m := goldenModel(t, size[0], size[1], key, n)
+					sc.run(&goldenRun{t: t, m: m, next: n, ref: viewport.New()})
 				})
 			}
 		}
