@@ -2,10 +2,38 @@
 // browser.
 package desktop
 
-import "os/exec"
+import (
+	"os/exec"
+	"time"
+)
 
-// OpenURL opens url with the system's opener.
+// openGrace is how long OpenURL waits for an opener that exits early, so a
+// quick failure still reaches the caller as an error.
+const openGrace = 500 * time.Millisecond
+
+// opener builds the command that opens a URL. Tests replace it.
+var opener = openCommand
+
+// OpenURL opens url with the system's opener and returns once the opener has
+// started. Some openers, such as xdg-open without a desktop environment, run
+// the browser in the foreground until it closes, so OpenURL does not wait for
+// the opener to exit. It does wait up to openGrace: an opener that fails to
+// start, or exits non-zero within that time, returns an error. The opener's
+// output is discarded so it cannot disturb a full-screen terminal.
 func OpenURL(url string) error {
-	args := openCommand(url)
-	return exec.Command(args[0], args[1:]...).Run()
+	args := opener(url)
+	cmd := exec.Command(args[0], args[1:]...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(openGrace)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return nil
+	}
 }
