@@ -118,13 +118,24 @@ func TestDeleteFromKeychainReportsAFailedDelete(t *testing.T) {
 	}
 }
 
+// pinUninstall replaces the hooks Uninstall consults, so a test does not
+// depend on the platform's defaults, and restores them when the test ends.
+func pinUninstall(t *testing.T, copyOnly, trusted bool, trustUn func(*x509.Certificate, ...truststore.Option) error, removeCopy func(*x509.Certificate) error) {
+	t.Helper()
+	origUninstall, origRemove, origOnly, origNow := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted, trustedNow
+	trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = trustUn, removeCopy, copyOnly
+	trustedNow = func(*x509.Certificate) bool { return trusted }
+	t.Cleanup(func() {
+		trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted, trustedNow = origUninstall, origRemove, origOnly, origNow
+	})
+}
+
 func TestUninstallRemovesTheSystemCopyAfterTheTrust(t *testing.T) {
 	fakeTrustSudo(t)
 	var order []string
-	origUninstall, origRemove := trustUninstall, removeSystemCopy
-	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { order = append(order, "trust"); return nil }
-	removeSystemCopy = func(*x509.Certificate) error { order = append(order, "copy"); return nil }
-	t.Cleanup(func() { trustUninstall, removeSystemCopy = origUninstall, origRemove })
+	pinUninstall(t, true, true,
+		func(*x509.Certificate, ...truststore.Option) error { order = append(order, "trust"); return nil },
+		func(*x509.Certificate) error { order = append(order, "copy"); return nil })
 
 	if err := Uninstall(&x509.Certificate{}); err != nil {
 		t.Fatal(err)
@@ -137,46 +148,25 @@ func TestUninstallRemovesTheSystemCopyAfterTheTrust(t *testing.T) {
 func TestUninstallOfAnUntrustedCopyOnlyRemovesTheCopy(t *testing.T) {
 	fakeTrustSudo(t)
 	var order []string
-	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
-	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { order = append(order, "trust"); return nil }
-	removeSystemCopy = func(*x509.Certificate) error { order = append(order, "copy"); return nil }
-	copyOnlyWhenUntrusted = true
-	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
-	trustedNow = func(*x509.Certificate) bool { return false }
+	pinUninstall(t, true, false,
+		func(*x509.Certificate, ...truststore.Option) error { order = append(order, "trust"); return nil },
+		func(*x509.Certificate) error { order = append(order, "copy"); return nil })
 
 	if err := Uninstall(&x509.Certificate{}); err != nil || !slices.Equal(order, []string{"copy"}) {
 		t.Fatalf("err=%v order=%v, want only the copy removal", err, order)
 	}
 }
 
-func TestUninstallRemovesTheCopyEvenWhenRemoveTrustedCertFails(t *testing.T) {
+// A trusted root whose trust settings cannot be removed keeps its copy, so a
+// second run can retry the removal.
+func TestUninstallKeepsTheCopyWhenTheTrustRemovalFails(t *testing.T) {
 	fakeTrustSudo(t)
-	var order []string
-	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
-	trustUninstall = func(*x509.Certificate, ...truststore.Option) error {
-		order = append(order, "trust")
-		return errors.New("exit status 1")
-	}
-	removeSystemCopy = func(*x509.Certificate) error { order = append(order, "copy"); return nil }
-	copyOnlyWhenUntrusted = true
-	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
-	trustedNow = func(*x509.Certificate) bool { return true }
+	copies := 0
+	pinUninstall(t, true, true,
+		func(*x509.Certificate, ...truststore.Option) error { return errors.New("trust boom") },
+		func(*x509.Certificate) error { copies++; return nil })
 
-	if err := Uninstall(&x509.Certificate{}); err != nil || !slices.Equal(order, []string{"trust", "copy"}) {
-		t.Fatalf("err=%v order=%v, want the copy removed after the failure", err, order)
-	}
-}
-
-func TestUninstallKeepsTheTrustErrorWhenTheCopyCannotGoEither(t *testing.T) {
-	fakeTrustSudo(t)
-	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
-	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { return errors.New("trust boom") }
-	removeSystemCopy = func(*x509.Certificate) error { return errors.New("copy boom") }
-	copyOnlyWhenUntrusted = true
-	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
-	trustedNow = func(*x509.Certificate) bool { return true }
-
-	if err := Uninstall(&x509.Certificate{}); err == nil || !strings.Contains(err.Error(), "trust boom") {
-		t.Fatalf("err = %v", err)
+	if err := Uninstall(&x509.Certificate{}); err == nil || !strings.Contains(err.Error(), "trust boom") || copies != 0 {
+		t.Fatalf("err=%v copies=%d, want the trust error and no copy removal", err, copies)
 	}
 }

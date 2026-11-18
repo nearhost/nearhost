@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -540,10 +539,8 @@ func TestUntrustTrustedFromAnotherAnchorFailsWithoutSudo(t *testing.T) {
 	f := newFake()
 	f.trusted = true
 	f.foreign = true
+	setHostOS(t, "linux")
 	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if runtime.GOOS != "linux" {
-		t.Skip("the anchor message is the Linux one")
-	}
 	if err == nil || f.uninstall != 0 || f.sudoChecks != 0 || strings.Contains(out, "removed") {
 		t.Fatalf("err=%v uninstalls=%d sudoChecks=%d out=%q", err, f.uninstall, f.sudoChecks, out)
 	}
@@ -551,5 +548,33 @@ func TestUntrustTrustedFromAnotherAnchorFailsWithoutSudo(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err %q lacks %q", err, want)
 		}
+	}
+}
+
+func setHostOS(t *testing.T, goos string) {
+	t.Helper()
+	orig := hostOS
+	hostOS = goos
+	t.Cleanup(func() { hostOS = orig })
+}
+
+// On macOS a root that is trusted but not held by the System keychain still
+// gets its trust settings removed once; the re-check then decides.
+func TestUntrustMacTrustedButNotHeldAttemptsTheTrustRemoval(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setHostOS(t, "darwin")
+
+	f := newFake()
+	f.trusted, f.foreign = true, true
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil || f.uninstall != 1 || !strings.Contains(out, "removed") {
+		t.Fatalf("not trusted afterwards: err=%v uninstalls=%d out=%q", err, f.uninstall, out)
+	}
+
+	f = newFake()
+	f.trusted, f.foreign, f.stillTrusted = true, true, true
+	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
+	if err == nil || f.uninstall != 1 || !strings.Contains(err.Error(), "Keychain Access") {
+		t.Fatalf("still trusted afterwards: err=%v uninstalls=%d", err, f.uninstall)
 	}
 }

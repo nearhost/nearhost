@@ -232,6 +232,9 @@ func nssStoreList(st proxy.NSSStatus) string {
 	return strings.Join(names, ", ")
 }
 
+// hostOS is the operating system the messages are worded for. Tests replace it.
+var hostOS = runtime.GOOS
+
 // foreignTrustError is the error for a root the system trusts without a file
 // of Nearhost's: there is nothing for untrust to remove.
 func foreignTrustError(goos string, help func() (string, string)) error {
@@ -287,10 +290,13 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 			// anchor on disk.
 			trusted := b.isTrusted(cert)
 			holds := b.systemHolds == nil || b.systemHolds(cert)
-			if trusted && !holds {
+			// Only Linux can tell that trust is not Nearhost's to remove. On
+			// macOS a root trusted without a System keychain copy still gets
+			// its trust settings removal, then the re-check decides.
+			if trusted && !holds && hostOS == "linux" {
 				// Trust comes from a file Nearhost did not install, so there
 				// is nothing of Nearhost's to remove and no reason for sudo.
-				return foreignTrustError(runtime.GOOS, b.anchorHelp)
+				return foreignTrustError(hostOS, b.anchorHelp)
 			}
 			inStore := trusted || holds
 			if inStore {
@@ -318,7 +324,7 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 					still = b.isTrusted
 				}
 				if still(cert) {
-					return stillTrustedError(runtime.GOOS)
+					return stillTrustedError(hostOS)
 				}
 			}
 			if inStore {
