@@ -22,6 +22,11 @@ type Command struct {
 // ERROR_CANCELLED, just as it reports a No, so it may have gone unanswered.
 var ErrDeclined = errors.New("the Windows prompt was declined or went unanswered")
 
+// HelperRefusedCode is the exit code of an elevated `hosts apply` that
+// refuses the paths of its --input and --report, before it opens or creates
+// either, so it leaves no report behind.
+const HelperRefusedCode = 3
+
 // Elevator is how privileged steps are run on this OS.
 type Elevator interface {
 	// Needed reports whether steps go through Run.

@@ -4,6 +4,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +147,9 @@ func TestElevatedHostsApplyRefusesOtherInputAndReportOnWindows(t *testing.T) {
 			if err == nil || err.Error() != errHelperFolder.Error() {
 				t.Fatalf("err = %v, want %q", err, errHelperFolder)
 			}
+			if code := exitCode(err, io.Discard); code != elevate.HelperRefusedCode {
+				t.Fatalf("exit code %d, want %d", code, elevate.HelperRefusedCode)
+			}
 			if report != "" {
 				if _, err := os.Lstat(report); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("report created: %v", err)
@@ -226,5 +231,149 @@ func TestInSystemFolderOnWindows(t *testing.T) {
 	}
 	if inSystemFolder(temp) {
 		t.Errorf("inSystemFolder(%q) = true", temp)
+	}
+}
+
+// helperPaths takes only clean drive-letter paths to input and report in
+// one folder named like the elevator's: a UNC or device path would have the
+// administrator's run open a server or an object manager link the caller
+// chose before any check of the folder.
+func TestHelperPathsOnWindows(t *testing.T) {
+	ok := `C:\Users\me\AppData\Local\Temp\nearhost-elevate-0123`
+	if !helperPaths(ok+`\input`, ok+`\report`) {
+		t.Fatalf("refused %s", ok)
+	}
+	for _, dir := range []string{
+		`\\server\share\nearhost-elevate-0123`,
+		`\\?\C:\Temp\nearhost-elevate-0123`,
+		`\\.\C:\Temp\nearhost-elevate-0123`,
+		`\\?\GLOBALROOT\??\nearhost-elevate-0123`,
+		`\\?\UNC\server\share\nearhost-elevate-0123`,
+		`Temp\nearhost-elevate-0123`,
+		`C:Temp\nearhost-elevate-0123`,
+		`1:\Temp\nearhost-elevate-0123`,
+	} {
+		if helperPaths(dir+`\input`, dir+`\report`) {
+			t.Errorf("took %s", dir)
+		}
+	}
+}
+
+// The folder opened must have the name the caller gave, on a local drive:
+// an object manager link or a link in a parent folder could otherwise lead
+// a name like the elevator's to another folder.
+func TestFinalNameMatchesOnWindows(t *testing.T) {
+	dir := `C:\Temp\nearhost-elevate-0123`
+	for final, want := range map[string]bool{
+		`\\?\C:\Temp\nearhost-elevate-0123`:          true,
+		`\\?\D:\Elsewhere\NEARHOST-ELEVATE-0123`:     true,
+		`\\?\C:\Users\admin\Startup`:                 false,
+		`\\?\C:\Temp\nearhost-elevate-0124`:          false,
+		`\\?\UNC\server\share\nearhost-elevate-0123`: false,
+		`C:\Temp\nearhost-elevate-0123`:              false,
+	} {
+		if got := finalNameMatches(dir, final); got != want {
+			t.Errorf("finalNameMatches(%s, %s) = %v, want %v", dir, final, got, want)
+		}
+	}
+	if finalNameMatches(`C:\Temp\startup`, `\\?\C:\Temp\startup`) {
+		t.Error("took a folder not named like the elevator's")
+	}
+}
+
+// defineDosDevice defines the DOS device name with the raw NT target until
+// the test ends.
+func defineDosDevice(t *testing.T, name, target string) {
+	t.Helper()
+	n, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := windows.UTF16PtrFromString(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.DefineDosDevice(windows.DDD_RAW_TARGET_PATH, n, p); err != nil {
+		t.Fatalf("define %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		windows.DefineDosDevice(windows.DDD_RAW_TARGET_PATH|windows.DDD_REMOVE_DEFINITION|windows.DDD_EXACT_MATCH_ON_REMOVE, n, p)
+	})
+}
+
+// An object manager link named like the elevator's folder, which leads to
+// another folder that passes the owner and access list checks, is refused
+// before the report is created: by its path when given as a device path,
+// and by the final path of the folder opened when reached through a drive
+// letter.
+func TestElevatedHostsApplyRefusesAnObjectManagerLinkOnWindows(t *testing.T) {
+	runElevated(t)
+	me := mySID(t)
+	target := mkdirWithSDDL(t, "startup", "O:"+me+"D:P(A;OICI;FA;;;"+me+")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	writeInput(t, target, "input")
+	device := fmt.Sprintf("%st%d", elevate.HelperDirPrefix, os.Getpid())
+	defineDosDevice(t, device, `\??\`+target)
+	report := filepath.Join(target, "report")
+
+	via := `\\?\GLOBALROOT\??\` + device
+	if _, err := os.Stat(via); err != nil {
+		t.Fatalf("the link does not lead to the folder: %v", err)
+	}
+	if _, err := runApply(t, "--input", via+`\input`, "--report", via+`\report`); err == nil || err.Error() != errHelperFolder.Error() {
+		t.Fatalf("err = %v, want %q", err, errHelperFolder)
+	}
+	var dirs heldDirs
+	defer dirs.Close()
+	if err := checkHelperDir(&dirs, via); err == nil || !strings.Contains(err.Error(), "opened as") {
+		t.Fatalf("checkHelperDir(%s) = %v, want opened as", via, err)
+	}
+	if _, err := os.Lstat(report); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("report created in the link's target: %v", err)
+	}
+
+	// A free drive letter whose target is the DOS device directory reaches
+	// the same link through a path helperPaths takes.
+	drive := freeDrive(t)
+	defineDosDevice(t, drive, `\??`)
+	viaDrive := drive + `\` + device
+	if _, err := os.Stat(viaDrive); err != nil {
+		t.Skipf("%s does not reach the link on this system: %v", viaDrive, err)
+	}
+	if !helperPaths(viaDrive+`\input`, viaDrive+`\report`) {
+		t.Fatalf("helperPaths refused %s, so this does not test the final path", viaDrive)
+	}
+	if _, err := runApply(t, "--input", viaDrive+`\input`, "--report", viaDrive+`\report`); err == nil || err.Error() != errHelperFolder.Error() {
+		t.Fatalf("err = %v, want %q", err, errHelperFolder)
+	}
+	if err := checkHelperDir(&dirs, viaDrive); err == nil || !strings.Contains(err.Error(), "opened as") {
+		t.Fatalf("checkHelperDir(%s) = %v, want opened as", viaDrive, err)
+	}
+	if _, err := os.Lstat(report); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("report created in the link's target: %v", err)
+	}
+}
+
+// freeDrive is a drive letter and colon that names no drive.
+func freeDrive(t *testing.T) string {
+	t.Helper()
+	used, err := windows.GetLogicalDrives()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 25; i >= 3; i-- {
+		if used&(1<<i) == 0 {
+			return string(rune('A'+i)) + ":"
+		}
+	}
+	t.Skip("no free drive letter")
+	return ""
+}
+
+// The folder the elevator makes passes checkHelperDir.
+func TestCheckHelperDirTakesTheElevatorsFolderOnWindows(t *testing.T) {
+	var dirs heldDirs
+	defer dirs.Close()
+	if err := checkHelperDir(&dirs, helperDir(t)); err != nil {
+		t.Fatal(err)
 	}
 }

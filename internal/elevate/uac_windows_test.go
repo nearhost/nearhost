@@ -223,3 +223,15 @@ func TestHelperDirIsPrivateOnWindows(t *testing.T) {
 		t.Fatalf("HelperDir gave %s twice", dir)
 	}
 }
+
+// A helper that refuses its folder exits with HelperRefusedCode and leaves
+// no report; Run names the folder and says what it must be.
+func TestUACRunExplainsARefusedFolderOnWindows(t *testing.T) {
+	dir := tempDir(t)
+	err := System().Run(context.Background(), helperCommand(t, "", "exit", strconv.Itoa(HelperRefusedCode)))
+	if err == nil || !strings.HasPrefix(err.Error(), "the administrator's helper refused the folder "+filepath.Join(dir, HelperDirPrefix)) ||
+		!strings.HasSuffix(err.Error(), ": it must be on a local NTFS or ReFS drive (check TMP)") {
+		t.Fatalf("Run: %v", err)
+	}
+	leftOver(t, dir)
+}

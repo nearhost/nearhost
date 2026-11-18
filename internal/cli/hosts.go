@@ -65,7 +65,10 @@ func newHostsCmd() *cobra.Command {
 			elevated := isElevated()
 			if elevated {
 				if err := checkElevatedIO(&dirs, input, report); err != nil {
-					return err
+					// Its own exit code tells the elevator why no report
+					// came back.
+					fmt.Fprintln(cmd.ErrOrStderr(), "nearhost:", err)
+					return exitError{code: elevate.HelperRefusedCode, msg: err.Error()}
 				}
 			}
 			err := checkElevatedFile(file)

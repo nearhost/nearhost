@@ -4,9 +4,12 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/elevate"
 )
 
 // An elevated run refuses every spelling of /etc/hosts but the one Nearhost
@@ -55,6 +58,9 @@ func TestElevatedHostsApplyRefusesInputAndReportOnUnix(t *testing.T) {
 			want := "an elevated run takes no --input or --report here"
 			if err == nil || err.Error() != want {
 				t.Fatalf("err = %v, want %q", err, want)
+			}
+			if code := exitCode(err, io.Discard); code != elevate.HelperRefusedCode {
+				t.Fatalf("exit code %d, want %d", code, elevate.HelperRefusedCode)
 			}
 			if _, err := os.Lstat(report); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("report created: %v", err)

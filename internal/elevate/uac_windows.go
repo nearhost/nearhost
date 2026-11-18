@@ -54,8 +54,9 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 // line of the file named by --report is the error. Both files are in a new
 // folder from HelperDir, which the elevated helper insists on, and the
 // folder goes when Run returns, whether the child ran, failed to start or
-// was declined. A child that refuses the folder writes no report, and Run
-// gives its exit code. When ctx ends, while the
+// was declined. A child that refuses the folder writes no report and exits
+// with HelperRefusedCode, which Run turns into an error that names the
+// folder; other exits without a report give their code. When ctx ends, while the
 // prompt is up or while the child runs, Run stops waiting and removes both
 // files, without killing the child: one that has not read its input yet
 // then fails, so an approval given after a stop changes nothing. c.Prompt
@@ -126,6 +127,9 @@ func (uac) Run(ctx context.Context, c Command) error {
 	if line := reportLine(report); line != "" {
 		return errors.New(line)
 	}
+	if code == HelperRefusedCode {
+		return fmt.Errorf("the administrator's helper refused the folder %s: it must be on a local NTFS or ReFS drive (check TMP)", dir)
+	}
 	return fmt.Errorf("exited with code %d", code)
 }
 
@@ -133,11 +137,14 @@ func (uac) Run(ctx context.Context, c Command) error {
 const HelperDirPrefix = "nearhost-elevate-"
 
 // HelperDir makes a new folder for one elevated run's input and report, in
-// the user's temp directory, with a random name that starts with
+// the user's temp directory (TMP), with a random name that starts with
 // HelperDirPrefix. Its owner is this process's user and its access list,
 // protected from what the temp directory passes down, grants that user,
 // SYSTEM and Administrators alone, so the elevated helper's check that no
-// one else can write in it passes whatever the temp directory allows.
+// one else can write in it passes whatever the temp directory allows. The
+// helper still refuses it when TMP is not on a local NTFS or ReFS drive: a
+// network share, UNC or a Samba share on a drive letter, or a FAT32 or
+// exFAT drive, which has no owner or access list.
 func HelperDir() (string, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
