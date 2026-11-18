@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,17 @@ func (e *instanceError) Error() string {
 	// moves on every system; --config moves only the config file.
 	return running + ". Stop it first. To run a second one beside it, give it its own XDG_CONFIG_HOME."
 }
+
+// ErrAlreadyRunning is what Start's refusal matches, with errors.Is, when
+// another Nearhost holds the run directory.
+var ErrAlreadyRunning = errors.New("another Nearhost is already running")
+
+// Is reports whether target is ErrAlreadyRunning.
+func (e *instanceError) Is(target error) bool { return target == ErrAlreadyRunning }
+
+// IsAlreadyRunning reports whether err is Start refusing because another
+// Nearhost holds the run directory. Its message already says what to do.
+func IsAlreadyRunning(err error) bool { return errors.Is(err, ErrAlreadyRunning) }
 
 // lockInstance takes the lock on the instance file in dir without waiting,
 // writes this process's pid in it and returns what releases the lock. When

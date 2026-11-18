@@ -199,6 +199,9 @@ type Engine struct {
 	// Start takes and Shutdown releases; nil while the engine holds none.
 	// lifeMu guards it.
 	releaseInstance func()
+	// startErr is why the last Start failed, nil when none has; mu guards
+	// it. ensureSession gives it while the engine has not started.
+	startErr error
 
 	lifeMu    sync.Mutex
 	hostsTurn chan struct{} // holds one token while a hosts update runs
@@ -410,9 +413,16 @@ func (e *Engine) Config() *config.Config {
 // way the engine stays unstarted and Start can be called again. A
 // taken page port only publishes an event, and the proxy runs without the
 // page. Starting a started engine does nothing.
-func (e *Engine) Start(ctx context.Context) error {
+func (e *Engine) Start(ctx context.Context) (err error) {
 	e.lifeMu.Lock()
 	defer e.lifeMu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		if !e.started {
+			e.startErr = err
+		}
+		e.mu.Unlock()
+	}()
 	e.mu.Lock()
 	started, closed := e.started, e.closed
 	e.mu.Unlock()
@@ -470,7 +480,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
 	e.applyMu.Lock()
-	err := e.proxy.Apply(nil)
+	err = e.proxy.Apply(nil)
 	e.applyMu.Unlock()
 	if err != nil {
 		proxy.SetSink(nil)

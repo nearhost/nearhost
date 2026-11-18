@@ -124,6 +124,11 @@ func TestProxyFix(t *testing.T) {
 		{"run directory not a directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.ENOTDIR}), "linux", "Fix /run/nearhost: " + syscall.ENOTDIR.Error() + "."},
 		{"run directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.EACCES}), "linux", "Check that this user can create /run/nearhost."},
 	}
+	// Another Nearhost holding the run directory: the message says what to
+	// do, and no port advice follows it.
+	if got := proxyFix(fmt.Errorf("start: %w", engine.ErrAlreadyRunning), "linux", "/usr/bin/nearhost"); got != "" {
+		t.Errorf("already running: proxyFix = %q, want no fix", got)
+	}
 	for _, c := range cases {
 		got := proxyFix(c.err, c.goos, "/usr/bin/nearhost")
 		if !strings.Contains(got, c.want) {
