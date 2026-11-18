@@ -371,7 +371,7 @@ func TestNoOnEndedLogsEnded(t *testing.T) {
 	}
 }
 
-func TestCloseAfterNonEndingErrorSendsNo(t *testing.T) {
+func TestCloseAfterNonEndingErrorSendsClose(t *testing.T) {
 	m, f, _ := projectFormModel(t)
 	f.passErr, f.passErrKeeps = errors.New("the server isn't connected"), true
 	ask(m, passReq(m))
@@ -381,7 +381,54 @@ func TestCloseAfterNonEndingErrorSendsNo(t *testing.T) {
 	if m.form != nil {
 		t.Fatalf("form %T still open", m.form)
 	}
-	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1", "answer r1 0"}) {
-		t.Fatalf("calls %v, want one No after the failed Yes", got)
+	// Closing the box is no No: it must not hold back the server's
+	// requests.
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1", fmt.Sprintf("answer r1 %d", AnswerClose)}) {
+		t.Fatalf("calls %v, want one Close after the failed Yes", got)
+	}
+}
+
+// asked lists the requests the model has open or waiting, by id.
+func askedIDs(m *Model) []string {
+	var ids []string
+	switch f := m.form.(type) {
+	case *passForm:
+		ids = append(ids, f.r.ID)
+	case *docForm:
+		ids = append(ids, f.r.ID)
+	}
+	for _, a := range m.waiting {
+		switch {
+		case a.pass != nil:
+			ids = append(ids, a.pass.ID)
+		case a.doc != nil:
+			ids = append(ids, a.doc.ID)
+		}
+	}
+	return ids
+}
+
+func TestPassNoDropsThatServersQueue(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	ask(m, passReq(m))
+	r2, r3, r4 := passReq(m), passReq(m), passReq(m)
+	r2.ID, r2.Remote = "r2", 3001
+	r3.ID, r3.Remote = "r3", 3002
+	r4.ID, r4.Origin = "r4", "mini"
+	ask(m, r2)
+	ask(m, r3)
+	ask(m, r4)
+	askDoc(m, docReq(m))
+	settle(m, press(m, "n"))
+	if got := askedIDs(m); !slices.Equal(got, []string{"r4", "d1"}) {
+		t.Fatalf("asked %v, want mini's passthrough and apollo's document", got)
+	}
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 0"}) {
+		t.Fatalf("calls %v", got)
+	}
+	log := logText(m, homeKey)
+	if !strings.Contains(log, "The request from Claude Code on apollo to open port 3001 was held back, as you declined another.") ||
+		!strings.Contains(log, "The request from Claude Code on apollo to open port 3002 was held back, as you declined another.") {
+		t.Fatalf("log:\n%s", log)
 	}
 }

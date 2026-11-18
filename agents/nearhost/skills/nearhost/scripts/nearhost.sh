@@ -260,9 +260,26 @@ held_back() {
 	[ -n "$n" ] || return 0
 	printf '%s\n' "$BODY"
 	if [ -n "${DOCUMENT:-}" ]; then
-		printf '%s\n' "The user said No to a $1 from this machine in Nearhost, so nothing was opened. Do not ask again on your own; if the user asks you to, ask again in $n seconds or later. Tell the user the document is at $DOCUMENT." >&2
+		said_no "The user said No to a $1 from this machine in Nearhost, so nothing was opened." "$n" " Tell the user the document is at $DOCUMENT."
+	fi
+	said_no "The user said No to a $1 from this machine in Nearhost." "$n"
+}
+
+# held exits 6 for a request in BODY that Nearhost ended without asking,
+# as the user said No to another of its KIND from this machine, saying when
+# the agent may ask again. It returns for any other.
+held() {
+	[ "$(field held "$BODY")" = true ] || return 0
+	said_no "The user said No to another $1 from this machine in Nearhost, so this one was not asked." "$(field retry_after "$BODY")"
+}
+
+# said_no exits 6 saying WHAT, that the agent must not ask again by itself,
+# and when it may if the user asks, which is after N seconds, then AFTER.
+said_no() {
+	if [ "${2:-0}" -gt 0 ] 2>/dev/null; then
+		printf '%s\n' "$1 Do not ask again on your own; if the user asks you to, ask again in $2 seconds or later.${3:-}" >&2
 	else
-		printf '%s\n' "The user said No to a $1 from this machine in Nearhost. Do not ask again on your own; if the user asks you to, ask again in $n seconds or later." >&2
+		printf '%s\n' "$1 Do not ask again on your own; if the user asks you to, you may ask again now.${3:-}" >&2
 	fi
 	exit 6
 }
@@ -621,6 +638,7 @@ passthrough-wait)
 	show_body
 	case $(field state "$BODY") in
 	declined)
+		held passthrough
 		# The user's No has no reason. A reason means the user said yes and
 		# opening the port failed, which is no answer to stop asking for.
 		reason=$(text_field reason "$BODY")
@@ -732,6 +750,7 @@ open-wait)
 	show_body
 	case $(field state "$BODY") in
 	declined)
+		held document
 		# The user's No has no reason. A reason means the user said yes and
 		# showing the document failed.
 		reason=$(text_field reason "$BODY")

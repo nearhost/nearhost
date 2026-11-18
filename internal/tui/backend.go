@@ -196,6 +196,10 @@ const (
 	// AnswerAlways opens it and lets its requester open more on the server
 	// without asking.
 	AnswerAlways
+	// AnswerClose ends the request as its box closes after an answer
+	// failed. It is not the user's No, so it holds back none of the
+	// server's other requests.
+	AnswerClose
 )
 
 // ServerFiles is the files of a server, open while a project there is being

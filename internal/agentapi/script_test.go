@@ -1836,3 +1836,50 @@ func TestScriptOpenRefusedWaits(t *testing.T) {
 		}
 	})
 }
+
+func TestScriptWaitHeldBack(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, c := scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini},
+			Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: &fakeGrants{tokens: map[[2]string]string{}}})
+		first := proposalID.FindStringSubmatch(shell.run(t, home, claudeEnv, "passthrough", "3000").stdout)[1]
+		held := proposalID.FindStringSubmatch(shell.run(t, home, claudeEnv, "passthrough", "3001").stdout)[1]
+		if err := s.AnswerPassthrough(context.Background(), first, AnswerNo); err != nil {
+			t.Fatal(err)
+		}
+		c.add(10 * time.Second)
+		posts, front := countPosts(t, home)
+		r := shell.run(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "passthrough-wait", held)
+		want := "The user said No to another passthrough from this machine in Nearhost, so this one was not asked. Do not ask again on your own; if the user asks you to, ask again in 20 seconds or later."
+		if r.code != 6 || strings.TrimSpace(r.stderr) != want || !strings.Contains(r.stdout, `"held":true`) {
+			t.Fatalf("held: %+v", r)
+		}
+		if n := posts(); n != 0 {
+			t.Fatalf("the script asked again %d times", n)
+		}
+		c.add(30 * time.Second)
+		r = shell.run(t, home, claudeEnv, "passthrough-wait", held)
+		want = "The user said No to another passthrough from this machine in Nearhost, so this one was not asked. Do not ask again on your own; if the user asks you to, you may ask again now."
+		if r.code != 6 || strings.TrimSpace(r.stderr) != want {
+			t.Fatalf("after the hold: %+v", r)
+		}
+	})
+}
+
+func TestScriptOpenWaitHeldBack(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, _ := docScript(t, home, shell.origin(), true)
+		dir := filepath.Join(realDir(t, home), "notes")
+		first := proposalID.FindStringSubmatch(shell.run(t, home, claudeEnv, "open", docFile(t, dir, "a.md")).stdout)[1]
+		held := proposalID.FindStringSubmatch(shell.run(t, home, claudeEnv, "open", docFile(t, dir, "b.md")).stdout)[1]
+		if err := s.AnswerDocument(context.Background(), first, AnswerNo); err != nil {
+			t.Fatal(err)
+		}
+		r := shell.run(t, home, claudeEnv, "open-wait", held)
+		want := "The user said No to another document from this machine in Nearhost, so this one was not asked. Do not ask again on your own; if the user asks you to, ask again in 30 seconds or later."
+		if r.code != 6 || strings.TrimSpace(r.stderr) != want {
+			t.Fatalf("held: %+v", r)
+		}
+	})
+}

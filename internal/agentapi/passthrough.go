@@ -76,7 +76,13 @@ const (
 	// AnswerAlways opens it and lets its requester on its server open more
 	// without asking, with the token it is given.
 	AnswerAlways
+	// AnswerClose ends the request as the interface closes its box after
+	// an answer failed. It is not the user's No, so it holds nothing back.
+	AnswerClose
 )
+
+// closedReason is the reason a request AnswerClose ended has.
+const closedReason = "its answer failed in Nearhost, and the user closed it"
 
 // kindPassthrough and kindDocument are the kinds of request a No holds
 // back: see backoff.
@@ -84,6 +90,12 @@ const (
 	kindPassthrough = "passthrough"
 	kindDocument    = "document"
 )
+
+// heldReason is the reason of a request of kind that a No to another of
+// the same kind ended.
+func heldReason(kind string) string {
+	return "the user refused another " + kind + " request from this machine moments ago"
+}
 
 // RequesterUnknown is the requester a tool that can't tell what it is
 // sends. It is never offered Always allow.
@@ -134,6 +146,8 @@ type passRecord struct {
 	local   int
 	// token is the Always allow token, until the agent has read it.
 	token string
+	// held is set when a No to another of its origin's requests ended it.
+	held bool
 	// gen orders opens against Passer.List snapshots: see sync.
 	gen   uint64
 	seq   uint64 // creation order, for lists
@@ -159,7 +173,8 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // the caller can say the answer came too late. When the grant for Always
 // allow fails to save, the error wraps ErrAllowNotSaved. Every error for a
 // request that is no longer waiting wraps ErrPassEnded. A No to a waiting
-// request refuses its origin's next passthrough requests for backoff.
+// request refuses its origin's next passthrough requests for backoff, and
+// ends its other prompts as held back; AnswerClose does neither.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
 	if s.opts.Passer == nil || s.opts.Grants == nil {
 		return errors.New("this nearhost has no passthroughs")
@@ -167,8 +182,9 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	s.mu.Lock()
 	s.sweepPassesLocked()
 	r := s.passes[id]
+	no := a == AnswerNo || a == AnswerClose
 	switch {
-	case a == AnswerNo && (r == nil || !r.prompted):
+	case no && (r == nil || !r.prompted):
 		s.mu.Unlock()
 		return nil
 	case r == nil || !r.prompted:
@@ -184,9 +200,14 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	case a == AnswerAlways && !r.CanAlways:
 		s.mu.Unlock()
 		return fmt.Errorf("%s can't be always allowed, as it didn't say which tool it is", r.Requester)
+	case a == AnswerClose:
+		s.endPassLocked(r, StateDeclined, closedReason)
+		s.mu.Unlock()
+		return nil
 	case a == AnswerNo:
 		s.endPassLocked(r, StateDeclined, "")
 		s.refuseLocked(r.Origin, kindPassthrough)
+		s.holdPassesLocked(r.Origin)
 		s.mu.Unlock()
 		return nil
 	}
@@ -285,6 +306,18 @@ func (s *Server) endPassLocked(r *passRecord, state State, reason string) {
 	}
 	r.state, r.reason, r.ended = state, reason, s.opts.Now()
 	close(r.done)
+}
+
+// holdPassesLocked ends origin's passthrough prompts still waiting for the
+// user, as the user's No to one of them holds the rest back: see backoff.
+// One being opened is left alone.
+func (s *Server) holdPassesLocked(origin string) {
+	for _, r := range s.passes {
+		if r.Origin == origin && r.prompted && r.state == StatePending && !r.opening {
+			r.held = true
+			s.endPassLocked(r, StateDeclined, heldReason(kindPassthrough))
+		}
+	}
 }
 
 // openPassLocked records a pending request as open on laptop port local.

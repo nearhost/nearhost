@@ -81,6 +81,9 @@ type docForm struct {
 	// document opened, and only Always allow was not saved.
 	opened bool
 	seq    int
+	// last is the answer given last, which decline gives again when it was
+	// No.
+	last Answer
 }
 
 // docAnsweredMsg is the outcome of answering a document request.
@@ -123,7 +126,7 @@ func (f *docForm) update(msg tea.Msg) tea.Cmd {
 
 // answer gives a to the backend on the worker.
 func (f *docForm) answer(a Answer) tea.Cmd {
-	f.seq = nextSeq()
+	f.seq, f.last = nextSeq(), a
 	f.busy, f.err = true, ""
 	seq, b, r := f.seq, f.b, f.r
 	return f.w.do(func(ctx context.Context) tea.Msg {
@@ -131,13 +134,22 @@ func (f *docForm) answer(a Answer) tea.Cmd {
 	})
 }
 
-// decline says no to the request on the worker, as the box closes after a
-// failed answer that left the request waiting. It is best effort.
+// decline ends the request on the worker, as the box closes after a failed
+// answer that left the request waiting: with the No that failed, or with
+// AnswerClose after a Yes or Always allow, as the user did not say No. It
+// is best effort: only a No that takes is logged.
 func (f *docForm) decline() tea.Cmd {
-	b, id := f.b, f.r.ID
+	b, r, a := f.b, f.r, AnswerClose
+	if f.last == AnswerNo {
+		a = AnswerNo
+	}
 	return f.w.do(func(ctx context.Context) tea.Msg {
-		_ = b.AnswerDocument(ctx, id, AnswerNo)
-		return nil
+		if err := b.AnswerDocument(ctx, r.ID, a); err != nil || a != AnswerNo {
+			return nil
+		}
+		// A No that took holds back the server's other requests, which
+		// the queue drops as for any No.
+		return docAnsweredMsg{r: r, answer: AnswerNo}
 	})
 }
 
@@ -247,5 +259,22 @@ func (m *Model) docAnswered(msg docAnsweredMsg) tea.Cmd {
 		line = fmt.Sprintf("Declined to show %s for %s.", doc, who)
 	}
 	m.logs.note(line)
+	if msg.answer == AnswerNo {
+		m.dropHeldDocs(msg.r.Origin)
+	}
 	return nil
+}
+
+// dropHeldDocs drops origin's document requests from the queue, as a No to
+// one of them ends the rest as held back, and logs each.
+func (m *Model) dropHeldDocs(origin string) {
+	kept := m.waiting[:0]
+	for _, a := range m.waiting {
+		if a.doc != nil && a.doc.Origin == origin {
+			m.logs.note(fmt.Sprintf("The request from %s to show %s was held back, as you declined another.", a.doc.who(), clean(a.doc.Doc)))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	m.waiting = kept
 }

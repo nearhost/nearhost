@@ -272,11 +272,15 @@ func (s *Server) docPromptsLocked(origin string) int {
 }
 
 // viewDocLocked is a record as an agent sees it. full adds what the request
-// asked for, for lists. A token is given once, and only outside lists.
+// asked for, for lists. A request held back by a No to another says so, as
+// viewLocked does. A token is given once, and only outside lists.
 func (s *Server) viewDocLocked(r *docRecord, full bool) map[string]any {
 	out := map[string]any{"id": r.ID, "state": r.state}
 	if r.reason != "" {
 		out["reason"] = r.reason
+	}
+	if r.held {
+		out["held"], out["retry_after"] = true, s.holdLeftLocked(r.Origin, kindDocument)
 	}
 	if r.state == StateOpen {
 		out["url"] = r.url

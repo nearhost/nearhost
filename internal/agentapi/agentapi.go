@@ -255,22 +255,31 @@ func (s *Server) refuseLocked(origin, kind string) {
 	s.refused[refusal{origin, kind}] = s.opts.Now()
 }
 
+// holdLeftLocked is how many whole seconds, rounded up, are left of the
+// hold the user's last No to origin's request of kind put on that kind, or 0
+// when none is.
+func (s *Server) holdLeftLocked(origin, kind string) int {
+	at, ok := s.refused[refusal{origin, kind}]
+	if !ok {
+		return 0
+	}
+	left := at.Add(backoff).Sub(s.opts.Now())
+	if left <= 0 {
+		return 0
+	}
+	return int((left + time.Second - 1) / time.Second)
+}
+
 // backingOffLocked answers origin's request of kind with 429 while the
 // user's last No to that kind from origin is under backoff old, and reports
 // whether it answered. The wait is given in whole seconds, rounded up, in
 // Retry-After and the error.
 func (s *Server) backingOffLocked(w http.ResponseWriter, origin, kind string) bool {
-	key := refusal{origin, kind}
-	at, ok := s.refused[key]
-	if !ok {
+	secs := s.holdLeftLocked(origin, kind)
+	if secs == 0 {
+		delete(s.refused, refusal{origin, kind})
 		return false
 	}
-	left := at.Add(backoff).Sub(s.opts.Now())
-	if left <= 0 {
-		delete(s.refused, key)
-		return false
-	}
-	secs := int((left + time.Second - 1) / time.Second)
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	fail(w, http.StatusTooManyRequests, fmt.Sprintf("refused; ask again in %d s", secs))
 	return true

@@ -264,3 +264,26 @@ func TestDocRequestsKeepTheOrderWithProposals(t *testing.T) {
 		t.Fatalf("third %#v", got[2])
 	}
 }
+
+func TestDocNoDropsThatServersQueue(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	askDoc(m, docReq(m))
+	d2, d3, d4 := docReq(m), docReq(m), docReq(m)
+	d2.ID, d2.Doc = "d2", "plans/y.md"
+	d3.ID, d3.Doc = "d3", "plans/z.md"
+	d4.ID, d4.Origin = "d4", "mini"
+	askDoc(m, d2)
+	askDoc(m, d3)
+	askDoc(m, d4)
+	ask(m, passReq(m))
+	settle(m, press(m, "n"))
+	if got := askedIDs(m); !slices.Equal(got, []string{"d4", "r1"}) {
+		t.Fatalf("asked %v, want mini's document and apollo's passthrough", got)
+	}
+	if got := f.documentCalls(); !slices.Equal(got, []string{"answer d1 0"}) {
+		t.Fatalf("calls %v", got)
+	}
+	if log := logText(m, homeKey); !strings.Contains(log, "The request from Claude Code on apollo to show plans/y.md was held back, as you declined another.") {
+		t.Fatalf("log:\n%s", log)
+	}
+}
