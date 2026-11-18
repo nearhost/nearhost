@@ -149,8 +149,9 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	}
 
 	routes := make([]Route, 0, len(raw.Routes))
-	for _, rr := range raw.Routes {
-		r, err := fill(rr, env, restore)
+	at := fieldLines(data)
+	for i, rr := range raw.Routes {
+		r, err := fill(rr, env, restore, func(field string, host int) int { return at(i, field, host) })
 		if err != nil {
 			return nil, err
 		}
@@ -164,11 +165,11 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	// The alias goes through the same token swap as the labels.
 	alias, name, ok := discovery.ExpandBraced(restore.Replace(raw.Alias), env)
 	if !ok {
-		return nil, unset(name)
+		return nil, unset(name, at(-1, "alias", 0))
 	}
 	if alias != "" {
 		if err := config.ValidProjectAlias(alias); err != nil {
-			return nil, bareHint(fmt.Errorf("%s: alias: %w", FileName, err), alias)
+			return nil, bareHint(fmt.Errorf("%s: alias: %w", FileName, err), restore.Replace(raw.Alias), at(-1, "alias", 0))
 		}
 	}
 
@@ -235,16 +236,16 @@ func checkRoutes(routes []Route) error {
 }
 
 // fill turns one raw route into a Route, filling and checking its values.
-func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route, error) {
+func fill(rr rawRoute, env map[string]string, restore *strings.Replacer, at func(field string, host int) int) (Route, error) {
 	// Labels and roles go through the same token swap as ports and hosts,
 	// so put their references back and fill them too.
 	label, name, ok := discovery.ExpandBraced(restore.Replace(rr.Label), env)
 	if !ok {
-		return Route{}, unset(name)
+		return Route{}, unset(name, at("label", 0))
 	}
 	role, name, ok := discovery.ExpandBraced(restore.Replace(string(rr.Role)), env)
 	if !ok {
-		return Route{}, unset(name)
+		return Route{}, unset(name, at("role", 0))
 	}
 	// A label is printed and saved, and a double-quoted YAML string or a
 	// variable can give it escape sequences, so it loses its control
@@ -259,32 +260,32 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		r.Role = config.RoleWeb
 	}
 	if !r.Role.Valid() {
-		return r, bareHint(fmt.Errorf("%s: role %q must be web, loopback or ignore", FileName, r.Role), role)
+		return r, bareHint(fmt.Errorf("%s: role %q must be web, loopback or ignore", FileName, r.Role), restore.Replace(string(rr.Role)), at("role", 0))
 	}
 
 	value, varName, ok := discovery.ExpandBraced(restore.Replace(rr.Port.Value), env)
 	if !ok {
-		return r, unset(varName)
+		return r, unset(varName, at("port", 0))
 	}
 	port, err := strconv.Atoi(value)
 	if err != nil || port < 1 || port > 65535 {
 		if varName != "" {
 			return r, fmt.Errorf("%s: port %q from variable %q is not a number from 1 to 65535", FileName, value, varName)
 		}
-		return r, bareHint(fmt.Errorf("%s: port %q is not a number from 1 to 65535", FileName, value), value)
+		return r, bareHint(fmt.Errorf("%s: port %q is not a number from 1 to 65535", FileName, value), restore.Replace(rr.Port.Value), at("port", 0))
 	}
 	r.Port = port
 
 	if len(rr.Hosts) > 0 && r.Role != config.RoleWeb {
 		return r, fmt.Errorf("%s: port %d: only web routes have hosts", FileName, port)
 	}
-	for _, h := range rr.Hosts {
+	for i, h := range rr.Hosts {
 		host, name, ok := discovery.ExpandBraced(restore.Replace(h), env)
 		if !ok {
-			return r, unset(name)
+			return r, unset(name, at("hosts", i))
 		}
 		if err := config.ValidProjectHost(host); err != nil {
-			return r, bareHint(fmt.Errorf("%s: %w", FileName, err), host)
+			return r, bareHint(fmt.Errorf("%s: %w", FileName, err), restore.Replace(h), at("hosts", i))
 		}
 		r.Hosts = append(r.Hosts, host)
 	}
@@ -293,66 +294,111 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 
 // UnsetError is the error for a ${VAR} in a .nearhostrc that has no value in
 // .env.local or .env and no default. It is a type so that a caller can name
-// the variable and find where the file uses it.
-type UnsetError struct{ Var string }
+// the variable. Line is the 1-based line of the value that uses it, or 0.
+type UnsetError struct {
+	Var  string
+	Line int
+}
 
 func (e *UnsetError) Error() string {
-	return fmt.Sprintf("%s: ${%s} has no value in .env.local or .env, and no default", FileName, e.Var)
+	return fmt.Sprintf("%s: ${%s} has no value in .env.local or .env, and no default", at(e.Line), e.Var)
+}
+
+func unset(name string, line int) error { return &UnsetError{Var: name, Line: line} }
+
+// at is the start of an error message: the file name, and the line when it
+// is known.
+func at(line int) string {
+	if line > 0 {
+		return fmt.Sprintf("%s line %d", FileName, line)
+	}
+	return FileName
 }
 
 // bareVar matches a "$" followed by an identifier, the unbraced form a
 // .nearhostrc no longer fills.
 var bareVar = regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*)`)
 
-// BareVarError is a validation error for a value that holds a bare $NAME. Older
-// versions filled it, so the error says to write ${NAME}, and Line finds the
-// text in the file.
+// BareVarError is a validation error for a value written with a bare $NAME.
+// Older versions filled it, so the error says to write ${NAME}. Line is the
+// 1-based line of the value, or 0.
 type BareVarError struct {
-	Err error
-	Var string
+	Err  error
+	Var  string
+	Line int
 }
 
 func (e *BareVarError) Error() string {
-	return fmt.Sprintf("%s. Write a variable as ${%s}.", e.Err, e.Var)
+	return fmt.Sprintf("%s: %s. Write a variable as ${%s}.", at(e.Line), strings.TrimPrefix(e.Err.Error(), FileName+": "), e.Var)
 }
 
 func (e *BareVarError) Unwrap() error { return e.Err }
 
-// bareHint returns err as a BareVarError when value holds a bare $NAME, and
-// err itself when it does not.
-func bareHint(err error, value string) error {
-	if m := bareVar.FindStringSubmatch(value); m != nil {
-		return &BareVarError{Err: err, Var: m[1]}
+// bareHint returns err as a BareVarError when written, the value as it stands
+// in the file with its braced references still in place, holds a bare $NAME,
+// and err itself when it does not. A braced reference and its default are
+// left out of the search, so a value from .env that holds a "$" never gets the
+// hint.
+func bareHint(err error, written string, line int) error {
+	if m := bareVar.FindStringSubmatch(varRef.ReplaceAllString(written, "")); m != nil {
+		return &BareVarError{Err: err, Var: m[1], Line: line}
 	}
 	return err
 }
 
-func unset(name string) error { return &UnsetError{Var: name} }
+// fieldLines decodes data again, without checking its keys, and returns a
+// function that gives the 1-based line of a field: route is the route's index
+// (or -1 for the file's own fields), field one of label, role, port, hosts or
+// alias, and host the index into hosts. It gives 0 when the field is not
+// there. The decode runs on the first call only, which is on the error path.
+func fieldLines(data []byte) func(route int, field string, host int) int {
+	var lines struct {
+		Routes []struct {
+			Port  yaml.Node   `yaml:"port"`
+			Hosts []yaml.Node `yaml:"hosts"`
+			Label yaml.Node   `yaml:"label"`
+			Role  yaml.Node   `yaml:"role"`
+		} `yaml:"routes"`
+		Alias yaml.Node `yaml:"alias"`
+	}
+	done := false
+	return func(route int, field string, host int) int {
+		if !done {
+			done = true
+			_ = yaml.Unmarshal(data, &lines)
+		}
+		if route < 0 {
+			return lines.Alias.Line
+		}
+		if route >= len(lines.Routes) {
+			return 0
+		}
+		r := lines.Routes[route]
+		switch field {
+		case "label":
+			return r.Label.Line
+		case "role":
+			return r.Role.Line
+		case "port":
+			return r.Port.Line
+		case "hosts":
+			if host < len(r.Hosts) {
+				return r.Hosts[host].Line
+			}
+		}
+		return 0
+	}
+}
 
 var errLine = regexp.MustCompile(`\bline (\d+):`)
 
-// Line returns the 1-based line of data that err, as Parse or Read returned
-// it, points at, or 0 when it points at none. An unset variable carries no
-// line of its own, so the line is that of the first reference to it; for any
-// other error it is the number in the first "line N:" of the message.
-func Line(data []byte, err error) int {
+// Line returns the 1-based line that err, as Parse or Read returned it,
+// points at, or 0 when it points at none. It is the number in the first
+// "line N:" of the message, which an unset variable, a bare $NAME and a
+// problem in the YAML all carry, so a message that has been turned into text
+// still gives its line. The data argument is not read.
+func Line(_ []byte, err error) int {
 	if err == nil {
-		return 0
-	}
-	var ue *UnsetError
-	if errors.As(err, &ue) {
-		ref := regexp.MustCompile(`\$\{` + regexp.QuoteMeta(ue.Var) + `(\}|:-|-)`)
-		if loc := ref.FindIndex(data); loc != nil {
-			return 1 + bytes.Count(data[:loc[0]], []byte("\n"))
-		}
-		return 0
-	}
-	var be *BareVarError
-	if errors.As(err, &be) {
-		ref := regexp.MustCompile(`\$` + regexp.QuoteMeta(be.Var) + `([^A-Za-z0-9_]|$)`)
-		if loc := ref.FindIndex(data); loc != nil {
-			return 1 + bytes.Count(data[:loc[0]], []byte("\n"))
-		}
 		return 0
 	}
 	if m := errLine.FindStringSubmatch(err.Error()); m != nil {
