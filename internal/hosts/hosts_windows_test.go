@@ -4,6 +4,7 @@ package hosts
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,10 +43,10 @@ func TestElevatedApplyRefusesAnotherFileOnWindows(t *testing.T) {
 	}
 }
 
-// Windows has no directory permission bits that stop a write, but a file with
-// the read-only attribute refuses to be replaced. Apply must say which file it
-// could not write and leave it as it was.
-func TestApplyReadOnlyFileNamesTheFileOnWindows(t *testing.T) {
+// A file with the read-only attribute refuses to be replaced on Windows.
+// Apply must say which file is read-only and how to clear it, leave the file
+// as it was, and create no temporary file.
+func TestApplyReadOnlyFileSaysHowToClearItOnWindows(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hosts")
 	const content = "127.0.0.1 localhost\r\n"
@@ -60,8 +61,9 @@ func TestApplyReadOnlyFileNamesTheFileOnWindows(t *testing.T) {
 	err := Apply(path, []string{"a.test"})
 	// The error names the long form of the path; the runner's TEMP is 8.3.
 	long := testutil.LongPath(t, path)
-	if err == nil || !strings.Contains(err.Error(), long) {
-		t.Fatalf("err = %v, want one naming %s", err, long)
+	want := long + " is read-only. Clear it with: attrib -r \"" + long + "\" (in an administrator terminal), or run with --no-hosts."
+	if err == nil || err.Error() != want || !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("err = %v, want %q wrapping ErrReadOnly", err, want)
 	}
 	got, _ := os.ReadFile(path)
 	if string(got) != content {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,5 +404,14 @@ func TestElevatedFileCheckAcceptsTheSystemFile(t *testing.T) {
 func TestUnelevatedFileCheckAcceptsAnyFile(t *testing.T) {
 	if err := checkElevatedFile(filepath.Join(t.TempDir(), "hosts")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An elevated report passes a read-only hosts file's message through, since it
+// names only the system hosts file and says how to clear the attribute.
+func TestElevatedReportTextKeepsReadOnlyMessage(t *testing.T) {
+	err := fmt.Errorf("C:\\hosts is read-only. Clear it with: attrib -r: %w", hosts.ErrReadOnly)
+	if got := reportText(err, true); got != err.Error() {
+		t.Errorf("elevated read-only: %q, want %q", got, err.Error())
 	}
 }
