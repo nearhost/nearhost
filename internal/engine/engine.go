@@ -485,10 +485,10 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 		}
 	}
 	// Name the program in the way, which Caddy's own error does not.
-	if err := e.probePort(ctx, "HTTPS", e.opts.HTTPSPort, 443); err != nil {
+	if err := e.probePort(ctx, "HTTPS", e.opts.HTTPSPort, 443, netbind.ServeAddrs); err != nil {
 		return err
 	}
-	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
+	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80, netbind.ServeAddrs); err != nil {
 		return err
 	}
 	// After the probes, so a second Nearhost on the same ports says which
@@ -516,7 +516,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.webPort = e.opts.WebPort
 	e.mu.Unlock()
 	if port := e.opts.WebPort; port != 0 {
-		if err := e.probePort(ctx, pageWhat, port, 0); err != nil {
+		if err := e.probePort(ctx, "Nearhost's page", port, 0, netbind.LoopbackAddrs); err != nil {
 			e.proxy.SetWebPort(0)
 			e.mu.Lock()
 			e.webPort = 0
@@ -570,7 +570,7 @@ func differentProxyPorts(httpsPort, httpPort, webPort int) error {
 
 // portError is a port the proxy cannot listen on.
 type portError struct {
-	what string // "HTTPS", "HTTP" or pageWhat
+	what string // "HTTPS", "HTTP" or "Nearhost's page"
 	port int
 	udp  bool // on UDP, for HTTP/3, rather than TCP
 	// heldBy names the program holding a TCP port, as Engine.heldBy does:
@@ -602,23 +602,15 @@ func (e *portError) Error() string {
 // Unwrap returns the error from binding the port.
 func (e *portError) Unwrap() error { return e.err }
 
-// pageWhat names Nearhost's page in a *portError and to probePort.
-const pageWhat = "Nearhost's page"
-
 // probePort reports whether the proxy could listen on port (def when 0): on
-// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. It binds the
-// addresses the proxy will: the loopback addresses for Nearhost's page, and
-// netbind.ServeAddrs for the others. A port it cannot bind is a *portError,
-// which wraps EACCES or EPERM when the user may not bind the port. Any other
-// failure on TCP is the port being in use, and names the program holding it
-// when that can be found.
-func (e *Engine) probePort(ctx context.Context, what string, port, def int) error {
+// TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. It binds
+// addrs(port), the addresses the proxy will serve the port on. A port it
+// cannot bind is a *portError, which wraps EACCES or EPERM when the user may
+// not bind the port. Any other failure on TCP is the port being in use, and
+// names the program holding it when that can be found.
+func (e *Engine) probePort(ctx context.Context, what string, port, def int, addrs func(int) []string) error {
 	if port == 0 {
 		port = def
-	}
-	addrs := netbind.ServeAddrs
-	if what == pageWhat {
-		addrs = netbind.LoopbackAddrs
 	}
 	for _, addr := range addrs(port) {
 		if err := e.probeAddr(ctx, what, port, addr); err != nil {

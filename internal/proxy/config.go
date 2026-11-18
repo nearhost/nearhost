@@ -313,10 +313,12 @@ var pageAddrs = netbind.LoopbackAddrs
 
 // webServer is the server on opts.WebPort, which serves the home page at
 // localhost to loopback clients and drops everything else. It listens on the
-// loopback addresses alone, on every system: the page lists the projects and
-// shows the documents agents ask for, and no client on another machine, nor
-// in a container, has a use for it, so the kernel refuses them before a
-// request is read. The loopback ranges below stay as a second check. It has
+// loopback addresses alone, on every system, so the kernel refuses a
+// connection from another machine to this port before a request is read.
+// The loopback ranges below stay as a second check. The same page is also
+// served at https://localhost on the https port while no project claims
+// that host (see homeRoute); that server listens on netbind.ServeAddrs, and
+// there the source-address check alone keeps it to loopback clients. It has
 // no HTTP/3, so it needs no UDP port, and no redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
