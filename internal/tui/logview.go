@@ -194,14 +194,18 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	case "c":
 		if at >= 0 && shown[at].req != nil {
 			a := shown[at].req
+			line := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+			command, err := curlFor(*a)
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				line := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+				command, err = curlForExchange(ex)
 				if why := bodyLeftOut(ex); why != "" {
 					line = strings.TrimSuffix(line, ".") + ", without its body: " + why + "."
 				}
-				return tea.Batch(copyText(v.key, curlForExchange(ex)), m.alert(v.key, line))
 			}
-			return tea.Batch(copyText(v.key, curlFor(*a)), m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl."))
+			if err != nil {
+				return m.alertProblem(v.key, "This request cannot be copied as curl.")
+			}
+			return tea.Batch(copyText(v.key, command), m.alert(v.key, line))
 		}
 	case "v":
 		v.reveal = !v.reveal
@@ -624,8 +628,9 @@ var skipInCurl = map[string]bool{
 }
 
 // curlForExchange is a curl command that makes a kept request again, with
-// its real headers and, when it was kept whole, its body.
-func curlForExchange(ex proxy.Exchange) string {
+// its real headers and, when it was kept whole, its body. It fails for a
+// request that holds a NUL byte.
+func curlForExchange(ex proxy.Exchange) (string, error) {
 	names := make([]string, 0, len(ex.ReqHeader))
 	for name := range ex.ReqHeader {
 		names = append(names, name)
@@ -645,8 +650,9 @@ func curlForExchange(ex proxy.Exchange) string {
 }
 
 // curlFor is a curl command that makes the request again. Headers whose
-// values Caddy redacted are left out, as is Host, which the URL carries.
-func curlFor(a proxy.Access) string {
+// values Caddy redacted are left out, as is Host, which the URL carries. It
+// fails for a request that holds a NUL byte.
+func curlFor(a proxy.Access) (string, error) {
 	names := make([]string, 0, len(a.Headers))
 	for name := range a.Headers {
 		names = append(names, name)
