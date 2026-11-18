@@ -54,7 +54,8 @@ func PageAddrs(port int) []string {
 // pageAddrsFor is PageAddrs on the system goos, in a process whose effective
 // user id is euid.
 func pageAddrsFor(goos string, euid, port int) []string {
-	if goos == "darwin" && port < 1024 && euid != 0 {
+	// Port 0 asks the system for a free port, which is never a low one.
+	if goos == "darwin" && port > 0 && port < 1024 && euid != 0 {
 		return ServeAddrs(port)
 	}
 	return LoopbackAddrs(port)

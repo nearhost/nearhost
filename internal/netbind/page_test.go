@@ -22,6 +22,7 @@ func TestPageAddrsFor(t *testing.T) {
 		{"macOS, port 1023, not root", "darwin", 501, 1023, ServeAddrs},
 		{"macOS, port 1024, not root", "darwin", 501, 1024, loopback},
 		{"macOS, default port", "darwin", 501, 6327, loopback},
+		{"macOS, port 0 (the system picks one), not root", "darwin", 501, 0, loopback},
 		{"macOS, low port, root", "darwin", 0, 444, loopback},
 		{"Linux, low port, not root", "linux", 1000, 444, loopback},
 		{"Linux, default port", "linux", 1000, 6327, loopback},
