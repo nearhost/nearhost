@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
@@ -151,23 +152,46 @@ func formNameProblem(cfg *config.Config, name string) error {
 	}
 }
 
-// uiFiles is a server's files for the add form.
+// uiFiles is a server's files for the add form. Its calls take a context
+// that the files underneath do not: each call checks it between the steps
+// it takes, and a read stuck on a server that stopped answering ends when
+// Close, which quitting calls even while a step runs, cuts the connection.
 type uiFiles struct {
 	u     *uiEngine
 	srv   config.Server
 	files serverFiles
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
-func (f *uiFiles) ListDirs(_ context.Context, dir string) ([]string, error) {
-	resolved, err := f.files.resolve(dir)
+func (f *uiFiles) ListDirs(ctx context.Context, dir string) ([]string, error) {
+	resolved, err := f.resolve(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	return f.files.listDirs(resolved)
+	dirs, err := f.files.listDirs(resolved)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return dirs, err
 }
 
-func (f *uiFiles) Resolve(_ context.Context, path string) (string, error) {
-	return f.files.resolve(path)
+func (f *uiFiles) Resolve(ctx context.Context, path string) (string, error) {
+	return f.resolve(ctx, path)
+}
+
+// resolve is the files' resolve, refused once ctx has ended, and its answer
+// left out when ctx ends while it runs: nobody waits for it any more.
+func (f *uiFiles) resolve(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	dir, err := f.files.resolve(path)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return dir, err
 }
 
 // Discover runs discovery with the enabled presets and returns what the add
@@ -178,13 +202,16 @@ func (f *uiFiles) Discover(ctx context.Context, path string) (tui.Draft, error) 
 	if err != nil {
 		return tui.Draft{}, err
 	}
-	dir, err := f.files.resolve(path)
+	dir, err := f.resolve(ctx, path)
 	if err != nil {
 		return tui.Draft{}, err
 	}
 	sources := f.u.b.presets.indexes(ctx, cfg, f.u.path)
 	reader := f.files.reader(dir)
 	res, warnings, err := discoverOnce(cfg, f.u.path, reader, sources, nil)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return tui.Draft{}, ctxErr
+	}
 	if err != nil {
 		return tui.Draft{}, err
 	}
@@ -247,11 +274,14 @@ func (f *uiFiles) Advise(ctx context.Context, path string, routes []config.Route
 // looks for ports other projects use: a project already configured does not
 // clash with itself.
 func (f *uiFiles) advise(ctx context.Context, cfg *config.Config, path string, routes []config.Route, alias, skip string) (tui.ProjectAdvice, error) {
-	dir, err := f.files.resolve(path)
+	dir, err := f.resolve(ctx, path)
 	if err != nil {
 		return tui.ProjectAdvice{}, err
 	}
 	res, _, err := discoverOnce(cfg, f.u.path, f.files.reader(dir), nil, nil)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return tui.ProjectAdvice{}, ctxErr
+	}
 	if err != nil {
 		return tui.ProjectAdvice{}, err
 	}
@@ -278,4 +308,10 @@ func (f *uiFiles) advise(ctx context.Context, cfg *config.Config, path string, r
 	return tui.ProjectAdvice{Items: out, Notes: notes, Presets: res.Applied}, nil
 }
 
-func (f *uiFiles) Close() error { return f.files.close() }
+// Close ends the files. Quitting may call it while a step runs, and the
+// form again after, so only the first call closes them; the others return
+// what it did.
+func (f *uiFiles) Close() error {
+	f.closeOnce.Do(func() { f.closeErr = f.files.close() })
+	return f.closeErr
+}

@@ -7,6 +7,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -46,6 +47,14 @@ type fakeFiles struct {
 	closed  int
 	presets bool     // EnablePresets has run
 	advised []string // the aliases Advise was asked about
+
+	// hang, when set, makes ListDirs wait on it as a read on a hung server
+	// does, deaf to its context: closing the files closes hang, unless
+	// keepHung is set. ListDirs sends on hung once it is waiting.
+	hang     chan struct{}
+	hung     chan struct{}
+	keepHung bool
+	unhang   sync.Once
 }
 
 func (f *fakeFiles) abs(p string) string {
@@ -56,6 +65,11 @@ func (f *fakeFiles) abs(p string) string {
 }
 
 func (f *fakeFiles) ListDirs(_ context.Context, dir string) ([]string, error) {
+	if f.hang != nil {
+		f.hung <- struct{}{}
+		<-f.hang
+		return nil, errors.New("connection closed")
+	}
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -102,7 +116,13 @@ func (f *fakeFiles) Discover(ctx context.Context, p string) (Draft, error) {
 	return d, nil
 }
 
-func (f *fakeFiles) Close() error { f.closed++; return nil }
+func (f *fakeFiles) Close() error {
+	f.closed++
+	if f.hang != nil && !f.keepHung {
+		f.unhang.Do(func() { close(f.hang) })
+	}
+	return nil
+}
 
 func (f *fakeBackend) SSHHosts() []string { return f.forms.hosts }
 

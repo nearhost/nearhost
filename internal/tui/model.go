@@ -33,6 +33,11 @@ const (
 	shutdownTimeout = 30 * time.Second
 )
 
+// formStopTimeout bounds how long quitting waits for the forms' background
+// steps, inside shutdownTimeout, so the engine keeps the rest of it. A step
+// still running then is left behind: the process is ending.
+var formStopTimeout = 5 * time.Second
+
 // Model is the interface's state. Create it with New and run it with
 // tea.NewProgram.
 type Model struct {
@@ -625,20 +630,23 @@ func (m *Model) quit() tea.Cmd {
 		m.endApply() // the shutdown would otherwise wait for it
 	}
 	// The open form's connection, and those its running steps are opening,
-	// go before the engine does.
-	var files ServerFiles
-	if pf, ok := m.form.(*projectForm); ok {
-		files, pf.files = pf.files, nil
+	// go before the engine does. The connection closes first, as a step may
+	// be stuck reading from it, then the steps are waited for, but only for
+	// formStopTimeout, so the engine keeps the rest of the time to stop.
+	var unblock func()
+	if pf, ok := m.form.(*projectForm); ok && pf.files != nil {
+		files := pf.files
+		pf.files = nil
+		unblock = func() { files.Close() }
 	}
 	work := m.work
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	m.cutShort = cancel
 	return func() tea.Msg {
 		defer cancel()
-		work.stop()
-		if files != nil {
-			files.Close()
-		}
+		steps, stopped := context.WithTimeout(ctx, formStopTimeout)
+		work.stop(steps, unblock)
+		stopped()
 		return shutdownMsg{m.b.Shutdown(ctx)}
 	}
 }

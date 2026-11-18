@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -437,4 +438,82 @@ func TestFormDiscoveryDropsTheAliasFromSecondaryRoutes(t *testing.T) {
 		t.Fatalf("alias %q", d.Alias)
 	}
 	wantAliasHostDropped(t, d.Routes)
+}
+
+// countedFiles is this machine's files, counting how often they are
+// closed, and calling during as a listing or resolve runs.
+type countedFiles struct {
+	localFiles
+	mu     sync.Mutex
+	closes int
+	calls  int
+	during func()
+}
+
+func (f *countedFiles) resolve(p string) (string, error) {
+	f.mu.Lock()
+	f.calls++
+	during := f.during
+	f.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	return f.localFiles.resolve(p)
+}
+
+func (f *countedFiles) close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closes++
+	return nil
+}
+
+// The add form's files stop at an ended context: a call made after it ends
+// does nothing, and one it ends during gives up its answer, since a read on
+// this machine cannot be interrupted.
+func TestFormFilesStopAtAnEndedContext(t *testing.T) {
+	u := formEngine(t)
+	dir := t.TempDir()
+	under := &countedFiles{}
+	files := &uiFiles{u: u, srv: config.Server{Name: config.LocalServer}, files: under}
+
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := files.ListDirs(ended, dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("ListDirs: %v", err)
+	}
+	if _, err := files.Resolve(ended, dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("Resolve: %v", err)
+	}
+	if _, err := files.Discover(ended, dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("Discover: %v", err)
+	}
+	if _, _, err := files.Advise(ended, dir, nil, "x.test"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Advise: %v", err)
+	}
+	if under.calls != 0 {
+		t.Errorf("the files were read %d times after the context ended", under.calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	under.during = cancel
+	if dirs, err := files.ListDirs(ctx, dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("ListDirs ended during the call: %v, %v", dirs, err)
+	}
+}
+
+// Closing the add form's files closes them once, however many times and
+// from however many goroutines it is called, as quitting and the form may.
+func TestFormFilesCloseOnce(t *testing.T) {
+	under := &countedFiles{}
+	files := &uiFiles{u: formEngine(t), files: under}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() { files.Close() })
+	}
+	wg.Wait()
+	files.Close()
+	if under.closes != 1 {
+		t.Errorf("closed %d times", under.closes)
+	}
 }
