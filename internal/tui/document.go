@@ -185,8 +185,8 @@ func (f *docForm) lines(width int) []string {
 	}
 	lines = append(lines, wrap(serves, width)...)
 	if f.r.NewRoot && f.r.CanAlways {
-		granted := requesterName(f.r.Requester) + " can show documents in other folders " + docWhere(f.r.Origin) +
-			" without asking. Always allow adds this folder to them."
+		granted := requesterName(f.r.Requester) + " has Always allow " + docWhere(f.r.Origin) +
+			", but not for this folder. Always allow adds it."
 		lines = append(lines, wrap(granted, width)...)
 	}
 	if f.busy {

@@ -215,6 +215,12 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	reviewer := s.reviewer
 	if !allowed {
 		if rec := s.repeatLocked(o, res, req); rec != nil {
+			// A repeat that brings a valid token lends it to the prompt,
+			// so Always allow adds the root to that token's grant rather
+			// than replacing the grant.
+			if rec.granted == "" {
+				rec.granted = granted
+			}
 			s.mu.Unlock()
 			reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
 			return

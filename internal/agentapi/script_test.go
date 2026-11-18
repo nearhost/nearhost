@@ -1633,6 +1633,50 @@ func TestScriptOpenNotConnectedAndUp(t *testing.T) {
 	})
 }
 
+// Always allow on a folder new to a grant adds the folder and gives no new
+// token, so the script keeps the documents token it has, which still works.
+func TestScriptOpenKeepsTheTokenForANewFolder(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, sh, g, rv := docScript(t, home, shell.origin(), true)
+		g.grant(shell.origin(), "claude-code", "doc-tok", "/srv/elsewhere")
+		if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(docToken(home, "claude-code"), []byte("doc-tok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, claudeEnv, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		if got := rv.docPrompts(); len(got) != 1 || !got[0].NewRoot {
+			t.Fatalf("prompts %+v", got)
+		}
+		if err := s.AnswerDocument(context.Background(), m[1], AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "open-wait", m[1])
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(sh.showed()) != 1 {
+			t.Fatalf("open-wait: %+v", r)
+		}
+		if tok, _ := os.ReadFile(docToken(home, "claude-code")); strings.TrimSpace(string(tok)) != "doc-tok" {
+			t.Fatalf("the token file changed: %q", tok)
+		}
+		// The kept token now opens the folder without a prompt, with no
+		// tree served, as after a restart.
+		sh.mu.Lock()
+		clear(sh.served)
+		sh.mu.Unlock()
+		r = shell.run(t, home, claudeEnv, "open", p)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(rv.docPrompts()) != 1 {
+			t.Fatalf("open again: %+v", r)
+		}
+	})
+}
+
 func TestScriptOpenAgentKeepsNoToken(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)

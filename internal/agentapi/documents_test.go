@@ -548,6 +548,32 @@ func TestDocumentTokenCoversItsRoots(t *testing.T) {
 	}
 }
 
+// A prompt first raised without a token and asked for again with a valid
+// one takes that token, so Always allow adds the root to its grant and the
+// token keeps working.
+func TestDocumentRepeatWithATokenKeepsIt(t *testing.T) {
+	e := newDocServer(t, true)
+	e.g.grant("apollo", "claude-code", "good", "/srv/elsewhere")
+	_, first := e.ask(t, docBody("plan.md", "claude-code", ""))
+	st, again := e.ask(t, docBody("plan.md", "claude-code", `, "token": "good"`))
+	if st != 202 || again["id"] != first["id"] {
+		t.Fatalf("the repeat: %d %v, first %v", st, again, first)
+	}
+	id := first["id"].(string)
+	if err := e.s.AnswerDocument(context.Background(), id, AnswerAlways); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "open" || out["token"] != nil {
+		t.Fatalf("after always allow: %v", out)
+	}
+	if len(e.g.allowed()) != 0 {
+		t.Fatalf("always allow replaced the grant: %v", e.g.allowed())
+	}
+	if got := e.g.covered(); len(got) != 1 || got[0] != [3]string{"apollo", "claude-code", "/srv/app"} {
+		t.Fatalf("covered %v", got)
+	}
+}
+
 func TestDocumentWrongToken(t *testing.T) {
 	e := newDocServer(t, true)
 	st, out := call(t, e.remote, "POST", "/v1/documents",
