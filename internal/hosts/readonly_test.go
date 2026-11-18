@@ -21,8 +21,14 @@ func TestApplyReadOnlySaysHowToClear(t *testing.T) {
 	isReadOnly = func(string) bool { return true }
 	t.Cleanup(func() { isReadOnly = old })
 
-	err := Apply(path, []string{"a.test"})
-	want := path + " is read-only. Clear it with: attrib -r \"" + path + "\" (in an administrator terminal), or run with --no-hosts."
+	// The message names the resolved file, which differs from path where
+	// the temp directory is a link or a short name (macOS, Windows runners).
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Apply(path, []string{"a.test"})
+	want := target + " is read-only. Clear it with: attrib -r \"" + target + "\" (in an administrator terminal), or run with --no-hosts."
 	if err == nil || err.Error() != want || !errors.Is(err, ErrReadOnly) {
 		t.Fatalf("err = %v, want %q wrapping ErrReadOnly", err, want)
 	}
