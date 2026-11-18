@@ -566,9 +566,10 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 			t.Errorf("route %d remote_ip = %v, want loopback", i+1, got)
 		}
 		h := dig(t, r, "handle", 0).(map[string]any)
-		if h["handler"] != "static_response" || h["status_code"] != float64(308) ||
-			dig(t, h, "headers", "Location", 0) != "https://{http.request.host}{http.request.uri}" {
-			t.Errorf("route %d handler = %v, want a 308 to https", i+1, h)
+		if h["handler"] != "static_response" || h["status_code"] != float64(307) ||
+			dig(t, h, "headers", "Location", 0) != "https://{http.request.host}{http.request.uri}" ||
+			dig(t, h, "headers", "Cache-Control", 0) != "no-store" {
+			t.Errorf("route %d handler = %v, want an uncacheable 307 to https", i+1, h)
 		}
 	}
 	if last := routes[4].(map[string]any); last["match"] != nil || !aborts(last) {
@@ -661,7 +662,7 @@ func TestBuildConfigServesHomePageAtLocalhost(t *testing.T) {
 	}
 	var redirects []string
 	for _, r := range dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any) {
-		if h := r.(map[string]any)["handle"].([]any)[0].(map[string]any); h["status_code"] == float64(308) {
+		if h := r.(map[string]any)["handle"].([]any)[0].(map[string]any); h["status_code"] == float64(307) {
 			redirects = append(redirects, strs(dig(t, r, "match", 0, "host"))...)
 		}
 	}
