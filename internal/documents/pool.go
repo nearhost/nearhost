@@ -271,9 +271,9 @@ func (f pooledFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 
 // Open opens p below root on the server. The client stays busy, so it isn't
 // closed as idle, until the file is closed.
-func (f pooledFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+func (f pooledFS) Open(ctx context.Context, root, rootHandle, p string) (io.ReadCloser, string, error) {
 	open := func(fsys FS) (openedFile, error) {
-		r, rel, err := fsys.Open(ctx, root, p)
+		r, rel, err := fsys.Open(ctx, root, rootHandle, p)
 		return openedFile{r, rel}, err
 	}
 	hold := func(o openedFile, release func()) openedFile {

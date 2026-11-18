@@ -48,11 +48,11 @@ func (f fakeFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 }
 
 // Open fails with f.err when it is set.
-func (f fakeFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+func (f fakeFS) Open(ctx context.Context, root, rootHandle, p string) (io.ReadCloser, string, error) {
 	if f.err != nil {
 		return nil, "", f.err
 	}
-	return f.LocalFS.Open(ctx, root, p)
+	return f.LocalFS.Open(ctx, root, rootHandle, p)
 }
 
 // fixture is a tree on disk served by a handler.
@@ -679,8 +679,8 @@ type countingFS struct {
 }
 
 // Open opens p below root and counts what is read from it.
-func (f countingFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
-	r, rel, err := f.LocalFS.Open(ctx, root, p)
+func (f countingFS) Open(ctx context.Context, root, rootHandle, p string) (io.ReadCloser, string, error) {
+	r, rel, err := f.LocalFS.Open(ctx, root, rootHandle, p)
 	if err != nil {
 		return nil, "", err
 	}

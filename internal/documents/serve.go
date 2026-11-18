@@ -198,7 +198,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	// checks above, so they are applied again to the file Open actually
 	// opened: below the root, with no dot segment, and in a hidden tree a
 	// document or asset by its own name. One that fails is missing.
-	f, opened, err := fsys.Open(ctx, root, real)
+	f, opened, err := fsys.Open(ctx, root, tr.RootHandle, real)
 	if err != nil {
 		return err
 	}

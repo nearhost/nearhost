@@ -124,10 +124,9 @@ func TestOpenedPathNamesTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// macOS and Windows may spell the path another way; the folder's
-	// identity decides then.
-	if m := sameSpelling(runtime.GOOS, got, p); m == matchDiffers || !strings.EqualFold(slashed(runtime.GOOS, got), p) {
-		t.Errorf("openedPath = %q (%v), want %q", got, m, p)
+	// macOS and Windows may spell the path in another case.
+	if !strings.EqualFold(slashed(runtime.GOOS, got), p) {
+		t.Errorf("openedPath = %q, want %q", got, p)
 	}
 }
 
@@ -157,24 +156,32 @@ func TestSameFileAt(t *testing.T) {
 	}
 }
 
-func TestSameSpelling(t *testing.T) {
+func TestSameRootHandle(t *testing.T) {
 	for _, tc := range []struct {
-		goos, opened, checked string
-		want                  openedMatch
+		goos, current, stored string
+		want                  bool
 	}{
-		{"linux", "/home/u/p", "/home/u/p", matchSame},
-		{"linux", "/home/u/.ssh", "/home/u/p", matchDiffers},
-		{"linux", "/home/u/P", "/home/u/p", matchDiffers},
-		{"darwin", "/Users/u/p", "/Users/u/p", matchSame},
-		{"darwin", "/System/Volumes/Data/Users/u/p", "/Users/u/p", matchUnsure},
-		{"darwin", "/Users/Jose\u0301/p", "/Users/Jos\u00e9/p", matchUnsure},
-		{"windows", `\\?\C:\Users\u\p`, "C:/Users/u/p", matchSame},
-		{"windows", `\\?\C:\Users\U\P`, "C:/Users/u/p", matchSame},
-		{"windows", `\\?\UNC\srv\share\p`, "//srv/share/p", matchSame},
-		{"windows", `\\?\C:\real\p`, "S:/p", matchUnsure},
+		{"linux", "/home/u/p", "/home/u/p", true},
+		{"linux", "/home/u/b/p", "/home/u/p", false},
+		{"linux", "/home/u/P", "/home/u/p", false},
+		{"linux", "", "", false},
+		// A respelled root: the same call gave both, so they agree.
+		{"darwin", "/System/Volumes/Data/Users/u/p", "/System/Volumes/Data/Users/u/p", true},
+		{"darwin", "/Users/Jose\u0301/p", "/Users/Jose\u0301/p", true},
+		{"windows", `\\?\C:\real\p`, `\\?\C:\real\p`, true},
+		{"windows", `\\?\UNC\srv\share\p`, `\\?\UNC\srv\share\p`, true},
+		{"windows", `\\?\C:\Users\U\P`, `\\?\C:\Users\u\p`, true},
+		// A root that is now elsewhere, as through a swapped folder
+		// above it: refused, with nothing to fall back to.
+		{"darwin", "/Users/u/b/p", "/Users/u/p", false},
+		{"darwin", "/Users/u/P", "/Users/u/p", false},
+		{"darwin", "/Users/Jos\u00e9/p", "/Users/Jose\u0301/p", false},
+		{"windows", `\\?\C:\Users\u\b\p`, `\\?\C:\Users\u\p`, false},
+		{"windows", `\\?\S:\p`, `\\?\C:\real\p`, false},
+		{"windows", "", `\\?\C:\real\p`, false},
 	} {
-		if got := sameSpelling(tc.goos, tc.opened, tc.checked); got != tc.want {
-			t.Errorf("sameSpelling(%s, %q, %q) = %v, want %v", tc.goos, tc.opened, tc.checked, got, tc.want)
+		if got := sameRootHandle(tc.goos, tc.current, tc.stored); got != tc.want {
+			t.Errorf("sameRootHandle(%s, %q, %q) = %v, want %v", tc.goos, tc.current, tc.stored, got, tc.want)
 		}
 	}
 }
@@ -189,7 +196,8 @@ func TestOpenedBelow(t *testing.T) {
 		{"linux", "/home/u/p", "/home/u/p2/a.md", "", false},
 		{"linux", "/home/u/p", "/home/u/p/.git/a.md", "", false},
 		{"linux", "/home/u/p", "/home/u/P/a.md", "", false},
-		{"linux", "/home/u/p", "/home/u/p/a.md (deleted)", "a.md (deleted)", true},
+		{"linux", "/home/u/p", "/home/u/p/a.md (deleted)", "", false},
+		{"darwin", "/Users/u/p", "/Users/u/p/a.md (deleted)", "a.md (deleted)", true},
 		{"linux", "/home/u/p", "/home/u/p", "", false},
 		// A folder swapped for a link: the file opened is outside the
 		// root, and nothing falls back.
@@ -220,7 +228,7 @@ func TestOpenedBelow(t *testing.T) {
 
 func TestLocalOpenGivesThePathBelowTheRoot(t *testing.T) {
 	dir, p := openTree(t)
-	r, rel, err := LocalFS{}.Open(context.Background(), dir, p)
+	r, rel, err := LocalFS{}.Open(context.Background(), dir, rootHandlePath(dir), p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +242,9 @@ func TestLocalOpenRefusesASwappedRoot(t *testing.T) {
 	// The root, dir/notes, swapped for a link after it was checked. A
 	// folder below the root swapped is TestSwapBetweenCheckAndOpenIsMissing.
 	dir, p := openTree(t)
+	handle := rootHandlePath(dir + "/notes")
 	swapNotes(t, dir)
-	if r, rel, err := (LocalFS{}).Open(context.Background(), dir+"/notes", p); !errors.Is(err, fs.ErrNotExist) {
+	if r, rel, err := (LocalFS{}).Open(context.Background(), dir+"/notes", handle, p); !errors.Is(err, fs.ErrNotExist) {
 		if r != nil {
 			b, _ := io.ReadAll(r)
 			r.Close()
@@ -250,7 +259,7 @@ func TestSFTPOpenRefusesASwappedPath(t *testing.T) {
 	dir, p := openTree(t)
 	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
 	swapNotes(t, dir)
-	if r, _, err := fsys.Open(context.Background(), dir, p); !errors.Is(err, fs.ErrNotExist) {
+	if r, _, err := fsys.Open(context.Background(), dir, "", p); !errors.Is(err, fs.ErrNotExist) {
 		if r != nil {
 			r.Close()
 		}
@@ -284,7 +293,7 @@ func TestSFTPFileGrowingWhileCheckedIsServed(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	r, _, err := fsys.Open(context.Background(), dir, p)
+	r, _, err := fsys.Open(context.Background(), dir, "", p)
 	if err != nil {
 		t.Fatalf("a file written to while it was checked: %v", err)
 	}
@@ -318,7 +327,7 @@ func TestSFTPFolderSwappedDuringCheckIsMissing(t *testing.T) {
 			swapNotes(t, dir)
 		}
 	})
-	if r, _, err := fsys.Open(context.Background(), dir, p); !errors.Is(err, fs.ErrNotExist) {
+	if r, _, err := fsys.Open(context.Background(), dir, "", p); !errors.Is(err, fs.ErrNotExist) {
 		if r != nil {
 			r.Close()
 		}
@@ -367,4 +376,107 @@ func TestOpenedFileIsJudgedByItsOwnName(t *testing.T) {
 			t.Error("app.js swapped for a link to secrets.json got Access-Control-Allow-Origin")
 		}
 	})
+}
+
+func TestTreeBindsItsRootHandle(t *testing.T) {
+	f := newFixture(t)
+	want := ""
+	switch runtime.GOOS {
+	case "linux", "darwin", "windows":
+		want = rootHandlePath(f.root)
+		if want == "" {
+			t.Fatal("rootHandlePath gave nothing for the fixture's root")
+		}
+	}
+	if f.tree.RootHandle != want {
+		t.Errorf("RootHandle = %q, want %q", f.tree.RootHandle, want)
+	}
+	if tr := f.table.Add("apollo", f.root, "claude", "plan.md"); tr.RootHandle != "" {
+		t.Errorf("a tree on a server has RootHandle %q, want none", tr.RootHandle)
+	}
+}
+
+func TestFolderAboveRootSwappedServesNothing(t *testing.T) {
+	// The tree's root is dir/a/root. dir/a is swapped for a link to dir/b,
+	// which holds a root/ of its own, after the checks: the root folder
+	// opened then isn't the one the tree was made with.
+	f := newFixtureAt(t, "a/root")
+	f.write(t, "notes/x.md", "# X")
+	b := filepath.Join(f.dir, "b", "root", "notes")
+	if err := os.MkdirAll(b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "x.md"), []byte("SECRET"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(f.dir, "a")
+	beforeOpen = func(string) {
+		if err := os.Rename(a, a+"-old"); err != nil {
+			t.Error(err)
+			return
+		}
+		testutil.Symlink(t, filepath.Join(f.dir, "b"), a)
+	}
+	t.Cleanup(func() { beforeOpen = nil })
+	rec := f.do(t, "GET", "notes/x.md?raw")
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn't there any more") {
+		t.Errorf("folder above the root swapped: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnreadableRootStillServes(t *testing.T) {
+	// A root the laptop may search but not list can't be opened when the
+	// tree is made, so the tree has no RootHandle and each file is checked
+	// by its identity instead.
+	if runtime.GOOS == "windows" {
+		t.Skip("folder permission bits are Unix only")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	dir, err := LocalFS{}.RealPath(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := dir + "/root"
+	if err := os.MkdirAll(root+"/notes", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root+"/notes/a.md", []byte("# A"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(root, 0o755) })
+	tbl := NewTable(time.Now)
+	tr := tbl.Add(LocalServer, root, "claude", "notes/a.md")
+	if tr.RootHandle != "" {
+		t.Fatalf("RootHandle of an unreadable root = %q, want none", tr.RootHandle)
+	}
+	h := NewHandler(tbl, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/"+tr.ID+"/notes/a.md?raw", nil))
+	if rec.Code != 200 || rec.Body.String() != "# A" {
+		t.Errorf("a file below an unreadable root: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFileDeletedAfterOpenIsMissing(t *testing.T) {
+	// /proc names a file deleted since it was opened "… (deleted)".
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux names a deleted file this way")
+	}
+	dir, p := openTree(t)
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openedBelowRoot(f, dir, rootHandlePath(dir), p); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a file deleted after the open: err = %v, want fs.ErrNotExist", err)
+	}
 }

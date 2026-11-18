@@ -20,12 +20,13 @@ type FS interface {
 	// Stat returns the file information for p, following symlinks.
 	Stat(ctx context.Context, p string) (fs.FileInfo, error)
 	// Open opens p, a path RealPath returned below the tree's resolved
-	// root, for reading. It returns the path below root of the file it
-	// actually opened, which differs from p's when a folder on the way was
-	// swapped for a symlink after p was resolved, so the caller can apply
-	// its rules to that. It gives an error wrapping fs.ErrNotExist when the
-	// opened file isn't below root.
-	Open(ctx context.Context, root, p string) (io.ReadCloser, string, error)
+	// root, for reading. rootHandle is the tree's RootHandle. It returns
+	// the path below root of the file it actually opened, which differs
+	// from p's when a folder on the way was swapped for a symlink after p
+	// was resolved, so the caller can apply its rules to that. It gives an
+	// error wrapping fs.ErrNotExist when the opened file isn't below root,
+	// or the root folder isn't the one the tree was made with.
+	Open(ctx context.Context, root, rootHandle, p string) (io.ReadCloser, string, error)
 	// Home returns the user's home folder.
 	Home(ctx context.Context) (string, error)
 }
@@ -58,16 +59,17 @@ func (LocalFS) Stat(_ context.Context, p string) (fs.FileInfo, error) {
 }
 
 // Open opens p and returns the path below root of the file it opened, as
-// the system names the open file. The folder root is opened as well and
-// named the same way, so both paths share one spelling of drives, links,
-// case and Unicode form. Where the system can't name an open file, the file
-// at p, which must still resolve to itself, must be the opened one.
-func (LocalFS) Open(_ context.Context, root, p string) (io.ReadCloser, string, error) {
+// the system names the open file. The root folder is opened as well, and its
+// path must be rootHandle, which the same call gave when the tree was made,
+// so both share one spelling of drives, links, case and Unicode form. With no
+// rootHandle, or where the system can't name the open file, the file at p,
+// which must still resolve to itself, must be the opened one.
+func (LocalFS) Open(_ context.Context, root, rootHandle, p string) (io.ReadCloser, string, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, "", err
 	}
-	rel, err := openedBelowRoot(f, root, p)
+	rel, err := openedBelowRoot(f, root, rootHandle, p)
 	if err != nil {
 		f.Close()
 		return nil, "", err
@@ -77,11 +79,11 @@ func (LocalFS) Open(_ context.Context, root, p string) (io.ReadCloser, string, e
 
 // openedBelowRoot returns the path below root of the open file f, which was
 // opened by the path p, or an error wrapping fs.ErrNotExist when f isn't
-// below root.
-func openedBelowRoot(f *os.File, root, p string) (string, error) {
+// below root or the root folder's path is no longer rootHandle.
+func openedBelowRoot(f *os.File, root, rootHandle, p string) (string, error) {
 	missing := &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
 	opened, err := openedPath(f)
-	if err != nil {
+	if err != nil || rootHandle == "" {
 		if !sameFileAt(f, p) {
 			return "", missing
 		}
@@ -91,76 +93,53 @@ func openedBelowRoot(f *os.File, root, p string) (string, error) {
 		}
 		return rel, nil
 	}
-	rootPath, ok := openedRoot(root)
-	if !ok {
+	current := rootHandlePath(root)
+	if !sameRootHandle(runtime.GOOS, current, rootHandle) {
 		return "", missing
 	}
-	rel, ok := openedBelow(runtime.GOOS, rootPath, opened)
+	rel, ok := openedBelow(runtime.GOOS, current, opened)
 	if !ok {
 		return "", missing
 	}
 	return rel, nil
 }
 
-// openedRoot opens the folder root and returns the path the system gives for
-// it. When that path spells root another way, as a subst drive or a firmlink
-// does, root must still resolve to itself and be the opened folder. ok is
-// false when it isn't.
-func openedRoot(root string) (string, bool) {
+// rootHandlePath opens the folder root and returns the path the system gives
+// for it, or "" when it can't be opened or the system can't name it.
+func rootHandlePath(root string) string {
 	d, err := os.Open(root)
 	if err != nil {
-		return "", false
+		return ""
 	}
 	defer d.Close()
-	opened, err := openedPath(d)
+	p, err := openedPath(d)
 	if err != nil {
-		return root, sameFileAt(d, root)
+		return ""
 	}
-	switch sameSpelling(runtime.GOOS, opened, root) {
-	case matchSame:
-		return opened, true
-	case matchUnsure:
-		return opened, sameFileAt(d, root)
-	}
-	return "", false
+	return p
 }
 
-// openedMatch is what the path the system gives for an open folder says
-// about whether it is the folder at the path it was opened by.
-type openedMatch int
-
-// The answers of sameSpelling.
-const (
-	// matchSame: the open folder is the one at the path.
-	matchSame openedMatch = iota
-	// matchDiffers: the open folder is elsewhere.
-	matchDiffers
-	// matchUnsure: the paths differ in a way the same folder's can, so
-	// the folder's identity decides.
-	matchUnsure
-)
-
-// sameSpelling compares opened, the path goos gives for an open folder, with
-// checked, the slash-form path it was opened by. Linux names an open file by
-// the path it resolves to, so any difference means another folder. macOS's
-// may differ in case, Unicode form or a firmlink, and Windows' in case or
-// the drive of a subst or mapped one.
-func sameSpelling(goos, opened, checked string) openedMatch {
-	opened = slashed(goos, opened)
-	switch {
-	case opened == checked, goos == "windows" && strings.EqualFold(opened, checked):
-		return matchSame
-	case goos == "darwin", goos == "windows":
-		return matchUnsure
+// sameRootHandle reports whether current, the path goos gives now for a
+// tree's root folder, is stored, the path it gave when the tree was made.
+// Both come from the same call, so they are compared as they are: without
+// case on Windows, as its file systems do, and exactly elsewhere. An empty
+// current, from a root that can't be opened now, is never the same.
+func sameRootHandle(goos, current, stored string) bool {
+	if current == "" {
+		return false
 	}
-	return matchDiffers
+	return current == stored || (goos == "windows" && strings.EqualFold(current, stored))
 }
 
 // openedBelow returns the path of file below root, where both are paths goos
 // gives for open handles, in one spelling. Windows compares without case, as
-// its file systems do. ok is false when file isn't below root or a segment
-// of the path below starts with ".".
+// its file systems do. ok is false when file isn't below root, a segment of
+// the path below starts with ".", or, on Linux, the path ends " (deleted)",
+// which /proc gives for a file deleted since it was opened.
 func openedBelow(goos, root, file string) (rel string, ok bool) {
+	if goos == "linux" && strings.HasSuffix(file, " (deleted)") {
+		return "", false
+	}
 	root, file = slashed(goos, root), slashed(goos, file)
 	prefix := root
 	if !strings.HasSuffix(prefix, "/") {
@@ -204,9 +183,9 @@ func cleanFinalPath(p string) string {
 
 // sameFileAt reports whether the open file f is the one at p now: p still
 // resolves to itself, and the file there, not following a last symlink, is
-// f. It is the check where the system can't name an open file, and it can be
-// beaten by a folder on the way that is swapped back and forth between its
-// two steps.
+// f. It is the check where the system can't name an open file or the tree
+// has no RootHandle, and it can be beaten by a folder on the way that is
+// swapped back and forth between its two steps.
 func sameFileAt(f *os.File, p string) bool {
 	real, err := filepath.EvalSymlinks(p)
 	if err != nil || filepath.Clean(real) != filepath.Clean(p) {

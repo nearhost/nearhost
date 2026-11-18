@@ -64,8 +64,9 @@ func (f sftpFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 // attributes. Someone who can write in the tree can still beat this by
 // swapping a folder back and forth while giving a file in the tree the
 // attributes of the one outside; the owner comparison stops another
-// account's swap.
-func (f sftpFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+// account's swap. A tree on a server has no RootHandle, so rootHandle is
+// not used.
+func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, string, error) {
 	rel, ok := Below(root, p)
 	if !ok {
 		return nil, "", &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}

@@ -201,7 +201,7 @@ func TestPoolKeepsAnOpenFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, _, err := fsys.Open(ctx, wd, wd+"/pool_test.go")
+	f, _, err := fsys.Open(ctx, wd, rootHandlePath(wd), wd+"/pool_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
