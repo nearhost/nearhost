@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/netbind"
@@ -18,6 +19,38 @@ import (
 
 // CAName is the display name of the local certificate authority.
 const CAName = "Nearhost Local CA"
+
+// leafLifetime is how long a site's certificate lasts: a week, where
+// Caddy's internal issuer defaults to 12 hours. Caddy renews a certificate
+// on a timer that a sleeping computer stops, so a 12-hour one issued in the
+// evening has expired when the laptop wakes. A week outlasts a night or a
+// weekend, and the CA is a local one whose key is on the same disk, so a
+// longer leaf gives nothing away. Tests shorten it.
+var leafLifetime = 168 * time.Hour
+
+// intermediateLifetime is how long the local CA's intermediate lasts. The
+// internal issuer cuts a leaf short to what is left of its intermediate, and
+// Caddy's default of 7 days would leave less than a week for most leaves.
+// The root keeps Caddy's default of 10 years.
+const intermediateLifetime = 720 * time.Hour
+
+// caddyDuration writes d as Caddy reads a duration: 168h, 30s.
+func caddyDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
+}
+
+// internalIssuer is the issuer of every certificate policy: the local CA,
+// with week-long leaves.
+func internalIssuer() map[string]any {
+	return map[string]any{"module": "internal", "lifetime": caddyDuration(leafLifetime)}
+}
 
 // writerModule is the Caddy log writer module name registered in logwriter.go.
 const writerModule = "nearhost"
@@ -528,7 +561,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if len(subjects) > 0 {
 		policies = append(policies, map[string]any{
 			"subjects": subjects,
-			"issuers":  []any{map[string]any{"module": "internal"}},
+			"issuers":  []any{internalIssuer()},
 		})
 	}
 	automation := map[string]any{"policies": policies}
@@ -543,7 +576,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// certificates issued for names that are not served.
 		policies = append(policies, map[string]any{
 			"on_demand": true,
-			"issuers":   []any{map[string]any{"module": "internal"}},
+			"issuers":   []any{internalIssuer()},
 		})
 		automation["policies"] = policies
 		automation["on_demand"] = map[string]any{
@@ -661,8 +694,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			"pki": map[string]any{
 				"certificate_authorities": map[string]any{
 					"local": map[string]any{
-						"name":          CAName,
-						"install_trust": false,
+						"name":                  CAName,
+						"install_trust":         false,
+						"intermediate_lifetime": caddyDuration(intermediateLifetime),
 					},
 				},
 			},
