@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -70,6 +71,13 @@ type fakeUpdate struct {
 	capped     map[string]bool
 	capUnknown bool
 	capProbed  []string
+	// regular, when set, lists the paths that are regular files instead
+	// of every path.
+	regular map[string]bool
+	// lowStart is the first unprivileged port; 0 means 1024.
+	// lowUnreadable is that it could not be read.
+	lowStart      int
+	lowUnreadable bool
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -160,6 +168,13 @@ func (f *fakeUpdate) backend() updateBackend {
 				return []byte(c), nil
 			}
 			return []byte("\x7fELF"), nil
+		},
+		isFile: func(p string) bool { return f.regular == nil || f.regular[p] },
+		unprivilegedPortStart: func() (int, bool) {
+			if f.lowStart == 0 {
+				return 1024, !f.lowUnreadable
+			}
+			return f.lowStart, !f.lowUnreadable
 		},
 		netBindCap: func(p string) (bool, bool) {
 			f.capProbed = append(f.capProbed, p)
@@ -626,6 +641,7 @@ func TestUpdateRunFailure(t *testing.T) {
 }
 
 func TestUpdateLinuxRemindsSetcap(t *testing.T) {
+	nodeArch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
 	const pnpmStore = "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost"
 	const setcap = "Let the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep "
 	shellShim := "#!/bin/sh\nexec node \"$basedir/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost/cli/bin/nearhost.js\" \"$@\"\n"
@@ -643,12 +659,12 @@ func TestUpdateLinuxRemindsSetcap(t *testing.T) {
 			"'/home/linuxbrew/.linuxbrew/Caskroom/nearhost/0.6.0/nearhost'"},
 		{"pnpm shell shim", &fakeUpdate{exe: "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli-linux-x64@0.5.0/node_modules/@nearhost/cli-linux-x64/bin/nearhost",
 			onPath: "/home/me/.local/share/pnpm/nearhost", files: map[string]string{"/home/me/.local/share/pnpm/nearhost": shellShim},
-			present: map[string]bool{pnpmStore + "/cli-linux-x64/bin/nearhost": true}},
-			"'" + pnpmStore + "/cli-linux-x64/bin/nearhost'"},
+			regular: map[string]bool{pnpmStore + "/cli-linux-" + nodeArch + "/bin/nearhost": true}},
+			"'" + pnpmStore + "/cli-linux-" + nodeArch + "/bin/nearhost'"},
 		{"pnpm symlink to the launcher", &fakeUpdate{exe: "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli-linux-x64@0.5.0/node_modules/@nearhost/cli-linux-x64/bin/nearhost",
 			onPath: "/home/me/.local/share/pnpm/nearhost", links: map[string]string{"/home/me/.local/share/pnpm/nearhost": pnpmStore + "/cli/bin/nearhost.js"},
-			present: map[string]bool{pnpmStore + "/cli-linux-x64/bin/nearhost": true}},
-			"'" + pnpmStore + "/cli-linux-x64/bin/nearhost'"},
+			regular: map[string]bool{pnpmStore + "/cli-linux-" + nodeArch + "/bin/nearhost": true}},
+			"'" + pnpmStore + "/cli-linux-" + nodeArch + "/bin/nearhost'"},
 		{"a directory with a space", &fakeUpdate{exe: "/home/me/my bin/it's/nearhost", env: map[string]string{"GOBIN": "/home/me/my bin/it's"}}, `'/home/me/my bin/it'\''s/nearhost'`},
 	} {
 		tc.f.latest, tc.f.goos = "0.6.0", "linux"
@@ -700,6 +716,40 @@ func TestUpdateSetcapAdviceDependsOnTheCapability(t *testing.T) {
 	out, err = runUpdate(t, f, "0.5.0", "", "--yes")
 	if err == nil || strings.Contains(out, "setcap") || len(f.capProbed) != 0 {
 		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestUpdateSetcapAdviceSkipsASystemThatLetsAnyoneBindLowPorts(t *testing.T) {
+	const exe = "/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"
+	for _, tc := range []struct {
+		name       string
+		start      int
+		unreadable bool
+		advice     bool
+	}{
+		{"1024", 1024, false, true}, {"81", 81, false, true}, {"80", 80, false, false}, {"unreadable", 0, true, true},
+	} {
+		f := &fakeUpdate{latest: "0.6.0", goos: "linux", exe: exe, writable: true, lowStart: tc.start, lowUnreadable: tc.unreadable}
+		out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+		if err != nil || strings.Contains(out, "setcap") != tc.advice {
+			t.Errorf("%s: out %q, err %v", tc.name, out, err)
+		}
+	}
+}
+
+// A path that is not a regular file, such as a directory or a missing
+// file, is never printed as the binary.
+func TestUpdateSetcapOnlyNamesRegularFiles(t *testing.T) {
+	const exe = "/usr/local/bin/nearhost"
+	f := &fakeUpdate{latest: "0.6.0", goos: "linux", exe: exe, writable: true, regular: map[string]bool{}}
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err != nil || !strings.Contains(out, "could not tell which file is the binary") || len(f.capProbed) != 0 {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	f = &fakeUpdate{latest: "0.6.0", goos: "linux", exe: "/home/linuxbrew/.linuxbrew/Caskroom/nearhost/0.5.0/nearhost", writable: true, regular: map[string]bool{}}
+	out, _ = runUpdate(t, f, "0.5.0", "", "--yes")
+	if !strings.Contains(out, "could not tell which file is the binary") || !strings.Contains(out, "'/home/linuxbrew/.linuxbrew/bin/nearhost'") {
+		t.Fatalf("out %q", out)
 	}
 }
 

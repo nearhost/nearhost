@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -74,6 +75,11 @@ type updateBackend struct {
 	// netBindCap reports whether the file at path has the file capability
 	// cap_net_bind_service. known is false when that cannot be told.
 	netBindCap func(path string) (has, known bool)
+	// isFile reports whether path is an existing regular file.
+	isFile func(path string) bool
+	// unprivilegedPortStart is the first port any user may bind
+	// (net.ipv4.ip_unprivileged_port_start), and whether it could be read.
+	unprivilegedPortStart func() (int, bool)
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -119,6 +125,18 @@ func systemUpdate() updateBackend {
 		realPath:      filepath.EvalSymlinks,
 		readHead:      readHead,
 		netBindCap:    fileNetBindCap,
+		isFile: func(path string) bool {
+			info, err := os.Stat(path)
+			return err == nil && info.Mode().IsRegular()
+		},
+		unprivilegedPortStart: func() (int, bool) {
+			data, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+			if err != nil {
+				return 0, false
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			return n, err == nil
+		},
 	}
 }
 
@@ -368,6 +386,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 // the new binary has the capability; when that cannot be checked, the
 // command is printed anyway.
 func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe string) {
+	if first, ok := b.unprivilegedPortStart(); ok && first <= 80 {
+		return // this system lets any program bind ports 80 and 443
+	}
 	bin, found := realBinary(b, m, exe)
 	if found {
 		if has, known := b.netBindCap(bin); known && has {
@@ -393,14 +414,23 @@ func realBinary(b updateBackend, m update.Method, exe string) (string, bool) {
 	if p == "" {
 		return "", false
 	}
+	var bin string
 	switch m.Kind {
 	case update.Homebrew:
 		real, err := b.realPath(p)
-		return real, err == nil
+		if err != nil {
+			return "", false
+		}
+		bin = real
 	case update.PNPM:
-		return pnpmBinary(b, p)
+		var ok bool
+		if bin, ok = pnpmBinary(b, p); !ok {
+			return "", false
+		}
+	default:
+		bin = p
 	}
-	return p, true
+	return bin, b.isFile(bin)
 }
 
 // pnpmBinary finds the platform binary behind pnpm's shim at shim. The
@@ -434,13 +464,9 @@ func pnpmBinary(b updateBackend, shim string) (string, bool) {
 	}
 	// <...>/node_modules/@nearhost/cli/bin/nearhost.js
 	scope := filepath.Dir(filepath.Dir(filepath.Dir(launcher)))
-	for _, arch := range []string{"x64", "arm64"} {
-		bin := filepath.Join(scope, "cli-linux-"+arch, "bin", "nearhost")
-		if b.exists(bin) {
-			return bin, true
-		}
-	}
-	return "", false
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
+	bin := filepath.Join(scope, "cli-linux-"+arch, "bin", "nearhost")
+	return bin, b.isFile(bin)
 }
 
 // shimTarget finds the launcher in a pnpm shell shim: the quoted
