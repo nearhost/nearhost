@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -210,5 +211,35 @@ extra: {free: form}
 	want := []Unknown{{Key: "skipped", Line: 3}, {Key: "sshhost", Line: 5}}
 	if !slices.Equal(got, want) {
 		t.Fatalf("unknown = %+v, want %+v", got, want)
+	}
+}
+
+// TestUpdateReadsTheFileOnce checks that Update looks for unknown keys in the
+// bytes it loaded: a second read could see a hand edit saved in between and
+// check a version other than the one it changes and saves.
+func TestUpdateReadsTheFileOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, sample()); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	real := readFile
+	readFile = func(name string) ([]byte, error) { reads++; return real(name) }
+	t.Cleanup(func() { readFile = real })
+	if err := Update(path, appendProject("blog")); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 {
+		t.Fatalf("Update read the config %d times, want 1", reads)
+	}
+}
+
+// TestUnknownKeysNamesAFileItCannotRead checks that a read error names the
+// file once.
+func TestUnknownKeysNamesAFileItCannotRead(t *testing.T) {
+	path := t.TempDir() // a directory cannot be read as a file
+	_, err := UnknownKeys(path)
+	if err == nil || !strings.HasPrefix(err.Error(), "read "+path+": ") || strings.Count(err.Error(), path) != 1 {
+		t.Fatalf("err = %v", err)
 	}
 }

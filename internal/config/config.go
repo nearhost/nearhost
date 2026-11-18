@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -344,21 +345,33 @@ func (c *Config) RemovePreset(name string) bool {
 // empty file is an error: a crash part way through a write can leave one,
 // and reading it as no projects would let the next save write over them.
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	c, _, err := load(path)
+	return c, err
+}
+
+// readFile reads a file for Load and UnknownKeys. Tests replace it to count
+// the reads.
+var readFile = os.ReadFile
+
+// load is Load that also returns the bytes it read, nil for a missing file,
+// so Update can look for unknown keys in the same version of the file it
+// changes and saves.
+func load(path string) (*Config, []byte, error) {
+	data, err := readFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Config{}, nil
+		return &Config{}, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("%s is empty. Restore it from a backup, or delete it to start afresh.", path)
+		return nil, nil, fmt.Errorf("%s is empty. Restore it from a backup, or delete it to start afresh.", path)
 	}
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return &c, nil
+	return &c, data, nil
 }
 
 // Unknown is a key in the config file that Nearhost does not know, with the
@@ -402,13 +415,24 @@ func (e *UnknownKeysError) Error() string {
 // decodes itself is not looked into. Comments and key order, which Save does
 // not keep either, are not reported.
 func UnknownKeys(path string) ([]Unknown, error) {
-	data, err := os.ReadFile(path)
+	data, err := readFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		// A PathError names the file already, as "open <path>: ...".
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return unknownKeysIn(path, data)
+}
+
+// unknownKeysIn is UnknownKeys for data, the content of the file at path,
+// which it names in a parse error.
+func unknownKeysIn(path string, data []byte) ([]Unknown, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -421,7 +445,9 @@ func UnknownKeys(path string) ([]Unknown, error) {
 var unmarshalerType = reflect.TypeFor[yaml.Unmarshaler]()
 
 // unknownIn appends to out the keys under n that type t has no field for.
-// An alias is skipped: its anchor is checked where it is written.
+// An alias is skipped: its anchor is checked where it is written, against
+// the type there, so an anchor written under one type and aliased under
+// another is checked only as the first.
 func unknownIn(n *yaml.Node, t reflect.Type, out *[]Unknown) {
 	if n.Kind == yaml.DocumentNode {
 		for _, c := range n.Content {

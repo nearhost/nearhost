@@ -19,18 +19,22 @@ func Update(path string, change func(*Config) error) error {
 		return err
 	}
 	defer unlock()
-	cfg, err := Load(path)
+	cfg, data, err := load(path)
 	if err != nil {
 		return err
 	}
 	// Save writes only what the structs hold, so it would delete a key
-	// Nearhost does not know. Refuse instead, and name every such key.
-	unknown, err := UnknownKeys(path)
-	if err != nil {
-		return err
-	}
-	if len(unknown) > 0 {
-		return &UnknownKeysError{Path: path, Keys: unknown}
+	// Nearhost does not know. Refuse instead, and name every such key. The
+	// keys are looked for in the bytes just loaded, so a hand edit saved
+	// meanwhile cannot be checked in place of the version being changed.
+	if data != nil {
+		unknown, err := unknownKeysIn(path, data)
+		if err != nil {
+			return err
+		}
+		if len(unknown) > 0 {
+			return &UnknownKeysError{Path: path, Keys: unknown}
+		}
 	}
 	if err := change(cfg); err != nil {
 		return err
