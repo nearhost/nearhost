@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // realOwnedByRoot is the ownership check Nearhost ships with.
@@ -227,13 +228,27 @@ func TestValidateCancelledAfterCachingForgets(t *testing.T) {
 	}
 	t.Setenv("FAKE_SUDO_WROTE", fifo)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	result := make(chan error, 1)
 	go func() { result <- Validate(ctx, "secret") }()
-	f, err := os.Open(fifo) // opens once the fake has cached the credentials
-	if err != nil {
-		t.Fatal(err)
+	// The open returns once the fake has cached the credentials and writes.
+	opened := make(chan *os.File, 1)
+	go func() {
+		f, err := os.Open(fifo)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- f
+	}()
+	var f *os.File
+	select {
+	case f = <-opened:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the fake never cached the credentials")
 	}
-	f.Close()
+	if f != nil {
+		defer f.Close() // open until the cancel, so the fake's write lands
+	}
 	if _, err := os.Stat(cache); err != nil {
 		t.Fatalf("the fake did not cache: %v", err)
 	}

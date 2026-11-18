@@ -233,6 +233,18 @@ func TestAsRootCancelForgetsTheCredentials(t *testing.T) {
 	}
 }
 
+// A request that ends while the box is open forgets the credentials too.
+func TestAsRootEndedRequestForgetsTheCredentials(t *testing.T) {
+	f := &fakeRoot{needed: true, askErr: context.Canceled}
+	var s step
+	if err := f.root().run(context.Background(), "Why.", "Done.", s.run); !errors.Is(err, context.Canceled) {
+		t.Errorf("error %v", err)
+	}
+	if s.runs != 0 || f.forgot != 1 {
+		t.Errorf("runs %d, forgot %d", s.runs, f.forgot)
+	}
+}
+
 // A password the box took does not forget the credentials.
 func TestAsRootSuccessKeepsTheCredentials(t *testing.T) {
 	f := &fakeRoot{needed: true, sticks: true}

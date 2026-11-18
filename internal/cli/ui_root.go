@@ -96,9 +96,10 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 		return step(ctx, nil)
 	}
 	if err := r.ask(ctx, why, r.sudo.validate); err != nil {
-		if errors.Is(err, tui.ErrPasswordCancelled) && r.sudo.forget != nil {
+		if r.sudo.forget != nil {
 			// The check may have cached the credentials before the user
-			// cancelled; the next step must ask again.
+			// cancelled, or the request ended; whatever the error, the
+			// next step must ask again. Forgetting nothing is harmless.
 			r.sudo.forget(ctx)
 		}
 		return err
