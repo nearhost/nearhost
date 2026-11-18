@@ -476,13 +476,16 @@ func TestPerProcessGivesUpWhenSSHNeverLaunches(t *testing.T) {
 	}
 }
 
-// Giving up leaves no next attempt, and a fresh Start counts afresh.
+// Giving up for now leaves the next attempt authRetryEvery away, and a
+// fresh Start counts afresh.
 func TestPerProcessHealthCountsFailuresAfreshAfterAStart(t *testing.T) {
 	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1")
+	before := time.Now()
 	p.Start()
 	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
 	h := p.Health()
-	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+	if h.Failures != 3 || h.NextAttempt.Before(before.Add(authRetryEvery)) || h.NextAttempt.After(time.Now().Add(authRetryEvery)) ||
+		!strings.Contains(h.LastError, "Permission denied") {
 		t.Errorf("health %+v", h)
 	}
 	p.Stop()
@@ -1745,7 +1748,36 @@ func TestPerProcessFatalLineSurvivesLaterChatter(t *testing.T) {
 	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
 	p.Start()
 	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
-	if got := p.LastError(); got != "user@host: Permission denied (publickey)." {
+	if got := beforeRetryTime(t, p.LastError()); got != "user@host: Permission denied (publickey)." {
 		t.Fatalf("LastError = %q", got)
 	}
+}
+
+// newSlowRetryPerProcess is a per-process transport that refuses logins
+// until the test removes the file the result names.
+func newSlowRetryPerProcess(t *testing.T) slowRetry {
+	t.Helper()
+	refuse := filepath.Join(t.TempDir(), "refuse")
+	if err := os.WriteFile(refuse, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
+	return slowRetry{tr: p, clock: newSlowClock(&p.supervision), refuse: refuse,
+		launches: func() int { return p.linkLaunches(t) }}
+}
+
+// After three refused logins in a row the link keeps trying, once every 15
+// minutes, until a login succeeds.
+func TestPerProcessRetriesARefusedLoginEvery15Minutes(t *testing.T) {
+	newSlowRetryPerProcess(t).retriesEvery15Minutes(t)
+}
+
+// A Start while the link waits to try again tries at once.
+func TestPerProcessStartDuringTheLongWaitRetriesAtOnce(t *testing.T) {
+	newSlowRetryPerProcess(t).startRetriesAtOnce(t)
+}
+
+// Stop ends the wait of a link that gave up for now.
+func TestPerProcessStopEndsTheLongWait(t *testing.T) {
+	newSlowRetryPerProcess(t).stopEndsTheWait(t)
 }

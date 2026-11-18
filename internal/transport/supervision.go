@@ -29,6 +29,15 @@ func (v *supervision) runSSH(cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
+// authRetryEvery is how long a supervisor waits between attempts once
+// maxAuthFailures attempts in a row have failed in a way that retrying
+// seldom fixes, such as a refused login. A server whose sshd answers before
+// its home directories are ready, or a laptop whose ssh agent wakes late,
+// recovers by itself. ssh runs in BatchMode, so each attempt is one failed
+// login on the server, and a strict fail2ban (five failures in ten
+// minutes) must not ban the laptop for them.
+const authRetryEvery = 15 * time.Minute
+
 // supervision is the state and bookkeeping both transports share: the
 // connection's status and last error, the failed attempts and when the
 // next one is due, the agent socket's state, and the timings that drive
@@ -44,6 +53,13 @@ type supervision struct {
 	maxBackoff      time.Duration
 	maxAuthFailures int
 
+	// now and zone give the time for the message of a supervisor that gave
+	// up for now, and newTimer starts its wait, which is authRetryEvery
+	// long. Tests replace them.
+	now      func() time.Time
+	zone     *time.Location
+	newTimer func(d time.Duration) (c <-chan time.Time, stop func() bool)
+
 	// mu guards the fields below and the embedding transport's own state.
 	mu      sync.Mutex
 	status  Status
@@ -53,6 +69,9 @@ type supervision struct {
 	// again, zero unless it is waiting to.
 	failures    int
 	nextAttempt time.Time
+	// retryNow is open while the supervisor waits authRetryEvery after
+	// giving up for now; Start closes it to end the wait.
+	retryNow chan struct{}
 	// Once connected, agentPath is where the server has the agent socket,
 	// or agentErr says why it has not.
 	agentPath    string
@@ -70,6 +89,12 @@ func (v *supervision) init(name, host string) {
 	v.baseBackoff = time.Second
 	v.maxBackoff = 30 * time.Second
 	v.maxAuthFailures = 3
+	v.now = time.Now
+	v.zone = time.Local
+	v.newTimer = func(d time.Duration) (<-chan time.Time, func() bool) {
+		t := time.NewTimer(d)
+		return t.C, t.Stop
+	}
 	v.status = StatusDisconnected
 }
 
@@ -124,7 +149,7 @@ func (v *supervision) retrying(msg string, d time.Duration) {
 	v.mu.Lock()
 	v.status, v.lastErr = StatusReconnecting, msg
 	v.failures++
-	v.nextAttempt = time.Now().Add(d)
+	v.nextAttempt = v.now().Add(d)
 	v.mu.Unlock()
 	v.Logf("%s: %s: %s", v.Name, StatusReconnecting, msg)
 }
@@ -138,21 +163,87 @@ func (v *supervision) giveUp(msg string) {
 	v.setStatus(StatusAuthFailed, msg)
 }
 
+// giveUpForNow notes a failed attempt and that the supervisor waits
+// authRetryEvery before the next: the transport is auth failed, and msg
+// gains the time of the next attempt in the user's time zone. It returns
+// the channel Start closes to end the wait.
+func (v *supervision) giveUpForNow(msg string) <-chan struct{} {
+	next := v.now().Add(authRetryEvery)
+	msg += "; trying again at " + next.In(v.zone).Format("15:04")
+	retryNow := make(chan struct{})
+	v.mu.Lock()
+	v.status, v.lastErr = StatusAuthFailed, msg
+	v.failures++
+	v.nextAttempt = next
+	v.retryNow = retryNow
+	v.mu.Unlock()
+	v.Logf("%s: %s: %s", v.Name, StatusAuthFailed, msg)
+	return retryNow
+}
+
+// retryAtOnceLocked ends the wait of a supervisor that gave up for now, so
+// it tries again at once and counts its failures afresh. It does nothing
+// to one that is not waiting so. It must be called with mu held.
+func (v *supervision) retryAtOnceLocked() {
+	if v.retryNow == nil {
+		return
+	}
+	close(v.retryNow)
+	v.retryNow = nil
+	v.failures = 0
+}
+
 // attemptFailed notes a failed attempt with message msg. A fatal one adds
-// to *fatalRun, and the maxAuthFailures-th in a row gives up; any other
-// ends the run. Unless it gave up, the transport is reconnecting in backoff.
-// It reports whether the supervisor goes on.
-func (v *supervision) attemptFailed(msg string, fatal bool, fatalRun *int, backoff time.Duration) bool {
+// to *fatalRun, and from the maxAuthFailures-th in a row on the supervisor
+// gives up for now (see giveUpForNow), and the result is the channel that
+// ends its wait. Any other failure ends the run of fatal ones. Unless it
+// gave up, the transport is reconnecting in backoff, and the result is nil.
+// Pass the result to waitToRetry.
+func (v *supervision) attemptFailed(msg string, fatal bool, fatalRun *int, backoff time.Duration) (retryNow <-chan struct{}) {
 	if fatal {
 		*fatalRun++
 		if *fatalRun >= v.maxAuthFailures {
-			v.giveUp(msg)
-			return false
+			return v.giveUpForNow(msg)
 		}
 	} else {
 		*fatalRun = 0 // only consecutive fatal failures count
 	}
 	v.retrying(msg, backoff)
+	return nil
+}
+
+// waitToRetry waits before the next attempt, after attemptFailed returned
+// retryNow. With retryNow nil it waits *backoff and doubles it. Otherwise
+// the supervisor gave up for now: it waits authRetryEvery, or until Start
+// closes retryNow, and the next attempt starts the backoff afresh. One that
+// Start asked for also starts the run of fatal failures afresh; one at the
+// end of the wait does not, so another such failure leads straight back to
+// the wait. waitToRetry reports false when ctx ends first.
+func (v *supervision) waitToRetry(ctx context.Context, retryNow <-chan struct{}, fatalRun *int, backoff *time.Duration) bool {
+	if retryNow == nil {
+		if !v.sleep(ctx, *backoff) {
+			return false
+		}
+		*backoff = v.nextBackoff(*backoff)
+		return true
+	}
+	defer func() {
+		v.mu.Lock()
+		if v.retryNow == retryNow {
+			v.retryNow = nil
+		}
+		v.mu.Unlock()
+	}()
+	timeUp, stop := v.newTimer(authRetryEvery)
+	defer stop()
+	*backoff = v.baseBackoff
+	select {
+	case <-ctx.Done():
+		return false
+	case <-retryNow:
+		*fatalRun = 0
+	case <-timeUp:
+	}
 	return true
 }
 

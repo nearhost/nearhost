@@ -120,7 +120,7 @@ func TestMasterErrorIsItsLastLinesNotItsWholeLog(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_FLOOD=10000")
 	s.Start()
 	waitFor(t, 20*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	msg := s.LastError()
+	msg := beforeRetryTime(t, s.LastError())
 	if !strings.Contains(msg, "Permission denied") {
 		t.Fatalf("LastError = %q, want the last line", msg)
 	}
@@ -136,7 +136,7 @@ func TestFatalLineSurvivesLaterChatter(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	if got := s.LastError(); got != "user@host: Permission denied (publickey)." {
+	if got := beforeRetryTime(t, s.LastError()); got != "user@host: Permission denied (publickey)." {
 		t.Fatalf("LastError = %q", got)
 	}
 }
@@ -162,7 +162,7 @@ func TestHostKeyMessageNamesTheOffendingKey(t *testing.T) {
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
 	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3"
-	if got := s.LastError(); got != want {
+	if got := beforeRetryTime(t, s.LastError()); got != want {
 		t.Fatalf("LastError = %q, want %q", got, want)
 	}
 }
@@ -589,14 +589,16 @@ func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
 	}
 }
 
-// A session that gives up says how many attempts failed and that it will
-// not try again by itself.
+// A session that gives up for now says how many attempts failed and when it
+// tries again.
 func TestHealthCountsFailuresUntilGivingUp(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	before := time.Now()
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
 	h := s.Health()
-	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+	if h.Failures != 3 || h.NextAttempt.Before(before.Add(authRetryEvery)) || h.NextAttempt.After(time.Now().Add(authRetryEvery)) ||
+		!strings.Contains(h.LastError, "Permission denied") {
 		t.Errorf("health %+v", h)
 	}
 	s.Stop()
@@ -760,4 +762,32 @@ func TestSessionStopDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
 	case <-time.After(procWaitDelay + 2*time.Second):
 		t.Fatal("Stop waited on the child that holds the master's stderr")
 	}
+}
+
+// newSlowRetrySession is a session that refuses logins until the test
+// removes the file the result names.
+func newSlowRetrySession(t *testing.T) slowRetry {
+	t.Helper()
+	refuse := filepath.Join(t.TempDir(), "refuse")
+	if err := os.WriteFile(refuse, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
+	return slowRetry{tr: s, clock: newSlowClock(&s.supervision), refuse: refuse, launches: s.Launches}
+}
+
+// After three refused logins in a row the session keeps trying, once every
+// 15 minutes, until a login succeeds.
+func TestSupervisorRetriesARefusedLoginEvery15Minutes(t *testing.T) {
+	newSlowRetrySession(t).retriesEvery15Minutes(t)
+}
+
+// A Start while the session waits to try again tries at once.
+func TestStartDuringTheLongWaitRetriesAtOnce(t *testing.T) {
+	newSlowRetrySession(t).startRetriesAtOnce(t)
+}
+
+// Stop ends the wait of a session that gave up for now.
+func TestStopEndsTheLongWait(t *testing.T) {
+	newSlowRetrySession(t).stopEndsTheWait(t)
 }

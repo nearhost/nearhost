@@ -84,9 +84,10 @@ func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 		return nil, errHeld(srv.Name)
 	}
 	if c.sess.Status() == transport.StatusAuthFailed {
-		// The supervisor has exited, so this returns at once. It clears the
-		// failed status; otherwise a waiter would see the old failure before
-		// the new supervisor has made its first attempt.
+		// The supervisor has exited or is waiting to try again, so this
+		// returns at once. It clears the failed status; otherwise a waiter
+		// would see the old failure before the new supervisor has made its
+		// first attempt.
 		c.sess.Stop()
 	}
 	// A run directory too long for a control socket fails the start with

@@ -204,14 +204,18 @@ func (p *perProcess) SetAgentForward(f AgentForward) {
 	p.mu.Unlock()
 }
 
-// Start launches the supervisor. It is a no-op while a supervisor is
-// running; after the supervisor has given up, Start launches a fresh one.
+// Start launches the supervisor. While a supervisor is running it does
+// nothing, except that one that gave up for now (auth failed, waiting
+// authRetryEvery) tries again at once and counts its failures afresh. After
+// a supervisor has given up for good, on a configuration it cannot work
+// with, Start launches a fresh one.
 func (p *perProcess) Start() {
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cancel != nil {
+		p.retryAtOnceLocked()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +237,7 @@ func (p *perProcess) Stop() {
 		cancel()
 		<-done
 	}
-	// Also covers a supervisor that already gave up (auth failed).
+	// Also covers a supervisor that gave up for good (auth failed).
 	if p.Status() != StatusDisconnected {
 		p.setStatus(StatusDisconnected, "")
 	}
@@ -306,7 +310,9 @@ func ConfigValue(config, key string) string {
 // `ssh -N`, marks the transport connected once ssh has authenticated and
 // forwarded the agent socket and the forwards are re-applied, closes the
 // forwards when the link exits, and relaunches it with backoff when it exits,
-// until ctx ends or a failure that retrying cannot fix. A link that exits
+// until ctx ends or the configuration is one it cannot work with. After
+// maxAuthFailures fatal failures in a row it relaunches the link once every
+// authRetryEvery (see waitToRetry). A link that exits
 // because the server refused the agent socket, or because ssh could not
 // parse its forward, is relaunched at once without it, as the same attempt;
 // the next full reconnect tries it again.
@@ -345,18 +351,14 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 			backoff = p.baseBackoff
 			authFails = 0
 		}
-		// Fatal errors, and failures to start ssh at all, give up after
-		// maxAuthFailures in a row.
-		goOn := p.attemptFailed(end.msg, end.fatal, &authFails, backoff)
+		// Fatal errors, and failures to start ssh at all, give up for now
+		// after maxAuthFailures in a row.
+		retryNow := p.attemptFailed(end.msg, end.fatal, &authFails, backoff)
 		p.endForwards() // after the status has left connected
-		if !goOn {
-			return
-		}
-		if !p.sleep(ctx, backoff) {
+		if !p.waitToRetry(ctx, retryNow, &authFails, &backoff) {
 			p.setStatus(StatusDisconnected, "")
 			return
 		}
-		backoff = p.nextBackoff(backoff)
 	}
 }
 
