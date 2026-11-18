@@ -2,14 +2,18 @@ package proxy
 
 import (
 	"encoding/hex"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/nearhost/nearhost/internal/testutil"
@@ -295,5 +299,102 @@ func TestDocumentResponseSetsCookieOnlyOnSuccess(t *testing.T) {
 		if w.Code == 200 || len(w.Header().Values("Set-Cookie")) != 0 {
 			t.Errorf("GET %s: status %d, Set-Cookie %d values, want a failure with no cookie", path, w.Code, len(w.Header().Values("Set-Cookie")))
 		}
+	}
+}
+
+// A secret file restored with a wider mode is narrowed to 0600 when read,
+// and keeps its secret.
+func TestPageSecretNarrowsAWideMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the data directory's access list protects the file on Windows")
+	}
+	secret := freshSecret(t)
+	path := filepath.Join(os.Getenv("XDG_DATA_HOME"), "nearhost", "page-secret")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := pageSecret()
+	if err != nil || got != secret {
+		t.Fatalf("pageSecret after a chmod: another secret, or %v", err)
+	}
+	testutil.WantPerm(t, path, 0o600)
+}
+
+// A secret file whose mode can't be narrowed is replaced with a new one,
+// made 0600.
+func TestPageSecretReplacesAFileItCannotNarrow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the data directory's access list protects the file on Windows")
+	}
+	secret := freshSecret(t)
+	path := filepath.Join(os.Getenv("XDG_DATA_HOME"), "nearhost", "page-secret")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := chmod
+	chmod = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { chmod = old })
+	got, err := pageSecret()
+	if err != nil || got == secret || len(got) != 64 {
+		t.Fatalf("pageSecret kept the wide file's secret, or failed: %v", err)
+	}
+	testutil.WantPerm(t, path, 0o600)
+}
+
+// Creating the secret removes temporary files a crash left more than a
+// minute ago, and keeps a fresh one, which may be another process's.
+func TestPageSecretRemovesStaleTempFiles(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	dir := filepath.Join(data, "nearhost")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, ".page-secret-111")
+	fresh := filepath.Join(dir, ".page-secret-222")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	long := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(stale, long, long); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pageSecret(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stale); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a stale temporary file is still there: %v", err)
+	}
+	if _, err := os.Lstat(fresh); err != nil {
+		t.Errorf("a fresh temporary file was removed: %v", err)
+	}
+}
+
+// A secret that can't be read or created is logged once per process,
+// naming the path, so a page with no list has an explanation.
+func TestPageSecretFailureIsLoggedOnce(t *testing.T) {
+	base := t.TempDir()
+	// The data directory's parent is a file, so nothing can be made in it.
+	blocker := filepath.Join(base, "file")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", blocker)
+	rec := &recorder{}
+	SetSink(rec)
+	t.Cleanup(func() { SetSink(nil) })
+	secretErrLogged.Store(false)
+	t.Cleanup(func() { secretErrLogged.Store(false) })
+	for range 3 {
+		if _, err := pageSecret(); err == nil {
+			t.Fatal("pageSecret succeeded under a file")
+		}
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.lines) != 1 || !strings.Contains(rec.lines[0], blocker) || !strings.Contains(rec.lines[0], "Nearhost's page") {
+		t.Fatalf("logged %q, want one line naming the page and the path", rec.lines)
 	}
 }

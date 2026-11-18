@@ -10,6 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync/atomic"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -35,15 +38,29 @@ const pageSecretAttempts = 5
 // empty by a crash, or edited by hand.
 var errBadSecret = errors.New("the page secret file is malformed")
 
+// chmod is os.Chmod, replaced in tests to fail.
+var chmod = os.Chmod
+
+// secretErrLogged is set once a failure to read or create the secret has
+// been logged, so the log says so once per process.
+var secretErrLogged atomic.Bool
+
 // pageSecret returns the secret of Nearhost's page, creating it the first
 // time. It is read from the file on each call, not kept, so every process
 // uses what the file holds now. Its errors never hold the secret.
 func pageSecret() (string, error) {
 	path, err := config.PageSecretPath()
-	if err != nil {
-		return "", err
+	if err == nil {
+		var secret string
+		if secret, err = readOrCreateSecret(path); err == nil {
+			return secret, nil
+		}
 	}
-	return readOrCreateSecret(path)
+	// The error names paths only, never the secret.
+	if secretErrLogged.CompareAndSwap(false, true) {
+		emit("", "Nearhost's page can't list documents: its secret can't be read or created: "+err.Error())
+	}
+	return "", err
 }
 
 // readOrCreateSecret returns the secret in the file at path. A missing file
@@ -73,7 +90,8 @@ func readOrCreateSecret(path string) (string, error) {
 }
 
 // readSecret reads the secret at path: exactly the hex of pageSecretBytes
-// bytes, or errBadSecret.
+// bytes, or errBadSecret. Outside Windows it narrows a wider mode to 0600,
+// and a file it can't narrow is errBadSecret too, so it gets replaced.
 func readSecret(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -84,6 +102,19 @@ func readSecret(path string) (string, error) {
 	}
 	if _, err := hex.DecodeString(string(data)); err != nil {
 		return "", errBadSecret
+	}
+	// A file restored from a backup may have come back readable by others.
+	// On Windows the mode means nothing: the folder's access list counts.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode().Perm()&^0o600 != 0 {
+			if err := chmod(path, 0o600); err != nil {
+				return "", errBadSecret
+			}
+		}
 	}
 	return string(data), nil
 }
@@ -96,6 +127,7 @@ func newSecretFile(path string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
+	removeStaleTemps(dir)
 	b := make([]byte, pageSecretBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -116,6 +148,21 @@ func newSecretFile(path string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// staleTemp is how old a temporary secret file must be before it counts as
+// left by a crash: one still being written belongs to another process.
+const staleTemp = time.Minute
+
+// removeStaleTemps removes the temporary secret files in dir older than
+// staleTemp. It does its best and reports nothing.
+func removeStaleTemps(dir string) {
+	names, _ := filepath.Glob(filepath.Join(dir, ".page-secret-*"))
+	for _, name := range names {
+		if info, err := os.Lstat(name); err == nil && info.Mode().IsRegular() && time.Since(info.ModTime()) > staleTemp {
+			os.Remove(name)
+		}
+	}
 }
 
 // createSecret puts a new secret at path unless a file is there already,
