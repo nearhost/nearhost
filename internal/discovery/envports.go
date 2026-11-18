@@ -33,6 +33,30 @@ func portVarLabel(name string) (string, bool) {
 	return strings.Join(rest, "-"), true
 }
 
+// serviceLabels are the words in a port variable's label that name a
+// service other than the app, such as a database or a mail catcher.
+var serviceLabels = []string{
+	"db", "database", "mysql", "mariadb", "postgres", "postgresql", "pg", "mongo", "mongodb",
+	"redis", "valkey", "memcached", "cache", "mail", "mailpit", "mailhog", "smtp", "imap",
+	"minio", "s3", "elasticsearch", "opensearch", "meilisearch", "typesense", "rabbitmq", "amqp", "kafka",
+}
+
+// serviceVarLabel reports whether the port variable name is labelled as a
+// service other than the app: one of the words of its label is in
+// serviceLabels, so FORWARD_DB_PORT counts as a database.
+func serviceVarLabel(name string) bool {
+	label, ok := portVarLabel(name)
+	if !ok {
+		return false
+	}
+	for _, word := range strings.Split(label, "-") {
+		if slices.Contains(serviceLabels, word) {
+			return true
+		}
+	}
+	return false
+}
+
 // envPortValue parses a port variable's value: a whole decimal number from
 // 1 to 65535, with surrounding spaces allowed.
 func envPortValue(value string) (int, bool) {

@@ -114,7 +114,22 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Port < routes[j].Port })
 	routes, primary := assignWeb(routes)
 	res.Routes = res.serveHosts(routes, primary)
+	res.noteLonePort(primary)
 	return res, nil
+}
+
+// noteLonePort says so when the only route found became the web route and
+// its port variable's name is that of a service other than the app. The
+// route stays web, so adding without a question keeps working.
+func (res *Result) noteLonePort(primary int) {
+	if primary != 0 || len(res.Routes) != 1 {
+		return
+	}
+	c := res.Routes[0]
+	if c.Preset != "" || !strings.HasPrefix(c.Source, "env:") || !serviceVarLabel(c.Var) {
+		return
+	}
+	res.warn("%s is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere.", safetext.Line(c.Var))
 }
 
 // wantsCompose reports whether an active preset asks for the Compose

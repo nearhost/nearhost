@@ -781,3 +781,31 @@ routes:
 		t.Errorf("9000 = %+v", c)
 	}
 }
+
+// A lone port variable becomes the web route, and when its name says it is
+// a service other than the app, discovery says so.
+func TestDiscoverLoneNonAppPortGetsANote(t *testing.T) {
+	res := discover(t, memReader{".env": "DB_PORT=5432\n"}, Options{})
+	if len(res.Routes) != 1 || res.Routes[0].Role != config.RoleWeb {
+		t.Fatalf("the lone port should be web: %+v", res.Routes)
+	}
+	want := []string{"DB_PORT is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere."}
+	if !slices.Equal(res.Warnings, want) {
+		t.Errorf("Warnings = %q, want %q", res.Warnings, want)
+	}
+	for _, env := range []string{"REDIS_PORT=6379\n", "FORWARD_MAILPIT_PORT=1025\n"} {
+		if res := discover(t, memReader{".env": env}, Options{}); len(res.Warnings) != 1 {
+			t.Errorf("%q: Warnings = %q, want one note", env, res.Warnings)
+		}
+	}
+}
+
+// The app's own port, or a name that says nothing, gets no note, and
+// neither does a project with several ports.
+func TestDiscoverLoneAppPortGetsNoNote(t *testing.T) {
+	for _, env := range []string{"APP_PORT=8080\n", "PORT=3000\n", "VITE_PORT=5173\n", "DB_PORT=5432\nAPP_PORT=8080\n"} {
+		if res := discover(t, memReader{".env": env}, Options{}); len(res.Warnings) != 0 {
+			t.Errorf("%q: Warnings = %q, want none", env, res.Warnings)
+		}
+	}
+}
