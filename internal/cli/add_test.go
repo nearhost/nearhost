@@ -12,6 +12,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
 // noRemote is an add backend for tests that must stay on this machine.
@@ -585,7 +586,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("answer %q: err = %v\n%s", answer, err, out)
 		}
-		wantContains(t, out, "Left out, as you did not approve them: app.local.dd.io.\n")
+		wantContains(t, out, "Not approved, so left out: app.local.dd.io.\n")
 		if p, ok := loadSaved(t, declined).Project("rcapp"); !ok || len(p.AllHosts()) != 1 {
 			t.Fatalf("answer %q: project = %+v %v", answer, p, ok)
 		}
@@ -723,6 +724,10 @@ func TestAddAsksBeforeLoopbackPort(t *testing.T) {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	wantContains(t, out, "localhost:5173 (binds localhost:5173 on this machine): approve? [y/N] ")
+	// The note is about names, and this prompt asks about none.
+	if strings.Contains(out, approvalNote) {
+		t.Errorf("the note on approving names came with a loopback port only:\n%s", out)
+	}
 }
 
 // Each item is asked about on its own, after one note on what approving
@@ -740,7 +745,7 @@ func TestAddAsksAboutEachItem(t *testing.T) {
 	wantContains(t, out,
 		approvalNote+"\napp.local.dd.io on port 8220 (a real domain): approve? [y/N] ",
 		"docker_clients (lets local Docker containers reach this project): approve? [y/N] ",
-		"Left out, as you did not approve them: docker_clients.\n")
+		"Not approved, so left out: docker_clients.\n")
 	p, ok := loadSaved(t, cfgPath).Project("rcapp")
 	if !ok {
 		t.Fatalf("the project was not added:\n%s", out)
@@ -763,7 +768,7 @@ func TestAddRefusingEveryItemAddsTheRest(t *testing.T) {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
 	wantContains(t, out, "Added rcapp on local at https://rcapp.test\n",
-		"Left out, as you did not approve them: app.local.dd.io, local.rcapp.com, localhost:5173, docker_clients.\n")
+		"Not approved, so left out: app.local.dd.io, local.rcapp.com, localhost:5173, docker_clients.\n")
 	p, ok := loadSaved(t, cfgPath).Project("rcapp")
 	if !ok {
 		t.Fatalf("the project was not added:\n%s", out)
@@ -776,6 +781,37 @@ func TestAddRefusingEveryItemAddsTheRest(t *testing.T) {
 			t.Errorf("route 5173 = %+v, want ignore", r)
 		}
 	}
+
+	// The next review of the file asks about every refused item again.
+	c := classifySaved(t, cfgPath, "rcapp", dir)
+	names := make([]string, len(c.Items))
+	for i, it := range c.Items {
+		names[i] = it.Name()
+	}
+	if want := []string{"app.local.dd.io", "local.rcapp.com", "localhost:5173", "docker_clients"}; c.Kind != nearhostrc.Pending || !reflect.DeepEqual(names, want) {
+		t.Errorf("review: kind %v, items %v, want pending %v", c.Kind, names, want)
+	}
+
+	// A project with every item approved has nothing waiting.
+	approved := filepath.Join(t.TempDir(), "config.yaml")
+	if out, err := executeWithInput(t, "y\ny\ny\ny\n", newAddCmd(rcBackend(t, true)), "--config", approved, "add", dir, "--name", "rcapp", "--no-presets"); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if c := classifySaved(t, approved, "rcapp", dir); c.Kind != nearhostrc.Nothing {
+		t.Errorf("review after approving everything: kind %v, items %+v", c.Kind, c.Items)
+	}
+}
+
+// classifySaved is how the project named name, as saved in the config at
+// cfgPath, stands against the .nearhostrc in dir.
+func classifySaved(t *testing.T, cfgPath, name, dir string) nearhostrc.Class {
+	t.Helper()
+	p, ok := loadSaved(t, cfgPath).Project(name)
+	if !ok {
+		t.Fatalf("project %s was not saved", name)
+	}
+	f, found, err := nearhostrc.Read(discovery.DirReader{Root: dir})
+	return nearhostrc.Classify(*p, f, found, err)
 }
 
 // A host whose DNS lookup fails says so, as the user cannot tell from it
@@ -790,7 +826,7 @@ func TestAddSaysWhenDNSCouldNotBeChecked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "app.local.dd.io on port 8220 (a real domain) (could not check DNS): approve? [y/N] ")
+	wantContains(t, out, "app.local.dd.io on port 8220 (a real domain, could not check DNS): approve? [y/N] ")
 }
 
 func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {

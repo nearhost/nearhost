@@ -264,7 +264,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		for i, n := range refused {
 			names[i] = printable(n)
 		}
-		fmt.Fprintf(out, "Left out, as you did not approve them: %s.\n", strings.Join(names, ", "))
+		fmt.Fprintf(out, "Not approved, so left out: %s.\n", strings.Join(names, ", "))
 	}
 	start := "nearhost up"
 	if !project.Enabled {
@@ -401,7 +401,14 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		}
 		return nil, fmt.Errorf("not added: this project asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
 	}
-	fmt.Fprintln(out, approvalNote)
+	// The note is about names, so a prompt about only loopback ports and
+	// options goes without it.
+	for _, it := range items {
+		if it.Host != "" {
+			fmt.Fprintln(out, approvalNote)
+			break
+		}
+	}
 	// A host listed twice, as a route host and as the main name, is asked
 	// about once, and the answer covers both.
 	asked := map[string]bool{}
@@ -422,8 +429,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	return refused, nil
 }
 
-// approvalNote is said once before the first approval question: what saying
-// yes to a name does on this machine.
+// approvalNote is said once before the first approval question when a host
+// or main name is among the items: what saying yes to a name does on this
+// machine.
 const approvalNote = "Approving a name puts it in your hosts file on this machine, has Nearhost's local CA sign a certificate for it, and makes your browser send that site's cookies to this project."
 
 // approvalItem is how an approval question names it: a host with its port,
@@ -435,7 +443,7 @@ func approvalItem(ctx context.Context, lookup hosts.Lookup, it nearhostrc.Item) 
 	addr, err := lookupPublic(ctx, lookup, it.Host)
 	switch {
 	case err != nil:
-		return fmt.Sprintf("%s on port %d (%s) (could not check DNS)", printable(it.Host), it.Port, it.Why)
+		return fmt.Sprintf("%s on port %d (%s, could not check DNS)", printable(it.Host), it.Port, it.Why)
 	case addr != "":
 		return fmt.Sprintf("%s on port %d (%s, resolves to %s on the internet)", printable(it.Host), it.Port, it.Why, addr)
 	}
@@ -447,10 +455,15 @@ func approvalItem(ctx context.Context, lookup hosts.Lookup, it nearhostrc.Item) 
 // defaultAlias; a web route other than the primary left without hosts is
 // ignored, as withoutTakenHosts does. A loopback port is ignored, as a new
 // project has no approved role for it to go back to. docker_clients stays
-// off. The snapshot of the file keeps what the file asked for, so a refused
-// item shows as a pending change later; only a refused main name is taken
-// out of it, so that the file's alias still reads as one to ask about.
+// off, and a refused main name leaves the snapshot's alias empty. An item
+// that came from the project's .nearhostrc also leaves the snapshot without
+// the file's hash, so that the next review of the file does not take it as
+// approved and asks about the item again.
 func dropRefused(project *config.Project, it nearhostrc.Item, defaultAlias string) {
+	if fromFile(project.Nearhostrc, it) {
+		project.Nearhostrc = project.Nearhostrc.Clone()
+		project.Nearhostrc.SHA256 = ""
+	}
 	switch {
 	case it.Host != "":
 		routes := make([]config.Route, len(project.Routes))
@@ -496,6 +509,29 @@ func dropRefused(project *config.Project, it nearhostrc.Item, defaultAlias strin
 			project.Nearhostrc.DockerClients = false
 		}
 	}
+}
+
+// fromFile reports whether the .nearhostrc that snap was taken from asked for
+// it: a host one of its routes lists, its main name, a loopback port or
+// docker_clients. A host a preset or the project's files gave is not.
+func fromFile(snap *config.RcSnapshot, it nearhostrc.Item) bool {
+	if snap == nil {
+		return false
+	}
+	if it.Host == "" {
+		return true
+	}
+	if strings.EqualFold(snap.Alias, it.Host) {
+		return true
+	}
+	for _, r := range snap.Routes {
+		for _, h := range r.Hosts {
+			if strings.EqualFold(h, it.Host) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // firstPublic is the first address DNS gives host that is not loopback. ok
