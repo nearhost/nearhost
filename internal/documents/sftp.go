@@ -29,27 +29,24 @@ func SFTPFS(c *sftp.Client) FS { return sftpFS{c: c} }
 // the links are followed here with lstat and readlink, as
 // filepath.EvalSymlinks does.
 func (f sftpFS) RealPath(ctx context.Context, p string) (string, error) {
-	return withContext(ctx, func() (string, error) { return f.realPath(p) }, nil)
-}
-
-// realPath is RealPath without the context.
-func (f sftpFS) realPath(p string) (string, error) {
-	if !path.IsAbs(p) {
-		abs, err := f.c.RealPath(p)
-		if err != nil {
-			return "", mapError("realpath", p, err)
+	return withContext(ctx, func() (string, error) {
+		if !path.IsAbs(p) {
+			abs, err := f.c.RealPath(p)
+			if err != nil {
+				return "", mapError("realpath", p, err)
+			}
+			p = abs
 		}
-		p = abs
-	}
-	return evalLinks(p,
-		func(name string) (fs.FileInfo, error) {
-			info, err := f.c.Lstat(name)
-			return info, mapError("lstat", name, err)
-		},
-		func(name string) (string, error) {
-			dest, err := f.c.ReadLink(name)
-			return dest, mapError("readlink", name, err)
-		})
+		return evalLinks(p,
+			func(name string) (fs.FileInfo, error) {
+				info, err := f.c.Lstat(name)
+				return info, mapError("lstat", name, err)
+			},
+			func(name string) (string, error) {
+				dest, err := f.c.ReadLink(name)
+				return dest, mapError("readlink", name, err)
+			})
+	}, nil)
 }
 
 // Stat returns the file information for p, following symlinks.
@@ -60,12 +57,20 @@ func (f sftpFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 	}, nil)
 }
 
-// Open opens p and checks the opened file is the one at p. SFTP has no call
-// that names an open file, so after the open p must still resolve to itself,
-// and the file there, not following a last symlink, must have the open
-// file's attributes.
-func (f sftpFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
-	return withContext(ctx, func() (io.ReadCloser, error) {
+// Open opens p below root and checks the opened file is the one at p, so the
+// path below root it returns is p's. SFTP has no call that names an open
+// file, so after the open every element of p must still be what it names,
+// with no symlink, and the file p names must have the open file's
+// attributes. Someone who can write in the tree can still beat this by
+// swapping a folder back and forth while giving a file in the tree the
+// attributes of the one outside; the owner comparison stops another
+// account's swap.
+func (f sftpFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+	rel, ok := Below(root, p)
+	if !ok {
+		return nil, "", &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
+	}
+	r, err := withContext(ctx, func() (io.ReadCloser, error) {
 		file, err := f.c.Open(p)
 		if err != nil {
 			return nil, mapError("open", p, err)
@@ -76,44 +81,114 @@ func (f sftpFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
 		}
 		return file, nil
 	}, func(r io.ReadCloser) { r.Close() })
+	if err != nil {
+		return nil, "", err
+	}
+	return r, rel, nil
 }
 
+// errMoved and errChanged are what compareOpened finds: the open file isn't
+// the one at the path, or it or a folder on the way changed in size or
+// modification time, as a file being written does.
+var (
+	errMoved   = errors.New("the opened file isn't the one at its path")
+	errChanged = errors.New("the opened file changed while it was checked")
+)
+
 // checkOpened returns nil when file, opened by the path p, is the file at p
-// now, and an error wrapping fs.ErrNotExist when it isn't. Errors talking
-// to the server are kept.
+// now, and an error wrapping fs.ErrNotExist when it isn't. A change in size
+// or modification time alone is checked once more first. Errors talking to
+// the server are kept.
 func (f sftpFS) checkOpened(file *sftp.File, p string) error {
+	err := f.compareOpened(file, p)
+	if errors.Is(err, errChanged) {
+		err = f.compareOpened(file, p)
+	}
+	if errors.Is(err, errMoved) || errors.Is(err, errChanged) {
+		return &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
+	}
+	return err
+}
+
+// sftpCheckHook, when set, runs in compareOpened at stage "walk", before the
+// path is walked, and "fstat", between the walk's last lstat and the open
+// file's stat. Tests set it to change the tree in those windows.
+var sftpCheckHook func(stage string)
+
+// compareOpened walks p with lstat, requiring each element to be what it
+// names, a folder up to the last and no symlink; then stats the open file at
+// once and compares it with the last element; then lstats each folder again
+// and compares it with what the walk saw. It returns errMoved, errChanged,
+// or the server's error.
+func (f sftpFS) compareOpened(file *sftp.File, p string) error {
+	if sftpCheckHook != nil {
+		sftpCheckHook("walk")
+	}
+	type seen struct {
+		name string
+		info fs.FileInfo
+	}
+	var folders []seen
+	var last fs.FileInfo
+	name := "/"
+	elems := strings.Split(strings.Trim(path.Clean(p), "/"), "/")
+	for i, elem := range elems {
+		name = path.Join(name, elem)
+		info, err := f.c.Lstat(name)
+		if err = mapError("lstat", name, err); errors.Is(err, fs.ErrNotExist) {
+			return errMoved
+		} else if err != nil {
+			return err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 || (i < len(elems)-1 && !info.IsDir()) {
+			return errMoved
+		}
+		if i < len(elems)-1 {
+			folders = append(folders, seen{name, info})
+		}
+		last = info
+	}
+	if sftpCheckHook != nil {
+		sftpCheckHook("fstat")
+	}
 	opened, err := file.Stat()
 	if err != nil {
 		return mapError("fstat", p, err)
 	}
-	real, err := f.realPath(p)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	result := compareAttributes(opened, last)
+	if result == errMoved {
+		return result
 	}
-	same := err == nil && path.Clean(real) == path.Clean(p)
-	if same {
-		at, err := f.c.Lstat(p)
-		if err = mapError("lstat", p, err); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	for _, d := range folders {
+		info, err := f.c.Lstat(d.name)
+		if err = mapError("lstat", d.name, err); errors.Is(err, fs.ErrNotExist) {
+			return errMoved
+		} else if err != nil {
 			return err
 		}
-		same = err == nil && sameAttributes(opened, at)
+		switch m := compareAttributes(d.info, info); m {
+		case errMoved:
+			return m
+		case errChanged:
+			result = m
+		}
 	}
-	if !same {
-		return &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
-	}
-	return nil
+	return result
 }
 
-// sameAttributes reports whether a and b, from SFTP, may be the same file:
-// the same type, permissions, size and modification time, and the same owner
-// where the server gives one. SFTP gives no inode number to compare.
-func sameAttributes(a, b fs.FileInfo) bool {
-	if a.Mode() != b.Mode() || a.Size() != b.Size() || !a.ModTime().Equal(b.ModTime()) {
-		return false
-	}
+// compareAttributes compares a and b, from SFTP, which gives no inode number
+// to compare: errMoved when their type, permissions or owner differ, and
+// errChanged when only their size or modification time does.
+func compareAttributes(a, b fs.FileInfo) error {
 	sa, aok := a.Sys().(*sftp.FileStat)
 	sb, bok := b.Sys().(*sftp.FileStat)
-	return !aok || !bok || (sa.UID == sb.UID && sa.GID == sb.GID)
+	if a.Mode() != b.Mode() || (aok && bok && (sa.UID != sb.UID || sa.GID != sb.GID)) {
+		return errMoved
+	}
+	if a.Size() != b.Size() || !a.ModTime().Equal(b.ModTime()) {
+		return errChanged
+	}
+	return nil
 }
 
 // Home returns the server's working folder, where an SFTP session starts:

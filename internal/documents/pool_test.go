@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -192,7 +193,15 @@ func TestPoolKeepsAnOpenFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := fsys.Open(ctx, "pool_test.go")
+	abs, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := LocalFS{}.RealPath(ctx, abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _, err := fsys.Open(ctx, wd, wd+"/pool_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}

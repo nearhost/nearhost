@@ -55,8 +55,8 @@ func (v volumeFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 }
 
 // Open is SFTPFS's, with the server's spelling of the volume.
-func (v volumeFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
-	return v.FS.Open(ctx, serverPath(p))
+func (v volumeFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+	return v.FS.Open(ctx, serverPath(root), serverPath(p))
 }
 
 // Home is SFTPFS's, with the volume spelt as the documents package does.
@@ -133,12 +133,15 @@ func TestSFTPFS(t *testing.T) {
 	if info, err := fsys.Stat(ctx, path.Join(dir, "link")); err != nil || !info.IsDir() {
 		t.Errorf("Stat(link) = %v, %v; want the folder it points to", info, err)
 	}
-	if _, err := fsys.Open(ctx, path.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
+	if _, _, err := fsys.Open(ctx, dir, path.Join(dir, "nope.md")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Open(missing) err = %v, want fs.ErrNotExist", err)
 	}
-	f, err := fsys.Open(ctx, path.Join(real, "p.md"))
+	f, rel, err := fsys.Open(ctx, dir, path.Join(real, "p.md"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if rel != "real/p.md" {
+		t.Errorf("Open's path below the root = %q, want real/p.md", rel)
 	}
 	b, err := io.ReadAll(f)
 	f.Close()

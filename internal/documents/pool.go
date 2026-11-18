@@ -269,13 +269,24 @@ func (f pooledFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 	return use(ctx, f, func(fsys FS) (fs.FileInfo, error) { return fsys.Stat(ctx, p) }, nil)
 }
 
-// Open opens p on the server. The client stays busy, so it isn't closed as
-// idle, until the file is closed.
-func (f pooledFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
-	return use(ctx, f, func(fsys FS) (io.ReadCloser, error) { return fsys.Open(ctx, p) },
-		func(r io.ReadCloser, release func()) io.ReadCloser {
-			return &heldFile{ReadCloser: r, release: release}
-		})
+// Open opens p below root on the server. The client stays busy, so it isn't
+// closed as idle, until the file is closed.
+func (f pooledFS) Open(ctx context.Context, root, p string) (io.ReadCloser, string, error) {
+	open := func(fsys FS) (openedFile, error) {
+		r, rel, err := fsys.Open(ctx, root, p)
+		return openedFile{r, rel}, err
+	}
+	hold := func(o openedFile, release func()) openedFile {
+		return openedFile{&heldFile{ReadCloser: o.r, release: release}, o.rel}
+	}
+	o, err := use(ctx, f, open, hold)
+	return o.r, o.rel, err
+}
+
+// openedFile is what FS.Open returns, as one value.
+type openedFile struct {
+	r   io.ReadCloser
+	rel string
 }
 
 // Home returns the user's home folder on the server.
