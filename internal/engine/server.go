@@ -62,6 +62,7 @@ func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 			Logf: func(format string, args ...any) {
 				e.serverLog(srv.Name, fmt.Sprintf(format, args...))
 			},
+			Notify: func() { e.serverChanged(srv.Name) },
 		})
 		c = &serverConn{sess: s}
 		e.servers[srv.Name] = c
@@ -125,6 +126,15 @@ func (e *Engine) serverLog(server, msg string) {
 	e.mu.Lock()
 	e.reviewServerLocked(server)
 	e.closeOnFailureLocked(server)
+	e.mu.Unlock()
+}
+
+// serverChanged is told by a server's session that its connection, or one
+// of its forwards, has just stopped carrying anything, before the session
+// logs why. The review shuts the proxy's gates for what was lost at once.
+func (e *Engine) serverChanged(server string) {
+	e.mu.Lock()
+	e.reviewServerLocked(server)
 	e.mu.Unlock()
 }
 

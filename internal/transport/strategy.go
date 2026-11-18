@@ -20,6 +20,9 @@ func New(c Config) Transport {
 	if c.Logf != nil {
 		s.Logf = c.Logf
 	}
+	if c.Notify != nil {
+		s.Notify = c.Notify
+	}
 	s.Foreground = c.Foreground
 	s.clock = c.Clock.withDefaults()
 	return s

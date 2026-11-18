@@ -1044,16 +1044,17 @@ func handlers(t *testing.T, route any) []string {
 	return out
 }
 
-// A Down site's route answers through a gate with no upstream and has no
-// reverse proxy, so it dials nothing; its error route still names its app.
+// A Down site's route answers through a gate that refuses everything and
+// has no reverse proxy, so it dials nothing; its error route still names its
+// app.
 func TestBuildConfigDownSiteHasNoUpstream(t *testing.T) {
-	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Down: true, Project: "a", Port: 80, Server: "mini"}})
+	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:8080", Down: true, Project: "a", Port: 80, Server: "mini"}})
 	route := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0)
 	if got := handlers(t, route); !slices.Equal(got, []string{tagModule, gateModule}) {
 		t.Fatalf("handlers %q, want the tag and a gate only", got)
 	}
-	if gate := dig(t, route, "handle", 1).(map[string]any); len(gate) != 1 {
-		t.Errorf("the gate of a down site has an upstream: %v", gate)
+	if gate := dig(t, route, "handle", 1).(map[string]any); gate["down"] != true {
+		t.Errorf("the gate of a down site lets requests through: %v", gate)
 	}
 	raw, _ := json.Marshal(route)
 	if strings.Contains(string(raw), "reverse_proxy") || strings.Contains(string(raw), "dial") {
@@ -1062,9 +1063,6 @@ func TestBuildConfigDownSiteHasNoUpstream(t *testing.T) {
 	down := dig(t, cfg, "apps", "http", "servers", "nearhost", "errors", "routes", 0, "handle", 0).(map[string]any)
 	if down["handler"] != downModule || down["project"] != "a" || down["port"] != float64(80) || down["server"] != "mini" {
 		t.Errorf("error route %v", down)
-	}
-	if _, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}}}, Options{StorageRoot: "/x"}); err == nil {
-		t.Error("a site that is not down needs an upstream")
 	}
 }
 

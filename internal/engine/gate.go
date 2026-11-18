@@ -18,17 +18,19 @@ import (
 //   - each request passes the site's gate (proxy.Gate), which the engine
 //     opens and shuts with proxy.SetForwardUp under mu, as soon as it
 //     learns of a change, with no config reload;
-//   - the site is published Down, with no upstream at all, while the
-//     forward is not up, and with its upstream again once it is.
+//   - the site is published Down, with no reverse proxy in its route,
+//     while the forward is not up, and with it again once it is.
 //
-// The gate is what keeps the port from being dialled once it is free:
-// a reload takes time, and requests that arrive meanwhile have the old
-// routes. The engine learns that a session dropped from the session's own
-// log line, which it writes as soon as it finds its ssh gone; the port is
-// free from the moment ssh exited, so a request that passes the gate in
-// between, a matter of the time it takes to reap the process, can still
-// reach it. A teardown, a reconnect asked for and a disconnect shut the
-// gates before they end anything, so they leave no such window.
+// The gate is what keeps the port from being dialled once it is free: a
+// reload takes time, and requests that arrive meanwhile have the old routes.
+// After an unexpected end of ssh, the engine learns of it from the
+// session's Notify, which the session calls as soon as the process is
+// reaped, before it reads why from ssh's stderr (a child of ssh, such as a
+// ProxyJump, may hold that pipe for a while). The port is free from the
+// moment ssh exited, so a request that passes the gate in between, the time
+// it takes to reap the process and take mu, can still reach it. A teardown,
+// a reconnect asked for and a disconnect shut the gates before they end
+// anything, so they leave no such window.
 
 // forwardAddr is the address the proxy dials the forward on local at.
 func forwardAddr(local int) string {

@@ -782,7 +782,7 @@ func (e *Engine) unlockRunDir() {
 }
 
 // Sites lists the sites published to the proxy, in config order. The site
-// of a forward that is not up is Down, with no upstream.
+// of a forward that is not up is Down: the proxy has no route to dial it.
 func (e *Engine) Sites() []proxy.Site {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -791,8 +791,8 @@ func (e *Engine) Sites() []proxy.Site {
 
 // sitesLocked lists the published sites, one per web route of each project,
 // leaving out those of skip. A remote project's site is Forwarded, so the
-// proxy's gate decides each request, and Down with no upstream while its
-// forward is not up (see webUpLocked).
+// proxy's gate decides each request, and Down, with no reverse proxy in its
+// route, while its forward is not up (see webUpLocked).
 func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 	var sites []proxy.Site
 	for _, name := range e.order {
@@ -823,9 +823,7 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 				Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
 				Forwarded: server != "", Project: run.name, Port: w.Port, Server: server,
 			}
-			if !up[i] {
-				site.Upstream, site.Down = "", true
-			}
+			site.Down = !up[i]
 			sites = append(sites, site)
 		}
 	}

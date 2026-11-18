@@ -14,6 +14,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -474,6 +475,7 @@ func (e *Engine) releasePort(port int) {
 // releasePortLocked is releasePort for a caller that holds e.mu.
 func (e *Engine) releasePortLocked(port int) {
 	delete(e.ports, port)
+	proxy.ForgetForward(forwardAddr(port))
 	if l, ok := e.relays[port]; ok {
 		_ = l.Close()
 		delete(e.relays, port)

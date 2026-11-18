@@ -87,6 +87,8 @@ type supervision struct {
 	Name string
 	host string
 	Logf func(format string, args ...any)
+	// Notify is Config.Notify; it is never nil.
+	Notify func()
 
 	pollInterval    time.Duration
 	connectTimeout  time.Duration
@@ -127,6 +129,7 @@ func (v *supervision) init(name, host string) {
 	v.Name = name
 	v.host = host
 	v.Logf = func(string, ...any) {}
+	v.Notify = func() {}
 	v.pollInterval = 200 * time.Millisecond
 	v.connectTimeout = 20 * time.Second
 	v.baseBackoff = time.Second
@@ -179,6 +182,24 @@ func (v *supervision) setStatus(st Status, errText string) {
 		v.Logf("%s: %s: %s", v.Name, st, errText)
 	} else {
 		v.Logf("%s: %s", v.Name, st)
+	}
+}
+
+// dropped notes, as soon as ssh has been reaped, that a connected transport
+// is connected no more: it is reconnecting, and nothing it carried is
+// applied. It tells Notify, so whoever routes traffic over the transport
+// stops at once rather than when the reason has been read from ssh's stderr
+// and logged by attemptFailed. A transport that was not connected is left
+// as it is.
+func (v *supervision) dropped() {
+	v.mu.Lock()
+	was := v.status == StatusConnected
+	if was {
+		v.status, v.lastErr = StatusReconnecting, "ssh exited"
+	}
+	v.mu.Unlock()
+	if was {
+		v.Notify()
 	}
 }
 

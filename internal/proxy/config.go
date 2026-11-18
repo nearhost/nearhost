@@ -43,11 +43,13 @@ type Site struct {
 	// *.local.example.io. There must be at least one.
 	Hosts []string
 	// Upstream is the address requests are sent to, host:port, e.g.
-	// 127.0.0.1:54321. It may be empty only while the site is Down.
+	// 127.0.0.1:54321. While the site is Down it only names the forward
+	// for the log, and nothing dials it.
 	Upstream string
 	// Down makes the site answer every request with 502 and dial nothing:
-	// its app's forward is not up. A browser asking for a page gets
-	// Nearhost's page saying the server is being reconnected to.
+	// its app's forward is not up. Its route has a gate and no reverse
+	// proxy. A browser asking for a page gets Nearhost's page saying the
+	// server is being reconnected to.
 	Down bool
 	// Forwarded marks an Upstream that is a forward to the app's server.
 	// The site then sends a request on only while SetForwardUp says the
@@ -152,8 +154,8 @@ func accessWriter() map[string]any {
 // siteRoute is the route serving one host of a site: it tags the request
 // with the site's alias, keeps the exchange when opts.Capture is on, and
 // proxies to the upstream, naming Nearhost in Via each way. A Forwarded
-// site's gate comes just before the proxy. A Down site has a gate with no
-// upstream and no proxy at all, so it answers 502 and dials nothing.
+// site's gate comes just before the proxy. A Down site has a gate that
+// refuses every request and no proxy at all, so it dials nothing.
 func siteRoute(s Site, host string, ranges []string, opts Options) map[string]any {
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
@@ -164,7 +166,7 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	if s.Down {
 		return map[string]any{
 			"match":    match,
-			"handle":   append(handle, map[string]any{"handler": gateModule}),
+			"handle":   append(handle, map[string]any{"handler": gateModule, "upstream": s.Upstream, "down": true}),
 			"terminal": true,
 		}
 	}
@@ -432,7 +434,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	rangesOf := map[string][]string{} // lower-cased host to the client ranges it is served to
 	siteOf := map[string]int{}        // lower-cased host to the index of its site: names match without case
 	for i, s := range sites {
-		if s.Alias == "" || s.Upstream == "" && !s.Down || len(s.Hosts) == 0 {
+		if s.Alias == "" || s.Upstream == "" || len(s.Hosts) == 0 {
 			return nil, fmt.Errorf("proxy: site needs alias, hosts and upstream, got %+v", s)
 		}
 		ranges, err := siteRanges(s)

@@ -57,6 +57,12 @@ type Config struct {
 	Env []string
 	// Logf receives the transport's log lines; nil logs nothing.
 	Logf func(format string, args ...any)
+	// Notify is told that the connection, or one of its forwards, has
+	// stopped carrying anything, as soon as its ssh has been reaped and
+	// before the line that says why has been read (see stderrDrainWait).
+	// That line is logged after. It is called with no transport lock held.
+	// nil tells nothing.
+	Notify func()
 	// Foreground is as Session.Foreground.
 	Foreground bool
 	// Clock is the clock and timers of the wait after logins were refused;

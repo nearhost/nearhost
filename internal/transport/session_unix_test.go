@@ -825,3 +825,45 @@ func TestMasterLeavesForkAfterAuthenticationAlone(t *testing.T) {
 		}
 	}
 }
+
+// A master whose ProxyCommand child holds its stderr is noticed gone as
+// soon as it is reaped, not once the child lets go, and its forwards stop
+// counting as applied then.
+func TestSessionDropIsNoticedWhileAChildHoldsStderr(t *testing.T) {
+	s, _ := newFakeSession(t, stderrHolder(t))
+	notified, notify := counter()
+	s.Notify = notify
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	if err := s.AddForward(t.Context(), freePort(t), 80); err != nil {
+		t.Fatal(err)
+	}
+	n0 := notified.Load()
+	start := time.Now()
+	if err := os.Remove(s.SocketPath()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, noticeBound, func() bool {
+		st, states := s.ForwardStates()
+		return st != StatusConnected && len(states) == 1 && !states[0].Applied
+	}, "the drop to be noticed")
+	if notified.Load() == n0 {
+		t.Error("Notify was not told of the drop")
+	}
+	t.Logf("noticed after %s", time.Since(start).Round(time.Millisecond))
+	s.Stop()
+	waitNoStderrReaders(t)
+}
+
+// A refused login is told from the line ssh writes as it exits, which is
+// still read while a child holds the pipe.
+func TestSessionRefusedLoginIsClassifiedWhileAChildHoldsStderr(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", stderrHolder(t))
+	s.Start()
+	waitFor(t, 10*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "the refused logins to count")
+	if !strings.Contains(s.LastError(), "Permission denied") {
+		t.Errorf("LastError = %q", s.LastError())
+	}
+	s.Stop()
+	waitNoStderrReaders(t)
+}

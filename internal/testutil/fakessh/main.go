@@ -92,6 +92,15 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "ssh: connect to host %s port 22: Connection refused\n", last)
 		return 255
 	}
+	// A master or a plain process also starts the $FAKE_SSH_STDERR_HOLDER
+	// child, as one that ran a ProxyCommand would have, before it says
+	// anything: the child holds its stderr however it ends.
+	if hold := os.Getenv("FAKE_SSH_STDERR_HOLDER"); hold != "" && (master || plain) {
+		if err := startStderrHolder(hold); err != nil {
+			fmt.Fprintf(os.Stderr, "fake ssh: stderr holder: %v\n", err)
+			return 255
+		}
+	}
 	// A master for $FAKE_SSH_AUTH_FAIL_HOST waits while the file named by
 	// $FAKE_SSH_AUTH_HOLD exists. Then that host, and every host while the
 	// file named by $FAKE_SSH_AUTH_FAIL_FILE exists, fails authentication.
@@ -261,15 +270,6 @@ func run(args []string) int {
 		}
 		fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
 		return 255
-	}
-
-	// A master also starts the $FAKE_SSH_STDERR_HOLDER child, as one that
-	// ran a ProxyCommand would have.
-	if hold := os.Getenv("FAKE_SSH_STDERR_HOLDER"); hold != "" && master {
-		if err := startStderrHolder(hold); err != nil {
-			fmt.Fprintf(os.Stderr, "fake ssh: stderr holder: %v\n", err)
-			return 255
-		}
 	}
 
 	// Master mode: create the socket and stay up until it is removed. TERM

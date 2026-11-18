@@ -320,7 +320,7 @@ func TestGateEndToEnd(t *testing.T) {
 	t.Cleanup(func() { SetForwardUp(up, false) })
 	h := startProxyWith(t, []Site{
 		{Alias: "gated.test", Hosts: []string{"gated.test"}, Upstream: up, Forwarded: true, Project: "gated", Port: 80, Server: "mini"},
-		{Alias: "down.test", Hosts: []string{"down.test"}, Down: true, Project: "down", Port: 80, Server: "mini"},
+		{Alias: "down.test", Hosts: []string{"down.test"}, Upstream: up, Down: true, Project: "down", Port: 80, Server: "mini"},
 	}, false)
 	h.waitCerts(t, "gated.test", "down.test")
 
@@ -350,6 +350,11 @@ func TestGateEndToEnd(t *testing.T) {
 	if n := dialled.Load(); n != 0 {
 		t.Fatalf("the app got %d connections while its forward was down", n)
 	}
+	// Four refused requests on two sites of one forward: one log line.
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", "the forward to the app's server is down") }, "the down period's log line")
+	if n := h.rec.countFor("", "the forward to the app's server is down"); n != 1 {
+		t.Errorf("the down period was logged %d times, want once", n)
+	}
 
 	if !SetForwardUp(up, true) || SetForwardUp(up, true) {
 		t.Error("SetForwardUp did not report the change once")
@@ -365,4 +370,19 @@ func TestGateEndToEnd(t *testing.T) {
 	if n := dialled.Load(); n != before {
 		t.Errorf("the app got %d new connections once its forward was down again", n-before)
 	}
+	// A new down period has its own line.
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.countFor("", "the forward to the app's server is down") == 2 }, "the second down period's log line")
+}
+
+// countFor counts the lines filed under alias that contain sub.
+func (r *recorder) countFor(alias, sub string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, l := range r.lines {
+		if strings.HasPrefix(l, alias+" ") && strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
 }

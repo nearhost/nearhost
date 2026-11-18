@@ -103,8 +103,8 @@ func (d *Down) Provision(ctx caddy.Context) error {
 	return err
 }
 
-// ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error at
-// the level Caddy uses for a server with no error routes, since Caddy logs
+// ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error, but
+// a gate's, at the level Caddy uses for a server with no error routes, since Caddy logs
 // an error that an error route handled only at debug level. Then it serves the page
 // for a 502, 503 or 504 to a GET or HEAD that accepts HTML and asks for no
 // upgrade, the reconnecting one when a gate failed the request, and passes
@@ -123,7 +123,10 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 			msg = herr.Err.Error()
 		}
 	}
-	if d.logger != nil {
+	// A gate logs the first request of a forward's down period itself, and
+	// no more of them.
+	forwardDown := errors.Is(err, errForwardDown)
+	if d.logger != nil && !forwardDown {
 		level := zapcore.DebugLevel
 		if status >= 500 {
 			level = zapcore.ErrorLevel
@@ -136,7 +139,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 		return next.ServeHTTP(w, r)
 	}
 	page := d.page
-	if errors.Is(err, errForwardDown) {
+	if forwardDown {
 		page = d.reconnecting
 	}
 	hdr := w.Header()

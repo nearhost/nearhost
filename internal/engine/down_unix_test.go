@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -17,14 +18,15 @@ import (
 // Unix only: the ControlMaster fake leaves a forward's local port free, so
 // the test can listen there, first as the app the forward reaches and then
 // as another program that took the port while the server reconnects. Every
-// OS: TestSiteOfADegradedProjectHasNoUpstream checks the site the proxy is
-// given.
+// OS: TestSiteOfADegradedProjectIsDown checks the site the proxy is given,
+// and TestPerProcessSiteDialsNothingWhileItsForwardIsDown the dialling.
 func TestSiteDialsNothingWhileItsServerReconnects(t *testing.T) {
 	if perProcessTransport() {
 		t.Skip("the per-process fake holds the forward's port itself")
 	}
 	ssh, flag := downWrapper(t)
 	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) { o.SSHPath = ssh })
+	applied := recordApplied(h)
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,10 @@ func TestSiteDialsNothingWhileItsServerReconnects(t *testing.T) {
 	}
 	h.dropMaster(t, "mini")
 	waitState(t, h, "myapp", StateDegraded)
+	// A reload drops the connections that arrive while it swaps the routes,
+	// so the requests wait for the one that takes the site down. The gate
+	// shut before it, at the drop.
+	testutil.WaitUntil(t, 10*time.Second, func() bool { down, _ := applied.lastOf("myapp", 80); return down }, "the proxy to get the site down")
 	c0, r0 := conns.Load(), requests.Load()
 	for range 3 {
 		if code, body := h.get(t, "myapp.test", "/secret?token=1"); code != 502 || body != "" {
