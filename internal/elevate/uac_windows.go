@@ -20,6 +20,11 @@ import (
 // runAs starts a program as administrator; tests replace it.
 var runAs = winsys.RunAs
 
+// promptTurn lets one UAC prompt be on screen at a time. ShellExecuteEx
+// cannot be cancelled, so its holder gives the turn back only when runAs
+// returns, which is when the prompt closes, not when its caller gives up.
+var promptTurn = newTurn()
+
 // started is what runAs gave back.
 type started struct {
 	h   windows.Handle
@@ -61,10 +66,23 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 // files, without killing the child: one that has not read its input yet
 // then fails, so an approval given after a stop changes nothing. c.Prompt
 // and c.Interactive are ignored, as the prompt is Windows' own.
+//
+// Only one prompt shows at a time: Run first waits for promptTurn, and gives
+// up with ctx's error if ctx ends while it waits, without launching. The
+// turn stays held after Run gives up on a prompt, until the prompt closes,
+// so a second Run cannot stack a prompt on the abandoned one. A user who
+// still clicks Yes on the abandoned prompt starts a helper whose folder is
+// gone, which it refuses and exits, so the late approval changes nothing.
 func (uac) Run(ctx context.Context, c Command) error {
-	if err := ctx.Err(); err != nil {
+	if err := promptTurn.acquire(ctx); err != nil {
 		return err
 	}
+	launched := false
+	defer func() {
+		if !launched { // no goroutine took the turn
+			promptTurn.release()
+		}
+	}()
 	dir, err := HelperDir()
 	if err != nil {
 		return err
@@ -77,11 +95,16 @@ func (uac) Run(ctx context.Context, c Command) error {
 	report := filepath.Join(dir, "report")
 	args := append(slices.Clip(c.Args), "--input", input, "--report", report)
 	// RunAs does not return while the prompt is up, so it runs on its own
-	// goroutine and Run can stop waiting for it. When Run has given up, the
-	// goroutine closes the handle of a child that was approved late.
+	// goroutine and Run can stop waiting for it. The goroutine gives the
+	// turn back as soon as runAs returns, which is when the prompt closes.
+	// When Run has given up, it also closes the handle of a child that was
+	// approved late, without waiting for that child, and reports nothing.
+	// The folder is Run's alone, removed once when Run returns.
 	result, abandoned := make(chan started), make(chan struct{})
+	launched = true
 	go func() {
 		h, err := runAs(c.Path, args)
+		promptTurn.release()
 		select {
 		case result <- started{h, err}:
 		case <-abandoned:
