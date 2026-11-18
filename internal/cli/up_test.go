@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 func TestUpServesEnabledProjectsUntilInterrupted(t *testing.T) {
@@ -305,9 +306,11 @@ func wantStoppedForNothing(t *testing.T, out string, err error) {
 	}
 }
 
-// When every project fails, up says so and stops, once every first start has
-// returned: a project still connecting holds it until its start ends.
-func TestUpStopsWhenNothingCanBeServed(t *testing.T) {
+// A project still connecting holds up until its start ends; and a start
+// that met a refused login waits on for the session's own next attempt, so
+// up keeps going then too. (Up stops when nothing can be served: see
+// TestUpWithoutATerminalForSudoSaysSoOnce.)
+func TestUpKeepsGoingWhileRefusedServersRetry(t *testing.T) {
 	hold := filepath.Join(t.TempDir(), "hold")
 	failAll := filepath.Join(t.TempDir(), "fail")
 	for _, f := range []string{hold, failAll} {
@@ -343,12 +346,22 @@ func TestUpStopsWhenNothingCanBeServed(t *testing.T) {
 	if err := os.Remove(hold); err != nil {
 		t.Fatal(err)
 	}
-	err := u.exited() // also checks that no ssh process, listener or goroutine is left
+	// Both servers now refuse the login, and each session tries it again
+	// by itself later, so each project's start waits on: up keeps going,
+	// and the shutdown runs once, at the interrupt.
+	u.waitFor("Press Ctrl-C to stop.\n")
+	time.Sleep(300 * time.Millisecond)
+	u.stillRunning()
 	out := u.out.String()
-	wantStoppedForNothing(t, out, err)
+	if strings.Contains(out, nothingServedLine) {
+		t.Errorf("up stopped while refused servers would try again:\n%s", out)
+	}
 	summary := strings.Index(out, "\napi: error: ")
-	if summary < 0 || !strings.Contains(out, "\nweb: error: ") || strings.Index(out, nothingServedLine) < summary {
-		t.Errorf("the summary is missing, or came after the stopping line:\n%s", out)
+	if summary < 0 || !strings.Contains(out, "\nweb: error: ") {
+		t.Errorf("the summary is missing:\n%s", out)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
 	if shutdowns != 1 {
 		t.Errorf("the shutdown ran %d times, want once", shutdowns)
@@ -422,6 +435,7 @@ func TestUpWithoutATerminalForSudoSaysSoOnce(t *testing.T) {
 }
 
 func TestWaitingStates(t *testing.T) {
+	retrying := engine.ServerHealth{Health: transport.Health{Status: transport.StatusReconnecting, NextAttempt: time.Now().Add(time.Second)}}
 	for st, want := range map[engine.State]bool{
 		engine.StateStarting: true,
 		engine.StateDegraded: true,
@@ -429,8 +443,29 @@ func TestWaitingStates(t *testing.T) {
 		engine.StateError:    false,
 		engine.StateStopped:  false,
 	} {
-		if got := waiting(st); got != want {
+		if got := waiting(engine.ProjectStatus{State: st}, retrying); got != want {
 			t.Errorf("waiting(%s) = %v, want %v", st, got, want)
+		}
+	}
+	// A start that waits for its server shows the error of a refused login:
+	// it waits on while the session will try again, and not once the
+	// session gave up for good or the server is held.
+	refused := engine.ProjectStatus{State: engine.StateError, Waiting: "mini"}
+	slow := engine.ServerHealth{Health: transport.Health{Status: transport.StatusAuthFailed, NextAttempt: time.Now().Add(15 * time.Minute), Refused: true}}
+	gaveUp := engine.ServerHealth{Health: transport.Health{Status: transport.StatusAuthFailed}}
+	held := engine.ServerHealth{Health: transport.Health{Status: transport.StatusDisconnected}, Held: true}
+	for _, tc := range []struct {
+		name   string
+		health engine.ServerHealth
+		want   bool
+	}{
+		{"slow retry", slow, true},
+		{"reconnecting", retrying, true},
+		{"gave up for good", gaveUp, false},
+		{"held", held, false},
+	} {
+		if got := waiting(refused, tc.health); got != tc.want {
+			t.Errorf("a waiting start whose server is %s: waiting = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -121,25 +121,33 @@ func (p *upPrinter) nothingToServe(names []string) bool {
 		return false
 	}
 	for _, name := range names {
-		if st := p.eng.Status(name).State; st == engine.StateRunning || waiting(st) {
+		st := p.eng.Status(name)
+		if st.State == engine.StateRunning || waiting(st, p.eng.ServerHealth(st.Waiting)) {
 			return false
 		}
 	}
 	return true
 }
 
-// waiting reports whether a project in state st will change by itself:
+// waiting reports whether a project with status st will change by itself:
 // Nearhost is still starting it, or retrying for it. Starting is a start
-// in flight; degraded is a project whose server's session, or one of its
-// forwards, is reconnecting. Any state that means "Nearhost will retry by
-// itself" must be added here, so that up never stops while one may still
-// come to serve.
-func waiting(st engine.State) bool {
-	switch st {
+// in flight, or one that waits for its server's session to connect;
+// degraded is a project whose server's session, or one of its forwards, is
+// reconnecting. A start that waits for its server (st.Waiting) also shows
+// the error of a server that refused the login, and the session tries that
+// login again by itself unless it gave up for good, which health, the
+// waited-for server's, tells by a zero NextAttempt. Any state that means
+// "Nearhost will retry by itself" must be added here, so that up never
+// stops while one may still come to serve.
+func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
+	switch st.State {
 	case engine.StateStarting, engine.StateDegraded:
 		return true
 	}
-	return false
+	if st.Waiting == "" || health.Held {
+		return false
+	}
+	return health.Status != transport.StatusAuthFailed || !health.NextAttempt.IsZero()
 }
 
 // fix prints what to do about a project in the given state, if anything.
