@@ -149,7 +149,7 @@ func TestParseCleansLabels(t *testing.T) {
 // approved by an earlier version, with such labels, keeps its hash and is not
 // asked about again.
 func TestParseKeepsTheHashOfCleanLabels(t *testing.T) {
-	labels := []string{"web", "Café 日本語", "管理　画面", "team 👨‍👩‍👧", "  padded  "}
+	labels := []string{"web", "Café 日本語", "管理\u3000画面", "team 👨\u200d👩\u200d👧", "  padded  "}
 	for _, label := range labels {
 		quoted, _ := json.Marshal(label) // a JSON string is a YAML double-quoted one
 		f, err := Parse([]byte("version: 1\nroutes:\n  - port: 80\n    label: "+string(quoted)+"\n"), nil)

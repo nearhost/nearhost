@@ -14,8 +14,8 @@ import (
 // Joiners that emoji sequences and some scripts (Persian, the Indic ones)
 // need. They are format characters, which are otherwise dropped.
 const (
-	zwnj = '‌'
-	zwj  = '‍'
+	zwnj = '\u200c'
+	zwj  = '\u200d'
 )
 
 // keep reports whether r prints as itself: a letter, mark, number,

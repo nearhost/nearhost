@@ -3,13 +3,17 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 )
 
@@ -47,12 +51,12 @@ func TestUpPrintsEventsWithoutControlCharacters(t *testing.T) {
 	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
 	p.event(engine.Event{Time: at, Project: "api", Message: "ssh: " + osc52 + "\n09:30:00 [api] forged"})
 	p.event(engine.Event{Time: at, Project: "api", Server: "mini", State: engine.StateError, Message: "state: error: " + osc52})
-	p.event(engine.Event{Time: at, Server: "mini", Message: "mini: Welcome \x1b]0;pwned\a日本語 ❤️"})
+	p.event(engine.Event{Time: at, Server: "mini", Message: "mini: Welcome \x1b]0;pwned\a日本語 ❤\ufe0f"})
 	noControl(t, out.String())
 	if n := strings.Count(out.String(), "\n09:30:00 "); n != 2 {
 		t.Errorf("a message's newline started a line of its own:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "日本語 ❤️") {
+	if !strings.Contains(out.String(), "日本語 ❤\ufe0f") {
 		t.Errorf("text in other scripts was lost: %q", out.String())
 	}
 }
@@ -85,5 +89,47 @@ func TestAddTablesPrintWithoutControlCharacters(t *testing.T) {
 	noControl(t, out.String())
 	if strings.Contains(out.String(), "\n  9999") {
 		t.Errorf("a label forged a row:\n%s", out.String())
+	}
+}
+
+// A project named after a directory on a server takes the directory's name
+// without its control characters, since the name is printed and saved.
+func TestNewProjectCleansANameFromTheDirectory(t *testing.T) {
+	cfg := &config.Config{Servers: mini}
+	p, err := newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/app" + osc52})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "app]52;c;AAAA" {
+		t.Errorf("Name = %q, want no ESC or BEL", p.Name)
+	}
+}
+
+// encoding/json leaves DEL, the C1 controls and bidi overrides as they are,
+// so doctor --json gets the same cleaned text as the plain report.
+func TestDoctorJSONWithoutControlCharacters(t *testing.T) {
+	const hostile = "a\x7fb\u009b31mc\u009d0;x\u009cd‮e"
+	checks := []check{{name: "server mini" + hostile, level: levelFail, detail: "ssh said\n" + hostile, fix: "run " + hostile}}
+	projects := []projectReport{{name: "api", findings: []doctor.Finding{{
+		ID: "x", Project: "api" + hostile, Message: hostile, File: hostile,
+		Fix: doctor.Fix{Text: hostile, Snippet: hostile},
+	}}}}
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	_ = reportJSON(cmd, checks, projects)
+	var got struct {
+		Checks   []map[string]string `json:"checks"`
+		Findings []doctor.Finding    `json:"findings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	decoded := fmt.Sprint(got)
+	if strings.ContainsAny(decoded, "\x7f\u009b\u009d\u009c‮") {
+		t.Errorf("decoded JSON carries control characters: %q", decoded)
+	}
+	if !strings.Contains(got.Checks[0]["detail"], "ssh said\n") {
+		t.Errorf("the detail lost its lines: %q", got.Checks[0]["detail"])
 	}
 }

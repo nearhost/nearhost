@@ -771,6 +771,8 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 	if len(args) == 1 {
 		projectPath = args[0]
 	}
+	// A name taken from the directory can hold escape sequences, and the
+	// project's name is printed and saved, so it is made printable.
 	name := flags.name
 	if srv.Name == config.LocalServer {
 		if projectPath == "" {
@@ -782,7 +784,7 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		}
 		projectPath = abs
 		if name == "" {
-			name = filepath.Base(projectPath)
+			name = printable(filepath.Base(projectPath))
 		}
 	} else {
 		if !path.IsAbs(projectPath) && projectPath != "~" && !strings.HasPrefix(projectPath, "~/") {
@@ -790,7 +792,7 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		}
 		projectPath = path.Clean(projectPath)
 		if name == "" {
-			name = path.Base(projectPath)
+			name = printable(path.Base(projectPath))
 		}
 	}
 	var taken *nameTakenError
