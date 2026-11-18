@@ -1836,8 +1836,8 @@ func TestLocalProjectWithSeveralWebRoutesPublishesEach(t *testing.T) {
 	h := newHarness(t, cfg)
 	mustStart(t, h, "dd")
 	want := []proxy.Site{
-		{Alias: "dd.test", Hosts: []string{"dd.test", "app.local.dd.io", "*.status.local.dd.io"}, Upstream: "localhost:8220"},
-		{Alias: "dd.test", Hosts: []string{"ws.local.dd.io"}, Upstream: "localhost:8230"},
+		{Alias: "dd.test", Hosts: []string{"dd.test", "app.local.dd.io", "*.status.local.dd.io"}, Upstream: "localhost:8220", Project: "dd", Port: 8220},
+		{Alias: "dd.test", Hosts: []string{"ws.local.dd.io"}, Upstream: "localhost:8230", Project: "dd", Port: 8230},
 	}
 	if got := h.eng.Sites(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Sites() = %+v, want %+v", got, want)
@@ -1887,8 +1887,8 @@ func TestRemoteProjectForwardsEveryWebRoute(t *testing.T) {
 		}
 	}
 	want := []proxy.Site{
-		{Alias: "myapp.test", Hosts: []string{"myapp.test"}, Upstream: "127.0.0.1:" + strconv.Itoa(l80)},
-		{Alias: "myapp.test", Hosts: []string{"ws.local.example.io"}, Upstream: "127.0.0.1:" + strconv.Itoa(l81)},
+		{Alias: "myapp.test", Hosts: []string{"myapp.test"}, Upstream: "127.0.0.1:" + strconv.Itoa(l80), Project: "myapp", Port: 80, Server: "mini"},
+		{Alias: "myapp.test", Hosts: []string{"ws.local.example.io"}, Upstream: "127.0.0.1:" + strconv.Itoa(l81), Project: "myapp", Port: 81, Server: "mini"},
 	}
 	if got := h.eng.Sites(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Sites() = %+v, want %+v", got, want)

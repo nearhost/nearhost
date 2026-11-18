@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/hostname"
@@ -44,6 +46,13 @@ type Site struct {
 	// site's hosts are served to besides loopback, such as the networks
 	// of local Docker containers. nil means loopback only.
 	Clients []string
+	// Project, Port and Server name the app behind the site on the page a
+	// browser gets while the app does not answer: the project's name, the
+	// port the app listens on and the server it runs on, empty for this
+	// machine. An empty Project means Alias, and Port 0 Upstream's port.
+	Project string
+	Port    int
+	Server  string
 }
 
 // clientRanges are the ranges for a site's extra clients: each as written
@@ -170,6 +179,34 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 			"remote_ip": map[string]any{"ranges": ranges},
 		}},
 		"handle":   handle,
+		"terminal": true,
+	}
+}
+
+// downRoute is the error route for one host of a site: matched as its
+// site route is, it serves Nearhost's page to a browser while the site's
+// app does not answer (see Down). Errors are the server's, not a route's,
+// so each host has its own, naming its site's app.
+func downRoute(s Site, host string, ranges []string) map[string]any {
+	project, port := s.Project, s.Port
+	if project == "" {
+		project = s.Alias
+	}
+	if port == 0 {
+		if _, p, err := net.SplitHostPort(s.Upstream); err == nil {
+			port, _ = strconv.Atoi(p)
+		}
+	}
+	handler := map[string]any{"handler": downModule, "project": project, "port": port}
+	if s.Server != "" {
+		handler["server"] = s.Server
+	}
+	return map[string]any{
+		"match": []any{map[string]any{
+			"host":      []string{host},
+			"remote_ip": map[string]any{"ranges": ranges},
+		}},
+		"handle":   []any{handler},
 		"terminal": true,
 	}
 }
@@ -345,7 +382,9 @@ func listenerWrappers(server map[string]any) map[string]any {
 // specific ones. While any site has extra clients, a host not served to all
 // of them is followed by a drop for that host alone (see hostDrop). While the config listens and no site
 // serves localhost, localhost is one more exact host, served Nearhost's own
-// page.
+// page. The https server's error routes, one per site host in the same
+// order, give a browser Nearhost's page while that site's app does not
+// answer (see Down).
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -415,6 +454,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	union := unionRanges(sites)
 	anyClients := len(union) > len(loopbackRanges)
 	routes := make([]any, 0, 2*len(all)+1)
+	var downRoutes []any // the error routes, one per site host, in the order of routes
 	subjects := make([]string, 0, len(all))
 	var patterns []string
 	hosts := make([]hostRanges, 0, len(all))
@@ -425,6 +465,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		} else {
 			ranges = rangesOf[strings.ToLower(sv.host)]
 			routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts))
+			downRoutes = append(downRoutes, downRoute(sv.site, sv.host, ranges))
 		}
 		drop := anyClients && !coversAll(ranges, union)
 		if drop {
@@ -553,6 +594,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// Requests are logged under one name; the tag handler on each route
 		// says which project the line is for.
 		"logs": map[string]any{"default_logger_name": accessLogger},
+	}
+	if len(downRoutes) > 0 {
+		// A site's app that does not answer fails its route, and Caddy
+		// runs these: the route for the host that failed. A host with none
+		// gets Caddy's bare status.
+		server["errors"] = map[string]any{"routes": downRoutes}
 	}
 	servers := map[string]any{"nearhost": listenerWrappers(server)}
 	if len(patterns) > 0 {
