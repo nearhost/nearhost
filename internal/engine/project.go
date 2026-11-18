@@ -204,13 +204,22 @@ func (e *Engine) startProject(ctx context.Context, name string, resume bool) err
 	e.mu.Unlock()
 
 	st, err := e.bringUp(ctx, cfg, p, run)
-	msg := ""
-	if err != nil {
-		msg = err.Error()
+	if st == StateStarting && e.beforeWaiting != nil {
+		e.beforeWaiting(ctx, name)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	run.cancel = nil
+	if st == StateStarting && ctx.Err() != nil {
+		// Stopped, or shut down, since the wait ran out: the stop cancelled
+		// ctx under mu before this, and found nothing waiting to drop, so
+		// nothing may wait now. The stop records the state it leads to.
+		st, err = StateError, ctx.Err()
+	}
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
 	if st == StateStarting {
 		// The server did not connect in time: the start waits on for it.
 		// The review announces what that shows, and hands the start over
@@ -245,9 +254,9 @@ func errChanged(name string) error {
 // server (run.waiting) is not busy: starting it again starts it afresh, and
 // retries a connection that gave up, as for a project in error. A running
 // project that shows an error because a forward is gone is not busy; starting
-// it replaces its
-// forwards. Nor is one that is being stopped, although it still shows its
-// last state: the start waits for the stop (on op) and runs after it.
+// it replaces its forwards. Nor is one that is being stopped, although it
+// still shows its last state: the start waits for the stop (on op) and runs
+// after it.
 func (e *Engine) busyLocked(run *projectRun) bool {
 	switch run.state {
 	case StateStarting:

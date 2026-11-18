@@ -117,6 +117,9 @@ func (e *Engine) StopProject(ctx context.Context, name string) error {
 	err := e.tearDown(ctx, run)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// A stopped project waits for nothing, whatever a start recorded while
+	// this stop waited for op.
+	run.waiting, run.resuming = false, false
 	if err != nil {
 		err = fmt.Errorf("stop %s: %w", name, err)
 		e.setStateLocked(run, StateError, err.Error())
