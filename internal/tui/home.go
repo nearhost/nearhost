@@ -22,7 +22,7 @@ import (
 // home is the Home panel.
 func (m *Model) home(width int) []string {
 	ca := m.caText()
-	hostsDot, hostsText := styleBeacon.Render("●"), clean(m.hostsState)
+	hostsDot, hostsText := styleRunning.Render("●"), clean(m.hostsState)
 	if _, ok := hostsWord(m.hostsState); !ok {
 		hostsDot = styleAmber.Render("●")
 	}
@@ -58,7 +58,7 @@ func (m *Model) proxyLines(width int) []string {
 	case !m.started:
 		return field("proxy", styleAmber.Render("◐ starting"), width)
 	}
-	return field("proxy", styleBeacon.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
+	return field("proxy", styleRunning.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }
 
 // pageURL is the address of Nearhost's page as the home panel shows it, or
@@ -239,7 +239,7 @@ const caWarnAhead = 30 * 24 * time.Hour
 
 // caText says whether the local CA is trusted and when it expires.
 func (m *Model) caText() string {
-	ca := styleBeacon.Render("●") + " trusted"
+	ca := styleRunning.Render("●") + " trusted"
 	if !m.caTrusted {
 		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
 	}

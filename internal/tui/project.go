@@ -174,7 +174,7 @@ func routeDot(r config.Route, st engine.ProjectStatus) seg {
 	case r.Role == config.RoleIgnore:
 		return seg{styleDim, "–"}
 	case st.State == engine.StateRunning:
-		return seg{styleBeacon, "●"}
+		return seg{styleRunning, "●"}
 	case st.State == engine.StateStarting, st.State == engine.StateDegraded:
 		return seg{styleAmber, "◐"}
 	}

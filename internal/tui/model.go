@@ -121,6 +121,11 @@ type Model struct {
 	// a change was saved after it had read the file.
 	reloadAfter bool
 
+	// paletteSettled is set once the terminal has said what its background
+	// is, or backgroundWait has gone by without an answer: the palette does
+	// not change after that.
+	paletteSettled bool
+
 	// guard is the request box nextAsked opened last, which ignores keys
 	// for askGuard after it opens.
 	guard askGuarded
@@ -182,11 +187,52 @@ type (
 	}
 )
 
-// Init starts the engine, listens for its events and starts the clock.
+// Init starts the engine, listens for its events and starts the clock. It
+// asks the terminal for its background colour, to pick the palette.
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(func() tea.Msg {
 		return startedMsg{m.b.Start(context.Background())}
-	}, m.listen(), tick())
+	}, m.listen(), tick(), tea.RequestBackgroundColor, backgroundTimer())
+}
+
+// backgroundWait is how long the interface waits for the terminal to say
+// what its background colour is. A terminal that has not answered by then
+// keeps the dark palette, and an answer that comes later is ignored, so the
+// colours never change once the user has started reading.
+const backgroundWait = 2 * time.Second
+
+// backgroundWaitedMsg is backgroundWait gone by.
+type backgroundWaitedMsg struct{}
+
+// backgroundTimer ends the wait for the terminal's background colour.
+func backgroundTimer() tea.Cmd {
+	return tea.Tick(backgroundWait, func(time.Time) tea.Msg { return backgroundWaitedMsg{} })
+}
+
+// gotBackground picks the palette for the terminal's background colour,
+// when it is the first answer within backgroundWait.
+func (m *Model) gotBackground(msg tea.BackgroundColorMsg) {
+	if m.paletteSettled {
+		return
+	}
+	m.paletteSettled = true
+	if !msg.IsDark() {
+		m.usePalette(lightPalette)
+	}
+}
+
+// usePalette sets the palette, and gives it to the parts of the model that
+// keep a copy of their styles: the footer's help and the text inputs.
+func (m *Model) usePalette(p palette) {
+	usePalette(p)
+	brandHelp(&m.help)
+	brandInput(&m.filter)
+	if m.logView != nil {
+		brandInput(&m.logView.search)
+	}
+	if m.password != nil {
+		brandInput(&m.password.input)
+	}
 }
 
 // requestCellSize asks the terminal how big a cell is in pixels, on the first
@@ -224,6 +270,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.gotBackground(msg)
+	case backgroundWaitedMsg:
+		m.paletteSettled = true
 	case spinner.TickMsg:
 		return m, m.turn(msg)
 	case adviceWaitMsg:
