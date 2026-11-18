@@ -488,6 +488,11 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	if err := e.lockRunDir(); err != nil {
 		return err
 	}
+	// Fix the ssh this run uses now, before anything starts one. One that
+	// is not found is reported when an ssh first runs, as it always was.
+	if e.opts.SSHPath == "" {
+		transport.FindSSH()
+	}
 	// From here the run directory, and any master socket left in it, is
 	// this engine's alone. A master left by a run that was killed still
 	// holds its forwards, and nothing else ends one for a server since

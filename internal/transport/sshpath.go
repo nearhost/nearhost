@@ -2,6 +2,8 @@ package transport
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,22 +13,32 @@ import (
 // foundSSH is the ssh found on PATH, kept once found so that every later
 // command runs the same binary, whatever PATH or the directories on it become
 // while Nearhost runs. Only a success is kept: a failed lookup is tried again
-// at the next command, so an ssh installed while Nearhost runs is found.
+// at the next command, so an ssh installed while Nearhost runs is found. A
+// kept ssh that no longer exists, as after it is uninstalled, is dropped and
+// looked up again.
 var foundSSH struct {
 	mu   sync.Mutex
 	path string
 }
 
-// findSSH returns the absolute path of the ssh on PATH, looking it up on the
-// first call that succeeds. Its error is exec.LookPath's, so it reads as the
+// FindSSH returns the absolute path of the ssh on PATH, looking it up until a
+// call succeeds and keeping that path while it exists. Its error is exec.LookPath's, so it reads as the
 // error of running "ssh" by name: not found, or found through a relative PATH
 // entry (exec.ErrDot), which is refused. A symlink is kept as found, not
 // followed to its target.
-func findSSH() (string, error) {
+//
+// Commands built by SSHCommand call it at their start; a caller may call it
+// earlier to fix the ssh then.
+func FindSSH() (string, error) {
 	foundSSH.mu.Lock()
 	defer foundSSH.mu.Unlock()
 	if foundSSH.path != "" {
-		return foundSSH.path, nil
+		// Any other error, such as a permission one, keeps the path: only
+		// an ssh that is gone is looked up again.
+		if _, err := os.Stat(foundSSH.path); !errors.Is(err, fs.ErrNotExist) {
+			return foundSSH.path, nil
+		}
+		foundSSH.path = ""
 	}
 	path, err := exec.LookPath("ssh")
 	if err != nil {
@@ -47,10 +59,11 @@ func findSSH() (string, error) {
 func SSHCommand(ctx context.Context, sshPath string, env []string, args ...string) *exec.Cmd {
 	var err error
 	if sshPath == "" {
-		sshPath, err = findSSH()
+		sshPath, err = FindSSH()
 	}
 	if err != nil {
-		// Name the command as before; Err keeps it from looking again.
+		// Named "ssh", the command fails with the error text running ssh
+		// by name has always given.
 		sshPath = "ssh"
 	}
 	cmd := exec.CommandContext(ctx, sshPath, args...)

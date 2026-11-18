@@ -167,3 +167,26 @@ func TestSSHIsFoundOnceAcrossGoroutines(t *testing.T) {
 		}
 	}
 }
+
+// TestSSHThatIsGoneIsLookedUpAgain checks that a kept ssh that has been
+// removed is dropped, and the next command runs the ssh now on PATH.
+func TestSSHThatIsGoneIsLookedUpAgain(t *testing.T) {
+	resetSSHPath(t)
+	first := fakeSSHIn(t, t.TempDir(), "first")
+	second := fakeSSHIn(t, t.TempDir(), "second")
+	t.Setenv("PATH", filepath.Dir(first)+string(os.PathListSeparator)+filepath.Dir(second))
+	if got, err := FindSSH(); got != first || err != nil {
+		t.Fatalf("FindSSH() = %q, %v; want %q", got, err, first)
+	}
+	if err := os.Remove(first); err != nil {
+		t.Fatal(err)
+	}
+	cmd := SSHCommand(context.Background(), "", nil, "-V")
+	if cmd.Path != second {
+		t.Fatalf("after the first ssh was removed the command runs %q, want %q", cmd.Path, second)
+	}
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != "second" {
+		t.Fatalf("ran %q, %v; want the second ssh", out, err)
+	}
+}
