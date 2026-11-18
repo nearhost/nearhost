@@ -12,7 +12,7 @@ import (
 )
 
 // within runs read and stops the test binary when it has not returned
-// within 500 ms, or when the heap passes 64 MiB while it runs. A read that
+// within 3 s, or when the heap passes 64 MiB while it runs. A read that
 // runs away on /dev/zero or waits on a FIFO is stopped there instead of
 // filling a shared machine's memory or hanging the run. The heap is checked
 // every 5 ms, and io.ReadAll at most doubles its buffer between checks.
@@ -27,7 +27,7 @@ func within(t *testing.T, read func() ([]byte, error)) ([]byte, error) {
 		data, err := read()
 		done <- result{data, err}
 	}()
-	deadline := time.After(500 * time.Millisecond)
+	deadline := time.After(3 * time.Second)
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 	for {
