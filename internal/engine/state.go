@@ -12,9 +12,36 @@ import (
 // followsSession reports whether what run shows depends on its server's
 // session: a running project, and one in error whose site is published all
 // the same (a loopback port could not be forwarded when it started, say).
-// Both have routes that are served only while the session carries them.
+// Both have routes that are served only while the session carries them. So
+// does a project whose start waits for the session to connect (run.waiting).
 func (run *projectRun) followsSession() bool {
-	return run.state == StateRunning || run.state == StateError && run.site
+	return run.state == StateRunning || run.state == StateError && run.site || run.waiting
+}
+
+// waitingLocked is what a project whose start waits for its server shows:
+// starting, with "waiting for <server>" and the session's last error, while
+// the session tries; the error a start that met it has always shown while
+// the session has given up (authentication failed); and starting alone once
+// it has connected, as the start runs again.
+func (e *Engine) waitingLocked(run *projectRun) (State, string) {
+	why := ""
+	switch c := e.servers[run.server]; {
+	case e.held[run.server]:
+		why = run.server + " was disconnected on purpose"
+	case c == nil:
+	default:
+		switch c.sess.Status() {
+		case transport.StatusConnected:
+			return StateStarting, ""
+		case transport.StatusAuthFailed:
+			return StateError, fmt.Sprintf("ssh %s: %s", c.sess.Host(), c.sess.LastError())
+		}
+		why = c.sess.LastError()
+	}
+	if why == "" {
+		return StateStarting, "waiting for " + run.server
+	}
+	return StateStarting, "waiting for " + run.server + ": " + why
 }
 
 // effectiveLocked is the state to show for run. It is the recorded state,
@@ -27,7 +54,8 @@ func (run *projectRun) followsSession() bool {
 // agree, and they end by themselves when a reconnect restores what was
 // missing. The error names the process holding a port once lookupHolder has
 // found it. A project recorded in error keeps the reason for that in
-// whatever it shows, and shows it alone again afterwards.
+// whatever it shows, and shows it alone again afterwards. A project whose
+// start waits for its server shows what waitingLocked says.
 func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	if run.tearing && run.announced != "" {
 		// Being torn down: the last announced state stands until the state
@@ -36,6 +64,9 @@ func (e *Engine) effectiveLocked(run *projectRun) (State, string) {
 	}
 	if !run.followsSession() {
 		return run.state, run.message
+	}
+	if run.waiting {
+		return e.waitingLocked(run)
 	}
 	c := e.servers[run.server]
 	if c == nil {

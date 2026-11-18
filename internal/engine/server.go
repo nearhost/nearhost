@@ -129,12 +129,23 @@ func (e *Engine) serverLog(server, msg string) {
 // reviewServerLocked announces the effective state of every project on
 // server. A forward found lost is announced at once, naming its port; who
 // holds that port is asked in the background, unless the forward is only
-// reconnecting.
+// reconnecting. A project whose start waits for the server has that start
+// handed to resumeStart once the session is connected, whatever connected it:
+// the supervisor retrying, ReconnectServer, ConnectServer, or another start
+// reviving a session that gave up.
 func (e *Engine) reviewServerLocked(server string) {
 	for _, name := range e.order {
 		run := e.runs[name]
 		if run.server != server {
 			continue
+		}
+		if c := e.servers[server]; run.waiting && !run.resuming && !e.closed && c != nil && c.sess.Status() == transport.StatusConnected {
+			// The start takes run.op, so it runs on a goroutine of its own;
+			// this may run under the session's forward lock. Counted under
+			// mu while closed is not set, so before Shutdown waits.
+			run.resuming = true
+			e.starts.Add(1)
+			go e.resumeStart(run.name)
 		}
 		lost := e.lostLocked(run)
 		for port := range run.holders {

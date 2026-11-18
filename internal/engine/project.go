@@ -51,6 +51,15 @@ type projectRun struct {
 	pending   *Change            // what the project's .nearhostrc asks for that waits for approval; nil when nothing does
 	notice    string             // why the .nearhostrc could not be taken into account; empty when it could
 	declined  string             // hash of a .nearhostrc whose change the user declined; empty when none
+	// waiting is set while a start whose server did not connect in time
+	// waits on for it: the project is recorded starting and shows what
+	// waitingLocked says, until the session connects and the start runs
+	// again (resumeStart). A stop or a start that takes over clears it.
+	waiting bool
+	// resuming is set once the session of a waiting project has connected
+	// and its start has been handed to resumeStart; that start runs only
+	// while it is still set.
+	resuming bool
 }
 
 // heldPort is what is known about the local port of a lost forward.
@@ -87,15 +96,25 @@ type heldPort struct {
 // then starts it.
 //
 // Outcomes other than running, each returned as an error as well:
-//   - the server cannot be reached, a web forward fails, a host is already
-//     served by another running project, or the proxy rejects the site:
-//     state error, nothing left running for the project;
+//   - the server's session cannot be started, a web forward fails, a host
+//     is already served by another running project, or the proxy rejects
+//     the site: state error, nothing left running for the project;
 //   - a loopback port is in use on this machine or held by another project:
 //     state error naming the port, with the web routes and the other
 //     loopback routes still served;
 //   - the hosts file could not be updated: state stopped with a message
 //     saying the project's hosts are not resolvable, nothing started for
 //     the project.
+//
+// When the server does not connect within connectWait, or gives up meanwhile
+// (authentication failed), the start waits on for it and StartProject returns
+// what the project shows. The project stays starting, with the message
+// "waiting for <server>: <the session's last error>", or shows the error of a
+// session that gave up, as a start that met it always has. Once the session
+// connects, whatever reconnected it, the start runs again by itself. Stopping
+// the project, or shutting down, drops the waiting start. Starting it again
+// meanwhile replaces the waiting start with a new one, which tries a
+// connection that gave up again, as for a project in error.
 //
 // If the server's connection drops while the forwards are being added, they
 // are queued on the session and StartProject returns nil with the project
@@ -113,6 +132,21 @@ type heldPort struct {
 //
 // A failure never changes another project.
 func (e *Engine) StartProject(ctx context.Context, name string) error {
+	return e.startProject(ctx, name, false)
+}
+
+// resumeStart runs the start of a project that waited for its server, once
+// the server's session has connected. reviewServerLocked hands it over, on a
+// goroutine counted in starts.
+func (e *Engine) resumeStart(name string) {
+	defer e.starts.Done()
+	_ = e.startProject(e.ctx, name, true) // the outcome is the project's state
+}
+
+// startProject is StartProject. With resume set it is the start a waiting
+// project hands to resumeStart: it goes ahead only while the project still
+// waits for it (run.resuming), which a stop or a start that took over clears.
+func (e *Engine) startProject(ctx context.Context, name string, resume bool) error {
 	e.mu.Lock()
 	cfg := e.cfg
 	run := e.runs[name]
@@ -157,11 +191,15 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	case run.gone: // Apply changed the project while this start waited
 		e.mu.Unlock()
 		return errChanged(name)
+	case resume && !run.resuming: // stopped, or started anew, meanwhile
+		e.mu.Unlock()
+		return nil
 	case e.busyLocked(run): // another start finished while this one waited
 		e.mu.Unlock()
 		return nil
 	}
 	run.cancel = cancel
+	run.waiting, run.resuming = false, false
 	e.setStateLocked(run, StateStarting, "")
 	e.mu.Unlock()
 
@@ -173,6 +211,18 @@ func (e *Engine) StartProject(ctx context.Context, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	run.cancel = nil
+	if st == StateStarting {
+		// The server did not connect in time: the start waits on for it.
+		// The review announces what that shows, and hands the start over
+		// at once if the session connected since the wait ran out.
+		run.waiting = true
+		e.changeLocked(run, StateStarting, "")
+		e.reviewServerLocked(run.server)
+		if _, why := e.effectiveLocked(run); why != "" {
+			return errors.New(why)
+		}
+		return fmt.Errorf("waiting for %s", run.server)
+	}
 	// Announce through the review: the forwards may have been queued on a
 	// session that dropped, or lost again since.
 	e.changeLocked(run, st, msg)
@@ -191,14 +241,17 @@ func errChanged(name string) error {
 }
 
 // busyLocked reports whether a start has nothing to do: the project is
-// starting, or running with nothing lost. A running project that shows an
-// error because a forward is gone is not busy; starting it replaces its
+// starting, or running with nothing lost. A project whose start waits for its
+// server (run.waiting) is not busy: starting it again starts it afresh, and
+// retries a connection that gave up, as for a project in error. A running
+// project that shows an error because a forward is gone is not busy; starting
+// it replaces its
 // forwards. Nor is one that is being stopped, although it still shows its
 // last state: the start waits for the stop (on op) and runs after it.
 func (e *Engine) busyLocked(run *projectRun) bool {
 	switch run.state {
 	case StateStarting:
-		return true
+		return !run.waiting
 	case StateRunning:
 		if run.tearing {
 			return false // only a stop tears down a running project
@@ -211,6 +264,8 @@ func (e *Engine) busyLocked(run *projectRun) bool {
 
 // bringUp does the work of StartProject and returns the state the project
 // ends in. cfg is the configuration p comes from. The caller holds run.op.
+// StateStarting means the server did not connect in time, or gave up, while
+// ctx went on: nothing is left of the start, which waits on for the server.
 func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Project, run *projectRun) (State, error) {
 	web := p.Web()
 	if len(web) == 0 {
@@ -243,6 +298,9 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 			return StateError, err
 		}
 		if err := e.waitConnected(ctx, sess); err != nil {
+			if ctx.Err() == nil {
+				return StateStarting, err
+			}
 			return StateError, err
 		}
 	}
@@ -313,18 +371,14 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	return StateRunning, nil
 }
 
-// waitConnected waits for the server's session, for at most connectWait.
+// waitConnected waits for the server's session, for at most connectWait. It
+// fails when the session gives up (authentication failed) or ctx ends too.
+// A start that is not interrupted waits on, and the project shows the
+// session's error then (see waitingLocked).
 func (e *Engine) waitConnected(ctx context.Context, sess transport.Transport) error {
 	wctx, cancel := context.WithTimeout(ctx, e.connectWait)
 	defer cancel()
-	err := sess.WaitConnected(wctx)
-	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-		err = fmt.Errorf("ssh %s: not connected after %s", sess.Host(), e.connectWait)
-		if last := sess.LastError(); last != "" {
-			err = fmt.Errorf("%w: %s", err, last)
-		}
-	}
-	return err
+	return sess.WaitConnected(wctx)
 }
 
 // ensureHosts asks for every hosts file name of the configuration (see

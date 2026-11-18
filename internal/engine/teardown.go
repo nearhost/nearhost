@@ -87,8 +87,8 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 
 // StopProject removes a project's site from the proxy and cancels its
 // forwards; other projects keep serving and the server's SSH connection stays
-// up. A start in progress is interrupted first. Stopping a stopped project
-// does nothing.
+// up. A start in progress is interrupted first, and one that waits for the
+// server is dropped. Stopping a stopped project does nothing.
 //
 // If a step fails the project ends in the error state and the error is
 // returned; what could not be removed is remembered, and stopping (or
@@ -102,6 +102,13 @@ func (e *Engine) StopProject(ctx context.Context, name string) error {
 	}
 	if run.cancel != nil {
 		run.cancel()
+	}
+	if run.waiting {
+		// The start that waits for the server is dropped, before a connect
+		// can hand it over or while the one handed over waits for op. The
+		// project shows what it showed until the stop records its state.
+		run.waiting, run.resuming = false, false
+		run.tearing = true
 	}
 	e.mu.Unlock()
 	run.op.Lock()

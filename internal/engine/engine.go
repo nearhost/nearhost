@@ -147,6 +147,12 @@ type ProjectStatus struct {
 // runs ssh while holding mu. So the only orders that exist are fwdMu -> mu ->
 // session state lock, and they cannot deadlock.
 //
+// A project whose start waits for its server is started, once the session
+// connects, by a goroutine of its own (resumeStart) that serverLog hands the
+// start to under mu: the start takes the project's op, which serverLog must
+// never wait for. It runs only while the project still waits, which StopProject
+// clears under mu, so a stop never races it into starting.
+//
 // Which process holds the port of a lost forward is asked by a goroutine of
 // its own (lookupHolder). It holds no lock while it asks, and takes mu
 // afterwards to check that the answer still applies before publishing it.
@@ -191,8 +197,9 @@ type Engine struct {
 	lookups sync.WaitGroup
 	// dockerLoops counts the Docker refresh loops, which run under ctx too.
 	dockerLoops sync.WaitGroup
-	// starts counts the project starts Apply has begun. Shutdown waits for
-	// them; each returns at once when it finds the engine closed.
+	// starts counts the project starts Apply has begun, and those of
+	// projects that waited for their server (resumeStart). Shutdown waits
+	// for them; each returns at once when it finds the engine closed.
 	starts sync.WaitGroup
 
 	// releaseInstance lets go of the run directory's instance lock, which
