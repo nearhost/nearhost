@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -193,10 +195,29 @@ func TestDownPageEndToEnd(t *testing.T) {
 
 	// The failure stays in the request log and in Caddy's own log.
 	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("dead.test", `"status":502`) }, "access log line for the 502")
-	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", "connection refused") }, "error log line for the 502")
+	refused := refusedText(t, dead)
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", refused) }, "error log line for the 502")
 	if e, ok := Captured(idOf(t, h, "dead.test", "/page")); !ok || e.Err == "" {
 		t.Errorf("the failed exchange was not kept with its error: %+v", e)
 	}
+}
+
+// refusedText is how this system words a refused connection, as the dial
+// to port, on which nothing listens, reports it: "connection refused" on
+// Unix, and "No connection could be made because the target machine
+// actively refused it." on Windows.
+func refusedText(t *testing.T, port int) string {
+	t.Helper()
+	c, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err == nil {
+		c.Close()
+		t.Fatalf("a dial to port %d, where nothing listens, connected", port)
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		t.Fatalf("a dial to port %d failed without an errno: %v", port, err)
+	}
+	return errno.Error()
 }
 
 // An error on a host with no site, such as one the home page returns, still
