@@ -81,7 +81,7 @@ type fakeBackend struct {
 	treeErr   error
 }
 
-func newFake(t *testing.T, cfg *config.Config) *fakeBackend {
+func newFake(t testing.TB, cfg *config.Config) *fakeBackend {
 	t.Helper()
 	return &fakeBackend{
 		cfg: cfg, path: filepath.Join(t.TempDir(), "config.yaml"), bus: engine.NewBus(),

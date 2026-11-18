@@ -59,6 +59,11 @@ type logs struct {
 	all ring
 	by  map[string]*ring
 	seq int
+	// ver counts the changes to the entries of any log: it goes up each time
+	// add files an entry, which can also drop the oldest of a full log.
+	// Whatever is derived from the entries, such as the full-screen log's
+	// filtered list, is valid only for the ver it was made at.
+	ver int
 	now func() time.Time
 }
 
@@ -69,6 +74,7 @@ func newLogs(now func() time.Time) *logs {
 // add numbers e and files it in the combined log and the logs of keys.
 func (l *logs) add(e logEntry, keys ...string) {
 	l.seq++
+	l.ver++
 	e.seq = l.seq
 	l.all.add(e)
 	for _, key := range keys {
@@ -187,12 +193,8 @@ func entryLines(e logEntry, width int, sources bool) []string {
 		}
 		return []string{fit(lead+fit(method, logSourceWidth)+"  "+requestText(*e.req, room), width)}
 	}
-	text := e.text
-	if e.err {
-		text = styleRed.Render(text)
-	}
 	var out []string
-	for i, l := range wrap(text, room) {
+	for i, l := range wrap(entryText(e), room) {
 		if i == 0 {
 			out = append(out, fit(lead+fit(e.source, logSourceWidth)+"  "+l, width))
 			continue
@@ -200,6 +202,25 @@ func entryLines(e logEntry, width int, sources bool) []string {
 		out = append(out, fit(strings.Repeat(" ", logTextAt)+l, width))
 	}
 	return out
+}
+
+// entryText is the text of an entry that is not a request, as drawn before
+// it wraps.
+func entryText(e logEntry) string {
+	if e.err {
+		return styleRed.Render(e.text)
+	}
+	return e.text
+}
+
+// entryHeight is how many lines entryLines draws for e at width, worked out
+// without drawing its columns.
+func entryHeight(e logEntry, width int) int {
+	room := width - logTextAt
+	if room < 8 || e.req != nil {
+		return 1
+	}
+	return len(wrap(entryText(e), room))
 }
 
 // requestText is a request's path, status and time, room cells wide.

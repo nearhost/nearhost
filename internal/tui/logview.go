@@ -60,7 +60,30 @@ type logView struct {
 	confirm   int                  // the seq of the request waiting for y to be sent again; 0 when none is
 	said      string               // what the last replay said, shown until the next key
 	pausedAt  int                  // the newest seq when following stopped
-	vp        viewport.Model
+	vp        viewport.Model       // draws the rows in view; its own scroll position stays at the top
+	yoff      int                  // the first line in view, counted from the top of the whole log
+	cache     logCache             // the filtered entries, made again only when what they come from changes
+	heights   map[int]int          // the lines of each wrapping entry, by seq, at heightsAt
+	heightsAt int                  // the width the entries in heights were measured at
+	rows      []int                // the lines of each shown entry in the frame being drawn
+}
+
+// logCache is what the full-screen log derives from the entries of its row:
+// those that are shown, and the counts the tabs and the footer show. It is
+// made again when the log gains or drops an entry (the version of the logs
+// goes up), or when the row, the kind or the search it was made for
+// changes, so no caller can act on an entry that is no longer there.
+type logCache struct {
+	ok     bool
+	src    *logs
+	ver    int
+	key    string
+	kind   logKind
+	search string
+	shown  []logEntry
+	total  int // all the entries of the row, whatever the kind and search
+	errs   int // those of them that failed
+	runs   int // how many times the entries were filtered; tests read it
 }
 
 func newLogView(key string) *logView {
@@ -74,17 +97,66 @@ func (m *Model) openLog() {
 	m.logView = newLogView(m.sel)
 }
 
-// shown are the entries the log view lists: those of its kind that hold
-// the search.
-func (m *Model) shown() []logEntry {
+// logData is the entries of the log view's row, filtered. It filters again
+// only when the cache no longer matches the logs' version, the row, the kind
+// or the search, so every caller in an update shares one pass over the log.
+func (m *Model) logData() *logCache {
 	v := m.logView
-	var out []logEntry
-	for _, e := range m.logs.entries(v.key, strings.TrimSpace(v.search.Value())) {
-		if v.kind.shows(e) {
-			out = append(out, e)
+	search := strings.TrimSpace(v.search.Value())
+	c := &v.cache
+	if c.ok && c.src == m.logs && c.ver == m.logs.ver && c.key == v.key && c.kind == v.kind && c.search == search {
+		return c
+	}
+	all := m.logs.entries(v.key, "")
+	c.errs = 0
+	for _, e := range all {
+		if e.err {
+			c.errs++
 		}
 	}
-	return out
+	// A fresh slice, as the ring reuses its own when it drops entries.
+	c.shown = nil
+	for _, e := range m.logs.entries(v.key, search) {
+		if v.kind.shows(e) {
+			c.shown = append(c.shown, e)
+		}
+	}
+	c.ok, c.src, c.ver, c.key, c.kind, c.search = true, m.logs, m.logs.ver, v.key, v.kind, search
+	c.total = len(all)
+	c.runs++
+	return c
+}
+
+// shown are the entries the log view lists: those of its kind that hold
+// the search.
+func (m *Model) shown() []logEntry { return m.logData().shown }
+
+// entryRows is how many lines each of shown takes at width, with the open
+// request's extra lines counted for entry openAt. The lines of a wrapping
+// entry are counted once and remembered by seq, until the width changes: a
+// request is always one line, and so is every entry when the log does not
+// wrap.
+func (v *logView) entryRows(shown []logEntry, width, openAt, extra int) []int {
+	if v.heights == nil || v.heightsAt != width || len(v.heights) > 4*len(shown)+1024 {
+		v.heights, v.heightsAt = map[int]int{}, width
+	}
+	v.rows = v.rows[:0]
+	for i, e := range shown {
+		n := 1
+		if v.wrap && e.req == nil {
+			h, ok := v.heights[e.seq]
+			if !ok {
+				h = entryHeight(e, width)
+				v.heights[e.seq] = h
+			}
+			n = h
+		}
+		if i == openAt {
+			n += extra
+		}
+		v.rows = append(v.rows, n)
+	}
+	return v.rows
 }
 
 // at is the index of the entry under the cursor in shown, the newest when
@@ -241,12 +313,56 @@ func (m *Model) logScreen() string {
 	shown := m.shown()
 	at := v.at(shown)
 	sources := !strings.HasPrefix(v.key, "project:")
-	var lines []string
-	cursorLine := 0
+	// The lines of each entry come from heights worked out once per width, so
+	// the whole log is measured but only the entries in view are drawn.
+	openAt, extra := -1, []string(nil)
 	for i, e := range shown {
-		if i == at {
-			cursorLine = len(lines)
+		if e.req != nil && e.seq == v.open {
+			openAt, extra = i, m.requestLines(e, width)
+			break
 		}
+	}
+	rows := v.entryRows(shown, width-1, openAt, len(extra))
+	total, cursorLine := 0, 0
+	for i, n := range rows {
+		if i == at {
+			cursorLine = total
+		}
+		total += n
+	}
+	foot := 1
+	if m.showHelp {
+		foot = logHelpRows(m.width)
+	}
+	height := max(m.height-5-foot, 1) // the header and its rule, the tabs and a blank line, the rule and the footer
+	newer := 0
+	if !v.follow {
+		newer = len(shown) - sort.Search(len(shown), func(i int) bool { return shown[i].seq > v.pausedAt })
+	}
+	if newer > 0 || v.confirm != 0 || v.said != "" {
+		height--
+	}
+	// The first line in view: the log stays where it was unless the cursor
+	// left the view, and never passes the last page.
+	last := max(0, total-height)
+	v.yoff = min(v.yoff, last)
+	if v.follow {
+		v.yoff = last
+	} else if cursorLine < v.yoff || cursorLine >= v.yoff+height {
+		v.yoff = min(max(cursorLine, 0), last)
+	}
+	var window []string
+	start := 0
+	for i, e := range shown {
+		if start >= v.yoff+height {
+			break
+		}
+		end := start + rows[i]
+		if end <= v.yoff {
+			start = end
+			continue
+		}
+		var block []string
 		el := entryLines(e, width-1, sources)
 		if !v.wrap {
 			el = el[:1]
@@ -256,38 +372,24 @@ func (m *Model) logScreen() string {
 			if i == at && j == 0 {
 				lead = styleBeacon.Render("▌")
 			}
-			lines = append(lines, lead+l)
+			block = append(block, lead+l)
 		}
-		if e.req != nil && e.seq == v.open {
-			lines = append(lines, m.requestLines(e, width)...)
+		if i == openAt {
+			block = append(block, extra...)
 		}
-	}
-	foot := 1
-	if m.showHelp {
-		foot = logHelpRows(m.width)
-	}
-	height := max(m.height-5-foot, 1) // the header and its rule, the tabs and a blank line, the rule and the footer
-	newer := 0
-	if !v.follow {
-		for _, e := range shown {
-			if e.seq > v.pausedAt {
-				newer++
+		for j, l := range block {
+			if n := start + j; n >= v.yoff && n < v.yoff+height {
+				window = append(window, l)
 			}
 		}
-	}
-	if newer > 0 || v.confirm != 0 || v.said != "" {
-		height--
+		start = end
 	}
 	v.vp.SetWidth(width)
 	v.vp.SetHeight(height)
-	v.vp.SetContentLines(lines)
-	if v.follow {
-		v.vp.GotoBottom()
-	} else {
-		v.vp.EnsureVisible(cursorLine, 0, 0)
-	}
+	v.vp.SetContentLines(window)
+	v.vp.SetYOffset(0)
 	body := strings.Split(v.vp.View(), "\n")
-	bar := scrollbar(v.vp.YOffset(), len(lines), height)
+	bar := scrollbar(v.yoff, total, height)
 	out := []string{m.bar(m.logCrumbs(), m.logState()), rule(m.width), m.bar(m.logTabs(), m.logCount(len(shown))), strings.Repeat(" ", m.width)}
 	for i := 0; i < height; i++ {
 		l := ""
@@ -410,13 +512,7 @@ func (m *Model) logTabs() string {
 	for i, name := range kindNames {
 		text := " " + name + " "
 		if logKind(i) == kindErrors {
-			errs := 0
-			for _, e := range m.logs.entries(v.key, "") {
-				if e.err {
-					errs++
-				}
-			}
-			if errs > 0 {
+			if errs := m.logData().errs; errs > 0 {
 				text = " " + name + " " + strconv.Itoa(errs) + " "
 			}
 		}
@@ -443,7 +539,7 @@ func (m *Model) logTabs() string {
 // logCount says how many entries match, and whether the log follows.
 func (m *Model) logCount(shown int) string {
 	v := m.logView
-	total := len(m.logs.entries(v.key, ""))
+	total := m.logData().total
 	count := fmt.Sprintf("%d lines", total)
 	if v.search.Value() != "" || v.kind != kindAll {
 		count = fmt.Sprintf("%d of %d lines", shown, total)
