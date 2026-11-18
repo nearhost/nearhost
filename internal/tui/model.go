@@ -317,8 +317,15 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.reloadConfig()
 	case tea.WindowSizeMsg:
 		m.clearSelection()
+		wasSmall := m.small()
 		m.width, m.height = msg.Width, msg.Height
 		// A new font size resizes the window, so the cells may have changed.
+		if wasSmall && !m.small() && m.form != nil && m.form == m.guard.form {
+			// A request box that opened while the window was too small is
+			// drawn for the first time now, so its guard starts again.
+			m.guard.opened = m.now()
+			return m, tea.Batch(requestCellSize, guardTimer())
+		}
 		return m, requestCellSize
 	case uv.CellSizeEvent:
 		m.tallCells = cellsTall(msg.Width, msg.Height)

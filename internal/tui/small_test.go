@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -50,6 +51,7 @@ func TestTooSmallWindowDoesNotApproveARequest(t *testing.T) {
 	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("form %T", m.form)
 	}
+	wait(m, askGuard) // the guard starts again as the box is first drawn
 	settle(m, press(m, "y"))
 	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1"}) {
 		t.Fatalf("calls %v", got)
@@ -90,5 +92,48 @@ func TestTooSmallWindowIgnoresTheMouse(t *testing.T) {
 	resize(m, 100, 30)
 	if m.sel != before || m.form != nil || m.showHelp {
 		t.Errorf("selection %q, form %T, help %v", m.sel, m.form, m.showHelp)
+	}
+}
+
+// A request box that opens while the window is too small keeps its guard
+// until the guard has passed since the window grew, however long it waited.
+func TestTooSmallRequestGuardRestartsOnGrowing(t *testing.T) {
+	for _, wait1 := range []time.Duration{100 * time.Millisecond, 2 * time.Second} {
+		m, f, _ := projectFormModel(t)
+		stopClock(m)
+		resize(m, 60, 15)
+		settle(m, func() tea.Msg { return passMsg{passReq(m)} })
+		wait(m, wait1)
+		resize(m, 100, 30)
+		settle(m, press(m, "y"))
+		if got := f.passthroughCalls(); len(got) != 0 {
+			t.Fatalf("after %v: calls %v", wait1, got)
+		}
+		if _, ok := m.form.(*passForm); !ok {
+			t.Fatalf("after %v: form %T", wait1, m.form)
+		}
+		wait(m, askGuard)
+		settle(m, press(m, "y"))
+		if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1"}) {
+			t.Fatalf("after %v: calls %v", wait1, got)
+		}
+	}
+}
+
+// The wheel does not scroll the log while the window is too small.
+func TestTooSmallWindowDoesNotScroll(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	for i := 0; i < 40; i++ {
+		m.logs.note("line")
+	}
+	resize(m, 60, 15)
+	m.Update(tea.MouseWheelMsg{X: 50, Y: 5, Button: tea.MouseWheelUp})
+	if m.scroll != 0 {
+		t.Errorf("scrolled to %d", m.scroll)
+	}
+	resize(m, 100, 30)
+	m.Update(tea.MouseWheelMsg{X: 90, Y: 15, Button: tea.MouseWheelUp})
+	if m.scroll == 0 {
+		t.Skip("the wheel does not scroll this screen, so the check above shows nothing")
 	}
 }
