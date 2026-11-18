@@ -794,46 +794,34 @@ func TestTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
 	newSlowRetrySession(t, refusing).triesWhenTheWallClockPasses(t)
 }
 
-// A host whose configuration sets ForkAfterAuthentication yes gets no master:
-// ssh would fork it away from the supervisor. The failure is a configuration
-// error, as on the per-process transport, and counts as no refused login.
-func TestStartRefusesForkAfterAuthentication(t *testing.T) {
-	s, logPath := newFakeSession(t, "FAKE_SSH_G_CONFIG=forkafterauthentication yes")
+// startedWith starts a session on the fake ssh with the given `ssh -G` output
+// and returns the log of ssh's arguments once the master has connected.
+func startedWith(t *testing.T, env ...string) string {
+	t.Helper()
+	s, logPath := newFakeSession(t, env...)
 	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	msg := s.LastError()
-	if !strings.Contains(msg, "mini") || !strings.Contains(msg, "forkafterauthentication") {
-		t.Fatalf("LastError = %q, want it to name mini and forkafterauthentication", msg)
-	}
-	if h := s.Health(); h.Failures != 1 {
-		t.Fatalf("Failures = %d, want 1", h.Failures)
-	}
-	s.mu.Lock()
-	refusals := s.refusals
-	s.mu.Unlock()
-	if refusals != 0 {
-		t.Fatalf("refusals = %d, want 0", refusals)
-	}
-	if s.Launches() != 0 || strings.Contains(readLog(t, logPath), "-M") {
-		t.Fatalf("a master was launched: %q", readLog(t, logPath))
-	}
-	time.Sleep(200 * time.Millisecond)
-	if s.Launches() != 0 || s.Status() != StatusAuthFailed {
-		t.Fatalf("the supervisor retried: status %s, launches %d", s.Status(), s.Launches())
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	return readLog(t, logPath)
+}
+
+// A host whose configuration lists ForkAfterAuthentication gets the option on
+// the master's command line, which wins over the file: ssh would fork the
+// master away from the supervisor otherwise. Setting it to no does no harm.
+func TestMasterTurnsForkAfterAuthenticationOff(t *testing.T) {
+	for _, value := range []string{"yes", "no"} {
+		log := startedWith(t, "FAKE_SSH_G_CONFIG=forkafterauthentication "+value)
+		if !strings.Contains(log, "-o ForkAfterAuthentication=no") {
+			t.Fatalf("value %s: master args lack the override: %q", value, log)
+		}
 	}
 }
 
-// Other options the per-process transport refuses do not stop a master, and
-// neither does a host with ForkAfterAuthentication no.
-func TestStartIgnoresOtherConfigOptions(t *testing.T) {
-	s, _ := newFakeSession(t, "FAKE_SSH_G_CONFIG=forkafterauthentication no\nclearallforwardings yes\nlocalforward 1 127.0.0.1:1")
-	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
-}
-
-// A failing `ssh -G` does not keep the master from starting.
-func TestStartProceedsWhenSSHGFails(t *testing.T) {
-	s, _ := newFakeSession(t, "FAKE_SSH_G_FAIL=unknown option -- G")
-	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+// Without the key in `ssh -G`, which an ssh that predates the option shows,
+// the master starts as before, and so it does when `ssh -G` fails.
+func TestMasterLeavesForkAfterAuthenticationAlone(t *testing.T) {
+	for _, env := range [][]string{nil, {"FAKE_SSH_G_FAIL=unknown option -- G"}} {
+		if log := startedWith(t, env...); strings.Contains(log, "ForkAfterAuthentication") {
+			t.Fatalf("env %v: master args have the override: %q", env, log)
+		}
+	}
 }

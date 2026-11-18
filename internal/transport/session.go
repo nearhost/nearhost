@@ -366,20 +366,13 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			return
 		}
 		s.setStatus(StatusConnecting, "")
-		conflict := s.forkConflict(ctx)
+		forkOff := s.forkOverride(ctx)
 		if ctx.Err() != nil {
 			s.setStatus(StatusDisconnected, "")
 			return
 		}
-		if conflict != nil {
-			// No retry fixes the user's configuration, and no login was
-			// refused: give up as the per-process transport does.
-			s.giveUp(conflict.Error())
-			return
-		}
 		s.cleanStaleSocket(ctx)
-		master := s.longLived(context.Background(), // not tied to ctx: we stop it ourselves
-			"-N", "-M", "-S", s.SocketPath(),
+		args := []string{"-N", "-M", "-S", s.SocketPath(),
 			"-o", "BatchMode=yes",
 			"-o", "ExitOnForwardFailure=yes",
 			"-o", "ServerAliveInterval=15",
@@ -391,8 +384,10 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			// already taken from ending the master.
 			"-o", "ControlPersist=no",
 			"-o", "ClearAllForwardings=yes",
-			"-o", "RemoteCommand=none",
-			"--", s.host)
+			"-o", "RemoteCommand=none"}
+		args = append(args, forkOff...)
+		args = append(args, "--", s.host)
+		master := s.longLived(context.Background(), args...) // not tied to ctx: we stop it ourselves
 		// The master's stderr is kept as its last stderrLines lines: ssh
 		// logs a line for each channel it cannot open, so the whole of it
 		// would grow for as long as the master lives. The stderr also
@@ -469,14 +464,33 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 // configTimeout bounds the `ssh -G` that precedes each master.
 const configTimeout = 10 * time.Second
 
-// forkConflict returns a *ConfigError when the user's ssh configuration for
-// the host sets ForkAfterAuthentication yes: ssh would then put the master in
-// the background, where it cannot be supervised. It reads the configuration
-// with `ssh -G`, which connects to nothing, and returns nil when that fails.
-func (s *Session) forkConflict(ctx context.Context) error {
+// forkOverride returns the option that keeps ssh from putting the master in
+// the background, where it cannot be supervised, or nil. ssh forks after
+// authentication when the user's configuration says ForkAfterAuthentication
+// yes. An option on the command line wins over the configuration file
+// (ssh_config(5)), so -o ForkAfterAuthentication=no needs no change from the
+// user. It is given only when `ssh -G`, which connects to nothing, lists the
+// key: an older ssh that does not know the option would reject it. It
+// returns nil when `ssh -G` fails. The -N matters: without a command or -N,
+// real ssh refuses a configuration with ForkAfterAuthentication yes, even
+// for -G.
+func (s *Session) forkOverride(ctx context.Context) []string {
 	ctx, cancel := context.WithTimeout(ctx, configTimeout)
 	defer cancel()
-	return s.configConflict(s.command(ctx, "-G", "--", s.host), s.host, "forkafterauthentication")
+	cmd := s.command(ctx, "-N", "-G", "--", s.host)
+	cmd.WaitDelay = procWaitDelay
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := s.runSSH(cmd); err != nil {
+		s.Logf("%s: ssh -G: %v", s.Name, err)
+		return nil
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if f := strings.Fields(line); len(f) > 0 && strings.EqualFold(f[0], "forkafterauthentication") {
+			return []string{"-o", "ForkAfterAuthentication=no"}
+		}
+	}
+	return nil
 }
 
 func hasExited(exited <-chan struct{}) bool {

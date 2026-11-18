@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -29,20 +28,6 @@ func (v *supervision) runSSH(cmd *exec.Cmd) error {
 		return err
 	}
 	return cmd.Wait()
-}
-
-// configConflict runs cmd, an `ssh -G` for host, and returns a *ConfigError
-// when its output sets one of the options in only (see configConflicts). It
-// returns nil when ssh -G itself fails: an old ssh or a passing error is no
-// reason to refuse a connection that the real ssh may still make.
-func (v *supervision) configConflict(cmd *exec.Cmd, host string, only ...string) error {
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := v.runSSH(cmd); err != nil {
-		v.Logf("%s: ssh -G: %v", v.Name, err)
-		return nil
-	}
-	return configConflicts(host, out.String(), only...)
 }
 
 // authRetryEvery is how long a supervisor waits after each attempt once
