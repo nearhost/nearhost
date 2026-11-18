@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -159,6 +160,52 @@ func TestParseComposeFilesMergesTheOverride(t *testing.T) {
 	slices.SortFunc(want, func(a, b ComposePort) int { return a.Published - b.Published })
 	if !slices.Equal(got, want) {
 		t.Errorf("ports = %+v, want %+v", got, want)
+	}
+}
+
+// Compose's merge tags in an override: !reset clears a service's ports or
+// removes the service, !override replaces its ports. A port in the short
+// syntax in one file and the long syntax in the other is listed once.
+func TestParseComposeFilesMergeTags(t *testing.T) {
+	const base = "services:\n  web:\n    ports:\n      - '8080:80'\n  db:\n    ports:\n      - '5433:5432'\n"
+	cases := []struct {
+		name, override, want string
+	}{
+		{"ports reset to a list", "services:\n  web:\n    ports: !reset []\n", "db:5433"},
+		{"ports reset to null", "services:\n  web:\n    ports: !reset null\n", "db:5433"},
+		{"ports overridden", "services:\n  web:\n    ports: !override\n      - '9000:80'\n", "db:5433 web:9000"},
+		{"service reset", "services:\n  web: !reset null\n", "db:5433"},
+		{"service reset to a map", "services:\n  web: !reset {}\n", "db:5433"},
+		{"long over short", "services:\n  web:\n    ports:\n      - published: 8080\n        target: 80\n", "db:5433 web:8080"},
+		{"plain append", "services:\n  web:\n    ports:\n      - '9000:80'\n", "db:5433 web:8080 web:9000"},
+	}
+	for _, c := range cases {
+		files := []ComposeFile{{Name: "compose.yaml", Data: []byte(base)}, {Name: "compose.override.yaml", Data: []byte(c.override)}}
+		got, err := ParseComposeFiles(files, nil)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		var parts []string
+		for _, p := range got {
+			parts = append(parts, fmt.Sprintf("%s:%d", p.Service, p.Published))
+		}
+		if s := strings.Join(parts, " "); s != c.want {
+			t.Errorf("%s: ports = %q, want %q", c.name, s, c.want)
+		}
+	}
+}
+
+// The long syntax in the Compose file and the short syntax in the override
+// publish the same port once.
+func TestParseComposeFilesShortOverLong(t *testing.T) {
+	files := []ComposeFile{
+		{Name: "compose.yaml", Data: []byte("services:\n  web:\n    ports:\n      - published: '8080'\n        target: 80\n")},
+		{Name: "compose.override.yaml", Data: []byte("services:\n  web:\n    ports:\n      - '8080:80/tcp'\n")},
+	}
+	got, err := ParseComposeFiles(files, nil)
+	if err != nil || len(got) != 1 || got[0].Published != 8080 || got[0].Target != 80 {
+		t.Fatalf("ports = %+v, err = %v", got, err)
 	}
 }
 

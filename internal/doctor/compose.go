@@ -25,7 +25,23 @@ type service struct {
 	Sources     []string          // volume sources, expanded from the shell and .env only
 	HostNetwork bool              // network_mode: host
 	NetworkSet  bool              // network_mode is set, to host or not
+
+	// Reset, Tags and EnvUnset are the merge tags of an override file.
+	// Reset says the service is tagged !reset, which removes it. Tags maps
+	// a key the merge reads to its tag, tagReset or tagOverride, when it
+	// has one. EnvUnset lists the environment keys tagged !reset.
+	Reset    bool
+	Tags     map[string]string
+	EnvUnset []string
 }
+
+// Compose's merge tags, which an override file puts on a value to say how it
+// merges with the Compose file's: !reset removes the value, !override
+// replaces it.
+const (
+	tagReset    = "!reset"
+	tagOverride = "!override"
+)
 
 // composeServices reads the services of a Compose file, sorted by name.
 // Compose accepts environment, extra_hosts, env_file and volumes in several
@@ -56,9 +72,22 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 	for _, kv := range w.mapPairs(services) {
 		key, node := kv[0], resolve(kv[1])
 		s := service{Name: key.Value, Line: key.Line, Env: map[string]string{}}
+		if node.Tag == tagReset {
+			s.Reset = true
+			out = append(out, s)
+			continue
+		}
 		if node.Kind != yaml.MappingNode {
 			out = append(out, s)
 			continue
+		}
+		for _, k := range []string{"environment", "extra_hosts", "env_file", "volumes", "network_mode"} {
+			if v := w.mapGet(node, k); v != nil && (v.Tag == tagReset || v.Tag == tagOverride) {
+				if s.Tags == nil {
+					s.Tags = map[string]string{}
+				}
+				s.Tags[k] = v.Tag
+			}
 		}
 		if mode := w.mapGet(node, "network_mode"); mode != nil {
 			s.NetworkSet = true
@@ -75,6 +104,16 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 			default:
 				s.Env[k] = expand(*v)
 			}
+		}
+		if envNode := w.mapGet(node, "environment"); envNode != nil && envNode.Kind == yaml.MappingNode {
+			for _, kv := range w.mapPairs(envNode) {
+				if kv[1].Tag == tagReset {
+					// FOO: !reset null unsets FOO.
+					delete(s.Env, kv[0].Value)
+					s.EnvUnset = append(s.EnvUnset, kv[0].Value)
+				}
+			}
+			sort.Strings(s.EnvUnset)
 		}
 		for k := range w.keyValues(w.mapGet(node, "extra_hosts")) {
 			// The list form is "name:address" or "name=address"; the map form
@@ -118,35 +157,67 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 // mergeServices merges the services of an override file over those of the
 // Compose file, as Compose does: extra_hosts, env_file and volumes add to
 // the service's, environment replaces by key, and network_mode replaces.
-// A service the override names takes the override's file and line, as an
-// addition made there joins the rest; one it does not name keeps its own.
-// The result is sorted by name.
+// A key the override tags !override takes the override's value alone, and
+// one it tags !reset is cleared; an environment key tagged !reset is
+// unset, and a service tagged !reset is removed. A service the override
+// names takes the override's file and line, as an addition made there
+// joins the rest; one it does not name keeps its own. The result is sorted
+// by name.
 func mergeServices(base, override []service) []service {
 	out := slices.Clone(base)
-	at := map[string]int{}
-	for i, s := range out {
-		at[s.Name] = i
-	}
 	for _, o := range override {
-		i, ok := at[o.Name]
-		if !ok {
+		i := slices.IndexFunc(out, func(s service) bool { return s.Name == o.Name })
+		switch {
+		case o.Reset:
+			if i >= 0 {
+				out = slices.Delete(out, i, i+1)
+			}
+			continue
+		case i < 0:
 			out = append(out, o)
 			continue
 		}
 		s := &out[i]
-		env := maps.Clone(s.Env)
-		maps.Copy(env, o.Env)
+		var env map[string]string
+		switch o.Tags["environment"] {
+		case tagReset:
+			env = map[string]string{}
+		case tagOverride:
+			env = maps.Clone(o.Env)
+		default:
+			env = maps.Clone(s.Env)
+			maps.Copy(env, o.Env)
+		}
+		for _, k := range o.EnvUnset {
+			delete(env, k)
+		}
 		s.Env = env
-		s.EnvFiles = slices.Concat(s.EnvFiles, o.EnvFiles)
-		s.ExtraHosts = slices.Compact(slices.Sorted(slices.Values(slices.Concat(s.ExtraHosts, o.ExtraHosts))))
-		s.Sources = slices.Concat(s.Sources, o.Sources)
-		if o.NetworkSet {
+		s.EnvFiles = mergeList(s.EnvFiles, o.EnvFiles, o.Tags["env_file"])
+		s.ExtraHosts = slices.Compact(slices.Sorted(slices.Values(mergeList(s.ExtraHosts, o.ExtraHosts, o.Tags["extra_hosts"]))))
+		s.Sources = mergeList(s.Sources, o.Sources, o.Tags["volumes"])
+		switch {
+		case o.Tags["network_mode"] == tagReset:
+			s.HostNetwork, s.NetworkSet = false, false
+		case o.NetworkSet:
 			s.HostNetwork, s.NetworkSet = o.HostNetwork, true
 		}
 		s.File, s.Line = o.File, o.Line
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// mergeList appends an override's list to the Compose file's. When the
+// override tags its list, tag, !override it takes the override's alone,
+// and !reset leaves it empty.
+func mergeList(base, override []string, tag string) []string {
+	switch tag {
+	case tagReset:
+		return nil
+	case tagOverride:
+		return slices.Clone(override)
+	}
+	return slices.Concat(base, override)
 }
 
 // requiredVar matches ${VAR:?message} and ${VAR?message}, which Compose

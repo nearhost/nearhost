@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -84,39 +86,73 @@ func ComposeText(files []ComposeFile) string {
 }
 
 // ParseComposeFiles extracts the published TCP ports of files, the Compose
-// file then its override, as Compose merges them: an override's ports add
-// to the service's. A port a service publishes in both files is listed
-// once, as it was first seen. An error names the file that did not parse.
+// file then its override, as Compose merges them. An override's ports add
+// to the service's; ports tagged !override replace them and ports tagged
+// !reset clear them; a service tagged !reset is removed. A port a service
+// publishes twice is listed once, as it was first seen. Ports are sorted by
+// service. An error names the file that did not parse.
 func ParseComposeFiles(files []ComposeFile, env map[string]string) ([]ComposePort, error) {
-	type key struct {
-		service   string
-		published int
-	}
-	seen := map[key]bool{}
-	var out []ComposePort
+	merged := map[string][]ComposePort{}
 	for _, f := range files {
-		ports, err := ParseCompose(f.Data, env)
+		services, err := parseComposeServices(f.Data, env)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Name, err)
 		}
-		for _, p := range ports {
-			k := key{p.Service, p.Published}
-			if seen[k] {
-				continue
+		for name, sp := range services {
+			switch {
+			case sp.removed:
+				delete(merged, name)
+			case sp.merge == tagReset || sp.merge == tagOverride:
+				merged[name] = sp.ports
+			default:
+				merged[name] = append(merged[name], sp.ports...)
 			}
-			seen[k] = true
-			out = append(out, p)
 		}
 	}
-	return out, nil
+	return flattenPorts(merged), nil
 }
 
+// flattenPorts lists the ports of services, sorted by service, each
+// published port of a service once.
+func flattenPorts(services map[string][]ComposePort) []ComposePort {
+	var out []ComposePort
+	for _, name := range slices.Sorted(maps.Keys(services)) {
+		seen := map[int]bool{}
+		for _, p := range services[name] {
+			if !seen[p.Published] {
+				seen[p.Published] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// Compose's merge tags, which an override file puts on a value to say how it
+// merges with the Compose file's: !reset removes the value, !override
+// replaces it.
+const (
+	tagReset    = "!reset"
+	tagOverride = "!override"
+)
+
+// servicePorts is what one Compose file says about one service's ports.
+type servicePorts struct {
+	ports   []ComposePort
+	merge   string // tagReset or tagOverride when the ports carry that tag
+	removed bool   // the service itself is tagged !reset
+}
+
+// composeDoc is a Compose file. Its services stay nodes, so that a merge
+// tag on a service, or a service that is not a mapping, can be seen.
 type composeDoc struct {
-	Services map[string]composeService `yaml:"services"`
+	Services map[string]yaml.Node `yaml:"services"`
 }
 
+// composeService is the part of a service discovery reads. Ports stays a
+// node, so that its merge tag can be seen.
 type composeService struct {
-	Ports []yaml.Node `yaml:"ports"`
+	Ports yaml.Node `yaml:"ports"`
 }
 
 type composeLongPort struct {
@@ -168,51 +204,99 @@ func toInt(v any) (int, bool) {
 // ParseCompose extracts published TCP ports, resolving variables against env.
 // Entries that cannot be resolved, use ranges, or are UDP are skipped.
 func ParseCompose(data []byte, env map[string]string) ([]ComposePort, error) {
+	services, err := parseComposeServices(data, env)
+	if err != nil {
+		return nil, err
+	}
+	byName := map[string][]ComposePort{}
+	for name, sp := range services {
+		if !sp.removed {
+			byName[name] = sp.ports
+		}
+	}
+	return flattenPorts(byName), nil
+}
+
+// parseComposeServices reads the published TCP ports of each service of one
+// Compose file, with the merge tags on them. A service that is not a
+// mapping, or whose keys do not decode, publishes none.
+func parseComposeServices(data []byte, env map[string]string) (map[string]servicePorts, error) {
 	var doc composeDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse compose: %w", err)
 	}
-	var out []ComposePort
-	for service, svc := range doc.Services {
-		for _, node := range svc.Ports {
-			switch node.Kind {
-			case yaml.ScalarNode:
-				if p, ok := parseShortPort(node.Value, env); ok {
+	out := map[string]servicePorts{}
+	for service, node := range doc.Services {
+		n := &node
+		for n.Kind == yaml.AliasNode && n.Alias != nil {
+			n = n.Alias
+		}
+		if n.Tag == tagReset {
+			out[service] = servicePorts{removed: true}
+			continue
+		}
+		var svc composeService
+		if n.Kind != yaml.MappingNode || n.Decode(&svc) != nil {
+			out[service] = servicePorts{}
+			continue
+		}
+		sp := servicePorts{}
+		if t := svc.Ports.Tag; t == tagReset || t == tagOverride {
+			sp.merge = t
+		}
+		if svc.Ports.Kind == yaml.SequenceNode && sp.merge != tagReset {
+			for _, node := range svc.Ports.Content {
+				for node.Kind == yaml.AliasNode && node.Alias != nil {
+					node = node.Alias
+				}
+				if p, ok := parsePort(node, env); ok {
 					p.Service = service
-					out = append(out, p)
+					sp.ports = append(sp.ports, p)
 				}
-			case yaml.MappingNode:
-				var lp composeLongPort
-				if err := node.Decode(&lp); err != nil {
-					continue
-				}
-				if lp.Protocol != "" && lp.Protocol != "tcp" {
-					continue
-				}
-				pub, ok := toInt(lp.Published)
-				varName := ""
-				if !ok {
-					if s, isStr := lp.Published.(string); isStr {
-						resolved, vn, rok := Expand(s, env)
-						varName = vn
-						if !rok {
-							continue
-						}
-						pub, ok = toInt(resolved)
-					}
-				}
-				if !ok || pub < 1 || pub > 65535 {
-					continue
-				}
-				if t, isStr := lp.Target.(string); isStr && strings.Contains(t, "-") {
-					continue // target range
-				}
-				target, _ := toInt(lp.Target)
-				out = append(out, ComposePort{Service: service, Published: pub, Target: target, Var: varName})
 			}
 		}
+		out[service] = sp
 	}
 	return out, nil
+}
+
+// parsePort reads one entry of a service's ports, in the short or the long
+// syntax, resolving variables against env. It reports false for an entry
+// that cannot be resolved, uses a range, or is UDP.
+func parsePort(node *yaml.Node, env map[string]string) (ComposePort, bool) {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return parseShortPort(node.Value, env)
+	case yaml.MappingNode:
+		var lp composeLongPort
+		if err := node.Decode(&lp); err != nil {
+			return ComposePort{}, false
+		}
+		if lp.Protocol != "" && lp.Protocol != "tcp" {
+			return ComposePort{}, false
+		}
+		pub, ok := toInt(lp.Published)
+		varName := ""
+		if !ok {
+			if s, isStr := lp.Published.(string); isStr {
+				resolved, vn, rok := Expand(s, env)
+				varName = vn
+				if !rok {
+					return ComposePort{}, false
+				}
+				pub, ok = toInt(resolved)
+			}
+		}
+		if !ok || pub < 1 || pub > 65535 {
+			return ComposePort{}, false
+		}
+		if t, isStr := lp.Target.(string); isStr && strings.Contains(t, "-") {
+			return ComposePort{}, false // target range
+		}
+		target, _ := toInt(lp.Target)
+		return ComposePort{Published: pub, Target: target, Var: varName}, true
+	}
+	return ComposePort{}, false
 }
 
 func parseShortPort(spec string, env map[string]string) (ComposePort, bool) {

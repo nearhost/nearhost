@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -148,6 +149,15 @@ func TestDiscoverReadsTheComposeOverride(t *testing.T) {
 	}
 }
 
+// An override that does not parse fails discovery, and the error names it.
+func TestDiscoverBadOverrideNamesIt(t *testing.T) {
+	r := memReader{"compose.yaml": "services:\n  web:\n    ports:\n      - '8080:80'\n", "compose.override.yaml": "services: [\n"}
+	_, err := Discover(r, Options{Presets: testPresets(t, "compose")})
+	if err == nil || !strings.HasPrefix(err.Error(), "compose.override.yaml: ") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // Compose reads compose.yaml, its canonical name, over docker-compose.yml.
 func TestDiscoverComposeYAMLWins(t *testing.T) {
 	r := memReader{
@@ -172,10 +182,21 @@ func TestDiscoverComposeReadsOnlyDotEnv(t *testing.T) {
 	if len(res.Routes) != 1 || res.Routes[0].Port != 8001 || res.Routes[0].Source != "compose:web" {
 		t.Fatalf("routes = %+v", res.Routes)
 	}
+	if want := []string{"WEB_PORT is 9000 in .env.local, but Compose reads .env, so it publishes 8001."}; !slices.Equal(res.Warnings, want) {
+		t.Errorf("Warnings = %q, want %q", res.Warnings, want)
+	}
 	delete(r, ".env")
 	res = discover(t, r, Options{Presets: testPresets(t, "compose")})
 	if len(res.Routes) != 1 || res.Routes[0].Port != 8000 {
 		t.Fatalf("without .env: routes = %+v", res.Routes)
+	}
+	if want := []string{"WEB_PORT is 9000 in .env.local, but Compose reads .env, so it publishes 8000."}; !slices.Equal(res.Warnings, want) {
+		t.Errorf("without .env: Warnings = %q, want %q", res.Warnings, want)
+	}
+	// The same value in both files needs no note.
+	r[".env"], r[".env.local"] = "WEB_PORT=8001\n", "WEB_PORT=8001\n"
+	if res = discover(t, r, Options{Presets: testPresets(t, "compose")}); len(res.Warnings) != 0 {
+		t.Errorf("same value: Warnings = %q", res.Warnings)
 	}
 }
 

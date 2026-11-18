@@ -81,6 +81,7 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 		if byPort, err = composeCandidates(compose, composeEnv); err != nil {
 			return nil, err
 		}
+		res.noteEnvLocalPorts(byPort, composeEnv)
 	}
 	for _, p := range res.active {
 		res.apply(p, byPort)
@@ -160,6 +161,25 @@ func composeCandidates(files []ComposeFile, env map[string]string) (map[int]*Can
 		byPort[c.Port] = c
 	}
 	return byPort, nil
+}
+
+// noteEnvLocalPorts warns about each variable that sets a Compose published
+// port and that .env.local gives another port, as Compose reads .env alone
+// and publishes the port from there. composeEnv is what Compose reads.
+func (res *Result) noteEnvLocalPorts(byPort map[int]*Candidate, composeEnv map[string]string) {
+	for _, port := range slices.Sorted(maps.Keys(byPort)) {
+		c := byPort[port]
+		if c.Var == "" || !strings.HasPrefix(c.Source, "compose:") {
+			continue
+		}
+		value, ok := res.Env[c.Var]
+		if !ok || value == composeEnv[c.Var] {
+			continue
+		}
+		if local, ok := envPortValue(value); ok && local != c.Port {
+			res.warn("%s is %d in .env.local, but Compose reads .env, so it publishes %d.", c.Var, local, c.Port)
+		}
+	}
 }
 
 // withoutComposeVars returns env less the variables that set a Compose

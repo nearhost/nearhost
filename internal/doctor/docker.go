@@ -40,7 +40,10 @@ func dockerFindings(in Input) []Finding {
 	if err != nil {
 		return nil
 	}
-	if dotEnv["COMPOSE_FILE"] != "" {
+	// A COMPOSE_FILE from the shell profile applies to every project, so
+	// it is worth a note only where it can matter: beside a Compose file,
+	// or in the project's own .env.
+	if dotEnv["COMPOSE_FILE"] != "" && (len(compose) > 0 || projectSetsComposeFile(in.Files)) {
 		out = append(out, composeFileFinding(compose))
 	}
 	if len(compose) == 0 {
@@ -59,8 +62,7 @@ func dockerFindings(in Input) []Finding {
 			return append(out, composeDepthFinding(f.Name))
 		}
 		if err != nil {
-			// discovery reports a Compose file that does not parse.
-			return out
+			return append(out, composeParseFinding(f.Name))
 		}
 		for i := range fileServices {
 			fileServices[i].File = f.Name
@@ -197,6 +199,29 @@ func hostGatewayFinding(s service, missing []string) Finding {
 			Kind:    FixProject,
 			Text:    "Map each name to the host in " + s.Name + "'s extra_hosts, so the container reaches Nearhost.",
 			Snippet: b.String(),
+		},
+	}
+}
+
+// projectSetsComposeFile reports whether the project's .env sets
+// COMPOSE_FILE.
+func projectSetsComposeFile(r discovery.FileReader) bool {
+	env, err := discovery.ReadComposeEnv(r)
+	return err == nil && env["COMPOSE_FILE"] != ""
+}
+
+// composeParseFinding reports a Compose file that is not valid YAML, so
+// doctor could not check its services. The parser's text is left out, as
+// it can quote the file.
+func composeParseFinding(file string) Finding {
+	return Finding{
+		ID:       "docker.compose-parse",
+		Severity: SeverityWarning,
+		Message:  file + " is not valid YAML, so Nearhost did not check the project's Compose services",
+		File:     file,
+		Fix: Fix{
+			Kind: FixProject,
+			Text: "Fix " + file + " until docker compose config reads it without an error, then run nearhost doctor again.",
 		},
 	}
 }
