@@ -48,13 +48,16 @@ func ParseEnv(data []byte) (map[string]string, error) {
 	return env, nil
 }
 
-// envError turns a godotenv error into one that names the failing line and
-// key. godotenv's own text quotes the rest of the file, so it is never shown.
+// envError turns a godotenv error into one that names the failing line and,
+// when it is key-shaped, its key. godotenv's own text quotes the rest of the file, so it is never shown.
 func envError(data []byte, err error) error {
 	src := strings.ReplaceAll(string(data), "\r\n", "\n") // as godotenv sees it
 	line, key := badLine(src, err.Error())
-	if line == 0 || key == "" {
+	if line == 0 {
 		return errors.New("could not be read")
+	}
+	if key == "" {
+		return fmt.Errorf("line %d could not be read", line)
 	}
 	return fmt.Errorf("line %d: %s could not be read", line, key)
 }
@@ -175,23 +178,32 @@ func validKeyLine(head string) bool {
 	return true
 }
 
-// keyLabel returns the key at the start of text: up to "=", ":" or
-// whitespace, at most maxKeyLabel characters, with control and format
-// characters removed so a terminal shows it as written.
+// keyLabel returns the key of the statement at the start of text, at most
+// maxKeyLabel characters, with control and format characters removed so a
+// terminal shows it as written. It returns "" unless the line has a "=" or
+// ":" separator and the text before it is key-shaped, since a line without
+// one may be a token pasted on its own.
 func keyLabel(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	sep := strings.IndexAny(line, "=:")
+	if sep < 0 {
+		return ""
+	}
 	var b strings.Builder
-	n := 0
-	for _, r := range text {
-		if r == '=' || r == ':' || unicode.IsSpace(r) || n == maxKeyLabel {
-			break
-		}
+	for _, r := range strings.TrimRight(line[:sep], " \t") {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
 			continue
 		}
+		if r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+			return ""
+		}
 		b.WriteRune(r)
-		n++
 	}
-	return b.String()
+	key := []rune(b.String())
+	if len(key) > maxKeyLabel {
+		key = key[:maxKeyLabel]
+	}
+	return string(key)
 }
 
 // ReadEnv reads .env then .env.local, later files overriding earlier ones.

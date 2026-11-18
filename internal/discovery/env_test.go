@@ -75,9 +75,13 @@ func TestParseEnvNamesTheBadLineByNumberAndKey(t *testing.T) {
 		{"crlf", "APP_PORT=80\r\n\r\nMY-PORT=3000\r\nDB_PASSWORD=hunter2\r\n", "line 3: MY-PORT could not be read"},
 		{"export prefix", "export APP_PORT=80\nexport MY-PORT=3000\n", "line 2: MY-PORT could not be read"},
 		{"yaml style", "A=1\nMY-PORT:3000\n", "line 2: MY-PORT could not be read"},
-		{"no separator", "A=1\nB=2\nOOPS hunter-2\n", "line 3: OOPS could not be read"},
+		{"no separator", "A=1\nB=2\nOOPS hunter-2\n", "line 3 could not be read"},
 		{"long key", "A=1\n" + strings.Repeat("K", 50) + "-X=1\n", "line 2: " + strings.Repeat("K", 40) + " could not be read"},
 		{"control characters", "A=1\nMY\x01-PORT=1\n", "line 2: MY-PORT could not be read"},
+		{"pasted token", "A=1\nghp_hunter2token\n", "line 2 could not be read"},
+		// godotenv accepts spaces in a key, so the dash makes this line fail.
+		{"spaces in key", "A=1\nmy key-with spaces=hunter2\n", "line 2 could not be read"},
+		{"quoted key", "A=1\n\"QUOTED\"=x\n", "line 2 could not be read"},
 		{"unterminated quote", "A=1\nB=2\nDB_PASSWORD=\"hunter2\nC=3\n", "line 3: DB_PASSWORD could not be read"},
 	}
 	for _, c := range cases {
@@ -102,6 +106,8 @@ func TestParseEnvErrorNeverShowsValues(t *testing.T) {
 		"SECRET=\"hunter2\"\nOTHER=\"hunter2\nMORE=\"hunter2\n",
 		"SECRET=hunter2\n\xEF\xBB\xBFBOM=hunter2\n",
 		"SECRET=hunter2\n\"QUOTED\"=hunter2\n",
+		"A=1\nghp_hunter2token\n",
+		"A=1\nmy key-with spaces=hunter2\n",
 	}
 	for i, data := range files {
 		_, err := ParseEnv([]byte(data))
