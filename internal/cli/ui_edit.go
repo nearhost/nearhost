@@ -124,9 +124,18 @@ func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvic
 	if err != nil {
 		return tui.ProjectAdvice{}, err
 	}
+	return u.adviceOn(ctx, cfg, *p, srv, files)
+}
+
+// adviceOn is Advice for p on srv's files, which it closes. Ending ctx
+// closes them too, which ends a read stuck on a server that stopped
+// answering, as quitting while a remote project is selected may find.
+func (u *uiEngine) adviceOn(ctx context.Context, cfg *config.Config, p config.Project, srv config.Server, files serverFiles) (tui.ProjectAdvice, error) {
 	uf := &uiFiles{u: u, srv: srv, files: files}
+	stop := context.AfterFunc(ctx, func() { uf.Close() })
+	defer stop()
 	advice, err := uf.advise(ctx, cfg, p.Path, p.Routes, p.Alias, p.Name)
-	return advice, errors.Join(err, files.close())
+	return advice, errors.Join(err, uf.Close())
 }
 
 // Trust runs what `nearhost trust` does, as root, asking for the password

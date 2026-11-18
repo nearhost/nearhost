@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -441,31 +443,62 @@ func TestFormDiscoveryDropsTheAliasFromSecondaryRoutes(t *testing.T) {
 }
 
 // countedFiles is this machine's files, counting how often they are
-// closed, and calling during as a listing or resolve runs.
+// closed. during runs as a resolve does, and reading as a file is read.
+// hang, when set, makes resolve wait on it, as a read on a hung server
+// does, until the files are closed; resolve sends on hung once it waits.
 type countedFiles struct {
 	localFiles
-	mu     sync.Mutex
-	closes int
-	calls  int
-	during func()
+	mu      sync.Mutex
+	closes  int
+	calls   int
+	during  func()
+	reading func()
+	hang    chan struct{}
+	hung    chan struct{}
 }
 
 func (f *countedFiles) resolve(p string) (string, error) {
 	f.mu.Lock()
 	f.calls++
-	during := f.during
+	during, hang := f.during, f.hang
 	f.mu.Unlock()
 	if during != nil {
 		during()
 	}
+	if hang != nil {
+		f.hung <- struct{}{}
+		<-hang
+		return "", errors.New("connection closed")
+	}
 	return f.localFiles.resolve(p)
+}
+
+func (f *countedFiles) reader(dir string) discovery.FileReader {
+	return countedReader{discovery.DirReader{Root: dir}, f}
 }
 
 func (f *countedFiles) close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closes++
+	if f.hang != nil && f.closes == 1 {
+		close(f.hang)
+	}
 	return nil
+}
+
+// countedReader reads this machine's files, calling its files' reading as
+// it does.
+type countedReader struct {
+	discovery.DirReader
+	f *countedFiles
+}
+
+func (r countedReader) ReadFile(name string) ([]byte, error) {
+	if r.f.reading != nil {
+		r.f.reading()
+	}
+	return r.DirReader.ReadFile(name)
 }
 
 // The add form's files stop at an ended context: a call made after it ends
@@ -499,6 +532,56 @@ func TestFormFilesStopAtAnEndedContext(t *testing.T) {
 	under.during = cancel
 	if dirs, err := files.ListDirs(ctx, dir); !errors.Is(err, context.Canceled) {
 		t.Errorf("ListDirs ended during the call: %v, %v", dirs, err)
+	}
+
+	// Ended while discovery reads the project's files.
+	under.during = nil
+	ctx, cancel = context.WithCancel(context.Background())
+	under.reading = cancel
+	if d, err := files.Discover(ctx, dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("Discover ended during the call: %+v, %v", d, err)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	under.reading = cancel
+	if a, _, err := files.Advise(ctx, dir, nil, "x.test"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Advise ended during the call: %+v, %v", a, err)
+	}
+}
+
+// A project's advice read stuck on a server that stopped answering ends
+// when its context does: ending the context closes the connection, once.
+func TestAdviceEndsWithItsContext(t *testing.T) {
+	u := formEngine(t)
+	cfg, err := u.current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := &countedFiles{hang: make(chan struct{}), hung: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := u.adviceOn(ctx, cfg, config.Project{Name: "blog", Path: t.TempDir()}, config.Server{Name: "mini"}, under)
+		done <- err
+	}()
+	select {
+	case <-under.hung:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the advice read never began")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("advice: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the advice read did not end with its context")
+	}
+	under.mu.Lock()
+	defer under.mu.Unlock()
+	if under.closes != 1 {
+		t.Errorf("closed %d times", under.closes)
 	}
 }
 

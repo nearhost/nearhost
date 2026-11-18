@@ -130,6 +130,29 @@ func TestQuitDoesNotWaitForeverForAFormStep(t *testing.T) {
 	<-listed
 }
 
+// A discovery that quitting ends says nothing: the form does not show
+// "context canceled" under the bar that says Nearhost is stopping.
+func TestQuitDropsTheAnswerOfAStepItEnds(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	pf := m.form.(*projectForm)
+	pf.resolved = "/home/dev/code/blog"
+	files.hang, files.hung = make(chan struct{}), make(chan struct{}, 1)
+	discover := pf.discover()
+	read := make(chan tea.Msg, 1)
+	go func() { read <- discover() }()
+	select {
+	case <-files.hung:
+	case <-time.After(2 * time.Second):
+		t.Fatal("discovery never began")
+	}
+	quitWithin(t, m)
+	if msg := <-read; msg != nil {
+		m.Update(msg)
+		t.Errorf("the ended step answered %#v; the form says %q", msg, pf.err)
+	}
+}
+
 // A form closed before quitting has closed its connection once, and
 // quitting does not close it again.
 func TestQuitAfterAFormClosedLeavesItsConnection(t *testing.T) {

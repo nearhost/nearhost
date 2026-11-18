@@ -138,8 +138,10 @@ func newWorker() *worker {
 type releaser interface{ release() }
 
 // do runs fn as a background step. A step that begins after stop does
-// nothing, and what a step returns after stop is released, since the
-// interface is going and will not take it.
+// nothing, and what a step returns after stop is dropped, and released when
+// it holds something, since the interface is going and will not take it:
+// such an answer is mostly the failure stop caused, which the form would
+// otherwise show while Nearhost stops.
 func (w *worker) do(fn func(ctx context.Context) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		w.mu.Lock()
@@ -154,11 +156,13 @@ func (w *worker) do(fn func(ctx context.Context) tea.Msg) tea.Cmd {
 		w.mu.Lock()
 		stopped := w.stopped
 		w.mu.Unlock()
-		if r, ok := msg.(releaser); ok && stopped {
-			r.release()
-			return nil
+		if !stopped {
+			return msg
 		}
-		return msg
+		if r, ok := msg.(releaser); ok {
+			r.release()
+		}
+		return nil
 	}
 }
 
