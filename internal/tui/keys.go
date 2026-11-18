@@ -279,6 +279,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		if s == "c" {
 			return m.connectFirst()
 		}
+		if cmd, ok := m.emptyProblemKey(s); ok {
+			return cmd
+		}
 		if !m.emptyKey(s) {
 			return nil // the rows these act on are not shown
 		}
@@ -326,7 +329,7 @@ func (m *Model) action(s string) tea.Cmd {
 		case kind == rowServer && name != config.LocalServer:
 			return m.reconnect(name)
 		case kind == rowHome:
-			return tea.Batch(m.retryProxy(), m.retryServers())
+			return m.retryHome()
 		}
 	case "a":
 		if kind, name := m.selected(); kind == rowProject {

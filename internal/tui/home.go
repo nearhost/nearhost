@@ -234,6 +234,12 @@ func (m *Model) retryProxy() tea.Cmd {
 	})
 }
 
+// retryHome is Home's r: it starts the proxy again when it is down and
+// reconnects every server that cannot connect.
+func (m *Model) retryHome() tea.Cmd {
+	return tea.Batch(m.retryProxy(), m.retryServers())
+}
+
 // retryServers reconnects every server that cannot connect.
 func (m *Model) retryServers() tea.Cmd {
 	var cmds []tea.Cmd

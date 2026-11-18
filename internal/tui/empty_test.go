@@ -291,3 +291,34 @@ func TestFirstRunScreenRetriesAndCopiesForAServer(t *testing.T) {
 		t.Errorf("copied %q", got)
 	}
 }
+
+// A server added from the first-run screen is selected while the screen
+// stays first-run; r and y there still do what Home's do: r retries the
+// proxy and the failing servers, and leaves the added one alone, and y
+// copies the ssh command.
+func TestFirstRunScreenKeysActAsHomeWhateverIsSelected(t *testing.T) {
+	cfg := &config.Config{Servers: []config.Server{
+		{Name: "vps", SSHHost: "deploy@vps.example"},
+		{Name: "box", SSHHost: "box.lan"},
+	}}
+	f := newFake(t, cfg)
+	f.servers["vps"] = transport.StatusAuthFailed
+	f.srvErrs["vps"] = "Permission denied (publickey)"
+	f.servers["box"] = transport.StatusConnected
+	f.startErrs = []error{nil}
+	m := proxyDown(t, f, errBoom)
+	m.Update(serverAddedMsg{srv: config.Server{Name: "box", SSHHost: "box.lan"}})
+	if !m.empty() || m.sel != rowKey(rowServer, "box") {
+		t.Fatalf("empty %v, selected %q", m.empty(), m.sel)
+	}
+	run(m, press(m, "r"))
+	if f.startCalls != 1 {
+		t.Errorf("Start called %d times, want 1", f.startCalls)
+	}
+	if got := strings.Join(f.edit.reconnected, ","); got != "vps" {
+		t.Errorf("reconnected %q, want vps", got)
+	}
+	if got := clipboardOf(press(m, "y")); got != "ssh deploy@vps.example" {
+		t.Errorf("copied %q", got)
+	}
+}

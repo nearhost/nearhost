@@ -56,18 +56,28 @@ func (m *Model) emptyKeys() []footerItem {
 	return append(keys, footerItem{"?", "help"}, footerItem{"q", "quit"})
 }
 
-// emptyKey reports whether s works on the first-run screen. r and y act as
-// on Home while the screen shows problems, whose lines name them.
+// emptyKey reports whether s works on the first-run screen.
 func (m *Model) emptyKey(s string) bool {
 	for _, it := range m.emptyKeys() {
 		if it.key == s {
 			return true
 		}
 	}
-	if (s == "r" || s == "y") && len(m.problems()) > 0 {
-		return true
-	}
 	return s == "esc"
+}
+
+// emptyProblemKey runs r or y on the first-run screen while it shows
+// problems, whose lines name those keys: they do what Home's do, whatever
+// row is selected (a server added from this screen is). ok is false for
+// any other key, or with no problem shown.
+func (m *Model) emptyProblemKey(s string) (cmd tea.Cmd, ok bool) {
+	if (s != "r" && s != "y") || len(m.problems()) == 0 {
+		return nil, false
+	}
+	if s == "r" {
+		return m.retryHome(), true
+	}
+	return m.copySSH(), true
 }
 
 // emptyAdding says what the ways to start do: c only once there is a
