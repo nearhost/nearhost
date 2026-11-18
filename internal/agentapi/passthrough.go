@@ -141,6 +141,9 @@ type passRecord struct {
 	// opening is set while Passer.Open runs for it. It does not expire
 	// meanwhile, and can't be answered again.
 	opening bool
+	// closing is set while the forward opened for a request its session
+	// closed meanwhile is closed again; see closeOpened.
+	closing bool
 	state   State
 	reason  string
 	local   int
@@ -211,6 +214,11 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		s.mu.Unlock()
 		return nil
 	}
+	if s.passCountLocked(r.Origin) >= maxPassthroughs {
+		s.endPassLocked(r, StateDeclined, tooManyPasses)
+		s.mu.Unlock()
+		return passEnded{errors.New(tooManyPasses)}
+	}
 	r.opening = true
 	p := r.passthrough(s.opts.Now())
 	s.mu.Unlock()
@@ -226,7 +234,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	if r.state != StatePending {
 		// Its session was closed while it opened: close the forward, and
 		// give no grant, which would replace the one the agent holds.
-		r.opening = false
+		r.opening, r.closing = false, true
 		s.mu.Unlock()
 		return passEnded{closedWhileOpening(r, s.closeOpened(ctx, r))}
 	}
@@ -240,6 +248,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 
 	s.mu.Lock()
 	r.opening = false
+	r.closing = r.state != StatePending
 	// A token is given even to a request its session closed meanwhile, as
 	// the grant it belongs to is saved.
 	r.token = token
@@ -287,7 +296,11 @@ func allowNotSaved(err error) error {
 func (s *Server) closeOpened(ctx context.Context, r *passRecord) error {
 	ctx, cancel := detached(ctx, closeTimeout)
 	defer cancel()
-	return s.opts.Passer.Close(ctx, r.ID)
+	err := s.opts.Passer.Close(ctx, r.ID)
+	s.mu.Lock()
+	r.closing = false
+	s.mu.Unlock()
+	return err
 }
 
 // closedWhileOpening is why a request whose session was closed while its
@@ -297,6 +310,20 @@ func closedWhileOpening(r *passRecord, closeErr error) error {
 		return fmt.Errorf("its session was closed while port %d opened, and closing it failed: %w", r.Remote, closeErr)
 	}
 	return fmt.Errorf("its session was closed while port %d opened", r.Remote)
+}
+
+// passCountLocked counts origin's passthroughs that are open, being
+// opened, or being closed again after their session closed while they
+// opened: each holds or may hold a forward, and counts against
+// maxPassthroughs.
+func (s *Server) passCountLocked(origin string) int {
+	n := 0
+	for _, r := range s.passes {
+		if r.Origin == origin && (r.state == StateOpen || r.opening || r.closing) {
+			n++
+		}
+	}
+	return n
 }
 
 // endPassLocked ends a pending request, unless it has already ended.

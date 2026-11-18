@@ -1131,3 +1131,113 @@ func TestPassthroughCloseIsNoRefusal(t *testing.T) {
 		t.Fatalf("after a close: %d %v", st, out)
 	}
 }
+
+// tooMany is the error for a passthrough past maxPassthroughs.
+const tooMany = "16 passthroughs are open for this server; close one first"
+
+// openWithToken opens ports from with a token on apollo, one at a time, and
+// returns their ids.
+func (e *passEnv) openWithToken(t *testing.T, from, n int) []string {
+	t.Helper()
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	var ids []string
+	for port := from; port < from+n; port++ {
+		st, out := e.ask(t, fmt.Sprintf(`{"port": %d, "requester": "claude-code", "token": "good"}`, port))
+		if st != http.StatusCreated {
+			t.Fatalf("port %d: %d %v", port, st, out)
+		}
+		ids = append(ids, out["id"].(string))
+	}
+	return ids
+}
+
+func TestPassthroughCap(t *testing.T) {
+	e := newPassServer(t, true)
+	ids := e.openWithToken(t, 3000, maxPassthroughs)
+	st, out := e.ask(t, `{"port": 4000, "requester": "claude-code", "token": "good"}`)
+	if st != http.StatusTooManyRequests || out["error"] != tooMany {
+		t.Fatalf("17th with a token: %d %v", st, out)
+	}
+	st, out = e.ask(t, `{"port": 4000, "requester": "claude-code"}`)
+	if st != http.StatusTooManyRequests || out["error"] != tooMany || len(e.r.prompts()) != 0 {
+		t.Fatalf("17th to prompt: %d %v, prompts %v", st, out, e.r.prompts())
+	}
+	// Asking again for a port that is open still answers with it.
+	if st, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`); st != http.StatusOK || out["state"] != "open" {
+		t.Fatalf("asked again for an open port: %d %v", st, out)
+	}
+	// The cap is per server.
+	if st, out := call(t, e.other, "POST", "/v1/passthroughs", `{"port": 4000, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("another server: %d %v", st, out)
+	}
+	if st := status(t, e.remote, "DELETE", "/v1/passthroughs/"+ids[0]); st != http.StatusNoContent {
+		t.Fatalf("close: %d", st)
+	}
+	if st, out := e.ask(t, `{"port": 4000, "requester": "claude-code", "token": "good"}`); st != http.StatusCreated {
+		t.Fatalf("after a close: %d %v", st, out)
+	}
+}
+
+// A passthrough counts from the moment its open begins, so requests that
+// arrive together cannot open more than the cap between them.
+func TestPassthroughCapCountsOpening(t *testing.T) {
+	e := newPassServer(t, true)
+	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	release := e.p.blocking()
+	defer release()
+	var wg sync.WaitGroup
+	for port := 3000; port < 3000+maxPassthroughs; port++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.ask(t, fmt.Sprintf(`{"port": %d, "requester": "claude-code", "token": "good"}`, port))
+		}()
+	}
+	for range maxPassthroughs {
+		e.waitStarted(t)
+	}
+	type answer struct {
+		st  int
+		out map[string]any
+	}
+	got := make(chan answer, 1)
+	go func() {
+		st, out := e.ask(t, `{"port": 4000, "requester": "claude-code", "token": "good"}`)
+		got <- answer{st, out}
+	}()
+	var a answer
+	select {
+	case a = <-got:
+	case <-time.After(2 * time.Second):
+		release()
+		a = <-got
+	}
+	release()
+	wg.Wait()
+	if a.st != http.StatusTooManyRequests || a.out["error"] != tooMany {
+		t.Fatalf("17th while 16 open: %d %v", a.st, a.out)
+	}
+	if n := len(e.p.opened()); n != maxPassthroughs {
+		t.Fatalf("opened %d", n)
+	}
+}
+
+// A prompt the user answers after the cap filled ends declined with the
+// cap as its reason, and opens nothing.
+func TestPassthroughCapAtTheAnswer(t *testing.T) {
+	e := newPassServer(t, true)
+	e.openWithToken(t, 3000, maxPassthroughs-1)
+	_, out := e.ask(t, `{"port": 4000, "requester": "claude-code"}`)
+	id := out["id"].(string)
+	e.openWithToken(t, 3100, 1)
+	err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
+	if err == nil || err.Error() != tooMany || !errors.Is(err, ErrPassEnded) {
+		t.Fatalf("answer: %v", err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "declined" || out["reason"] != tooMany {
+		t.Fatalf("after the answer: %v", out)
+	}
+	if n := len(e.p.opened()); n != maxPassthroughs {
+		t.Fatalf("opened %d", n)
+	}
+}

@@ -135,6 +135,11 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		return
 	}
+	if s.passCountLocked(o) >= maxPassthroughs {
+		s.mu.Unlock()
+		fail(w, http.StatusTooManyRequests, tooManyPasses)
+		return
+	}
 	reviewer := s.reviewer
 	if !allowed {
 		if s.backingOffLocked(w, o, kindPassthrough) {
@@ -191,6 +196,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.state != StatePending {
+		rec.closing = true
 		s.mu.Unlock()
 		closeErr := s.closeOpened(r.Context(), rec)
 		status := http.StatusConflict
