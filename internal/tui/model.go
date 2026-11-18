@@ -485,8 +485,7 @@ func (m *Model) setConfig(cfg *config.Config) {
 	for _, p := range cfg.Projects {
 		if _, existed := old.Project(p.Name); !existed {
 			delete(m.collapsed, p.Server) // so the new project's row is shown
-			m.sel = rowKey(rowProject, p.Name)
-			m.scroll = 0
+			m.selectRow(rowKey(rowProject, p.Name))
 			return
 		}
 	}

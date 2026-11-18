@@ -196,3 +196,26 @@ func TestRoutesMakeWebKeepsHostedRoute(t *testing.T) {
 		t.Errorf("cursor on row %d, want 0", m.routeRow)
 	}
 }
+
+// TestRouteFocusEndsWhenConfigAddsProject checks that a project added from
+// outside takes the selection and the route keys with it: the next space
+// must not change a route of a project the user did not choose.
+func TestRouteFocusEndsWhenConfigAddsProject(t *testing.T) {
+	m, f := routesModel(t)
+	cfg := sampleConfig()
+	cfg.Projects = append(cfg.Projects, config.Project{
+		Name: "fresh", Server: "mini", Path: "/srv/fresh", Alias: "fresh.test", Enabled: true,
+		Routes: []config.Route{{Port: 80, Role: config.RoleWeb}, {Port: 5173, Role: config.RoleLoopback}},
+	})
+	m.setConfig(cfg)
+	if m.sel != rowKey(rowProject, "fresh") {
+		t.Fatalf("selection is %q, want the new project", m.sel)
+	}
+	if m.routeFocus || m.panelErr != "" {
+		t.Errorf("focus %v, panel %q after the selection jumped", m.routeFocus, m.panelErr)
+	}
+	run(m, press(m, "space"))
+	if f.edit.edits != 0 {
+		t.Error("space changed a route after the selection jumped")
+	}
+}
