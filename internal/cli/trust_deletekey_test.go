@@ -576,6 +576,7 @@ func TestUntrustDeleteKeyDeletesNothingOnAnUnclassifiedError(t *testing.T) {
 // A Nearhost found by the second check keeps untrust's own error in the
 // output.
 func TestUntrustDeleteKeySecondRunningCheckKeepsUntrustsError(t *testing.T) {
+	setHostOS(t, "linux") // the still-trusted wording differs by system
 	ca, _ := localCA(t)
 	f := deleteFake(t)
 	f.trusted = true
