@@ -137,19 +137,26 @@ func TestSameFileAt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { f.Close() })
 		return f
 	}
-	if f := open(); !sameFileAt(f, p) {
+	// Each file is closed once checked: Windows refuses to rename a folder
+	// that holds an open file, which would stop the next swap.
+	f := open()
+	if !sameFileAt(f, p) {
 		t.Error("an unchanged file is not the one at its path")
 	}
+	f.Close()
 	// Swapped before the open, and still swapped.
 	swapNotes(t, dir)
-	if f := open(); sameFileAt(f, p) {
+	f = open()
+	if sameFileAt(f, p) {
 		t.Error("a file opened through a swapped folder passes")
 	}
-	// Swapped before the open, and swapped back before the check.
-	f := open()
+	f.Close()
+	// Swapped before the open, and swapped back before the check. The file
+	// is open in dir/outside, so notes can be swapped back with it open.
+	f = open()
+	defer f.Close()
 	unswapNotes(t, dir)
 	if sameFileAt(f, p) {
 		t.Error("a file opened through a folder swapped back passes")
