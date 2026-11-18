@@ -60,3 +60,29 @@ func TestDefaultHostsIncludeGlobSkipsFIFO(t *testing.T) {
 		t.Fatalf("got %v, %v; want %v", hosts, err, want)
 	}
 }
+
+func TestDefaultHostsMainConfigFIFOIsSkipped(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(home, ".ssh", "config"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	done := make(chan struct{})
+	var hosts []string
+	var err error
+	go func() {
+		defer close(done)
+		hosts, err = DefaultHosts()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a FIFO as the config hung the read")
+	}
+	if err != nil || hosts != nil {
+		t.Fatalf("got %v, %v", hosts, err)
+	}
+}

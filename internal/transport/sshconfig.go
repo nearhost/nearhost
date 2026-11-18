@@ -65,7 +65,8 @@ func (l *hostLister) read(r io.Reader, chain []string) error {
 		}
 		text := strings.Join(chunk, "\n")
 		chunk = chunk[:0]
-		return l.add(text)
+		l.add(text)
+		return nil
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if isMatchLine(line) {
@@ -88,19 +89,48 @@ func (l *hostLister) read(r io.Reader, chain []string) error {
 	return flush()
 }
 
-func (l *hostLister) add(text string) error {
+// add lists the Host names in chunk, a run of lines between Include lines.
+// When the parser rejects the chunk, add retries it one block at a time (a
+// block starts at a Host line) and skips the blocks that still fail, so one
+// bad line cannot empty the list.
+func (l *hostLister) add(chunk string) {
+	if l.addParsed(chunk) == nil {
+		return
+	}
+	var block []string
+	flush := func() {
+		if len(block) > 0 {
+			_ = l.addParsed(strings.Join(block, "\n"))
+			block = block[:0]
+		}
+	}
+	for _, line := range strings.Split(chunk, "\n") {
+		if f := strings.Fields(line); len(f) > 0 && strings.EqualFold(strings.SplitN(f[0], "=", 2)[0], "host") {
+			flush()
+		}
+		block = append(block, line)
+	}
+	flush()
+}
+
+// addParsed parses text and lists its Host names; nothing is listed when the
+// parse fails.
+func (l *hostLister) addParsed(text string) error {
 	cfg, err := ssh_config.Decode(strings.NewReader(text))
 	if err != nil {
 		return fmt.Errorf("parse ssh config: %w", err)
 	}
 	for _, h := range cfg.Hosts {
 		for _, p := range h.Patterns {
-			name := strings.Trim(p.String(), `"`)
-			if name == "" || strings.HasPrefix(name, "!") || strings.ContainsAny(name, "*?") || l.seen[name] {
-				continue
+			// The parser splits on spaces only; ssh also splits on tabs.
+			for _, name := range strings.Fields(p.String()) {
+				name = strings.Trim(name, `"`)
+				if name == "" || strings.HasPrefix(name, "!") || strings.ContainsAny(name, "*?") || l.seen[name] {
+					continue
+				}
+				l.seen[name] = true
+				l.hosts = append(l.hosts, name)
 			}
-			l.seen[name] = true
-			l.hosts = append(l.hosts, name)
 		}
 	}
 	return nil
@@ -111,6 +141,9 @@ func (l *hostLister) include(args, chain []string) error {
 		return nil
 	}
 	for _, arg := range args {
+		if l.files >= maxIncludeFiles {
+			return nil
+		}
 		// OpenSSH expands %-tokens and ${VAR} in Include paths, and ~user to
 		// another account's home. None of that is expanded here: skip the path.
 		if strings.Contains(arg, "%") || strings.Contains(arg, "${") || (strings.HasPrefix(arg, "~") && !strings.HasPrefix(arg, "~/") && !strings.HasPrefix(arg, `~\`)) {
@@ -179,6 +212,10 @@ func isMatchLine(line string) bool {
 // arguments.
 func includeArgs(line string) ([]string, bool) {
 	line = strings.TrimSpace(line)
+	if strings.EqualFold(line, "include") {
+		// A bare Include names nothing; claim it so the parser never sees it.
+		return nil, true
+	}
 	if len(line) < 8 || !strings.EqualFold(line[:7], "include") {
 		return nil, false
 	}
@@ -227,6 +264,10 @@ func DefaultHosts() ([]string, error) {
 		return nil, err
 	}
 	path := filepath.Join(home, ".ssh", "config")
+	// Opening a FIFO would block, so look before opening.
+	if fi, err := os.Stat(path); err == nil && !fi.Mode().IsRegular() {
+		return nil, nil
+	}
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

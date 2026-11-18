@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -269,10 +268,10 @@ func TestDefaultHostsIncludedMatchBlockHostsAreSkipped(t *testing.T) {
 
 func TestDefaultHostsSyntaxVariants(t *testing.T) {
 	home := t.TempDir()
-	writeSSHFile(t, home, "config", "# c\r\nHost mini mini.lan\r\n  HostName 1.2.3.4\r\nhost apollo\r\nHost=vps\r\nHost \"quoted\"\r\nHost mini\r\n")
+	writeSSHFile(t, home, "config", "# c\r\nHost mini mini.lan\r\n  HostName 1.2.3.4\r\nhost apollo\r\nHost=vps\r\nHost \"quoted\"\r\nHost mini\r\nHost tab1\ttab2\r\n")
 	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
-	want := []string{"mini", "mini.lan", "apollo", "vps", "quoted"}
+	want := []string{"mini", "mini.lan", "apollo", "vps", "quoted", "tab1", "tab2"}
 	if err != nil || !reflect.DeepEqual(hosts, want) {
 		t.Fatalf("got %v, %v; want %v", hosts, err, want)
 	}
@@ -302,14 +301,30 @@ func TestDefaultHostsReadsOnlyTheFirstMebibyte(t *testing.T) {
 	}
 }
 
-func TestDefaultHostsSkipsAnIncludedFileThatDoesNotParse(t *testing.T) {
+func TestDefaultHostsSkipsTheBlockThatDoesNotParse(t *testing.T) {
 	home := t.TempDir()
-	writeSSHFile(t, home, "config", "Include bad good\nHost mini\n")
-	writeSSHFile(t, home, "bad", "Host ok\n  Port\n\tProxyCommand \"unterminated\nHost =\n")
+	// A bare Match line reaches the parser and makes it fail.
+	writeSSHFile(t, home, "config", "Host before\nInclude bad good\nHost after\nMatch\nHost last\n")
+	writeSSHFile(t, home, "bad", "Host skipped-with-bad\nMatch\n")
 	writeSSHFile(t, home, "good", "Host fine\n")
 	testutil.SetHome(t, home)
 	hosts, err := DefaultHosts()
-	if err != nil || !slices.Contains(hosts, "fine") || !slices.Contains(hosts, "mini") {
-		t.Fatalf("got %v, %v", hosts, err)
+	want := []string{"before", "fine", "last"} // "after" shares a block with the bad line
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
+
+func TestDefaultHostsIncludeBackslashHome(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include ~\\hosts\nHost mini\n")
+	if err := os.WriteFile(filepath.Join(home, "hosts"), []byte("Host viahome\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	want := []string{"viahome", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
 	}
 }
