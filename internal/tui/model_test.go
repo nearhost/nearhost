@@ -569,3 +569,90 @@ func TestFormatCharactersAreRemoved(t *testing.T) {
 		t.Errorf("format characters reached the screen:\n%s", s)
 	}
 }
+
+// proxyDown is a model whose first start failed with err, Home selected.
+func proxyDown(t *testing.T, f *fakeBackend, err error) *Model {
+	t.Helper()
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{err} })
+	return m
+}
+
+func TestRTriesTheProxyAgainAndTheItemGoes(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.startErrs = []error{nil}
+	m := proxyDown(t, f, errBoom)
+	wantScreen(t, m, "✕ proxy  down", "r tries again")
+	run(m, run(m, press(m, "r"))) // the answer, then the projects it starts
+	if f.startCalls != 1 {
+		t.Fatalf("Start called %d times, want 1", f.startCalls)
+	}
+	if got := screen(m); strings.Contains(got, "down") || strings.Contains(got, "tries again") {
+		t.Errorf("the proxy item stays after a good retry:\n%s", got)
+	}
+	wantScreen(t, m, "proxy     ● https :443 · http :80")
+	if strings.Join(f.started, ",") != "website,myapp" {
+		t.Errorf("projects started %v, want website,myapp once", f.started)
+	}
+}
+
+func TestRDoesNotStartAProxyThatIsUp(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{} })
+	run(m, press(m, "r"))
+	if f.startCalls != 0 {
+		t.Errorf("Start called %d times with the proxy up", f.startCalls)
+	}
+	if strings.Contains(screen(m), "tries again") {
+		t.Error("the hint shows with the proxy up")
+	}
+}
+
+func TestSecondRDuringARetryStartsNothing(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := proxyDown(t, f, errBoom)
+	first := press(m, "r") // in flight: not run yet
+	wantScreen(t, m, "proxy     ◐ starting")
+	if strings.Contains(screen(m), "tries again") {
+		t.Error("the hint shows while starting")
+	}
+	if second := press(m, "r"); second != nil {
+		t.Error("a second r started another retry")
+	}
+	run(m, first)
+	if f.startCalls != 1 {
+		t.Errorf("Start called %d times, want 1", f.startCalls)
+	}
+}
+
+func TestFailedRetryShowsTheNewReasonAndKeepsTheHint(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.startErrs = []error{errors.New("HTTP port 80 is in use by nginx (pid 7)")}
+	m := proxyDown(t, f, errors.New("HTTPS port 443 is in use"))
+	run(m, press(m, "r"))
+	wantScreen(t, m, "proxy     ✕ down", "why       HTTP port 80 is in use by nginx (pid 7)", "r tries again")
+	if strings.Contains(screen(m), "why       HTTPS port 443") {
+		t.Error("the old reason stays")
+	}
+	if len(f.started) != 0 {
+		t.Errorf("projects started %v without a proxy", f.started)
+	}
+	f.startErrs = []error{nil}
+	run(m, press(m, "r")) // and a later retry works
+	if f.startCalls != 2 || strings.Contains(screen(m), "down") {
+		t.Errorf("calls %d, screen:\n%s", f.startCalls, screen(m))
+	}
+}
+
+func TestRDoesNothingWhileTheWindowIsTooSmall(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := proxyDown(t, f, errBoom)
+	m.Update(tea.WindowSizeMsg{Width: 10, Height: 5})
+	if cmd := press(m, "r"); cmd != nil {
+		t.Error("r acted in a window that is too small")
+	}
+	if f.startCalls != 0 {
+		t.Errorf("Start called %d times", f.startCalls)
+	}
+}

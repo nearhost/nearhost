@@ -18,6 +18,9 @@ func newSpinner() spinner.Model {
 // busy reports whether anything shown turns the spinner: a project that is
 // starting, or a server that is connecting.
 func (m *Model) busy() bool {
+	if m.proxyRetrying {
+		return true
+	}
 	for _, p := range m.cfg.Projects {
 		if m.b.Status(p.Name).State == engine.StateStarting {
 			return true

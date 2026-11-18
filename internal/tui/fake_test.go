@@ -34,14 +34,18 @@ type fakeBackend struct {
 	health    map[string]engine.ServerHealth // failures and next attempts, by server
 	startErr  error
 	startErr2 error // what StartProject returns
-	reads     int   // calls to CATrusted and HostsState
-	openErr   error
-	applyErr  error
-	forms     formFake
-	edit      editFake
-	change    changeFake
-	trusted   bool
-	caExpires time.Time
+	// startErrs are what the next calls of Start return, one each; Start
+	// returns startErr when it is empty.
+	startErrs  []error
+	startCalls int // calls to Start
+	reads      int // calls to CATrusted and HostsState
+	openErr    error
+	applyErr   error
+	forms      formFake
+	edit       editFake
+	change     changeFake
+	trusted    bool
+	caExpires  time.Time
 	// hostsState is what HostsState says; empty means "2 names".
 	hostsState string
 	// applyBlocks makes Apply wait for its context to end.
@@ -90,7 +94,17 @@ func newFake(t testing.TB, cfg *config.Config) *fakeBackend {
 	}
 }
 
-func (f *fakeBackend) Start(context.Context) error { return f.startErr }
+func (f *fakeBackend) Start(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startCalls++
+	if len(f.startErrs) > 0 {
+		err := f.startErrs[0]
+		f.startErrs = f.startErrs[1:]
+		return err
+	}
+	return f.startErr
+}
 func (f *fakeBackend) AcceptProposal(id, name string) {
 	f.mu.Lock()
 	f.answers = append(f.answers, "accept "+id+" "+name)
