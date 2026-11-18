@@ -174,8 +174,21 @@ func lineEnding(parts ...[]string) string {
 	return "\n"
 }
 
+// Current reports whether existing already holds the managed block for
+// aliases, the check Apply and Ensure make before they write. A missing final
+// newline does not count as a difference.
+func Current(existing string, aliases []string) (bool, error) {
+	updated, err := Rewrite(existing, aliases)
+	if err != nil {
+		return false, err
+	}
+	return unchanged(existing, updated), nil
+}
+
 // Rewrite returns the hosts content with the managed block set to aliases.
-// Everything outside the markers is preserved byte for byte.
+// Everything outside the markers is preserved byte for byte. The block takes
+// the file's dominant line ending. When Nearhost had to add a newline after a
+// last line that had none, removing the block later leaves that newline.
 func Rewrite(existing string, aliases []string) (string, error) {
 	return rewrite(existing, aliases, true)
 }

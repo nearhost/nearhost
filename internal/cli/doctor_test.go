@@ -317,6 +317,17 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 		})
 	}
 
+	t.Run("a CRLF block with no final newline is current", func(t *testing.T) {
+		doctorConfig(t)
+		f := healthy()
+		f.hosts = "127.0.0.1 localhost\r\n# nearhost:start\r\n127.0.0.1 api.test\r\n::1 api.test\r\n127.0.0.1 web.test\r\n::1 web.test\r\n# nearhost:end"
+		out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+		if err != nil {
+			t.Fatalf("doctor: %v\n%s", err, out)
+		}
+		wantContains(t, out, "ok    hosts block      2 names\n")
+	})
+
 	t.Run("--no-hosts skips the check", func(t *testing.T) {
 		doctorConfig(t)
 		f := healthy()

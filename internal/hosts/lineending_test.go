@@ -47,7 +47,7 @@ func TestApplyUnchangedCRLFBlockWritesNothing(t *testing.T) {
 	withDefaultEnding(t, "\n")
 	path := filepath.Join(t.TempDir(), "hosts")
 	content := crlf(base + lfBlock)
-	os.WriteFile(path, []byte(content), 0o644)
+	writeHosts(t, path, content)
 	old := renameFile
 	renameFile = func(_, _ string) error { t.Fatal("the file was written"); return nil }
 	defer func() { renameFile = old }()
@@ -62,7 +62,7 @@ func TestApplyUnchangedCRLFBlockWritesNothing(t *testing.T) {
 func TestApplyRewritesLFBlockInCRLFFileOnce(t *testing.T) {
 	withDefaultEnding(t, "\n")
 	path := filepath.Join(t.TempDir(), "hosts")
-	os.WriteFile(path, []byte(crlf(base)+lfBlock), 0o644)
+	writeHosts(t, path, crlf(base)+lfBlock)
 	if err := Apply(path, []string{"a.test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,10 +142,54 @@ func TestRewriteAddThenRemoveRestoresFile(t *testing.T) {
 	}
 }
 
-func TestRewriteRemovalWithNoFinalNewlineKeepsIt(t *testing.T) {
-	existing := "a\r\nb" // no block: nothing to remove
-	if got := mustRewrite(t, existing, nil); got != existing {
-		t.Fatalf("got %q", got)
+// When Nearhost had to add a newline before its block, removing the block
+// leaves that newline in place.
+func TestRewriteRemovalLeavesTheNewlineAddedBeforeTheBlock(t *testing.T) {
+	withDefaultEnding(t, "\n")
+	added := mustRewrite(t, "a\r\nb", []string{"a.test"})
+	if got, want := mustRewrite(t, added, nil), "a\r\nb\r\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := mustRewrite(t, "a\r\nb", nil); got != "a\r\nb" {
+		t.Fatalf("a file with no block changed: %q", got)
+	}
+}
+
+// TestSecondApplyIsANoOp applies each file twice: the first write may change
+// it, the second must not write at all.
+func TestSecondApplyIsANoOp(t *testing.T) {
+	cases := []struct {
+		name, eol, content string
+	}{
+		{"plain CRLF file", "\n", crlf(base)},
+		{"empty file, LF default", "\n", ""},
+		{"empty file, CRLF default", "\r\n", ""},
+		{"block in the middle", "\n", crlf(base) + lfBlock + "10.0.0.1 x.test\r\n"},
+		{"block in the middle, no final newline", "\n", crlf(base) + lfBlock + "10.0.0.1 x.test"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withDefaultEnding(t, tc.eol)
+			path := filepath.Join(t.TempDir(), "hosts")
+			writeHosts(t, path, tc.content)
+			if err := Apply(path, []string{"a.test"}); err != nil {
+				t.Fatal(err)
+			}
+			old := renameFile
+			renameFile = func(_, _ string) error { t.Fatal("the second Apply wrote"); return nil }
+			defer func() { renameFile = old }()
+			if err := Apply(path, []string{"a.test"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// writeHosts writes content to path.
+func writeHosts(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -24,6 +24,7 @@ func TestRewriteAppendsBlockWhenAbsent(t *testing.T) {
 }
 
 func TestRewriteWithoutTrailingNewlineStartsBlockOnOwnLine(t *testing.T) {
+	withDefaultEnding(t, "\n")
 	got := mustRewrite(t, "127.0.0.1\tlocalhost", []string{"a.test"})
 	if !strings.HasPrefix(got, "127.0.0.1\tlocalhost\n# nearhost:start\n") {
 		t.Fatalf("marker merged into last line:\n%s", got)
@@ -232,6 +233,7 @@ func TestRewriteRejectsInvalidAliases(t *testing.T) {
 }
 
 func TestRewriteAcceptsValidAliases(t *testing.T) {
+	withDefaultEnding(t, "\n")
 	got := mustRewrite(t, "", []string{"my-app-2.test", "api.myapp.test", "  pad.test  "})
 	want := "# nearhost:start\n127.0.0.1 api.myapp.test\n::1 api.myapp.test\n127.0.0.1 my-app-2.test\n::1 my-app-2.test\n127.0.0.1 pad.test\n::1 pad.test\n# nearhost:end\n"
 	if got != want {
@@ -321,6 +323,7 @@ func TestApplyPreservesMode(t *testing.T) {
 }
 
 func TestApplyCreatesMissingFileWith0644(t *testing.T) {
+	withDefaultEnding(t, "\n")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hosts")
 	if err := Apply(path, []string{"a.test"}); err != nil {
@@ -480,6 +483,7 @@ func TestRewriteAcceptsRealDomainsButNotPatternsOrLocalhost(t *testing.T) {
 }
 
 func TestBlockWritesIPv4AndIPv6(t *testing.T) {
+	withDefaultEnding(t, "\n")
 	got := mustRewrite(t, "", []string{"b.test", "a.test"})
 	want := "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
 	if got != want {
