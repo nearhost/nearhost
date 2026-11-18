@@ -94,7 +94,7 @@ func (m *Model) machineSummary() string {
 	case m.proxyErr != nil:
 		proxy, proxyOK = glyph(markError).String()+styleRed.Render(" down"), false
 	case !m.started:
-		proxy = styleAmber.Render("◐ starting")
+		proxy = busyMark().String() + styleAmber.Render(" starting")
 	}
 	ca := "trusted"
 	if !m.caTrusted {

@@ -56,7 +56,7 @@ func (m *Model) proxyLines(width int) []string {
 	case m.proxyErr != nil:
 		return field("proxy", glyph(markError).String()+styleRed.Render(" down"), width)
 	case !m.started:
-		return field("proxy", styleAmber.Render("◐ starting"), width)
+		return field("proxy", busyMark().String()+styleAmber.Render(" starting"), width)
 	}
 	return field("proxy", glyph(markRunning).String()+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }

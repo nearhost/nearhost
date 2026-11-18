@@ -102,3 +102,20 @@ func TestLogTabBracketsWithoutColour(t *testing.T) {
 		t.Errorf("the tabs are %d cells wide, were %d", ansi.StringWidth(plain), ansi.StringWidth(colour))
 	}
 }
+
+// A project in error keeps its error mark when a change also waits for
+// approval.
+func TestErrorMarkWinsOverPending(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	st := engine.ProjectStatus{State: engine.StateError, Message: "boom", Pending: &engine.Change{}}
+	if got := m.projectDot(st); got.text != "✕" || got.style.GetForeground() != colourRed {
+		t.Errorf("errored project with a pending change has mark %q", got.text)
+	}
+	f.setState("myapp", st)
+	for _, l := range sideText(m) {
+		if strings.Contains(l, "myapp") && !strings.Contains(l, "✕") {
+			t.Errorf("sidebar row %q lacks the error mark", l)
+		}
+	}
+}

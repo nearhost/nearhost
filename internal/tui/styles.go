@@ -180,10 +180,10 @@ func serverMark(st transport.Status) seg {
 }
 
 // projectDot is the mark of a project: the spinner while it starts, the
-// attention mark while its .nearhostrc waits for approval, and its state's
-// mark otherwise.
+// attention mark while its .nearhostrc waits for approval (an error still
+// shows its own mark), and its state's mark otherwise.
 func (m *Model) projectDot(st engine.ProjectStatus) seg {
-	if st.State != engine.StateStarting && st.Pending != nil {
+	if st.State != engine.StateStarting && st.State != engine.StateError && st.Pending != nil {
 		return glyph(markAttention)
 	}
 	return m.stateDot(st.State)
