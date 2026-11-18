@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/nearhost/nearhost/internal/fsretry"
 )
 
 // Windows cannot overwrite or delete a running .exe, but it can rename one,
@@ -73,7 +76,7 @@ func moveAside(exe string) (string, error) {
 		to := filepath.Join(dir, fmt.Sprintf("%s-%d-%s%s", stem, os.Getpid(), randomHex(), ext))
 		err := os.MkdirAll(dir, 0o755)
 		if err == nil {
-			err = os.Rename(exe, to)
+			err = renameAside(exe, to)
 		}
 		if err == nil {
 			return to, nil
@@ -82,13 +85,20 @@ func moveAside(exe string) (string, error) {
 	}
 	beside := exe + ".old-" + strconv.Itoa(os.Getpid())
 	for _, to := range []string{beside, beside + "-" + randomHex()} {
-		err := os.Rename(exe, to)
+		err := renameAside(exe, to)
 		if err == nil {
 			return to, nil
 		}
 		errs = append(errs, err)
 	}
 	return "", fmt.Errorf("move %s out of the way: %w", exe, errors.Join(errs...))
+}
+
+// renameAside renames the running copy. A virus scanner or an indexer may
+// hold the file for a moment, most of all one that was just written, so a
+// rename refused for that reason is tried again for a short while.
+func renameAside(from, to string) error {
+	return fsretry.Rename(from, to, 50*time.Millisecond, 2*time.Second)
 }
 
 func randomHex() string {
