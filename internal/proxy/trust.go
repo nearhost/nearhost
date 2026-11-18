@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/smallstep/truststore"
@@ -80,6 +81,16 @@ func Uninstall(cert *x509.Certificate) error {
 	return nil
 }
 
+// UninstallNSS removes the root from the NSS stores only, leaving the system
+// store alone, so it never prompts for a password. A machine without certutil
+// or an NSS database has nothing to remove and is not an error.
+func UninstallNSS(cert *x509.Certificate) error {
+	if err := trustUninstall(cert, truststore.WithFirefox(), truststore.WithNoSystem()); err != nil {
+		return fmt.Errorf("uninstall CA from NSS stores: %w", err)
+	}
+	return nil
+}
+
 // IsTrusted reports whether the system trust store accepts cert as a root.
 // On Linux it reads the bundle files afresh, so a CA trusted while Nearhost
 // runs shows at once; when they cannot be read it asks Go's own pool.
@@ -115,6 +126,36 @@ const (
 type NSSStatus struct {
 	State  NSSState
 	Detail string
+	// NoCertutil is true when NSS stores cannot be read or changed because
+	// certutil is missing, as opposed to there being no NSS store at all.
+	NoCertutil bool
+	// Stores lists the NSS database directories found, so a message can name
+	// them. It is empty when there are none or the platform has no NSS.
+	Stores []string
+}
+
+// nssDatabases lists the NSS database directories on this machine: the Firefox
+// profiles and, on Linux, the shared ~/.pki/nssdb, which hold a cert9.db or
+// cert8.db. It mirrors where the trust store library looks.
+func nssDatabases() []string {
+	var dirs []string
+	if truststore.NSSProfile != "" {
+		dirs, _ = filepath.Glob(truststore.NSSProfile)
+	}
+	dirs = append(dirs, filepath.Join(os.Getenv("HOME"), ".pki", "nssdb"))
+	var found []string
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			continue
+		}
+		for _, db := range []string{"cert9.db", "cert8.db"} {
+			if _, err := os.Stat(filepath.Join(d, db)); err == nil {
+				found = append(found, d)
+				break
+			}
+		}
+	}
+	return found
 }
 
 // CheckNSS reports whether the NSS stores already have cert. It only
@@ -123,21 +164,24 @@ func CheckNSS(cert *x509.Certificate) NSSStatus {
 	if !nssNeeded {
 		return NSSStatus{State: NSSNotNeeded, Detail: "Chromium-family browsers and Firefox 120 or later use the Windows certificate store"}
 	}
+	stores := nssDatabases()
 	t, err := truststore.NewNSSTrust()
 	if err != nil {
 		detail := "NSS support is not available on this platform"
+		missing := false
 		if truststore.CertutilInstallHelp != "" {
 			detail = `"certutil" not found (install it with "` + truststore.CertutilInstallHelp + `")`
+			missing = true
 		}
-		return NSSStatus{State: NSSUnavailable, Detail: detail}
+		return NSSStatus{State: NSSUnavailable, Detail: detail, NoCertutil: missing, Stores: stores}
 	}
 	if err := t.PreCheck(); err != nil {
 		return NSSStatus{State: NSSUnavailable, Detail: "no NSS database found"}
 	}
 	if t.Exists(cert) {
-		return NSSStatus{State: NSSCovered}
+		return NSSStatus{State: NSSCovered, Stores: stores}
 	}
-	return NSSStatus{State: NSSMissing}
+	return NSSStatus{State: NSSMissing, Stores: stores}
 }
 
 // InstallNSS adds the root to the NSS stores only, leaving the system

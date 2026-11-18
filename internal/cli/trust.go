@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/smallstep/truststore"
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -25,6 +27,9 @@ type trustBackend struct {
 	nss        func(*x509.Certificate) proxy.NSSStatus
 	installNSS func(*x509.Certificate) error
 	uninstall  func(*x509.Certificate) error
+	// uninstallNSS removes the root from the NSS stores alone, without
+	// touching the system store. nil skips it.
+	uninstallNSS func(*x509.Certificate) error
 	// findSudo returns sudo.ErrNotFound when the system store cannot be
 	// changed: no root-owned sudo, and Nearhost is not root. nil skips the
 	// check.
@@ -59,7 +64,9 @@ func systemTrust() trustBackend {
 		nss:        proxy.CheckNSS,
 		installNSS: proxy.InstallNSS,
 		uninstall:  proxy.Uninstall,
-		findSudo:   systemSudo,
+
+		uninstallNSS: proxy.UninstallNSS,
+		findSudo:     systemSudo,
 	}
 }
 
@@ -176,6 +183,33 @@ func nssLine(st proxy.NSSStatus) string {
 	}
 }
 
+// untrustNotInStore is what untrust says when the system store lacks the root.
+const untrustNotInStore = "Nearhost Local CA was not in the trust store."
+
+// nssLeftLine words what untrust could not clean from the NSS stores, "" when
+// they are clean or there are none. It is the counterpart of nssLine: a
+// browser store that still trusts the root, or one that could not be checked
+// because certutil is missing, is a CA the user believes is gone.
+func nssLeftLine(st proxy.NSSStatus) string {
+	var names []string
+	for _, s := range st.Stores {
+		names = append(names, printable(s))
+	}
+	list := strings.Join(names, ", ")
+	switch {
+	case st.State == proxy.NSSCovered:
+		if list == "" {
+			list = "an NSS store"
+		}
+		return "Warning: the " + nssStores + " still trust the Nearhost Local CA (" + list +
+			"). Nearhost could not remove it there; delete \"Nearhost\" from that browser's certificates by hand."
+	case st.State == proxy.NSSUnavailable && st.NoCertutil && len(st.Stores) > 0:
+		return "Warning: Nearhost could not clean the " + nssStores + " (" + list + "), which may still trust the Nearhost Local CA: " +
+			st.Detail + ". Install it and run `nearhost untrust` again."
+	}
+	return ""
+}
+
 func newUntrustCmd(b trustBackend) *cobra.Command {
 	return &cobra.Command{
 		Use:   "untrust",
@@ -192,19 +226,48 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("no local CA found: %w", err)
 			}
-			if err := b.sudoProblem("untrust"); err != nil {
-				return err
-			}
-			if err := b.uninstall(cert); err != nil {
-				if errors.Is(err, sudo.ErrNotFound) {
-					return noSudo(err, "untrust")
+			out := cmd.OutOrStdout()
+			inStore := b.isTrusted == nil || b.isTrusted(cert)
+			if inStore {
+				// Check sudo only when there is something to remove: the
+				// not-trusted path asks for no elevation at all.
+				if err := b.sudoProblem("untrust"); err != nil {
+					return err
 				}
-				if trustRefused(err) {
-					return errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes.")
+				if err := b.uninstall(cert); err != nil {
+					switch {
+					case errors.Is(err, truststore.ErrNotFound):
+						inStore = false // trusted a moment ago, gone now
+					case errors.Is(err, sudo.ErrNotFound):
+						return noSudo(err, "untrust")
+					case trustRefused(err):
+						return errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes.")
+					default:
+						return fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err)
+					}
 				}
-				return fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Nearhost Local CA removed from the trust store.")
+			if inStore {
+				fmt.Fprintln(out, "Nearhost Local CA removed from the trust store.")
+			} else {
+				fmt.Fprintln(out, untrustNotInStore)
+				// The root can sit in a browser store without being in the
+				// system store, and that needs no password.
+				if b.uninstallNSS != nil {
+					if err := b.uninstallNSS(cert); err != nil {
+						return fmt.Errorf("%w (the system store does not hold the CA; fix the NSS stores and run `nearhost untrust` again)", err)
+					}
+				}
+			}
+			// The library removes from the NSS stores when it can and skips
+			// them silently otherwise, so check what actually happened. The
+			// exit status stays 0 as in `trust`, which also only reports NSS
+			// stores it could not configure; the line comes last.
+			if b.nss != nil {
+				if line := nssLeftLine(b.nss(cert)); line != "" {
+					fmt.Fprintln(out, line)
+				}
+			}
 			return nil
 		},
 	}

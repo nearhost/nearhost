@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallstep/truststore"
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -32,6 +33,10 @@ type fakeTrust struct {
 	nssInstalls int
 	nssErr      error
 	nssChecks   int
+	// nssUninstalls counts uninstallNSS calls; sudoChecks counts findSudo calls.
+	nssUninstalls int
+	nssUninstErr  error
+	sudoChecks    int
 }
 
 func (f *fakeTrust) backend() trustBackend {
@@ -52,6 +57,11 @@ func (f *fakeTrust) backend() trustBackend {
 		},
 		installNSS: func(*x509.Certificate) error { f.nssInstalls++; return f.nssErr },
 		uninstall:  func(*x509.Certificate) error { f.uninstall++; return f.uninstErr },
+		uninstallNSS: func(*x509.Certificate) error {
+			f.nssUninstalls++
+			return f.nssUninstErr
+		},
+		findSudo: func() error { f.sudoChecks++; return nil },
 	}
 }
 
@@ -188,6 +198,7 @@ func TestTrustSurfacesEnsureError(t *testing.T) {
 func TestUntrustRemoves(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
+	f.trusted = true
 	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
 	if err != nil || f.uninstall != 1 || !strings.Contains(out, "removed") {
 		t.Fatalf("err=%v uninstalls=%d out=%q", err, f.uninstall, out)
@@ -207,6 +218,7 @@ func TestUntrustWithoutCAFailsWithoutUninstalling(t *testing.T) {
 func TestUntrustSurfacesErrorWithHint(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	f := newFake()
+	f.trusted = true
 	f.uninstErr = errors.New("uninstall CA: refused")
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
 	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "run `nearhost untrust` again") {
@@ -222,6 +234,7 @@ func TestTrustCommandsWithoutSudoGiveNoPromptHint(t *testing.T) {
 	f.instErr = fmt.Errorf("install CA: %w", sudo.ErrNotFound)
 	f.uninstErr = fmt.Errorf("uninstall CA: %w", sudo.ErrNotFound)
 	for _, name := range []string{"trust", "untrust"} {
+		f.trusted = name == "untrust"
 		cmd := newTrustCmd(f.backend())
 		if name == "untrust" {
 			cmd = newUntrustCmd(f.backend())
@@ -239,6 +252,7 @@ func TestTrustCommandsCheckForSudoFirst(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, name := range []string{"trust", "untrust"} {
 		f := newFake()
+		f.trusted = name == "untrust" // untrust only asks for sudo when there is something to remove
 		b := f.backend()
 		b.findSudo = func() error { return sudo.ErrNotFound }
 		cmd := newTrustCmd(b)
@@ -364,5 +378,102 @@ func TestDoctorWarnsOfAnOldCACopy(t *testing.T) {
 	}
 	if len(f.rootDirs) != 2 || f.rootDirs[1] != filepath.Join(data, "caddy") {
 		t.Fatalf("CA read from %v", f.rootDirs)
+	}
+}
+
+func TestUntrustNotTrustedSaysSoAsksNoElevationAndCleansNSS(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.nss = proxy.NSSStatus{State: proxy.NSSMissing}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.uninstall != 0 || f.sudoChecks != 0 || f.nssUninstalls != 1 {
+		t.Fatalf("uninstalls=%d sudoChecks=%d nssUninstalls=%d", f.uninstall, f.sudoChecks, f.nssUninstalls)
+	}
+	if !strings.Contains(out, "Nearhost Local CA was not in the trust store.") || strings.Contains(out, "removed") || strings.Contains(out, "Warning") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestUntrustMapsNotFoundAfterTrustedToNotInStore(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.uninstErr = fmt.Errorf("uninstall CA: %w", truststore.ErrNotFound)
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil || f.uninstall != 1 || f.nssUninstalls != 1 {
+		t.Fatalf("err=%v uninstalls=%d nssUninstalls=%d", err, f.uninstall, f.nssUninstalls)
+	}
+	if !strings.Contains(out, "Nearhost Local CA was not in the trust store.") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestUntrustTrustedRemovesAndChecksNSS(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.nss = proxy.NSSStatus{State: proxy.NSSMissing}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil || f.uninstall != 1 || f.nssUninstalls != 0 || f.nssChecks != 1 {
+		t.Fatalf("err=%v uninstalls=%d nssUninstalls=%d nssChecks=%d", err, f.uninstall, f.nssUninstalls, f.nssChecks)
+	}
+	if !strings.Contains(out, "removed") || strings.Contains(out, "Warning") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestUntrustNSSLeftBehindIsTheLastLine(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.nss = proxy.NSSStatus{State: proxy.NSSCovered, Stores: []string{"/home/u/.mozilla/firefox/ab\x1b[31mc.default"}}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "still trust") || !strings.Contains(last, "firefox/ab") || strings.Contains(out, "\x1b") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestUntrustCertutilMissingNamesStoresAndWhatToInstall(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, NoCertutil: true,
+		Detail: `"certutil" not found (install it with "apt install libnss3-tools")`, Stores: []string{"/home/u/.pki/nssdb"}}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strings.Split(strings.TrimSpace(out), "\n")
+	if l := last[len(last)-1]; !strings.Contains(l, "/home/u/.pki/nssdb") || !strings.Contains(l, "libnss3-tools") || !strings.Contains(l, "may still trust") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestUntrustNoNSSDatabaseSaysNothingExtra(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, Detail: "no NSS database found"}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil || strings.Contains(out, "Warning") {
+		t.Fatalf("err=%v output %q", err, out)
+	}
+}
+
+func TestUntrustNSSCleanFailureFails(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.nssUninstErr = errors.New("certutil -D failed")
+	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err == nil || !strings.Contains(err.Error(), "certutil -D failed") {
+		t.Fatalf("err = %v", err)
 	}
 }
