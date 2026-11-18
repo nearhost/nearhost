@@ -16,6 +16,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// zstdMaxWindow is the largest zstd window decode accepts, in bytes.
+const zstdMaxWindow = 8 << 20
+
 // BodyText is a kept body as text to read: decoded when it was sent
 // compressed with gzip, deflate or zstd, and indented when it is JSON. note
 // says why there is no text (binary, or an encoding that is not decoded) or
@@ -72,7 +75,12 @@ func decode(enc string, body []byte) (out []byte, whole bool, err error) {
 			r = flate.NewReader(bytes.NewReader(body))
 		}
 	case "zstd":
-		zr, err := zstd.NewReader(bytes.NewReader(body))
+		// A frame declares its window and the decoder allocates it up front,
+		// so cap it at 8 MiB, the window of zstd levels up to 19. Frames
+		// that declare more (--ultra, --long) fail and show as undecoded.
+		// One decoder goroutine at most, closed on return.
+		zr, err := zstd.NewReader(bytes.NewReader(body),
+			zstd.WithDecoderMaxWindow(zstdMaxWindow), zstd.WithDecoderConcurrency(1))
 		if err != nil {
 			return nil, false, err
 		}
