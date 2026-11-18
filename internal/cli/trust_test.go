@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -41,6 +42,9 @@ type fakeTrust struct {
 	// stillTrusted is the answer after the uninstall.
 	present      bool
 	stillTrusted bool
+	// foreign makes the fake system store hold no anchor of Nearhost's even
+	// though trusted is true: trust comes from somewhere else.
+	foreign bool
 }
 
 func (f *fakeTrust) backend() trustBackend {
@@ -65,8 +69,9 @@ func (f *fakeTrust) backend() trustBackend {
 			f.nssUninstalls++
 			return f.nssUninstErr
 		},
-		systemHolds:  func(*x509.Certificate) bool { return f.present },
+		systemHolds:  func(*x509.Certificate) bool { return (f.present || f.trusted) && !f.foreign },
 		stillTrusted: func(*x509.Certificate) bool { return f.stillTrusted },
+		anchorHelp:   func() (string, string) { return "/usr/local/share/ca-certificates", "update-ca-certificates" },
 		findSudo:     func() error { f.sudoChecks++; return nil },
 	}
 }
@@ -527,5 +532,24 @@ func TestUntrustNotTrustedWithCertutilMissingFails(t *testing.T) {
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
 	if err == nil || !strings.Contains(err.Error(), "/home/u/.pki/nssdb") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestUntrustTrustedFromAnotherAnchorFailsWithoutSudo(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.trusted = true
+	f.foreign = true
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if runtime.GOOS != "linux" {
+		t.Skip("the anchor message is the Linux one")
+	}
+	if err == nil || f.uninstall != 0 || f.sudoChecks != 0 || strings.Contains(out, "removed") {
+		t.Fatalf("err=%v uninstalls=%d sudoChecks=%d out=%q", err, f.uninstall, f.sudoChecks, out)
+	}
+	for _, want := range []string{"did not install the file", "/usr/local/share/ca-certificates", "SSL_CERT_FILE", "update-ca-certificates"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err %q lacks %q", err, want)
+		}
 	}
 }

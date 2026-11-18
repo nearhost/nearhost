@@ -11,3 +11,6 @@ func SystemHolds(*x509.Certificate) bool { return true }
 
 // StillTrusted reports whether the system still trusts the root.
 func StillTrusted(cert *x509.Certificate) bool { return IsTrusted(cert) }
+
+// AnchorHelp has nothing to name here.
+func AnchorHelp() (dir, update string) { return "", "" }

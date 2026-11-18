@@ -7,3 +7,8 @@ import "crypto/x509"
 var removeSystemCopy = func(cert *x509.Certificate) error {
 	return deleteFromKeychain(cert, systemKeychain)
 }
+
+// copyOnlyWhenUntrusted is true on macOS: a root with no trust settings makes
+// the library's `remove-trusted-cert` fail, so Uninstall then only deletes the
+// copy.
+var copyOnlyWhenUntrusted = true

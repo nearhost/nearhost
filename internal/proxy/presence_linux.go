@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/smallstep/truststore"
@@ -43,3 +44,13 @@ func SystemHolds(cert *x509.Certificate) bool {
 // Linux IsTrusted would answer from before the uninstall; the anchor file is
 // the thing to look at.
 func StillTrusted(cert *x509.Certificate) bool { return SystemHolds(cert) }
+
+// AnchorHelp names the directory the library keeps its anchor in and the
+// command that rebuilds the bundle, for a message about trust that is not
+// Nearhost's to remove. Either is "" when the library found none.
+func AnchorHelp() (dir, update string) {
+	if truststore.SystemTrustFilename != "" {
+		dir = filepath.Dir(truststore.SystemTrustFilename)
+	}
+	return dir, strings.Join(truststore.SystemTrustCommand, " ")
+}

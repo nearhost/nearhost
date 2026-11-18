@@ -32,6 +32,9 @@ type trustBackend struct {
 	// isTrusted says: a file or keychain entry that is present has to go even
 	// when this process does not see it as trusted. nil means unknown.
 	systemHolds func(*x509.Certificate) bool
+	// anchorHelp names the directory of the anchor file and the command that
+	// rebuilds the bundle, for a message about trust Nearhost did not install.
+	anchorHelp func() (dir, update string)
 	// stillTrusted is asked after the system uninstall; true means the system
 	// still trusts the root. nil falls back to isTrusted.
 	stillTrusted func(*x509.Certificate) bool
@@ -74,6 +77,7 @@ func systemTrust() trustBackend {
 		uninstall:    proxy.Uninstall,
 		systemHolds:  proxy.SystemHolds,
 		stillTrusted: proxy.StillTrusted,
+		anchorHelp:   proxy.AnchorHelp,
 
 		uninstallNSS: proxy.UninstallNSS,
 		findSudo:     systemSudo,
@@ -228,6 +232,26 @@ func nssStoreList(st proxy.NSSStatus) string {
 	return strings.Join(names, ", ")
 }
 
+// foreignTrustError is the error for a root the system trusts without a file
+// of Nearhost's: there is nothing for untrust to remove.
+func foreignTrustError(goos string, help func() (string, string)) error {
+	if goos != "linux" {
+		return stillTrustedError(goos)
+	}
+	dir, update := "", ""
+	if help != nil {
+		dir, update = help()
+	}
+	if dir == "" {
+		dir = "your distribution's trust anchors directory"
+	}
+	if update == "" {
+		update = "your distribution's update command"
+	}
+	return fmt.Errorf("the system still trusts Nearhost Local CA, and Nearhost did not install the file that makes it so. "+
+		"Look for it under %s and the directory named by SSL_CERT_FILE or SSL_CERT_DIR if set, remove it, then run %s.", dir, update)
+}
+
 // stillTrustedError says the system still trusts the root after untrust, for
 // the operating system, and what to do about it.
 func stillTrustedError(goos string) error {
@@ -261,7 +285,14 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 			// Presence decides what to remove, with IsTrusted as one input: a
 			// process that does not see the root as trusted can still have its
 			// anchor on disk.
-			inStore := b.isTrusted(cert) || b.systemHolds == nil || b.systemHolds(cert)
+			trusted := b.isTrusted(cert)
+			holds := b.systemHolds == nil || b.systemHolds(cert)
+			if trusted && !holds {
+				// Trust comes from a file Nearhost did not install, so there
+				// is nothing of Nearhost's to remove and no reason for sudo.
+				return foreignTrustError(runtime.GOOS, b.anchorHelp)
+			}
+			inStore := trusted || holds
 			if inStore {
 				// Check sudo only when there is something to remove: the
 				// not-trusted path asks for no elevation at all.

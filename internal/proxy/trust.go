@@ -72,14 +72,28 @@ func Install(cert *x509.Certificate) error {
 // Uninstall removes the root from the trust stores Install touched, and on
 // macOS deletes it from the System keychain too.
 func Uninstall(cert *x509.Certificate) error {
-	if err := withTrustedSudo(func() error { return trustUninstall(cert, truststore.WithFirefox()) }); err != nil {
-		return fmt.Errorf("uninstall CA: %w", err)
+	// On macOS a copy with no trust settings makes `remove-trusted-cert` fail
+	// every run, so only the copy is deleted then. When it is trusted, a
+	// failure still goes on to delete the copy and the caller's re-check
+	// decides the outcome.
+	var trustErr error
+	if !(copyOnlyWhenUntrusted && !trustedNow(cert)) {
+		trustErr = withTrustedSudo(func() error { return trustUninstall(cert, truststore.WithFirefox()) })
+		if trustErr != nil && !copyOnlyWhenUntrusted {
+			return fmt.Errorf("uninstall CA: %w", trustErr)
+		}
 	}
 	if err := removeSystemCopy(cert); err != nil {
+		if trustErr != nil {
+			return fmt.Errorf("uninstall CA: %w", trustErr)
+		}
 		return fmt.Errorf("uninstall CA: %w", err)
 	}
 	return nil
 }
+
+// trustedNow is IsTrusted. Tests replace it.
+var trustedNow = IsTrusted
 
 // UninstallNSS removes the root from the NSS stores only, leaving the system
 // store alone, so it never prompts for a password. A machine without certutil

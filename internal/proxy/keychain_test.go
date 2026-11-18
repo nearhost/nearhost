@@ -133,3 +133,50 @@ func TestUninstallRemovesTheSystemCopyAfterTheTrust(t *testing.T) {
 		t.Fatalf("order = %v, want trust then copy", order)
 	}
 }
+
+func TestUninstallOfAnUntrustedCopyOnlyRemovesTheCopy(t *testing.T) {
+	fakeTrustSudo(t)
+	var order []string
+	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
+	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { order = append(order, "trust"); return nil }
+	removeSystemCopy = func(*x509.Certificate) error { order = append(order, "copy"); return nil }
+	copyOnlyWhenUntrusted = true
+	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
+	trustedNow = func(*x509.Certificate) bool { return false }
+
+	if err := Uninstall(&x509.Certificate{}); err != nil || !slices.Equal(order, []string{"copy"}) {
+		t.Fatalf("err=%v order=%v, want only the copy removal", err, order)
+	}
+}
+
+func TestUninstallRemovesTheCopyEvenWhenRemoveTrustedCertFails(t *testing.T) {
+	fakeTrustSudo(t)
+	var order []string
+	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
+	trustUninstall = func(*x509.Certificate, ...truststore.Option) error {
+		order = append(order, "trust")
+		return errors.New("exit status 1")
+	}
+	removeSystemCopy = func(*x509.Certificate) error { order = append(order, "copy"); return nil }
+	copyOnlyWhenUntrusted = true
+	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
+	trustedNow = func(*x509.Certificate) bool { return true }
+
+	if err := Uninstall(&x509.Certificate{}); err != nil || !slices.Equal(order, []string{"trust", "copy"}) {
+		t.Fatalf("err=%v order=%v, want the copy removed after the failure", err, order)
+	}
+}
+
+func TestUninstallKeepsTheTrustErrorWhenTheCopyCannotGoEither(t *testing.T) {
+	fakeTrustSudo(t)
+	origUninstall, origRemove, origOnly := trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted
+	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { return errors.New("trust boom") }
+	removeSystemCopy = func(*x509.Certificate) error { return errors.New("copy boom") }
+	copyOnlyWhenUntrusted = true
+	t.Cleanup(func() { trustUninstall, removeSystemCopy, copyOnlyWhenUntrusted = origUninstall, origRemove, origOnly })
+	trustedNow = func(*x509.Certificate) bool { return true }
+
+	if err := Uninstall(&x509.Certificate{}); err == nil || !strings.Contains(err.Error(), "trust boom") {
+		t.Fatalf("err = %v", err)
+	}
+}
