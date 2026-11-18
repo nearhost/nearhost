@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // Kind is how a copy of nearhost was installed.
@@ -28,6 +30,15 @@ func (k Kind) String() string {
 
 // InstallScript is the shell installer's one-liner.
 const InstallScript = "curl -fsSL https://nearhost.dev/install.sh | sh"
+
+// scriptRun is the command nearhost runs for a script install. It downloads
+// the installer to a temporary file and runs it only when curl has fetched
+// all of it, so a download that fails part-way runs nothing and the
+// command fails with curl's status, which `curl | sh` would hide behind
+// sh's. The file goes when the shell exits. NEARHOST_INSTALL_DIR and
+// NEARHOST_VERSION reach the installer through the environment (Env),
+// never through this text, so no directory name can change the command.
+const scriptRun = `t=$(mktemp) && trap "rm -f \"$t\"" EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`
 
 // InstallScriptWindows is the PowerShell installer's one-liner.
 const InstallScriptWindows = "irm https://nearhost.dev/install.ps1 | iex"
@@ -82,6 +93,18 @@ func (m Method) String() string {
 		return InstallScript
 	}
 	return strings.Join(m.Args, " ")
+}
+
+// SameVersion reports whether installed, the version a binary reports, is
+// target. A leading v and build metadata (+...) do not count; anything that
+// is not a version, such as a development build's "dev", is never target.
+func SameVersion(installed, target string) bool {
+	i, err := semver.NewVersion(installed)
+	if err != nil {
+		return false
+	}
+	t, err := semver.NewVersion(target)
+	return err == nil && i.Equal(t)
 }
 
 // Pinned is the method installing exactly version rather than the latest
@@ -143,7 +166,7 @@ func DetectOn(goos, exe string, getenv func(string) string) Method {
 		m.Kind = Script
 	default:
 		m.Kind = Script
-		m.Args = []string{"sh", "-c", InstallScript}
+		m.Args = []string{"sh", "-c", scriptRun}
 		m.Env = []string{"NEARHOST_INSTALL_DIR=" + dir}
 	}
 	return m

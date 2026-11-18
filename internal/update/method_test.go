@@ -3,7 +3,6 @@ package update
 import (
 	"path"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -51,8 +50,35 @@ func TestScriptInstallsOverTheRunningBinary(t *testing.T) {
 	if !slices.Contains(m.Env, "NEARHOST_INSTALL_DIR="+dir) {
 		t.Fatalf("Env = %v, want the binary's directory as NEARHOST_INSTALL_DIR", m.Env)
 	}
-	if m.Args[0] != "sh" || !strings.Contains(m.Args[2], "install.sh | sh") {
-		t.Fatalf("Args = %v", m.Args)
+	// The installer is downloaded to a file and run once the download is
+	// complete. The directory reaches it through the environment, never
+	// through the command's text.
+	want := []string{"sh", "-c", `t=$(mktemp) && trap "rm -f \"$t\"" EXIT && curl -fsSL https://nearhost.dev/install.sh -o "$t" && sh "$t"`}
+	if !slices.Equal(m.Args, want) {
+		t.Fatalf("Args = %q, want %q", m.Args, want)
+	}
+	if m.String() != InstallScript {
+		t.Fatalf("the command shown is %q, want %q", m.String(), InstallScript)
+	}
+}
+
+func TestSameVersion(t *testing.T) {
+	for _, tc := range []struct {
+		installed, target string
+		want              bool
+	}{
+		{"0.6.0", "0.6.0", true},
+		{"v0.6.0", "0.6.0", true},
+		{"0.6.0+darwin.arm64", "0.6.0", true},
+		{"0.13.0-rc.2", "0.13.0-rc.2", true},
+		{"0.5.0", "0.6.0", false},
+		{"0.13.0-rc.1", "0.13.0", false},
+		{"dev", "0.6.0", false},
+		{"", "0.6.0", false},
+	} {
+		if got := SameVersion(tc.installed, tc.target); got != tc.want {
+			t.Errorf("SameVersion(%q, %q) = %v, want %v", tc.installed, tc.target, got, tc.want)
+		}
 	}
 }
 
