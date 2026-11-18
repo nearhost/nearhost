@@ -103,6 +103,14 @@ func TestNewProjectCleansANameFromTheDirectory(t *testing.T) {
 	if p.Name != "app]52;c;AAAA" {
 		t.Errorf("Name = %q, want no ESC or BEL", p.Name)
 	}
+	if got := defaultName(mini[0], "/srv/app"+osc52); got != "app]52;c;AAAA" {
+		t.Errorf("defaultName = %q, want no ESC or BEL", got)
+	}
+	// A directory named with nothing but control characters gives no name.
+	_, err = newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/\x1b\a\x01"})
+	if err == nil || !strings.Contains(err.Error(), "cannot name a project after") || !strings.Contains(err.Error(), "pass --name") {
+		t.Errorf("err = %v, want the refusal to name it", err)
+	}
 }
 
 // encoding/json leaves DEL, the C1 controls and bidi overrides as they are,
