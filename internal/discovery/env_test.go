@@ -2,7 +2,9 @@ package discovery
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -67,78 +69,85 @@ func TestParseEnvStripsByteOrderMark(t *testing.T) {
 	}
 }
 
-func TestParseEnvNamesTheBadLineByNumberAndKey(t *testing.T) {
-	cases := []struct {
-		name, data, want string
-	}{
-		{"dash in key", "APP_PORT=80\n# comment\nMY-PORT=3000\nDB_PASSWORD=hunter2\n", "line 3: MY-PORT could not be read"},
-		{"crlf", "APP_PORT=80\r\n\r\nMY-PORT=3000\r\nDB_PASSWORD=hunter2\r\n", "line 3: MY-PORT could not be read"},
-		{"export prefix", "export APP_PORT=80\nexport MY-PORT=3000\n", "line 2: MY-PORT could not be read"},
-		{"yaml style", "A=1\nMY-PORT:3000\n", "line 2: MY-PORT could not be read"},
-		{"no separator", "A=1\nB=2\nOOPS hunter-2\n", "line 3 could not be read"},
-		{"long key", "A=1\n" + strings.Repeat("K", 50) + "-X=1\n", "line 2: " + strings.Repeat("K", 40) + " could not be read"},
-		{"control characters", "A=1\nMY\x01-PORT=1\n", "line 2: MY-PORT could not be read"},
-		{"pasted token", "A=1\nghp_hunter2token\n", "line 2 could not be read"},
-		// godotenv accepts spaces in a key, so the dash makes this line fail.
-		{"spaces in key", "A=1\nmy key-with spaces=hunter2\n", "line 2 could not be read"},
-		{"quoted key", "A=1\n\"QUOTED\"=x\n", "line 2 could not be read"},
-		{"unterminated quote", "A=1\nB=2\nDB_PASSWORD=\"hunter2\nC=3\n", "line 3: DB_PASSWORD could not be read"},
-	}
-	for _, c := range cases {
+// errorForm is the only shape a ParseEnv error may take.
+var errorForm = regexp.MustCompile(`^(line [0-9]+ )?could not be read$`)
+
+// malformedEnv is a .env that godotenv rejects, the line ParseEnv should
+// name (0 for none), and a secret the error must not show.
+type malformedEnv struct {
+	name, data string
+	line       int
+	secret     string
+}
+
+// malformedEnvs covers each error form godotenv has, with a secret on other
+// lines, as the bad line's value and as the bad line itself.
+var malformedEnvs = []malformedEnv{
+	{"dash in key", "APP_PORT=80\n# comment\nMY-PORT=3000\nDB_PASSWORD=hunter2\n", 3, "hunter2"},
+	{"crlf", "APP_PORT=80\r\n\r\nMY-PORT=3000\r\nDB_PASSWORD=hunter2\r\n", 3, "hunter2"},
+	{"export prefix", "export APP_PORT=80\nexport MY-PORT=hunter2\n", 2, "hunter2"},
+	{"yaml style", "A=1\nMY-PORT: hunter2\nSECRET=hunter2\n", 2, "hunter2"},
+	{"no separator", "A=1\nB=2\nOOPS hunter-2\n", 3, "hunter-2"},
+	{"key is the secret", "A=1\nhunter2-key=x\n", 2, "hunter2"},
+	{"control characters", "A=1\nMY\x01-PORT=hunter2\n", 2, "hunter2"},
+	{"pasted token", "A=1\nghp_hunter2token\n", 2, "ghp_hunter2token"},
+	// godotenv accepts spaces in a key, so the dash makes this line fail.
+	{"spaces in key", "A=1\nmy key-with spaces=hunter2\n", 2, "hunter2"},
+	{"quoted key", "SECRET=hunter2\n\"QUOTED\"=hunter2\n", 2, "hunter2"},
+	{"bom inside", "SECRET=hunter2\n\xEF\xBB\xBFBOM=hunter2\n", 2, "hunter2"},
+	{"token before cr", "A=1\nsk-live-abc123\rB=2\n", 2, "sk-live-abc123"},
+	{"token before vt", "A=1\nsk-live-abc123\vB=2\n", 2, "sk-live-abc123"},
+	{"token before ff", "A=1\nsk-live-abc123\fB=2\n", 2, "sk-live-abc123"},
+	{"padded base64", "A=1\nZmDfcTF7-60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg=\n", 2, "ZmDfcTF7"},
+	{"unterminated quote", "A=1\nB=2\nDB_PASSWORD=\"hunter2\nC=3\n", 3, "hunter2"},
+	{"unterminated single quote", "PASSWORD='hunter2\nSECRET=hunter2\n", 1, "hunter2"},
+	{"unterminated after secrets", "SECRET=hunter2\nPASSWORD=\"hunter2\nTOKEN=hunter2\n", 2, "hunter2"},
+	{"unterminated after a multi-line value", "A='x\nB=\"hunter2\n'\nMY KEY=\"hunter2\n", 4, "hunter2"},
+	// The error starts inside a quoted value that ran past its line.
+	{"quote runs past its line", "SECRET=\"hunter2\"\nOTHER=\"hunter2\nMORE=\"hunter2\n", 0, "hunter2"},
+}
+
+func TestParseEnvNamesOnlyTheBadLine(t *testing.T) {
+	for _, c := range malformedEnvs {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := ParseEnv([]byte(c.data))
-			if err == nil || err.Error() != c.want {
-				t.Fatalf("got %v, want %q", err, c.want)
+			want := "could not be read"
+			if c.line > 0 {
+				want = fmt.Sprintf("line %d could not be read", c.line)
+			}
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %q", err, want)
 			}
 		})
 	}
 }
 
-func TestParseEnvErrorNeverShowsValues(t *testing.T) {
-	const secret = "hunter2"
-	files := []string{
-		"SECRET=hunter2\nMY-PORT=3000\nTOKEN=hunter2xyz\nPASSWORD=\"hunter2\"\n",
-		"MY-PORT=hunter2\nSECRET=hunter2\n",
-		"A=1\nMY-PORT: hunter2\nSECRET=hunter2\n",
-		"A=1\nBAD KEY-hunter2=x\nSECRET=hunter2\n",
-		"SECRET=hunter2\nPASSWORD=\"hunter2\nTOKEN=hunter2\n",
-		"PASSWORD='hunter2\nSECRET=hunter2\n",
-		"SECRET=\"hunter2\"\nOTHER=\"hunter2\nMORE=\"hunter2\n",
-		"SECRET=hunter2\n\xEF\xBB\xBFBOM=hunter2\n",
-		"SECRET=hunter2\n\"QUOTED\"=hunter2\n",
-		"A=1\nghp_hunter2token\n",
-		"A=1\nmy key-with spaces=hunter2\n",
-	}
-	for i, data := range files {
-		_, err := ParseEnv([]byte(data))
-		if err == nil {
-			t.Fatalf("file %d: expected an error", i)
-		}
-		if strings.Contains(err.Error(), secret) {
-			t.Fatalf("file %d: error shows a value: %v", i, err)
-		}
+func TestParseEnvErrorShowsNothingFromTheFile(t *testing.T) {
+	for _, c := range malformedEnvs {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseEnv([]byte(c.data))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if strings.Contains(err.Error(), c.secret) {
+				t.Fatalf("error shows %q: %v", c.secret, err)
+			}
+			if !errorForm.MatchString(err.Error()) {
+				t.Fatalf("error %q is not of the form %s", err, errorForm)
+			}
+		})
 	}
 }
 
 func TestReadEnvNamesTheFileAndLine(t *testing.T) {
-	_, err := ReadEnv(memReader{".env": "A=1\nMY-PORT=3000\nSECRET=hunter2\n"})
-	if err == nil || err.Error() != ".env: line 2: MY-PORT could not be read" {
+	_, err := ReadEnv(memReader{".env": "A=1\nB=2\nMY-PORT=3000\nSECRET=hunter2\n"})
+	if err == nil || err.Error() != ".env: line 3 could not be read" {
 		t.Fatalf("got %v", err)
 	}
 }
 
-func TestParseEnvWithoutAKnownLineSaysOnlyThatItCouldNotBeRead(t *testing.T) {
-	files := []string{
-		// The error starts inside a quoted value that ran past its line.
-		"SECRET=\"hunter2\"\nOTHER=\"hunter2\nMORE=\"hunter2\n",
-	}
-	for i, data := range files {
-		_, err := ParseEnv([]byte(data))
-		if err == nil || err.Error() != "could not be read" {
-			t.Fatalf("file %d: got %v", i, err)
-		}
-	}
-	if line, key := badLine("A=1\n", "zero length string"); line != 0 || key != "" {
-		t.Fatalf("unknown error form gave line %d key %q", line, key)
+func TestBadLineWithAnUnknownErrorFormIsZero(t *testing.T) {
+	if line := badLine("A=1\n", errors.New("zero length string")); line != 0 {
+		t.Fatalf("got line %d", line)
 	}
 }

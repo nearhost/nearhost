@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/joho/godotenv"
 
@@ -33,12 +32,9 @@ type Candidate struct {
 // utf8BOM is the byte order mark some editors write at the start of a file.
 var utf8BOM = []byte("\xEF\xBB\xBF")
 
-// maxKeyLabel is the most characters of a key an error shows.
-const maxKeyLabel = 40
-
 // ParseEnv parses dotenv content. When the content cannot be parsed, the error
-// names the failing line and its key, and never any value or other line,
-// since a .env holds passwords and API keys.
+// names at most the failing line's number. Nothing from the file appears in
+// it, since a .env holds passwords and API keys.
 func ParseEnv(data []byte) (map[string]string, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
 	env, err := godotenv.UnmarshalBytes(data)
@@ -48,44 +44,42 @@ func ParseEnv(data []byte) (map[string]string, error) {
 	return env, nil
 }
 
-// envError turns a godotenv error into one that names the failing line and,
-// when it is key-shaped, its key. godotenv's own text quotes the rest of the file, so it is never shown.
+// envError turns a godotenv error into one that names only the failing line.
+// godotenv's own text quotes the rest of the file, so it is never shown.
 func envError(data []byte, err error) error {
 	src := strings.ReplaceAll(string(data), "\r\n", "\n") // as godotenv sees it
-	line, key := badLine(src, err.Error())
+	line := badLine(src, err)
 	if line == 0 {
 		return errors.New("could not be read")
 	}
-	if key == "" {
-		return fmt.Errorf("line %d could not be read", line)
-	}
-	return fmt.Errorf("line %d: %s could not be read", line, key)
+	return fmt.Errorf("line %d could not be read", line)
 }
 
-// badLine finds the line godotenv failed on, and its key, from godotenv's
-// error text. It returns 0 when the text has no form it knows.
-func badLine(src, msg string) (int, string) {
+// badLine finds the line godotenv failed on from its error. It returns 0 when
+// the error has no form it knows or the line cannot be placed for certain.
+func badLine(src string, err error) int {
+	msg := err.Error()
 	if near, ok := nearText(msg); ok {
 		// near is the rest of the input from the bad statement on.
 		if !strings.HasSuffix(src, near) {
-			return 0, ""
+			return 0
 		}
 		start := len(src) - len(near)
 		if !atStatementStart(src[:start]) {
 			// It starts inside a quoted value that ran past its line.
-			return 0, ""
+			return 0
 		}
-		return 1 + strings.Count(src[:start], "\n"), keyLabel(near)
+		return 1 + strings.Count(src[:start], "\n")
 	}
 	if value, ok := strings.CutPrefix(msg, "unterminated quoted value "); ok {
 		// value is the bad statement's value up to the end of its line.
-		start, ok := unterminatedStart(src, value)
+		start, ok := unterminatedStart(src, value, msg)
 		if !ok {
-			return 0, ""
+			return 0
 		}
-		return 1 + strings.Count(src[:start], "\n"), keyLabel(trimExport(src[start:]))
+		return 1 + strings.Count(src[:start], "\n")
 	}
-	return 0, ""
+	return 0
 }
 
 // nearText reads the quoted remainder from godotenv's "unexpected character
@@ -110,10 +104,13 @@ func nearText(msg string) (string, bool) {
 	return near, true
 }
 
-// unterminatedStart finds the start of the one line whose value is value: it
-// follows "=" or ":" and runs to the end of the line. It reports false when no
-// line or more than one line matches.
-func unterminatedStart(src, value string) (int, bool) {
+// unterminatedStart finds the start of the line whose unterminated quoted
+// value godotenv reported. A candidate line has a key, then "=" or ":", then
+// value up to the end of the line. Because a candidate can sit inside an
+// earlier quoted value that spans lines, a candidate counts only when the
+// input before it parses and the input from it fails with the same error,
+// which is what godotenv saw. It reports false unless exactly one line counts.
+func unterminatedStart(src, value, msg string) (int, bool) {
 	found := -1
 	for from := 0; ; {
 		i := strings.Index(src[from:], value)
@@ -128,6 +125,12 @@ func unterminatedStart(src, value string) (int, bool) {
 		}
 		lineStart := strings.LastIndex(src[:at], "\n") + 1
 		if !validKeyLine(src[lineStart:at]) {
+			continue
+		}
+		if _, err := godotenv.Unmarshal(src[:lineStart]); err != nil {
+			continue
+		}
+		if _, err := godotenv.Unmarshal(src[lineStart:]); err == nil || err.Error() != msg {
 			continue
 		}
 		if found >= 0 {
@@ -147,63 +150,31 @@ func atStatementStart(before string) bool {
 	return before == "" || strings.HasSuffix(before, "\n")
 }
 
-// trimExport removes indentation and an "export" prefix from the start of a
-// statement.
-func trimExport(text string) string {
-	text = strings.TrimLeft(text, " \t")
-	if rest, ok := strings.CutPrefix(text, "export"); ok && strings.IndexAny(rest, " \t") == 0 {
-		text = strings.TrimLeft(rest, " \t")
-	}
-	return text
-}
-
 // validKeyLine reports whether head, a line up to its value, is a key godotenv
-// accepts followed by "=" or ":", so the line is a statement and not the inside
-// of a quoted value.
+// accepts followed by "=" or ":", so the line can be a statement.
 func validKeyLine(head string) bool {
-	head = strings.TrimRight(trimExport(head), " \t")
+	head = strings.TrimLeft(head, " \t")
+	if rest, ok := strings.CutPrefix(head, "export"); ok && strings.IndexAny(rest, " \t") == 0 {
+		head = rest
+	}
+	head = strings.TrimRight(head, " \t")
 	key, ok := strings.CutSuffix(head, "=")
 	if !ok {
 		key, ok = strings.CutSuffix(head, ":")
 	}
-	key = strings.TrimRight(key, " \t")
+	key = strings.Trim(key, " \t")
 	if !ok || key == "" {
 		return false
 	}
 	for _, r := range key {
-		if r != '_' && r != '.' && !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+		switch {
+		case r == '_' || r == '.' || unicode.IsLetter(r) || unicode.IsNumber(r):
+		case r == ' ' || r == '\t' || r == '\v' || r == '\f' || r == '\r':
+		default:
 			return false
 		}
 	}
 	return true
-}
-
-// keyLabel returns the key of the statement at the start of text, at most
-// maxKeyLabel characters, with control and format characters removed so a
-// terminal shows it as written. It returns "" unless the line has a "=" or
-// ":" separator and the text before it is key-shaped, since a line without
-// one may be a token pasted on its own.
-func keyLabel(text string) string {
-	line, _, _ := strings.Cut(text, "\n")
-	sep := strings.IndexAny(line, "=:")
-	if sep < 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range strings.TrimRight(line[:sep], " \t") {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
-			continue
-		}
-		if r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsNumber(r) {
-			return ""
-		}
-		b.WriteRune(r)
-	}
-	key := []rune(b.String())
-	if len(key) > maxKeyLabel {
-		key = key[:maxKeyLabel]
-	}
-	return string(key)
 }
 
 // ReadEnv reads .env then .env.local, later files overriding earlier ones.
