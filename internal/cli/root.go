@@ -205,7 +205,9 @@ func (e exitError) Error() string { return e.msg }
 
 // exitCode is the exit code for the error a command returned, which is 0 for
 // nil. It writes "nearhost: <err>" to stderr unless the command printed the
-// error itself (see exitError).
+// error itself (see exitError). An error can quote a project's file, a
+// server or ssh, so its text loses its control characters and keeps its
+// lines.
 func exitCode(err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
@@ -214,7 +216,7 @@ func exitCode(err error, stderr io.Writer) int {
 	if errors.As(err, &ee) {
 		return ee.code
 	}
-	fmt.Fprintln(stderr, "nearhost:", err)
+	fmt.Fprintln(stderr, "nearhost:", printableLines(err.Error()))
 	return 1
 }
 

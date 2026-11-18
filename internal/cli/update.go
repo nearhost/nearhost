@@ -117,7 +117,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		if update.IsRelease(current) {
 			fmt.Fprintf(out, "nearhost %s is the latest.\n", current)
 		} else {
-			fmt.Fprintf(out, "This is a development build of nearhost (%s). The latest release is %s.\n", Version, latest)
+			// On a development build nothing checked that latest, which is
+			// GitHub's text, is a version.
+			fmt.Fprintf(out, "This is a development build of nearhost (%s). The latest release is %s.\n", Version, printable(latest))
 		}
 		return nil
 	}

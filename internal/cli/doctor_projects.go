@@ -322,6 +322,7 @@ func printProjects(out io.Writer, projects []projectReport) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Projects")
 	for _, p := range projects {
+		p.name = printable(p.name) // a project's name can come from a remote directory
 		if len(p.findings) == 0 {
 			fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
 			continue

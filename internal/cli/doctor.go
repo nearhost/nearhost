@@ -337,11 +337,13 @@ func report(cmd *cobra.Command, checks []check, projects []projectReport) error 
 	failed, warned := tally(checks, projects)
 	for _, c := range checks {
 		// A detail of several lines (ssh can print more than one) keeps its
-		// lines, aligned under the first.
-		detail := strings.ReplaceAll(strings.TrimRight(c.detail, "\n"), "\n", "\n"+strings.Repeat(" ", 23))
-		fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, c.name, detail)
+		// lines, aligned under the first. What ssh printed comes from the
+		// server too, and a check's name can hold a server's, so neither
+		// keeps its control characters.
+		detail := strings.ReplaceAll(strings.TrimRight(printableLines(c.detail), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
+		fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, printable(c.name), detail)
 		if c.fix != "" {
-			fmt.Fprintf(out, "      fix: %s\n", upperFirst(c.fix))
+			fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
 		}
 	}
 	printProjects(out, projects)

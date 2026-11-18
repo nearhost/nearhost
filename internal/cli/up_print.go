@@ -49,7 +49,10 @@ func (p *upPrinter) event(ev engine.Event) {
 		}
 		p.shown[ev.Project] = msg
 	}
-	fmt.Fprintf(p.out, "%s [%s] %s\n", ev.Time.Format("15:04:05"), source, msg)
+	// The message can carry text from ssh or the server, and the source a
+	// project's name from a remote directory: neither may act on the
+	// terminal or start a line of its own.
+	fmt.Fprintf(p.out, "%s [%s] %s\n", ev.Time.Format("15:04:05"), printable(source), printable(msg))
 	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
 		// Approving takes the interface, which shows each change and why it
 		// needs approval; up only says where to go.
@@ -81,16 +84,16 @@ func (p *upPrinter) summary(names []string, startErrs []error) {
 	for i, name := range names {
 		st := p.eng.Status(name)
 		if st.State == engine.StateRunning {
-			fmt.Fprintf(p.out, "%s: running at https://%s\n", name, st.Alias)
+			fmt.Fprintf(p.out, "%s: running at https://%s\n", printable(name), printable(st.Alias))
 			continue
 		}
 		reason := st.Message
 		if reason == "" && startErrs[i] != nil {
 			reason = startErrs[i].Error()
 		}
-		line := fmt.Sprintf("%s: %s", name, st.State)
+		line := fmt.Sprintf("%s: %s", printable(name), st.State)
 		if reason != "" {
-			line += ": " + reason
+			line += ": " + printable(reason)
 		}
 		fmt.Fprintln(p.out, line)
 		p.fix(name, st.State, reason)
@@ -142,6 +145,6 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		}
 	}
 	if fix != "" {
-		fmt.Fprintln(p.out, "  fix: "+upperFirst(fix))
+		fmt.Fprintln(p.out, "  fix: "+upperFirst(printable(fix)))
 	}
 }
