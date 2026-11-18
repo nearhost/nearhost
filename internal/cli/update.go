@@ -254,6 +254,11 @@ var (
 	errDownloadInterrupted = errors.New("the update was cancelled")
 )
 
+// updateCheckFailedCode is the exit code of `nearhost update --check` when
+// the check itself failed. 0 is up to date and 1 is a newer release; 3 is
+// the elevated hosts helper's (elevate.HelperRefusedCode).
+const updateCheckFailedCode = 2
+
 func newUpdateCmd(b updateBackend) *cobra.Command {
 	var check, yes bool
 	cmd := &cobra.Command{
@@ -271,7 +276,7 @@ func newUpdateCmd(b updateBackend) *cobra.Command {
 			return runUpdateCmd(cmd, b, check, yes)
 		},
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "only report whether an update is available; exit 1 when it is")
+	cmd.Flags().BoolVar(&check, "check", false, "only report whether an update is available; exits 0 when up to date, 1 when a newer release is out, 2 when the check failed")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "update without asking")
 	return cmd
 }
@@ -284,6 +289,13 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	}
 	latest, err := b.latest(ctx)
 	if err != nil {
+		if check {
+			// A script tells "could not check" (2) from "a newer release is
+			// out" (1). The command prints the failure, so Main does not.
+			msg := "nearhost: " + printableLines(err.Error())
+			fmt.Fprintln(cmd.ErrOrStderr(), msg)
+			return exitError{code: updateCheckFailedCode, msg: msg}
+		}
 		return err
 	}
 	current := strings.TrimPrefix(Version, "v")
@@ -351,11 +363,17 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		default:
 			fmt.Fprintf(out, "Run `%s`? [Y/n] ", m)
 		}
-		answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-		switch strings.ToLower(strings.TrimSpace(answer)) {
-		case "", "y", "yes":
-		default:
-			fmt.Fprintln(out, "Not updated.")
+		answer, rerr := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		// An empty line is the default, yes. A read that failed or hit the
+		// end of input with no text (stdin closed, /dev/null, Ctrl-D) is
+		// no: nobody answered. Text without a final newline still counts.
+		noAnswer := rerr != nil && answer == ""
+		if noAnswer || (answer != "" && answer != "y" && answer != "yes") {
+			if noAnswer {
+				fmt.Fprintln(out)
+			}
+			fmt.Fprintln(out, "Not updated. Nothing was changed.")
 			return nil
 		}
 	}

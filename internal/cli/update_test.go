@@ -1186,3 +1186,112 @@ func TestInstalledVersion(t *testing.T) {
 		}
 	}
 }
+
+// checkExit runs `update --check` the way Main does and returns its output,
+// what Main would print to stderr, and the exit code.
+func checkExit(t *testing.T, f *fakeUpdate, version string) (out, stderr string, code int) {
+	t.Helper()
+	out, err := runUpdate(t, f, version, "", "--check")
+	var errBuf bytes.Buffer
+	code = exitCode(err, &errBuf)
+	return out, errBuf.String(), code
+}
+
+func TestUpdateCheckExitCodes(t *testing.T) {
+	exe := "/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost"
+	t.Run("up to date exits 0", func(t *testing.T) {
+		out, stderr, code := checkExit(t, &fakeUpdate{latest: "0.5.0", exe: exe}, "0.5.0")
+		if code != 0 || stderr != "" || !strings.Contains(out, "is the latest") {
+			t.Fatalf("code %d, out %q, stderr %q", code, out, stderr)
+		}
+	})
+	t.Run("a release without files yet is not out and exits 0", func(t *testing.T) {
+		_, stderr, code := checkExit(t, &fakeUpdate{latest: "", exe: exe}, "0.5.0")
+		if code != 0 || stderr != "" {
+			t.Fatalf("code %d, stderr %q", code, stderr)
+		}
+	})
+	t.Run("a newer release exits 1", func(t *testing.T) {
+		_, stderr, code := checkExit(t, &fakeUpdate{latest: "0.6.0", exe: exe}, "0.5.0")
+		if code != 1 || !strings.Contains(stderr, "0.6.0 is available") {
+			t.Fatalf("code %d, stderr %q", code, stderr)
+		}
+	})
+	t.Run("a failed check exits 2 and says so once", func(t *testing.T) {
+		out, stderr, code := checkExit(t, &fakeUpdate{err: errors.New("offline")}, "0.5.0")
+		if code != 2 {
+			t.Fatalf("code %d, want 2", code)
+		}
+		// The command prints the failure; Main adds nothing.
+		if stderr != "" || strings.Count(out, "offline") != 1 {
+			t.Fatalf("out %q, stderr %q", out, stderr)
+		}
+	})
+	t.Run("a cached failed check exits 2", func(t *testing.T) {
+		f := &fakeUpdate{err: errors.New("the last check for a newer nearhost failed")}
+		_, _, code := checkExit(t, f, "0.5.0")
+		if code != 2 {
+			t.Fatalf("code %d, want 2", code)
+		}
+	})
+	t.Run("a development build exits 0", func(t *testing.T) {
+		out, stderr, code := checkExit(t, &fakeUpdate{latest: "0.6.0", exe: exe}, "dev")
+		if code != 0 || stderr != "" || !strings.Contains(out, "development build") {
+			t.Fatalf("code %d, out %q, stderr %q", code, out, stderr)
+		}
+	})
+}
+
+func TestUpdateFailedCheckWithoutCheckFlagStillExits1(t *testing.T) {
+	_, err := runUpdate(t, &fakeUpdate{err: errors.New("offline")}, "0.5.0", "")
+	var errBuf bytes.Buffer
+	if code := exitCode(err, &errBuf); code != 1 || !strings.Contains(errBuf.String(), "offline") {
+		t.Fatalf("code %d, stderr %q", code, errBuf.String())
+	}
+}
+
+func TestUpdatePromptEndOfInput(t *testing.T) {
+	exe := "/usr/local/bin/nearhost"
+	for _, tc := range []struct {
+		name, stdin string
+		ran         int
+	}{
+		{"no input is no", "", 0},
+		{"y without a newline is yes", "y", 1},
+		{"n without a newline is no", "n", 0},
+		{"enter is yes", "\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeUpdate{latest: "0.6.0", exe: exe, writable: true, tty: true}
+			out, err := runUpdate(t, f, "0.5.0", tc.stdin)
+			if err != nil || len(f.ran) != tc.ran {
+				t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+			}
+			if tc.ran == 0 && !strings.Contains(out, "Not updated. Nothing was changed.") {
+				t.Errorf("output does not say nothing changed:\n%s", out)
+			}
+		})
+	}
+}
+
+// failingReader fails every read.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("input/output error") }
+
+func TestUpdatePromptReadErrorIsNo(t *testing.T) {
+	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", writable: true, tty: true}
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+	Version = "0.5.0"
+	cmd := newUpdateCmd(f.backend())
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(failingReader{})
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil || len(f.ran) != 0 || !strings.Contains(out.String(), "Nothing was changed") {
+		t.Fatalf("out %q, err %v, ran %v", out.String(), err, f.ran)
+	}
+}
