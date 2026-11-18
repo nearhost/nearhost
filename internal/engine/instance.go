@@ -27,11 +27,13 @@ type instanceError struct {
 
 // Error says that another Nearhost runs, and what to do about it.
 func (e *instanceError) Error() string {
-	running := "Another Nearhost is running with this config"
+	running := "Another Nearhost is already running"
 	if e.pid > 0 {
 		running += fmt.Sprintf(" (pid %d)", e.pid)
 	}
-	return running + ". Stop it first, or pass --config for a separate one."
+	// The run directory is config.Dir's, which an absolute XDG_CONFIG_HOME
+	// moves on every system; --config moves only the config file.
+	return running + ". Stop it first. To run a second one beside it, give it its own XDG_CONFIG_HOME."
 }
 
 // lockInstance takes the lock on the instance file in dir without waiting,

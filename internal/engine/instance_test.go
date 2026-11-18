@@ -26,7 +26,7 @@ func TestASecondEngineWithTheSameRunDirectoryStops(t *testing.T) {
 	second := buildHarness(t, instanceConfig(t), func(o *Options) { o.RunDir = first.runDir })
 
 	err := second.eng.Start(context.Background())
-	want := fmt.Sprintf("Another Nearhost is running with this config (pid %d). Stop it first, or pass --config for a separate one.", os.Getpid())
+	want := fmt.Sprintf("Another Nearhost is already running (pid %d). Stop it first. To run a second one beside it, give it its own XDG_CONFIG_HOME.", os.Getpid())
 	if err == nil || err.Error() != want {
 		t.Fatalf("second Start = %v, want %q", err, want)
 	}
@@ -43,6 +43,13 @@ func TestASecondEngineWithTheSameRunDirectoryStops(t *testing.T) {
 	}
 	if err := second.eng.Start(context.Background()); err != nil {
 		t.Fatalf("second Start after the first shut down: %v", err)
+	}
+}
+
+func TestInstanceErrorWithNoPidLeavesOutTheParenthesis(t *testing.T) {
+	want := "Another Nearhost is already running. Stop it first. To run a second one beside it, give it its own XDG_CONFIG_HOME."
+	if got := (&instanceError{}).Error(); got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
 
