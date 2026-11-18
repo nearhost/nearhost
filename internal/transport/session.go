@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -482,24 +481,33 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 	exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.clearSocket(ctx, exitCtx, s.SocketPath(), s.host)
+	// The new master needs the path, even where the old one would not go:
+	// a master left on it would turn the new one's multiplexing off.
+	os.Remove(s.SocketPath())
 }
 
-// clearSocket removes the socket at path, first asking a master still alive
-// on it to exit, so that the new master is the one we supervise. host is
-// what the control commands name; a master answers whatever it is. It
-// returns why the master or the socket could not be cleared.
+// clearSocket asks a master still alive on the socket at path to exit, so
+// that the new master is the one we supervise, and removes the socket. host
+// is what the control commands name; a master answers whatever it is. The
+// socket is the only way to reach its master, so it stays when the master
+// may still be running: when the exit failed, or ctx ended before the check
+// could tell. clearSocket then returns why.
 func (s *Session) clearSocket(ctx, exitCtx context.Context, path, host string) error {
-	var errs []error
-	if s.controlAt(ctx, path, "-O", "check", "--", host).Run() == nil {
+	if err := s.controlAt(ctx, path, "-O", "check", "--", host).Run(); err == nil {
 		if err := s.controlAt(exitCtx, path, "-O", "exit", "--", host).Run(); err != nil {
-			errs = append(errs, fmt.Errorf("end the ssh master left at %s: %w", path, err))
+			if exitCtx.Err() != nil {
+				err = exitCtx.Err()
+			}
+			return fmt.Errorf("could not end the ssh master left at %s: %w", path, err)
 		}
+	} else if ctx.Err() != nil {
+		return fmt.Errorf("could not check the ssh socket left at %s: %w", path, ctx.Err())
 	}
 	// A master that exits removes its socket itself.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		errs = append(errs, fmt.Errorf("remove the ssh socket left at %s: %w", path, err))
+		return fmt.Errorf("could not remove the ssh socket left at %s: %w", path, err)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // staleMasterTimeout bounds the clearing of each socket by EndStaleMasters.
@@ -509,7 +517,8 @@ const staleMasterTimeout = 3 * time.Second
 // in runDir when it was killed, and removes their sockets, so that no master
 // outlives its run, not even one for a server since disabled or removed. It
 // touches only sockets named as a Session names its own, all at once, each
-// for at most staleMasterTimeout, and returns what it could not clear. The
+// for at most staleMasterTimeout, and returns what it could not clear; a
+// socket whose master may still be running stays for the next start. The
 // caller must hold runDir's instance lock: a master there may otherwise be
 // another nearhost's. Windows' ssh has no masters, so there it does nothing.
 func EndStaleMasters(ctx context.Context, runDir, sshPath string, env []string) []error {

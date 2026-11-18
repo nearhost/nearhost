@@ -484,31 +484,60 @@ func TestLoopbackForwardAnswersOnTheIPv6Loopback(t *testing.T) {
 	}
 }
 
+// sweepWrapper returns an ssh, wrapping the fake one, that answers a
+// control command on a socket named dead.sock as ssh does when nothing
+// listens there, and hangs on one named hung.sock as ssh does when the
+// master there never answers. Both are logged like the fake's own commands.
+func sweepWrapper(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ssh")
+	script := `#!/bin/sh
+for a; do
+	case "$a" in
+	*/dead.sock)
+		echo "$*" >>"$FAKE_SSH_LOG"
+		echo "Control socket connect($a): Connection refused" >&2
+		exit 255 ;;
+	*/hung.sock)
+		echo "$*" >>"$FAKE_SSH_LOG"
+		exec sleep 30 ;;
+	esac
+done
+exec ` + fakeSSH(t) + ` "$@"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// leaveSocket leaves a socket at name in dir, as a master left by a crashed
+// run does; dead makes it one with nothing listening.
+func leaveSocket(t *testing.T, dir, name string, dead bool) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if dead {
+		ln.Close()
+	} else {
+		t.Cleanup(func() { ln.Close() })
+	}
+	return path
+}
+
 // Unix only: a master left by a crash is a ControlMaster, which Windows'
 // ssh does not have.
 func TestStartEndsMastersLeftInTheRunDirectory(t *testing.T) {
-	h := buildHarness(t, instanceConfig(t), nil)
-	// listen leaves a socket at name in the run directory, as a master left
-	// by a crashed run does; dead makes it one with nothing listening.
-	listen := func(name string, dead bool) string {
-		path := filepath.Join(h.runDir, name)
-		ln, err := net.Listen("unix", path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ln.(*net.UnixListener).SetUnlinkOnClose(false)
-		if dead {
-			ln.Close()
-		} else {
-			t.Cleanup(func() { ln.Close() })
-		}
-		return path
-	}
+	h := buildHarness(t, instanceConfig(t), func(o *Options) { o.SSHPath = sweepWrapper(t) })
 	// No server in the config has any of these.
-	live := listen("gone.sock", false)
-	hashed := listen("h-0123456789abcdef.sock", false)
-	dead := listen("dead.sock", true)
-	agent := listen("agent-0123456789ab.sock", false)
+	live := leaveSocket(t, h.runDir, "gone.sock", false)
+	hashed := leaveSocket(t, h.runDir, "h-0123456789abcdef.sock", false)
+	dead := leaveSocket(t, h.runDir, "dead.sock", true)
+	agent := leaveSocket(t, h.runDir, "agent-0123456789ab.sock", false)
 
 	if err := h.eng.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -518,6 +547,12 @@ func TestStartEndsMastersLeftInTheRunDirectory(t *testing.T) {
 		if !strings.Contains(log, "-S "+path+" -O exit") {
 			t.Errorf("the master at %s was not asked to exit; ssh log:\n%s", path, log)
 		}
+	}
+	if !strings.Contains(log, "-S "+dead+" -O check") {
+		t.Errorf("the socket at %s was not checked; ssh log:\n%s", dead, log)
+	}
+	if strings.Contains(log, "-S "+dead+" -O exit") {
+		t.Errorf("the dead socket at %s was asked to exit; ssh log:\n%s", dead, log)
 	}
 	for _, path := range []string{live, hashed, dead} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -532,5 +567,42 @@ func TestStartEndsMastersLeftInTheRunDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.runDir, instanceLockName)); err != nil {
 		t.Errorf("the lock file is gone: %v", err)
+	}
+}
+
+// Unix only, as above. A master that never answers keeps its socket, the
+// only way to reach it, for the next start to try again.
+func TestStartGivesUpOnAMasterThatNeverAnswers(t *testing.T) {
+	h := buildHarness(t, instanceConfig(t), func(o *Options) { o.SSHPath = sweepWrapper(t) })
+	hung := leaveSocket(t, h.runDir, "hung.sock", false)
+	live := leaveSocket(t, h.runDir, "gone.sock", false)
+
+	began := time.Now()
+	if err := h.eng.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if took := time.Since(began); took > 6*time.Second {
+		t.Errorf("Start took %v with a master that never answers, want about 3 s", took)
+	}
+	if !h.eng.proxy.Running() {
+		t.Error("the proxy did not start")
+	}
+	if _, err := os.Stat(hung); err != nil {
+		t.Errorf("the socket of the master that never answered is gone: %v", err)
+	}
+	if _, err := os.Stat(live); !os.IsNotExist(err) {
+		t.Errorf("%s is still there after Start (%v)", live, err)
+	}
+	if log := h.log(); strings.Contains(log, "-S "+hung+" -O exit") {
+		t.Errorf("the master that never answered its check was asked to exit; ssh log:\n%s", log)
+	}
+	found := false
+	for _, line := range h.transportLines("") {
+		if strings.Contains(line, hung) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no event names %s; events: %q", hung, h.transportLines(""))
 	}
 }
