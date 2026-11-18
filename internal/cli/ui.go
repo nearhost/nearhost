@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -55,6 +56,11 @@ type uiBackend struct {
 	// updateNotice delivers a line saying a new release is out, if one is;
 	// nil means no check.
 	updateNotice func() <-chan string
+	// stops listens, from the call until the release, for the signals
+	// that ask the process to stop. Each one the interface gets is
+	// handled as Ctrl-C: the first quits, the next cuts the shutdown
+	// short.
+	stops func() (sigs <-chan os.Signal, release func())
 	// engineMade, when set, is given the engine as soon as it is made,
 	// before anything is published on its bus. Tests use it to listen;
 	// it is nil otherwise.
@@ -70,7 +76,9 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
 		run: func(m *tui.Model, attach func(*tea.Program)) error {
-			p := tea.NewProgram(m)
+			// runUI handles the stop signals, through the model's own
+			// quit, so the program must not end on them by itself.
+			p := tea.NewProgram(m, tea.WithoutSignalHandler())
 			attach(p)
 			_, err := p.Run()
 			return err
@@ -101,6 +109,35 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			return os.ReadFile(filepath.Join(home, ".ssh", "config"))
 		},
 		updateNotice: func() <-chan string { return updates.wait() },
+		stops:        notifyUIStop,
+	}
+}
+
+// notifyUIStop is the stops of the production backend. The ssh masters
+// run outside this process's group, so a closed terminal must quit the
+// interface as Ctrl-C does rather than end the process on the spot.
+func notifyUIStop() (<-chan os.Signal, func()) {
+	// While this is registered no stop signal ends the process: those that
+	// do not fit are dropped, which leaves one to quit and one to hurry.
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, stopSignals()...)
+	return sigs, func() { signal.Stop(sigs) }
+}
+
+// ctrlC is the key the interface quits on, and what a stop signal is
+// handed to it as.
+var ctrlC = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+// forwardStops hands each signal on sigs to p as Ctrl-C until done is
+// closed.
+func forwardStops(p *tea.Program, sigs <-chan os.Signal, done <-chan struct{}) {
+	for {
+		select {
+		case <-sigs:
+			p.Send(ctrlC)
+		case <-done:
+			return
+		}
 	}
 }
 
@@ -176,8 +213,22 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	back.Engine, back.agents = eng, ag
 	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
-	// program that ends any other way.
-	defer eng.Shutdown(context.Background())
+	// program that ends any other way, within the bound up has.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		eng.Shutdown(ctx)
+	}()
+	// From here a closed terminal or a kill quits the interface, so the
+	// shutdown above runs.
+	var sigs <-chan os.Signal
+	if b.stops != nil {
+		var release func()
+		sigs, release = b.stops()
+		defer release()
+	}
+	running := make(chan struct{})
+	defer close(running)
 	var proposals tui.Proposals
 	ag.review(&proposals)
 	m := tui.New(back, dir)
@@ -198,6 +249,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	return b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)
 		proposals.Attach(p)
+		if sigs != nil {
+			go forwardStops(p, sigs, running)
+		}
 	})
 }
 
@@ -281,6 +335,15 @@ func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
 		u.Engine.Events().Publish(engine.Event{Message: msg})
 	}
 	return nil
+}
+
+// Shutdown stops every project and the engine through the up backend's
+// shutdown, which tests count; ctx ending cuts it short.
+func (u *uiEngine) Shutdown(ctx context.Context) error {
+	if u.b.up.shutdown != nil {
+		return u.b.up.shutdown(u.Engine, ctx)
+	}
+	return u.Engine.Shutdown(ctx)
 }
 
 func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
