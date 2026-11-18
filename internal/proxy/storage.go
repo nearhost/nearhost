@@ -439,3 +439,131 @@ func removeCertFiles(dir *os.Root, files []string) error {
 	}
 	return dir.Remove(crt)
 }
+
+// RemoveCA deletes the local CA from Caddy's storage under storageRoot: the
+// authority's directory, which holds its root and intermediate certificates
+// and their private keys, and the site certificates it issued. Those would
+// otherwise be served until they came up for renewal, under a root nobody
+// trusts any more. Nothing else in storageRoot is touched, and with no CA
+// there is nothing to do.
+//
+// storageRoot comes from the environment, so each path is resolved through
+// any links and removed only when it lies inside storageRoot, itself
+// resolved. A link that leads elsewhere inside it is removed with its
+// target; one that leads out of it, or to a directory above the link, is
+// refused. A removal that leaves anything
+// behind is an error naming what is left.
+func RemoveCA(storageRoot string) error {
+	if !filepath.IsAbs(storageRoot) {
+		return fmt.Errorf("Caddy's storage directory %q is not an absolute path; Nearhost deletes nothing there", storageRoot)
+	}
+	root, err := filepath.EvalSymlinks(storageRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ca := filepath.Dir(RootCertPath(storageRoot))
+	issued := filepath.Join(storageRoot, filepath.FromSlash(certmagic.StorageKeys.CertsPrefix(filepath.Base(ca))))
+	for _, dir := range []string{ca, issued} {
+		if err := removeInside(root, dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeInside removes the directory at path, and the directory a link there
+// leads to, when that lies inside root, a resolved path. Anything left behind
+// is an error that names it.
+func removeInside(root, path string) error {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A link to nothing: only the link itself is left.
+		return removeChecked(path, path)
+	}
+	if err != nil {
+		return err
+	}
+	if !within(root, target) {
+		return fmt.Errorf("%s leads to %s, outside Nearhost's Caddy directory %s, so Nearhost did not delete it. "+
+			"If that is Nearhost's local CA, delete it yourself", path, target, root)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if within(target, filepath.Join(parent, filepath.Base(path))) {
+		// A link to a directory above it, which holds more than the CA.
+		return fmt.Errorf("%s leads to %s, which holds it, so Nearhost did not delete it. "+
+			"If that is Nearhost's local CA, delete it yourself", path, target)
+	}
+	if err := removeChecked(target, target); err != nil {
+		return err
+	}
+	if target != path {
+		return removeChecked(path, path)
+	}
+	return nil
+}
+
+// removeChecked removes path and everything under it, then checks it is
+// gone. What is left is reported under shown.
+func removeChecked(path, shown string) error {
+	err := os.RemoveAll(path)
+	left := leftUnder(path)
+	if err == nil && len(left) == 0 {
+		return nil
+	}
+	if err == nil {
+		err = errors.New("files remain")
+	}
+	if len(left) == 0 {
+		left = []string{shown}
+	}
+	return fmt.Errorf("Nearhost could not delete all of %s (%v). Still there: %s. Delete them by hand",
+		shown, err, strings.Join(left, ", "))
+}
+
+// maxLeft is how many leftover paths an error names.
+const maxLeft = 10
+
+// leftUnder lists the files and directories still at or under path, up to
+// maxLeft, files first since they hold the data.
+func leftUnder(path string) []string {
+	var files, dirs []string
+	filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == path && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			files = append(files, p)
+			return nil
+		}
+		if d.IsDir() {
+			dirs = append(dirs, p)
+		} else {
+			files = append(files, p)
+		}
+		return nil
+	})
+	left := append(files, dirs...)
+	if len(left) > maxLeft {
+		left = append(left[:maxLeft], fmt.Sprintf("and %d more", len(left)-maxLeft))
+	}
+	return left
+}
+
+// within reports whether path lies strictly inside dir. Both are resolved
+// absolute paths.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == "." || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
