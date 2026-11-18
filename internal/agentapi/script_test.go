@@ -1859,11 +1859,38 @@ func TestScriptDoctorBusyFails(t *testing.T) {
 		defer close(d.gate)
 		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{Source: src, Doctor: d})
 		sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
-		go client(sock).Get("http://nearhost/v1/doctor?path=" + url.QueryEscape(dir))
+		go func() {
+			if resp, err := client(sock).Get("http://nearhost/v1/doctor?path=" + url.QueryEscape(dir)); err == nil {
+				resp.Body.Close()
+			}
+		}()
 		waitCalls(t, d, 1)
 		gets, front := countCalls(t, home, "GET", "/v1/doctor")
 		r := shell.run(t, home, []string{"NEARHOST_SOCKET=" + front}, "doctor", dir)
 		if r.code != 1 || !strings.Contains(r.stdout, doctorBusy) || strings.Contains(r.stderr, "said No") {
+			t.Fatalf("%+v", r)
+		}
+		if n := gets(); n != 1 {
+			t.Fatalf("the script asked %d times, want 1", n)
+		}
+	})
+}
+
+// A doctor run that started moments ago is a 429 with a wait, but no
+// refusal: the scripts report it as a failure with Nearhost's message, and
+// do not ask again.
+func TestScriptDoctorTooSoonFails(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir, src := scriptProject(t, home, shell.origin())
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{Source: src, Doctor: &fakeDoctor{}})
+		if r := shell.run(t, home, nil, "doctor", dir); r.code != 0 {
+			t.Fatalf("the first run: %+v", r)
+		}
+		gets, front := countCalls(t, home, "GET", "/v1/doctor")
+		r := shell.run(t, home, []string{"NEARHOST_SOCKET=" + front}, "doctor", dir)
+		want := "a doctor run for this server started moments ago; ask again in 5 s"
+		if r.code != 1 || !strings.Contains(r.stdout, want) || strings.Contains(r.stderr, "said No") {
 			t.Fatalf("%+v", r)
 		}
 		if n := gets(); n != 1 {

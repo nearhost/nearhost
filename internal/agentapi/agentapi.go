@@ -67,6 +67,16 @@ const (
 	// request to open it again, from the same origin and requester, with
 	// the same reply, so a loop can't open tab after tab.
 	reopenWindow = 5 * time.Second
+	// maxFreeOpens is how many documents one origin may open without a
+	// prompt in any freeOpenWindow; past it the user is asked. A repeat
+	// answered under reopenWindow, and an open the user approved, don't
+	// count.
+	maxFreeOpens   = 5
+	freeOpenWindow = time.Minute
+	// doctorGap is the least time between the starts of two doctor runs
+	// for one origin. Its 429 says "a doctor run for this server started
+	// moments ago; ask again in N s", which a refusal's does not match.
+	doctorGap = 5 * time.Second
 	// idleTimeout closes a connection left idle between requests.
 	idleTimeout = 2 * time.Minute
 	// backoff is how long, after the user says No to a passthrough or a
@@ -226,7 +236,12 @@ type Server struct {
 	docOpens  uint64                 // counts document requests that opened
 	refused   map[refusal]time.Time  // when the user last said No, by origin and kind
 	doctoring map[string]bool        // origins with a doctor run going
-	closed    bool
+	doctored  map[string]time.Time   // when each origin's last doctor run started
+	freeOpens map[string][]time.Time // when each origin's recent opens without a prompt began
+	// reopenWaiting, when set, is called as a document request starts
+	// waiting for another's Show to end. Tests set it.
+	reopenWaiting func()
+	closed        bool
 }
 
 // change is one change of a project's .nearhostrc: the project's name and
@@ -316,7 +331,7 @@ func New(opts Options) *Server {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}, refused: map[refusal]time.Time{}, doctoring: map[string]bool{}}
+	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}, refused: map[refusal]time.Time{}, doctoring: map[string]bool{}, doctored: map[string]time.Time{}, freeOpens: map[string][]time.Time{}}
 	s.handler = s.routes()
 	return s
 }

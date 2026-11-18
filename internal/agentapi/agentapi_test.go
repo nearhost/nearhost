@@ -479,7 +479,18 @@ func (f *fakeDoctor) all() []string {
 // doctorServer is a server with d as its doctor, serving mini's socket.
 func doctorServer(t *testing.T, d Doctor) string {
 	t.Helper()
-	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini}, Doctor: d})
+	return doctorServerAt(t, d, nil)
+}
+
+// doctorServerAt is doctorServer on c's time, or the real time when c is
+// nil.
+func doctorServerAt(t *testing.T, d Doctor, c *clock) string {
+	t.Helper()
+	opts := Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini}, Doctor: d}
+	if c != nil {
+		opts.Now = c.Now
+	}
+	s := New(opts)
 	sock := filepath.Join(shortDir(t), "mini.sock")
 	if err := s.Listen("mini", sock); err != nil {
 		t.Fatal(err)
@@ -549,11 +560,53 @@ func waitCalls(t *testing.T, d *fakeDoctor, n int) {
 	}
 }
 
+// tryCall is call for a goroutine other than the test's: it reports a
+// failure instead of ending the test.
+func tryCall(sock, method, path, body string) (int, map[string]any, error) {
+	req, err := http.NewRequest(method, "http://nearhost"+path, strings.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	resp, err := client(sock).Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, nil, fmt.Errorf("%s %s: not JSON: %q", method, path, data)
+	}
+	return resp.StatusCode, out, nil
+}
+
+// callResult is what tryCall gave, sent back to the test's goroutine.
+type callResult struct {
+	st  int
+	out map[string]any
+	err error
+}
+
+// callAsync runs tryCall in a goroutine and sends its result on the
+// channel it returns.
+func callAsync(sock, method, path, body string) <-chan callResult {
+	ch := make(chan callResult, 1)
+	go func() {
+		st, out, err := tryCall(sock, method, path, body)
+		ch <- callResult{st, out, err}
+	}()
+	return ch
+}
+
 // Each run of the doctor on a server starts an ssh login from the laptop,
 // so a server gets one at a time.
 func TestDoctorRunsOneAtATimePerServer(t *testing.T) {
 	d := &fakeDoctor{gate: make(chan struct{})}
-	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini, "apollo": apollo}, Doctor: d})
+	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini, "apollo": apollo}, Doctor: d, Now: c.Now})
 	dir := shortDir(t)
 	sock, other := filepath.Join(dir, "mini.sock"), filepath.Join(dir, "apollo.sock")
 	for origin, p := range map[string]string{"mini": sock, "apollo": other} {
@@ -563,11 +616,7 @@ func TestDoctorRunsOneAtATimePerServer(t *testing.T) {
 	}
 	t.Cleanup(s.Close)
 
-	first := make(chan int)
-	go func() {
-		st, _ := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
-		first <- st
-	}()
+	first := callAsync(sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
 	waitCalls(t, d, 1)
 	st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
 	if st != http.StatusTooManyRequests || out["error"] != "a doctor run is already going for this server" {
@@ -578,22 +627,52 @@ func TestDoctorRunsOneAtATimePerServer(t *testing.T) {
 	}
 
 	// Another server has its own run.
-	second := make(chan int)
-	go func() {
-		st, _ := call(t, other, "GET", "/v1/doctor?path=/srv/app", "")
-		second <- st
-	}()
+	second := callAsync(other, "GET", "/v1/doctor?path=/srv/app", "")
 	waitCalls(t, d, 2)
 	close(d.gate)
-	if st := <-first; st != 200 {
-		t.Fatalf("the first run: %d", st)
+	if r := <-first; r.err != nil || r.st != 200 {
+		t.Fatalf("the first run: %+v", r)
 	}
-	if st := <-second; st != 200 {
-		t.Fatalf("the other server's run: %d", st)
+	if r := <-second; r.err != nil || r.st != 200 {
+		t.Fatalf("the other server's run: %+v", r)
 	}
-	// The run over, the next may start.
+	// The run over, the next may start once doctorGap has passed.
+	c.add(doctorGap)
 	if st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", ""); st != 200 {
 		t.Fatalf("after the first: %d %v", st, out)
+	}
+}
+
+// Runs one after another start an ssh login each too, so a server's runs
+// start doctorGap apart.
+func TestDoctorRunsStartApart(t *testing.T) {
+	d := &fakeDoctor{}
+	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
+	sock := doctorServerAt(t, d, c)
+	if st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", ""); st != 200 {
+		t.Fatalf("the first run: %d %v", st, out)
+	}
+	c.add(2 * time.Second)
+	req, _ := http.NewRequest("GET", "http://nearhost/v1/doctor?path=/home/dev/code/myapp", nil)
+	resp, err := client(sock).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	want := `{"error":"a doctor run for this server started moments ago; ask again in 3 s"}`
+	if resp.StatusCode != http.StatusTooManyRequests || strings.TrimSpace(string(data)) != want || resp.Header.Get("Retry-After") != "3" {
+		t.Fatalf("at 2 s: %d %s, Retry-After %q", resp.StatusCode, data, resp.Header.Get("Retry-After"))
+	}
+	if n := len(d.all()); n != 1 {
+		t.Fatalf("the doctor ran %d times, want 1", n)
+	}
+	c.add(4 * time.Second)
+	if st, out := call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", ""); st != 200 {
+		t.Fatalf("at 6 s: %d %v", st, out)
+	}
+	if n := len(d.all()); n != 2 {
+		t.Fatalf("the doctor ran %d times, want 2", n)
 	}
 }
 
@@ -644,7 +723,8 @@ func TestServerTimeouts(t *testing.T) {
 
 func TestDoctorEndpointMapsErrors(t *testing.T) {
 	d := &fakeDoctor{}
-	sock := doctorServer(t, d)
+	c := &clock{now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
+	sock := doctorServerAt(t, d, c)
 	if status, _ := call(t, sock, "GET", "/v1/doctor?path=code/myapp", ""); status != 400 {
 		t.Fatalf("a relative path: %d", status)
 	}
@@ -659,6 +739,7 @@ func TestDoctorEndpointMapsErrors(t *testing.T) {
 	if status != 404 || out["error"] != "/home/dev/gone is not a directory on mini" {
 		t.Fatalf("a missing directory: %d %v", status, out)
 	}
+	c.add(doctorGap)
 	d.err = errors.New("connect to mini.lan: no route to host")
 	status, out = call(t, sock, "GET", "/v1/doctor?path=/home/dev/code/myapp", "")
 	if status != 502 || out["error"] != "connect to mini.lan: no route to host" {
