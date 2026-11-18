@@ -125,8 +125,14 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	if url := linkAt(lines, ms.to); url != "" {
 		ms.lastAt = time.Time{}
 		key := m.sel
+		open := openURL
+		if url == m.pageURL() {
+			// Nearhost's page opens with its key, so the browser can see
+			// the documents it lists.
+			open = func(string) error { return m.b.OpenPage() }
+		}
 		return func() tea.Msg {
-			if err := openURL(url); err != nil {
+			if err := open(url); err != nil {
 				return openFailedMsg{key, url, err}
 			}
 			return nil

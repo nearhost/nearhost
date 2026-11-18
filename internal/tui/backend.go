@@ -58,6 +58,10 @@ type Backend interface {
 	HostsState() string
 	// Open opens url in the browser.
 	Open(url string) error
+	// OpenPage opens Nearhost's page in the browser at an address that gives
+	// the browser the cookie the page's document list needs. That address
+	// holds a secret, so it is never shown, and errors leave it out.
+	OpenPage() error
 	// SSHHosts lists the hosts named in the user's OpenSSH config.
 	SSHHosts() []string
 	// CheckServer connects to srv as adding a project there would, and

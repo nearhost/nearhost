@@ -106,7 +106,8 @@ func TestDragWithinARow(t *testing.T) {
 // on a link selects instead.
 func TestClickOpensAddresses(t *testing.T) {
 	opened := opens(t)
-	m := sized(newFake(t, sampleConfig()))
+	f := newFake(t, sampleConfig())
+	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
 	x, y := find(t, m, "https://localhost:6327")
 	run(m, click(m, x+3, y))
@@ -116,10 +117,11 @@ func TestClickOpensAddresses(t *testing.T) {
 	run(m, click(m, x+10, y))
 	fx, fy := find(t, m, "file:///etc/passwd")
 	run(m, click(m, fx+2, fy))
-	if strings.Join(*opened, " ") != "https://localhost:6327 https://nearhost.dev/docs/" {
-		t.Errorf("opened %v", *opened)
+	// Nearhost's page opens through the backend, with its key.
+	if strings.Join(*opened, " ") != "https://nearhost.dev/docs/" || strings.Join(f.opened, " ") != "page" {
+		t.Errorf("opened %v, and through the backend %v", *opened, f.opened)
 	}
-	if got := clipboard(drag(m, x, y, x+7, y)); got != "https://" || len(*opened) != 2 {
+	if got := clipboard(drag(m, x, y, x+7, y)); got != "https://" || len(*opened) != 1 {
 		t.Errorf("drag from a link copied %q and opened %v", got, *opened)
 	}
 }

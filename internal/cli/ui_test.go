@@ -309,3 +309,38 @@ func TestHostsThroughSaysTheUserDeclined(t *testing.T) {
 		t.Fatalf("err %v, want %q", err, want)
 	}
 }
+
+// The interface opens Nearhost's page at /?k=<secret>, and an opener that
+// fails gives an error that names the page's plain address, not the key.
+func TestOpenPageOpensItWithTheKey(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	var opened []string
+	var openErr error
+	u := &uiEngine{
+		Engine: engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443}),
+		b: uiBackend{open: func(url string) error {
+			opened = append(opened, url)
+			if openErr != nil {
+				return fmt.Errorf("could not run the opener for %s: %w", url, openErr)
+			}
+			return nil
+		}},
+	}
+	if err := u.OpenPage(); err != nil {
+		t.Fatalf("OpenPage: %v", err)
+	}
+	secret, err := os.ReadFile(filepath.Join(data, "nearhost", "page-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://localhost:8443/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
+		t.Fatalf("opened %d addresses, want the page with its key", len(opened))
+	}
+
+	openErr = fmt.Errorf("no browser")
+	err = u.OpenPage()
+	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://localhost:8443") {
+		t.Errorf("a failed open: the error is nil, holds the secret, or does not name the page")
+	}
+}
