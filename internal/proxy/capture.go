@@ -35,7 +35,10 @@ type Exchange struct {
 	Proto             string
 	ReqHeader         http.Header
 	ReqBody           []byte
-	ReqBodySize       int64 // the whole body's size; ReqBody may be cut short
+	ReqBodySize       int64 // the bytes of the body the app was sent; ReqBody may be cut short
+	ReqBodyLength     int64 // the Content-Length the client gave, or -1 when it gave none
+	ReqBodyShort      bool  // the app was not sent the whole body: it answered first, or the client stopped
+	ReqBodyAborted    bool  // the client stopped sending the body before its end; ReqBodyShort is set too
 	Status            int
 	RespHeader        http.Header
 	RespBody          []byte
@@ -162,11 +165,20 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 	cw := &captureWriter{ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w}, e: e}
 	err := next.ServeHTTP(cw, r)
+	e.ReqBodyLength = r.ContentLength
 	if reqBody != nil {
 		// The transport may still be sending the request body, when the
 		// upstream answered without reading it: take what was read so far
-		// and keep no more.
+		// and keep no more. From here the tee hands the transport nothing
+		// more either, so what was counted is all the app was sent.
 		e.ReqBody, e.ReqBodySize = reqBody.done()
+		eof, failed := reqBody.ending()
+		e.ReqBodyAborted = failed
+		if r.ContentLength >= 0 {
+			e.ReqBodyShort = e.ReqBodySize < r.ContentLength
+		} else {
+			e.ReqBodyShort = !eof
+		}
 	}
 	e.RespBody, e.RespBodySize = cw.body.done()
 	if err != nil {
@@ -191,19 +203,60 @@ type limited struct {
 	buf    []byte
 	n      int64
 	closed bool
+	eof    bool // a request body was read to its end
+	failed bool // reading a request body failed: the client stopped sending it
 }
 
 func (l *limited) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.write(p)
+	return len(p), nil
+}
+
+// write keeps p, until done. The caller holds mu.
+func (l *limited) write(p []byte) {
 	if l.closed {
-		return len(p), nil
+		return
 	}
 	if room := captureBodyMax - len(l.buf); room > 0 {
 		l.buf = append(l.buf, p[:min(room, len(p))]...)
 	}
 	l.n += int64(len(p))
-	return len(p), nil
+}
+
+// read keeps what a read of a request body returned, and how it ended. It
+// reports false when the exchange is already done, and what was read must
+// not be passed on.
+func (l *limited) read(p []byte, err error) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return false
+	}
+	l.write(p)
+	switch {
+	case err == io.EOF:
+		l.eof = true
+	case err != nil:
+		l.failed = true
+	}
+	return true
+}
+
+// isDone reports whether done was called.
+func (l *limited) isDone() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
+}
+
+// ending reports whether a request body was read to its end, and whether
+// reading it failed.
+func (l *limited) ending() (eof, failed bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.eof, l.failed
 }
 
 // done returns what was kept and how much was written, and keeps nothing
@@ -216,15 +269,24 @@ func (l *limited) done() ([]byte, int64) {
 	return bytes.Clone(l.buf), l.n
 }
 
-// teeBody copies what is read from a request body into to.
+// teeBody copies what is read from a request body into to. Once to is
+// done, it reads as a closed body, so the app is sent no byte that was not
+// counted: the server closes the body when the handler returns anyway.
 type teeBody struct {
 	io.ReadCloser
 	to *limited
 }
 
 func (t *teeBody) Read(p []byte) (int, error) {
+	if t.to.isDone() {
+		return 0, http.ErrBodyReadAfterClose
+	}
 	n, err := t.ReadCloser.Read(p)
-	t.to.Write(p[:n])
+	if !t.to.read(p[:n], err) {
+		// The exchange ended while this read waited: what it got is
+		// dropped, as it was not counted.
+		return 0, http.ErrBodyReadAfterClose
+	}
 	return n, err
 }
 
