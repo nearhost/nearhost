@@ -59,8 +59,8 @@ type File struct {
 	SHA256 string
 }
 
-// varRef matches the braced forms discovery.ExpandBraced understands, on one line,
-// so a stray "${" in a comment cannot swallow the YAML after it.
+// varRef matches the braced forms discovery.ExpandBraced understands, on one
+// line, so a stray "${" in a comment cannot swallow the YAML after it.
 var varRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}\n]*)?\}`)
 
 var unknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type`)
@@ -168,7 +168,7 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	}
 	if alias != "" {
 		if err := config.ValidProjectAlias(alias); err != nil {
-			return nil, fmt.Errorf("%s: alias: %w", FileName, err)
+			return nil, bareHint(fmt.Errorf("%s: alias: %w", FileName, err), alias)
 		}
 	}
 
@@ -259,7 +259,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		r.Role = config.RoleWeb
 	}
 	if !r.Role.Valid() {
-		return r, fmt.Errorf("%s: role %q must be web, loopback or ignore", FileName, r.Role)
+		return r, bareHint(fmt.Errorf("%s: role %q must be web, loopback or ignore", FileName, r.Role), role)
 	}
 
 	value, varName, ok := discovery.ExpandBraced(restore.Replace(rr.Port.Value), env)
@@ -271,7 +271,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		if varName != "" {
 			return r, fmt.Errorf("%s: port %q from variable %q is not a number from 1 to 65535", FileName, value, varName)
 		}
-		return r, fmt.Errorf("%s: port %q is not a number from 1 to 65535", FileName, value)
+		return r, bareHint(fmt.Errorf("%s: port %q is not a number from 1 to 65535", FileName, value), value)
 	}
 	r.Port = port
 
@@ -284,7 +284,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 			return r, unset(name)
 		}
 		if err := config.ValidProjectHost(host); err != nil {
-			return r, fmt.Errorf("%s: %w", FileName, err)
+			return r, bareHint(fmt.Errorf("%s: %w", FileName, err), host)
 		}
 		r.Hosts = append(r.Hosts, host)
 	}
@@ -298,6 +298,33 @@ type UnsetError struct{ Var string }
 
 func (e *UnsetError) Error() string {
 	return fmt.Sprintf("%s: ${%s} has no value in .env.local or .env, and no default", FileName, e.Var)
+}
+
+// bareVar matches a "$" followed by an identifier, the unbraced form a
+// .nearhostrc no longer fills.
+var bareVar = regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*)`)
+
+// BareVarError is a validation error for a value that holds a bare $NAME. Older
+// versions filled it, so the error says to write ${NAME}, and Line finds the
+// text in the file.
+type BareVarError struct {
+	Err error
+	Var string
+}
+
+func (e *BareVarError) Error() string {
+	return fmt.Sprintf("%s. Write a variable as ${%s}.", e.Err, e.Var)
+}
+
+func (e *BareVarError) Unwrap() error { return e.Err }
+
+// bareHint returns err as a BareVarError when value holds a bare $NAME, and
+// err itself when it does not.
+func bareHint(err error, value string) error {
+	if m := bareVar.FindStringSubmatch(value); m != nil {
+		return &BareVarError{Err: err, Var: m[1]}
+	}
+	return err
 }
 
 func unset(name string) error { return &UnsetError{Var: name} }
@@ -315,6 +342,14 @@ func Line(data []byte, err error) int {
 	var ue *UnsetError
 	if errors.As(err, &ue) {
 		ref := regexp.MustCompile(`\$\{` + regexp.QuoteMeta(ue.Var) + `(\}|:-|-)`)
+		if loc := ref.FindIndex(data); loc != nil {
+			return 1 + bytes.Count(data[:loc[0]], []byte("\n"))
+		}
+		return 0
+	}
+	var be *BareVarError
+	if errors.As(err, &be) {
+		ref := regexp.MustCompile(`\$` + regexp.QuoteMeta(be.Var) + `([^A-Za-z0-9_]|$)`)
 		if loc := ref.FindIndex(data); loc != nil {
 			return 1 + bytes.Count(data[:loc[0]], []byte("\n"))
 		}

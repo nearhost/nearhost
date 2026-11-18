@@ -161,11 +161,16 @@ type composeLongPort struct {
 	Protocol  string `yaml:"protocol"`
 }
 
-// composeVar matches ${VAR}, ${VAR:-default}, ${VAR-default} and $VAR.
-var composeVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+// bracedVarPattern is the text of the braced forms ${VAR}, ${VAR:-default} and
+// ${VAR-default}; its groups are the name, the operator and the default.
+const bracedVarPattern = `\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}`
 
-// bracedVar matches the braced forms of composeVar only.
-var bracedVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}`)
+// bracedVar matches the braced forms only.
+var bracedVar = regexp.MustCompile(bracedVarPattern)
+
+// composeVar matches the braced forms and the unbraced $VAR, whose name is
+// group 4.
+var composeVar = regexp.MustCompile(bracedVarPattern + `|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
 // Expand substitutes variables in s, in both the braced and the unbraced form
 // that Compose accepts. It returns the first variable name seen and ok=false
