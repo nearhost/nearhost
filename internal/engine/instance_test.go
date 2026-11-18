@@ -1,0 +1,95 @@
+package engine
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/nearhost/nearhost/internal/config"
+)
+
+// instanceConfig is a config with one local project, for the instance tests.
+func instanceConfig(t *testing.T) *config.Config {
+	t.Helper()
+	return &config.Config{Projects: []config.Project{localProject("web", upstream(t, "ok"))}}
+}
+
+func TestASecondEngineWithTheSameRunDirectoryStops(t *testing.T) {
+	first := newHarness(t, instanceConfig(t))
+	// Its own ports, so only the run directory is shared.
+	second := buildHarness(t, instanceConfig(t), func(o *Options) { o.RunDir = first.runDir })
+
+	err := second.eng.Start(context.Background())
+	want := fmt.Sprintf("Another Nearhost is running with this config (pid %d). Stop it first, or pass --config for a separate one.", os.Getpid())
+	if err == nil || err.Error() != want {
+		t.Fatalf("second Start = %v, want %q", err, want)
+	}
+	if second.eng.proxy.Running() {
+		t.Fatal("the second engine started its proxy")
+	}
+	if !first.eng.proxy.Running() {
+		t.Fatal("the first engine's proxy stopped")
+	}
+
+	// Once the first is gone, the second can start.
+	if err := first.eng.Shutdown(context.Background()); err != nil {
+		t.Fatalf("first Shutdown: %v", err)
+	}
+	if err := second.eng.Start(context.Background()); err != nil {
+		t.Fatalf("second Start after the first shut down: %v", err)
+	}
+}
+
+func TestALockFileWithNoHolderDoesNotBlockStart(t *testing.T) {
+	// A process that has exited leaves its pid behind and holds nothing.
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	dead := cmd.Process.Pid
+	h := buildHarness(t, instanceConfig(t), nil)
+	path := filepath.Join(h.runDir, instanceLockName)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(dead)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.eng.Start(context.Background()); err != nil {
+		t.Fatalf("Start with a stale lock file: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("lock file holds %q, want this process's pid %d", got, os.Getpid())
+	}
+}
+
+func TestASecondEngineOnTheSamePortsGetsThePortErrorFirst(t *testing.T) {
+	first := newHarness(t, instanceConfig(t))
+	second := buildHarness(t, instanceConfig(t), func(o *Options) {
+		o.RunDir = first.runDir
+		o.HTTPSPort, o.HTTPPort = first.httpsPort, first.httpPort
+	})
+	second.eng.holderOf = func(context.Context, int) string { return fmt.Sprintf("nearhost (pid %d)", os.Getpid()) }
+
+	err := second.eng.Start(context.Background())
+	var pe *portError
+	if !errors.As(err, &pe) {
+		t.Fatalf("second Start = %v, want the port error", err)
+	}
+	if want := fmt.Sprintf("is in use by nearhost (pid %d)", os.Getpid()); !strings.Contains(err.Error(), want) {
+		t.Fatalf("second Start = %q, want it to say %q", err, want)
+	}
+	// The second harness checks its ports are free when the test ends, and
+	// they are the first's.
+	if err := first.eng.Shutdown(context.Background()); err != nil {
+		t.Fatalf("first Shutdown: %v", err)
+	}
+}
