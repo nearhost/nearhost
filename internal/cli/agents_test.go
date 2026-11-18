@@ -1215,3 +1215,15 @@ func TestApplyPrunesNothingWithoutTheDefaultConfigFile(t *testing.T) {
 		t.Fatalf("another config: grants left on %v", got)
 	}
 }
+
+// instanceHeld is false when the run directory is unknown or no engine has
+// locked it, so the caller asks the agent socket next.
+func TestInstanceHeldWithNoLock(t *testing.T) {
+	if instanceHeld(func() (string, error) { return "", errors.New("no home") }) {
+		t.Error("an unknown run directory counted as held")
+	}
+	dir := t.TempDir()
+	if instanceHeld(func() (string, error) { return dir, nil }) {
+		t.Error("an empty run directory counted as held")
+	}
+}

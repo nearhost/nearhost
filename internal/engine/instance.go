@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -79,6 +80,30 @@ func lockInstance(dir string) (release func(), err error) {
 		return nil, fmt.Errorf("write %s: %w", path, err)
 	}
 	return release, nil
+}
+
+// InstanceRunning reports whether an engine, in this process or another,
+// holds the instance lock in dir, the run directory: whether a Nearhost
+// runs. It changes nothing on disk. It takes the lock for an instant when
+// it is free, so an engine that starts at that instant is refused as if
+// another ran; callers are commands a user runs by hand.
+func InstanceRunning(dir string) (bool, error) {
+	f, err := os.OpenFile(filepath.Join(dir, instanceLockName), os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil // no engine has started with this run directory
+	}
+	if err != nil {
+		return false, fmt.Errorf("open instance lock: %w", err)
+	}
+	defer f.Close()
+	held, err := tryLockFile(f)
+	if err != nil {
+		return false, fmt.Errorf("lock %s: %w", f.Name(), err)
+	}
+	if !held {
+		unlockFile(f)
+	}
+	return held, nil
 }
 
 // writePid replaces what f holds with this process's pid.

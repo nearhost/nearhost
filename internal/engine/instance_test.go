@@ -146,3 +146,28 @@ func TestAFailedProxyStartReleasesTheLock(t *testing.T) {
 		t.Fatalf("Start after a failed proxy start: %v", err)
 	}
 }
+
+// InstanceRunning says whether the run directory's lock is held, and leaves
+// it free for the next engine when it is not.
+func TestInstanceRunningProbesTheLock(t *testing.T) {
+	dir := t.TempDir()
+	if up, err := InstanceRunning(dir); up || err != nil {
+		t.Fatalf("with no lock file: %v, %v", up, err)
+	}
+	release, err := lockInstance(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up, err := InstanceRunning(dir); !up || err != nil {
+		t.Fatalf("with the lock held: %v, %v", up, err)
+	}
+	release()
+	if up, err := InstanceRunning(dir); up || err != nil {
+		t.Fatalf("after the release: %v, %v", up, err)
+	}
+	again, err := lockInstance(dir)
+	if err != nil {
+		t.Fatalf("the probe left the lock held: %v", err)
+	}
+	again()
+}

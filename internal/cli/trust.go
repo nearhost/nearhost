@@ -538,8 +538,13 @@ func runningProblem(b trustBackend) error {
 }
 
 // nearhostRunningWhy is nearhostRunning that says why when it cannot tell,
-// and that cannot tell more often: see runningAt.
+// and that cannot tell more often: see runningAt. A held instance lock is a
+// running Nearhost whatever its socket says; a free one is not proof that
+// none runs, as a Nearhost from before the lock holds none.
 func nearhostRunningWhy() (bool, error) {
+	if instanceHeld(config.RunDir) {
+		return true, nil
+	}
 	id, err := config.InstallID()
 	if err != nil {
 		return false, err
@@ -557,8 +562,7 @@ func nearhostRunningWhy() (bool, error) {
 // could have made it: writable reports whether a file can be made in the
 // socket's folder. A dial that fails for any reason other than nothing
 // listening, or a folder where no socket can be made, is an error: the
-// socket cannot tell. Once every serving run holds an instance lock, this
-// should ask that lock instead.
+// socket cannot tell. nearhostRunningWhy asks the instance lock first.
 func runningAt(path string, dial func(string) error, writable func(dir string) error) (bool, error) {
 	err := dial(path)
 	if err == nil {
