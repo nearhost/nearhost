@@ -234,8 +234,8 @@ func TestRangesKeepsOnlyLocalBridgeNetworks(t *testing.T) {
 		t.Errorf("ranges = %q, want %q", got, want)
 	}
 	want := []string{
-		`docker network "lan" ("macvlan") is not a bridge; its clients are not let in`,
-		`docker network "mesh" ("overlay") is not a bridge; its clients are not let in`,
+		`docker network "lan" ("macvlan") is not a local bridge; its clients are not let in`,
+		`docker network "mesh" ("overlay") is not a local bridge; its clients are not let in`,
 	}
 	if !reflect.DeepEqual(rec.lines, want) {
 		t.Errorf("log = %q, want %q (host and none stay silent)", rec.lines, want)
@@ -251,6 +251,9 @@ func TestRangesLogsALeftOutNetworkOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if got := src.LeftOut(); len(got) != 2 {
+		t.Errorf("LeftOut = %q, want both networks, sorted", got)
+	}
 	if len(rec.lines) != 2 {
 		t.Errorf("log after two refreshes = %q, want one line per network", rec.lines)
 	}
@@ -260,8 +263,8 @@ func TestRangesLogsALeftOutNetworkOnce(t *testing.T) {
 	if _, err := src.rangesFrom(context.Background(), []string{gone}); err != nil {
 		t.Fatal(err)
 	}
-	if len(src.logged) != 0 {
-		t.Errorf("remembered %v after the networks left the list", src.logged)
+	if got := src.LeftOut(); len(got) != 0 {
+		t.Errorf("remembered %v after the networks left the list", got)
 	}
 	if _, err := src.rangesFrom(context.Background(), []string{path}); err != nil {
 		t.Fatal(err)
@@ -280,5 +283,18 @@ func TestRangesQuotesNamesFromTheDaemon(t *testing.T) {
 	}
 	if len(rec.lines) != 1 || strings.Contains(rec.lines[0], "\n") {
 		t.Errorf("log = %q, want one line with the newline escaped", rec.lines)
+	}
+}
+
+func TestRangesSaysSwarmBridgeIsNotLocal(t *testing.T) {
+	src := &Source{}
+	body := `[{"Name":"x","Driver":"bridge","Scope":"swarm","IPAM":{"Config":[{"Subnet":"10.5.0.0/24"}]}}]`
+	got, err := src.rangesFrom(context.Background(), []string{fakeDaemon(t, body)})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("ranges = %q, %v; want none", got, err)
+	}
+	want := []string{`docker network "x" ("bridge") is not a local bridge; its clients are not let in`}
+	if !reflect.DeepEqual(src.LeftOut(), want) {
+		t.Errorf("LeftOut = %q, want %q", src.LeftOut(), want)
 	}
 }

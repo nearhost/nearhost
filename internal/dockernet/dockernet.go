@@ -43,17 +43,33 @@ func Ranges(ctx context.Context) ([]string, error) {
 	return rangesFrom(ctx, endpoints())
 }
 
-// Source is Ranges that says, through Logf, which networks it leaves out.
-// A network is named once while it stays left out, however often Ranges is
-// asked again. Names no longer in Docker's list are forgotten. A Source is
-// safe for concurrent use; the zero value logs nothing.
+// Source is Ranges that remembers which networks it leaves out. LeftOut
+// lists them, and Logf, when set, announces each one when it first appears
+// among them. A Source is safe for concurrent use; the zero value is ready.
 type Source struct {
-	// Logf says that a network is left out. It may be called with no lock
-	// held by the caller, and must not call back into the Source.
+	// Logf announces a network newly left out, once while it stays left
+	// out. It must not call back into the Source.
 	Logf func(format string, args ...any)
 
-	mu     sync.Mutex
-	logged map[string]bool // networks left out and already logged
+	mu   sync.Mutex
+	left map[string]string // networks left out by the last answer: key to sentence
+}
+
+// LeftOut returns a sentence for each network the last answer left out,
+// sorted. Names and drivers come from the daemon, so they are quoted. It is
+// nil before an answer and for a nil Source.
+func (s *Source) LeftOut() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.left))
+	for _, sentence := range s.left {
+		out = append(out, sentence)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Ranges is the package's Ranges, logging each network left out once.
@@ -138,6 +154,13 @@ func rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
 	return (*Source)(nil).rangesFrom(ctx, endpoints)
 }
 
+// RangesFrom is Ranges over the daemon at each of the given endpoints, tried
+// in order, with this Source's memory of what it leaves out. Tests use it to
+// point a Source at a fake daemon.
+func (s *Source) RangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
+	return s.rangesFrom(ctx, endpoints)
+}
+
 // rangesFrom is Source.Ranges over the given endpoints. A nil Source logs
 // nothing.
 func (s *Source) rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
@@ -218,11 +241,12 @@ func (n network) isClientNetwork() bool {
 // ranges returns the subnets of the networks whose clients are let in, as
 // Ranges does: masked, deduplicated and sorted, IPv4 first. Empty and
 // unparsable subnets are skipped. A network with a subnet that is left out
-// is logged once through s.Logf; one with none, such as Docker's host and
-// none networks, is silent.
+// is remembered for LeftOut and announced through s.Logf when it is new to
+// the list; one with none, such as Docker's host and none networks, is
+// ignored.
 func (s *Source) ranges(nets []network) []string {
 	var prefixes []netip.Prefix
-	left := map[string]bool{}
+	left := map[string]string{}
 	for _, n := range nets {
 		var own []netip.Prefix
 		for _, c := range n.IPAM.Config {
@@ -237,10 +261,9 @@ func (s *Source) ranges(nets []network) []string {
 			prefixes = append(prefixes, own...)
 			continue
 		}
-		left[n.Name+"\x00"+n.Driver] = true
-		s.leftOut(n)
+		left[n.Name+"\x00"+n.Driver] = fmt.Sprintf("docker network %q (%q) is not a local bridge; its clients are not let in", n.Name, n.Driver)
 	}
-	s.forget(left)
+	s.setLeftOut(left)
 	// Addr.Compare puts IPv4 before IPv6, then orders by address.
 	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
 		return cmp.Or(a.Addr().Compare(b.Addr()), cmp.Compare(a.Bits(), b.Bits()))
@@ -253,36 +276,28 @@ func (s *Source) ranges(nets []network) []string {
 	return out
 }
 
-// leftOut logs n once while it stays left out. The name and driver come
-// from the daemon, and a compose file chooses the name, so they are quoted.
-func (s *Source) leftOut(n network) {
-	if s == nil || s.Logf == nil {
-		return
-	}
-	key := n.Name + "\x00" + n.Driver
-	s.mu.Lock()
-	seen := s.logged[key]
-	if s.logged == nil {
-		s.logged = map[string]bool{}
-	}
-	s.logged[key] = true
-	s.mu.Unlock()
-	if !seen {
-		s.Logf("docker network %q (%q) is not a bridge; its clients are not let in", n.Name, n.Driver)
-	}
-}
-
-// forget drops from the logged set every network not in left, which keeps
-// the set to the networks Docker lists now.
-func (s *Source) forget(left map[string]bool) {
+// setLeftOut records left as the networks now left out and announces those
+// that were not before. A network that leaves the list is forgotten, which
+// bounds the set, and is announced again if it returns.
+func (s *Source) setLeftOut(left map[string]string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k := range s.logged {
-		if !left[k] {
-			delete(s.logged, k)
+	var added []string
+	for k, sentence := range left {
+		if _, was := s.left[k]; !was {
+			added = append(added, sentence)
 		}
+	}
+	s.left = left
+	logf := s.Logf
+	s.mu.Unlock()
+	if logf == nil {
+		return
+	}
+	slices.Sort(added)
+	for _, sentence := range added {
+		logf("%s", sentence)
 	}
 }

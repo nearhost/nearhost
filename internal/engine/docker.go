@@ -32,10 +32,6 @@ type dockerState struct {
 	// source asks Docker when Options.DockerRanges is nil, and remembers
 	// which networks it has said are left out. Its Logf is set by New.
 	source *dockernet.Source
-	// asking holds the projects whose start is asking Docker now. They are
-	// not published yet, so they get what the answer says about networks
-	// left out too.
-	asking []*projectRun
 }
 
 // dockerClientsLocked is the ranges a site that opts in is served to,
@@ -55,13 +51,14 @@ func (e *Engine) askDocker(ctx context.Context) ([]string, error) {
 }
 
 // logDocker publishes a line about the Docker networks to each project that
-// is served to them, and to those starting. It is called with no engine lock
+// is served to them. It announces a network newly left out; a project that
+// starts later is told by dockerStart. It is called with no engine lock
 // held.
 func (e *Engine) logDocker(format string, args ...any) {
 	e.mu.Lock()
-	served := slices.Clone(e.docker.asking)
+	var served []*projectRun
 	for _, name := range e.order {
-		if run := e.runs[name]; run.site && run.docker && !slices.Contains(served, run) {
+		if run := e.runs[name]; run.site && run.docker {
 			served = append(served, run)
 		}
 	}
@@ -93,13 +90,7 @@ func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 	ask := !answered || e.docker.stop == nil
 	e.mu.Unlock()
 	if ask {
-		e.mu.Lock()
-		e.docker.asking = append(e.docker.asking, run)
-		e.mu.Unlock()
 		ranges, err := e.askDocker(ctx)
-		e.mu.Lock()
-		e.docker.asking = slices.DeleteFunc(e.docker.asking, func(r *projectRun) bool { return r == run })
-		e.mu.Unlock()
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
@@ -119,6 +110,10 @@ func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 	ranges := slices.Clone(e.dockerClientsLocked())
 	e.mu.Unlock()
 	e.logProject(run, "accepts requests from Docker networks: %s", describeRanges(ranges))
+	// Whoever asked, each project's log says which networks are left out.
+	for _, sentence := range e.docker.source.LeftOut() {
+		e.logProject(run, "%s", sentence)
+	}
 	return nil
 }
 
