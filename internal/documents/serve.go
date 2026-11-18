@@ -183,6 +183,11 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	} else if slash {
 		return errRefused
 	}
+	// The gate again, on the file finally served: a folder's index.html
+	// is judged by the name it resolves to as well.
+	if tr.Hidden && !documentOrAsset(path.Base(real)) {
+		return fs.ErrNotExist
+	}
 	if !info.Mode().IsRegular() {
 		return errRefused
 	}

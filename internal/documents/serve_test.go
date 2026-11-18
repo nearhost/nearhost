@@ -810,3 +810,25 @@ func TestTableMarksTreesInHiddenFolders(t *testing.T) {
 		}
 	}
 }
+
+func TestHiddenTreeIndexSymlinkToAKeyIsMissing(t *testing.T) {
+	// A folder's index.html is served by the name of the file it resolves
+	// to too, so it can't stand in for a key.
+	f := newFixtureAt(t, ".ssh")
+	f.write(t, "id_ed25519", "SECRET")
+	f.write(t, "site/index.html", "<p>hi</p>")
+	if err := os.Mkdir(filepath.Join(f.root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Symlink(t, filepath.Join(f.root, "id_ed25519"), filepath.Join(f.root, "index.html"))
+	testutil.Symlink(t, filepath.Join(f.root, "id_ed25519"), filepath.Join(f.root, "sub", "index.html"))
+	for _, p := range []string{"", "sub/"} {
+		rec := f.do(t, "GET", p)
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+			t.Errorf("%q: %d %q", p, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := f.do(t, "GET", "site/"); rec.Code != 200 || rec.Body.String() != "<p>hi</p>" {
+		t.Errorf("site/: %d %q", rec.Code, rec.Body.String())
+	}
+}
