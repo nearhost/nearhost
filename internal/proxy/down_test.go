@@ -14,6 +14,8 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -194,5 +196,43 @@ func TestDownPageEndToEnd(t *testing.T) {
 	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", "connection refused") }, "error log line for the 502")
 	if e, ok := Captured(idOf(t, h, "dead.test", "/page")); !ok || e.Err == "" {
 		t.Errorf("the failed exchange was not kept with its error: %+v", e)
+	}
+}
+
+// An error on a host with no site, such as one the home page returns, still
+// has its line at error level, as Caddy logs it for a server with no error
+// routes, and gets the bare status.
+func TestDownLogOnlyLogsAndLeavesStatusBare(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	d := &Down{LogOnly: true}
+	if err := d.Provision(caddy.Context{Context: context.Background()}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	d.logger = zap.New(core)
+	for _, status := range []int{502, 500, 404} {
+		herr := caddyhttp.Error(status, errors.New("it broke"))
+		req := navigation("GET")
+		req = req.WithContext(context.WithValue(req.Context(), caddyhttp.ErrorCtxKey, herr))
+		w := httptest.NewRecorder()
+		passed := false
+		next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
+			passed = true
+			w.WriteHeader(status)
+			return nil
+		})
+		if err := d.ServeHTTP(w, req, next); err != nil {
+			t.Fatalf("ServeHTTP: %v", err)
+		}
+		if !passed || w.Code != status || w.Body.Len() != 0 {
+			t.Errorf("status %d: code %d, passed on %v, body %q", status, w.Code, passed, w.Body.String())
+		}
+		want := zapcore.ErrorLevel
+		if status < 500 {
+			want = zapcore.DebugLevel
+		}
+		got := logs.TakeAll()
+		if len(got) != 1 || got[0].Level != want || got[0].Message != "it broke" || got[0].ContextMap()["status"] != int64(status) {
+			t.Errorf("status %d: logged %+v", status, got)
+		}
 	}
 }

@@ -999,6 +999,14 @@ func TestBuildConfigServesDownPageOnSiteErrors(t *testing.T) {
 		}
 	}
 	routes := dig(t, servers, "nearhost", "errors", "routes").([]any)
+	// The last route catches every other error, to log it and leave its
+	// bare status.
+	last := routes[len(routes)-1].(map[string]any)
+	if _, ok := last["match"]; ok || last["terminal"] != true ||
+		!reflect.DeepEqual(last["handle"], []any{map[string]any{"handler": downModule, "log_only": true}}) {
+		t.Errorf("last error route = %v", last)
+	}
+	routes = routes[:len(routes)-1]
 	type want struct {
 		host, project, server string
 		port                  float64

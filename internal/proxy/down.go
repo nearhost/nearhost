@@ -52,6 +52,11 @@ type Down struct {
 	Port int `json:"port,omitempty"`
 	// Server is the server the app runs on. Empty means this machine.
 	Server string `json:"server,omitempty"`
+	// LogOnly makes the handler only log the error and leave the bare
+	// status, for the error route that catches errors on hosts with no
+	// site: once a server has error routes, Caddy logs the errors they
+	// handle only at debug level.
+	LogOnly bool `json:"log_only,omitempty"`
 
 	page   []byte
 	logger *zap.Logger
@@ -68,6 +73,10 @@ func (Down) CaddyModule() caddy.ModuleInfo {
 // Provision implements caddy.Provisioner. The page depends only on the
 // handler's fields, so it is rendered once per config load.
 func (d *Down) Provision(ctx caddy.Context) error {
+	d.logger = ctx.Logger()
+	if d.LogOnly {
+		return nil
+	}
 	server := d.Server
 	if server == "" {
 		server = thisMachine
@@ -81,7 +90,6 @@ func (d *Down) Provision(ctx caddy.Context) error {
 		return err
 	}
 	d.page = buf.Bytes()
-	d.logger = ctx.Logger()
 	return nil
 }
 
@@ -89,7 +97,8 @@ func (d *Down) Provision(ctx caddy.Context) error {
 // the level Caddy uses for a server with no error routes, since Caddy logs
 // an error that an error route handled only at debug level. Then it serves the page
 // for a 502, 503 or 504 to a GET or HEAD that accepts HTML and asks for no
-// upgrade, and passes anything else to next, which writes the bare status.
+// upgrade, and passes anything else, and everything in LogOnly mode, to
+// next, which writes the bare status.
 func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	err, _ := r.Context().Value(caddyhttp.ErrorCtxKey).(error)
 	status := http.StatusInternalServerError
@@ -112,7 +121,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 			c.Write(zap.Object("request", caddyhttp.LoggableHTTPRequest{Request: r}), zap.Int("status", status))
 		}
 	}
-	if !downStatus(status) || !wantsPage(r) {
+	if d.LogOnly || !downStatus(status) || !wantsPage(r) {
 		return next.ServeHTTP(w, r)
 	}
 	hdr := w.Header()

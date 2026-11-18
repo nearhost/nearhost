@@ -597,8 +597,14 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 	if len(downRoutes) > 0 {
 		// A site's app that does not answer fails its route, and Caddy
-		// runs these: the route for the host that failed. A host with none
-		// gets Caddy's bare status.
+		// runs these: the route for the host that failed. The last route
+		// catches every other error, such as one the home page returns,
+		// only to log it: with error routes, Caddy logs the errors they
+		// handle at debug level.
+		downRoutes = append(downRoutes, map[string]any{
+			"handle":   []any{map[string]any{"handler": downModule, "log_only": true}},
+			"terminal": true,
+		})
 		server["errors"] = map[string]any{"routes": downRoutes}
 	}
 	servers := map[string]any{"nearhost": listenerWrappers(server)}
