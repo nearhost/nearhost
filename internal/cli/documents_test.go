@@ -372,7 +372,9 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	if status, out := postDoc(t, a.sock, doc, repo, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
 		t.Fatalf("no token: %d %v", status, out)
 	}
-	token, err := a.grants.Allow(config.LocalServer, "claude-code", grants.KindDocuments, realDir(t, repo))
+	// The grant covers the root as Resolve gives it: resolved and in slash
+	// form, C:/… on Windows.
+	token, err := a.grants.Allow(config.LocalServer, "claude-code", grants.KindDocuments, filepath.ToSlash(realDir(t, repo)))
 	if err != nil {
 		t.Fatal(err)
 	}
