@@ -67,7 +67,8 @@ func TestOwnerProblemRefusesRootInAnotherUsersStorage(t *testing.T) {
 	}
 	dir := t.TempDir()
 	err := ownerProblemFor(0, dir)
-	if err == nil || !strings.Contains(err.Error(), "as root") || !strings.Contains(err.Error(), dir) {
+	if err == nil || !strings.Contains(err.Error(), dir) ||
+		!strings.Contains(err.Error(), "Run `nearhost untrust --delete-key` without sudo. Nearhost asks for the password itself when it needs it.") {
 		t.Fatalf("err = %v", err)
 	}
 	if err := ownerProblemFor(os.Geteuid(), dir); err != nil {

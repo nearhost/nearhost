@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -343,6 +345,22 @@ type retryableError struct {
 func (e *retryableError) Error() string { return e.err.Error() }
 func (e *retryableError) Unwrap() error { return e.err }
 
+// trustRemainsError is an untrust failure that leaves trust Nearhost cannot
+// remove: another store or a file Nearhost did not install still trusts the
+// root, a browser store still trusts it after cleaning, or the root could not
+// be read. Only these, and a clean untrust, let `untrust --delete-key` delete
+// the key; every other failure deletes nothing.
+type trustRemainsError struct{ err error }
+
+func (e *trustRemainsError) Error() string { return e.err.Error() }
+func (e *trustRemainsError) Unwrap() error { return e.err }
+
+// trustRemains marks err as trust Nearhost cannot remove.
+func trustRemains(err error) error { return &trustRemainsError{err: err} }
+
+// untrustStep is untrustRoot; tests replace it.
+var untrustStep = untrustRoot
+
 // noSudoRetry is untrust's error for a missing sudo.
 func noSudoRetry(err error) error {
 	return &retryableError{err: noSudo(err, "untrust"), fix: fmt.Sprintf("%v; install sudo in one of those", err)}
@@ -351,15 +369,15 @@ func noSudoRetry(err error) error {
 // untrustAndDelete is `nearhost untrust --delete-key`: it untrusts the root,
 // then asks, unless yes, and deletes the local CA.
 //
-// When untrust fails in a way a second run gets past, nothing is asked or
-// deleted: the user fixes what the error names and runs the command again,
-// which can still find the root to untrust. When trust remains that Nearhost
-// cannot remove, the key goes anyway. A root something still trusts is worse
+// The key goes only after a clean untrust or one that left trust Nearhost
+// cannot remove (a trustRemainsError). Any other failure asks and deletes
+// nothing: a second run, once the user fixes what the error names, can still
+// find the root to untrust. When trust remains, the key goes anyway. A root something still trusts is worse
 // with its key on disk, where anyone who reads it can sign certificates that
 // trust accepts; without the key the root signs nothing new. The command then
 // fails and names the old root by fingerprint and serial number, so the user
 // can tell it from the new one, and a copy of its certificate stays in the
-// data directory.
+// data directory. A clean untrust keeps no copy.
 func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 	// Refuse before anything happens: the two steps are one operation.
 	if err := runningProblem(b); err != nil {
@@ -386,18 +404,24 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 	var untrustErr error
 	switch {
 	case err == nil:
-		untrustErr = untrustRoot(out, b, cert)
+		untrustErr = untrustStep(out, b, cert)
 	case errors.Is(err, fs.ErrNotExist) && !caPresent(ca):
 		return fmt.Errorf("no local CA found: %w", err)
 	default:
 		// A key without a readable root: there is no root to untrust, but the
 		// key can still go.
 		cert = nil
-		untrustErr = fmt.Errorf("Nearhost could not read the local CA's root certificate (%w), so it could not check what trusts it.", err)
+		untrustErr = trustRemains(fmt.Errorf("Nearhost could not read the local CA's root certificate (%w), so it could not check what trusts it.", err))
 	}
-	var retry *retryableError
-	if errors.As(untrustErr, &retry) {
-		return fmt.Errorf("Nothing was deleted. %s, then run `nearhost untrust --delete-key` again.", retry.fix)
+	var remains *trustRemainsError
+	if untrustErr != nil && !errors.As(untrustErr, &remains) {
+		// A second run can finish the untrust, and could not find the root
+		// to untrust once the CA is gone.
+		var retry *retryableError
+		if errors.As(untrustErr, &retry) {
+			return fmt.Errorf("Nothing was deleted. %s, then run `nearhost untrust --delete-key` again.", retry.fix)
+		}
+		return fmt.Errorf("Nothing was deleted. %v Fix that, then run `nearhost untrust --delete-key` again.", strings.TrimSuffix(untrustErr.Error(), ".")+".")
 	}
 	if !yes {
 		also := ""
@@ -411,12 +435,21 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 		}
 	}
 	// A password prompt or the question can wait for any length of time.
-	if err := runningProblem(b); err != nil {
-		return err
+	if up, err := b.running(); up || err != nil {
+		kept := "The local CA was untrusted but its key was kept. Stop Nearhost, then run `nearhost untrust --delete-key` again."
+		if err != nil {
+			kept = fmt.Sprintf("The local CA was untrusted but its key was kept: Nearhost could not tell whether a Nearhost is running (%v). Stop it, then run `nearhost untrust --delete-key` again.", err)
+		}
+		if untrustErr != nil {
+			return fmt.Errorf("%w\n%s", untrustErr, kept)
+		}
+		return errors.New(kept)
 	}
 
+	// Keep the root's certificate only while something still trusts it, so
+	// the user can tell it from the new one.
 	kept := ""
-	if cert != nil {
+	if cert != nil && untrustErr != nil {
 		if kept, err = keepRoot(cert); err != nil {
 			fmt.Fprintf(out, "Nearhost could not keep a copy of the old root certificate: %v.\n", err)
 		}
@@ -448,8 +481,10 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 			problems = append(problems, fmt.Sprintf("Nearhost could not delete the old copy of the local CA: %v.", oldErr))
 		}
 	}
-	if keyGone && untrustErr != nil {
-		problems = append(problems, oldRootLine(cert, kept))
+	if untrustErr != nil {
+		if line := oldRootLine(cert, kept, keyGone && oldErr == nil); line != "" {
+			problems = append(problems, line)
+		}
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "\n"))
@@ -533,21 +568,45 @@ func keepRoot(cert *x509.Certificate) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-// oldRootLine closes a deletion that left trust behind: it says the key is
-// gone and names the old root, so the user removes that one and not the new
-// Nearhost Local CA. cert is nil when the root could not be read.
-func oldRootLine(cert *x509.Certificate, kept string) string {
+// oldRootLine closes a run that left trust behind: it says whether the key
+// is gone and names the old root, so the user removes that one and not the
+// new Nearhost Local CA. cert is nil when the root could not be read; kept is
+// where its copy is, "" for none; deleted is whether every copy of the key is
+// gone. It is "" when there is nothing to say.
+func oldRootLine(cert *x509.Certificate, kept string, deleted bool) string {
+	lead := "The trust above remains."
+	if deleted {
+		lead = "Nearhost deleted the CA's key, so nothing can sign new certificates under that root, but the trust above remains."
+	}
 	if cert == nil {
+		if !deleted {
+			return ""
+		}
 		return "Nearhost deleted the CA's key, so nothing can sign new certificates under that root, but it could not read the root to say which Nearhost Local CA it is."
 	}
 	sum := sha256.Sum256(cert.Raw)
+	ids := "SHA-256 fingerprint " + colonPairs(sum[:])
+	if hostOS == "windows" {
+		// certlm.msc shows the SHA-1 thumbprint.
+		ids += fmt.Sprintf(", SHA-1 thumbprint %x", sha1.Sum(cert.Raw))
+	}
+	ids += " and serial number " + colonPairs(serialBytes(cert.SerialNumber))
 	copyNote := ""
 	if kept != "" {
 		copyNote = fmt.Sprintf(" (a copy is in %s)", printable(kept))
 	}
-	return fmt.Sprintf("Nearhost deleted the CA's key, so nothing can sign new certificates under that root, but the trust above remains. "+
-		"That root has SHA-256 fingerprint %s and serial number %s%s. The Nearhost Local CA that Nearhost makes on its next run has others, so remove the one that matches.",
-		colonPairs(sum[:]), colonPairs(cert.SerialNumber.Bytes()), copyNote)
+	return fmt.Sprintf("%s That root has %s%s. The Nearhost Local CA that Nearhost makes on its next run has others, so remove the one that matches.",
+		lead, ids, copyNote)
+}
+
+// serialBytes is a serial number's bytes as DER encodes them and certificate
+// viewers show them: a leading 00 when the high bit is set.
+func serialBytes(n *big.Int) []byte {
+	b := n.Bytes()
+	if len(b) == 0 || b[0]&0x80 != 0 {
+		b = append([]byte{0}, b...)
+	}
+	return b
 }
 
 // colonPairs is b as upper-case hex pairs joined with colons, the way
@@ -574,7 +633,7 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 	if trusted && !holds && hostOS == "linux" {
 		// Trust comes from a file Nearhost did not install, so there
 		// is nothing of Nearhost's to remove and no reason for sudo.
-		return foreignTrustError(hostOS, b.anchorHelp)
+		return trustRemains(foreignTrustError(hostOS, b.anchorHelp))
 	}
 	inStore := trusted || holds
 	if inStore {
@@ -610,7 +669,7 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 			still = b.isTrusted
 		}
 		if still(cert) {
-			return stillTrustedError(hostOS)
+			return trustRemains(stillTrustedError(hostOS))
 		}
 	}
 	if inStore {
@@ -642,7 +701,7 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 				return &retryableError{err: errors.New(line), fix: "Nearhost could not clean the " + nssStores + " (" + nssStoreList(st) +
 					"), which may still trust the Nearhost Local CA: " + st.Detail + ". Install it"}
 			}
-			return errors.New(line)
+			return trustRemains(errors.New(line))
 		}
 	}
 	return nil

@@ -32,5 +32,5 @@ func ownerProblemFor(euid int, dir string) error {
 	if u, err := user.LookupId(owner); err == nil {
 		owner = u.Username
 	}
-	return fmt.Errorf("Nearhost is running as root, but %s belongs to %s. Run `nearhost untrust --delete-key` as %s instead", printable(dir), printable(owner), printable(owner))
+	return fmt.Errorf("Nearhost is running as root, but %s belongs to %s. Run `nearhost untrust --delete-key` without sudo. Nearhost asks for the password itself when it needs it.", printable(dir), printable(owner))
 }

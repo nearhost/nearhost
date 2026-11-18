@@ -5,12 +5,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/big"
 	"os"
@@ -82,12 +84,18 @@ func localCA(t *testing.T) (ca, sibling string) {
 // copy kept of it.
 func rootCert(t *testing.T) *x509.Certificate {
 	t.Helper()
+	return rootCertSerial(t, big.NewInt(0x1234abcd))
+}
+
+// rootCertSerial is rootCert with the serial number given.
+func rootCertSerial(t *testing.T, serial *big.Int) *x509.Certificate {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(0x1234abcd),
+		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "Nearhost Local CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(time.Hour),
@@ -175,7 +183,7 @@ func TestUntrustDeleteKeyChecksForNearhostAgainBeforeDeleting(t *testing.T) {
 	f.interactive = true
 	f.runningFn = func(call int) (bool, error) { return call > 1, nil }
 	out, err := runIn(t, newUntrustCmd(f.backend()), "y\n", "untrust", "--delete-key")
-	if err == nil || !strings.Contains(err.Error(), "Stop Nearhost") || f.runningChecks != 2 {
+	if err == nil || !strings.Contains(err.Error(), "The local CA was untrusted but its key was kept. Stop Nearhost, then run `nearhost untrust --delete-key` again.") || f.runningChecks != 2 {
 		t.Fatalf("err=%v checks=%d", err, f.runningChecks)
 	}
 	if !present(filepath.Join(ca, "root.key")) || strings.Contains(out, deletedLine) {
@@ -208,7 +216,23 @@ func TestUntrustDeleteKeyRemovesTheCAOnYes(t *testing.T) {
 	if !present(sibling) {
 		t.Fatal("a sibling of the CA's directory was removed")
 	}
-	// A copy of the root certificate, and nothing else, stays behind.
+	// With nothing left trusting the root, no copy of it is kept.
+	if present(keptRoot(t)) || strings.Contains(out, "copy") {
+		t.Fatalf("a copy was kept: %q", out)
+	}
+}
+
+// When trust remains, a copy of the root certificate, and nothing else, stays
+// behind.
+func TestUntrustDeleteKeyKeepsTheRootsCertificateWhenTrustRemains(t *testing.T) {
+	localCA(t)
+	f := deleteFake(t)
+	f.trusted = true
+	f.stillTrusted = true
+	out, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+	if err == nil {
+		t.Fatal("no error while trust remains")
+	}
 	kept := keptRoot(t)
 	if !strings.Contains(out, kept) {
 		t.Fatalf("output does not say where the root's copy is: %q", out)
@@ -528,5 +552,103 @@ func TestUntrustYesNeedsDeleteKey(t *testing.T) {
 	f := newFake()
 	if _, err := run(t, newUntrustCmd(f.backend()), "untrust", "--yes"); err == nil || !strings.Contains(err.Error(), "--delete-key") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// An error from untrust that nobody classified deletes nothing: only trust
+// Nearhost cannot remove leads to a deletion.
+func TestUntrustDeleteKeyDeletesNothingOnAnUnclassifiedError(t *testing.T) {
+	ca, _ := localCA(t)
+	orig := untrustStep
+	untrustStep = func(io.Writer, trustBackend, *x509.Certificate) error { return errors.New("something new went wrong") }
+	t.Cleanup(func() { untrustStep = orig })
+	f := deleteFake(t)
+	f.interactive = true
+	out, err := runIn(t, newUntrustCmd(f.backend()), "y\n", "untrust", "--delete-key")
+	if err == nil || !strings.HasPrefix(err.Error(), "Nothing was deleted. ") || !strings.Contains(err.Error(), "something new went wrong") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(out, "[y/N]") || !present(filepath.Join(ca, "root.key")) {
+		t.Fatalf("asked or deleted: %q", out)
+	}
+}
+
+// A Nearhost found by the second check keeps untrust's own error in the
+// output.
+func TestUntrustDeleteKeySecondRunningCheckKeepsUntrustsError(t *testing.T) {
+	ca, _ := localCA(t)
+	f := deleteFake(t)
+	f.trusted = true
+	f.stillTrusted = true
+	f.runningFn = func(call int) (bool, error) { return call > 1, nil }
+	_, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "still holds") || !strings.Contains(err.Error(), "its key was kept") {
+		t.Fatalf("err = %v", err)
+	}
+	if !present(filepath.Join(ca, "root.key")) {
+		t.Fatal("deleted while a Nearhost runs")
+	}
+}
+
+// While the old copy remains, so does a copy of the key: the old-root line
+// must not say the key is deleted.
+func TestUntrustDeleteKeyOldCopyLeftMeansTheKeyIsNotDeleted(t *testing.T) {
+	localCA(t)
+	cfg, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRoot := filepath.Join(cfg, "caddy")
+	writeCA(t, oldRoot)
+	f := deleteFake(t)
+	f.trusted = true
+	f.stillTrusted = true
+	f.removeFn = func(dir string) error {
+		if dir == oldRoot {
+			return errors.New("could not delete all of the old copy")
+		}
+		return proxy.RemoveCA(dir)
+	}
+	_, err = runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+	sum := sha256.Sum256(f.cert.Raw)
+	if err == nil || strings.Contains(err.Error(), "deleted the CA's key") || !strings.Contains(err.Error(), colonHex(sum[:])) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A removal that fails after the root's copy was written names the copy.
+func TestUntrustDeleteKeyFailedRemovalNamesTheCopy(t *testing.T) {
+	localCA(t)
+	f := deleteFake(t)
+	f.trusted = true
+	f.stillTrusted = true
+	f.removeErr = errors.New("could not delete all of the CA")
+	_, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "could not delete all of the CA") || !strings.Contains(err.Error(), keptRoot(t)) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Serial numbers print as their DER bytes, as OS certificate viewers show
+// them: a serial with the high bit set has a leading 00. On Windows the SHA-1
+// thumbprint, which certlm.msc shows, is printed too.
+func TestUntrustDeleteKeyPrintsTheSerialAsOSToolsDo(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			setHostOS(t, goos)
+			localCA(t)
+			f := newFake()
+			f.cert = rootCertSerial(t, big.NewInt(0x8a12))
+			f.trusted = true
+			f.stillTrusted = true
+			_, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
+			if err == nil || !strings.Contains(err.Error(), "serial number 00:8A:12") {
+				t.Fatalf("err = %v", err)
+			}
+			thumb := fmt.Sprintf("%x", sha1.Sum(f.cert.Raw))
+			if got := strings.Contains(err.Error(), thumb); got != (goos == "windows") {
+				t.Fatalf("thumbprint shown=%v on %s: %v", got, goos, err)
+			}
+		})
 	}
 }
