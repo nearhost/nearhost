@@ -16,7 +16,9 @@ func TestKeychainHoldsReadsTheListing(t *testing.T) {
 	if keychainHolds(cert, "/k") {
 		t.Error("keychain with another certificate: want false")
 	}
-	fakeSecurity(t, "", errors.New("exit status 1"))
+	orig := security
+	security = func(bool, ...string) ([]byte, error) { return nil, errors.New("exit status 1") }
+	t.Cleanup(func() { security = orig })
 	if !keychainHolds(cert, "/k") {
 		t.Error("unlistable keychain: want true, so the removal is attempted")
 	}
