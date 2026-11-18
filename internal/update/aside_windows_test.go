@@ -8,6 +8,7 @@ package update
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // asideChild, in the environment of the copy, makes TestAsideChildOnWindows
@@ -374,5 +377,49 @@ func TestRestoreThatFailsKeepsTheOldCopyOnWindows(t *testing.T) {
 			}
 			os.Remove(kept)
 		})
+	}
+}
+
+// The Windows update in full, on a running copy: the release is fetched to
+// <exe>.new while the running copy stays, then the running copy moves aside
+// and the new file is renamed into its place.
+func TestFetchThenSwapARunningExeOnWindows(t *testing.T) {
+	localAppData(t)
+	exe, _ := runningCopy(t)
+	d := release(t, "0.13.0", zipOf(t, map[string]string{"nearhost.exe": "new binary"}), "")
+	staged := exe + ".new"
+	if err := d.Fetch(context.Background(), "0.13.0", staged); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if _, err := os.Stat(exe); err != nil {
+		t.Fatalf("the download moved the running copy: %v", err)
+	}
+	if _, err := StepAside(exe); err != nil {
+		t.Fatalf("StepAside: %v", err)
+	}
+	if err := MoveIntoPlace(staged, exe); err != nil {
+		t.Fatalf("MoveIntoPlace: %v", err)
+	}
+	if got, err := os.ReadFile(exe); err != nil || string(got) != "new binary" {
+		t.Fatalf("%s holds %q, err %v", exe, got, err)
+	}
+	if _, err := os.Lstat(staged); !os.IsNotExist(err) {
+		t.Fatalf("%s is still there: %v", staged, err)
+	}
+}
+
+// renameBusy knows the errors a virus scanner holding a file open causes.
+func TestRenameBusyOnWindows(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_SHARING_VIOLATION}, true},
+		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_ACCESS_DENIED}, true},
+		{&os.LinkError{Op: "rename", Old: "a", New: "b", Err: windows.ERROR_FILE_NOT_FOUND}, false},
+	} {
+		if got := renameBusy(tc.err); got != tc.want {
+			t.Errorf("renameBusy(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }
