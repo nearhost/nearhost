@@ -77,8 +77,12 @@ func newFixture(t *testing.T) *fixture {
 func newFixtureAt(t *testing.T, rel string) *fixture {
 	t.Helper()
 	// The documents package works in slash form, so a Windows folder is
-	// given as C:/…, not C:\….
-	dir := filepath.ToSlash(t.TempDir())
+	// given as C:/…, not C:\…, and a tree's root is resolved (macOS's
+	// /var is /private/var).
+	dir, err := LocalFS{}.RealPath(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := dir + "/" + rel
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -289,6 +293,8 @@ func TestJunkBelowFileIsMissing(t *testing.T) {
 }
 
 func TestSymlinkedRoot(t *testing.T) {
+	// A tree's root is stored resolved. One stored as a symlink resolves
+	// elsewhere, so it is served as gone, as a swapped root is.
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real")
 	if err := os.MkdirAll(filepath.Join(real, "docs"), 0o755); err != nil {
@@ -299,13 +305,62 @@ func TestSymlinkedRoot(t *testing.T) {
 	}
 	link := filepath.Join(dir, "link")
 	testutil.Symlink(t, real, link)
+	resolved, err := LocalFS{}.RealPath(context.Background(), real)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tbl := NewTable(time.Now)
-	tr := tbl.Add("local", link, "claude", "docs/p.md")
 	h := NewHandler(tbl, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+tr.ID+"/docs/p.md?raw", nil))
-	if rec.Code != 200 || rec.Body.String() != "# P" {
-		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	get := func(root string) *httptest.ResponseRecorder {
+		tr := tbl.Add("local", root, "claude", "docs/p.md")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+tr.ID+"/docs/p.md?raw", nil))
+		return rec
+	}
+	if rec := get(resolved); rec.Code != 200 || rec.Body.String() != "# P" {
+		t.Fatalf("resolved root: got %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(filepath.ToSlash(link)); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+		t.Fatalf("symlink root: got %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// swapRoot moves f's root aside and puts a symlink to target in its place,
+// as an agent that may write in its project could.
+func swapRoot(t *testing.T, f *fixture, target string) {
+	t.Helper()
+	if err := os.Rename(f.root, f.root+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Symlink(t, target, f.root)
+}
+
+func TestSwappedRootServesNothing(t *testing.T) {
+	for _, tc := range []struct{ name, file string }{
+		{".ssh", "id_ed25519"},
+		{"plain", "secret.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.write(t, "notes/a.md", "# A")
+			target := filepath.Join(f.dir, tc.name)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, tc.file), []byte("SECRET"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if rec := f.do(t, "GET", "notes/a.md?raw"); rec.Code != 200 || rec.Body.String() != "# A" {
+				t.Fatalf("unchanged root: %d %q", rec.Code, rec.Body.String())
+			}
+			swapRoot(t, f, target)
+			for _, p := range []string{tc.file, tc.file + "?raw", "notes/a.md", ""} {
+				rec := f.do(t, "GET", p)
+				if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+					t.Errorf("%q after the swap: %d %q", p, rec.Code, rec.Body.String())
+				}
+			}
+		})
 	}
 }
 
@@ -702,17 +757,19 @@ func TestHiddenTreeServesOnlyDocumentsAndAssets(t *testing.T) {
 		t.Run(rel, func(t *testing.T) {
 			f := newFixtureAt(t, rel)
 			hidden := InHiddenFolder(rel)
-			if f.tree.Hidden != hidden {
-				t.Fatalf("Hidden = %v, want %v", f.tree.Hidden, hidden)
-			}
 			writeHiddenFiles(t, f)
 			for _, p := range hiddenServed {
 				if rec := f.do(t, "GET", p); rec.Code != 200 {
 					t.Errorf("%s: %d, want 200", p, rec.Code)
 				}
 			}
+			// got and gotSlash hold each answer while the file is there,
+			// without and with a trailing slash, to compare with the answers
+			// once it is gone.
 			got := map[string]*httptest.ResponseRecorder{}
+			gotSlash := map[string]*httptest.ResponseRecorder{}
 			for _, p := range hiddenRefused {
+				gotSlash[p] = f.do(t, "GET", p+"/")
 				rec := f.do(t, "GET", p)
 				got[p] = rec
 				if want := map[bool]int{true: 404, false: 200}[hidden]; rec.Code != want {
@@ -732,6 +789,9 @@ func TestHiddenTreeServesOnlyDocumentsAndAssets(t *testing.T) {
 				gone := f.do(t, "GET", p)
 				if gone.Code != got[p].Code || gone.Body.String() != got[p].Body.String() || gone.Header().Get("Content-Type") != got[p].Header().Get("Content-Type") {
 					t.Errorf("%s: %d %q, gone %d %q", p, got[p].Code, got[p].Body.String(), gone.Code, gone.Body.String())
+				}
+				if slashed := f.do(t, "GET", p+"/"); slashed.Code != gotSlash[p].Code || slashed.Body.String() != gotSlash[p].Body.String() {
+					t.Errorf("%s/: %d %q, gone %d %q", p, gotSlash[p].Code, gotSlash[p].Body.String(), slashed.Code, slashed.Body.String())
 				}
 			}
 		})

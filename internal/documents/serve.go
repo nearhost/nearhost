@@ -134,6 +134,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	if err != nil {
 		return err
 	}
+	// A tree is bound to the resolved root it was approved with. A root
+	// that resolves elsewhere now, as when a folder of it was swapped for
+	// a symlink to ~/.ssh or /etc, is answered as gone for every path, so
+	// the root rules applied when the tree was made can't be escaped.
+	if path.Clean(root) != path.Clean(tr.Root) {
+		return fs.ErrNotExist
+	}
 	real, err := fsys.RealPath(ctx, path.Join(root, rel))
 	if err != nil {
 		return explain(ctx, fsys, root, rel, err)
@@ -146,6 +153,12 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	info, err := fsys.Stat(ctx, real)
 	if err != nil {
 		return err
+	}
+	// A tree in a hidden folder, such as ~/.ssh, serves only documents and
+	// web assets; any other file there is missing, by the name of the file
+	// it resolves to, with or without a trailing slash.
+	if tr.Hidden && !info.IsDir() && !documentOrAsset(path.Base(real)) {
+		return fs.ErrNotExist
 	}
 	name := path.Base(rel)
 	if info.IsDir() {
@@ -169,12 +182,6 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 		name = "index.html"
 	} else if slash {
 		return errRefused
-	}
-	// A tree in a hidden folder, such as ~/.ssh, serves only documents and
-	// web assets; any other file there is missing, by the name of the file
-	// it resolves to.
-	if tr.Hidden && !documentOrAsset(path.Base(real)) {
-		return fs.ErrNotExist
 	}
 	if !info.Mode().IsRegular() {
 		return errRefused

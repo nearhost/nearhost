@@ -100,7 +100,9 @@ type Doc struct {
 	Opened time.Time
 }
 
-// Tree is a folder Nearhost serves on a server. Docs is newest first.
+// Tree is a folder Nearhost serves on a server. Root is resolved, as the
+// server's FS.RealPath gives it: a tree whose root resolves elsewhere later
+// serves nothing. Docs is newest first.
 // Requester is the agent the tree was approved for. Hidden is set when Root
 // is in a hidden folder (InHiddenFolder): such a tree serves only documents
 // and web assets.
@@ -140,7 +142,7 @@ func newID() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Add finds the tree for server and root, or makes one with a fresh ID, moves
+// Add finds the tree for server and root, a resolved path, or makes one with a fresh ID, moves
 // doc to the front of its Docs without duplicating it, and returns a copy.
 // requester is recorded only when the tree is made, as is Hidden, from root.
 func (t *Table) Add(server, root, requester, doc string) Tree {
