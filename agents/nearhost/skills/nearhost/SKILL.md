@@ -76,7 +76,7 @@ Use this when you have written a document for the user to read, such as a plan, 
 4. Exit status 6 means the user said No: do not offer that folder or its project again in this session, and give them the path only. When the script says the user said No to a document or to another one, Nearhost did not ask the user about this one: pass on what the script printed, give them the path, and ask again only if the user asks you to. Exit status 1 with `Nearhost could not show the document: <reason>` means the user said yes but showing it failed: pass on the reason and give them the path. Exit status 1 from `open` with an `error` means Nearhost refused the document: pass on its `error` and give them the path. Exit status 7 means nobody answered within 10 minutes: give them the path.
 5. On exit status 2 and 5, pass on the message the script printed as it is, and give the user the document's path: `open` repeats it, but `open-wait` cannot. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop, and give them the path.
 
-When the user picks "Always allow" in Nearhost, the script keeps the token it is given next to the passthrough token, in a file ending in `.documents`, and later asks without a prompt. Do not read, print or edit those files.
+When the user picks "Always allow" in Nearhost, the script keeps the token it is given next to the passthrough token, in a file ending in `.documents`. A later document in a folder the user approved opens without a prompt; one in any other folder asks again. Do not read, print or edit those files.
 
 ## When the script fails
 
