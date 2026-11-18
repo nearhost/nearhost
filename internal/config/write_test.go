@@ -250,7 +250,13 @@ func TestWriteFileAtomicNamesAReadOnlyFile(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(path, 0o644) })
 	err := WriteFileAtomic(path, []byte("new\n"), 0o644)
-	want := path + " is read-only, so Nearhost cannot save it. Clear the file's read-only attribute and try again."
+	// The message names the file by its resolved path, which differs from
+	// the temp folder's on macOS and on Windows runners.
+	resolved, rerr := filepath.EvalSymlinks(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	want := resolved + " is read-only, so Nearhost cannot save it. Clear the file's read-only attribute and try again."
 	if err == nil || err.Error() != want {
 		t.Fatalf("error = %v, want %q", err, want)
 	}
