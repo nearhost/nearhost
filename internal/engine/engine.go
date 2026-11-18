@@ -14,6 +14,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/dockernet"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -322,6 +323,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		_, err := e.proxy.ApplyIfRunning(sites)
 		return err
 	}
+	e.docker.source = &dockernet.Source{Logf: e.logDocker}
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	e.setConfigLocked(cloneConfig(cfg), nil)
 	return e
