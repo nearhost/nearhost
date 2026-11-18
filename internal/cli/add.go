@@ -3,20 +3,25 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hostname"
@@ -40,6 +45,59 @@ type addBackend struct {
 	// domain can show where it points today. Nil means no lookup, and no
 	// warning.
 	lookup hosts.Lookup
+	// running reports which Nearhost, if any, is serving on this machine, so
+	// that add can say whether it picks the new project up. Nil means none.
+	running func() runMode
+}
+
+// runMode is which Nearhost, if any, answers on this machine's agent socket.
+type runMode int
+
+const (
+	// modeNone is no Nearhost answering.
+	modeNone runMode = iota
+	// modeInterface is the interface, which watches the config and applies
+	// a change to it.
+	modeInterface
+	// modeUp is `nearhost up`, which reads the config once.
+	modeUp
+	// modeUnknown is a Nearhost that answers without saying which it is, as
+	// an older one does.
+	modeUnknown
+)
+
+// agentRunMode asks the agent API on the socket at path which Nearhost
+// serves it. A socket nothing answers on is modeNone; an answer that does not
+// say whether the interface is running is modeUnknown.
+func agentRunMode(path string) runMode {
+	const timeout = 500 * time.Millisecond
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: timeout}).DialContext(ctx, "unix", path)
+		}},
+	}
+	defer client.CloseIdleConnections()
+	resp, err := client.Get("http://nearhost/v1")
+	if err != nil {
+		// A refused dial means nothing is there. A socket that accepts but
+		// does not answer in time is still something running.
+		if !agentapi.Answers(path) {
+			return modeNone
+		}
+		return modeUnknown
+	}
+	defer resp.Body.Close()
+	var hello struct {
+		Interface *bool `json:"interface"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&hello) != nil || hello.Interface == nil {
+		return modeUnknown
+	}
+	if *hello.Interface {
+		return modeInterface
+	}
+	return modeUp
 }
 
 // systemAdd is the production backend. Only NewRoot wires it in.
@@ -48,6 +106,7 @@ func systemAdd() addBackend {
 		openRemote: sshClient{}.openRemote,
 		presets:    systemPresets(),
 		lookup:     hosts.DNSLookup,
+		running:    systemRunMode,
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
@@ -275,7 +334,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if !project.Enabled {
 		start = config.UpCommand(project.Name)
 	}
-	_, err = fmt.Fprintf(out, "Start it with `%s`.\n", start)
+	_, err = fmt.Fprintln(out, runningAdvice(b.running, start))
 	return err
 }
 
@@ -937,4 +996,38 @@ func loopbackClash(cfg *config.Config, p config.Project) error {
 		}
 	}
 	return nil
+}
+
+// runningAdvice is the last line of add: what the user does next, given the
+// Nearhost that is running, if any. start is the command that starts the
+// project when nothing runs.
+func runningAdvice(running func() runMode, start string) string {
+	mode := modeNone
+	if running != nil {
+		mode = running()
+	}
+	switch mode {
+	case modeInterface:
+		return "The running Nearhost picks it up in a moment."
+	case modeUp:
+		return "nearhost up is running and does not reload. Stop it and start it again to serve this project."
+	case modeUnknown:
+		return "Nearhost is running. If it does not pick the project up in a moment, stop it and start it again."
+	}
+	return fmt.Sprintf("Start it with `%s`.", start)
+}
+
+// systemRunMode is the production probe: this machine's own agent socket.
+// When the socket cannot be worked out it says nothing runs, which leaves
+// the plain advice to start Nearhost.
+func systemRunMode() runMode {
+	id, err := config.InstallID()
+	if err != nil {
+		return modeNone
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return modeNone
+	}
+	return agentRunMode(agentSocket(home, id))
 }
