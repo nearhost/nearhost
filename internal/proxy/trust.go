@@ -81,8 +81,14 @@ func Uninstall(cert *x509.Certificate) error {
 }
 
 // IsTrusted reports whether the system trust store accepts cert as a root.
+// On Linux it reads the bundle files afresh, so a CA trusted while Nearhost
+// runs shows at once; when they cannot be read it asks Go's own pool.
 func IsTrusted(cert *x509.Certificate) bool {
-	_, err := cert.Verify(x509.VerifyOptions{})
+	opts := x509.VerifyOptions{}
+	if pool, ok := systemRoots(); ok {
+		opts.Roots = pool
+	}
+	_, err := cert.Verify(opts)
 	return err == nil
 }
 
