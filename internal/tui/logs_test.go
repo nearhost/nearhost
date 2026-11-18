@@ -73,3 +73,13 @@ func TestRequestEntryWithAnOddPath(t *testing.T) {
 		t.Errorf("lines %q", lines)
 	}
 }
+
+// A request's method is cleaned before it is drawn.
+func TestRequestMethodIsCleaned(t *testing.T) {
+	e := logEntry{at: time.Now(), source: "myapp", req: &proxy.Access{Method: "G\x1b]8;;https://evil.example\x07ET", URI: "/", Status: 200}}
+	for _, sources := range []bool{false, true} {
+		if got := entryLines(e, 80, sources)[0]; strings.Contains(got, "\x1b]8") || strings.Contains(got, "\x07") {
+			t.Errorf("sources %v: %q", sources, got)
+		}
+	}
+}

@@ -55,7 +55,7 @@ func TestLogAddressNeedsADoubleClick(t *testing.T) {
 // and not the text shown.
 func TestOwnLinkOpensOnOneClickWithItsFullTarget(t *testing.T) {
 	lines := uv.NewStyledString(ansi.SetHyperlink("https://a.test/full/path?x=1") + "a.test…" + ansi.ResetHyperlink()).Lines(ansi.WcWidth)
-	if got, own := linkAt(lines, point{2, 0}); got != "https://a.test/full/path?x=1" || !own {
+	if got, own, _, _ := linkAt(lines, point{2, 0}); got != "https://a.test/full/path?x=1" || !own {
 		t.Errorf("the link opens %q, own %v", got, own)
 	}
 	m, _, opened := clickModel(t)
@@ -145,5 +145,77 @@ func TestUnsafeAddressNeverOpens(t *testing.T) {
 	}
 	if safeAddress("https://a.test/x\x00y") || safeAddress("https://a.test/x y") || !safeAddress("https://a.test/x?y=1@z") {
 		t.Error("safeAddress is wrong about a control character, a space or an @ in a query")
+	}
+}
+
+// The toast keeps the scheme and host whole and cuts the path; a host too
+// long to show is not opened.
+func TestAddressToastShowsTheHost(t *testing.T) {
+	m, _, _ := clickModel(t)
+	room := m.toastRoom() - len("Click again to open ")
+	host := "https://" + strings.Repeat("h", room-len("https://.example")-len("/…")-1) + ".example"
+	got, ok := m.addressToast(host + "/" + strings.Repeat("p", 80))
+	if !ok || got != "Click again to open "+host+"/…" {
+		t.Errorf("a long path gave %q, %v", got, ok)
+	}
+	if got, ok := m.addressToast(host + "/x"); !ok || got != "Click again to open "+host+"/x" {
+		t.Errorf("a short path gave %q, %v", got, ok)
+	}
+	long := "https://" + strings.Repeat("h", room) + ".example"
+	if got, ok := m.addressToast(long + "/x"); ok || got != "Address too long to show; not opened" {
+		t.Errorf("a host too long gave %q, %v", got, ok)
+	}
+}
+
+// The same address on two rows is two places: a click on each opens
+// nothing, and a second click after the view scrolls opens nothing.
+func TestDoubleClickNeedsTheSamePlace(t *testing.T) {
+	m, _, opened := clickModel(t)
+	m.logs.noteOn(m.sel, "a https://a.example/x one")
+	m.logs.noteOn(m.sel, "b https://a.example/x two")
+	x, y := find(t, m, "a https://a.example/x one")
+	run(m, click(m, x+5, y))
+	run(m, click(m, x+5, y+1))
+	if len(*opened) != 0 {
+		t.Errorf("one click on each of two rows opened %v", *opened)
+	}
+	run(m, click(m, x+5, y))
+	m.Update(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
+	run(m, click(m, x+5, y))
+	if len(*opened) != 0 {
+		t.Errorf("a click after the wheel opened %v", *opened)
+	}
+}
+
+// An address that runs to the last cell or up to an edge may be cut, so it
+// is not opened.
+func TestAddressAtTheEdgeIsRefused(t *testing.T) {
+	for _, row := range []string{"see https://a.test/x", "see https://a.test/x│  "} {
+		lines := uv.NewStyledString(row).Lines(ansi.WcWidth)
+		if got, _, _, _ := linkAt(lines, point{8, 0}); got != "" {
+			t.Errorf("%q gave %q", row, got)
+		}
+	}
+	lines := uv.NewStyledString("see https://a.test/x end").Lines(ansi.WcWidth)
+	if got, own, _, _ := linkAt(lines, point{8, 0}); got != "https://a.test/x" || own {
+		t.Errorf("an address in the middle of a row gave %q, own %v", got, own)
+	}
+	if safeAddress("https://nеarhost.test/") {
+		t.Error("a host with a Cyrillic letter is safe")
+	}
+}
+
+// A log line with the page's exact address is text, so it needs two
+// clicks.
+func TestLogLineWithThePageAddressNeedsTwoClicks(t *testing.T) {
+	m, _, opened := clickModel(t)
+	m.logs.noteOn(m.sel, "visit https://localhost:6327 now")
+	clickOn(t, m, "visit https://localhost:6327", 8)
+	if len(*opened) != 0 {
+		t.Errorf("one click opened %v", *opened)
+	}
+	clickOn(t, m, "visit https://localhost:6327", 8)
+	if len(*opened) != 1 {
+		t.Errorf("two clicks opened %v", *opened)
 	}
 }

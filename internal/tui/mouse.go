@@ -43,10 +43,15 @@ type mouseState struct {
 	shown     bool
 	lastClick point
 	lastAt    time.Time
-	// pending is the address in log text the last click was on, and
-	// pendingAt when: a second click on it within doubleClick opens it.
-	pending   string
-	pendingAt time.Time
+	// pending is the address in log text the last click was on, with the
+	// row it is on, its columns [lo, hi) and the row's text, and pendingAt
+	// when: a second click on the same place within doubleClick opens it.
+	pending    string
+	pendingRow string
+	pendingY   int
+	pendingLo  int
+	pendingHi  int
+	pendingAt  time.Time
 }
 
 // doubleClick is the longest time between the clicks of a double-click.
@@ -109,10 +114,11 @@ func (m *Model) mouseMove(mouse tea.Mouse) {
 	}
 }
 
-// mouseUp ends a press: a drag copies what it selected, a click on an
-// address opens it, one on a row or a key does what clicking there does,
-// and a second click on the same cell of anything else selects and copies
-// the word there.
+// mouseUp ends a press: a drag copies what it selected, a click on a link
+// the interface drew opens it, and one on an address in log text opens it
+// on a second click. A click on a row or a key does what clicking there
+// does, and a second click on the same cell of anything else selects and
+// copies the word there.
 func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	ms := &m.mouse
 	if !ms.down || mouse.Button != tea.MouseLeft {
@@ -128,9 +134,9 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		return m.copySelection()
 	}
 	lines := m.screenLines()
-	pending, pendingAt := ms.pending, ms.pendingAt
+	prev := *ms
 	ms.pending, ms.pendingAt = "", time.Time{}
-	if url, own := linkAt(lines, ms.to); url != "" {
+	if url, own, lo, hi := linkAt(lines, ms.to); url != "" {
 		ms.lastAt = time.Time{}
 		if own {
 			if url == m.pageURL() {
@@ -143,12 +149,18 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		}
 		// An address in log text came from the network or a dev server, so
 		// one click only says where it leads and a second opens it.
+		row := rowText(lines[ms.to.y])
 		at := m.now()
-		if url == pending && at.Sub(pendingAt) <= doubleClick {
+		if url == prev.pending && ms.to.y == prev.pendingY && lo == prev.pendingLo && hi == prev.pendingHi &&
+			row == prev.pendingRow && at.Sub(prev.pendingAt) <= doubleClick {
 			return m.open(url)
 		}
-		ms.pending, ms.pendingAt = url, at
-		return m.showToast("Click again to open "+url, false)
+		toast, ok := m.addressToast(url)
+		if !ok {
+			return m.showToast(toast, true)
+		}
+		ms.pending, ms.pendingRow, ms.pendingY, ms.pendingLo, ms.pendingHi, ms.pendingAt = url, row, ms.to.y, lo, hi, at
+		return m.showToast(toast, false)
 	}
 	if m.clickable(mouse) {
 		ms.lastAt = time.Time{}
@@ -166,6 +178,36 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		return m.copySelection()
 	}
 	return nil
+}
+
+// addressToast is what the first click on an address in log text says: the
+// address with its scheme and host whole, and its path cut to fit the toast.
+// With no room for the host it says the address will not open, and ok is
+// false.
+func (m *Model) addressToast(raw string) (text string, ok bool) {
+	const lead = "Click again to open "
+	room := m.toastRoom() - ansi.StringWidth(lead)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "Address too long to show; not opened", false
+	}
+	if ansi.StringWidth(raw) <= room {
+		return lead + raw, true
+	}
+	origin := u.Scheme + "://" + u.Host
+	if ansi.StringWidth(origin)+len("/…") > room {
+		return "Address too long to show; not opened", false
+	}
+	return lead + origin + "/…", true
+}
+
+// rowText is the text of a row of cells.
+func rowText(row uv.Line) string {
+	var sb strings.Builder
+	for _, c := range row {
+		sb.WriteString(c.Content)
+	}
+	return sb.String()
 }
 
 // open opens a web address in the browser, and says if it could not.
@@ -194,6 +236,7 @@ type openFailedMsg struct {
 // does.
 func (m *Model) clearSelection() {
 	m.mouse.shown = false
+	m.mouse.pending = ""
 }
 
 // copySelection puts the selected text on the clipboard and says so.
@@ -351,16 +394,16 @@ var webAddress = regexp.MustCompile(`https?://[^\s"'<>]+`)
 // sequences stripped, so it cannot carry one, and an address in it is only
 // found by its look and has to pass safeAddress. Anything else is not
 // opened, as a log line from a project could name any scheme.
-func linkAt(lines []uv.Line, p point) (url string, own bool) {
+func linkAt(lines []uv.Line, p point) (url string, own bool, lo, hi int) {
 	if p.y < 0 || p.y >= len(lines) || p.x < 0 || p.x >= len(lines[p.y]) {
-		return "", false
+		return "", false, 0, 0
 	}
 	row := lines[p.y]
 	if url := row[p.x].Link.URL; url != "" {
 		if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-			return url, true
+			return url, true, 0, 0
 		}
-		return "", false
+		return "", false, 0, 0
 	}
 	var sb strings.Builder
 	col := make([]int, 0, len(row)) // the cell of each byte
@@ -381,25 +424,26 @@ func linkAt(lines []uv.Line, p point) (url string, own bool) {
 		// have been cut without a mark: what is shown is not the address.
 		if strings.Contains(text[loc[0]:loc[1]], "…") || col[loc[1]-1] >= len(row)-1 ||
 			col[loc[1]-1]+1 < len(row) && row[col[loc[1]-1]+1].Content == edge {
-			return "", false
+			return "", false, 0, 0
 		}
 		if url := text[loc[0]:end]; safeAddress(url) {
-			return url, false
+			return url, false, col[loc[0]], col[end-1] + 1
 		}
 	}
-	return "", false
+	return "", false, 0, 0
 }
 
 // safeAddress reports whether an address found in text is one to open: an
-// http or https address with a host, no control characters or spaces, and
-// no user name or password, which is how https://nearhost.test@evil.example
-// is made to look like a host it is not.
+// http or https address with a host, in ASCII so a look-alike host is not
+// opened, with no control characters or spaces and no user name or
+// password, which is how https://nearhost.test@evil.example is made to look
+// like a host it is not.
 func safeAddress(s string) bool {
 	if !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '\\' {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '\\' || r > unicode.MaxASCII {
 			return false
 		}
 	}

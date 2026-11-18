@@ -203,10 +203,10 @@ func TestDragInAFormKeepsToTheBox(t *testing.T) {
 func TestLinkAtOpensOnlyWebAddresses(t *testing.T) {
 	lines := uv.NewStyledString(ansi.SetHyperlink("file:///etc/passwd") + "passwd" + ansi.ResetHyperlink() + " " +
 		ansi.SetHyperlink("https://a.test") + "a.test" + ansi.ResetHyperlink()).Lines(ansi.WcWidth)
-	if got, _ := linkAt(lines, point{2, 0}); got != "" {
+	if got, _, _, _ := linkAt(lines, point{2, 0}); got != "" {
 		t.Errorf("a file: link opens %q", got)
 	}
-	if got, own := linkAt(lines, point{9, 0}); got != "https://a.test" || !own {
+	if got, own, _, _ := linkAt(lines, point{9, 0}); got != "https://a.test" || !own {
 		t.Errorf("the https link opens %q, own %v", got, own)
 	}
 }
