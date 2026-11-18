@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,10 +49,149 @@ func releaseServer(t *testing.T, tag string, hits *atomic.Int32) *httptest.Serve
 			http.Error(w, "nope", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(`{"tag_name":"` + tag + `","html_url":"x"}`))
+		w.Write([]byte(`{"tag_name":"` + tag + `","html_url":"x","assets":[{"name":"nearhost_` + strings.TrimPrefix(tag, "v") + "_" + runtime.GOOS + "_" + runtime.GOARCH + archiveExt() + `"}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// archiveExt is the running platform's archive extension.
+func archiveExt() string {
+	if runtime.GOOS == "windows" {
+		return ".zip"
+	}
+	return ".tar.gz"
+}
+
+// assetServer serves one latest release with the given asset names.
+func assetServer(t *testing.T, tag string, names ...string) *httptest.Server {
+	t.Helper()
+	assets := make([]string, len(names))
+	for i, n := range names {
+		assets[i] = `{"name":"` + n + `"}`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"` + tag + `","assets":[` + strings.Join(assets, ",") + `]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A release whose archive for this platform is not uploaded yet is not out:
+// no update, no error.
+func TestLatestWithoutThisPlatformsArchiveIsNotOut(t *testing.T) {
+	for name, names := range map[string][]string{
+		"no assets":       nil,
+		"checksums only":  {"checksums.txt"},
+		"other platform":  {"checksums.txt", "nearhost_0.6.0_darwin_arm64.tar.gz", "nearhost_0.6.0_linux_arm64.tar.gz", "nearhost_0.6.0_windows_amd64.zip"},
+		"wrong extension": {"nearhost_0.6.0_linux_amd64.zip"},
+	} {
+		c := Checker{URL: assetServer(t, "v0.6.0", names...).URL, GOOS: "linux", GOARCH: "amd64"}
+		got, err := c.Latest(context.Background())
+		if err != nil || got != "" {
+			t.Errorf("%s: Latest = %q, %v; want no update and no error", name, got, err)
+		}
+	}
+}
+
+func TestLatestWithThisPlatformsArchiveIsOffered(t *testing.T) {
+	for _, tc := range []struct{ goos, goarch, name string }{
+		{"linux", "amd64", "nearhost_0.6.0_linux_amd64.tar.gz"},
+		{"linux", "arm64", "nearhost_0.6.0_linux_arm64.tar.gz"},
+		{"darwin", "arm64", "nearhost_0.6.0_darwin_arm64.tar.gz"},
+		{"darwin", "amd64", "nearhost_0.6.0_darwin_amd64.tar.gz"},
+		{"windows", "amd64", "nearhost_0.6.0_windows_amd64.zip"},
+		{"windows", "arm64", "nearhost_0.6.0_windows_arm64.zip"},
+	} {
+		c := Checker{URL: assetServer(t, "v0.6.0", "checksums.txt", tc.name).URL, GOOS: tc.goos, GOARCH: tc.goarch}
+		got, err := c.Latest(context.Background())
+		if err != nil || got != "0.6.0" {
+			t.Errorf("%s/%s: Latest = %q, %v; want 0.6.0", tc.goos, tc.goarch, got, err)
+		}
+	}
+}
+
+// A skipped release is remembered for 15 minutes, so the notice appears soon
+// after the files land; a normal answer keeps its 24 hours.
+func TestCachedSkippedReleaseIsRememberedFor15Minutes(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "update.json")
+	var hits atomic.Int32
+	var assets atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if assets.Load() {
+			w.Write([]byte(`{"tag_name":"v0.6.0","assets":[{"name":"nearhost_0.6.0_linux_amd64.tar.gz"}]}`))
+			return
+		}
+		w.Write([]byte(`{"tag_name":"v0.6.0","assets":[]}`))
+	}))
+	defer srv.Close()
+	c := Checker{URL: srv.URL, CachePath: path, Now: func() time.Time { return now }, GOOS: "linux", GOARCH: "amd64"}
+	if got, err := c.Cached(context.Background()); err != nil || got != "" {
+		t.Fatalf("Cached = %q, %v", got, err)
+	}
+	now = now.Add(14 * time.Minute)
+	if got, err := c.Cached(context.Background()); err != nil || got != "" || hits.Load() != 1 {
+		t.Fatalf("after 14 min: %q, %v, %d fetches; want the cached no-update", got, err, hits.Load())
+	}
+	assets.Store(true)
+	now = now.Add(2 * time.Minute)
+	if got, err := c.Cached(context.Background()); err != nil || got != "0.6.0" || hits.Load() != 2 {
+		t.Fatalf("after 16 min: %q, %v, %d fetches; want 0.6.0 from a second fetch", got, err, hits.Load())
+	}
+	// The normal answer now stays for 24 hours.
+	now = now.Add(23 * time.Hour)
+	if got, err := c.Cached(context.Background()); err != nil || got != "0.6.0" || hits.Load() != 2 {
+		t.Fatalf("after 23 h: %q, %v, %d fetches; want the cached 0.6.0", got, err, hits.Load())
+	}
+}
+
+// An older build reads a newer build's skipped entry as a failed check, and
+// the entry is dated so that the older build's 24 hours end after 15 minutes.
+func TestSkippedCacheEntryExpiresForAnOlderBuildToo(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "update.json")
+	c := Checker{URL: assetServer(t, "v0.6.0").URL, CachePath: path, Now: func() time.Time { return now }, GOOS: "linux", GOARCH: "amd64"}
+	if _, err := c.Cached(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the previous build's struct sees.
+	var old struct {
+		CheckedAt time.Time `json:"checked_at"`
+		Latest    string    `json:"latest,omitempty"`
+		Line      string    `json:"line,omitempty"`
+	}
+	if err := json.Unmarshal(data, &old); err != nil {
+		t.Fatalf("an older build cannot read the entry: %v", err)
+	}
+	if old.Latest != "" {
+		t.Errorf("older build sees latest %q", old.Latest)
+	}
+	if age := now.Add(16 * time.Minute).Sub(old.CheckedAt); age < TTL {
+		t.Errorf("an older build would trust the entry for %v, want it stale after 15 minutes", TTL-age)
+	}
+	if age := now.Add(10 * time.Minute).Sub(old.CheckedAt); age >= TTL {
+		t.Errorf("entry already stale after 10 minutes")
+	}
+}
+
+// A cache file an older build wrote has no skipped marker and reads as before.
+func TestCachedReadsAnOlderBuildsFile(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "update.json")
+	old := `{"checked_at":"` + now.Add(-time.Hour).Format(time.RFC3339) + `","latest":"0.5.0"}`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Checker{URL: "http://127.0.0.1:1/unreachable", CachePath: path, Now: func() time.Time { return now }}
+	if got, err := c.Cached(context.Background()); err != nil || got != "0.5.0" {
+		t.Fatalf("Cached = %q, %v; want 0.5.0 from the older build's file", got, err)
+	}
 }
 
 func TestLatest(t *testing.T) {
@@ -261,12 +401,12 @@ func TestLatestForANormalBuildNeverReadsTheList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		paths = append(paths, r.URL.Path)
-		w.Write([]byte(`{"tag_name":"v0.12.0"}`))
+		w.Write([]byte(`{"tag_name":"v0.12.0","assets":[{"name":"nearhost_0.12.0_linux_amd64.tar.gz"}]}`))
 	}))
 	defer srv.Close()
 	// The default URL is GitHub's; here the test points URL at a server and
 	// checks the request is for a single release, not a list.
-	c := Checker{Current: "0.12.0", URL: srv.URL + "/releases/latest"}
+	c := Checker{Current: "0.12.0", URL: srv.URL + "/releases/latest", GOOS: "linux", GOARCH: "amd64"}
 	got, err := c.Latest(context.Background())
 	if err != nil || got != "0.12.0" || hits.Load() != 1 || paths[0] != "/releases/latest" {
 		t.Fatalf("Latest = %q, %v, paths %v", got, err, paths)

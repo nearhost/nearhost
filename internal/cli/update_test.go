@@ -833,11 +833,11 @@ func TestBackgroundCheckNotice(t *testing.T) {
 func TestColdCheckFinishesWithinTheGrace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(700 * time.Millisecond)
-		io.WriteString(w, `{"tag_name":"v0.6.0"}`)
+		io.WriteString(w, `{"tag_name":"v0.6.0","assets":[{"name":"nearhost_0.6.0_`+runtime.GOOS+"_"+runtime.GOARCH+`.tar.gz"},{"name":"nearhost_0.6.0_`+runtime.GOOS+"_"+runtime.GOARCH+`.zip"}]}`)
 	}))
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "update.json")
-	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP()}
+	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	c := startBackgroundCheck("0.5.0", checker.Cached)
 	if got := c.notice(updateGrace); got == "" {
 		t.Fatal("a check finishing within the grace gave no notice")
@@ -860,7 +860,7 @@ func TestHungCheckSavesTheCacheWithinTheGrace(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 	path := filepath.Join(t.TempDir(), "update.json")
-	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP()}
+	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	c := startBackgroundCheck("0.5.0", checker.Cached)
 	select {
 	case <-c.done:
