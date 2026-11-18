@@ -10,17 +10,29 @@ import (
 	"testing"
 
 	"github.com/smallstep/truststore"
+
+	"github.com/nearhost/nearhost/internal/sudo"
 )
 
-// TestUninstallNSSLeavesTheSystemStoreAlone checks that the NSS-only uninstall
-// asks the library to skip the system store.
+// TestUninstallNSSLeavesTheSystemStoreAlone checks that the NSS-only
+// uninstall never reaches the sudo path or the System keychain copy removal.
 func TestUninstallNSSLeavesTheSystemStoreAlone(t *testing.T) {
-	orig := trustUninstall
-	t.Cleanup(func() { trustUninstall = orig })
-	var calls int
+	if os.Geteuid() == 0 {
+		t.Skip("root needs no sudo")
+	}
+	origCandidates := sudo.Candidates
+	sudo.Candidates = []string{filepath.Join(t.TempDir(), "missing")} // withTrustedSudo would refuse
+	origUninstall, origRemove := trustUninstall, removeSystemCopy
+	t.Cleanup(func() { sudo.Candidates, trustUninstall, removeSystemCopy = origCandidates, origUninstall, origRemove })
+	var calls, removed int
 	trustUninstall = func(*x509.Certificate, ...truststore.Option) error { calls++; return nil }
-	if err := UninstallNSS(&x509.Certificate{}); err != nil || calls != 1 {
-		t.Fatalf("err=%v calls=%d", err, calls)
+	removeSystemCopy = func(*x509.Certificate) error { removed++; return nil }
+	before := os.Getenv("PATH")
+	if err := UninstallNSS(&x509.Certificate{}); err != nil {
+		t.Fatalf("UninstallNSS = %v, want it to need no sudo", err)
+	}
+	if calls != 1 || removed != 0 || os.Getenv("PATH") != before {
+		t.Fatalf("calls=%d removed=%d PATH=%q", calls, removed, os.Getenv("PATH"))
 	}
 }
 

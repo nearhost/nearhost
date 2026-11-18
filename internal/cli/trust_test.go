@@ -37,6 +37,10 @@ type fakeTrust struct {
 	nssUninstalls int
 	nssUninstErr  error
 	sudoChecks    int
+	// present is what the fake system store holds regardless of trusted;
+	// stillTrusted is the answer after the uninstall.
+	present      bool
+	stillTrusted bool
 }
 
 func (f *fakeTrust) backend() trustBackend {
@@ -61,7 +65,9 @@ func (f *fakeTrust) backend() trustBackend {
 			f.nssUninstalls++
 			return f.nssUninstErr
 		},
-		findSudo: func() error { f.sudoChecks++; return nil },
+		systemHolds:  func(*x509.Certificate) bool { return f.present },
+		stillTrusted: func(*x509.Certificate) bool { return f.stillTrusted },
+		findSudo:     func() error { f.sudoChecks++; return nil },
 	}
 }
 
@@ -431,13 +437,8 @@ func TestUntrustNSSLeftBehindIsTheLastLine(t *testing.T) {
 	f.trusted = true
 	f.nss = proxy.NSSStatus{State: proxy.NSSCovered, Stores: []string{"/home/u/.mozilla/firefox/ab\x1b[31mc.default"}}
 	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	last := lines[len(lines)-1]
-	if !strings.Contains(last, "still trust") || !strings.Contains(last, "firefox/ab") || strings.Contains(out, "\x1b") {
-		t.Fatalf("output %q", out)
+	if err == nil || !strings.Contains(err.Error(), "still trust") || !strings.Contains(err.Error(), "firefox/ab") || strings.Contains(err.Error()+out, "\x1b") {
+		t.Fatalf("err=%v output %q", err, out)
 	}
 }
 
@@ -447,13 +448,9 @@ func TestUntrustCertutilMissingNamesStoresAndWhatToInstall(t *testing.T) {
 	f.trusted = true
 	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, NoCertutil: true,
 		Detail: `"certutil" not found (install it with "apt install libnss3-tools")`, Stores: []string{"/home/u/.pki/nssdb"}}
-	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if err != nil {
-		t.Fatal(err)
-	}
-	last := strings.Split(strings.TrimSpace(out), "\n")
-	if l := last[len(last)-1]; !strings.Contains(l, "/home/u/.pki/nssdb") || !strings.Contains(l, "libnss3-tools") || !strings.Contains(l, "may still trust") {
-		t.Fatalf("output %q", out)
+	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err == nil || !strings.Contains(err.Error(), "/home/u/.pki/nssdb") || !strings.Contains(err.Error(), "libnss3-tools") || !strings.Contains(err.Error(), "may still trust") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -473,7 +470,62 @@ func TestUntrustNSSCleanFailureFails(t *testing.T) {
 	f := newFake()
 	f.nssUninstErr = errors.New("certutil -D failed")
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if err == nil || !strings.Contains(err.Error(), "certutil -D failed") {
-		t.Fatalf("err = %v", err)
+	if err == nil || strings.Contains(err.Error(), "certutil -D failed") || !strings.Contains(err.Error(), "quit Firefox") {
+		t.Fatalf("err = %v, want the cause without the raw error", err)
+	}
+}
+
+func TestUntrustAnchorPresentButNotTrustedStillUninstalls(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.present = true // for example SSL_CERT_FILE hides the anchor from this process
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err != nil || f.uninstall != 1 || f.sudoChecks != 1 || strings.Contains(out, "was not in") {
+		t.Fatalf("err=%v uninstalls=%d sudoChecks=%d out=%q", err, f.uninstall, f.sudoChecks, out)
+	}
+}
+
+func TestUntrustStillTrustedAfterUninstallFails(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for name, uninstErr := range map[string]error{"removed": nil, "not found": truststore.ErrNotFound} {
+		f := newFake()
+		f.trusted = true
+		f.stillTrusted = true
+		f.uninstErr = uninstErr
+		out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+		if err == nil || !strings.Contains(err.Error(), "still") || strings.Contains(out, "was not in") {
+			t.Errorf("%s: err=%v out=%q", name, err, out)
+		}
+	}
+}
+
+func TestStillTrustedErrorNamesTheStore(t *testing.T) {
+	for goos, want := range map[string]string{"windows": "certlm.msc", "darwin": "Keychain Access", "linux": "update"} {
+		if err := stillTrustedError(goos); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", goos, err, want)
+		}
+	}
+}
+
+func TestUntrustNotTrustedWithNSSStillTrustingFailsLast(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.nss = proxy.NSSStatus{State: proxy.NSSCovered, Stores: []string{"/home/u/.mozilla/firefox/a.default"}}
+	out, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err == nil || !strings.Contains(err.Error(), "still trust") || !strings.Contains(err.Error(), "Snap and Flatpak") {
+		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(out, "was not in the trust store") {
+		t.Fatalf("out %q", out)
+	}
+}
+
+func TestUntrustNotTrustedWithCertutilMissingFails(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	f := newFake()
+	f.nss = proxy.NSSStatus{State: proxy.NSSUnavailable, NoCertutil: true, Detail: "certutil not found", Stores: []string{"/home/u/.pki/nssdb"}}
+	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
+	if err == nil || !strings.Contains(err.Error(), "/home/u/.pki/nssdb") {
+		t.Fatalf("err=%v", err)
 	}
 }

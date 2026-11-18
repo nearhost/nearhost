@@ -59,3 +59,15 @@ func deleteFromKeychain(cert *x509.Certificate, keychain string) error {
 	}
 	return nil
 }
+
+// keychainHolds reports whether keychain holds a copy of cert. When the
+// keychain cannot be listed it says yes, so the caller attempts the removal.
+func keychainHolds(cert *x509.Certificate, keychain string) bool {
+	sum := sha1.Sum(cert.Raw)
+	hash := strings.ToUpper(hex.EncodeToString(sum[:]))
+	out, err := security(false, "find-certificate", "-a", "-Z", keychain)
+	if err != nil {
+		return true
+	}
+	return bytes.Contains(out, []byte("SHA-1 hash: "+hash+"\n"))
+}
