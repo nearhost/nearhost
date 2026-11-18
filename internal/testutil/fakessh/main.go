@@ -244,6 +244,15 @@ func run(args []string) int {
 		return 255
 	}
 
+	// A master also starts the $FAKE_SSH_STDERR_HOLDER child, as one that
+	// ran a ProxyCommand would have.
+	if hold := os.Getenv("FAKE_SSH_STDERR_HOLDER"); hold != "" && master {
+		if err := startStderrHolder(hold); err != nil {
+			fmt.Fprintf(os.Stderr, "fake ssh: stderr holder: %v\n", err)
+			return 255
+		}
+	}
+
 	// Master mode: create the socket and stay up until it is removed. TERM
 	// and INT remove it and end the master cleanly.
 	touch(sock)
