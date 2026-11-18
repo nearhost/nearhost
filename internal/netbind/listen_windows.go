@@ -3,7 +3,6 @@ package netbind
 import (
 	"context"
 	"net"
-	"sync"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -14,14 +13,7 @@ const loopbackHost = ""
 
 // serveHosts are the hosts ServeAddrs binds: loopback only, and [::1] only
 // on a machine that has the IPv6 loopback.
-var serveHosts = sync.OnceValue(func() []string {
-	l, err := net.Listen("tcp", "[::1]:0")
-	if err != nil {
-		return []string{"127.0.0.1"}
-	}
-	l.Close()
-	return []string{"127.0.0.1", "::1"}
-})
+func serveHosts() []string { return loopbackHosts() }
 
 // soExclusiveAddrUse is SO_EXCLUSIVEADDRUSE, ^SO_REUSEADDR in winsock2.h. It has
 // no constant in x/sys.

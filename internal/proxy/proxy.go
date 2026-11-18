@@ -156,8 +156,16 @@ func (p *Proxy) Stop() error {
 // releaseWait bounds how long Stop waits for the proxy's ports.
 const releaseWait = 5 * time.Second
 
-// ports are the TCP ports the proxy listens on.
-func (p *Proxy) ports() []int {
+// listenPort is a TCP port the proxy listens on and the addresses it binds
+// the port on.
+type listenPort struct {
+	port  int
+	addrs []string
+}
+
+// ports are the TCP ports the proxy listens on: the https and http ports on
+// netbind.ServeAddrs, and the page's on the loopback addresses alone.
+func (p *Proxy) ports() []listenPort {
 	https, http := p.opts.HTTPSPort, p.opts.HTTPPort
 	if https == 0 {
 		https = 443
@@ -165,25 +173,26 @@ func (p *Proxy) ports() []int {
 	if http == 0 {
 		http = 80
 	}
+	out := []listenPort{{https, netbind.ServeAddrs(https)}, {http, netbind.ServeAddrs(http)}}
 	if p.opts.WebPort != 0 {
-		return []int{https, http, p.opts.WebPort}
+		out = append(out, listenPort{p.opts.WebPort, pageAddrs(p.opts.WebPort)})
 	}
-	return []int{https, http}
+	return out
 }
 
 // releasePorts is waitReleased; tests watch it.
 var releasePorts = waitReleased
 
-// waitReleased waits until no port is in use on TCP, or timeout has passed.
-// A port that cannot be bound for another reason, such as a low port without
-// the right to bind it, is not waited for. Only TCP is waited for: Caddy's
-// HTTP/3 server keeps its UDP socket until its connections end, which
-// nothing here waits for.
-func waitReleased(ports []int, timeout time.Duration) error {
+// waitReleased waits until no port is in use on TCP at any of its addresses,
+// or timeout has passed. A port that cannot be bound for another reason,
+// such as a low port without the right to bind it, is not waited for. Only
+// TCP is waited for: Caddy's HTTP/3 server keeps its UDP socket until its
+// connections end, which nothing here waits for.
+func waitReleased(ports []listenPort, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	for _, port := range ports {
-		for _, addr := range netbind.ServeAddrs(port) {
-			if err := waitAddr(addr, port, deadline); err != nil {
+	for _, lp := range ports {
+		for _, addr := range lp.addrs {
+			if err := waitAddr(addr, lp.port, deadline); err != nil {
 				return err
 			}
 		}

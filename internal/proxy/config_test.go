@@ -714,8 +714,8 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
-	if got := strs(web["listen"]); !slices.Equal(got, netbind.ServeAddrs(6327)) {
-		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(6327))
+	if got := strs(web["listen"]); !slices.Equal(got, netbind.LoopbackAddrs(6327)) {
+		t.Errorf("listen = %v, want %v", got, netbind.LoopbackAddrs(6327))
 	}
 	if got := strs(web["protocols"]); !slices.Equal(got, []string{"h1", "h2"}) {
 		t.Errorf("protocols = %v, want h1 and h2, so no UDP port", got)

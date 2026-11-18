@@ -2169,6 +2169,47 @@ func TestStartServesWithoutPageWhenWebPortNeedsPermission(t *testing.T) {
 	}
 }
 
+// The page's port is probed at the addresses the page listens on, the
+// loopback addresses, and the https and http ports at netbind.ServeAddrs.
+// A probe at the wildcard address alone would miss a holder on 127.0.0.1 on
+// macOS, where both binds succeed.
+func TestStartProbesThePagePortOnLoopback(t *testing.T) {
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+	web := h.eng.opts.WebPort
+	var mu sync.Mutex
+	var probed []string
+	h.eng.listen = func(network, addr string) (net.Listener, error) {
+		mu.Lock()
+		probed = append(probed, addr)
+		mu.Unlock()
+		return net.Listen(network, addr)
+	}
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := h.eng.WebPort(); got != web {
+		t.Fatalf("WebPort = %d, want %d", got, web)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var page []string
+	for _, addr := range probed {
+		if strings.HasSuffix(addr, fmt.Sprintf(":%d", web)) {
+			page = append(page, addr)
+		}
+	}
+	if want := netbind.LoopbackAddrs(web); !slices.Equal(page, want) {
+		t.Errorf("probed the page's port at %q, want %q", page, want)
+	}
+	for _, port := range []int{h.eng.opts.HTTPSPort, h.eng.opts.HTTPPort} {
+		for _, addr := range netbind.ServeAddrs(port) {
+			if !slices.Contains(probed, addr) {
+				t.Errorf("did not probe %s; probed %q", addr, probed)
+			}
+		}
+	}
+}
+
 // A taken page port names its holder from the one lookup the probe made.
 func TestStartLooksUpThePagePortsHolderOnce(t *testing.T) {
 	l, err := net.Listen("tcp", proxyAddr(0))
