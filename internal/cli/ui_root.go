@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/sudo"
@@ -101,15 +102,17 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 	// The box answers as soon as the user cancels, while the check it
 	// cancelled may still be waiting for sudo to leave, and then runs
 	// sudo -k. The turn is held until that has finished, so the -k cannot
-	// drop the credentials the next step's password caches. The wait is
-	// bounded: a cancelled sudo is killed after 2 s, and the forget gives
-	// up after 2 s more.
-	settled()
+	// drop the credentials the next step's password caches; but for at
+	// most cancelledCheckWait, so a sudo that never leaves cannot block
+	// every later prompt. In that rare case the late -k can still drop the
+	// next step's credentials, which then asks in the terminal.
+	cancelled := settled(cancelledCheckWait)
 	if err != nil {
-		if r.sudo.forget != nil {
+		if r.sudo.forget != nil && !cancelled {
 			// The check may have cached the credentials before the user
 			// cancelled, or the request ended; whatever the error, the
 			// next step must ask again. Forgetting nothing is harmless.
+			// A check still running at the answer forgets for itself.
 			r.sudo.forget(ctx)
 		}
 		return err
@@ -129,12 +132,16 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 }
 
 // checks wraps the backend's validate for one password box. settled closes
-// it to new checks, which then fail at once, and waits for those running to
-// return.
-func (r asRoot) checks() (check func(context.Context, string) error, settled func()) {
+// it to new checks, which then fail at once, waits up to limit for those
+// running to return, and reports whether any was running. Such a check
+// forgets for itself: a cancelled validate forgets as it ends, and a check
+// that cached the credentials after the box answered forgets them here,
+// since nobody wants them.
+func (r asRoot) checks() (check func(context.Context, string) error, settled func(limit time.Duration) bool) {
 	var (
 		mu      sync.Mutex
 		closed  bool
+		active  int // checks running now
 		running sync.WaitGroup
 	)
 	check = func(ctx context.Context, password string) error {
@@ -143,16 +150,37 @@ func (r asRoot) checks() (check func(context.Context, string) error, settled fun
 			mu.Unlock()
 			return context.Canceled // the box has answered; nobody reads this
 		}
+		active++
 		running.Add(1)
 		mu.Unlock()
 		defer running.Done()
-		return r.sudo.validate(ctx, password)
+		err := r.sudo.validate(ctx, password)
+		mu.Lock()
+		active--
+		late := closed
+		mu.Unlock()
+		if late && err == nil && r.sudo.forget != nil {
+			r.sudo.forget(ctx)
+		}
+		return err
 	}
-	settled = func() {
+	settled = func(limit time.Duration) bool {
 		mu.Lock()
 		closed = true
+		wasRunning := active > 0
 		mu.Unlock()
-		running.Wait()
+		ended := make(chan struct{})
+		go func() {
+			running.Wait()
+			close(ended)
+		}()
+		timer := time.NewTimer(limit)
+		defer timer.Stop()
+		select {
+		case <-ended:
+		case <-timer.C:
+		}
+		return wasRunning
 	}
 	return check, settled
 }
@@ -164,3 +192,9 @@ func terminalWidth() int {
 	}
 	return 80
 }
+
+// cancelledCheckWait bounds how long a step holds the turn for a check its
+// box cancelled: under the 5 s that quitting waits. sudo itself takes up to
+// 4 s (killed 2 s after the cancel, then a sudo -k given 2 s). Tests
+// shorten it.
+var cancelledCheckWait = 4 * time.Second

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 // slowSudo points sudo at the stand-in in internal/sudo/testdata, with secret
 // as the password, and makes its next validation slow to leave once it is
 // asked to terminate. It returns the file that means the credentials are
-// cached, and the file that appears once that slow validation waits.
-func slowSudo(t *testing.T) (cache, waiting string) {
+// cached, the file that appears once that slow validation waits, and the
+// fake's log of its calls.
+func slowSudo(t *testing.T) (cache, waiting, log string) {
 	t.Helper()
 	src, err := os.ReadFile("../sudo/testdata/sudo")
 	if err != nil {
@@ -42,11 +44,12 @@ func slowSudo(t *testing.T) (cache, waiting string) {
 	if err := os.WriteFile(slow, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cache = filepath.Join(dir, "cache")
+	cache, log = filepath.Join(dir, "cache"), filepath.Join(dir, "log")
+	t.Setenv("FAKE_SUDO_LOG", log)
 	t.Setenv("FAKE_SUDO_PASSWORD", "secret")
 	t.Setenv("FAKE_SUDO_CACHE", cache)
 	t.Setenv("FAKE_SUDO_SLOW", slow)
-	return cache, slow + ".waiting"
+	return cache, slow + ".waiting", log
 }
 
 // waitFor waits up to 10 s for the file at path to exist.
@@ -63,9 +66,9 @@ func waitFor(t *testing.T, path string) {
 // A check the user cancelled while sudo was slow to leave cannot drop the
 // credentials the next step's password cached: the next step runs with
 // them still cached after the cancelled check, and the sudo -k it runs as
-// it ends, have finished.
+// it ends, have finished. That -k is the only one: the step adds none.
 func TestAsRootCancelledCheckKeepsTheNextStepsCredentials(t *testing.T) {
-	_, waiting := slowSudo(t)
+	_, waiting, log := slowSudo(t)
 	firstEnded := make(chan struct{})
 	root := asRoot{
 		sudo: rootBackend{
@@ -114,5 +117,9 @@ func TestAsRootCancelledCheckKeepsTheNextStepsCredentials(t *testing.T) {
 	}
 	if !cachedAfter {
 		t.Error("the cancelled check's sudo -k dropped the credentials the second step cached")
+	}
+	calls, _ := os.ReadFile(log)
+	if n := strings.Count(string(calls), "-k\n"); n != 1 {
+		t.Errorf("sudo -k ran %d times, want 1:\n%s", n, calls)
 	}
 }
