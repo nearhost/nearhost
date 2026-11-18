@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -607,7 +608,9 @@ func (e *portError) Unwrap() error { return e.err }
 // addrs(port), the addresses the proxy will serve the port on. A port it
 // cannot bind is a *portError, which wraps EACCES or EPERM when the user may
 // not bind the port. Any other failure on TCP is the port being in use, and
-// names the program holding it when that can be found.
+// names the program holding it when that can be found. So is a program that
+// listens on the port on loopback, which on macOS a bind to the wildcard
+// address does not see.
 func (e *Engine) probePort(ctx context.Context, what string, port, def int, addrs func(int) []string) error {
 	if port == 0 {
 		port = def
@@ -632,6 +635,16 @@ func (e *Engine) probeAddr(ctx context.Context, what string, port int, addr stri
 	}
 	if err := l.Close(); err != nil {
 		return fmt.Errorf("%s port %d: %w", what, port, err)
+	}
+	// On macOS the wildcard bind succeeds beside a program on loopback,
+	// which would then get the requests to every .test name. Nothing of this
+	// engine listens yet: Start probes before the proxy starts. A loopback
+	// address bound here needs no dial, as its bind fails against a holder.
+	if isWildcard(addr) {
+		if held := loopbackHeld(ctx, port); held != "" {
+			err := fmt.Errorf("a server listens on %s: %w", held, syscall.EADDRINUSE)
+			return &portError{what: what, port: port, heldBy: e.heldBy(ctx, port), err: err}
+		}
 	}
 	if what != "HTTPS" {
 		return nil
