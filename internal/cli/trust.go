@@ -11,17 +11,19 @@ import (
 	"io"
 	"io/fs"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/smallstep/truststore"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/sudo"
@@ -526,7 +528,7 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 func runningProblem(b trustBackend) error {
 	up, err := b.running()
 	if err != nil {
-		return fmt.Errorf("could not tell whether a Nearhost is running (%v); stop it and try again", err)
+		return fmt.Errorf("could not tell whether a Nearhost is running (%v). Stop every Nearhost first. Then fix that and try again, or run `nearhost untrust` and delete the local CA's folder yourself", err)
 	}
 	if up {
 		return errors.New("a Nearhost is running on this machine, and it holds the local CA in memory: it would go on using the key and could write it back. " +
@@ -535,7 +537,8 @@ func runningProblem(b trustBackend) error {
 	return nil
 }
 
-// nearhostRunningWhy is nearhostRunning that says why when it cannot tell.
+// nearhostRunningWhy is nearhostRunning that says why when it cannot tell,
+// and that cannot tell more often: see runningAt.
 func nearhostRunningWhy() (bool, error) {
 	id, err := config.InstallID()
 	if err != nil {
@@ -545,7 +548,61 @@ func nearhostRunningWhy() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return agentapi.Answers(agentSocket(home, id)), nil
+	return runningAt(agentSocket(home, id), dialSocket, canCreateIn)
+}
+
+// runningAt reports whether a Nearhost answers on the agent socket at path,
+// through dial. A Nearhost that could not make its socket runs on without
+// one, so nothing listening at path shows that none runs only where one
+// could have made it: writable reports whether a file can be made in the
+// socket's folder. A dial that fails for any reason other than nothing
+// listening, or a folder where no socket can be made, is an error: the
+// socket cannot tell. Once every serving run holds an instance lock, this
+// should ask that lock instead.
+func runningAt(path string, dial func(string) error, writable func(dir string) error) (bool, error) {
+	err := dial(path)
+	if err == nil {
+		return true, nil
+	}
+	if !nothingListens(err) {
+		return false, fmt.Errorf("the agent socket %s did not answer: %v", printable(path), err)
+	}
+	dir := filepath.Dir(path)
+	if err := writable(dir); err != nil {
+		return false, fmt.Errorf("a running Nearhost could not have made its agent socket in %s: %v", printable(dir), err)
+	}
+	return false, nil
+}
+
+// dialSocket connects to the Unix socket at path and hangs up.
+func dialSocket(path string) error {
+	c, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	return c.Close()
+}
+
+// nothingListens reports whether a dial failed because nothing listens at
+// the path: no socket file, or one that nothing serves any more.
+func nothingListens(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) || refusedHere(err)
+}
+
+// canCreateIn reports whether this user can make a file in dir, or, when dir
+// is not there yet, in the folder that would hold it, as Nearhost does when
+// it makes its agent socket. It makes a file and removes it again, and makes
+// no folder.
+func canCreateIn(dir string) error {
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		dir = filepath.Dir(dir)
+	}
+	f, err := os.CreateTemp(dir, ".nearhost-probe-*")
+	if err != nil {
+		return err
+	}
+	f.Close()
+	return os.Remove(f.Name())
 }
 
 // caDir is the local CA's directory in the Caddy storage directory dir.

@@ -12,8 +12,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/fsretry"
 	"github.com/nearhost/nearhost/internal/hostname"
 )
 
@@ -328,9 +330,25 @@ func read(path string) (string, error) {
 	return string(data), nil
 }
 
-// renameFile replaces the target with the finished temporary file. Tests
-// replace it to fail or hold the final step.
-var renameFile = os.Rename
+// Windows refuses to rename over a file another program has open, such as
+// a virus scanner reading the hosts file just as Nearhost replaces it. A
+// rename that fails so is tried again every renameRetryEvery until
+// renameRetryFor has passed, as the config's save does.
+const (
+	renameRetryEvery = 50 * time.Millisecond
+	renameRetryFor   = 500 * time.Millisecond
+)
+
+// renameFile replaces the target with the finished temporary file, waiting
+// out a file that another program holds open for a moment. Tests replace it
+// to fail or hold the final step.
+var renameFile = retryRename(os.Rename, fsretry.Busy, time.Sleep)
+
+// retryRename is fsretry.Retry with the hosts file's waits:
+// renameRetryEvery apart, for up to renameRetryFor.
+func retryRename(try func(oldpath, newpath string) error, busy func(error) bool, sleep func(time.Duration)) func(oldpath, newpath string) error {
+	return fsretry.Retry(try, busy, sleep, renameRetryEvery, renameRetryFor)
+}
 
 // Apply rewrites the managed block in the hosts file at path. The file is
 // replaced atomically: the new content is written to a temporary file in the

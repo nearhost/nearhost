@@ -566,3 +566,45 @@ func TestApplySucceedsWhenTheFlushFails(t *testing.T) {
 		t.Fatalf("file lacks a.test:\n%s", data)
 	}
 }
+
+// On Windows a virus scanner may hold the hosts file for a moment just as
+// Apply replaces it. The rename is tried again, as the config's is: a rename
+// busy twice succeeds on the third try, 50 ms apart, and one still busy
+// after 500 ms of waiting gives up with the system's error.
+func TestApplyWaitsOutABusyRename(t *testing.T) {
+	errBusy := errors.New("busy")
+	isBusy := func(err error) bool { return errors.Is(err, errBusy) }
+	orig := renameFile
+	t.Cleanup(func() { renameFile = orig })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(path, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tries := 0
+	var slept []time.Duration
+	renameFile = retryRename(func(oldpath, newpath string) error {
+		if tries++; tries <= 2 {
+			return errBusy
+		}
+		return os.Rename(oldpath, newpath)
+	}, isBusy, func(d time.Duration) { slept = append(slept, d) })
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatalf("Apply = %v after %d tries", err, tries)
+	}
+	if tries != 3 || len(slept) != 2 || slept[0] != 50*time.Millisecond {
+		t.Errorf("%d tries, slept %v; want 3 tries, 50ms apart", tries, slept)
+	}
+	if got, _ := os.ReadFile(path); !strings.Contains(string(got), "a.test") {
+		t.Errorf("the hosts file was not updated: %q", got)
+	}
+
+	var waited time.Duration
+	renameFile = retryRename(func(string, string) error { return errBusy }, isBusy, func(d time.Duration) { waited += d })
+	err := Apply(path, []string{"b.test"})
+	if err == nil || !errors.Is(err, errBusy) || waited != 500*time.Millisecond {
+		t.Errorf("Apply = %v after waiting %v; want the busy error after 500ms", err, waited)
+	}
+	tempLeftovers(t, dir, "hosts")
+}

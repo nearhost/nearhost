@@ -41,10 +41,11 @@ func StepAside(exe string) (restore func() error, err error) {
 	return func() error {
 		// npm may have removed the package folder; a failed installer may
 		// have left a partial file at exe. The old copy is known to work,
-		// so it goes back in either case.
+		// so it goes back in either case, waiting out a scanner that holds
+		// either file as the move aside does.
 		err := os.MkdirAll(filepath.Dir(exe), 0o755)
 		if err == nil {
-			err = os.Rename(moved, exe)
+			err = renameAside(moved, exe)
 		}
 		if err == nil {
 			return nil

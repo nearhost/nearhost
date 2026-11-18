@@ -1476,3 +1476,17 @@ func TestAddDisabledWithUpRunningSaysHowToStartIt(t *testing.T) {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
+
+// A config that cannot be loaded is named with the load's own sentence and
+// what to do, with one full stop between them.
+func TestAddOverABrokenConfigPunctuatesOnce(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(cfgPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"))
+	want := cfgPath + " is empty. Restore it from a backup, or delete it to start afresh. Fix the config before adding to it."
+	if err == nil || err.Error() != want {
+		t.Fatalf("add = %v, want %q", err, want)
+	}
+}
