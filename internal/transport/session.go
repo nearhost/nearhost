@@ -317,14 +317,18 @@ func (s *Session) Stop() {
 	}
 }
 
+// fatalSSHNeedles are the texts in ssh's output of errors that retrying
+// cannot fix.
+var fatalSSHNeedles = []string{
+	"Permission denied",
+	"Host key verification failed",
+	"REMOTE HOST IDENTIFICATION HAS CHANGED",
+	"Too many authentication failures",
+}
+
 // isFatalSSHError reports errors that retrying cannot fix.
 func isFatalSSHError(msg string) bool {
-	for _, needle := range []string{
-		"Permission denied",
-		"Host key verification failed",
-		"REMOTE HOST IDENTIFICATION HAS CHANGED",
-		"Too many authentication failures",
-	} {
+	for _, needle := range fatalSSHNeedles {
 		if strings.Contains(msg, needle) {
 			return true
 		}
@@ -371,9 +375,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"--", s.host)
 		// The master's stderr is kept as its last stderrLines lines: ssh
 		// logs a line for each channel it cannot open, so the whole of it
-		// would grow for as long as the master lives. The fatal check reads
-		// the same lines. An authentication failure is the last thing a
-		// master that failed to log in writes, so it is among them.
+		// would grow for as long as the master lives. The stderr also
+		// remembers the last fatal line, which the ring may drop under later
+		// chatter, until the master connects.
 		stderr := newSSHStderr("", "")
 		master.Stderr = stderr
 		// A ProxyCommand or ProxyJump child of the master can keep the
@@ -406,6 +410,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			if s.markConnected(ctx, exited) {
 				backoff = s.baseBackoff
 				authFails = 0
+				stderr.ForgetFatal()
 				s.applyAgent(ctx)
 			} else if ctx.Err() == nil && !hasExited(exited) {
 				// The master stopped answering during the re-apply pass
@@ -436,9 +441,17 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.mu.Lock()
 			s.agentPath = "" // the server dropped it with the master
 			s.mu.Unlock()
-			lines := stderr.Lines()
-			msg := exitMessage(lines)
-			if !s.attemptFailed(msg, isFatalSSHError(strings.Join(lines, "\n")), &authFails, backoff) {
+			msg := exitMessage(stderr.Lines())
+			fatalLine, offending := stderr.Fatal()
+			if fatalLine != "" {
+				// The line that says why, with the one naming the key to
+				// fix for a host key failure, however much ssh wrote since.
+				msg = fatalLine
+				if offending != "" {
+					msg += "\n" + offending
+				}
+			}
+			if !s.attemptFailed(msg, fatalLine != "", &authFails, backoff) {
 				return
 			}
 		}

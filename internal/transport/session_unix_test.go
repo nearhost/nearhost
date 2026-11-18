@@ -127,6 +127,44 @@ func TestMasterErrorIsItsLastLinesNotItsWholeLog(t *testing.T) {
 	if n := strings.Count(msg, "\n") + 1; n > stderrLines {
 		t.Fatalf("LastError has %d lines, want at most %d", n, stderrLines)
 	}
+	if strings.Contains(msg, "channel 1:") || !strings.HasSuffix(msg, "Permission denied (publickey).") {
+		t.Fatalf("LastError = %q, want the Permission denied line", msg)
+	}
+}
+
+func TestFatalLineSurvivesLaterChatter(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	if got := s.LastError(); got != "user@host: Permission denied (publickey)." {
+		t.Fatalf("LastError = %q", got)
+	}
+}
+
+func TestFatalLineBeforeConnectingIsForgotten(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.3", "FAKE_SSH_EARLY_LINE=debug1: Permission denied (keyboard-interactive), trying next")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect")
+}
+
+func TestHostKeyMessageNamesTheOffendingKey(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3"
+	if got := s.LastError(); got != want {
+		t.Fatalf("LastError = %q, want %q", got, want)
+	}
+}
+
+func TestMasterWithOnlyRefusedChannelsExitsPlainly(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.2", "FAKE_SSH_EXIT_FLOOD=50")
+	s.baseBackoff, s.maxBackoff = 3*time.Second, 3*time.Second
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.LastError() != "" }, "an exit message")
+	if got := s.LastError(); got != "ssh exited" {
+		t.Fatalf("LastError = %q, want \"ssh exited\"", got)
+	}
 }
 
 func TestHostKeyFailureIsFatal(t *testing.T) {

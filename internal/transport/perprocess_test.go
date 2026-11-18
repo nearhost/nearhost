@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -1722,5 +1723,14 @@ func TestPerProcessSSHCouldNotRequestTheForwardRefusesThePort(t *testing.T) {
 	fs := startRetriedForward(t, p, local)
 	if fs.Applied || !fs.Retrying || !fs.PortRefused || !strings.Contains(fs.Err, "Could not request local forwarding") {
 		t.Fatalf("ForwardState = %+v, want ssh's refusal with its port refused", fs)
+	}
+}
+
+func TestStderrLineCutKeepsRunesWhole(t *testing.T) {
+	w := newSSHStderr("", "")
+	w.Write([]byte(strings.Repeat("é", maxStderrLine) + "\n"))
+	lines := w.Lines()
+	if len(lines) != 1 || !utf8.ValidString(lines[0]) || len(lines[0]) > maxStderrLine {
+		t.Fatalf("lines = %d, valid %v", len(lines), len(lines) == 1 && utf8.ValidString(lines[0]))
 	}
 }
