@@ -334,7 +334,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if !project.Enabled {
 		start = config.UpCommand(project.Name)
 	}
-	_, err = fmt.Fprintln(out, runningAdvice(b.running, start))
+	_, err = fmt.Fprintln(out, runningAdvice(b.running, project.Enabled, start))
 	return err
 }
 
@@ -1000,16 +1000,23 @@ func loopbackClash(cfg *config.Config, p config.Project) error {
 
 // runningAdvice is the last line of add: what the user does next, given the
 // Nearhost that is running, if any. start is the command that starts the
-// project when nothing runs.
-func runningAdvice(running func() runMode, start string) string {
+// project when nothing runs. A disabled project is listed but not started by
+// the interface, and is started by naming it under `up`.
+func runningAdvice(running func() runMode, enabled bool, start string) string {
 	mode := modeNone
 	if running != nil {
 		mode = running()
 	}
 	switch mode {
 	case modeInterface:
+		if !enabled {
+			return "The running Nearhost lists it in a moment. Start it there."
+		}
 		return "The running Nearhost picks it up in a moment."
 	case modeUp:
+		if !enabled {
+			return fmt.Sprintf("nearhost up is running and does not reload. Stop it and start it again with `%s` to serve this project.", start)
+		}
 		return "nearhost up is running and does not reload. Stop it and start it again to serve this project."
 	case modeUnknown:
 		return "Nearhost is running. If it does not pick the project up in a moment, stop it and start it again."

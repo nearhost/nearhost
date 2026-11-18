@@ -1379,12 +1379,13 @@ func TestAddNotesALonePortVariable(t *testing.T) {
 
 // addEnding runs `add` with the given running-Nearhost probe and returns the
 // last line it printed.
-func addEnding(t *testing.T, running func() runMode) string {
+func addEnding(t *testing.T, running func() runMode, extra ...string) string {
 	t.Helper()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	b := noRemote(t)
 	b.running = running
-	out, err := execute(t, newAddCmd(b), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
+	args := append([]string{"--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080"}, extra...)
+	out, err := execute(t, newAddCmd(b), args...)
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
@@ -1457,6 +1458,21 @@ func TestAddWithAnOlderNearhostRunningSaysSomethingTrueForBoth(t *testing.T) {
 	t.Cleanup(func() { srv.Close() })
 	got := addEnding(t, func() runMode { return agentRunMode(sock) })
 	if want := "Nearhost is running. If it does not pick the project up in a moment, stop it and start it again."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddDisabledWithTheInterfaceRunningSaysToStartItThere(t *testing.T) {
+	got := addEnding(t, serveRunning(t, true), "--disabled")
+	if want := "The running Nearhost lists it in a moment. Start it there."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddDisabledWithUpRunningSaysHowToStartIt(t *testing.T) {
+	got := addEnding(t, serveRunning(t, false), "--disabled")
+	want := "nearhost up is running and does not reload. Stop it and start it again with `" + config.UpCommand("myapp") + "` to serve this project."
+	if got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
