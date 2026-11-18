@@ -250,7 +250,12 @@ func fixFor(st engine.State, reason string, serverUp bool, host string) string {
 	case engine.StateDegraded:
 		return "None needed while Nearhost reconnects. If it stays degraded, run `ssh " + clean(host) + "` once in a terminal to fix access."
 	case engine.StateStopped:
-		// A stopped project with a reason was refused its hosts entry.
+		// A stopped project with a reason was refused its hosts entry. A
+		// read-only hosts file's reason already says how to clear it, and
+		// approving again would fail the same way.
+		if hosts.IsReadOnlyMessage(reason) {
+			return "Clear the read-only attribute as named above, then press enter to start it again."
+		}
 		if reason != "" {
 			return "Press enter and " + approvePrompt() + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and run nearhost with --no-hosts."
 		}

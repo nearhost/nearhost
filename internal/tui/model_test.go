@@ -156,6 +156,20 @@ func TestFixFor(t *testing.T) {
 	}
 }
 
+// A read-only hosts file is not cleared by approving a prompt again: the
+// fix says to clear the attribute the reason names.
+func TestFixForAReadOnlyHostsFile(t *testing.T) {
+	withGOOS(t, "windows")
+	reason := `C:\Windows\System32\drivers\etc\hosts is read-only. Clear it with: attrib -r "C:\Windows\System32\drivers\etc\hosts" (in an administrator terminal), or run with --no-hosts.`
+	if !hosts.IsReadOnlyMessage(reason) {
+		t.Fatalf("the test's reason is not the read-only message: %q", reason)
+	}
+	got := fixFor(engine.StateStopped, reason, true, "mini.lan")
+	if strings.Contains(got, "approve") || !strings.Contains(got, "read-only attribute") {
+		t.Errorf("fixFor = %q", got)
+	}
+}
+
 func TestFixForAHostsRefusalOnWindows(t *testing.T) {
 	withGOOS(t, "windows")
 	got := fixFor(engine.StateStopped, "hosts not resolvable", true, "mini.lan")
