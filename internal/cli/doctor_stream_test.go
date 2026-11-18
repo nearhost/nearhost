@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hosts"
 )
 
 // legacyReport is the renderer doctor used before it streamed: it prints
@@ -28,7 +30,7 @@ func legacyReport(out io.Writer, checks []check, projects []projectReport) error
 			fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
 		}
 	}
-	printProjects(out, projects)
+	legacyPrintProjects(out, projects)
 	fmt.Fprintln(out)
 	switch {
 	case failed > 0:
@@ -41,6 +43,32 @@ func legacyReport(out io.Writer, checks []check, projects []projectReport) error
 		fmt.Fprintln(out, "All checks passed.")
 	}
 	return nil
+}
+
+// legacyPrintProjects is the project printer as it was before streaming.
+func legacyPrintProjects(out io.Writer, projects []projectReport) {
+	if len(projects) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Projects")
+	for _, p := range projects {
+		p.name = printable(p.name)
+		if len(p.findings) == 0 {
+			fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
+			continue
+		}
+		for _, f := range p.findings {
+			message := strings.ReplaceAll(strings.TrimRight(printableLines(f.Message), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
+			fmt.Fprintf(out, "%-4s  %-16s %s\n", severityLabel(f.Severity), p.name, message)
+			fmt.Fprintf(out, "      fix: %s\n", printable(f.Fix.Text))
+			if f.Fix.Snippet != "" {
+				for _, line := range strings.Split(strings.TrimRight(printableLines(f.Fix.Snippet), "\n"), "\n") {
+					fmt.Fprintf(out, "          %s\n", line)
+				}
+			}
+		}
+	}
 }
 
 // legacyDoctor runs the checks as doctor did before streaming and renders
@@ -149,16 +177,19 @@ func TestDoctorPrintsEachCheckBeforeALaterOneReturns(t *testing.T) {
 	}
 }
 
-// signalWriter says on ch when it has been written to.
+// signalWriter closes ch when the line want has been written to it.
 type signalWriter struct {
 	syncBuffer
-	ch chan struct{}
-	do sync.Once
+	want string
+	ch   chan struct{}
+	do   sync.Once
 }
 
 func (w *signalWriter) Write(p []byte) (int, error) {
 	n, err := w.syncBuffer.Write(p)
-	w.do.Do(func() { close(w.ch) })
+	if strings.Contains(w.syncBuffer.String(), w.want) {
+		w.do.Do(func() { close(w.ch) })
+	}
 	return n, err
 }
 
@@ -168,9 +199,9 @@ func TestDoctorSaysWhichCheckIsSlow(t *testing.T) {
 	doctorConfig(t)
 	g, b := newGatedServer(healthy())
 	b.stderrTTY = func() bool { return true }
-	b.slowAfter = time.Millisecond
+	b.slowAfter = 100 * time.Millisecond
 	var out syncBuffer
-	errw := &signalWriter{ch: make(chan struct{})}
+	errw := &signalWriter{want: "checking server mini…\n", ch: make(chan struct{})}
 	wait := runDoctor(t, b, &out, errw)
 	<-g.entered
 	<-errw.ch // the notice arrived
@@ -178,8 +209,8 @@ func TestDoctorSaysWhichCheckIsSlow(t *testing.T) {
 	if err := wait(); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := errw.String(), "checking server mini…\n"; got != want {
-		t.Errorf("stderr = %q, want %q", got, want)
+	if n := strings.Count(errw.String(), "checking server mini…\n"); n != 1 {
+		t.Errorf("the notice for the server check appears %d times, want once:\n%q", n, errw.String())
 	}
 	if !strings.Contains(out.String(), "ok    server mini ") || strings.Contains(out.String(), "checking") {
 		t.Errorf("stdout:\n%s", out.String())
@@ -241,5 +272,62 @@ func TestDoctorStreamStopsTheNoticeWhenTheCheckReturns(t *testing.T) {
 	time.Sleep(60 * time.Millisecond) // long enough for a leaked timer to fire
 	if errw.String() != "" {
 		t.Errorf("stderr = %q after the check had returned", errw.String())
+	}
+}
+
+// The filters on the project section (the first hosts.dns-unchecked only,
+// no hosts.unresolved for a name the hosts block check reported) leave the
+// streamed text equal to the old report's.
+func TestDoctorStreamedOutputAppliesTheProjectFilters(t *testing.T) {
+	path := configHome(t)
+	shop, blog := localProject("shop", 3000, true), localProject("blog", 8000, true)
+	shop.Path, blog.Path = t.TempDir(), t.TempDir()
+	shop.Alias, blog.Alias = "shop.example.io", "blog.example.io"
+	saveConfig(t, path, &config.Config{Projects: []config.Project{shop, blog}})
+	f := healthy()
+	f.hosts = "127.0.0.1 localhost\n"
+	f.lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, hosts.ErrNoUpstream }
+	var opened []string
+	b := withProjects(f.backend(), nil, &opened)
+	want, wantErr := legacyDoctor(t, b)
+	got, gotErr := execute(t, newDoctorCmd(b), "doctor")
+	if got != want || fmt.Sprint(gotErr) != fmt.Sprint(wantErr) {
+		t.Errorf("streamed output:\n%s\nold report:\n%s", got, want)
+	}
+	// Prove the scenario exercises the filters: both projects look up an
+	// alias, so DNS goes unchecked for each, and the hosts block check
+	// reports names missing.
+	var dns, unresolved int
+	probe := &cobra.Command{Use: "doctor", RunE: func(cmd *cobra.Command, _ []string) error {
+		var flags serveFlags
+		m := runChecks(cmd, b, flags, &doctorStream{quiet: true})
+		if len(m.hostsMissing) == 0 {
+			t.Error("the hosts block check reported no missing name")
+		}
+		for _, r := range checkProjects(cmd.Context(), b, b.env, m.cfg, m.cfgPath, m.reachable) {
+			for _, fd := range r.findings {
+				switch fd.ID {
+				case "hosts.dns-unchecked":
+					dns++
+				case "hosts.unresolved":
+					unresolved++
+				}
+			}
+		}
+		return nil
+	}}
+	if _, err := execute(t, probe, "doctor"); err != nil {
+		t.Fatal(err)
+	}
+	// checkProjects keeps one dns-unchecked, so what the stream's own filter
+	// and withoutReported drop is checked by the equality above.
+	if dns != 1 || unresolved == 0 {
+		t.Errorf("raw findings: %d dns-unchecked, %d unresolved; want 1 and some", dns, unresolved)
+	}
+	if n := strings.Count(got, "Nearhost could not ask DNS"); n != 1 {
+		t.Errorf("the DNS note appears %d times, want once:\n%s", n, got)
+	}
+	if strings.Contains(got, "hosts.unresolved") || strings.Contains(got, "is not in the hosts") {
+		t.Errorf("a name the hosts block check reported is repeated:\n%s", got)
 	}
 }

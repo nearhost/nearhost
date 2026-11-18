@@ -86,10 +86,13 @@ func (s *doctorStream) slow(name string, f func() check) check {
 // slowMany is slow for a function that makes several checks, which it then
 // hands to add.
 func (s *doctorStream) slowMany(name string, f func() []check, add func(...check)) {
-	stop := s.watch(name)
-	cs := f()
-	stop()
-	add(cs...)
+	add(s.watched(name, f)...)
+}
+
+// watched runs f under the notice and returns its checks.
+func (s *doctorStream) watched(name string, f func() []check) []check {
+	defer s.watch(name)()
+	return f()
 }
 
 // projectHooks prints the project section as each project's report is
