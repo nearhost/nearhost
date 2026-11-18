@@ -325,8 +325,9 @@ func TestSymlinkedRoot(t *testing.T) {
 	}
 }
 
-// swapRoot moves f's root aside and puts a symlink to target in its place,
-// as an agent that may write in its project could.
+// swapRoot moves f's root aside and puts a symlink to target, absolute or
+// relative to the root's folder, in its place, as an agent that may write in
+// its project could.
 func swapRoot(t *testing.T, f *fixture, target string) {
 	t.Helper()
 	if err := os.Rename(f.root, f.root+"-old"); err != nil {
