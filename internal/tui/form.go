@@ -51,41 +51,107 @@ type (
 
 func closeForm() tea.Msg { return formClosedMsg{} }
 
-// textField is a one-line text input, edited at its end.
+// textField is a one-line text input with a cursor. value is the text and
+// the source of truth; cur is the cursor's place in runes, 0 to the rune
+// count, so an edit never splits a multi-byte character. Code sets the text
+// with set, which puts the cursor at the end; a cursor left out of range by
+// a direct write to value is clamped when it is used.
 type textField struct {
 	value string
+	cur   int
+}
+
+// set replaces the text from code and puts the cursor at its end.
+func (f *textField) set(s string) {
+	f.value = s
+	f.cur = utf8.RuneCountInString(s)
+}
+
+// cursor is the cursor's place in runes, kept inside the text.
+func (f *textField) cursor() int {
+	f.cur = min(max(f.cur, 0), utf8.RuneCountInString(f.value))
+	return f.cur
+}
+
+// atEnd reports whether the cursor is after the last character, the only
+// place where completion works.
+func (f *textField) atEnd() bool {
+	return f.cursor() == utf8.RuneCountInString(f.value)
+}
+
+// offset is the byte offset of the rune at index n.
+func (f *textField) offset(n int) int {
+	for i := range f.value {
+		if n == 0 {
+			return i
+		}
+		n--
+	}
+	return len(f.value)
 }
 
 // key edits the field and reports whether the key was for it.
 func (f *textField) key(k tea.KeyPressMsg) bool {
+	cur := f.cursor()
 	switch k.String() {
+	case "left":
+		f.cur = max(cur-1, 0)
+		return true
+	case "right":
+		f.cur = cur + 1
+		f.cursor()
+		return true
+	case "home", "ctrl+a":
+		f.cur = 0
+		return true
+	case "end", "ctrl+e":
+		f.cur = utf8.RuneCountInString(f.value)
+		return true
 	case "backspace":
-		if _, size := utf8.DecodeLastRuneInString(f.value); size > 0 {
-			f.value = f.value[:len(f.value)-size]
+		if cur > 0 {
+			at := f.offset(cur - 1)
+			f.value = f.value[:at] + f.value[f.offset(cur):]
+			f.cur = cur - 1
+		}
+		return true
+	case "delete":
+		if cur < utf8.RuneCountInString(f.value) {
+			f.value = f.value[:f.offset(cur)] + f.value[f.offset(cur+1):]
 		}
 		return true
 	case "ctrl+u":
-		f.value = ""
+		f.set("")
 		return true
 	}
 	if k.Text == "" {
 		return false
 	}
-	f.value += strings.Map(func(r rune) rune {
+	text := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
 	}, k.Text)
+	at := f.offset(cur)
+	f.value = f.value[:at] + text + f.value[at:]
+	f.cur = cur + utf8.RuneCountInString(text)
 	return true
 }
 
-// view draws the field, with a cursor when it has the focus.
-func (f textField) view(focused bool) string {
-	if focused {
-		return clean(f.value) + styleBeacon.Render("▏")
+// view draws the field, with a cursor when it has the focus. The cursor
+// after the last character is a bar; on a character it shows that character
+// reversed, so the text does not shift and a wide character keeps its width.
+func (f *textField) view(focused bool) string {
+	if !focused {
+		return clean(f.value)
 	}
-	return clean(f.value)
+	at := f.offset(f.cursor())
+	before, after := f.value[:at], f.value[at:]
+	if after == "" {
+		return clean(before) + styleBeacon.Render("▏")
+	}
+	r, size := utf8.DecodeRuneInString(after)
+	return clean(before) + styleBeacon.Reverse(true).Render(clean(string(r))) + clean(after[size:])
 }
 
 // busyLine is the line a form shows while it waits for a background step.
