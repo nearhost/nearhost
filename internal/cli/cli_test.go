@@ -35,7 +35,10 @@ import (
 // transport whatever the developer's shell asks for: ControlMaster on Unix,
 // per-process on Windows, which has no ControlMaster. Tests that only make
 // sense on ControlMaster are in the _unix_test.go files.
+// The hosts commands see an unelevated process, as CI's Windows runner is
+// elevated and an elevated run refuses the tests' hosts files.
 func TestMain(m *testing.M) {
+	isElevated = func() bool { return false }
 	dir, err := os.MkdirTemp("", "nh-cli-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

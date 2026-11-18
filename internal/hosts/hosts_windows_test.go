@@ -14,11 +14,13 @@ import (
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
-// TestElevatedApplyEndToEndOnWindows builds nearhost.exe and applies a block
-// through the UAC elevator. From an elevated session (CI, ssh) the launch
-// shows no prompt; from a normal one it asks, so run it from an elevated
-// terminal.
-func TestElevatedApplyEndToEndOnWindows(t *testing.T) {
+// TestElevatedApplyRefusesAnotherFileOnWindows builds nearhost.exe and
+// applies a block to a file in a temp directory through the UAC elevator.
+// The helper runs elevated, so it refuses any file but the system hosts
+// file, says so through its report, and leaves the file as it was. From an
+// elevated session (CI, ssh) the launch shows no prompt; from a normal one it
+// asks, so run it from an elevated terminal.
+func TestElevatedApplyRefusesAnotherFileOnWindows(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "nearhost.exe")
 	build := exec.Command("go", "build", "-o", exe, "github.com/nearhost/nearhost/cmd/nearhost")
@@ -26,15 +28,16 @@ func TestElevatedApplyEndToEndOnWindows(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	path := filepath.Join(dir, "hosts")
-	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\r\n"), 0o644); err != nil {
+	const content = "127.0.0.1 localhost\r\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := Ensure(path, []string{"a.test"}, ElevatedApplier(context.Background(), elevate.System(), exe, path, "", false))
-	if err != nil || !changed {
-		t.Fatalf("changed %v, err %v", changed, err)
+	want := "an elevated run only writes " + SystemPath()
+	if err == nil || changed || !strings.Contains(err.Error(), want) {
+		t.Fatalf("changed %v, err %v, want an error with %q", changed, err, want)
 	}
-	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "127.0.0.1 a.test") {
+	if data, _ := os.ReadFile(path); string(data) != content {
 		t.Fatalf("hosts:\n%s", data)
 	}
 }

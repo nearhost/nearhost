@@ -2,12 +2,38 @@
 
 package hosts
 
-import "testing"
+import (
+	"path/filepath"
+	"strings"
+	"testing"
 
-func TestDefaultPathIsTheSystemHostsFileOnWindows(t *testing.T) {
+	"golang.org/x/sys/windows"
+)
+
+// The hosts file is under the system directory Windows reports, whatever
+// %SystemRoot% says: the caller of the elevated helper sets that variable.
+func TestSystemPathIsUnderTheSystemDirectoryOnWindows(t *testing.T) {
 	t.Setenv("SystemRoot", `D:\Win`)
-	if got := defaultPath(); got != `D:\Win\System32\drivers\etc\hosts` {
-		t.Fatalf("defaultPath() = %q", got)
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SystemPath(), filepath.Join(dir, "drivers", "etc", "hosts"); got != want {
+		t.Fatalf("SystemPath() = %q, want %q", got, want)
+	}
+}
+
+// Windows paths are compared without case, as NTFS does, and with either
+// slash.
+func TestIsSystemPathIgnoresCaseOnWindows(t *testing.T) {
+	sys := SystemPath()
+	for _, p := range []string{strings.ToUpper(sys), strings.ToLower(sys), strings.ReplaceAll(sys, `\`, "/")} {
+		if !IsSystemPath(p) {
+			t.Errorf("IsSystemPath(%q) = false, want true", p)
+		}
+	}
+	if IsSystemPath(`D:\Win\System32\drivers\etc\hosts`) {
+		t.Error("IsSystemPath accepted a hosts file on another drive")
 	}
 }
 

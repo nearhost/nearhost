@@ -3,19 +3,28 @@
 package hosts
 
 import (
-	"os"
 	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
-// DefaultPath is the system hosts file.
-var DefaultPath = defaultPath()
+// DefaultPath is the system hosts file, the path Nearhost hands the
+// elevated hosts helper.
+var DefaultPath = SystemPath()
 
-// defaultPath returns the hosts file under %SystemRoot%, or under C:\Windows
-// when that variable is unset.
-func defaultPath() string {
-	root := os.Getenv("SystemRoot")
-	if root == "" {
-		root = `C:\Windows`
+// SystemPath returns the hosts file under the system directory Windows
+// reports. It does not read %SystemRoot%, which the caller of the elevated
+// helper sets. When the call fails, which Windows does not document as
+// happening, it falls back to C:\Windows\System32.
+func SystemPath() string {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil || dir == "" {
+		dir = `C:\Windows\System32`
 	}
-	return filepath.Join(root, "System32", "drivers", "etc", "hosts")
+	return filepath.Join(dir, "drivers", "etc", "hosts")
 }
+
+// samePath reports whether two clean absolute paths name the same entry.
+// NTFS compares names without case.
+func samePath(a, b string) bool { return strings.EqualFold(a, b) }
