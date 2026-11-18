@@ -5,6 +5,7 @@ package elevate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -221,5 +222,100 @@ func TestSudoElevatedAndTakesPassword(t *testing.T) {
 	}
 	if !System().TakesPassword() {
 		t.Error("sudo takes a password")
+	}
+}
+
+// asRoot makes Nearhost see itself as root and sudo as missing, so a Run
+// that looks for sudo fails.
+func asRoot(t *testing.T) {
+	t.Helper()
+	origEuid, origCandidates := geteuid, sudo.Candidates
+	geteuid = func() int { return 0 }
+	sudo.Candidates = []string{filepath.Join(t.TempDir(), "no-sudo")}
+	t.Cleanup(func() { geteuid, sudo.Candidates = origEuid, origCandidates })
+}
+
+// recorder writes a stand-in for the Nearhost binary that records its
+// arguments and standard input, then exits with code.
+func recorder(t *testing.T, code int) (path, args, stdin string) {
+	t.Helper()
+	dir := t.TempDir()
+	path, args, stdin = filepath.Join(dir, "nearhost"), filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" > '%s'\ncat > '%s'\necho 'helper failed' >&2\nexit %d\n", args, stdin, code)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path, args, stdin
+}
+
+// As root Run runs the command itself with the same arguments and input,
+// and never looks for sudo.
+func TestRunAsRootRunsTheCommandDirectly(t *testing.T) {
+	asRoot(t)
+	bin, args, stdin := recorder(t, 0)
+	err := System().Run(context.Background(), Command{
+		Path:        bin,
+		Args:        []string{"hosts", "apply", "--file", "/etc/hosts"},
+		Input:       "a.test\nb.test\n",
+		Prompt:      hostsPrompt,
+		Interactive: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(args); string(got) != "hosts apply --file /etc/hosts\n" {
+		t.Errorf("args %q", got)
+	}
+	if got, _ := os.ReadFile(stdin); string(got) != "a.test\nb.test\n" {
+		t.Errorf("stdin %q", got)
+	}
+}
+
+// A direct run that fails reports the helper's last line, as a run through
+// sudo does, and keeps it off the terminal without a prompt.
+func TestRunAsRootMapsAFailureLikeSudo(t *testing.T) {
+	asRoot(t)
+	bin, _, _ := recorder(t, 1)
+	err := System().Run(context.Background(), Command{Path: bin, Args: []string{"hosts", "apply"}})
+	if err == nil || err.Error() != "helper failed" {
+		t.Errorf("err = %v, want the helper's last line", err)
+	}
+}
+
+// A cancelled context starts nothing as root either.
+func TestRunAsRootDoesNotStartWhenCancelled(t *testing.T) {
+	asRoot(t)
+	bin, args, _ := recorder(t, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := System().Run(ctx, Command{Path: bin}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want the context's error", err)
+	}
+	if _, err := os.Stat(args); err == nil {
+		t.Fatal("the command ran for a cancelled context")
+	}
+}
+
+// Not root, Run still goes through sudo with the same arguments.
+func TestRunNotRootStillUsesSudo(t *testing.T) {
+	origEuid := geteuid
+	geteuid = func() int { return 1000 }
+	t.Cleanup(func() { geteuid = origEuid })
+	dir := t.TempDir()
+	got := filepath.Join(dir, "args")
+	fake := filepath.Join(dir, "sudo")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" > '"+got+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useSudo(t, fake)
+	err := System().Run(context.Background(), Command{
+		Path: "/bin/nearhost", Args: []string{"hosts", "apply"}, Prompt: hostsPrompt, Interactive: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-p " + hostsPrompt + " /bin/nearhost hosts apply\n"
+	if data, _ := os.ReadFile(got); string(data) != want {
+		t.Errorf("sudo %q, want %q", data, want)
 	}
 }
