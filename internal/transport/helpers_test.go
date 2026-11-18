@@ -299,3 +299,16 @@ func beforeRetryTime(t *testing.T, msg string) string {
 	}
 	return before
 }
+
+// resetSSHPath forgets the ssh found on PATH, now and when t ends, so a fake
+// ssh one test puts on PATH is not the one the next test runs.
+func resetSSHPath(t *testing.T) {
+	t.Helper()
+	forget := func() {
+		foundSSH.mu.Lock()
+		foundSSH.path = ""
+		foundSSH.mu.Unlock()
+	}
+	forget()
+	t.Cleanup(forget)
+}

@@ -15,7 +15,9 @@ import (
 // the terminal, so a fake sudo earlier on PATH would be handed it. Without a
 // root-owned sudo it refuses, unless Nearhost runs as root. PATH is
 // process-wide, which is fine for the one-shot trust and untrust commands,
-// the only callers.
+// the only callers. It does not change which ssh Nearhost runs once ssh has
+// been found: transport.SSHCommand looks ssh up on PATH once and runs it by
+// its absolute path after that.
 func withTrustedSudo(fn func() error) error {
 	path, err := sudo.Binary()
 	if err != nil {

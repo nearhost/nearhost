@@ -50,7 +50,8 @@ type Config struct {
 	Name, Host string
 	// RunDir is where a transport keeps its sockets; "" for Check only.
 	RunDir string
-	// SSHPath is the ssh binary; "" means "ssh".
+	// SSHPath is the ssh binary, run as given; "" means the one on PATH,
+	// found once as SSHCommand says.
 	SSHPath string
 	// Env is extra environment for ssh (tests).
 	Env []string

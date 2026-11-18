@@ -39,7 +39,7 @@ const (
 type Options struct {
 	RunDir      string   // SSH control sockets
 	StorageRoot string   // Caddy storage
-	SSHPath     string   // ssh binary; empty means "ssh"
+	SSHPath     string   // ssh binary; empty means the one on PATH, found once
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
