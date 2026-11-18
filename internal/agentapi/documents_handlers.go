@@ -183,6 +183,10 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
 			return
 		}
+		if s.backingOffLocked(w, o, kindDocument) {
+			s.mu.Unlock()
+			return
+		}
 		if reviewer == nil {
 			s.mu.Unlock()
 			fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to approve this; `nearhost up` cannot show prompts")

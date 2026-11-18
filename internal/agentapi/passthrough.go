@@ -78,6 +78,13 @@ const (
 	AnswerAlways
 )
 
+// kindPassthrough and kindDocument are the kinds of request a No holds
+// back: see backoff.
+const (
+	kindPassthrough = "passthrough"
+	kindDocument    = "document"
+)
+
 // RequesterUnknown is the requester a tool that can't tell what it is
 // sends. It is never offered Always allow.
 const RequesterUnknown = "agent"
@@ -151,7 +158,8 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // way; No on a request that has ended returns the same error Yes would, so
 // the caller can say the answer came too late. When the grant for Always
 // allow fails to save, the error wraps ErrAllowNotSaved. Every error for a
-// request that is no longer waiting wraps ErrPassEnded.
+// request that is no longer waiting wraps ErrPassEnded. A No to a waiting
+// request refuses its origin's next passthrough requests for backoff.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
 	if s.opts.Passer == nil || s.opts.Grants == nil {
 		return errors.New("this nearhost has no passthroughs")
@@ -178,6 +186,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		return fmt.Errorf("%s can't be always allowed, as it didn't say which tool it is", r.Requester)
 	case a == AnswerNo:
 		s.endPassLocked(r, StateDeclined, "")
+		s.refuseLocked(r.Origin, kindPassthrough)
 		s.mu.Unlock()
 		return nil
 	}

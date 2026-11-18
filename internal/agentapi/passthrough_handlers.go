@@ -137,6 +137,10 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	reviewer := s.reviewer
 	if !allowed {
+		if s.backingOffLocked(w, o, kindPassthrough) {
+			s.mu.Unlock()
+			return
+		}
 		if reviewer == nil {
 			s.mu.Unlock()
 			fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to approve this; `nearhost up` cannot show prompts")

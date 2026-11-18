@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -984,5 +985,87 @@ func TestNoOnEndedRequestSaysSo(t *testing.T) {
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "expired" {
 		t.Fatalf("no changed an expired request: %v", out)
+	}
+}
+
+// askFull posts body to path on sock and returns the status, the
+// Retry-After header and the reply.
+func askFull(t *testing.T, sock, path, body string) (int, string, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest("POST", "http://nearhost"+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client(sock).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("POST %s: not JSON: %v", path, err)
+	}
+	return resp.StatusCode, resp.Header.Get("Retry-After"), out
+}
+
+func TestPassthroughRefusedWaits(t *testing.T) {
+	e := newPassServer(t, true)
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
+	if err := e.s.AnswerPassthrough(context.Background(), out["id"].(string), AnswerNo); err != nil {
+		t.Fatal(err)
+	}
+	e.c.add(10 * time.Second)
+	st, retry, out := askFull(t, e.remote, "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`)
+	if st != http.StatusTooManyRequests || retry != "20" || out["error"] != "refused; ask again in 20 s" {
+		t.Fatalf("at 10 s: %d %q %v", st, retry, out)
+	}
+	if n := len(e.r.prompts()); n != 1 {
+		t.Fatalf("%d prompts", n)
+	}
+
+	// Another server is not held back by apollo's No.
+	if st, out := call(t, e.other, "POST", "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("mini: %d %v", st, out)
+	}
+	// Nor is a request with a valid token.
+	tok, _ := e.g.Allow("apollo", "claude-code")
+	if st, out := e.ask(t, `{"port": 3002, "requester": "claude-code", "token": "`+tok+`"}`); st != http.StatusCreated {
+		t.Fatalf("with a token: %d %v", st, out)
+	}
+
+	e.c.add(21 * time.Second)
+	if st, out := e.ask(t, `{"port": 3001, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("at 31 s: %d %v", st, out)
+	}
+	if n := len(e.r.prompts()); n != 3 {
+		t.Fatalf("%d prompts", n)
+	}
+}
+
+func TestPassthroughOnlyANoHoldsBack(t *testing.T) {
+	e := newPassServer(t, true)
+	// A prompt that expired unanswered is no refusal.
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
+	id := out["id"].(string)
+	e.c.add(10 * time.Minute)
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "expired" {
+		t.Fatalf("not expired: %v", out)
+	}
+	if err := e.s.AnswerPassthrough(context.Background(), id, AnswerNo); err == nil {
+		t.Fatal("no on an expired request was taken")
+	}
+	st, out := e.ask(t, `{"port": 3001, "requester": "claude-code"}`)
+	if st != http.StatusAccepted {
+		t.Fatalf("after an expiry: %d %v", st, out)
+	}
+	// Nor is one its requester withdrew.
+	if st := status(t, e.remote, "DELETE", "/v1/passthroughs/"+out["id"].(string)); st != http.StatusNoContent {
+		t.Fatalf("withdraw: %d", st)
+	}
+	if err := e.s.AnswerPassthrough(context.Background(), out["id"].(string), AnswerNo); err == nil {
+		t.Fatal("no on a withdrawn request was taken")
+	}
+	if st, out := e.ask(t, `{"port": 3002, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("after a withdrawal: %d %v", st, out)
 	}
 }

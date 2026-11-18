@@ -290,6 +290,8 @@ func TestDocumentAnswerNoAndFailures(t *testing.T) {
 		t.Fatalf("after no: %v", out)
 	}
 
+	// A No holds back the next request for backoff.
+	e.c.add(backoff)
 	_, out = e.ask(t, docBody("b.md", "agent", ""))
 	id = out["id"].(string)
 	if e.r.docPrompts()[1].CanAlways {
@@ -604,5 +606,42 @@ func TestDocumentRefusesADrivePathFromAServer(t *testing.T) {
 		if msg := remoteDrivePath(c[0], "path", c[1]); msg != "" {
 			t.Errorf("remoteDrivePath(%s, %s) = %q", c[0], c[1], msg)
 		}
+	}
+}
+
+func TestDocumentRefusedWaits(t *testing.T) {
+	e := newDocServer(t, true)
+	_, out := e.ask(t, docBody("a.md", "claude-code", ""))
+	if err := e.s.AnswerDocument(context.Background(), out["id"].(string), AnswerNo); err != nil {
+		t.Fatal(err)
+	}
+	e.c.add(10 * time.Second)
+	st, retry, out := askFull(t, e.remote, "/v1/documents", docBody("b.md", "claude-code", ""))
+	if st != http.StatusTooManyRequests || retry != "20" || out["error"] != "refused; ask again in 20 s" {
+		t.Fatalf("at 10 s: %d %q %v", st, retry, out)
+	}
+	if n := len(e.r.docPrompts()); n != 1 {
+		t.Fatalf("%d prompts", n)
+	}
+
+	// The laptop is not held back by apollo's No, nor are apollo's
+	// passthroughs, nor a request with a valid token.
+	if st, out := call(t, e.local, "POST", "/v1/documents", docBody("b.md", "claude-code", "")); st != http.StatusAccepted {
+		t.Fatalf("local: %d %v", st, out)
+	}
+	if st, out := call(t, e.remote, "POST", "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("a passthrough: %d %v", st, out)
+	}
+	tok, _ := e.g.Allow("apollo", "claude-code")
+	if st, out := e.ask(t, `{"path": "/srv/other/c.md", "root": "/srv/other", "requester": "claude-code", "token": "`+tok+`"}`); st != http.StatusCreated {
+		t.Fatalf("with a token: %d %v", st, out)
+	}
+
+	e.c.add(21 * time.Second)
+	if st, out := e.ask(t, docBody("b.md", "claude-code", "")); st != http.StatusAccepted {
+		t.Fatalf("at 31 s: %d %v", st, out)
+	}
+	if n := len(e.r.docPrompts()); n != 3 {
+		t.Fatalf("%d prompts", n)
 	}
 }

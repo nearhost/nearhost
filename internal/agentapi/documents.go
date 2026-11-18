@@ -93,7 +93,8 @@ func (s *Server) documenting() bool {
 // does nothing and returns nil; No on a request that has ended returns the
 // same error Yes would. When the grant for Always allow fails to save, the
 // error wraps ErrAllowNotSaved. Every error for a request that is no longer
-// waiting wraps ErrPassEnded.
+// waiting wraps ErrPassEnded. A No to a waiting request refuses its
+// origin's next document requests for backoff.
 func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error {
 	if !s.documenting() {
 		return errors.New("this nearhost has no documents")
@@ -120,6 +121,7 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 		return fmt.Errorf("%s can't be always allowed, as it didn't say which tool it is", r.Requester)
 	case a == AnswerNo:
 		s.endDocLocked(r, StateDeclined, "")
+		s.refuseLocked(r.Origin, kindDocument)
 		s.mu.Unlock()
 		return nil
 	}

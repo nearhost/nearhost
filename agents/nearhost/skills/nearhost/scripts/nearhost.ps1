@@ -19,7 +19,7 @@
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
-# by the user, 7 expired, 8 superseded: the change waited on no longer waits.
+# by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
 #
 # The file stays ASCII, as Windows PowerShell 5.1 reads a file without a byte
@@ -319,6 +319,28 @@ function Exit-Answer {
 		exit 3
 	}
 	exit 1
+}
+
+# Exit-HeldBack exits 6 when Nearhost refused the request because the user
+# said No to one of its Kind from this machine moments ago, printing Body and
+# saying when the agent may ask again: held_back in nearhost.sh. It never asks
+# again by itself. Otherwise it returns.
+function Exit-HeldBack([string]$Kind) {
+	if ($script:Status -ne '429') {
+		return
+	}
+	$m = [regex]::Match((Get-Text error $script:Body), '^refused; ask again in ([0-9]+) s\z')
+	if (-not $m.Success) {
+		return
+	}
+	$n = $m.Groups[1].Value
+	Write-Out $script:Body
+	if ($script:Document) {
+		Write-Err "The user said No to a $Kind from this machine in Nearhost, so nothing was opened. Do not ask again on your own; if the user asks you to, ask again in $n seconds or later. Tell the user the document is at $($script:Document)."
+	} else {
+		Write-Err "The user said No to a $Kind from this machine in Nearhost. Do not ask again on your own; if the user asks you to, ask again in $n seconds or later."
+	}
+	exit 6
 }
 
 # Get-Requester prints who is asking: claude-code inside Claude Code,
@@ -707,6 +729,7 @@ switch -CaseSensitive ($cmd) {
 			$fields['label'] = $label
 		}
 		Send-WithToken -Url 'http://nearhost/v1/passthroughs' -Fields $fields -TokenFile (Get-TokenFile)
+		Exit-HeldBack passthrough
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token
@@ -867,6 +890,7 @@ switch -CaseSensitive ($cmd) {
 			$fields['label'] = $label
 		}
 		Send-WithToken -Url 'http://nearhost/v1/documents' -Fields $fields -TokenFile (Get-DocTokenFile)
+		Exit-HeldBack document
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token (Get-DocTokenFile)
