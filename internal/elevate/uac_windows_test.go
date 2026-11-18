@@ -148,6 +148,10 @@ func TestUACRunStopsWaitingWhenTheContextEndsOnWindows(t *testing.T) {
 func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 	dir := tempDir(t)
 	asked, release, returned := make(chan string, 1), make(chan struct{}), make(chan struct{})
+	promptTurn = newTurn()
+	t.Cleanup(func() { promptTurn = newTurn() })
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	orig := runAs
 	runAs = func(_ string, args []string) (windows.Handle, error) {
 		defer close(returned)
@@ -168,13 +172,13 @@ func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("Run took %v", took)
 	}
-	input := <-asked
+	input := waitAsked(t, asked)
 	if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("input still there for a late approval: %v", err)
 	}
 	leftOver(t, dir)
 
-	close(release) // a late answer with no process to close
+	once.Do(func() { close(release) }) // a late answer with no process to close
 	select {
 	case <-returned:
 	case <-time.After(2 * time.Second):
@@ -183,13 +187,36 @@ func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // let the goroutine finish; a panic would fail the run
 }
 
+// waitAsked returns the --input path of the next runAs call, failing t when
+// none comes in 5 seconds.
+func waitAsked(t *testing.T, asked chan string) string {
+	t.Helper()
+	select {
+	case in := <-asked:
+		return in
+	case <-time.After(5 * time.Second):
+		t.Fatal("runAs was not called")
+		return ""
+	}
+}
+
 // blockingRunAs replaces runAs with one that blocks until release is
 // closed, sending each call's --input path on asked, and returns release. A
 // call returns the handle 0 and a nil error, as a late approval with no
 // process to close.
-func blockingRunAs(t *testing.T) (asked chan string, release chan struct{}, calls func() int) {
+func blockingRunAs(t *testing.T) (asked chan string, release func(), calls func() int) {
 	t.Helper()
-	asked, release = make(chan string, 8), make(chan struct{})
+	asked = make(chan string, 8)
+	done := make(chan struct{})
+	// Each test starts from a free turn, and a failing test cannot leave a
+	// blocked runAs holding the turn for the next one.
+	promptTurn = newTurn()
+	var once sync.Once
+	release = func() { once.Do(func() { close(done) }) }
+	t.Cleanup(func() {
+		release()
+		promptTurn = newTurn()
+	})
 	var mu sync.Mutex
 	n := 0
 	orig := runAs
@@ -198,7 +225,7 @@ func blockingRunAs(t *testing.T) (asked chan string, release chan struct{}, call
 		n++
 		mu.Unlock()
 		asked <- args[slices.Index(args, "--input")+1]
-		<-release
+		<-done
 		return 0, nil
 	}
 	t.Cleanup(func() { runAs = orig })
@@ -223,7 +250,7 @@ func TestUACCancelledPromptKeepsItsTurnOnWindows(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("first Run took %v while runAs was blocked", took)
 	}
-	<-asked
+	waitAsked(t, asked)
 	leftOver(t, dir)
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -236,7 +263,7 @@ func TestUACCancelledPromptKeepsItsTurnOnWindows(t *testing.T) {
 	}
 	leftOver(t, dir)
 
-	close(release)
+	release()
 	// The turn is free once the first runAs returns.
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel3()
@@ -255,14 +282,14 @@ func TestUACSecondRunWaitsForTheFirstPromptOnWindows(t *testing.T) {
 
 	first := make(chan error, 1)
 	go func() { first <- System().Run(context.Background(), helperCommand(t, "", "exit", "0")) }()
-	<-asked
+	waitAsked(t, asked)
 	second := make(chan error, 1)
 	go func() { second <- System().Run(context.Background(), helperCommand(t, "", "exit", "0")) }()
 	time.Sleep(200 * time.Millisecond)
 	if n := calls(); n != 1 {
 		t.Fatalf("runAs called %d times while the first prompt was up, want 1", n)
 	}
-	close(release)
+	release()
 	for _, c := range []chan error{first, second} {
 		select {
 		case err := <-c:

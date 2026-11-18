@@ -23,6 +23,12 @@ func (t turn) acquire(ctx context.Context) error {
 	}
 	select {
 	case <-t:
+		// The turn and the end of ctx can come together; a caller whose
+		// context has ended must not leave holding the turn.
+		if err := ctx.Err(); err != nil {
+			t.release()
+			return err
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

@@ -74,15 +74,20 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 // still clicks Yes on the abandoned prompt starts a helper whose folder is
 // gone, which it refuses and exits, so the late approval changes nothing.
 func (uac) Run(ctx context.Context, c Command) error {
-	if err := promptTurn.acquire(ctx); err != nil {
+	tn := promptTurn
+	if err := tn.acquire(ctx); err != nil {
 		return err
 	}
 	launched := false
 	defer func() {
 		if !launched { // no goroutine took the turn
-			promptTurn.release()
+			tn.release()
 		}
 	}()
+	// The turn may come as ctx ends; do not start a prompt nobody waits for.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir, err := HelperDir()
 	if err != nil {
 		return err
@@ -104,7 +109,7 @@ func (uac) Run(ctx context.Context, c Command) error {
 	launched = true
 	go func() {
 		h, err := runAs(c.Path, args)
-		promptTurn.release()
+		tn.release()
 		select {
 		case result <- started{h, err}:
 		case <-abandoned:

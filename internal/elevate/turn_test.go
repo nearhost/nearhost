@@ -60,3 +60,28 @@ func TestTurnEndedContextNeverTakesAFreeTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A waiter that wins the turn as its context ends either holds the turn with
+// a nil error or leaves the turn free; it never keeps the turn and errs.
+func TestTurnAcquireThatErrsLeavesTheTurnFree(t *testing.T) {
+	for range 200 {
+		tn := newTurn()
+		if err := tn.acquire(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		got := make(chan error, 1)
+		go func() { got <- tn.acquire(ctx) }()
+		cancel()
+		tn.release()
+		err := <-got
+		if err == nil {
+			tn.release()
+		}
+		free, stop := context.WithTimeout(context.Background(), 2*time.Second)
+		if e := tn.acquire(free); e != nil {
+			t.Fatalf("turn not free after acquire returned %v: %v", err, e)
+		}
+		stop()
+	}
+}
