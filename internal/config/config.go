@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -358,6 +359,160 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &c, nil
+}
+
+// Unknown is a key in the config file that Nearhost does not know, with the
+// line it is on. Load ignores such a key and Save would not write it back.
+type Unknown struct {
+	Key  string
+	Line int
+}
+
+// Describe says where in the file at path the key is and that Nearhost does
+// not know it, as one sentence.
+func (u Unknown) Describe(path string) string {
+	return fmt.Sprintf("%s line %d: Nearhost does not know the key %q.", path, u.Line, u.Key)
+}
+
+// UnknownKeysError is the error Update returns when the file holds keys
+// Nearhost does not know, which saving would delete.
+type UnknownKeysError struct {
+	Path string
+	Keys []Unknown
+}
+
+// Error names every unknown key with its line, one per line.
+func (e *UnknownKeysError) Error() string {
+	lines := make([]string, len(e.Keys))
+	for i, u := range e.Keys {
+		lines[i] = u.Describe(e.Path) + " Fix or remove it; saving now would delete it."
+	}
+	return strings.Join(lines, "\n")
+}
+
+// UnknownKeys reads the config at path again and returns, in file order,
+// every key Nearhost does not know: one the structs have no field for, such
+// as host: written for hosts:, or one a newer Nearhost wrote. A missing file
+// has none.
+//
+// It walks the YAML node tree against the structs' yaml tags rather than
+// decode with yaml's KnownFields, whose errors are text to be parsed back
+// apart and mix unknown keys with every other type error. The keys of a map,
+// if the config ever has one, are data and never unknown, and a type that
+// decodes itself is not looked into. Comments and key order, which Save does
+// not keep either, are not reported.
+func UnknownKeys(path string) ([]Unknown, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var out []Unknown
+	unknownIn(&doc, reflect.TypeFor[Config](), &out)
+	return out, nil
+}
+
+var unmarshalerType = reflect.TypeFor[yaml.Unmarshaler]()
+
+// unknownIn appends to out the keys under n that type t has no field for.
+// An alias is skipped: its anchor is checked where it is written.
+func unknownIn(n *yaml.Node, t reflect.Type, out *[]Unknown) {
+	if n.Kind == yaml.DocumentNode {
+		for _, c := range n.Content {
+			unknownIn(c, t, out)
+		}
+		return
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if n.Kind == yaml.AliasNode || reflect.PointerTo(t).Implements(unmarshalerType) {
+		return
+	}
+	switch {
+	case t.Kind() == reflect.Struct && n.Kind == yaml.MappingNode:
+		fields, anyKey := yamlFields(t)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if k.ShortTag() == "!!merge" {
+				// A merge key brings in one mapping or a list of
+				// them, checked against the same struct.
+				merged := []*yaml.Node{v}
+				if v.Kind == yaml.SequenceNode {
+					merged = v.Content
+				}
+				for _, m := range merged {
+					unknownIn(m, t, out)
+				}
+				continue
+			}
+			ft, ok := fields[k.Value]
+			switch {
+			case ok:
+				unknownIn(v, ft, out)
+			case anyKey == nil:
+				*out = append(*out, Unknown{Key: k.Value, Line: k.Line})
+			default:
+				unknownIn(v, anyKey, out)
+			}
+		}
+	case (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && n.Kind == yaml.SequenceNode:
+		for _, c := range n.Content {
+			unknownIn(c, t.Elem(), out)
+		}
+	case t.Kind() == reflect.Map && n.Kind == yaml.MappingNode:
+		for i := 1; i < len(n.Content); i += 2 {
+			unknownIn(n.Content[i], t.Elem(), out)
+		}
+	}
+}
+
+// yamlFields maps each key the struct t decodes to its field's type, as
+// yaml.v3 names them: the tag's name, or the field's name in lowercase, with
+// the fields of an inline struct in among them. anyKey is the element type of
+// an inline map, which takes every other key, or nil when there is none.
+func yamlFields(t reflect.Type) (fields map[string]reflect.Type, anyKey reflect.Type) {
+	fields = map[string]reflect.Type{}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() && !f.Anonymous {
+			continue
+		}
+		tag := f.Tag.Get("yaml")
+		if tag == "-" {
+			continue
+		}
+		name, opts, _ := strings.Cut(tag, ",")
+		if slices.Contains(strings.Split(opts, ","), "inline") {
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Map {
+				anyKey = ft.Elem()
+				continue
+			}
+			inner, innerAny := yamlFields(ft)
+			for k, v := range inner {
+				fields[k] = v
+			}
+			if innerAny != nil {
+				anyKey = innerAny
+			}
+			continue
+		}
+		if name == "" {
+			name = strings.ToLower(f.Name)
+		}
+		fields[name] = f.Type
+	}
+	return fields, anyKey
 }
 
 // Save writes the config atomically with WriteFileAtomic, creating its
