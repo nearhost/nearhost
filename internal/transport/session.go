@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -495,19 +496,31 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 func (s *Session) clearSocket(ctx, exitCtx context.Context, path, host string) error {
 	if err := s.controlAt(ctx, path, "-O", "check", "--", host).Run(); err == nil {
 		if err := s.controlAt(exitCtx, path, "-O", "exit", "--", host).Run(); err != nil {
-			if exitCtx.Err() != nil {
-				err = exitCtx.Err()
-			}
-			return fmt.Errorf("could not end the ssh master left at %s: %w", path, err)
+			return leftMasterError(path, "did not end when asked")
 		}
 	} else if ctx.Err() != nil {
-		return fmt.Errorf("could not check the ssh socket left at %s: %w", path, ctx.Err())
+		return leftMasterError(path, "did not answer")
 	}
 	// A master that exits removes its socket itself.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not remove the ssh socket left at %s: %w", path, err)
 	}
 	return nil
+}
+
+// leftMasterError is the error for a master on the socket at path that
+// Nearhost could not end; happened says why. It tells the user how to end
+// it: a pkill pattern that matches the master's own arguments, "-N -M -S
+// path" (see run), quoted for the shell.
+func leftMasterError(path, happened string) error {
+	pattern := "ssh -N -M -S " + regexp.QuoteMeta(path)
+	return fmt.Errorf("An ssh connection left by an earlier Nearhost %s (%s). End it with: pkill -f %s. Nearhost removes the socket the next time it starts.",
+		happened, path, shellQuote(pattern))
+}
+
+// shellQuote quotes s as one word for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // staleMasterTimeout bounds the clearing of each socket by EndStaleMasters.

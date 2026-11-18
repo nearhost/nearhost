@@ -669,3 +669,13 @@ func TestEndStaleMastersTouchesOnlySocketsWithAMasterName(t *testing.T) {
 		}
 	}
 }
+
+func TestLeftMasterErrorQuotesThePathForTheShell(t *testing.T) {
+	got := leftMasterError("/home/o'neil/run/a.sock", "did not end when asked").Error()
+	want := `An ssh connection left by an earlier Nearhost did not end when asked (/home/o'neil/run/a.sock). ` +
+		`End it with: pkill -f 'ssh -N -M -S /home/o'\''neil/run/a\.sock'. ` +
+		`Nearhost removes the socket the next time it starts.`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

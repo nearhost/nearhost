@@ -13,6 +13,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -596,13 +598,10 @@ func TestStartGivesUpOnAMasterThatNeverAnswers(t *testing.T) {
 	if log := h.log(); strings.Contains(log, "-S "+hung+" -O exit") {
 		t.Errorf("the master that never answered its check was asked to exit; ssh log:\n%s", log)
 	}
-	found := false
-	for _, line := range h.transportLines("") {
-		if strings.Contains(line, hung) {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("no event names %s; events: %q", hung, h.transportLines(""))
+	want := "An ssh connection left by an earlier Nearhost did not answer (" + hung + "). " +
+		"End it with: pkill -f 'ssh -N -M -S " + regexp.QuoteMeta(hung) + "'. " +
+		"Nearhost removes the socket the next time it starts."
+	if lines := h.transportLines(""); !slices.Contains(lines, want) {
+		t.Errorf("no event %q; events: %q", want, lines)
 	}
 }
