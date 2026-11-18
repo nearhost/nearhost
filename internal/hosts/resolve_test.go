@@ -215,8 +215,8 @@ func TestDNSLookupRefusesLoopbackNameserver(t *testing.T) {
 	for _, server := range []string{"127.0.0.53", "::1"} {
 		useNameservers(t, server)
 		_, err := DNSLookup(context.Background(), "app.example.io")
-		if !errors.Is(err, errLocalResolver) {
-			t.Errorf("nameserver %s: err = %v, want errLocalResolver", server, err)
+		if !errors.Is(err, ErrNoUpstream) {
+			t.Errorf("nameserver %s: err = %v, want ErrNoUpstream", server, err)
 		}
 		got := Wanted(context.Background(), []string{"app.example.io"}, DNSLookup)
 		if !slices.Equal(got, []string{"app.example.io"}) {
@@ -225,14 +225,18 @@ func TestDNSLookupRefusesLoopbackNameserver(t *testing.T) {
 	}
 }
 
-// useNameservers makes clientConfig list servers until the test ends.
+// useNameservers makes clientConfig list servers, and upstreamConfig list
+// none, until the test ends, so no test reads this machine's resolver files.
 func useNameservers(t *testing.T, servers ...string) {
 	t.Helper()
-	old := clientConfig
+	old, oldUpstream := clientConfig, upstreamConfig
 	clientConfig = func() (*dns.ClientConfig, error) {
 		return &dns.ClientConfig{Servers: servers, Port: "53", Timeout: 5, Attempts: 2}, nil
 	}
-	t.Cleanup(func() { clientConfig = old })
+	upstreamConfig = func() (*dns.ClientConfig, error) {
+		return &dns.ClientConfig{Port: "53", Timeout: 5, Attempts: 2}, nil
+	}
+	t.Cleanup(func() { clientConfig, upstreamConfig = old, oldUpstream })
 }
 
 func TestNameserversFromSkipsPlaceholdersAndDuplicates(t *testing.T) {

@@ -30,20 +30,17 @@ var dnsPort string
 // which DNSLookup otherwise refuses.
 var allowLoopbackNameserver bool
 
-// errLocalResolver is what DNSLookup returns when the nameserver runs on this
-// machine.
-var errLocalResolver = errors.New("the nameserver is on this machine, so it may answer from the hosts file")
+// ErrNoUpstream is what DNSLookup returns when the system's nameserver runs
+// on this machine and no nameserver beyond it can be found, so DNS cannot be
+// asked without the hosts file answering.
+var ErrNoUpstream = errors.New("the nameserver is on this machine and no upstream nameserver is listed, so DNS could not be asked without the hosts file answering")
 
-// DNSLookup returns the A and AAAA records of name from the nameservers in the
-// system's network configuration: /etc/resolv.conf on Unix, the network
-// adapters on Windows. It asks them directly rather than through the system
-// resolver, because that would read the hosts file and so report the very
-// entries nearhost wrote as if DNS had supplied them. A nameserver on this
-// machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
-// too, so DNSLookup refuses it with errLocalResolver and Wanted keeps the name.
-func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
-	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
-	defer cancel()
+// nameservers is the nameserver list DNSLookup asks. When the system's first
+// nameserver is on this machine, as with systemd-resolved's stub at
+// 127.0.0.53, it would answer from the hosts file, so nameservers turns to
+// the upstream servers that stub forwards to. It returns ErrNoUpstream when
+// none is listed or the first is on this machine too.
+func nameservers() (*dns.ClientConfig, error) {
 	conf, err := clientConfig()
 	if err != nil {
 		return nil, err
@@ -51,8 +48,36 @@ func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	if len(conf.Servers) == 0 {
 		return nil, errors.New(noNameserverMessage)
 	}
-	if ip, err := netip.ParseAddr(conf.Servers[0]); err == nil && ip.IsLoopback() && !allowLoopbackNameserver {
-		return nil, errLocalResolver
+	if !isLoopback(conf.Servers[0]) || allowLoopbackNameserver {
+		return conf, nil
+	}
+	up, err := upstreamConfig()
+	if err != nil || len(up.Servers) == 0 || isLoopback(up.Servers[0]) {
+		return nil, ErrNoUpstream
+	}
+	return up, nil
+}
+
+// isLoopback reports whether server is a loopback address.
+func isLoopback(server string) bool {
+	ip, err := netip.ParseAddr(server)
+	return err == nil && ip.IsLoopback()
+}
+
+// DNSLookup returns the A and AAAA records of name from the nameservers in the
+// system's network configuration: /etc/resolv.conf on Unix, the network
+// adapters on Windows. It asks them directly rather than through the system
+// resolver, because that would read the hosts file and so report the very
+// entries nearhost wrote as if DNS had supplied them. A nameserver on this
+// machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
+// too, so DNSLookup asks the servers it forwards to instead, and returns
+// ErrNoUpstream when it finds none; Wanted then keeps the name.
+func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	conf, err := nameservers()
+	if err != nil {
+		return nil, err
 	}
 	// The first nameserver answers; trying the rest is the system resolver's
 	// job, and a wrong answer here only costs a redundant hosts entry.

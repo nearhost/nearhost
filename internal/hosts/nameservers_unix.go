@@ -15,3 +15,14 @@ const noNameserverMessage = "no nameserver in /etc/resolv.conf"
 var clientConfig = func() (*dns.ClientConfig, error) {
 	return dns.ClientConfigFromFile(resolvConf)
 }
+
+// resolvedConf is where systemd-resolved lists the nameservers its stub at
+// 127.0.0.53 forwards to. It exists only on Linux, and only while
+// systemd-resolved runs. Tests replace it.
+var resolvedConf = "/run/systemd/resolve/resolv.conf"
+
+// upstreamConfig reads the nameservers that a stub resolver on this machine
+// forwards to. Tests replace it.
+var upstreamConfig = func() (*dns.ClientConfig, error) {
+	return dns.ClientConfigFromFile(resolvedConf)
+}
