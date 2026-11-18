@@ -34,10 +34,17 @@ var ErrReadOnly = errors.New("hosts file is read-only")
 // read-only hosts file is often deliberate.
 type readOnlyError struct{ path string }
 
+// readOnlyMarker is the fixed part of the read-only message.
+const readOnlyMarker = " is read-only. Clear it with: attrib -r "
+
 // Error returns the message shown to the user.
 func (e *readOnlyError) Error() string {
-	return fmt.Sprintf("%s is read-only. Clear it with: attrib -r \"%s\" (in an administrator terminal), or run with --no-hosts.", e.path, e.path)
+	return fmt.Sprintf("%s%s\"%s\" (in an administrator terminal), or run with --no-hosts.", e.path, readOnlyMarker, e.path)
 }
+
+// IsReadOnlyMessage reports whether s is the read-only message, for code that
+// only has an error's text, such as a project's status reason.
+func IsReadOnlyMessage(s string) bool { return strings.Contains(s, readOnlyMarker) }
 
 // Is reports a match with ErrReadOnly.
 func (e *readOnlyError) Is(target error) bool { return target == ErrReadOnly }

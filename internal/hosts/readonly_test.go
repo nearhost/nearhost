@@ -31,3 +31,28 @@ func TestApplyReadOnlySaysHowToClear(t *testing.T) {
 	}
 	tempLeftovers(t, dir, "hosts")
 }
+
+// A read-only file whose block is already current needs no write, so it is no
+// error.
+func TestApplyReadOnlyFileWithCurrentBlockIsNoError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	old := isReadOnly
+	isReadOnly = func(string) bool { return true }
+	t.Cleanup(func() { isReadOnly = old })
+	if err := Apply(path, []string{"a.test"}); err != nil {
+		t.Fatalf("err = %v, want none", err)
+	}
+}
+
+// IsReadOnlyMessage recognises the message by its fixed part.
+func TestIsReadOnlyMessage(t *testing.T) {
+	if !IsReadOnlyMessage((&readOnlyError{path: `C:\x\hosts`}).Error()) {
+		t.Error("the read-only message was not recognised")
+	}
+	if IsReadOnlyMessage("replace /etc/hosts: permission denied") {
+		t.Error("another message was recognised")
+	}
+}
