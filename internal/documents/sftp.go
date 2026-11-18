@@ -29,24 +29,27 @@ func SFTPFS(c *sftp.Client) FS { return sftpFS{c: c} }
 // the links are followed here with lstat and readlink, as
 // filepath.EvalSymlinks does.
 func (f sftpFS) RealPath(ctx context.Context, p string) (string, error) {
-	return withContext(ctx, func() (string, error) {
-		if !path.IsAbs(p) {
-			abs, err := f.c.RealPath(p)
-			if err != nil {
-				return "", mapError("realpath", p, err)
-			}
-			p = abs
+	return withContext(ctx, func() (string, error) { return f.realPath(p) }, nil)
+}
+
+// realPath is RealPath without the context.
+func (f sftpFS) realPath(p string) (string, error) {
+	if !path.IsAbs(p) {
+		abs, err := f.c.RealPath(p)
+		if err != nil {
+			return "", mapError("realpath", p, err)
 		}
-		return evalLinks(p,
-			func(name string) (fs.FileInfo, error) {
-				info, err := f.c.Lstat(name)
-				return info, mapError("lstat", name, err)
-			},
-			func(name string) (string, error) {
-				dest, err := f.c.ReadLink(name)
-				return dest, mapError("readlink", name, err)
-			})
-	}, nil)
+		p = abs
+	}
+	return evalLinks(p,
+		func(name string) (fs.FileInfo, error) {
+			info, err := f.c.Lstat(name)
+			return info, mapError("lstat", name, err)
+		},
+		func(name string) (string, error) {
+			dest, err := f.c.ReadLink(name)
+			return dest, mapError("readlink", name, err)
+		})
 }
 
 // Stat returns the file information for p, following symlinks.
@@ -57,15 +60,60 @@ func (f sftpFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 	}, nil)
 }
 
-// Open opens p for reading.
+// Open opens p and checks the opened file is the one at p. SFTP has no call
+// that names an open file, so after the open p must still resolve to itself,
+// and the file there, not following a last symlink, must have the open
+// file's attributes.
 func (f sftpFS) Open(ctx context.Context, p string) (io.ReadCloser, error) {
 	return withContext(ctx, func() (io.ReadCloser, error) {
 		file, err := f.c.Open(p)
 		if err != nil {
 			return nil, mapError("open", p, err)
 		}
+		if err := f.checkOpened(file, p); err != nil {
+			file.Close()
+			return nil, err
+		}
 		return file, nil
 	}, func(r io.ReadCloser) { r.Close() })
+}
+
+// checkOpened returns nil when file, opened by the path p, is the file at p
+// now, and an error wrapping fs.ErrNotExist when it isn't. Errors talking
+// to the server are kept.
+func (f sftpFS) checkOpened(file *sftp.File, p string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return mapError("fstat", p, err)
+	}
+	real, err := f.realPath(p)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	same := err == nil && path.Clean(real) == path.Clean(p)
+	if same {
+		at, err := f.c.Lstat(p)
+		if err = mapError("lstat", p, err); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		same = err == nil && sameAttributes(opened, at)
+	}
+	if !same {
+		return &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
+	}
+	return nil
+}
+
+// sameAttributes reports whether a and b, from SFTP, may be the same file:
+// the same type, permissions, size and modification time, and the same owner
+// where the server gives one. SFTP gives no inode number to compare.
+func sameAttributes(a, b fs.FileInfo) bool {
+	if a.Mode() != b.Mode() || a.Size() != b.Size() || !a.ModTime().Equal(b.ModTime()) {
+		return false
+	}
+	sa, aok := a.Sys().(*sftp.FileStat)
+	sb, bok := b.Sys().(*sftp.FileStat)
+	return !aok || !bok || (sa.UID == sb.UID && sa.GID == sb.GID)
 }
 
 // Home returns the server's working folder, where an SFTP session starts:

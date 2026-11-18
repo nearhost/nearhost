@@ -192,6 +192,12 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 		return errRefused
 	}
 	name = assetName(name, real)
+	if beforeOpen != nil {
+		beforeOpen(real)
+	}
+	// Open checks that the file it opened is the one at real, so a folder
+	// on the way swapped for a symlink since the checks above gives a
+	// missing file, not one from outside the root.
 	f, err := fsys.Open(ctx, real)
 	if err != nil {
 		return err
@@ -199,6 +205,10 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	defer f.Close()
 	return sendFile(w, r, f, name, info.Size())
 }
+
+// beforeOpen, when set, runs in serve between the checks on the resolved path
+// real and its open. Tests set it to change the tree in that window.
+var beforeOpen func(real string)
 
 // documentOrAsset reports whether name is a document (IsDocument) or has a
 // web asset extension (assetTypes).
