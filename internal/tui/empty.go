@@ -56,12 +56,16 @@ func (m *Model) emptyKeys() []footerItem {
 	return append(keys, footerItem{"?", "help"}, footerItem{"q", "quit"})
 }
 
-// emptyKey reports whether s works on the first-run screen.
+// emptyKey reports whether s works on the first-run screen. r and y act as
+// on Home while the screen shows problems, whose lines name them.
 func (m *Model) emptyKey(s string) bool {
 	for _, it := range m.emptyKeys() {
 		if it.key == s {
 			return true
 		}
+	}
+	if (s == "r" || s == "y") && len(m.problems()) > 0 {
+		return true
 	}
 	return s == "esc"
 }

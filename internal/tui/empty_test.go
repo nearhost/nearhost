@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // With nothing to serve, the window is the first-run screen: the mark in
@@ -234,5 +235,59 @@ func TestFirstRunScreenWithoutAServerHasNoConnect(t *testing.T) {
 	settle(m, press(m, "c"))
 	if m.form != nil || !m.empty() || len(f.edit.connected) != 0 {
 		t.Fatalf("c gave form %T, empty %v, connected %v", m.form, m.empty(), f.edit.connected)
+	}
+}
+
+// r on the first-run screen tries the proxy again when it failed to start,
+// as on Home, and a second r while that start runs starts nothing.
+func TestFirstRunScreenRetriesTheProxy(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	f.startErrs = []error{nil}
+	m := proxyDown(t, f, errBoom)
+	wantScreen(t, m, "✕ proxy  down", "r tries again")
+	first := press(m, "r")
+	if first == nil {
+		t.Fatal("r did nothing on the first-run screen")
+	}
+	if second := press(m, "r"); second != nil {
+		t.Error("a second r started another retry")
+	}
+	run(m, first)
+	if f.startCalls != 1 {
+		t.Fatalf("Start called %d times, want 1", f.startCalls)
+	}
+	if strings.Contains(screen(m), "tries again") {
+		t.Errorf("the hint stays after a good retry:\n%s", screen(m))
+	}
+}
+
+// With nothing wrong, r on the first-run screen does nothing.
+func TestFirstRunScreenIgnoresRWithoutAProblem(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	m := sized(f)
+	run(m, func() tea.Msg { return startedMsg{} })
+	if cmd := press(m, "r"); cmd != nil {
+		t.Error("r acted with nothing to retry")
+	}
+	if f.startCalls != 0 {
+		t.Errorf("Start called %d times", f.startCalls)
+	}
+}
+
+// A server that cannot connect shows on the first-run screen with r and y,
+// and both act there as on Home.
+func TestFirstRunScreenRetriesAndCopiesForAServer(t *testing.T) {
+	cfg := &config.Config{Servers: []config.Server{{Name: "vps", SSHHost: "deploy@vps.example"}}}
+	f := newFake(t, cfg)
+	f.servers["vps"] = transport.StatusAuthFailed
+	f.srvErrs["vps"] = "Permission denied (publickey)"
+	m := sized(f)
+	wantScreen(t, m, "r retry now · y copy command")
+	run(m, press(m, "r"))
+	if strings.Join(f.edit.reconnected, ",") != "vps" {
+		t.Errorf("reconnected %v", f.edit.reconnected)
+	}
+	if got := clipboardOf(press(m, "y")); got != "ssh deploy@vps.example" {
+		t.Errorf("copied %q", got)
 	}
 }

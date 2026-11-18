@@ -209,11 +209,12 @@ func (m *Model) problemLines(width int) []string {
 		}
 		servers = servers || p.server != ""
 	}
-	if retry {
-		lines = append(lines, "", "  "+styleBeacon.Render("r")+styleDim.Render(" tries again"))
-	}
-	if servers {
+	// One r retries the proxy and the servers together, so it is named once.
+	switch {
+	case servers:
 		lines = append(lines, "", "  "+styleBeacon.Render("r")+styleDim.Render(" retry now · ")+styleBeacon.Render("y")+styleDim.Render(" copy command"))
+	case retry:
+		lines = append(lines, "", "  "+styleBeacon.Render("r")+styleDim.Render(" tries again"))
 	}
 	return lines
 }
