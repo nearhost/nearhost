@@ -4,14 +4,17 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // plainMethod is a method that needs no quotes on sh.
 var plainMethod = regexp.MustCompile(`^[A-Z]+$`)
 
-// errCurlNUL is the error for a request that holds a NUL byte, which no
-// shell argument or curl config line can carry.
-var errCurlNUL = errors.New("the request holds a NUL byte")
+// errCurlUnsafe is the error for a request that holds a control character
+// or bytes that are not UTF-8. Pasted raw, a control character can end a
+// bracketed paste or erase the line, and none of them can be quoted on
+// every shell, so such a request is not copied.
+var errCurlUnsafe = errors.New("the request holds a control character")
 
 // curlCommand is a curl command that makes a request again, for pasting
 // into the shell of goos: sh on macOS and Linux, PowerShell on Windows.
@@ -19,24 +22,40 @@ var errCurlNUL = errors.New("the request holds a NUL byte")
 // argument. On PowerShell the request travels as a curl config file in a
 // literal here-string, so no request data is a process argument, which
 // Windows PowerShell 5.1 would split at a double quote. The body is sent as
-// it is, and left out when bodyLeftOut. A request that holds a NUL byte
-// cannot be copied.
+// it is, and left out when bodyLeftOut. A request with a value that is not
+// curlSafe cannot be copied.
 func curlCommand(goos string, method, url string, headers [][2]string, body []byte, bodyLeftOut bool) (string, error) {
 	if bodyLeftOut {
 		body = nil
 	}
-	if strings.ContainsRune(method+url, 0) || strings.ContainsRune(string(body), 0) {
-		return "", errCurlNUL
-	}
+	values := []string{method, url, string(body)}
 	for _, h := range headers {
-		if strings.ContainsRune(h[0]+h[1], 0) {
-			return "", errCurlNUL
+		values = append(values, h[0], h[1])
+	}
+	for _, v := range values {
+		if !curlSafe(v) {
+			return "", errCurlUnsafe
 		}
 	}
 	if goos == "windows" {
 		return "@'\n" + curlConfig(method, url, headers, body) + "'@ | curl.exe -K -", nil
 	}
 	return curlPOSIX(method, url, headers, body), nil
+}
+
+// curlSafe reports whether s is UTF-8 with no control character other than
+// tab, line feed and carriage return: no other C0 control, no DEL and no
+// C1 control.
+func curlSafe(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || (r >= 0x7f && r <= 0x9f) {
+			return false
+		}
+	}
+	return true
 }
 
 // curlPOSIX is the curl command for sh: each value in single quotes. A

@@ -195,12 +195,15 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 		if at >= 0 && shown[at].req != nil {
 			a := shown[at].req
 			line := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
-			command, err := curlFor(*a)
+			var command string
+			var err error
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
 				command, err = curlForExchange(ex)
 				if why := bodyLeftOut(ex); why != "" {
 					line = strings.TrimSuffix(line, ".") + ", without its body: " + why + "."
 				}
+			} else {
+				command, err = curlFor(*a)
 			}
 			if err != nil {
 				return m.alertProblem(v.key, "This request cannot be copied as curl.")
@@ -629,7 +632,7 @@ var skipInCurl = map[string]bool{
 
 // curlForExchange is a curl command that makes a kept request again, with
 // its real headers and, when it was kept whole, its body. It fails for a
-// request that holds a NUL byte.
+// request that holds a control character.
 func curlForExchange(ex proxy.Exchange) (string, error) {
 	names := make([]string, 0, len(ex.ReqHeader))
 	for name := range ex.ReqHeader {
@@ -651,7 +654,7 @@ func curlForExchange(ex proxy.Exchange) (string, error) {
 
 // curlFor is a curl command that makes the request again. Headers whose
 // values Caddy redacted are left out, as is Host, which the URL carries. It
-// fails for a request that holds a NUL byte.
+// fails for a request that holds a control character.
 func curlFor(a proxy.Access) (string, error) {
 	names := make([]string, 0, len(a.Headers))
 	for name := range a.Headers {

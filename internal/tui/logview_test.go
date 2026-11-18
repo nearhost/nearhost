@@ -276,6 +276,22 @@ func TestLogViewRefusesToCopyANUL(t *testing.T) {
 	wantScreen(t, m, "This request cannot be copied as curl.")
 }
 
+// A kept request whose body would erase the pasted line is not copied.
+func TestLogViewRefusesToCopyControlCharacters(t *testing.T) {
+	m := capturedModel(t)
+	ex := m.b.(*fakeBackend).edit.captured["ab12"]
+	ex.ReqBody = []byte("\x1b[201~\x15echo PWNED; : \\")
+	ex.ReqBodySize = int64(len(ex.ReqBody))
+	m.b.(*fakeBackend).edit.captured["ab12"] = ex
+	press(m, "k")
+	if cmd := press(m, "c"); cmd != nil {
+		if got := clipboardOf(cmd); got != "" {
+			t.Errorf("copied %q", got)
+		}
+	}
+	wantScreen(t, m, "This request cannot be copied as curl.")
+}
+
 // A request whose exchange is no longer kept says so.
 func TestLogViewRequestNoLongerKept(t *testing.T) {
 	m := capturedModel(t)

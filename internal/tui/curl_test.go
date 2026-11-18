@@ -132,6 +132,39 @@ func TestCurlCommandRefusesNUL(t *testing.T) {
 	}
 }
 
+// A request that holds a control character or bytes that are not UTF-8 is
+// not copied on either shell: pasted raw, a control character edits or ends
+// the line being pasted.
+func TestCurlCommandRefusesControlCharacters(t *testing.T) {
+	cases := []struct {
+		name, method, header string
+		body                 []byte
+	}{
+		{name: "a body that ends bracketed paste and erases the line", method: "POST", body: []byte("\x1b[201~\x15echo PWNED; : \\")},
+		{name: "a body that erases the line", method: "POST", body: []byte("\x15echo PWNED; : \\")},
+		{name: "ESC in a header value", method: "GET", header: "a\x1bb"},
+		{name: "DEL in a header value", method: "GET", header: "a\x7fb"},
+		{name: "a C1 control in the method", method: "P\u009bST"},
+		{name: "a body that is not UTF-8", method: "POST", body: []byte{'a', 0xff, 'b'}},
+	}
+	for _, c := range cases {
+		for _, goos := range []string{"linux", "windows"} {
+			if got, err := curlCommand(goos, c.method, "https://myapp.test/", [][2]string{{"X-Name", c.header}}, c.body, false); err == nil {
+				t.Errorf("%s on %s was copied as %q", c.name, goos, got)
+			}
+		}
+	}
+	if _, err := curlCommand("linux", "POST", "https://myapp.test/\x1b", nil, nil, false); err == nil {
+		t.Error("ESC in the URL was copied")
+	}
+	if _, err := curlCommand("linux", "POST", "https://myapp.test/", [][2]string{{"X-\x1b", "v"}}, nil, false); err == nil {
+		t.Error("ESC in a header name was copied")
+	}
+	if _, err := curlCommand("windows", "POST", "https://myapp.test/", nil, []byte("\t\r\n\u00e9"), false); err != nil {
+		t.Errorf("tab, CR, LF and é were refused: %v", err)
+	}
+}
+
 // wantCurl is posix on macOS and Linux, and on Windows the PowerShell form
 // with config, for tests that copy through the TUI on the system they run
 // on.
