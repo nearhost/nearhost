@@ -166,7 +166,7 @@ func TestAuthFailedClosesPassthroughs(t *testing.T) {
 	}
 	// The session says when it tries again, at a time the test cannot know.
 	_, last := h.eng.ServerStatus("apollo")
-	if !strings.HasPrefix(last, "user@host: Permission denied (publickey).; trying again at ") {
+	if !strings.HasPrefix(last, "user@host: Permission denied (publickey). Nearhost tries again at ") {
 		t.Fatalf("the server's last error = %q", last)
 	}
 	waitClosedEvent(t, events, p.Remote, "apollo's connection failed: "+last)

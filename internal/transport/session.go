@@ -259,6 +259,11 @@ type Health struct {
 	// NextAttempt is when the session tries again; zero unless it is
 	// reconnecting, or auth failed and waiting authRetryEvery to try again.
 	NextAttempt time.Time
+	// Refused is whether logins have been refused maxAuthFailures times or
+	// more in a row since the session last connected. Each attempt then is
+	// a single one, followed by a wait of authRetryEvery when it fails, so
+	// a reconnect need not stop the session to try again.
+	Refused bool
 	// AgentPath is the socket agents on the server reach nearhost on, while
 	// it is forwarded; AgentErr says why it is not, once that was tried and
 	// failed. Both are empty for a session that forwards none.
@@ -269,8 +274,9 @@ type Health struct {
 
 // Start launches the supervisor. While a supervisor is running it does
 // nothing, except that one that gave up for now (auth failed, waiting
-// authRetryEvery) tries again at once and counts its failures afresh. When
-// none is running, Start launches one. When the
+// authRetryEvery) makes one attempt at once. When none is running, Start
+// launches one; while logins have been refused since the session last
+// connected, it too makes one attempt before it waits. When the
 // control socket path is too long (see Preflight) it launches nothing
 // and the session is at once in the state of a supervisor that gave up, with
 // that error as its last one.
@@ -354,7 +360,6 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 	}()
 	os.MkdirAll(s.runDir, 0o700)
 	backoff := s.baseBackoff
-	authFails := 0
 	for {
 		if ctx.Err() != nil { // stopped before (re)launching the master
 			s.setStatus(StatusDisconnected, "")
@@ -391,8 +396,8 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		if err := master.Start(); err != nil {
 			// Usually a missing binary, occasionally a passing fork failure:
 			// retry, but give up for now after the same number of attempts.
-			retryNow := s.attemptFailed("start ssh: "+err.Error(), true, &authFails, backoff)
-			if !s.waitToRetry(ctx, retryNow, &authFails, &backoff) {
+			retryNow := s.attemptFailed("start ssh: "+err.Error(), true, backoff)
+			if !s.waitToRetry(ctx, retryNow, &backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
 			}
@@ -410,7 +415,6 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		if s.waitForSocket(ctx, exited) {
 			if s.markConnected(ctx, exited) {
 				backoff = s.baseBackoff
-				authFails = 0
 				stderr.ForgetFatal()
 				s.applyAgent(ctx)
 			} else if ctx.Err() == nil && !hasExited(exited) {
@@ -424,8 +428,8 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.Logf("%s: connect timed out after %s", s.Name, s.connectTimeout)
 			master.Process.Kill()
 			<-exited
-			retryNow := s.attemptFailed("connect timed out", false, &authFails, backoff)
-			if !s.waitToRetry(ctx, retryNow, &authFails, &backoff) {
+			retryNow := s.attemptFailed("connect timed out", false, backoff)
+			if !s.waitToRetry(ctx, retryNow, &backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
 			}
@@ -442,8 +446,8 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.agentPath = "" // the server dropped it with the master
 			s.mu.Unlock()
 			msg, fatal := stderr.ExitMessage()
-			retryNow := s.attemptFailed(msg, fatal, &authFails, backoff)
-			if !s.waitToRetry(ctx, retryNow, &authFails, &backoff) {
+			retryNow := s.attemptFailed(msg, fatal, backoff)
+			if !s.waitToRetry(ctx, retryNow, &backoff) {
 				s.setStatus(StatusDisconnected, "")
 				return
 			}

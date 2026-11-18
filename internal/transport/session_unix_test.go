@@ -161,7 +161,7 @@ func TestHostKeyMessageNamesTheOffendingKey(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3"
+	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3."
 	if got := beforeRetryTime(t, s.LastError()); got != want {
 		t.Fatalf("LastError = %q, want %q", got, want)
 	}
@@ -602,8 +602,8 @@ func TestHealthCountsFailuresUntilGivingUp(t *testing.T) {
 		t.Errorf("health %+v", h)
 	}
 	s.Stop()
-	s.Start() // a fresh start counts afresh
-	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 3 }, "auth failed again")
+	s.Start() // a fresh start counts afresh, and makes one attempt as logins were refused
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 1 }, "auth failed again")
 }
 
 // A session that is reconnecting says when it tries next; connecting
@@ -764,30 +764,31 @@ func TestSessionStopDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
 	}
 }
 
-// newSlowRetrySession is a session that refuses logins until the test
-// removes the file the result names.
-func newSlowRetrySession(t *testing.T) slowRetry {
+// newSlowRetrySession is a session that refuses logins as slowRetry says.
+func newSlowRetrySession(t *testing.T, held bool) slowRetry {
 	t.Helper()
-	refuse := filepath.Join(t.TempDir(), "refuse")
-	if err := os.WriteFile(refuse, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
-	return slowRetry{tr: s, clock: newSlowClock(&s.supervision), refuse: refuse, launches: s.Launches}
+	refuse, hold, env := slowRetryEnv(t, held)
+	s, _ := newFakeSession(t, env...)
+	return slowRetry{tr: s, clock: newSlowClock(&s.supervision), refuse: refuse, hold: hold, launches: s.Launches}
 }
 
 // After three refused logins in a row the session keeps trying, once every
 // 15 minutes, until a login succeeds.
 func TestSupervisorRetriesARefusedLoginEvery15Minutes(t *testing.T) {
-	newSlowRetrySession(t).retriesEvery15Minutes(t)
+	newSlowRetrySession(t, false).retriesEvery15Minutes(t)
 }
 
-// A Start while the session waits to try again tries at once.
-func TestStartDuringTheLongWaitRetriesAtOnce(t *testing.T) {
-	newSlowRetrySession(t).startRetriesAtOnce(t)
+// Each revive of a session that gave up for now makes one attempt.
+func TestReviveDuringTheLongWaitTriesOnce(t *testing.T) {
+	newSlowRetrySession(t, false).revivesTryOnceEach(t)
+}
+
+// Revives during the attempt a revive made share it.
+func TestRevivesShareTheirAttempt(t *testing.T) {
+	newSlowRetrySession(t, true).revivesShareAnAttempt(t)
 }
 
 // Stop ends the wait of a session that gave up for now.
 func TestStopEndsTheLongWait(t *testing.T) {
-	newSlowRetrySession(t).stopEndsTheWait(t)
+	newSlowRetrySession(t, false).stopEndsTheWait(t)
 }

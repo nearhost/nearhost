@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -256,12 +257,19 @@ func TestUpReportsAFailedProjectAndKeepsServingTheOthers(t *testing.T) {
 	u.start()
 	u.waitFor("Serving until interrupted")
 	out := u.out.String()
-	wantContains(t, out,
-		"[server mini] auth failed: user@host: Permission denied (publickey).\n",
-		"\napi: error: ssh mini.lan: user@host: Permission denied (publickey).\n"+
-			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"+
-			"web: running at https://web.test\n"+
-			"\nServing until interrupted. Press Ctrl-C to stop.\n")
+	// The refusal ends with when the server is tried next, in local time.
+	const refused = `user@host: Permission denied \(publickey\)\. Nearhost tries again at \d\d:\d\d\.\n`
+	for _, want := range []string{
+		`\[server mini\] auth failed: ` + refused,
+		`\napi: error: ssh mini\.lan: ` + refused +
+			"  fix: Run `ssh mini\\.lan` once in a terminal to fix access; nearhost tries again by itself\n" +
+			`web: running at https://web\.test\n` +
+			`\nServing until interrupted\. Press Ctrl-C to stop\.\n`,
+	} {
+		if !regexp.MustCompile(want).MatchString(out) {
+			t.Errorf("output does not match %q:\n%s", want, out)
+		}
+	}
 	if strings.Count(out, "  fix: ") != 1 {
 		t.Errorf("the fix is printed more than once:\n%s", out)
 	}

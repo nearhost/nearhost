@@ -206,9 +206,9 @@ func (p *perProcess) SetAgentForward(f AgentForward) {
 
 // Start launches the supervisor. While a supervisor is running it does
 // nothing, except that one that gave up for now (auth failed, waiting
-// authRetryEvery) tries again at once and counts its failures afresh. After
-// a supervisor has given up for good, on a configuration it cannot work
-// with, Start launches a fresh one.
+// authRetryEvery) makes one attempt at once. When none is running, Start
+// launches one; while logins have been refused since the link last
+// connected, it too makes one attempt before it waits.
 func (p *perProcess) Start() {
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
@@ -329,7 +329,6 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 		close(done)
 	}()
 	backoff := p.baseBackoff
-	authFails := 0
 	withAgent := true
 	for {
 		if ctx.Err() != nil { // stopped before (re)launching the link
@@ -349,13 +348,12 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 		}
 		if end.connected {
 			backoff = p.baseBackoff
-			authFails = 0
 		}
 		// Fatal errors, and failures to start ssh at all, give up for now
 		// after maxAuthFailures in a row.
-		retryNow := p.attemptFailed(end.msg, end.fatal, &authFails, backoff)
+		retryNow := p.attemptFailed(end.msg, end.fatal, backoff)
 		p.endForwards() // after the status has left connected
-		if !p.waitToRetry(ctx, retryNow, &authFails, &backoff) {
+		if !p.waitToRetry(ctx, retryNow, &backoff) {
 			p.setStatus(StatusDisconnected, "")
 			return
 		}

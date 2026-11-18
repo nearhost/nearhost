@@ -489,8 +489,8 @@ func TestPerProcessHealthCountsFailuresAfreshAfterAStart(t *testing.T) {
 		t.Errorf("health %+v", h)
 	}
 	p.Stop()
-	p.Start()
-	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed && p.Health().Failures == 3 }, "auth failed again")
+	p.Start() // one attempt, as logins were refused
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed && p.Health().Failures == 1 }, "auth failed again")
 }
 
 func TestPerProcessAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
@@ -1754,30 +1754,32 @@ func TestPerProcessFatalLineSurvivesLaterChatter(t *testing.T) {
 }
 
 // newSlowRetryPerProcess is a per-process transport that refuses logins
-// until the test removes the file the result names.
-func newSlowRetryPerProcess(t *testing.T) slowRetry {
+// as slowRetry says.
+func newSlowRetryPerProcess(t *testing.T, held bool) slowRetry {
 	t.Helper()
-	refuse := filepath.Join(t.TempDir(), "refuse")
-	if err := os.WriteFile(refuse, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
-	return slowRetry{tr: p, clock: newSlowClock(&p.supervision), refuse: refuse,
+	refuse, hold, env := slowRetryEnv(t, held)
+	p := newTestPerProcess(t, env...)
+	return slowRetry{tr: p, clock: newSlowClock(&p.supervision), refuse: refuse, hold: hold,
 		launches: func() int { return p.linkLaunches(t) }}
 }
 
 // After three refused logins in a row the link keeps trying, once every 15
 // minutes, until a login succeeds.
 func TestPerProcessRetriesARefusedLoginEvery15Minutes(t *testing.T) {
-	newSlowRetryPerProcess(t).retriesEvery15Minutes(t)
+	newSlowRetryPerProcess(t, false).retriesEvery15Minutes(t)
 }
 
-// A Start while the link waits to try again tries at once.
-func TestPerProcessStartDuringTheLongWaitRetriesAtOnce(t *testing.T) {
-	newSlowRetryPerProcess(t).startRetriesAtOnce(t)
+// Each revive of a link that gave up for now makes one attempt.
+func TestPerProcessReviveDuringTheLongWaitTriesOnce(t *testing.T) {
+	newSlowRetryPerProcess(t, false).revivesTryOnceEach(t)
+}
+
+// Revives during the attempt a revive made share it.
+func TestPerProcessRevivesShareTheirAttempt(t *testing.T) {
+	newSlowRetryPerProcess(t, true).revivesShareAnAttempt(t)
 }
 
 // Stop ends the wait of a link that gave up for now.
 func TestPerProcessStopEndsTheLongWait(t *testing.T) {
-	newSlowRetryPerProcess(t).stopEndsTheWait(t)
+	newSlowRetryPerProcess(t, false).stopEndsTheWait(t)
 }
