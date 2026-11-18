@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,98 +18,70 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
-// appliedSites records the sites the engine gives the proxy outside a start
-// or a stop: those it publishes again when a forward goes down or comes
-// back.
-type appliedSites struct {
-	mu   sync.Mutex
-	last []proxy.Site
+// countApplies counts the times h's engine gives the proxy its sites, by
+// either of the engine's seams to it.
+func countApplies(h *harness) *atomic.Int32 {
+	var n atomic.Int32
+	apply, refresh := h.eng.applySites, h.eng.refreshSites
+	h.eng.applySites = func(sites []proxy.Site) error { n.Add(1); return apply(sites) }
+	h.eng.refreshSites = func(sites []proxy.Site) error { n.Add(1); return refresh(sites) }
+	return &n
 }
 
-// recordApplied wraps h's refreshSites so a test sees what it applies.
-func recordApplied(h *harness) *appliedSites {
-	a := &appliedSites{}
-	inner := h.eng.refreshSites
-	h.eng.refreshSites = func(sites []proxy.Site) error {
-		err := inner(sites)
-		a.mu.Lock()
-		a.last = sites // once the proxy runs them
-		a.mu.Unlock()
-		return err
-	}
-	return a
-}
-
-// lastOf reports whether the site of project's web route for port the
-// proxy was last given is down or up.
-func (a *appliedSites) lastOf(project string, port int) (down, up bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, s := range a.last {
-		if s.Project == project && s.Port == port {
-			return s.Down, !s.Down
-		}
-	}
-	return false, false
-}
-
-// While a project's server reconnects, its site is published down, still
-// naming its app for the page; once the server is back, it is up again. A
-// local project's site is never down.
-func TestSiteOfADegradedProjectIsDown(t *testing.T) {
+// While a project's server reconnects, its gate is shut: the proxy dials
+// nothing for it. Once the server is back, the gate is open again. Neither
+// reloads the proxy, so other sites are left alone. A local project has no
+// gate.
+func TestDropAndReconnectShutAndOpenTheGateWithoutReloading(t *testing.T) {
 	ssh, flag := downWrapper(t)
 	cfg := remoteConfig(testutil.FreePort(t))
 	cfg.Projects = append(cfg.Projects, localProject("web", upstream(t, "web")))
 	h := buildHarness(t, cfg, func(o *Options) { o.SSHPath = ssh })
-	applied := recordApplied(h)
+	applies := countApplies(h)
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
 	mustStart(t, h, "myapp")
 	mustStart(t, h, "web")
-	dial := "127.0.0.1:" + strconv.Itoa(h.eng.Status("myapp").WebLocalPort)
+	dial := forwardAddr(h.eng.Status("myapp").WebLocalPort)
 	sites := h.eng.Sites()
-	if len(sites) != 2 || sites[0].Down || !sites[0].Forwarded || sites[0].Upstream != dial {
+	if len(sites) != 2 || !sites[0].Forwarded || sites[0].Upstream != dial || sites[1].Forwarded {
 		t.Fatalf("running: sites %+v", sites)
 	}
+	if !proxy.ForwardUp(dial) {
+		t.Fatal("the gate of a running project is shut")
+	}
+	before := applies.Load()
 
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h.dropMaster(t, "mini")
 	waitState(t, h, "myapp", StateDegraded)
-	sites = h.eng.Sites()
-	if len(sites) != 2 {
-		t.Fatalf("degraded: sites %+v", sites)
+	if proxy.ForwardUp(dial) {
+		t.Fatal("the gate is open while the server reconnects")
 	}
-	if s := sites[0]; !s.Down || s.Upstream != dial || s.Project != "myapp" || s.Port != 80 || s.Server != "mini" {
-		t.Errorf("degraded: site %+v, want down", s)
-	}
-	if s := sites[1]; s.Down || s.Forwarded || s.Upstream == "" {
-		t.Errorf("a local project's site changed with the server: %+v", s)
-	}
-	// Published to the proxy too, by the engine itself.
-	testutil.WaitUntil(t, 10*time.Second, func() bool { down, _ := applied.lastOf("myapp", 80); return down }, "the proxy to get the site down")
 
 	if err := os.Remove(flag); err != nil {
 		t.Fatal(err)
 	}
 	waitState(t, h, "myapp", StateRunning)
-	sites = h.eng.Sites()
-	if len(sites) != 2 || sites[0].Down || sites[0].Upstream != dial {
-		t.Fatalf("reconnected: sites %+v", sites)
+	if !proxy.ForwardUp(dial) {
+		t.Fatal("the gate is shut once the server is back")
 	}
-	testutil.WaitUntil(t, 10*time.Second, func() bool { _, up := applied.lastOf("myapp", 80); return up }, "the proxy to get the site up again")
-	if st, _ := h.eng.ServerStatus("mini"); st != transport.StatusConnected {
-		t.Errorf("server %s", st)
+	if n := applies.Load() - before; n != 0 {
+		t.Errorf("the drop and the reconnect reloaded the proxy %d times", n)
+	}
+	if s := h.eng.Sites(); len(s) != 2 || s[0].Upstream != dial {
+		t.Errorf("reconnected: sites %+v", s)
 	}
 }
 
 // A web forward the session could not apply again after a reconnect, as its
-// port was taken meanwhile, leaves the site down: the proxy must not send
-// the project's requests to whatever holds the port. A lost loopback forward
-// leaves the web route up. A reconnect that applies it restores the site.
-func TestSiteOfARefusedForwardIsDown(t *testing.T) {
+// port was taken meanwhile, keeps its gate shut: the proxy must not send the
+// project's requests to whatever holds the port. A lost loopback forward
+// leaves the web route's gate open. A reconnect that applies it opens it.
+func TestGateOfARefusedForwardIsShut(t *testing.T) {
 	flag := filepath.Join(t.TempDir(), "forward-fails")
 	lb := testutil.FreePort(t)
 	h := newHarness(t, remoteConfig(lb), "FAKE_SSH_FORWARD_FAIL_FILE="+flag)
@@ -122,8 +93,8 @@ func TestSiteOfARefusedForwardIsDown(t *testing.T) {
 	}
 	h.dropMaster(t, "mini")
 	testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateError }, "the lost loopback forward to show")
-	if s := h.eng.Sites(); len(s) != 1 || s[0].Down {
-		t.Fatalf("a lost loopback forward took the web route down: %+v", s)
+	if !proxy.ForwardUp(forwardAddr(local)) {
+		t.Fatal("a lost loopback forward shut the web route's gate")
 	}
 
 	if err := os.WriteFile(flag, []byte(strconv.Itoa(local)), 0o644); err != nil {
@@ -136,8 +107,8 @@ func TestSiteOfARefusedForwardIsDown(t *testing.T) {
 		st := h.eng.Status("myapp")
 		return st.State == StateError && strings.Contains(st.Message, "the web route for port 80 is not forwarded")
 	}, "the lost web forward to show")
-	if s := h.eng.Sites(); len(s) != 1 || !s[0].Down {
-		t.Fatalf("refused web forward: sites %+v, want down", s)
+	if proxy.ForwardUp(forwardAddr(local)) {
+		t.Fatal("the gate of a refused web forward is open")
 	}
 
 	if err := os.Remove(flag); err != nil {
@@ -147,8 +118,8 @@ func TestSiteOfARefusedForwardIsDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitState(t, h, "myapp", StateRunning)
-	if s := h.eng.Sites(); len(s) != 1 || s[0].Down || s[0].Upstream != forwardAddr(local) {
-		t.Fatalf("restored: sites %+v", s)
+	if !proxy.ForwardUp(forwardAddr(local)) {
+		t.Fatal("the gate is shut once the forward is restored")
 	}
 }
 
@@ -201,8 +172,8 @@ func TestReconnectShutsTheGateBeforeEndingTheSession(t *testing.T) {
 				}
 			}
 			waitState(t, h, "myapp", StateRunning)
-			if s := h.eng.Sites(); len(s) != 1 || s[0].Down {
-				t.Fatalf("reconnected: sites %+v", s)
+			if !proxy.ForwardUp(addr) {
+				t.Fatal("the gate is shut once reconnected")
 			}
 		})
 	}
@@ -252,15 +223,14 @@ func countingListener(t *testing.T, port int) *atomic.Int32 {
 }
 
 // Every OS: one web forward's ssh dies and cannot be relaunched, as another
-// program has taken its port. That route's site is down and dials nothing,
-// while the project's other web route, whose forward lives, is still
-// dialled.
+// program has taken its port. That route's gate is shut and the proxy dials
+// nothing for it, while the project's other web route, whose forward lives,
+// is still dialled.
 func TestPerProcessSiteDialsNothingWhileItsForwardIsDown(t *testing.T) {
 	t.Setenv("NEARHOST_TRANSPORT", "per-process")
 	fake, env := newPerProcessFake(t)
 	flag := filepath.Join(t.TempDir(), "forward-fails")
 	h := newHarness(t, remoteTwoWebConfig(testutil.FreePort(t)), append(env, "FAKE_SSH_FORWARD_FAIL_FILE="+flag)...)
-	applied := recordApplied(h)
 	mustStart(t, h, "myapp")
 	st := h.eng.Status("myapp")
 	l80, l81 := st.WebLocalPorts[80], st.WebLocalPorts[81]
@@ -274,19 +244,10 @@ func TestPerProcessSiteDialsNothingWhileItsForwardIsDown(t *testing.T) {
 	}
 	fake.drop(t, pids[0])
 	squatter := countingListener(t, l80)
-	testutil.WaitUntil(t, 10*time.Second, func() bool {
-		s := h.eng.Sites()
-		return len(s) == 2 && s[0].Down
-	}, "the route of the dead forward to be down")
-	if s := h.eng.Sites(); s[1].Down {
-		t.Fatalf("the route whose forward lives is down: %+v", s)
-	}
-	if proxy.SetForwardUp(forwardAddr(l81), true) {
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return !proxy.ForwardUp(forwardAddr(l80)) }, "the gate of the dead forward to shut")
+	if !proxy.ForwardUp(forwardAddr(l81)) {
 		t.Error("the gate of the forward that lives was shut")
 	}
-	// A reload drops the connections that arrive while it swaps the
-	// routes, so the requests wait for the one that takes the route down.
-	testutil.WaitUntil(t, 10*time.Second, func() bool { down, _ := applied.lastOf("myapp", 80); return down }, "the proxy to get the route down")
 
 	// Caddy issues each certificate once the site is published: the first
 	// requests wait for it.
@@ -313,16 +274,16 @@ func TestPerProcessSiteDialsNothingWhileItsForwardIsDown(t *testing.T) {
 }
 
 // Every OS: a server that refused the logins waits a long while before it
-// tries again. Its project's site is down meanwhile, and up once it is
+// tries again. Its project's gate is shut meanwhile, and open once it is
 // back.
-func TestSiteOfASlowRetryServerIsDown(t *testing.T) {
+func TestGateOfASlowRetryServerIsShut(t *testing.T) {
 	wrapper, flag, _ := authWrapper(t)
 	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) { o.SSHPath = wrapper })
-	applied := recordApplied(h)
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatal(err)
 	}
 	mustStart(t, h, "myapp")
+	dial := forwardAddr(h.eng.Status("myapp").WebLocalPort)
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -331,10 +292,9 @@ func TestSiteOfASlowRetryServerIsDown(t *testing.T) {
 		st, _ := h.eng.ServerStatus("mini")
 		return st == transport.StatusAuthFailed
 	}, "the server to wait before it tries again")
-	if s := h.eng.Sites(); len(s) != 1 || !s[0].Down {
-		t.Fatalf("sites while the server waits: %+v", s)
+	if proxy.ForwardUp(dial) {
+		t.Fatal("the gate is open while the server waits")
 	}
-	testutil.WaitUntil(t, 10*time.Second, func() bool { down, _ := applied.lastOf("myapp", 80); return down }, "the proxy to get the site down")
 	h.getEventually(t, "myapp.test", "/")
 	if code, body := h.browserGet(t, "myapp.test"); code != 502 || !strings.Contains(body, "Nearhost is reconnecting to mini.") {
 		t.Errorf("while the server waits: %d\n%s", code, body)
@@ -345,7 +305,7 @@ func TestSiteOfASlowRetryServerIsDown(t *testing.T) {
 	}
 	mustStart(t, h, "myapp") // revives the connection
 	waitState(t, h, "myapp", StateRunning)
-	if s := h.eng.Sites(); len(s) != 1 || s[0].Down {
-		t.Fatalf("sites once the server is back: %+v", s)
+	if !proxy.ForwardUp(dial) {
+		t.Fatal("the gate is shut once the server is back")
 	}
 }

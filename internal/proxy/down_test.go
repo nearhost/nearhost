@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -259,27 +260,36 @@ func TestDownLogOnlyLogsAndLeavesStatusBare(t *testing.T) {
 	}
 }
 
-// A request a gate failed, because the site's forward is down, gets the
-// page that says Nearhost is reconnecting, with the same headers.
-func TestDownSaysReconnectingWhenTheForwardIsDown(t *testing.T) {
-	d := &Down{Project: "shop", Port: 3000, Server: "mini"}
-	if err := d.Provision(caddy.Context{Context: context.Background()}); err != nil {
+// serveGate provisions g and sends it req, reporting whether it passed the
+// request on to the reverse proxy.
+func serveGate(t *testing.T, g *Gate, req *http.Request) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
+	if err := g.Provision(caddy.Context{Context: context.Background()}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	d.logger = zap.NewNop()
-	req := navigation("GET")
-	req = req.WithContext(context.WithValue(req.Context(), caddyhttp.ErrorCtxKey, caddyhttp.Error(502, errForwardDown)))
+	g.logger = zap.NewNop()
 	w := httptest.NewRecorder()
+	passed := false
 	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
-		t.Error("the page passed the request on")
+		passed = true
 		return nil
 	})
-	if err := d.ServeHTTP(w, req, next); err != nil {
+	if err := g.ServeHTTP(w, req, next); err != nil {
 		t.Fatalf("ServeHTTP: %v", err)
 	}
+	return w, passed
+}
+
+// A shut gate answers itself, without calling the reverse proxy: a browser
+// gets the page saying Nearhost is reconnecting, anything else the bare 502.
+func TestGateAnswersWhileTheForwardIsDown(t *testing.T) {
+	const up = "127.0.0.1:1"
+	t.Cleanup(func() { ForgetForward(up) })
+	g := &Gate{Upstream: up, Project: "shop", Server: "mini"}
+	w, passed := serveGate(t, g, navigation("GET"))
 	body := w.Body.String()
-	if w.Code != 502 {
-		t.Errorf("code %d", w.Code)
+	if passed || w.Code != 502 {
+		t.Fatalf("code %d, passed on %v", w.Code, passed)
 	}
 	for _, want := range []string{
 		"<h1>shop is not answering</h1>",
@@ -294,16 +304,33 @@ func TestDownSaysReconnectingWhenTheForwardIsDown(t *testing.T) {
 		t.Errorf("body has the other variant's copy or a script:\n%s", body)
 	}
 	if hdr := w.Header(); hdr.Get("Content-Security-Policy") != homeCSP || hdr.Get("Cache-Control") != "no-store" ||
-		hdr.Get("Content-Length") != strconv.Itoa(len(body)) {
+		hdr.Get("Content-Length") != strconv.Itoa(len(body)) || hdr.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("headers %v", hdr)
+	}
+
+	json := httptest.NewRequest("GET", "/api", nil)
+	json.Header.Set("Accept", "application/json")
+	ws := navigation("GET")
+	ws.Header.Set("Upgrade", "websocket")
+	for name, req := range map[string]*http.Request{"json": json, "post": navigation("POST"), "upgrade": ws} {
+		w, passed := serveGate(t, g, req)
+		if passed || w.Code != 502 || w.Body.Len() != 0 {
+			t.Errorf("%s: code %d, passed on %v, body %q", name, w.Code, passed, w.Body.String())
+		}
+	}
+
+	SetForwardUp(up, true)
+	if w, passed := serveGate(t, g, navigation("GET")); !passed || w.Body.Len() != 0 {
+		t.Errorf("forward up: passed on %v, body %q", passed, w.Body.String())
 	}
 }
 
-// TestGateEndToEnd runs the proxy with a forwarded site whose forward is
-// down and a site that is Down: both answer 502 without dialling the
-// listener on their port, a browser getting the reconnecting page. Once the
-// forward is said to be up, the forwarded site proxies to it at once, with
-// no reload; said down again, it stops.
+// TestGateEndToEnd runs the proxy with two sites of one forward that is
+// down: both answer 502 without dialling the app, a browser getting the
+// reconnecting page, and the down period is logged once. A reload for
+// another reason keeps them refusing. Once the forward is said to be up,
+// the sites proxy to it at once, with no reload; said down again, they stop.
+// A forward that is up to an app that does not answer gets A13's page.
 func TestGateEndToEnd(t *testing.T) {
 	var dialled atomic.Int32
 	app := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -317,12 +344,15 @@ func TestGateEndToEnd(t *testing.T) {
 	app.Start()
 	t.Cleanup(app.Close)
 	up := addr(app)
-	t.Cleanup(func() { SetForwardUp(up, false) })
-	h := startProxyWith(t, []Site{
+	dead := "127.0.0.1:" + strconv.Itoa(testutil.FreePort(t))
+	t.Cleanup(func() { ForgetForward(up); ForgetForward(dead) })
+	sites := []Site{
 		{Alias: "gated.test", Hosts: []string{"gated.test"}, Upstream: up, Forwarded: true, Project: "gated", Port: 80, Server: "mini"},
-		{Alias: "down.test", Hosts: []string{"down.test"}, Upstream: up, Down: true, Project: "down", Port: 80, Server: "mini"},
-	}, false)
-	h.waitCerts(t, "gated.test", "down.test")
+		{Alias: "other.test", Hosts: []string{"other.test"}, Upstream: up, Forwarded: true, Project: "other", Port: 80, Server: "mini"},
+		{Alias: "dead.test", Hosts: []string{"dead.test"}, Upstream: dead, Forwarded: true, Project: "dead", Port: 3000, Server: "mini"},
+	}
+	h := startProxyWith(t, sites, false)
+	h.waitCerts(t, "gated.test", "other.test", "dead.test")
 
 	get := func(alias, accept string) (int, string) {
 		t.Helper()
@@ -339,22 +369,33 @@ func TestGateEndToEnd(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
 	}
-	for _, alias := range []string{"gated.test", "down.test"} {
-		if code, body := get(alias, "text/html"); code != 502 || !strings.Contains(body, "Nearhost is reconnecting to mini.") {
-			t.Errorf("%s, browser: %d\n%s", alias, code, body)
+	refuses := func(when string) {
+		t.Helper()
+		for _, alias := range []string{"gated.test", "other.test"} {
+			if code, body := get(alias, "text/html"); code != 502 || !strings.Contains(body, "Nearhost is reconnecting to mini.") {
+				t.Errorf("%s, %s, browser: %d\n%s", when, alias, code, body)
+			}
+			if code, body := get(alias, "application/json"); code != 502 || body != "" {
+				t.Errorf("%s, %s, json: %d %q", when, alias, code, body)
+			}
 		}
-		if code, body := get(alias, "application/json"); code != 502 || body != "" {
-			t.Errorf("%s, json: %d %q", alias, code, body)
+		if n := dialled.Load(); n != 0 {
+			t.Fatalf("%s: the app got %d connections while its forward was down", when, n)
 		}
 	}
-	if n := dialled.Load(); n != 0 {
-		t.Fatalf("the app got %d connections while its forward was down", n)
-	}
+	refuses("down")
 	// Four refused requests on two sites of one forward: one log line.
-	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", "the forward to the app's server is down") }, "the down period's log line")
-	if n := h.rec.countFor("", "the forward to the app's server is down"); n != 1 {
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("", forwardDownMsg) }, "the down period's log line")
+	if n := h.rec.countFor("", forwardDownMsg); n != 1 {
 		t.Errorf("the down period was logged %d times, want once", n)
 	}
+
+	// A reload for another reason, such as a project starting.
+	local := Site{Alias: "local.test", Hosts: []string{"local.test"}, Upstream: up}
+	if err := h.p.Apply(append(slices.Clone(sites), local)); err != nil {
+		t.Fatal(err)
+	}
+	refuses("after a reload")
 
 	if !SetForwardUp(up, true) || SetForwardUp(up, true) {
 		t.Error("SetForwardUp did not report the change once")
@@ -371,7 +412,13 @@ func TestGateEndToEnd(t *testing.T) {
 		t.Errorf("the app got %d new connections once its forward was down again", n-before)
 	}
 	// A new down period has its own line.
-	waitUntil(t, 5*time.Second, func() bool { return h.rec.countFor("", "the forward to the app's server is down") == 2 }, "the second down period's log line")
+	waitUntil(t, 5*time.Second, func() bool { return h.rec.countFor("", forwardDownMsg) == 2 }, "the second down period's log line")
+
+	// Up, to an app that does not answer: A13's page, from the error route.
+	SetForwardUp(dead, true)
+	if code, body := get("dead.test", "text/html"); code != 502 || !strings.Contains(body, "Nothing answered on port 3000 on mini.") {
+		t.Errorf("forward up, app down: %d\n%s", code, body)
+	}
 }
 
 // countFor counts the lines filed under alias that contain sub.

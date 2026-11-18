@@ -15,6 +15,10 @@ import (
 // can hold it for as long as it lives, and is waited for this long only.
 const stderrDrainWait = 300 * time.Millisecond
 
+// stderrCloseWait bounds how long the end of an ssh's stderr waits, once its
+// read end is closed, for the copy to hand on what it read last.
+const stderrCloseWait = 100 * time.Millisecond
+
 // stderrPipe carries a long-lived ssh's stderr to a writer through a pipe
 // of its own, read by a goroutine of its own. ssh writes to an *os.File, so
 // exec starts no copying goroutine and cmd.Wait returns as soon as the
@@ -61,10 +65,14 @@ func (p *stderrPipe) started() {
 
 // end waits at most wait for the copy to reach the end of the pipe, then
 // closes the read end, which ends the copy even while a child of ssh still
-// holds the write end, on Unix and on Windows alike (Close cancels a pipe
-// read that is under way there). The reader goroutine is so bounded by the
-// process's life plus wait, never by a child's. It closes done, without
-// waiting for the copy to notice the close.
+// holds the write end: on Unix at once, and on Windows by cancelling the
+// read under way (os.File.Close calls CancelIoEx on a pipe). It then waits
+// for the copy to finish, so the last chunk it read reaches the writer: a
+// "Permission denied" lost there would turn a refused login into a quick
+// retry. That wait is bounded too, by stderrCloseWait: should a close ever
+// fail to end a read, the caller goes on with what was read, and the copy
+// and the close, which hold only the read end, end by themselves when the
+// read does. It closes done.
 func (p *stderrPipe) end(wait time.Duration) {
 	if wait > 0 {
 		t := time.NewTimer(wait)
@@ -74,6 +82,14 @@ func (p *stderrPipe) end(wait time.Duration) {
 		}
 		t.Stop()
 	}
-	_ = p.r.Close()
+	// Close waits for a read under way to return; it runs on its own so
+	// that even a close that never returned would not hold the caller.
+	go p.r.Close()
+	t := time.NewTimer(stderrCloseWait)
+	select {
+	case <-p.read:
+	case <-t.C:
+	}
+	t.Stop()
 	close(p.done)
 }

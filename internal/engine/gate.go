@@ -13,16 +13,17 @@ import (
 // refused logins or was disconnected, or the session refused to bind the
 // port again), the port may be free, and any program could listen there
 // and be sent the project's requests under its https name. So the proxy
-// dials a forward only while the engine says it is up, at two levels:
+// dials a forward only while the engine says it is up: each request passes
+// the site's gate (proxy.Gate), which the engine opens and shuts with
+// proxy.SetForwardUp under mu, as soon as it learns of a change. A shut
+// gate answers the request itself, with 502 and, for a browser, a page
+// saying Nearhost is reconnecting.
 //
-//   - each request passes the site's gate (proxy.Gate), which the engine
-//     opens and shuts with proxy.SetForwardUp under mu, as soon as it
-//     learns of a change, with no config reload;
-//   - the site is published Down, with no reverse proxy in its route,
-//     while the forward is not up, and with it again once it is.
+// The config does not change with the forward: a reload takes time, leaves
+// the requests that arrive meanwhile with the old routes, and drops new
+// connections on every site, so a session that flaps would disturb the
+// others. A reload for another reason leaves the gate as it is.
 //
-// The gate is what keeps the port from being dialled once it is free: a
-// reload takes time, and requests that arrive meanwhile have the old routes.
 // After an unexpected end of ssh, the engine learns of it from the
 // session's Notify, which the session calls as soon as the process is
 // reaped, before it reads why from ssh's stderr (a child of ssh, such as a
@@ -77,63 +78,12 @@ func (e *Engine) webUpLocked(run *projectRun) []bool {
 }
 
 // syncGatesLocked opens and shuts the proxy's gates for run's web forwards
-// as webUpLocked says, and reports whether any changed. A local project has
-// none.
-func (e *Engine) syncGatesLocked(run *projectRun) bool {
+// as webUpLocked says. A local project has none.
+func (e *Engine) syncGatesLocked(run *projectRun) {
 	if run.server == config.LocalServer {
-		return false
-	}
-	changed := false
-	for i, up := range e.webUpLocked(run) {
-		if proxy.SetForwardUp(forwardAddr(run.webLocals[i]), up) {
-			changed = true
-		}
-	}
-	return changed
-}
-
-// republishLocked has the proxy given the sites again, by a goroutine of its
-// own, as a forward of a published site went down or came back: the caller
-// may hold a session's forward lock, and an apply waits for applyMu. Calls
-// made while one runs are coalesced into one more apply after it, so a
-// session that flaps costs at most one reload under way and one waiting,
-// and each apply has the state of the moment it begins. Caddy skips a
-// config that has not changed, and lets the requests of other sites that are
-// under way finish on the routes they began with.
-func (e *Engine) republishLocked() {
-	if e.closed {
-		return // Shutdown stops every project, which removes the sites
-	}
-	if e.republishing {
-		e.republishAgain = true
 		return
 	}
-	e.republishing = true
-	e.siteWork.Add(1) // under mu while closed is not set, so before Shutdown waits
-	go e.republish()
-}
-
-// republish gives the proxy the sites until no change is left that it has
-// not applied. It runs on its own goroutine, counted in siteWork.
-func (e *Engine) republish() {
-	defer e.siteWork.Done()
-	for {
-		e.applyMu.Lock()
-		e.mu.Lock()
-		e.republishAgain = false
-		sites := e.sitesLocked(nil)
-		e.mu.Unlock()
-		err := e.refreshSites(sites)
-		e.applyMu.Unlock()
-		if err != nil {
-			e.bus.Publish(Event{Message: fmt.Sprintf("could not update the proxy's sites: %v", err)})
-		}
-		e.mu.Lock()
-		if !e.republishAgain || e.closed {
-			e.republishing = false
-			e.mu.Unlock()
-			return
-		}
-		e.mu.Unlock()
+	for i, up := range e.webUpLocked(run) {
+		proxy.SetForwardUp(forwardAddr(run.webLocals[i]), up)
 	}
 }

@@ -40,9 +40,7 @@ func init() {
 // Nearhost's page saying so, with that status, in place of an empty body.
 // Any other request, and any other error, gets the bare status, as it would
 // with no error route. An app that answers with 502 itself is no error, so
-// its answer never reaches this handler. When the 502 is a gate's, because
-// the site's forward to its server is down, the page says Nearhost is
-// reconnecting to the server instead.
+// its answer never reaches this handler.
 //
 // It is a module of its own, rather than a static response in the config,
 // because a static response's body goes through Caddy's placeholders, which
@@ -60,10 +58,8 @@ type Down struct {
 	// handle only at debug level.
 	LogOnly bool `json:"log_only,omitempty"`
 
-	page []byte
-	// reconnecting is the page for a forward that is down (see Gate).
-	reconnecting []byte
-	logger       *zap.Logger
+	page   []byte
+	logger *zap.Logger
 }
 
 // CaddyModule implements caddy.Module.
@@ -74,42 +70,41 @@ func (Down) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision implements caddy.Provisioner. The pages depend only on the
-// handler's fields, so they are rendered once per config load.
+// Provision implements caddy.Provisioner. The page depends only on the
+// handler's fields, so it is rendered once per config load.
 func (d *Down) Provision(ctx caddy.Context) error {
 	d.logger = ctx.Logger()
 	if d.LogOnly {
 		return nil
 	}
-	server := d.Server
-	if server == "" {
-		server = thisMachine
-	}
-	render := func(reconnecting bool) ([]byte, error) {
-		var buf bytes.Buffer
-		err := downPage.Execute(&buf, struct {
-			Project      string
-			Port         int
-			Server       string
-			Reconnecting bool
-		}{d.Project, d.Port, server, reconnecting})
-		return buf.Bytes(), err
-	}
 	var err error
-	if d.page, err = render(false); err != nil {
-		return err
-	}
-	d.reconnecting, err = render(true)
+	d.page, err = renderDownPage(d.Project, d.Port, d.Server, false)
 	return err
 }
 
-// ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error, but
-// a gate's, at the level Caddy uses for a server with no error routes, since Caddy logs
+// renderDownPage renders Nearhost's page for project's app, which listens
+// on port on server (empty for this machine): that nothing answered there,
+// or with reconnecting, that Nearhost is reconnecting to the server.
+func renderDownPage(project string, port int, server string, reconnecting bool) ([]byte, error) {
+	if server == "" {
+		server = thisMachine
+	}
+	var buf bytes.Buffer
+	err := downPage.Execute(&buf, struct {
+		Project      string
+		Port         int
+		Server       string
+		Reconnecting bool
+	}{project, port, server, reconnecting})
+	return buf.Bytes(), err
+}
+
+// ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error at
+// the level Caddy uses for a server with no error routes, since Caddy logs
 // an error that an error route handled only at debug level. Then it serves the page
 // for a 502, 503 or 504 to a GET or HEAD that accepts HTML and asks for no
-// upgrade, the reconnecting one when a gate failed the request, and passes
-// anything else, and everything in LogOnly mode, to next, which writes the
-// bare status.
+// upgrade, and passes anything else, and everything in LogOnly mode, to
+// next, which writes the bare status.
 func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	err, _ := r.Context().Value(caddyhttp.ErrorCtxKey).(error)
 	status := http.StatusInternalServerError
@@ -123,10 +118,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 			msg = herr.Err.Error()
 		}
 	}
-	// A gate logs the first request of a forward's down period itself, and
-	// no more of them.
-	forwardDown := errors.Is(err, errForwardDown)
-	if d.logger != nil && !forwardDown {
+	if d.logger != nil {
 		level := zapcore.DebugLevel
 		if status >= 500 {
 			level = zapcore.ErrorLevel
@@ -138,10 +130,12 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if d.LogOnly || !downStatus(status) || !wantsPage(r) {
 		return next.ServeHTTP(w, r)
 	}
-	page := d.page
-	if forwardDown {
-		page = d.reconnecting
-	}
+	return writePage(w, r, status, d.page)
+}
+
+// writePage answers r with status and page, one of Nearhost's own pages,
+// with no body for a HEAD.
+func writePage(w http.ResponseWriter, r *http.Request, status int, page []byte) error {
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
 	hdr.Set("Content-Length", strconv.Itoa(len(page)))
@@ -152,7 +146,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	_, err = w.Write(page)
+	_, err := w.Write(page)
 	return err
 }
 

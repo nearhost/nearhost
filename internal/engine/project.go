@@ -583,8 +583,8 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 	}
 	run.web, run.webLocals, run.site, run.docker, run.shut = web, webLocals, true, docker, false
 	// The forwards the session has applied may be dialled from here on;
-	// those it has not (the session dropped while they were added) give a
-	// site that is down until it applies them.
+	// those it has not (the session dropped while they were added) stay
+	// shut until it applies them.
 	e.syncGatesLocked(run)
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()

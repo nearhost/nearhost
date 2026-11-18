@@ -1044,28 +1044,6 @@ func handlers(t *testing.T, route any) []string {
 	return out
 }
 
-// A Down site's route answers through a gate that refuses everything and
-// has no reverse proxy, so it dials nothing; its error route still names its
-// app.
-func TestBuildConfigDownSiteHasNoUpstream(t *testing.T) {
-	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:8080", Down: true, Project: "a", Port: 80, Server: "mini"}})
-	route := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0)
-	if got := handlers(t, route); !slices.Equal(got, []string{tagModule, gateModule}) {
-		t.Fatalf("handlers %q, want the tag and a gate only", got)
-	}
-	if gate := dig(t, route, "handle", 1).(map[string]any); gate["down"] != true {
-		t.Errorf("the gate of a down site lets requests through: %v", gate)
-	}
-	raw, _ := json.Marshal(route)
-	if strings.Contains(string(raw), "reverse_proxy") || strings.Contains(string(raw), "dial") {
-		t.Errorf("the route of a down site can dial: %s", raw)
-	}
-	down := dig(t, cfg, "apps", "http", "servers", "nearhost", "errors", "routes", 0, "handle", 0).(map[string]any)
-	if down["handler"] != downModule || down["project"] != "a" || down["port"] != float64(80) || down["server"] != "mini" {
-		t.Errorf("error route %v", down)
-	}
-}
-
 // A forwarded site's gate, naming its upstream, comes right before the
 // reverse proxy; a site that is not forwarded has none.
 func TestBuildConfigForwardedSiteIsGated(t *testing.T) {
@@ -1078,8 +1056,8 @@ func TestBuildConfigForwardedSiteIsGated(t *testing.T) {
 	if n := len(got); n < 2 || got[n-2] != gateModule || got[n-1] != "reverse_proxy" {
 		t.Fatalf("forwarded site handlers %q, want a gate then the proxy", got)
 	}
-	if up := dig(t, routes[0], "handle", len(got)-2, "upstream"); up != "127.0.0.1:8080" {
-		t.Errorf("gate upstream %v", up)
+	if gate := dig(t, routes[0], "handle", len(got)-2).(map[string]any); gate["upstream"] != "127.0.0.1:8080" || gate["project"] != "a.test" {
+		t.Errorf("gate %v", gate)
 	}
 	if slices.Contains(handlers(t, routes[1]), gateModule) {
 		t.Errorf("a local site is gated: %q", handlers(t, routes[1]))
