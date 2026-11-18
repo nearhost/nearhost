@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2183,6 +2184,30 @@ func TestStartSaysAPortNeedsPermission(t *testing.T) {
 		if !errors.Is(err, syscall.EACCES) {
 			t.Fatalf("udp %v: %v does not wrap EACCES", udp, err)
 		}
+	}
+}
+
+// BindNotPermitted tells the error of a port needing permission from a port
+// in use, and from errors that are no port's.
+func TestBindNotPermitted(t *testing.T) {
+	start := func(listen func(network, addr string) (net.Listener, error)) error {
+		h := buildHarness(t, &config.Config{}, nil)
+		h.eng.listen = listen
+		h.eng.holderOf = func(context.Context, int) string { return "" }
+		return h.eng.Start(bg)
+	}
+	denied := start(func(network, addr string) (net.Listener, error) { return nil, deniedListen(network, addr) })
+	if !BindNotPermitted(denied) {
+		t.Errorf("BindNotPermitted(%v) = false", denied)
+	}
+	inUse := start(func(network, addr string) (net.Listener, error) {
+		return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+	})
+	if inUse == nil || BindNotPermitted(inUse) {
+		t.Errorf("BindNotPermitted(%v) = true for a port in use", inUse)
+	}
+	if BindNotPermitted(fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/x", Err: fs.ErrPermission})) || BindNotPermitted(nil) {
+		t.Error("BindNotPermitted is true for an error that is no port's")
 	}
 }
 

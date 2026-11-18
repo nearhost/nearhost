@@ -31,6 +31,7 @@ func setcapBackend(u *upRun, startErr error, bin string) upBackend {
 	b.start = startFailing(startErr)
 	b.bind = bindEnv{
 		goos:                  "linux",
+		notPermitted:          func(err error) bool { var w *wrapped; return errors.As(err, &w) && w.denied },
 		elevated:              func() bool { return false },
 		exe:                   func() string { return bin },
 		isFile:                func(string) bool { return bin != "" },
@@ -42,7 +43,7 @@ func setcapBackend(u *upRun, startErr error, bin string) upBackend {
 func TestUpPrintsTheSetcapCommandForAPortItMayNotBind(t *testing.T) {
 	const exe = "/home/me/.local/bin/nearhost"
 	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
-	perm := fmtPortErr("HTTPS port 443 needs permission to bind", permissionError())
+	perm := deniedPortErr("HTTPS port 443 needs permission to bind", permissionError())
 	_, err := execute(t, newUpCmd(setcapBackend(u, perm, exe)), u.args()...)
 	if err == nil {
 		t.Fatal("up succeeded")
@@ -62,7 +63,7 @@ func TestUpPrintsTheSetcapCommandForAPortItMayNotBind(t *testing.T) {
 
 func TestUpSaysWhenItCannotTellWhichFileIsTheBinary(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
-	perm := fmtPortErr("HTTP port 80 needs permission to bind", permissionError())
+	perm := deniedPortErr("HTTP port 80 needs permission to bind", permissionError())
 	_, err := execute(t, newUpCmd(setcapBackend(u, perm, "")), u.args()...)
 	if err == nil || !strings.Contains(err.Error(), "could not tell which file is the binary") ||
 		!strings.Contains(err.Error(), `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`) {
@@ -72,7 +73,7 @@ func TestUpSaysWhenItCannotTellWhichFileIsTheBinary(t *testing.T) {
 
 func TestUpAddsNoSetcapAdviceWhenItWouldNotHelp(t *testing.T) {
 	inUse := fmtPortErr("HTTPS port 443 is in use", errors.New("address already in use"))
-	perm := fmtPortErr("HTTPS port 443 needs permission to bind", permissionError())
+	perm := deniedPortErr("HTTPS port 443 needs permission to bind", permissionError())
 	dir := &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: fs.ErrPermission}
 	for _, tc := range []struct {
 		name  string
@@ -108,7 +109,7 @@ func TestUpAddsNoSetcapAdviceWhenItWouldNotHelp(t *testing.T) {
 
 func TestUpAdvisesOnAnUnreadableUnprivilegedPortStart(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
-	b := setcapBackend(u, fmtPortErr("HTTPS port 443 needs permission to bind", permissionError()), "/usr/local/bin/nearhost")
+	b := setcapBackend(u, deniedPortErr("HTTPS port 443 needs permission to bind", permissionError()), "/usr/local/bin/nearhost")
 	b.bind.unprivilegedPortStart = func() (int, bool) { return 0, false }
 	_, err := execute(t, newUpCmd(b), u.args()...)
 	if err == nil || !strings.Contains(err.Error(), "sudo setcap") {
@@ -122,9 +123,16 @@ func fmtPortErr(msg string, err error) error {
 	return &wrapped{msg: msg + ": " + err.Error(), err: err}
 }
 
+// deniedPortErr is fmtPortErr for a port the user may not bind, which the
+// test's notPermitted recognises where up uses engine.BindNotPermitted.
+func deniedPortErr(msg string, err error) error {
+	return &wrapped{msg: msg + ": " + err.Error(), err: err, denied: true}
+}
+
 type wrapped struct {
-	msg string
-	err error
+	msg    string
+	denied bool
+	err    error
 }
 
 func (w *wrapped) Error() string { return w.msg }

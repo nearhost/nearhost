@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -66,8 +64,11 @@ type upBackend struct {
 // bindEnv is the machine's side of the advice printed when a proxy port
 // needs a privilege.
 type bindEnv struct {
-	goos     string // advice is for "linux" only
-	elevated func() bool
+	goos string // advice is for "linux" only
+	// notPermitted reports whether an error from Start is a port the user
+	// may not bind: engine.BindNotPermitted.
+	notPermitted func(error) bool
+	elevated     func() bool
 	// exe is the running binary's path with symlinks resolved, or "".
 	exe    func() string
 	isFile func(path string) bool
@@ -99,7 +100,7 @@ func systemUp(lookup hosts.Lookup) upBackend {
 		shutdown: (*engine.Engine).Shutdown,
 		agents:   systemAgents(),
 		bind: bindEnv{
-			goos: runtime.GOOS, elevated: isElevated, exe: realExecutable,
+			goos: runtime.GOOS, notPermitted: engine.BindNotPermitted, elevated: isElevated, exe: realExecutable,
 			isFile: isRegularFile, unprivilegedPortStart: readUnprivilegedPortStart,
 		},
 	}
@@ -489,7 +490,7 @@ func (e *bindAdvice) Unwrap() error { return e.err }
 // a system that lets any program bind from port 80, and for every other
 // error, it returns err as it is.
 func (e bindEnv) advise(err error) error {
-	if e.goos != "linux" || !isBindPermission(err) {
+	if e.goos != "linux" || e.notPermitted == nil || !e.notPermitted(err) {
 		return err
 	}
 	if e.elevated != nil && e.elevated() {
@@ -513,13 +514,4 @@ func (e bindEnv) advise(err error) error {
 		advice = "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:\n\n" + doctor.SetcapFix("")
 	}
 	return &bindAdvice{err: err, advice: advice + "\nDo not run nearhost with sudo."}
-}
-
-// isBindPermission reports whether err is the engine's port error for a port
-// the user may not bind. A directory Nearhost could not create is also a
-// permission error, but a PathError, and no port's.
-func isBindPermission(err error) bool {
-	var pe *fs.PathError
-	return errors.Is(err, fs.ErrPermission) && !errors.As(err, &pe) &&
-		strings.Contains(err.Error(), "needs permission to bind")
 }

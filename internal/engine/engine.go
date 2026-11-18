@@ -598,6 +598,13 @@ func (e *portError) Error() string {
 // Unwrap returns the error from binding the port.
 func (e *portError) Unwrap() error { return e.err }
 
+// BindNotPermitted reports whether err is a port the proxy cannot listen on
+// because the user may not bind it, as opposed to the port being in use.
+func BindNotPermitted(err error) bool {
+	var pe *portError
+	return errors.As(err, &pe) && errors.Is(pe.err, fs.ErrPermission)
+}
+
 // probePort reports whether the proxy could listen on port (def when 0): on
 // TCP, and for HTTPS also on UDP, where the proxy serves HTTP/3. It binds
 // addrs(port), the addresses the proxy will serve the port on. A port it
