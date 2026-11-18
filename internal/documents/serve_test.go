@@ -67,15 +67,26 @@ type fixture struct {
 // and serves it with LocalFS.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureAt(t, "root")
+}
+
+// newFixtureAt is newFixture with the root at dir/rel. The tree is hidden
+// when rel has a segment starting with ".": the temporary folder above it
+// may be in a hidden folder itself, such as a TMPDIR under ~/.worktrees, and
+// it does not count.
+func newFixtureAt(t *testing.T, rel string) *fixture {
+	t.Helper()
 	// The documents package works in slash form, so a Windows folder is
 	// given as C:/…, not C:\….
 	dir := filepath.ToSlash(t.TempDir())
-	root := dir + "/root"
-	if err := os.Mkdir(root, 0o755); err != nil {
+	root := dir + "/" + rel
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tbl := NewTable(time.Now)
 	tr := tbl.Add("local", root, "claude", "plan.md")
+	tbl.trees[tr.ID].Hidden = InHiddenFolder(rel)
+	tr.Hidden = InHiddenFolder(rel)
 	open := func(ctx context.Context, server string) (FS, error) { return LocalFS{}, nil }
 	return &fixture{dir: dir, root: root, table: tbl, tree: tr, h: NewHandler(tbl, open)}
 }
@@ -663,6 +674,79 @@ func TestHeadReadsNoBody(t *testing.T) {
 		}
 		if got, wantCSP := rec.Header().Get("Content-Security-Policy"), get.Header().Get("Content-Security-Policy"); got != wantCSP {
 			t.Errorf("HEAD %s: CSP %q, GET has %q", p, got, wantCSP)
+		}
+	}
+}
+
+// hiddenServed and hiddenRefused are the files a tree in a hidden folder
+// serves and the ones it answers as missing.
+var (
+	hiddenServed  = []string{"notes.md", "page.html", "img.png", "app.js", "style.css"}
+	hiddenRefused = []string{"id_ed25519", "credentials", "settings.json", "secrets.yml", "data.csv", "config", "x.md"}
+)
+
+// writeHiddenFiles writes every file of hiddenServed and hiddenRefused below
+// f's root, with x.md a symlink to id_ed25519.
+func writeHiddenFiles(t *testing.T, f *fixture) {
+	t.Helper()
+	for _, p := range append(hiddenServed, hiddenRefused...) {
+		if p != "x.md" {
+			f.write(t, p, "x")
+		}
+	}
+	testutil.Symlink(t, "id_ed25519", filepath.Join(f.root, "x.md"))
+}
+
+func TestHiddenTreeServesOnlyDocumentsAndAssets(t *testing.T) {
+	for _, rel := range []string{".ssh", ".claude/plans", "repo/.superpowers/b", "code/app"} {
+		t.Run(rel, func(t *testing.T) {
+			f := newFixtureAt(t, rel)
+			hidden := InHiddenFolder(rel)
+			if f.tree.Hidden != hidden {
+				t.Fatalf("Hidden = %v, want %v", f.tree.Hidden, hidden)
+			}
+			writeHiddenFiles(t, f)
+			for _, p := range hiddenServed {
+				if rec := f.do(t, "GET", p); rec.Code != 200 {
+					t.Errorf("%s: %d, want 200", p, rec.Code)
+				}
+			}
+			got := map[string]*httptest.ResponseRecorder{}
+			for _, p := range hiddenRefused {
+				rec := f.do(t, "GET", p)
+				got[p] = rec
+				if want := map[bool]int{true: 404, false: 200}[hidden]; rec.Code != want {
+					t.Errorf("%s: %d, want %d", p, rec.Code, want)
+				}
+			}
+			if !hidden {
+				return
+			}
+			// Each answer is the one the file gets once it is gone.
+			for _, p := range hiddenRefused {
+				if err := os.Remove(filepath.Join(f.root, p)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, p := range hiddenRefused {
+				gone := f.do(t, "GET", p)
+				if gone.Code != got[p].Code || gone.Body.String() != got[p].Body.String() || gone.Header().Get("Content-Type") != got[p].Header().Get("Content-Type") {
+					t.Errorf("%s: %d %q, gone %d %q", p, got[p].Code, got[p].Body.String(), gone.Code, gone.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestTableMarksTreesInHiddenFolders(t *testing.T) {
+	tb := NewTable(time.Now)
+	for root, want := range map[string]bool{
+		"/home/ed/.ssh": true, "/home/ed/.claude/plans": true, "/home/ed/repo/.superpowers/b": true,
+		"C:/Users/me/.ssh": true, "/C:/Users/me/.aws": true, `C:\Users\me\.claude\plans`: true,
+		"/home/ed/code/app": false, "C:/Users/me/code/app": false,
+	} {
+		if got := tb.Add("local", root, "c", "a.md"); got.Hidden != want {
+			t.Errorf("Add(%q).Hidden = %v, want %v", root, got.Hidden, want)
 		}
 	}
 }

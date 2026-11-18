@@ -136,7 +136,9 @@ func (s *shower) Resolve(ctx context.Context, origin, p, root string) (agentapi.
 		_, err := fsys.Stat(ctx, path.Join(dir, ".git"))
 		return err == nil
 	}
-	chosen, ok := documents.ChooseRoot(sent, doc, home, hasGit)
+	// A root in a hidden folder is served too: its tree, made with
+	// Hidden set, serves only documents and web assets.
+	chosen, _, ok := documents.ChooseRoot(sent, doc, home, hasGit)
 	if !ok {
 		return agentapi.Resolved{}, badDocument("Nearhost won't serve your whole home folder; save the document in a project or a folder of its own")
 	}

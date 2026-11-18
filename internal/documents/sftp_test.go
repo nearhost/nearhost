@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -195,6 +196,30 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 			if got.Code != want.Code || got.Body.String() != want.Body.String() {
 				t.Errorf("%s: over SFTP %d %q, locally %d %q", p, got.Code, got.Body.String(), want.Code, want.Body.String())
 			}
+		}
+	}
+}
+
+// TestHiddenTreeOverSFTPMatchesLocal checks that a tree in a hidden folder on
+// a server serves only documents and web assets, as one on the laptop does.
+func TestHiddenTreeOverSFTPMatchesLocal(t *testing.T) {
+	f := newFixtureAt(t, ".ssh")
+	writeHiddenFiles(t, f)
+	client := inProcessSFTP(t, f.dir)
+	local := NewHandler(f.table, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
+	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return volumeFS{SFTPFS(client)}, nil })
+	for _, p := range append(hiddenServed, hiddenRefused...) {
+		do := func(h http.Handler) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+f.tree.ID+"/"+p, nil))
+			return rec
+		}
+		want, got := do(local), do(remote)
+		if got.Code != want.Code || got.Body.String() != want.Body.String() {
+			t.Errorf("%s: over SFTP %d %q, locally %d %q", p, got.Code, got.Body.String(), want.Code, want.Body.String())
+		}
+		if slices.Contains(hiddenRefused, p) && got.Code != 404 {
+			t.Errorf("%s over SFTP: %d, want 404", p, got.Code)
 		}
 	}
 }

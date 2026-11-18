@@ -170,6 +170,12 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	} else if slash {
 		return errRefused
 	}
+	// A tree in a hidden folder, such as ~/.ssh, serves only documents and
+	// web assets; any other file there is missing, by the name of the file
+	// it resolves to.
+	if tr.Hidden && !documentOrAsset(path.Base(real)) {
+		return fs.ErrNotExist
+	}
 	if !info.Mode().IsRegular() {
 		return errRefused
 	}
@@ -180,6 +186,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	}
 	defer f.Close()
 	return sendFile(w, r, f, name, info.Size())
+}
+
+// documentOrAsset reports whether name is a document (IsDocument) or has a
+// web asset extension (assetTypes).
+func documentOrAsset(name string) bool {
+	_, asset := assetTypes[strings.ToLower(path.Ext(name))]
+	return asset || IsDocument(name)
 }
 
 // assetName returns the name to serve the file at real as, when it was

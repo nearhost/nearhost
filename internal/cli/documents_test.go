@@ -75,6 +75,9 @@ func TestShowerResolvesLocal(t *testing.T) {
 		t.Fatalf("resolved %#v, want root %s", got, real)
 	}
 
+	// The root's way down to the document crosses a dot folder, so the
+	// document's own folder is the root; that tree serves only documents
+	// and web assets.
 	got, err = s.Resolve(ctx, config.LocalServer, filepath.Join(repo, ".superpowers", "b", "x.html"), repo)
 	if err != nil {
 		t.Fatal(err)

@@ -46,6 +46,15 @@ func TestDocPrompt(t *testing.T) {
 		"Nearhost will serve files in /home/dev/code/app, except dotfiles.")
 }
 
+func TestDocPromptSaysAHiddenFolderServesOnlyDocuments(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	m.homeDir = func() (string, error) { return "/Users/dev", nil }
+	r := docReq(m)
+	r.Origin, r.Root, r.Doc = config.LocalServer, "/Users/dev/.claude/plans", "x.md"
+	askDoc(m, r)
+	wantText(t, m, "Nearhost will serve files in ~/.claude/plans. It is in a hidden folder, so only documents and their assets are served from it.")
+}
+
 func TestDocPromptShortensTheLaptopsHome(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.homeDir = func() (string, error) { return "/Users/dev", nil }
