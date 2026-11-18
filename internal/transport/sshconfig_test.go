@@ -1,9 +1,11 @@
 package transport
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -209,5 +211,105 @@ func TestListHostsRejectsHomeRelativeIncludeWithoutHome(t *testing.T) {
 	hosts, err := ListHosts(strings.NewReader("Include " + abs + "\n"))
 	if err != nil || !reflect.DeepEqual(hosts, []string{"from-cwd"}) {
 		t.Fatalf("absolute include needs no home directory: %v, %v", hosts, err)
+	}
+}
+
+func TestDefaultHostsIncludeGlobIsLexicalAndTildeResolvesHome(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include conf.d/*\nInclude ~/other/hosts\nHost mini\n")
+	writeSSHFile(t, home, "conf.d/20-b", "Host bee\n")
+	writeSSHFile(t, home, "conf.d/10-a", "Host ay\n")
+	if err := os.MkdirAll(filepath.Join(home, "other"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "other", "hosts"), []byte("Host tilde\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	want := []string{"ay", "bee", "tilde", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
+
+func TestDefaultHostsNestedIncludes(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include a\nHost mini\n")
+	writeSSHFile(t, home, "a", "Host one\nInclude b\n")
+	writeSSHFile(t, home, "b", "Host two\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	want := []string{"one", "two", "mini"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
+
+func TestDefaultHostsSkipsTokenAndOtherUserIncludes(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include %d/x ${HOME}/y ~root/z\nHost mini\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	if err != nil || !reflect.DeepEqual(hosts, []string{"mini"}) {
+		t.Fatalf("got %v, %v", hosts, err)
+	}
+}
+
+func TestDefaultHostsIncludedMatchBlockHostsAreSkipped(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include extra\nHost mini\n")
+	writeSSHFile(t, home, "extra", "Host kept\nMatch host nothere\n  User x\nHost *.wild !neg\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	if err != nil || !reflect.DeepEqual(hosts, []string{"kept", "mini"}) {
+		t.Fatalf("got %v, %v", hosts, err)
+	}
+}
+
+func TestDefaultHostsSyntaxVariants(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "# c\r\nHost mini mini.lan\r\n  HostName 1.2.3.4\r\nhost apollo\r\nHost=vps\r\nHost \"quoted\"\r\nHost mini\r\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	want := []string{"mini", "mini.lan", "apollo", "vps", "quoted"}
+	if err != nil || !reflect.DeepEqual(hosts, want) {
+		t.Fatalf("got %v, %v; want %v", hosts, err, want)
+	}
+}
+
+func TestDefaultHostsStopsAtFileCap(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include conf.d/*\n")
+	for i := 0; i < maxIncludeFiles+10; i++ {
+		writeSSHFile(t, home, fmt.Sprintf("conf.d/f%03d", i), fmt.Sprintf("Host h%03d\n", i))
+	}
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	if err != nil || len(hosts) != maxIncludeFiles {
+		t.Fatalf("got %d hosts, %v; want %d", len(hosts), err, maxIncludeFiles)
+	}
+}
+
+func TestDefaultHostsReadsOnlyTheFirstMebibyte(t *testing.T) {
+	home := t.TempDir()
+	pad := strings.Repeat("# padding\n", maxConfigBytes/10)
+	writeSSHFile(t, home, "config", "Host early\n"+pad+"Host late\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	if err != nil || !reflect.DeepEqual(hosts, []string{"early"}) {
+		t.Fatalf("got %v, %v", hosts, err)
+	}
+}
+
+func TestDefaultHostsSkipsAnIncludedFileThatDoesNotParse(t *testing.T) {
+	home := t.TempDir()
+	writeSSHFile(t, home, "config", "Include bad good\nHost mini\n")
+	writeSSHFile(t, home, "bad", "Host ok\n  Port\n\tProxyCommand \"unterminated\nHost =\n")
+	writeSSHFile(t, home, "good", "Host fine\n")
+	testutil.SetHome(t, home)
+	hosts, err := DefaultHosts()
+	if err != nil || !slices.Contains(hosts, "fine") || !slices.Contains(hosts, "mini") {
+		t.Fatalf("got %v, %v", hosts, err)
 	}
 }

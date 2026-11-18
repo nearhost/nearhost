@@ -15,32 +15,37 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
 func TestSSHHosts(t *testing.T) {
-	data := []byte(`# a comment
-Host mini mini.lan
-  HostName 192.168.1.10
-host apollo
-Host=vps
-Host *.internal !bastion web?
-Host "quoted"
-Host mini
-Match host other
-  User dev
-`)
-	want := []string{"mini", "mini.lan", "apollo", "vps", "quoted"}
-	if got := sshHosts(data); !reflect.DeepEqual(got, want) {
-		t.Errorf("sshHosts = %v, want %v", got, want)
+	u := &uiEngine{b: uiBackend{sshHosts: func() ([]string, error) { return []string{"mini", "vps"}, nil }}}
+	if got, want := u.SSHHosts(), []string{"mini", "vps"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SSHHosts = %v, want %v", got, want)
 	}
-	u := &uiEngine{b: uiBackend{sshConfig: func() ([]byte, error) { return data, nil }}}
-	if got := u.SSHHosts(); !reflect.DeepEqual(got, want) {
-		t.Errorf("SSHHosts = %v", got)
-	}
-	u.b.sshConfig = func() ([]byte, error) { return nil, os.ErrNotExist }
+	u.b.sshHosts = func() ([]string, error) { return nil, os.ErrNotExist }
 	if got := u.SSHHosts(); got != nil {
 		t.Errorf("SSHHosts with no config = %v", got)
+	}
+}
+
+func TestSSHHostsFollowsInclude(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(filepath.Join(dir, "conf.d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("Include conf.d/*\nHost mini\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "conf.d", "extra"), []byte("Host vps *.wild\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.SetHome(t, home)
+	u := &uiEngine{b: uiBackend{sshHosts: transport.DefaultHosts}}
+	if got, want := u.SSHHosts(), []string{"vps", "mini"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SSHHosts = %v, want %v", got, want)
 	}
 }
 

@@ -17,6 +17,14 @@ import (
 // maxIncludeDepth matches OpenSSH's limit on nested Include directives.
 const maxIncludeDepth = 16
 
+// Limits on what listing hosts reads, since an Include can name any file the
+// user's config reaches: at most maxIncludeFiles included files, and the
+// first maxConfigBytes of each file.
+const (
+	maxIncludeFiles = 64
+	maxConfigBytes  = 1 << 20
+)
+
 // ListHosts returns concrete Host aliases from an ssh_config, in file order,
 // without wildcard or negated patterns and without duplicates. Include
 // directives are followed; relative paths resolve against ~/.ssh, and missing
@@ -38,13 +46,15 @@ type hostLister struct {
 	home, sshDir string
 	seen         map[string]bool
 	hosts        []string
+	// files counts the included files opened so far.
+	files int
 }
 
 // read scans r, handing runs of non-Include lines to the ssh_config parser and
 // expanding Include lines in place so host order follows the file. chain holds
 // the files currently being read, to stop include cycles.
 func (l *hostLister) read(r io.Reader, chain []string) error {
-	data, err := io.ReadAll(r)
+	data, err := io.ReadAll(io.LimitReader(r, maxConfigBytes))
 	if err != nil {
 		return err
 	}
@@ -85,7 +95,7 @@ func (l *hostLister) add(text string) error {
 	}
 	for _, h := range cfg.Hosts {
 		for _, p := range h.Patterns {
-			name := p.String()
+			name := strings.Trim(p.String(), `"`)
 			if name == "" || strings.HasPrefix(name, "!") || strings.ContainsAny(name, "*?") || l.seen[name] {
 				continue
 			}
@@ -101,8 +111,18 @@ func (l *hostLister) include(args, chain []string) error {
 		return nil
 	}
 	for _, arg := range args {
+		// OpenSSH expands %-tokens and ${VAR} in Include paths, and ~user to
+		// another account's home. None of that is expanded here: skip the path.
+		if strings.Contains(arg, "%") || strings.Contains(arg, "${") || (strings.HasPrefix(arg, "~") && !strings.HasPrefix(arg, "~/") && !strings.HasPrefix(arg, `~\`)) {
+			continue
+		}
 		path := arg
 		switch {
+		case strings.HasPrefix(path, `~\`):
+			if l.home == "" {
+				return fmt.Errorf("ssh config include %q: home directory is unknown", arg)
+			}
+			path = filepath.Join(l.home, path[2:])
 		case strings.HasPrefix(path, "~/"):
 			if l.home == "" {
 				return fmt.Errorf("ssh config include %q: home directory is unknown", arg)
@@ -125,6 +145,10 @@ func (l *hostLister) include(args, chain []string) error {
 			if fi, err := os.Stat(m); err != nil || !fi.Mode().IsRegular() {
 				continue
 			}
+			if l.files >= maxIncludeFiles {
+				return nil
+			}
+			l.files++
 			f, err := os.Open(m)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
@@ -132,11 +156,10 @@ func (l *hostLister) include(args, chain []string) error {
 				}
 				return err
 			}
-			err = l.read(f, append(chain[:len(chain):len(chain)], m))
+			// A file the parser rejects is skipped, as OpenSSH's own tools
+			// would report it rather than hide the rest of the config.
+			_ = l.read(f, append(chain[:len(chain):len(chain)], m))
 			f.Close()
-			if err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -194,7 +217,10 @@ loop:
 	return args, true
 }
 
-// DefaultHosts lists hosts from ~/.ssh/config. A missing file is not an error.
+// DefaultHosts lists hosts from the user's ssh config (~/.ssh/config, or
+// %USERPROFILE%\.ssh\config on Windows) and the files it includes. A missing
+// file is not an error. It reads files only: nothing in the config, such as a
+// Match exec command, is ever run.
 func DefaultHosts() ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -52,8 +52,9 @@ type uiBackend struct {
 	workDir func() (string, error)
 	// presets reaches the trusted preset registries.
 	presets presetBackend
-	// sshConfig returns the user's OpenSSH client config.
-	sshConfig func() ([]byte, error)
+	// sshHosts lists the host names in the user's OpenSSH client config and
+	// the files it includes.
+	sshHosts func() ([]string, error)
 	// updateNotice delivers a line saying a new release is out, if one is;
 	// nil means no check.
 	updateNotice func() <-chan string
@@ -101,17 +102,11 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
-		lookup:  lookup,
-		open:    desktop.OpenURL,
-		workDir: os.Getwd,
-		presets: systemPresets(),
-		sshConfig: func() ([]byte, error) {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return nil, err
-			}
-			return os.ReadFile(filepath.Join(home, ".ssh", "config"))
-		},
+		lookup:       lookup,
+		open:         desktop.OpenURL,
+		workDir:      os.Getwd,
+		presets:      systemPresets(),
+		sshHosts:     transport.DefaultHosts,
 		updateNotice: func() <-chan string { return updates.wait() },
 		stops:        notifyUIStop,
 	}
