@@ -4,9 +4,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/smallstep/truststore"
@@ -19,7 +21,14 @@ import (
 // process-global, so this goes through the same lock as Proxy. If a Proxy is
 // running its configuration is left alone: an existing root is simply read,
 // and a missing one is an error rather than a reason to replace the proxy.
+//
+// The storage directory is made private (see privateStorage) before
+// anything is read or written in it, so the key never sits under a wider
+// access list; a failure is a warning on storageWarnings.
 func EnsureCA(storageRoot string) (*x509.Certificate, error) {
+	if _, err := os.Stat(storageRoot); err == nil {
+		warnStorage(storageRoot)
+	}
 	if cert, err := RootCert(storageRoot); err == nil {
 		return cert, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -39,6 +48,7 @@ func EnsureCA(storageRoot string) (*x509.Certificate, error) {
 	if err := os.MkdirAll(storageRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("create storage: %w", err)
 	}
+	warnStorage(storageRoot)
 	cfg, err := BuildConfig(nil, Options{StorageRoot: storageRoot})
 	if err != nil {
 		return nil, err
@@ -51,6 +61,52 @@ func EnsureCA(storageRoot string) (*x509.Certificate, error) {
 		return nil, err
 	}
 	return RootCert(storageRoot)
+}
+
+// storageWarnings is where EnsureCA writes a warning, the terminal of the
+// command that called it. Tests replace it.
+var storageWarnings io.Writer = os.Stderr
+
+// warnStorage is privateStorage for EnsureCA, which writes its warning to
+// storageWarnings.
+func warnStorage(root string) {
+	if msg := privateStorage(root); msg != "" {
+		fmt.Fprintln(storageWarnings, msg)
+	}
+}
+
+// privateDone holds the storage directories privateStorage has seen this
+// process, under privateMu.
+var (
+	privateMu   sync.Mutex
+	privateDone = map[string]bool{}
+)
+
+// privateStorage makes the storage directory root, which holds the local
+// CA's private key, private with restrictStorage, once a process for each
+// root, so each start sets it again and a reload does not. It returns a
+// warning for the user when that fails, "" otherwise: a file system without
+// access lists, such as FAT32 or exFAT, cannot hold one, and the proxy works
+// all the same.
+func privateStorage(root string) string {
+	if restrictStorage == nil {
+		return ""
+	}
+	privateMu.Lock()
+	defer privateMu.Unlock()
+	if privateDone[root] {
+		return ""
+	}
+	privateDone[root] = true
+	if err := restrictStorage(root); err != nil {
+		// The message names root already.
+		if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return fmt.Sprintf("Warning: Nearhost could not make its local CA folder %s private (%v), so other users of this computer may be able to read the CA's private key. "+
+			"Keep Nearhost's data folder (%%LOCALAPPDATA%%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.", root, err)
+	}
+	return ""
 }
 
 // trustInstall and trustUninstall are the trust store library's calls. Tests

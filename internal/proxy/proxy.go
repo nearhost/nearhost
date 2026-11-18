@@ -76,6 +76,9 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
 		return false, fmt.Errorf("create proxy storage: %w", err)
 	}
+	if msg := privateStorage(p.opts.StorageRoot); msg != "" {
+		emit("", msg)
+	}
 	if owner == nil {
 		// Caddy is not running, so nothing has a certificate's files open
 		// and its cache of them is gone: this load starts it. The caller

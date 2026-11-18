@@ -1,8 +1,12 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,4 +117,83 @@ func TestEnsureCAWhileProxyRunningKeepsItServing(t *testing.T) {
 		t.Fatal("failed EnsureCA displaced the running proxy")
 	}
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+}
+
+// recordRestrict replaces restrictStorage for the test with one that records
+// each root it is given and whether the CA's root key was already there,
+// and returns err.
+func recordRestrict(t *testing.T, err error) *[]string {
+	t.Helper()
+	var calls []string
+	saved := restrictStorage
+	restrictStorage = func(root string) error {
+		if _, statErr := os.Stat(filepath.Join(root, "pki", "authorities", "local", "root.key")); statErr == nil {
+			calls = append(calls, root+" (key already there)")
+		} else {
+			calls = append(calls, root)
+		}
+		return err
+	}
+	t.Cleanup(func() { restrictStorage = saved })
+	return &calls
+}
+
+// EnsureCA makes the storage directory private before Caddy writes the CA's
+// key into it, so the key never sits under a wider access list, and once a
+// process for each directory.
+func TestEnsureCAMakesStoragePrivateBeforeTheKey(t *testing.T) {
+	calls := recordRestrict(t, nil)
+	storage := filepath.Join(t.TempDir(), "caddy")
+	if _, err := EnsureCA(storage); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureCA(storage); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{storage}; !slices.Equal(*calls, want) {
+		t.Fatalf("restrictStorage calls = %q, want %q", *calls, want)
+	}
+}
+
+// A storage directory that cannot be made private is a warning that names
+// it, and the CA is still made.
+func TestEnsureCAWarnsWhenStorageCannotBeMadePrivate(t *testing.T) {
+	recordRestrict(t, errors.New("not supported"))
+	var out strings.Builder
+	saved := storageWarnings
+	storageWarnings = &out
+	t.Cleanup(func() { storageWarnings = saved })
+	storage := filepath.Join(t.TempDir(), "caddy")
+	if _, err := EnsureCA(storage); err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "could not make its local CA folder "+storage+" private") || !strings.Contains(got, "not supported") {
+		t.Fatalf("warning = %q", got)
+	}
+}
+
+// A proxy makes its storage directory private once, before Caddy loads, and
+// a failure is a line in the log.
+func TestProxyMakesStoragePrivateOnceAndLogsAFailure(t *testing.T) {
+	calls := recordRestrict(t, errors.New("not supported"))
+	var lines []string
+	SetSink(LogFunc(func(_, line string) { lines = append(lines, line) }))
+	t.Cleanup(func() { SetSink(nil) })
+	storage := filepath.Join(t.TempDir(), "caddy")
+	p := New(Options{StorageRoot: storage, HTTPSPort: freePort(t), HTTPPort: freePort(t)})
+	if err := p.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Stop() })
+	if err := p.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{storage}; !slices.Equal(*calls, want) {
+		t.Fatalf("restrictStorage calls = %q, want %q", *calls, want)
+	}
+	if !slices.ContainsFunc(lines, func(l string) bool {
+		return strings.Contains(l, "could not make its local CA folder "+storage+" private")
+	}) {
+		t.Fatalf("no warning in the log: %q", lines)
+	}
 }
