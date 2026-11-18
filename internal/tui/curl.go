@@ -12,9 +12,9 @@ var plainMethod = regexp.MustCompile(`^[A-Z]+$`)
 
 // errCurlUnsafe is the error for a request that holds a control character
 // or bytes that are not UTF-8. Pasted raw, a control character can end a
-// bracketed paste or erase the line, and none of them can be quoted on
-// every shell, so such a request is not copied.
-var errCurlUnsafe = errors.New("the request holds a control character")
+// bracketed paste, erase the line or complete a file name, so such a
+// request is not copied.
+var errCurlUnsafe = errors.New("the request holds a control character or bytes that are not UTF-8")
 
 // curlCommand is a curl command that makes a request again, for pasting
 // into the shell of goos: sh on macOS and Linux, PowerShell on Windows.
@@ -23,7 +23,7 @@ var errCurlUnsafe = errors.New("the request holds a control character")
 // literal here-string, so no request data is a process argument, which
 // Windows PowerShell 5.1 would split at a double quote. The body is sent as
 // it is, and left out when bodyLeftOut. A request with a value that is not
-// curlSafe cannot be copied.
+// curlSafe on goos cannot be copied.
 func curlCommand(goos string, method, url string, headers [][2]string, body []byte, bodyLeftOut bool) (string, error) {
 	if bodyLeftOut {
 		body = nil
@@ -33,7 +33,7 @@ func curlCommand(goos string, method, url string, headers [][2]string, body []by
 		values = append(values, h[0], h[1])
 	}
 	for _, v := range values {
-		if !curlSafe(v) {
+		if !curlSafe(goos, v) {
 			return "", errCurlUnsafe
 		}
 	}
@@ -43,15 +43,19 @@ func curlCommand(goos string, method, url string, headers [][2]string, body []by
 	return curlPOSIX(method, url, headers, body), nil
 }
 
-// curlSafe reports whether s is UTF-8 with no control character other than
-// tab, line feed and carriage return: no other C0 control, no DEL and no
-// C1 control.
-func curlSafe(s string) bool {
+// curlSafe reports whether s can be pasted into the shell of goos: UTF-8
+// with no control character other than line feed and carriage return, and
+// tab on Windows only. No other C0 control, no DEL and no C1 control. On sh
+// a raw tab completes a file name when the terminal does not bracket the
+// paste, and closes the quote; PowerShell gets a tab escaped as \t in the
+// config file.
+func curlSafe(goos, s string) bool {
 	if !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || (r >= 0x7f && r <= 0x9f) {
+		allowed := r == '\n' || r == '\r' || (r == '\t' && goos == "windows")
+		if (r < 0x20 && !allowed) || (r >= 0x7f && r <= 0x9f) {
 			return false
 		}
 	}

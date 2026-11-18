@@ -61,9 +61,9 @@ var curlCases = []curlCase{{
 	posix:  "curl -i --globoff -X POST 'https://myapp.test/' --data-raw 'a\nb'\\''c'",
 	config: "url = \"https://myapp.test/\"\nrequest = \"POST\"\ndata-raw = \"a\\nb'c\"\ngloboff\ninclude\n",
 }, {
-	name: "a body that tries to end the here-string", method: "POST", url: "https://myapp.test/", body: "x\r\n'@ | calc\t",
-	posix:  "curl -i --globoff -X POST 'https://myapp.test/' --data-raw 'x\r\n'\\''@ | calc\t'",
-	config: "url = \"https://myapp.test/\"\nrequest = \"POST\"\ndata-raw = \"x\\r\\n'@ | calc\\t\"\ngloboff\ninclude\n",
+	name: "a body that tries to end the here-string", method: "POST", url: "https://myapp.test/", body: "x\r\n'@ | calc",
+	posix:  "curl -i --globoff -X POST 'https://myapp.test/' --data-raw 'x\r\n'\\''@ | calc'",
+	config: "url = \"https://myapp.test/\"\nrequest = \"POST\"\ndata-raw = \"x\\r\\n'@ | calc\"\ngloboff\ninclude\n",
 }, {
 	name: "a body left out", method: "POST", url: "https://myapp.test/", body: "{", bodyLeftOut: true,
 	posix:  "curl -i --globoff -X POST 'https://myapp.test/'",
@@ -160,8 +160,29 @@ func TestCurlCommandRefusesControlCharacters(t *testing.T) {
 	if _, err := curlCommand("linux", "POST", "https://myapp.test/", [][2]string{{"X-\x1b", "v"}}, nil, false); err == nil {
 		t.Error("ESC in a header name was copied")
 	}
-	if _, err := curlCommand("windows", "POST", "https://myapp.test/", nil, []byte("\t\r\n\u00e9"), false); err != nil {
-		t.Errorf("tab, CR, LF and é were refused: %v", err)
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		if _, err := curlCommand(goos, "POST", "https://myapp.test/", nil, []byte("\r\n\u00e9"), false); err != nil {
+			t.Errorf("CR, LF and é were refused on %s: %v", goos, err)
+		}
+	}
+}
+
+// A tab is refused on sh, where without bracketed paste it completes a
+// file name and closes the quote, and copied as \t on PowerShell, where the
+// config file escapes it.
+func TestCurlCommandTab(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		if got, err := curlCommand(goos, "POST", "https://myapp.test/", nil, []byte("/etc/hostnam\t; echo PWNED #"), false); err == nil {
+			t.Errorf("a tab in a body on %s was copied as %q", goos, got)
+		}
+		if got, err := curlCommand(goos, "GET", "https://myapp.test/", [][2]string{{"X-Name", "a\tb"}}, nil, false); err == nil {
+			t.Errorf("a tab in a header value on %s was copied as %q", goos, got)
+		}
+	}
+	got, err := curlCommand("windows", "POST", "https://myapp.test/", [][2]string{{"X-Name", "a\tb"}}, []byte("c\td"), false)
+	want := "@'\nurl = \"https://myapp.test/\"\nrequest = \"POST\"\nheader = \"X-Name: a\\tb\"\ndata-raw = \"c\\td\"\ngloboff\ninclude\n'@ | curl.exe -K -"
+	if err != nil || got != want {
+		t.Errorf("tabs on windows:\ngot  %q (%v)\nwant %q", got, err, want)
 	}
 }
 
