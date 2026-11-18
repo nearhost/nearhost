@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,17 @@ type heldDirs struct{}
 // Close does nothing, as nothing is held.
 func (*heldDirs) Close() {}
 
+// checkElevatedIO refuses --input and --report in an elevated run. Nearhost
+// hands the sudo helper its aliases on stdin and reads its error from
+// stderr, so only someone else's command line would pass either, to read a
+// file as root or create one where root can.
+func checkElevatedIO(_ *heldDirs, input, report string) error {
+	if input != "" || report != "" {
+		return errors.New("an elevated run takes no --input or --report here")
+	}
+	return nil
+}
+
 // openInput opens the `hosts apply --input` file without following a link
 // at its last component, and refuses anything but a regular file, checked
 // on the opened file. The directory holding it must not be a link either.
@@ -25,6 +37,7 @@ func (*heldDirs) Close() {}
 // is walked by handle, so a process of the same user could swap the
 // directory between the two; the impact is limited to a file named input
 // whose first line could reach the report through hosts.Apply's quoting.
+// An elevated run never gets here: checkElevatedIO refuses --input.
 func openInput(_ *heldDirs, path string) (*os.File, error) {
 	if err := refuseLinkedDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("input directory: %w", err)

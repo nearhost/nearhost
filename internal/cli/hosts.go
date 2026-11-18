@@ -60,12 +60,20 @@ func newHostsCmd() *cobra.Command {
 			// apply and the report are done.
 			var dirs heldDirs
 			defer dirs.Close()
+			// An elevated run checks where --input and --report are before
+			// it opens or creates either, so a refusal leaves no report.
+			elevated := isElevated()
+			if elevated {
+				if err := checkElevatedIO(&dirs, input, report); err != nil {
+					return err
+				}
+			}
 			err := checkElevatedFile(file)
 			if err == nil {
 				err = applyAliases(cmd.InOrStdin(), file, input, &dirs)
 			}
 			if err != nil && report != "" {
-				if rerr := writeReport(&dirs, report, err); rerr != nil {
+				if rerr := writeReport(&dirs, report, reportText(err, elevated)); rerr != nil {
 					return errors.Join(err, rerr)
 				}
 			}
@@ -126,22 +134,33 @@ const maxInput = 1 << 20
 // applyAliases reads aliases, one per line, from the file input, or from
 // stdin when input is empty, and sets the managed block of file to them.
 // openInput opens input, holding its directory in dirs where the system can.
+// An error reading the aliases is an *inputError.
 func applyAliases(stdin io.Reader, file, input string, dirs *heldDirs) error {
+	aliases, err := readAliases(stdin, input, dirs)
+	if err != nil {
+		return &inputError{err}
+	}
+	return hosts.Apply(file, aliases)
+}
+
+// readAliases reads the non-blank lines of the file input, or of stdin when
+// input is empty, each trimmed.
+func readAliases(stdin io.Reader, input string, dirs *heldDirs) ([]string, error) {
 	r := stdin
 	if input != "" {
 		f, err := openInput(dirs, input)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer f.Close()
 		// One byte more than the limit tells a file at the limit from one
 		// over it.
 		data, err := io.ReadAll(io.LimitReader(f, maxInput+1))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(data) > maxInput {
-			return fmt.Errorf("%s is over %d bytes", input, maxInput)
+			return nil, fmt.Errorf("%s is over %d bytes", input, maxInput)
 		}
 		r = bytes.NewReader(data)
 	}
@@ -152,23 +171,49 @@ func applyAliases(stdin io.Reader, file, input string, dirs *heldDirs) error {
 			aliases = append(aliases, a)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return err
-	}
-	return hosts.Apply(file, aliases)
+	return aliases, sc.Err()
 }
 
-// writeReport writes err's text to a new file at path, which createReport
-// makes without following or replacing anything already there. The elevated
-// process that calls it is handed a path in the user's temp directory, which
-// other processes of that user can write to; createReport's comment says
-// what each system guarantees about where the file lands. The content is
-// only the error's text, which the caller already has.
-func writeReport(dirs *heldDirs, path string, err error) error {
+// inputError is an error reading the host list, which names the caller's
+// input file or quotes its content.
+type inputError struct{ err error }
+
+// Error is the wrapped error's text.
+func (e *inputError) Error() string { return e.err.Error() }
+
+// Unwrap is the wrapped error.
+func (e *inputError) Unwrap() error { return e.err }
+
+// reportText is what the --report file says about err. Elevated, it quotes
+// no text the caller chose, as whoever starts the helper chooses the input,
+// and the unelevated caller has already checked the host list and says what
+// is wrong with it itself: a host list that cannot be read or is not valid
+// gets a fixed sentence. Every other error names only the system hosts file,
+// which checkElevatedFile pins, and the system's own message.
+func reportText(err error, elevated bool) string {
+	if !elevated {
+		return err.Error()
+	}
+	var ie *inputError
+	switch {
+	case errors.As(err, &ie):
+		return "the host list could not be read"
+	case errors.Is(err, hosts.ErrInvalidHost):
+		return "the host list is not valid"
+	}
+	return err.Error()
+}
+
+// writeReport writes text and a newline to a new file at path, which
+// createReport makes without following or replacing anything already there.
+// When elevated, checkElevatedIO has already refused a path outside a folder
+// Nearhost made for the helper; createReport's comment says what each system
+// guarantees about where the file lands.
+func writeReport(dirs *heldDirs, path, text string) error {
 	f, ferr := createReport(dirs, path)
 	if ferr != nil {
 		return ferr
 	}
-	_, werr := fmt.Fprintln(f, err)
+	_, werr := fmt.Fprintln(f, text)
 	return errors.Join(werr, f.Close())
 }

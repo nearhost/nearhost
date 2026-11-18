@@ -266,8 +266,7 @@ func runElevated(t *testing.T) {
 // chooses --file, and the helper runs as root or administrator.
 func TestElevatedHostsApplyRefusesAnotherFile(t *testing.T) {
 	runElevated(t)
-	report := filepath.Join(t.TempDir(), "report")
-	path, err := runApply(t, "--report", report)
+	path, err := runApply(t)
 	want := "an elevated run only writes " + hosts.SystemPath()
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -275,9 +274,50 @@ func TestElevatedHostsApplyRefusesAnotherFile(t *testing.T) {
 	if data, _ := os.ReadFile(path); string(data) != "127.0.0.1 localhost\n" {
 		t.Fatalf("file modified:\n%s", data)
 	}
-	if data, _ := os.ReadFile(report); strings.TrimSpace(string(data)) != want {
-		t.Fatalf("report %q, want %q", data, want)
+}
+
+// An elevated report quotes no text its caller chose: not a host from the
+// input, and not the input's path, so a report file holds only Nearhost's
+// own words. An unelevated report is the error as it is.
+func TestElevatedReportTextQuotesNoCallerText(t *testing.T) {
+	invalid := hosts.Apply(filepath.Join(t.TempDir(), "hosts"), []string{"Bad Name"})
+	if invalid == nil {
+		t.Fatal("hosts.Apply accepted an invalid host")
 	}
+	if got := reportText(invalid, true); got != "the host list is not valid" {
+		t.Errorf("elevated invalid host: %q", got)
+	}
+	if got := reportText(invalid, false); got != invalid.Error() {
+		t.Errorf("unelevated invalid host: %q, want %q", got, invalid.Error())
+	}
+	unread := applyInput(t, filepath.Join(t.TempDir(), "x-chosen-by-caller", "input"))
+	if got := reportText(unread, true); got != "the host list could not be read" {
+		t.Errorf("elevated unreadable input: %q", got)
+	}
+	fixed := checkElevatedFileForTest(t)
+	if got := reportText(fixed, true); got != fixed.Error() {
+		t.Errorf("elevated other error: %q, want %q", got, fixed.Error())
+	}
+}
+
+// applyInput runs applyAliases on input and returns its error.
+func applyInput(t *testing.T, input string) error {
+	t.Helper()
+	var dirs heldDirs
+	defer dirs.Close()
+	return applyAliases(strings.NewReader(""), filepath.Join(t.TempDir(), "hosts"), input, &dirs)
+}
+
+// checkElevatedFileForTest is the error an elevated run gives for a file
+// other than the system hosts file.
+func checkElevatedFileForTest(t *testing.T) error {
+	t.Helper()
+	runElevated(t)
+	err := checkElevatedFile(filepath.Join(t.TempDir(), "hosts"))
+	if err == nil {
+		t.Fatal("checkElevatedFile accepted another file")
+	}
+	return err
 }
 
 // A link to another file is refused by its path, as the helper writes

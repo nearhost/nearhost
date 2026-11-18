@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/nearhost/nearhost/internal/elevate"
 )
 
 // heldDirs are the directories `hosts apply` reads --input from and writes
@@ -122,6 +126,171 @@ func (hd *heldDir) holds(h windows.Handle, path string) error {
 		return fmt.Errorf("%s opened as %s, not in its directory %s", path, got, hd.final)
 	}
 	return nil
+}
+
+// errHelperFolder refuses an elevated run's --input or --report.
+var errHelperFolder = errors.New("an elevated run reads and reports only in a folder Nearhost made for it")
+
+// checkElevatedIO checks, before an elevated run opens either file, that
+// --input and --report are both given or both left out, and when given are
+// the files input and report of one folder that HelperDir could have made.
+// Whoever starts the helper chooses both paths, and an administrator's run
+// could otherwise read any file into its report, or create the report where
+// only administrators can write, such as the Startup folder of every user.
+//
+// The folder is held (see heldDirs), so it is not a link or a junction and
+// stays what was checked, and its owner and access list are read from that
+// handle. checkHelperDirSecurity says what they must be; the helper cannot
+// tell which user asked for it, as a standard user who typed an
+// administrator's password runs it as that administrator, so it checks that
+// the only one besides SYSTEM and Administrators who can write in the folder
+// is a user account that owns it. A folder under the Windows directory,
+// Program Files or ProgramData is refused as well. openInput and
+// createReport then use the held folder and check each file's final path.
+func checkElevatedIO(dirs *heldDirs, input, report string) error {
+	if input == "" && report == "" {
+		return nil
+	}
+	dir := filepath.Dir(input)
+	if input == "" || report == "" ||
+		!filepath.IsAbs(input) || filepath.Clean(input) != input || filepath.Clean(report) != report ||
+		filepath.Base(input) != "input" || filepath.Base(report) != "report" || filepath.Dir(report) != dir ||
+		!strings.HasPrefix(filepath.Base(dir), elevate.HelperDirPrefix) {
+		return errHelperFolder
+	}
+	hd, err := dirs.hold(dir)
+	if err != nil {
+		return errHelperFolder
+	}
+	sd, err := windows.GetSecurityInfo(hd.h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil || checkHelperDirSecurity(sd) != nil || inSystemFolder(hd.final) {
+		return errHelperFolder
+	}
+	return nil
+}
+
+// fileDeleteChild is FILE_DELETE_CHILD: on a folder, the right to delete
+// any file in it.
+const fileDeleteChild = 0x40
+
+// writeRights are the rights on a folder that let a holder add, replace or
+// remove a file in it, or give itself those rights.
+const writeRights = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | fileDeleteChild | windows.DELETE |
+	windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_WRITE | windows.GENERIC_ALL
+
+// checkHelperDirSecurity returns an error unless sd, a folder's security
+// descriptor, has a user account for its owner and an access list that lets
+// no one but that owner, SYSTEM and Administrators write in the folder or
+// in what it passes down to new files. A user account is a local or domain
+// account (S-1-5-21-...) or a Microsoft Entra account (S-1-12-1-...), never
+// a built-in group or service such as TrustedInstaller, which own the
+// system's folders. Allow entries of a kind other than the plain one are
+// refused, as are a missing or null access list, which let anyone in; deny
+// entries only take rights away.
+func checkHelperDirSecurity(sd *windows.SECURITY_DESCRIPTOR) error {
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
+	if owner == nil {
+		return errors.New("the folder has no owner")
+	}
+	if o := owner.String(); !strings.HasPrefix(o, "S-1-5-21-") && !strings.HasPrefix(o, "S-1-12-1-") {
+		return fmt.Errorf("the folder's owner %s is not a user account", o)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	if dacl == nil {
+		return errors.New("the folder's access list lets anyone in")
+	}
+	allowed := []*windows.SID{owner}
+	for _, t := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid,
+		windows.WinCreatorOwnerSid, windows.WinCreatorOwnerRightsSid} {
+		sid, err := windows.CreateWellKnownSid(t)
+		if err != nil {
+			return err
+		}
+		allowed = append(allowed, sid)
+	}
+	for i := range uint32(dacl.AceCount) {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return err
+		}
+		switch ace.Header.AceType {
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+		case windows.ACCESS_DENIED_ACE_TYPE, accessDeniedObjectACEType, accessDeniedCallbackACEType, accessDeniedCallbackObjectACEType:
+			continue
+		default:
+			return fmt.Errorf("the folder's access list has an entry of type %d", ace.Header.AceType)
+		}
+		if ace.Mask&writeRights == 0 {
+			continue
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !slices.ContainsFunc(allowed, sid.Equals) {
+			return fmt.Errorf("%s can write in the folder", sid)
+		}
+	}
+	return nil
+}
+
+// The deny entry types other than ACCESS_DENIED_ACE_TYPE, from winnt.h.
+const (
+	accessDeniedObjectACEType         = 0x6
+	accessDeniedCallbackACEType       = 0xA
+	accessDeniedCallbackObjectACEType = 0xC
+)
+
+// systemFolders are the known folders an elevated run's folder must not be
+// in: the Windows directory, both Program Files and ProgramData.
+var systemFolders = []*windows.KNOWNFOLDERID{windows.FOLDERID_Windows, windows.FOLDERID_ProgramFiles,
+	windows.FOLDERID_ProgramFilesX86, windows.FOLDERID_ProgramData}
+
+// inSystemFolder reports whether final, a final path as finalPath gives it,
+// is one of systemFolders or in one, each compared by its own final path. A
+// known folder this system does not have is skipped.
+func inSystemFolder(final string) bool {
+	for _, id := range systemFolders {
+		path, err := windows.KnownFolderPath(id, 0)
+		if err != nil {
+			continue
+		}
+		root, err := finalPathOf(path)
+		if err != nil {
+			// Not there to open: compare the path as the API gives it.
+			root = `\\?\` + path
+		}
+		if within(final, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// finalPathOf is the final path of the file or folder at path.
+func finalPathOf(path string) (string, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", err
+	}
+	h, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	return finalPath(h)
+}
+
+// within reports whether path is root or in it, without case, as NTFS
+// compares names.
+func within(path, root string) bool {
+	root = strings.TrimSuffix(root, `\`)
+	return strings.EqualFold(path, root) ||
+		len(path) > len(root) && path[len(root)] == '\\' && strings.EqualFold(path[:len(root)], root)
 }
 
 // openInput opens the `hosts apply --input` file. Its directory is held
