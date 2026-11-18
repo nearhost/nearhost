@@ -41,6 +41,9 @@ func (sudoElevator) TakesPassword() bool { return true }
 // Cached reports whether sudo has the user's credentials now.
 func (sudoElevator) Cached(ctx context.Context) bool { return sudo.Cached(ctx) }
 
+// Forget drops the credentials sudo has cached.
+func (sudoElevator) Forget(ctx context.Context) { sudo.Forget(ctx) }
+
 // Validate checks password with sudo, which caches the credentials.
 func (sudoElevator) Validate(ctx context.Context, password string) error {
 	return sudo.Validate(ctx, password)

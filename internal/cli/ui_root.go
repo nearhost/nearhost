@@ -26,6 +26,8 @@ type rootBackend struct {
 	// validate checks a password and caches the credentials; a refused
 	// password is tui.ErrWrongPassword.
 	validate func(ctx context.Context, password string) error
+	// forget drops the cached credentials; nil when there is nothing to drop.
+	forget func(ctx context.Context)
 }
 
 // systemRoot is the production backend, built from the elevator e.
@@ -34,6 +36,7 @@ func systemRoot(e elevate.Elevator) rootBackend {
 		needed:        e.Needed,
 		takesPassword: e.TakesPassword,
 		cached:        e.Cached,
+		forget:        e.Forget,
 		validate: func(ctx context.Context, password string) error {
 			return wrongPassword(e.Validate(ctx, password))
 		},
@@ -93,6 +96,11 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 		return step(ctx, nil)
 	}
 	if err := r.ask(ctx, why, r.sudo.validate); err != nil {
+		if errors.Is(err, tui.ErrPasswordCancelled) && r.sudo.forget != nil {
+			// The check may have cached the credentials before the user
+			// cancelled; the next step must ask again.
+			r.sudo.forget(ctx)
+		}
 		return err
 	}
 	if r.sudo.cached(ctx) {

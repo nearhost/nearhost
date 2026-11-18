@@ -40,6 +40,9 @@ func (uac) TakesPassword() bool { return false }
 // Cached is false: every Run asks for consent.
 func (uac) Cached(context.Context) bool { return false }
 
+// Forget does nothing: there are no cached credentials.
+func (uac) Forget(context.Context) {}
+
 // Validate is unsupported: there is no password to check.
 func (uac) Validate(context.Context, string) error { return errors.ErrUnsupported }
 

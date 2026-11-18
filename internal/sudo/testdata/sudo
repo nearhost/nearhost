@@ -4,11 +4,14 @@
 # is set (sudo set to always ask). FAKE_SUDO_LOG gets a line per call. With
 # FAKE_SUDO_GERMAN set it speaks German, as a translated sudo does, unless
 # LC_ALL is C.
-# It understands -n, -S, -v, -p PROMPT and a command to run.
+# With FAKE_SUDO_WROTE set to a fifo, a validation that cached the
+# credentials then writes to the fifo and waits, to be interrupted.
+# It understands -k (forget the credentials), -n, -S, -v, -p PROMPT and a command to run.
 nonint=0 stdin=0 validate=0 prompt="${SUDO_PROMPT:-Password:}"
 [ -n "$FAKE_SUDO_LOG" ] && echo "$*" >> "$FAKE_SUDO_LOG"
 while [ $# -gt 0 ]; do
 	case "$1" in
+	-k) rm -f "$FAKE_SUDO_CACHE"; exit 0 ;;
 	-n) nonint=1 ;;
 	-S) stdin=1 ;;
 	-v) validate=1 ;;
@@ -51,5 +54,8 @@ if ! cached; then
 	fi
 	[ -z "$FAKE_SUDO_NOCACHE" ] && : > "$FAKE_SUDO_CACHE"
 fi
-[ "$validate" = 1 ] && exit 0
+if [ "$validate" = 1 ]; then
+	[ -n "$FAKE_SUDO_WROTE" ] && echo > "$FAKE_SUDO_WROTE" && exec sleep 30
+	exit 0
+fi
 exec "$@"

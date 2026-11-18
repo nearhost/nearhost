@@ -306,7 +306,7 @@ func TestPasswordBoxEscCancelsTheCheck(t *testing.T) {
 	c := newBlockedCheck()
 	done := askFor(m, "Why.", c.check)
 	late := enterBlocked(t, m, c)
-	wantScreen(t, m, "Checking…", "esc cancels")
+	wantScreen(t, m, "Checking…", "esc cancel")
 	settle(m, press(m, "esc"))
 	if err := <-done; !errors.Is(err, ErrPasswordCancelled) {
 		t.Errorf("answer %v", err)
@@ -342,7 +342,7 @@ func TestPasswordBoxLateResultIgnored(t *testing.T) {
 	if s := screen(m); strings.Contains(s, "Sorry") || strings.Contains(s, "Checking") || !strings.Contains(s, "Again.") {
 		t.Errorf("the late failure showed:\n%s", s)
 	}
-	if s := screen(m); strings.Contains(s, "•") != true {
+	if s := screen(m); !strings.Contains(s, "•") {
 		t.Errorf("the new box lost its typed text:\n%s", s)
 	}
 	settle(m, press(m, "enter"))

@@ -33,6 +33,8 @@ type Elevator interface {
 	Cached(ctx context.Context) bool
 	// Validate checks password and caches the credentials it unlocks.
 	Validate(ctx context.Context, password string) error
+	// Forget drops the credentials Validate cached, without prompting.
+	Forget(ctx context.Context)
 	// Run runs c with administrator rights.
 	Run(ctx context.Context, c Command) error
 }

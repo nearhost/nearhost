@@ -21,6 +21,7 @@ type fakeRoot struct {
 	sticks    bool  // whether a password the box takes stays cached
 	askErr    error // what the password box answers
 	asked     []string
+	forgot    int
 	suspended int
 	said      bytes.Buffer
 }
@@ -35,6 +36,7 @@ func (f *fakeRoot) root() asRoot {
 			validate: func(context.Context, string) error {
 				return nil
 			},
+			forget: func(context.Context) { f.forgot++ },
 		},
 		ask: func(ctx context.Context, why string, check func(context.Context, string) error) error {
 			f.asked = append(f.asked, why)
@@ -215,5 +217,30 @@ func TestRootRunWithoutAPasswordSkipsTheBox(t *testing.T) {
 	}
 	if st.runs != 1 || terminals[0] {
 		t.Fatalf("runs %d, terminals %v", st.runs, terminals)
+	}
+}
+
+// A cancelled password box leaves no cached credentials and runs nothing.
+func TestAsRootCancelForgetsTheCredentials(t *testing.T) {
+	f := &fakeRoot{needed: true, askErr: tui.ErrPasswordCancelled}
+	var s step
+	err := f.root().run(context.Background(), "Why.", "Done.", s.run)
+	if !errors.Is(err, tui.ErrPasswordCancelled) {
+		t.Errorf("error %v", err)
+	}
+	if s.runs != 0 || f.forgot != 1 {
+		t.Errorf("runs %d, forgot %d", s.runs, f.forgot)
+	}
+}
+
+// A password the box took does not forget the credentials.
+func TestAsRootSuccessKeepsTheCredentials(t *testing.T) {
+	f := &fakeRoot{needed: true, sticks: true}
+	var s step
+	if err := f.root().run(context.Background(), "Why.", "Done.", s.run); err != nil {
+		t.Fatal(err)
+	}
+	if s.runs != 1 || f.forgot != 0 {
+		t.Errorf("runs %d, forgot %d", s.runs, f.forgot)
 	}
 }

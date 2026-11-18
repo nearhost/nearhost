@@ -181,7 +181,7 @@ func (b *passwordBox) lines(width int) []string {
 
 func (b *passwordBox) keys() []footerItem {
 	if b.busy {
-		return []footerItem{{"esc", "cancels"}}
+		return []footerItem{{"esc", "cancel"}}
 	}
 	return []footerItem{{"enter", "continue"}, {"esc", "cancel"}}
 }
