@@ -60,6 +60,9 @@ type doctorBackend struct {
 	// probePort reports whether port can be bound on every interface of the
 	// given network, "tcp" or "udp".
 	probePort func(network string, port int) error
+	// probePage is probePort for Nearhost's page, which listens on other
+	// addresses; nil probes the page's port with probePort.
+	probePage func(network string, port int) error
 	// holderOf names the process listening on a port, or returns "".
 	holderOf func(ctx context.Context, port int) string
 	// running reports whether a Nearhost is serving on this machine. nil
@@ -112,6 +115,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 	return doctorBackend{
 		trust:     systemTrust(),
 		probePort: probePort,
+		probePage: probePagePort,
 		holderOf:  engine.PortHolder,
 		running:   nearhostRunning,
 		// --no-hosts is a flag of the run, so it is applied then. A config
@@ -237,7 +241,11 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 	add(st.slow(fmt.Sprintf("port %d", flags.httpsPort), func() check { return checkPort(ctx, b, flags.httpsPort, "--https-port", true) }))
 	add(st.slow(fmt.Sprintf("port %d", flags.httpPort), func() check { return checkPort(ctx, b, flags.httpPort, "--http-port", false) }))
 	if flags.webPort != 0 {
-		c := st.slow(fmt.Sprintf("port %d", flags.webPort), func() check { return checkPort(ctx, b, flags.webPort, "--web-port", false) })
+		page := b
+		if b.probePage != nil {
+			page.probePort = b.probePage
+		}
+		c := st.slow(fmt.Sprintf("port %d", flags.webPort), func() check { return checkPort(ctx, page, flags.webPort, "--web-port", false) })
 		if c.level == levelFail {
 			// A page port Nearhost cannot bind costs only the page:
 			// `nearhost up` runs without it. checkPort's fix stands for a

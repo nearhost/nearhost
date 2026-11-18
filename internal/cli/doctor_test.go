@@ -612,6 +612,28 @@ func TestDoctorWarnsWhenTheWebPortIsTaken(t *testing.T) {
 			"      fix: Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another\n")
 }
 
+// The page port is probed on the page's own addresses (probePage), not the
+// proxy's: on macOS a wildcard probe misses a program on loopback alone.
+func TestDoctorProbesTheWebPortWhereThePageListens(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.holders = map[int]string{6327: "other (pid 9)"}
+	b := f.backend()
+	var paged []int
+	b.probePage = func(network string, port int) error {
+		paged = append(paged, port)
+		return syscall.EADDRINUSE
+	}
+	out, err := execute(t, newDoctorCmd(b), "doctor")
+	if err != nil {
+		t.Fatalf("doctor failed on a taken page port: %v\n%s", err, out)
+	}
+	if len(paged) != 1 || paged[0] != 6327 {
+		t.Errorf("probePage was asked for %v, want only the page port", paged)
+	}
+	wantContains(t, out, "warn  port 6327        in use by other (pid 9)\n")
+}
+
 // A page port Nearhost may not bind also only warns, and keeps the
 // permission fix rather than telling the user to stop a process.
 func TestDoctorKeepsThePermissionFixForTheWebPort(t *testing.T) {

@@ -11,7 +11,20 @@ import (
 // probePort reports whether port can be bound on network ("tcp" or "udp"). It
 // binds the addresses the proxy serves on, and lets go of each at once.
 func probePort(network string, port int) error {
-	for _, addr := range netbind.ServeAddrs(port) {
+	return probeAddrs(network, netbind.ServeAddrs(port))
+}
+
+// probePagePort reports whether Nearhost's page could listen on port: it
+// binds the addresses the page listens on (netbind.PageAddrs), which on
+// macOS are the loopback ones, where a wildcard probe would miss a program
+// that holds the port on loopback alone.
+func probePagePort(network string, port int) error {
+	return probeAddrs(network, netbind.PageAddrs(port))
+}
+
+// probeAddrs reports whether each of addrs can be bound on network.
+func probeAddrs(network string, addrs []string) error {
+	for _, addr := range addrs {
 		if err := probeAddr(network, addr); err != nil {
 			return err
 		}
