@@ -188,11 +188,19 @@ func TestAddInterruptedAtAQuestion(t *testing.T) {
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetIn(stdin)
-	root.SetArgs([]string{"--config", cfgPath, "add", signalProject(t), "--server", "elsewhere"})
+	// A server path is POSIX on every system: the question comes after the
+	// path is checked, and a Windows path such as C:\x would be refused.
+	// Nothing on the server is opened before the question.
+	root.SetArgs([]string{"--config", cfgPath, "add", "/srv/app", "--server", "elsewhere"})
 	done := make(chan error, 1)
 	go func() { done <- root.ExecuteContext(ctx) }()
 
 	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		select {
+		case err := <-done:
+			t.Fatalf("add returned before asking: %v\n%s", err, out.String())
+		default:
+		}
 		return strings.Contains(out.String(), "Add it? [Y/n]")
 	}, "the question")
 	cancel()
