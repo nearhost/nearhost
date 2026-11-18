@@ -105,7 +105,10 @@ Getting started:
   nearhost add .     Add the project in this directory
   nearhost           Open the interface, which serves every enabled project
   nearhost up        Serve them without the interface
-  nearhost doctor    Check the machine and each project`,
+  nearhost doctor    Check the machine and each project
+
+The interface needs a terminal. Without a terminal, nearhost prints that it
+needs one and exits 1; use nearhost up there.`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
