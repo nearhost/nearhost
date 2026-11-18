@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -305,7 +306,7 @@ func TestComposeNestedTooDeep(t *testing.T) {
 	}
 	g := got[0]
 	if g.File != "docker-compose.yml" || g.Severity != SeverityWarning || g.Fix.Kind != FixProject ||
-		g.Message != "docker-compose.yml nests << merges more than 64 deep, so Nearhost did not check its services" {
+		g.Message != "docker-compose.yml nests or repeats << merges too much to check, so Nearhost did not check its services" {
 		t.Errorf("finding = %+v", g)
 	}
 }
@@ -321,5 +322,27 @@ func TestComposeNestedWithinTheLimit(t *testing.T) {
 	got := dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil)
 	if has(got, "docker.compose-depth") || !has(got, "docker.host-gateway") {
 		t.Errorf("findings = %+v", ids(got))
+	}
+}
+
+// Merges that repeat an anchor double the walk at each level, so 30 levels
+// stay under the depth limit and would still never finish. The walk stops
+// at its visit budget and says so.
+func TestComposeRepeatedMergesStop(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: [*a%d, *a%d]\n", i, i, i-1, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a30\n      OTHER: x\n")
+	done := make(chan []Finding, 1)
+	go func() { done <- dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil) }()
+	select {
+	case got := <-done:
+		if len(onlyID(got, "docker.compose-depth")) != 1 {
+			t.Fatalf("findings = %+v", ids(got))
+		}
+	case <-time.After(10 * time.Second):
+		panic(t.Name() + ": the walk of repeated merges did not stop")
 	}
 }

@@ -136,6 +136,9 @@ func (r sftpReader) ReadFile(name string) ([]byte, error) {
 	if err := discovery.CheckFile(name, info); err != nil {
 		return nil, err
 	}
+	// A FIFO put in place between the stat and here would still make the
+	// server block on this open; the check of the handle below catches every
+	// other swap.
 	f, err := r.c.Open(p)
 	if err != nil {
 		return nil, notExistErr(name, err)

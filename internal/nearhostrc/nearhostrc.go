@@ -326,7 +326,7 @@ func Read(r discovery.FileReader) (f *File, found bool, err error) {
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %w", FileName, err)
+		return nil, false, discovery.ReadError(FileName, err)
 	}
 	env, err := discovery.ReadEnv(r)
 	if err != nil {

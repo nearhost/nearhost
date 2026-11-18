@@ -105,3 +105,33 @@ func TestMemoExistsFailureFailsTheRun(t *testing.T) {
 type existsFails struct{ memReader }
 
 func (existsFails) Exists(string) (bool, error) { return false, errors.New("denied") }
+
+// A refused file is named once wherever its error is passed on: by ReadEnv,
+// ReadCompose and the memo a preset reads through.
+func TestARefusedFileIsNamedOnce(t *testing.T) {
+	big := bytes.Repeat([]byte("#"), 2<<20)
+	for _, name := range []string{".env", "compose.yaml"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), big, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Discover(DirReader{Root: dir}, Options{})
+		if err == nil || err.Error() != name+" is larger than 1 MiB" {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	m := newMemo(DirReader{Root: t.TempDir()})
+	m.fail("vite.config.js", tooLarge("vite.config.js"))
+	if m.err == nil || m.err.Error() != "vite.config.js is larger than 1 MiB" {
+		t.Errorf("memo: err = %v", m.err)
+	}
+}
+
+func TestReadErrorNamesOtherErrors(t *testing.T) {
+	if got := ReadError(".env", errors.New("permission denied")).Error(); got != "read .env: permission denied" {
+		t.Errorf("got %q", got)
+	}
+	if got := ReadError(".env.local", tooLarge(".env")).Error(); got != "read .env.local: .env is larger than 1 MiB" {
+		t.Errorf("got %q", got)
+	}
+}

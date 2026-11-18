@@ -38,7 +38,7 @@ func CheckFile(name string, info fs.FileInfo) error {
 	case info.IsDir():
 		return &fs.PathError{Op: "read", Path: name, Err: syscall.EISDIR}
 	case !info.Mode().IsRegular():
-		return fmt.Errorf("%s is not a regular file", name)
+		return &FileError{Name: name, Problem: "is not a regular file"}
 	case info.Size() > MaxProjectFile:
 		return tooLarge(name)
 	}
@@ -59,7 +59,27 @@ func ReadLimited(name string, r io.Reader) ([]byte, error) {
 }
 
 func tooLarge(name string) error {
-	return fmt.Errorf("%s is larger than 1 MiB", name)
+	return &FileError{Name: name, Problem: "is larger than 1 MiB"}
+}
+
+// FileError is a project file a FileReader refuses to read. Its message
+// names the file, so ReadError does not name it again.
+type FileError struct {
+	Name    string // the file, relative to the project
+	Problem string // what is wrong with it, such as "is not a regular file"
+}
+
+func (e *FileError) Error() string { return e.Name + " " + e.Problem }
+
+// ReadError is err, from reading the project file name, with the file named
+// once: a FileError for name already says which file, and any other error
+// is put as "read <name>: <err>".
+func ReadError(name string, err error) error {
+	var fe *FileError
+	if errors.As(err, &fe) && fe.Name == name {
+		return err
+	}
+	return fmt.Errorf("read %s: %w", name, err)
 }
 
 // DirReader reads a project on the local filesystem.
@@ -80,6 +100,9 @@ func (d DirReader) ReadFile(name string) ([]byte, error) {
 	if err := CheckFile(name, info); err != nil {
 		return nil, err
 	}
+	// A FIFO put in place between the stat and here would still block this
+	// open; the check of the handle below catches every other swap. Opening
+	// without blocking needs O_NONBLOCK, which only Unix has.
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -164,7 +187,7 @@ func (m *memo) Exists(name string) (bool, error) {
 // or a failure is already remembered.
 func (m *memo) fail(name string, err error) {
 	if err != nil && !isAbsent(err) && m.err == nil {
-		m.err = fmt.Errorf("read %s: %w", name, err)
+		m.err = ReadError(name, err)
 	}
 }
 

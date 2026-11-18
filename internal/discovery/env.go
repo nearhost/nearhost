@@ -217,7 +217,7 @@ func ReadEnv(r FileReader) (map[string]string, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
+			return nil, ReadError(name, err)
 		}
 		env, err := ParseEnv(data)
 		if err != nil {

@@ -42,8 +42,8 @@ func TestDirReaderRefusesALinkToADevice(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = Discover(DirReader{Root: dir}, Options{})
-	if err == nil {
-		t.Fatal("discovery should fail on a .env it cannot read")
+	if err == nil || err.Error() != ".env is not a regular file" {
+		t.Fatalf("Discover: err = %v", err)
 	}
 }
 

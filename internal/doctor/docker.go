@@ -136,17 +136,17 @@ func insideProject(p string) (string, bool) {
 	return p, true
 }
 
-// composeDepthFinding reports a Compose file whose << merges nest deeper
-// than doctor follows.
+// composeDepthFinding reports a Compose file whose << merges nest deeper,
+// or repeat more, than doctor follows.
 func composeDepthFinding(file string) Finding {
 	return Finding{
 		ID:       "docker.compose-depth",
 		Severity: SeverityWarning,
-		Message:  fmt.Sprintf("%s nests << merges more than %d deep, so Nearhost did not check its services", file, maxMergeDepth),
+		Message:  file + " nests or repeats << merges too much to check, so Nearhost did not check its services",
 		File:     file,
 		Fix: Fix{
 			Kind: FixProject,
-			Text: fmt.Sprintf("Cut the chain of << merges in %s to %d levels or fewer, then run nearhost doctor again.", file, maxMergeDepth),
+			Text: fmt.Sprintf("Keep each chain of << merges in %s to %d levels or fewer, merge each anchor once per level, then run nearhost doctor again.", file, maxMergeDepth),
 		},
 	}
 }

@@ -31,7 +31,7 @@ func ReadCompose(r FileReader) (name string, data []byte, err error) {
 			continue
 		}
 		if rerr != nil {
-			return "", nil, fmt.Errorf("read %s: %w", file, rerr)
+			return "", nil, ReadError(file, rerr)
 		}
 		return file, b, nil
 	}
