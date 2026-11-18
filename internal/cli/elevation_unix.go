@@ -3,7 +3,10 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
 
@@ -39,3 +42,19 @@ func systemSudo() error {
 
 // trustRefused is always false here: sudo's refusals keep the generic wording.
 func trustRefused(error) bool { return false }
+
+// upHostsApplier is the applier `nearhost up` updates the hosts file with,
+// through e. With terminal (stdin is a terminal) sudo may prompt for the
+// password. Without one (a service, CI, nohup, stdin redirected) it never
+// prompts: when sudo -n can run (the credentials are cached, or none are
+// needed) the update runs that way, and otherwise it fails with
+// errNoTerminal without starting sudo. As root no sudo runs at all.
+func upHostsApplier(ctx context.Context, e elevate.Elevator, exe string, terminal bool) hosts.Applier {
+	return func(aliases []string) error {
+		interactive := terminal
+		if !terminal && e.Needed() && !e.Cached(ctx) {
+			return errNoTerminal
+		}
+		return hosts.ElevatedApplier(ctx, e, exe, hosts.DefaultPath, hostsPrompt, interactive)(aliases)
+	}
+}
