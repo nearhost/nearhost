@@ -369,8 +369,13 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"-o", "ClearAllForwardings=yes",
 			"-o", "RemoteCommand=none",
 			"--", s.host)
-		var stderr bytes.Buffer
-		master.Stderr = &stderr
+		// The master's stderr is kept as its last stderrLines lines: ssh
+		// logs a line for each channel it cannot open, so the whole of it
+		// would grow for as long as the master lives. The fatal check reads
+		// the same lines. An authentication failure is the last thing a
+		// master that failed to log in writes, so it is among them.
+		stderr := newSSHStderr("", "")
+		master.Stderr = stderr
 		// A ProxyCommand or ProxyJump child of the master can keep the
 		// stderr pipe open after the master is gone. Wait then gives up on
 		// the pipe after procWaitDelay rather than wait for that child.
@@ -431,11 +436,9 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.mu.Lock()
 			s.agentPath = "" // the server dropped it with the master
 			s.mu.Unlock()
-			msg := strings.TrimSpace(stderr.String())
-			if msg == "" {
-				msg = "ssh exited"
-			}
-			if !s.attemptFailed(msg, isFatalSSHError(msg), &authFails, backoff) {
+			lines := stderr.Lines()
+			msg := exitMessage(lines)
+			if !s.attemptFailed(msg, isFatalSSHError(strings.Join(lines, "\n")), &authFails, backoff) {
 				return
 			}
 		}

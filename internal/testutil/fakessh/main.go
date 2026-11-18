@@ -161,6 +161,13 @@ func run(args []string) int {
 	}
 
 	if authFail {
+		// $FAKE_SSH_FLOOD=<n> writes n lines of a refused channel first, as
+		// a master does for each request to a forward whose server is down.
+		if n, _ := strconv.Atoi(os.Getenv("FAKE_SSH_FLOOD")); n > 0 {
+			for i := 1; i <= n; i++ {
+				fmt.Fprintf(os.Stderr, "channel %d: open failed: connect failed: Connection refused\n", i)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "user@host: Permission denied (publickey).")
 		return 255
 	}

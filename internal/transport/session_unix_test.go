@@ -116,6 +116,19 @@ func TestSupervisorStopsAfterRepeatedAuthFailures(t *testing.T) {
 	}
 }
 
+func TestMasterErrorIsItsLastLinesNotItsWholeLog(t *testing.T) {
+	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_FLOOD=10000")
+	s.Start()
+	waitFor(t, 20*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
+	msg := s.LastError()
+	if !strings.Contains(msg, "Permission denied") {
+		t.Fatalf("LastError = %q, want the last line", msg)
+	}
+	if n := strings.Count(msg, "\n") + 1; n > stderrLines {
+		t.Fatalf("LastError has %d lines, want at most %d", n, stderrLines)
+	}
+}
+
 func TestHostKeyFailureIsFatal(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
 	s.Start()
