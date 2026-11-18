@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -503,6 +504,56 @@ func TestStopReleasesPortsAndIsIdempotent(t *testing.T) {
 			t.Fatalf("port %d not released: %v", port, err)
 		}
 		l.Close()
+	}
+}
+
+// A stop that fails leaves the proxy running in Nearhost's eyes, so the next
+// Stop tries Caddy again instead of finding nothing to do, and waits for the
+// ports once that succeeds.
+func TestFailedStopCanBeTriedAgain(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+
+	failed := errors.New("a listener would not close")
+	calls := 0
+	stopCaddy = func() error {
+		calls++
+		if calls == 1 {
+			return failed
+		}
+		return caddy.Stop()
+	}
+	t.Cleanup(func() { stopCaddy = caddy.Stop })
+
+	if err := h.p.Stop(); !errors.Is(err, failed) {
+		t.Fatalf("first Stop = %v, want %v", err, failed)
+	}
+	if !h.p.Running() {
+		t.Fatal("not Running after a failed Stop")
+	}
+	if err := h.p.Stop(); err != nil {
+		t.Fatalf("second Stop: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("Caddy's stop ran %d times, want 2", calls)
+	}
+	if h.p.Running() {
+		t.Fatal("Running after the second Stop")
+	}
+	for _, port := range []int{h.httpsPort, h.httpPort} {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			t.Fatalf("port %d not released: %v", port, err)
+		}
+		l.Close()
+	}
+
+	if err := h.p.Stop(); err != nil {
+		t.Fatalf("Stop on a stopped proxy: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("Stop on a stopped proxy ran Caddy's stop: %d calls, want 2", calls)
 	}
 }
 
