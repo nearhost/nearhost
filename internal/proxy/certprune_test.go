@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -168,44 +169,175 @@ func TestPruneReadsTheLeafOfAChain(t *testing.T) {
 }
 
 // A directory that does not hold exactly what certmagic writes for a
-// certificate is left alone and logged: one with a .crt that does not parse,
-// one with no .crt, and one with a file of another kind.
+// certificate is left alone, and the log says why in one line.
 func TestPruneLeavesUnexpectedDirectoriesAlone(t *testing.T) {
+	expired := pruneNow.Add(-48 * time.Hour)
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, storage string) string
+		want  string
+	}{
+		{"unparsable", func(t *testing.T, storage string) string {
+			return writeLeaf(t, storage, "d.myapp.test", []byte("not a certificate"))
+		}, "has d.myapp.test.crt, which holds no certificate"},
+		{"no crt", func(t *testing.T, storage string) string {
+			dir := writeLeaf(t, storage, "d.myapp.test", testCertPEM(t, "d.myapp.test", expired))
+			if err := os.Remove(filepath.Join(dir, "d.myapp.test.crt")); err != nil {
+				t.Fatal(err)
+			}
+			return dir
+		}, "has no d.myapp.test.crt"},
+		{"extra file", func(t *testing.T, storage string) string {
+			dir := writeLeaf(t, storage, "d.myapp.test", testCertPEM(t, "d.myapp.test", expired))
+			writeFile(t, filepath.Join(dir, "notes.txt"), []byte("mine"))
+			return dir
+		}, "holds notes.txt"},
+		{"subfolder", func(t *testing.T, storage string) string {
+			dir := writeLeaf(t, storage, "d.myapp.test", testCertPEM(t, "d.myapp.test", expired))
+			if err := os.Remove(filepath.Join(dir, "d.myapp.test.json")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(dir, "d.myapp.test.json", "file"), []byte("mine"))
+			return dir
+		}, "holds d.myapp.test.json, which is not a file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := t.TempDir()
+			rec := recordLog(t)
+			dir := tc.setup(t, storage)
+			before, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			pruneExpiredCertificates(storage, pruneNow)
+
+			after, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("the folder went: %v", err)
+			}
+			if len(after) != len(before) {
+				t.Errorf("the folder held %d entries and holds %d", len(before), len(after))
+			}
+			want := " Left the certificate folder d.myapp.test in " + filepath.Join(storage, "certificates", "local") + " alone, as it " + tc.want + "."
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if len(rec.lines) != 1 || rec.lines[0] != want {
+				t.Errorf("logged %q, want [%q]", rec.lines, want)
+			}
+		})
+	}
+}
+
+// Several folders left alone make one line, which counts them and names
+// one.
+func TestPruneLogsFoldersLeftAloneOnce(t *testing.T) {
 	storage := t.TempDir()
 	rec := recordLog(t)
-	garbage := writeLeaf(t, storage, "garbage.myapp.test", []byte("not a certificate"))
-	noCrt := writeLeaf(t, storage, "nocrt.myapp.test", testCertPEM(t, "nocrt.myapp.test", pruneNow.Add(-48*time.Hour)))
-	if err := os.Remove(filepath.Join(noCrt, "nocrt.myapp.test.crt")); err != nil {
-		t.Fatal(err)
-	}
-	extra := writeLeaf(t, storage, "extra.myapp.test", testCertPEM(t, "extra.myapp.test", pruneNow.Add(-48*time.Hour)))
-	writeFile(t, filepath.Join(extra, "notes.txt"), []byte("mine"))
-	nested := writeLeaf(t, storage, "nested.myapp.test", testCertPEM(t, "nested.myapp.test", pruneNow.Add(-48*time.Hour)))
-	writeFile(t, filepath.Join(nested, "sub", "file"), []byte("mine"))
+	writeLeaf(t, storage, "a.myapp.test", []byte("not a certificate"))
+	writeLeaf(t, storage, "b.myapp.test", []byte("not a certificate"))
 	stray := filepath.Join(storage, "certificates", "local", "stray-file")
 	writeFile(t, stray, []byte("mine"))
 
 	pruneExpiredCertificates(storage, pruneNow)
 
-	for _, dir := range []string{garbage, noCrt, extra, nested} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("%s: %v", dir, err)
-		}
-		if len(entries) < 2 {
-			t.Errorf("%s lost files: %v left", dir, entries)
-		}
-	}
-	if !exists(t, filepath.Join(extra, "extra.myapp.test.crt")) || !exists(t, filepath.Join(extra, "extra.myapp.test.key")) {
-		t.Error("the certificate beside an unexpected file was removed")
-	}
 	if !exists(t, stray) {
 		t.Error("a stray file among the certificates was removed")
 	}
+	want := " Left 2 certificate folders in " + filepath.Join(storage, "certificates", "local") + " alone; a.myapp.test, for one, has a.myapp.test.crt, which holds no certificate."
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if len(rec.lines) != 1 || !strings.Contains(rec.lines[0], "4 certificate folders") {
-		t.Errorf("logged %q, want one line about the 4 folders left alone", rec.lines)
+	if len(rec.lines) != 1 || rec.lines[0] != want {
+		t.Errorf("logged %q, want [%q]", rec.lines, want)
+	}
+}
+
+// A removal that failed part way, on Windows for a file another program
+// held, leaves the .crt, or once that went an empty folder. The next start
+// finishes either, and says nothing about the empty one.
+func TestPruneFinishesAnEarlierPartialRemoval(t *testing.T) {
+	storage := t.TempDir()
+	rec := recordLog(t)
+	crtOnly := leafDir(storage, "a.myapp.test")
+	writeFile(t, filepath.Join(crtOnly, "a.myapp.test.crt"), testCertPEM(t, "a.myapp.test", pruneNow.Add(-48*time.Hour)))
+	empty := leafDir(storage, "b.myapp.test")
+	if err := os.MkdirAll(empty, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneExpiredCertificates(storage, pruneNow)
+
+	if exists(t, crtOnly) {
+		t.Error("a folder holding only an expired .crt is still there")
+	}
+	if exists(t, empty) {
+		t.Error("an empty certificate folder is still there")
+	}
+	want := " Removed 1 expired certificate from the proxy's storage."
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.lines) != 1 || rec.lines[0] != want {
+		t.Errorf("logged %q, want [%q]", rec.lines, want)
+	}
+}
+
+// A certificate's folder swapped for a symlink after it was listed, to
+// another folder inside the storage that holds files of the same names, is
+// left alone, and so is what the link points at: the CA's folder, outside
+// the issuer's, or a sibling certificate folder.
+func TestPruneLeavesAFolderSwappedForASymlinkAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target string // relative to the storage
+		link   string // the symlink's text, relative to the folder's parent
+		want   string
+	}{
+		{"to the CA", filepath.Join("pki", "authorities", "local"), filepath.Join("..", "..", "pki", "authorities", "local"),
+			"Left the certificate folder a.myapp.test in %s alone, as it can't be opened"},
+		{"to a sibling", filepath.Join("certificates", "local", "other"), "other",
+			"Left 2 certificate folders in %s alone; a.myapp.test, for one, changed while it was checked."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := t.TempDir()
+			rec := recordLog(t)
+			name := "a.myapp.test"
+			dir := writeLeaf(t, storage, name, testCertPEM(t, name, pruneNow.Add(-48*time.Hour)))
+			target := filepath.Join(storage, tc.target)
+			writeFile(t, filepath.Join(target, name+".crt"), testCertPEM(t, name, pruneNow.Add(-48*time.Hour)))
+			writeFile(t, filepath.Join(target, name+".key"), []byte("not a real key"))
+			moved := filepath.Join(storage, "moved")
+			beforeCertDir = func(n string) {
+				if n != name {
+					return
+				}
+				if err := os.Rename(dir, moved); err != nil {
+					t.Error(err)
+					return
+				}
+				symlinkOrSkip(t, tc.link, dir)
+			}
+			t.Cleanup(func() { beforeCertDir = func(string) {} })
+
+			pruneExpiredCertificates(storage, pruneNow)
+
+			for _, f := range []string{name + ".crt", name + ".key"} {
+				if !exists(t, filepath.Join(target, f)) {
+					t.Errorf("%s was removed through the symlink", f)
+				}
+				if !exists(t, filepath.Join(moved, f)) {
+					t.Errorf("the moved folder lost %s", f)
+				}
+			}
+			if !exists(t, dir) {
+				t.Error("the symlink was removed")
+			}
+			want := " " + fmt.Sprintf(tc.want, filepath.Join(storage, "certificates", "local"))
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if len(rec.lines) != 1 || !strings.HasPrefix(rec.lines[0], want) {
+				t.Errorf("logged %q, want one line starting %q", rec.lines, want)
+			}
+		})
 	}
 }
 
