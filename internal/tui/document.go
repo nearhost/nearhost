@@ -81,8 +81,6 @@ type docForm struct {
 	// document opened, and only Always allow was not saved.
 	opened bool
 	seq    int
-	// guard holds back the keys pressed as the box opens.
-	guard askGuarded
 }
 
 // docAnsweredMsg is the outcome of answering a document request.
@@ -96,8 +94,8 @@ type docAnsweredMsg struct {
 func (f *docForm) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if f.busy || f.guard.holding() {
-			return nil // an answer runs to its end, or the box has only just opened
+		if f.busy {
+			return nil // an answer runs to its end
 		}
 		if f.err != "" {
 			switch msg.String() {

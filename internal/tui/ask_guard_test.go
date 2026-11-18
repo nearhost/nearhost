@@ -2,6 +2,7 @@ package tui
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,17 +99,54 @@ func TestDocPromptLowerAIsNotAlways(t *testing.T) {
 	}
 }
 
-func TestRequestBoxesShowShiftedAlways(t *testing.T) {
+func TestRequestBoxShowsItsKeysOnceTheGuardEnds(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	stopClock(m)
-	ask(m, passReq(m))
-	if got := keyLabels(m.form); !slices.Equal(got, []string{"y", "n", "A"}) {
-		t.Fatalf("passthrough keys %v", got)
+	settle(m, func() tea.Msg { return passMsg{passReq(m)} })
+	wait(m, 100*time.Millisecond)
+	if s := screen(m); strings.Contains(s, "y yes") || !strings.Contains(s, "wants to open port 41873") {
+		t.Fatalf("at 100 ms:\n%s", s)
 	}
-	m, _, _ = projectFormModel(t)
-	askDoc(m, docReq(m))
-	if got := keyLabels(m.form); !slices.Equal(got, []string{"y", "n", "A"}) {
-		t.Fatalf("document keys %v", got)
+	wait(m, 700*time.Millisecond)
+	m.Update(askGuardEndedMsg{})
+	wantScreen(t, m, "y yes", "A always allow")
+}
+
+func TestProposalBoxIgnoresEnterAsItOpens(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	stopClock(m)
+	settle(m, func() tea.Msg {
+		return proposalMsg{Proposal{ID: "p1", Origin: "mini", Path: "/home/dev/code/blog", Expires: m.now().Add(time.Minute)}}
+	})
+	wantScreen(t, m, "Add project · routes")
+	wait(m, 100*time.Millisecond)
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · routes")
+	wait(m, 700*time.Millisecond)
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "name      blog▏")
+}
+
+func TestTheNextRequestHasItsOwnGuard(t *testing.T) {
+	m, f, _ := projectFormModel(t)
+	stopClock(m)
+	first, second := passReq(m), passReq(m)
+	second.ID, second.Remote = "r2", 5173
+	settle(m, func() tea.Msg { return passMsg{first} })
+	settle(m, func() tea.Msg { return passMsg{second} })
+	wait(m, askGuard)
+	settle(m, press(m, "y")) // answers the first, and the second opens
+	if pf, ok := m.form.(*passForm); !ok || pf.r.ID != "r2" {
+		t.Fatalf("form %T", m.form)
+	}
+	settle(m, press(m, "y")) // pressed at once
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1"}) {
+		t.Fatalf("calls %v", got)
+	}
+	wait(m, askGuard)
+	settle(m, press(m, "y"))
+	if got := f.passthroughCalls(); !slices.Equal(got, []string{"answer r1 1", "answer r2 1"}) {
+		t.Fatalf("calls %v", got)
 	}
 }
 

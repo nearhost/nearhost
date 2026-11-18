@@ -143,6 +143,7 @@ func TestDocQueuesWithProposals(t *testing.T) {
 	m.form = nil
 	wantScreen(t, m, "agents    ● 3 requests waiting · p to review")
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if _, ok := m.form.(*projectForm); !ok {
 		t.Fatalf("first was %T", m.form)
 	}
@@ -157,10 +158,10 @@ func TestDocQueuesWithProposals(t *testing.T) {
 	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if _, ok := m.form.(*docForm); !ok {
 		t.Fatalf("third was %T", m.form)
 	}
-	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	if got := f.documentCalls(); !slices.Equal(got, []string{"answer d1 0"}) {
 		t.Fatalf("calls %v", got)
@@ -174,6 +175,7 @@ func TestDocExpiredSkipped(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(time.Hour) }
 	m.form = nil
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.form != nil || len(m.waiting) != 0 || len(f.documentCalls()) != 0 {
 		t.Fatalf("form %T, waiting %d, calls %v", m.form, len(m.waiting), f.documentCalls())
 	}

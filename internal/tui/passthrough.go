@@ -49,8 +49,6 @@ type passForm struct {
 	// the port opened, and only Always allow was not saved.
 	opened bool
 	seq    int
-	// guard holds back the keys pressed as the box opens.
-	guard askGuarded
 }
 
 // passAnsweredMsg is the outcome of answering a request.
@@ -64,8 +62,8 @@ type passAnsweredMsg struct {
 func (f *passForm) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if f.busy || f.guard.holding() {
-			return nil // an answer runs to its end, or the box has only just opened
+		if f.busy {
+			return nil // an answer runs to its end
 		}
 		if f.err != "" {
 			// The answer failed: another would fail the same way, or open

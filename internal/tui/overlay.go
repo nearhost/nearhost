@@ -52,7 +52,11 @@ func (m *Model) formBox(base string, f form) string {
 	top = append(top, "")
 	keys := m.help
 	keys.SetWidth(inner)
-	bottom := []string{"", keys.ShortHelpView(bindings(f.keys()))}
+	var items []footerItem
+	if f != m.form || !m.guarding() {
+		items = f.keys() // a request box shows its keys once its guard ends
+	}
+	bottom := []string{"", keys.ShortHelpView(bindings(items))}
 	// A form with steps keeps one height from step to step; a box without,
 	// such as the password box or a question, is as tall as what it says.
 	h := len(top) + len(body) + len(bottom) + 2

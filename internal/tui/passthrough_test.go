@@ -221,6 +221,7 @@ func TestPassAndProposalQueue(t *testing.T) {
 	m.form = nil
 	wantScreen(t, m, "agents    ● 3 requests waiting · p to review")
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	wantScreen(t, m, "Proposed by an agent on mini", "path      /home/dev/code/blog")
 	for i := 0; i < 2; i++ {
 		if _, ok := m.form.(*projectForm); ok {
@@ -234,6 +235,7 @@ func TestPassAndProposalQueue(t *testing.T) {
 	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	wantScreen(t, m, "path      /work/here")
 	if got := f.proposalAnswers(); !slices.Equal(got, []string{"decline p1"}) {
 		t.Fatalf("answers %v", got)
@@ -247,6 +249,7 @@ func TestPassExpiredSkipped(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(time.Hour) }
 	m.form = nil
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.form != nil || len(m.waiting) != 0 || len(f.passthroughCalls()) != 0 {
 		t.Fatalf("form %T, waiting %d, calls %v", m.form, len(m.waiting), f.passthroughCalls())
 	}
