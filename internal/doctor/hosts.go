@@ -208,7 +208,8 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 }
 
 // dnsUncheckedFix is the fix of hosts.dns-unchecked.
-const dnsUncheckedFix = "Nothing to do. Nearhost checks again once your network settings list a nameserver that is not on this machine."
+const dnsUncheckedFix = "Check for yourself that each real-domain name this project serves is one you mean to take over on this machine. " +
+	"Nearhost asks DNS again each time it checks."
 
 // unchecked reports whether a lookup of a real-domain name, one that is not
 // .test, failed because no nameserver beyond this machine could be found.

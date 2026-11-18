@@ -268,3 +268,143 @@ func TestDNSLookupSaysWhenNoAdapterHasANameserver(t *testing.T) {
 		t.Fatalf("noNameserverMessage = %q, want %q", noNameserverMessage, want)
 	}
 }
+
+// errRefused is the error of a fake nameserver that refuses the connection.
+var errRefused = errors.New("connect: connection refused")
+
+// fakeServer is how a fake nameserver answers: with err, by hanging until
+// the query's deadline, or with rcode and, for an A query, the address a.
+type fakeServer struct {
+	err   error
+	hang  bool
+	rcode int
+	a     string
+}
+
+// useExchange makes DNSLookup's queries go to servers, keyed by host:port,
+// until the test ends. asked lists the servers queried, once each, in order.
+func useExchange(t *testing.T, servers map[string]fakeServer) (asked func() []string) {
+	t.Helper()
+	var (
+		mu  sync.Mutex
+		got []string
+	)
+	old := exchange
+	exchange = func(ctx context.Context, msg *dns.Msg, server, _ string) (*dns.Msg, error) {
+		mu.Lock()
+		if !slices.Contains(got, server) {
+			got = append(got, server)
+		}
+		mu.Unlock()
+		s, ok := servers[server]
+		switch {
+		case !ok:
+			t.Errorf("asked %s, which the test does not list", server)
+			return nil, errRefused
+		case s.hang:
+			<-ctx.Done()
+			return nil, ctx.Err()
+		case s.err != nil:
+			return nil, s.err
+		}
+		resp := new(dns.Msg)
+		resp.SetRcode(msg, s.rcode)
+		if s.a != "" && msg.Question[0].Qtype == dns.TypeA {
+			resp.Answer = append(resp.Answer, &dns.A{
+				Hdr: dns.RR_Header{Name: msg.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET},
+				A:   net.ParseIP(s.a),
+			})
+		}
+		return resp, nil
+	}
+	t.Cleanup(func() { exchange = old })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(got)
+	}
+}
+
+func TestDNSLookupMovesToTheNextServerWhenOneRefuses(t *testing.T) {
+	useNameservers(t, "192.0.2.1", "192.0.2.2")
+	asked := useExchange(t, map[string]fakeServer{
+		"192.0.2.1:53": {err: errRefused},
+		"192.0.2.2:53": {a: "93.184.216.34"},
+	})
+	addrs, err := DNSLookup(context.Background(), "app.example.io")
+	if err != nil || len(addrs) != 1 || addrs[0].String() != "93.184.216.34" {
+		t.Fatalf("DNSLookup = %v, %v", addrs, err)
+	}
+	if !slices.Equal(asked(), []string{"192.0.2.1:53", "192.0.2.2:53"}) {
+		t.Errorf("asked %q", asked())
+	}
+}
+
+func TestDNSLookupGivesTheLastErrorWhenEveryServerFails(t *testing.T) {
+	last := errors.New("connect: network is unreachable")
+	useNameservers(t, "192.0.2.1", "2001:db8::53")
+	useExchange(t, map[string]fakeServer{
+		"192.0.2.1:53":      {err: errRefused},
+		"[2001:db8::53]:53": {err: last},
+	})
+	if _, err := DNSLookup(context.Background(), "app.example.io"); !errors.Is(err, last) {
+		t.Fatalf("err = %v, want %v", err, last)
+	}
+}
+
+// An answer ends the lookup, NXDOMAIN and SERVFAIL included: only a server
+// that cannot be reached sends it to the next.
+func TestDNSLookupStopsAtTheFirstAnswer(t *testing.T) {
+	for _, rcode := range []int{dns.RcodeNameError, dns.RcodeServerFailure} {
+		useNameservers(t, "192.0.2.1", "192.0.2.2")
+		asked := useExchange(t, map[string]fakeServer{
+			"192.0.2.1:53": {rcode: rcode},
+			"192.0.2.2:53": {a: "93.184.216.34"},
+		})
+		addrs, err := DNSLookup(context.Background(), "app.example.io")
+		if len(addrs) != 0 || (err == nil) != (rcode == dns.RcodeNameError) {
+			t.Errorf("%s: DNSLookup = %v, %v", dns.RcodeToString[rcode], addrs, err)
+		}
+		if !slices.Equal(asked(), []string{"192.0.2.1:53"}) {
+			t.Errorf("%s: asked %q", dns.RcodeToString[rcode], asked())
+		}
+	}
+}
+
+// A server that never answers gets its share of lookupTimeout, not all of
+// it, so the next one is still asked.
+func TestDNSLookupLeavesTimeForTheNextServer(t *testing.T) {
+	useNameservers(t, "192.0.2.1", "192.0.2.2", "192.0.2.3")
+	asked := useExchange(t, map[string]fakeServer{
+		"192.0.2.1:53": {hang: true},
+		"192.0.2.2:53": {hang: true},
+		"192.0.2.3:53": {a: "93.184.216.34"},
+	})
+	start := time.Now()
+	addrs, err := DNSLookup(context.Background(), "app.example.io")
+	if err != nil || len(addrs) != 1 {
+		t.Fatalf("DNSLookup = %v, %v", addrs, err)
+	}
+	if elapsed := time.Since(start); elapsed > lookupTimeout {
+		t.Errorf("DNSLookup took %v", elapsed)
+	}
+	if len(asked()) != 3 {
+		t.Errorf("asked %q", asked())
+	}
+}
+
+// Loopback servers after the first are skipped: they may answer from the
+// hosts file.
+func TestDNSLookupSkipsLoopbackServers(t *testing.T) {
+	useNameservers(t, "192.0.2.1", "127.0.0.1", "192.0.2.2")
+	asked := useExchange(t, map[string]fakeServer{
+		"192.0.2.1:53": {err: errRefused},
+		"192.0.2.2:53": {a: "93.184.216.34"},
+	})
+	if _, err := DNSLookup(context.Background(), "app.example.io"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(asked(), []string{"192.0.2.1:53", "192.0.2.2:53"}) {
+		t.Errorf("asked %q", asked())
+	}
+}
