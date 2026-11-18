@@ -59,7 +59,7 @@ type File struct {
 	SHA256 string
 }
 
-// varRef matches the braced forms discovery.Expand understands, on one line,
+// varRef matches the braced forms discovery.ExpandBraced understands, on one line,
 // so a stray "${" in a comment cannot swallow the YAML after it.
 var varRef = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}\n]*)?\}`)
 
@@ -162,7 +162,7 @@ func Parse(data []byte, env map[string]string) (*File, error) {
 	}
 
 	// The alias goes through the same token swap as the labels.
-	alias, name, ok := discovery.Expand(restore.Replace(raw.Alias), env)
+	alias, name, ok := discovery.ExpandBraced(restore.Replace(raw.Alias), env)
 	if !ok {
 		return nil, unset(name)
 	}
@@ -238,11 +238,11 @@ func checkRoutes(routes []Route) error {
 func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route, error) {
 	// Labels and roles go through the same token swap as ports and hosts,
 	// so put their references back and fill them too.
-	label, name, ok := discovery.Expand(restore.Replace(rr.Label), env)
+	label, name, ok := discovery.ExpandBraced(restore.Replace(rr.Label), env)
 	if !ok {
 		return Route{}, unset(name)
 	}
-	role, name, ok := discovery.Expand(restore.Replace(string(rr.Role)), env)
+	role, name, ok := discovery.ExpandBraced(restore.Replace(string(rr.Role)), env)
 	if !ok {
 		return Route{}, unset(name)
 	}
@@ -262,7 +262,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		return r, fmt.Errorf("%s: role %q must be web, loopback or ignore", FileName, r.Role)
 	}
 
-	value, varName, ok := discovery.Expand(restore.Replace(rr.Port.Value), env)
+	value, varName, ok := discovery.ExpandBraced(restore.Replace(rr.Port.Value), env)
 	if !ok {
 		return r, unset(varName)
 	}
@@ -279,7 +279,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		return r, fmt.Errorf("%s: port %d: only web routes have hosts", FileName, port)
 	}
 	for _, h := range rr.Hosts {
-		host, name, ok := discovery.Expand(restore.Replace(h), env)
+		host, name, ok := discovery.ExpandBraced(restore.Replace(h), env)
 		if !ok {
 			return r, unset(name)
 		}

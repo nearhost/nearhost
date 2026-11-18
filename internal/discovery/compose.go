@@ -164,14 +164,34 @@ type composeLongPort struct {
 // composeVar matches ${VAR}, ${VAR:-default}, ${VAR-default} and $VAR.
 var composeVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
-// Expand substitutes variables in s. It returns the first variable name
-// seen and ok=false when a variable has no value and no default.
+// bracedVar matches the braced forms of composeVar only.
+var bracedVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}`)
+
+// Expand substitutes variables in s, in both the braced and the unbraced form
+// that Compose accepts. It returns the first variable name seen and ok=false
+// when a variable has no value and no default.
 func Expand(s string, env map[string]string) (value, varName string, ok bool) {
+	return expand(composeVar, s, env)
+}
+
+// ExpandBraced substitutes only ${VAR}, ${VAR:-default} and ${VAR-default}
+// in s and leaves a bare $VAR as written. A .nearhostrc uses it, since its
+// documented form is the braced one and a label may hold a "$" in plain text.
+// It returns the first variable name seen and ok=false when a variable has no
+// value and no default.
+func ExpandBraced(s string, env map[string]string) (value, varName string, ok bool) {
+	return expand(bracedVar, s, env)
+}
+
+// expand replaces each match of re in s, whose submatches are the variable
+// name (1 and, for an unbraced form, 4), the default operator (2) and the
+// default (3).
+func expand(re *regexp.Regexp, s string, env map[string]string) (value, varName string, ok bool) {
 	ok = true
-	out := composeVar.ReplaceAllStringFunc(s, func(m string) string {
-		sub := composeVar.FindStringSubmatch(m)
+	out := re.ReplaceAllStringFunc(s, func(m string) string {
+		sub := re.FindStringSubmatch(m)
 		name := sub[1]
-		if name == "" {
+		if name == "" && len(sub) > 4 {
 			name = sub[4]
 		}
 		if varName == "" {
