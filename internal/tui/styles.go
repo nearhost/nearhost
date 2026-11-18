@@ -114,30 +114,79 @@ func usePalette(p palette) {
 // labelWidth is the width of the labels of a panel's fields.
 const labelWidth = 10
 
-// stateMark is the dot and colour for a project state.
+// markKind is a state a mark can show. Each has its own glyph as well as its
+// own colour, so the states differ with colour off.
+type markKind int
+
+const (
+	markStopped   markKind = iota // off, or not connected: ○
+	markRunning                   // running or connected: ●
+	markError                     // an error or a failed login: ✕
+	markAttention                 // waiting for approval, or a warning: !
+)
+
+// glyphs are the glyphs of the mark kinds, each one cell wide.
+var glyphs = map[markKind]string{
+	markStopped:   "○",
+	markRunning:   "●",
+	markError:     "✕",
+	markAttention: "!",
+}
+
+// glyph is the mark of a kind: its glyph in its colour. Every state mark of
+// the interface comes from here, so the sidebar, the headers and the detail
+// panels agree.
+func glyph(k markKind) seg {
+	style := styleDim
+	switch k {
+	case markRunning:
+		style = styleRunning
+	case markError:
+		style = styleRed
+	case markAttention:
+		style = styleAmber
+	}
+	return seg{style, glyphs[k]}
+}
+
+// busyMark is the mark of a project or server that is on its way, where the
+// spinner is not turning.
+func busyMark() seg { return seg{styleAmber, "◐"} }
+
+// stateMark is the mark and colour for a project state.
 func stateMark(st engine.State) seg {
 	switch st {
 	case engine.StateRunning:
-		return seg{styleRunning, "●"}
+		return glyph(markRunning)
 	case engine.StateStarting, engine.StateDegraded:
-		return seg{styleAmber, "◐"}
+		return busyMark()
 	case engine.StateError:
-		return seg{styleRed, "●"}
+		return glyph(markError)
 	}
-	return seg{styleDim, "○"}
+	return glyph(markStopped)
 }
 
-// serverMark is the dot and colour for a server's connection.
+// serverMark is the mark and colour for a server's connection.
 func serverMark(st transport.Status) seg {
 	switch st {
 	case transport.StatusConnected:
-		return seg{styleRunning, "●"}
+		return glyph(markRunning)
 	case transport.StatusConnecting, transport.StatusReconnecting:
-		return seg{styleAmber, "◐"}
+		return busyMark()
 	case transport.StatusAuthFailed:
-		return seg{styleRed, "○"}
+		return glyph(markError)
 	}
-	return seg{styleDim, "○"}
+	return glyph(markStopped)
+}
+
+// projectDot is the mark of a project: the spinner while it starts, the
+// attention mark while its .nearhostrc waits for approval, and its state's
+// mark otherwise.
+func (m *Model) projectDot(st engine.ProjectStatus) seg {
+	if st.State != engine.StateStarting && st.Pending != nil {
+		return glyph(markAttention)
+	}
+	return m.stateDot(st.State)
 }
 
 // stateDot is stateMark, with the spinner for a project that is starting.

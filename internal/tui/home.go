@@ -22,12 +22,12 @@ import (
 // home is the Home panel.
 func (m *Model) home(width int) []string {
 	ca := m.caText()
-	hostsDot, hostsText := styleRunning.Render("●"), clean(m.hostsState)
+	hostsDot, hostsText := glyph(markRunning).String(), clean(m.hostsState)
 	if _, ok := hostsWord(m.hostsState); !ok {
-		hostsDot = styleAmber.Render("●")
+		hostsDot = glyph(markAttention).String()
 	}
 	if m.hostsState == hostsChecking {
-		hostsDot, hostsText = styleDim.Render("●"), styleDim.Render("checking…")
+		hostsDot, hostsText = glyph(markStopped).String(), styleDim.Render("checking…")
 	}
 	running, serversUsed := 0, map[string]bool{}
 	for _, p := range m.cfg.Projects {
@@ -54,11 +54,11 @@ func (m *Model) proxyLines(width int) []string {
 	https, http := m.b.Ports()
 	switch {
 	case m.proxyErr != nil:
-		return field("proxy", styleRed.Render("● down"), width)
+		return field("proxy", glyph(markError).String()+styleRed.Render(" down"), width)
 	case !m.started:
 		return field("proxy", styleAmber.Render("◐ starting"), width)
 	}
-	return field("proxy", styleRunning.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
+	return field("proxy", glyph(markRunning).String()+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }
 
 // pageURL is the address of Nearhost's page as the home panel shows it, or
@@ -138,7 +138,7 @@ type problem struct {
 func (m *Model) problems() []problem {
 	var out []problem
 	if m.proxyErr != nil {
-		out = append(out, problem{dot: seg{styleRed, "●"}, title: "proxy", what: "down", why: m.proxyErr.Error(),
+		out = append(out, problem{dot: glyph(markError), title: "proxy", what: "down", why: m.proxyErr.Error(),
 			fix: proxyFix(m.proxyErr, goos, executable())})
 	}
 	for _, srv := range m.cfg.Servers {
@@ -146,7 +146,7 @@ func (m *Model) problems() []problem {
 		if h.Status == transport.StatusConnected && h.AgentErr != "" {
 			// Not one for r on Home to retry: the server's projects serve,
 			// and reconnecting would drop them for nothing.
-			out = append(out, problem{dot: seg{styleAmber, "●"}, title: srv.Name, what: "agents unavailable",
+			out = append(out, problem{dot: glyph(markAttention), title: srv.Name, what: "agents unavailable",
 				why: h.AgentErr, fix: agentFix(h.AgentProblem)})
 		}
 		if h.Status == transport.StatusConnected || h.Held || h.LastError == "" {
@@ -173,7 +173,7 @@ func (m *Model) problems() []problem {
 			status, _ := m.b.ServerStatus(p.Server)
 			serverUp, host = status == transport.StatusConnected, srv.SSHHost
 		}
-		out = append(out, problem{dot: seg{styleRed, "●"}, title: p.Name, what: "error", why: st.Message,
+		out = append(out, problem{dot: glyph(markError), title: p.Name, what: "error", why: st.Message,
 			fix: fixFor(st.State, st.Message, serverUp, host)})
 	}
 	return out
@@ -239,9 +239,9 @@ const caWarnAhead = 30 * 24 * time.Hour
 
 // caText says whether the local CA is trusted and when it expires.
 func (m *Model) caText() string {
-	ca := styleRunning.Render("●") + " trusted"
+	ca := glyph(markRunning).String() + " trusted"
 	if !m.caTrusted {
-		ca = styleAmber.Render("● not trusted") + ". Run nearhost trust"
+		ca = glyph(markAttention).String() + styleAmber.Render(" not trusted") + ". Run nearhost trust"
 	}
 	if m.caExpires.IsZero() {
 		return ca
@@ -249,7 +249,7 @@ func (m *Model) caText() string {
 	date := m.caExpires.Format("2006-01-02")
 	switch left := m.caExpires.Sub(m.now()); {
 	case left <= 0:
-		return styleRed.Render("● expired " + date)
+		return glyph(markError).String() + styleRed.Render(" expired "+date)
 	case left < caWarnAhead:
 		return ca + styleAmber.Render(" · expires "+date)
 	}

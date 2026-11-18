@@ -34,7 +34,7 @@ func TestSidebarLayout(t *testing.T) {
 		"                            ",
 		" ▾ local                  1 ", // the servers follow each other, as Herdr's groups do
 		"   ● website        running ",
-		" ▾ mini       ○ auth failed ",
+		" ▾ mini       ✕ auth failed ",
 		"   ○ myapp          stopped ",
 		"   ○ old            stopped ",
 	}

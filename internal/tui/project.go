@@ -28,7 +28,7 @@ func (m *Model) projectPanel(name string, width int) []string {
 	}
 	url := "https://" + clean(p.Alias)
 	title := styleTitle.Render(clean(p.Name)) + "  " + styleBeacon.Underline(true).Hyperlink(url).Render(url)
-	state := m.stateDot(st.State).String() + " " + string(st.State)
+	state := m.projectDot(st).String() + " " + string(st.State)
 	if up := m.uptime(name); up != "" {
 		state += styleDim.Render(" · up " + up)
 	}
@@ -174,11 +174,11 @@ func routeDot(r config.Route, st engine.ProjectStatus) seg {
 	case r.Role == config.RoleIgnore:
 		return seg{styleDim, "–"}
 	case st.State == engine.StateRunning:
-		return seg{styleRunning, "●"}
+		return glyph(markRunning)
 	case st.State == engine.StateStarting, st.State == engine.StateDegraded:
-		return seg{styleAmber, "◐"}
+		return busyMark()
 	}
-	return seg{styleDim, "○"}
+	return glyph(markStopped)
 }
 
 // uptime is how long a project has been running, or "" when it is not.

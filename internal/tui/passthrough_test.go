@@ -219,7 +219,7 @@ func TestPassAndProposalQueue(t *testing.T) {
 	ask(m, passReq(m))
 	propose(m, Proposal{ID: "p2", Origin: "mini", Path: "/work/here"})
 	m.form = nil
-	wantScreen(t, m, "agents    ● 3 requests waiting · p to review")
+	wantScreen(t, m, "agents    ! 3 requests waiting · p to review")
 	settle(m, press(m, "p"))
 	wait(m, askGuard)
 	wantScreen(t, m, "Proposed by an agent on mini", "path      /home/dev/code/blog")

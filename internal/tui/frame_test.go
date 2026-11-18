@@ -42,7 +42,7 @@ func TestHeaderShowsTrouble(t *testing.T) {
 	run(m, func() tea.Msg { return startedMsg{errBoom} })
 	m.firstRunShown = true
 	run(m, m.readMachine())
-	wantScreen(t, m, "proxy ● down · CA not trusted · hosts ok")
+	wantScreen(t, m, "proxy ✕ down · CA not trusted · hosts ok")
 }
 
 // Before the first look at the hosts file, the header says it is checking
@@ -52,7 +52,7 @@ func TestHeaderWhileCheckingHosts(t *testing.T) {
 	f.hostsState = "checking"
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "CA trusted · hosts checking…", "hosts     ● checking…")
+	wantScreen(t, m, "CA trusted · hosts checking…", "hosts     ○ checking…")
 	if s := screen(m); strings.Contains(s, "needs update") {
 		t.Errorf("screen warns while checking:\n%s", s)
 	}

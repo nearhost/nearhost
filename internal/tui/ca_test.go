@@ -19,7 +19,7 @@ func TestHomeShowsWhenTheCAExpires(t *testing.T) {
 	}{
 		{time.Date(2036, 10, 13, 0, 0, 0, 0, time.UTC), "local CA  ● trusted · expires 2036-10-13", "38;2;124;132;121"},
 		{now.Add(10 * 24 * time.Hour), "local CA  ● trusted · expires 2026-10-25", "38;2;242;184;75"},
-		{now.Add(-time.Hour), "local CA  ● expired 2026-10-15", "38;2;242;107;107"},
+		{now.Add(-time.Hour), "local CA  ✕ expired 2026-10-15", "38;2;242;107;107"},
 	} {
 		f := newFake(t, sampleConfig())
 		f.caExpires = c.expires

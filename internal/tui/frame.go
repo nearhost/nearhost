@@ -88,11 +88,11 @@ func (m *Model) header() string {
 func (m *Model) machineSummary() string {
 	https, _ := m.b.Ports()
 	sep := styleDim.Render(" · ")
-	proxy := styleRunning.Render("●") + fmt.Sprintf(" :%d", https)
+	proxy := glyph(markRunning).String() + fmt.Sprintf(" :%d", https)
 	proxyOK := true
 	switch {
 	case m.proxyErr != nil:
-		proxy, proxyOK = styleRed.Render("● down"), false
+		proxy, proxyOK = glyph(markError).String()+styleRed.Render(" down"), false
 	case !m.started:
 		proxy = styleAmber.Render("◐ starting")
 	}
@@ -103,12 +103,12 @@ func (m *Model) machineSummary() string {
 	hostsText, hostsOK := hostsWord(m.hostsState)
 	problems := len(m.problems())
 	if m.narrow() {
-		dot := styleRunning.Render("●")
+		dot := glyph(markRunning).String()
 		switch {
 		case !proxyOK || problems > 0:
-			dot = styleRed.Render("●")
+			dot = glyph(markError).String()
 		case !m.started || !m.caTrusted || !hostsOK:
-			dot = styleAmber.Render("●")
+			dot = glyph(markAttention).String()
 		}
 		return dot + " " + styleDim.Render("proxy · CA · hosts")
 	}
