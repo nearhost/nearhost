@@ -537,20 +537,139 @@ func TestProjectWebPutsAliasOnPrimary(t *testing.T) {
 	}
 }
 
-func TestHostClashIgnoresDisabledAndMatchesPatternsExactly(t *testing.T) {
+func TestHostClashIgnoresDisabledAndMatchesPatterns(t *testing.T) {
 	pro := Project{Name: "pro", Alias: "pro.test", Enabled: true, Routes: []Route{{Port: 8211, Role: RoleWeb, Hosts: []string{"*.local.redactr.pro"}}}}
-	old := Project{Name: "old", Alias: "old.test", Enabled: false, Routes: []Route{{Port: 1, Role: RoleWeb, Hosts: []string{"auth.local.redactr.pro"}}}}
+	old := Project{Name: "old", Alias: "old.test", Enabled: false, Routes: []Route{{Port: 1, Role: RoleWeb, Hosts: []string{"files.local.redactr.pro"}}}}
 	c := &Config{Projects: []Project{pro, old}}
-	platform := Project{Name: "platform", Alias: "platform.test", Routes: []Route{{Port: 8210, Role: RoleWeb, Hosts: []string{"auth.local.redactr.pro"}}}}
-	if _, _, clash := c.HostClash(platform); clash {
-		t.Error("an exact host under another project's pattern is not a clash, and disabled projects don't count")
-	}
 	copyPro := Project{Name: "pro2", Alias: "pro2.test", Routes: []Route{{Port: 9, Role: RoleWeb, Hosts: []string{"*.LOCAL.redactr.pro"}}}}
 	if host, other, clash := c.HostClash(copyPro); !clash || other != "pro" || host != "*.LOCAL.redactr.pro" {
 		t.Errorf("HostClash = %q %q %v, want the pattern, pro, true", host, other, clash)
 	}
 	if _, _, clash := c.HostClash(pro); clash {
 		t.Error("a project does not clash with itself")
+	}
+	// old is disabled, so its exact host under pro's pattern is no clash,
+	// and pro's pattern does not clash with it either.
+	if _, _, clash := (&Config{Projects: []Project{old}}).HostClash(pro); clash {
+		t.Error("a disabled project's host clashed")
+	}
+	other := Project{Name: "own", Alias: "own.test", Enabled: true, Routes: []Route{{Port: 1, Role: RoleWeb, Hosts: []string{"*.own.io", "api.own.io"}}}}
+	if _, _, clash := (&Config{Projects: []Project{pro}}).HostClash(other); clash {
+		t.Error("a pattern and an exact host in the same project clashed")
+	}
+}
+
+// An exact host under another enabled project's pattern is a clash, whichever
+// of the two is checked, and the contested name is the exact host.
+func TestHostClashExactHostUnderAnotherPattern(t *testing.T) {
+	a := Project{Name: "a", Alias: "myapp.test", Enabled: true, Routes: []Route{{Port: 80, Role: RoleWeb, Hosts: []string{"*.myapp.test"}}}}
+	b := Project{Name: "b", Alias: "b.test", Enabled: true, Routes: []Route{{Port: 81, Role: RoleWeb, Hosts: []string{"API.myapp.test"}}}}
+	if host, other, clash := (&Config{Projects: []Project{a}}).HostClash(b); !clash || host != "API.myapp.test" || other != "a" {
+		t.Errorf("exact host added: HostClash = %q %q %v, want API.myapp.test, a, true", host, other, clash)
+	}
+	if host, other, clash := (&Config{Projects: []Project{b}}).HostClash(a); !clash || host != "API.myapp.test" || other != "b" {
+		t.Errorf("pattern added: HostClash = %q %q %v, want API.myapp.test, b, true", host, other, clash)
+	}
+	// A main name under the pattern is an exact host as well.
+	c := Project{Name: "c", Alias: "shop.myapp.test", Enabled: true, Routes: []Route{{Port: 82, Role: RoleWeb}}}
+	if _, other, clash := (&Config{Projects: []Project{a}}).HostClash(c); !clash || other != "a" {
+		t.Errorf("main name under the pattern: HostClash other %q clash %v", other, clash)
+	}
+	// The pattern's own parent, with one label fewer, is not under it.
+	d := Project{Name: "d", Alias: "d.test", Enabled: true, Routes: []Route{{Port: 83, Role: RoleWeb, Hosts: []string{"x.api.myapp.test"}}}}
+	if _, _, clash := (&Config{Projects: []Project{a}}).HostClash(d); clash {
+		t.Error("a host with more labels than the pattern clashed")
+	}
+}
+
+func TestHostConflictSaysWhatToDo(t *testing.T) {
+	cases := []struct {
+		c    HostConflict
+		want string
+	}{
+		{HostConflict{Project: "b", Host: "x.io", Other: "a", OtherHost: "x.io"},
+			`host x.io is already served by project "a"`},
+		{HostConflict{Project: "b", Host: "api.myapp.test", Other: "a", OtherHost: "*.myapp.test"},
+			`host api.myapp.test of project "b" falls under *.myapp.test, which project "a" serves, so "b" would take requests and cookies meant for "a"; serve api.myapp.test from "a", or remove it from "b"`},
+		{HostConflict{Project: "a", Host: "*.myapp.test", Other: "b", OtherHost: "api.myapp.test"},
+			`pattern *.myapp.test of project "a" covers api.myapp.test, which project "b" serves, so "b" would take requests and cookies meant for "a"; remove api.myapp.test from "b", or give "a" a pattern that does not cover it`},
+	}
+	for _, c := range cases {
+		if got := c.c.Error(); got != c.want {
+			t.Errorf("Error() = %s\nwant %s", got, c.want)
+		}
+	}
+}
+
+// PatternConflicts lists each exact host of an enabled project under another
+// enabled project's pattern once, with the exact host's project first.
+func TestPatternConflicts(t *testing.T) {
+	c := &Config{Projects: []Project{
+		{Name: "a", Alias: "myapp.test", Enabled: true, Routes: []Route{{Port: 80, Role: RoleWeb, Hosts: []string{"*.myapp.test", "own.myapp.test"}}}},
+		{Name: "b", Alias: "b.test", Enabled: true, Routes: []Route{{Port: 81, Role: RoleWeb, Hosts: []string{"api.myapp.test"}}}},
+		{Name: "off", Alias: "off.test", Routes: []Route{{Port: 82, Role: RoleWeb, Hosts: []string{"old.myapp.test"}}}},
+		{Name: "same", Alias: "same.test", Enabled: true, Routes: []Route{{Port: 83, Role: RoleWeb, Hosts: []string{"same.myapp.test"}}}},
+	}}
+	want := []HostConflict{
+		{Project: "b", Host: "api.myapp.test", Other: "a", OtherHost: "*.myapp.test"},
+		{Project: "same", Host: "same.myapp.test", Other: "a", OtherHost: "*.myapp.test"},
+	}
+	if got := c.PatternConflicts(); !reflect.DeepEqual(got, want) {
+		t.Errorf("PatternConflicts() = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestLoopbackOnOwnPort(t *testing.T) {
+	p := Project{Routes: []Route{
+		{Port: 8080, Role: RoleWeb},
+		{Port: 443, Role: RoleWeb},
+		{Port: 5432, Role: RoleLoopback},
+		{Port: 6327, Role: RoleLoopback},
+		{Port: 80, Role: RoleIgnore},
+	}}
+	if port, ok := p.LoopbackOnOwnPort(443, 80, 6327); !ok || port != 6327 {
+		t.Errorf("LoopbackOnOwnPort = %d %v, want 6327 true", port, ok)
+	}
+	if _, ok := p.LoopbackOnOwnPort(443, 80, 0); ok {
+		t.Error("a loopback port matched with no page port")
+	}
+}
+
+// Update refuses a main name that is not a valid domain when a change brings
+// it in, and keeps one that was already in the file, so a config that loads
+// still saves other changes.
+func TestUpdateRefusesANewInvalidAlias(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	web := []Route{{Port: 80, Role: RoleWeb}}
+	if err := Save(path, &Config{Projects: []Project{{Name: "old", Server: LocalServer, Alias: "Old.test", Routes: web}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("a config with an invalid alias no longer loads: %v", err)
+	}
+	if err := Update(path, func(c *Config) error {
+		c.Projects = append(c.Projects, Project{Name: "new", Server: LocalServer, Alias: "new.test", Routes: web})
+		c.Projects[0].Routes = []Route{{Port: 81, Role: RoleWeb}}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update refused a change that keeps the alias already there: %v", err)
+	}
+	for _, alias := range []string{"*.x.test", "localhost", "a_b.test"} {
+		err := Update(path, func(c *Config) error {
+			c.Projects = append(c.Projects, Project{Name: "bad", Server: LocalServer, Alias: alias, Routes: web})
+			return nil
+		})
+		want := fmt.Sprintf(`project "bad": invalid main name %q`, alias)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("new alias %q: Update = %v, want %q", alias, err, want)
+		}
+	}
+	err := Update(path, func(c *Config) error {
+		c.Projects[1].Alias = "New.test"
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), `project "new": invalid main name "New.test"`) {
+		t.Errorf("changed alias: Update = %v", err)
 	}
 }
 

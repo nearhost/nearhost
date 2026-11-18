@@ -421,6 +421,41 @@ func TestDoctorFailsOnAnInvalidAlias(t *testing.T) {
 	wantContains(t, out, "FAIL  aliases          project \"legacy\": invalid main name", "FAIL  hosts block      missing web.test\n")
 }
 
+// A config saved before an exact host under another project's pattern was
+// refused still loads; doctor warns about the pair and says which project
+// gets the requests. A loopback route on Nearhost's own port fails, as
+// `nearhost up` does not forward it.
+func TestDoctorReportsPatternConflictsAndOwnPortLoopbacks(t *testing.T) {
+	path := configHome(t)
+	shop := localProject("shop", 8000, true)
+	shop.Routes[0].Hosts = []string{"*.shop.test"}
+	api := localProject("api", 8001, true)
+	api.Routes[0].Hosts = []string{"api.shop.test"}
+	db := localProject("db", 8002, true)
+	db.Routes = append(db.Routes, config.Route{Port: 6327, Role: config.RoleLoopback})
+	off := localProject("off", 8003, false)
+	off.Routes = append(off.Routes, config.Route{Port: 443, Role: config.RoleLoopback})
+	saveConfig(t, path, &config.Config{Projects: []config.Project{shop, api, db, off}})
+	f := healthy()
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--no-hosts")
+	if err == nil || err.Error() != "1 check failed" {
+		t.Errorf("err = %v\n%s", err, out)
+	}
+	wantContains(t, out,
+		"warn  host patterns    project \"api\" serves api.shop.test, under the pattern *.shop.test of project \"shop\": requests for api.shop.test go to \"api\", not \"shop\"\n"+
+			"      fix: In "+path+", remove the exact host from its project or serve it from the pattern's project; Nearhost refuses to add or change either project while both claim the host\n",
+		"FAIL  loopback ports   project \"db\": loopback port 6327 is Nearhost's own port\n")
+	if strings.Contains(out, `"off"`) {
+		t.Errorf("a disabled project was reported:\n%s", out)
+	}
+
+	// The page port is not Nearhost's when it serves no page.
+	out, err = execute(t, newDoctorCmd(f.backend()), "doctor", "--no-hosts", "--web-port", "0")
+	if err != nil || strings.Contains(out, "loopback ports") {
+		t.Errorf("--web-port 0: err = %v\n%s", err, out)
+	}
+}
+
 // doctor says when the local CA expires.
 func TestDoctorSaysWhenTheCAExpires(t *testing.T) {
 	doctorConfig(t)

@@ -151,30 +151,132 @@ func (p Project) AllHosts() []string {
 }
 
 // HostClash finds the first host of p that another enabled project also
-// serves. Two exact hosts clash when equal and two patterns when written the
-// same, ignoring case. An exact host under another project's pattern does not
-// clash, because the exact host is the more specific match and wins. The
-// project in c named like p is skipped, so a stored project can be checked
-// against its own config. The approval and enable flows in later stages
-// will use it to refuse a clash before the config is saved.
+// serves, and returns the name the two contest with that project's name. Two
+// exact hosts clash when equal and two patterns when written the same,
+// ignoring case. An exact host under another project's pattern clashes too,
+// in either direction: the proxy sends the exact host to its own project, so
+// that project would take requests, and cookies set for the pattern's
+// domain, meant for the other. The contested name is then the exact host.
+// The project in c named like p is skipped, so a stored project can be
+// checked against its own config, and a pattern and an exact host of one
+// project never clash. Callers check it before a change is saved; Validate
+// does not, so a config that already holds such a pair still loads, and
+// doctor warns about it.
 func (c *Config) HostClash(p Project) (host, other string, clash bool) {
-	taken := map[string]string{}
+	hc, ok := c.HostConflict(p)
+	if !ok {
+		return "", "", false
+	}
+	host = hc.Host
+	if hostname.IsPattern(hc.Host) && !hostname.IsPattern(hc.OtherHost) {
+		host = hc.OtherHost
+	}
+	return host, hc.Other, true
+}
+
+// HostConflict is a host of one project that another enabled project
+// claims: the same name, or an exact host and a pattern that matches it.
+type HostConflict struct {
+	Project, Host    string // the project checked and its host
+	Other, OtherHost string // the project that claims Host, and how
+}
+
+// Error says which projects claim which name and what to do about it.
+func (h HostConflict) Error() string {
+	switch exact, otherExact := !hostname.IsPattern(h.Host), !hostname.IsPattern(h.OtherHost); {
+	case exact && !otherExact:
+		return fmt.Sprintf("host %s of project %q falls under %s, which project %q serves, so %q would take requests and cookies meant for %q; serve %s from %q, or remove it from %q",
+			h.Host, h.Project, h.OtherHost, h.Other, h.Project, h.Other, h.Host, h.Other, h.Project)
+	case !exact && otherExact:
+		return fmt.Sprintf("pattern %s of project %q covers %s, which project %q serves, so %q would take requests and cookies meant for %q; remove %s from %q, or give %q a pattern that does not cover it",
+			h.Host, h.Project, h.OtherHost, h.Other, h.Other, h.Project, h.OtherHost, h.Other, h.Project)
+	}
+	return fmt.Sprintf("host %s is already served by project %q", h.Host, h.Other)
+}
+
+// HostConflict is HostClash with both sides of the clash.
+func (c *Config) HostConflict(p Project) (HostConflict, bool) {
+	for _, h := range p.AllHosts() {
+		if other, otherHost, ok := c.ClaimedBy(p.Name, h); ok {
+			return HostConflict{Project: p.Name, Host: h, Other: other, OtherHost: otherHost}, true
+		}
+	}
+	return HostConflict{}, false
+}
+
+// ClaimedBy finds the first enabled project other than the one named name
+// that claims host, as HostClash has it, and the host it claims it with.
+func (c *Config) ClaimedBy(name, host string) (other, otherHost string, ok bool) {
 	for _, q := range c.Projects {
-		if q.Name == p.Name || !q.Enabled {
+		if q.Name == name || !q.Enabled {
 			continue
 		}
-		for _, h := range q.AllHosts() {
-			if _, seen := taken[strings.ToLower(h)]; !seen {
-				taken[strings.ToLower(h)] = q.Name
+		for _, qh := range q.AllHosts() {
+			if hostsClash(host, qh) {
+				return q.Name, qh, true
 			}
 		}
 	}
-	for _, h := range p.AllHosts() {
-		if name, ok := taken[strings.ToLower(h)]; ok {
-			return h, name, true
+	return "", "", false
+}
+
+// PatternConflicts lists each exact host of an enabled project that a
+// pattern of another enabled project matches, in project and host order,
+// the exact host's project first. A config saved before such a pair was
+// refused may hold one; the proxy sends the exact host to its own project.
+func (c *Config) PatternConflicts() []HostConflict {
+	var out []HostConflict
+	for _, p := range c.Projects {
+		if !p.Enabled {
+			continue
+		}
+		for _, h := range p.AllHosts() {
+			if hostname.IsPattern(h) {
+				continue
+			}
+		others:
+			for _, q := range c.Projects {
+				if q.Name == p.Name || !q.Enabled {
+					continue
+				}
+				for _, qh := range q.AllHosts() {
+					if hostname.IsPattern(qh) && hostname.Match(strings.ToLower(qh), h) {
+						out = append(out, HostConflict{Project: p.Name, Host: h, Other: q.Name, OtherHost: qh})
+						break others
+					}
+				}
+			}
 		}
 	}
-	return "", "", false
+	return out
+}
+
+// hostsClash reports whether two projects serving a and b would both claim
+// a name: a and b are equal ignoring case, or one is a pattern that matches
+// the other, an exact host.
+func hostsClash(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	switch pa, pb := hostname.IsPattern(a), hostname.IsPattern(b); {
+	case pa && !pb:
+		return hostname.Match(strings.ToLower(a), b)
+	case pb && !pa:
+		return hostname.Match(strings.ToLower(b), a)
+	}
+	return false
+}
+
+// LoopbackOnOwnPort finds the first loopback route of p whose port is one of
+// own, the ports Nearhost itself listens on on this machine. A 0 in own
+// stands for a port Nearhost does not serve and matches nothing.
+func (p Project) LoopbackOnOwnPort(own ...int) (int, bool) {
+	for _, r := range p.Routes {
+		if r.Role == RoleLoopback && r.Port != 0 && slices.Contains(own, r.Port) {
+			return r.Port, true
+		}
+	}
+	return 0, false
 }
 
 // ValidProjectAlias reports why alias cannot be a project's main name, or
@@ -601,6 +703,23 @@ func (c *Config) RemoveProject(name string) bool {
 		}
 	}
 	return false
+}
+
+// validateChange checks what a change must not bring in although a config
+// already holding it still loads, so a config that loaded before keeps
+// loading: a main name of a project that is new since before, or changed,
+// that ValidProjectAlias refuses. The engine does not start a project with
+// such a name, and doctor reports one already in the file.
+func (c *Config) validateChange(before *Config) error {
+	for _, p := range c.Projects {
+		if old, ok := before.Project(p.Name); ok && old.Alias == p.Alias {
+			continue
+		}
+		if err := ValidProjectAlias(p.Alias); err != nil {
+			return fmt.Errorf("project %q: %w", p.Name, err)
+		}
+	}
+	return nil
 }
 
 // Validate checks the invariants the rest of nearhost relies on.
