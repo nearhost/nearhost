@@ -25,6 +25,10 @@ func newLsCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if len(cfg.Projects) == 0 {
+				if msg := missingConfigMessage(cmd); msg != "" {
+					_, err := fmt.Fprintln(out, msg)
+					return err
+				}
 				_, err := fmt.Fprintln(out, "No projects yet. Add one with `nearhost add <path>`.")
 				return err
 			}

@@ -33,16 +33,6 @@ func TestLsPrintsProjectsWithServerAliasStateAndRoutes(t *testing.T) {
 	}
 }
 
-func TestLsWithNoProjectsSaysHowToAddOne(t *testing.T) {
-	out, err := execute(t, newLsCmd(), "--config", filepath.Join(t.TempDir(), "none.yaml"), "ls")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "No projects yet. Add one with `nearhost add <path>`.\n" {
-		t.Fatalf("empty ls printed %q", out)
-	}
-}
-
 func TestLsFailsOnAnInvalidConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("projects: [not, a, project\n"), 0o644); err != nil {

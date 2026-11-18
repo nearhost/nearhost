@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -192,6 +194,27 @@ func configPath(cmd *cobra.Command) (string, error) {
 		return path, nil
 	}
 	return config.DefaultPath()
+}
+
+// missingConfigMessage is the "no projects" line for a config file named with
+// --config that does not exist, or "" when it does not apply: no --config was
+// given (the default file is missing on a fresh install, which is no mistake),
+// or the file exists, or cannot be read for another reason, which loadConfig
+// reports. The path is made absolute, so a relative path that resolves from the
+// wrong directory shows where Nearhost looked. `nearhost add` creates the file.
+func missingConfigMessage(cmd *cobra.Command) string {
+	given, err := cmd.Flags().GetString("config")
+	if err != nil || given == "" {
+		return ""
+	}
+	if _, err := os.Stat(given); !errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	path, err := filepath.Abs(given)
+	if err != nil {
+		path = filepath.Clean(given)
+	}
+	return "No projects in " + printable(path) + " (the file does not exist yet)."
 }
 
 // loadConfig loads and validates the config and returns it with its path. A
