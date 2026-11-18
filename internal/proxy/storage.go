@@ -2,7 +2,15 @@ package proxy
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -154,4 +162,207 @@ func whileInUse(f func() error) error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// localIssuer is the storage key of the local CA's issuer. certmagic keeps
+// each certificate it issues under certificates/local/<name>/, as
+// <name>.crt (the chain, leaf first), <name>.key and <name>.json. The
+// proxy's config names no other issuer, so every certificate there is one
+// the local CA can issue again on the next handshake.
+const localIssuer = "local"
+
+// expiredCertMargin is how long a certificate must have been expired before
+// pruneExpiredCertificates removes it, so that one Caddy would renew at
+// once, or one a clock set back a little shows as just expired, stays.
+const expiredCertMargin = 24 * time.Hour
+
+// maxCertFile bounds how much of a certificate file is read: a chain is a
+// few kilobytes.
+const maxCertFile = 1 << 20
+
+// pruneExpiredCertificates removes from storageRoot each certificate of the
+// local CA that expired more than expiredCertMargin before now, with its key
+// and metadata. Caddy renews only the certificates of names it still
+// serves, so without this one for each name a pattern host was asked for
+// stays on disk for good. A clock far ahead makes every certificate look
+// expired and removes them all; the local CA issues each again, as the
+// config loads or as its name is next asked for, so the cost is the issuing.
+//
+// Only a directory under certificates/local that holds nothing but files
+// named for it, a .crt among them, is removed: the CA under pki, the lock
+// files, other issuers' certificates and anything unexpected stay. Nothing
+// is reached through a symlink. Problems are logged and never fatal.
+//
+// Call it with caddyMu held while Caddy is not running, before the config
+// that starts it is loaded, so Caddy never meets a directory being removed.
+func pruneExpiredCertificates(storageRoot string, now time.Time) {
+	root, err := os.OpenRoot(storageRoot)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			emit("", "Couldn't check the proxy's storage for expired certificates: "+err.Error())
+		}
+		return
+	}
+	defer root.Close()
+	issuerDir := filepath.Join("certificates", localIssuer)
+	for _, dir := range []string{"certificates", issuerDir} {
+		info, err := root.Lstat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		switch {
+		case err != nil:
+		case info.Mode()&fs.ModeSymlink != 0:
+			err = errors.New("it is a symlink")
+		case !info.IsDir():
+			err = errors.New("it is not a folder")
+		}
+		if err != nil {
+			emit("", fmt.Sprintf("Couldn't check %s for expired certificates: %v", filepath.Join(storageRoot, dir), err))
+			return
+		}
+	}
+	entries, err := readDir(root, issuerDir)
+	if err != nil {
+		emit("", fmt.Sprintf("Couldn't check %s for expired certificates: %v", filepath.Join(storageRoot, issuerDir), err))
+		return
+	}
+
+	var removed, skipped, failed int
+	var skipName, failName string
+	var skipErr, failErr error
+	for _, e := range entries {
+		switch e.Type() & fs.ModeType {
+		case fs.ModeDir:
+		case fs.ModeSymlink:
+			skipped++
+			if skipName == "" {
+				skipName, skipErr = e.Name(), errors.New("it is a symlink")
+			}
+			continue
+		default:
+			continue
+		}
+		dir := filepath.Join(issuerDir, e.Name())
+		files, notAfter, err := certDir(root, dir, e.Name())
+		if err != nil {
+			skipped++
+			if skipName == "" {
+				skipName, skipErr = e.Name(), err
+			}
+			continue
+		}
+		if now.Sub(notAfter) <= expiredCertMargin {
+			continue
+		}
+		if err := removeCertDir(root, dir, files); err != nil {
+			failed++
+			if failName == "" {
+				failName, failErr = e.Name(), err
+			}
+			continue
+		}
+		removed++
+	}
+
+	if removed > 0 {
+		emit("", fmt.Sprintf("Removed %s from the proxy's storage.", count(removed, "expired certificate")))
+	}
+	if skipped > 0 {
+		verb := "don't"
+		if skipped == 1 {
+			verb = "doesn't"
+		}
+		emit("", fmt.Sprintf("Left %s in %s alone that %s hold just a certificate and its key, such as %s: %v.",
+			count(skipped, "certificate folder"), filepath.Join(storageRoot, issuerDir), verb, skipName, skipErr))
+	}
+	if failed > 0 {
+		emit("", fmt.Sprintf("Couldn't remove %s from the proxy's storage, such as %s: %v.",
+			count(failed, "expired certificate"), failName, failErr))
+	}
+}
+
+// count is n and noun, plural unless n is 1.
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// readDir lists the directory name in root.
+func readDir(root *os.Root, name string) ([]fs.DirEntry, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+// certDir checks that dir, the directory of the certificate for name, holds
+// only regular files named name.crt, name.key and name.json, name.crt among
+// them, and returns those files and when the leaf, the first certificate in
+// name.crt, expires.
+func certDir(root *os.Root, dir, name string) (files []string, notAfter time.Time, err error) {
+	entries, err := readDir(root, dir)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	crt := name + ".crt"
+	hasCrt := false
+	for _, e := range entries {
+		switch e.Name() {
+		case crt, name + ".key", name + ".json":
+		default:
+			return nil, time.Time{}, fmt.Errorf("it holds %s", e.Name())
+		}
+		if !e.Type().IsRegular() {
+			return nil, time.Time{}, fmt.Errorf("its %s is not a file", e.Name())
+		}
+		hasCrt = hasCrt || e.Name() == crt
+		files = append(files, e.Name())
+	}
+	if !hasCrt {
+		return nil, time.Time{}, fmt.Errorf("it has no %s", crt)
+	}
+	f, err := root.Open(filepath.Join(dir, crt))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxCertFile))
+	f.Close()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, time.Time{}, fmt.Errorf("its %s holds no certificate", crt)
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("its %s: %w", crt, err)
+	}
+	return files, leaf.NotAfter, nil
+}
+
+// removeCertDir removes files from dir, the .crt last, and then dir. A file
+// that cannot be removed, such as one another program holds open on Windows,
+// stops it there, and the .crt it keeps until last lets the next start
+// find the rest and try again.
+func removeCertDir(root *os.Root, dir string, files []string) error {
+	var crt string
+	for _, f := range files {
+		if strings.HasSuffix(f, ".crt") {
+			crt = f
+			continue
+		}
+		if err := root.Remove(filepath.Join(dir, f)); err != nil {
+			return err
+		}
+	}
+	if err := root.Remove(filepath.Join(dir, crt)); err != nil {
+		return err
+	}
+	return root.Remove(dir)
 }
