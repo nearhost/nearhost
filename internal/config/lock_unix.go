@@ -14,7 +14,7 @@ import (
 // other holder, in this process or another, since each open of the file is
 // a lock of its own.
 func lockFile(path string) (unlock func(), err error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
