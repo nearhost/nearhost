@@ -61,6 +61,9 @@ type uiBackend struct {
 	// handled as Ctrl-C: the first quits, the next cuts the shutdown
 	// short.
 	stops func() (sigs <-chan os.Signal, release func())
+	// rootMade, when set, is given the interface's way to run steps as
+	// root. Tests use it to lend the terminal; it is nil otherwise.
+	rootMade func(asRoot)
 	// engineMade, when set, is given the engine as soon as it is made,
 	// before anything is published on its bus. Tests use it to listen;
 	// it is nil otherwise.
@@ -128,12 +131,37 @@ func notifyUIStop() (<-chan os.Signal, func()) {
 // handed to it as.
 var ctrlC = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 
-// forwardStops hands each signal on sigs to p as Ctrl-C until done is
-// closed.
-func forwardStops(p *tea.Program, sigs <-chan os.Signal, done <-chan struct{}) {
+// stopForwarder hands the stop signals to the interface as Ctrl-C.
+type stopForwarder struct {
+	// lent is set while the interface has lent the terminal to a step,
+	// such as sudo's password prompt.
+	lent atomic.Bool
+}
+
+// suspend wraps run, the interface's way to lend the terminal, so that f
+// knows when a step has it.
+func (f *stopForwarder) suspend(run func(context.Context, func(io.Reader, io.Writer) error) error) func(context.Context, func(io.Reader, io.Writer) error) error {
+	return func(ctx context.Context, fn func(io.Reader, io.Writer) error) error {
+		return run(ctx, func(in io.Reader, out io.Writer) error {
+			f.lent.Store(true)
+			defer f.lent.Store(false)
+			return fn(in, out)
+		})
+	}
+}
+
+// forward hands each signal on sigs to p as Ctrl-C until done is closed.
+// An interrupt while a step has the terminal is the user's Ctrl-C at that
+// step, which shares this process's group: it ends the step and is not
+// handed on. A hangup or terminate then waits for the step to end, and
+// quits.
+func (f *stopForwarder) forward(p *tea.Program, sigs <-chan os.Signal, done <-chan struct{}) {
 	for {
 		select {
-		case <-sigs:
+		case sig := <-sigs:
+			if sig == os.Interrupt && f.lent.Load() {
+				continue
+			}
 			p.Send(ctrlC)
 		case <-done:
 			return
@@ -189,7 +217,8 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		return err
 	}
 	var suspender tui.Suspender
-	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: suspender.Run, width: terminalWidth, turn: make(chan struct{}, 1)}
+	var stops stopForwarder
+	root := asRoot{sudo: b.root, ask: suspender.Password, suspend: stops.suspend(suspender.Run), width: terminalWidth, turn: make(chan struct{}, 1)}
 	// Every sudo the interface runs, the CA's included, which cannot be
 	// given a prompt of its own, words its prompt as Nearhost's.
 	os.Setenv("SUDO_PROMPT", terminalPrompt)
@@ -200,6 +229,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// Each start, and r on a project, re-reads its .nearhostrc. A change
 	// that needs no approval is saved as the interface's own edits are, one
 	// at a time with them; one that does waits for a to review it.
+	if b.rootMade != nil {
+		b.rootMade(root)
+	}
 	back := &uiEngine{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
 	opts.Review = reviewProject(back.saveRc)
 	ag, agentNote := serveAgents(b.up.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
@@ -250,7 +282,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		suspender.Attach(p)
 		proposals.Attach(p)
 		if sigs != nil {
-			go forwardStops(p, sigs, running)
+			go stops.forward(p, sigs, running)
 		}
 	})
 }

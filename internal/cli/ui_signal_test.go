@@ -33,6 +33,8 @@ type signalRun struct {
 	passwordOpened chan struct{}
 	// ended receives what the run returned.
 	ended chan error
+	// root runs the interface's steps as root.
+	root asRoot
 }
 
 // startSignalRun starts bare `nearhost` and returns once its program is
@@ -53,6 +55,7 @@ func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 		r.shutdowns.Add(1)
 		return eng.Shutdown(ctx)
 	}
+	b.rootMade = func(root asRoot) { r.root = root }
 	var opened sync.Once
 	b.run = func(m *tui.Model, attach func(*tea.Program)) error {
 		p := tea.NewProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30), tea.WithoutSignalHandler(),
@@ -138,4 +141,76 @@ func TestTheInterfaceQuitsOnAHangupWithThePasswordBoxOpen(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Error("the password box was not answered")
 	}
+}
+
+// lend lends the terminal to a step, as sudo's password prompt has it, and
+// returns once the step runs. The step ends, and the interface takes the
+// terminal back, when release is called; lent then receives its result.
+func (r *signalRun) lend(t *testing.T) (release func(), lent <-chan error) {
+	t.Helper()
+	running, end, result := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		result <- r.root.suspend(context.Background(), func(io.Reader, io.Writer) error {
+			close(running)
+			<-end
+			return nil
+		})
+	}()
+	select {
+	case <-running:
+	case err := <-result:
+		t.Fatalf("the step did not run: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the step did not run")
+	}
+	return func() { close(end) }, result
+}
+
+// waitTaken waits until the interface has taken every signal sent, and a
+// moment more for it to act on the last.
+func (r *signalRun) waitTaken(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(r.sigs) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the interface did not take the signal")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
+// Ctrl-C at sudo's password prompt in the terminal interrupts nearhost too,
+// as sudo shares its process group. It ends the prompt only: the interface
+// comes back. A hangup meanwhile quits once the prompt has ended.
+func TestAnInterruptWhileTheTerminalIsLentEndsOnlyTheStep(t *testing.T) {
+	r, _ := startSignalRun(t)
+	release, lent := r.lend(t)
+	r.sigs <- os.Interrupt
+	r.waitTaken(t)
+	release()
+	if err := <-lent; err != nil {
+		t.Fatalf("the step returned %v", err)
+	}
+	select {
+	case err := <-r.ended:
+		r.ended <- err // for the cleanup
+		t.Fatalf("the interface quit on Ctrl-C at the step: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if n := r.shutdowns.Load(); n != 0 {
+		t.Fatalf("the interface asked for %d shutdowns on Ctrl-C at the step", n)
+	}
+
+	release, lent = r.lend(t)
+	r.sigs <- syscall.SIGHUP
+	r.waitTaken(t)
+	if n := r.shutdowns.Load(); n != 0 {
+		t.Fatalf("the interface asked for %d shutdowns while the step ran", n)
+	}
+	release()
+	if err := <-lent; err != nil {
+		t.Fatalf("the step returned %v", err)
+	}
+	r.waitQuit(t, "a hangup while the terminal was lent")
 }
