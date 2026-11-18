@@ -117,6 +117,11 @@ func sudoCommand(ctx context.Context, c Command) (*exec.Cmd, error) {
 	}
 	cmd := exec.CommandContext(ctx, bin, append(append(args, c.Path), c.Args...)...)
 	cmd.Stdin = strings.NewReader(c.Input)
+	if !c.Interactive {
+		// Callers read sudo's refusal by its English wording. A prompt keeps
+		// the user's language.
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+	}
 	// Terminate rather than kill: at its password prompt sudo then puts the
 	// terminal back the way it was.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
