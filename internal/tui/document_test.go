@@ -46,6 +46,23 @@ func TestDocPrompt(t *testing.T) {
 		"Nearhost will serve files in /home/dev/code/app, except dotfiles.")
 }
 
+// A request from an agent with Always allow for other folders says that
+// Always allow adds this one; a request without a grant says nothing of it.
+func TestDocPromptForANewFolder(t *testing.T) {
+	const says = "Claude Code can show documents in other folders on apollo without asking. Always allow adds this folder to them."
+	m, _, _ := projectFormModel(t)
+	r := docReq(m)
+	r.NewRoot = true
+	askDoc(m, r)
+	wantText(t, m, "Nearhost will serve files in /home/dev/code/app, except dotfiles.", says)
+
+	m, _, _ = projectFormModel(t)
+	askDoc(m, docReq(m))
+	if strings.Contains(screenText(m), "other folders") {
+		t.Errorf("a request with no grant mentions other folders:\n%s", screen(m))
+	}
+}
+
 func TestDocPromptSaysAHiddenFolderServesOnlyDocuments(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.homeDir = func() (string, error) { return "/Users/dev", nil }

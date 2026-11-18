@@ -40,6 +40,21 @@ var ErrBadDocument = errors.New("not a document nearhost can show")
 // served anywhere a URL can point to.
 var ErrNoPage = errors.New("nearhost's page isn't served")
 
+// DocGrants keeps the documents grants given with Always allow. A grant
+// covers the roots the user approved for it, each a tree's root as
+// Resolved gives it, and opens a document without a prompt only in those.
+type DocGrants interface {
+	// Allow gives requester a grant on server that covers root alone,
+	// replacing any it had, and returns its new token.
+	Allow(server, requester, root string) (string, error)
+	// Cover adds root to requester's grant on server when token is its
+	// token, which it keeps, and reports whether it was.
+	Cover(server, requester, token, root string) (bool, error)
+	// Check reports whether token is requester's on server, and whether
+	// its grant covers root.
+	Check(server, requester, token, root string) (valid, covered bool, err error)
+}
+
 // DocRequest is a document waiting for the user's answer to show it.
 type DocRequest struct {
 	ID        string
@@ -52,6 +67,9 @@ type DocRequest struct {
 	// CanAlways is set when Always allow may be offered, which it never is
 	// to RequesterUnknown.
 	CanAlways bool
+	// NewRoot is set when the request came with a valid token whose grant
+	// does not cover Root, so Always allow adds Root to that grant.
+	NewRoot bool
 	// Expires is when the request stops waiting for an answer.
 	Expires time.Time
 }
@@ -71,6 +89,10 @@ type docRecord struct {
 	url     string
 	// token is the Always allow token, until the agent has read it.
 	token string
+	// granted is the valid token a prompted request came with, kept while
+	// it waits so that Always allow adds Root to that token's grant, which
+	// the agent keeps, rather than giving it a new one.
+	granted string
 	// held is set when a No to another of its origin's requests ended it.
 	held bool
 	seq  uint64 // creation order, for lists
@@ -93,7 +115,9 @@ func (s *Server) documenting() bool {
 // errors for Yes or Always allow on an id that is unknown or has ended, and
 // for Always allow on a request that may not have it. No on an unknown id
 // does nothing and returns nil; No on a request that has ended returns the
-// same error Yes would. When the grant for Always allow fails to save, the
+// same error Yes would. Always allow on a request that came with a valid
+// token adds its root to that token's grant, and otherwise gives a new
+// grant for its root. When the grant for Always allow fails to save, the
 // error wraps ErrAllowNotSaved. Every error for a request that is no longer
 // waiting wraps ErrPassEnded. A No to a waiting request refuses its
 // origin's next document requests for backoff, and ends its other prompts
@@ -135,6 +159,7 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 		return nil
 	}
 	r.opening = true
+	granted := r.granted
 	s.mu.Unlock()
 
 	url, err := s.opts.Shower.Show(ctx, r.Origin, r.Root, r.Doc, r.Requester)
@@ -149,7 +174,7 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 	var token string
 	var allowErr error
 	if a == AnswerAlways {
-		token, allowErr = s.opts.DocGrants.Allow(r.Origin, r.Requester)
+		token, allowErr = s.allowDoc(r, granted)
 	}
 
 	s.mu.Lock()
@@ -162,12 +187,27 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 	return nil
 }
 
+// allowDoc saves Always allow for r. With granted, the valid token r came
+// with, it adds r's root to that token's grant and returns no token, as the
+// agent keeps the one it has. Otherwise, or once that token has been
+// revoked or replaced, it gives r's requester a new grant for r's root and
+// returns its token.
+func (s *Server) allowDoc(r *docRecord, granted string) (string, error) {
+	if granted != "" {
+		ok, err := s.opts.DocGrants.Cover(r.Origin, r.Requester, granted, r.Root)
+		if err != nil || ok {
+			return "", err
+		}
+	}
+	return s.opts.DocGrants.Allow(r.Origin, r.Requester, r.Root)
+}
+
 // endDocLocked ends a pending request, unless it has already ended.
 func (s *Server) endDocLocked(r *docRecord, state State, reason string) {
 	if r.state != StatePending {
 		return
 	}
-	r.state, r.reason, r.ended = state, reason, s.opts.Now()
+	r.state, r.reason, r.ended, r.granted = state, reason, s.opts.Now(), ""
 	close(r.done)
 }
 
@@ -191,6 +231,7 @@ func (s *Server) openDocLocked(r *docRecord, url, token string) {
 	}
 	s.docOpens++
 	r.state, r.url, r.token, r.ended, r.opened = StateOpen, url, token, s.opts.Now(), s.docOpens
+	r.granted = ""
 	close(r.done)
 }
 
@@ -198,7 +239,7 @@ func (s *Server) openDocLocked(r *docRecord, url, token string) {
 // is being shown.
 func (s *Server) expireDocLocked(r *docRecord) {
 	if r.state == StatePending && !r.opening && !s.opts.Now().Before(r.Expires) {
-		r.state, r.ended = StateExpired, r.Expires
+		r.state, r.ended, r.granted = StateExpired, r.Expires, ""
 		close(r.done)
 	}
 }

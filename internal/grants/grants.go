@@ -29,7 +29,8 @@ const KindPassthrough = "passthrough"
 const KindDocuments = "documents"
 
 // Grant is one "Always allow" answer. The token hash is kept in the file and
-// is never returned.
+// is never returned, nor are the hashes of the roots a documents grant
+// covers.
 type Grant struct {
 	Server, Requester, Kind string
 	Created                 time.Time
@@ -42,6 +43,10 @@ type record struct {
 	Kind      string    `json:"kind"`
 	SHA256    string    `json:"sha256"`
 	Created   time.Time `json:"created"`
+	// Roots holds the rootHash of each folder a documents grant covers. A
+	// file written before grants had roots has none, so its grants cover
+	// no folder until one is added.
+	Roots []string `json:"roots,omitempty"`
 }
 
 // fileData is the whole grants file.
@@ -62,6 +67,13 @@ func Open(path string) *Store { return &Store{path: path} }
 // hash is the hex SHA-256 of token.
 func hash(token string) string {
 	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// rootHash is the hex SHA-256 of root on server, as the file keeps it, so
+// the file does not name the folders it covers.
+func rootHash(server, root string) string {
+	sum := sha256.Sum256([]byte(server + "\x00" + root))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -156,9 +168,10 @@ func (s *Store) save(d fileData) error {
 	return nil
 }
 
-// Allow creates the grant for server, requester and kind, or replaces its
-// token, and returns the new token: 32 random bytes in unpadded base64url.
-func (s *Store) Allow(server, requester, kind string) (string, error) {
+// Allow creates the grant for server, requester and kind, or replaces it,
+// and returns its new token: 32 random bytes in unpadded base64url. The
+// grant covers roots and no other: a replaced grant drops the roots it had.
+func (s *Store) Allow(server, requester, kind string, roots ...string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -172,6 +185,9 @@ func (s *Store) Allow(server, requester, kind string) (string, error) {
 		return "", err
 	}
 	rec := record{Server: server, Requester: requester, Kind: kind, SHA256: hash(token), Created: time.Now().UTC()}
+	for _, root := range roots {
+		rec.cover(rootHash(server, root))
+	}
 	replaced := false
 	for i, r := range d.Grants {
 		if r.same(server, requester, kind) {
@@ -189,6 +205,83 @@ func (s *Store) Allow(server, requester, kind string) (string, error) {
 	return token, nil
 }
 
+// cover adds the root hash h to r, unless r has it.
+func (r *record) cover(h string) {
+	if !r.covers(h) {
+		r.Roots = append(r.Roots, h)
+	}
+}
+
+// covers reports whether r holds the root hash h. It compares each in
+// constant time and looks at all of them.
+func (r record) covers(h string) bool {
+	found := 0
+	for _, have := range r.Roots {
+		found |= subtle.ConstantTimeCompare([]byte(have), []byte(h))
+	}
+	return found == 1
+}
+
+// find is the index of the grant for server, requester and kind whose token
+// is token, or -1. An empty token is never valid, and the token's hash is
+// compared in constant time.
+func (d fileData) find(server, requester, kind, token string) int {
+	if token == "" {
+		return -1
+	}
+	want := hash(token)
+	for i, r := range d.Grants {
+		if r.same(server, requester, kind) {
+			if subtle.ConstantTimeCompare([]byte(r.SHA256), []byte(want)) == 1 {
+				return i
+			}
+			return -1
+		}
+	}
+	return -1
+}
+
+// Covers reports whether token is the current token of the grant for
+// server, requester and kind, and whether that grant covers root.
+func (s *Store) Covers(server, requester, kind, token, root string) (valid, covered bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.load()
+	if err != nil {
+		return false, false, err
+	}
+	i := d.find(server, requester, kind, token)
+	if i < 0 {
+		return false, false, nil
+	}
+	return true, d.Grants[i].covers(rootHash(server, root)), nil
+}
+
+// Cover adds root to the grant for server, requester and kind when token is
+// its current token, keeping the token, and reports whether it was. The file
+// is not written when the grant covers root already.
+func (s *Store) Cover(server, requester, kind, token, root string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	i := d.find(server, requester, kind, token)
+	if i < 0 {
+		return false, nil
+	}
+	h := rootHash(server, root)
+	if d.Grants[i].covers(h) {
+		return true, nil
+	}
+	d.Grants[i].cover(h)
+	if err := s.save(d); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Check reports whether token is the current token of the grant for server,
 // requester and kind. It compares in constant time, and an empty token is
 // never valid.
@@ -199,16 +292,7 @@ func (s *Store) Check(server, requester, kind, token string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if token == "" {
-		return false, nil
-	}
-	want := hash(token)
-	for _, r := range d.Grants {
-		if r.same(server, requester, kind) {
-			return subtle.ConstantTimeCompare([]byte(r.SHA256), []byte(want)) == 1, nil
-		}
-	}
-	return false, nil
+	return d.find(server, requester, kind, token) >= 0, nil
 }
 
 // List returns the grants for server, sorted by requester. A missing file is

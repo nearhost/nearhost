@@ -299,7 +299,7 @@ func TestReviewerForwardsDocRequest(t *testing.T) {
 	r := reviewer{&to}
 	expires := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	r.ReviewDocument(agentapi.DocRequest{ID: "d1", Origin: "mini", Requester: "claude-code", Session: "s1",
-		Label: "plan", Root: "/code/app", Doc: "plans/x.md", CanAlways: true, Expires: expires})
+		Label: "plan", Root: "/code/app", Doc: "plans/x.md", CanAlways: true, NewRoot: true, Expires: expires})
 	r.Shown("mini", "claude-code", "plans/y.md")
 
 	_, _, _, docs, shown := to.Waiting()
@@ -308,7 +308,7 @@ func TestReviewerForwardsDocRequest(t *testing.T) {
 	}
 	got := docs[0]
 	if got.ID != "d1" || got.Origin != "mini" || got.Requester != "claude-code" || got.Session != "s1" ||
-		got.Label != "plan" || got.Root != "/code/app" || got.Doc != "plans/x.md" || !got.CanAlways || !got.Expires.Equal(expires) {
+		got.Label != "plan" || got.Root != "/code/app" || got.Doc != "plans/x.md" || !got.CanAlways || !got.NewRoot || !got.Expires.Equal(expires) {
 		t.Fatalf("request: %#v", got)
 	}
 	if s := shown[0]; s.Origin != "mini" || s.Requester != "claude-code" || s.Doc != "plans/y.md" {
@@ -372,7 +372,7 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	if status, out := postDoc(t, a.sock, doc, repo, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
 		t.Fatalf("no token: %d %v", status, out)
 	}
-	token, err := a.grants.Allow(config.LocalServer, "claude-code", grants.KindDocuments)
+	token, err := a.grants.Allow(config.LocalServer, "claude-code", grants.KindDocuments, realDir(t, repo))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,6 +390,70 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	}
 	if status, out := postDoc(t, a.sock, doc, repo, pass); status != 401 {
 		t.Fatalf("passthrough token: %d %v", status, out)
+	}
+}
+
+// A folder approved with Always allow in one run opens with no prompt in
+// the next, which reads the grants file afresh. Another folder still asks,
+// and Always allow there adds it to the grant and keeps the token.
+func TestAlwaysAllowedFolderSurvivesARestart(t *testing.T) {
+	home := agentHome(t)
+	repo, other := gitRepo(t), gitRepo(t)
+	start := func() *agents {
+		t.Helper()
+		opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443}
+		a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 8443, agentEnv{})
+		if a == nil {
+			t.Fatal(note)
+		}
+		a.review(&tui.Proposals{})
+		a.attach(engine.New(&config.Config{}, opts))
+		a.docs.open = func(string) error { return nil }
+		return a
+	}
+	// always asks for doc in root without a token, answers Always allow,
+	// and returns the reply's token, which is absent when none is given.
+	always := func(a *agents, doc, root, token string) any {
+		t.Helper()
+		status, out := postDoc(t, a.sock, doc, root, token)
+		id, _ := out["id"].(string)
+		if status != 202 || id == "" {
+			t.Fatalf("ask for %s: %d %v", doc, status, out)
+		}
+		if err := a.answerDocument(context.Background(), id, tui.AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		out = getJSON(t, a.sock, "/v1/documents/"+id)
+		if out["state"] != "open" {
+			t.Fatalf("after Always allow: %v", out)
+		}
+		return out["token"]
+	}
+	repoDoc, otherDoc := filepath.Join(repo, "docs", "p.md"), filepath.Join(other, "docs", "p.md")
+
+	a := start()
+	token, _ := always(a, repoDoc, repo, "").(string)
+	if token == "" {
+		t.Fatal("Always allow gave no token")
+	}
+	a.close()
+
+	b := start()
+	if status, out := postDoc(t, b.sock, repoDoc, repo, token); status != 201 || out["state"] != "open" {
+		t.Fatalf("the approved folder after a restart: %d %v", status, out)
+	}
+	if got := always(b, otherDoc, other, token); got != nil {
+		t.Fatalf("Always allow on a new folder gave a new token %v", got)
+	}
+	b.close()
+
+	c := start()
+	defer c.close()
+	for _, doc := range []string{repoDoc, otherDoc} {
+		root := filepath.Dir(filepath.Dir(doc))
+		if status, out := postDoc(t, c.sock, doc, root, token); status != 201 || out["state"] != "open" {
+			t.Fatalf("%s after a second restart: %d %v", doc, status, out)
+		}
 	}
 }
 

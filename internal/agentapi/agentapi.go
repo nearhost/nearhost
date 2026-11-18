@@ -212,7 +212,7 @@ type Options struct {
 	Shower Shower
 	// DocGrants keeps the documents grants given with Always allow, apart
 	// from the passthrough grants in Grants.
-	DocGrants Grants
+	DocGrants DocGrants
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

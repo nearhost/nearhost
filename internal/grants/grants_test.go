@@ -312,3 +312,139 @@ func TestSaveSyncsDirectoryBestEffort(t *testing.T) {
 		t.Fatalf("synced %v, want the directory %s", synced, filepath.Dir(path))
 	}
 }
+
+// rootHashOf is the hash the file keeps for root on server.
+func rootHashOf(server, root string) string {
+	sum := sha256.Sum256([]byte(server + "\x00" + root))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestRootsCoverOnlyThoseApproved(t *testing.T) {
+	s, path := tempStore(t)
+	token, err := s.Allow("apollo", "claude-code", KindDocuments, "/srv/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, server, token, root string
+		valid, covered            bool
+	}{
+		{"approved root", "apollo", token, "/srv/app", true, true},
+		{"new root", "apollo", token, "/srv/other", true, false},
+		{"a folder below the root", "apollo", token, "/srv/app/docs", true, false},
+		{"other token", "apollo", "!" + token[1:], "/srv/app", false, false},
+		{"empty token", "apollo", "", "/srv/app", false, false},
+		{"other server", "mini", token, "/srv/app", false, false},
+	} {
+		valid, covered, err := s.Covers(c.server, "claude-code", KindDocuments, c.token, c.root)
+		if err != nil || valid != c.valid || covered != c.covered {
+			t.Errorf("%s: Covers = %v, %v, %v; want %v, %v", c.name, valid, covered, err, c.valid, c.covered)
+		}
+	}
+
+	// Cover adds a root and keeps the token.
+	if ok, err := s.Cover("apollo", "claude-code", KindDocuments, token, "/srv/other"); err != nil || !ok {
+		t.Fatalf("Cover = %v, %v", ok, err)
+	}
+	if valid, covered, _ := s.Covers("apollo", "claude-code", KindDocuments, token, "/srv/other"); !valid || !covered {
+		t.Errorf("after Cover: %v, %v", valid, covered)
+	}
+	// Twice is once.
+	if ok, err := s.Cover("apollo", "claude-code", KindDocuments, token, "/srv/other"); err != nil || !ok {
+		t.Fatalf("Cover again = %v, %v", ok, err)
+	}
+	// A wrong token adds nothing.
+	if ok, err := s.Cover("apollo", "claude-code", KindDocuments, "!"+token[1:], "/srv/third"); err != nil || ok {
+		t.Fatalf("Cover with a wrong token = %v, %v", ok, err)
+	}
+	if _, covered, _ := s.Covers("apollo", "claude-code", KindDocuments, token, "/srv/third"); covered {
+		t.Error("a wrong token added a root")
+	}
+
+	// The file holds each root's hash, once, and never the root.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "/srv/") {
+		t.Fatalf("the file holds a root:\n%s", data)
+	}
+	for _, root := range []string{"/srv/app", "/srv/other"} {
+		if n := strings.Count(string(data), rootHashOf("apollo", root)); n != 1 {
+			t.Errorf("%s's hash is in the file %d times:\n%s", root, n, data)
+		}
+	}
+
+	// A new token covers only the roots it was given.
+	again, err := s.Allow("apollo", "claude-code", KindDocuments, "/srv/third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, covered, _ := s.Covers("apollo", "claude-code", KindDocuments, again, "/srv/app"); covered {
+		t.Error("a new token kept the old roots")
+	}
+	if _, covered, _ := s.Covers("apollo", "claude-code", KindDocuments, again, "/srv/third"); !covered {
+		t.Error("a new token does not cover its root")
+	}
+}
+
+// A root approved in one run is covered in the next, which reads the file
+// afresh.
+func TestRootsSurviveAReload(t *testing.T) {
+	s, path := tempStore(t)
+	token, err := s.Allow("apollo", "claude-code", KindDocuments, "/srv/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.Cover("apollo", "claude-code", KindDocuments, token, "/srv/other"); err != nil || !ok {
+		t.Fatalf("Cover = %v, %v", ok, err)
+	}
+	next := Open(path)
+	for _, root := range []string{"/srv/app", "/srv/other"} {
+		if valid, covered, err := next.Covers("apollo", "claude-code", KindDocuments, token, root); err != nil || !valid || !covered {
+			t.Errorf("%s after a reload: %v, %v, %v", root, valid, covered, err)
+		}
+	}
+	if _, covered, _ := next.Covers("apollo", "claude-code", KindDocuments, token, "/srv/new"); covered {
+		t.Error("a root never approved is covered after a reload")
+	}
+}
+
+// A file written before grants had roots loads, each grant with none: its
+// token is still good, and every root asks once.
+func TestOldFileHasNoRoots(t *testing.T) {
+	s, path := tempStore(t)
+	token := "old-token"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := fmt.Sprintf(`{"grants": [{"server": "apollo", "requester": "claude-code", "kind": "documents", "sha256": %q, "created": "2026-10-28T12:00:00Z"}]}`, hash(token))
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid, covered, err := s.Covers("apollo", "claude-code", KindDocuments, token, "/srv/app")
+	if err != nil || !valid || covered {
+		t.Fatalf("Covers = %v, %v, %v; want a valid token that covers nothing", valid, covered, err)
+	}
+	if ok, err := s.Cover("apollo", "claude-code", KindDocuments, token, "/srv/app"); err != nil || !ok {
+		t.Fatalf("Cover = %v, %v", ok, err)
+	}
+	if valid, covered, _ := s.Covers("apollo", "claude-code", KindDocuments, token, "/srv/app"); !valid || !covered {
+		t.Errorf("after Cover: %v, %v", valid, covered)
+	}
+}
+
+// A passthrough grant is given no roots, and its file entry has none.
+func TestPassthroughHasNoRoots(t *testing.T) {
+	s, path := tempStore(t)
+	if _, err := s.Allow("apollo", "claude-code", KindPassthrough); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "roots") {
+		t.Fatalf("a passthrough grant has roots:\n%s", data)
+	}
+}

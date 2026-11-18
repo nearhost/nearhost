@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -83,12 +84,95 @@ func (f *fakeShower) showed() []DocRequest {
 	return append([]DocRequest(nil), f.shows...)
 }
 
+// fakeDocGrants keeps one token per server and requester, and the roots
+// each token's grant covers.
+type fakeDocGrants struct {
+	mu     sync.Mutex
+	tokens map[[2]string]string
+	roots  map[[2]string][]string
+	allows [][3]string // server, requester and root of each Allow
+	covers [][3]string // server, requester and root of each Cover that took
+	err    error
+	// allowErr fails Allow and Cover.
+	allowErr error
+}
+
+// newFakeDocGrants is a fakeDocGrants with no grants.
+func newFakeDocGrants() *fakeDocGrants {
+	return &fakeDocGrants{tokens: map[[2]string]string{}, roots: map[[2]string][]string{}}
+}
+
+// grant gives requester on server token, covering roots.
+func (f *fakeDocGrants) grant(server, requester, token string, roots ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tokens[[2]string{server, requester}] = token
+	f.roots[[2]string{server, requester}] = roots
+}
+
+func (f *fakeDocGrants) Allow(server, requester, root string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.allowErr != nil {
+		return "", f.allowErr
+	}
+	f.allows = append(f.allows, [3]string{server, requester, root})
+	tok := fmt.Sprintf("tok-%d", len(f.allows))
+	f.tokens[[2]string{server, requester}] = tok
+	f.roots[[2]string{server, requester}] = []string{root}
+	return tok, nil
+}
+
+func (f *fakeDocGrants) Cover(server, requester, token, root string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.allowErr != nil {
+		return false, f.allowErr
+	}
+	key := [2]string{server, requester}
+	if token == "" || f.tokens[key] != token {
+		return false, nil
+	}
+	f.covers = append(f.covers, [3]string{server, requester, root})
+	if !slices.Contains(f.roots[key], root) {
+		f.roots[key] = append(f.roots[key], root)
+	}
+	return true, nil
+}
+
+func (f *fakeDocGrants) Check(server, requester, token, root string) (valid, covered bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return false, false, f.err
+	}
+	key := [2]string{server, requester}
+	if token == "" || f.tokens[key] != token {
+		return false, false, nil
+	}
+	return true, slices.Contains(f.roots[key], root), nil
+}
+
+// allowed is the server, requester and root of each Allow.
+func (f *fakeDocGrants) allowed() [][3]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.allows)
+}
+
+// covered is the server, requester and root of each Cover that took.
+func (f *fakeDocGrants) covered() [][3]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.covers)
+}
+
 type docEnv struct {
 	s      *Server
 	r      *fakeReviewer
 	sh     *fakeShower
-	g      *fakeGrants // the documents grants
-	pg     *fakeGrants // the passthrough grants
+	g      *fakeDocGrants // the documents grants
+	pg     *fakeGrants    // the passthrough grants
 	c      *clock
 	local  string
 	remote string // apollo's socket
@@ -101,7 +185,7 @@ func newDocServer(t *testing.T, review bool) *docEnv {
 	e := &docEnv{
 		r:  &fakeReviewer{},
 		sh: &fakeShower{served: map[[2]string]string{}},
-		g:  &fakeGrants{tokens: map[[2]string]string{}},
+		g:  newFakeDocGrants(),
 		pg: &fakeGrants{tokens: map[[2]string]string{}},
 		c:  &clock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)},
 	}
@@ -352,16 +436,19 @@ func TestDocumentAlways(t *testing.T) {
 	if _, ok := out["token"]; ok || out["state"] != "open" {
 		t.Fatalf("second poll: %v", out)
 	}
-	if got := e.g.allowed(); len(got) != 1 || got[0] != [2]string{"apollo", "claude-code"} {
+	if got := e.g.allowed(); len(got) != 1 || got[0] != [3]string{"apollo", "claude-code", "/srv/app"} {
 		t.Fatalf("allowed %v", got)
 	}
 	if len(e.pg.allowed()) != 0 {
 		t.Fatal("the passthrough grants were given one")
 	}
 
-	// A token opens a new tree without a prompt.
-	st, out := call(t, e.remote, "POST", "/v1/documents",
-		`{"path": "/srv/other/spec.md", "root": "/srv/other", "requester": "claude-code", "token": "tok-1"}`)
+	// After a restart no tree is served, and the token alone opens a
+	// document in the root it was given for, without a prompt.
+	e.sh.mu.Lock()
+	clear(e.sh.served)
+	e.sh.mu.Unlock()
+	st, out := e.ask(t, docBody("spec.md", "claude-code", `, "token": "tok-1"`))
 	if st != 201 || out["state"] != "open" || out["url"] != "https://localhost:6327/d/tree/spec.md" {
 		t.Fatalf("with the token: %d %v", st, out)
 	}
@@ -374,8 +461,96 @@ func TestDocumentAlways(t *testing.T) {
 	if got := e.r.shownDocs(); len(got) != 1 || got[0] != [3]string{"apollo", "claude-code", "spec.md"} {
 		t.Fatalf("shown %v", got)
 	}
+	if p := e.r.docPrompts()[0]; p.NewRoot {
+		t.Fatalf("a request with no token was a new root: %+v", p)
+	}
+}
 
-	st, out = call(t, e.remote, "POST", "/v1/documents",
+// A valid token opens a document without a prompt only under a root its
+// grant covers. Under another root the user is asked, with the box naming
+// the root; Yes does not add it, and Always allow adds it to the grant
+// whose token the agent keeps.
+func TestDocumentTokenCoversItsRoots(t *testing.T) {
+	e := newDocServer(t, true)
+	e.g.grant("apollo", "claude-code", "good", "/srv/app")
+	other := `{"path": "/srv/other/spec.md", "root": "/srv/other", "requester": "claude-code", "token": "good"}`
+	// unserve forgets the trees the server serves, as a restart does.
+	unserve := func() {
+		e.sh.mu.Lock()
+		clear(e.sh.served)
+		e.sh.mu.Unlock()
+	}
+
+	if st, out := e.ask(t, docBody("plan.md", "claude-code", `, "token": "good"`)); st != 201 || out["state"] != "open" {
+		t.Fatalf("a covered root: %d %v", st, out)
+	}
+	st, out := e.ask(t, other)
+	if st != 202 || out["id"] == nil {
+		t.Fatalf("a new root: %d %v", st, out)
+	}
+	ps := e.r.docPrompts()
+	if len(ps) != 1 || ps[0].Root != "/srv/other" || ps[0].Doc != "spec.md" || !ps[0].NewRoot || !ps[0].CanAlways {
+		t.Fatalf("prompts %+v", ps)
+	}
+	// Yes opens it once and adds nothing.
+	if err := e.s.AnswerDocument(context.Background(), out["id"].(string), AnswerYes); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+out["id"].(string), ""); out["state"] != "open" || out["token"] != nil {
+		t.Fatalf("after yes: %v", out)
+	}
+	if len(e.g.covered()) != 0 || len(e.g.allowed()) != 0 {
+		t.Fatalf("yes saved a grant: covered %v, allowed %v", e.g.covered(), e.g.allowed())
+	}
+	unserve()
+	e.c.add(reopenWindow)
+	st, out = e.ask(t, other)
+	if st != 202 {
+		t.Fatalf("a new root after yes: %d %v", st, out)
+	}
+	// Always allow adds the root to the grant, and gives no new token.
+	id := out["id"].(string)
+	if err := e.s.AnswerDocument(context.Background(), id, AnswerAlways); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "open" || out["token"] != nil {
+		t.Fatalf("after always allow: %v", out)
+	}
+	if got := e.g.covered(); len(got) != 1 || got[0] != [3]string{"apollo", "claude-code", "/srv/other"} {
+		t.Fatalf("covered %v", got)
+	}
+	if len(e.g.allowed()) != 0 {
+		t.Fatalf("always allow gave a new grant: %v", e.g.allowed())
+	}
+	unserve()
+	e.c.add(reopenWindow)
+	for _, body := range []string{other, docBody("plan.md", "claude-code", `, "token": "good"`)} {
+		if st, out := e.ask(t, body); st != 201 || out["state"] != "open" {
+			t.Fatalf("with the old token: %d %v", st, out)
+		}
+	}
+	if n := len(e.r.docPrompts()); n != 2 {
+		t.Fatalf("%d prompts, want 2", n)
+	}
+
+	// A token replaced while its prompt waits gets a new grant for the root.
+	_, out = e.ask(t, `{"path": "/srv/third/a.md", "root": "/srv/third", "requester": "claude-code", "token": "good"}`)
+	e.g.grant("apollo", "claude-code", "newer", "/srv/app")
+	id = out["id"].(string)
+	if err := e.s.AnswerDocument(context.Background(), id, AnswerAlways); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["token"] != "tok-1" {
+		t.Fatalf("after a replaced token: %v", out)
+	}
+	if got := e.g.allowed(); len(got) != 1 || got[0] != [3]string{"apollo", "claude-code", "/srv/third"} {
+		t.Fatalf("allowed %v", got)
+	}
+}
+
+func TestDocumentWrongToken(t *testing.T) {
+	e := newDocServer(t, true)
+	st, out := call(t, e.remote, "POST", "/v1/documents",
 		`{"path": "/srv/third/spec.md", "root": "/srv/third", "requester": "claude-code", "token": "wrong"}`)
 	if st != 401 || !strings.Contains(fmt.Sprint(out["error"]), "revoked or never existed") {
 		t.Fatalf("a wrong token: %d %v", st, out)
@@ -451,7 +626,7 @@ func TestDocumentRepeats(t *testing.T) {
 // reopenWindow gets the first answer again and opens no second tab.
 func TestDocumentOpenedTwiceOpensOnce(t *testing.T) {
 	e := newDocServer(t, true)
-	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	e.g.grant("apollo", "claude-code", "good", "/srv/app")
 	body := docBody("plan.md", "claude-code", `, "token": "good"`)
 	st, first := e.ask(t, body)
 	if st != 201 || first["state"] != "open" {
@@ -498,7 +673,7 @@ func TestDocumentOpenedTwiceOpensOnce(t *testing.T) {
 // the gate that releases Show.
 func openingTwice(t *testing.T, e *docEnv) (first, second <-chan callResult, gate chan struct{}) {
 	t.Helper()
-	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
+	e.g.grant("apollo", "claude-code", "good", "/srv/app")
 	gate = make(chan struct{})
 	e.sh.mu.Lock()
 	e.sh.gate = gate
@@ -590,8 +765,8 @@ func TestDocumentOpensWithoutAPromptAreCapped(t *testing.T) {
 	if err := e.s.AnswerDocument(context.Background(), out["id"].(string), AnswerYes); err != nil {
 		t.Fatal(err)
 	}
-	e.g.tokens[[2]string{"apollo", "claude-code"}] = "good"
-	e.g.tokens[[2]string{"local", "claude-code"}] = "good"
+	e.g.grant("apollo", "claude-code", "good", "/srv/app")
+	e.g.grant("local", "claude-code", "good", "/srv/app")
 	tok := `, "token": "good"`
 	for i := range maxFreeOpens {
 		if st, out := e.ask(t, docBody(fmt.Sprintf("p%d.md", i), "claude-code", tok)); st != 201 {
@@ -611,6 +786,17 @@ func TestDocumentOpensWithoutAPromptAreCapped(t *testing.T) {
 	}
 	if n := len(e.sh.showed()); n != 1+maxFreeOpens {
 		t.Fatalf("%d shows, want %d", n, 1+maxFreeOpens)
+	}
+	// Always allow on a prompt the cap raised keeps the agent's token.
+	id := out["id"].(string)
+	if err := e.s.AnswerDocument(context.Background(), id, AnswerAlways); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "open" || out["token"] != nil {
+		t.Fatalf("after always allow: %v", out)
+	}
+	if len(e.g.allowed()) != 0 {
+		t.Fatalf("always allow gave a new grant: %v", e.g.allowed())
 	}
 	// Another origin has its own count.
 	if st, out := call(t, e.local, "POST", "/v1/documents", docBody("p6.md", "claude-code", tok)); st != 201 {
@@ -651,7 +837,7 @@ func TestDocumentHeadless(t *testing.T) {
 		t.Fatalf("%d %v", st, out)
 	}
 	// A valid token opens it all the same.
-	e.g.tokens[[2]string{"apollo", "claude-code"}] = "tok"
+	e.g.grant("apollo", "claude-code", "tok", "/srv/app")
 	if st, out := e.ask(t, docBody("plan.md", "claude-code", `, "token": "tok"`)); st != 201 || out["state"] != "open" {
 		t.Fatalf("with a token: %d %v", st, out)
 	}
@@ -659,7 +845,7 @@ func TestDocumentHeadless(t *testing.T) {
 
 func TestDocumentNoPage(t *testing.T) {
 	e := newDocServer(t, true)
-	e.g.tokens[[2]string{"apollo", "claude-code"}] = "tok"
+	e.g.grant("apollo", "claude-code", "tok", "/srv/app")
 	e.sh.showErr = fmt.Errorf("%w: --web-port is 0", ErrNoPage)
 	st, out := e.ask(t, docBody("plan.md", "claude-code", `, "token": "tok"`))
 	if st != 409 || !strings.Contains(fmt.Sprint(out["error"]), "--web-port is 0") {
@@ -816,7 +1002,7 @@ func TestDocumentRefusedWaits(t *testing.T) {
 	if st, out := call(t, e.remote, "POST", "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`); st != http.StatusAccepted {
 		t.Fatalf("a passthrough: %d %v", st, out)
 	}
-	tok, _ := e.g.Allow("apollo", "claude-code")
+	tok, _ := e.g.Allow("apollo", "claude-code", "/srv/other")
 	if st, out := e.ask(t, `{"path": "/srv/other/c.md", "root": "/srv/other", "requester": "claude-code", "token": "`+tok+`"}`); st != http.StatusCreated {
 		t.Fatalf("with a token: %d %v", st, out)
 	}

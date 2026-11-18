@@ -54,6 +54,9 @@ type PassRequest struct {
 	LocalTaken bool
 	// CanAlways is set when Always allow may be offered.
 	CanAlways bool
+	// NewRoot is set when the requester has Always allow on Origin for
+	// other folders but not Root, so Always allow adds Root to them.
+	NewRoot bool
 	// Expires is when the agent stops waiting for the answer.
 	Expires time.Time
 }
@@ -71,6 +74,9 @@ type DocRequest struct {
 	Doc       string // the document, relative to Root
 	// CanAlways is set when Always allow may be offered.
 	CanAlways bool
+	// NewRoot is set when the requester has Always allow on Origin for
+	// other folders but not Root, so Always allow adds Root to them.
+	NewRoot bool
 	// Expires is when the agent stops waiting for the answer.
 	Expires time.Time
 }

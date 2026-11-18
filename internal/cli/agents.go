@@ -365,7 +365,7 @@ func (r reviewer) Opened(p agentapi.Passthrough) { r.to.Opened(p.Origin, p.Reque
 func (r reviewer) ReviewDocument(d agentapi.DocRequest) {
 	r.to.Doc(tui.DocRequest{
 		ID: d.ID, Origin: d.Origin, Requester: d.Requester, Session: d.Session, Label: d.Label,
-		Root: d.Root, Doc: d.Doc, CanAlways: d.CanAlways, Expires: d.Expires,
+		Root: d.Root, Doc: d.Doc, CanAlways: d.CanAlways, NewRoot: d.NewRoot, Expires: d.Expires,
 	})
 }
 
@@ -443,14 +443,21 @@ func (g passGrants) Check(server, requester, token string) (bool, error) {
 // apart from the passthrough grants.
 type docGrants struct{ s *grants.Store }
 
-// Allow gives requester a documents grant on server.
-func (g docGrants) Allow(server, requester string) (string, error) {
-	return g.s.Allow(server, requester, grants.KindDocuments)
+// Allow gives requester a documents grant on server that covers root.
+func (g docGrants) Allow(server, requester, root string) (string, error) {
+	return g.s.Allow(server, requester, grants.KindDocuments, root)
 }
 
-// Check reports whether token is requester's documents token on server.
-func (g docGrants) Check(server, requester, token string) (bool, error) {
-	return g.s.Check(server, requester, grants.KindDocuments, token)
+// Cover adds root to requester's documents grant on server when token is its
+// token.
+func (g docGrants) Cover(server, requester, token, root string) (bool, error) {
+	return g.s.Cover(server, requester, grants.KindDocuments, token, root)
+}
+
+// Check reports whether token is requester's documents token on server, and
+// whether its grant covers root.
+func (g docGrants) Check(server, requester, token, root string) (valid, covered bool, err error) {
+	return g.s.Covers(server, requester, grants.KindDocuments, token, root)
 }
 
 // agentAnswer is the interface's answer as the agent API takes it.
