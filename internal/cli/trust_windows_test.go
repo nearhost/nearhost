@@ -22,6 +22,8 @@ func TestTrustSaysPlainlyWhenTheWarningWasDeclinedOnWindows(t *testing.T) {
 		t.Fatalf("trust err = %v, want %q", err, wantTrust)
 	}
 
+	// untrust only reaches the uninstall for a root the system holds.
+	f.trusted = true
 	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
 	const wantUntrust = "Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."
 	if err == nil || err.Error() != wantUntrust {
@@ -42,6 +44,8 @@ func TestTrustSaysPlainlyWhenTheErrnoSaysCancelledOnWindows(t *testing.T) {
 		t.Fatalf("trust err = %v, want %q", err, wantTrust)
 	}
 
+	// untrust only reaches the uninstall for a root the system holds.
+	f.trusted = true
 	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
 	const wantUntrust = "Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."
 	if err == nil || err.Error() != wantUntrust {
