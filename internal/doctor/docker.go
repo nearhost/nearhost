@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -42,6 +43,9 @@ func dockerFindings(in Input) []Finding {
 		env = nil
 	}
 	services, err := composeServices(data, env, composeEnv(in.Files, in.Environ))
+	if errors.Is(err, errComposeTooDeep) {
+		return []Finding{composeDepthFinding(file)}
+	}
 	if err != nil {
 		// discovery reports a Compose file that does not parse.
 		return nil
@@ -82,7 +86,11 @@ func serviceReferences(in Input, s service, projectEnv map[string]string) []stri
 		values = append(values, v)
 	}
 	for _, f := range s.EnvFiles {
-		data, err := in.Files.ReadFile(path.Clean(f))
+		name, ok := insideProject(f)
+		if !ok {
+			continue
+		}
+		data, err := in.Files.ReadFile(name)
 		if err != nil {
 			continue
 		}
@@ -114,6 +122,33 @@ func serviceReferences(in Input, s service, projectEnv map[string]string) []stri
 	}
 	sort.Strings(out)
 	return out
+}
+
+// insideProject cleans p, a path from the Compose file, and reports whether
+// it stays inside the project. One that leaves it is never read: the
+// Compose file comes with the repository, and must not point doctor at
+// files elsewhere on the machine.
+func insideProject(p string) (string, bool) {
+	p = path.Clean(p)
+	if path.IsAbs(p) || p == ".." || strings.HasPrefix(p, "../") {
+		return "", false
+	}
+	return p, true
+}
+
+// composeDepthFinding reports a Compose file whose << merges nest deeper
+// than doctor follows.
+func composeDepthFinding(file string) Finding {
+	return Finding{
+		ID:       "docker.compose-depth",
+		Severity: SeverityWarning,
+		Message:  fmt.Sprintf("%s nests << merges more than %d deep, so Nearhost did not check its services", file, maxMergeDepth),
+		File:     file,
+		Fix: Fix{
+			Kind: FixProject,
+			Text: fmt.Sprintf("Cut the chain of << merges in %s to %d levels or fewer, then run nearhost doctor again.", file, maxMergeDepth),
+		},
+	}
 }
 
 func hostGatewayFinding(file string, s service, missing []string) Finding {

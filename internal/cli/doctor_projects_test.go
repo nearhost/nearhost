@@ -63,6 +63,14 @@ func (r memReader) ReadFile(name string) ([]byte, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 }
 
+func (r memReader) Exists(name string) (bool, error) {
+	if r.m.block != nil {
+		<-r.m.block
+	}
+	_, ok := r.m.dirs[r.dir][name]
+	return ok, nil
+}
+
 // writeFiles writes files, by name, into dir.
 func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()

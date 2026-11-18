@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -254,5 +255,71 @@ func TestCAFindingReadsTheShell(t *testing.T) {
 	}
 	if got := run(files{".env": "NEARHOST_CA_CERT=" + ca + "\n"}, map[string]string{"NEARHOST_CA_CERT": "/elsewhere.crt"}); len(got) != 1 {
 		t.Errorf("not reported with .env's NEARHOST_CA_CERT overridden by the shell's: %+v", got)
+	}
+}
+
+// readLog is a files that records the names it was asked to read.
+type readLog struct {
+	files
+	read []string
+}
+
+func (r *readLog) ReadFile(name string) ([]byte, error) {
+	r.read = append(r.read, name)
+	return r.files.ReadFile(name)
+}
+
+// An env_file outside the project is never read: the Compose file arrives
+// with the repository and must not point doctor at the rest of the machine.
+func TestEnvFileOutsideTheProjectIsNotRead(t *testing.T) {
+	const compose = "services:\n  worker:\n    env_file:\n      - ../../x\n      - /etc/x\n      - sub/../../y\n"
+	r := &readLog{files: files{
+		"docker-compose.yml": compose,
+		"../../x":            "CALLBACK=https://api.local.x.io/hook\n",
+		"/etc/x":             "CALLBACK=https://api.local.x.io/hook\n",
+		"../y":               "CALLBACK=https://api.local.x.io/hook\n",
+	}}
+	in := Input{Project: dockerProject(), Added: true, Files: r, GOOS: "linux"}
+	got := Check(context.Background(), in)
+	if has(got, "docker.host-gateway") {
+		t.Errorf("a file outside the project was used: %+v", got)
+	}
+	for _, name := range r.read {
+		if strings.HasPrefix(name, "..") || strings.HasPrefix(name, "/") {
+			t.Errorf("read %s, outside the project", name)
+		}
+	}
+}
+
+// A chain of << merges deeper than doctor follows stops the walk and says so.
+func TestComposeNestedTooDeep(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 70; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: *a%d\n", i, i, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a70\n")
+	got := onlyID(dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil), "docker.compose-depth")
+	if len(got) != 1 {
+		t.Fatalf("findings = %+v", got)
+	}
+	g := got[0]
+	if g.File != "docker-compose.yml" || g.Severity != SeverityWarning || g.Fix.Kind != FixProject ||
+		g.Message != "docker-compose.yml nests << merges more than 64 deep, so Nearhost did not check its services" {
+		t.Errorf("finding = %+v", g)
+	}
+}
+
+// A chain of merges within the limit is followed to its end.
+func TestComposeNestedWithinTheLimit(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: *a%d\n", i, i, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a60\n")
+	got := dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil)
+	if has(got, "docker.compose-depth") || !has(got, "docker.host-gateway") {
+		t.Errorf("findings = %+v", ids(got))
 	}
 }

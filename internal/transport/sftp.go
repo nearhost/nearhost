@@ -123,16 +123,51 @@ func NewSFTPReader(c *sftp.Client, root string) discovery.FileReader {
 	return sftpReader{c: c, root: root}
 }
 
+// ReadFile implements discovery.FileReader. A link is followed. The file is
+// checked before it is opened, so the server never opens a FIFO and waits
+// on it, and again through the open handle, so a file swapped in between is
+// caught too. It reads no more than discovery.MaxProjectFile bytes.
 func (r sftpReader) ReadFile(name string) ([]byte, error) {
-	f, err := r.c.Open(path.Join(r.root, name))
+	p := path.Join(r.root, name)
+	info, err := r.c.Stat(p)
 	if err != nil {
-		if isNotExist(err) {
-			return nil, fmt.Errorf("%s: %w", name, fs.ErrNotExist)
-		}
+		return nil, notExistErr(name, err)
+	}
+	if err := discovery.CheckFile(name, info); err != nil {
 		return nil, err
 	}
+	f, err := r.c.Open(p)
+	if err != nil {
+		return nil, notExistErr(name, err)
+	}
 	defer f.Close()
-	return io.ReadAll(f)
+	if info, err = f.Stat(); err != nil {
+		return nil, err
+	}
+	if err := discovery.CheckFile(name, info); err != nil {
+		return nil, err
+	}
+	return discovery.ReadLimited(name, f)
+}
+
+// Exists implements discovery.FileReader.
+func (r sftpReader) Exists(name string) (bool, error) {
+	info, err := r.c.Stat(path.Join(r.root, name))
+	if err != nil {
+		if isNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
+}
+
+// notExistErr wraps a missing file's error so it satisfies fs.ErrNotExist.
+func notExistErr(name string, err error) error {
+	if isNotExist(err) {
+		return fmt.Errorf("%s: %w", name, fs.ErrNotExist)
+	}
+	return err
 }
 
 func isNotExist(err error) bool {

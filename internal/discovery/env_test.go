@@ -60,6 +60,11 @@ func (m memReader) ReadFile(name string) ([]byte, error) {
 	return []byte(s), nil
 }
 
+func (m memReader) Exists(name string) (bool, error) {
+	_, ok := m[name]
+	return ok, nil
+}
+
 func TestParseEnvStripsByteOrderMark(t *testing.T) {
 	env, err := ParseEnv([]byte("\xEF\xBB\xBFAPP_PORT=8080\n"))
 	if err != nil {

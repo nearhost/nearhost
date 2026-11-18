@@ -60,6 +60,34 @@ func TestSFTPReaderReadsAndReportsNotExist(t *testing.T) {
 	}
 }
 
+func TestSFTPReaderRefusesALargeFile(t *testing.T) {
+	client, root := inProcessSFTP(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(strings.Repeat("#", 2<<20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewSFTPReader(client, root).ReadFile(".env")
+	if err == nil || err.Error() != ".env is larger than 1 MiB" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSFTPReaderExists(t *testing.T) {
+	client, root := inProcessSFTP(t)
+	if err := os.WriteFile(filepath.Join(root, "big"), []byte(strings.Repeat("#", 2<<20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := NewSFTPReader(client, root)
+	for name, want := range map[string]bool{"big": true, "vendor": false, "missing": false} {
+		got, err := r.Exists(name)
+		if err != nil || got != want {
+			t.Errorf("Exists(%q) = %v %v, want %v", name, got, err, want)
+		}
+	}
+}
+
 func TestDiscoveryWorksOverSFTP(t *testing.T) {
 	client, root := inProcessSFTP(t)
 	os.WriteFile(filepath.Join(root, ".env"), []byte("APP_PORT=8080\nASSET_PORT=5174\n"), 0o644)

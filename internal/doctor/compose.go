@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -30,7 +31,8 @@ type service struct {
 // are expanded from env, and volume sources from dotEnv, the variables of
 // the shell and .env alone: Compose fills in the file from those, never
 // .env.local, so a mount that needs .env.local is not one. A value with a
-// variable that has no value stays as written.
+// variable that has no value stays as written. A file whose "<<" merges nest
+// deeper than maxMergeDepth gives errComposeTooDeep.
 func composeServices(data []byte, env, dotEnv map[string]string) ([]service, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
@@ -39,23 +41,24 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
 		return nil, nil
 	}
-	services := mapGet(root.Content[0], "services")
+	w := &walker{}
+	services := w.mapGet(root.Content[0], "services")
 	if services == nil || services.Kind != yaml.MappingNode {
 		return nil, nil
 	}
 	expand := func(s string) string { return expandCompose(s, env) }
 
 	var out []service
-	for _, kv := range mapPairs(services) {
+	for _, kv := range w.mapPairs(services) {
 		key, node := kv[0], resolve(kv[1])
 		s := service{Name: key.Value, Line: key.Line, Env: map[string]string{}}
 		if node.Kind != yaml.MappingNode {
 			out = append(out, s)
 			continue
 		}
-		s.HostNetwork = scalar(mapGet(node, "network_mode")) == "host"
+		s.HostNetwork = scalar(w.mapGet(node, "network_mode")) == "host"
 
-		for k, v := range keyValues(mapGet(node, "environment")) {
+		for k, v := range w.keyValues(w.mapGet(node, "environment")) {
 			switch {
 			case v == nil:
 				// A bare name takes its value from the environment Compose runs in.
@@ -66,7 +69,7 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 				s.Env[k] = expand(*v)
 			}
 		}
-		for k := range keyValues(mapGet(node, "extra_hosts")) {
+		for k := range w.keyValues(w.mapGet(node, "extra_hosts")) {
 			// The list form is "name:address" or "name=address"; the map form
 			// is already split.
 			name := k
@@ -77,18 +80,18 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 		}
 		sort.Strings(s.ExtraHosts)
 
-		for _, n := range seq(mapGet(node, "env_file")) {
+		for _, n := range seq(w.mapGet(node, "env_file")) {
 			if n.Kind == yaml.MappingNode {
-				n = mapGet(n, "path")
+				n = w.mapGet(n, "path")
 			}
 			if p := scalar(n); p != "" {
 				s.EnvFiles = append(s.EnvFiles, p)
 			}
 		}
-		for _, n := range seq(mapGet(node, "volumes")) {
+		for _, n := range seq(w.mapGet(node, "volumes")) {
 			src := ""
 			if n.Kind == yaml.MappingNode {
-				src = scalar(mapGet(n, "source"))
+				src = scalar(w.mapGet(n, "source"))
 			} else {
 				src = volumeSource(scalar(n))
 			}
@@ -97,6 +100,9 @@ func composeServices(data []byte, env, dotEnv map[string]string) ([]service, err
 			}
 		}
 		out = append(out, s)
+	}
+	if w.tooDeep {
+		return nil, errComposeTooDeep
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -155,11 +161,35 @@ func resolve(n *yaml.Node) *yaml.Node {
 	return n
 }
 
+// maxMergeDepth is how many "<<" merges deep a walk of a Compose file goes.
+// The file comes with the repository, and a long chain of anchors that
+// merge one another must not run doctor's walk on and on.
+const maxMergeDepth = 64
+
+// errComposeTooDeep is composeServices' error for a Compose file whose
+// merges nest deeper than maxMergeDepth.
+var errComposeTooDeep = errors.New("the compose file nests << merges too deep")
+
+// walker walks the nodes of one Compose file. It follows "<<" merge entries
+// at most maxMergeDepth deep, and records that it stopped there.
+type walker struct {
+	tooDeep bool
+}
+
 // mapGet returns the value of key in a mapping node, or nil. A key the
 // mapping does not hold itself is looked up in its "<<" merge entries, which
 // Compose files use to share settings through an anchor. The mapping's own
 // keys win, and an earlier merge entry wins over a later one, as in YAML.
-func mapGet(n *yaml.Node, key string) *yaml.Node {
+func (w *walker) mapGet(n *yaml.Node, key string) *yaml.Node {
+	return w.mapGetAt(n, key, 0)
+}
+
+// mapGetAt is mapGet for a mapping reached through depth merges.
+func (w *walker) mapGetAt(n *yaml.Node, key string, depth int) *yaml.Node {
+	if depth > maxMergeDepth {
+		w.tooDeep = true
+		return nil
+	}
 	n = resolve(n)
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
@@ -182,7 +212,7 @@ func mapGet(n *yaml.Node, key string) *yaml.Node {
 			sources = v.Content
 		}
 		for _, m := range sources {
-			if got := mapGet(m, key); got != nil {
+			if got := w.mapGetAt(m, key, depth+1); got != nil {
 				return got
 			}
 		}
@@ -193,7 +223,16 @@ func mapGet(n *yaml.Node, key string) *yaml.Node {
 // mapPairs lists the key and value nodes of a mapping, merge entries
 // included, with the same precedence as mapGet: own keys first, then each
 // "<<" entry in order, the first occurrence of a key winning.
-func mapPairs(n *yaml.Node) [][2]*yaml.Node {
+func (w *walker) mapPairs(n *yaml.Node) [][2]*yaml.Node {
+	return w.mapPairsAt(n, 0)
+}
+
+// mapPairsAt is mapPairs for a mapping reached through depth merges.
+func (w *walker) mapPairsAt(n *yaml.Node, depth int) [][2]*yaml.Node {
+	if depth > maxMergeDepth {
+		w.tooDeep = true
+		return nil
+	}
 	n = resolve(n)
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
@@ -224,7 +263,7 @@ func mapPairs(n *yaml.Node) [][2]*yaml.Node {
 			sources = v.Content
 		}
 		for _, m := range sources {
-			for _, kv := range mapPairs(m) {
+			for _, kv := range w.mapPairsAt(m, depth+1) {
 				add(kv[0], kv[1])
 			}
 		}
@@ -263,7 +302,7 @@ func seq(n *yaml.Node) []*yaml.Node {
 
 // keyValues reads a map or a list of "K=V" strings into key to value. A list
 // entry with no "=" and a map entry with a null value give a nil value.
-func keyValues(n *yaml.Node) map[string]*string {
+func (w *walker) keyValues(n *yaml.Node) map[string]*string {
 	n = resolve(n)
 	out := map[string]*string{}
 	if n == nil {
@@ -271,7 +310,7 @@ func keyValues(n *yaml.Node) map[string]*string {
 	}
 	switch n.Kind {
 	case yaml.MappingNode:
-		for _, kv := range mapPairs(n) {
+		for _, kv := range w.mapPairs(n) {
 			v := resolve(kv[1])
 			if v.Kind != yaml.ScalarNode || v.Tag == "!!null" {
 				out[kv[0].Value] = nil
