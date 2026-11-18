@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -296,14 +297,17 @@ func count(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// readDir lists the folder r is rooted at.
+// readDir lists the folder r is rooted at, by name: the system's own order
+// differs between file systems, and the log names the first folder.
 func readDir(r *os.Root) ([]fs.DirEntry, error) {
 	f, err := r.Open(".")
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return f.ReadDir(-1)
+	entries, err := f.ReadDir(-1)
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, err
 }
 
 // sameDir reports an error unless name in parent is a folder, not a
