@@ -906,6 +906,12 @@ func TestUpdatePnpmChecksTheShimOnPath(t *testing.T) {
 	if out, _ := runUpdate(t, f, "0.5.0", "", "--yes"); strings.Contains(out, "Another nearhost") {
 		t.Fatalf("pnpm's own shim was called another nearhost: %q", out)
 	}
+	// Newer pnpm keeps its shims in PNPM_HOME/bin.
+	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/Users/me/Library/pnpm/bin/nearhost", installed: "0.5.0",
+		env: map[string]string{"PNPM_HOME": "/Users/me/Library/pnpm/"}}
+	if out, _ := runUpdate(t, f, "0.5.0", "", "--yes"); strings.Contains(out, "Another nearhost") {
+		t.Fatalf("pnpm's shim in PNPM_HOME/bin was called another nearhost: %q", out)
+	}
 }
 
 // The version is the release's ldflags value; without one, a `go install`

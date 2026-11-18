@@ -454,8 +454,9 @@ func samePathEveryVersion(k update.Kind) bool {
 }
 
 // shadowsPnpm reports whether path, the nearhost found on PATH, is outside
-// pnpm's bin folder, PNPM_HOME, so another copy runs before pnpm's. It is
-// false when PNPM_HOME is not set.
+// pnpm's bin folder, so another copy runs before pnpm's. That folder is
+// PNPM_HOME, or PNPM_HOME/bin in newer pnpm. It is false when PNPM_HOME is
+// not set.
 func shadowsPnpm(b updateBackend, path string) bool {
 	home := b.getenv("PNPM_HOME")
 	if home == "" {
@@ -466,10 +467,12 @@ func shadowsPnpm(b updateBackend, path string) bool {
 		dir = path[:i]
 	}
 	home = strings.TrimRight(home, `/\`)
-	if b.goos == "windows" {
-		return !strings.EqualFold(dir, home)
+	for _, bin := range []string{home, home + "/bin", home + `\bin`} {
+		if dir == bin || b.goos == "windows" && strings.EqualFold(dir, bin) {
+			return false
+		}
 	}
-	return dir != home
+	return true
 }
 
 // installerVars are the install script's variables that would change what
