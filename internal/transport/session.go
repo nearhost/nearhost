@@ -260,7 +260,7 @@ type Health struct {
 	// reconnecting, or auth failed and waiting authRetryEvery to try again.
 	NextAttempt time.Time
 	// Refused is whether logins have been refused maxAuthFailures times or
-	// more in a row since the session last connected. Each attempt then is
+	// more since the session last connected. Each attempt then is
 	// a single one, followed by a wait of authRetryEvery when it fails, so
 	// a reconnect need not stop the session to try again.
 	Refused bool

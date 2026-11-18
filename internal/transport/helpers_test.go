@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func readLog(t *testing.T, path string) string {
@@ -34,80 +36,11 @@ func logLines(t *testing.T, path string) []string {
 	return strings.Split(strings.TrimSpace(readLog(t, path)), "\n")
 }
 
-// slowClock stands in for the clock and the timer of a supervisor's wait
-// after it gave up. Its time starts at 01:49 UTC, which is 14:49 in its zone,
-// and moves on only when a wait is let go.
-type slowClock struct {
-	mu      sync.Mutex
-	now     time.Time
-	zone    *time.Location
-	waits   []time.Duration // every wait asked for, in order
-	stopped int             // waits stopped before they ended
-	pending chan time.Time  // the wait under way, or nil
-}
-
-// newSlowClock puts a slowClock in v.
-func newSlowClock(v *supervision) *slowClock {
-	c := &slowClock{
-		now:  time.Date(2026, 11, 18, 1, 49, 0, 0, time.UTC),
-		zone: time.FixedZone("NZDT", 13*60*60),
-	}
-	v.now = c.Now
-	v.zone = c.zone
-	v.newTimer = c.newTimer
+// newSlowClock gives v a testutil.FakeClock, and returns it.
+func newSlowClock(v *supervision) *testutil.FakeClock {
+	c := testutil.NewFakeClock()
+	v.clock = Clock{Now: c.Now, Zone: c.Zone(), NewTimer: c.NewTimer, NewTicker: c.NewTicker}
 	return c
-}
-
-// Now is the clock's time.
-func (c *slowClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *slowClock) newTimer(d time.Duration) (<-chan time.Time, func() bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ch := make(chan time.Time, 1)
-	c.waits = append(c.waits, d)
-	c.pending = ch
-	return ch, func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.pending != ch {
-			return false
-		}
-		c.pending = nil
-		c.stopped++
-		return true
-	}
-}
-
-// Waits returns the waits asked for so far.
-func (c *slowClock) Waits() []time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]time.Duration(nil), c.waits...)
-}
-
-// Stopped returns how many waits were stopped before they ended.
-func (c *slowClock) Stopped() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.stopped
-}
-
-// Pass lets the wait under way end, the clock moving on by its length.
-func (c *slowClock) Pass(t *testing.T) {
-	t.Helper()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.pending == nil {
-		t.Fatal("no wait is under way")
-	}
-	c.now = c.now.Add(c.waits[len(c.waits)-1])
-	c.pending <- c.now
-	c.pending = nil
 }
 
 // slowRetry is a transport that refuses logins while the file refuse
@@ -116,26 +49,63 @@ func (c *slowClock) Pass(t *testing.T) {
 // while the file hold exists.
 type slowRetry struct {
 	tr       Transport
-	clock    *slowClock
+	v        *supervision
+	clock    *testutil.FakeClock
 	refuse   string
 	hold     string
 	launches func() int
 }
 
+// How a slowRetry's ssh fails: it refuses while the file refuse exists;
+// held, it refuses always and each attempt waits while the file hold
+// exists; alternating, it refuses every other attempt, starting with the
+// first, and fails another way in between.
+const (
+	refusing = iota
+	held
+	alternating
+)
+
 // slowRetryEnv makes the files of a slowRetry and returns them with the
-// fake ssh's environment for them.
-func slowRetryEnv(t *testing.T, held bool) (refuse, hold string, env []string) {
+// fake ssh's environment for them, failing as mode says.
+func slowRetryEnv(t *testing.T, mode int) (refuse, hold string, env []string) {
 	t.Helper()
 	dir := t.TempDir()
 	refuse, hold = filepath.Join(dir, "refuse"), filepath.Join(dir, "hold")
+	switch mode {
+	case alternating:
+		return refuse, hold, []string{"FAKE_SSH_ALTERNATE=1", "FAKE_SSH_ALTERNATE_FILE=" + filepath.Join(dir, "turn")}
+	case held:
+		env = []string{"FAKE_SSH_AUTH_FAIL_HOST=mini", "FAKE_SSH_AUTH_HOLD=" + hold}
+	}
 	if err := os.WriteFile(refuse, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env = []string{"FAKE_SSH_AUTH_FAIL_FILE=" + refuse}
-	if held {
-		env = append(env, "FAKE_SSH_AUTH_FAIL_HOST=mini", "FAKE_SSH_AUTH_HOLD="+hold)
+	return refuse, hold, append(env, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
+}
+
+// refusalTimes records, on the fake clock, when each refused login
+// failed. Call it before Start.
+func (r slowRetry) refusalTimes() func() []time.Time {
+	var mu sync.Mutex
+	var times []time.Time
+	r.v.Logf = func(format string, args ...any) {
+		if len(args) < 3 {
+			return
+		}
+		st, _ := args[1].(Status)
+		msg, _ := args[2].(string)
+		if (st == StatusReconnecting || st == StatusAuthFailed) && strings.Contains(msg, "Permission denied") {
+			mu.Lock()
+			times = append(times, r.clock.Now())
+			mu.Unlock()
+		}
 	}
-	return refuse, hold, env
+	return func() []time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Time(nil), times...)
+	}
 }
 
 // gaveUp waits for the transport to give up for now after its attempt
@@ -228,6 +198,11 @@ func (r slowRetry) revivesShareAnAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.tr.Start()
+	// Connecting at once, so nothing takes the session for one that gave
+	// up and replaces it before its loop has begun the attempt.
+	if h := r.tr.Health(); h.Status != StatusConnecting || !h.NextAttempt.IsZero() {
+		t.Fatalf("health %+v right after the revive, want connecting", h)
+	}
 	waitFor(t, 5*time.Second, func() bool { return r.launches() == 4 }, "the revived attempt")
 	for range 4 {
 		r.tr.Start()
@@ -242,6 +217,60 @@ func (r slowRetry) revivesShareAnAttempt(t *testing.T) {
 	}
 }
 
+// refusalsCountAcrossOtherFailures checks, for a transport whose ssh
+// alternates, that refusals count since the last connect whatever fails
+// between them: the third gives up for now. In the wait, another failure
+// is retried in backoff and the next refusal goes straight back to the
+// wait. From the start, no 10 minutes see more than three refused logins,
+// and after those, one per 15 minutes.
+func (r slowRetry) refusalsCountAcrossOtherFailures(t *testing.T) {
+	refusals := r.refusalTimes()
+	r.tr.Start()
+	r.gaveUp(t, 5, 1) // refused, other, refused, other, refused
+	for i := 2; i <= 4; i++ {
+		r.clock.Pass(t)
+		r.gaveUp(t, 2*i+3, i) // other, then refused
+	}
+	got := refusals()
+	if len(got) != 6 {
+		t.Fatalf("%d refused logins, want 6: %v", len(got), got)
+	}
+	for i, at := range got {
+		n := 0
+		for _, other := range got {
+			if !other.Before(at) && other.Sub(at) < 10*time.Minute {
+				n++
+			}
+		}
+		if n > 3 {
+			t.Fatalf("%d refused logins in the 10 minutes from %s, want at most 3: %v", n, at, got)
+		}
+		if i >= 3 && at.Sub(got[i-1]) < authRetryEvery {
+			t.Fatalf("refused login %d came %s after the one before, want %s: %v", i+1, at.Sub(got[i-1]), authRetryEvery, got)
+		}
+	}
+}
+
+// triesWhenTheWallClockPasses checks that a wait whose timer has not fired
+// ends at the next tick once the wall clock has passed the time it
+// announced, as after the computer slept.
+func (r slowRetry) triesWhenTheWallClockPasses(t *testing.T) {
+	r.tr.Start()
+	r.gaveUp(t, 3, 1)
+	waitFor(t, 5*time.Second, func() bool { return r.clock.Tickers() == 1 }, "the wall clock's ticker")
+	r.clock.Tick(t) // not yet time
+	time.Sleep(100 * time.Millisecond)
+	if n := r.launches(); n != 3 {
+		t.Fatalf("attempts = %d before the announced time, want 3", n)
+	}
+	r.clock.Jump(16 * time.Minute)
+	r.clock.Tick(t)
+	r.gaveUp(t, 4, 2)
+	if h := r.tr.Health(); !strings.HasSuffix(h.LastError, " Nearhost tries again at 15:20.") {
+		t.Fatalf("LastError = %q", h.LastError)
+	}
+}
+
 // stopEndsTheWait checks that Stop ends the long wait at once.
 func (r slowRetry) stopEndsTheWait(t *testing.T) {
 	r.tr.Start()
@@ -250,8 +279,8 @@ func (r slowRetry) stopEndsTheWait(t *testing.T) {
 	if st := r.tr.Status(); st != StatusDisconnected {
 		t.Fatalf("status after Stop = %s", st)
 	}
-	if s := r.clock.Stopped(); s != 1 {
-		t.Fatalf("waits stopped = %d, want 1", s)
+	if s, n := r.clock.Stopped(), r.clock.Tickers(); s != 1 || n != 0 {
+		t.Fatalf("timers stopped = %d, tickers running = %d, want 1 and 0", s, n)
 	}
 	time.Sleep(100 * time.Millisecond)
 	if n := r.launches(); n != 3 {

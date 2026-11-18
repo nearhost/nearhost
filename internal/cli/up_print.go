@@ -132,9 +132,13 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 	case engine.StateError:
 		fix = "resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again"
 		if status, _ := p.eng.ServerStatus(proj.Server); status != transport.StatusConnected {
-			// The project waits for its server and starts once a later
-			// attempt connects.
-			fix = fmt.Sprintf("run `ssh %s` once in a terminal to fix access; nearhost tries again by itself", host)
+			fix = sshHint(host, "run `nearhost up` again")
+			// A session with a next attempt tries by itself, and the
+			// project waits for it and starts once it connects. One that
+			// gave up for good (it cannot run at all) has none.
+			if !p.eng.ServerHealth(proj.Server).NextAttempt.IsZero() {
+				fix = fmt.Sprintf("run `ssh %s` once in a terminal to fix access; nearhost tries again by itself", host)
+			}
 		}
 	}
 	if fix != "" {

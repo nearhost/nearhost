@@ -327,13 +327,9 @@ func TestOrphanedLiveSocketIsReplacedByOwnMaster(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect after master death")
 }
 
-func TestAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
-	s, _ := newFakeSession(t, "FAKE_SSH_ALTERNATE=1")
-	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 8 || s.Status() == StatusAuthFailed }, "eight launches")
-	if s.Status() == StatusAuthFailed {
-		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", s.Launches())
-	}
+// Refusals count since the last connect, whatever fails between them.
+func TestRefusalsCountAcrossOtherFailures(t *testing.T) {
+	newSlowRetrySession(t, alternating).refusalsCountAcrossOtherFailures(t)
 }
 
 func TestStartRetriesWhenSSHCannotBeLaunched(t *testing.T) {
@@ -765,30 +761,35 @@ func TestSessionStopDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
 }
 
 // newSlowRetrySession is a session that refuses logins as slowRetry says.
-func newSlowRetrySession(t *testing.T, held bool) slowRetry {
+func newSlowRetrySession(t *testing.T, mode int) slowRetry {
 	t.Helper()
-	refuse, hold, env := slowRetryEnv(t, held)
+	refuse, hold, env := slowRetryEnv(t, mode)
 	s, _ := newFakeSession(t, env...)
-	return slowRetry{tr: s, clock: newSlowClock(&s.supervision), refuse: refuse, hold: hold, launches: s.Launches}
+	return slowRetry{tr: s, v: &s.supervision, clock: newSlowClock(&s.supervision), refuse: refuse, hold: hold, launches: s.Launches}
 }
 
 // After three refused logins in a row the session keeps trying, once every
 // 15 minutes, until a login succeeds.
 func TestSupervisorRetriesARefusedLoginEvery15Minutes(t *testing.T) {
-	newSlowRetrySession(t, false).retriesEvery15Minutes(t)
+	newSlowRetrySession(t, refusing).retriesEvery15Minutes(t)
 }
 
 // Each revive of a session that gave up for now makes one attempt.
 func TestReviveDuringTheLongWaitTriesOnce(t *testing.T) {
-	newSlowRetrySession(t, false).revivesTryOnceEach(t)
+	newSlowRetrySession(t, refusing).revivesTryOnceEach(t)
 }
 
 // Revives during the attempt a revive made share it.
 func TestRevivesShareTheirAttempt(t *testing.T) {
-	newSlowRetrySession(t, true).revivesShareAnAttempt(t)
+	newSlowRetrySession(t, held).revivesShareAnAttempt(t)
 }
 
 // Stop ends the wait of a session that gave up for now.
 func TestStopEndsTheLongWait(t *testing.T) {
-	newSlowRetrySession(t, false).stopEndsTheWait(t)
+	newSlowRetrySession(t, refusing).stopEndsTheWait(t)
+}
+
+// A wait the computer slept through ends once the wall clock has passed it.
+func TestTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
+	newSlowRetrySession(t, refusing).triesWhenTheWallClockPasses(t)
 }

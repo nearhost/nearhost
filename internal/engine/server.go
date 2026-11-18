@@ -58,6 +58,7 @@ func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 			RunDir:  e.opts.RunDir,
 			SSHPath: e.opts.SSHPath,
 			Env:     e.opts.SSHEnv,
+			Clock:   e.opts.SSHClock,
 			Logf: func(format string, args ...any) {
 				e.serverLog(srv.Name, fmt.Sprintf(format, args...))
 			},
