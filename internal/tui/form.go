@@ -90,52 +90,57 @@ func (f *textField) offset(n int) int {
 	return len(f.value)
 }
 
-// key edits the field and reports whether the key was for it.
+// key edits the field and reports whether the key changed its text. A key
+// that only moves the cursor, or does nothing, reports false; whether the
+// field took the key does not matter to the forms, since no other step
+// binds these keys.
 func (f *textField) key(k tea.KeyPressMsg) bool {
+	if k.Text != "" {
+		return f.insert(k.Text)
+	}
 	cur := f.cursor()
+	n := utf8.RuneCountInString(f.value)
 	switch k.String() {
 	case "left":
 		f.cur = max(cur-1, 0)
-		return true
 	case "right":
-		f.cur = cur + 1
-		f.cursor()
-		return true
+		f.cur = min(cur+1, n)
 	case "home", "ctrl+a":
 		f.cur = 0
-		return true
 	case "end", "ctrl+e":
-		f.cur = utf8.RuneCountInString(f.value)
-		return true
+		f.cur = n
 	case "backspace":
 		if cur > 0 {
-			at := f.offset(cur - 1)
-			f.value = f.value[:at] + f.value[f.offset(cur):]
+			f.value = f.value[:f.offset(cur-1)] + f.value[f.offset(cur):]
 			f.cur = cur - 1
+			return true
 		}
-		return true
 	case "delete":
-		if cur < utf8.RuneCountInString(f.value) {
+		if cur < n {
 			f.value = f.value[:f.offset(cur)] + f.value[f.offset(cur+1):]
+			return true
 		}
-		return true
 	case "ctrl+u":
+		changed := f.value != ""
 		f.set("")
-		return true
+		return changed
 	}
-	if k.Text == "" {
-		return false
-	}
+	return false
+}
+
+// insert adds text at the cursor, without control characters, and reports
+// whether anything was added.
+func (f *textField) insert(s string) bool {
 	text := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
-	}, k.Text)
-	at := f.offset(cur)
+	}, s)
+	at := f.offset(f.cursor())
 	f.value = f.value[:at] + text + f.value[at:]
-	f.cur = cur + utf8.RuneCountInString(text)
-	return true
+	f.cur += utf8.RuneCountInString(text)
+	return text != ""
 }
 
 // view draws the field, with a cursor when it has the focus. The cursor
@@ -151,7 +156,11 @@ func (f *textField) view(focused bool) string {
 		return clean(before) + styleBeacon.Render("▏")
 	}
 	r, size := utf8.DecodeRuneInString(after)
-	return clean(before) + styleBeacon.Reverse(true).Render(clean(string(r))) + clean(after[size:])
+	under := clean(string(r))
+	if under == "" {
+		under = " " // a format character has no cell of its own
+	}
+	return clean(before) + styleBeacon.Reverse(true).Render(under) + clean(after[size:])
 }
 
 // busyLine is the line a form shows while it waits for a background step.
@@ -270,5 +279,5 @@ func (w *worker) stop(ctx context.Context, unblock func()) {
 // paste adds pasted text to the field, without line breaks or control
 // characters.
 func (f *textField) paste(s string) {
-	f.key(tea.KeyPressMsg{Text: s})
+	f.insert(s)
 }

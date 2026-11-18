@@ -34,7 +34,7 @@ func serverFormModel(t *testing.T) (*Model, *fakeBackend) {
 func TestServerFormOffersHostsFromTheSSHConfig(t *testing.T) {
 	m, _ := serverFormModel(t)
 	// mini.lan is configured already, so it is not offered.
-	wantScreen(t, m, "Add server", "host      ▏", "  apollo", "  vps", "  app.internal", "enter next · ↑↓ choose · esc cancel")
+	wantScreen(t, m, "Add server", "host      ▏", "  apollo", "  vps", "  app.internal", "enter next · ↑↓ choose · ←→ move · esc cancel")
 	if strings.Contains(screen(m), "mini.lan") {
 		t.Error("a configured host was offered")
 	}
@@ -45,7 +45,7 @@ func TestServerFormOffersHostsFromTheSSHConfig(t *testing.T) {
 	press(m, "down")
 	wantScreen(t, m, "▸ apollo")
 	press(m, "enter")
-	wantScreen(t, m, "host      apollo", "name      apollo▏", "enter check · esc back")
+	wantScreen(t, m, "host      apollo", "name      apollo▏", "enter check · ←→ move · esc back")
 }
 
 func TestServerFormNamesTheServerAfterItsHost(t *testing.T) {

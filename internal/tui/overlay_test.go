@@ -33,7 +33,7 @@ func TestFormOpensInABox(t *testing.T) {
 	if !strings.Contains(lines[top+2], "━━━━━━━━━━━━━━━━━━━") {
 		t.Errorf("no progress bar: %q", lines[top+2])
 	}
-	if !strings.Contains(lines[top+boxHeight-2], "tab complete · enter next") {
+	if !strings.Contains(lines[top+boxHeight-2], "tab complete · ←→ move · enter next") {
 		t.Errorf("no keys at the box's foot: %q", lines[top+boxHeight-2])
 	}
 	if strings.TrimSpace(lines[35]) != "" {

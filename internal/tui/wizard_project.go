@@ -446,11 +446,6 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		switch s {
 		case "tab":
 			return f.tab()
-		case "right":
-			if f.suggestion() != "" {
-				return f.accept()
-			}
-			return nil
 		case "down", "up":
 			if n := len(f.candidates()); n > 1 {
 				step := 1
@@ -463,9 +458,13 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "enter":
 			return f.resolve()
 		}
+		if s == "right" && f.suggestion() != "" {
+			return f.accept()
+		}
 		if f.path.key(k) {
 			return f.edited()
 		}
+		f.listNote = "" // a move of the cursor leaves the rest as it is, but the note is stale
 	case projectStepRegistry:
 		switch s {
 		case "up":
@@ -1096,7 +1095,8 @@ func (f *projectForm) accept() tea.Cmd {
 // their slash, else lists the parent again, as it may have changed since.
 func (f *projectForm) tab() tea.Cmd {
 	if !f.path.atEnd() {
-		return nil // the path is the only field of its step
+		f.listNote = "Move to the end of the path to complete." // the path is the only field of its step
+		return nil
 	}
 	parent, part := splitPath(f.path.value, f.winLocal())
 	switch {
@@ -1784,7 +1784,7 @@ func (f *projectForm) keys() []footerItem {
 			}
 			return append(items, footerItem{"esc", "back"})
 		}
-		items := []footerItem{{"tab", "complete"}}
+		items := []footerItem{{"tab", "complete"}, {"←→", "move"}}
 		if len(f.candidates()) > 1 {
 			items = append(items, footerItem{"↑↓", "choose"})
 		}
@@ -1802,7 +1802,7 @@ func (f *projectForm) keys() []footerItem {
 			return []footerItem{{"enter", "next"}, {"esc", "back"}}
 		}
 		if f.editingHosts {
-			return []footerItem{{"enter", "set hosts"}, {"esc", "cancel"}}
+			return []footerItem{{"enter", "set hosts"}, {"←→", "move"}, {"esc", "cancel"}}
 		}
 		items := []footerItem{{"space", "toggle"}, {"←/→", "role"}}
 		if f.routes[f.routeRow].Role == config.RoleWeb {
@@ -1810,7 +1810,7 @@ func (f *projectForm) keys() []footerItem {
 		}
 		return append(items, footerItem{"enter", "next"}, footerItem{"esc", "back"})
 	case projectStepDetails:
-		return []footerItem{{"tab", "switch"}, {"enter", "next"}, {"esc", "back"}}
+		return []footerItem{{"tab", "switch"}, {"←→", "move"}, {"enter", "next"}, {"esc", "back"}}
 	}
 	if len(f.approval) > 0 {
 		return []footerItem{{"enter", "approve and save"}, {"esc", "back"}}

@@ -226,3 +226,63 @@ func TestPathCompletionNeedsTheCursorAtTheEnd(t *testing.T) {
 		t.Errorf("accepting left the cursor at %d", pf.path.cur)
 	}
 }
+
+// Pasted text is text, even when it spells a key's name.
+func TestFieldPasteOfAKeyNameInserts(t *testing.T) {
+	for _, name := range []string{"home", "end", "left", "right", "delete", "backspace", "ctrl+a"} {
+		f := fieldWith("ab")
+		fieldKey(f, "left")
+		f.paste(name)
+		if want := "a" + name + "b"; f.value != want || f.cur != 1+len(name) {
+			t.Errorf("%s: got %q at %d", name, f.value, f.cur)
+		}
+	}
+}
+
+// A key reports a change of the text only; a move is not one.
+func TestFieldKeyReportsChangesOnly(t *testing.T) {
+	f := fieldWith("ab")
+	for _, k := range []string{"left", "right", "home", "end", "ctrl+a", "ctrl+e", "delete"} {
+		if f.key(tea.KeyPressMsg{Code: tea.KeyLeft}) && k == "left" {
+			t.Errorf("a move reported a change")
+		}
+	}
+	fieldKey(f, "end")
+	if !f.key(tea.KeyPressMsg{Code: tea.KeyBackspace}) || f.value != "a" {
+		t.Errorf("backspace: %q", f.value)
+	}
+}
+
+// A format character under the cursor still shows a cursor.
+func TestFieldViewShowsACursorOnAFormatCharacter(t *testing.T) {
+	f := &textField{value: "a​b", cur: 1}
+	if got := f.view(true); !strings.Contains(got, "\x1b[") || ansi.StringWidth(got) != 3 {
+		t.Errorf("got %q (%d)", got, ansi.StringWidth(got))
+	}
+}
+
+// On the path step left and right move the cursor, right accepts a
+// suggestion only at the end, and a move does not reset the completion.
+func TestPathStepMovesTheCursor(t *testing.T) {
+	m, _, _ := projectFormModel(t)
+	toPath(t, m, 1)
+	pf := m.form.(*projectForm)
+	settle(m, press(m, "tab"))
+	typeText(m, "b")
+	press(m, "down") // choose blog
+	press(m, "left")
+	if pf.path.cur != len(pf.path.value)-1 {
+		t.Fatalf("left: cursor %d of %q", pf.path.cur, pf.path.value)
+	}
+	press(m, "right")
+	if !pf.path.atEnd() || pf.chosen != 1 {
+		t.Errorf("right: cursor %d, chosen %d", pf.path.cur, pf.chosen)
+	}
+	settle(m, press(m, "right")) // at the end with a suggestion: accepts
+	if pf.path.value != "~/code/blog/" {
+		t.Errorf("right at the end: %q", pf.path.value)
+	}
+	press(m, "left")
+	settle(m, press(m, "tab"))
+	wantScreen(t, m, "Move to the end of the path to complete.")
+}

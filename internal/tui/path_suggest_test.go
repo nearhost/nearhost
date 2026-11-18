@@ -42,7 +42,7 @@ func TestPathSuggestsAsYouType(t *testing.T) {
 	typeSettled(m, "c")
 	wantScreen(t, m, "path      ~/c▏ode/")
 	settle(m, press(m, "tab"))
-	wantScreen(t, m, "path      ~/code/▏blob/", "blob  blog  shop", "tab complete · ↑↓ choose · enter next")
+	wantScreen(t, m, "path      ~/code/▏blob/", "blob  blog  shop", "tab complete · ←→ move · ↑↓ choose · enter next")
 	typeSettled(m, "bl")
 	wantScreen(t, m, "path      ~/code/bl▏ob/", "blob  blog")
 	press(m, "down")

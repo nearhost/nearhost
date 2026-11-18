@@ -304,9 +304,9 @@ var serverStepTitles = map[int]string{serverStepHost: "host", serverStepName: "n
 func (f *serverForm) keys() []footerItem {
 	switch f.step {
 	case serverStepHost:
-		return []footerItem{{"enter", "next"}, {"↑↓", "choose"}, {"esc", "cancel"}}
+		return []footerItem{{"enter", "next"}, {"↑↓", "choose"}, {"←→", "move"}, {"esc", "cancel"}}
 	case serverStepName:
-		return []footerItem{{"enter", "check"}, {"esc", "back"}}
+		return []footerItem{{"enter", "check"}, {"←→", "move"}, {"esc", "back"}}
 	}
 	if f.fail != "" {
 		return []footerItem{{"r", "check again"}, {"esc", "back"}}
