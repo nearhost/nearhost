@@ -72,15 +72,90 @@ func TestAProjectStartsOnceItsServerConnects(t *testing.T) {
 	}
 }
 
+// stopMyapp stops "myapp" by hand.
+func stopMyapp(h *harness) error { return h.eng.StopProject(bg, "myapp") }
+
+// disableMyapp stops "myapp" as Apply does when the project is disabled.
+func disableMyapp(h *harness) error {
+	next := h.eng.Config()
+	next.Projects[0].Enabled = false
+	return h.eng.Apply(bg, next)
+}
+
 func TestStoppingAWaitingProjectDropsItsStart(t *testing.T) {
 	h, down := waitingHarness(t)
-	if err := h.eng.StopProject(bg, "myapp"); err != nil {
+	if err := stopMyapp(h); err != nil {
 		t.Fatal(err)
 	}
 	if st := h.eng.Status("myapp"); st.State != StateStopped {
 		t.Fatalf("status = %+v", st)
 	}
 	h.connectStartsNothing(t, down)
+}
+
+func TestDisablingAWaitingProjectDropsItsStart(t *testing.T) {
+	h, down := waitingHarness(t)
+	if err := disableMyapp(h); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateStopped {
+		t.Fatalf("status = %+v", st)
+	}
+	h.connectStartsNothing(t, down)
+}
+
+// A start made while a waiting project is being stopped runs after the
+// stop, once. While the stop runs the project still shows what it waits for.
+func TestAStartDuringTheStopOfAWaitingProjectRunsAfterIt(t *testing.T) {
+	h, down := waitingHarness(t)
+	held, release := make(chan struct{}), make(chan struct{})
+	h.eng.stopHeld = func(string) {
+		h.eng.stopHeld = nil // only this stop, not the harness's shutdown
+		close(held)
+		<-release
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- stopMyapp(h) }()
+	<-held
+	if st := h.eng.Status("myapp"); st.State != StateStarting || st.Waiting != "mini" {
+		t.Fatalf("status during the stop = %+v, want it still starting and waiting for mini", st)
+	}
+	// The server is up for the start that follows.
+	if err := os.Remove(down); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 20*time.Second, func() bool {
+		st, _ := h.eng.ServerStatus("mini")
+		return st == transport.StatusConnected
+	}, "mini to connect")
+	queued := make(chan struct{})
+	h.eng.startQueued = func(string) { close(queued) }
+	started := make(chan error, 1)
+	go func() { started <- h.eng.StartProject(bg, "myapp") }()
+	select {
+	case <-queued:
+	case err := <-started:
+		close(release)
+		<-stopped
+		t.Fatalf("StartProject during the stop returned %v without waiting for it", err)
+	}
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-started; err != nil {
+		t.Fatalf("StartProject after the stop: %v", err)
+	}
+	h.eng.starts.Wait()
+	if st := h.eng.Status("myapp"); st.State != StateRunning || st.Waiting != "" {
+		t.Fatalf("status = %+v, want running", st)
+	}
+	if n := len(h.ensureCalls()); n != 1 {
+		t.Fatalf("the project was started %d times, want once", n)
+	}
+	if n := len(h.forwards("mini")); n != 2 {
+		t.Fatalf("mini carries %d forwards, want the web and loopback routes'", n)
+	}
 }
 
 // connectStartsNothing lets mini connect and checks that "myapp", which a
@@ -154,6 +229,19 @@ func TestADisableAsTheWaitRunsOutLeavesNothingWaiting(t *testing.T) {
 // A stop that comes after the server connected, while the start handed over
 // waits for the project's op, still drops it.
 func TestStoppingAProjectWhoseStartWasHandedOverDropsIt(t *testing.T) {
+	stopAfterTheHandOver(t, stopMyapp)
+}
+
+// The same for a project disabled through Apply.
+func TestDisablingAProjectWhoseStartWasHandedOverDropsIt(t *testing.T) {
+	stopAfterTheHandOver(t, disableMyapp)
+}
+
+// stopAfterTheHandOver has mini connect while "myapp" waits for it, holds
+// the start handed over back, stops the project with stop and checks that
+// the start was dropped.
+func stopAfterTheHandOver(t *testing.T, stop func(*harness) error) {
+	t.Helper()
 	h, down := waitingHarness(t)
 	h.eng.mu.Lock()
 	run := h.eng.runs["myapp"]
@@ -168,7 +256,7 @@ func TestStoppingAProjectWhoseStartWasHandedOverDropsIt(t *testing.T) {
 		return run.resuming
 	}, "mini to connect and myapp's start to be handed over")
 	stopped := make(chan error, 1)
-	go func() { stopped <- h.eng.StopProject(bg, "myapp") }()
+	go func() { stopped <- stop(h) }()
 	dropped := false
 	for deadline := time.Now().Add(2 * time.Second); !dropped && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		h.eng.mu.Lock()

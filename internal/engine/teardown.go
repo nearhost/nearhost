@@ -103,23 +103,37 @@ func (e *Engine) StopProject(ctx context.Context, name string) error {
 	if run.cancel != nil {
 		run.cancel()
 	}
+	// A start made from here on is not refused as busy: it queues on op.
+	run.stopping = true
+	held := false
 	if run.waiting {
 		// The start that waits for the server is dropped, before a connect
 		// can hand it over or while the one handed over waits for op. The
 		// project shows what it showed until the stop records its state.
 		run.waiting, run.resuming = false, false
 		run.tearing = true
+		// No start holds op while the project waits, unless one handed
+		// over (which finds it has nothing to do) or one made just before
+		// this stop (which runs, and is stopped after) has taken it.
+		// Taking op here, without waiting for it, puts a start made after
+		// this stop behind it.
+		held = run.op.TryLock()
 	}
 	e.mu.Unlock()
-	run.op.Lock()
+	if !held {
+		run.op.Lock()
+	}
 	defer run.op.Unlock()
+	if e.stopHeld != nil {
+		e.stopHeld(name)
+	}
 
 	err := e.tearDown(ctx, run)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	// A stopped project waits for nothing, whatever a start recorded while
 	// this stop waited for op.
-	run.waiting, run.resuming = false, false
+	run.waiting, run.resuming, run.stopping = false, false, false
 	if err != nil {
 		err = fmt.Errorf("stop %s: %w", name, err)
 		e.setStateLocked(run, StateError, err.Error())

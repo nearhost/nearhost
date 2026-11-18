@@ -60,6 +60,13 @@ type projectRun struct {
 	// and its start has been handed to resumeStart; that start runs only
 	// while it is still set.
 	resuming bool
+	// shownWaiting is waiting as it was at the last announcement, so Status
+	// reports the server waited for alongside the state it shows, also while
+	// a teardown holds that state.
+	shownWaiting bool
+	// stopping is set while StopProject runs, from its first look at the
+	// project to the state it records.
+	stopping bool
 }
 
 // heldPort is what is known about the local port of a lost forward.
@@ -175,6 +182,9 @@ func (e *Engine) startProject(ctx context.Context, name string, resume bool) err
 		}
 		return nil
 	}
+	if e.startQueued != nil {
+		e.startQueued(name)
+	}
 	run.op.Lock()
 	defer run.op.Unlock()
 
@@ -254,13 +264,15 @@ func errChanged(name string) error {
 // server (run.waiting) is not busy: starting it again starts it afresh, and
 // retries a connection that gave up, as for a project in error. A running
 // project that shows an error because a forward is gone is not busy; starting
-// it replaces its forwards. Nor is one that is being stopped, although it
-// still shows its last state: the start waits for the stop (on op) and runs
-// after it.
+// it replaces its forwards. Nor is a starting or running project that is
+// being stopped (run.stopping, run.tearing), although it still shows its last
+// state: the start queues on op and runs when it gets it. A stop holds op from
+// the moment it tears down, and from its first step when the project waits
+// for its server, so a start made after that runs after the stop.
 func (e *Engine) busyLocked(run *projectRun) bool {
 	switch run.state {
 	case StateStarting:
-		return !run.waiting
+		return !run.waiting && !run.stopping
 	case StateRunning:
 		if run.tearing {
 			return false // only a stop tears down a running project

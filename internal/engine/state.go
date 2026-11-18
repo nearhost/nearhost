@@ -198,6 +198,7 @@ func (e *Engine) announceLocked(run *projectRun) {
 	if run.tearing {
 		return
 	}
+	run.shownWaiting = run.waiting
 	st, msg := e.effectiveLocked(run)
 	if st == run.announced && msg == run.shownMsg {
 		return
