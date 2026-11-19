@@ -99,7 +99,7 @@ Releases carry build provenance attestations, and a software bill of materials (
 nearhost update
 ```
 
-updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pnpm add -g`, `bun add -g`, `go install`, or the install script into the same directory. On Windows, a copy from the PowerShell installer or a zip is replaced with the release's `nearhost.exe`, which Nearhost downloads from GitHub and checks against the release's checksums. It shows what it will do and asks first; `--yes` skips the question, and `--check` only reports, exiting 1 when a newer release is out.
+updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pnpm add -g`, `bun add -g`, `go install`, or the install script into the same directory. On Windows, a copy from the PowerShell installer or a zip is replaced with the release's `nearhost.exe`, which Nearhost downloads from GitHub and checks against the release's checksums. It shows what it will do and asks first; `--yes` skips the question, and `--check` only reports and exits 0 when Nearhost is up to date, 1 when a newer release is out and 2 when the check failed.
 
 Nearhost also asks GitHub for the latest release at most once a day and prints a line when one is out. Set `NEARHOST_NO_UPDATE_CHECK=1` to turn that off.
 
