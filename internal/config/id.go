@@ -62,6 +62,10 @@ func installIDFor(path string, fingerprint func() string) (string, error) {
 // progress. An empty file older than this is a leftover.
 const idWait = time.Second
 
+// idPause waits between two reads of an id file that has no id yet. Tests
+// replace it to count the waits.
+var idPause = time.Sleep
+
 // errEmptyID is what readIDFile returns for a file with no id in it that
 // no process is still writing.
 var errEmptyID = errors.New("the id file is empty")
@@ -82,7 +86,7 @@ func readIDFile(path string) (id, fingerprint string, err error) {
 			// A modification time in the future cannot age, so the loop's
 			// own count bounds the wait too.
 			if wait < 20 && !olderThan(path, idWait) {
-				time.Sleep(50 * time.Millisecond)
+				idPause(50 * time.Millisecond)
 				continue
 			}
 			return "", "", errEmptyID

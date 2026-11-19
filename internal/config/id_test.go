@@ -133,16 +133,25 @@ func leftover(t *testing.T, content string) string {
 	return path
 }
 
+// The waits for a writer are counted, not timed: writing the id takes as
+// long as the disk does, and on Windows a rename waits out a virus scanner
+// for up to renameRetryFor.
 func TestInstallIDReplacesAnOldEmptyFileAtOnce(t *testing.T) {
+	waits := 0
+	saved := idPause
+	t.Cleanup(func() { idPause = saved })
+	idPause = func(d time.Duration) {
+		waits++
+		saved(d)
+	}
 	for _, content := range []string{"", " \n\t\n"} {
 		path := leftover(t, content)
-		start := time.Now()
 		id, err := installIDFor(path, fingerprint("aaaa"))
 		if err != nil || !validID(id) {
 			t.Fatalf("%q: %q %v", content, id, err)
 		}
-		if took := time.Since(start); took > 400*time.Millisecond {
-			t.Fatalf("%q: took %v, want no wait", content, took)
+		if waits != 0 {
+			t.Fatalf("%q: waited %d times for a writer, want no wait", content, waits)
 		}
 		if got := readID(t, path); got != id+" aaaa\n" {
 			t.Fatalf("%q: file %q", content, got)
