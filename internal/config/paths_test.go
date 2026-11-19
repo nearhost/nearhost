@@ -60,7 +60,7 @@ func TestMigrateMovesOldCaddyDir(t *testing.T) {
 	old := filepath.Join(base, "config", "nearhost", "caddy")
 	new := filepath.Join(base, "data", "nearhost", "caddy")
 	key := caddyTree(t, old, "the key")
-	if err := migrateCaddyDir(old, new); err != nil {
+	if err := migrateCaddyDir(old, new, nil); err != nil {
 		t.Fatal(err)
 	}
 	checkMoved(t, old, new, key)
@@ -72,7 +72,7 @@ func TestMigrateKeepsBothWhenNewExists(t *testing.T) {
 	new := filepath.Join(base, "data", "nearhost", "caddy")
 	key := caddyTree(t, old, "old key")
 	caddyTree(t, new, "new key")
-	if err := migrateCaddyDir(old, new); err != nil {
+	if err := migrateCaddyDir(old, new, nil); err != nil {
 		t.Fatal(err)
 	}
 	for dir, want := range map[string]string{old: "old key", new: "new key"} {
@@ -86,7 +86,7 @@ func TestMigrateKeepsBothWhenNewExists(t *testing.T) {
 func TestMigrateDoesNothingWithoutOld(t *testing.T) {
 	base := t.TempDir()
 	new := filepath.Join(base, "data", "nearhost", "caddy")
-	if err := migrateCaddyDir(filepath.Join(base, "missing"), new); err != nil {
+	if err := migrateCaddyDir(filepath.Join(base, "missing"), new, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(new); !errors.Is(err, fs.ErrNotExist) {
@@ -115,13 +115,38 @@ func TestMigrateCopiesAcrossDevices(t *testing.T) {
 	old := filepath.Join(base, "config", "nearhost", "caddy")
 	new := filepath.Join(base, "data", "nearhost", "caddy")
 	key := caddyTree(t, old, "the key")
-	if err := migrateCaddyDir(old, new); err != nil {
+	if err := migrateCaddyDir(old, new, nil); err != nil {
 		t.Fatal(err)
 	}
 	checkMoved(t, old, new, key)
 	left, err := os.ReadDir(filepath.Dir(new))
 	if err != nil || len(left) != 1 {
 		t.Fatalf("beside new: %v, %v; want only caddy", left, err)
+	}
+}
+
+// A move across filesystems makes the folder it copies into private before
+// the key is copied into it.
+func TestMigrateMakesTheCopyPrivateBeforeCopying(t *testing.T) {
+	exdev(t)
+	base := t.TempDir()
+	old := filepath.Join(base, "config", "nearhost", "caddy")
+	new := filepath.Join(base, "data", "nearhost", "caddy")
+	key := caddyTree(t, old, "the key")
+	var made []string
+	private := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Errorf("private(%s) with %v in it, %v; want an empty folder", dir, entries, err)
+		}
+		made = append(made, dir)
+	}
+	if err := migrateCaddyDir(old, new, private); err != nil {
+		t.Fatal(err)
+	}
+	checkMoved(t, old, new, key)
+	if len(made) != 1 || filepath.Dir(made[0]) != filepath.Dir(new) {
+		t.Fatalf("private called with %q, want one folder beside %s", made, new)
 	}
 }
 
@@ -156,13 +181,13 @@ func TestMigrateCaddyDirWaitsWhileNearhostRuns(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	old := filepath.Join(home, "config", "nearhost", "caddy")
 	key := caddyTree(t, old, "the key")
-	if err := MigrateCaddyDir(func() bool { return true }); err != nil {
+	if err := MigrateCaddyDir(func() bool { return true }, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := CaddyDir(); got != old {
 		t.Fatalf("moved while another Nearhost runs: CaddyDir() = %q", got)
 	}
-	if err := MigrateCaddyDir(func() bool { return false }); err != nil {
+	if err := MigrateCaddyDir(func() bool { return false }, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := DataDir()
@@ -184,7 +209,7 @@ func TestMigrateCopiesASymlinkedOldDir(t *testing.T) {
 	// Relative, as dotfiles managers often make them.
 	testutil.Symlink(t, filepath.Join("..", "..", "dotfiles", "caddy"), old)
 	new := filepath.Join(base, "data", "nearhost", "caddy")
-	if err := migrateCaddyDir(old, new); err != nil {
+	if err := migrateCaddyDir(old, new, nil); err != nil {
 		t.Fatal(err)
 	}
 	checkMoved(t, old, new, key)

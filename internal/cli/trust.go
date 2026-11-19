@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/smallstep/truststore"
@@ -124,10 +125,36 @@ func migrateCA(w io.Writer) {
 }
 
 // migrateCANote is migrateCA for the interface, which hides stderr while it
-// runs: it returns the warning, "" for none, for the interface's log.
+// runs: it returns the warnings, "" for none, for the interface's log.
+//
+// It also makes private the CA's folder, once it is where it stays, and
+// the copy older versions left in the config directory, which still holds
+// the private key; a move across filesystems makes its new folder private
+// before copying into it. On Windows a folder otherwise takes its parent's
+// access list. A folder that cannot be made private is a warning too.
 func migrateCANote() string {
-	return migrateWarning(config.MigrateCaddyDir(nearhostRunning))
+	notes := []string{migrateWarning(config.MigrateCaddyDir(nearhostRunning, func(dir string) {
+		// The temporary folder's warning is dropped: the final folder is
+		// restricted, and warned about, just below.
+		makeStoragePrivate(dir)
+	}))}
+	var dirs []string
+	if dir, err := config.CaddyDir(); err == nil {
+		if _, err := os.Stat(dir); err == nil {
+			dirs = append(dirs, dir)
+		}
+	}
+	if old, ok := config.LeftoverCaddyDir(); ok {
+		dirs = append(dirs, old)
+	}
+	for _, dir := range dirs {
+		notes = append(notes, makeStoragePrivate(dir))
+	}
+	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "\n")
 }
+
+// makeStoragePrivate is proxy.MakeStoragePrivate. Tests replace it.
+var makeStoragePrivate = proxy.MakeStoragePrivate
 
 // migrateWarning words a config.MigrateCaddyDir error for the user, "" for
 // none.

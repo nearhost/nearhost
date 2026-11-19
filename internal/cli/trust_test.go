@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -605,5 +606,70 @@ func TestUntrustMacTrustedButNotHeldAttemptsTheTrustRemoval(t *testing.T) {
 	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
 	if err == nil || f.uninstall != 1 || !strings.Contains(err.Error(), "Keychain Access") {
 		t.Fatalf("still trusted afterwards: err=%v uninstalls=%d", err, f.uninstall)
+	}
+}
+
+// recordPrivate replaces makeStoragePrivate for the test with one that
+// records each folder and warns about those in fail.
+func recordPrivate(t *testing.T, fail ...string) *[]string {
+	t.Helper()
+	var dirs []string
+	saved := makeStoragePrivate
+	makeStoragePrivate = func(dir string) string {
+		dirs = append(dirs, dir)
+		if slices.Contains(fail, dir) {
+			return "Warning: could not make " + dir + " private."
+		}
+		return ""
+	}
+	t.Cleanup(func() { makeStoragePrivate = saved })
+	return &dirs
+}
+
+// The CA's folder is made private where it ends up after a move.
+func TestMigrateCAMakesTheMovedFolderPrivate(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(cfgHome, "nearhost", "caddy", "pki"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dirs := recordPrivate(t)
+	if note := migrateCANote(); note != "" {
+		t.Fatalf("note = %q, want none", note)
+	}
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(data, "caddy")}; !slices.Equal(*dirs, want) {
+		t.Fatalf("made private %q, want %q", *dirs, want)
+	}
+}
+
+// The copy older versions left in the config directory still holds the
+// CA's private key, so it is made private too, and a failure is a warning.
+func TestMigrateCAMakesTheLeftoverCopyPrivate(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	old := filepath.Join(cfgHome, "nearhost", "caddy")
+	data, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(data, "caddy")
+	for _, dir := range []string{old, current} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirs := recordPrivate(t, old)
+	note := migrateCANote()
+	if want := []string{current, old}; !slices.Equal(*dirs, want) {
+		t.Fatalf("made private %q, want %q", *dirs, want)
+	}
+	if want := "Warning: could not make " + old + " private."; note != want {
+		t.Fatalf("note = %q, want %q", note, want)
 	}
 }
