@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -327,4 +328,48 @@ func TestAProjectWhoseServerGaveUpStartsWhenItConnects(t *testing.T) {
 	testutil.WaitUntil(t, 20*time.Second, func() bool {
 		return h.eng.Status("myapp").State == StateRunning
 	}, "myapp to start once mini connects")
+}
+
+// A start that met a server which refused the logins starts, once and with
+// nothing more asked of it, when the session's next try after its wait
+// connects.
+func TestAProjectStartsWhenTheSlowRetryConnects(t *testing.T) {
+	wrapper, flag, _ := authWrapper(t)
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clock := testutil.NewFakeClock()
+	h := buildHarness(t, remoteConfig(testutil.FreePort(t)), func(o *Options) {
+		o.SSHPath = wrapper
+		o.SSHClock = transport.Clock{Now: clock.Now, Zone: clock.Zone(), NewTimer: clock.NewTimer, NewTicker: clock.NewTicker}
+	})
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.StartProject(bg, "myapp"); err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("StartProject = %v, want the authentication error", err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return len(clock.Waits()) == 1 }, "mini's wait after the refusals")
+	if st := h.eng.Status("myapp"); st.State != StateError || st.Waiting != "mini" ||
+		!strings.HasSuffix(st.Message, "Nearhost tries again at 15:04.") {
+		t.Fatalf("status = %+v", st)
+	}
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	clock.Pass(t)
+	testutil.WaitUntil(t, 20*time.Second, func() bool {
+		return h.eng.Status("myapp").State == StateRunning
+	}, "myapp to start once the slow retry connects")
+	time.Sleep(300 * time.Millisecond) // a second start would show by now
+	if states, _ := stateEvents(h.events, "myapp"); slices.Index(states, StateRunning) != len(states)-1 ||
+		h.connections() != 4 {
+		t.Fatalf("states %v, ssh log:\n%s", states, h.log())
+	}
+	if n := len(h.eng.Sites()); n != 1 {
+		t.Fatalf("sites = %d, want 1", n)
+	}
+	if n := len(h.forwards("mini")); n != 2 {
+		t.Fatalf("mini carries %d forwards, want the web and loopback routes'", n)
+	}
 }

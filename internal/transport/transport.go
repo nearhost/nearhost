@@ -58,4 +58,7 @@ type Config struct {
 	Logf func(format string, args ...any)
 	// Foreground is as Session.Foreground.
 	Foreground bool
+	// Clock is the clock and timers of the wait after logins were refused;
+	// the zero Clock is the real one. Tests set it.
+	Clock Clock
 }

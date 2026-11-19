@@ -42,6 +42,11 @@ type Options struct {
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
+
+	// SSHClock is the clock of the sessions' wait after refused logins;
+	// the zero one is the real clock (tests set it).
+	SSHClock transport.Clock
+
 	// WebPort is a port of the proxy's own that always serves Nearhost's
 	// page at https://localhost:<port>. 0 means none. If the port is taken
 	// when the engine starts, the proxy runs without the page.

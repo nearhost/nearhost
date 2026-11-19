@@ -120,7 +120,7 @@ func TestMasterErrorIsItsLastLinesNotItsWholeLog(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_FLOOD=10000")
 	s.Start()
 	waitFor(t, 20*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	msg := s.LastError()
+	msg := beforeRetryTime(t, s.LastError())
 	if !strings.Contains(msg, "Permission denied") {
 		t.Fatalf("LastError = %q, want the last line", msg)
 	}
@@ -136,7 +136,7 @@ func TestFatalLineSurvivesLaterChatter(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	if got := s.LastError(); got != "user@host: Permission denied (publickey)." {
+	if got := beforeRetryTime(t, s.LastError()); got != "user@host: Permission denied (publickey)." {
 		t.Fatalf("LastError = %q", got)
 	}
 }
@@ -161,8 +161,8 @@ func TestHostKeyMessageNamesTheOffendingKey(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_HOSTKEY_FAIL=1")
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
-	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3"
-	if got := s.LastError(); got != want {
+	want := "Host key verification failed.\nOffending ECDSA key in /home/u/.ssh/known_hosts:3."
+	if got := beforeRetryTime(t, s.LastError()); got != want {
 		t.Fatalf("LastError = %q, want %q", got, want)
 	}
 }
@@ -327,13 +327,9 @@ func TestOrphanedLiveSocketIsReplacedByOwnMaster(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect after master death")
 }
 
-func TestAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
-	s, _ := newFakeSession(t, "FAKE_SSH_ALTERNATE=1")
-	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 8 || s.Status() == StatusAuthFailed }, "eight launches")
-	if s.Status() == StatusAuthFailed {
-		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", s.Launches())
-	}
+// Refusals count since the last connect, whatever fails between them.
+func TestRefusalsCountAcrossOtherFailures(t *testing.T) {
+	newSlowRetrySession(t, alternating).refusalsCountAcrossOtherFailures(t)
 }
 
 func TestStartRetriesWhenSSHCannotBeLaunched(t *testing.T) {
@@ -589,19 +585,21 @@ func TestSocketPathOfANameThatLooksHashedIsNotALongNamesSocket(t *testing.T) {
 	}
 }
 
-// A session that gives up says how many attempts failed and that it will
-// not try again by itself.
+// A session that gives up for now says how many attempts failed and when it
+// tries again.
 func TestHealthCountsFailuresUntilGivingUp(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_AUTH_FAIL=1")
+	before := time.Now()
 	s.Start()
 	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed }, "auth failed status")
 	h := s.Health()
-	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+	if h.Failures != 3 || h.NextAttempt.Before(before.Add(authRetryEvery)) || h.NextAttempt.After(time.Now().Add(authRetryEvery)) ||
+		!strings.Contains(h.LastError, "Permission denied") {
 		t.Errorf("health %+v", h)
 	}
 	s.Stop()
-	s.Start() // a fresh start counts afresh
-	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 3 }, "auth failed again")
+	s.Start() // a fresh start counts afresh, and makes one attempt as logins were refused
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusAuthFailed && s.Health().Failures == 1 }, "auth failed again")
 }
 
 // A session that is reconnecting says when it tries next; connecting
@@ -760,4 +758,38 @@ func TestSessionStopDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
 	case <-time.After(procWaitDelay + 2*time.Second):
 		t.Fatal("Stop waited on the child that holds the master's stderr")
 	}
+}
+
+// newSlowRetrySession is a session that refuses logins as slowRetry says.
+func newSlowRetrySession(t *testing.T, mode int) slowRetry {
+	t.Helper()
+	refuse, hold, env := slowRetryEnv(t, mode)
+	s, _ := newFakeSession(t, env...)
+	return slowRetry{tr: s, v: &s.supervision, clock: newSlowClock(&s.supervision), refuse: refuse, hold: hold, launches: s.Launches}
+}
+
+// After three refused logins in a row the session keeps trying, once every
+// 15 minutes, until a login succeeds.
+func TestSupervisorRetriesARefusedLoginEvery15Minutes(t *testing.T) {
+	newSlowRetrySession(t, refusing).retriesEvery15Minutes(t)
+}
+
+// Each revive of a session that gave up for now makes one attempt.
+func TestReviveDuringTheLongWaitTriesOnce(t *testing.T) {
+	newSlowRetrySession(t, refusing).revivesTryOnceEach(t)
+}
+
+// Revives during the attempt a revive made share it.
+func TestRevivesShareTheirAttempt(t *testing.T) {
+	newSlowRetrySession(t, held).revivesShareAnAttempt(t)
+}
+
+// Stop ends the wait of a session that gave up for now.
+func TestStopEndsTheLongWait(t *testing.T) {
+	newSlowRetrySession(t, refusing).stopEndsTheWait(t)
+}
+
+// A wait the computer slept through ends once the wall clock has passed it.
+func TestTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
+	newSlowRetrySession(t, refusing).triesWhenTheWallClockPasses(t)
 }

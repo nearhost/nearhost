@@ -23,5 +23,6 @@ func New(c Config) Transport {
 		s.Logf = c.Logf
 	}
 	s.Foreground = c.Foreground
+	s.clock = c.Clock.withDefaults()
 	return s
 }

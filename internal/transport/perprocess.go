@@ -75,6 +75,7 @@ func newPerProcess(c Config) *perProcess {
 		listen:      net.Listen,
 	}
 	p.init(c.Name, c.Host)
+	p.clock = c.Clock.withDefaults()
 	p.prepareAgent = func(ctx context.Context, f AgentForward) (string, error) {
 		return prepareAgentWith(ctx, p.OpenSFTP, p.Name, f)
 	}
@@ -204,14 +205,18 @@ func (p *perProcess) SetAgentForward(f AgentForward) {
 	p.mu.Unlock()
 }
 
-// Start launches the supervisor. It is a no-op while a supervisor is
-// running; after the supervisor has given up, Start launches a fresh one.
+// Start launches the supervisor. While a supervisor is running it does
+// nothing, except that one that gave up for now (auth failed, waiting
+// authRetryEvery) makes one attempt at once. When none is running, Start
+// launches one; while logins have been refused since the link last
+// connected, it too makes one attempt before it waits.
 func (p *perProcess) Start() {
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cancel != nil {
+		p.retryAtOnceLocked()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +238,7 @@ func (p *perProcess) Stop() {
 		cancel()
 		<-done
 	}
-	// Also covers a supervisor that already gave up (auth failed).
+	// Also covers a supervisor that gave up for good (auth failed).
 	if p.Status() != StatusDisconnected {
 		p.setStatus(StatusDisconnected, "")
 	}
@@ -306,7 +311,9 @@ func ConfigValue(config, key string) string {
 // `ssh -N`, marks the transport connected once ssh has authenticated and
 // forwarded the agent socket and the forwards are re-applied, closes the
 // forwards when the link exits, and relaunches it with backoff when it exits,
-// until ctx ends or a failure that retrying cannot fix. A link that exits
+// until ctx ends or the configuration is one it cannot work with. After
+// maxAuthFailures refusals since it last connected it relaunches the link
+// once every authRetryEvery after each further refusal (see waitToRetry). A link that exits
 // because the server refused the agent socket, or because ssh could not
 // parse its forward, is relaunched at once without it, as the same attempt;
 // the next full reconnect tries it again.
@@ -323,7 +330,6 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 		close(done)
 	}()
 	backoff := p.baseBackoff
-	authFails := 0
 	withAgent := true
 	for {
 		if ctx.Err() != nil { // stopped before (re)launching the link
@@ -343,20 +349,15 @@ func (p *perProcess) run(ctx context.Context, cancel context.CancelFunc, done ch
 		}
 		if end.connected {
 			backoff = p.baseBackoff
-			authFails = 0
 		}
-		// Fatal errors, and failures to start ssh at all, give up after
-		// maxAuthFailures in a row.
-		goOn := p.attemptFailed(end.msg, end.fatal, &authFails, backoff)
+		// Fatal errors, and failures to start ssh at all, give up for now
+		// after maxAuthFailures since the link last connected.
+		retryNow := p.attemptFailed(end.msg, end.fatal, backoff)
 		p.endForwards() // after the status has left connected
-		if !goOn {
-			return
-		}
-		if !p.sleep(ctx, backoff) {
+		if !p.waitToRetry(ctx, retryNow, &backoff) {
 			p.setStatus(StatusDisconnected, "")
 			return
 		}
-		backoff = p.nextBackoff(backoff)
 	}
 }
 

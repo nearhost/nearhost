@@ -476,27 +476,26 @@ func TestPerProcessGivesUpWhenSSHNeverLaunches(t *testing.T) {
 	}
 }
 
-// Giving up leaves no next attempt, and a fresh Start counts afresh.
+// Giving up for now leaves the next attempt authRetryEvery away, and a
+// fresh Start counts afresh.
 func TestPerProcessHealthCountsFailuresAfreshAfterAStart(t *testing.T) {
 	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1")
+	before := time.Now()
 	p.Start()
 	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
 	h := p.Health()
-	if h.Failures != 3 || !h.NextAttempt.IsZero() || !strings.Contains(h.LastError, "Permission denied") {
+	if h.Failures != 3 || h.NextAttempt.Before(before.Add(authRetryEvery)) || h.NextAttempt.After(time.Now().Add(authRetryEvery)) ||
+		!strings.Contains(h.LastError, "Permission denied") {
 		t.Errorf("health %+v", h)
 	}
 	p.Stop()
-	p.Start()
-	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed && p.Health().Failures == 3 }, "auth failed again")
+	p.Start() // one attempt, as logins were refused
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed && p.Health().Failures == 1 }, "auth failed again")
 }
 
-func TestPerProcessAuthFailureStreakResetsOnOtherFailures(t *testing.T) {
-	p := newTestPerProcess(t, "FAKE_SSH_ALTERNATE_FILE="+filepath.Join(t.TempDir(), "turn"))
-	p.Start()
-	waitFor(t, 10*time.Second, func() bool { return p.linkLaunches(t) >= 8 || p.Status() == StatusAuthFailed }, "eight launches")
-	if p.Status() == StatusAuthFailed {
-		t.Fatalf("gave up after %d launches although no three authentication failures were consecutive", p.linkLaunches(t))
-	}
+// Refusals count since the last connect, whatever fails between them.
+func TestPerProcessRefusalsCountAcrossOtherFailures(t *testing.T) {
+	newSlowRetryPerProcess(t, alternating).refusalsCountAcrossOtherFailures(t)
 }
 
 func TestPerProcessGivesUpOnHostKeyFailure(t *testing.T) {
@@ -1745,7 +1744,43 @@ func TestPerProcessFatalLineSurvivesLaterChatter(t *testing.T) {
 	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
 	p.Start()
 	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
-	if got := p.LastError(); got != "user@host: Permission denied (publickey)." {
+	if got := beforeRetryTime(t, p.LastError()); got != "user@host: Permission denied (publickey)." {
 		t.Fatalf("LastError = %q", got)
 	}
+}
+
+// newSlowRetryPerProcess is a per-process transport that refuses logins
+// as slowRetry says.
+func newSlowRetryPerProcess(t *testing.T, mode int) slowRetry {
+	t.Helper()
+	refuse, hold, env := slowRetryEnv(t, mode)
+	p := newTestPerProcess(t, env...)
+	return slowRetry{tr: p, v: &p.supervision, clock: newSlowClock(&p.supervision), refuse: refuse, hold: hold,
+		launches: func() int { return p.linkLaunches(t) }}
+}
+
+// After three refused logins in a row the link keeps trying, once every 15
+// minutes, until a login succeeds.
+func TestPerProcessRetriesARefusedLoginEvery15Minutes(t *testing.T) {
+	newSlowRetryPerProcess(t, refusing).retriesEvery15Minutes(t)
+}
+
+// Each revive of a link that gave up for now makes one attempt.
+func TestPerProcessReviveDuringTheLongWaitTriesOnce(t *testing.T) {
+	newSlowRetryPerProcess(t, refusing).revivesTryOnceEach(t)
+}
+
+// Revives during the attempt a revive made share it.
+func TestPerProcessRevivesShareTheirAttempt(t *testing.T) {
+	newSlowRetryPerProcess(t, held).revivesShareAnAttempt(t)
+}
+
+// Stop ends the wait of a link that gave up for now.
+func TestPerProcessStopEndsTheLongWait(t *testing.T) {
+	newSlowRetryPerProcess(t, refusing).stopEndsTheWait(t)
+}
+
+// A wait the computer slept through ends once the wall clock has passed it.
+func TestPerProcessTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
+	newSlowRetryPerProcess(t, refusing).triesWhenTheWallClockPasses(t)
 }

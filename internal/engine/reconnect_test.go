@@ -1,6 +1,10 @@
 package engine
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -194,4 +198,70 @@ func TestConnectBringsARunningProjectBack(t *testing.T) {
 		}
 		break
 	}
+}
+
+// A server that refused the logins is tried once per revive, whichever
+// revives it, and revives during that attempt share it: none of them can
+// spend three refusals, as a strict fail2ban on the server would count them.
+func TestRevivingARefusedServerTriesOnceEachTime(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)), "FAKE_SSH_AUTH_FAIL_HOST=mini", "FAKE_SSH_AUTH_HOLD="+hold)
+	start := func() error {
+		ctx, cancel := context.WithTimeout(bg, 20*time.Second)
+		defer cancel()
+		return h.eng.StartProject(ctx, "myapp")
+	}
+	refusedAfter := func(n int) {
+		t.Helper()
+		testutil.WaitUntil(t, 10*time.Second, func() bool {
+			status, _ := h.eng.ServerStatus("mini")
+			return status == transport.StatusAuthFailed && h.connections() == n
+		}, fmt.Sprintf("auth failed after %d attempts", n))
+		time.Sleep(200 * time.Millisecond) // another attempt would show up by now
+		if got := h.connections(); got != n {
+			t.Fatalf("ssh was launched %d times, want %d:\n%s", got, n, h.log())
+		}
+	}
+	if err := start(); err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("StartProject = %v, want the refusal", err)
+	}
+	refusedAfter(3)
+	revives := []func() error{
+		func() error { return h.eng.ReconnectServer("mini") },
+		func() error { return h.eng.ConnectServer("mini") },
+		func() error { start(); return nil }, // fails with the refusal
+		func() error { return h.eng.ReconnectServer("mini") },
+	}
+	for i, revive := range revives {
+		if err := revive(); err != nil {
+			t.Fatalf("revive %d: %v", i+1, err)
+		}
+		refusedAfter(4 + i)
+	}
+
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.eng.ReconnectServer("mini"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.connections() == 8 }, "the revived attempt")
+	started := make(chan error, 1)
+	go func() { started <- start() }()
+	for i := 0; i < 3; i++ {
+		if err := h.eng.ReconnectServer("mini"); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.eng.ConnectServer("mini"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // let the start reach the session
+	if err := os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-started; err == nil {
+		t.Fatal("StartProject during the refused attempt succeeded")
+	}
+	refusedAfter(8)
 }
