@@ -443,7 +443,7 @@ func TestValidateRejectsARefOnALocalPreset(t *testing.T) {
 
 func TestRegistryPromptIsOffOnlyWhenFalse(t *testing.T) {
 	dir := t.TempDir()
-	for body, want := range map[string]bool{"": false, "registry_prompt: true\n": false, "registry_prompt: false\n": true} {
+	for body, want := range map[string]bool{"projects: []\n": false, "registry_prompt: true\n": false, "registry_prompt: false\n": true} {
 		path := filepath.Join(dir, "config.yaml")
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -483,7 +483,7 @@ func TestRegistryPromptRoundTripsAndStaysOutOfAnEmptyConfig(t *testing.T) {
 
 func TestNotificationsAreOnUnlessTurnedOff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	for content, off := range map[string]bool{"": false, "notifications: true\n": false, "notifications: false\n": true} {
+	for content, off := range map[string]bool{"projects: []\n": false, "notifications: true\n": false, "notifications: false\n": true} {
 		os.WriteFile(path, []byte(content), 0o600)
 		cfg, err := Load(path)
 		if err != nil || cfg.NotificationsOff() != off {

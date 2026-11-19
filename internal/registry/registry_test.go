@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 const ref = "3f2c1ab9d0e4"
@@ -329,5 +331,20 @@ func TestStoredIndexStartsWithItsSource(t *testing.T) {
 	}
 	if _, err := ParseIndex([]byte(rest)); err != nil {
 		t.Error(err)
+	}
+}
+
+// Saving the index on a fresh machine creates the config directory, and the
+// registry directories in it, 0700.
+func TestStoreCreatesPrivateDirectories(t *testing.T) {
+	s, c := serve(t)
+	cfgDir := filepath.Join(filepath.Dir(c.Dir), "nearhost")
+	c.Dir = filepath.Join(cfgDir, "registry", "presets")
+	s.publish(ref, map[string]string{"stack": "one"})
+	if _, err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{cfgDir, filepath.Dir(c.Dir), c.Dir} {
+		testutil.WantPerm(t, d, 0o700)
 	}
 }

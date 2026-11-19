@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
-	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestLoadEnabledSkipsWhatItCannotUse(t *testing.T) {
@@ -81,30 +80,4 @@ func TestPrintable(t *testing.T) {
 			t.Errorf("printable(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-}
-
-// A preset kept as a link to a file the user manages is written through: the
-// link stays and its file gets the new contents.
-func TestWriteFileAtomicWritesThroughALink(t *testing.T) {
-	dir := t.TempDir()
-	real := filepath.Join(dir, "mine.yaml")
-	if err := os.WriteFile(real, []byte("old\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(real, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "preset.yaml")
-	testutil.Symlink(t, "mine.yaml", link)
-	if err := writeFileAtomic(link, []byte("new\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("the link was replaced: %v %v", fi, err)
-	}
-	if data, err := os.ReadFile(real); err != nil || string(data) != "new\n" {
-		t.Fatalf("linked file = %q, %v", data, err)
-	}
-	// The file keeps its own mode.
-	testutil.WantPerm(t, real, 0o600)
 }

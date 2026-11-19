@@ -339,7 +339,9 @@ func (c *Config) RemovePreset(name string) bool {
 	return false
 }
 
-// Load reads the config at path. A missing file yields an empty config.
+// Load reads the config at path. A missing file yields an empty config. An
+// empty file is an error: a crash part way through a write can leave one,
+// and reading it as no projects would let the next save write over them.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -348,6 +350,9 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%s is empty. Restore it from a backup, or delete it to start afresh.", path)
+	}
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -355,36 +360,19 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-// Save writes the config atomically, creating parent directories.
+// Save writes the config atomically with WriteFileAtomic, creating its
+// directory 0700 when missing. A config kept as a link stays a link, and the
+// file keeps its mode; a new one is 0644.
 func Save(path string, c *Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("replace config: %w", err)
+	if err := WriteFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
 }
