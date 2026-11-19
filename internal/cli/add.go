@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -164,7 +165,7 @@ func newAddCmd(b addBackend) *cobra.Command {
 			if flags.noPresets && len(flags.presets) > 0 {
 				return errors.New("--no-presets and --preset contradict each other; pass one of them")
 			}
-			return runAdd(cmd, b, flags, args)
+			return runAddInterruptible(cmd, b, flags, args)
 		},
 	}
 	cmd.Flags().StringVar(&flags.server, "server", config.LocalServer, "server the project runs on")
@@ -178,6 +179,63 @@ func newAddCmd(b addBackend) *cobra.Command {
 	return cmd
 }
 
+// interruptedCode is add's exit status when it is interrupted, the status a
+// shell gives a command that Ctrl-C ended.
+const interruptedCode = 130
+
+// runAddInterruptible is runAdd under a context that the signals `up` stops
+// on (Ctrl-C among them) end. Then the connection to a server ends, its run
+// directory goes, a question waiting for an answer gives up, and nothing is
+// saved: add prints that the project was not added and exits with
+// interruptedCode. Only the first signal is caught: a second one ends the
+// process as usual, while the connection is still being ended.
+func runAddInterruptible(cmd *cobra.Command, b addBackend, flags addFlags, args []string) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), stopSignals()...)
+	defer stop()
+	context.AfterFunc(ctx, stop)
+	cmd.SetContext(ctx)
+	err := runAdd(cmd, b, flags, args)
+	if err != nil && ctx.Err() != nil {
+		// What failed, failed because of the interrupt: an ssh or a read cut
+		// short says nothing the user needs.
+		msg := "Interrupted, so the project was not added."
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
+		return exitError{code: interruptedCode, msg: msg}
+	}
+	return err
+}
+
+// contextReader is r, read so that a read gives up when ctx ends: a question
+// waiting on the terminal then ends as the end of input does. A read that
+// gives up leaves its goroutine waiting on r; what it reads is lost.
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+// Read implements io.Reader.
+func (c contextReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	type result struct {
+		n   int
+		err error
+	}
+	buf := make([]byte, len(p))
+	done := make(chan result, 1)
+	go func() {
+		n, err := c.r.Read(buf)
+		done <- result{n, err}
+	}()
+	select {
+	case r := <-done:
+		return copy(p, buf[:r.n]), r.err
+	case <-c.ctx.Done():
+		return 0, c.ctx.Err()
+	}
+}
+
 func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) error {
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
@@ -187,7 +245,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// typed ahead reach the questions in the order they are asked.
 	var answers *bufio.Reader
 	if b.interactive != nil && b.interactive() {
-		answers = bufio.NewReader(cmd.InOrStdin())
+		answers = bufio.NewReader(contextReader{ctx: cmd.Context(), r: cmd.InOrStdin()})
 	}
 	out := cmd.OutOrStdout()
 	// A server the config does not have can be added when someone can
@@ -301,6 +359,12 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
 
+	// An interrupt before this point saves nothing, even when a question it
+	// cut short let the add go on. One during the save leaves the config as
+	// it was or as saved: the write is atomic.
+	if err := cmd.Context().Err(); err != nil {
+		return err
+	}
 	err = config.Update(cfgPath, func(cfg *config.Config) error {
 		// Another add may have saved the server meanwhile: the same server
 		// is used as it is, and one reached another way is not the one the
