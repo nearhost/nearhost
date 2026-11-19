@@ -37,12 +37,13 @@ func (s *Session) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=no",
 		"-s", "--", s.host, "sftp")
-	return openSFTP(ctx, cmd, s.host)
+	return openSFTP(ctx, &s.supervision, cmd)
 }
 
-// openSFTP starts cmd, an ssh that runs the SFTP subsystem on host, and
+// openSFTP starts cmd, an ssh that runs the SFTP subsystem on v's host, and
 // speaks SFTP over its standard streams. ctx bounds the handshake only.
-func openSFTP(ctx context.Context, cmd *exec.Cmd, host string) (*SFTP, error) {
+func openSFTP(ctx context.Context, v *supervision, cmd *exec.Cmd) (*SFTP, error) {
+	host := v.host
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -56,7 +57,7 @@ func openSFTP(ctx context.Context, cmd *exec.Cmd, host string) (*SFTP, error) {
 	// ProxyJump child can hold open after ssh is killed: Wait gives up on it
 	// after procWaitDelay rather than wait for that child to exit.
 	cmd.WaitDelay = procWaitDelay
-	if err := cmd.Start(); err != nil {
+	if err := v.startSSH(cmd); err != nil {
 		return nil, fmt.Errorf("start sftp: %w", err)
 	}
 	handshakeDone := make(chan struct{})

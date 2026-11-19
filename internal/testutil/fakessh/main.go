@@ -42,6 +42,11 @@ func run(args []string) int {
 		return holdStderr(args[1])
 	}
 	parentGone := watchParent()
+	// $FAKE_SSH_OUTLIVE_PARENT keeps it up when its parent ends, as a real
+	// ssh would be, for tests of what ends it then.
+	if os.Getenv("FAKE_SSH_OUTLIVE_PARENT") != "" {
+		parentGone = func() bool { return false }
+	}
 	all := strings.Join(args, " ")
 	if hasArg(args, "-G") {
 		return printConfig(args[len(args)-1])
@@ -325,7 +330,8 @@ func configHostname() string {
 // with 255 when exitOnFail is set (ExitOnForwardFailure=yes). It logs its
 // pid to $FAKE_SSH_PID_LOG and stays up until TERM or INT, until the file
 // $FAKE_SSH_DROP_DIR/<pid> exists, or until its parent process ends (then
-// it exits 255, so a crashed test leaves no ssh behind). It polls for that
+// it exits 255, so a crashed test leaves no ssh behind) unless
+// $FAKE_SSH_OUTLIVE_PARENT is set. It polls for that
 // file rather than relying on signals, which Windows lacks.
 func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, parentGone func() bool) int {
 	signals := make(chan os.Signal, 1)

@@ -178,7 +178,7 @@ func (p *perProcess) args(extra ...string) []string {
 // Check verifies that ssh can reach the host without prompting, as
 // Session.Check does.
 func (p *perProcess) Check(ctx context.Context) error {
-	return checkHost(p.command(ctx, checkArgs(p.host)...), p.host)
+	return checkHost(&p.supervision, p.command(ctx, checkArgs(p.host)...))
 }
 
 // OpenSFTP starts `ssh -s sftp` on a connection of its own. ctx bounds the
@@ -191,7 +191,7 @@ func (p *perProcess) OpenSFTP(ctx context.Context) (*SFTP, error) {
 		"-o", "RemoteCommand=none",
 		"-o", "ClearAllForwardings=yes",
 		"-s", "--", p.host, "sftp")
-	return openSFTP(ctx, cmd, p.host)
+	return openSFTP(ctx, &p.supervision, cmd)
 }
 
 // SetAgentForward chooses the socket forwarded for coding agents. Call it
@@ -247,10 +247,9 @@ func (p *perProcess) Stop() {
 // goes straight to the host.
 func (p *perProcess) readConfig(ctx context.Context) (authHost string, conflict error, fatal bool, err error) {
 	cmd := p.command(ctx, "-G", "--", p.host)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := p.runSSH(cmd); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
@@ -258,7 +257,7 @@ func (p *perProcess) readConfig(ctx context.Context) (authHost string, conflict 
 		var exit *exec.ExitError
 		return "", nil, !errors.As(err, &exit) || isFatalSSHError(msg), errors.New("ssh -G: " + msg)
 	}
-	return configAuthHost(string(out)), configConflicts(p.host, string(out)), false, nil
+	return configAuthHost(out.String()), configConflicts(p.host, out.String()), false, nil
 }
 
 // configAuthHost is the value of the hostname line in `ssh -G` output when
@@ -581,7 +580,7 @@ func (p *perProcess) startProc(args []string, stderr *sshStderr) (*sshProc, erro
 	cmd := p.longLived(context.Background(), args...) // not tied to a context: we stop it ourselves
 	cmd.Stderr = stderr
 	cmd.WaitDelay = procWaitDelay
-	if err := cmd.Start(); err != nil {
+	if err := p.startSSH(cmd); err != nil {
 		return nil, err
 	}
 	p.mu.Lock()
