@@ -196,13 +196,17 @@ func startProxyWith(t *testing.T, sites []Site, capture bool) *harness {
 	return startProxyOpts(t, sites, Options{Capture: capture})
 }
 
-// startProxyOpts is startProxy with opts, whose storage, ports other than
-// the web port, and version it sets.
+// startProxyOpts is startProxy with opts, whose ports other than the web
+// port, and version it sets, and its storage unless opts has one.
 func startProxyOpts(t *testing.T, sites []Site, opts Options) *harness {
 	t.Helper()
 	// Caddy can go on writing certificates to storage just after Stop, so
 	// the storage is removed with retries, as the engine harness does.
-	h := &harness{t: t, rec: &recorder{}, storage: testutil.TempDir(t, "nh-caddy-"), httpsPort: freePort(t), httpPort: freePort(t), webPort: opts.WebPort}
+	storage := opts.StorageRoot
+	if storage == "" {
+		storage = testutil.TempDir(t, "nh-caddy-")
+	}
+	h := &harness{t: t, rec: &recorder{}, storage: storage, httpsPort: freePort(t), httpPort: freePort(t), webPort: opts.WebPort}
 	SetSink(h.rec)
 	t.Cleanup(func() { SetSink(nil) })
 	opts.StorageRoot, opts.HTTPSPort, opts.HTTPPort, opts.Version = h.storage, h.httpsPort, h.httpPort, testVersion

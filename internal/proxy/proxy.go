@@ -77,7 +77,10 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		return false, fmt.Errorf("create proxy storage: %w", err)
 	}
 	quietCaddy()
-	if err := caddy.Load(cfg, false); err != nil {
+	// A replaced intermediate is read only when Caddy loads the config,
+	// which it skips for one it already runs.
+	force := freshenIntermediate(p.opts.StorageRoot)
+	if err := caddy.Load(cfg, force); err != nil {
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
@@ -92,6 +95,38 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		_ = releasePorts(p.ports(), releaseWait)
 	}
 	return true, nil
+}
+
+// freshenIntermediate removes the local CA's intermediate from storage when
+// it has less than a leaf's lifetime left, and reports whether it did, so
+// that Caddy makes a new one, with intermediateLifetime, when it next loads
+// a config. The internal issuer would otherwise cut every leaf short to what
+// is left of it. An install from before week-long leaves has one of at most
+// 7 days. New leaves chain to the same root; leaves the old intermediate
+// signed carry it in their chain and stay valid until they are renewed.
+// Call it with caddyMu held.
+func freshenIntermediate(storageRoot string) bool {
+	dir := filepath.Dir(RootCertPath(storageRoot))
+	cert := filepath.Join(dir, "intermediate.crt")
+	data, err := os.ReadFile(cert)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	inter, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || time.Until(inter.NotAfter) >= leafLifetime {
+		return false
+	}
+	if err := os.Remove(cert); err != nil {
+		return false
+	}
+	// Caddy writes a new key with the new certificate; removing the old
+	// one only keeps the two from being mismatched meanwhile.
+	_ = os.Remove(filepath.Join(dir, "intermediate.key"))
+	return true
 }
 
 // Stop shuts Caddy down and releases its listening ports if this Proxy owns
