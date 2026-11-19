@@ -33,6 +33,7 @@ type fakeMachine struct {
 	lowLevel  level
 	lowDetail string
 	exe       string
+	running   bool // a Nearhost answers on the agent socket
 
 	probed      []string
 	hostsReads  int
@@ -67,6 +68,7 @@ func (f *fakeMachine) backend() doctorBackend {
 			goos:      f.goos,
 		},
 		holderOf: func(_ context.Context, port int) string { return f.holders[port] },
+		running:  func() bool { return f.running },
 		checkServer: func(_ context.Context, srv config.Server) error {
 			f.serverCalls = append(f.serverCalls, srv.SSHHost)
 			return f.serverErr[srv.Name]
@@ -907,4 +909,164 @@ func TestDoctorWarnsAboutUnknownConfigKeys(t *testing.T) {
 		"      fix: Fix or remove them; saving now would delete them, so Nearhost refuses to save until then\n",
 		path, lines+1, path, lines+2),
 		"ok    hosts block      2 names\n")
+}
+
+// portLine is the report line of the check named name, "" when there is none.
+func portLine(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line[min(len(line), 6):], name) {
+			return line
+		}
+	}
+	return ""
+}
+
+// Run while Nearhost serves, doctor finds every port taken by Nearhost
+// itself. That is fine, so the checks pass and the exit status is zero.
+func TestDoctorAcceptsPortsTheRunningNearhostHolds(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{
+		"tcp 8443": syscall.EADDRINUSE, "udp 8443": syscall.EADDRINUSE,
+		"tcp 8080": syscall.EADDRINUSE, "tcp 6327": syscall.EADDRINUSE,
+	}
+	// The holder's pid is not known to doctor, so the name decides; a
+	// different pid than any recorded one makes no difference.
+	f.holders = map[int]string{8443: "nearhost (pid 41)", 8080: "nearhost (pid 41)", 6327: "nearhost (pid 41)"}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err != nil {
+		t.Fatalf("doctor failed while Nearhost holds its ports: %v\n%s", err, out)
+	}
+	wantContains(t, out,
+		"ok    port 8443        in use by the running Nearhost\n",
+		"ok    port 8080        in use by the running Nearhost\n",
+		"ok    port 6327        in use by the running Nearhost\n")
+	if strings.Contains(out, "FAIL") || strings.Contains(out, "warn  port") {
+		t.Errorf("unexpected failure or warning:\n%s", out)
+	}
+}
+
+// Any other holder stays a failure, even while a Nearhost runs.
+func TestDoctorFailsOnAnotherHolderWhileNearhostRuns(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{"tcp 8443": syscall.EADDRINUSE, "udp 8443": syscall.EADDRINUSE}
+	f.holders = map[int]string{8443: "nginx (pid 12)"}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err == nil || err.Error() != "1 check failed" {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	wantContains(t, out, "FAIL  port 8443        in use by nginx (pid 12); UDP (for HTTP/3): address already in use\n")
+}
+
+// With no Nearhost answering, a process called nearhost is a stale or
+// foreign one: the port is a conflict.
+func TestDoctorFailsOnANearhostNamedHolderWhenNoneRuns(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.portErr = map[string]error{"tcp 8080": syscall.EADDRINUSE}
+	f.holders = map[int]string{8080: "nearhost (pid 9)"}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err == nil || err.Error() != "1 check failed" {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	wantContains(t, out, "FAIL  port 8080        in use by nearhost (pid 9)\n")
+}
+
+// Names that only start with nearhost, or are another program's, are not
+// Nearhost.
+func TestDoctorNearhostHolderMatchesTheWholeName(t *testing.T) {
+	for _, holder := range []string{"nearhost-helper (pid 3)", "nginx (pid 3)", "pid 3", "mynearhost (pid 3)"} {
+		doctorConfig(t)
+		f := healthy()
+		f.running = true
+		f.portErr = map[string]error{"tcp 8080": syscall.EADDRINUSE}
+		f.holders = map[int]string{8080: holder}
+		out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+		if err == nil {
+			t.Errorf("holder %q: doctor passed\n%s", holder, out)
+		}
+	}
+}
+
+// A running Nearhost and a taken port with no holder to name: probably
+// Nearhost, but not proven, so doctor warns and exits zero.
+func TestDoctorWarnsWhenTheHolderIsUnknownWhileNearhostRuns(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{"tcp 8080": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err != nil {
+		t.Fatalf("doctor failed on an unnamed holder: %v\n%s", err, out)
+	}
+	line := portLine(out, "port 8080")
+	if !strings.HasPrefix(line, "warn  port 8080") || !strings.Contains(line, "probably Nearhost") {
+		t.Errorf("line = %q\n%s", line, out)
+	}
+	wantContains(t, out, "fix: Check with `lsof -nP -iTCP:8080 -sTCP:LISTEN`")
+
+	// Without a running Nearhost the same port stays a failure.
+	f.running = false
+	if _, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080"); err == nil {
+		t.Error("an unnamed holder passed with no Nearhost running")
+	}
+}
+
+// A Nearhost that holds TCP 443 holds UDP 443 for HTTP/3 as well. UDP taken
+// with TCP free is not Nearhost's.
+func TestDoctorAcceptsUDPOnlyBesideANearhostTCPHolder(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{"udp 8443": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err == nil {
+		t.Errorf("UDP alone passed\n%s", out)
+	}
+}
+
+// With the holder unnamed, a Nearhost's HTTP/3 listener makes UDP taken too.
+// UDP follows the TCP result, so the check is one warning, not a failure.
+func TestDoctorWarnsOnceWhenTCPAndUDPAreTakenAndTheHolderIsUnknown(t *testing.T) {
+	doctorConfig(t)
+	f := healthy()
+	f.running = true
+	f.portErr = map[string]error{"tcp 8443": syscall.EADDRINUSE, "udp 8443": syscall.EADDRINUSE}
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor", "--https-port", "8443", "--http-port", "8080")
+	if err != nil {
+		t.Fatalf("doctor failed on an unnamed holder with UDP taken: %v\n%s", err, out)
+	}
+	if line := portLine(out, "port 8443"); !strings.HasPrefix(line, "warn  port 8443") || strings.Contains(out, "UDP") {
+		t.Errorf("line = %q\n%s", line, out)
+	}
+}
+
+// The command that names a port's holder suits the system.
+func TestHolderCommand(t *testing.T) {
+	for goos, want := range map[string]string{
+		"linux":   "ss -ltnp 'sport = :443'",
+		"darwin":  "lsof -nP -iTCP:443 -sTCP:LISTEN",
+		"windows": "netstat -ano | findstr :443",
+	} {
+		if got := holderCommand(goos, 443); got != want {
+			t.Errorf("holderCommand(%q) = %q, want %q", goos, got, want)
+		}
+	}
+}
+
+// Windows reports WSAEADDRINUSE (10048), which is not syscall.EADDRINUSE there.
+func TestIsAddrInUse(t *testing.T) {
+	wsa := syscall.Errno(10048)
+	if !isAddrInUse(wsa, "windows") {
+		t.Error("WSAEADDRINUSE on windows is not in use")
+	}
+	if isAddrInUse(syscall.EACCES, "windows") || isAddrInUse(errors.New("x"), "linux") {
+		t.Error("another error counted as in use")
+	}
+	if !isAddrInUse(syscall.EADDRINUSE, "linux") {
+		t.Error("EADDRINUSE is in use")
+	}
 }
