@@ -627,6 +627,10 @@ func TestAddHostFlagIsApprovedByTyping(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "*.com") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
+	out, err = execute(t, newAddCmd(noRemote(t)), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--web", "3000", "--host", "Nearhost.localhost", "--no-presets")
+	if err == nil || err.Error() != "nearhost.localhost is Nearhost's own page" {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
 }
 
 func TestAddRefusesAHostAnotherProjectServes(t *testing.T) {

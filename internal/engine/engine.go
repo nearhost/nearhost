@@ -417,9 +417,10 @@ var errNoPage = errors.New("Nearhost's page isn't served: --web-port is 0")
 // PageURL returns the base URL of Nearhost's page, which documents are
 // given out below: https://nearhost.localhost:<web port>, the only host the
 // page gives its cookie at. The page answers at localhost on the web port
-// too, without the cookie; localhost on the HTTPS port belongs to projects. With no web port, it
-// returns errNoPage when the option was 0, and otherwise an error naming
-// the port that was taken when the engine started.
+// too, without the cookie; localhost on the HTTPS port belongs to projects.
+// With no web port, it returns errNoPage when the option was 0, and
+// otherwise an error naming the port that was taken when the engine
+// started.
 func (e *Engine) PageURL() (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

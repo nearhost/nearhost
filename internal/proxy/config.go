@@ -460,15 +460,14 @@ func listenerWrappers(server map[string]any) map[string]any {
 // deterministic: there is one route per host, ordered by hostname.Less, so
 // exact hosts win over patterns and more specific patterns over less
 // specific ones. While any site has extra clients, a host not served to all
-// of them is followed by a drop for that host alone (see hostDrop). Nearhost's
-// own page is served on the web port alone (see webServer): localhost on
-// the https port is served only to a site that lists it, and is otherwise
-// dropped like any host that is not served. With a web port, localhost and
-// hostname.PageHost are certificate subjects whether or not a site lists
-// them. The https server's
-// error routes, one per site host in the same
-// order, give a browser Nearhost's page while that site's app does not
-// answer (see Down).
+// of them is followed by a drop for that host alone (see hostDrop).
+// Nearhost's own page is served on the web port alone (see webServer):
+// localhost on the https port is served only to a site that lists it, and
+// is otherwise dropped like any host that is not served. With a web port,
+// localhost and hostname.PageHost are certificate subjects whether or not a
+// site lists them. The https server's error routes, one per site host in
+// the same order, give a browser Nearhost's page while that site's app does
+// not answer (see Down).
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")

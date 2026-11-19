@@ -598,6 +598,22 @@ func TestDiscoverFiltersInferredHosts(t *testing.T) {
 	}
 }
 
+// A project file that names Nearhost's page, in any case, gives no host:
+// no project may claim it.
+func TestDiscoverDropsNearhostsPage(t *testing.T) {
+	r := memReader{
+		"compose.yaml": hostsCompose,
+		".env":         "APP_URL=https://Nearhost.localhost:6327\nREVERB_HOST=ws.x.io\n",
+	}
+	res := discover(t, r, Options{Presets: []*preset.Preset{hostsPreset(t, `[url_host(env["APP_URL"])]`)}})
+	if want := "80 web []\n8080 web [ws.x.io]"; routeLines(res) != want {
+		t.Errorf("routes:\n%s\nwant:\n%s", routeLines(res), want)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "nearhost.localhost is Nearhost's own page") {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+}
+
 func TestDiscoverStockSailInfersNoHosts(t *testing.T) {
 	r := memReader{
 		"compose.yaml": hostsCompose,

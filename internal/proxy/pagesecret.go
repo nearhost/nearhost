@@ -222,7 +222,9 @@ func secretMatches(got, secret string) bool {
 // hostname.PageHost, with the port stripped and case ignored. The page
 // cookie is given and honoured there alone: a cookie is sent to every port
 // of the host it was set at, and at localhost that would hand it to any dev
-// server the user browses there.
+// server the user browses there. Cookies ignore ports at nearhost.localhost
+// too, so a server the user opens there on another port would receive the
+// cookie; SameSite=Strict keeps cross-site navigations from carrying it.
 func atPageHost(r *http.Request) bool {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {

@@ -47,8 +47,8 @@ func init() {
 // Home is a Caddy HTTP handler that serves Nearhost's own page, at
 // https://nearhost.localhost:<web port> and https://localhost:<web port>
 // and nowhere else. It is a module of its own, rather than a static
-// response in the config, so the page can grow without touching routing. It answers every request itself and never
-// calls the next handler.
+// response in the config, so the page can grow without touching routing.
+// It answers every request itself and never calls the next handler.
 type Home struct {
 	// Version is the Nearhost version shown in the footer. Empty means dev.
 	Version string `json:"version,omitempty"`

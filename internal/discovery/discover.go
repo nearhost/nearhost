@@ -256,14 +256,18 @@ type hostClaim struct {
 
 // inferHosts gives c the hosts a route of p names, leaving out those that
 // cannot be served: ones that are not names at all are dropped quietly,
-// ones that are malformed with a warning. A host two candidates are given
-// goes to the first that is served (serveHosts).
+// ones that are malformed, or Nearhost's own page, with a warning. A host
+// two candidates are given goes to the first that is served (serveHosts).
 func (res *Result) inferHosts(p *preset.Preset, id string, c *Candidate, hosts []string) {
 	for _, h := range hosts {
 		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
 		if _, err := netip.ParseAddr(h); err != nil && h != "" && h != "localhost" && strings.Contains(h, ".") {
 			if hostname.Valid(h) != nil {
 				res.warn("preset %s: route %s: %q is not a host name, so it is left out", p.Key(), id, h)
+				continue
+			}
+			if config.ValidProjectHost(h) != nil {
+				res.warn("preset %s: route %s: %s is Nearhost's own page, so it is left out", p.Key(), id, h)
 				continue
 			}
 			if slices.Contains(c.Hosts, h) {

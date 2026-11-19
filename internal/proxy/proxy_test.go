@@ -229,12 +229,11 @@ func startProxyOpts(t *testing.T, sites []Site, opts Options) *harness {
 	h.pool = x509.NewCertPool()
 	h.pool.AddCert(root)
 	// The web port makes localhost and nearhost.localhost certificate
-	// subjects of every config
-	// that listens, and most tests never ask for it, so its certificate is
-	// waited for here, while the proxy is surely running: a wait at cleanup
-	// would hang for tests that stop the proxy or apply no sites
-	// themselves. The https port shows it to a loopback client too, though
-	// it serves nothing there.
+	// subjects of every config that listens, and most tests never ask for
+	// them, so their certificates are waited for here, while the proxy is
+	// surely running: a wait at cleanup would hang for tests that stop the
+	// proxy or apply no sites themselves. The https port shows them to a
+	// loopback client too, though it serves nothing there.
 	if opts.WebPort != 0 && listens(sites, opts) {
 		h.waitCerts(t, hostname.PageHost, homeHost)
 	}
