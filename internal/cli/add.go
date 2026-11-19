@@ -189,7 +189,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		project.Routes = forceWeb(project.Routes, flags.web)
 	}
 	defaultAlias := project.Alias
-	if err := applyNearhostrc(cmd, b, cfg, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != ""); err != nil {
+	refused, err := applyNearhostrc(cmd, b, cfg, reader, answers, &project, flags.hosts, strings.TrimSpace(flags.alias) != "")
+	if err != nil {
 		return errors.Join(err, done())
 	}
 	// A main name from the .nearhostrc must be free, as a typed one must.
@@ -258,6 +259,13 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		fmt.Fprintf(out, "Added server %s, reached with `ssh %s`.\n", printable(srv.Name), printable(srv.SSHHost))
 	}
 	fmt.Fprintf(out, "Added %s on %s at https://%s\n", project.Name, project.Server, project.Alias)
+	if len(refused) > 0 {
+		names := make([]string, len(refused))
+		for i, n := range refused {
+			names[i] = printable(n)
+		}
+		fmt.Fprintf(out, "Not approved, so left out: %s.\n", strings.Join(names, ", "))
+	}
 	start := "nearhost up"
 	if !project.Enabled {
 		start = config.UpCommand(project.Name)
@@ -275,13 +283,18 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 // --alias. The file's alias is the project's main name unless --alias gave
 // one: the flag wins, and the snapshot still records the file's, so a later
 // start keeps the flag's until the file moves its alias. An inferred host
-// another project in cfg serves is left out, with a note on stderr. Nothing
+// another project in cfg serves is left out, with a note on stderr. Each
+// item that needs approval is asked about on its own, and one the user
+// refuses is dropped from project; the names of those are returned. Nothing
 // is saved here; an error stops the add.
-func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) error {
+func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reader discovery.FileReader, answers *bufio.Reader, project *config.Project, typed []string, aliasTyped bool) ([]string, error) {
 	out := cmd.OutOrStdout()
+	// The main name before the file is applied is the one a refused main
+	// name from the file goes back to.
+	defaultAlias := project.Alias
 	f, found, err := nearhostrc.Read(reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Without a file, or with one that lists no routes, the hosts on the
 	// routes now are the ones discovery inferred; with routes in the file,
@@ -304,7 +317,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		stripped.Routes = rcBase(project.Routes, f)
 		merged, err := nearhostrc.Merge(stripped, f, stripped.Routes)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		*project = merged
 		if aliasTyped {
@@ -323,7 +336,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	for _, h := range typed {
 		h = strings.ToLower(strings.TrimSpace(h))
 		if err := config.ValidProjectHost(h); err != nil {
-			return err
+			return nil, err
 		}
 		if !approved[h] {
 			approved[h] = true
@@ -379,57 +392,173 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		}
 	}
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
 	if answers == nil {
 		names := make([]string, len(items))
 		for i, it := range items {
 			names[i] = it.Name()
 		}
-		return fmt.Errorf("not added: this project asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
+		return nil, fmt.Errorf("not added: this project asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
 	}
-	fmt.Fprintln(out, "This project asks for these, which need your approval:")
+	// The note is about names, so a prompt about only loopback ports and
+	// options goes without it.
 	for _, it := range items {
-		if it.Host == "" {
-			fmt.Fprintf(out, "  %s (%s)\n", printable(it.Name()), it.Why)
+		if it.Host != "" {
+			fmt.Fprintln(out, approvalNote)
+			break
+		}
+	}
+	// A host listed twice, as a route host and as the main name, is asked
+	// about once, and the answer covers both.
+	asked := map[string]bool{}
+	var refused []string
+	for _, it := range items {
+		name := strings.ToLower(it.Name())
+		if asked[name] {
 			continue
 		}
-		fmt.Fprintf(out, "  %s on port %d (%s%s)\n", printable(it.Host), it.Port, it.Why, publicAddress(cmd.Context(), b.lookup, it.Host))
+		asked[name] = true
+		fmt.Fprintf(out, "%s: approve? [y/N] ", approvalItem(cmd.Context(), b.lookup, it))
+		if saidYesDefaultNo(answers, out) {
+			continue
+		}
+		refused = append(refused, it.Name())
+		dropRefused(project, it, defaultAlias)
 	}
-	fmt.Fprint(out, "Approve these? [y/N] ")
-	if !saidYesDefaultNo(answers, out) {
-		return errors.New("not added: what this project asks for was not approved")
-	}
-	return nil
+	return refused, nil
 }
 
-// publicAddress is ", resolves to <addr> on the internet" when DNS gives host
-// an address that is not loopback, which is what the user most needs to know
-// before shadowing it. It is empty when firstPublic finds none.
-func publicAddress(ctx context.Context, lookup hosts.Lookup, host string) string {
-	if addr, ok := firstPublic(ctx, lookup, host); ok {
-		return ", resolves to " + addr + " on the internet"
+// approvalNote is said once before the first approval question when a host
+// or main name is among the items: what saying yes to a name does on this
+// machine.
+const approvalNote = "Approving a name puts it in your hosts file on this machine, has Nearhost's local CA sign a certificate for it, and makes your browser send that site's cookies to this project."
+
+// approvalItem is how an approval question names it: a host with its port,
+// why it needs approval and where DNS points it, or an option with why.
+func approvalItem(ctx context.Context, lookup hosts.Lookup, it nearhostrc.Item) string {
+	if it.Host == "" {
+		return fmt.Sprintf("%s (%s)", printable(it.Name()), it.Why)
 	}
-	return ""
+	addr, err := lookupPublic(ctx, lookup, it.Host)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("%s on port %d (%s, could not check DNS)", printable(it.Host), it.Port, it.Why)
+	case addr != "":
+		return fmt.Sprintf("%s on port %d (%s, resolves to %s on the internet)", printable(it.Host), it.Port, it.Why, addr)
+	}
+	return fmt.Sprintf("%s on port %d (%s)", printable(it.Host), it.Port, it.Why)
+}
+
+// dropRefused takes the item the user refused out of project. A host leaves
+// every route that lists it, and a main name it refused goes back to
+// defaultAlias; a web route other than the primary left without hosts is
+// ignored, as withoutTakenHosts does. A loopback port is ignored, as a new
+// project has no approved role for it to go back to. docker_clients stays
+// off, and a refused main name leaves the snapshot's alias empty. An item
+// that came from the project's .nearhostrc also leaves the snapshot without
+// the file's hash, so that the next review of the file does not take it as
+// approved and asks about the item again.
+func dropRefused(project *config.Project, it nearhostrc.Item, defaultAlias string) {
+	if fromFile(project.Nearhostrc, it) {
+		project.Nearhostrc = project.Nearhostrc.Clone()
+		project.Nearhostrc.SHA256 = ""
+	}
+	switch {
+	case it.Host != "":
+		routes := make([]config.Route, len(project.Routes))
+		primary := true
+		for i, r := range project.Routes {
+			isPrimary := primary && r.Role == config.RoleWeb
+			if r.Role == config.RoleWeb {
+				primary = false
+			}
+			var kept []string
+			for _, h := range r.Hosts {
+				if !strings.EqualFold(h, it.Host) {
+					kept = append(kept, h)
+				}
+			}
+			if len(kept) != len(r.Hosts) {
+				r.Hosts = kept
+				if len(kept) == 0 && r.Role == config.RoleWeb && !isPrimary {
+					r.Role = config.RoleIgnore
+				}
+			}
+			routes[i] = r
+		}
+		project.Routes = routes
+		if strings.EqualFold(project.Alias, it.Host) {
+			project.Alias = defaultAlias
+			if project.Nearhostrc != nil {
+				project.Nearhostrc = project.Nearhostrc.Clone()
+				project.Nearhostrc.Alias = ""
+			}
+		}
+	case it.Option == nearhostrc.OptionLoopback:
+		routes := append([]config.Route(nil), project.Routes...)
+		for i := range routes {
+			if routes[i].Port == it.Port && routes[i].Role == config.RoleLoopback {
+				routes[i].Role = config.RoleIgnore
+			}
+		}
+		project.Routes = routes
+	case it.Option == nearhostrc.OptionDockerClients:
+		if project.Nearhostrc != nil {
+			project.Nearhostrc = project.Nearhostrc.Clone()
+			project.Nearhostrc.DockerClients = false
+		}
+	}
+}
+
+// fromFile reports whether the .nearhostrc that snap was taken from asked for
+// it: a host one of its routes lists, its main name, a loopback port or
+// docker_clients. A host a preset or the project's files gave is not.
+func fromFile(snap *config.RcSnapshot, it nearhostrc.Item) bool {
+	if snap == nil {
+		return false
+	}
+	if it.Host == "" {
+		return true
+	}
+	if strings.EqualFold(snap.Alias, it.Host) {
+		return true
+	}
+	for _, r := range snap.Routes {
+		for _, h := range r.Hosts {
+			if strings.EqualFold(h, it.Host) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // firstPublic is the first address DNS gives host that is not loopback. ok
 // is false for a pattern, when lookup is nil, when the lookup fails and when
 // every address is loopback, since the warning it feeds is a courtesy.
 func firstPublic(ctx context.Context, lookup hosts.Lookup, host string) (addr string, ok bool) {
+	addr, err := lookupPublic(ctx, lookup, host)
+	return addr, err == nil && addr != ""
+}
+
+// lookupPublic is the first address DNS gives host that is not loopback, or
+// empty when there is none, when host is a pattern and when lookup is nil.
+// The error is the lookup's: DNS could not be checked.
+func lookupPublic(ctx context.Context, lookup hosts.Lookup, host string) (string, error) {
 	if lookup == nil || hostname.IsPattern(host) {
-		return "", false
+		return "", nil
 	}
 	addrs, err := lookup(ctx, host)
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	for _, a := range addrs {
 		if !a.IsLoopback() {
-			return a.String(), true
+			return a.String(), nil
 		}
 	}
-	return "", false
+	return "", nil
 }
 
 // discoverWithPresets runs discovery with the enabled presets, then offers
