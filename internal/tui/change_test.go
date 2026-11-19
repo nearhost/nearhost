@@ -201,3 +201,16 @@ func TestChangeScreenShowsDockerClients(t *testing.T) {
 		t.Errorf("an option is shown as a host:\n%s", s)
 	}
 }
+
+// A loopback port is shown by the address it binds, without a lookup.
+func TestChangeScreenShowsLoopbackPort(t *testing.T) {
+	m, f := pendingModel(t)
+	st := f.Status("dd")
+	st.Pending.Items = []nearhostrc.Item{{Option: nearhostrc.OptionLoopback, Port: 5173, Why: "binds localhost:5173 on this machine"}}
+	f.setState("dd", st)
+	settle(m, press(m, "a"))
+	wantScreen(t, m, "localhost:5173 (binds localhost:5173 on this machine)")
+	if s := screen(m); strings.Contains(s, "on port 5173") || strings.Contains(s, "resolves to") {
+		t.Errorf("a loopback port is shown as a host:\n%s", s)
+	}
+}
