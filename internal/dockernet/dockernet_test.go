@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,9 +23,9 @@ import (
 // IPv4 subnet, one with an IPv4 and an IPv6 subnet, and host, which has no
 // IPAM config.
 const networks = `[
- {"Name":"bridge","IPAM":{"Driver":"default","Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}},
- {"Name":"app_default","IPAM":{"Driver":"default","Config":[{"Subnet":"fd00:d0c::/64"},{"Subnet":"192.168.97.0/24"}]}},
- {"Name":"host","IPAM":{"Driver":"default","Config":[]}}
+ {"Name":"bridge","Driver":"bridge","Scope":"local","IPAM":{"Driver":"default","Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}},
+ {"Name":"app_default","Driver":"bridge","Scope":"local","IPAM":{"Driver":"default","Config":[{"Subnet":"fd00:d0c::/64"},{"Subnet":"192.168.97.0/24"}]}},
+ {"Name":"host","Driver":"host","Scope":"local","IPAM":{"Driver":"default","Config":[]}}
 ]`
 
 // socketPath is a path for a unix socket in a short temporary directory, as
@@ -118,7 +121,7 @@ func TestRangesErrsWhenDaemonIsMissingOrSlow(t *testing.T) {
 }
 
 func TestRangesTriesSocketsInOrder(t *testing.T) {
-	second := fakeDaemon(t, `[{"IPAM":{"Config":[{"Subnet":"10.99.0.0/16"}]}}]`)
+	second := fakeDaemon(t, `[{"Driver":"bridge","Scope":"local","IPAM":{"Config":[{"Subnet":"10.99.0.0/16"}]}}]`)
 	got, err := rangesFrom(context.Background(), []string{socketPath(t), second})
 	if err != nil {
 		t.Fatalf("rangesFrom: %v", err)
@@ -194,5 +197,104 @@ func TestPipePath(t *testing.T) {
 	}
 	if _, ok := pipePath("unix:///var/run/docker.sock"); ok {
 		t.Error("a unix host is not a pipe")
+	}
+}
+
+// mixedNetworks has a kept bridge, a macvlan network on a LAN subnet, an
+// overlay network of swarm scope, and Docker's host and none networks,
+// which have drivers of their own and no subnets.
+const mixedNetworks = `[
+ {"Name":"bridge","Driver":"bridge","Scope":"local","IPAM":{"Config":[{"Subnet":"172.17.0.0/16"}]}},
+ {"Name":"lan","Driver":"macvlan","Scope":"local","IPAM":{"Config":[{"Subnet":"192.168.1.0/24"}]}},
+ {"Name":"mesh","Driver":"overlay","Scope":"swarm","IPAM":{"Config":[{"Subnet":"10.0.1.0/24"}]}},
+ {"Name":"host","Driver":"host","Scope":"local","IPAM":{"Config":[]}},
+ {"Name":"none","Driver":"null","Scope":"local"}
+]`
+
+// logRecorder collects what a Source logs.
+type logRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *logRecorder) logf(format string, args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+
+func TestRangesKeepsOnlyLocalBridgeNetworks(t *testing.T) {
+	var rec logRecorder
+	src := &Source{Logf: rec.logf}
+	got, err := src.rangesFrom(context.Background(), []string{fakeDaemon(t, mixedNetworks)})
+	if err != nil {
+		t.Fatalf("rangesFrom: %v", err)
+	}
+	if want := []string{"172.17.0.0/16"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ranges = %q, want %q", got, want)
+	}
+	want := []string{
+		`docker network "lan" ("macvlan") is not a local bridge; its clients are not let in`,
+		`docker network "mesh" ("overlay") is not a local bridge; its clients are not let in`,
+	}
+	if !reflect.DeepEqual(rec.lines, want) {
+		t.Errorf("log = %q, want %q (host and none stay silent)", rec.lines, want)
+	}
+}
+
+func TestRangesLogsALeftOutNetworkOnce(t *testing.T) {
+	var rec logRecorder
+	src := &Source{Logf: rec.logf}
+	path := fakeDaemon(t, mixedNetworks)
+	for range 2 {
+		if _, err := src.rangesFrom(context.Background(), []string{path}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := src.LeftOut(); len(got) != 2 {
+		t.Errorf("LeftOut = %q, want both networks, sorted", got)
+	}
+	if len(rec.lines) != 2 {
+		t.Errorf("log after two refreshes = %q, want one line per network", rec.lines)
+	}
+	// Once the network is gone from the list it is forgotten, so it is
+	// named again if it comes back.
+	gone := fakeDaemon(t, networks)
+	if _, err := src.rangesFrom(context.Background(), []string{gone}); err != nil {
+		t.Fatal(err)
+	}
+	if got := src.LeftOut(); len(got) != 0 {
+		t.Errorf("remembered %v after the networks left the list", got)
+	}
+	if _, err := src.rangesFrom(context.Background(), []string{path}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.lines) != 4 {
+		t.Errorf("log after the networks returned = %q, want 4 lines", rec.lines)
+	}
+}
+
+func TestRangesQuotesNamesFromTheDaemon(t *testing.T) {
+	var rec logRecorder
+	src := &Source{Logf: rec.logf}
+	body := `[{"Name":"a\nb","Driver":"macvlan","Scope":"local","IPAM":{"Config":[{"Subnet":"192.168.1.0/24"}]}}]`
+	if _, err := src.rangesFrom(context.Background(), []string{fakeDaemon(t, body)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.lines) != 1 || strings.Contains(rec.lines[0], "\n") {
+		t.Errorf("log = %q, want one line with the newline escaped", rec.lines)
+	}
+}
+
+func TestRangesSaysSwarmBridgeIsNotLocal(t *testing.T) {
+	src := &Source{}
+	body := `[{"Name":"x","Driver":"bridge","Scope":"swarm","IPAM":{"Config":[{"Subnet":"10.5.0.0/24"}]}}]`
+	got, err := src.rangesFrom(context.Background(), []string{fakeDaemon(t, body)})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("ranges = %q, %v; want none", got, err)
+	}
+	want := []string{`docker network "x" ("bridge") is not a local bridge; its clients are not let in`}
+	if !reflect.DeepEqual(src.LeftOut(), want) {
+		t.Errorf("LeftOut = %q, want %q", src.LeftOut(), want)
 	}
 }

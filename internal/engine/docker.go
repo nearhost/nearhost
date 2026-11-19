@@ -29,6 +29,9 @@ type dockerState struct {
 	// loops counts refresh loops that have not returned. One that was
 	// stopped may still be finishing while its successor runs.
 	loops int
+	// source asks Docker when Options.DockerRanges is nil, and remembers
+	// which networks it has said are left out. Its Logf is set by New.
+	source *dockernet.Source
 }
 
 // dockerClientsLocked is the ranges a site that opts in is served to,
@@ -42,9 +45,27 @@ func (e *Engine) dockerClientsLocked() []string {
 func (e *Engine) askDocker(ctx context.Context) ([]string, error) {
 	ask := e.opts.DockerRanges
 	if ask == nil {
-		ask = dockernet.Ranges
+		ask = e.docker.source.Ranges
 	}
 	return ask(ctx)
+}
+
+// logDocker publishes a line about the Docker networks to each project that
+// is served to them. It announces a network newly left out; a project that
+// starts later is told by dockerStart. It is called with no engine lock
+// held.
+func (e *Engine) logDocker(format string, args ...any) {
+	e.mu.Lock()
+	var served []*projectRun
+	for _, name := range e.order {
+		if run := e.runs[name]; run.site && run.docker {
+			served = append(served, run)
+		}
+	}
+	e.mu.Unlock()
+	for _, run := range served {
+		e.logProject(run, format, args...)
+	}
 }
 
 // describeRanges is ranges as shown in a project's log.
@@ -89,6 +110,10 @@ func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 	ranges := slices.Clone(e.dockerClientsLocked())
 	e.mu.Unlock()
 	e.logProject(run, "accepts requests from Docker networks: %s", describeRanges(ranges))
+	// Whoever asked, each project's log says which networks are left out.
+	for _, sentence := range e.docker.source.LeftOut() {
+		e.logProject(run, "%s", sentence)
+	}
 	return nil
 }
 

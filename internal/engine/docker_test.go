@@ -3,6 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -274,5 +278,127 @@ func TestStartAsksDockerAgainWhenNoLoopRuns(t *testing.T) {
 	// The refresh is an hour away, so only the start can have asked.
 	if got := clientsOf(h, "a.test"); len(got) != 1 || !slices.Equal(got[0], both) {
 		t.Errorf("a's clients after starting again = %q, want %q", got, both)
+	}
+}
+
+// daemonBody is a Docker daemon's network list that a test can change.
+type daemonBody struct {
+	mu   sync.Mutex
+	body string
+}
+
+func (d *daemonBody) set(body string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.body = body
+}
+
+// leftOutLine is what a project's log says of the network "lan" (macvlan).
+const leftOutLine = `docker network "lan" ("macvlan") is not a local bridge; its clients are not let in`
+
+// logsOf returns the log lines the engine has published for project so far.
+func logsOf(h *harness, project string) []string {
+	var out []string
+	for {
+		select {
+		case ev := <-h.events:
+			h.seen = append(h.seen, ev)
+		default:
+			for _, ev := range h.seen {
+				if ev.Project == project && ev.State == "" {
+					out = append(out, ev.Message)
+				}
+			}
+			return out
+		}
+	}
+}
+
+// Every project served to Docker is told which networks are left out and
+// why, whether it asked Docker itself, started while the refresh loop ran,
+// or started after the loop had stopped; a network that turns up while
+// projects run is announced to them once.
+func TestProjectLogsSayWhichDockerNetworksAreLeftOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake daemon listens on a unix socket")
+	}
+	const bridge = `{"Name":"bridge","Driver":"bridge","Scope":"local","IPAM":{"Config":[{"Subnet":"172.17.0.0/16"}]}}`
+	const lan = `{"Name":"lan","Driver":"macvlan","Scope":"local","IPAM":{"Config":[{"Subnet":"192.168.1.0/24"}]}}`
+	daemon := &daemonBody{body: "[" + bridge + "," + lan + "]"}
+	sock := filepath.Join(testutil.TempDir(t, "nh-dn-"), "docker.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		daemon.mu.Lock()
+		defer daemon.mu.Unlock()
+		_, _ = w.Write([]byte(daemon.body))
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	var h *harness
+	h = buildHarness(t, &config.Config{Projects: []config.Project{optedIn(t, "a"), optedIn(t, "b")}}, func(o *Options) {
+		o.DockerRefresh = 20 * time.Millisecond
+		o.DockerRanges = func(ctx context.Context) ([]string, error) {
+			return h.eng.docker.source.RangesFrom(ctx, []string{sock})
+		}
+	})
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	count := func(project string) int {
+		n := 0
+		for _, line := range logsOf(h, project) {
+			if line == leftOutLine {
+				n++
+			}
+		}
+		return n
+	}
+
+	mustStart(t, h, "a") // asks Docker itself
+	if n := count("a"); n != 1 {
+		t.Errorf("a's log has the left-out line %d times, want 1", n)
+	}
+	mustStart(t, h, "b") // starts while the refresh loop runs, so does not ask
+	if n := count("b"); n != 1 {
+		t.Errorf("b's log has the left-out line %d times, want 1", n)
+	}
+	// The refresh loop runs on, and the network is not announced again.
+	time.Sleep(100 * time.Millisecond)
+	if n, m := count("a"), count("b"); n != 1 || m != 1 {
+		t.Errorf("after refreshes a has the line %d times and b %d, want 1 each", n, m)
+	}
+
+	// A network that turns up while they run is announced to both.
+	const mesh = `{"Name":"mesh","Driver":"overlay","Scope":"swarm","IPAM":{"Config":[{"Subnet":"10.0.1.0/24"}]}}`
+	daemon.set("[" + bridge + "," + lan + "," + mesh + "]")
+	meshLine := `docker network "mesh" ("overlay") is not a local bridge; its clients are not let in`
+	testutil.WaitUntil(t, 2*time.Second, func() bool {
+		for _, p := range []string{"a", "b"} {
+			if !slices.Contains(logsOf(h, p), meshLine) {
+				return false
+			}
+		}
+		return true
+	}, "the new network to be announced to both projects")
+
+	// Started after the loop has stopped, a project is told again.
+	for _, p := range []string{"a", "b"} {
+		if err := h.eng.StopProject(bg, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.WaitUntil(t, 2*time.Second, func() bool {
+		h.eng.mu.Lock()
+		defer h.eng.mu.Unlock()
+		return h.eng.docker.loops == 0
+	}, "the refresh loop to end")
+	before := count("a")
+	mustStart(t, h, "a")
+	if n := count("a"); n != before+1 {
+		t.Errorf("a's log has the left-out line %d times after a restart, want %d", n, before+1)
 	}
 }

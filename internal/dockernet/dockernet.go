@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/oserr"
@@ -34,8 +35,46 @@ const maxBody = 16 << 20
 // daemon listens, in order (see endpoints), and uses the first that answers.
 // It returns an error when none answers with a network list within 2s. An
 // empty list with no error means the daemon has no subnets.
+//
+// Only local bridge networks count: a macvlan or ipvlan network's subnet is
+// the real LAN, and an overlay network spans other hosts, so letting their
+// addresses in would let those machines reach a project's sites.
 func Ranges(ctx context.Context) ([]string, error) {
 	return rangesFrom(ctx, endpoints())
+}
+
+// Source is Ranges that remembers which networks it leaves out. LeftOut
+// lists them, and Logf, when set, announces each one when it first appears
+// among them. A Source is safe for concurrent use; the zero value is ready.
+type Source struct {
+	// Logf announces a network newly left out, once while it stays left
+	// out. It must not call back into the Source.
+	Logf func(format string, args ...any)
+
+	mu   sync.Mutex
+	left map[string]string // networks left out by the last answer: key to sentence
+}
+
+// LeftOut returns a sentence for each network the last answer left out,
+// sorted. Names and drivers come from the daemon, so they are quoted. It is
+// nil before an answer and for a nil Source.
+func (s *Source) LeftOut() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.left))
+	for _, sentence := range s.left {
+		out = append(out, sentence)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Ranges is the package's Ranges, logging each network left out once.
+func (s *Source) Ranges(ctx context.Context) ([]string, error) {
+	return s.rangesFrom(ctx, endpoints())
 }
 
 // contextHost returns the host of the current docker context's endpoint, as
@@ -112,13 +151,26 @@ func unique(list []string) []string {
 
 // rangesFrom is Ranges over the given endpoints, tried in order.
 func rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
+	return (*Source)(nil).rangesFrom(ctx, endpoints)
+}
+
+// RangesFrom is Ranges over the daemon at each of the given endpoints, tried
+// in order, with this Source's memory of what it leaves out. Tests use it to
+// point a Source at a fake daemon.
+func (s *Source) RangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
+	return s.rangesFrom(ctx, endpoints)
+}
+
+// rangesFrom is Source.Ranges over the given endpoints. A nil Source logs
+// nothing.
+func (s *Source) rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var failed error // the first endpoint that was there but did not answer well
 	for _, path := range endpoints {
-		ranges, err := ask(ctx, path)
+		nets, err := ask(ctx, path)
 		if err == nil {
-			return ranges, nil
+			return s.ranges(nets), nil
 		}
 		if failed == nil && !oserr.NothingListening(err) {
 			failed = fmt.Errorf("%s: %w", path, err)
@@ -138,7 +190,10 @@ func rangesFrom(ctx context.Context, endpoints []string) ([]string, error) {
 
 // network is the part of a network in the daemon's list that is read.
 type network struct {
-	IPAM struct {
+	Name   string
+	Driver string
+	Scope  string
+	IPAM   struct {
 		Config []struct {
 			Subnet string
 		}
@@ -146,9 +201,8 @@ type network struct {
 }
 
 // ask fetches the network list from the daemon at endpoint (a unix socket's
-// path, or a named pipe's on Windows) and returns its subnets. Empty and
-// unparsable subnets are skipped.
-func ask(ctx context.Context, endpoint string) ([]string, error) {
+// path, or a named pipe's on Windows) and returns its networks.
+func ask(ctx context.Context, endpoint string) ([]network, error) {
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
@@ -174,14 +228,42 @@ func ask(ctx context.Context, endpoint string) ([]string, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&nets); err != nil {
 		return nil, fmt.Errorf("read Docker's networks: %w", err)
 	}
+	return nets, nil
+}
+
+// isClientNetwork reports whether n's clients are let in: a bridge network
+// whose scope is this host. Docker Desktop and Podman's Docker-compatible
+// API report their bridge networks the same way.
+func (n network) isClientNetwork() bool {
+	return n.Driver == "bridge" && n.Scope == "local"
+}
+
+// ranges returns the subnets of the networks whose clients are let in, as
+// Ranges does: masked, deduplicated and sorted, IPv4 first. Empty and
+// unparsable subnets are skipped. A network with a subnet that is left out
+// is remembered for LeftOut and announced through s.Logf when it is new to
+// the list; one with none, such as Docker's host and none networks, is
+// ignored.
+func (s *Source) ranges(nets []network) []string {
 	var prefixes []netip.Prefix
+	left := map[string]string{}
 	for _, n := range nets {
+		var own []netip.Prefix
 		for _, c := range n.IPAM.Config {
 			if p, err := netip.ParsePrefix(c.Subnet); err == nil {
-				prefixes = append(prefixes, p.Masked())
+				own = append(own, p.Masked())
 			}
 		}
+		if len(own) == 0 {
+			continue
+		}
+		if n.isClientNetwork() {
+			prefixes = append(prefixes, own...)
+			continue
+		}
+		left[n.Name+"\x00"+n.Driver] = fmt.Sprintf("docker network %q (%q) is not a local bridge; its clients are not let in", n.Name, n.Driver)
 	}
+	s.setLeftOut(left)
 	// Addr.Compare puts IPv4 before IPv6, then orders by address.
 	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
 		return cmp.Or(a.Addr().Compare(b.Addr()), cmp.Compare(a.Bits(), b.Bits()))
@@ -191,5 +273,31 @@ func ask(ctx context.Context, endpoint string) ([]string, error) {
 	for i, p := range prefixes {
 		out[i] = p.String()
 	}
-	return out, nil
+	return out
+}
+
+// setLeftOut records left as the networks now left out and announces those
+// that were not before. A network that leaves the list is forgotten, which
+// bounds the set, and is announced again if it returns.
+func (s *Source) setLeftOut(left map[string]string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	var added []string
+	for k, sentence := range left {
+		if _, was := s.left[k]; !was {
+			added = append(added, sentence)
+		}
+	}
+	s.left = left
+	logf := s.Logf
+	s.mu.Unlock()
+	if logf == nil {
+		return
+	}
+	slices.Sort(added)
+	for _, sentence := range added {
+		logf("%s", sentence)
+	}
 }
