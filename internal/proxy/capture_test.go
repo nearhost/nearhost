@@ -234,6 +234,10 @@ func TestRequestBodyStillReadAfterTheExchangeIsKept(t *testing.T) {
 	if after, m := kept.done(); len(after) != len(buf) || m != n {
 		t.Errorf("more was kept after done: %d bytes of %d, then %d of %d", len(buf), n, len(after), m)
 	}
+	// Nor is anything more handed on to the app: it was not counted.
+	if got, err := body.Read(make([]byte, 1)); got != 0 || err != http.ErrBodyReadAfterClose {
+		t.Errorf("a read after done = %d, %v", got, err)
+	}
 }
 
 // An exchange that ends after the store was cleared, such as a WebSocket

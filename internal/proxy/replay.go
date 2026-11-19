@@ -27,12 +27,32 @@ var notReplayed = map[string]bool{
 	"proxy-authorization": true, "proxy-authenticate": true, "trailer": true,
 }
 
+// The reasons a request whose body did not all reach the app is not sent
+// again. Each already says the request cannot be sent.
+var (
+	// ErrAppStoppedReading is the reason when the app answered before
+	// reading the whole body.
+	ErrAppStoppedReading = errors.New("the app stopped reading this request's body, so Nearhost cannot send it again")
+	// ErrClientStoppedSending is the reason when the client gave up before
+	// sending the whole body.
+	ErrClientStoppedSending = errors.New("the client stopped sending this request's body, so Nearhost cannot send it again")
+	// ErrBodyNeverReached is the reason when none of the body reached the
+	// app: it was down, or answered without reading any.
+	ErrBodyNeverReached = errors.New("this request's body never reached the app, so Nearhost has none of it to send again")
+)
+
 // CanReplay says why a kept request cannot be sent again, or nil when it
 // can.
 func CanReplay(e Exchange) error {
 	switch {
 	case e.Upgraded:
 		return errors.New("it is an upgraded connection, such as a WebSocket")
+	case e.ReqBodyAborted:
+		return ErrClientStoppedSending
+	case e.ReqBodyNeverReached():
+		return ErrBodyNeverReached
+	case e.ReqBodyShort:
+		return ErrAppStoppedReading
 	case e.ReqBodyCut():
 		return fmt.Errorf("only the first %d bytes of its body were kept", len(e.ReqBody))
 	}

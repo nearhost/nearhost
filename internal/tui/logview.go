@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -192,10 +193,14 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	case "c":
 		if at >= 0 && shown[at].req != nil {
 			a := shown[at].req
-			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				return tea.Batch(copyText(v.key, curlForExchange(ex)), note)
+				said := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+				if why := bodyLeftOut(ex); why != "" {
+					said = strings.TrimSuffix(said, ".") + ", without its body: " + why + "."
+				}
+				return tea.Batch(copyText(v.key, curlForExchange(ex)), m.alert(v.key, said))
 			}
+			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
 			return tea.Batch(copyText(v.key, curlFor(*a)), note)
 		}
 	case "v":
@@ -430,8 +435,11 @@ func (m *Model) requestLines(e logEntry, width int) []string {
 		}
 		lines = append(lines, lead+l)
 	}
-	if kept && ex.ReqBodySize > 0 {
+	if kept && (ex.ReqBodySize > 0 || ex.ReqBodyShort) {
 		text, note := m.logView.decoded(ex.ID+" sent", ex.ReqBody, ex.ReqHeader, ex.ReqBodyCut())
+		if short := shortBodyNote(ex); short != "" {
+			note = strings.TrimPrefix(note+" · "+short, " · ")
+		}
 		lines = append(lines, bodyLines(bar+label("sent"), under, text, note, width)...)
 	}
 	resp := statusText(a.Status)
@@ -562,6 +570,52 @@ func sizeText(n int) string {
 	return fmt.Sprintf("%.1f MB", float64(n)/1000/1000)
 }
 
+// shortBodyNote says how much of a request body reached the app, when not
+// all of it did, or is empty.
+func shortBodyNote(ex proxy.Exchange) string {
+	switch {
+	case !ex.ReqBodyShort || ex.Upgraded:
+		return ""
+	case ex.ReqBodyNeverReached() && ex.ReqBodyLength >= 0:
+		return "(none of " + sizeText(int(ex.ReqBodyLength)) + " reached the app)"
+	case ex.ReqBodyNeverReached():
+		return "(none of the body reached the app)"
+	}
+	n := sizeText(int(ex.ReqBodySize))
+	if n == "" {
+		n = "0 B"
+	}
+	who := "app read "
+	if ex.ReqBodyAborted {
+		who = "client sent "
+	}
+	switch {
+	case ex.ReqBodyLength >= 0 && ex.ReqBodyAborted:
+		return "(" + who + n + " of " + sizeText(int(ex.ReqBodyLength)) + ", then stopped)"
+	case ex.ReqBodyLength >= 0:
+		return "(" + who + n + " of " + sizeText(int(ex.ReqBodyLength)) + ")"
+	}
+	return "(" + who + n + ", then stopped)"
+}
+
+// bodyLeftOut says why a curl command for ex has no body when it had one,
+// or is empty.
+func bodyLeftOut(ex proxy.Exchange) string {
+	switch {
+	case ex.Upgraded:
+		return ""
+	case ex.ReqBodyAborted:
+		return "the client stopped sending it"
+	case ex.ReqBodyNeverReached():
+		return "it never reached the app"
+	case ex.ReqBodyShort:
+		return "the app stopped reading it"
+	case ex.ReqBodyCut():
+		return "only its start was kept"
+	}
+	return ""
+}
+
 // skipInCurl are the headers a curl command leaves out: the URL carries
 // the host, and curl works out the rest itself.
 var skipInCurl = map[string]bool{
@@ -591,7 +645,7 @@ func curlForExchange(ex proxy.Exchange) string {
 			parts = append(parts, "-H", quote(name+": "+value))
 		}
 	}
-	if ex.ReqBodySize > 0 && !ex.ReqBodyCut() {
+	if ex.ReqBodySize > 0 && !ex.ReqBodyCut() && !ex.ReqBodyShort {
 		parts = append(parts, "--data-binary", quote(string(ex.ReqBody)))
 	}
 	return strings.Join(parts, " ")
@@ -677,7 +731,12 @@ func (m *Model) askReplay(e logEntry) tea.Cmd {
 		v.said = styleAmber.Render("That request is no longer kept, so it cannot be sent again.")
 		return nil
 	case proxy.CanReplay(ex) != nil:
-		v.said = styleAmber.Render(sentence(proxy.CanReplay(ex).Error()) + ", so it cannot be sent again.")
+		why := proxy.CanReplay(ex)
+		if errors.Is(why, proxy.ErrAppStoppedReading) || errors.Is(why, proxy.ErrClientStoppedSending) || errors.Is(why, proxy.ErrBodyNeverReached) {
+			v.said = styleAmber.Render(sentence(why.Error()) + ".") // already says it cannot be sent
+		} else {
+			v.said = styleAmber.Render(sentence(why.Error()) + ", so it cannot be sent again.")
+		}
 		return nil
 	case !safeMethods[ex.Method]:
 		v.confirm = e.seq
