@@ -687,7 +687,7 @@ func TestDoctorReportsDNSUncheckedOnce(t *testing.T) {
 	shop.Alias, blog.Alias = "shop.example.io", "blog.example.io"
 	saveConfig(t, path, &config.Config{Projects: []config.Project{shop, blog}})
 	f := healthy()
-	f.hosts = "# nearhost:start\n127.0.0.1 blog.example.io\n::1 blog.example.io\n127.0.0.1 shop.example.io\n::1 shop.example.io\n# nearhost:end\n"
+	f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 blog.example.io\n::1 blog.example.io\n127.0.0.1 shop.example.io\n::1 shop.example.io\n# nearhost:end\n"
 	f.lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, hosts.ErrNoUpstream }
 	var opened []string
 	stdout, _, err := runSplit(t, withProjects(f.backend(), nil, &opened), "doctor", "--json")

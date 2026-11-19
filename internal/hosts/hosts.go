@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -136,11 +137,58 @@ func isEntry(line string) bool {
 // unchanged reports whether updated differs from existing at most by a
 // missing trailing newline.
 func unchanged(existing, updated string) bool {
-	return updated == existing || updated == existing+"\n"
+	return updated == existing || updated == existing+"\n" || updated == existing+"\r\n"
+}
+
+// defaultLineEnding is the line ending for a hosts file with no line breaks:
+// CRLF on Windows, LF elsewhere. Tests set it to reach both cases.
+var defaultLineEnding = func() string {
+	if runtime.GOOS == "windows" {
+		return "\r\n"
+	}
+	return "\n"
+}()
+
+// lineEnding returns the dominant line ending of the lines outside the
+// managed block: CRLF when more than half of their line breaks are CRLF, LF
+// when not, and the platform default when there are none. The block itself is
+// left out, so an LF block from 0.13.0 in a CRLF file does not sway the vote.
+// A lone \r is not a line break, so the caller leaves out a last line that has
+// no line break after it.
+func lineEnding(parts ...[]string) string {
+	total, crlf := 0, 0
+	for _, p := range parts {
+		for _, l := range p {
+			total++
+			if strings.HasSuffix(l, "\r") {
+				crlf++
+			}
+		}
+	}
+	if total <= 0 {
+		return defaultLineEnding
+	}
+	if crlf*2 > total {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// Current reports whether existing already holds the managed block for
+// aliases, the check Apply and Ensure make before they write. A missing final
+// newline does not count as a difference.
+func Current(existing string, aliases []string) (bool, error) {
+	updated, err := Rewrite(existing, aliases)
+	if err != nil {
+		return false, err
+	}
+	return unchanged(existing, updated), nil
 }
 
 // Rewrite returns the hosts content with the managed block set to aliases.
-// Everything outside the markers is preserved byte for byte.
+// Everything outside the markers is preserved byte for byte. The block takes
+// the file's dominant line ending. When Nearhost had to add a newline after a
+// last line that had none, removing the block later leaves that newline.
 func Rewrite(existing string, aliases []string) (string, error) {
 	return rewrite(existing, aliases, true)
 }
@@ -162,9 +210,13 @@ func rewrite(existing string, aliases []string, ipv6 bool) (string, error) {
 	lines := splitLines(existing)
 	start, end := findBlock(lines)
 	var before, after []string
+	// lastIn names the part that holds the file's last line, which has no
+	// terminator when the file lacks a final newline.
+	lastIn := "before"
 	switch {
 	case start >= 0 && end >= 0:
 		before, after = lines[:start], lines[end+1:]
+		lastIn = "after"
 	case start >= 0:
 		// Unterminated block: drop only the orphan marker and the block
 		// entries right after it; everything else is foreign content.
@@ -173,17 +225,52 @@ func rewrite(existing string, aliases []string, ipv6 bool) (string, error) {
 			n++
 		}
 		before = append(append([]string{}, lines[:start]...), lines[n:]...)
+		if n == len(lines) {
+			lastIn = ""
+		}
 	default:
 		before = lines
 	}
-	out := make([]string, 0, len(before)+len(sorted)+2+len(after))
-	out = append(out, before...)
-	out = append(out, blockFor(sorted, ipv6)...)
-	out = append(out, after...)
-	if len(out) == 0 {
-		return "", nil
+	// Lines outside the block keep their own bytes, a trailing \r included.
+	// Only the block, and a newline added before it or after it, take the
+	// file's dominant ending.
+	missingFinal := len(lines) > 0 && !strings.HasSuffix(existing, "\n")
+	voters := [2][]string{before, after}
+	switch {
+	case !missingFinal || lastIn == "" || (lastIn == "after" && len(after) == 0) || (lastIn == "before" && len(before) == 0):
+	case lastIn == "after":
+		voters[1] = after[:len(after)-1]
+	default:
+		voters[0] = before[:len(before)-1]
 	}
-	return strings.Join(out, "\n") + "\n", nil
+	eol := lineEnding(voters[0], voters[1])
+	type segment struct{ text, term string }
+	var out []segment
+	add := func(ls []string, holdsLast bool) {
+		for i, l := range ls {
+			term := "\n"
+			if missingFinal && holdsLast && i == len(ls)-1 {
+				term = ""
+			}
+			out = append(out, segment{l, term})
+		}
+	}
+	add(before, lastIn == "before")
+	for _, l := range blockFor(sorted, ipv6) {
+		out = append(out, segment{l, eol})
+	}
+	add(after, lastIn == "after")
+	var b strings.Builder
+	for i, sg := range out {
+		b.WriteString(sg.text)
+		switch {
+		case sg.term != "":
+			b.WriteString(sg.term)
+		case i < len(out)-1:
+			b.WriteString(eol)
+		}
+	}
+	return b.String(), nil
 }
 
 // withPage returns aliases with Nearhost's page, hostname.PageHost, added
