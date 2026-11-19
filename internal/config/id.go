@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -41,6 +40,9 @@ func installIDFor(path string, fingerprint func() string) (string, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return createID(path, fingerprint)
 	}
+	if errors.Is(err, errEmptyID) {
+		return replaceEmptyID(path, fingerprint)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -56,9 +58,19 @@ func installIDFor(path string, fingerprint func() string) (string, error) {
 	return id, writeID(path, id, fp)
 }
 
+// idWait is how long a file with no id in it may be a writer's work in
+// progress. An empty file older than this is a leftover.
+const idWait = time.Second
+
+// errEmptyID is what readIDFile returns for a file with no id in it that
+// no process is still writing.
+var errEmptyID = errors.New("the id file is empty")
+
 // readIDFile reads the id and the fingerprint in the file at path. A file
 // that is there but empty is being written by a process that started at
-// the same moment: it is read again for a while.
+// the same moment: it is read again for a while. Once it is older than
+// idWait it is a leftover (a crash or a full disk between create and write)
+// and the error is errEmptyID. A file of only white space counts as empty.
 func readIDFile(path string) (id, fingerprint string, err error) {
 	for wait := 0; ; wait++ {
 		data, err := os.ReadFile(path)
@@ -66,11 +78,16 @@ func readIDFile(path string) (id, fingerprint string, err error) {
 			return "", "", err
 		}
 		fields := strings.Fields(string(data))
-		if len(fields) == 0 && wait < 20 {
-			time.Sleep(50 * time.Millisecond)
-			continue
+		if len(fields) == 0 {
+			// A modification time in the future cannot age, so the loop's
+			// own count bounds the wait too.
+			if wait < 20 && !olderThan(path, idWait) {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			return "", "", errEmptyID
 		}
-		if len(fields) == 0 || len(fields) > 2 || !validID(fields[0]) {
+		if len(fields) > 2 || !validID(fields[0]) {
 			return "", "", fmt.Errorf("%s does not hold an install id; remove it and nearhost makes a new one", path)
 		}
 		if len(fields) == 2 {
@@ -80,20 +97,63 @@ func readIDFile(path string) (id, fingerprint string, err error) {
 	}
 }
 
+// olderThan reports whether the file at path was last written more than d
+// ago. A file that cannot be examined counts as old.
+func olderThan(path string, d time.Duration) bool {
+	info, err := os.Stat(path)
+	return err != nil || time.Since(info.ModTime()) >= d
+}
+
+// replaceEmptyID gives a leftover empty id file an id. Processes that find
+// the same leftover take the id lock (the file id.lock beside the id, the
+// one createID holds while it writes) and each looks again under it, so
+// the first writes an id and the rest read it, and a creator that is slow
+// is waited for. Nothing is removed: the file is replaced whole by a
+// rename, so there is no moment with no file. On Windows a rename can fail
+// while another program holds the file open, after the retries in
+// WriteFileAtomic; the error then says so. Nothing reached while the lock
+// is held may take it again, so the cases here write the file themselves.
+func replaceEmptyID(path string, fingerprint func() string) (string, error) {
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err == nil && len(strings.Fields(string(data))) > 0 {
+		// Another process got here first.
+		unlock()
+		return installIDFor(path, fingerprint)
+	}
+	defer unlock()
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	id := newID()
+	return id, writeID(path, id, fingerprint())
+}
+
 // createID makes the id file. Two processes starting at once must end up
 // with one id: the first to create the file wins, and the other reads what
-// it wrote.
+// it wrote. The create and the write happen under the id lock, so a
+// process that finds the file empty and old (see replaceEmptyID) waits for
+// the lock and sees the id, however long this one stalled. The lock is
+// released before the id is read back, since taking it again would wait on
+// itself.
 func createID(path string, fingerprint func() string) (string, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
 		return "", err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrExist) {
+		unlock()
 		return installIDFor(path, fingerprint)
 	}
 	if err != nil {
+		unlock()
 		return "", err
 	}
+	defer unlock()
 	id := newID()
 	_, err = f.WriteString(idLine(id, fingerprint()))
 	return id, errors.Join(err, f.Close())
@@ -101,18 +161,7 @@ func createID(path string, fingerprint func() string) (string, error) {
 
 // writeID replaces the id file, whole: a reader never sees half of it.
 func writeID(path, id, fingerprint string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".id-*")
-	if err != nil {
-		return err
-	}
-	_, err = tmp.WriteString(idLine(id, fingerprint))
-	if err = errors.Join(err, tmp.Close()); err == nil {
-		err = os.Rename(tmp.Name(), path)
-	}
-	if err != nil {
-		os.Remove(tmp.Name())
-	}
-	return err
+	return WriteFileAtomic(path, []byte(idLine(id, fingerprint)), 0o600)
 }
 
 func idLine(id, fingerprint string) string {

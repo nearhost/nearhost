@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,5 +116,138 @@ func TestThisMachineHasAFingerprint(t *testing.T) {
 	fp := machineFingerprint()
 	if len(fp) != 16 || fp != machineFingerprint() {
 		t.Fatalf("fingerprint %q", fp)
+	}
+}
+
+// leftover makes an id file with content that is older than the wait window.
+func leftover(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "id")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestInstallIDReplacesAnOldEmptyFileAtOnce(t *testing.T) {
+	for _, content := range []string{"", " \n\t\n"} {
+		path := leftover(t, content)
+		start := time.Now()
+		id, err := installIDFor(path, fingerprint("aaaa"))
+		if err != nil || !validID(id) {
+			t.Fatalf("%q: %q %v", content, id, err)
+		}
+		if took := time.Since(start); took > 400*time.Millisecond {
+			t.Fatalf("%q: took %v, want no wait", content, took)
+		}
+		if got := readID(t, path); got != id+" aaaa\n" {
+			t.Fatalf("%q: file %q", content, got)
+		}
+		testutil.WantPerm(t, path, 0o600)
+	}
+}
+
+func TestInstallIDWaitsForAWriterThatIsStillAtWork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "id")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		if err := os.WriteFile(path, []byte("abcdef\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}()
+	id, err := installIDFor(path, fingerprint(""))
+	if err != nil || id != "abcdef" {
+		t.Fatalf("got %q %v, want the writer's id", id, err)
+	}
+}
+
+func TestInstallIDStillRefusesContentThatIsNotAnID(t *testing.T) {
+	path := leftover(t, "not an id at all\n")
+	if _, err := installIDFor(path, fingerprint("")); err == nil || !strings.Contains(err.Error(), "remove it") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestInstallIDAgreesWhenManyFindTheSameLeftover(t *testing.T) {
+	path := leftover(t, "")
+	const n = 16
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids[i], errs[i] = installIDFor(path, fingerprint("aaaa"))
+		}()
+	}
+	wg.Wait()
+	for i := range ids {
+		if errs[i] != nil || ids[i] != ids[0] || !validID(ids[i]) {
+			t.Fatalf("caller %d: %q %v, caller 0 got %q", i, ids[i], errs[i], ids[0])
+		}
+	}
+	if got := readID(t, path); got != ids[0]+" aaaa\n" {
+		t.Fatalf("file %q", got)
+	}
+}
+
+func TestInstallIDWaitsForACreatorThatHoldsTheLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "id")
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result)
+	go func() {
+		id, err := installIDFor(path, fingerprint(""))
+		done <- result{id, err}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	if err := os.WriteFile(path, []byte("abcdef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if r := <-done; r.err != nil || r.id != "abcdef" {
+		t.Fatalf("got %q %v, want the creator's id", r.id, r.err)
+	}
+}
+
+func TestInstallIDAgreesWhenManyStartWithNoFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "id")
+	const n = 16
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids[i], errs[i] = installIDFor(path, fingerprint("aaaa"))
+		}()
+	}
+	wg.Wait()
+	for i := range ids {
+		if errs[i] != nil || ids[i] != ids[0] || !validID(ids[i]) {
+			t.Fatalf("caller %d: %q %v, caller 0 got %q", i, ids[i], errs[i], ids[0])
+		}
 	}
 }
