@@ -96,7 +96,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// goroutines it does not wait for: wait for them, so a caller that
 		// tries again at once does not find a port held by its own failed
 		// start. A port another program holds is not waited for.
-		retired(retiring.since(before), releaseWait)
+		retiring.settle(retiring.since(before), "a load that failed")
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
@@ -176,7 +176,8 @@ func (p *Proxy) Stop() error {
 // again after a failure finds nothing left to stop and succeeds.
 var stopCaddy = caddy.Stop
 
-// releaseWait bounds how long Stop waits for the proxy's ports.
+// releaseWait bounds how long Stop waits for the proxy's ports, and how long
+// a load waits for the listeners it closes (see Retire).
 const releaseWait = 5 * time.Second
 
 // listenPort is a TCP port the proxy listens on and the addresses it binds

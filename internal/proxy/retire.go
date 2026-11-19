@@ -1,7 +1,10 @@
 package proxy
 
 import (
+	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +28,10 @@ func init() {
 // port in use. With this wrapper on each server the proxy knows every open
 // listener and when its close has returned, and a load waits for those it
 // closes.
+//
+// It wraps TCP listeners only. The UDP sockets of HTTP/3 are deliberately
+// not tracked: Caddy keeps one until its connections end, which nothing
+// here waits for.
 type Retire struct{}
 
 // CaddyModule implements caddy.Module.
@@ -101,23 +108,60 @@ func (s *retireSet) since(before map[*retireListener]struct{}) map[*retireListen
 	return out
 }
 
-// retired is waitRetired; tests watch it.
+// settle waits for every listener of ls to close, for releaseWait at most.
+// Those still open then are said in the log, once, and forgotten: a listener
+// that never closes is not waited for again, so it cannot hold up every
+// later load. after says what closed them, for the log line.
+func (s *retireSet) settle(ls map[*retireListener]struct{}, after string) {
+	left := retired(ls, releaseWait)
+	if len(left) == 0 {
+		return
+	}
+	addrs := make([]string, 0, len(left))
+	s.mu.Lock()
+	for l := range left {
+		delete(s.open, l)
+		addrs = append(addrs, l.Addr().String())
+	}
+	s.mu.Unlock()
+	slices.Sort(addrs)
+	noun := "listeners were"
+	if len(left) == 1 {
+		noun = "listener was"
+	}
+	emit("", fmt.Sprintf("%d proxy %s still open %s after %s: %s",
+		len(left), noun, releaseWait, after, strings.Join(addrs, ", ")))
+}
+
+// retired is waitRetired; tests replace it.
 var retired = waitRetired
 
 // waitRetired waits until every listener of ls has closed, or timeout has
-// passed, and reports whether all closed.
-func waitRetired(ls map[*retireListener]struct{}, timeout time.Duration) bool {
+// passed, and returns those still open then.
+func waitRetired(ls map[*retireListener]struct{}, timeout time.Duration) map[*retireListener]struct{} {
 	if len(ls) == 0 {
-		return true
+		return nil
 	}
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 	for l := range ls {
 		select {
 		case <-l.closed:
+			continue
 		case <-t.C:
-			return false
+		}
+		break
+	}
+	var left map[*retireListener]struct{}
+	for l := range ls {
+		select {
+		case <-l.closed:
+		default:
+			if left == nil {
+				left = map[*retireListener]struct{}{}
+			}
+			left[l] = struct{}{}
 		}
 	}
-	return true
+	return left
 }
