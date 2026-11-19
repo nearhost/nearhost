@@ -147,12 +147,25 @@ func TestFatalLineBeforeConnectingIsForgotten(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool { return s.Launches() >= 2 && s.Status() == StatusConnected }, "reconnect")
 }
 
+// exitMessageOf waits until s has noted why its master exited, as a failed
+// attempt, and returns the message. LastError alone does not tell: from the
+// moment a connected master is reaped it is the "ssh exited" of dropped,
+// until the master's stderr has been read.
+func exitMessageOf(t *testing.T, s *Session) string {
+	t.Helper()
+	var h Health
+	waitFor(t, 5*time.Second, func() bool {
+		h = s.Health()
+		return h.Failures > 0
+	}, "an exit message")
+	return h.LastError
+}
+
 func TestRefusedChannelWithServerErrorIsNotAnAuthFailure(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.3", "FAKE_SSH_LATE_LINE=channel 3: open failed: connect failed: Permission denied")
 	s.baseBackoff, s.maxBackoff = 3*time.Second, 3*time.Second
 	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.LastError() != "" }, "an exit message")
-	if got := s.LastError(); !strings.Contains(got, "Broken pipe") {
+	if got := exitMessageOf(t, s); !strings.Contains(got, "Broken pipe") {
 		t.Fatalf("LastError = %q, want the reason the master exited, not the refused channel", got)
 	}
 }
@@ -171,8 +184,7 @@ func TestMasterWithOnlyRefusedChannelsExitsPlainly(t *testing.T) {
 	s, _ := newFakeSession(t, "FAKE_SSH_FLAKY_ONCE=0.2", "FAKE_SSH_EXIT_FLOOD=50")
 	s.baseBackoff, s.maxBackoff = 3*time.Second, 3*time.Second
 	s.Start()
-	waitFor(t, 5*time.Second, func() bool { return s.LastError() != "" }, "an exit message")
-	if got := s.LastError(); got != "ssh exited" {
+	if got := exitMessageOf(t, s); got != "ssh exited" {
 		t.Fatalf("LastError = %q, want \"ssh exited\"", got)
 	}
 }
