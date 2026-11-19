@@ -290,6 +290,8 @@ func TestDocumentAnswerNoAndFailures(t *testing.T) {
 		t.Fatalf("after no: %v", out)
 	}
 
+	// A No holds back the next request for backoff.
+	e.c.add(backoff)
 	_, out = e.ask(t, docBody("b.md", "agent", ""))
 	id = out["id"].(string)
 	if e.r.docPrompts()[1].CanAlways {
@@ -604,5 +606,104 @@ func TestDocumentRefusesADrivePathFromAServer(t *testing.T) {
 		if msg := remoteDrivePath(c[0], "path", c[1]); msg != "" {
 			t.Errorf("remoteDrivePath(%s, %s) = %q", c[0], c[1], msg)
 		}
+	}
+}
+
+func TestDocumentRefusedWaits(t *testing.T) {
+	e := newDocServer(t, true)
+	_, out := e.ask(t, docBody("a.md", "claude-code", ""))
+	if err := e.s.AnswerDocument(context.Background(), out["id"].(string), AnswerNo); err != nil {
+		t.Fatal(err)
+	}
+	e.c.add(10 * time.Second)
+	st, retry, out := askFull(t, e.remote, "/v1/documents", docBody("b.md", "claude-code", ""))
+	if st != http.StatusTooManyRequests || retry != "20" || out["error"] != "refused; ask again in 20 s" {
+		t.Fatalf("at 10 s: %d %q %v", st, retry, out)
+	}
+	if n := len(e.r.docPrompts()); n != 1 {
+		t.Fatalf("%d prompts", n)
+	}
+
+	// The laptop is not held back by apollo's No, nor are apollo's
+	// passthroughs, nor a request with a valid token.
+	if st, out := call(t, e.local, "POST", "/v1/documents", docBody("b.md", "claude-code", "")); st != http.StatusAccepted {
+		t.Fatalf("local: %d %v", st, out)
+	}
+	if st, out := call(t, e.remote, "POST", "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`); st != http.StatusAccepted {
+		t.Fatalf("a passthrough: %d %v", st, out)
+	}
+	tok, _ := e.g.Allow("apollo", "claude-code")
+	if st, out := e.ask(t, `{"path": "/srv/other/c.md", "root": "/srv/other", "requester": "claude-code", "token": "`+tok+`"}`); st != http.StatusCreated {
+		t.Fatalf("with a token: %d %v", st, out)
+	}
+
+	if st, _, out := askFull(t, e.remote, "/v1/documents", docBody("d.md", "codex", `, "session": "s9"`)); st != http.StatusTooManyRequests {
+		t.Fatalf("another requester and session: %d %v", st, out)
+	}
+
+	e.c.add(21 * time.Second)
+	if st, out := e.ask(t, docBody("b.md", "claude-code", "")); st != http.StatusAccepted {
+		t.Fatalf("at 31 s: %d %v", st, out)
+	}
+	if n := len(e.r.docPrompts()); n != 3 {
+		t.Fatalf("%d prompts", n)
+	}
+}
+
+func TestDocumentOnlyANoHoldsBack(t *testing.T) {
+	e := newDocServer(t, true)
+	_, out := e.ask(t, docBody("a.md", "claude-code", ""))
+	id := out["id"].(string)
+	e.c.add(10 * time.Minute)
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "expired" {
+		t.Fatalf("not expired: %v", out)
+	}
+	if err := e.s.AnswerDocument(context.Background(), id, AnswerNo); err == nil {
+		t.Fatal("no on an expired request was taken")
+	}
+	_, out = e.ask(t, docBody("b.md", "claude-code", ""))
+	if out["id"] == nil {
+		t.Fatalf("after an expiry: %v", out)
+	}
+	// A box closed after a failed answer is no refusal either.
+	if err := e.s.AnswerDocument(context.Background(), out["id"].(string), AnswerClose); err != nil {
+		t.Fatal(err)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+out["id"].(string), ""); out["state"] != "declined" || out["reason"] == nil || out["held"] != nil {
+		t.Fatalf("closed: %v", out)
+	}
+	if st, out := e.ask(t, docBody("c.md", "claude-code", "")); st != http.StatusAccepted {
+		t.Fatalf("after a close: %d %v", st, out)
+	}
+}
+
+func TestDocumentNoHoldsBackTheQueue(t *testing.T) {
+	e := newDocServer(t, true)
+	var ids []string
+	for _, doc := range []string{"a.md", "b.md", "c.md"} {
+		_, out := e.ask(t, docBody(doc, "claude-code", ""))
+		ids = append(ids, out["id"].(string))
+	}
+	_, out := call(t, e.local, "POST", "/v1/documents", docBody("a.md", "claude-code", ""))
+	local := out["id"].(string)
+	_, out = call(t, e.remote, "POST", "/v1/passthroughs", `{"port": 3001, "requester": "claude-code"}`)
+	pass := out["id"].(string)
+	if err := e.s.AnswerDocument(context.Background(), ids[0], AnswerNo); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids[1:] {
+		_, out := call(t, e.remote, "GET", "/v1/documents/"+id+"?wait=5", "")
+		if out["state"] != "declined" || out["held"] != true || out["retry_after"] != 30.0 || out["reason"] == nil {
+			t.Fatalf("a queued one: %v", out)
+		}
+	}
+	if _, out := call(t, e.local, "GET", "/v1/documents/"+local, ""); out["state"] != "pending" {
+		t.Fatalf("the laptop's: %v", out)
+	}
+	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+pass, ""); out["state"] != "pending" {
+		t.Fatalf("apollo's passthrough: %v", out)
+	}
+	if len(e.sh.showed()) != 0 {
+		t.Fatal("a held request was shown")
 	}
 }

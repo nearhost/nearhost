@@ -460,6 +460,8 @@ func agentAnswer(answer tui.Answer) agentapi.Answer {
 		return agentapi.AnswerYes
 	case tui.AnswerAlways:
 		return agentapi.AnswerAlways
+	case tui.AnswerClose:
+		return agentapi.AnswerClose
 	}
 	return agentapi.AnswerNo
 }

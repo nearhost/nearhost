@@ -132,7 +132,7 @@ func (f *fakeBackend) AnswerPassthrough(_ context.Context, id string, a Answer) 
 	if a == AnswerAlways && errors.Is(f.passErr, ErrAllowNotSaved) {
 		return f.passErr // the port opened, and the request was answered; only Always allow saves
 	}
-	if f.passErr != nil && a != AnswerNo && !f.passErrKeeps {
+	if f.passErr != nil && a != AnswerNo && a != AnswerClose && !f.passErrKeeps {
 		// A failed open ends the request.
 		f.endPass(id, f.passErr)
 		return f.passEnded[id]
@@ -228,7 +228,7 @@ func (f *fakeBackend) AnswerDocument(_ context.Context, id string, a Answer) err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.docCalls = append(f.docCalls, fmt.Sprintf("answer %s %d", id, a))
-	if f.docErr != nil && a != AnswerNo {
+	if f.docErr != nil && a != AnswerNo && a != AnswerClose {
 		return RequestEnded(f.docErr)
 	}
 	return nil

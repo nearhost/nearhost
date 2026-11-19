@@ -19,7 +19,7 @@
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
-# by the user, 7 expired, 8 superseded: the change waited on no longer waits.
+# by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
 #
 # The file stays ASCII, as Windows PowerShell 5.1 reads a file without a byte
@@ -319,6 +319,48 @@ function Exit-Answer {
 		exit 3
 	}
 	exit 1
+}
+
+# Exit-HeldBack exits 6 when Nearhost refused the request because the user
+# said No to one of its Kind from this machine moments ago, printing Body and
+# saying when the agent may ask again: held_back in nearhost.sh. It never asks
+# again by itself. Otherwise it returns.
+function Exit-HeldBack([string]$Kind) {
+	if ($script:Status -ne '429') {
+		return
+	}
+	$m = [regex]::Match((Get-Text error $script:Body), '^refused; ask again in ([0-9]+) s\z')
+	if (-not $m.Success) {
+		return
+	}
+	$n = $m.Groups[1].Value
+	Write-Out $script:Body
+	if ($script:Document) {
+		Exit-SaidNo "The user said No to a $Kind from this machine in Nearhost, so nothing was opened." $n " Tell the user the document is at $($script:Document)."
+	}
+	Exit-SaidNo "The user said No to a $Kind from this machine in Nearhost." $n
+}
+
+# Exit-Held exits 6 for a request in Body that Nearhost ended without asking,
+# as the user said No to another of its Kind from this machine, saying when
+# the agent may ask again: held in nearhost.sh. It returns for any other.
+function Exit-Held([string]$Kind) {
+	if ((Get-Field held $script:Body) -ne 'True') {
+		return
+	}
+	Exit-SaidNo "The user said No to another $Kind from this machine in Nearhost, so this one was not asked." (Get-Field retry_after $script:Body)
+}
+
+# Exit-SaidNo exits 6 saying What, that the agent must not ask again by
+# itself, and when it may if the user asks, which is after N seconds, then
+# After: said_no in nearhost.sh.
+function Exit-SaidNo([string]$What, [string]$N, [string]$After = '') {
+	if ($N -match '^[0-9]+\z' -and [int]$N -gt 0) {
+		Write-Err "$What Do not ask again on your own; if the user asks you to, ask again in $N seconds or later.$After"
+	} else {
+		Write-Err "$What Do not ask again on your own; if the user asks you to, you may ask again now.$After"
+	}
+	exit 6
 }
 
 # Get-Requester prints who is asking: claude-code inside Claude Code,
@@ -707,6 +749,7 @@ switch -CaseSensitive ($cmd) {
 			$fields['label'] = $label
 		}
 		Send-WithToken -Url 'http://nearhost/v1/passthroughs' -Fields $fields -TokenFile (Get-TokenFile)
+		Exit-HeldBack passthrough
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token
@@ -756,6 +799,7 @@ switch -CaseSensitive ($cmd) {
 		}
 		Write-Body
 		if ($state -eq 'declined') {
+			Exit-Held passthrough
 			# The user's No has no reason. A reason means the user said yes and
 			# opening the port failed, which is no answer to stop asking for.
 			$reason = Get-Text reason $script:Body
@@ -867,6 +911,7 @@ switch -CaseSensitive ($cmd) {
 			$fields['label'] = $label
 		}
 		Send-WithToken -Url 'http://nearhost/v1/documents' -Fields $fields -TokenFile (Get-DocTokenFile)
+		Exit-HeldBack document
 		switch ($script:Status) {
 			{ $_ -eq '200' -or $_ -eq '201' } {
 				Save-Token (Get-DocTokenFile)
@@ -912,6 +957,7 @@ switch -CaseSensitive ($cmd) {
 		}
 		Write-Body
 		if ($state -eq 'declined') {
+			Exit-Held document
 			# The user's No has no reason. A reason means the user said yes and
 			# showing the document failed.
 			$reason = Get-Text reason $script:Body

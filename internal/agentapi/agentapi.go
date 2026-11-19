@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -51,6 +52,11 @@ const (
 	// reloadTimeout bounds one re-read of a project's .nearhostrc, which
 	// may read it over ssh.
 	reloadTimeout = 45 * time.Second
+	// backoff is how long, after the user says No to a passthrough or a
+	// document, that origin's next request of the same kind is refused
+	// without a prompt, so an agent can't wear the user down with one
+	// prompt after another.
+	backoff = 30 * time.Second
 )
 
 // Route is one of a project's ports and what nearhost does with it.
@@ -201,6 +207,7 @@ type Server struct {
 	docs      map[string]*docRecord  // document requests, by ID
 	docSeq    uint64                 // counts document requests, for their order
 	docOpens  uint64                 // counts document requests that opened
+	refused   map[refusal]time.Time  // when the user last said No, by origin and kind
 	closed    bool
 }
 
@@ -238,6 +245,46 @@ type proposal struct {
 	sha     string
 }
 
+// refusal is an origin and the kind of request the user said No to:
+// kindPassthrough or kindDocument.
+type refusal struct{ origin, kind string }
+
+// refuseLocked records that the user said No to origin's request of kind
+// now.
+func (s *Server) refuseLocked(origin, kind string) {
+	s.refused[refusal{origin, kind}] = s.opts.Now()
+}
+
+// holdLeftLocked is how many whole seconds, rounded up, are left of the
+// hold the user's last No to origin's request of kind put on that kind, or 0
+// when none is.
+func (s *Server) holdLeftLocked(origin, kind string) int {
+	at, ok := s.refused[refusal{origin, kind}]
+	if !ok {
+		return 0
+	}
+	left := at.Add(backoff).Sub(s.opts.Now())
+	if left <= 0 {
+		return 0
+	}
+	return int((left + time.Second - 1) / time.Second)
+}
+
+// backingOffLocked answers origin's request of kind with 429 while the
+// user's last No to that kind from origin is under backoff old, and reports
+// whether it answered. The wait is given in whole seconds, rounded up, in
+// Retry-After and the error.
+func (s *Server) backingOffLocked(w http.ResponseWriter, origin, kind string) bool {
+	secs := s.holdLeftLocked(origin, kind)
+	if secs == 0 {
+		delete(s.refused, refusal{origin, kind})
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	fail(w, http.StatusTooManyRequests, fmt.Sprintf("refused; ask again in %d s", secs))
+	return true
+}
+
 type originKey struct{}
 
 // New creates a server that listens nowhere yet.
@@ -245,7 +292,7 @@ func New(opts Options) *Server {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}}
+	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}, refused: map[refusal]time.Time{}}
 	s.handler = s.routes()
 	return s
 }

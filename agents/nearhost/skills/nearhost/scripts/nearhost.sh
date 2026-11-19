@@ -18,7 +18,7 @@
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
 # 2 no Nearhost reachable, no curl to reach it with or no token it accepts, 3 Nearhost runs without its interface, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
-# by the user, 7 expired, 8 superseded: the change waited on no longer waits.
+# by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
 
 set -u
@@ -248,6 +248,40 @@ answer() {
 	409) exit 3 ;;
 	*) exit 1 ;;
 	esac
+}
+
+# held_back exits 6 when Nearhost refused the request because the user said
+# No to one of its KIND from this machine moments ago, printing BODY and
+# saying when the agent may ask again. It never asks again by itself.
+# Otherwise it returns.
+held_back() {
+	[ "$STATUS" = 429 ] || return 0
+	n=$(text_field error "$BODY" | sed -n 's/^refused; ask again in \([0-9][0-9]*\) s$/\1/p')
+	[ -n "$n" ] || return 0
+	printf '%s\n' "$BODY"
+	if [ -n "${DOCUMENT:-}" ]; then
+		said_no "The user said No to a $1 from this machine in Nearhost, so nothing was opened." "$n" " Tell the user the document is at $DOCUMENT."
+	fi
+	said_no "The user said No to a $1 from this machine in Nearhost." "$n"
+}
+
+# held exits 6 for a request in BODY that Nearhost ended without asking,
+# as the user said No to another of its KIND from this machine, saying when
+# the agent may ask again. It returns for any other.
+held() {
+	[ "$(field held "$BODY")" = true ] || return 0
+	said_no "The user said No to another $1 from this machine in Nearhost, so this one was not asked." "$(field retry_after "$BODY")"
+}
+
+# said_no exits 6 saying WHAT, that the agent must not ask again by itself,
+# and when it may if the user asks, which is after N seconds, then AFTER.
+said_no() {
+	if [ "${2:-0}" -gt 0 ] 2>/dev/null; then
+		printf '%s\n' "$1 Do not ask again on your own; if the user asks you to, ask again in $2 seconds or later.${3:-}" >&2
+	else
+		printf '%s\n' "$1 Do not ask again on your own; if the user asks you to, you may ask again now.${3:-}" >&2
+	fi
+	exit 6
 }
 
 # requester prints who is asking: claude-code inside Claude Code, otherwise
@@ -551,6 +585,7 @@ passthrough)
 	PASSPORT=$PORT
 	pass_find
 	pass_post
+	held_back passthrough
 	case $STATUS in
 	200 | 201)
 		save_token
@@ -603,6 +638,7 @@ passthrough-wait)
 	show_body
 	case $(field state "$BODY") in
 	declined)
+		held passthrough
 		# The user's No has no reason. A reason means the user said yes and
 		# opening the port failed, which is no answer to stop asking for.
 		reason=$(text_field reason "$BODY")
@@ -672,6 +708,7 @@ open)
 	[ -n "$ROOT" ] || ROOT=$fdir
 	doc_find
 	doc_post
+	held_back document
 	case $STATUS in
 	200 | 201)
 		save_token "$(doc_token_file)"
@@ -713,6 +750,7 @@ open-wait)
 	show_body
 	case $(field state "$BODY") in
 	declined)
+		held document
 		# The user's No has no reason. A reason means the user said yes and
 		# showing the document failed.
 		reason=$(text_field reason "$BODY")

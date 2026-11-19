@@ -49,6 +49,9 @@ type passForm struct {
 	// the port opened, and only Always allow was not saved.
 	opened bool
 	seq    int
+	// last is the answer given last, which decline gives again when it was
+	// No.
+	last Answer
 }
 
 // passAnsweredMsg is the outcome of answering a request.
@@ -93,7 +96,7 @@ func (f *passForm) update(msg tea.Msg) tea.Cmd {
 
 // answer gives a to the backend on the worker.
 func (f *passForm) answer(a Answer) tea.Cmd {
-	f.seq = nextSeq()
+	f.seq, f.last = nextSeq(), a
 	f.busy, f.err = true, ""
 	seq, b, r := f.seq, f.b, f.r
 	return f.w.do(func(ctx context.Context) tea.Msg {
@@ -101,14 +104,23 @@ func (f *passForm) answer(a Answer) tea.Cmd {
 	})
 }
 
-// decline says no to the request on the worker, as the box closes after a
-// failed answer that left the request waiting. It is best effort: the
-// outcome is not shown or logged, since the box has gone.
+// decline ends the request on the worker, as the box closes after a failed
+// answer that left the request waiting: with the No that failed, or with
+// AnswerClose after a Yes or Always allow, as the user did not say No. It
+// is best effort: a failure is not shown or logged, since the box has gone,
+// and only a No that takes is logged.
 func (f *passForm) decline() tea.Cmd {
-	b, id := f.b, f.r.ID
+	b, r, a := f.b, f.r, AnswerClose
+	if f.last == AnswerNo {
+		a = AnswerNo
+	}
 	return f.w.do(func(ctx context.Context) tea.Msg {
-		_ = b.AnswerPassthrough(ctx, id, AnswerNo)
-		return nil
+		if err := b.AnswerPassthrough(ctx, r.ID, a); err != nil || a != AnswerNo {
+			return nil
+		}
+		// A No that took holds back the server's other requests, which
+		// the queue drops as for any No.
+		return passAnsweredMsg{r: r, answer: AnswerNo}
 	})
 }
 
@@ -222,7 +234,24 @@ func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
 		line = fmt.Sprintf("Declined to open port %d for %s.", msg.r.Remote, msg.r.who())
 	}
 	m.logs.note(line)
+	if msg.answer == AnswerNo {
+		m.dropHeldPasses(msg.r.Origin)
+	}
 	return nil
+}
+
+// dropHeldPasses drops origin's passthrough requests from the queue, as a
+// No to one of them ends the rest as held back, and logs each.
+func (m *Model) dropHeldPasses(origin string) {
+	kept := m.waiting[:0]
+	for _, a := range m.waiting {
+		if a.pass != nil && a.pass.Origin == origin {
+			m.logs.note(fmt.Sprintf("The request from %s to open port %d was held back, as you declined another.", a.pass.who(), a.pass.Remote))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	m.waiting = kept
 }
 
 // expires is when the agent stops waiting for an answer.

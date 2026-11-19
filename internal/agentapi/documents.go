@@ -71,7 +71,9 @@ type docRecord struct {
 	url     string
 	// token is the Always allow token, until the agent has read it.
 	token string
-	seq   uint64 // creation order, for lists
+	// held is set when a No to another of its origin's requests ended it.
+	held bool
+	seq  uint64 // creation order, for lists
 	// opened is the order the request opened in, among all document
 	// requests, so the latest open one is the one shown last.
 	opened uint64
@@ -93,7 +95,9 @@ func (s *Server) documenting() bool {
 // does nothing and returns nil; No on a request that has ended returns the
 // same error Yes would. When the grant for Always allow fails to save, the
 // error wraps ErrAllowNotSaved. Every error for a request that is no longer
-// waiting wraps ErrPassEnded.
+// waiting wraps ErrPassEnded. A No to a waiting request refuses its
+// origin's next document requests for backoff, and ends its other prompts
+// as held back; AnswerClose does neither.
 func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error {
 	if !s.documenting() {
 		return errors.New("this nearhost has no documents")
@@ -101,8 +105,9 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 	s.mu.Lock()
 	s.sweepDocsLocked()
 	r := s.docs[id]
+	no := a == AnswerNo || a == AnswerClose
 	switch {
-	case a == AnswerNo && (r == nil || !r.prompted):
+	case no && (r == nil || !r.prompted):
 		s.mu.Unlock()
 		return nil
 	case r == nil || !r.prompted:
@@ -118,8 +123,14 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 	case a == AnswerAlways && !r.CanAlways:
 		s.mu.Unlock()
 		return fmt.Errorf("%s can't be always allowed, as it didn't say which tool it is", r.Requester)
+	case a == AnswerClose:
+		s.endDocLocked(r, StateDeclined, closedReason)
+		s.mu.Unlock()
+		return nil
 	case a == AnswerNo:
 		s.endDocLocked(r, StateDeclined, "")
+		s.refuseLocked(r.Origin, kindDocument)
+		s.holdDocsLocked(r.Origin)
 		s.mu.Unlock()
 		return nil
 	}
@@ -158,6 +169,18 @@ func (s *Server) endDocLocked(r *docRecord, state State, reason string) {
 	}
 	r.state, r.reason, r.ended = state, reason, s.opts.Now()
 	close(r.done)
+}
+
+// holdDocsLocked ends origin's document prompts still waiting for the
+// user, as the user's No to one of them holds the rest back: see backoff.
+// One being shown is left alone.
+func (s *Server) holdDocsLocked(origin string) {
+	for _, r := range s.docs {
+		if r.Origin == origin && r.prompted && r.state == StatePending && !r.opening {
+			r.held = true
+			s.endDocLocked(r, StateDeclined, heldReason(kindDocument))
+		}
+	}
 }
 
 // openDocLocked records a pending request as open at url. An open record

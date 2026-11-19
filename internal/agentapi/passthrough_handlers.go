@@ -137,6 +137,10 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	reviewer := s.reviewer
 	if !allowed {
+		if s.backingOffLocked(w, o, kindPassthrough) {
+			s.mu.Unlock()
+			return
+		}
 		if reviewer == nil {
 			s.mu.Unlock()
 			fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to approve this; `nearhost up` cannot show prompts")
@@ -262,11 +266,15 @@ func (s *Server) promptsLocked(origin string) int {
 }
 
 // viewLocked is a record as an agent sees it. full adds what the request
-// asked for, for lists. A token is given once, and only outside lists.
+// asked for, for lists. A request held back by a No to another says so, with
+// the seconds left of the hold in retry_after. A token is given once, and only outside lists.
 func (s *Server) viewLocked(r *passRecord, full bool) map[string]any {
 	out := map[string]any{"id": r.ID, "state": r.state}
 	if r.reason != "" {
 		out["reason"] = r.reason
+	}
+	if r.held {
+		out["held"], out["retry_after"] = true, s.holdLeftLocked(r.Origin, kindPassthrough)
 	}
 	if r.state == StateOpen {
 		out["url"], out["local_port"] = localURL(r.local), r.local
