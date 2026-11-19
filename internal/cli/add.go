@@ -178,6 +178,11 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return errors.Join(err, done())
 	}
 	project.Routes = discoveredRoutes(res)
+	if flags.web == 0 && res.LonePortNote != "" {
+		// With --web the user already said which port is the app. Export
+		// and doctor read the same discovery, and --web advice is no use there.
+		warnings = append(warnings, res.LonePortNote)
+	}
 	// Several routes were found and none says it is the web route: ask,
 	// when someone can answer. Otherwise the error below says how to choose.
 	if _, found := project.WebRoute(); !found && flags.web == 0 && len(project.Routes) > 1 && answers != nil {

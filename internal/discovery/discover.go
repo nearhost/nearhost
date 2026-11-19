@@ -37,6 +37,10 @@ type Result struct {
 	Suggested []Offer  // offers that match the project
 	Warnings  []string // presets, or parts of them, that were skipped
 
+	// LonePortNote is the warning about a lone .env port variable made the
+	// web route, or empty. It is not in Warnings.
+	LonePortNote string
+
 	project    *preset.Project
 	hasCompose bool
 	files      *memo // the reader under project, which Advise reads through too
@@ -114,7 +118,24 @@ func Discover(r FileReader, opts Options) (*Result, error) {
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Port < routes[j].Port })
 	routes, primary := assignWeb(routes)
 	res.Routes = res.serveHosts(routes, primary)
+	res.noteLonePort(primary)
 	return res, nil
+}
+
+// noteLonePort says so when the only route found is a lone port variable of
+// .env that became the web route, whatever the variable is called, since
+// nothing says it is the app. The route stays web, so adding without a
+// question keeps working. The note is in LonePortNote and not in Warnings,
+// since only a caller that can take --web, such as add, wants it.
+func (res *Result) noteLonePort(primary int) {
+	if primary != 0 || len(res.Routes) != 1 {
+		return
+	}
+	c := res.Routes[0]
+	if c.Preset != "" || !strings.HasPrefix(c.Source, "env:") {
+		return
+	}
+	res.LonePortNote = fmt.Sprintf("%s is the only port Nearhost found, so it is the web route. Pass --web <port> if your app listens elsewhere.", safetext.Line(c.Var))
 }
 
 // wantsCompose reports whether an active preset asks for the Compose
