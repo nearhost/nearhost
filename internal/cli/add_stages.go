@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -299,17 +300,6 @@ func withoutHosts(routes []config.Route) []config.Route {
 // .nearhostrc is not in it, so a clash there stays an error on save. A route
 // other than the primary left without hosts is ignored.
 func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string]bool) ([]config.Route, []string) {
-	taken := map[string]string{}
-	for _, q := range cfg.Projects {
-		if q.Name == p.Name || !q.Enabled {
-			continue
-		}
-		for _, h := range q.AllHosts() {
-			if _, seen := taken[strings.ToLower(h)]; !seen {
-				taken[strings.ToLower(h)] = q.Name
-			}
-		}
-	}
 	var notes []string
 	out := make([]config.Route, len(p.Routes))
 	primary := true
@@ -322,9 +312,19 @@ func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string
 		primary = false
 		var kept []string
 		for _, h := range r.Hosts {
-			other, ok := taken[strings.ToLower(h)]
-			if ok && inferred[strings.ToLower(h)] {
-				notes = append(notes, fmt.Sprintf("Not serving %s: project %q already serves it.", h, other))
+			if !inferred[strings.ToLower(h)] {
+				kept = append(kept, h)
+				continue
+			}
+			if other, otherHost, ok := cfg.ClaimedBy(p.Name, h); ok {
+				switch {
+				case strings.EqualFold(h, otherHost):
+					notes = append(notes, fmt.Sprintf("Not serving %s: project %q already serves it.", h, other))
+				case hostname.IsPattern(h):
+					notes = append(notes, fmt.Sprintf("Not serving %s: it covers %s, which project %q serves.", h, otherHost, other))
+				default:
+					notes = append(notes, fmt.Sprintf("Not serving %s: it falls under %s, which project %q serves.", h, otherHost, other))
+				}
 				continue
 			}
 			kept = append(kept, h)
@@ -353,8 +353,8 @@ func addProjectTo(cfg *config.Config, project config.Project) error {
 	}
 	// A disabled project serves nothing, so it cannot take a host from
 	// another one; enabling it checks again.
-	if host, other, clash := cfg.HostClash(project); clash && project.Enabled {
-		return fmt.Errorf("host %s is already served by project %q", host, other)
+	if hc, clash := cfg.HostConflict(project); clash && project.Enabled {
+		return hc
 	}
 	cfg.Projects = append(cfg.Projects, project)
 	if err := cfg.Validate(); err != nil {

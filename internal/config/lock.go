@@ -1,5 +1,11 @@
 package config
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 // Update changes the config at path under a lock that every other Update
 // takes too, in this process or another nearhost: it loads the file, calls
 // change on what it read, validates and saves, then unlocks. change must be
@@ -8,7 +14,9 @@ package config
 // now. When change fails, or leaves the config invalid, nothing is saved.
 // Nor is anything saved, and change is not called, while the file holds a
 // key Nearhost does not know, which the save would delete: the error is an
-// *UnknownKeysError naming each key and its line.
+// *UnknownKeysError naming each key and its line. What validateChange
+// refuses is refused only when change brings it in, so a config that loads
+// still saves.
 //
 // The lock is on a file beside the config, path + ".lock", which is kept
 // after use: removing it would let a writer that opened it before the
@@ -36,10 +44,20 @@ func Update(path string, change func(*Config) error) error {
 			return &UnknownKeysError{Path: path, Keys: unknown}
 		}
 	}
+	// The file as read, kept apart from what change does to cfg.
+	before := &Config{}
+	if data != nil {
+		if err := yaml.Unmarshal(data, before); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	}
 	if err := change(cfg); err != nil {
 		return err
 	}
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.validateChange(before); err != nil {
 		return err
 	}
 	return Save(path, cfg)

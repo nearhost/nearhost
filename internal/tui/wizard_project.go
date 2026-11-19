@@ -575,10 +575,11 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 				p.Enabled = f.edit.Enabled
 				return f.w.do(func(context.Context) tea.Msg {
 					return projectSavedMsg{seq, p.Name, b.EditConfig(func(cfg *config.Config) error {
+						before := slices.Clone(cfg.Projects)
 						for i := range cfg.Projects {
 							if cfg.Projects[i].Name == was {
 								cfg.Projects[i] = p
-								return hostClash(cfg, p)
+								return hostClash(cfg, p, before...)
 							}
 						}
 						return errNoLongerConfigured(was)
@@ -780,11 +781,12 @@ func (f *projectForm) needsApproval() []nearhostrc.Item {
 }
 
 // hostClash refuses p, as it is in cfg, when it is enabled and serves a host
-// another enabled project serves. A disabled project serves nothing, as
+// another enabled project serves, other than a pair before, the projects
+// before the change, already had. A disabled project serves nothing, as
 // `nearhost add` has it.
-func hostClash(cfg *config.Config, p config.Project) error {
-	if host, other, clash := cfg.HostClash(p); clash && p.Enabled {
-		return fmt.Errorf("host %s is already served by project %q", host, other)
+func hostClash(cfg *config.Config, p config.Project, before ...config.Project) error {
+	if hc, clash := cfg.HostConflictSince(before, p); clash && p.Enabled {
+		return hc
 	}
 	return nil
 }

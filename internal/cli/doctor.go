@@ -248,6 +248,8 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		return machine{checks: append(checks, unread("servers")), cfgPath: path}
 	}
 	checks = append(checks, checkAliases(cfg, path)...)
+	checks = append(checks, checkPatternConflicts(cfg, path)...)
+	checks = append(checks, checkOwnLoopbacks(cfg, path, flags)...)
 	var missing []string
 	if !flags.noHosts {
 		var c check
@@ -541,6 +543,45 @@ func checkAliases(cfg *config.Config, path string) []check {
 	}
 	return []check{{"aliases", levelFail, strings.Join(invalid, "\n"),
 		"correct the alias in " + path + "; `nearhost up` does not start a project with such an alias"}}
+}
+
+// checkPatternConflicts warns about each exact host of an enabled project
+// under another enabled project's pattern. Nearhost refuses a change that
+// brings in such a pair, but a config saved before then may hold one, and it
+// still serves: the proxy sends the exact host to its own project. It adds no
+// line when there is none.
+func checkPatternConflicts(cfg *config.Config, path string) []check {
+	var lines []string
+	for _, c := range cfg.PatternConflicts() {
+		lines = append(lines, fmt.Sprintf("project %q serves %s, under the pattern %s of project %q: requests for %s go to %q, not %q",
+			c.Project, c.Host, c.OtherHost, c.Other, c.Host, c.Project, c.Other))
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return []check{{"host patterns", levelWarn, strings.Join(lines, "\n"),
+		"to end the overlap, remove the exact host from the project that gets its requests, or move it to the pattern's project, in " + path}}
+}
+
+// checkOwnLoopbacks reports each enabled project with a loopback route on a
+// port Nearhost itself listens on, as flags set them: `nearhost up` does not
+// forward such a route, which on this machine would take Nearhost's own
+// port. It adds no line when there is none.
+func checkOwnLoopbacks(cfg *config.Config, path string, flags serveFlags) []check {
+	var lines []string
+	for _, p := range cfg.Projects {
+		if !p.Enabled {
+			continue
+		}
+		if port, ok := p.LoopbackOnOwnPort(flags.httpsPort, flags.httpPort, flags.webPort); ok {
+			lines = append(lines, fmt.Sprintf("project %q: loopback port %d is Nearhost's own port", p.Name, port))
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return []check{{"loopback ports", levelFail, strings.Join(lines, "\n"),
+		"give the route another port or role in " + path + ", or start Nearhost with other ports; `nearhost up` does not forward a loopback route on its own port"}}
 }
 
 // checkHosts compares the managed block with the names `nearhost up` would

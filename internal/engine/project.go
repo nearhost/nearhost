@@ -532,6 +532,12 @@ func (e *Engine) forwardLoopbacks(ctx context.Context, sess transport.Transport,
 }
 
 func (e *Engine) forwardLoopback(ctx context.Context, sess transport.Transport, run *projectRun, port int) error {
+	// The config cannot know the ports Nearhost was started with, so a
+	// loopback route on one of them is refused here: on some systems the
+	// forward would take the port from Nearhost on 127.0.0.1.
+	if slices.Contains(e.ownPorts(), port) {
+		return fmt.Errorf("loopback port %d is Nearhost's own port; give the route another port or role", port)
+	}
 	// Two projects may not share a local port: the session would treat the
 	// second forward as the first, and stopping either would cancel it.
 	if owner, ok := e.claimPort(run, port); !ok {
@@ -566,6 +572,19 @@ func (e *Engine) forwardLoopback(ctx context.Context, sess transport.Transport, 
 	run.forwards = append(run.forwards, forward{port, port})
 	e.mu.Unlock()
 	return nil
+}
+
+// ownPorts lists the ports Nearhost listens on on this machine: HTTPS, HTTP
+// and the page port as the engine was started with them, 0 for no page.
+func (e *Engine) ownPorts() []int {
+	https, http := e.opts.HTTPSPort, e.opts.HTTPPort
+	if https == 0 {
+		https = 443
+	}
+	if http == 0 {
+		http = 80
+	}
+	return []int{https, http, e.opts.WebPort}
 }
 
 // publishSite adds run's site to the proxy: each of web, sent to the local
@@ -616,8 +635,10 @@ func (e *Engine) hostClash(run *projectRun, web []config.WebHosts) error {
 // hostClashLocked refuses a host of web that another project's published site
 // already serves. Hosts are compared ignoring case, so two exact hosts clash
 // when they are the same name and two patterns when written the same. An
-// exact host under another project's pattern does not clash: the proxy sends
-// it to the more specific match, as config.HostClash allows.
+// exact host under another project's pattern does not clash here: the proxy
+// sends it to the more specific match. config.HostClash refuses such a pair
+// when a change brings it in, but a config saved before then may hold one,
+// and it keeps serving.
 func (e *Engine) hostClashLocked(run *projectRun, web []config.WebHosts) error {
 	taken := map[string]string{}
 	for _, name := range e.order {

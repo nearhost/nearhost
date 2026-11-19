@@ -248,6 +248,30 @@ func TestLoopbackBindFailureIsReportedButWebStillServed(t *testing.T) {
 	}
 }
 
+// A loopback route on one of Nearhost's own ports is refused at start, as
+// the config cannot know which ports Nearhost was started with; the web
+// route is still served.
+func TestLoopbackOnNearhostsOwnPortIsRefused(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	if err := h.eng.Apply(bg, remoteConfig(h.httpsPort)); err != nil {
+		t.Fatal(err)
+	}
+	err := h.eng.StartProject(bg, "myapp")
+	want := fmt.Sprintf("loopback port %d is Nearhost's own port", h.httpsPort)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("StartProject = %v, want %q", err, want)
+	}
+	if st := h.eng.Status("myapp"); st.State != StateError || !strings.Contains(st.Message, want) || st.WebLocalPort == 0 {
+		t.Fatalf("status = %+v", st)
+	}
+	if len(h.eng.Sites()) != 1 {
+		t.Fatal("web route should still be proxied")
+	}
+	if strings.Contains(h.log(), fmt.Sprintf("-L 127.0.0.1:%d:", h.httpsPort)) {
+		t.Fatalf("a forward was requested for Nearhost's own port:\n%s", h.log())
+	}
+}
+
 func TestLoopbackPortAlreadyBoundLocally(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

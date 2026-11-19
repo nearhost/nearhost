@@ -670,6 +670,63 @@ func TestAddRefusesAHostAnotherProjectServes(t *testing.T) {
 	}
 }
 
+// An exact host under another enabled project's pattern is refused, whether
+// the exact host or the pattern comes second, and the error names both
+// projects and what to do. A disabled project claims nothing.
+func TestAddRefusesAnExactHostUnderAnotherProjectsPattern(t *testing.T) {
+	shop := config.Project{Name: "shop", Server: config.LocalServer, Alias: "shop.test", Enabled: true,
+		Routes: []config.Route{{Port: 8000, Role: config.RoleWeb, Hosts: []string{"*.shop.test"}}}}
+	api := config.Project{Name: "api", Server: config.LocalServer, Alias: "api.test", Enabled: true,
+		Routes: []config.Route{{Port: 8001, Role: config.RoleWeb, Hosts: []string{"api.shop.test"}}}}
+	cases := []struct {
+		have, add config.Project
+		want      string
+	}{
+		{shop, api, `host api.shop.test of project "api" falls under *.shop.test, which project "shop" serves, so "api" would take requests and cookies meant for "shop"; serve api.shop.test from "shop", or remove it from "api"`},
+		{api, shop, `pattern *.shop.test of project "shop" covers api.shop.test, which project "api" serves, so "api" would take requests and cookies meant for "shop"; remove api.shop.test from "api", or give "shop" a pattern that does not cover it`},
+	}
+	for _, c := range cases {
+		cfg := &config.Config{Projects: []config.Project{c.have}}
+		if err := addProjectTo(cfg, c.add); err == nil || err.Error() != c.want {
+			t.Errorf("adding %s: err = %v\nwant %s", c.add.Name, err, c.want)
+		}
+		off := c.have
+		off.Enabled = false
+		if err := addProjectTo(&config.Config{Projects: []config.Project{off}}, c.add); err != nil {
+			t.Errorf("adding %s beside a disabled project: %v", c.add.Name, err)
+		}
+	}
+	both := shop
+	both.Name, both.Alias = "both", "both.test"
+	both.Routes = []config.Route{{Port: 8002, Role: config.RoleWeb, Hosts: []string{"*.both.test", "api.both.test"}}}
+	if err := addProjectTo(&config.Config{}, both); err != nil {
+		t.Errorf("a pattern and an exact host of one project: %v", err)
+	}
+}
+
+// An inferred host under another project's pattern is left out with a note,
+// as an inferred host the other project serves is.
+func TestWithoutTakenHostsUnderAPattern(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{
+		{Name: "shop", Alias: "shop.test", Enabled: true, Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"*.shop.test", "app.y.io"}}}},
+	}}
+	p := config.Project{Name: "mine", Alias: "mine.test", Routes: []config.Route{
+		{Port: 80, Role: config.RoleWeb, Hosts: []string{"api.shop.test", "*.y.io", "kept.shop.test"}},
+	}}
+	inferred := map[string]bool{"api.shop.test": true, "*.y.io": true}
+	routes, notes := withoutTakenHosts(cfg, p, inferred)
+	if want := []string{"kept.shop.test"}; !reflect.DeepEqual(routes[0].Hosts, want) {
+		t.Errorf("hosts = %q, want %q", routes[0].Hosts, want)
+	}
+	wantNotes := []string{
+		`Not serving api.shop.test: it falls under *.shop.test, which project "shop" serves.`,
+		`Not serving *.y.io: it covers app.y.io, which project "shop" serves.`,
+	}
+	if !reflect.DeepEqual(notes, wantNotes) {
+		t.Errorf("notes = %q", notes)
+	}
+}
+
 func TestAddHostFlagApprovesAHostTheFileLists(t *testing.T) {
 	dir := rcProject(t, rcRealDomain)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
