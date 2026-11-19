@@ -84,6 +84,7 @@ func TestHomeRefusesOtherPathsAndMethods(t *testing.T) {
 }
 
 func TestHomeListsTrees(t *testing.T) {
+	secret := freshSecret(t)
 	t.Cleanup(func() { SetDocuments(nil, nil) })
 	plain := serveHome(t, "1.2.3", "GET", "/")
 
@@ -93,7 +94,7 @@ func TestHomeListsTrees(t *testing.T) {
 			{Path: "notes.html", URL: "https://localhost:6327/d/abc/notes.html"},
 		}}}
 	})
-	w := serveHome(t, "1.2.3", "GET", "/")
+	w := serveHomeRequest(t, withCookie("/", secret))
 	body := w.Body.String()
 	if w.Code != 200 {
 		t.Fatalf("GET /: status %d", w.Code)
@@ -119,17 +120,18 @@ func TestHomeListsTrees(t *testing.T) {
 	// With no trees the page is what it is without a list, with no empty
 	// heading.
 	SetDocuments(http.NotFoundHandler(), func() []HomeTree { return nil })
-	if got := serveHome(t, "1.2.3", "GET", "/").Body.String(); got != plain.Body.String() {
+	if got := serveHomeRequest(t, withCookie("/", secret)).Body.String(); got != plain.Body.String() {
 		t.Errorf("an empty list changed the page:\n%s", got)
 	}
 }
 
 func TestHomeListEscapes(t *testing.T) {
+	secret := freshSecret(t)
 	t.Cleanup(func() { SetDocuments(nil, nil) })
 	SetDocuments(http.NotFoundHandler(), func() []HomeTree {
 		return []HomeTree{{Server: "<b>srv</b>", Root: "/tmp/<script>", Docs: []HomeDoc{{Path: "<i>a</i>.md", URL: `/d/abc/a.md"onmouseover="x`}}}}
 	})
-	body := serveHome(t, "1.2.3", "GET", "/").Body.String()
+	body := serveHomeRequest(t, withCookie("/", secret)).Body.String()
 	for _, raw := range []string{"<script>", "<b>srv", "<i>a", `"onmouseover`} {
 		if strings.Contains(body, raw) {
 			t.Errorf("%q reached the page unescaped:\n%s", raw, body)

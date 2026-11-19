@@ -87,6 +87,18 @@ func dataDirFor(goos string) (string, error) {
 	return filepath.Join(home, ".local", "share", "nearhost"), nil
 }
 
+// PageSecretPath is the file holding the secret a browser must show, as a
+// cookie, before Nearhost's page lists the documents agents asked to show.
+// It is in DataDir beside the local CA. On Windows the file's mode means
+// nothing: the data directory's access list is what keeps it private.
+func PageSecretPath() (string, error) {
+	d, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "page-secret"), nil
+}
+
 // caddyDirs are where Caddy's storage lives now, in DataDir, and where
 // Nearhost 0.7 and earlier kept it, in Dir.
 func caddyDirs() (current, old string, err error) {

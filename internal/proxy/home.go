@@ -90,12 +90,16 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler. Paths below /d/ go to
-// the documents handler SetDocuments stored, which sets its own headers.
-// Otherwise only / exists, and only GET and HEAD read it. It lists the
-// documents' trees, rendered per request, while there are any.
+// the documents handler SetDocuments stored, which sets its own headers; a
+// successful answer there also gives the browser the page cookie, as the
+// link proves it was given a document. Otherwise only / exists, and only GET
+// and HEAD read it. /?k=<secret> gives the cookie for the right secret and
+// sends the browser on to /. / lists the documents' trees, rendered per
+// request, only to a browser with the cookie; any other gets the page with
+// no list, which shows nothing of the documents, not even whether any are.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
-		serveDocument(w, r)
+		serveDocument(&cookieOnSuccess{ResponseWriter: w}, r)
 		return nil
 	}
 	if r.URL.Path != "/" {
@@ -107,20 +111,36 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return nil
 	}
+	hdr := w.Header()
+	if q := r.URL.Query(); q.Has(pageKeyParam) {
+		if secret, err := pageSecret(); err == nil && secretMatches(q.Get(pageKeyParam), secret) {
+			setPageCookie(hdr)
+		}
+		// The secret leaves the address bar with the redirect, and is
+		// neither sent on as a referrer nor kept in a cache.
+		hdr.Set("Referrer-Policy", "no-referrer")
+		hdr.Set("Cache-Control", "no-store")
+		hdr.Set("Location", "/")
+		w.WriteHeader(http.StatusSeeOther)
+		return nil
+	}
 	page := h.page
-	if trees := homeTrees(); len(trees) > 0 {
-		var err error
-		if page, err = h.render(trees); err != nil {
-			return err
+	if hasPageCookie(r) {
+		if trees := homeTrees(); len(trees) > 0 {
+			var err error
+			if page, err = h.render(trees); err != nil {
+				return err
+			}
 		}
 	}
-	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
 	hdr.Set("Content-Length", strconv.Itoa(len(page)))
 	hdr.Set("Content-Security-Policy", homeCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
-	// The footer names the running version, which changes on upgrade.
+	// The footer names the running version, which changes on upgrade, and
+	// the list depends on the cookie.
 	hdr.Set("Cache-Control", "no-cache")
+	hdr.Set("Vary", "Cookie")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return nil
@@ -128,6 +148,38 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	_, err := w.Write(page)
 	return err
 }
+
+// cookieOnSuccess adds the page cookie to a document's response when its
+// status is 2xx, and to nothing else: a 404 for an unknown id, a redirect
+// or an error page gives the browser nothing.
+type cookieOnSuccess struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+// WriteHeader adds the cookie for a 2xx status before passing it on.
+func (c *cookieOnSuccess) WriteHeader(status int) {
+	if !c.wrote {
+		c.wrote = true
+		if status >= 200 && status < 300 {
+			setPageCookie(c.Header())
+		}
+	}
+	c.ResponseWriter.WriteHeader(status)
+}
+
+// Write sends the status 200 first when none was sent, as
+// http.ResponseWriter does.
+func (c *cookieOnSuccess) Write(b []byte) (int, error) {
+	if !c.wrote {
+		c.WriteHeader(http.StatusOK)
+	}
+	return c.ResponseWriter.Write(b)
+}
+
+// Unwrap returns the response writer underneath, for
+// http.ResponseController.
+func (c *cookieOnSuccess) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 
 var (
 	_ caddy.Provisioner           = (*Home)(nil)

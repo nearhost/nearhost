@@ -358,6 +358,14 @@ func (f *fakeBackend) Open(url string) error {
 	return f.openErr
 }
 
+// OpenPage records the page's opening as "page".
+func (f *fakeBackend) OpenPage() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opened = append(f.opened, "page")
+	return f.openErr
+}
+
 func (f *fakeBackend) setState(name string, st engine.ProjectStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -267,3 +267,12 @@ func TestDirsForWindowsNeedAppData(t *testing.T) {
 		}
 	}
 }
+
+func TestPageSecretPathIsInDataDir(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	got, err := PageSecretPath()
+	if want := filepath.Join(data, "nearhost", "page-secret"); err != nil || got != want {
+		t.Errorf("PageSecretPath() = %q, %v; want %q", got, err, want)
+	}
+}

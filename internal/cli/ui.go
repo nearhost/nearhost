@@ -23,6 +23,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -456,6 +457,24 @@ func (u *uiEngine) HostsState() string {
 }
 
 func (u *uiEngine) Open(url string) error { return u.b.open(url) }
+
+// OpenPage opens Nearhost's page at /?k=<secret>, which gives the browser
+// the cookie the page's document list needs and sends it on to the page.
+// The keyed address is opened only: no error names it.
+func (u *uiEngine) OpenPage() error {
+	base, err := u.PageURL()
+	if err != nil {
+		return err
+	}
+	keyed, err := proxy.PageKeyURL(base)
+	if err != nil {
+		return err
+	}
+	if err := u.b.open(keyed); err != nil {
+		return errors.New(strings.ReplaceAll(err.Error(), keyed, base))
+	}
+	return nil
+}
 
 // uiEngine must satisfy the interface's backend.
 var _ tui.Backend = (*uiEngine)(nil)

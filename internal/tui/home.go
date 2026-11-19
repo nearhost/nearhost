@@ -60,13 +60,24 @@ func (m *Model) proxyLines(width int) []string {
 	return field("proxy", styleBeacon.Render("●")+fmt.Sprintf(" https :%d · http :%d", https, http), width)
 }
 
-// webLines link to Nearhost's page, once the proxy serves it.
-func (m *Model) webLines(width int) []string {
+// pageURL is the address of Nearhost's page as the home panel shows it, or
+// "" while the proxy does not serve it.
+func (m *Model) pageURL() string {
 	port := m.b.WebPort()
 	if port == 0 || !m.started || m.proxyErr != nil {
+		return ""
+	}
+	return fmt.Sprintf("https://localhost:%d", port)
+}
+
+// webLines link to Nearhost's page, once the proxy serves it. The link is
+// the plain address: a click opens it through OpenPage, with the key, and
+// the key is never drawn on the screen.
+func (m *Model) webLines(width int) []string {
+	url := m.pageURL()
+	if url == "" {
 		return nil
 	}
-	url := fmt.Sprintf("https://localhost:%d", port)
 	return field("page", styleBeacon.Underline(true).Hyperlink(url).Render(url), width)
 }
 
