@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1783,4 +1784,54 @@ func TestPerProcessStopEndsTheLongWait(t *testing.T) {
 // A wait the computer slept through ends once the wall clock has passed it.
 func TestPerProcessTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
 	newSlowRetryPerProcess(t, refusing).triesWhenTheWallClockPasses(t)
+}
+
+// The check binds 127.0.0.1, exclusively on Windows. A holder on 127.0.0.1
+// is seen everywhere. A plain holder on 0.0.0.0 is seen on Linux only: on
+// macOS (BSD sockets) and on Windows a bind to 127.0.0.1 succeeds beside it,
+// as ssh's own bind does, so the check cannot report it there.
+func TestCheckLocalPortReportsAHeldPortRefusedAndAFreeOneFree(t *testing.T) {
+	for _, h := range []struct {
+		name, network, addr string
+		linuxOnly           bool
+	}{
+		{"127.0.0.1", "tcp", "127.0.0.1:0", false},
+		{"0.0.0.0", "tcp4", "0.0.0.0:0", true},
+	} {
+		t.Run(h.name, func(t *testing.T) {
+			if h.linuxOnly && runtime.GOOS != "linux" {
+				t.Skipf("a bind to 127.0.0.1 succeeds beside a holder on %s on %s", h.addr, runtime.GOOS)
+			}
+			p := newPerProcess(Config{})
+			holder, err := net.Listen(h.network, h.addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Close()
+			port := holder.Addr().(*net.TCPAddr).Port
+			var refused *portRefusedError
+			if err := p.checkLocalPort(port); !errors.As(err, &refused) {
+				t.Fatalf("checkLocalPort beside a holder on %s = %v, want a *portRefusedError", h.addr, err)
+			}
+			holder.Close()
+			if err := p.checkLocalPort(port); err != nil {
+				t.Fatalf("checkLocalPort on a free port = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// The engine holds a loopback forward's port on [::1] itself, as a relay to
+// 127.0.0.1, before it asks for the forward, and keeps it while ssh is
+// relaunched. The check must not take that relay for another holder.
+func TestCheckLocalPortIgnoresAHolderOnTheIPv6Loopback(t *testing.T) {
+	relay, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	defer relay.Close()
+	port := relay.Addr().(*net.TCPAddr).Port
+	if err := newPerProcess(Config{}).checkLocalPort(port); err != nil {
+		t.Fatalf("checkLocalPort beside a holder on [::1] = %v, want nil", err)
+	}
 }

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // perProcess is a Transport that keeps no ControlMaster, for an ssh that has
@@ -56,7 +58,7 @@ type perProcess struct {
 	// prepareAgent readies ~/.nearhost on the server and returns the path
 	// of the forward's socket there. Tests replace it.
 	prepareAgent func(ctx context.Context, f AgentForward) (string, error)
-	// listen is net.Listen, for the check that a forward's local port is
+	// listen is netbind.Listen, for the check that a forward's local port is
 	// free before its ssh starts. Tests replace it.
 	listen func(network, address string) (net.Listener, error)
 }
@@ -72,7 +74,7 @@ func newPerProcess(c Config) *perProcess {
 		Foreground:  c.Foreground,
 		forwards:    map[string]*perProcessForward{},
 		launchSlots: make(chan struct{}, maxForwardLaunches),
-		listen:      net.Listen,
+		listen:      netbind.Listen,
 	}
 	p.init(c.Name, c.Host)
 	p.clock = c.Clock.withDefaults()

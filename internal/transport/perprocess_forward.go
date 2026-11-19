@@ -412,6 +412,30 @@ func refusesPort(msg string) bool {
 	return strings.Contains(msg, "Could not request local forwarding") || strings.Contains(msg, "bind [")
 }
 
+// checkLocalPort fails with a *portRefusedError when another process holds
+// the loopback port that a forward's ssh is about to bind, so ssh is not
+// started against it. It binds 127.0.0.1, the address ssh binds, with
+// p.listen, which is netbind.Listen: on Windows that asks for exclusive use
+// and so sees a holder there that a plain bind would not. It does not bind
+// the wildcard address, as netbind.LoopbackProbe does on Windows: that
+// would collide with the engine's own relay on [::1] for the same port, and
+// so refuse every loopback forward and passthrough. A holder on the
+// wildcard address alone is seen on Linux only; elsewhere ssh's bind
+// succeeds beside it too, and loopback clients reach ssh. Another process
+// can still take the port before ssh binds it; ssh then exits under
+// ExitOnForwardFailure and launchForward reports that as a refused port.
+func (p *perProcess) checkLocalPort(local int) error {
+	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
+	if oserr.AddrInUse(err) {
+		return &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
+	}
+	if err != nil {
+		return &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)}
+	}
+	l.Close()
+	return nil
+}
+
 // launchForward starts an `ssh -N -L` for the forward from local to remote
 // and waits until it listens, holding one of the launch slots while it
 // does. It fails when the port is taken, when ssh exits first, after
@@ -427,14 +451,9 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	l, err := p.listen("tcp", fmt.Sprintf("127.0.0.1:%d", local))
-	if oserr.AddrInUse(err) {
-		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: Address already in use", local)}
+	if err := p.checkLocalPort(local); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, &portRefusedError{fmt.Errorf("bind [127.0.0.1]:%d: %w", local, err)}
-	}
-	l.Close()
 	spec := forwardSpec(local, remote)
 	stderr := newForwardStderr(local)
 	proc, err := p.startProc(p.args("-N", "-L", spec), stderr)
