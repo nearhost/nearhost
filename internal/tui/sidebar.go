@@ -224,10 +224,7 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 	if p != nil && !p.Enabled {
 		name = styleDim
 	}
-	dot := m.stateDot(st)
-	if status.Pending != nil {
-		dot.style = styleAmber // its .nearhostrc waits for approval
-	}
+	dot := m.projectDot(status)
 	left := append([]seg{{styleText, "  "}, dot, {styleText, " "}}, highlight(clean(r.name), m.query(), seg{style: name})...)
 	if m.narrow() {
 		return renderRow(left, nil, width, selected)

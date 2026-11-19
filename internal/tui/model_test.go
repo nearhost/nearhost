@@ -58,7 +58,7 @@ func TestSidebarShowsServersProjectsAndStates(t *testing.T) {
 	f.setState("myapp", engine.ProjectStatus{State: engine.StateStarting})
 	f.servers["mini"] = transport.StatusAuthFailed
 	m := sized(f)
-	wantScreen(t, m, "▾ local", "● website", "running", "▾ mini", "○ auth failed", "myapp", "starting", "○ old")
+	wantScreen(t, m, "▾ local", "● website", "running", "▾ mini", "✕ auth failed", "myapp", "starting", "○ old")
 }
 
 func TestHomeShowsTheMachine(t *testing.T) {
@@ -68,7 +68,7 @@ func TestHomeShowsTheMachine(t *testing.T) {
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	wantScreen(t, m, "proxy     ● https :443 · http :80", "page      https://nearhost.localhost:6327", "local CA  ● not trusted. Run nearhost trust", "hosts     ● 2 names", "config    "+f.path,
+	wantScreen(t, m, "proxy     ● https :443 · http :80", "page      https://nearhost.localhost:6327", "local CA  ! not trusted. Run nearhost trust", "hosts     ● 2 names", "config    "+f.path,
 		"running   1 of 3 projects on 1 of 2 servers")
 	if !strings.Contains(m.View().Content, "\x1b]8;;https://nearhost.localhost:6327") {
 		t.Error("the page address is not a link")
@@ -81,7 +81,7 @@ func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
 	if cmd := run(m, func() tea.Msg { return startedMsg{errBoom} }); cmd != nil {
 		t.Error("projects were started without a proxy")
 	}
-	wantScreen(t, m, "proxy     ● down", "● proxy  down", "why       boom", "The proxy could not start: boom")
+	wantScreen(t, m, "proxy     ✕ down", "✕ proxy  down", "why       boom", "The proxy could not start: boom")
 	if strings.Contains(screen(m), "https://nearhost.localhost") {
 		t.Error("the page is linked while the proxy is down")
 	}
@@ -105,7 +105,7 @@ func TestProjectPanel(t *testing.T) {
 	f.servers["mini"] = transport.StatusConnected
 	m := sized(f)
 	m.sel = rowKey(rowProject, "myapp")
-	wantScreen(t, m, "myapp  https://myapp.test", "● error", "server mini    path /srv/myapp",
+	wantScreen(t, m, "myapp  https://myapp.test", "✕ error", "server mini    path /srv/myapp",
 		"why       loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
 		" port    role        label", "80      web         web", "52114     ○", "5173    loopback    vite (VITE_PORT)", "5173      ○",
 		"1 ignored: 3306  ·  i show",
@@ -170,7 +170,7 @@ func TestServerPanelShowsTheErrorAndFix(t *testing.T) {
 	f.srvErrs["mini"] = "user@mini.lan: Permission denied (publickey)."
 	m := sized(f)
 	m.sel = rowKey(rowServer, "mini")
-	wantScreen(t, m, "mini", "○ auth failed", "ssh host  mini.lan", "why       user@mini.lan: Permission denied (publickey).",
+	wantScreen(t, m, "mini", "✕ auth failed", "ssh host  mini.lan", "why       user@mini.lan: Permission denied (publickey).",
 		"fix       Run ssh mini.lan once in a terminal to fix access, then", "press r.", "projects  myapp, old", "enter collapse")
 }
 
@@ -448,7 +448,7 @@ func TestHomeReadsTheMachineOnTheTick(t *testing.T) {
 	m.firstRunShown = true // this test is about Home, not the first-run screen
 	wantScreen(t, m, "local CA  ● trusted")
 	run(m, m.readMachine())
-	wantScreen(t, m, "local CA  ● not trusted")
+	wantScreen(t, m, "local CA  ! not trusted")
 }
 
 // With the proxy down, Home says how to get round it, even with no projects.
@@ -457,7 +457,7 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 		f := newFake(t, cfg)
 		m := sized(f)
 		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
-		wantScreen(t, m, "● proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
+		wantScreen(t, m, "✕ proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
 			"fix       Quit the program using the port, or pass", "http-port.")
 	}
 }

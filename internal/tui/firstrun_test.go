@@ -89,7 +89,7 @@ func TestFirstRunSkipsForTheSession(t *testing.T) {
 	if m.form != nil {
 		t.Error("the first-run screen came back in the same session")
 	}
-	wantScreen(t, m, "local CA  ● not trusted. Run nearhost trust")
+	wantScreen(t, m, "local CA  ! not trusted. Run nearhost trust")
 }
 
 func TestTrustSuccessSetsTheFlagAtOnceAndAnOlderReadCannotUndoIt(t *testing.T) {

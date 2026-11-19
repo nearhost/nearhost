@@ -333,9 +333,9 @@ func (m *Model) logState() string {
 	if !ok || !found {
 		return m.machineSummary()
 	}
-	st := m.b.Status(name).State
+	status := m.b.Status(name)
 	url := "https://" + clean(p.Alias)
-	return m.stateDot(st).String() + " " + string(st) + styleDim.Render(" · ") + styleBeacon.Underline(true).Hyperlink(url).Render(url)
+	return m.projectDot(status).String() + " " + string(status.State) + styleDim.Render(" · ") + styleBeacon.Underline(true).Hyperlink(url).Render(url)
 }
 
 // logTabs are the kinds to choose from, and the search.
@@ -356,6 +356,9 @@ func (m *Model) logTabs() string {
 			}
 		}
 		if logKind(i) == v.kind {
+			if m.monochrome {
+				text = "[" + strings.TrimSuffix(strings.TrimPrefix(text, " "), " ") + "]"
+			}
 			parts = append(parts, styleSelected.Render(text))
 		} else {
 			parts = append(parts, styleDim.Render(text))

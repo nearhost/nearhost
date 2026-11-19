@@ -33,9 +33,9 @@ func problemModel(t *testing.T) (*Model, *fakeBackend) {
 // Home lists what needs the user, and says how to fix each.
 func TestHomeShowsProblems(t *testing.T) {
 	m, _ := problemModel(t)
-	wantScreen(t, m, "problems ───", "○ vps  auth failed", "why       Permission denied (publickey)",
+	wantScreen(t, m, "problems ───", "✕ vps  auth failed", "why       Permission denied (publickey)",
 		"fix       Run ssh deploy@vps.example once in a terminal to fix", "blocks    clientsite",
-		"● website  error", "why       port 8080 is not answering", "r retry now · y copy command",
+		"✕ website  error", "why       port 8080 is not answering", "r retry now · y copy command",
 		"· 2 problems", " r retry · l log · / filter")
 }
 
@@ -75,7 +75,7 @@ func TestHomeWithManyProblems(t *testing.T) {
 	if got := strings.Count(screen(m), "\n") + 1; got != 30 {
 		t.Errorf("drew %d lines", got)
 	}
-	wantScreen(t, m, "· 12 problems", "○ srva  auth failed")
+	wantScreen(t, m, "· 12 problems", "✕ srva  auth failed")
 }
 
 // A server that gave up says how often it tried; one that is reconnecting
@@ -85,7 +85,7 @@ func TestServerAttemptsAndNextTry(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3}}
-	wantScreen(t, m, "○ vps  auth failed · tried 3 times", "then press r.")
+	wantScreen(t, m, "✕ vps  auth failed · tried 3 times", "then press r.")
 	f.servers["vps"] = transport.StatusReconnecting
 	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3, NextAttempt: now.Add(15500 * time.Millisecond)}}
 	wantScreen(t, m, "◐ vps  reconnecting · attempt 4 · next in 16s", "Nearhost tries again by itself.")

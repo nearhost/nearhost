@@ -100,7 +100,7 @@ func TestAProposalWaitsForTheOpenFormThenOpens(t *testing.T) {
 		t.Fatalf("form %T, waiting %d", m.form, len(m.waiting))
 	}
 	m.form = nil
-	wantScreen(t, m, "agents    ● 2 requests waiting · p to review")
+	wantScreen(t, m, "agents    ! 2 requests waiting · p to review")
 	settle(m, press(m, "p"))
 	wait(m, askGuard)
 	wantScreen(t, m, "Proposed by an agent on mini")
@@ -178,7 +178,7 @@ func TestTheServerPanelSaysWhetherAgentsReachNearhost(t *testing.T) {
 	wantScreen(t, m, "agents    ● reach Nearhost at /home/dev/.nearhost/k3f9q2.sock")
 
 	f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: "the server refused to forward it"}}
-	wantScreen(t, m, "agents    ● unavailable the server refused to forward it", "AllowStreamLocalForwarding yes")
+	wantScreen(t, m, "agents    ! unavailable the server refused to forward it", "AllowStreamLocalForwarding yes")
 	m.sel = homeKey
 	wantScreen(t, m, "mini  agents unavailable", "AllowStreamLocalForwarding yes")
 }
@@ -266,7 +266,7 @@ func TestHomeCountsOnlyProposalsStillWaiting(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(30 * time.Minute) }
 	m.form = nil
 	m.filtering = true // keeps the proposal from opening, so Home shows the count
-	wantScreen(t, m, "agents    ● 1 request waiting · p to review")
+	wantScreen(t, m, "agents    ! 1 request waiting · p to review")
 }
 
 func TestHelpListsP(t *testing.T) {

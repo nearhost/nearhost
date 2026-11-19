@@ -318,5 +318,5 @@ func (m *Model) proposalsWaiting(width int) []string {
 	if n > 1 {
 		what = fmt.Sprintf("%d requests waiting", n)
 	}
-	return field("agents", styleAmber.Render("● "+what)+styleDim.Render(" · ")+styleBeacon.Render("p")+styleDim.Render(" to review"), width)
+	return field("agents", glyph(markAttention).String()+styleAmber.Render(" "+what)+styleDim.Render(" · ")+styleBeacon.Render("p")+styleDim.Render(" to review"), width)
 }

@@ -167,7 +167,7 @@ func TestDocQueuesWithProposals(t *testing.T) {
 	ask(m, passReq(m))
 	askDoc(m, docReq(m))
 	m.form = nil
-	wantScreen(t, m, "agents    ● 3 requests waiting · p to review")
+	wantScreen(t, m, "agents    ! 3 requests waiting · p to review")
 	settle(m, press(m, "p"))
 	wait(m, askGuard)
 	if _, ok := m.form.(*projectForm); !ok {

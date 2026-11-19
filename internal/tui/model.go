@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
@@ -127,6 +128,10 @@ type Model struct {
 	// is, or backgroundWait has gone by without an answer: the palette does
 	// not change after that.
 	paletteSettled bool
+
+	// monochrome is set when the terminal shows no colour (NO_COLOR, a dumb
+	// terminal, a pipe): what colour alone tells apart then needs a mark.
+	monochrome bool
 
 	// guard is the request box nextAsked opened last, which ignores keys
 	// for askGuard after it opens.
@@ -276,6 +281,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.gotBackground(msg)
+	case tea.ColorProfileMsg:
+		m.monochrome = msg.Profile <= colorprofile.ASCII && msg.Profile != colorprofile.Unknown
 	case backgroundWaitedMsg:
 		m.paletteSettled = true
 	case spinner.TickMsg:
