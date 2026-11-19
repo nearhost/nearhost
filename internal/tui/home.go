@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -131,6 +132,7 @@ type problem struct {
 	why, fix     string
 	blocks       []string
 	server, host string // the server it is about, which r and y act on
+	retry        bool   // r on Home starts the proxy again
 }
 
 // problems are what needs the user: the proxy being down, servers that
@@ -139,7 +141,7 @@ func (m *Model) problems() []problem {
 	var out []problem
 	if m.proxyErr != nil {
 		out = append(out, problem{dot: glyph(markError), title: "proxy", what: "down", why: m.proxyErr.Error(),
-			fix: proxyFix(m.proxyErr, goos, executable())})
+			fix: proxyFix(m.proxyErr, goos, executable()), retry: true})
 	}
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)
@@ -187,8 +189,9 @@ func (m *Model) problemLines(width int) []string {
 		return nil
 	}
 	lines := []string{"", section("problems", "", width)}
-	servers := false
+	servers, retry := false, false
 	for _, p := range problems {
+		retry = retry || p.retry
 		lines = append(lines, "", p.dot.String()+" "+styleTitle.Render(clean(p.title))+"  "+p.dot.style.Render(p.what))
 		indent := func(label, value string) {
 			for _, l := range field(label, value, width-2) {
@@ -206,10 +209,28 @@ func (m *Model) problemLines(width int) []string {
 		}
 		servers = servers || p.server != ""
 	}
+	if retry {
+		lines = append(lines, "", "  "+styleBeacon.Render("r")+styleDim.Render(" tries again"))
+	}
 	if servers {
 		lines = append(lines, "", "  "+styleBeacon.Render("r")+styleDim.Render(" retry now · ")+styleBeacon.Render("y")+styleDim.Render(" copy command"))
 	}
 	return lines
+}
+
+// retryProxy starts the engine again when the proxy is down, say after the
+// program that held a port has quit. It does nothing while a start is
+// running or when the proxy is up. The answer is a startedMsg, which starts
+// the projects as the first start's does.
+func (m *Model) retryProxy() tea.Cmd {
+	if m.proxyErr == nil || m.proxyRetrying || m.quitting {
+		return nil
+	}
+	m.proxyRetrying, m.proxyErr = true, nil // Home shows it starting, as the first start does
+	b := m.b
+	return m.work.do(func(ctx context.Context) tea.Msg {
+		return startedMsg{b.Start(ctx)}
+	})
 }
 
 // retryServers reconnects every server that cannot connect.

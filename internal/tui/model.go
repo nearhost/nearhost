@@ -98,8 +98,11 @@ type Model struct {
 
 	started  bool  // the engine started
 	proxyErr error // why the engine could not start
-	quitting bool
-	cutShort context.CancelFunc // ends the shutdown's context
+	// proxyRetrying is set while r on Home starts the engine again; further
+	// presses wait for the answer.
+	proxyRetrying bool
+	quitting      bool
+	cutShort      context.CancelFunc // ends the shutdown's context
 	// leftEmpty is set once a server is connected from the first-run
 	// screen: the main screen stays up for this run, with nothing to serve.
 	leftEmpty bool
@@ -346,11 +349,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uv.CellSizeEvent:
 		m.tallCells = cellsTall(msg.Width, msg.Height)
 	case startedMsg:
+		m.proxyRetrying = false
 		if msg.err != nil {
 			m.proxyErr = msg.err
 			m.logs.note("The proxy could not start: " + msg.err.Error())
 			return m, nil
 		}
+		m.proxyErr = nil
 		m.started = true
 		cmds := []tea.Cmd{m.readMachine()} // the engine has just created the CA
 		for _, p := range m.cfg.Projects {

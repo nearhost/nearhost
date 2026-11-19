@@ -322,7 +322,7 @@ func (m *Model) action(s string) tea.Cmd {
 		case kind == rowServer && name != config.LocalServer:
 			return m.reconnect(name)
 		case kind == rowHome:
-			return m.retryServers()
+			return tea.Batch(m.retryProxy(), m.retryServers())
 		}
 	case "a":
 		if kind, name := m.selected(); kind == rowProject {
