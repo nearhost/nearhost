@@ -140,16 +140,18 @@ func freshenIntermediate(storageRoot string) bool {
 // it. Already-upgraded connections (WebSockets) are not force-closed; they stay
 // open until either end closes or the stream close delay elapses. Calling
 // it again, or on a Proxy that never applied or lost ownership, is a no-op.
+// If Caddy's stop fails, this Proxy stays the owner and Running, so the next
+// Stop tries Caddy again and then waits for the ports.
 func (p *Proxy) Stop() error {
 	caddyMu.Lock()
 	defer caddyMu.Unlock()
 	if owner != p {
 		return nil
 	}
-	owner = nil
-	if err := caddy.Stop(); err != nil {
+	if err := stopCaddy(); err != nil {
 		return err
 	}
+	owner = nil
 	if !listening {
 		return nil
 	}
@@ -159,6 +161,11 @@ func (p *Proxy) Stop() error {
 	// Wait for the ports, so a caller can bind them again at once.
 	return releasePorts(p.ports(), releaseWait)
 }
+
+// stopCaddy is caddy.Stop; tests make it fail. Caddy 2.11's Stop drops its
+// config before it stops the apps and always returns nil, so a stop tried
+// again after a failure finds nothing left to stop and succeeds.
+var stopCaddy = caddy.Stop
 
 // releaseWait bounds how long Stop waits for the proxy's ports.
 const releaseWait = 5 * time.Second
