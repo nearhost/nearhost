@@ -263,3 +263,109 @@ func TestPasswordBoxWrapsTheReasonBetweenWords(t *testing.T) {
 	askFor(m, "Nearhost needs your password to add ipbar.test, website.test to /etc/hosts.", func(context.Context, string) error { return nil })
 	wantScreen(t, m, "/etc/hosts.")
 }
+
+// blockedCheck is a password check that waits until it is released, and
+// records whether its context ended first.
+type blockedCheck struct {
+	started   chan struct{}
+	release   chan error
+	cancelled chan struct{}
+}
+
+func newBlockedCheck() *blockedCheck {
+	return &blockedCheck{started: make(chan struct{}), release: make(chan error), cancelled: make(chan struct{})}
+}
+
+func (c *blockedCheck) check(ctx context.Context, _ string) error {
+	close(c.started)
+	select {
+	case err := <-c.release:
+		return err
+	case <-ctx.Done():
+		close(c.cancelled)
+		return <-c.release
+	}
+}
+
+// enterBlocked types a password, presses enter and returns the channel the
+// blocked check's message arrives on once it is released.
+func enterBlocked(t *testing.T, m *Model, c *blockedCheck) <-chan tea.Msg {
+	t.Helper()
+	typeText(m, "hunter2")
+	cmd := press(m, "enter")
+	out := make(chan tea.Msg, 1)
+	go func() { out <- cmd() }()
+	<-c.started
+	return out
+}
+
+// esc during the check closes the box, ends the check's context, and the
+// requester gets the cancelled answer once.
+func TestPasswordBoxEscCancelsTheCheck(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	c := newBlockedCheck()
+	done := askFor(m, "Why.", c.check)
+	late := enterBlocked(t, m, c)
+	wantScreen(t, m, "Checking…", "esc cancel")
+	settle(m, press(m, "esc"))
+	if err := <-done; !errors.Is(err, ErrPasswordCancelled) {
+		t.Errorf("answer %v", err)
+	}
+	<-c.cancelled
+	if m.password != nil {
+		t.Error("the box stayed open")
+	}
+	c.release <- nil
+	m.Update(<-late)
+	select {
+	case err := <-done:
+		t.Errorf("a second answer: %v", err)
+	default:
+	}
+	if m.password != nil {
+		t.Error("a late success reopened the box")
+	}
+}
+
+// A late failure of the abandoned check shows nothing, and a box opened
+// since is not touched by it.
+func TestPasswordBoxLateResultIgnored(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	c := newBlockedCheck()
+	askFor(m, "Why.", c.check)
+	late := enterBlocked(t, m, c)
+	settle(m, press(m, "esc"))
+	next := askFor(m, "Again.", func(context.Context, string) error { return nil })
+	typeText(m, "pw")
+	c.release <- ErrWrongPassword
+	m.Update(<-late)
+	if s := screen(m); strings.Contains(s, "Sorry") || strings.Contains(s, "Checking") || !strings.Contains(s, "Again.") {
+		t.Errorf("the late failure showed:\n%s", s)
+	}
+	if s := screen(m); !strings.Contains(s, "•") {
+		t.Errorf("the new box lost its typed text:\n%s", s)
+	}
+	settle(m, press(m, "enter"))
+	if err := <-next; err != nil {
+		t.Errorf("the retry answered %v", err)
+	}
+}
+
+// esc while the window is too small does nothing, as before.
+func TestPasswordBoxEscIgnoredWhenSmall(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	c := newBlockedCheck()
+	done := askFor(m, "Why.", c.check)
+	late := enterBlocked(t, m, c)
+	m.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
+	press(m, "esc")
+	if m.password == nil {
+		t.Error("esc closed the box in a small window")
+	}
+	c.release <- nil
+	m.Update(<-late)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if err := <-done; err != nil {
+		t.Errorf("answer %v", err)
+	}
+}

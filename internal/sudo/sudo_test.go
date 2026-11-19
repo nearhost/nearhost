@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // realOwnedByRoot is the ownership check Nearhost ships with.
@@ -213,5 +215,78 @@ func TestDefaultCandidates(t *testing.T) {
 	want := []string{"/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo", "/run/wrappers/bin/sudo"}
 	if !reflect.DeepEqual(Candidates, want) {
 		t.Errorf("Candidates = %q, want %q", Candidates, want)
+	}
+}
+
+// A validation whose context ends after sudo cached the credentials leaves
+// none cached: the user withdrew consent.
+func TestValidateCancelledAfterCachingForgets(t *testing.T) {
+	cache, log := fake(t, "secret")
+	fifo := filepath.Join(filepath.Dir(cache), "wrote")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_SUDO_WROTE", fifo)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- Validate(ctx, "secret") }()
+	// The open returns once the fake has cached the credentials and writes.
+	opened := make(chan *os.File, 1)
+	go func() {
+		f, err := os.Open(fifo)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- f
+	}()
+	var f *os.File
+	select {
+	case f = <-opened:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the fake never cached the credentials")
+	}
+	if f != nil {
+		defer f.Close() // open until the cancel, so the fake's write lands
+	}
+	if _, err := os.Stat(cache); err != nil {
+		t.Fatalf("the fake did not cache: %v", err)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Errorf("Validate returned %v", err)
+	}
+	if _, err := os.Stat(cache); err == nil {
+		t.Error("the credentials stayed cached after the cancel")
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "-k") {
+		t.Errorf("sudo -k was not run: %q", calls)
+	}
+}
+
+// A validation that ends normally keeps the credentials and never runs -k.
+func TestValidateKeepsTheCacheWhenNotCancelled(t *testing.T) {
+	_, log := fake(t, "secret")
+	if err := Validate(context.Background(), "secret"); err != nil {
+		t.Fatal(err)
+	}
+	if !Cached(context.Background()) {
+		t.Error("not cached")
+	}
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "-k") {
+		t.Errorf("sudo -k ran: %q", calls)
+	}
+}
+
+// Forget drops the cached credentials.
+func TestForgetDropsTheCache(t *testing.T) {
+	cache, _ := fake(t, "secret")
+	if err := os.WriteFile(cache, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	Forget(context.Background())
+	if Cached(context.Background()) {
+		t.Error("still cached")
 	}
 }

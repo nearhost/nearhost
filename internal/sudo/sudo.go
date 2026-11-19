@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // Candidates are the places sudo is looked for, in order, by absolute path:
@@ -52,7 +54,16 @@ func Cached(ctx context.Context) bool {
 // is right (by default for a few minutes, for this terminal). A password sudo
 // refuses is ErrWrongPassword. The password goes to sudo on its standard
 // input, never in its arguments.
+//
+// When ctx has ended by the time sudo returns, the credentials are forgotten
+// again: sudo may have cached them before it was stopped, and the caller no
+// longer wants them.
 func Validate(ctx context.Context, password string) error {
+	defer func() {
+		if ctx.Err() != nil {
+			Forget(ctx)
+		}
+	}()
 	path, err := Binary()
 	if err != nil {
 		return err
@@ -62,6 +73,10 @@ func Validate(ctx context.Context, password string) error {
 	// same everywhere.
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	cmd.Stdin = strings.NewReader(password + "\n")
+	// Terminate rather than kill, so sudo leaves cleanly, and stop waiting
+	// for output that a helper of sudo's still holds open.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = stopDelay
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -84,3 +99,24 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return strings.TrimPrefix(line, "sudo: ")
 }
+
+// Forget drops the cached credentials, with sudo -k, which never prompts.
+// It runs under a context of its own, so one that has ended does not stop
+// it, and gives up after forgetGrace. It takes the timestamp away from sudo
+// calls made later; a command already running through sudo is not affected.
+func Forget(context.Context) {
+	path, err := Binary()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), forgetGrace)
+	defer cancel()
+	_ = exec.CommandContext(ctx, path, "-k").Run()
+}
+
+// forgetGrace is how long Forget lets sudo -k run.
+const forgetGrace = 2 * time.Second
+
+// stopDelay is how long sudo gets to leave after it was asked to terminate
+// before it is killed, and before a process holding its output is let go.
+const stopDelay = 2 * time.Second

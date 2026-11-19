@@ -58,6 +58,8 @@ type passwordBox struct {
 	tries    int
 	seq      int
 	w        *worker
+	// stopCheck ends the context of the check in flight; nil when none runs.
+	stopCheck context.CancelFunc
 }
 
 func newPasswordBox(msg passwordMsg, w *worker) *passwordBox {
@@ -69,9 +71,27 @@ func newPasswordBox(msg passwordMsg, w *worker) *passwordBox {
 	return &passwordBox{why: msg.why, input: in, check: msg.check, done: msg.done, w: w}
 }
 
+// releaseCheck frees the context of the check that has returned.
+func (b *passwordBox) releaseCheck() {
+	if b.stopCheck != nil {
+		b.stopCheck()
+		b.stopCheck = nil
+	}
+}
+
+// cancel ends the box as cancelled: it ends the check in flight, which
+// stops sudo, and answers the requester. The password the check was given
+// is a string the check holds until it returns, and Go cannot overwrite
+// it; the box drops its own copy, and a late result is ignored.
+func (b *passwordBox) cancel() {
+	b.busy = false
+	b.answer(ErrPasswordCancelled)
+}
+
 // answer ends the box with err, once.
 func (b *passwordBox) answer(err error) {
 	b.input.SetValue("")
+	b.releaseCheck() // a check still running stops, whoever ends the box
 	if b.answered {
 		return
 	}
@@ -82,10 +102,12 @@ func (b *passwordBox) answer(err error) {
 func (b *passwordBox) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case passwordCheckedMsg:
-		if msg.seq != b.seq {
+		// A result of a check the user cancelled is dropped, whatever it says.
+		if msg.seq != b.seq || b.answered {
 			return nil
 		}
 		b.busy = false
+		b.releaseCheck()
 		switch {
 		case msg.err == nil:
 			b.answer(nil)
@@ -107,7 +129,16 @@ func (b *passwordBox) update(msg tea.Msg) tea.Cmd {
 			b.input.SetValue(b.input.Value() + strings.TrimRight(msg.Content, "\r\n"))
 		}
 	case tea.KeyPressMsg:
-		if b.busy || b.answered {
+		if b.answered {
+			return nil
+		}
+		if b.busy {
+			// Only esc acts during the check: it ends the check, and
+			// whatever the check returns later is ignored.
+			if msg.String() == "esc" {
+				b.cancel()
+				return b.close()
+			}
 			return nil
 		}
 		switch msg.String() {
@@ -120,7 +151,9 @@ func (b *passwordBox) update(msg tea.Msg) tea.Cmd {
 			b.busy, b.err = true, ""
 			b.seq = nextSeq()
 			seq, check := b.seq, b.check
-			return b.w.do(func(ctx context.Context) tea.Msg {
+			ctx, stop := context.WithCancel(b.w.ctx)
+			b.stopCheck = stop
+			return b.w.do(func(context.Context) tea.Msg {
 				return passwordCheckedMsg{seq, check(ctx, password)}
 			})
 		}
@@ -148,7 +181,7 @@ func (b *passwordBox) lines(width int) []string {
 
 func (b *passwordBox) keys() []footerItem {
 	if b.busy {
-		return nil
+		return []footerItem{{"esc", "cancel"}}
 	}
 	return []footerItem{{"enter", "continue"}, {"esc", "cancel"}}
 }
