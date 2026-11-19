@@ -295,7 +295,7 @@ func TestParseErrorKinds(t *testing.T) {
 	if !errors.As(err, &ue) || ue.Var != "MISSING" {
 		t.Fatalf("unset: %v, want *UnsetError{MISSING}", err)
 	}
-	want = ".nearhostrc: ${MISSING} has no value in .env.local or .env, and no default"
+	want = ".nearhostrc line 3: ${MISSING} has no value in .env.local or .env, and no default"
 	if err.Error() != want {
 		t.Errorf("message = %q, want %q", err, want)
 	}
