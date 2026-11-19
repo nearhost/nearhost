@@ -231,6 +231,53 @@ func TestPerProcessStopStartTouchesOnlyThatProject(t *testing.T) {
 	}
 }
 
+// The system may offer, as a free port for a web forward, the port of a
+// loopback route, which nothing holds until that route is forwarded. The
+// web forward leaves it for the route, here its own project's and another
+// project's.
+func TestWebForwardLeavesTheLoopbackPortsAlone(t *testing.T) {
+	for _, tr := range []string{"default", "per-process"} {
+		t.Run(tr, func(t *testing.T) {
+			if tr != "default" {
+				t.Setenv("NEARHOST_TRANSPORT", tr)
+			}
+			own, other := testutil.FreePort(t), testutil.FreePort(t)
+			cfg := &config.Config{
+				Servers: []config.Server{{Name: "mini", SSHHost: "mini"}},
+				Projects: []config.Project{
+					remoteProject("first", "mini", own),
+					remoteProject("second", "mini", other),
+				},
+			}
+			h := newHarness(t, cfg)
+			var mu sync.Mutex
+			offers := []int{own, other}
+			h.eng.freePort = func() (int, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				if len(offers) == 0 {
+					return transport.FreePort()
+				}
+				port := offers[0]
+				offers = offers[1:]
+				return port, nil
+			}
+			mustStart(t, h, "first")
+			mustStart(t, h, "second")
+			st := h.eng.Status("first")
+			if st.State != StateRunning || st.Message != "" {
+				t.Fatalf("first = %+v", st)
+			}
+			if web := st.WebLocalPort; web == own || web == other {
+				t.Fatalf("first's web forward took port %d, the port of a loopback route (%d, %d)", web, own, other)
+			}
+			if st := h.eng.Status("second"); st.State != StateRunning || st.Message != "" {
+				t.Fatalf("second = %+v", st)
+			}
+		})
+	}
+}
+
 // A forward whose ssh died is relaunched by the transport by itself. Until
 // it is back the project is degraded, saying so, not in error over a port
 // that nothing holds, and nobody is asked who holds it.

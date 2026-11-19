@@ -370,8 +370,9 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	}
 	var problems []string
 	if sess != nil {
+		loopback := loopbackPorts(cfg)
 		for i, w := range web {
-			local, err := e.forwardWeb(ctx, sess, run, w.Port)
+			local, err := e.forwardWeb(ctx, sess, run, w.Port, loopback)
 			if err != nil {
 				// The web routes forwarded so far go with the rest.
 				return StateError, errors.Join(fmt.Errorf("web port %d: %w", w.Port, err), e.rollBack(ctx, run))
@@ -482,15 +483,36 @@ func (e *Engine) releasePortLocked(port int) {
 	}
 }
 
+// loopbackPorts are the ports of the loopback routes in cfg, each of which
+// is forwarded from the same port on this machine.
+func loopbackPorts(cfg *config.Config) map[int]bool {
+	ports := map[int]bool{}
+	for _, p := range cfg.Projects {
+		for _, r := range p.Routes {
+			if r.Role == config.RoleLoopback {
+				ports[r.Port] = true
+			}
+		}
+	}
+	return ports
+}
+
 // forwardWeb forwards a web route's remote port to a free local port chosen
 // here and returns that port. The forward is recorded on run, so a rollback
-// cancels it; the proxy learns the port when the site is published.
-func (e *Engine) forwardWeb(ctx context.Context, sess transport.Transport, run *projectRun, remote int) (int, error) {
+// cancels it; the proxy learns the port when the site is published. It
+// passes over a port in loopback, the ports of the configuration's loopback
+// routes: a free port is any that nothing holds, and one of those is free
+// until its route is forwarded, which would then find it taken.
+func (e *Engine) forwardWeb(ctx context.Context, sess transport.Transport, run *projectRun, remote int, loopback map[int]bool) (int, error) {
 	var last error
 	for attempt := 0; attempt < webPortAttempts && ctx.Err() == nil; attempt++ {
-		local, err := transport.FreePort()
+		local, err := e.freePort()
 		if err != nil {
 			return 0, err
+		}
+		if loopback[local] {
+			last = fmt.Errorf("local port %d is a loopback route's", local)
+			continue
 		}
 		if holder, ok := e.claimPort(run, local); !ok {
 			last = fmt.Errorf("local port %d is held by %s", local, holder)
