@@ -409,18 +409,22 @@ func (e *Engine) WebPort() int {
 	return e.webPort
 }
 
-// errNoPage is PageURL's error when Nearhost's page is served nowhere:
-// there is no web port.
+// errNoPage is PageURL's error when Nearhost's page was not asked for: the
+// web port option is 0.
 var errNoPage = errors.New("Nearhost's page isn't served: --web-port is 0")
 
 // PageURL returns the base URL of Nearhost's page, which documents are
 // given out below: https://localhost:<web port>, the page's only address.
 // localhost on the HTTPS port belongs to projects. With no web port, it
-// returns errNoPage.
+// returns errNoPage when the option was 0, and otherwise an error naming
+// the port that was taken when the engine started.
 func (e *Engine) PageURL() (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.webPort == 0 {
+		if port := e.opts.WebPort; port != 0 {
+			return "", fmt.Errorf("Nearhost's page isn't served: port %d wasn't available when Nearhost started", port)
+		}
 		return "", errNoPage
 	}
 	return fmt.Sprintf("https://localhost:%d", e.webPort), nil

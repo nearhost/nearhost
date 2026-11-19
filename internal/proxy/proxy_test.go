@@ -1228,13 +1228,15 @@ func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
 
 // Nearhost's page answers on its own port, with a certificate for
 // localhost though no project lists it, only to GET and HEAD at /, and
-// before any project is served.
+// before any project is served. The page is no project's, so its access
+// lines never reach the sink.
 func TestHomePageOnTheWebPort(t *testing.T) {
-	for name, sites := range map[string][]Site{
-		"no sites": nil,
-		"a site":   {{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
-	} {
+	for _, name := range []string{"no sites", "a site"} {
 		t.Run(name, func(t *testing.T) {
+			var sites []Site
+			if name == "a site" {
+				sites = []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "a"))}}
+			}
 			h := startProxyOpts(t, sites, Options{WebPort: freePort(t), HomeWithNoSites: true})
 			c := h.pageClient(t, h.webPort)
 			page := fmt.Sprintf("https://localhost:%d", h.webPort)
@@ -1263,6 +1265,19 @@ func TestHomePageOnTheWebPort(t *testing.T) {
 			r.Body.Close()
 			if r.StatusCode != 405 {
 				t.Errorf("POST /: status %d, want 405", r.StatusCode)
+			}
+			// A tagged request afterwards is logged after the page's, so by
+			// then a line for the page would have arrived.
+			if len(sites) > 0 {
+				h.getEventually(h.client("a.test", false), "a.test", "/after-home")
+				waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/after-home") }, "log line for /after-home")
+			}
+			h.rec.mu.Lock()
+			defer h.rec.mu.Unlock()
+			for _, l := range h.rec.lines {
+				if strings.Contains(l, "/nope") {
+					t.Errorf("an access line for the page reached the sink: %q", l)
+				}
 			}
 		})
 	}

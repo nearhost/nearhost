@@ -728,8 +728,35 @@ func TestBuildConfigHTTPSServerNeverServesHomePage(t *testing.T) {
 
 // With a web port, a server of its own serves the home page at localhost
 // to loopback clients, even while a project serves localhost on the https
-// port, and drops the rest. localhost is a subject either way.
+// port, and drops the rest. localhost is a subject once, whether or not a
+// project lists it.
 func TestBuildConfigWebPortServesHomePage(t *testing.T) {
+	for name, hosts := range map[string][]string{
+		"no project lists localhost": {"a.test"},
+		"a project lists localhost":  {"a.test", "localhost"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: hosts, Upstream: "127.0.0.1:1"}},
+				Options{StorageRoot: t.TempDir(), WebPort: 6327})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			n := 0
+			for _, s := range tlsSubjects(cfg) {
+				if s == "localhost" {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("subjects = %v, want localhost exactly once", tlsSubjects(cfg))
+			}
+		})
+	}
+
 	raw, err := BuildConfig([]Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: "127.0.0.1:1"},
 	}, Options{StorageRoot: t.TempDir(), Version: "1.2.3", WebPort: 6327})
@@ -757,9 +784,6 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 	}
 	if len(homeRoutes(t, cfg)) != 0 {
 		t.Error("the https port serves the home page")
-	}
-	if got := tlsSubjects(cfg); !slices.Contains(got, "localhost") {
-		t.Errorf("subjects = %v, want localhost", got)
 	}
 	// A config that does not listen has no web server, nor one without a
 	// web port.

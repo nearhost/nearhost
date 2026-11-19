@@ -2034,6 +2034,9 @@ func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
 	if got := h.eng.WebPort(); got != 0 {
 		t.Fatalf("WebPort = %d, want 0", got)
 	}
+	if _, err := h.eng.PageURL(); err == nil || err.Error() != fmt.Sprintf("Nearhost's page isn't served: port %d wasn't available when Nearhost started", held) {
+		t.Fatalf("PageURL error = %v, want one naming port %d", err, held)
+	}
 	want := fmt.Sprintf("port %d is in use", held)
 	for said := false; !said; {
 		select {
@@ -2285,21 +2288,23 @@ func TestPageURL(t *testing.T) {
 	const noPage = "Nearhost's page isn't served: --web-port is 0"
 	for _, tc := range []struct {
 		name      string
+		asked     int // the web port option; webPort is the port served
 		webPort   int
 		httpsPort int
 		runs      map[string]*projectRun
 		want      string
 		wantErr   string
 	}{
-		{name: "web port", webPort: 6327, want: "https://localhost:6327"},
-		{name: "web port, project holds localhost", webPort: 6327, runs: holding, want: "https://localhost:6327"},
+		{name: "web port", asked: 6327, webPort: 6327, want: "https://localhost:6327"},
+		{name: "web port, project holds localhost", asked: 6327, webPort: 6327, runs: holding, want: "https://localhost:6327"},
+		{name: "web port taken at start", asked: 6327, wantErr: "Nearhost's page isn't served: port 6327 wasn't available when Nearhost started"},
 		{name: "no web port", wantErr: noPage},
 		{name: "no web port, https 443", httpsPort: 443, wantErr: noPage},
 		{name: "no web port, https 8443", httpsPort: 8443, wantErr: noPage},
 		{name: "no web port, project holds localhost", runs: holding, wantErr: noPage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := &Engine{opts: Options{HTTPSPort: tc.httpsPort}, webPort: tc.webPort, runs: tc.runs}
+			e := &Engine{opts: Options{HTTPSPort: tc.httpsPort, WebPort: tc.asked}, webPort: tc.webPort, runs: tc.runs}
 			for name := range tc.runs {
 				e.order = append(e.order, name)
 			}

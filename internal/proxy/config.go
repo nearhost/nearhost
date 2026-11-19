@@ -636,9 +636,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 	}}
 	for _, g := range groups {
-		// Except is every host outside the group, so
-		// a pattern of the group's does not match a name a more specific
-		// host of another site owns (see HostsMatcher).
+		// Except is every host outside the group, so a pattern of the
+		// group's does not match a name a more specific host of another
+		// site owns (see HostsMatcher).
 		var except []string
 		for _, sv := range all {
 			if !slices.Contains(g.hosts, sv.host) {
@@ -672,8 +672,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// A site's app that does not answer fails its route, and Caddy
 		// runs these: the route for the host that failed. The last route
 		// catches every other error only to log it: with error routes,
-		// Caddy logs the errors they
-		// handle at debug level.
+		// Caddy logs the errors they handle at debug level.
 		downRoutes = append(downRoutes, map[string]any{
 			"handle":   []any{map[string]any{"handler": downModule, "log_only": true}},
 			"terminal": true,
