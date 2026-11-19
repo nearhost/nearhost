@@ -160,6 +160,7 @@ func (u *upRun) backend() upBackend {
 			u.mu.Unlock()
 			return ctx, again, cancel
 		},
+		start:    (*engine.Engine).Start,
 		shutdown: (*engine.Engine).Shutdown,
 	}
 }
