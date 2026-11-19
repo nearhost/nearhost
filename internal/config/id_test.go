@@ -133,9 +133,10 @@ func leftover(t *testing.T, content string) string {
 	return path
 }
 
-// The waits for a writer are counted, not timed: writing the id takes as
-// long as the disk does, and on Windows a rename waits out a virus scanner
-// for up to renameRetryFor.
+// An old empty id file is a leftover, so it is replaced with no waits for a
+// writer. The test counts those waits and does not time the replacement:
+// writing the id takes as long as the disk does, and on Windows a rename
+// waits out a virus scanner for up to renameRetryFor.
 func TestInstallIDReplacesAnOldEmptyFileAtOnce(t *testing.T) {
 	waits := 0
 	saved := idPause
@@ -151,7 +152,7 @@ func TestInstallIDReplacesAnOldEmptyFileAtOnce(t *testing.T) {
 			t.Fatalf("%q: %q %v", content, id, err)
 		}
 		if waits != 0 {
-			t.Fatalf("%q: waited %d times for a writer, want no wait", content, waits)
+			t.Fatalf("%q: %d waits for a writer, want no waits for a writer", content, waits)
 		}
 		if got := readID(t, path); got != id+" aaaa\n" {
 			t.Fatalf("%q: file %q", content, got)
