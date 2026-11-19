@@ -346,3 +346,64 @@ func TestAReloadSaysWhichListenersDidNotClose(t *testing.T) {
 		t.Errorf("%d lines about open listeners, want 1", n)
 	}
 }
+
+// A reload that takes the last site away opens no listener and closes the
+// old ones: it waits for them as any reload does, so one still open after
+// the wait is said in the log and not waited for again.
+func TestAReloadToNoSitesSettlesTheOldListeners(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxy(t, []Site{a})
+	old := retiring.snapshot()
+	if len(old) == 0 {
+		t.Fatal("no listener is recorded for a running proxy")
+	}
+	left := stuck(retiring, 1)
+	t.Cleanup(func() {
+		retiring.mu.Lock()
+		defer retiring.mu.Unlock()
+		for l := range left {
+			delete(retiring.open, l)
+		}
+	})
+	waited := standRetired(t, func(ls map[*retireListener]struct{}) map[*retireListener]struct{} {
+		out := map[*retireListener]struct{}{}
+		for l := range left {
+			if _, ok := ls[l]; ok {
+				out[l] = struct{}{}
+			}
+		}
+		return out
+	})
+
+	if err := h.p.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(*waited) != 1 {
+		t.Fatalf("the reload to no sites waited %d times for the old listeners, want once", len(*waited))
+	}
+	for l := range old {
+		if _, ok := (*waited)[0][l]; !ok {
+			t.Fatal("the reload to no sites did not wait for one of the old listeners")
+		}
+	}
+	const want = "1 proxy listener was still open 5s after a reload: 127.0.0.1:8080"
+	if !h.rec.hasFor("", want) {
+		t.Errorf("the log lacks %q", want)
+	}
+	if _, ok := retiring.snapshot()[firstOf(left)]; ok {
+		t.Error("the listener that did not close is still waited for")
+	}
+
+	if err := h.p.Apply([]Site{a}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ls := range (*waited)[1:] {
+		if _, ok := ls[firstOf(left)]; ok {
+			t.Fatal("the next reload waited again for the listener that had not closed")
+		}
+	}
+	if n := h.rec.countFor("", "still open"); n != 1 {
+		t.Errorf("%d lines about open listeners, want 1", n)
+	}
+}
