@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -27,6 +28,7 @@ type serverForm struct {
 	name   textField
 	known  []string // hosts from the SSH config not yet configured
 	pick   int      // index into the shown hosts; -1 for the typed text
+	top    int      // index of the first host in the visible window
 	err    string
 	busy   bool
 	fail   string // why the check failed
@@ -88,6 +90,36 @@ func (f *serverForm) shown() []string {
 		}
 	}
 	return out
+}
+
+const (
+	// hostRows is how many hosts the list shows at once.
+	hostRows = 8
+	// hostRowsWithError is how many it shows while an error is under it, so
+	// the field, the list and the error fit the smallest window together.
+	hostRowsWithError = 4
+)
+
+// rows is how many hosts the list shows now.
+func (f *serverForm) rows() int {
+	if f.err != "" {
+		return hostRowsWithError
+	}
+	return hostRows
+}
+
+// scroll moves the window the least that keeps the selection in it, and
+// keeps the window inside the shown hosts.
+func (f *serverForm) scroll() {
+	n, rows := len(f.shown()), f.rows()
+	if f.pick >= 0 {
+		if f.pick < f.top {
+			f.top = f.pick
+		} else if f.pick >= f.top+rows {
+			f.top = f.pick - rows + 1
+		}
+	}
+	f.top = max(min(f.top, n-rows), 0)
 }
 
 // hostName is the name a server reached at host gets unless one is typed:
@@ -154,7 +186,7 @@ func (f *serverForm) update(msg tea.Msg) tea.Cmd {
 		switch f.step {
 		case serverStepHost:
 			f.host.paste(msg.Content)
-			f.pick, f.err = -1, ""
+			f.pick, f.top, f.err = -1, 0, ""
 		case serverStepName:
 			f.name.paste(msg.Content)
 			f.err = ""
@@ -172,9 +204,11 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 		switch k.String() {
 		case "up":
 			f.pick = max(f.pick-1, -1)
+			f.scroll()
 			return nil
 		case "down":
 			f.pick = min(f.pick+1, len(f.shown())-1)
+			f.scroll()
 			return nil
 		case "enter":
 			host := strings.TrimSpace(f.host.value)
@@ -184,6 +218,7 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 			// The rule nearhost add applies.
 			if host == "" || strings.HasPrefix(host, "-") || strings.IndexFunc(host, unicode.IsSpace) >= 0 {
 				f.err = "an SSH host cannot be empty, start with - or contain spaces"
+				f.scroll() // the list shrinks to make room for the error
 				return nil
 			}
 			f.host.set(host)
@@ -195,7 +230,7 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		if f.host.key(k) {
-			f.pick, f.err = -1, ""
+			f.pick, f.top, f.err = -1, 0, ""
 		}
 	case serverStepName:
 		if k.String() == "enter" {
@@ -259,15 +294,32 @@ func (f *serverForm) back() tea.Cmd {
 func (f *serverForm) lines(width int) []string {
 	lines := field("host", f.host.view(f.step == serverStepHost), width)
 	if f.step == serverStepHost {
-		for i, h := range f.shown() {
-			if i == 8 {
-				break
+		shown := f.shown()
+		rows := f.rows()
+		// A list longer than the window reserves a line above and below
+		// for the "more" notes, so the box keeps its height as you move.
+		long := len(shown) > rows
+		pad := strings.Repeat(" ", labelWidth)
+		if long {
+			note := ""
+			if f.top > 0 {
+				note = fmt.Sprintf("↑ %d more", f.top)
 			}
+			lines = append(lines, pad+"  "+styleDim.Render(note))
+		}
+		for i := f.top; i < min(f.top+rows, len(shown)); i++ {
 			mark := "  "
 			if i == f.pick {
 				mark = styleBeacon.Render("▸ ")
 			}
-			lines = append(lines, strings.Repeat(" ", labelWidth)+mark+clean(h))
+			lines = append(lines, pad+mark+clean(shown[i]))
+		}
+		if long {
+			note := ""
+			if below := len(shown) - f.top - rows; below > 0 {
+				note = fmt.Sprintf("↓ %d more", below)
+			}
+			lines = append(lines, pad+"  "+styleDim.Render(note))
 		}
 	} else {
 		lines = append(lines, field("name", f.name.view(f.step == serverStepName), width)...)

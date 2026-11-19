@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -159,4 +161,139 @@ func TestServerFormRefusesAnySpace(t *testing.T) {
 	typeText(m, "box\u00a0lan")
 	press(m, "enter")
 	wantScreen(t, m, "An SSH host cannot be empty, start with - or contain spaces")
+}
+
+// manyHostsModel is the add-server form with n hosts in the SSH config, named
+// h01, h02 and so on.
+func manyHostsModel(t *testing.T, n int) *Model {
+	t.Helper()
+	f := newFake(t, sampleConfig())
+	for i := 1; i <= n; i++ {
+		f.forms.hosts = append(f.forms.hosts, fmt.Sprintf("h%02d", i))
+	}
+	m := sized(f)
+	settle(m, press(m, "s"))
+	return m
+}
+
+// hostBoxHeight is the number of lines the form's body takes.
+func hostBoxHeight(m *Model) int {
+	return len(m.form.(*serverForm).lines(70))
+}
+
+func TestServerFormListScrollsWithTheSelection(t *testing.T) {
+	m := manyHostsModel(t, 12)
+	if s := screen(m); !strings.Contains(s, "h08") || strings.Contains(s, "h09") || !strings.Contains(s, "↓ 4 more") || hasUpNote(s) {
+		t.Fatalf("top of the list:\n%s", s)
+	}
+	for range 8 {
+		press(m, "down")
+	}
+	wantScreen(t, m, "▸ h08", "↓ 4 more")
+	press(m, "down") // row 9: the window moves by one
+	s := screen(m)
+	for _, want := range []string{"▸ h09", "↑ 1 more", "↓ 3 more", "h02"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("row 9 lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "h01") {
+		t.Errorf("h01 still shown:\n%s", s)
+	}
+	press(m, "down")
+	wantScreen(t, m, "▸ h10", "↑ 2 more", "↓ 2 more")
+	press(m, "up")
+	press(m, "up")
+	wantScreen(t, m, "▸ h08", "↑ 2 more", "↓ 2 more") // the window stays until the selection leaves it
+	for range 7 {
+		press(m, "up")
+	}
+	s = screen(m)
+	if !strings.Contains(s, "▸ h01") || hasUpNote(s) || !strings.Contains(s, "↓ 4 more") {
+		t.Errorf("back at the top:\n%s", s)
+	}
+}
+
+func TestServerFormListKeepsItsHeight(t *testing.T) {
+	m := manyHostsModel(t, 12)
+	top := hostBoxHeight(m)
+	for range 6 {
+		press(m, "down")
+	}
+	mid := hostBoxHeight(m)
+	for range 6 {
+		press(m, "down")
+	}
+	if bottom := hostBoxHeight(m); top != mid || mid != bottom {
+		t.Errorf("height changed: top %d, middle %d, bottom %d", top, mid, bottom)
+	}
+	if !strings.Contains(screen(m), "▸ h12") {
+		t.Errorf("last row not selected:\n%s", screen(m))
+	}
+}
+
+func TestServerFormFilterResetsTheWindow(t *testing.T) {
+	m := manyHostsModel(t, 12)
+	for range 11 {
+		press(m, "down")
+	}
+	typeText(m, "h0")
+	s := screen(m)
+	if hasUpNote(s) || !strings.Contains(s, "↓ 1 more") || !strings.Contains(s, "h01") {
+		t.Errorf("after filtering to nine hosts:\n%s", s)
+	}
+	press(m, "ctrl+u")
+	typeText(m, "h1")
+	s = screen(m)
+	if strings.Contains(s, "more") || !strings.Contains(s, "h10") || !strings.Contains(s, "h12") {
+		t.Errorf("after filtering to three hosts:\n%s", s)
+	}
+	press(m, "down")
+	press(m, "down")
+	press(m, "down")
+	wantScreen(t, m, "▸ h12")
+}
+
+// hasUpNote reports whether the screen shows a "↑ N more" line (the footer's
+// ↑↓ hint does not count).
+func hasUpNote(s string) bool { return regexp.MustCompile(`↑ \d+ more`).MatchString(s) }
+
+func TestServerFormListFitsTheSmallestWindow(t *testing.T) {
+	m := manyHostsModel(t, 12)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	for range 12 {
+		press(m, "down")
+	}
+	wantScreen(t, m, "host      ", "↑ 4 more", "▸ h12", "enter next")
+}
+
+// hyphenHostsModel is the form at 80x20 with 12 hosts that all hold a hyphen.
+func hyphenHostsModel(t *testing.T) *Model {
+	t.Helper()
+	f := newFake(t, sampleConfig())
+	for i := 1; i <= 12; i++ {
+		f.forms.hosts = append(f.forms.hosts, fmt.Sprintf("h-%02d", i))
+	}
+	m := sized(f)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	settle(m, press(m, "s"))
+	return m
+}
+
+func TestServerFormErrorShowsWithTheFieldAndAShorterList(t *testing.T) {
+	m := hyphenHostsModel(t)
+	typeText(m, "-")
+	press(m, "enter")
+	wantScreen(t, m, "host      -▏", "An SSH host cannot be empty", "h-01", "↓ 8 more", "enter next")
+	press(m, "down")
+	for range 6 {
+		press(m, "down")
+	}
+	wantScreen(t, m, "host      -", "An SSH host cannot be empty", "▸ h-07", "↑ 3 more", "↓ 5 more")
+	press(m, "backspace") // the host field is back to "-" and the hosts match again
+	typeText(m, "0")
+	s := screen(m)
+	if strings.Contains(s, "An SSH host") || !strings.Contains(s, "h-08") || strings.Contains(s, "h-09") {
+		t.Errorf("after an edit the list should show eight rows and no error:\n%s", s)
+	}
 }
