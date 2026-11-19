@@ -26,10 +26,11 @@ func TestInstallAndUninstallRunTheTrustedSudo(t *testing.T) {
 		seen = append(seen, path)
 		return nil
 	}
-	origInstall, origUninstall, origRemove := trustInstall, trustUninstall, removeSystemCopy
-	trustInstall, trustUninstall = look, look
-	removeSystemCopy = func(*x509.Certificate) error { return nil }
-	t.Cleanup(func() { trustInstall, trustUninstall, removeSystemCopy = origInstall, origUninstall, origRemove })
+	origInstall := trustInstall
+	trustInstall = look
+	t.Cleanup(func() { trustInstall = origInstall })
+	// Trusted, so macOS's uninstall runs the trust removal this test watches.
+	pinUninstall(t, true, true, look, func(*x509.Certificate) error { return nil })
 
 	if err := Install(&x509.Certificate{}); err != nil {
 		t.Fatal(err)
