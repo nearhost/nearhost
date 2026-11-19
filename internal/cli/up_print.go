@@ -167,8 +167,9 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.
 		// A read-only hosts file's reason already says how to clear it, and
-		// approving again would fail the same way.
-		if reason != "" && !hosts.IsReadOnlyMessage(reason) {
+		// approving again would fail the same way. Without a terminal no
+		// prompt can appear, and up has already said what to do instead.
+		if reason != "" && !hosts.IsReadOnlyMessage(reason) && !strings.Contains(reason, errNoTerminal.Error()) {
 			fix = "run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts"
 		}
 	case engine.StateError:
