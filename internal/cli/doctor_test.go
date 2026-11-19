@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -835,4 +836,29 @@ func TestFirefoxRootsOffWarns(t *testing.T) {
 	if out, _ := execute(t, newDoctorCmd(b), "doctor"); strings.Contains(out, "Firefox") {
 		t.Errorf("reported with roots on:\n%s", out)
 	}
+}
+
+// A key Nearhost does not know stays in the file until the next save, which
+// is refused. doctor warns about each such key with its line, and the checks
+// that need the config still run.
+func TestDoctorWarnsAboutUnknownConfigKeys(t *testing.T) {
+	path := doctorConfig(t)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "colour: blue\nfuture: 1\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Count(string(data), "\n")
+	f := healthy()
+	out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out)
+	}
+	wantContains(t, out, fmt.Sprintf("warn  config           %s line %d: Nearhost does not know the key \"colour\".\n"+
+		"                       %s line %d: Nearhost does not know the key \"future\".\n"+
+		"      fix: Fix or remove them; saving now would delete them, so Nearhost refuses to save until then\n",
+		path, lines+1, path, lines+2),
+		"ok    hosts block      2 names\n")
 }

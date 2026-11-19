@@ -195,7 +195,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 	case err != nil:
 		checks = append(checks, check{"config", levelFail, err.Error(), "edit " + path})
 	default:
-		checks = append(checks, check{name: "config", detail: path})
+		checks = append(checks, checkUnknownKeys(path))
 	}
 
 	ctx := cmd.Context()
@@ -500,6 +500,28 @@ func checkCAAt(b trustBackend, dir string) []check {
 		nss.fix = "only Firefox (and on Linux Chromium-family browsers) need this; set them up, then " + fix
 	}
 	return []check{ca, nss}
+}
+
+// checkUnknownKeys is the config check for a config that loads: it passes
+// with the file's path, or warns about each key in it Nearhost does not know,
+// since the next save is refused until the key is fixed or removed.
+func checkUnknownKeys(path string) check {
+	unknown, err := config.UnknownKeys(path)
+	if err != nil {
+		return check{"config", levelWarn, "could not look for keys Nearhost does not know: " + err.Error(), "edit " + path}
+	}
+	if len(unknown) == 0 {
+		return check{name: "config", detail: path}
+	}
+	lines := make([]string, len(unknown))
+	for i, u := range unknown {
+		lines[i] = u.Describe(path)
+	}
+	fix := "fix or remove it; saving now would delete it, so Nearhost refuses to save until then"
+	if len(unknown) > 1 {
+		fix = "fix or remove them; saving now would delete them, so Nearhost refuses to save until then"
+	}
+	return check{"config", levelWarn, strings.Join(lines, "\n"), fix}
 }
 
 // checkAliases reports the projects whose main name is not a valid domain,
