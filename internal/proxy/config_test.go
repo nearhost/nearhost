@@ -982,3 +982,54 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 		t.Errorf("config without clients changed:\n got %s\nwant %s", raw, wantRaw)
 	}
 }
+
+// The https server's error routes give each site's hosts Nearhost's page
+// for an app that does not answer, matched as the site's own route is and
+// naming the project, its port and its server. The other servers proxy
+// nothing and have none.
+func TestBuildConfigServesDownPageOnSiteErrors(t *testing.T) {
+	cfg := buildJSON(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test", "*.local.x.io"}, Upstream: "127.0.0.1:41000", Project: "a", Port: 3000, Server: "mini"},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "localhost:5173", Clients: []string{"172.17.0.0/16"}},
+	})
+	servers := dig(t, cfg, "apps", "http", "servers").(map[string]any)
+	for _, name := range []string{"nearhost_http", "nearhost_web"} {
+		if s, ok := servers[name].(map[string]any); ok && s["errors"] != nil {
+			t.Errorf("%s has error routes: %v", name, s["errors"])
+		}
+	}
+	routes := dig(t, servers, "nearhost", "errors", "routes").([]any)
+	// The last route catches every other error, to log it and leave its
+	// bare status.
+	last := routes[len(routes)-1].(map[string]any)
+	if _, ok := last["match"]; ok || last["terminal"] != true ||
+		!reflect.DeepEqual(last["handle"], []any{map[string]any{"handler": downModule, "log_only": true}}) {
+		t.Errorf("last error route = %v", last)
+	}
+	routes = routes[:len(routes)-1]
+	type want struct {
+		host, project, server string
+		port                  float64
+		ranges                []any
+	}
+	loop := []any{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
+	wants := []want{
+		{"a.test", "a", "mini", 3000, loop},
+		{"b.test", "b.test", "", 5173, append(slices.Clone(loop), "172.17.0.0/16", "::ffff:172.17.0.0/112")},
+		{"*.local.x.io", "a", "mini", 3000, loop},
+	}
+	if len(routes) != len(wants) {
+		t.Fatalf("error routes = %v", routes)
+	}
+	for i, w := range wants {
+		r := routes[i]
+		if dig(t, r, "match", 0, "host", 0) != w.host || !reflect.DeepEqual(dig(t, r, "match", 0, "remote_ip", "ranges"), w.ranges) || dig(t, r, "terminal") != true {
+			t.Errorf("error route %d matches %v", i, r)
+		}
+		h := dig(t, r, "handle", 0).(map[string]any)
+		server, _ := h["server"].(string)
+		if h["handler"] != downModule || h["project"] != w.project || h["port"] != w.port || server != w.server {
+			t.Errorf("error route %d handles with %v, want %+v", i, h, w)
+		}
+	}
+}

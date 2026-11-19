@@ -787,12 +787,21 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.server == config.LocalServer {
 			host = "localhost"
 		}
+		// The page a browser gets while the app does not answer names its
+		// server, or none for this machine.
+		server := run.server
+		if server == config.LocalServer {
+			server = ""
+		}
 		var clients []string
 		if run.docker {
 			clients = e.dockerClientsLocked()
 		}
 		for i, w := range run.web {
-			sites = append(sites, proxy.Site{Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients)})
+			sites = append(sites, proxy.Site{
+				Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
+				Project: run.name, Port: w.Port, Server: server,
+			})
 		}
 	}
 	return sites
