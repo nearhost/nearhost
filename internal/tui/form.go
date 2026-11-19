@@ -138,8 +138,10 @@ func newWorker() *worker {
 type releaser interface{ release() }
 
 // do runs fn as a background step. A step that begins after stop does
-// nothing, and what a step returns after stop is released, since the
-// interface is going and will not take it.
+// nothing, and what a step returns after stop is dropped, and released when
+// it holds something, since the interface is going and will not take it:
+// such an answer is mostly the failure stop caused, which the form would
+// otherwise show while Nearhost stops.
 func (w *worker) do(fn func(ctx context.Context) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		w.mu.Lock()
@@ -154,21 +156,49 @@ func (w *worker) do(fn func(ctx context.Context) tea.Msg) tea.Cmd {
 		w.mu.Lock()
 		stopped := w.stopped
 		w.mu.Unlock()
-		if r, ok := msg.(releaser); ok && stopped {
-			r.release()
-			return nil
+		if !stopped {
+			return msg
 		}
-		return msg
+		if r, ok := msg.(releaser); ok {
+			r.release()
+		}
+		return nil
 	}
 }
 
-// stop ends the running steps and waits for them.
-func (w *worker) stop() {
+// stop ends the running steps and waits for them until ctx ends. From now
+// on what a step returns is released. unblock, when not nil, runs first, on
+// the side, to end what a step may be stuck on that its context cannot
+// reach, such as a read on a connection to a server that stopped answering;
+// stop waits for it too. A step or unblock still running when ctx ends is
+// left behind.
+func (w *worker) stop(ctx context.Context, unblock func()) {
 	w.mu.Lock()
 	w.stopped = true
 	w.mu.Unlock()
+	unblocked := make(chan struct{})
+	go func() {
+		defer close(unblocked)
+		if unblock != nil {
+			unblock()
+		}
+	}()
 	w.cancel()
-	w.running.Wait()
+	ended := make(chan struct{})
+	go func() {
+		w.running.Wait()
+		close(ended)
+	}()
+	for unblocked != nil || ended != nil {
+		select {
+		case <-unblocked:
+			unblocked = nil
+		case <-ended:
+			ended = nil
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // paste adds pasted text to the field, without line breaks or control

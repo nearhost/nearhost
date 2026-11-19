@@ -7,6 +7,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -46,6 +47,14 @@ type fakeFiles struct {
 	closed  int
 	presets bool     // EnablePresets has run
 	advised []string // the aliases Advise was asked about
+
+	// hang, when set, makes ListDirs and Discover wait on it as a read on a
+	// hung server does, deaf to their context: closing the files closes
+	// hang, unless keepHung is set. They send on hung once they wait.
+	hang     chan struct{}
+	hung     chan struct{}
+	keepHung bool
+	unhang   sync.Once
 }
 
 func (f *fakeFiles) abs(p string) string {
@@ -55,7 +64,24 @@ func (f *fakeFiles) abs(p string) string {
 	return path.Clean(p)
 }
 
-func (f *fakeFiles) ListDirs(_ context.Context, dir string) ([]string, error) {
+// wait waits on hang, when it is set, and then fails as a read on a closed
+// connection does, or with ctx's error once ctx has ended.
+func (f *fakeFiles) wait(ctx context.Context) error {
+	if f.hang == nil {
+		return nil
+	}
+	f.hung <- struct{}{}
+	<-f.hang
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("connection closed")
+}
+
+func (f *fakeFiles) ListDirs(ctx context.Context, dir string) ([]string, error) {
+	if err := f.wait(ctx); err != nil {
+		return nil, err
+	}
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -82,6 +108,9 @@ func (f *fakeFiles) Resolve(_ context.Context, p string) (string, error) {
 }
 
 func (f *fakeFiles) Discover(ctx context.Context, p string) (Draft, error) {
+	if err := f.wait(ctx); err != nil {
+		return Draft{}, err
+	}
 	p, err := f.Resolve(ctx, p)
 	if err != nil {
 		return Draft{}, err
@@ -102,7 +131,13 @@ func (f *fakeFiles) Discover(ctx context.Context, p string) (Draft, error) {
 	return d, nil
 }
 
-func (f *fakeFiles) Close() error { f.closed++; return nil }
+func (f *fakeFiles) Close() error {
+	f.closed++
+	if f.hang != nil && !f.keepHung {
+		f.unhang.Do(func() { close(f.hang) })
+	}
+	return nil
+}
 
 func (f *fakeBackend) SSHHosts() []string { return f.forms.hosts }
 

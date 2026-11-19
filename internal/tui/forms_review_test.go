@@ -61,6 +61,115 @@ func TestQuitClosesTheFormsConnection(t *testing.T) {
 	}
 }
 
+// hangOnList makes the form's next listing wait as a read on a hung server
+// does, and returns the listing's command running and what it returned.
+func hangOnList(t *testing.T, m *Model, files *fakeFiles) <-chan tea.Msg {
+	t.Helper()
+	files.hang, files.hung = make(chan struct{}), make(chan struct{}, 1)
+	list := press(m, "tab")
+	listed := make(chan tea.Msg, 1)
+	go func() { listed <- list() }()
+	select {
+	case <-files.hung:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the listing never began")
+	}
+	return listed
+}
+
+// quitWithin quits and fails the test if quitting takes longer than 2 s.
+func quitWithin(t *testing.T, m *Model) {
+	t.Helper()
+	quit := press(m, "ctrl+c")
+	done := make(chan struct{})
+	go func() {
+		quit()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("quitting waited for a step blocked on the form's connection")
+	}
+}
+
+// Quitting while a form step waits on a hung server closes the form's
+// connection, which ends the wait, so nearhost stops without being killed.
+func TestQuitEndsAFormStepBlockedOnItsConnection(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	toPath(t, m, 1)
+	listed := hangOnList(t, m, files)
+	quitWithin(t, m)
+	select {
+	case <-listed:
+	default:
+		t.Error("the shutdown did not wait for the step its close ended")
+	}
+	if files.closed != 1 || len(f.shutdown) != 1 {
+		t.Errorf("files closed %d times, shut down %d times", files.closed, len(f.shutdown))
+	}
+}
+
+// A step that closing the connection does not end is waited for only so
+// long: quitting goes on without it, and the engine still stops.
+func TestQuitDoesNotWaitForeverForAFormStep(t *testing.T) {
+	defer func(d time.Duration) { formStopTimeout = d }(formStopTimeout)
+	formStopTimeout = 50 * time.Millisecond
+	m, f, files := projectFormModel(t)
+	toPath(t, m, 1)
+	files.keepHung = true
+	listed := hangOnList(t, m, files)
+	quitWithin(t, m)
+	if files.closed != 1 || len(f.shutdown) != 1 {
+		t.Errorf("files closed %d times, shut down %d times", files.closed, len(f.shutdown))
+	}
+	if dl, ok := f.shutdown[0].Deadline(); !ok || time.Until(dl) < shutdownTimeout-time.Second {
+		t.Errorf("the engine's shutdown has until %v, %v from now", dl, time.Until(dl))
+	}
+	close(files.hang)
+	<-listed
+}
+
+// A discovery that quitting ends says nothing: the form does not show
+// "context canceled" under the bar that says Nearhost is stopping.
+func TestQuitDropsTheAnswerOfAStepItEnds(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	pf := m.form.(*projectForm)
+	pf.resolved = "/home/dev/code/blog"
+	files.hang, files.hung = make(chan struct{}), make(chan struct{}, 1)
+	discover := pf.discover()
+	read := make(chan tea.Msg, 1)
+	go func() { read <- discover() }()
+	select {
+	case <-files.hung:
+	case <-time.After(2 * time.Second):
+		t.Fatal("discovery never began")
+	}
+	quitWithin(t, m)
+	if msg := <-read; msg != nil {
+		m.Update(msg)
+		t.Errorf("the ended step answered %#v; the form says %q", msg, pf.err)
+	}
+}
+
+// A form closed before quitting has closed its connection once, and
+// quitting does not close it again.
+func TestQuitAfterAFormClosedLeavesItsConnection(t *testing.T) {
+	m, _, files := projectFormModel(t)
+	toPath(t, m, 1)
+	for i := 0; i < 3 && m.form != nil; i++ {
+		settle(m, press(m, "esc")) // back to the server step, then out
+	}
+	if m.form != nil || files.closed != 1 {
+		t.Fatalf("form %T, files closed %d times", m.form, files.closed)
+	}
+	quitWithin(t, m)
+	if files.closed != 1 {
+		t.Errorf("files closed %d times", files.closed)
+	}
+}
+
 // Quitting ends a server check that is still running and waits for it, so
 // its connection is gone before nearhost is.
 func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
