@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -221,6 +222,10 @@ func exitCode(err error, stderr io.Writer) int {
 // replace it, so they leave the real %LOCALAPPDATA% alone.
 var cleanOld = update.CleanOld
 
+// clearingOld counts the cleanOld runs clearOldCopies has started and not
+// finished. Tests wait on it before they restore cleanOld.
+var clearingOld sync.WaitGroup
+
 // clearOldCopies starts cleanOld in the background, so no command waits on
 // it, and reports whether it did. An elevated run, as the hosts helper is,
 // leaves it to the user's own runs. It does nothing off Windows.
@@ -228,7 +233,11 @@ func clearOldCopies(elevated bool) bool {
 	if elevated {
 		return false
 	}
-	go func() { cleanOld(realExecutable()) }()
+	clearingOld.Add(1)
+	go func() {
+		defer clearingOld.Done()
+		cleanOld(realExecutable())
+	}()
 	return true
 }
 

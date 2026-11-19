@@ -1501,7 +1501,10 @@ func TestScriptOpenWithoutGit(t *testing.T) {
 		_, _, _, rv := docScript(t, home, shell.origin(), true)
 		dir := filepath.Join(realDir(t, home), "notes")
 		docFile(t, dir, "p.html")
-		r := shell.run(t, home, claudeEnv, "open", filepath.Join(dir, "p.html"))
+		// Git stops above the temp directory, so a TMPDIR inside a
+		// repository does not give the script that repository's root.
+		ceiling := "GIT_CEILING_DIRECTORIES=" + filepath.Dir(realDir(t, home))
+		r := shell.run(t, home, append([]string{ceiling}, claudeEnv...), "open", filepath.Join(dir, "p.html"))
 		if r.code != 0 || proposalID.FindStringSubmatch(r.stdout) == nil {
 			t.Fatalf("open: %+v", r)
 		}
