@@ -246,6 +246,33 @@ func (h *harness) get(t *testing.T, alias, path string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
+// pageEventually GETs Nearhost's page at localhost on the web port,
+// retrying until a response arrives, as getEventually does.
+func (h *harness) pageEventually(t *testing.T) (int, string) {
+	t.Helper()
+	var root *x509.Certificate
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		c, err := proxy.RootCert(h.storage)
+		root = c
+		return err == nil
+	}, "root cert")
+	port := h.eng.WebPort()
+	c := testutil.HTTPSClient(t, root, "localhost", port)
+	var last error
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		resp, err := c.Get(fmt.Sprintf("https://localhost:%d/", port))
+		if err != nil {
+			last = err
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(body)
+	}
+	t.Fatalf("timed out waiting for Nearhost's page on port %d; the last error: %v", port, last)
+	return 0, ""
+}
+
 // getEventually retries until a response arrives. Caddy issues a site's leaf
 // certificate after the configuration is applied, so the first handshakes
 // after a start can fail.

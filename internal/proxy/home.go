@@ -14,8 +14,7 @@ import (
 // homeModule is the Caddy handler module name registered below.
 const homeModule = "nearhost_home"
 
-// homeHost is where the home page is served: on the https port while no
-// project serves it, and on the web port always.
+// homeHost is the host the home page is served at, on the web port alone.
 const homeHost = "localhost"
 
 // homeCSP lets the page use its own inline styles and data: images and
@@ -36,16 +35,14 @@ func init() {
 }
 
 // Home is a Caddy HTTP handler that serves Nearhost's own page, at
-// https://localhost while no project serves localhost, and at
-// https://localhost:<web port> always. It is a module of
+// https://localhost:<web port> and nowhere else. It is a module of
 // its own, rather than a static response in the config, so the page can
 // grow without touching routing. It answers every request itself and never
 // calls the next handler.
 type Home struct {
 	// Version is the Nearhost version shown in the footer. Empty means dev.
 	Version string `json:"version,omitempty"`
-	// WebPort is the port of its own the page is also served on. 0 means
-	// none.
+	// WebPort is the port the page is served on.
 	WebPort int `json:"web_port,omitempty"`
 
 	// page is the page with no documents listed, rendered in Provision.

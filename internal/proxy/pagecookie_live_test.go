@@ -45,10 +45,10 @@ func get(t *testing.T, c *http.Client, port int, path string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// The page on its own port and at https://localhost on the https port lists
-// the documents only to a browser that was given the cookie, by /?k= or by
-// a document's link, and the proxy's logs never hold the secret.
-func TestPageListNeedsCookieOnBothPorts(t *testing.T) {
+// The page lists the documents only to a browser that was given the cookie,
+// by /?k= or by a document's link, and the proxy's logs never hold the
+// secret.
+func TestPageListNeedsCookie(t *testing.T) {
 	secret := freshSecret(t)
 	h := startProxyOpts(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "project"))}}, Options{WebPort: freePort(t)})
 	waitUntil(t, 10*time.Second, func() bool {
@@ -70,33 +70,32 @@ func TestPageListNeedsCookieOnBothPorts(t *testing.T) {
 		return []HomeTree{{Server: "apollo", Root: "/srv/app", Docs: []HomeDoc{{Path: "plan.md", URL: "/d/abc123/plan.md"}}}}
 	})
 
-	for _, port := range []int{h.webPort, h.httpsPort} {
-		c := h.pageClient(t, port)
-		if code, body := get(t, c, port, "/"); code != 200 || strings.Contains(body, "abc123") {
-			t.Fatalf("port %d with no cookie: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
-		}
-		if code, body := get(t, c, port, "/?k="+wrongSecret(secret)); code != 200 || strings.Contains(body, "abc123") {
-			t.Fatalf("port %d after a wrong key: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
-		}
-		if code, body := get(t, c, port, "/?k="+secret); code != 200 || !strings.Contains(body, "/d/abc123/plan.md") {
-			t.Fatalf("port %d after the right key: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
-		}
+	port := h.webPort
+	c := h.pageClient(t, port)
+	if code, body := get(t, c, port, "/"); code != 200 || strings.Contains(body, "abc123") {
+		t.Fatalf("port %d with no cookie: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
+	}
+	if code, body := get(t, c, port, "/?k="+wrongSecret(secret)); code != 200 || strings.Contains(body, "abc123") {
+		t.Fatalf("port %d after a wrong key: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
+	}
+	if code, body := get(t, c, port, "/?k="+secret); code != 200 || !strings.Contains(body, "/d/abc123/plan.md") {
+		t.Fatalf("port %d after the right key: status %d, list shown: %v", port, code, strings.Contains(body, "abc123"))
+	}
 
-		// A browser that only ever opened a document's link sees the list
-		// too.
-		c = h.pageClient(t, port)
-		if code, _ := get(t, c, port, "/d/nope/plan.md"); code != 404 {
-			t.Fatalf("port %d: an unknown document answered %d", port, code)
-		}
-		if _, body := get(t, c, port, "/"); strings.Contains(body, "abc123") {
-			t.Fatalf("port %d: an unknown document's link gave the list", port)
-		}
-		if code, body := get(t, c, port, "/d/abc123/plan.md"); code != 200 || body != "the plan" {
-			t.Fatalf("port %d: the document answered %d %q", port, code, body)
-		}
-		if _, body := get(t, c, port, "/"); !strings.Contains(body, "/d/abc123/plan.md") {
-			t.Fatalf("port %d: a document's link did not give the list", port)
-		}
+	// A browser that only ever opened a document's link sees the list
+	// too.
+	c = h.pageClient(t, port)
+	if code, _ := get(t, c, port, "/d/nope/plan.md"); code != 404 {
+		t.Fatalf("port %d: an unknown document answered %d", port, code)
+	}
+	if _, body := get(t, c, port, "/"); strings.Contains(body, "abc123") {
+		t.Fatalf("port %d: an unknown document's link gave the list", port)
+	}
+	if code, body := get(t, c, port, "/d/abc123/plan.md"); code != 200 || body != "the plan" {
+		t.Fatalf("port %d: the document answered %d %q", port, code, body)
+	}
+	if _, body := get(t, c, port, "/"); !strings.Contains(body, "/d/abc123/plan.md") {
+		t.Fatalf("port %d: a document's link did not give the list", port)
 	}
 
 	h.rec.mu.Lock()

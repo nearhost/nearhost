@@ -139,21 +139,21 @@ type Options struct {
 	// Capture keeps each request and response in memory (see Capture), so
 	// they can be shown and sent again.
 	Capture bool
-	// Version is the Nearhost version the home page at https://localhost
-	// shows. Empty means dev.
+	// Version is the Nearhost version the home page shows. Empty means dev.
 	Version string
-	// HomeWithNoSites serves the home page, and so listens, even with no
-	// sites, so https://localhost answers before the first project. Without
-	// it a config with no sites declares no listeners.
+	// HomeWithNoSites listens even with no sites, so the home page on the
+	// web port answers before the first project. Without it a config with
+	// no sites declares no listeners.
 	HomeWithNoSites bool
 	// WebPort is a port of its own that serves the home page, Nearhost's
-	// page, at https://localhost:<port> whenever the proxy
-	// listens, even while a project serves localhost. 0 means none.
+	// page, at https://localhost:<port> whenever the proxy listens. It is
+	// the page's only address: localhost on the https port belongs to
+	// projects. 0 means none, and then the page is not served.
 	WebPort int
 }
 
 // listens reports whether the config for sites declares listeners: with
-// any site, or with none while the home page is served without one.
+// any site, or with none under opts.HomeWithNoSites.
 func listens(sites []Site, opts Options) bool {
 	return len(sites) > 0 || opts.HomeWithNoSites
 }
@@ -285,18 +285,14 @@ func viaReplace(version string) map[string]any {
 	}}}
 }
 
-// homeRoute is the route serving Nearhost's own page at localhost to
-// loopback clients. It has no tag: the page is no project's, so its access
-// lines are dropped like any other untagged line.
+// homeRoute is the web server's route serving Nearhost's own page at
+// localhost to loopback clients. It has no tag: the page is no project's.
 func homeRoute(opts Options) map[string]any {
 	version := opts.Version
 	if version == "" {
 		version = "dev"
 	}
-	handler := map[string]any{"handler": homeModule, "version": version}
-	if opts.WebPort != 0 {
-		handler["web_port"] = opts.WebPort
-	}
+	handler := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
 	return map[string]any{
 		"match": []any{map[string]any{
 			"host":      []string{homeHost},
@@ -317,12 +313,10 @@ var pageAddrs = netbind.PageAddrs
 // connection from another machine to this port before a request is read,
 // except on macOS for a port below 1024 when Nearhost is not root, where it
 // listens on the wildcard address. The loopback ranges below hold in both
-// cases, and in the second they alone keep the page to loopback clients,
-// as on the https port. The same page is also
-// served at https://localhost on the https port while no project claims
-// that host (see homeRoute); that server listens on netbind.ServeAddrs, and
-// there the source-address check alone keeps it to loopback clients. It has
-// no HTTP/3, so it needs no UDP port, and no redirects of its own.
+// cases, and in the second they alone keep the page to loopback clients.
+// The https server never serves the page: localhost there is a project's,
+// or is not served. It has no HTTP/3, so it needs no UDP port, and no
+// redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
 		"listen": pageAddrs(opts.WebPort),
@@ -395,7 +389,9 @@ func coversAll(ranges, union []string) bool {
 // host-matched route and Caddy's redirects land after ours; a client in
 // union has by then been redirected or, by a host's drop, refused, for
 // every host Caddy redirects. The last of our routes drops what is left, so
-// Caddy's catch-all after it is never reached.
+// Caddy's catch-all after it is never reached. With no host at all there is
+// no host-matched route to keep Caddy's redirects behind ours, so
+// BuildConfig turns them off on the https server.
 func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map[string]any {
 	location := "https://{http.request.host}"
 	if httpsPort != 443 {
@@ -463,9 +459,12 @@ func listenerWrappers(server map[string]any) map[string]any {
 // deterministic: there is one route per host, ordered by hostname.Less, so
 // exact hosts win over patterns and more specific patterns over less
 // specific ones. While any site has extra clients, a host not served to all
-// of them is followed by a drop for that host alone (see hostDrop). While the config listens and no site
-// serves localhost, localhost is one more exact host, served Nearhost's own
-// page. The https server's error routes, one per site host in the same
+// of them is followed by a drop for that host alone (see hostDrop). Nearhost's
+// own page is served on the web port alone (see webServer): localhost on
+// the https port is served only to a site that lists it, and is otherwise
+// dropped like any host that is not served. With a web port, localhost is
+// a certificate subject whether or not a site lists it. The https server's
+// error routes, one per site host in the same
 // order, give a browser Nearhost's page while that site's app does not
 // answer (see Down).
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
@@ -485,7 +484,6 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	type served struct {
 		site Site
 		host string
-		home bool // the host is localhost, served the home page
 	}
 	var all []served
 	rangesOf := map[string][]string{} // lower-cased host to the client ranges it is served to
@@ -510,12 +508,6 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			rangesOf[key] = ranges
 			all = append(all, served{site: s, host: h})
 		}
-	}
-	// While the proxy listens, localhost has Nearhost's own page, unless a
-	// project serves localhost itself: then the page is left out
-	// altogether, so it never has to be decided which of the two wins.
-	if _, claimed := siteOf[homeHost]; listens(sites, opts) && !claimed {
-		all = append(all, served{host: homeHost, home: true})
 	}
 	for _, sv := range all {
 		if err := hostname.Valid(sv.host); err != nil {
@@ -542,14 +534,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	var patterns []string
 	hosts := make([]hostRanges, 0, len(all))
 	for _, sv := range all {
-		ranges := loopbackRanges
-		if sv.home {
-			routes = append(routes, homeRoute(opts))
-		} else {
-			ranges = rangesOf[strings.ToLower(sv.host)]
-			routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts))
-			downRoutes = append(downRoutes, downRoute(sv.site, sv.host, ranges))
-		}
+		ranges := rangesOf[strings.ToLower(sv.host)]
+		routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts))
+		downRoutes = append(downRoutes, downRoute(sv.site, sv.host, ranges))
 		drop := anyClients && !coversAll(ranges, union)
 		if drop {
 			routes = append(routes, hostDrop(sv.host))
@@ -582,10 +569,13 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
 	})
 
-	// The web port serves localhost too. Its certificate is already a
-	// subject: the home page's on the https port, or the project's that
-	// serves localhost.
+	// The web port serves the home page at localhost, so localhost is a
+	// certificate subject whenever that port is served, unless it already
+	// is one as a project's host.
 	web := opts.WebPort != 0 && listens(sites, opts)
+	if _, claimed := siteOf[homeHost]; web && !claimed {
+		subjects = append(subjects, homeHost)
+	}
 	// An empty-subject policy would match every name, so only add one when
 	// there are exact hosts.
 	policies := []any{}
@@ -637,7 +627,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		}
 	}
 	for _, sv := range all {
-		if !sv.home && len(sv.site.Clients) > 0 {
+		if len(sv.site.Clients) > 0 {
 			g := groupOf[strings.Join(sv.site.Clients, ",")]
 			g.hosts = append(g.hosts, sv.host)
 		}
@@ -646,7 +636,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 	}}
 	for _, g := range groups {
-		// Except is every host outside the group, localhost's included, so
+		// Except is every host outside the group, so
 		// a pattern of the group's does not match a name a more specific
 		// host of another site owns (see HostsMatcher).
 		var except []string
@@ -681,8 +671,8 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if len(downRoutes) > 0 {
 		// A site's app that does not answer fails its route, and Caddy
 		// runs these: the route for the host that failed. The last route
-		// catches every other error, such as one the home page returns,
-		// only to log it: with error routes, Caddy logs the errors they
+		// catches every other error only to log it: with error routes,
+		// Caddy logs the errors they
 		// handle at debug level.
 		downRoutes = append(downRoutes, map[string]any{
 			"handle":   []any{map[string]any{"handler": downModule, "log_only": true}},
@@ -691,6 +681,14 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		server["errors"] = map[string]any{"routes": downRoutes}
 	}
 	servers := map[string]any{"nearhost": listenerWrappers(server)}
+	if len(all) == 0 {
+		// For a server with no host at all, automatic HTTPS adds a redirect
+		// of every host to the http port, ahead of our routes when another
+		// server (the web port's) has a certificate subject, and that would
+		// answer any client asking for any name. With no host there is
+		// nothing to redirect.
+		server["automatic_https"] = map[string]any{"disable_redirects": true}
+	}
 	if len(patterns) > 0 {
 		// Automatic HTTPS would otherwise try to manage the patterns as
 		// subjects. Its redirects stay on, but on the http port our own

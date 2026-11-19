@@ -37,10 +37,6 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	web.Routes = append(web.Routes, config.Route{Port: testutil.FreePort(t), Role: config.RoleLoopback})
 	h := newHarness(t, &config.Config{Projects: []config.Project{web}})
 
-	// Before any project starts, the proxy already serves its own page.
-	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "<title>Nearhost</title>") {
-		t.Fatalf("localhost before any project: %d %q", code, body)
-	}
 	if st := h.eng.Status("web"); st.State != StateStopped || st.Alias != "web.test" {
 		t.Fatalf("status before start = %+v", st)
 	}
@@ -72,11 +68,6 @@ func TestLocalProjectIsServedAndStopped(t *testing.T) {
 	}
 	if code, body := h.get(t, "web.test", "/"); code == 200 && strings.HasPrefix(body, "ok:") {
 		t.Fatal("project still served after stop")
-	}
-	// The stop reloads the proxy, and a connection the kernel queued on the
-	// old listener as Caddy closes it in the background is reset.
-	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "<title>Nearhost</title>") {
-		t.Fatalf("localhost after the last project stopped: %d %q, want the proxy's page", code, body)
 	}
 }
 
@@ -1992,19 +1983,38 @@ func TestStartingADisabledProjectAsksForItsOwnHosts(t *testing.T) {
 	}
 }
 
-// The proxy's page at localhost names the version the engine was given.
-func TestProxyHomePageShowsTheVersion(t *testing.T) {
+// Nearhost's page answers on its own port, before any project starts,
+// while one runs and after the last one stops, and names the version the
+// engine was given. localhost on the HTTPS port is not the page's.
+func TestPageIsServedOnTheWebPort(t *testing.T) {
 	web := localProject("web", upstream(t, "ok"))
-	h := buildHarness(t, &config.Config{Projects: []config.Project{web}}, func(o *Options) { o.Version = "4.5.6-engine" })
+	h := buildHarness(t, &config.Config{Projects: []config.Project{web}}, func(o *Options) {
+		o.Version = "4.5.6-engine"
+		o.WebPort = testutil.ProxyPort(t)
+	})
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatalf("Start: %v", err)
+	}
+	page := func(when string) {
+		t.Helper()
+		if code, body := h.pageEventually(t); code != 200 || !strings.Contains(body, "<title>Nearhost</title>") || !strings.Contains(body, "Nearhost 4.5.6-engine") {
+			t.Fatalf("the page %s: status %d, footer with 4.5.6-engine: %v", when, code, strings.Contains(body, "4.5.6-engine"))
+		}
+	}
+	page("before any project")
+	if code, body := h.get(t, "localhost", "/"); code != 0 {
+		t.Fatalf("localhost on the HTTPS port answered %d %q, want the connection dropped", code, body)
 	}
 	if err := h.eng.StartProject(bg, "web"); err != nil {
 		t.Fatalf("StartProject: %v", err)
 	}
-	if code, body := h.getEventually(t, "localhost", "/"); code != 200 || !strings.Contains(body, "Nearhost 4.5.6-engine") {
-		t.Fatalf("https://localhost/: status %d, footer with 4.5.6-engine: %v", code, strings.Contains(body, "4.5.6-engine"))
+	page("with a project running")
+	if err := h.eng.StopProject(bg, "web"); err != nil {
+		t.Fatal(err)
 	}
+	// The stop reloads the proxy, and a connection the kernel queued on the
+	// old listener as Caddy closes it in the background is reset.
+	page("after the last project stopped")
 }
 
 func TestStartServesWithoutPageWhenWebPortBusy(t *testing.T) {
@@ -2267,11 +2277,12 @@ func TestPortErrorSaysEPERMNeedsPermission(t *testing.T) {
 	}
 }
 
+// Nearhost's page has one address, on its own port: a project that serves
+// localhost changes nothing, and without the port there is no address.
 func TestPageURL(t *testing.T) {
 	// holding is a running project whose site serves localhost.
-	holding := func(host string, site bool) map[string]*projectRun {
-		return map[string]*projectRun{"app": {name: "app", server: config.LocalServer, alias: "app", site: site, web: []config.WebHosts{{Port: 3000, Hosts: []string{host}}}, webLocals: []int{3000}}}
-	}
+	holding := map[string]*projectRun{"app": {name: "app", server: config.LocalServer, alias: "app", site: true, web: []config.WebHosts{{Port: 3000, Hosts: []string{"localhost"}}}, webLocals: []int{3000}}}
+	const noPage = "Nearhost's page isn't served: --web-port is 0"
 	for _, tc := range []struct {
 		name      string
 		webPort   int
@@ -2280,13 +2291,12 @@ func TestPageURL(t *testing.T) {
 		want      string
 		wantErr   string
 	}{
-		{name: "web port", webPort: 6327, runs: holding("localhost", true), want: "https://localhost:6327"},
-		{name: "https 443", httpsPort: 443, want: "https://localhost"},
-		{name: "https default", want: "https://localhost"},
-		{name: "https 8443", httpsPort: 8443, want: "https://localhost:8443"},
-		{name: "stopped project on localhost", runs: holding("localhost", false), want: "https://localhost"},
-		{name: "project holds localhost", httpsPort: 443, runs: holding("localhost", true), wantErr: "Nearhost's page isn't served: a project holds localhost and --web-port is 0"},
-		{name: "project holds LOCALHOST", runs: holding("LOCALHOST", true), wantErr: "Nearhost's page isn't served: a project holds localhost and --web-port is 0"},
+		{name: "web port", webPort: 6327, want: "https://localhost:6327"},
+		{name: "web port, project holds localhost", webPort: 6327, runs: holding, want: "https://localhost:6327"},
+		{name: "no web port", wantErr: noPage},
+		{name: "no web port, https 443", httpsPort: 443, wantErr: noPage},
+		{name: "no web port, https 8443", httpsPort: 8443, wantErr: noPage},
+		{name: "no web port, project holds localhost", runs: holding, wantErr: noPage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := &Engine{opts: Options{HTTPSPort: tc.httpsPort}, webPort: tc.webPort, runs: tc.runs}
@@ -2295,7 +2305,7 @@ func TestPageURL(t *testing.T) {
 			}
 			got, err := e.PageURL()
 			if tc.wantErr != "" {
-				if err == nil || err.Error() != tc.wantErr {
+				if err == nil || err.Error() != tc.wantErr || got != "" {
 					t.Fatalf("PageURL = %q, %v, want error %q", got, err, tc.wantErr)
 				}
 				return

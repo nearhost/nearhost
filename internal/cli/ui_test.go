@@ -318,7 +318,7 @@ func TestOpenPageOpensItWithTheKey(t *testing.T) {
 	var opened []string
 	var openErr error
 	u := &uiEngine{
-		Engine: engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443}),
+		Engine: engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443, WebPort: 6327}),
 		b: uiBackend{open: func(url string) error {
 			opened = append(opened, url)
 			if openErr != nil {
@@ -334,13 +334,13 @@ func TestOpenPageOpensItWithTheKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://localhost:8443/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
+	if want := "https://localhost:6327/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
 		t.Fatalf("opened %d addresses, want the page with its key", len(opened))
 	}
 
 	openErr = fmt.Errorf("no browser")
 	err = u.OpenPage()
-	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://localhost:8443") {
+	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://localhost:6327") {
 		t.Errorf("a failed open: the error is nil, holds the secret, or does not name the page")
 	}
 }

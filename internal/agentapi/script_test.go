@@ -1477,7 +1477,7 @@ func TestScriptOpenSendsRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 		r = shell.run(t, home, claudeEnv, "open", filepath.Join(repo, "docs", "p.md"))
-		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"https://localhost:8443/d/tree/docs/p.md"`) || strings.Contains(r.stdout, "doc-tok") {
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !strings.Contains(r.stdout, `"url":"https://localhost:6327/d/tree/docs/p.md"`) || strings.Contains(r.stdout, "doc-tok") {
 			t.Fatalf("open: %+v", r)
 		}
 		if shows := sh.showed(); len(shows) != 1 || shows[0].Root != repo || shows[0].Doc != "docs/p.md" || shows[0].Requester != "claude-code" {
