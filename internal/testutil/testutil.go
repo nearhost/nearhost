@@ -34,18 +34,33 @@ func SetHome(t testing.TB, dir string) {
 	t.Setenv("USERPROFILE", dir)
 }
 
-// FreePort returns a loopback TCP port that was unused a moment ago. The
-// system picks it, so any process may be given the same one next: use it for
+// FreePort returns a loopback TCP port that was unused a moment ago, and
+// that no test still running in this process has been given. The system
+// picks it, so any other process may be given the same one next: use it for
 // what is bound at once or may fail to bind, and ProxyPort for a proxy.
+//
+// The system may pick the same port twice in a row, as nothing holds it in
+// between: Linux picks at random among some 7,000 ports. A test that asks for
+// two ports means two different ones, so a port stays out until the test
+// that got it ends.
 func FreePort(t testing.TB) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		if _, given := freePorts.LoadOrStore(port, struct{}{}); !given {
+			t.Cleanup(func() { freePorts.Delete(port) })
+			return port
+		}
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }
+
+// freePorts holds the ports FreePort has given to tests still running.
+var freePorts sync.Map
 
 // WaitUntil polls cond until it holds and fails the test after timeout.
 func WaitUntil(t testing.TB, timeout time.Duration, cond func() bool, what string) {
