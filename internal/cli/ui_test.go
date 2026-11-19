@@ -56,11 +56,43 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 	}
 }
 
-func TestBareNearhostWithoutATerminalPrintsHelp(t *testing.T) {
-	ran := false
-	out, err := runRoot(t, uiRoot(fakeUI(t, false, &ran)))
-	if err != nil || ran || !strings.Contains(out, "Usage:") {
-		t.Fatalf("err %v, ran %v, out:\n%s", err, ran, out)
+// runRootSplit runs root and returns standard output and standard error
+// apart, with the exit code Main would give the error.
+func runRootSplit(t *testing.T, root *cobra.Command, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	code = exitCode(err, &errOut)
+	return out.String(), errOut.String(), code
+}
+
+func TestBareNearhostWithoutATerminalSaysToUseUp(t *testing.T) {
+	for _, tc := range []struct{ goos, want string }{
+		{"linux", "nearhost needs a terminal for its interface. Use nearhost up to serve without one.\n"},
+		{"darwin", "nearhost needs a terminal for its interface. Use nearhost up to serve without one.\n"},
+		{"windows", "nearhost needs a terminal for its interface. Use nearhost up to serve without one. In Git Bash, run it through winpty or use Windows Terminal.\n"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			setHostOS(t, tc.goos)
+			ran := false
+			stdout, stderr, code := runRootSplit(t, uiRoot(fakeUI(t, false, &ran)))
+			if code != 1 || ran || stdout != "" || stderr != tc.want {
+				t.Fatalf("code %d, ran %v, stdout %q, stderr %q, want stderr %q", code, ran, stdout, stderr, tc.want)
+			}
+		})
+	}
+}
+
+func TestHelpWithoutATerminalStillSucceeds(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+		ran := false
+		stdout, stderr, code := runRootSplit(t, uiRoot(fakeUI(t, false, &ran)), args...)
+		if code != 0 || ran || !strings.Contains(stdout, "Usage:") || stderr != "" {
+			t.Errorf("%v: code %d, ran %v, stdout %q, stderr %q", args, code, ran, stdout, stderr)
+		}
 	}
 }
 
