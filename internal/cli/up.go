@@ -188,6 +188,9 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
+	if msg := missingConfigMessage(cmd); msg != "" && len(cfg.Projects) == 0 {
+		return errors.New(msg)
+	}
 	names, err := upTargets(cfg, args)
 	if err != nil {
 		return err
