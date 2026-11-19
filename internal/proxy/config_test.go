@@ -80,7 +80,7 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 		t.Errorf("server logs = %v, want only the default logger name", logs)
 	}
 	subjects := dig(t, cfg, "apps", "tls", "automation", "policies", 0, "subjects").([]any)
-	if !slices.Equal(strs(subjects), []string{"a.test", "b.test", "localhost"}) {
+	if !slices.Equal(strs(subjects), []string{"a.test", "b.test"}) {
 		t.Errorf("subjects = %v", subjects)
 	}
 	if dig(t, cfg, "apps", "tls", "automation", "policies", 0, "issuers", 0, "module") != "internal" {
@@ -138,8 +138,10 @@ func TestBuildConfigNoSitesHasNoListenersButKeepsCA(t *testing.T) {
 	}
 }
 
-// With HomeWithNoSites, a config with no sites still listens, to serve the
-// home page at localhost alone.
+// With HomeWithNoSites, a config with no sites still listens, and its https
+// server serves nothing: no route names a host, the home page has no route
+// there, and nothing is a certificate subject. With a web port, that port's
+// server has the page, and localhost is a subject for it.
 func TestBuildConfigHomeWithNoSites(t *testing.T) {
 	raw, err := BuildConfig(nil, Options{StorageRoot: t.TempDir(), HomeWithNoSites: true})
 	if err != nil {
@@ -149,14 +151,42 @@ func TestBuildConfigHomeWithNoSites(t *testing.T) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"localhost"}) {
-		t.Fatalf("route hosts = %v, want localhost alone", got)
+	if got := routeHosts(cfg); len(got) != 0 {
+		t.Fatalf("route hosts = %v, want none", got)
 	}
-	if len(homeRoutes(t, cfg)) != 1 {
-		t.Error("no home page route")
+	if len(homeRoutes(t, cfg)) != 0 {
+		t.Error("the https server has a home page route")
+	}
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	if len(routes) != 1 || dig(t, routes[0], "handle", 0, "abort") != true {
+		t.Errorf("https routes = %v, want the final drop alone", routes)
+	}
+	if got := tlsSubjects(cfg); len(got) != 0 {
+		t.Errorf("subjects = %v, want none without a web port", got)
+	}
+	if dig(t, cfg, "apps", "http", "servers", "nearhost", "automatic_https", "disable_redirects") != true {
+		t.Error("the https server with no hosts leaves Caddy's own redirect of every host on the http port")
+	}
+
+	raw, err = BuildConfig(nil, Options{StorageRoot: t.TempDir(), HomeWithNoSites: true, WebPort: 6327})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = map[string]any{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(homeRoutes(t, cfg)) != 0 {
+		t.Error("the https server has a home page route beside the web port")
+	}
+	if got := routeHosts(cfg); len(got) != 0 {
+		t.Errorf("route hosts = %v, want none", got)
+	}
+	if dig(t, cfg, "apps", "http", "servers", "nearhost_web", "routes", 0, "handle", 0, "handler") != homeModule {
+		t.Error("the web port's server has no home page route")
 	}
 	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost"}) {
-		t.Errorf("subjects = %v, want localhost", got)
+		t.Errorf("subjects = %v, want localhost for the web port", got)
 	}
 }
 
@@ -251,7 +281,7 @@ func TestBuildConfigAllowsSitesSharingAnAlias(t *testing.T) {
 		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"},
 		{Alias: "a.test", Hosts: []string{"api.example.io"}, Upstream: "127.0.0.1:2"},
 	})
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "api.example.io", "localhost"}) {
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "api.example.io"}) {
 		t.Fatalf("route hosts = %v", got)
 	}
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes")
@@ -328,8 +358,8 @@ func TestBuildConfigDisablesStorageClean(t *testing.T) {
 func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
 	cfg := build(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "127.0.0.1:2"}})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
-	if len(routes) != 4 {
-		t.Fatalf("got %d routes, want one per site, the home page and a final catch-all", len(routes))
+	if len(routes) != 3 {
+		t.Fatalf("got %d routes, want one per site and a final catch-all", len(routes))
 	}
 	for i, alias := range []string{"a.test", "b.test"} {
 		sets := dig(t, routes[i], "match").([]any)
@@ -369,7 +399,7 @@ func TestBuildConfigServesSitesToLoopbackClientsOnly(t *testing.T) {
 			t.Errorf("TLS connection policy range %d = %v, want %s", j, r, loopbackRanges[j])
 		}
 	}
-	last := routes[3].(map[string]any)
+	last := routes[2].(map[string]any)
 	if m, ok := last["match"]; ok {
 		t.Errorf("the final route must match every request, got match %v", m)
 	}
@@ -422,10 +452,14 @@ func routeHosts(cfg map[string]any) []string {
 	return hosts
 }
 
-// tlsSubjects are the names of the first TLS automation policy.
+// tlsSubjects are the names of the first TLS automation policy, or none
+// when there is no policy.
 func tlsSubjects(cfg map[string]any) []string {
 	policies := cfg["apps"].(map[string]any)["tls"].(map[string]any)["automation"].(map[string]any)["policies"].([]any)
 	var subjects []string
+	if len(policies) == 0 {
+		return nil
+	}
 	for _, s := range policies[0].(map[string]any)["subjects"].([]any) {
 		subjects = append(subjects, s.(string))
 	}
@@ -449,9 +483,8 @@ func TestBuildConfigOrdersHostsAcrossSites(t *testing.T) {
 		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.redactr.pro", "internal.*.local.redactr.pro"}, Upstream: "127.0.0.1:8211"},
 		{Alias: "platform.test", Hosts: []string{"platform.test", "auth.local.redactr.pro"}, Upstream: "127.0.0.1:8210"},
 	})
-	// One Caddy route per host, and the home page at localhost, then the
-	// final abort route.
-	want := []string{"auth.local.redactr.pro", "localhost", "platform.test", "pro.test", "internal.*.local.redactr.pro", "*.local.redactr.pro"}
+	// One Caddy route per host, then the final abort route.
+	want := []string{"auth.local.redactr.pro", "platform.test", "pro.test", "internal.*.local.redactr.pro", "*.local.redactr.pro"}
 	if got := routeHosts(cfg); !slices.Equal(got, want) {
 		t.Fatalf("route hosts = %v, want %v", got, want)
 	}
@@ -469,10 +502,10 @@ func TestBuildConfigRejectsHostOnTwoSites(t *testing.T) {
 
 func TestBuildConfigLegacySiteServesAliasOnly(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test", "localhost"}) {
+	if got := routeHosts(cfg); !slices.Equal(got, []string{"a.test"}) {
 		t.Fatalf("route hosts = %v", got)
 	}
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"a.test", "localhost"}) {
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"a.test"}) {
 		t.Fatalf("subjects = %v", got)
 	}
 }
@@ -504,7 +537,7 @@ func TestBuildConfigIssuesPatternsOnDemand(t *testing.T) {
 	cfg := buildJSON(t, []Site{
 		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: "127.0.0.1:1"},
 	})
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost", "pro.test"}) {
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"pro.test"}) {
 		t.Errorf("first policy subjects = %v, want only the exact hosts", got)
 	}
 	policies := dig(t, cfg, "apps", "tls", "automation", "policies").([]any)
@@ -547,8 +580,8 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(8080))
 	}
 	routes := srv["routes"].([]any)
-	if len(routes) != 5 {
-		t.Fatalf("routes = %v, want five", routes)
+	if len(routes) != 4 {
+		t.Fatalf("routes = %v, want four", routes)
 	}
 	aborts := func(r any) bool {
 		h := dig(t, r, "handle", 0).(map[string]any)
@@ -557,7 +590,7 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 	if got := strs(dig(t, routes[0], "match", 0, "not", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) || !aborts(routes[0]) {
 		t.Errorf("first route = %v, want an abort for clients not on loopback", routes[0])
 	}
-	for i, host := range []string{"localhost", "pro.test", "*.local.example.pro"} {
+	for i, host := range []string{"pro.test", "*.local.example.pro"} {
 		r := routes[i+1]
 		if got := strs(dig(t, r, "match", 0, "host")); !slices.Equal(got, []string{host}) {
 			t.Errorf("route %d host = %v, want %s", i+1, got, host)
@@ -572,7 +605,7 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 			t.Errorf("route %d handler = %v, want an uncacheable 307 to https", i+1, h)
 		}
 	}
-	if last := routes[4].(map[string]any); last["match"] != nil || !aborts(last) {
+	if last := routes[3].(map[string]any); last["match"] != nil || !aborts(last) {
 		t.Errorf("last route = %v, want an abort with no matchers", last)
 	}
 }
@@ -610,9 +643,8 @@ func TestBuildConfigRedirectKeepsHTTPSPort(t *testing.T) {
 func TestBuildConfigHasHTTPServerWithoutPatterns(t *testing.T) {
 	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
-	if len(routes) != 4 || !slices.Equal(strs(dig(t, routes[1], "match", 0, "host")), []string{"a.test"}) ||
-		!slices.Equal(strs(dig(t, routes[2], "match", 0, "host")), []string{"localhost"}) {
-		t.Errorf("routes = %v, want the abort, a.test's and localhost's redirects and the abort", routes)
+	if len(routes) != 3 || !slices.Equal(strs(dig(t, routes[1], "match", 0, "host")), []string{"a.test"}) {
+		t.Errorf("routes = %v, want the abort, a.test's redirect and the abort", routes)
 	}
 }
 
@@ -650,59 +682,81 @@ func homeRoutes(t *testing.T, cfg map[string]any) []any {
 	return out
 }
 
-// While no project serves localhost, the proxy serves its own page there,
-// to loopback clients, with a certificate from the internal CA and a
-// redirect from http, like any exact host.
-func TestBuildConfigServesHomePageAtLocalhost(t *testing.T) {
-	raw, err := BuildConfig([]Site{
-		{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"},
-	}, Options{StorageRoot: t.TempDir(), Version: "1.2.3"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if got := routeHosts(cfg); !slices.Equal(got, []string{"localhost", "pro.test", "*.local.example.pro"}) {
-		t.Fatalf("route hosts = %v, want localhost among the exact hosts", got)
-	}
-	home := homeRoutes(t, cfg)
-	if len(home) != 1 {
-		t.Fatalf("%d home page routes, want one", len(home))
-	}
-	r := home[0].(map[string]any)
-	if got := strs(dig(t, r, "match", 0, "host")); !slices.Equal(got, []string{"localhost"}) {
-		t.Errorf("home route host = %v, want localhost", got)
-	}
-	if got := strs(dig(t, r, "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
-		t.Errorf("home route remote_ip = %v, want loopback", got)
-	}
-	handle := dig(t, r, "handle").([]any)
-	if len(handle) != 1 || dig(t, handle[0], "version") != "1.2.3" {
-		t.Errorf("home route handlers = %v, want the home page alone, with the version", handle)
-	}
-	if r["terminal"] != true {
-		t.Error("home route must be terminal")
-	}
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost", "pro.test"}) {
-		t.Errorf("subjects = %v, want localhost and pro.test", got)
-	}
-	var redirects []string
-	for _, r := range dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any) {
-		if h := r.(map[string]any)["handle"].([]any)[0].(map[string]any); h["status_code"] == float64(307) {
-			redirects = append(redirects, strs(dig(t, r, "match", 0, "host"))...)
-		}
-	}
-	if !slices.Equal(redirects, []string{"localhost", "pro.test", "*.local.example.pro"}) {
-		t.Errorf("http redirects = %v, want localhost among them", redirects)
+// The https server never serves the home page: while no project lists
+// localhost, it has no route for that host, the http port has no redirect
+// for it, and it is a certificate subject only for the web port.
+func TestBuildConfigHTTPSServerNeverServesHomePage(t *testing.T) {
+	sites := []Site{{Alias: "pro.test", Hosts: []string{"pro.test", "*.local.example.pro"}, Upstream: "127.0.0.1:1"}}
+	for _, tc := range []struct {
+		name     string
+		webPort  int
+		subjects []string
+	}{
+		{"no web port", 0, []string{"pro.test"}},
+		{"web port", 6327, []string{"pro.test", "localhost"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := BuildConfig(sites, Options{StorageRoot: t.TempDir(), Version: "1.2.3", WebPort: tc.webPort})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got := routeHosts(cfg); !slices.Equal(got, []string{"pro.test", "*.local.example.pro"}) {
+				t.Errorf("route hosts = %v, want the site's alone", got)
+			}
+			if home := homeRoutes(t, cfg); len(home) != 0 {
+				t.Errorf("%d home page routes on the https server, want none", len(home))
+			}
+			if got := tlsSubjects(cfg); !slices.Equal(got, tc.subjects) {
+				t.Errorf("subjects = %v, want %v", got, tc.subjects)
+			}
+			var redirects []string
+			for _, r := range dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any) {
+				if h := r.(map[string]any)["handle"].([]any)[0].(map[string]any); h["status_code"] == float64(307) {
+					redirects = append(redirects, strs(dig(t, r, "match", 0, "host"))...)
+				}
+			}
+			if !slices.Equal(redirects, []string{"pro.test", "*.local.example.pro"}) {
+				t.Errorf("http redirects = %v, want the site's hosts alone", redirects)
+			}
+		})
 	}
 }
 
 // With a web port, a server of its own serves the home page at localhost
-// to loopback clients, even while a project serves localhost, and drops
-// the rest. localhost is a subject either way.
+// to loopback clients, even while a project serves localhost on the https
+// port, and drops the rest. localhost is a subject once, whether or not a
+// project lists it.
 func TestBuildConfigWebPortServesHomePage(t *testing.T) {
+	for name, hosts := range map[string][]string{
+		"no project lists localhost": {"a.test"},
+		"a project lists localhost":  {"a.test", "localhost"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: hosts, Upstream: "127.0.0.1:1"}},
+				Options{StorageRoot: t.TempDir(), WebPort: 6327})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			n := 0
+			for _, s := range tlsSubjects(cfg) {
+				if s == "localhost" {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("subjects = %v, want localhost exactly once", tlsSubjects(cfg))
+			}
+		})
+	}
+
 	raw, err := BuildConfig([]Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: "127.0.0.1:1"},
 	}, Options{StorageRoot: t.TempDir(), Version: "1.2.3", WebPort: 6327})
@@ -729,10 +783,7 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Errorf("home route remote_ip = %v, want loopback", got)
 	}
 	if len(homeRoutes(t, cfg)) != 0 {
-		t.Error("the https port serves the home page though a project serves localhost")
-	}
-	if got := tlsSubjects(cfg); !slices.Contains(got, "localhost") {
-		t.Errorf("subjects = %v, want localhost", got)
+		t.Error("the https port serves the home page")
 	}
 	// A config that does not listen has no web server, nor one without a
 	// web port.
@@ -787,15 +838,21 @@ func TestBuildConfigWildcardPageAdmitsLoopbackOnly(t *testing.T) {
 }
 
 func TestBuildConfigHomePageVersionDefaultsToDev(t *testing.T) {
-	cfg := buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
-	home := homeRoutes(t, cfg)
-	if len(home) != 1 || dig(t, home[0], "handle", 0, "version") != "dev" {
-		t.Errorf("home routes = %v, want one with version dev", home)
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}, Options{StorageRoot: t.TempDir(), WebPort: 6327})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	home := dig(t, cfg, "apps", "http", "servers", "nearhost_web", "routes", 0, "handle", 0)
+	if dig(t, home, "handler") != homeModule || dig(t, home, "version") != "dev" {
+		t.Errorf("the web port's first handler = %v, want the home page with version dev", home)
 	}
 }
 
-// A project that serves localhost gets it, and the home page is not served
-// at all, so no precedence has to decide.
+// A project that lists localhost is served there on the https port.
 func TestBuildConfigLeavesLocalhostToAProjectThatServesIt(t *testing.T) {
 	cfg := buildJSON(t, []Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: "127.0.0.1:1"},
@@ -868,7 +925,7 @@ func TestBuildConfigAddsSiteClientsToItsRoutesOnly(t *testing.T) {
 	if seenA != 2 || seenB != 1 {
 		t.Errorf("saw %d routes of a and %d of b, want 2 and 1", seenA, seenB)
 	}
-	if want := []string{"b.test", "localhost"}; !slices.Equal(dropped, want) {
+	if want := []string{"b.test"}; !slices.Equal(dropped, want) {
 		t.Errorf("hosts followed by a drop = %v, want %v", dropped, want)
 	}
 }
@@ -902,7 +959,7 @@ func TestBuildConfigAddsADockerTLSPolicyMatchedByHost(t *testing.T) {
 	if got := strs(dig(t, match, "nearhost_hosts", "hosts")); !slices.Equal(got, []string{"a.test", "b.local.x.io"}) {
 		t.Errorf("second policy hosts = %v, want a's hosts, sorted", got)
 	}
-	if got := strs(dig(t, match, "nearhost_hosts", "except")); !slices.Equal(got, []string{"b.test", "localhost"}) {
+	if got := strs(dig(t, match, "nearhost_hosts", "except")); !slices.Equal(got, []string{"b.test"}) {
 		t.Errorf("second policy except = %v, want every other host, sorted", got)
 	}
 
@@ -948,10 +1005,9 @@ func TestBuildConfigRedirectsSiteClientsFromHTTP(t *testing.T) {
 		t.Errorf("first route ranges = %v, want %v", got, union)
 	}
 	want := map[string][]string{
-		"a.test":    union,
-		"b.test":    loopbackRanges,
-		"c.test":    append(slices.Clone(loopbackRanges), "172.16.0.0/12", "::ffff:172.16.0.0/108"),
-		"localhost": loopbackRanges,
+		"a.test": union,
+		"b.test": loopbackRanges,
+		"c.test": append(slices.Clone(loopbackRanges), "172.16.0.0/12", "::ffff:172.16.0.0/108"),
 	}
 	var order []string
 	for _, r := range routes[1 : len(routes)-1] {
@@ -969,7 +1025,7 @@ func TestBuildConfigRedirectsSiteClientsFromHTTP(t *testing.T) {
 		}
 	}
 	// a.test is served to the whole union, so nothing falls through it.
-	wantOrder := []string{"a.test", "b.test", "drop b.test", "c.test", "drop c.test", "localhost", "drop localhost"}
+	wantOrder := []string{"a.test", "b.test", "drop b.test", "c.test", "drop c.test"}
 	if !slices.Equal(order, wantOrder) {
 		t.Errorf("routes = %v, want %v", order, wantOrder)
 	}

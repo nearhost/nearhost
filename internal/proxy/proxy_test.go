@@ -227,28 +227,16 @@ func startProxyOpts(t *testing.T, sites []Site, opts Options) *harness {
 	}, "root certificate")
 	h.pool = x509.NewCertPool()
 	h.pool.AddCert(root)
-	// The home page makes localhost an exact host of every site set that
-	// does not claim it, and most tests never ask for it, so its certificate
-	// is waited for here, while the proxy is surely running: a wait at
-	// cleanup would hang for tests that stop the proxy or apply no sites
-	// themselves.
-	if servesHome(sites) {
+	// The web port makes localhost a certificate subject of every config
+	// that listens, and most tests never ask for it, so its certificate is
+	// waited for here, while the proxy is surely running: a wait at cleanup
+	// would hang for tests that stop the proxy or apply no sites
+	// themselves. The https port shows it to a loopback client too, though
+	// it serves nothing there.
+	if opts.WebPort != 0 && listens(sites, opts) {
 		h.waitCerts(t, homeHost)
 	}
 	return h
-}
-
-// servesHome reports whether BuildConfig serves the home page for sites.
-func servesHome(sites []Site) bool {
-	if len(sites) == 0 {
-		return false
-	}
-	for _, s := range sites {
-		if slices.Contains(s.Hosts, homeHost) {
-			return false
-		}
-	}
-	return true
 }
 
 // client returns an HTTPS client that dials the proxy's loopback port while
@@ -1238,44 +1226,89 @@ func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
 	}
 }
 
-// While no project serves localhost, the proxy answers there with its own
-// page, over https only, and only to GET and HEAD at /.
-func TestHomePageAtLocalhost(t *testing.T) {
-	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "a"))}})
-	resp, body := h.getEventually(h.client("localhost", false), "localhost", "/")
-	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-		t.Fatalf("status %d, Content-Type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+// Nearhost's page answers on its own port, with a certificate for
+// localhost though no project lists it, only to GET and HEAD at /, and
+// before any project is served. The page is no project's, so its access
+// lines never reach the sink.
+func TestHomePageOnTheWebPort(t *testing.T) {
+	for _, name := range []string{"no sites", "a site"} {
+		t.Run(name, func(t *testing.T) {
+			var sites []Site
+			if name == "a site" {
+				sites = []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "a"))}}
+			}
+			h := startProxyOpts(t, sites, Options{WebPort: freePort(t), HomeWithNoSites: true})
+			c := h.pageClient(t, h.webPort)
+			page := fmt.Sprintf("https://localhost:%d", h.webPort)
+			resp, err := c.Get(page + "/")
+			if err != nil {
+				t.Fatalf("GET / on the web port: %v", err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			body := string(b)
+			if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+				t.Fatalf("status %d, Content-Type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+			}
+			for _, want := range []string{"Run it anywhere.", "https://nearhost.dev", "Nearhost " + testVersion, fmt.Sprintf("this page answers at localhost:%d.", h.webPort)} {
+				if !strings.Contains(body, want) {
+					t.Errorf("page does not hold %q", want)
+				}
+			}
+			if code, _ := get(t, c, h.webPort, "/nope"); code != 404 {
+				t.Errorf("GET /nope: status %d, want 404", code)
+			}
+			r, err := c.Post(page+"/", "text/plain", strings.NewReader("x"))
+			if err != nil {
+				t.Fatalf("POST /: %v", err)
+			}
+			r.Body.Close()
+			if r.StatusCode != 405 {
+				t.Errorf("POST /: status %d, want 405", r.StatusCode)
+			}
+			// A tagged request afterwards is logged after the page's, so by
+			// then a line for the page would have arrived.
+			if len(sites) > 0 {
+				h.getEventually(h.client("a.test", false), "a.test", "/after-home")
+				waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/after-home") }, "log line for /after-home")
+			}
+			h.rec.mu.Lock()
+			defer h.rec.mu.Unlock()
+			for _, l := range h.rec.lines {
+				if strings.Contains(l, "/nope") {
+					t.Errorf("an access line for the page reached the sink: %q", l)
+				}
+			}
+		})
 	}
-	for _, want := range []string{"Run it anywhere.", "https://nearhost.dev", "Nearhost " + testVersion} {
-		if !strings.Contains(body, want) {
-			t.Errorf("page does not hold %q", want)
-		}
-	}
-	c := h.client("localhost", false)
-	if r, _ := h.getEventually(c, "localhost", "/nope"); r.StatusCode != 404 {
-		t.Errorf("GET /nope: status %d, want 404", r.StatusCode)
-	}
-	r, err := c.Post(h.url("localhost", "/"), "text/plain", strings.NewReader("x"))
-	if err != nil {
-		t.Fatalf("POST /: %v", err)
-	}
-	r.Body.Close()
-	if r.StatusCode != 405 {
-		t.Errorf("POST /: status %d, want 405", r.StatusCode)
-	}
-	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 307 || r.Header.Get("Location") != h.httpsURL("localhost", "/") {
-		t.Errorf("http POST /: %d %q, want 307 to %s", r.StatusCode, r.Header.Get("Location"), h.httpsURL("localhost", "/"))
-	}
-	// The page is no project's, so its access lines are dropped like any
-	// untagged line. A tagged request afterwards is logged after them.
-	h.getEventually(h.client("a.test", false), "a.test", "/after-home")
-	waitUntil(t, 5*time.Second, func() bool { return h.rec.hasFor("a.test", "/after-home") }, "log line for /after-home")
-	h.rec.mu.Lock()
-	defer h.rec.mu.Unlock()
-	for _, l := range h.rec.lines {
-		if strings.Contains(l, "/nope") {
-			t.Errorf("an access line for the home page reached the sink: %q", l)
-		}
+}
+
+// localhost on the https port belongs to projects: while none lists it, a
+// request for it there is dropped, like one for any host that is not
+// served, and the http port has no redirect to it. The page on the web
+// port has answered by then, so the certificate for localhost is issued and
+// the drop is not a handshake that came too early.
+func TestHTTPSPortDropsLocalhostNoProjectServes(t *testing.T) {
+	for name, sites := range map[string][]Site{
+		"no sites": nil,
+		"a site":   {{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := startProxyOpts(t, sites, Options{WebPort: freePort(t), HomeWithNoSites: true})
+			if code, _ := get(t, h.pageClient(t, h.webPort), h.webPort, "/"); code != 200 {
+				t.Fatalf("the page on the web port answered %d", code)
+			}
+			for _, host := range []string{"localhost", "nothing.test"} {
+				resp, err := h.client(host, false).Get(h.url(host, "/"))
+				if err == nil {
+					resp.Body.Close()
+					t.Errorf("https port, %s: status %d, want the connection dropped", host, resp.StatusCode)
+				}
+			}
+			if _, status, err := h.plainHTTP(t, net.IPv4(127, 0, 0, 1), "localhost"); err == nil {
+				t.Errorf("http port, localhost: status %d, want the connection dropped", status)
+			}
+		})
 	}
 }
 
@@ -1302,7 +1335,7 @@ func TestWebPortServesHomePageAlways(t *testing.T) {
 		body = string(b)
 		return resp.StatusCode == 200
 	}, "home page on the web port")
-	if want := fmt.Sprintf("localhost:%d always", h.webPort); !strings.Contains(body, "Run it anywhere.") || !strings.Contains(body, want) {
+	if want := fmt.Sprintf("localhost:%d.", h.webPort); !strings.Contains(body, "Run it anywhere.") || !strings.Contains(body, want) {
 		t.Errorf("web port page lacks the home page or %q:\n%s", want, body)
 	}
 	if got := h.body(t, "https://localhost/"); got != "project" {
@@ -1324,8 +1357,9 @@ func TestWebPortServesHomePageAlways(t *testing.T) {
 	}
 }
 
-// A project that serves localhost gets every request for it.
-func TestProjectServingLocalhostReplacesHomePage(t *testing.T) {
+// A project that serves localhost gets every request for it on the https
+// port.
+func TestProjectServingLocalhostIsServedThere(t *testing.T) {
 	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "localhost"}, Upstream: addr(named(t, "project"))}})
 	if got := h.body(t, "https://localhost/"); got != "project" {
 		t.Errorf("https://localhost/ answered %q, want the project's upstream", got)

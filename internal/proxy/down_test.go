@@ -222,9 +222,9 @@ func refusedText(t *testing.T, port int) string {
 	return errno.Error()
 }
 
-// An error on a host with no site, such as one the home page returns, still
-// has its line at error level, as Caddy logs it for a server with no error
-// routes, and gets the bare status.
+// An error on a host with no site still has its line at error level, as
+// Caddy logs it for a server with no error routes, and gets the bare
+// status.
 func TestDownLogOnlyLogsAndLeavesStatusBare(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	d := &Down{LogOnly: true}

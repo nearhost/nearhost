@@ -115,7 +115,7 @@ type serveFlags struct {
 func (f *serveFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.httpsPort, "https-port", 443, "port for https://<alias>")
 	cmd.Flags().IntVar(&f.httpPort, "http-port", 80, "port that redirects to https")
-	cmd.Flags().IntVar(&f.webPort, "web-port", defaultWebPort, "port for Nearhost's page at https://localhost:<port>; 0 for none")
+	cmd.Flags().IntVar(&f.webPort, "web-port", defaultWebPort, "port for Nearhost's page, served only at https://localhost:<port>; 0 for no page")
 	cmd.Flags().BoolVar(&f.noHosts, "no-hosts", false, "do not manage "+hosts.DefaultPath)
 }
 

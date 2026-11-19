@@ -66,7 +66,7 @@ func (f *fakeShower) Show(_ context.Context, origin, root, doc, requester string
 	if _, ok := f.served[key]; !ok {
 		f.served[key] = requester
 	}
-	return "https://localhost:8443/d/tree/" + doc, nil
+	return "https://localhost:6327/d/tree/" + doc, nil
 }
 
 func (f *fakeShower) showed() []DocRequest {
@@ -245,7 +245,7 @@ func TestDocumentAnswerYes(t *testing.T) {
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("the long poll did not return early")
 	}
-	if out["state"] != "open" || out["url"] != "https://localhost:8443/d/tree/docs/plan.md" {
+	if out["state"] != "open" || out["url"] != "https://localhost:6327/d/tree/docs/plan.md" {
 		t.Fatalf("after yes: %v", out)
 	}
 	if _, ok := out["token"]; ok {
@@ -300,13 +300,13 @@ func TestDocumentAnswerNoAndFailures(t *testing.T) {
 	}
 
 	e.sh.mu.Lock()
-	e.sh.showErr = fmt.Errorf("%w: a project holds localhost", ErrNoPage)
+	e.sh.showErr = fmt.Errorf("%w: --web-port is 0", ErrNoPage)
 	e.sh.mu.Unlock()
 	err := e.s.AnswerDocument(context.Background(), id, AnswerYes)
 	if !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNoPage) {
 		t.Fatalf("a failed show: %v", err)
 	}
-	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "declined" || !strings.Contains(fmt.Sprint(out["reason"]), "a project holds localhost") {
+	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "declined" || !strings.Contains(fmt.Sprint(out["reason"]), "--web-port is 0") {
 		t.Fatalf("after a failed show: %v", out)
 	}
 
@@ -352,7 +352,7 @@ func TestDocumentAlways(t *testing.T) {
 	// A token opens a new tree without a prompt.
 	st, out := call(t, e.remote, "POST", "/v1/documents",
 		`{"path": "/srv/other/spec.md", "root": "/srv/other", "requester": "claude-code", "token": "tok-1"}`)
-	if st != 201 || out["state"] != "open" || out["url"] != "https://localhost:8443/d/tree/spec.md" {
+	if st != 201 || out["state"] != "open" || out["url"] != "https://localhost:6327/d/tree/spec.md" {
 		t.Fatalf("with the token: %d %v", st, out)
 	}
 	if _, ok := out["token"]; ok {
@@ -396,7 +396,7 @@ func TestDocumentRepeats(t *testing.T) {
 			t.Fatal(err)
 		}
 		st, out := e.ask(t, docBody("docs/spec.md", "claude-code", ""))
-		if st != 201 || out["state"] != "open" || out["url"] != "https://localhost:8443/d/tree/docs/spec.md" {
+		if st != 201 || out["state"] != "open" || out["url"] != "https://localhost:6327/d/tree/docs/spec.md" {
 			t.Fatalf("another document in the tree: %d %v", st, out)
 		}
 		if n := len(e.r.docPrompts()); n != 1 {
@@ -474,9 +474,9 @@ func TestDocumentHeadless(t *testing.T) {
 func TestDocumentNoPage(t *testing.T) {
 	e := newDocServer(t, true)
 	e.g.tokens[[2]string{"apollo", "claude-code"}] = "tok"
-	e.sh.showErr = fmt.Errorf("%w: a project holds localhost and --web-port is 0", ErrNoPage)
+	e.sh.showErr = fmt.Errorf("%w: --web-port is 0", ErrNoPage)
 	st, out := e.ask(t, docBody("plan.md", "claude-code", `, "token": "tok"`))
-	if st != 409 || !strings.Contains(fmt.Sprint(out["error"]), "a project holds localhost and --web-port is 0") {
+	if st != 409 || !strings.Contains(fmt.Sprint(out["error"]), "--web-port is 0") {
 		t.Fatalf("%d %v", st, out)
 	}
 	if len(e.r.shownDocs()) != 0 {

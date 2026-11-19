@@ -146,7 +146,7 @@ func TestShowerShowOpensBrowser(t *testing.T) {
 	if _, err := s.Show(ctx, config.LocalServer, "/code/app", "docs/p.md", "claude-code"); err == nil {
 		t.Fatal("showed with no engine")
 	}
-	e := engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443})
+	e := engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443, WebPort: 6327})
 	eng.Store(e)
 	base, err := e.PageURL()
 	if err != nil {
@@ -351,7 +351,7 @@ func postDoc(t *testing.T, sock, path, root, token string) (int, map[string]any)
 // with a valid token, and refuses the rest.
 func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	home := agentHome(t)
-	opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443}
+	opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443, WebPort: 6327}
 	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 8443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
@@ -377,7 +377,7 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	if status != 201 || out["state"] != "open" {
 		t.Fatalf("token: %d %v", status, out)
 	}
-	if url, _ := out["url"].(string); !slices.Equal(opened, []string{url}) || !strings.HasPrefix(url, "https://localhost:8443/d/") {
+	if url, _ := out["url"].(string); !slices.Equal(opened, []string{url}) || !strings.HasPrefix(url, "https://localhost:6327/d/") {
 		t.Fatalf("url %v, opened %v", out["url"], opened)
 	}
 	// A passthrough token is not a documents token.
@@ -394,7 +394,7 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 // the page's address, and stops serving a tree.
 func TestInterfaceOpensAndRemovesTrees(t *testing.T) {
 	home := agentHome(t)
-	opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443}
+	opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443, WebPort: 6327}
 	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 8443, agentEnv{})
 	if a == nil {
 		t.Fatal(note)
@@ -422,7 +422,7 @@ func TestInterfaceOpensAndRemovesTrees(t *testing.T) {
 	if err := a.openDocument(tr.ID); err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://localhost:8443/d/" + tr.ID + "/plans/a%20b.md"; !slices.Equal(opened, []string{want}) {
+	if want := "https://localhost:6327/d/" + tr.ID + "/plans/a%20b.md"; !slices.Equal(opened, []string{want}) {
 		t.Fatalf("opened %v, want %s", opened, want)
 	}
 	a.docs.open = func(string) error { return errors.New("no browser") }
@@ -483,6 +483,31 @@ func TestShowerRefusesABackslashInTheName(t *testing.T) {
 	_, err := s.Resolve(context.Background(), config.LocalServer, filepath.Join(repo, `my\plans`, "p.md"), repo)
 	if !errors.Is(err, agentapi.ErrBadDocument) || !strings.Contains(err.Error(), "backslash") {
 		t.Fatalf("backslash: %v", err)
+	}
+}
+
+// With no web port Nearhost's page has no address, so a document is not
+// shown, nor a served tree opened, and the error says why.
+func TestShowerWithoutAWebPortIsNoPage(t *testing.T) {
+	var eng atomic.Pointer[engine.Engine]
+	s := newShower(&eng)
+	defer s.pool.Close()
+	s.open = func(url string) error {
+		t.Errorf("opened %s", url)
+		return nil
+	}
+	eng.Store(engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443}))
+	const want = "Nearhost's page isn't served: --web-port is 0"
+	_, err := s.Show(context.Background(), config.LocalServer, "/code/app", "docs/p.md", "claude-code")
+	if !errors.Is(err, agentapi.ErrNoPage) || err.Error() != want {
+		t.Fatalf("Show = %v, want %q marked as no page", err, want)
+	}
+	if got := s.table.List(""); len(got) != 0 {
+		t.Errorf("trees served with no page: %#v", got)
+	}
+	tr := s.table.Add(config.LocalServer, "/code/app", "claude-code", "docs/p.md")
+	if err := s.openNewest(tr.ID); err == nil || err.Error() != want {
+		t.Fatalf("openNewest = %v, want %q", err, want)
 	}
 }
 

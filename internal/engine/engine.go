@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -49,15 +48,16 @@ type Options struct {
 	// the zero one is the real clock (tests set it).
 	SSHClock transport.Clock
 
-	// WebPort is a port of the proxy's own that always serves Nearhost's
-	// page at https://localhost:<port>. 0 means none. If the port is taken
-	// when the engine starts, the proxy runs without the page.
+	// WebPort is a port of the proxy's own that serves Nearhost's page at
+	// https://localhost:<port>, the page's only address. 0 means none. If
+	// the port is taken when the engine starts, the proxy runs without the
+	// page.
 	WebPort int
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
 	Capture bool
-	// Version is the Nearhost version, shown on the proxy's page at
-	// https://localhost. Empty means dev.
+	// Version is the Nearhost version, shown on Nearhost's page. Empty
+	// means dev.
 	Version string
 	// EnsureHosts makes every given name resolve to 127.0.0.1. It gets the
 	// hosts file names of the configuration (config.HostsFileNames: valid
@@ -409,33 +409,25 @@ func (e *Engine) WebPort() int {
 	return e.webPort
 }
 
-// errPageHeld is PageURL's error when Nearhost's page is served nowhere: a
-// project serves localhost on the HTTPS port and there is no web port.
-var errPageHeld = errors.New("Nearhost's page isn't served: a project holds localhost and --web-port is 0")
+// errNoPage is PageURL's error when Nearhost's page was not asked for: the
+// web port option is 0.
+var errNoPage = errors.New("Nearhost's page isn't served: --web-port is 0")
 
 // PageURL returns the base URL of Nearhost's page, which documents are
-// given out below: https://localhost:<web port> while the page has a port of
-// its own, and otherwise https://localhost, with the HTTPS port when it
-// isn't 443, while no running project serves localhost. A project serves it
-// when one of its published sites lists the host, in any case, as the proxy
-// decides when it leaves the page out. With neither, it returns errPageHeld.
+// given out below: https://localhost:<web port>, the page's only address.
+// localhost on the HTTPS port belongs to projects. With no web port, it
+// returns errNoPage when the option was 0, and otherwise an error naming
+// the port that was taken when the engine started.
 func (e *Engine) PageURL() (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.webPort != 0 {
-		return fmt.Sprintf("https://localhost:%d", e.webPort), nil
-	}
-	for _, s := range e.sitesLocked(nil) {
-		for _, h := range s.Hosts {
-			if strings.EqualFold(h, "localhost") {
-				return "", errPageHeld
-			}
+	if e.webPort == 0 {
+		if port := e.opts.WebPort; port != 0 {
+			return "", fmt.Errorf("Nearhost's page isn't served: port %d wasn't available when Nearhost started", port)
 		}
+		return "", errNoPage
 	}
-	if p := e.opts.HTTPSPort; p != 0 && p != 443 {
-		return fmt.Sprintf("https://localhost:%d", p), nil
-	}
-	return "https://localhost", nil
+	return fmt.Sprintf("https://localhost:%d", e.webPort), nil
 }
 
 // Config returns a copy of the engine's configuration.
