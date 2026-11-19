@@ -21,6 +21,11 @@ func (f files) ReadFile(name string) ([]byte, error) {
 	return nil, fs.ErrNotExist
 }
 
+func (f files) Exists(name string) (bool, error) {
+	_, ok := f[name]
+	return ok, nil
+}
+
 func byID(t *testing.T, fs []Finding, id string) Finding {
 	t.Helper()
 	for _, f := range fs {

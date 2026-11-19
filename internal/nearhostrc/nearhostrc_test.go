@@ -278,3 +278,14 @@ func TestLineOfErrors(t *testing.T) {
 		t.Errorf("plain error: line %d, want 0", got)
 	}
 }
+
+func TestReadNamesARefusedFileOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(strings.Repeat("#", 2<<20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := Read(discovery.DirReader{Root: dir})
+	if err == nil || err.Error() != ".nearhostrc is larger than 1 MiB. Nearhost reads project files up to that size; make it smaller or remove it." {
+		t.Fatalf("err = %v", err)
+	}
+}

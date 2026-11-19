@@ -11,6 +11,9 @@ import (
 // errors.Is(err, fs.ErrNotExist).
 type Reader interface {
 	ReadFile(name string) ([]byte, error)
+	// Exists reports whether name is a regular file, without reading it.
+	// A missing file gives false and no error.
+	Exists(name string) (bool, error)
 }
 
 // Project is everything a preset may see of a project.
@@ -30,9 +33,18 @@ func (pr *Project) read(name string) ([]byte, bool) {
 	return data, err == nil
 }
 
+// hasFile reports whether any of names is a regular file inside the
+// project. It asks whether each is there and reads none, so a large file
+// counts without being read.
 func (pr *Project) hasFile(names []string) bool {
+	if pr.Files == nil {
+		return false
+	}
 	for _, name := range names {
-		if _, ok := pr.read(name); ok {
+		if checkPath(name) != nil {
+			continue
+		}
+		if ok, err := pr.Files.Exists(name); err == nil && ok {
 			return true
 		}
 	}

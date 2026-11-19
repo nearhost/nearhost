@@ -3,24 +3,47 @@ package preset
 import (
 	"io/fs"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-// files is an in-memory Reader that records what was asked of it.
+// files is an in-memory Reader that records what was asked of it: asked
+// holds every name, read the names it read.
 type files struct {
 	content map[string]string
 	asked   []string
+	read    []string
 }
 
 func newFiles(content map[string]string) *files { return &files{content: content} }
 
 func (f *files) ReadFile(name string) ([]byte, error) {
 	f.asked = append(f.asked, name)
+	f.read = append(f.read, name)
 	s, ok := f.content[name]
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
 	return []byte(s), nil
+}
+
+func (f *files) Exists(name string) (bool, error) {
+	f.asked = append(f.asked, name)
+	_, ok := f.content[name]
+	return ok, nil
+}
+
+// file() asks whether a file is there and never reads it, so a file too
+// large to read still counts.
+func TestDetectFileDoesNotReadTheFile(t *testing.T) {
+	f := newFiles(map[string]string{"big.lock": strings.Repeat("x", 2<<20)})
+	got, err := DetectExpr(`file("big.lock")`, &Project{Files: f})
+	if err != nil || !got {
+		t.Fatalf("DetectExpr = %v %v, want true", got, err)
+	}
+	if len(f.read) != 0 {
+		t.Errorf("read %v; file() must not read", f.read)
+	}
 }
 
 func mustParse(t *testing.T, name, doc string) *Preset {

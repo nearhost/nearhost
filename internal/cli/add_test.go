@@ -303,6 +303,14 @@ func (s *sessionReader) ReadFile(name string) ([]byte, error) {
 	return []byte(data), nil
 }
 
+func (s *sessionReader) Exists(name string) (bool, error) {
+	if s.closed {
+		return false, errors.New("use of closed network connection")
+	}
+	_, ok := s.files[name]
+	return ok, nil
+}
+
 // An advisory may read a file that discovery never did. The session must
 // still be open when it does.
 func TestAddRemoteAdvisoryReadsThroughAnOpenSession(t *testing.T) {

@@ -334,7 +334,7 @@ func TestDiscoverSkipsPresetsInACycle(t *testing.T) {
 	}
 }
 
-// failReader fails to read one file that exists.
+// failReader fails to read, or stat, one file that exists.
 type failReader struct {
 	memReader
 	fail string
@@ -345,6 +345,13 @@ func (f failReader) ReadFile(name string) ([]byte, error) {
 		return nil, errors.New("permission denied")
 	}
 	return f.memReader.ReadFile(name)
+}
+
+func (f failReader) Exists(name string) (bool, error) {
+	if name == f.fail {
+		return false, errors.New("permission denied")
+	}
+	return f.memReader.Exists(name)
 }
 
 func TestDiscoverFailsWhenAPresetFileCannotBeRead(t *testing.T) {

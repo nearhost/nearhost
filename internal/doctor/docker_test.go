@@ -2,8 +2,10 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 )
@@ -254,5 +256,102 @@ func TestCAFindingReadsTheShell(t *testing.T) {
 	}
 	if got := run(files{".env": "NEARHOST_CA_CERT=" + ca + "\n"}, map[string]string{"NEARHOST_CA_CERT": "/elsewhere.crt"}); len(got) != 1 {
 		t.Errorf("not reported with .env's NEARHOST_CA_CERT overridden by the shell's: %+v", got)
+	}
+}
+
+// readLog is a files that records the names it was asked to read.
+type readLog struct {
+	files
+	read []string
+}
+
+func (r *readLog) ReadFile(name string) ([]byte, error) {
+	r.read = append(r.read, name)
+	return r.files.ReadFile(name)
+}
+
+// An env_file outside the project is never read: the Compose file arrives
+// with the repository and must not point doctor at the rest of the machine.
+func TestEnvFileOutsideTheProjectIsNotRead(t *testing.T) {
+	const compose = "services:\n  worker:\n    env_file:\n      - ../../x\n      - /etc/x\n      - sub/../../y\n" +
+		"      - '..\\..\\x'\n      - 'C:\\x'\n      - 'c:x'\n      - '\\\\host\\share\\x'\n"
+	const env = "CALLBACK=https://api.local.x.io/hook\n"
+	r := &readLog{files: files{
+		"docker-compose.yml": compose,
+		"../../x":            env,
+		"/etc/x":             env,
+		"../y":               env,
+		`..\..\x`:            env,
+		"C:/x":               env,
+		`C:\x`:               env,
+		"c:x":                env,
+		"//host/share/x":     env,
+		"/host/share/x":      env,
+		`\\host\share\x`:     env,
+	}}
+	in := Input{Project: dockerProject(), Added: true, Files: r, GOOS: "linux"}
+	got := Check(context.Background(), in)
+	if has(got, "docker.host-gateway") {
+		t.Errorf("a file outside the project was used: %+v", got)
+	}
+	for _, name := range r.read {
+		if name != "docker-compose.yml" && name != ".env" && name != ".env.local" && name != ".nearhostrc" {
+			t.Errorf("read %s, outside the project", name)
+		}
+	}
+}
+
+// A chain of << merges deeper than doctor follows stops the walk and says so.
+func TestComposeNestedTooDeep(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 70; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: *a%d\n", i, i, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a70\n")
+	got := onlyID(dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil), "docker.compose-depth")
+	if len(got) != 1 {
+		t.Fatalf("findings = %+v", got)
+	}
+	g := got[0]
+	if g.File != "docker-compose.yml" || g.Severity != SeverityWarning || g.Fix.Kind != FixProject ||
+		g.Message != "docker-compose.yml nests or repeats << merges too much to check, so Nearhost did not check its services" {
+		t.Errorf("finding = %+v", g)
+	}
+}
+
+// A chain of merges within the limit is followed to its end.
+func TestComposeNestedWithinTheLimit(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: *a%d\n", i, i, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a60\n")
+	got := dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil)
+	if has(got, "docker.compose-depth") || !has(got, "docker.host-gateway") {
+		t.Errorf("findings = %+v", ids(got))
+	}
+}
+
+// Merges that repeat an anchor double the walk at each level, so 30 levels
+// stay under the depth limit and would still never finish. The walk stops
+// at its lookup budget and says so.
+func TestComposeRepeatedMergesStop(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("x-0: &a0\n  CALLBACK: https://api.local.x.io/hook\n")
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "x-%d: &a%d\n  <<: [*a%d, *a%d]\n", i, i, i-1, i-1)
+	}
+	b.WriteString("services:\n  worker:\n    environment:\n      <<: *a30\n      OTHER: x\n")
+	done := make(chan []Finding, 1)
+	go func() { done <- dockerCheck(dockerProject(), files{"docker-compose.yml": b.String()}, nil) }()
+	select {
+	case got := <-done:
+		if len(onlyID(got, "docker.compose-depth")) != 1 {
+			t.Fatalf("findings = %+v", ids(got))
+		}
+	case <-time.After(10 * time.Second):
+		panic(t.Name() + ": the walk of repeated merges did not stop")
 	}
 }
