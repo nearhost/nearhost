@@ -49,15 +49,22 @@ func (sudoElevator) Validate(ctx context.Context, password string) error {
 	return sudo.Validate(ctx, password)
 }
 
-// Run runs c through sudo. When ctx ends while sudo runs, which includes sudo
+// Run runs c through sudo, or directly when Nearhost already runs as root,
+// where there may be no sudo to run. A direct run gets the same input and
+// ends the same way as a run through sudo. When ctx ends while sudo runs, which includes sudo
 // waiting for a password, sudo is asked to terminate (and killed if it
 // stays), and Run returns ctx's error. When ctx has already ended sudo is not
 // started. Without Interactive sudo never prompts, and what it and the
 // command said is kept for the error rather than shown.
 func (sudoElevator) Run(ctx context.Context, c Command) error {
-	cmd, err := sudoCommand(ctx, c)
-	if err != nil {
-		return err
+	var cmd *exec.Cmd
+	if Elevated() {
+		cmd = directCommand(ctx, c)
+	} else {
+		var err error
+		if cmd, err = sudoCommand(ctx, c); err != nil {
+			return err
+		}
 	}
 	// Without a prompt the terminal is in use by someone else (the
 	// interface): what sudo and the command say is kept for the error.
@@ -83,6 +90,19 @@ func (sudoElevator) Run(ctx context.Context, c Command) error {
 func lastLine(said string) string {
 	lines := strings.Split(strings.TrimSpace(said), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// directCommand is the process that runs c itself, for Nearhost running as
+// root. It is the command sudo would run: the same path and arguments, with
+// no shell and no lookup on PATH, the same input, and the environment of
+// this process, which is already root's. No password prompt comes, so
+// c.Prompt is unused.
+func directCommand(ctx context.Context, c Command) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
+	cmd.Stdin = strings.NewReader(c.Input)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = sudoStopDelay
+	return cmd
 }
 
 // sudoCommand is the sudo process that runs c.
