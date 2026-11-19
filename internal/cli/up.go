@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -347,13 +348,14 @@ func untrustedCA(b trustBackend, storageRoot string) string {
 }
 
 // disabledClash refuses the first disabled project among names that would
-// serve a host another enabled or named project serves.
+// serve a host another named project serves. Only the named projects start,
+// so they are the only ones compared: an enabled project left out serves
+// nothing in this run.
 func disabledClash(cfg *config.Config, names []string) error {
 	started := *cfg
 	started.Projects = append([]config.Project(nil), cfg.Projects...)
-	for _, name := range names {
-		q, _ := started.Project(name)
-		q.Enabled = true
+	for i := range started.Projects {
+		started.Projects[i].Enabled = slices.Contains(names, started.Projects[i].Name)
 	}
 	for _, name := range names {
 		if p, _ := cfg.Project(name); p.Enabled {
@@ -368,9 +370,9 @@ func disabledClash(cfg *config.Config, names []string) error {
 }
 
 // upTargets is the projects to start: those named, or every enabled one. A
-// disabled project named is checked as if it were enabled, beside the other
-// projects named: it is refused when it would serve a host another of them
-// serves, as enabling it would be. A pair of enabled projects is left to
+// disabled project named is checked beside the other projects named, which
+// are the only ones this run starts: it is refused when it would serve a
+// host another of them serves, as enabling it would be. A pair of enabled projects is left to
 // serve, as it did before such pairs were refused.
 func upTargets(cfg *config.Config, args []string) ([]string, error) {
 	if len(cfg.Projects) == 0 {

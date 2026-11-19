@@ -109,8 +109,9 @@ func TestReviewKeepsAPairTheConfigHad(t *testing.T) {
 }
 
 // `nearhost up` refuses a disabled project named on the command line that
-// would complete a pair with an enabled or named project; a pair of enabled
-// projects still starts.
+// would complete a pair with another named project; an enabled project not
+// named does not start, so it does not count, and a pair of enabled projects
+// still starts.
 func TestUpTargetsRefusesADisabledProjectThatCompletesAPair(t *testing.T) {
 	shop := localProject("shop", 8000, true)
 	shop.Routes[0].Hosts = []string{"*.shop.test"}
@@ -120,6 +121,14 @@ func TestUpTargetsRefusesADisabledProjectThatCompletesAPair(t *testing.T) {
 	want := `cannot start disabled project "api": host api.shop.test of project "api" falls under *.shop.test, which project "shop" serves`
 	if _, err := upTargets(cfg, []string{"shop", "api"}); err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("upTargets = %v, want %q", err, want)
+	}
+	// Only the named projects start, so an enabled project left out serves
+	// nothing in this run and cannot clash.
+	if names, err := upTargets(cfg, []string{"api"}); err != nil || len(names) != 1 || names[0] != "api" {
+		t.Errorf("api alone, shop enabled and not named: upTargets = %v %v", names, err)
+	}
+	if names, err := upTargets(cfg, nil); err != nil || len(names) != 1 || names[0] != "shop" {
+		t.Errorf("no names: upTargets = %v %v, want shop", names, err)
 	}
 	cfg.Projects[0].Enabled = false
 	if _, err := upTargets(cfg, []string{"api", "shop"}); err == nil || !strings.Contains(err.Error(), `cannot start disabled project "api"`) {
