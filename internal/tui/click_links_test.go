@@ -70,8 +70,8 @@ func TestOwnLinkOpensOnOneClickWithItsFullTarget(t *testing.T) {
 // text: it needs a double click.
 func TestLogLineCannotImitateAnInterfaceLink(t *testing.T) {
 	m, _, opened := clickModel(t)
-	m.logs.noteOn(m.sel, "visit https://localhost:6327/x now")
-	clickOn(t, m, "https://localhost:6327/x", 4)
+	m.logs.noteOn(m.sel, "visit https://nearhost.localhost:6327/x now")
+	clickOn(t, m, "https://nearhost.localhost:6327/x", 4)
 	if len(*opened) != 0 {
 		t.Errorf("one click opened %v", *opened)
 	}
@@ -209,12 +209,12 @@ func TestAddressAtTheEdgeIsRefused(t *testing.T) {
 // clicks.
 func TestLogLineWithThePageAddressNeedsTwoClicks(t *testing.T) {
 	m, _, opened := clickModel(t)
-	m.logs.noteOn(m.sel, "visit https://localhost:6327 now")
-	clickOn(t, m, "visit https://localhost:6327", 8)
+	m.logs.noteOn(m.sel, "visit https://nearhost.localhost:6327 now")
+	clickOn(t, m, "visit https://nearhost.localhost:6327", 8)
 	if len(*opened) != 0 {
 		t.Errorf("one click opened %v", *opened)
 	}
-	clickOn(t, m, "visit https://localhost:6327", 8)
+	clickOn(t, m, "visit https://nearhost.localhost:6327", 8)
 	if len(*opened) != 1 {
 		t.Errorf("two clicks opened %v", *opened)
 	}
