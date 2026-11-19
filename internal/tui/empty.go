@@ -9,20 +9,24 @@ import (
 )
 
 // markLines draw the Nearhost mark in half blocks: an arch in the beacon
-// colour over a dot, 9 cells by 4.
-var markLines = []string{
-	styleBeacon.Render(" ▄█████▄ "),
-	styleBeacon.Render("██     ██"),
-	styleBeacon.Render("██") + styleText.Render(" ▄▄▄ ") + styleBeacon.Render("██"),
-	styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
-}
+// colour over a dot, 9 cells by 4. shortMarkLines draw it in 2 rows for
+// cells about twice as tall as usual, at half the height in pixels: the
+// lintel, legs and dot keep their shape where markLines would stand twice
+// as tall as it is wide. drawMark sets both in the palette in use.
+var markLines, shortMarkLines []string
 
-// shortMarkLines draw the mark in 2 rows for cells about twice as tall as
-// usual, at half the height in pixels: the lintel, legs and dot keep their
-// shape where markLines would stand twice as tall as it is wide.
-var shortMarkLines = []string{
-	styleBeacon.Render("▄█▀▀▀▀▀█▄"),
-	styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
+// drawMark draws the mark in the palette in use.
+func drawMark() {
+	markLines = []string{
+		styleBeacon.Render(" ▄█████▄ "),
+		styleBeacon.Render("██     ██"),
+		styleBeacon.Render("██") + styleText.Render(" ▄▄▄ ") + styleBeacon.Render("██"),
+		styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
+	}
+	shortMarkLines = []string{
+		styleBeacon.Render("▄█▀▀▀▀▀█▄"),
+		styleBeacon.Render("██") + styleText.Render(" ▀▀▀ ") + styleBeacon.Render("██"),
+	}
 }
 
 // cellsTall reports whether cells of w by h pixels are tall enough that

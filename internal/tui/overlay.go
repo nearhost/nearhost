@@ -23,9 +23,6 @@ type wideForm interface {
 	wide() bool
 }
 
-// colourBoxEdge draws the edge of a form's box.
-var colourBoxEdge = lipgloss.Color("#4A5449")
-
 // formBox draws the open form in a box over base, the screen drawn faint
 // behind it: a terminal has no transparency, so dimming is redrawing.
 func (m *Model) formBox(base string, f form) string {

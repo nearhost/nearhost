@@ -706,8 +706,6 @@ func scrollbarOf(offset, view, total, height int) []string {
 // thumb is the part of a scrollbar that shows where the view is.
 const thumb = "┃"
 
-var styleBox = styleDim.Foreground(colourBoxEdge)
-
 // safeMethods are sent again without asking: they change nothing.
 var safeMethods = map[string]bool{"GET": true, "HEAD": true, "OPTIONS": true}
 

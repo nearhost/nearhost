@@ -64,7 +64,7 @@ func (m *Model) serverPanel(name string, width, height int) []string {
 	if st == transport.StatusConnected {
 		switch {
 		case h.AgentPath != "":
-			lines = append(lines, field("agents", styleBeacon.Render("●")+" reach Nearhost at "+clean(h.AgentPath), width)...)
+			lines = append(lines, field("agents", styleRunning.Render("●")+" reach Nearhost at "+clean(h.AgentPath), width)...)
 		case h.AgentErr != "":
 			lines = append(lines, field("agents", styleAmber.Render("● unavailable")+" "+clean(h.AgentErr), width)...)
 			lines = append(lines, field("fix", agentFix(h.AgentProblem), width)...)

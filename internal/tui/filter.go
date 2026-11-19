@@ -14,13 +14,18 @@ func newFilter() textinput.Model {
 	in := textinput.New()
 	in.Prompt = ""
 	in.CharLimit = 64
+	brandInput(&in)
+	return in
+}
+
+// brandInput gives a text input the colours of the palette in use.
+func brandInput(in *textinput.Model) {
 	st := in.Styles()
 	st.Focused.Text = styleText
 	st.Blurred.Text = styleText
 	st.Cursor.Color = colourBeacon
 	st.Cursor.Blink = false
 	in.SetStyles(st)
-	return in
 }
 
 // query is what the sidebar is filtered by; empty when it is not.

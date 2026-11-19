@@ -145,9 +145,6 @@ func (m *Model) copyAdvice(name string) tea.Cmd {
 	return tea.Batch(copyText(key, strings.Join(snippets, "\n\n")), m.alert(key, "Copied the advice for "+name+"."))
 }
 
-// colourWarnEdge draws the edge of a piece of advice.
-var colourWarnEdge = lipgloss.Color("#6B5524")
-
 // adviceBox draws a piece of advice in an amber box width wide, saying y
 // copies its fix when it has one.
 func adviceBox(a Advisory, width int) []string {

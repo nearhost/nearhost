@@ -173,7 +173,7 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 				running++
 			}
 		}
-		right := seg{styleBeacon, fmt.Sprintf("%d running", running)}
+		right := seg{styleRunning, fmt.Sprintf("%d running", running)}
 		switch {
 		case m.narrow():
 			right.text = fmt.Sprint(running)
@@ -236,7 +236,7 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 	switch {
 	case status.Pending != nil: // the word stays amber with the dot
 	case selected && st == engine.StateRunning:
-		word.style = styleBeacon
+		word.style = styleRunning
 	case st == engine.StateRunning, st == engine.StateStopped:
 		word.style = styleDim
 	}

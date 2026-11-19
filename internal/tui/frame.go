@@ -88,7 +88,7 @@ func (m *Model) header() string {
 func (m *Model) machineSummary() string {
 	https, _ := m.b.Ports()
 	sep := styleDim.Render(" · ")
-	proxy := styleBeacon.Render("●") + fmt.Sprintf(" :%d", https)
+	proxy := styleRunning.Render("●") + fmt.Sprintf(" :%d", https)
 	proxyOK := true
 	switch {
 	case m.proxyErr != nil:
@@ -103,7 +103,7 @@ func (m *Model) machineSummary() string {
 	hostsText, hostsOK := hostsWord(m.hostsState)
 	problems := len(m.problems())
 	if m.narrow() {
-		dot := styleBeacon.Render("●")
+		dot := styleRunning.Render("●")
 		switch {
 		case !proxyOK || problems > 0:
 			dot = styleRed.Render("●")

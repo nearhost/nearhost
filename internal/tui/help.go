@@ -12,11 +12,16 @@ import (
 func newHelp() help.Model {
 	h := help.New()
 	h.ShortSeparator = footerSep
+	brandHelp(&h)
+	return h
+}
+
+// brandHelp gives the footer's help the colours of the palette in use.
+func brandHelp(h *help.Model) {
 	h.Styles.ShortKey = styleBeacon
 	h.Styles.ShortDesc = styleDim
 	h.Styles.ShortSeparator = styleDim
 	h.Styles.Ellipsis = styleDim
-	return h
 }
 
 // bindings are footer items as key bindings, for the help to draw.
