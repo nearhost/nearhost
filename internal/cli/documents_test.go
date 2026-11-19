@@ -403,7 +403,7 @@ func TestAlwaysAllowedFolderSurvivesARestart(t *testing.T) {
 	repo, other := gitRepo(t), gitRepo(t)
 	start := func() *agents {
 		t.Helper()
-		opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443}
+		opts := engine.Options{RunDir: filepath.Join(home, "run"), HTTPSPort: 8443, WebPort: 6327}
 		a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 8443, agentEnv{})
 		if a == nil {
 			t.Fatal(note)
