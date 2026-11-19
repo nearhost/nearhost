@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,6 +148,10 @@ func TestUACRunStopsWaitingWhenTheContextEndsOnWindows(t *testing.T) {
 func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 	dir := tempDir(t)
 	asked, release, returned := make(chan string, 1), make(chan struct{}), make(chan struct{})
+	promptTurn = newTurn()
+	t.Cleanup(func() { promptTurn = newTurn() })
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	orig := runAs
 	runAs = func(_ string, args []string) (windows.Handle, error) {
 		defer close(returned)
@@ -167,19 +172,138 @@ func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("Run took %v", took)
 	}
-	input := <-asked
+	input := waitAsked(t, asked)
 	if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("input still there for a late approval: %v", err)
 	}
 	leftOver(t, dir)
 
-	close(release) // a late answer with no process to close
+	once.Do(func() { close(release) }) // a late answer with no process to close
 	select {
 	case <-returned:
 	case <-time.After(2 * time.Second):
 		t.Fatal("runAs did not return after release")
 	}
 	time.Sleep(100 * time.Millisecond) // let the goroutine finish; a panic would fail the run
+}
+
+// waitAsked returns the --input path of the next runAs call, failing t when
+// none comes in 5 seconds.
+func waitAsked(t *testing.T, asked chan string) string {
+	t.Helper()
+	select {
+	case in := <-asked:
+		return in
+	case <-time.After(5 * time.Second):
+		t.Fatal("runAs was not called")
+		return ""
+	}
+}
+
+// blockingRunAs replaces runAs with one that blocks until release is
+// closed, sending each call's --input path on asked, and returns release. A
+// call returns the handle 0 and a nil error, as a late approval with no
+// process to close.
+func blockingRunAs(t *testing.T) (asked chan string, release func(), calls func() int) {
+	t.Helper()
+	asked = make(chan string, 8)
+	done := make(chan struct{})
+	// Each test starts from a free turn, and a failing test cannot leave a
+	// blocked runAs holding the turn for the next one.
+	promptTurn = newTurn()
+	var once sync.Once
+	release = func() { once.Do(func() { close(done) }) }
+	t.Cleanup(func() {
+		release()
+		promptTurn = newTurn()
+	})
+	var mu sync.Mutex
+	n := 0
+	orig := runAs
+	runAs = func(_ string, args []string) (windows.Handle, error) {
+		mu.Lock()
+		n++
+		mu.Unlock()
+		asked <- args[slices.Index(args, "--input")+1]
+		<-done
+		return 0, nil
+	}
+	t.Cleanup(func() { runAs = orig })
+	return asked, release, func() int { mu.Lock(); defer mu.Unlock(); return n }
+}
+
+// A prompt whose caller gave up keeps the turn until it closes: a second
+// Run waits, gives up with its own error when its context ends, and never
+// launches. Once the first runAs returns the turn is free and no folder is
+// left.
+func TestUACCancelledPromptKeepsItsTurnOnWindows(t *testing.T) {
+	dir := tempDir(t)
+	asked, release, calls := blockingRunAs(t)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	time.AfterFunc(100*time.Millisecond, cancel1)
+	start := time.Now()
+	if err := System().Run(ctx1, helperCommand(t, "a.test\n", "exit", "0")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Run: %v, want context.Canceled", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("first Run took %v while runAs was blocked", took)
+	}
+	waitAsked(t, asked)
+	leftOver(t, dir)
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel2()
+	if err := System().Run(ctx2, helperCommand(t, "b.test\n", "exit", "0")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second Run: %v, want context.DeadlineExceeded", err)
+	}
+	if n := calls(); n != 1 {
+		t.Fatalf("runAs called %d times, want 1: the second Run must not launch", n)
+	}
+	leftOver(t, dir)
+
+	release()
+	// The turn is free once the first runAs returns.
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel3()
+	if err := promptTurn.acquire(ctx3); err != nil {
+		t.Fatalf("the turn did not come back: %v", err)
+	}
+	promptTurn.release()
+	leftOver(t, dir)
+}
+
+// A second Run that waits for the turn starts only after the first runAs
+// returns.
+func TestUACSecondRunWaitsForTheFirstPromptOnWindows(t *testing.T) {
+	dir := tempDir(t)
+	asked, release, calls := blockingRunAs(t)
+
+	first := make(chan error, 1)
+	go func() { first <- System().Run(context.Background(), helperCommand(t, "", "exit", "0")) }()
+	waitAsked(t, asked)
+	second := make(chan error, 1)
+	go func() { second <- System().Run(context.Background(), helperCommand(t, "", "exit", "0")) }()
+	time.Sleep(200 * time.Millisecond)
+	if n := calls(); n != 1 {
+		t.Fatalf("runAs called %d times while the first prompt was up, want 1", n)
+	}
+	release()
+	for _, c := range []chan error{first, second} {
+		select {
+		case err := <-c:
+			// runAs gave handle 0, which cannot be waited on: any error is
+			// fine, a hang is not.
+			_ = err
+		case <-time.After(10 * time.Second):
+			t.Fatal("a Run did not return after the prompt closed")
+		}
+	}
+	if n := calls(); n != 2 {
+		t.Fatalf("runAs called %d times, want 2", n)
+	}
+	leftOver(t, dir)
 }
 
 // HelperDir makes a new folder in the temp directory, owned by this
