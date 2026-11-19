@@ -117,10 +117,10 @@ func notifyStop(parent context.Context) (context.Context, <-chan struct{}, func(
 	}
 }
 
-// stopSignals are the signals up shuts down on. The ssh masters run outside
-// this process's group, so nothing ends them when the terminal goes away:
-// a hangup is therefore handled like Ctrl-C, unless it is being ignored
-// (nohup), in which case it stays ignored.
+// stopSignals are the signals up and the interface shut down on. The ssh
+// masters run outside this process's group, so nothing ends them when the
+// terminal goes away: a hangup is therefore handled like Ctrl-C, unless it
+// is being ignored (nohup), in which case it stays ignored.
 func stopSignals() []os.Signal {
 	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
 	if !signal.Ignored(syscall.SIGHUP) {
