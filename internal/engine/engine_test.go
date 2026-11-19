@@ -867,7 +867,14 @@ func TestHolderFoundTooLateIsDropped(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
+				// The drop is seen before the forward counts as restored.
+				// The per-process transport tries a lost forward again by
+				// itself, so with the flag gone the project may run again
+				// while the link is still up, and is degraded once more
+				// when the link goes.
+				stateEvents(events, "myapp")
 				h.dropMaster(t, "mini")
+				waitAnnounced(t, events, "myapp", StateDegraded)
 				testutil.WaitUntil(t, 15*time.Second, func() bool { return h.eng.Status("myapp").State == StateRunning }, "the forward to be restored")
 				want = h.eng.Status("myapp")
 			}
