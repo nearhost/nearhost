@@ -141,6 +141,12 @@ func TestAFailedProxyStartReleasesTheLock(t *testing.T) {
 		t.Fatalf("Start = %v, want the proxy to fail to start", err)
 	}
 
+	// The interface's retry key calls Start again on the same engine: it
+	// meets the same failure, not its own lock.
+	if err := failing.eng.Start(context.Background()); IsAlreadyRunning(err) || err == nil || !strings.Contains(err.Error(), "start proxy") {
+		t.Fatalf("a second Start on the same engine = %v, want the proxy to fail again", err)
+	}
+
 	next := buildHarness(t, instanceConfig(t), func(o *Options) { o.RunDir = failing.runDir })
 	if err := next.eng.Start(context.Background()); err != nil {
 		t.Fatalf("Start after a failed proxy start: %v", err)
