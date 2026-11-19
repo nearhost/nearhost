@@ -30,20 +30,17 @@ var dnsPort string
 // which DNSLookup otherwise refuses.
 var allowLoopbackNameserver bool
 
-// errLocalResolver is what DNSLookup returns when the nameserver runs on this
-// machine.
-var errLocalResolver = errors.New("the nameserver is on this machine, so it may answer from the hosts file")
+// ErrNoUpstream is what DNSLookup returns when the system's nameserver runs
+// on this machine and no nameserver beyond it can be found, so DNS cannot be
+// asked without the hosts file answering.
+var ErrNoUpstream = errors.New("the nameserver is on this machine and no upstream nameserver is listed, so DNS could not be asked without the hosts file answering")
 
-// DNSLookup returns the A and AAAA records of name from the nameservers in the
-// system's network configuration: /etc/resolv.conf on Unix, the network
-// adapters on Windows. It asks them directly rather than through the system
-// resolver, because that would read the hosts file and so report the very
-// entries nearhost wrote as if DNS had supplied them. A nameserver on this
-// machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
-// too, so DNSLookup refuses it with errLocalResolver and Wanted keeps the name.
-func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
-	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
-	defer cancel()
+// nameservers is the nameserver list DNSLookup asks. When the system's first
+// nameserver is on this machine, as with systemd-resolved's stub at
+// 127.0.0.53, it would answer from the hosts file, so nameservers turns to
+// the upstream servers that stub forwards to. It returns ErrNoUpstream when
+// none is listed or the first is on this machine too.
+func nameservers() (*dns.ClientConfig, error) {
 	conf, err := clientConfig()
 	if err != nil {
 		return nil, err
@@ -51,21 +48,94 @@ func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	if len(conf.Servers) == 0 {
 		return nil, errors.New(noNameserverMessage)
 	}
-	if ip, err := netip.ParseAddr(conf.Servers[0]); err == nil && ip.IsLoopback() && !allowLoopbackNameserver {
-		return nil, errLocalResolver
+	if !isLoopback(conf.Servers[0]) || allowLoopbackNameserver {
+		return conf, nil
 	}
-	// The first nameserver answers; trying the rest is the system resolver's
-	// job, and a wrong answer here only costs a redundant hosts entry.
+	up, err := upstreamConfig()
+	if err != nil || len(up.Servers) == 0 || isLoopback(up.Servers[0]) {
+		return nil, ErrNoUpstream
+	}
+	return up, nil
+}
+
+// isLoopback reports whether server is a loopback address.
+func isLoopback(server string) bool {
+	ip, err := netip.ParseAddr(server)
+	return err == nil && ip.IsLoopback()
+}
+
+// DNSLookup returns the A and AAAA records of name from the nameservers in the
+// system's network configuration: /etc/resolv.conf on Unix, the network
+// adapters on Windows. It asks them directly rather than through the system
+// resolver, because that would read the hosts file and so report the very
+// entries nearhost wrote as if DNS had supplied them. A nameserver on this
+// machine, such as systemd-resolved at 127.0.0.53, answers from the hosts file
+// too, so DNSLookup asks the servers it forwards to instead, and returns
+// ErrNoUpstream when it finds none; Wanted then keeps the name.
+func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
+	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	conf, err := nameservers()
+	if err != nil {
+		return nil, err
+	}
 	port := conf.Port
 	if dnsPort != "" {
 		port = dnsPort
 	}
-	server := net.JoinHostPort(conf.Servers[0], port)
+	// The servers are asked in order, and the first that answers decides,
+	// as the system resolver does. One that cannot be reached gets a share
+	// of the time left, so a dead first server leaves time for the rest.
+	servers := askable(conf.Servers)
+	var lastErr error
+	for i, s := range servers {
+		sctx, scancel := context.WithTimeout(ctx, serverShare(ctx, len(servers)-i))
+		addrs, err := lookupAt(sctx, net.JoinHostPort(s, port), name)
+		scancel()
+		var answered *rcodeError
+		if err == nil || errors.As(err, &answered) || ctx.Err() != nil {
+			return addrs, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// minServerShare is the least time one nameserver gets to answer, however
+// many are left to ask.
+const minServerShare = 500 * time.Millisecond
+
+// serverShare is the time one of left nameservers gets: an equal share of
+// what remains of ctx, and at least minServerShare.
+func serverShare(ctx context.Context, left int) time.Duration {
+	share := lookupTimeout / time.Duration(left)
+	if deadline, ok := ctx.Deadline(); ok {
+		share = time.Until(deadline) / time.Duration(left)
+	}
+	return max(share, minServerShare)
+}
+
+// askable is servers without the loopback ones after the first, which may
+// answer from the hosts file. nameservers has already vouched for the first.
+func askable(servers []string) []string {
+	out := servers[:1:1]
+	for _, s := range servers[1:] {
+		if !isLoopback(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// lookupAt asks server for the A and AAAA records of name at once. When one
+// query cannot reach the server, its error wins over an answer's, so that
+// DNSLookup moves on to the next server.
+func lookupAt(ctx context.Context, server, name string) ([]netip.Addr, error) {
 	var (
-		mu       sync.Mutex
-		addrs    []netip.Addr
-		firstErr error
-		wg       sync.WaitGroup
+		mu    sync.Mutex
+		addrs []netip.Addr
+		errs  []error
+		wg    sync.WaitGroup
 	)
 	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
 		wg.Add(1)
@@ -74,17 +144,44 @@ func DNSLookup(ctx context.Context, name string) ([]netip.Addr, error) {
 			got, err := query(ctx, server, name, qtype)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil && firstErr == nil {
-				firstErr = err
+			if err != nil {
+				errs = append(errs, err)
 			}
 			addrs = append(addrs, got...)
 		}()
 	}
 	wg.Wait()
-	if firstErr != nil {
-		return nil, firstErr
+	if len(errs) == 0 {
+		return addrs, nil
 	}
-	return addrs, nil
+	for _, err := range errs {
+		var answered *rcodeError
+		if !errors.As(err, &answered) {
+			return nil, err
+		}
+	}
+	return nil, errs[0]
+}
+
+// rcodeError is a nameserver's answer that it could not resolve the name,
+// such as SERVFAIL or REFUSED. It is an answer, so DNSLookup asks no other
+// server.
+type rcodeError struct {
+	rcode  int
+	server string
+}
+
+// Error names the response code and the server that sent it.
+func (e *rcodeError) Error() string {
+	return dns.RcodeToString[e.rcode] + " from " + e.server
+}
+
+// exchange sends msg to server over network, udp or tcp, and returns the
+// reply. Tests replace it.
+var exchange = func(ctx context.Context, msg *dns.Msg, server, network string) (*dns.Msg, error) {
+	c := &dns.Client{Net: network, Timeout: lookupTimeout}
+	resp, _, err := c.ExchangeContext(ctx, msg, server)
+	return resp, err
 }
 
 // query asks server for the records of one type, retrying over TCP when the
@@ -93,18 +190,16 @@ func query(ctx context.Context, server, name string, qtype uint16) ([]netip.Addr
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), qtype)
 	msg.RecursionDesired = true
-	c := &dns.Client{Timeout: lookupTimeout}
-	resp, _, err := c.ExchangeContext(ctx, msg, server)
+	resp, err := exchange(ctx, msg, server, "udp")
 	if err == nil && resp.Truncated {
-		c.Net = "tcp"
-		resp, _, err = c.ExchangeContext(ctx, msg, server)
+		resp, err = exchange(ctx, msg, server, "tcp")
 	}
 	if err != nil {
 		return nil, err
 	}
 	// NXDOMAIN is an answer: the name has no addresses.
 	if resp.Rcode != dns.RcodeSuccess && resp.Rcode != dns.RcodeNameError {
-		return nil, errors.New(dns.RcodeToString[resp.Rcode] + " from " + server)
+		return nil, &rcodeError{rcode: resp.Rcode, server: server}
 	}
 	var out []netip.Addr
 	for _, rr := range resp.Answer {

@@ -22,6 +22,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
 )
 
@@ -667,4 +668,31 @@ func TestDraftProjectDropsTheAliasFromSecondaryRoutes(t *testing.T) {
 	local := config.Server{Name: config.LocalServer}
 	p := draftProject(cfg, cfgPath, local, dir, localFiles{}.reader(dir))
 	wantAliasHostDropped(t, p.Routes)
+}
+
+// hosts.dns-unchecked is about this machine, not a project, so a doctor run
+// reports it once, with the first project that found it.
+func TestDoctorReportsDNSUncheckedOnce(t *testing.T) {
+	path := configHome(t)
+	shop, blog := localProject("shop", 3000, true), localProject("blog", 8000, true)
+	shop.Path, blog.Path = t.TempDir(), t.TempDir()
+	shop.Alias, blog.Alias = "shop.example.io", "blog.example.io"
+	saveConfig(t, path, &config.Config{Projects: []config.Project{shop, blog}})
+	f := healthy()
+	f.hosts = "# nearhost:start\n127.0.0.1 blog.example.io\n::1 blog.example.io\n127.0.0.1 shop.example.io\n::1 shop.example.io\n# nearhost:end\n"
+	f.lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, hosts.ErrNoUpstream }
+	var opened []string
+	stdout, _, err := runSplit(t, withProjects(f.backend(), nil, &opened), "doctor", "--json")
+	if err != nil {
+		t.Fatalf("err = %v\n%s", err, stdout)
+	}
+	var projects []string
+	for _, f := range decodeOne(t, stdout).Findings {
+		if f.ID == "hosts.dns-unchecked" {
+			projects = append(projects, f.Project)
+		}
+	}
+	if !slices.Equal(projects, []string{"shop"}) {
+		t.Fatalf("hosts.dns-unchecked for %v, want shop alone\n%s", projects, stdout)
+	}
 }

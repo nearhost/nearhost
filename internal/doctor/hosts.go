@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -158,6 +159,14 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 	got := lookupAll(ctx, in.Lookup, ask)
 
 	var out []Finding
+	if unchecked(got) {
+		out = append(out, Finding{
+			ID:       "hosts.dns-unchecked",
+			Severity: SeverityInfo,
+			Message:  "Nearhost could not ask DNS directly, so it did not check whether your real-domain names resolve elsewhere.",
+			Fix:      Fix{Kind: FixManual, Text: dnsUncheckedFix},
+		})
+	}
 	for _, n := range names {
 		a, asked := got[n]
 		if !asked {
@@ -196,6 +205,21 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 		})
 	}
 	return out
+}
+
+// dnsUncheckedFix is the fix of hosts.dns-unchecked.
+const dnsUncheckedFix = "Check for yourself that each real-domain name this project serves is one you mean to take over on this machine. " +
+	"Nearhost asks DNS again each time it checks."
+
+// unchecked reports whether a lookup of a real-domain name, one that is not
+// .test, failed because no nameserver beyond this machine could be found.
+func unchecked(got map[string]answer) bool {
+	for n, a := range got {
+		if !strings.HasSuffix(n, ".test") && errors.Is(a.err, hosts.ErrNoUpstream) {
+			return true
+		}
+	}
+	return false
 }
 
 // overlapFindings reports a pattern of this project that overlaps, without

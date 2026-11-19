@@ -25,6 +25,13 @@ var clientConfig = func() (*dns.ClientConfig, error) {
 	return &dns.ClientConfig{Servers: nameserversFrom(addrs), Port: "53", Timeout: 5, Attempts: 2}, nil
 }
 
+// upstreamConfig would read the nameservers a stub resolver on this machine
+// forwards to. Windows lists none, so a loopback nameserver on an adapter
+// leaves DNSLookup with ErrNoUpstream. Tests replace it.
+var upstreamConfig = func() (*dns.ClientConfig, error) {
+	return nil, errors.New("no upstream nameserver on Windows")
+}
+
 // adapterNameservers returns the DNS server addresses of the adapters that
 // are up.
 func adapterNameservers() ([]netip.Addr, error) {

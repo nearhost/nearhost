@@ -262,6 +262,21 @@ func checkProjects(ctx context.Context, b doctorBackend, env doctorEnv, cfg *con
 		}
 		add(findings...)
 	}
+	return oncePerRun(reports, "hosts.dns-unchecked")
+}
+
+// oncePerRun keeps the first finding with the given ID and drops the rest.
+// Some findings are about this machine rather than a project, and every
+// project that looks finds them.
+func oncePerRun(reports []projectReport, id string) []projectReport {
+	seen := false
+	for i, r := range reports {
+		reports[i].findings = slices.DeleteFunc(r.findings, func(f doctor.Finding) bool {
+			drop := f.ID == id && seen
+			seen = seen || f.ID == id
+			return drop
+		})
+	}
 	return reports
 }
 

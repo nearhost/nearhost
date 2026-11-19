@@ -12,6 +12,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
@@ -816,17 +817,21 @@ func classifySaved(t *testing.T, cfgPath, name, dir string) nearhostrc.Class {
 
 // A host whose DNS lookup fails says so, as the user cannot tell from it
 // whether serving the host hides a real site.
+// A resolver with no upstream nameserver to ask, as behind a
+// systemd-resolved stub that lists none, reads the same.
 func TestAddSaysWhenDNSCouldNotBeChecked(t *testing.T) {
-	dir := rcProject(t, rcRealDomain)
-	b := rcBackend(t, true)
-	b.lookup = func(context.Context, string) ([]netip.Addr, error) {
-		return nil, errors.New("no nameserver")
+	for _, lookupErr := range []error{errors.New("no nameserver"), hosts.ErrNoUpstream} {
+		dir := rcProject(t, rcRealDomain)
+		b := rcBackend(t, true)
+		b.lookup = func(context.Context, string) ([]netip.Addr, error) {
+			return nil, lookupErr
+		}
+		out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--no-presets")
+		if err != nil {
+			t.Fatalf("add: %v\n%s", err, out)
+		}
+		wantContains(t, out, "app.local.dd.io on port 8220 (a real domain, could not check DNS): approve? [y/N] ")
 	}
-	out, err := executeWithInput(t, "n\n", newAddCmd(b), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--no-presets")
-	if err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
-	}
-	wantContains(t, out, "app.local.dd.io on port 8220 (a real domain, could not check DNS): approve? [y/N] ")
 }
 
 func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {

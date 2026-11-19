@@ -230,3 +230,33 @@ func TestNotListening(t *testing.T) {
 		t.Errorf("a route without hosts: %q", f.Message)
 	}
 }
+
+// A lookup that finds no upstream nameserver gets one info finding for the
+// project, whatever the number of names, and no hosts.public or
+// hosts.unresolved-pattern.
+func TestDNSUncheckedWithoutUpstream(t *testing.T) {
+	p := webProject("app", "app.test", true, "a.x.io", "b.x.io", "*.local.x.pro")
+	noUpstream := func(context.Context, string) ([]netip.Addr, error) { return nil, hosts.ErrNoUpstream }
+	in := Input{Project: p, Added: true, Files: files{}, Lookup: noUpstream, ManagesHosts: true,
+		Block: []string{"app.test", "a.x.io", "b.x.io"}}
+	got := Check(context.Background(), in)
+	want := Finding{
+		ID:       "hosts.dns-unchecked",
+		Severity: SeverityInfo,
+		Project:  "app",
+		Message:  "Nearhost could not ask DNS directly, so it did not check whether your real-domain names resolve elsewhere.",
+		Fix:      Fix{Kind: FixManual, Text: dnsUncheckedFix},
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("findings = %+v, want only %+v", got, want)
+	}
+}
+
+// Any other lookup failure is not hosts.dns-unchecked: Nearhost did ask DNS.
+func TestDNSFailureIsNotUnchecked(t *testing.T) {
+	p := webProject("app", "app.test", true, "a.x.io")
+	got := hostIn(p, &dns{errs: map[string]bool{"a.x.io": true}}, func(in *Input) { in.Block = []string{"app.test", "a.x.io"} })
+	if has(got, "hosts.dns-unchecked") {
+		t.Fatalf("findings = %+v", got)
+	}
+}
