@@ -235,6 +235,82 @@ func TestWriteFileAtomicNamesAFileHeldOpen(t *testing.T) {
 	}
 }
 
+// A rename still refused when the retries run out over a read-only file
+// says the file is read-only, which is what the user can fix; Windows
+// refuses such a rename with access denied, as it does a file held open.
+func TestWriteFileAtomicNamesAReadOnlyFile(t *testing.T) {
+	saved := renameIntoPlace
+	t.Cleanup(func() { renameIntoPlace = saved })
+	renameIntoPlace = retryRename(func(string, string) error { return errBusy },
+		func(err error) bool { return errors.Is(err, errBusy) }, func(time.Duration) {})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("old\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o644) })
+	err := WriteFileAtomic(path, []byte("new\n"), 0o644)
+	// The message names the file by its resolved path, which differs from
+	// the temp folder's on macOS and on Windows runners.
+	resolved, rerr := filepath.EvalSymlinks(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	want := resolved + " is read-only, so Nearhost cannot save it. Clear the file's read-only attribute and try again."
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("dir holds %d entries, want only the file", len(entries))
+	}
+}
+
+// stillBusy blames another program for a sharing violation, and for access
+// denied over a file that is not read-only; access denied over a read-only
+// file is reported as such.
+func TestStillBusyNamesTheCause(t *testing.T) {
+	const path = "config.yaml"
+	held := path + " is open in another program. Close it and try again."
+	readOnly := path + " is read-only, so Nearhost cannot save it. Clear the file's read-only attribute and try again."
+	for _, tc := range []struct {
+		sharing, readOnly bool
+		want              string
+	}{
+		{sharing: true, readOnly: false, want: held},
+		{sharing: true, readOnly: true, want: held},
+		{sharing: false, readOnly: true, want: readOnly},
+		{sharing: false, readOnly: false, want: held},
+	} {
+		var asked string
+		err := stillBusy(path, errBusy,
+			func(error) bool { return tc.sharing },
+			func(p string) bool { asked = p; return tc.readOnly })
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("sharing %v, read-only %v: %v, want %q", tc.sharing, tc.readOnly, err, tc.want)
+		}
+		if !tc.sharing && asked != path {
+			t.Errorf("sharing %v: looked at %q, want %q", tc.sharing, asked, path)
+		}
+	}
+}
+
+// A file whose mode has no write bit is read-only, as Windows shows the
+// read-only attribute; a missing file is not.
+func TestReadOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	ro, rw := filepath.Join(dir, "ro"), filepath.Join(dir, "rw")
+	if err := os.WriteFile(ro, nil, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(ro, 0o644) })
+	if err := os.WriteFile(rw, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !readOnlyFile(ro) || readOnlyFile(rw) || readOnlyFile(filepath.Join(dir, "missing")) {
+		t.Errorf("readOnlyFile: ro %v, rw %v, missing %v", readOnlyFile(ro), readOnlyFile(rw), readOnlyFile(filepath.Join(dir, "missing")))
+	}
+}
+
 // A chain of links whose last link dangles names the path that is missing,
 // not the first hop, which exists.
 func TestSaveNamesTheMissingEndOfALinkChain(t *testing.T) {

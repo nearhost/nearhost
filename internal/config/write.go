@@ -78,11 +78,33 @@ func WriteFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	}
 	if err = renameIntoPlace(tmpName, path); err != nil {
 		if _, held := errors.AsType[*fsretry.StillBusyError](err); held {
-			return fmt.Errorf("%s is open in another program. Close it and try again.", path)
+			return stillBusy(path, err, fsretry.Sharing, readOnlyFile)
 		}
 		return err
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+// stillBusy is WriteFileAtomic's error for a rename into path that was
+// still refused when the retries ran out. Windows refuses with a sharing
+// violation when another program has the file open, and with access denied
+// both when a program opened it without letting others delete it and when
+// the file is read-only. So unless sharing says the error is a sharing
+// violation, readOnly looks at the file: a read-only file is reported as
+// such, and anything else as a file another program holds.
+func stillBusy(path string, err error, sharing func(error) bool, readOnly func(string) bool) error {
+	if !sharing(err) && readOnly(path) {
+		return fmt.Errorf("%s is read-only, so Nearhost cannot save it. Clear the file's read-only attribute and try again.", path)
+	}
+	return fmt.Errorf("%s is open in another program. Close it and try again.", path)
+}
+
+// readOnlyFile reports whether path is a file with no write permission,
+// which is how Go shows the read-only attribute on Windows. A path that
+// cannot be read is not.
+func readOnlyFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().Perm()&0o200 == 0
 }
 
 // maxLinkHops bounds how far missingEnd follows a chain of links.
