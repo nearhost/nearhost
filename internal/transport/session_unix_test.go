@@ -793,3 +793,35 @@ func TestStopEndsTheLongWait(t *testing.T) {
 func TestTheLongWaitEndsWhenTheWallClockPassesIt(t *testing.T) {
 	newSlowRetrySession(t, refusing).triesWhenTheWallClockPasses(t)
 }
+
+// startedWith starts a session on the fake ssh with the given `ssh -G` output
+// and returns the log of ssh's arguments once the master has connected.
+func startedWith(t *testing.T, env ...string) string {
+	t.Helper()
+	s, logPath := newFakeSession(t, env...)
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	return readLog(t, logPath)
+}
+
+// A host whose configuration lists ForkAfterAuthentication gets the option on
+// the master's command line, which wins over the file: ssh would fork the
+// master away from the supervisor otherwise. Setting it to no does no harm.
+func TestMasterTurnsForkAfterAuthenticationOff(t *testing.T) {
+	for _, value := range []string{"yes", "no"} {
+		log := startedWith(t, "FAKE_SSH_G_CONFIG=forkafterauthentication "+value)
+		if !strings.Contains(log, "-o ForkAfterAuthentication=no") {
+			t.Fatalf("value %s: master args lack the override: %q", value, log)
+		}
+	}
+}
+
+// Without the key in `ssh -G`, which an ssh that predates the option shows,
+// the master starts as before, and so it does when `ssh -G` fails.
+func TestMasterLeavesForkAfterAuthenticationAlone(t *testing.T) {
+	for _, env := range [][]string{nil, {"FAKE_SSH_G_FAIL=unknown option -- G"}} {
+		if log := startedWith(t, env...); strings.Contains(log, "ForkAfterAuthentication") {
+			t.Fatalf("env %v: master args have the override: %q", env, log)
+		}
+	}
+}
