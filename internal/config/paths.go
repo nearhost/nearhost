@@ -113,6 +113,9 @@ func caddyDirs() (current, old string, err error) {
 	return filepath.Join(data, "caddy"), old, nil
 }
 
+// OldCaddyDir is where Nearhost 0.7 and earlier kept Caddy's storage, in Dir.
+func OldCaddyDir() (string, error) { return sub("caddy") }
+
 // CaddyDir holds Caddy storage including the local CA. It is in DataDir,
 // unless only the directory older versions used in Dir exists: that one stays
 // in use, with the CA the user already trusts, until MigrateCaddyDir moves it.

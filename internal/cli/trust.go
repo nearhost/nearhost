@@ -1,16 +1,26 @@
 package cli
 
 import (
+	"bufio"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"math/big"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/smallstep/truststore"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/sudo"
@@ -45,6 +55,17 @@ type trustBackend struct {
 	// changed: no root-owned sudo, and Nearhost is not root. nil skips the
 	// check.
 	findSudo func() error
+	// running reports whether a Nearhost is serving on this machine, or why
+	// it cannot tell, for `untrust --delete-key`, which must not delete a CA
+	// one holds.
+	running func() (bool, error)
+	// ownerProblem refuses `untrust --delete-key` on the Caddy storage
+	// directory given, as when root would delete another user's CA.
+	ownerProblem func(storageRoot string) error
+	// interactive reports whether a question can be asked and answered.
+	interactive func() bool
+	// removeCA deletes the local CA from Caddy's storage directory.
+	removeCA func(storageRoot string) error
 }
 
 // noSudo says what to do about a missing sudo, for the command name.
@@ -81,6 +102,13 @@ func systemTrust() trustBackend {
 
 		uninstallNSS: proxy.UninstallNSS,
 		findSudo:     systemSudo,
+
+		running:      nearhostRunningWhy,
+		ownerProblem: ownerProblem,
+		interactive: func() bool {
+			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+		},
+		removeCA: proxy.RemoveCA,
 	}
 }
 
@@ -213,11 +241,17 @@ func nssLeftLine(st proxy.NSSStatus) string {
 	case st.State == proxy.NSSCovered:
 		return "The " + nssStores + " still trust the Nearhost Local CA (" + list +
 			"). Nearhost could not remove it there; delete it from that browser's certificates by hand." + nssCoverage
-	case st.State == proxy.NSSUnavailable && st.NoCertutil && len(st.Stores) > 0:
+	case certutilMissing(st):
 		return "Nearhost could not clean the " + nssStores + " (" + list + "), which may still trust the Nearhost Local CA: " +
 			st.Detail + ". Install it and run `nearhost untrust` again." + nssCoverage
 	}
 	return ""
+}
+
+// certutilMissing reports whether NSS stores were found that certutil, which
+// is not installed, would be needed to clean.
+func certutilMissing(st proxy.NSSStatus) bool {
+	return st.State == proxy.NSSUnavailable && st.NoCertutil && len(st.Stores) > 0
 }
 
 // nssStoreList names the NSS stores found, cleaned for printing.
@@ -269,90 +303,406 @@ func stillTrustedError(goos string) error {
 }
 
 func newUntrustCmd(b trustBackend) *cobra.Command {
-	return &cobra.Command{
+	var deleteKey, yes bool
+	cmd := &cobra.Command{
 		Use:   "untrust",
 		Short: "Remove the Nearhost Local CA from " + trustStore,
 		Long:  "Remove the Nearhost Local CA from " + trustStore + ".\n\n" + elevationNote,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			migrateCA(cmd.ErrOrStderr())
-			dir, err := config.CaddyDir()
-			if err != nil {
-				return err
-			}
-			cert, err := b.rootCert(dir)
-			if err != nil {
-				return fmt.Errorf("no local CA found: %w", err)
-			}
-			out := cmd.OutOrStdout()
-			// Presence decides what to remove, with IsTrusted as one input: a
-			// process that does not see the root as trusted can still have its
-			// anchor on disk.
-			trusted := b.isTrusted(cert)
-			holds := b.systemHolds == nil || b.systemHolds(cert)
-			// Only Linux can tell that trust is not Nearhost's to remove. On
-			// macOS a root trusted without a System keychain copy still gets
-			// its trust settings removal, then the re-check decides.
-			if trusted && !holds && hostOS == "linux" {
-				// Trust comes from a file Nearhost did not install, so there
-				// is nothing of Nearhost's to remove and no reason for sudo.
-				return foreignTrustError(hostOS, b.anchorHelp)
-			}
-			inStore := trusted || holds
-			if inStore {
-				// Check sudo only when there is something to remove: the
-				// not-trusted path asks for no elevation at all.
-				if err := b.sudoProblem("untrust"); err != nil {
+			if !deleteKey {
+				if yes {
+					return errors.New("--yes answers the question --delete-key asks, so it needs --delete-key")
+				}
+				migrateCA(cmd.ErrOrStderr())
+				dir, err := config.CaddyDir()
+				if err != nil {
 					return err
 				}
-				if err := b.uninstall(cert); err != nil {
-					switch {
-					case errors.Is(err, truststore.ErrNotFound):
-						inStore = false // listed or trusted a moment ago, gone now
-					case errors.Is(err, sudo.ErrNotFound):
-						return noSudo(err, "untrust")
-					case trustRefused(err):
-						return errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes.")
-					default:
-						return fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err)
-					}
+				cert, err := b.rootCert(dir)
+				if err != nil {
+					return fmt.Errorf("no local CA found: %w", err)
 				}
-				// A root another store still trusts is not removed, and the
-				// not-in-store line would be false.
-				still := b.stillTrusted
-				if still == nil {
-					still = b.isTrusted
-				}
-				if still(cert) {
-					return stillTrustedError(hostOS)
-				}
+				return untrustRoot(cmd.OutOrStdout(), b, cert)
 			}
-			if inStore {
-				fmt.Fprintln(out, "Nearhost Local CA removed from the trust store.")
-			} else {
-				fmt.Fprintln(out, untrustNotInStore)
-				// The root can sit in a browser store without being in the
-				// system store, and that needs no password.
-				if b.uninstallNSS != nil {
-					if err := b.uninstallNSS(cert); err != nil {
-						where := "an NSS store"
-						if b.nss != nil {
-							where = nssStoreList(b.nss(cert))
-						}
-						return fmt.Errorf("Nearhost could not remove the Nearhost Local CA from the NSS stores (%s). A browser may be holding its database open: quit Firefox and run `nearhost untrust` again.", where)
-					}
-				}
-			}
-			// The library removes from the NSS stores when it can and skips
-			// them silently otherwise, so check what actually happened. Trust
-			// left behind is a failure: `nearhost untrust && ...` must not go
-			// on while a browser still trusts the root.
-			if b.nss != nil {
-				if line := nssLeftLine(b.nss(cert)); line != "" {
-					return errors.New(line)
-				}
-			}
-			return nil
+			return untrustAndDelete(cmd, b, yes)
 		},
 	}
+	cmd.Flags().BoolVar(&deleteKey, "delete-key", false, "also delete the local CA and its private key; Nearhost makes a new one the next time it runs")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "delete the local CA without asking")
+	return cmd
+}
+
+// retryableError is an untrust failure that a second run gets past once the
+// user does what fix says: a declined prompt, sudo missing, a browser holding
+// its NSS store open, certutil missing. Its message is plain untrust's; fix
+// says what to do without telling the user to run plain untrust again.
+type retryableError struct {
+	err error
+	fix string
+}
+
+func (e *retryableError) Error() string { return e.err.Error() }
+func (e *retryableError) Unwrap() error { return e.err }
+
+// trustRemainsError is an untrust failure that leaves trust Nearhost cannot
+// remove: another store or a file Nearhost did not install still trusts the
+// root, a browser store still trusts it after cleaning, or the root could not
+// be read. Only these, and a clean untrust, let `untrust --delete-key` delete
+// the key; every other failure deletes nothing.
+type trustRemainsError struct{ err error }
+
+func (e *trustRemainsError) Error() string { return e.err.Error() }
+func (e *trustRemainsError) Unwrap() error { return e.err }
+
+// trustRemains marks err as trust Nearhost cannot remove.
+func trustRemains(err error) error { return &trustRemainsError{err: err} }
+
+// untrustStep is untrustRoot; tests replace it.
+var untrustStep = untrustRoot
+
+// noSudoRetry is untrust's error for a missing sudo.
+func noSudoRetry(err error) error {
+	return &retryableError{err: noSudo(err, "untrust"), fix: fmt.Sprintf("%v; install sudo in one of those", err)}
+}
+
+// untrustAndDelete is `nearhost untrust --delete-key`: it untrusts the root,
+// then asks, unless yes, and deletes the local CA.
+//
+// The key goes only after a clean untrust or one that left trust Nearhost
+// cannot remove (a trustRemainsError). Any other failure asks and deletes
+// nothing: a second run, once the user fixes what the error names, can still
+// find the root to untrust. When trust remains, the key goes anyway. A root something still trusts is worse
+// with its key on disk, where anyone who reads it can sign certificates that
+// trust accepts; without the key the root signs nothing new. The command then
+// fails and names the old root by fingerprint and serial number, so the user
+// can tell it from the new one, and a copy of its certificate stays in the
+// data directory. A clean untrust keeps no copy.
+func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
+	// Refuse before anything happens: the two steps are one operation.
+	if err := runningProblem(b); err != nil {
+		return err
+	}
+	if !yes && !b.interactive() {
+		return errors.New("`nearhost untrust --delete-key` asks before it deletes the local CA, and there is no terminal to ask in. " +
+			"Run `nearhost untrust --delete-key --yes` to delete it without asking")
+	}
+	if dir, err := config.CaddyDir(); err == nil {
+		if err := b.ownerProblem(dir); err != nil {
+			return err
+		}
+	}
+	migrateCA(cmd.ErrOrStderr())
+	dir, err := config.CaddyDir()
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	ca := caDir(dir)
+	oldRoot := oldCopy(dir)
+	cert, err := b.rootCert(dir)
+	var untrustErr error
+	switch {
+	case err == nil:
+		untrustErr = untrustStep(out, b, cert)
+	case errors.Is(err, fs.ErrNotExist) && !caPresent(ca):
+		return fmt.Errorf("no local CA found: %w", err)
+	default:
+		// A key without a readable root: there is no root to untrust, but the
+		// key can still go.
+		cert = nil
+		untrustErr = trustRemains(fmt.Errorf("Nearhost could not read the local CA's root certificate (%w), so it could not check what trusts it.", err))
+	}
+	var remains *trustRemainsError
+	if untrustErr != nil && !errors.As(untrustErr, &remains) {
+		// A second run can finish the untrust, and could not find the root
+		// to untrust once the CA is gone.
+		var retry *retryableError
+		if errors.As(untrustErr, &retry) {
+			return fmt.Errorf("Nothing was deleted. %s, then run `nearhost untrust --delete-key` again.", retry.fix)
+		}
+		return fmt.Errorf("Nothing was deleted. %v Fix that, then run `nearhost untrust --delete-key` again.", strings.TrimSuffix(untrustErr.Error(), ".")+".")
+	}
+	if !yes {
+		also := ""
+		if oldRoot != "" {
+			also = " and the old copy in " + printable(caDir(oldRoot))
+		}
+		fmt.Fprintf(out, "Delete the local CA and its key in %s%s? Nearhost makes a new one, which you trust again, the next time it runs. [y/N] ", printable(ca), also)
+		if !saidYesDefaultNo(bufio.NewReader(cmd.InOrStdin()), out) {
+			fmt.Fprintln(out, "Kept the local CA and its key.")
+			return untrustErr
+		}
+	}
+	// A password prompt or the question can wait for any length of time.
+	if up, err := b.running(); up || err != nil {
+		kept := "The local CA was untrusted but its key was kept. Stop Nearhost, then run `nearhost untrust --delete-key` again."
+		if err != nil {
+			kept = fmt.Sprintf("The local CA was untrusted but its key was kept: Nearhost could not tell whether a Nearhost is running (%v). Stop it, then run `nearhost untrust --delete-key` again.", err)
+		}
+		if untrustErr != nil {
+			return fmt.Errorf("%w\n%s", untrustErr, kept)
+		}
+		return errors.New(kept)
+	}
+
+	// Keep the root's certificate only while something still trusts it, so
+	// the user can tell it from the new one.
+	kept := ""
+	if cert != nil && untrustErr != nil {
+		if kept, err = keepRoot(cert); err != nil {
+			fmt.Fprintf(out, "Nearhost could not keep a copy of the old root certificate: %v.\n", err)
+		}
+	}
+	removeErr := b.removeCA(dir)
+	var oldErr error
+	if oldRoot != "" {
+		oldErr = b.removeCA(oldRoot)
+	}
+	keyGone := !caPresent(ca)
+
+	var problems []string
+	if untrustErr != nil {
+		problems = append(problems, untrustErr.Error())
+	}
+	if keyGone && oldErr == nil {
+		fmt.Fprintln(out, "Deleted the local CA and its key.")
+		if kept != "" {
+			fmt.Fprintf(out, "Kept a copy of its root certificate, which holds no key, in %s.\n", printable(kept))
+		}
+		if removeErr != nil {
+			problems = append(problems, fmt.Sprintf("The key is deleted, but Nearhost could not delete all the certificates the old CA issued: %v.", removeErr))
+		}
+	} else {
+		if removeErr != nil {
+			problems = append(problems, fmt.Sprintf("Nearhost could not delete the local CA: %v.", removeErr))
+		}
+		if oldErr != nil {
+			problems = append(problems, fmt.Sprintf("Nearhost could not delete the old copy of the local CA: %v.", oldErr))
+		}
+	}
+	if untrustErr != nil {
+		if line := oldRootLine(cert, kept, keyGone && oldErr == nil); line != "" {
+			problems = append(problems, line)
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "\n"))
+	}
+	return nil
+}
+
+// runningProblem refuses `untrust --delete-key` while a Nearhost runs, or
+// when it cannot tell: a running one holds the CA in memory.
+func runningProblem(b trustBackend) error {
+	up, err := b.running()
+	if err != nil {
+		return fmt.Errorf("could not tell whether a Nearhost is running (%v); stop it and try again", err)
+	}
+	if up {
+		return errors.New("a Nearhost is running on this machine, and it holds the local CA in memory: it would go on using the key and could write it back. " +
+			"Stop Nearhost first, then run `nearhost untrust --delete-key` again")
+	}
+	return nil
+}
+
+// nearhostRunningWhy is nearhostRunning that says why when it cannot tell.
+func nearhostRunningWhy() (bool, error) {
+	id, err := config.InstallID()
+	if err != nil {
+		return false, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	return agentapi.Answers(agentSocket(home, id)), nil
+}
+
+// caDir is the local CA's directory in the Caddy storage directory dir.
+func caDir(dir string) string { return filepath.Dir(proxy.RootCertPath(dir)) }
+
+// caPresent reports whether the local CA's directory is there.
+func caPresent(ca string) bool {
+	_, err := os.Lstat(ca)
+	return err == nil
+}
+
+// oldCopy is the Caddy storage directory Nearhost 0.7 and earlier used, when
+// it still holds a local CA and is not dir, the one in use; "" otherwise. A
+// move to the data directory that could not delete the original leaves one.
+func oldCopy(dir string) string {
+	old, err := config.OldCaddyDir()
+	if err != nil || filepath.Clean(old) == filepath.Clean(dir) || !caPresent(caDir(old)) {
+		return ""
+	}
+	return old
+}
+
+// keepRoot writes cert, the certificate alone and never a key, to
+// <data dir>/old-roots/<serial>.crt and returns that path, so the old root
+// can be told apart from the one Nearhost makes next.
+func keepRoot(cert *x509.Certificate) (string, error) {
+	data, err := config.DataDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(data, "old-roots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	name := cert.SerialNumber.Text(16) + ".crt"
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	if err := root.WriteFile(name, pemData, 0o644); err != nil {
+		return "", err
+	}
+	// WriteFile's mode is cut by the umask, and an existing file keeps its own.
+	if err := root.Chmod(name, 0o644); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
+}
+
+// oldRootLine closes a run that left trust behind: it says whether the key
+// is gone and names the old root, so the user removes that one and not the
+// new Nearhost Local CA. cert is nil when the root could not be read; kept is
+// where its copy is, "" for none; deleted is whether every copy of the key is
+// gone. It is "" when there is nothing to say.
+func oldRootLine(cert *x509.Certificate, kept string, deleted bool) string {
+	lead := "The trust above remains."
+	if deleted {
+		lead = "Nearhost deleted the CA's key, so nothing can sign new certificates under that root, but the trust above remains."
+	}
+	if cert == nil {
+		if !deleted {
+			return ""
+		}
+		return "Nearhost deleted the CA's key, so nothing can sign new certificates under that root, but it could not read the root to say which Nearhost Local CA it is."
+	}
+	sum := sha256.Sum256(cert.Raw)
+	ids := "SHA-256 fingerprint " + colonPairs(sum[:])
+	if hostOS == "windows" {
+		// certlm.msc shows the SHA-1 thumbprint.
+		ids += fmt.Sprintf(", SHA-1 thumbprint %x", sha1.Sum(cert.Raw))
+	}
+	ids += " and serial number " + colonPairs(serialBytes(cert.SerialNumber))
+	copyNote := ""
+	if kept != "" {
+		copyNote = fmt.Sprintf(" (a copy is in %s)", printable(kept))
+	}
+	return fmt.Sprintf("%s That root has %s%s. The Nearhost Local CA that Nearhost makes on its next run has others, so remove the one that matches.",
+		lead, ids, copyNote)
+}
+
+// serialBytes is a serial number's bytes as DER encodes them and certificate
+// viewers show them: a leading 00 when the high bit is set.
+func serialBytes(n *big.Int) []byte {
+	b := n.Bytes()
+	if len(b) == 0 || b[0]&0x80 != 0 {
+		b = append([]byte{0}, b...)
+	}
+	return b
+}
+
+// colonPairs is b as upper-case hex pairs joined with colons, the way
+// certificate viewers show fingerprints and serial numbers.
+func colonPairs(b []byte) string {
+	parts := make([]string, len(b))
+	for i, c := range b {
+		parts[i] = fmt.Sprintf("%02X", c)
+	}
+	return strings.Join(parts, ":")
+}
+
+// untrustRoot removes cert from the system and NSS stores. An error means
+// something may still trust it.
+func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
+	// Presence decides what to remove, with IsTrusted as one input: a
+	// process that does not see the root as trusted can still have its
+	// anchor on disk.
+	trusted := b.isTrusted(cert)
+	holds := b.systemHolds == nil || b.systemHolds(cert)
+	// Only Linux can tell that trust is not Nearhost's to remove. On
+	// macOS a root trusted without a System keychain copy still gets
+	// its trust settings removal, then the re-check decides.
+	if trusted && !holds && hostOS == "linux" {
+		// Trust comes from a file Nearhost did not install, so there
+		// is nothing of Nearhost's to remove and no reason for sudo.
+		return trustRemains(foreignTrustError(hostOS, b.anchorHelp))
+	}
+	inStore := trusted || holds
+	if inStore {
+		// Check sudo only when there is something to remove: the
+		// not-trusted path asks for no elevation at all.
+		if b.findSudo != nil {
+			if err := b.findSudo(); err != nil {
+				return noSudoRetry(err)
+			}
+		}
+		if err := b.uninstall(cert); err != nil {
+			switch {
+			case errors.Is(err, truststore.ErrNotFound):
+				inStore = false // listed or trusted a moment ago, gone now
+			case errors.Is(err, sudo.ErrNotFound):
+				return noSudoRetry(err)
+			case trustRefused(err):
+				return &retryableError{
+					err: errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."),
+					fix: "Nearhost Local CA was not removed because the Windows security warning was declined. Be ready to choose Yes in it",
+				}
+			default:
+				return &retryableError{
+					err: fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err),
+					fix: fmt.Sprintf("Nearhost Local CA was not removed (%v). If you declined the prompt, be ready to approve it", err),
+				}
+			}
+		}
+		// A root another store still trusts is not removed, and the
+		// not-in-store line would be false.
+		still := b.stillTrusted
+		if still == nil {
+			still = b.isTrusted
+		}
+		if still(cert) {
+			return trustRemains(stillTrustedError(hostOS))
+		}
+	}
+	if inStore {
+		fmt.Fprintln(out, "Nearhost Local CA removed from the trust store.")
+	} else {
+		fmt.Fprintln(out, untrustNotInStore)
+		// The root can sit in a browser store without being in the
+		// system store, and that needs no password.
+		if b.uninstallNSS != nil {
+			if err := b.uninstallNSS(cert); err != nil {
+				where := "an NSS store"
+				if b.nss != nil {
+					where = nssStoreList(b.nss(cert))
+				}
+				held := fmt.Sprintf("Nearhost could not remove the Nearhost Local CA from the NSS stores (%s). A browser may be holding its database open: quit Firefox", where)
+				return &retryableError{err: errors.New(held + " and run `nearhost untrust` again."), fix: held}
+			}
+		}
+	}
+	// The library removes from the NSS stores when it can and skips
+	// them silently otherwise, so check what actually happened. Trust
+	// left behind is a failure: `nearhost untrust && ...` must not go
+	// on while a browser still trusts the root.
+	if b.nss != nil {
+		st := b.nss(cert)
+		if line := nssLeftLine(st); line != "" {
+			if certutilMissing(st) {
+				// Installing certutil and running again finishes the job.
+				return &retryableError{err: errors.New(line), fix: "Nearhost could not clean the " + nssStores + " (" + nssStoreList(st) +
+					"), which may still trust the Nearhost Local CA: " + st.Detail + ". Install it"}
+			}
+			return trustRemains(errors.New(line))
+		}
+	}
+	return nil
 }

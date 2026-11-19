@@ -59,3 +59,22 @@ func TestTrustCarriesOnWhenTheMoveFails(t *testing.T) {
 		t.Fatalf("stderr %q", errOut.String())
 	}
 }
+
+// Root may not delete a CA in storage another user owns; that user may.
+func TestOwnerProblemRefusesRootInAnotherUsersStorage(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs a directory root does not own")
+	}
+	dir := t.TempDir()
+	err := ownerProblemFor(0, dir)
+	if err == nil || !strings.Contains(err.Error(), dir) ||
+		!strings.Contains(err.Error(), "Run `nearhost untrust --delete-key` without sudo. Nearhost asks for the password itself when it needs it.") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := ownerProblemFor(os.Geteuid(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ownerProblemFor(0, filepath.Join(dir, "missing")); err != nil {
+		t.Fatal(err)
+	}
+}

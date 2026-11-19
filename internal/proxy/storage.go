@@ -439,3 +439,115 @@ func removeCertFiles(dir *os.Root, files []string) error {
 	}
 	return dir.Remove(crt)
 }
+
+// RemoveCA deletes the local CA from Caddy's storage under storageRoot: the
+// authority's directory, which holds its root and intermediate certificates
+// and their private keys, and then the site certificates it issued. Those
+// would otherwise be served until they came up for renewal, under a root
+// nobody trusts any more. Nothing else in storageRoot is touched, and with no
+// CA there is nothing to do.
+//
+// storageRoot comes from the environment. It may itself be a link, as into a
+// dotfiles repository, but no link below it is followed: each directory on
+// the way to the two that go must be a plain directory, or nothing is
+// removed. The removal goes through an os.Root, so it cannot leave
+// storageRoot even if a link appears after that check. A removal that leaves
+// anything behind is an error naming what is left.
+func RemoveCA(storageRoot string) error {
+	if !filepath.IsAbs(storageRoot) {
+		return fmt.Errorf("Caddy's storage directory %q is not an absolute path; Nearhost deletes nothing there", storageRoot)
+	}
+	root, err := os.OpenRoot(storageRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	ca, err := filepath.Rel(storageRoot, filepath.Dir(RootCertPath(storageRoot)))
+	if err != nil {
+		return err
+	}
+	issued := filepath.FromSlash(strings.TrimSuffix(certmagic.StorageKeys.CertsPrefix(filepath.Base(ca)), "/"))
+	dirs := []string{ca, issued}
+	for _, dir := range dirs {
+		if err := noLinks(root, storageRoot, dir); err != nil {
+			return err
+		}
+	}
+	for _, dir := range dirs {
+		if err := removeChecked(root, storageRoot, dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// noLinks returns an error when dir, a path relative to root, or a directory
+// on the way to it is a link (on Windows also a junction or another reparse
+// point). A part that does not exist ends the check: nothing below it is
+// there to remove.
+func noLinks(root *os.Root, shownRoot, dir string) error {
+	part := ""
+	for _, name := range strings.Split(dir, string(filepath.Separator)) {
+		part = filepath.Join(part, name)
+		fi, err := root.Lstat(part)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("%s is a link, and Nearhost deletes the local CA only where Caddy keeps it, so it deleted nothing. "+
+				"If that link leads to Nearhost's local CA, delete the CA yourself", filepath.Join(shownRoot, part))
+		}
+	}
+	return nil
+}
+
+// removeChecked removes dir, a path relative to root, and everything under
+// it, then checks it is gone. What is left is reported under shownRoot.
+func removeChecked(root *os.Root, shownRoot, dir string) error {
+	err := root.RemoveAll(dir)
+	left := leftUnder(root, shownRoot, dir)
+	if err == nil && len(left) == 0 {
+		return nil
+	}
+	if err == nil {
+		err = errors.New("files remain")
+	}
+	if len(left) == 0 {
+		left = []string{filepath.Join(shownRoot, dir)}
+	}
+	return fmt.Errorf("Nearhost could not delete all of %s (%v). Still there: %s. Delete them by hand",
+		filepath.Join(shownRoot, dir), err, strings.Join(left, ", "))
+}
+
+// maxLeft is how many leftover paths an error names.
+const maxLeft = 10
+
+// leftUnder lists the files and directories still at or under dir in root,
+// up to maxLeft, files first since they hold the data, as paths under
+// shownRoot.
+func leftUnder(root *os.Root, shownRoot, dir string) []string {
+	var files, dirs []string
+	start := filepath.ToSlash(dir)
+	fs.WalkDir(root.FS(), start, func(p string, d fs.DirEntry, err error) error {
+		shown := filepath.Join(shownRoot, filepath.FromSlash(p))
+		switch {
+		case err != nil && p == start && errors.Is(err, fs.ErrNotExist):
+		case err != nil || !d.IsDir():
+			files = append(files, shown)
+		default:
+			dirs = append(dirs, shown)
+		}
+		return nil
+	})
+	left := append(files, dirs...)
+	if len(left) > maxLeft {
+		left = append(left[:maxLeft], fmt.Sprintf("and %d more", len(left)-maxLeft))
+	}
+	return left
+}
