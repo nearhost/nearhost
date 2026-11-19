@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,13 +55,36 @@ func (m *Model) shortRoot(origin, root string) string {
 	if err != nil || home == "" || home == "/" {
 		return clean(root)
 	}
+	return clean(shortHome(root, home, runtime.GOOS == "windows"))
+}
+
+// shortHome is root with the home folder at its start as ~. On a Windows
+// laptop the folder may be written with either separator, and its name
+// compares without case; the prefix must end at a separator, so C:\Users\meow
+// is not below C:\Users\me.
+func shortHome(root, home string, windowsLocal bool) string {
+	if windowsLocal {
+		home = strings.TrimRight(home, `/\`)
+		n := len(home)
+		slashed := strings.NewReplacer(`\`, "/")
+		if n == 0 || len(root) < n || !strings.EqualFold(slashed.Replace(root[:n]), slashed.Replace(home)) {
+			return root
+		}
+		switch {
+		case len(root) == n:
+			return "~"
+		case root[n] == '/' || root[n] == '\\':
+			return "~" + root[n:]
+		}
+		return root
+	}
 	switch {
 	case root == home:
-		root = "~"
+		return "~"
 	case strings.HasPrefix(root, home+"/"):
-		root = "~" + root[len(home):]
+		return "~" + root[len(home):]
 	}
-	return clean(root)
+	return root
 }
 
 // docForm asks whether to show a document for an agent: yes, no, or always

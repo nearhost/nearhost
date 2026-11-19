@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,6 +54,10 @@ type projectForm struct {
 	servers []config.Server // Local, then the configured servers
 	cursor  int             // the server step's row; len(servers) is "New server…"
 	sub     *serverForm     // the add-server form, while open from here
+
+	// laptopWindows is whether this machine is Windows, whose own files take
+	// backslashes. It is set once, when the form opens.
+	laptopWindows bool
 
 	srv      config.Server
 	files    ServerFiles // open from the path step on; nil before, or when connecting failed
@@ -204,7 +209,7 @@ func newProposalForm(b Backend, cfg *config.Config, srv config.Server, p Proposa
 // newProjectForm opens the add-project form with the cursor on the server
 // called selected.
 func newProjectForm(b Backend, cfg *config.Config, dir, selected string, w *worker) *projectForm {
-	f := &projectForm{b: b, cfg: cfg, dir: dir, offered: map[string]bool{}, w: w}
+	f := &projectForm{b: b, cfg: cfg, dir: dir, offered: map[string]bool{}, w: w, laptopWindows: runtime.GOOS == "windows"}
 	f.servers = append([]config.Server{{Name: config.LocalServer}}, cfg.Servers...)
 	for i, s := range f.servers {
 		if s.Name == selected {
@@ -894,6 +899,13 @@ func routeAt(routes []config.Route, port int) int {
 	return 0
 }
 
+// winLocal reports whether the path is one of a Windows laptop's own files,
+// the only paths with backslashes: the server is this machine and it runs
+// Windows. A server reached over ssh has POSIX paths whatever the laptop is.
+func (f *projectForm) winLocal() bool {
+	return f.laptopWindows && f.srv.Name == config.LocalServer
+}
+
 // pick goes on with srv: to the path step, connecting to the server.
 func (f *projectForm) pick(srv config.Server) tea.Cmd {
 	f.srv, f.step, f.err = srv, projectStepPath, ""
@@ -918,13 +930,85 @@ func (f *projectForm) connect() tea.Cmd {
 	})
 }
 
-// splitPath splits a path at its last slash: the parent, kept as typed with
-// its slash, and the part being typed after it.
-func splitPath(v string) (parent, part string) {
-	if i := strings.LastIndex(v, "/"); i >= 0 {
+// splitPath splits a path at its last separator: the parent, kept as typed
+// with its separator, and the part being typed after it. A separator is a
+// slash, and on a Windows laptop's own files also a backslash, so a drive
+// root such as C:\ and a share such as \\server\share\ are parents too.
+// It does not use path/filepath, which splits on one separator by the OS
+// the program runs on.
+func splitPath(v string, windowsLocal bool) (parent, part string) {
+	i := strings.LastIndex(v, "/")
+	if windowsLocal {
+		i = strings.LastIndexAny(v, `/\`)
+	}
+	if i >= 0 {
 		return v[:i+1], v[i+1:]
 	}
 	return "", v
+}
+
+// pathSep is the separator accept puts after a folder: a slash, except on
+// a Windows laptop's own files, where it is the one the path was typed with
+// last, a backslash when none was.
+func pathSep(parent string, windowsLocal bool) string {
+	if windowsLocal && !strings.HasSuffix(parent, "/") {
+		return `\`
+	}
+	return "/"
+}
+
+// driveRelative reports whether the path is a drive and no separator yet,
+// such as C: or C:ap, on a Windows laptop's own files. Such a path names the
+// drive's working folder, not its root, so it is not completed; the drive's
+// folders are listed once a separator follows the colon.
+func driveRelative(parent, part string, windowsLocal bool) bool {
+	return windowsLocal && parent == "" && len(part) >= 2 && part[1] == ':' &&
+		(part[0]|0x20 >= 'a' && part[0]|0x20 <= 'z')
+}
+
+// listPath is the directory string the lister is given for a parent. On a
+// Windows laptop's own files it is a Windows path: slashes become
+// backslashes, and a leading ~ keeps to the form the lister expands, ~/.
+func listPath(parent string, windowsLocal bool) string {
+	switch {
+	case parent == "":
+		return "."
+	case !windowsLocal:
+		return parent
+	case isTildePath(parent):
+		return tildePath(parent)
+	}
+	return strings.ReplaceAll(parent, "/", `\`)
+}
+
+// isTildePath reports whether p is ~ or starts with ~ and a separator.
+func isTildePath(p string) bool {
+	return p == "~" || strings.HasPrefix(p, `~\`) || strings.HasPrefix(p, "~/")
+}
+
+// tildePath is a Windows path that starts with ~ in the form the local
+// files expand, ~/ and slashes, as they do not expand ~\.
+func tildePath(p string) string {
+	if p == "~" {
+		return p
+	}
+	return "~/" + strings.ReplaceAll(p[2:], `\`, "/")
+}
+
+// hiddenWindowsDir reports whether d is a system folder of a drive root that
+// a listing of the laptop's own files leaves out.
+func hiddenWindowsDir(d string) bool {
+	return strings.EqualFold(d, "$Recycle.Bin") || strings.EqualFold(d, "System Volume Information")
+}
+
+// hasNamePrefix reports whether the directory name d starts with part.
+// Windows file names are not case sensitive, so on a Windows laptop's own
+// files case is ignored.
+func hasNamePrefix(d, part string, windowsLocal bool) bool {
+	if windowsLocal {
+		return strings.HasPrefix(strings.ToLower(d), strings.ToLower(part))
+	}
+	return strings.HasPrefix(d, part)
 }
 
 // isDirName reports whether part is a directory already: ~ at the start,
@@ -945,15 +1029,12 @@ func (f *projectForm) listAhead() tea.Cmd {
 	if f.files == nil || f.edit != nil {
 		return nil
 	}
-	parent, _ := splitPath(f.path.value)
-	if _, ok := f.listings[parent]; ok {
+	parent, part := splitPath(f.path.value, f.winLocal())
+	if _, ok := f.listings[parent]; ok || driveRelative(parent, part, f.winLocal()) {
 		return nil
 	}
 	f.listings[parent] = listing{}
-	conn, files, list := f.conn, f.files, parent
-	if list == "" {
-		list = "."
-	}
+	conn, files, list := f.conn, f.files, listPath(parent, f.winLocal())
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		dirs, err := files.ListDirs(ctx, list)
 		return listedMsg{conn, parent, dirs, err}
@@ -970,15 +1051,16 @@ func (f *projectForm) edited() tea.Cmd {
 // candidates are the parent's directories that start with the part being
 // typed, in the listing's order. Hidden ones wait for a dot.
 func (f *projectForm) candidates() []string {
-	parent, part := splitPath(f.path.value)
+	parent, part := splitPath(f.path.value, f.winLocal())
 	l := f.listings[parent]
-	if !l.done || l.err != nil || part == "~" && parent == "" {
+	if !l.done || l.err != nil || part == "~" && parent == "" || driveRelative(parent, part, f.winLocal()) {
 		return nil
 	}
 	var found []string
 	for _, d := range l.dirs {
-		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(part, ".")
-		if strings.HasPrefix(d, part) && !hidden {
+		hidden := strings.HasPrefix(d, ".") && !strings.HasPrefix(part, ".") ||
+			f.winLocal() && hiddenWindowsDir(d)
+		if hasNamePrefix(d, part, f.winLocal()) && !hidden {
 			found = append(found, d)
 		}
 	}
@@ -996,28 +1078,28 @@ func (f *projectForm) suggestion() string {
 
 // accept puts the suggestion in the path, as a directory.
 func (f *projectForm) accept() tea.Cmd {
-	parent, _ := splitPath(f.path.value)
-	f.path.value = parent + f.suggestion() + "/"
+	parent, _ := splitPath(f.path.value, f.winLocal())
+	f.path.value = parent + f.suggestion() + pathSep(parent, f.winLocal())
 	return f.edited()
 }
 
 // tab completes the path: it accepts the suggestion, else gives ~, . and ..
 // their slash, else lists the parent again, as it may have changed since.
 func (f *projectForm) tab() tea.Cmd {
-	parent, part := splitPath(f.path.value)
+	parent, part := splitPath(f.path.value, f.winLocal())
 	switch {
 	case f.suggestion() != "":
 		return f.accept()
 	case isDirName(parent, part):
-		f.path.value += "/"
+		f.path.value += pathSep(parent, f.winLocal())
 		return f.edited()
+	case driveRelative(parent, part, f.winLocal()):
+		f.listNote = "no directories match"
+		return nil
 	}
 	f.seq = nextSeq()
 	f.busy, f.listNote = "Listing…", ""
-	seq, files, list := f.seq, f.files, parent
-	if list == "" {
-		list = "."
-	}
+	seq, files, list := f.seq, f.files, listPath(parent, f.winLocal())
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		dirs, err := files.ListDirs(ctx, list)
 		return completedMsg{seq, parent, part, dirs, err}
@@ -1045,6 +1127,9 @@ func (f *projectForm) resolve() tea.Cmd {
 	f.seq = nextSeq()
 	f.busy, f.err, f.listNote = "Checking "+clean(f.path.value)+"…", "", ""
 	seq, files, p, b := f.seq, f.files, strings.TrimSpace(f.path.value), f.b
+	if f.winLocal() && isTildePath(p) {
+		p = tildePath(p)
+	}
 	return f.w.do(func(ctx context.Context) tea.Msg {
 		resolved, err := files.Resolve(ctx, p)
 		return resolvedMsg{seq, resolved, err == nil && b.RegistryQuestion(), err}
@@ -1341,8 +1426,11 @@ func (f *projectForm) lines(width int) []string {
 		focused := f.busy == "" && f.files != nil
 		view := f.path.view(focused)
 		if s := f.suggestion(); focused && s != "" {
-			_, part := splitPath(f.path.value)
-			view += styleDim.Render(clean(s[len(part):] + "/"))
+			parent, part := splitPath(f.path.value, f.winLocal())
+			if len(part) > len(s) {
+				part = s
+			}
+			view += styleDim.Render(clean(s[len(part):] + pathSep(parent, f.winLocal())))
 		}
 		lines = append(lines, field("path", view, width)...)
 		if c := f.candidates(); focused && len(c) > 1 {
