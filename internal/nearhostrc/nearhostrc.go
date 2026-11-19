@@ -21,7 +21,6 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
-	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 const (
@@ -275,7 +274,7 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 		if !ok {
 			return r, unset(name)
 		}
-		if err := hostname.Valid(host); err != nil {
+		if err := config.ValidProjectHost(host); err != nil {
 			return r, fmt.Errorf("%s: %w", FileName, err)
 		}
 		r.Hosts = append(r.Hosts, host)

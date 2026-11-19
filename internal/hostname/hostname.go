@@ -15,6 +15,12 @@ import (
 // wildcard is the label that stands for exactly one non-empty label.
 const wildcard = "*"
 
+// PageHost is the host name of Nearhost's own page, served on the web port.
+// It is the only host the page's cookie is given at, so no project may
+// claim it. It lives here, the package every other one can import, so the
+// proxy, the hosts file and the config share one name.
+const PageHost = "nearhost.localhost"
+
 // Valid reports whether h is a usable exact host or pattern. The error names h
 // so callers can pass it straight to the user. Names must already be lower
 // case and without a trailing dot, so one project cannot spell the same host

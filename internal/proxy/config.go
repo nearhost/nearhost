@@ -146,9 +146,10 @@ type Options struct {
 	// no sites declares no listeners.
 	HomeWithNoSites bool
 	// WebPort is a port of its own that serves the home page, Nearhost's
-	// page, at https://localhost:<port> whenever the proxy listens. It is
-	// the page's only address: localhost on the https port belongs to
-	// projects. 0 means none, and then the page is not served.
+	// page, at https://nearhost.localhost:<port>, and at localhost on the
+	// same port, whenever the proxy listens. It is the page's only port:
+	// localhost on the https port belongs to projects. 0 means none, and
+	// then the page is not served.
 	WebPort int
 }
 
@@ -286,7 +287,7 @@ func viaReplace(version string) map[string]any {
 }
 
 // homeRoute is the web server's route serving Nearhost's own page at
-// localhost to loopback clients. It has no tag: the page is no project's.
+// pageHosts to loopback clients. It has no tag: the page is no project's.
 func homeRoute(opts Options) map[string]any {
 	version := opts.Version
 	if version == "" {
@@ -295,7 +296,7 @@ func homeRoute(opts Options) map[string]any {
 	handler := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
 	return map[string]any{
 		"match": []any{map[string]any{
-			"host":      []string{homeHost},
+			"host":      pageHosts(),
 			"remote_ip": map[string]any{"ranges": loopbackRanges},
 		}},
 		"handle":   []any{handler},
@@ -308,7 +309,7 @@ func homeRoute(opts Options) map[string]any {
 var pageAddrs = netbind.PageAddrs
 
 // webServer is the server on opts.WebPort, which serves the home page at
-// localhost to loopback clients and drops everything else. It listens on
+// pageHosts to loopback clients and drops everything else. It listens on
 // netbind.PageAddrs: the loopback addresses alone, so the kernel refuses a
 // connection from another machine to this port before a request is read,
 // except on macOS for a port below 1024 when Nearhost is not root, where it
@@ -459,14 +460,14 @@ func listenerWrappers(server map[string]any) map[string]any {
 // deterministic: there is one route per host, ordered by hostname.Less, so
 // exact hosts win over patterns and more specific patterns over less
 // specific ones. While any site has extra clients, a host not served to all
-// of them is followed by a drop for that host alone (see hostDrop). Nearhost's
-// own page is served on the web port alone (see webServer): localhost on
-// the https port is served only to a site that lists it, and is otherwise
-// dropped like any host that is not served. With a web port, localhost is
-// a certificate subject whether or not a site lists it. The https server's
-// error routes, one per site host in the same
-// order, give a browser Nearhost's page while that site's app does not
-// answer (see Down).
+// of them is followed by a drop for that host alone (see hostDrop).
+// Nearhost's own page is served on the web port alone (see webServer):
+// localhost on the https port is served only to a site that lists it, and
+// is otherwise dropped like any host that is not served. With a web port,
+// localhost and hostname.PageHost are certificate subjects whether or not a
+// site lists them. The https server's error routes, one per site host in
+// the same order, give a browser Nearhost's page while that site's app does
+// not answer (see Down).
 func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if opts.StorageRoot == "" {
 		return nil, errors.New("proxy: storage root is required")
@@ -569,12 +570,16 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
 	})
 
-	// The web port serves the home page at localhost, so localhost is a
+	// The web port serves the home page at pageHosts, so each is a
 	// certificate subject whenever that port is served, unless it already
 	// is one as a project's host.
 	web := opts.WebPort != 0 && listens(sites, opts)
-	if _, claimed := siteOf[homeHost]; web && !claimed {
-		subjects = append(subjects, homeHost)
+	if web {
+		for _, h := range pageHosts() {
+			if _, claimed := siteOf[h]; !claimed {
+				subjects = append(subjects, h)
+			}
+		}
 	}
 	// An empty-subject policy would match every name, so only add one when
 	// there are exact hosts.

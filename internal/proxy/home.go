@@ -9,13 +9,23 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 // homeModule is the Caddy handler module name registered below.
 const homeModule = "nearhost_home"
 
-// homeHost is the host the home page is served at, on the web port alone.
+// homeHost is the page's other host, beside hostname.PageHost, on the web
+// port alone. The page answers there, but never gives or honours its cookie
+// there (see setPageCookie).
 const homeHost = "localhost"
+
+// pageHosts lists the hosts the home page is served at on the web port:
+// hostname.PageHost, its own, and homeHost.
+func pageHosts() []string {
+	return []string{hostname.PageHost, homeHost}
+}
 
 // homeCSP lets the page use its own inline styles and data: images and
 // nothing else, so it can never make a request that leaves the machine,
@@ -35,10 +45,10 @@ func init() {
 }
 
 // Home is a Caddy HTTP handler that serves Nearhost's own page, at
-// https://localhost:<web port> and nowhere else. It is a module of
-// its own, rather than a static response in the config, so the page can
-// grow without touching routing. It answers every request itself and never
-// calls the next handler.
+// https://nearhost.localhost:<web port> and https://localhost:<web port>
+// and nowhere else. It is a module of its own, rather than a static
+// response in the config, so the page can grow without touching routing.
+// It answers every request itself and never calls the next handler.
 type Home struct {
 	// Version is the Nearhost version shown in the footer. Empty means dev.
 	Version string `json:"version,omitempty"`
@@ -88,15 +98,18 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler. Paths below /d/ go to
 // the documents handler SetDocuments stored, which sets its own headers; a
-// successful answer there also gives the browser the page cookie, as the
-// link proves it was given a document. Otherwise only / exists, and only GET
-// and HEAD read it. /?k=<secret> gives the cookie for the right secret and
-// sends the browser on to /. / lists the documents' trees, rendered per
-// request, only to a browser with the cookie; any other gets the page with
-// no list, which shows nothing of the documents, not even whether any are.
+// successful answer there at hostname.PageHost also gives the browser the
+// page cookie, as the link proves it was given a document. Otherwise only /
+// exists, and only GET and HEAD read it. /?k=<secret> gives the cookie for
+// the right secret and sends the browser on to /. / lists the documents'
+// trees, rendered per request, only to a browser with the cookie; any other
+// gets the page with no list, which shows nothing of the documents, not even
+// whether any are. The cookie is given and read at hostname.PageHost alone
+// (see setPageCookie): at localhost, /?k= redirects and sets nothing, and /
+// never lists.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
-		serveDocument(&cookieOnSuccess{ResponseWriter: w}, r)
+		serveDocument(&cookieOnSuccess{ResponseWriter: w, r: r}, r)
 		return nil
 	}
 	if r.URL.Path != "/" {
@@ -111,7 +124,7 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	hdr := w.Header()
 	if q := r.URL.Query(); q.Has(pageKeyParam) {
 		if secret, err := pageSecret(); err == nil && secretMatches(q.Get(pageKeyParam), secret) {
-			setPageCookie(hdr)
+			setPageCookie(hdr, r)
 		}
 		// The secret leaves the address bar with the redirect, and is
 		// neither sent on as a referrer nor kept in a cache.
@@ -151,6 +164,9 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 // or an error page gives the browser nothing.
 type cookieOnSuccess struct {
 	http.ResponseWriter
+	// r is the request answered, which decides whether the cookie is set
+	// at all (see setPageCookie).
+	r     *http.Request
 	wrote bool
 }
 
@@ -159,7 +175,7 @@ func (c *cookieOnSuccess) WriteHeader(status int) {
 	if !c.wrote {
 		c.wrote = true
 		if status >= 200 && status < 300 {
-			setPageCookie(c.Header())
+			setPageCookie(c.Header(), c.r)
 		}
 	}
 	c.ResponseWriter.WriteHeader(status)

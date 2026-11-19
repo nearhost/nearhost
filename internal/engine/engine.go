@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/dockernet"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -49,9 +50,9 @@ type Options struct {
 	SSHClock transport.Clock
 
 	// WebPort is a port of the proxy's own that serves Nearhost's page at
-	// https://localhost:<port>, the page's only address. 0 means none. If
-	// the port is taken when the engine starts, the proxy runs without the
-	// page.
+	// https://nearhost.localhost:<port>, and at localhost on the same port.
+	// 0 means none. If the port is taken when the engine starts, the proxy
+	// runs without the page.
 	WebPort int
 	// Capture keeps each request the proxy passes on, and its response, in
 	// memory, for Captured and Replay.
@@ -414,10 +415,12 @@ func (e *Engine) WebPort() int {
 var errNoPage = errors.New("Nearhost's page isn't served: --web-port is 0")
 
 // PageURL returns the base URL of Nearhost's page, which documents are
-// given out below: https://localhost:<web port>, the page's only address.
-// localhost on the HTTPS port belongs to projects. With no web port, it
-// returns errNoPage when the option was 0, and otherwise an error naming
-// the port that was taken when the engine started.
+// given out below: https://nearhost.localhost:<web port>, the only host the
+// page gives its cookie at. The page answers at localhost on the web port
+// too, without the cookie; localhost on the HTTPS port belongs to projects.
+// With no web port, it returns errNoPage when the option was 0, and
+// otherwise an error naming the port that was taken when the engine
+// started.
 func (e *Engine) PageURL() (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -427,7 +430,7 @@ func (e *Engine) PageURL() (string, error) {
 		}
 		return "", errNoPage
 	}
-	return fmt.Sprintf("https://localhost:%d", e.webPort), nil
+	return fmt.Sprintf("https://%s:%d", hostname.PageHost, e.webPort), nil
 }
 
 // Config returns a copy of the engine's configuration.

@@ -65,15 +65,15 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	run(m, func() tea.Msg { return startedMsg{} })
 	x0, y0 := find(t, m, "proxy     ●")
-	x1, y1 := find(t, m, "page      https://localhost:6327")
-	x1 += len("page      https://localhost:6327") - 1
+	x1, y1 := find(t, m, "page      https://nearhost.localhost:6327")
+	x1 += len("page      https://nearhost.localhost:6327") - 1
 	m.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
 	m.Update(tea.MouseMotionMsg{X: x1, Y: y1, Button: tea.MouseLeft})
 	if !reversed.MatchString(m.View().Content) {
 		t.Error("the selection is not highlighted while dragging")
 	}
 	_, cmd := m.Update(tea.MouseReleaseMsg{X: x1, Y: y1, Button: tea.MouseLeft})
-	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\npage      https://localhost:6327" {
+	if got := clipboard(cmd); got != "proxy     ● https :443 · http :80\npage      https://nearhost.localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
 	wantScreen(t, m, "● Copied 2 lines")
@@ -93,12 +93,12 @@ func TestDragCopiesTheTextOfOnePanel(t *testing.T) {
 func TestDragWithinARow(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	run(m, func() tea.Msg { return startedMsg{} })
-	x, y := find(t, m, "https://localhost:6327")
-	end := x + len("https://localhost:6327") - 1
-	if got := clipboard(drag(m, end, y, x, y)); got != "https://localhost:6327" {
+	x, y := find(t, m, "https://nearhost.localhost:6327")
+	end := x + len("https://nearhost.localhost:6327") - 1
+	if got := clipboard(drag(m, end, y, x, y)); got != "https://nearhost.localhost:6327" {
 		t.Errorf("copied %q", got)
 	}
-	wantScreen(t, m, `● Copied “https://localhost:6327”`)
+	wantScreen(t, m, `● Copied “https://nearhost.localhost:6327”`)
 }
 
 // A click on a link opens it, and so does one on an address a log line
@@ -109,7 +109,7 @@ func TestClickOpensAddresses(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
 	run(m, func() tea.Msg { return startedMsg{} })
-	x, y := find(t, m, "https://localhost:6327")
+	x, y := find(t, m, "https://nearhost.localhost:6327")
 	run(m, click(m, x+3, y))
 	m.logs.noteOn(m.sel, "Docs at https://nearhost.dev/docs/.")
 	m.logs.noteOn(m.sel, "Or file:///etc/passwd.")
@@ -282,7 +282,7 @@ func TestCopyWithReportsAFailure(t *testing.T) {
 func TestCopyShowsAToast(t *testing.T) {
 	m := sized(newFake(t, sampleConfig()))
 	run(m, func() tea.Msg { return startedMsg{} })
-	x, y := find(t, m, "https://localhost:6327")
+	x, y := find(t, m, "https://nearhost.localhost:6327")
 	drag(m, x, y, x+7, y)
 	first := m.toast.seq
 	lines := strings.Split(screen(m), "\n")

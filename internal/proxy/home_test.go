@@ -9,7 +9,24 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
+
+// pageRequest is a request for target at Nearhost's page,
+// nearhost.localhost, with the port the browser sends.
+func pageRequest(method, target string) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	r.Host = hostname.PageHost + ":6327"
+	return r
+}
+
+// localhostRequest is pageRequest at localhost, the page's other host.
+func localhostRequest(method, target string) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	r.Host = "localhost:6327"
+	return r
+}
 
 // serveHome provisions a home page for version and sends it one request.
 func serveHome(t *testing.T, version, method, path string) *httptest.ResponseRecorder {
@@ -23,7 +40,7 @@ func serveHome(t *testing.T, version, method, path string) *httptest.ResponseRec
 		t.Error("the home page passed the request on")
 		return nil
 	})
-	if err := h.ServeHTTP(w, httptest.NewRequest(method, path, nil), next); err != nil {
+	if err := h.ServeHTTP(w, pageRequest(method, path), next); err != nil {
 		t.Fatalf("ServeHTTP: %v", err)
 	}
 	return w

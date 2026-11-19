@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
-	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
 
@@ -727,7 +726,7 @@ func (f *projectForm) setHosts() {
 	seen := map[string]bool{}
 	for _, h := range strings.Fields(f.hosts.value) {
 		h = strings.ToLower(h)
-		if err := hostname.Valid(h); err != nil {
+		if err := config.ValidProjectHost(h); err != nil {
 			f.hostsErr = err.Error()
 			return
 		}

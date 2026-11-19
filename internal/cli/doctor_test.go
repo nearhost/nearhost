@@ -298,6 +298,24 @@ func TestDoctorComparesTheHostsBlockWithTheConfiguredAliases(t *testing.T) {
 		wantContains(t, out, "warn  hosts block      the block was written by an older Nearhost and has no IPv6 (::1) entries\n"+fix)
 	})
 
+	// The page's line is no problem whether the block holds it or not.
+	for name, page := range map[string]string{
+		"a block with the page's line":    "127.0.0.1 nearhost.localhost\n::1 nearhost.localhost\n",
+		"a block without the page's line": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			doctorConfig(t)
+			f := healthy()
+			f.hosts = "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 api.test\n::1 api.test\n" + page +
+				"127.0.0.1 web.test\n::1 web.test\n# nearhost:end\n"
+			out, err := execute(t, newDoctorCmd(f.backend()), "doctor")
+			if err != nil {
+				t.Errorf("err = %v", err)
+			}
+			wantContains(t, out, "ok    hosts block      2 names\n")
+		})
+	}
+
 	t.Run("--no-hosts skips the check", func(t *testing.T) {
 		doctorConfig(t)
 		f := healthy()

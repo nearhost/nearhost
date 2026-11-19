@@ -27,6 +27,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	"github.com/coder/websocket"
 
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -227,14 +228,14 @@ func startProxyOpts(t *testing.T, sites []Site, opts Options) *harness {
 	}, "root certificate")
 	h.pool = x509.NewCertPool()
 	h.pool.AddCert(root)
-	// The web port makes localhost a certificate subject of every config
-	// that listens, and most tests never ask for it, so its certificate is
-	// waited for here, while the proxy is surely running: a wait at cleanup
-	// would hang for tests that stop the proxy or apply no sites
-	// themselves. The https port shows it to a loopback client too, though
-	// it serves nothing there.
+	// The web port makes localhost and nearhost.localhost certificate
+	// subjects of every config that listens, and most tests never ask for
+	// them, so their certificates are waited for here, while the proxy is
+	// surely running: a wait at cleanup would hang for tests that stop the
+	// proxy or apply no sites themselves. The https port shows them to a
+	// loopback client too, though it serves nothing there.
 	if opts.WebPort != 0 && listens(sites, opts) {
-		h.waitCerts(t, homeHost)
+		h.waitCerts(t, hostname.PageHost, homeHost)
 	}
 	return h
 }
@@ -1226,9 +1227,9 @@ func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
 	}
 }
 
-// Nearhost's page answers on its own port, with a certificate for
-// localhost though no project lists it, only to GET and HEAD at /, and
-// before any project is served. The page is no project's, so its access
+// Nearhost's page answers on its own port at nearhost.localhost and at
+// localhost, with a valid certificate for each though no project lists
+// them, only to GET and HEAD at /, and before any project is served. The page is no project's, so its access
 // lines never reach the sink.
 func TestHomePageOnTheWebPort(t *testing.T) {
 	for _, name := range []string{"no sites", "a site"} {
@@ -1239,22 +1240,27 @@ func TestHomePageOnTheWebPort(t *testing.T) {
 			}
 			h := startProxyOpts(t, sites, Options{WebPort: freePort(t), HomeWithNoSites: true})
 			c := h.pageClient(t, h.webPort)
-			page := fmt.Sprintf("https://localhost:%d", h.webPort)
-			resp, err := c.Get(page + "/")
-			if err != nil {
-				t.Fatalf("GET / on the web port: %v", err)
-			}
-			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			body := string(b)
-			if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-				t.Fatalf("status %d, Content-Type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
-			}
-			for _, want := range []string{"Run it anywhere.", "https://nearhost.dev", "Nearhost " + testVersion, fmt.Sprintf("this page answers at localhost:%d.", h.webPort)} {
-				if !strings.Contains(body, want) {
-					t.Errorf("page does not hold %q", want)
+			for _, host := range []string{hostname.PageHost, "localhost"} {
+				resp, err := c.Get(fmt.Sprintf("https://%s:%d/", host, h.webPort))
+				if err != nil {
+					t.Fatalf("GET / at %s on the web port: %v", host, err)
+				}
+				b, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				body := string(b)
+				if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+					t.Fatalf("%s: status %d, Content-Type %q", host, resp.StatusCode, resp.Header.Get("Content-Type"))
+				}
+				if cn := resp.TLS.PeerCertificates[0].VerifyHostname(host); cn != nil {
+					t.Errorf("%s: %v", host, cn)
+				}
+				for _, want := range []string{"Run it anywhere.", "https://nearhost.dev", "Nearhost " + testVersion, fmt.Sprintf("this page answers at nearhost.localhost:%d.", h.webPort)} {
+					if !strings.Contains(body, want) {
+						t.Errorf("%s: page does not hold %q", host, want)
+					}
 				}
 			}
+			page := fmt.Sprintf("https://%s:%d", hostname.PageHost, h.webPort)
 			if code, _ := get(t, c, h.webPort, "/nope"); code != 404 {
 				t.Errorf("GET /nope: status %d, want 404", code)
 			}

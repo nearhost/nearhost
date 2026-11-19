@@ -298,13 +298,15 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			names := strings.Join(want, ", ")
+			// The message names the projects' names alone: want adds
+			// Nearhost's page to them, which is never the reason to ask.
+			names := strings.Join(aliases, ", ")
 			why := fmt.Sprintf("Nearhost needs your password to add %s to %s.", names, path)
 			err := root.run(ctx, why, "Added to "+path+".", func(ctx context.Context, terminal io.Writer) error {
 				return applier(ctx, terminal != nil)(want)
 			})
 			verb := "were"
-			if len(want) == 1 {
+			if len(aliases) == 1 {
 				verb = "was"
 			}
 			if errors.Is(err, tui.ErrPasswordCancelled) {

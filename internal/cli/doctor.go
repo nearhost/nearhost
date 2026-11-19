@@ -530,11 +530,10 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}, nil
 	}
-	updated, err := hosts.Rewrite(existing, want)
-	if err != nil {
+	if _, err := hosts.Rewrite(existing, want); err != nil {
 		return check{name, levelFail, err.Error(), fix}, nil
 	}
-	if updated == existing || updated == existing+"\n" {
+	if hosts.UpToDate(existing, want) {
 		if len(want) == 0 {
 			return check{name: name, detail: "no names configured"}, nil
 		}

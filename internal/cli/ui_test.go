@@ -334,13 +334,13 @@ func TestOpenPageOpensItWithTheKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://localhost:6327/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
+	if want := "https://nearhost.localhost:6327/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
 		t.Fatalf("opened %d addresses, want the page with its key", len(opened))
 	}
 
 	openErr = fmt.Errorf("no browser")
 	err = u.OpenPage()
-	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://localhost:6327") {
+	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://nearhost.localhost:6327") {
 		t.Errorf("a failed open: the error is nil, holds the secret, or does not name the page")
 	}
 }

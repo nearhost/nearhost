@@ -185,8 +185,8 @@ func TestBuildConfigHomeWithNoSites(t *testing.T) {
 	if dig(t, cfg, "apps", "http", "servers", "nearhost_web", "routes", 0, "handle", 0, "handler") != homeModule {
 		t.Error("the web port's server has no home page route")
 	}
-	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"localhost"}) {
-		t.Errorf("subjects = %v, want localhost for the web port", got)
+	if got := tlsSubjects(cfg); !slices.Equal(got, []string{"nearhost.localhost", "localhost"}) {
+		t.Errorf("subjects = %v, want nearhost.localhost and localhost for the web port", got)
 	}
 }
 
@@ -693,7 +693,7 @@ func TestBuildConfigHTTPSServerNeverServesHomePage(t *testing.T) {
 		subjects []string
 	}{
 		{"no web port", 0, []string{"pro.test"}},
-		{"web port", 6327, []string{"pro.test", "localhost"}},
+		{"web port", 6327, []string{"pro.test", "nearhost.localhost", "localhost"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := BuildConfig(sites, Options{StorageRoot: t.TempDir(), Version: "1.2.3", WebPort: tc.webPort})
@@ -726,10 +726,10 @@ func TestBuildConfigHTTPSServerNeverServesHomePage(t *testing.T) {
 	}
 }
 
-// With a web port, a server of its own serves the home page at localhost
-// to loopback clients, even while a project serves localhost on the https
-// port, and drops the rest. localhost is a subject once, whether or not a
-// project lists it.
+// With a web port, a server of its own serves the home page at
+// nearhost.localhost and localhost to loopback clients, even while a project
+// serves localhost on the https port, and drops the rest. Each is a subject
+// once, whether or not a project lists localhost.
 func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 	for name, hosts := range map[string][]string{
 		"no project lists localhost": {"a.test"},
@@ -745,14 +745,16 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 			if err := json.Unmarshal(raw, &cfg); err != nil {
 				t.Fatal(err)
 			}
-			n := 0
-			for _, s := range tlsSubjects(cfg) {
-				if s == "localhost" {
-					n++
+			for _, host := range []string{"localhost", "nearhost.localhost"} {
+				n := 0
+				for _, s := range tlsSubjects(cfg) {
+					if s == host {
+						n++
+					}
 				}
-			}
-			if n != 1 {
-				t.Errorf("subjects = %v, want localhost exactly once", tlsSubjects(cfg))
+				if n != 1 {
+					t.Errorf("subjects = %v, want %s exactly once", tlsSubjects(cfg), host)
+				}
 			}
 		})
 	}
@@ -781,6 +783,9 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 	}
 	if got := strs(dig(t, routes[0], "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
 		t.Errorf("home route remote_ip = %v, want loopback", got)
+	}
+	if got := strs(dig(t, routes[0], "match", 0, "host")); !slices.Equal(got, []string{"nearhost.localhost", "localhost"}) {
+		t.Errorf("home route hosts = %v, want nearhost.localhost and localhost", got)
 	}
 	if len(homeRoutes(t, cfg)) != 0 {
 		t.Error("the https port serves the home page")

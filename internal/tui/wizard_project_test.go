@@ -506,6 +506,12 @@ func TestRoutesStepEditsHosts(t *testing.T) {
 	if h := pf.routes[0].Hosts; len(h) != 2 || !pf.editingHosts {
 		t.Fatalf("a bad host changed the hosts to %v, or closed the field", h)
 	}
+	press(m, "ctrl+u")
+	typeText(m, "nearhost.localhost")
+	press(m, "enter")
+	if h := pf.routes[0].Hosts; len(h) != 2 || !pf.editingHosts || pf.hostsErr != "nearhost.localhost is Nearhost's own page" {
+		t.Fatalf("Nearhost's page: hosts %v, editing %v, error %q", h, pf.editingHosts, pf.hostsErr)
+	}
 	press(m, "esc")
 	if pf.editingHosts || pf.step != projectStepRoutes || len(pf.routes[0].Hosts) != 2 {
 		t.Fatalf("esc: editing %v, step %d, hosts %v", pf.editingHosts, pf.step, pf.routes[0].Hosts)

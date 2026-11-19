@@ -511,6 +511,8 @@ func TestValidateWebRoutesAndHosts(t *testing.T) {
 		{"host equals alias", base(web(8220), web(8230, "dd.test")), `"dd.test"`},
 		{"alias on the primary route is tolerated", base(web(8220, "dd.test")), ""},
 		{"hosts on a loopback route", base(web(8220), Route{Port: 5432, Role: RoleLoopback, Hosts: []string{"db.dd.io"}}), "only web routes have hosts"},
+		{"Nearhost's page", base(web(8220, "nearhost.localhost")), "nearhost.localhost is Nearhost's own page"},
+		{"Nearhost's page in capitals", base(web(8220, "NEARHOST.localhost")), "nearhost.localhost is Nearhost's own page"},
 	}
 	for _, c := range cases {
 		err := c.cfg.Validate()
@@ -549,6 +551,25 @@ func TestHostClashIgnoresDisabledAndMatchesPatternsExactly(t *testing.T) {
 	}
 	if _, _, clash := c.HostClash(pro); clash {
 		t.Error("a project does not clash with itself")
+	}
+}
+
+// No project may claim Nearhost's page, as its main name, a route host or
+// an approved .nearhostrc host.
+func TestValidateRefusesNearhostsPage(t *testing.T) {
+	web := []Route{{Port: 8220, Role: RoleWeb}}
+	for name, p := range map[string]Project{
+		"main name": {Name: "dd", Server: LocalServer, Alias: "Nearhost.localhost", Routes: web},
+		".nearhostrc host": {Name: "dd", Server: LocalServer, Alias: "dd.test", Routes: web,
+			Nearhostrc: &RcSnapshot{Routes: []Route{{Port: 8220, Role: RoleWeb, Hosts: []string{"nearhost.localhost"}}}}},
+	} {
+		err := (&Config{Projects: []Project{p}}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "nearhost.localhost is Nearhost's own page") {
+			t.Errorf("%s: Validate() = %v", name, err)
+		}
+	}
+	if err := ValidProjectAlias("nearhost.localhost"); err == nil || !strings.Contains(err.Error(), "nearhost.localhost is Nearhost's own page") {
+		t.Errorf("ValidProjectAlias = %v", err)
 	}
 }
 

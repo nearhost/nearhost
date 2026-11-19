@@ -42,6 +42,7 @@ func TestParseErrors(t *testing.T) {
 		"version: 1\nroutes:\n  - port: ${P}\n":                                       `"P"`, // env P=abc: not a port
 		"version: 1\nroutes:\n  - port: 70000\n":                                      "70000",
 		"version: 1\nroutes:\n  - port: 1\n    hosts: [\"*.com\"]\n":                  `"*.com"`,
+		"version: 1\nroutes:\n  - port: 1\n    hosts: [Nearhost.localhost]\n":         "nearhost.localhost is Nearhost's own page",
 		"version: 1\nroutes:\n  - port: 1\n    role: loopback\n    hosts: [a.b.io]\n": "only web routes have hosts",
 		"routes: []\n": "version",
 	}
