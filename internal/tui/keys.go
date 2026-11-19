@@ -224,6 +224,14 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	if s == "ctrl+c" {
 		return m.quit()
 	}
+	if m.small() {
+		// Nothing is drawn but the notice, so only quit acts, even over a
+		// box that would take a q as text.
+		if s == "q" {
+			return m.quit()
+		}
+		return nil
+	}
 	if m.quitting {
 		if s == "q" {
 			return m.quit()
@@ -449,7 +457,7 @@ func (m *Model) enter() tea.Cmd {
 // clickable reports whether a click at mouse does something: on a footer
 // key, or a sidebar row, while no box covers them.
 func (m *Model) clickable(mouse tea.Mouse) bool {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.width < minWidth || m.height < minHeight {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.small() {
 		return false
 	}
 	if mouse.Y == m.height-1 {

@@ -177,7 +177,7 @@ func TestServerPanelShowsTheErrorAndFix(t *testing.T) {
 func TestTooSmall(t *testing.T) {
 	m := New(newFake(t, sampleConfig()), "/")
 	m.Update(tea.WindowSizeMsg{Width: 79, Height: 30})
-	if s := screen(m); !strings.Contains(s, "Make the window larger (80×20 or more).") || strings.Contains(s, "website") {
+	if s := screen(m); !strings.Contains(s, "Make the window larger (80×20 at least). q quits.") || strings.Contains(s, "website") {
 		t.Fatalf("screen:\n%s", s)
 	}
 }
