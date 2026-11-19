@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/fsretry"
 )
 
 // Windows refuses to rename over a file another program has open, such as
@@ -19,34 +21,13 @@ const (
 
 // renameIntoPlace moves a written temp file into place, waiting out a file
 // that another program holds open for a moment.
-var renameIntoPlace = retryRename(os.Rename, renameBusy, time.Sleep)
+var renameIntoPlace = retryRename(os.Rename, fsretry.Busy, time.Sleep)
 
-// stillBusyError is a rename that another program still blocked when the
-// retries ran out.
-type stillBusyError struct{ err error }
-
-// Error returns the rename's own error.
-func (e *stillBusyError) Error() string { return e.err.Error() }
-
-// Unwrap returns the rename's own error.
-func (e *stillBusyError) Unwrap() error { return e.err }
-
-// retryRename returns a rename that calls try and, while busy reports its
-// error as one that passes, sleeps renameRetryEvery and calls it again, for
-// up to renameRetryFor of sleeping. Any other error returns at once; one
-// still busy at the end returns as a *stillBusyError.
+// retryRename is fsretry.Retry with the config's waits: renameRetryEvery
+// apart, for up to renameRetryFor. One still busy at the end returns as a
+// *fsretry.StillBusyError.
 func retryRename(try func(oldpath, newpath string) error, busy func(error) bool, sleep func(time.Duration)) func(oldpath, newpath string) error {
-	return func(oldpath, newpath string) error {
-		err := try(oldpath, newpath)
-		for waited := time.Duration(0); err != nil && busy(err) && waited < renameRetryFor; waited += renameRetryEvery {
-			sleep(renameRetryEvery)
-			err = try(oldpath, newpath)
-		}
-		if err != nil && busy(err) {
-			return &stillBusyError{err}
-		}
-		return err
-	}
+	return fsretry.Retry(try, busy, sleep, renameRetryEvery, renameRetryFor)
 }
 
 // WriteFileAtomic writes data to path so that a crash leaves either the old
@@ -96,7 +77,7 @@ func WriteFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 		return err
 	}
 	if err = renameIntoPlace(tmpName, path); err != nil {
-		if _, held := errors.AsType[*stillBusyError](err); held {
+		if _, held := errors.AsType[*fsretry.StillBusyError](err); held {
 			return fmt.Errorf("%s is open in another program. Close it and try again.", path)
 		}
 		return err

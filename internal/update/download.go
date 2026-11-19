@@ -6,25 +6,33 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/nearhost/nearhost/internal/fsretry"
 )
 
 // DownloadURL is where a release's files are, under /v<version>/.
 const DownloadURL = "https://github.com/nearhost/nearhost/releases/download"
 
-// The most Install reads of checksums.txt and of the archive. A release's
+// The most Fetch reads of checksums.txt and of the archive. A release's
 // archive is some 25 MB.
 const (
 	maxChecksums = 1 << 20
 	maxArchive   = 512 << 20
 )
+
+// maxExe is the most writeExe takes from the archive's nearhost.exe once
+// unpacked. A release's is some 30 MB. Tests lower it.
+var maxExe int64 = 256 << 20
 
 // Downloader updates a Windows copy that came from the PowerShell installer
 // or a zip, by fetching the release itself. Starting PowerShell to run the
@@ -33,7 +41,7 @@ const (
 // refuses to start it.
 type Downloader struct {
 	// HTTP is the client; nil means http.DefaultClient. The context given
-	// to Install bounds the download.
+	// to Fetch bounds the download.
 	HTTP *http.Client
 	// BaseURL is where releases are; empty means DownloadURL.
 	BaseURL string
@@ -41,11 +49,16 @@ type Downloader struct {
 	GOARCH string
 }
 
-// Install fetches the Windows zip of the release of version, checks it
-// against the release's checksums.txt, and writes its nearhost.exe to exe,
-// which must not exist or must be replaceable (the running copy has been
-// moved aside). When it fails it leaves the folder as it found it.
-func (d Downloader) Install(ctx context.Context, version, exe string) error {
+// Fetch fetches the Windows zip of the release of version, checks it
+// against the release's checksums.txt, and writes its nearhost.exe to dest,
+// a new file beside the running copy that MoveIntoPlace then renames over
+// it. A file already at dest, left by an earlier update, is removed first
+// and never used. When Fetch returns nil, dest is complete and on disk; when
+// it fails, a cancelled ctx among the causes, dest is gone.
+func (d Downloader) Fetch(ctx context.Context, version, dest string) error {
+	if err := os.Remove(dest); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove %s, left by an earlier update: %w", dest, err)
+	}
 	version = strings.TrimPrefix(version, "v")
 	goarch := d.GOARCH
 	if goarch == "" {
@@ -84,7 +97,7 @@ func (d Downloader) Install(ctx context.Context, version, exe string) error {
 	}
 	for _, f := range zr.File {
 		if strings.EqualFold(path.Base(f.Name), "nearhost.exe") && !f.FileInfo().IsDir() {
-			return writeExe(f, exe)
+			return writeExe(ctx, f, dest)
 		}
 	}
 	return fmt.Errorf("%s holds no nearhost.exe", asset)
@@ -118,32 +131,60 @@ func (d Downloader) get(ctx context.Context, url string, max int64) ([]byte, err
 	return body, nil
 }
 
-// writeExe writes the zip entry f to exe by way of a file beside it, so exe
-// is never half written.
-func writeExe(f *zip.File, exe string) (err error) {
+// writeExe writes the zip entry f to dest, a file it creates, and syncs it.
+// archive/zip checks the entry's size and CRC-32 as it is read. On any
+// error, or when ctx has ended by the time the file is written, dest is
+// removed.
+func writeExe(ctx context.Context, f *zip.File, dest string) (err error) {
 	src, err := f.Open()
 	if err != nil {
 		return err
 	}
 	defer src.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(exe), ".nearhost-update-*")
+	// O_EXCL: Fetch removed any file at dest, so one there now is not ours.
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
+			out.Close()
+			os.Remove(dest)
 		}
 	}()
-	if _, err = io.Copy(tmp, src); err != nil {
-		return err
+	n, err := io.Copy(out, io.LimitReader(src, maxExe+1))
+	if err != nil {
+		return fmt.Errorf("write %s: %w", dest, err)
 	}
-	if err = tmp.Chmod(0o755); err != nil && runtime.GOOS != "windows" {
-		return err
+	if n > maxExe {
+		return fmt.Errorf("the release's nearhost.exe is larger than %d MB, so it was not installed", maxExe>>20)
 	}
-	if err = tmp.Close(); err != nil {
-		return err
+	if err = out.Sync(); err != nil {
+		return fmt.Errorf("write %s: %w", dest, err)
 	}
-	return os.Rename(tmp.Name(), exe)
+	if err = out.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", dest, err)
+	}
+	return ctx.Err()
+}
+
+// Windows refuses to rename a file another program has open, such as a
+// virus scanner reading the file Fetch has just written. A rename that
+// fails so is tried again every renameRetryEvery until renameRetryFor has
+// passed.
+const (
+	renameRetryEvery = 100 * time.Millisecond
+	renameRetryFor   = 2 * time.Second
+)
+
+// MoveIntoPlace renames from to to, waiting out a file that another program
+// holds open for a moment.
+func MoveIntoPlace(from, to string) error {
+	return retryRename(os.Rename, fsretry.Busy, time.Sleep)(from, to)
+}
+
+// retryRename is fsretry.Retry with the update's waits: renameRetryEvery
+// apart, for up to renameRetryFor.
+func retryRename(try func(oldpath, newpath string) error, busy func(error) bool, sleep func(time.Duration)) func(oldpath, newpath string) error {
+	return fsretry.Retry(try, busy, sleep, renameRetryEvery, renameRetryFor)
 }

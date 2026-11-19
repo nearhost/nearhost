@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,14 +37,27 @@ type updateBackend struct {
 	goos        string
 	// run runs the update command.
 	run func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error
-	// download fetches the release of version and writes its nearhost.exe
-	// to exe: the update of a Windows copy that no package manager owns.
-	download func(ctx context.Context, version, exe string) error
+	// download fetches the release of version and writes its nearhost.exe,
+	// checked against the release's checksums, to path, a new file beside
+	// the running one: the update of a Windows copy that no package manager
+	// owns. On failure it leaves nothing at path.
+	download func(ctx context.Context, version, path string) error
 	// stepAside moves the running binary out of the way, on Windows only,
 	// and returns a function that moves it back.
 	stepAside func(exe string) (restore func() error, err error)
 	// exists reports whether there is a file at path.
 	exists func(path string) bool
+	// rename moves the file at from to to, waiting out a virus scanner that
+	// holds it open for a moment.
+	rename func(from, to string) error
+	// remove deletes the file at path.
+	remove func(path string) error
+	// hold catches Ctrl-C and the console closing, which then arrive on
+	// signals instead of ending nearhost, until stop is called.
+	hold func() (signals <-chan os.Signal, stop func())
+	// downloadLimit is the longest the download may take: downloadTimeLimit
+	// in production.
+	downloadLimit time.Duration
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -71,14 +85,33 @@ func systemUpdate() updateBackend {
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 			return c.Run()
 		},
-		download:  update.Downloader{}.Install,
+		download:  update.Downloader{HTTP: downloadHTTP()}.Fetch,
 		stepAside: update.StepAside,
 		exists: func(path string) bool {
 			_, err := os.Stat(path)
 			return err == nil
 		},
+		rename: update.MoveIntoPlace,
+		remove: os.Remove,
+		hold: func() (<-chan os.Signal, func()) {
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+			return signals, func() { signal.Stop(signals) }
+		},
+		downloadLimit: downloadTimeLimit,
 	}
 }
+
+// downloadTimeLimit is the longest the Windows download may take. The
+// message for a download that takes longer names it.
+const downloadTimeLimit = 5 * time.Minute
+
+// errDownloadSlow and errDownloadInterrupted say why the download's context
+// ended.
+var (
+	errDownloadSlow        = errors.New("the download took longer than 5 minutes")
+	errDownloadInterrupted = errors.New("the update was cancelled")
+)
 
 func newUpdateCmd(b updateBackend) *cobra.Command {
 	var check, yes bool
@@ -210,9 +243,11 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 	// console window (SIGTERM to Go) ends the installer and gives nearhost a
 	// few seconds. Either way nearhost must not end before the old copy is
 	// back, so both are held from before it moves.
-	held := make(chan os.Signal, 1)
-	signal.Notify(held, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(held)
+	held, stop := b.hold()
+	defer stop()
+	if native {
+		return replaceExe(ctx, b, exe, latest, held)
+	}
 	restore, err := b.stepAside(exe)
 	if err != nil {
 		return fmt.Errorf("nothing was updated, as the running nearhost could not be moved out of the way: %w", err)
@@ -222,23 +257,6 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 			return fmt.Errorf("%w, and the old nearhost could not be put back: %v", err, rerr)
 		}
 		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
-	}
-	if native {
-		// There is no installer for a Ctrl-C to reach, so it ends the
-		// download here, and the old copy goes back.
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go func() {
-			select {
-			case <-held:
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-		if err := b.download(ctx, latest, exe); err != nil {
-			return failed(fmt.Errorf("nearhost %s could not be downloaded: %w", latest, err))
-		}
-		return nil
 	}
 	if err := b.run(ctx, m, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 		return failed(fmt.Errorf("`%s` failed: %w", m, err))
@@ -256,6 +274,53 @@ func runAside(ctx context.Context, cmd *cobra.Command, b updateBackend, m update
 		return fmt.Errorf("`%s` installed the new nearhost at %s; %s is still the old one", m, installed, exe)
 	}
 	return failed(fmt.Errorf("`%s` left no nearhost at %s", m, exe))
+}
+
+// replaceExe updates a Windows copy that no package manager owns. It
+// downloads the release to <exe>.new and checks it while exe stays where it
+// is; only a complete, checked file goes on to the swap: exe moves aside,
+// and <exe>.new is renamed to exe. A failed download, a Ctrl-C (held) or
+// the time limit during it leaves exe untouched, and the download removes
+// <exe>.new. Once
+// the swap starts, a Ctrl-C no longer stops it: it finishes, or puts the old
+// copy back, so there is always a nearhost at exe.
+func replaceExe(ctx context.Context, b updateBackend, exe, latest string, held <-chan os.Signal) error {
+	staged := exe + ".new"
+	interrupted, interrupt := context.WithCancelCause(ctx)
+	defer interrupt(nil)
+	dctx, cancel := context.WithTimeoutCause(interrupted, b.downloadLimit, errDownloadSlow)
+	defer cancel()
+	go func() {
+		select {
+		case <-held:
+			interrupt(errDownloadInterrupted)
+		case <-dctx.Done():
+		}
+	}()
+	// download removes what it wrote when it fails. A file at staged then
+	// is not this run's: another update running at the same moment may own
+	// it, so it stays.
+	if err := b.download(dctx, latest, staged); err != nil {
+		if cause := context.Cause(dctx); errors.Is(cause, errDownloadSlow) || errors.Is(cause, errDownloadInterrupted) {
+			err = cause
+		}
+		return fmt.Errorf("nearhost %s could not be downloaded: %w; %s is unchanged", latest, err, exe)
+	}
+	restore, err := b.stepAside(exe)
+	if err != nil {
+		b.remove(staged)
+		return fmt.Errorf("nothing was updated, as the running nearhost could not be moved out of the way: %w", err)
+	}
+	if err := b.rename(staged, exe); err != nil {
+		err = fmt.Errorf("the new nearhost could not be moved to %s: %w", exe, err)
+		if rerr := restore(); rerr != nil {
+			// The checked new copy stays as a second way back.
+			return fmt.Errorf("%w, and the old nearhost could not be put back: %v. The new nearhost is at %s; rename it to %s", err, rerr, staged, exe)
+		}
+		b.remove(staged)
+		return fmt.Errorf("%w; the old nearhost is back at %s", err, exe)
+	}
+	return nil
 }
 
 // samePathEveryVersion reports whether an update of kind puts the new binary
@@ -394,4 +459,15 @@ func cachedLatest(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return update.Checker{HTTP: backgroundHTTP(), CachePath: path, Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Cached(ctx)
+}
+
+// downloadHTTP is the client for the Windows download. It has no overall
+// timeout, which would cut off a slow download that is still going (the
+// download's context has downloadTimeLimit), but it gives up on a server
+// that does not connect or answer.
+func downloadHTTP() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{Transport: tr}
 }
