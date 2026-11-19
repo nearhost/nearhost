@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/elevate"
@@ -65,7 +67,10 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			}
 			// The applier ends sudo when ctx does, so an interrupt during
 			// the password prompt shuts down instead of waiting for it.
-			_, err = hosts.Ensure(hosts.DefaultPath, aliases, hosts.ElevatedApplier(ctx, elevate.System(), exe, hosts.DefaultPath, hostsPrompt, true))
+			// sudo prompts only when stdin is a terminal (see
+			// upHostsApplier).
+			terminal := term.IsTerminal(int(os.Stdin.Fd()))
+			_, err = hosts.Ensure(hosts.DefaultPath, aliases, upHostsApplier(ctx, elevate.System(), exe, terminal))
 			return err
 		},
 		notify:   notifyStop,
@@ -160,7 +165,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	if err != nil {
 		return err
 	}
-	opts, err := engineOptions(b.ssh, flags, b.ensureHosts, b.lookup)
+	opts, err := engineOptions(b.ssh, flags, warnNoTerminal(cmd.ErrOrStderr(), b.ensureHosts), b.lookup)
 	if err != nil {
 		return err
 	}
@@ -211,7 +216,7 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 	// trust store holds nothing up.
 	trustHint := make(chan string, 1)
 	go func() { trustHint <- untrustedCA(b.trust, opts.StorageRoot) }()
-	p.untilInterrupted(ctx, events, started, trustHint, names, startErrs)
+	nothing := p.untilInterrupted(ctx, events, started, trustHint, names, startErrs)
 
 	// A second signal must not end the process: the ssh masters are outside
 	// its process group and would be left running. It cuts the shutdown
@@ -246,6 +251,10 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 		return fmt.Errorf("shut down: %w", stopErr)
 	}
 	fmt.Fprintln(p.out, "stopped")
+	if nothing {
+		// The summary has said why; Main adds nothing.
+		return exitError{code: 1, msg: "nothing can be served"}
+	}
 	return nil
 }
 
@@ -254,7 +263,12 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 // returned startErrs, unless ctx has ended by then. The trust store's hint is
 // printed after the summary, whichever comes first. Everything is printed
 // from this goroutine, so lines never interleave.
-func (p *upPrinter) untilInterrupted(ctx context.Context, events <-chan engine.Event, started <-chan struct{}, trustHint <-chan string, names []string, startErrs []error) {
+//
+// When the summary finds nothing served and nothing waiting (see
+// nothingToServe), it returns at once and reports true: up then stops as it
+// does when interrupted. That is checked once, after the first round of
+// starts; a project that fails later leaves up running.
+func (p *upPrinter) untilInterrupted(ctx context.Context, events <-chan engine.Event, started <-chan struct{}, trustHint <-chan string, names []string, startErrs []error) (nothing bool) {
 	hint, summarised := "", false
 	for {
 		select {
@@ -267,15 +281,17 @@ func (p *upPrinter) untilInterrupted(ctx context.Context, events <-chan engine.E
 			// once, and select picks either. Starts that returned because
 			// of the interrupt are not summed up, as errors to fix.
 			if ctx.Err() != nil {
-				return
+				return false
 			}
 			started = nil
 			p.buffered(events) // the state changes the summary sums up
-			p.summary(names, startErrs)
+			if p.summary(names, startErrs) {
+				return true
+			}
 			p.advise = true // from here a state change is news, and so is its fix
 			summarised = true
 		case <-ctx.Done():
-			return
+			return false
 		}
 		if summarised && hint != "" {
 			fmt.Fprintln(p.out, hint)
@@ -381,6 +397,33 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		opts.Lookup = lookup
 	}
 	return opts, nil
+}
+
+// errNoTerminal is the error of a hosts update that needs sudo's password
+// when there is no terminal to ask for it in. Only the Unix applier returns
+// it (see upHostsApplier).
+var errNoTerminal = errors.New("sudo needs a password, and there is no terminal to ask for it")
+
+// hostsNoTerminal is what up prints when a hosts update fails with
+// errNoTerminal.
+const hostsNoTerminal = "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost up in a terminal once, or pass --no-hosts."
+
+// warnNoTerminal wraps a hosts function so that the first update that fails
+// with errNoTerminal prints hostsNoTerminal to w. Later ones print nothing:
+// the message is said once a run, however many projects or updates there
+// are. A nil ensure stays nil.
+func warnNoTerminal(w io.Writer, ensure func(context.Context, []string) error) func(context.Context, []string) error {
+	if ensure == nil {
+		return nil
+	}
+	var once sync.Once
+	return func(ctx context.Context, aliases []string) error {
+		err := ensure(ctx, aliases)
+		if errors.Is(err, errNoTerminal) {
+			once.Do(func() { fmt.Fprintln(w, hostsNoTerminal) })
+		}
+		return err
+	}
 }
 
 // askOnce wraps a hosts function so that a refusal stands for the rest of the

@@ -3,10 +3,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"strings"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/hosts"
 )
 
 const (
@@ -42,4 +46,11 @@ func systemSudo() error { return nil }
 // so the message is checked as well.
 func trustRefused(err error) bool {
 	return errors.Is(err, windows.ERROR_CANCELLED) || strings.Contains(err.Error(), "canceled by the user")
+}
+
+// upHostsApplier is the applier `nearhost up` updates the hosts file with,
+// through e: the UAC prompt, which Windows shows whether or not stdin is a
+// terminal, so terminal is unused.
+func upHostsApplier(ctx context.Context, e elevate.Elevator, exe string, _ bool) hosts.Applier {
+	return hosts.ElevatedApplier(ctx, e, exe, hosts.DefaultPath, hostsPrompt, true)
 }

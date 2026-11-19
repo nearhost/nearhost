@@ -87,8 +87,10 @@ func run(args []string) int {
 	}
 
 	// While the file named by $FAKE_SSH_MASTER_DOWN exists, every master
-	// fails with a refused connection.
-	if f := os.Getenv("FAKE_SSH_MASTER_DOWN"); f != "" && (master || plain) && exists(f) {
+	// fails with a refused connection; with $FAKE_SSH_MASTER_DOWN_HOST set,
+	// only the masters for that host do.
+	downHost := os.Getenv("FAKE_SSH_MASTER_DOWN_HOST")
+	if f := os.Getenv("FAKE_SSH_MASTER_DOWN"); f != "" && (master || plain) && exists(f) && (downHost == "" || last == downHost) {
 		fmt.Fprintf(os.Stderr, "ssh: connect to host %s port 22: Connection refused\n", last)
 		return 255
 	}

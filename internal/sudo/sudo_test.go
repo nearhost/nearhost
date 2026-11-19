@@ -332,3 +332,21 @@ func TestValidateKeepsOtherRefusalsApart(t *testing.T) {
 		})
 	}
 }
+
+// sudo -n says it needed a password in sudo's words and in sudo-rs's;
+// anything else it says is another failure.
+func TestPasswordRequired(t *testing.T) {
+	for said, want := range map[string]bool{
+		"sudo: a password is required":                      true,
+		"sudo: interactive authentication is required":      true,
+		"sudo-rs: interactive authentication is required":   true,
+		"hosts: sudo: a password is required\n":             true,
+		"sudo: unable to resolve host mini: Name not known": false,
+		"Sorry, try again.":                                 false,
+		"":                                                  false,
+	} {
+		if got := PasswordRequired(said); got != want {
+			t.Errorf("PasswordRequired(%q) = %v, want %v", said, got, want)
+		}
+	}
+}

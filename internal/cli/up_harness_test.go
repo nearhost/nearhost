@@ -198,11 +198,36 @@ func (u *upRun) start(extra ...string) {
 func (u *upRun) stop() error {
 	u.t.Helper()
 	u.cancel()
+	return u.finish("after its context ended")
+}
+
+// exited waits for the command to return by itself, with no signal, and
+// checks that nothing of it is left, as stop does.
+func (u *upRun) exited() error {
+	u.t.Helper()
+	return u.finish("by itself")
+}
+
+// stillRunning fails the test when the command has returned.
+func (u *upRun) stillRunning() {
+	u.t.Helper()
+	select {
+	case err := <-u.done:
+		u.done <- err
+		u.t.Fatalf("up returned (%v) while it had something to serve or wait for; output:\n%s", err, u.out.String())
+	default:
+	}
+}
+
+// finish waits for the command to return and checks that nothing of it is
+// left (see stop). when says what the wait is for, in the failure.
+func (u *upRun) finish(when string) error {
+	u.t.Helper()
 	var err error
 	select {
 	case err = <-u.done:
 	case <-time.After(60 * time.Second):
-		u.t.Fatalf("up did not return after its context ended; output:\n%s", u.out.String())
+		u.t.Fatalf("up did not return %s; output:\n%s", when, u.out.String())
 	}
 	u.done = nil
 	for _, port := range []int{u.httpsPort, u.httpPort, u.webPort} {

@@ -276,8 +276,158 @@ func TestUpReportsAFailedProjectAndKeepsServingTheOthers(t *testing.T) {
 	if got := u.get("web.test"); !strings.HasPrefix(got, "web:web.test") {
 		t.Fatalf("served %q through the proxy", got)
 	}
+	// One project serves, so up keeps going.
+	u.stillRunning()
+	if strings.Contains(u.out.String(), nothingServedLine) {
+		t.Errorf("up said it was stopping while it served a project:\n%s", u.out.String())
+	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v", err)
+	}
+}
+
+const nothingServedLine = "\nNothing can be served, so nearhost up is stopping.\n"
+
+// wantStoppedForNothing checks that up, which has returned err, stopped
+// because nothing could be served: the line after the summary, the same
+// shutdown as Ctrl-C, and exit status 1 with nothing more said by Main.
+func wantStoppedForNothing(t *testing.T, out string, err error) {
+	t.Helper()
+	var stderr bytes.Buffer
+	if code := exitCode(err, &stderr); code != 1 || stderr.Len() != 0 {
+		t.Errorf("up returned %v: exit status %d, Main said %q; want 1 and nothing", err, code, stderr.String())
+	}
+	if !strings.Contains(out, nothingServedLine+"shutting down\n") || !strings.HasSuffix(out, "\nstopped\n") {
+		t.Errorf("expected the stopping line, then the shutdown:\n%s", out)
+	}
+	if strings.Contains(out, "Ctrl-C") {
+		t.Errorf("up said to press Ctrl-C while stopping by itself:\n%s", out)
+	}
+}
+
+// When every project fails, up says so and stops, once every first start has
+// returned: a project still connecting holds it until its start ends.
+func TestUpStopsWhenNothingCanBeServed(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	failAll := filepath.Join(t.TempDir(), "fail")
+	for _, f := range []string{hold, failAll} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	web := remoteProject("web")
+	web.Server = "other"
+	u := newUpRun(t, &config.Config{
+		Servers:  append([]config.Server{{Name: "other", SSHHost: "other.lan"}}, mini...),
+		Projects: []config.Project{remoteProject("api"), web},
+	})
+	u.noHosts = true
+	// api's server answers only once hold is gone, then refuses it; web's
+	// refuses it at once.
+	u.sshEnv = []string{"FAKE_SSH_AUTH_FAIL_HOST=mini.lan", "FAKE_SSH_AUTH_HOLD=" + hold, "FAKE_SSH_AUTH_FAIL_FILE=" + failAll}
+	shutdowns := 0
+	u.adjust = func(b *upBackend) {
+		b.shutdown = func(eng *engine.Engine, ctx context.Context) error {
+			shutdowns++
+			return eng.Shutdown(ctx)
+		}
+	}
+	u.start()
+	u.waitFor("[web] state: error")
+	// api is still connecting: its first attempt has not ended.
+	time.Sleep(300 * time.Millisecond)
+	u.stillRunning()
+	if out := u.out.String(); strings.Contains(out, nothingServedLine) || strings.Contains(out, "shutting down") {
+		t.Fatalf("up stopped while a project was still connecting:\n%s", out)
+	}
+	if err := os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
+	err := u.exited() // also checks that no ssh process, listener or goroutine is left
+	out := u.out.String()
+	wantStoppedForNothing(t, out, err)
+	summary := strings.Index(out, "\napi: error: ")
+	if summary < 0 || !strings.Contains(out, "\nweb: error: ") || strings.Index(out, nothingServedLine) < summary {
+		t.Errorf("the summary is missing, or came after the stopping line:\n%s", out)
+	}
+	if shutdowns != 1 {
+		t.Errorf("the shutdown ran %d times, want once", shutdowns)
+	}
+}
+
+// A project whose server is reconnecting will serve again by itself, so up
+// keeps going although nothing else runs.
+func TestUpKeepsGoingWhileAProjectWaitsForItsServer(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	down := filepath.Join(t.TempDir(), "down")
+	if err := os.WriteFile(hold, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	web := remoteProject("web")
+	web.Server = "other"
+	u := newUpRun(t, &config.Config{
+		Servers:  append([]config.Server{{Name: "other", SSHHost: "other.lan"}}, mini...),
+		Projects: []config.Project{remoteProject("api"), web},
+	})
+	u.noHosts = true
+	// web's server answers only once hold is gone, then refuses it; only
+	// api's server goes down.
+	u.sshEnv = []string{"FAKE_SSH_AUTH_FAIL_HOST=other.lan", "FAKE_SSH_AUTH_HOLD=" + hold, "FAKE_SSH_MASTER_DOWN=" + down, "FAKE_SSH_MASTER_DOWN_HOST=mini.lan"}
+	u.start()
+	u.waitFor("[api] state: running")
+	// api's server goes away and stays away: its session keeps reconnecting.
+	if err := os.WriteFile(down, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u.dropLink()
+	u.waitFor("[api] state: degraded: server mini is ")
+	if err := os.Remove(hold); err != nil {
+		t.Fatal(err)
+	}
+	u.waitFor("Press Ctrl-C to stop.\n")
+	wantContains(t, u.out.String(), "\napi: degraded: ", "\nweb: error: ")
+	time.Sleep(300 * time.Millisecond)
+	u.stillRunning()
+	if out := u.out.String(); strings.Contains(out, nothingServedLine) {
+		t.Errorf("up stopped while a project waited for its server:\n%s", out)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// With no terminal to ask in, the hosts file's sudo prompt is skipped: up
+// says so once, whatever the number of projects, and as nothing can be
+// served, stops.
+func TestUpWithoutATerminalForSudoSaysSoOnce(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{
+		localProject("one", testutil.Upstream(t, "one"), true),
+		localProject("two", testutil.Upstream(t, "two"), true),
+	}})
+	u.hostsErr = errNoTerminal
+	u.start()
+	err := u.exited()
+	out := u.out.String()
+	if n := strings.Count(out, hostsNoTerminal); n != 1 {
+		t.Errorf("the no-terminal message was printed %d times:\n%s", n, out)
+	}
+	if hostsNoTerminal != "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost up in a terminal once, or pass --no-hosts." {
+		t.Errorf("the message reads %q", hostsNoTerminal)
+	}
+	wantStoppedForNothing(t, out, err)
+}
+
+func TestWaitingStates(t *testing.T) {
+	for st, want := range map[engine.State]bool{
+		engine.StateStarting: true,
+		engine.StateDegraded: true,
+		engine.StateRunning:  false,
+		engine.StateError:    false,
+		engine.StateStopped:  false,
+	} {
+		if got := waiting(st); got != want {
+			t.Errorf("waiting(%s) = %v, want %v", st, got, want)
+		}
 	}
 }
 
@@ -288,8 +438,10 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 	}})
 	u.hostsErr = errors.New("sudo hosts apply: exit status 1")
 	u.start()
-	u.waitFor("Nothing is being served. Press Ctrl-C to stop.\n")
+	// Neither project is served, and neither will be by itself.
+	err := u.exited()
 	out := u.out.String()
+	wantStoppedForNothing(t, out, err)
 	for _, name := range []string{"one", "two"} {
 		wantContains(t, out,
 			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
@@ -300,9 +452,6 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {
 		t.Errorf("the hosts function was called %d times; a refusal must not be asked again", len(calls))
-	}
-	if err := u.stop(); err != nil {
-		t.Fatalf("up returned %v", err)
 	}
 }
 

@@ -61,6 +61,26 @@ func TestSudoCommandCarriesArgsAndInput(t *testing.T) {
 	}
 }
 
+// Without a prompt, callers read sudo's refusal by its English wording, so
+// sudo is told to speak it. A prompt keeps the user's language.
+func TestSudoCommandSpeaksEnglishOnlyWithoutAPrompt(t *testing.T) {
+	fakeSudo := filepath.Join(t.TempDir(), "sudo")
+	if err := os.WriteFile(fakeSudo, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useSudo(t, fakeSudo)
+	for _, interactive := range []bool{false, true} {
+		cmd, err := sudoCommand(context.Background(), Command{Path: "/bin/nearhost", Prompt: hostsPrompt, Interactive: interactive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		forced := len(cmd.Env) > 0 && cmd.Env[len(cmd.Env)-1] == "LC_ALL=C"
+		if forced == interactive {
+			t.Fatalf("interactive %v: LC_ALL=C set %v", interactive, forced)
+		}
+	}
+}
+
 func TestSudoRunStopsSudoWhenCancelled(t *testing.T) {
 	// A stand-in for sudo that, like sudo at its password prompt, does not
 	// finish by itself.

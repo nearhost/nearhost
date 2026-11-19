@@ -79,7 +79,9 @@ func (p *upPrinter) buffered(events <-chan engine.Event) {
 
 // summary prints one line per started project with the state it is in now,
 // which is not always what its start returned: a project can come up degraded.
-func (p *upPrinter) summary(names []string, startErrs []error) {
+// It reports whether nothing can be served (see nothingToServe), and then
+// ends with the line that says up is stopping.
+func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
 	fmt.Fprintln(p.out)
 	for i, name := range names {
 		st := p.eng.Status(name)
@@ -98,11 +100,46 @@ func (p *upPrinter) summary(names []string, startErrs []error) {
 		fmt.Fprintln(p.out, line)
 		p.fix(name, st.State, reason)
 	}
+	if p.nothingToServe(names) {
+		fmt.Fprintln(p.out, "\nNothing can be served, so nearhost up is stopping.")
+		return true
+	}
 	if len(p.eng.Sites()) == 0 {
 		fmt.Fprintln(p.out, "\nNothing is being served. Press Ctrl-C to stop.")
-		return
+		return false
 	}
 	fmt.Fprintln(p.out, "\nServing until interrupted. Press Ctrl-C to stop.")
+	return false
+}
+
+// nothingToServe reports whether up has nothing to serve and nothing to
+// wait for: no site is published (a project in error can still serve its
+// web routes), and none of names is running or waiting. Projects in error
+// or stopped stay so until the user does something.
+func (p *upPrinter) nothingToServe(names []string) bool {
+	if len(p.eng.Sites()) > 0 {
+		return false
+	}
+	for _, name := range names {
+		if st := p.eng.Status(name).State; st == engine.StateRunning || waiting(st) {
+			return false
+		}
+	}
+	return true
+}
+
+// waiting reports whether a project in state st will change by itself:
+// Nearhost is still starting it, or retrying for it. Starting is a start
+// in flight; degraded is a project whose server's session, or one of its
+// forwards, is reconnecting. Any state that means "Nearhost will retry by
+// itself" must be added here, so that up never stops while one may still
+// come to serve.
+func waiting(st engine.State) bool {
+	switch st {
+	case engine.StateStarting, engine.StateDegraded:
+		return true
+	}
+	return false
 }
 
 // fix prints what to do about a project in the given state, if anything.
