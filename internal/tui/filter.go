@@ -138,3 +138,40 @@ func highlight(name, query string, style seg) []seg {
 		{style.style, string(rn[end:])},
 	}
 }
+
+// pasteLine is the one line of pasted text a single-line input takes: the
+// first line that holds anything, with control characters and escape
+// sequences replaced by spaces, and the edges trimmed.
+func pasteLine(s string) string {
+	for _, line := range strings.FieldsFunc(s, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if line = strings.TrimSpace(clean(line)); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// pasteText puts pasted text in the text input that has the focus: the log
+// view's search while it is typed in, otherwise the sidebar filter. With
+// neither focused it does nothing. The input's own limit applies.
+func (m *Model) pasteText(content string) tea.Cmd {
+	text := pasteLine(content)
+	if text == "" || m.quitting {
+		return nil
+	}
+	if v := m.logView; v != nil {
+		if !v.searching {
+			return nil
+		}
+		var cmd tea.Cmd
+		v.search, cmd = v.search.Update(tea.PasteMsg{Content: text})
+		return cmd
+	}
+	if !m.filtering {
+		return nil
+	}
+	var cmd tea.Cmd
+	m.filter, cmd = m.filter.Update(tea.PasteMsg{Content: text})
+	m.keepSelectionShown()
+	return cmd
+}

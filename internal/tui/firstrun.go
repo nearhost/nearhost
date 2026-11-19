@@ -52,7 +52,7 @@ func (f *firstRunForm) update(msg tea.Msg) tea.Cmd {
 			f.busy, f.err = true, ""
 			seq, b := f.seq, f.b
 			return f.w.do(func(ctx context.Context) tea.Msg { return trustedMsg{seq, b.Trust(ctx)} })
-		case "s":
+		case "s", "esc":
 			return func() tea.Msg { return firstRunSkippedMsg{} }
 		}
 	}
@@ -104,7 +104,7 @@ func (f *firstRunForm) keys() []footerItem {
 	if f.err != "" {
 		label = "try again"
 	}
-	return []footerItem{{"enter", label}, {"s", "skip"}}
+	return []footerItem{{"enter", label}, {"s/esc", "skip"}}
 }
 
 // offerFirstRun opens the first-run screen at the first trust check after

@@ -34,7 +34,7 @@ func TestFirstRunIsShownWhenTheCAIsUntrusted(t *testing.T) {
 	m, _ := started(t, false)
 	wantScreen(t, m, "Welcome to Nearhost", "Two things ask for your password:",
 		"• now: trusting the local certificate authority,", "so browsers accept HTTPS from Nearhost's web server",
-		"• later: adding names to "+hosts.DefaultPath, "enter trust now · s skip")
+		"• later: adding names to "+hosts.DefaultPath, "enter trust now · s/esc skip")
 	// The main screen's keys wait.
 	press(m, "n")
 	if _, ok := m.form.(*firstRunForm); !ok {
@@ -64,7 +64,7 @@ func TestFirstRunTrusts(t *testing.T) {
 	m, f := started(t, false)
 	f.edit.trustErr = errors.New("the password was refused")
 	settle(m, press(m, "enter"))
-	wantScreen(t, m, "The password was refused", "enter try again · s skip")
+	wantScreen(t, m, "The password was refused", "enter try again · s/esc skip")
 	f.edit.trustErr = nil
 	cmd := press(m, "enter")
 	wantScreen(t, m, "◐ Trusting the local certificate authority…")
@@ -109,5 +109,18 @@ func TestTrustSuccessSetsTheFlagAtOnceAndAnOlderReadCannotUndoIt(t *testing.T) {
 	m.Update(machineMsg{readAt: time.Now().Add(time.Second), caTrusted: false})
 	if m.caTrusted {
 		t.Fatal("a later read that says not trusted was ignored")
+	}
+}
+
+func TestFirstRunEscSkipsLikeS(t *testing.T) {
+	m, _ := started(t, false)
+	wantScreen(t, m, "enter trust now · s/esc skip")
+	settle(m, press(m, "esc"))
+	if m.form != nil {
+		t.Fatalf("form %T after esc", m.form)
+	}
+	m.Update(machineMsg{caTrusted: false})
+	if m.form != nil {
+		t.Error("the first-run screen came back in the same session")
 	}
 }

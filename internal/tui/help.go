@@ -61,8 +61,19 @@ const helpGap = 1
 // longest description.
 func groupWidth(g helpGroup) int {
 	w := lipgloss.Width(g.title)
+	kw := keyWidth(g)
 	for _, b := range g.keys {
-		w = max(w, helpKeyWidth+lipgloss.Width(b.Help().Desc))
+		w = max(w, kw+lipgloss.Width(b.Help().Desc))
+	}
+	return w
+}
+
+// keyWidth is the width of a group's keys' column: helpKeyWidth, or more
+// for a group with a longer key, such as shift+tab.
+func keyWidth(g helpGroup) int {
+	w := helpKeyWidth
+	for _, b := range g.keys {
+		w = max(w, lipgloss.Width(b.Help().Key)+1)
 	}
 	return w
 }
@@ -70,27 +81,33 @@ func groupWidth(g helpGroup) int {
 // helpColumns is the full help's layout for a window of width: its columns,
 // each a list of groups stacked top to bottom. The four groups sit side by
 // side when they fit whole, and in two columns of two otherwise.
-func helpColumns(width int) [][]helpGroup {
+func helpColumns(width int) [][]helpGroup { return helpColumnsOf(helpGroups, width) }
+
+// helpColumnsOf is helpColumns for the keys of groups.
+func helpColumnsOf(groups []helpGroup, width int) [][]helpGroup {
 	wide := 1 // the cell at the left
-	for _, g := range helpGroups {
+	for _, g := range groups {
 		wide += groupWidth(g) + helpGap
 	}
 	if wide-helpGap <= width {
-		cols := make([][]helpGroup, len(helpGroups))
-		for i, g := range helpGroups {
+		cols := make([][]helpGroup, len(groups))
+		for i, g := range groups {
 			cols[i] = []helpGroup{g}
 		}
 		return cols
 	}
-	half := len(helpGroups) / 2
-	return [][]helpGroup{helpGroups[:half], helpGroups[half:]}
+	half := len(groups) / 2
+	return [][]helpGroup{groups[:half], groups[half:]}
 }
 
 // helpRows is how many rows the full help takes in a window of width: the
 // tallest column, each group with its title.
-func helpRows(width int) int {
+func helpRows(width int) int { return helpRowsOf(helpGroups, width) }
+
+// helpRowsOf is helpRows for the keys of groups.
+func helpRowsOf(groups []helpGroup, width int) int {
 	rows := 0
-	for _, col := range helpColumns(width) {
+	for _, col := range helpColumnsOf(groups, width) {
 		n := 0
 		for _, g := range col {
 			n += len(g.keys) + 1
@@ -101,10 +118,13 @@ func helpRows(width int) int {
 }
 
 // fullHelp draws every key in columns, each as wide as its longest line.
-func (m *Model) fullHelp() string {
-	rows := helpRows(m.width)
+func (m *Model) fullHelp() string { return m.helpOf(helpGroups) }
+
+// helpOf draws the keys of groups in columns.
+func (m *Model) helpOf(groups []helpGroup) string {
+	rows := helpRowsOf(groups, m.width)
 	var cols []string
-	for _, col := range helpColumns(m.width) {
+	for _, col := range helpColumnsOf(groups, m.width) {
 		w := 0
 		for _, g := range col {
 			w = max(w, groupWidth(g))
@@ -114,7 +134,7 @@ func (m *Model) fullHelp() string {
 			lines = append(lines, fit(styleTitle.Render(g.title), w))
 			for _, b := range g.keys {
 				h := b.Help()
-				lines = append(lines, fit(styleBeacon.Render(fit(h.Key, helpKeyWidth))+styleDim.Render(h.Desc), w))
+				lines = append(lines, fit(styleBeacon.Render(fit(h.Key, keyWidth(g)))+styleDim.Render(h.Desc), w))
 			}
 		}
 		for len(lines) < rows {
