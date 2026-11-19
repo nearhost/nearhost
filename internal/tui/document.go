@@ -184,6 +184,11 @@ func (f *docForm) lines(width int) []string {
 		serves = "Nearhost will serve files in " + f.root + ". It is in a hidden folder, so only documents and their assets are served from it."
 	}
 	lines = append(lines, wrap(serves, width)...)
+	if f.r.NewRoot && f.r.CanAlways {
+		granted := requesterName(f.r.Requester) + " has Always allow " + docWhere(f.r.Origin) +
+			", but not for this folder. Always allow adds it."
+		lines = append(lines, wrap(granted, width)...)
+	}
 	if f.busy {
 		lines = append(lines, "", busyLine("Opening…"))
 	}

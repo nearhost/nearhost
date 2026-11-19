@@ -101,9 +101,9 @@ func (s *Server) notConnected(w http.ResponseWriter, origin string) {
 		"Nearhost isn't connected to %s. On %s, select %s in Nearhost and press c, then ask again", origin, s.laptop(), origin))
 }
 
-// docRequest asks to show a document: at once with a valid token or in a
-// tree already served for its requester, or prompted in the interface
-// otherwise.
+// docRequest asks to show a document: at once with a valid token whose
+// grant covers the document's root or in a tree already served for its
+// requester, or prompted in the interface otherwise.
 func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.docReady(w, r) {
 		return
@@ -153,9 +153,12 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed := false
+	// A valid token opens a document without asking only in a root its
+	// grant covers. In another the user is asked, and Always allow adds the
+	// root to that grant.
+	allowed, granted, newRoot := false, "", false
 	if req.Token != "" {
-		ok, err := s.opts.DocGrants.Check(o, req.Requester, req.Token)
+		ok, covered, err := s.opts.DocGrants.Check(o, req.Requester, req.Token, res.Root)
 		if err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
@@ -165,7 +168,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 				"the token for %s on %s was revoked or never existed; drop it and ask again without it", req.Requester, o))
 			return
 		}
-		allowed = true
+		allowed, granted, newRoot = covered, req.Token, !covered
 	}
 	// A tree already served opens without asking only for the requester it
 	// was approved for, and never for RequesterUnknown, which any process
@@ -212,6 +215,12 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	reviewer := s.reviewer
 	if !allowed {
 		if rec := s.repeatLocked(o, res, req); rec != nil {
+			// A repeat that brings a valid token lends it to the prompt,
+			// so Always allow adds the root to that token's grant rather
+			// than replacing the grant.
+			if rec.granted == "" {
+				rec.granted = granted
+			}
 			s.mu.Unlock()
 			reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
 			return
@@ -231,13 +240,17 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if allowed {
+		granted = "" // only a prompt's answer needs it
+	}
 	s.docSeq++
 	rec := &docRecord{
 		DocRequest: DocRequest{
 			ID: newID(), Origin: o, Requester: req.Requester, Session: req.Session, Label: req.Label,
 			Root: res.Root, Doc: res.Doc, CanAlways: req.Requester != RequesterUnknown,
-			Expires: s.opts.Now().Add(expiry),
+			NewRoot: newRoot && !allowed, Expires: s.opts.Now().Add(expiry),
 		},
+		granted:  granted,
 		prompted: !allowed,
 		opening:  allowed,
 		state:    StatePending,

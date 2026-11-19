@@ -71,6 +71,9 @@ type DocRequest struct {
 	Doc       string // the document, relative to Root
 	// CanAlways is set when Always allow may be offered.
 	CanAlways bool
+	// NewRoot is set when the requester has Always allow on Origin, but
+	// not for Root, so Always allow adds Root to that grant.
+	NewRoot bool
 	// Expires is when the agent stops waiting for the answer.
 	Expires time.Time
 }

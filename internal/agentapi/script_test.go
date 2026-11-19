@@ -1417,10 +1417,10 @@ func TestScriptDecodesHTMLEscapes(t *testing.T) {
 
 // docScript serves origin like scriptServerWith, with a fake Shower and
 // DocGrants and the install id "lid".
-func docScript(t *testing.T, home, origin string, review bool) (*Server, *fakeShower, *fakeGrants, *fakeReviewer) {
+func docScript(t *testing.T, home, origin string, review bool) (*Server, *fakeShower, *fakeDocGrants, *fakeReviewer) {
 	t.Helper()
 	sh := &fakeShower{served: map[[2]string]string{}}
-	g := &fakeGrants{tokens: map[[2]string]string{}}
+	g := newFakeDocGrants()
 	s, _ := scriptServerWith(t, home, "k3f9q2", origin, review, Options{ID: "lid", Source: fakeSource{origin: mini}, Shower: sh, DocGrants: g})
 	rv := &fakeReviewer{}
 	if review {
@@ -1478,7 +1478,7 @@ func TestScriptOpenSendsRoot(t *testing.T) {
 		}
 
 		// With a documents token the same request opens at once.
-		g.tokens[[2]string{shell.origin(), "claude-code"}] = "doc-tok"
+		g.grant(shell.origin(), "claude-code", "doc-tok", repo)
 		if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -1618,7 +1618,7 @@ func TestScriptOpenNotConnectedAndUp(t *testing.T) {
 		home := shortDir(t)
 		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		sh := &fakeShower{served: map[[2]string]string{}, resolveErr: ErrNotConnected}
-		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: newFakeDocGrants()})
 		r := shell.run(t, home, nil, "open", p)
 		if r.code != 2 || !strings.Contains(r.stderr, "isn't connected") || !strings.Contains(r.stderr, p) {
 			t.Fatalf("not connected: %+v", r)
@@ -1633,11 +1633,55 @@ func TestScriptOpenNotConnectedAndUp(t *testing.T) {
 	})
 }
 
+// Always allow on a folder new to a grant adds the folder and gives no new
+// token, so the script keeps the documents token it has, which still works.
+func TestScriptOpenKeepsTheTokenForANewFolder(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, sh, g, rv := docScript(t, home, shell.origin(), true)
+		g.grant(shell.origin(), "claude-code", "doc-tok", "/srv/elsewhere")
+		if err := os.MkdirAll(filepath.Dir(docToken(home, "claude-code")), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(docToken(home, "claude-code"), []byte("doc-tok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r := shell.run(t, home, claudeEnv, "open", p)
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("open: %+v", r)
+		}
+		if got := rv.docPrompts(); len(got) != 1 || !got[0].NewRoot {
+			t.Fatalf("prompts %+v", got)
+		}
+		if err := s.AnswerDocument(context.Background(), m[1], AnswerAlways); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, claudeEnv, "open-wait", m[1])
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(sh.showed()) != 1 {
+			t.Fatalf("open-wait: %+v", r)
+		}
+		if tok, _ := os.ReadFile(docToken(home, "claude-code")); strings.TrimSpace(string(tok)) != "doc-tok" {
+			t.Fatalf("the token file changed: %q", tok)
+		}
+		// The kept token now opens the folder without a prompt, with no
+		// tree served, as after a restart.
+		sh.mu.Lock()
+		clear(sh.served)
+		sh.mu.Unlock()
+		r = shell.run(t, home, claudeEnv, "open", p)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || len(rv.docPrompts()) != 1 {
+			t.Fatalf("open again: %+v", r)
+		}
+	})
+}
+
 func TestScriptOpenAgentKeepsNoToken(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		s, sh, g, rv := docScript(t, home, shell.origin(), true)
-		g.tokens[[2]string{shell.origin(), "agent"}] = "tok-agent"
+		g.grant(shell.origin(), "agent", "tok-agent")
 		if err := os.MkdirAll(filepath.Dir(docToken(home, "agent")), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -1671,7 +1715,7 @@ func TestScriptOpenRefusedGivesThePath(t *testing.T) {
 		home := shortDir(t)
 		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		sh := &fakeShower{served: map[[2]string]string{}, resolveErr: fmt.Errorf("%w: Nearhost won't serve your whole home folder", ErrBadDocument)}
-		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: newFakeDocGrants()})
 		r := shell.run(t, home, claudeEnv, "open", p)
 		if r.code != 1 || !strings.Contains(r.stdout, "whole home folder") || !strings.Contains(r.stderr, "Nothing was opened") || !strings.Contains(r.stderr, p) {
 			t.Fatalf("refused: %+v", r)
@@ -1683,7 +1727,7 @@ func TestScriptOpenWaitExpired(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		sh := &fakeShower{served: map[[2]string]string{}}
-		_, c := scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: &fakeGrants{tokens: map[[2]string]string{}}})
+		_, c := scriptServerWith(t, home, "k3f9q2", shell.origin(), true, Options{ID: "lid", Source: fakeSource{shell.origin(): mini}, Shower: sh, DocGrants: newFakeDocGrants()})
 		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		r := shell.run(t, home, claudeEnv, "open", p)
 		m := proposalID.FindStringSubmatch(r.stdout)
