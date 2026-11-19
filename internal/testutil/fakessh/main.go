@@ -161,10 +161,15 @@ func run(args []string) int {
 	}
 
 	if authFail {
+		// $FAKE_SSH_FLOOD=<n> writes n lines of a refused channel first, as
+		// a master does for each request to a forward whose server is down.
+		floodStderr("", os.Getenv("FAKE_SSH_FLOOD"))
 		fmt.Fprintln(os.Stderr, "user@host: Permission denied (publickey).")
+		floodStderr("debug1: chatter", os.Getenv("FAKE_SSH_TRAILING"))
 		return 255
 	}
 	if os.Getenv("FAKE_SSH_HOSTKEY_FAIL") != "" {
+		fmt.Fprintln(os.Stderr, "Offending ECDSA key in /home/u/.ssh/known_hosts:3")
 		fmt.Fprintln(os.Stderr, "Host key verification failed.")
 		return 255
 	}
@@ -230,6 +235,10 @@ func run(args []string) int {
 	// long.
 	if s := os.Getenv("FAKE_SSH_FLAKY_ONCE"); s != "" && !exists(sock+".flaked") {
 		touch(sock + ".flaked")
+		// $FAKE_SSH_EARLY_LINE is written before the socket exists.
+		if l := os.Getenv("FAKE_SSH_EARLY_LINE"); l != "" {
+			fmt.Fprintln(os.Stderr, l)
+		}
 		touch(sock)
 		secs, _ := strconv.ParseFloat(s, 64)
 		deadline := time.Now().Add(time.Duration(secs * float64(time.Second)))
@@ -240,6 +249,16 @@ func run(args []string) int {
 			time.Sleep(min(50*time.Millisecond, time.Until(deadline)))
 		}
 		os.Remove(sock)
+		// $FAKE_SSH_LATE_LINE is written once the master has connected.
+		if l := os.Getenv("FAKE_SSH_LATE_LINE"); l != "" {
+			fmt.Fprintln(os.Stderr, l)
+		}
+		// $FAKE_SSH_EXIT_FLOOD=<n> makes it exit after n refused-channel
+		// lines and nothing else.
+		if os.Getenv("FAKE_SSH_EXIT_FLOOD") != "" {
+			floodStderr("", os.Getenv("FAKE_SSH_EXIT_FLOOD"))
+			return 255
+		}
 		fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
 		return 255
 	}
@@ -593,4 +612,17 @@ func holdStderr(hold string) int {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return 0
+}
+
+// floodStderr writes n (a decimal string, "" for none) lines to stderr: of
+// the text line when it is not empty, else of a refused channel.
+func floodStderr(line, n string) {
+	count, _ := strconv.Atoi(n)
+	for i := 1; i <= count; i++ {
+		if line != "" {
+			fmt.Fprintln(os.Stderr, line)
+		} else {
+			fmt.Fprintf(os.Stderr, "channel %d: open failed: connect failed: Connection refused\n", i)
+		}
+	}
 }

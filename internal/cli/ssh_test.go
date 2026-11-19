@@ -128,8 +128,12 @@ func TestCheckServerRunsTheBatchModeCheck(t *testing.T) {
 	c, _ = fakeClient(t, "FAKE_SSH_HOSTKEY_FAIL=1")
 	err := c.check(context.Background(), config.Server{Name: "mini", SSHHost: "mini.lan"})
 	var ce *transport.CheckError
-	if !errors.As(err, &ce) || ce.Stderr != "Host key verification failed." {
+	if !errors.As(err, &ce) {
 		t.Fatalf("err = %v", err)
+	}
+	// The offending-key line says which known_hosts entry to remove.
+	if !strings.HasSuffix(ce.Stderr, "Host key verification failed.") || !strings.Contains(ce.Stderr, "Offending") {
+		t.Fatalf("Stderr = %q", ce.Stderr)
 	}
 }
 

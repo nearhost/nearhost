@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // perProcess is a Transport that keeps no ControlMaster, for an ssh that has
@@ -452,6 +454,7 @@ wait:
 			return linkEnd{msg: "connect timed out"}, true
 		case <-stderr.ready:
 			end.connected = true
+			stderr.ForgetFatal()
 			if remote != "" {
 				p.mu.Lock()
 				p.agentPath, p.agentErr, p.agentProblem = remote, "", AgentOK
@@ -483,9 +486,7 @@ wait:
 		p.setAgentErr(fmt.Errorf("ssh cannot forward %s: %s", remote, bad), AgentNotReady)
 		return linkEnd{agentRefused: true}, true
 	}
-	lines := stderr.Lines()
-	end.msg = exitMessage(lines)
-	end.fatal = isFatalSSHError(strings.Join(lines, "\n"))
+	end.msg, end.fatal = stderr.ExitMessage()
 	return end, true
 }
 
@@ -611,27 +612,38 @@ func (p *perProcess) running() int {
 }
 
 // exitMessage picks why the link exited from the last lines of its stderr:
-// the last that is not ssh's DEBUG1 chatter or the byte counts it prints on
-// the way out. It looks no further back than ssh's saying it has
+// the last that is not ssh's DEBUG1 chatter, a refused channel or the byte
+// counts it prints on the way out. It looks no further back than ssh's saying it has
 // authenticated, since what came before (a banner, a known_hosts warning)
 // is not why a logged-in ssh exited: then it is "ssh exited". An ssh that
 // never said it authenticated and wrote only chatter gives its last line;
 // one that wrote nothing gives "ssh exited".
 func exitMessage(lines []string) string {
+	last := ""
 	for i := len(lines) - 1; i >= 0; i-- {
 		l := lines[i]
 		if saysAuthenticated(l) {
 			return "ssh exited"
 		}
+		if refusedChannel.MatchString(l) {
+			continue
+		}
+		if last == "" {
+			last = l
+		}
 		if !strings.HasPrefix(l, "debug") && !strings.HasPrefix(l, "Transferred:") && !strings.HasPrefix(l, "Bytes per second:") {
 			return l
 		}
 	}
-	if len(lines) > 0 {
-		return lines[len(lines)-1]
+	if last != "" {
+		return last
 	}
 	return "ssh exited"
 }
+
+// refusedChannel matches the line ssh logs for a forwarded connection it
+// could not open, which is not why a link exited.
+var refusedChannel = regexp.MustCompile(`^channel \d+: open failed`)
 
 // saysAuthenticated reports whether line is ssh saying it has logged in.
 func saysAuthenticated(line string) bool {
@@ -675,6 +687,10 @@ type sshStderr struct {
 	isReady bool
 	refusal string
 	badSpec string
+	// fatal is the last line that isFatalSSHError matches and offending the
+	// last that names a host key to fix, kept when the ring drops them.
+	fatal     string
+	offending string
 }
 
 // newSSHStderr returns an sshStderr for a link that forwards the agent
@@ -743,11 +759,12 @@ func (w *sshStderr) Write(b []byte) (int, error) {
 
 // endLine files the line in partial.
 func (w *sshStderr) endLine() {
-	line := strings.TrimSpace(string(w.partial))
+	line := cleanLine(w.partial)
 	w.partial = w.partial[:0]
 	if line == "" {
 		return
 	}
+	w.noteFatal(line)
 	if !w.authed && saysAuthenticatedTo(line, w.authenticatedOn) {
 		w.authed = true
 		close(w.authenticated)
@@ -791,8 +808,77 @@ func (w *sshStderr) Lines() []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	out := append([]string(nil), w.lines...)
-	if line := strings.TrimSpace(string(w.partial)); line != "" {
+	if line := cleanLine(w.partial); line != "" {
 		out = append(out[max(0, len(out)-stderrLines+1):], line)
 	}
 	return out
+}
+
+// cleanLine is the line in b, trimmed, with a rune that the cut at
+// maxStderrLine split dropped.
+func cleanLine(b []byte) string {
+	if len(b) >= maxStderrLine {
+		for len(b) > 0 {
+			if r, size := utf8.DecodeLastRune(b); r == utf8.RuneError && size <= 1 {
+				b = b[:len(b)-1]
+				continue
+			}
+			break
+		}
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// noteFatal remembers line if it is a fatal error or names a key to fix.
+func (w *sshStderr) noteFatal(line string) {
+	// A refused channel carries the server's error text, not ssh's own.
+	if refusedChannel.MatchString(line) {
+		return
+	}
+	if isFatalSSHError(line) {
+		w.fatal = line
+	}
+	if strings.Contains(line, "Offending") {
+		w.offending = line
+	}
+}
+
+// Fatal returns the last line ssh wrote that retrying cannot fix, and the
+// last that names the host key to fix, "" for none, since the last
+// ForgetFatal. A final line without a newline counts.
+func (w *sshStderr) Fatal() (fatal, offending string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	fatal, offending = w.fatal, w.offending
+	if line := cleanLine(w.partial); line != "" {
+		if isFatalSSHError(line) {
+			fatal = line
+		}
+		if strings.Contains(line, "Offending") {
+			offending = line
+		}
+	}
+	return fatal, offending
+}
+
+// ExitMessage is why ssh exited and whether retrying cannot fix it. For a
+// fatal error it is the line that says so, and for a host key the line
+// naming the key to fix after it, however much ssh wrote since; otherwise
+// it is exitMessage of the last lines.
+func (w *sshStderr) ExitMessage() (msg string, fatal bool) {
+	if line, offending := w.Fatal(); line != "" {
+		if offending != "" {
+			line += "\n" + offending
+		}
+		return line, true
+	}
+	return exitMessage(w.Lines()), false
+}
+
+// ForgetFatal drops what Fatal remembers, once ssh has connected: what it
+// logged before is not why it exits later.
+func (w *sshStderr) ForgetFatal() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.fatal, w.offending = "", ""
 }

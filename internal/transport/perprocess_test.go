@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -1722,5 +1723,29 @@ func TestPerProcessSSHCouldNotRequestTheForwardRefusesThePort(t *testing.T) {
 	fs := startRetriedForward(t, p, local)
 	if fs.Applied || !fs.Retrying || !fs.PortRefused || !strings.Contains(fs.Err, "Could not request local forwarding") {
 		t.Fatalf("ForwardState = %+v, want ssh's refusal with its port refused", fs)
+	}
+}
+
+func TestStderrLineCutKeepsRunesWhole(t *testing.T) {
+	// The cut at maxStderrLine falls inside a 2-byte and a 3-byte rune.
+	for _, line := range []string{
+		"x" + strings.Repeat("é", maxStderrLine),
+		strings.Repeat("x", 2) + strings.Repeat("€", maxStderrLine),
+	} {
+		w := newSSHStderr("", "")
+		w.Write([]byte(line + "\n"))
+		lines := w.Lines()
+		if len(lines) != 1 || !utf8.ValidString(lines[0]) || len(lines[0]) > maxStderrLine {
+			t.Fatalf("lines = %d, valid %v", len(lines), len(lines) == 1 && utf8.ValidString(lines[0]))
+		}
+	}
+}
+
+func TestPerProcessFatalLineSurvivesLaterChatter(t *testing.T) {
+	p := newTestPerProcess(t, "FAKE_SSH_AUTH_FAIL=1", "FAKE_SSH_TRAILING=30")
+	p.Start()
+	waitFor(t, 5*time.Second, func() bool { return p.Status() == StatusAuthFailed }, "auth failed status")
+	if got := p.LastError(); got != "user@host: Permission denied (publickey)." {
+		t.Fatalf("LastError = %q", got)
 	}
 }
