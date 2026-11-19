@@ -322,7 +322,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 	var extra []string
 	for _, h := range typed {
 		h = strings.ToLower(strings.TrimSpace(h))
-		if err := hostname.Valid(h); err != nil {
+		if err := config.ValidProjectHost(h); err != nil {
 			return err
 		}
 		if !approved[h] {

@@ -162,7 +162,7 @@ func serveHomeRequest(t *testing.T, r *http.Request) *httptest.ResponseRecorder 
 
 // withCookie is a GET of path carrying the page cookie with value.
 func withCookie(path, value string) *http.Request {
-	r := httptest.NewRequest("GET", path, nil)
+	r := pageRequest("GET", path)
 	r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: value})
 	return r
 }
@@ -229,7 +229,7 @@ func TestHomeKeySetsCookieAndRedirects(t *testing.T) {
 	secret := freshSecret(t)
 	listTrees(t)
 	for _, method := range []string{"GET", "HEAD"} {
-		w := serveHomeRequest(t, httptest.NewRequest(method, "/?k="+secret, nil))
+		w := serveHomeRequest(t, pageRequest(method, "/?k="+secret))
 		hdr := w.Header()
 		if w.Code != 303 || hdr.Get("Location") != "/" {
 			t.Fatalf("%s /?k=right: status %d, Location %q, want 303 to /", method, w.Code, hdr.Get("Location"))
@@ -252,7 +252,7 @@ func TestHomeWrongKeySetsNothing(t *testing.T) {
 	// The cases are named by number, so a failure prints no part of the
 	// secret.
 	for i, k := range []string{wrongSecret(secret), "", secret[:10], secret + "00", "%00"} {
-		w := serveHomeRequest(t, httptest.NewRequest("GET", "/?k="+k, nil))
+		w := serveHomeRequest(t, pageRequest("GET", "/?k="+k))
 		hdr := w.Header()
 		if w.Code != 303 || hdr.Get("Location") != "/" {
 			t.Errorf("wrong key %d: status %d, Location %q, want 303 to /", i, w.Code, hdr.Get("Location"))
@@ -299,6 +299,47 @@ func TestDocumentResponseSetsCookieOnlyOnSuccess(t *testing.T) {
 		if w.Code == 200 || len(w.Header().Values("Set-Cookie")) != 0 {
 			t.Errorf("GET %s: status %d, Set-Cookie %d values, want a failure with no cookie", path, w.Code, len(w.Header().Values("Set-Cookie")))
 		}
+	}
+}
+
+// At localhost, the page's other host, the cookie is neither given nor
+// honoured: browsers send a localhost cookie to every port there, so any dev
+// server the user browses at localhost would receive it. The host is
+// matched without regard to case or port.
+func TestPageCookieOnlyAtNearhostLocalhost(t *testing.T) {
+	secret := freshSecret(t)
+	plain := serveHome(t, "1.2.3", "GET", "/").Body.String()
+	listTrees(t)
+
+	for _, host := range []string{"localhost:6327", "localhost", "LOCALHOST:6327", "a.test:6327"} {
+		r := pageRequest("GET", "/?k="+secret)
+		r.Host = host
+		w := serveHomeRequest(t, r)
+		if w.Code != 303 || w.Header().Get("Location") != "/" || len(w.Header().Values("Set-Cookie")) != 0 {
+			t.Errorf("%s /?k=right: status %d, Location %q, %d Set-Cookie values, want 303 to / with no cookie",
+				host, w.Code, w.Header().Get("Location"), len(w.Header().Values("Set-Cookie")))
+		}
+		r = withCookie("/", secret)
+		r.Host = host
+		wantNoList(t, host+" with the right cookie", serveHomeRequest(t, r).Body.String(), plain)
+	}
+	for _, host := range []string{"nearhost.localhost", "NearHost.LocalHost:6327"} {
+		r := pageRequest("GET", "/?k="+secret)
+		r.Host = host
+		if got := serveHomeRequest(t, r).Header().Values("Set-Cookie"); len(got) != 1 || got[0] != pageCookieHeader(secret) {
+			t.Errorf("%s /?k=right: %d Set-Cookie values, want the page cookie", host, len(got))
+		}
+	}
+
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("doc"))
+	}), nil)
+	r := localhostRequest("GET", "/d/abc123/plan.md")
+	w := serveHomeRequest(t, r)
+	if w.Code != 200 || w.Body.String() != "doc" || len(w.Header().Values("Set-Cookie")) != 0 {
+		t.Errorf("a document at localhost: status %d, body %q, %d Set-Cookie values, want the document with no cookie",
+			w.Code, w.Body.String(), len(w.Header().Values("Set-Cookie")))
 	}
 }
 

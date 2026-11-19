@@ -106,6 +106,56 @@ func TestEnsureCallsApplierOnlyWhenChanged(t *testing.T) {
 	}
 }
 
+// A block Nearhost writes holds Nearhost's page, with the same address
+// forms as the other names, and Aliases leaves it out.
+func TestEnsureWritesThePageHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	os.WriteFile(path, []byte(base), 0o644)
+	if _, err := Ensure(path, []string{"a.test"}, func(aliases []string) error { return Apply(path, aliases) }); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 nearhost.localhost\n::1 nearhost.localhost\n# nearhost:end\n"
+	if string(data) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
+	}
+	if got := Aliases(string(data)); !reflect.DeepEqual(got, []string{"a.test"}) {
+		t.Errorf("Aliases = %v, want a.test alone", got)
+	}
+	if !UpToDate(string(data), []string{"a.test"}) {
+		t.Error("the block Ensure wrote is not up to date")
+	}
+
+	// With no names there is no block, so no line for the page either.
+	if _, err := Ensure(path, nil, func(aliases []string) error { return Apply(path, aliases) }); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != base {
+		t.Fatalf("after clean:\n%s", data)
+	}
+}
+
+// A block that lacks only the page's line is up to date: Nearhost never asks
+// for a password to add that line alone.
+func TestEnsureDoesNotWriteForThePageHostAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	existing := mustRewrite(t, base, []string{"a.test"})
+	os.WriteFile(path, []byte(existing), 0o644)
+	if !UpToDate(existing, []string{"a.test"}) {
+		t.Error("a block lacking only the page's line is not up to date")
+	}
+	changed, err := Ensure(path, []string{"a.test"}, func([]string) error {
+		t.Error("Ensure called the applier for the page's line alone")
+		return nil
+	})
+	if err != nil || changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if UpToDate(existing, []string{"a.test", "b.test"}) {
+		t.Error("a block lacking b.test is up to date")
+	}
+}
+
 func TestEnsureTreatsMissingFileAsEmpty(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
 	changed, err := Ensure(path, []string{"a.test"}, func([]string) error { return nil })
@@ -463,7 +513,8 @@ func TestEnsureRewritesOldBlockOnce(t *testing.T) {
 		t.Fatalf("first Ensure: changed=%v err=%v", changed, err)
 	}
 	data, _ := os.ReadFile(path)
-	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n# nearhost:end\n"
+	want := base + "# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n127.0.0.1 b.test\n::1 b.test\n" +
+		"127.0.0.1 nearhost.localhost\n::1 nearhost.localhost\n# nearhost:end\n"
 	if string(data) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
 	}

@@ -181,11 +181,28 @@ func (c *Config) HostClash(p Project) (host, other string, clash bool) {
 // an IP address are not names a hosts file or the proxy's certificate can
 // serve as a project's own.
 func ValidProjectAlias(alias string) error {
+	if strings.EqualFold(alias, hostname.PageHost) {
+		return errPageHost
+	}
 	if _, err := netip.ParseAddr(alias); err == nil || alias == "localhost" ||
 		hostname.Valid(alias) != nil || hostname.IsPattern(alias) || alias == ".test" {
 		return fmt.Errorf("invalid main name %q: must be a lowercase domain name, not a wildcard, localhost or an IP address", alias)
 	}
 	return nil
+}
+
+// errPageHost is the error for a project that claims Nearhost's own page.
+var errPageHost = errors.New(hostname.PageHost + " is Nearhost's own page")
+
+// ValidProjectHost reports why h cannot be a host of a project's web route,
+// or returns nil: it must be a valid host or pattern (see hostname.Valid),
+// and not Nearhost's own page in any case, which only Nearhost serves and
+// gives its cookie at.
+func ValidProjectHost(h string) error {
+	if strings.EqualFold(h, hostname.PageHost) {
+		return errPageHost
+	}
+	return hostname.Valid(h)
 }
 
 // HostsFileNames lists the names nearhost puts in the hosts file for this
@@ -458,6 +475,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("alias %q used by both %q and %q", p.Alias, other, p.Name)
 		}
 		aliases[aliasKey] = p.Name
+		if strings.EqualFold(p.Alias, hostname.PageHost) {
+			return fmt.Errorf("project %q: %w", p.Name, errPageHost)
+		}
 
 		if p.DockerClients() && p.Server != LocalServer {
 			// Containers can only reach Nearhost on this machine.
@@ -466,7 +486,7 @@ func (c *Config) Validate() error {
 		if p.Nearhostrc != nil {
 			for _, r := range p.Nearhostrc.Routes {
 				for _, h := range r.Hosts {
-					if err := hostname.Valid(h); err != nil {
+					if err := ValidProjectHost(h); err != nil {
 						return fmt.Errorf("project %q approved .nearhostrc port %d: %w", p.Name, r.Port, err)
 					}
 				}
@@ -492,7 +512,7 @@ func (c *Config) Validate() error {
 					return fmt.Errorf("project %q: web route on port %d needs at least one host; only the first web route is served at the alias", p.Name, r.Port)
 				}
 				for _, h := range r.Hosts {
-					if err := hostname.Valid(h); err != nil {
+					if err := ValidProjectHost(h); err != nil {
 						return fmt.Errorf("project %q port %d: %w", p.Name, r.Port, err)
 					}
 					// Web() drops the alias from the primary route's own

@@ -377,7 +377,7 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	if status != 201 || out["state"] != "open" {
 		t.Fatalf("token: %d %v", status, out)
 	}
-	if url, _ := out["url"].(string); !slices.Equal(opened, []string{url}) || !strings.HasPrefix(url, "https://localhost:6327/d/") {
+	if url, _ := out["url"].(string); !slices.Equal(opened, []string{url}) || !strings.HasPrefix(url, "https://nearhost.localhost:6327/d/") {
 		t.Fatalf("url %v, opened %v", out["url"], opened)
 	}
 	// A passthrough token is not a documents token.
@@ -422,7 +422,7 @@ func TestInterfaceOpensAndRemovesTrees(t *testing.T) {
 	if err := a.openDocument(tr.ID); err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://localhost:6327/d/" + tr.ID + "/plans/a%20b.md"; !slices.Equal(opened, []string{want}) {
+	if want := "https://nearhost.localhost:6327/d/" + tr.ID + "/plans/a%20b.md"; !slices.Equal(opened, []string{want}) {
 		t.Fatalf("opened %v, want %s", opened, want)
 	}
 	a.docs.open = func(string) error { return errors.New("no browser") }

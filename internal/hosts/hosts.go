@@ -154,7 +154,33 @@ func rewrite(existing string, aliases []string, ipv6 bool) (string, error) {
 	return strings.Join(out, "\n") + "\n", nil
 }
 
-// Aliases returns the aliases currently in the managed block.
+// withPage returns aliases with Nearhost's page, hostname.PageHost, added
+// when there are any: every block Nearhost writes holds the page's name, so
+// Safari and command-line tools, which ask the system resolver, find it.
+// With no aliases there is no block, and no line for the page either.
+func withPage(aliases []string) []string {
+	if len(aliases) == 0 {
+		return aliases
+	}
+	return append(slices.Clone(aliases), hostname.PageHost)
+}
+
+// UpToDate reports whether existing already holds the block for aliases, with
+// or without the page's line. A block that lacks only that line counts as up
+// to date, so Nearhost never asks for a password to add it alone: browsers
+// resolve *.localhost themselves. It is the one comparison that Ensure and
+// doctor share.
+func UpToDate(existing string, aliases []string) bool {
+	for _, want := range [][]string{aliases, withPage(aliases)} {
+		if updated, err := Rewrite(existing, want); err == nil && unchanged(existing, updated) {
+			return true
+		}
+	}
+	return false
+}
+
+// Aliases returns the aliases currently in the managed block. The page's
+// line, hostname.PageHost, is no alias and is left out.
 func Aliases(existing string) []string {
 	lines := splitLines(existing)
 	start, end := findBlock(lines)
@@ -163,7 +189,7 @@ func Aliases(existing string) []string {
 	}
 	var out []string
 	for _, l := range lines[start+1 : end] {
-		if isEntry(l) {
+		if isEntry(l) && strings.Fields(l)[1] != hostname.PageHost {
 			out = append(out, strings.Fields(l)[1])
 		}
 	}
@@ -286,20 +312,20 @@ func replaceFile(path, content string) (err error) {
 type Applier func(aliases []string) error
 
 // Ensure compares the file with the desired block and calls apply only when
-// a change is needed.
+// a change is needed (see UpToDate). apply is given aliases with the page's
+// name added, so the block it writes holds it.
 func Ensure(path string, aliases []string, apply Applier) (bool, error) {
 	existing, err := read(path)
 	if err != nil {
 		return false, err
 	}
-	updated, err := Rewrite(existing, aliases)
-	if err != nil {
+	if _, err := Rewrite(existing, aliases); err != nil {
 		return false, err
 	}
-	if unchanged(existing, updated) {
+	if UpToDate(existing, aliases) {
 		return false, nil
 	}
-	if err := apply(aliases); err != nil {
+	if err := apply(withPage(aliases)); err != nil {
 		return false, err
 	}
 	return true, nil

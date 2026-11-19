@@ -47,7 +47,7 @@ type Backend interface {
 	// Ports are the proxy's HTTPS and HTTP ports.
 	Ports() (https, http int)
 	// WebPort is the port Nearhost's page is served on, at
-	// https://localhost:<port>; 0 when there is none.
+	// https://nearhost.localhost:<port>; 0 when there is none.
 	WebPort() int
 	// CATrusted reports whether the system trusts the local CA.
 	CATrusted() bool

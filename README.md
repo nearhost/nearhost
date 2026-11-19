@@ -148,7 +148,7 @@ For scripts and terminals without a screen, `nearhost up` serves the same projec
 
 ### Nearhost's page
 
-While Nearhost runs, a short page at https://localhost:6327 confirms it is up and shows its version. If something else holds port 6327, Nearhost starts without the page and says so. `--web-port <port>` moves the page, and `--web-port 0` turns it off.
+While Nearhost runs, a short page at https://nearhost.localhost:6327 confirms it is up and shows its version. If something else holds port 6327, Nearhost starts without the page and says so. `--web-port <port>` moves the page, and `--web-port 0` turns it off.
 
 ### Share a project's setup
 

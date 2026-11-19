@@ -2295,8 +2295,8 @@ func TestPageURL(t *testing.T) {
 		want      string
 		wantErr   string
 	}{
-		{name: "web port", asked: 6327, webPort: 6327, want: "https://localhost:6327"},
-		{name: "web port, project holds localhost", asked: 6327, webPort: 6327, runs: holding, want: "https://localhost:6327"},
+		{name: "web port", asked: 6327, webPort: 6327, want: "https://nearhost.localhost:6327"},
+		{name: "web port, project holds localhost", asked: 6327, webPort: 6327, runs: holding, want: "https://nearhost.localhost:6327"},
 		{name: "web port taken at start", asked: 6327, wantErr: "Nearhost's page isn't served: port 6327 wasn't available when Nearhost started"},
 		{name: "no web port", wantErr: noPage},
 		{name: "no web port, https 443", httpsPort: 443, wantErr: noPage},

@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -67,7 +68,7 @@ func (m *Model) pageURL() string {
 	if port == 0 || !m.started || m.proxyErr != nil {
 		return ""
 	}
-	return fmt.Sprintf("https://localhost:%d", port)
+	return fmt.Sprintf("https://%s:%d", hostname.PageHost, port)
 }
 
 // webLines link to Nearhost's page, once the proxy serves it. The link is

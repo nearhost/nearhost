@@ -6,15 +6,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 // pageCookie is the cookie that lets a browser see the documents listed on
@@ -215,10 +218,28 @@ func secretMatches(got, secret string) bool {
 	return secret != "" && subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
 }
 
-// hasPageCookie reports whether r carries the page cookie with the right
-// value. Every cookie of that name counts, as a server on another port of
-// localhost may have set one of its own.
+// atPageHost reports whether r is for Nearhost's page at its own host,
+// hostname.PageHost, with the port stripped and case ignored. The page
+// cookie is given and honoured there alone: a cookie is sent to every port
+// of the host it was set at, and at localhost that would hand it to any dev
+// server the user browses there.
+func atPageHost(r *http.Request) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(host, hostname.PageHost)
+}
+
+// hasPageCookie reports whether r, a request at hostname.PageHost, carries
+// the page cookie with the right value. A request at any other host has no
+// page cookie, whatever it sends: one there could only have been set by
+// another server on that host. Every cookie of that name counts, as another
+// server on a port of hostname.PageHost may have set one of its own.
 func hasPageCookie(r *http.Request) bool {
+	if !atPageHost(r) {
+		return false
+	}
 	cookies := r.CookiesNamed(pageCookie)
 	if len(cookies) == 0 {
 		return false
@@ -236,9 +257,13 @@ func hasPageCookie(r *http.Request) bool {
 	return ok
 }
 
-// setPageCookie adds the page cookie to the response headers h. A secret
-// that can't be read sets nothing.
-func setPageCookie(h http.Header) {
+// setPageCookie adds the page cookie to the response headers h for the
+// request r. It sets nothing for a request at a host other than
+// hostname.PageHost, or when the secret can't be read.
+func setPageCookie(h http.Header, r *http.Request) {
+	if !atPageHost(r) {
+		return
+	}
 	secret, err := pageSecret()
 	if err != nil {
 		return
@@ -247,10 +272,10 @@ func setPageCookie(h http.Header) {
 }
 
 // PageKeyURL returns the address that opens Nearhost's page at base (such
-// as https://localhost:6327) and gives the browser the cookie that shows the
-// document list: base/?k=<secret>. It is for opening in the browser only:
-// printed or logged, it would give the secret away. Its errors never hold
-// the secret.
+// as https://nearhost.localhost:6327) and gives the browser the cookie that
+// shows the document list: base/?k=<secret>. It is for opening in the
+// browser only: printed or logged, it would give the secret away. Its
+// errors never hold the secret.
 func PageKeyURL(base string) (string, error) {
 	secret, err := pageSecret()
 	if err != nil {
