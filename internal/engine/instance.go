@@ -32,9 +32,10 @@ func (e *instanceError) Error() string {
 	if e.pid > 0 {
 		running += fmt.Sprintf(" (pid %d)", e.pid)
 	}
-	// The run directory is config.Dir's, which an absolute XDG_CONFIG_HOME
-	// moves on every system; --config moves only the config file.
-	return running + ". Stop it first. To run a second one beside it, give it its own XDG_CONFIG_HOME."
+	// It names no way to run a second one: a second Nearhost with its own
+	// config folder would still share the data folder, and so the local CA
+	// and the certificates, which the proxy takes to be its own.
+	return running + ". Stop it first."
 }
 
 // ErrAlreadyRunning is what Start's refusal matches, with errors.Is, when
