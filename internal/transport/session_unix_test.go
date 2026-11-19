@@ -679,3 +679,24 @@ func TestLeftMasterErrorQuotesThePathForTheShell(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A ProxyCommand child that holds the master's stderr open must not keep
+// Stop waiting once the master has ended.
+func TestSessionStopDoesNotWaitOnAChildHoldingStderr(t *testing.T) {
+	hold := filepath.Join(t.TempDir(), "hold")
+	if err := os.WriteFile(hold, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Last in, so it runs first: the holder ends once the file is gone.
+	defer os.Remove(hold)
+	s, _ := newFakeSession(t, "FAKE_SSH_STDERR_HOLDER="+hold)
+	s.Start()
+	waitFor(t, 5*time.Second, func() bool { return s.Status() == StatusConnected }, "connected")
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(procWaitDelay + 2*time.Second):
+		t.Fatal("Stop waited on the child that holds the master's stderr")
+	}
+}

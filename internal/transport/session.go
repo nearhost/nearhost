@@ -371,6 +371,10 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			"--", s.host)
 		var stderr bytes.Buffer
 		master.Stderr = &stderr
+		// A ProxyCommand or ProxyJump child of the master can keep the
+		// stderr pipe open after the master is gone. Wait then gives up on
+		// the pipe after procWaitDelay rather than wait for that child.
+		master.WaitDelay = procWaitDelay
 		if err := master.Start(); err != nil {
 			// Usually a missing binary, occasionally a passing fork failure:
 			// retry, but give up after the same number of attempts.
