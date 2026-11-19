@@ -191,14 +191,32 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	if !info.Mode().IsRegular() {
 		return errRefused
 	}
-	name = assetName(name, real)
-	f, err := fsys.Open(ctx, real)
+	if beforeOpen != nil {
+		beforeOpen(real)
+	}
+	// A folder on the way may have been swapped for a symlink since the
+	// checks above, so they are applied again to the file Open actually
+	// opened: below the root, with no dot segment, and in a hidden tree a
+	// document or asset by its own name. One that fails is missing.
+	f, opened, err := fsys.Open(ctx, root, tr.RootHandle, real)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return sendFile(w, r, f, name, info.Size())
+	openedReal := path.Join(root, opened)
+	if _, ok := Below(root, openedReal); !ok {
+		return fs.ErrNotExist
+	}
+	if tr.Hidden && !documentOrAsset(path.Base(opened)) {
+		return fs.ErrNotExist
+	}
+	return sendFile(w, r, f, assetName(name, openedReal), info.Size())
 }
+
+// beforeOpen, when set, runs in serve between the first checks on the
+// resolved path real and its open. Tests set it to change the tree in that
+// window.
+var beforeOpen func(real string)
 
 // documentOrAsset reports whether name is a document (IsDocument) or has a
 // web asset extension (assetTypes).

@@ -108,9 +108,16 @@ type Doc struct {
 // and web assets.
 type Tree struct {
 	ID, Server, Root, Requester string
-	Docs                        []Doc
-	Opened                      time.Time
-	Hidden                      bool
+	// RootHandle is the path the laptop's system gave for the root folder,
+	// opened when the tree was made. A request serves only while the root
+	// folder opened then has the same path, so a folder above the root
+	// swapped for a symlink serves nothing. It is empty for a tree on a
+	// server, on a system that can't name an open folder, and for a root
+	// that couldn't be opened.
+	RootHandle string
+	Docs       []Doc
+	Opened     time.Time
+	Hidden     bool
 }
 
 // clone returns a copy of tr that shares no memory with it.
@@ -144,14 +151,19 @@ func newID() string {
 
 // Add finds the tree for server and root, a resolved path, or makes one with a fresh ID, moves
 // doc to the front of its Docs without duplicating it, and returns a copy.
-// requester is recorded only when the tree is made, as is Hidden, from root.
+// requester is recorded only when the tree is made, as is Hidden, from root,
+// and RootHandle, for a tree on the laptop.
 func (t *Table) Add(server, root, requester, doc string) Tree {
+	var handle string
+	if server == LocalServer {
+		handle = rootHandlePath(root)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	tr := t.find(server, root)
 	if tr == nil {
-		tr = &Tree{ID: newID(), Server: server, Root: root, Requester: requester, Hidden: InHiddenFolder(root)}
+		tr = &Tree{ID: newID(), Server: server, Root: root, RootHandle: handle, Requester: requester, Hidden: InHiddenFolder(root)}
 		t.trees[tr.ID] = tr
 	}
 	docs := []Doc{{Path: doc, Opened: now}}
