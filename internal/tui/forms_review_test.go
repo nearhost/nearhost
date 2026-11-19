@@ -93,20 +93,50 @@ func quitWithin(t *testing.T, m *Model) {
 	}
 }
 
+// quitHeldBy quits while a step that quitting has ended is held at release,
+// and fails the test if quitting returns before the step is let go, or does
+// not return within 2 s of it.
+func quitHeldBy(t *testing.T, m *Model, release chan struct{}) {
+	t.Helper()
+	quit := press(m, "ctrl+c")
+	done := make(chan struct{})
+	go func() {
+		quit()
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("quitting returned while the step was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("quitting did not return once the step ended")
+	}
+}
+
 // Quitting while a form step waits on a hung server closes the form's
 // connection, which ends the wait, so nearhost stops without being killed.
+// It waits for the step: one slow to end after the close holds it.
 func TestQuitEndsAFormStepBlockedOnItsConnection(t *testing.T) {
 	m, f, files := projectFormModel(t)
 	toPath(t, m, 1)
+	files.release = make(chan struct{})
 	listed := hangOnList(t, m, files)
-	quitWithin(t, m)
+	quitHeldBy(t, m, files.release)
 	// The files' own count says whether the step had gone on by the time
 	// quitting returned. listed is sent after the shutdown stopped waiting
 	// for the step, and could be late.
 	if n := files.resumed.Load(); n != 1 {
 		t.Errorf("the shutdown did not wait for the step its close ended: %d steps had gone on", n)
 	}
-	<-listed
+	select {
+	case <-listed:
+	case <-time.After(2 * time.Second):
+		t.Error("the listing never returned")
+	}
 	if files.closed != 1 || len(f.shutdown) != 1 {
 		t.Errorf("files closed %d times, shut down %d times", files.closed, len(f.shutdown))
 	}
@@ -177,6 +207,7 @@ func TestQuitAfterAFormClosedLeavesItsConnection(t *testing.T) {
 func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 	m, f := serverFormModel(t)
 	f.forms.checkBlocks = true
+	f.forms.checkRelease = make(chan struct{})
 	typeText(m, "box")
 	press(m, "enter")
 	check := press(m, "enter")
@@ -194,17 +225,9 @@ func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 			t.Fatal("the check never began")
 		}
 	}
-	quit := press(m, "ctrl+c")
-	done := make(chan struct{})
-	go func() {
-		quit()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("quitting did not end the check")
-	}
+	// The check is held after quitting ends it, so quitting must still be
+	// waiting when the test looks.
+	quitHeldBy(t, m, f.forms.checkRelease)
 	// The backend's own count says whether the check had returned by the
 	// time quitting did. A signal sent by the goroutine that ran the check
 	// would come after the shutdown stopped waiting, and could be late.
