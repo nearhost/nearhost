@@ -107,9 +107,11 @@ type Model struct {
 
 	// What Home shows about the machine. Reading it can be slow (the trust
 	// store, /etc/hosts), so it is read on the clock, not on every redraw.
-	caTrusted  bool
-	caExpires  time.Time // zero when the CA is not there yet
-	hostsState string
+	caTrusted bool
+	// caTrustedAt is when the trust step last reported success.
+	caTrustedAt time.Time
+	caExpires   time.Time // zero when the CA is not there yet
+	hostsState  string
 
 	work *worker // runs the forms' background steps
 
@@ -176,6 +178,8 @@ type (
 		err  error
 	}
 	machineMsg struct {
+		// readAt is when the read began; zero means it is not tracked.
+		readAt     time.Time
 		caTrusted  bool
 		caExpires  time.Time
 		hostsState string
@@ -351,12 +355,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.trackUptime()
 		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
 	case machineMsg:
+		// A read that began before the trust step finished may have seen the
+		// old bundle; it must not undo the success.
+		if !msg.caTrusted && !msg.readAt.IsZero() && msg.readAt.Before(m.caTrustedAt) {
+			msg.caTrusted = true
+		}
 		m.caTrusted, m.caExpires, m.hostsState = msg.caTrusted, msg.caExpires, msg.hostsState
 		m.offerFirstRun()
 	case firstRunSkippedMsg:
 		m.form = nil
 		m.selectRow(homeKey)
 	case caTrustedMsg:
+		m.caTrusted, m.caTrustedAt = true, time.Now()
 		m.form = nil
 		m.selectRow(homeKey)
 		m.logs.note("The local CA is now trusted.")
@@ -587,7 +597,8 @@ func (m *Model) stopProject(name string) tea.Cmd {
 // readMachine reads what Home shows about the machine.
 func (m *Model) readMachine() tea.Cmd {
 	return func() tea.Msg {
-		return machineMsg{m.b.CATrusted(), m.b.CAExpires(), m.b.HostsState()}
+		readAt := time.Now()
+		return machineMsg{readAt, m.b.CATrusted(), m.b.CAExpires(), m.b.HostsState()}
 	}
 }
 

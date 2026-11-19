@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -89,4 +90,24 @@ func TestFirstRunSkipsForTheSession(t *testing.T) {
 		t.Error("the first-run screen came back in the same session")
 	}
 	wantScreen(t, m, "local CA  ● not trusted. Run nearhost trust")
+}
+
+func TestTrustSuccessSetsTheFlagAtOnceAndAnOlderReadCannotUndoIt(t *testing.T) {
+	m, _ := started(t, false)
+	before := time.Now().Add(-time.Second)
+	m.Update(caTrustedMsg{})
+	if !m.caTrusted {
+		t.Fatal("the flag stayed false after the trust step succeeded")
+	}
+	// A read that began before the bundle was rewritten arrives late.
+	m.Update(machineMsg{readAt: before, caTrusted: false})
+	if !m.caTrusted {
+		t.Fatal("a read that began before the trust step flipped the flag back")
+	}
+	// A read that began afterwards is believed: the system store may not be
+	// the one that took the CA.
+	m.Update(machineMsg{readAt: time.Now().Add(time.Second), caTrusted: false})
+	if m.caTrusted {
+		t.Fatal("a later read that says not trusted was ignored")
+	}
 }
