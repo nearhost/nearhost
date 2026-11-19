@@ -62,12 +62,13 @@ func internalIssuer() map[string]any {
 // writerModule is the Caddy log writer module name registered in logwriter.go.
 const writerModule = "nearhost"
 
-// loopbackRanges are the client addresses sites are served to. The proxy
-// listens on netbind.ServeAddrs (every interface on Unix, as a non-root
-// process on macOS can bind a low port only on the wildcard address) while every alias resolves to loopback, so no
-// legitimate client comes from anywhere else. Caddy compares the remote
-// address as written and does not unmap, so the IPv4-mapped form of the
-// loopback network is listed too.
+// loopbackRanges are the client addresses sites are served to. The https and
+// http servers listen on netbind.ServeAddrs (every interface on Unix, as a
+// non-root process on macOS can bind a low port only on the wildcard
+// address) while every alias resolves to loopback, so no legitimate client
+// comes from anywhere else. Nearhost's page listens on loopback alone. Caddy
+// compares the remote address as written and does not unmap, so the
+// IPv4-mapped form of the loopback network is listed too.
 var loopbackRanges = []string{"127.0.0.0/8", "::1", "::ffff:127.0.0.0/104"}
 
 // Site is one web route of a project: the hosts it is served at, proxied to
@@ -306,12 +307,22 @@ func homeRoute(opts Options) map[string]any {
 	}
 }
 
+// pageAddrs is netbind.LoopbackAddrs; tests stand in a machine without the
+// IPv6 loopback.
+var pageAddrs = netbind.LoopbackAddrs
+
 // webServer is the server on opts.WebPort, which serves the home page at
-// localhost to loopback clients and drops everything else. It has no
-// HTTP/3, so it needs no UDP port, and no redirects of its own.
+// localhost to loopback clients and drops everything else. It listens on the
+// loopback addresses alone, on every system, so the kernel refuses a
+// connection from another machine to this port before a request is read.
+// The loopback ranges below stay as a second check. The same page is also
+// served at https://localhost on the https port while no project claims
+// that host (see homeRoute); that server listens on netbind.ServeAddrs, and
+// there the source-address check alone keeps it to loopback clients. It has
+// no HTTP/3, so it needs no UDP port, and no redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
-		"listen": netbind.ServeAddrs(opts.WebPort),
+		"listen": pageAddrs(opts.WebPort),
 		"tls_connection_policies": []any{map[string]any{
 			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 		}},

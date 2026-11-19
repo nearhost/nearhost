@@ -3,6 +3,7 @@ package proxy
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestWaitReleased(t *testing.T) {
 		held.Close()
 	}()
 	start := time.Now()
-	if err := waitReleased([]int{port}, 5*time.Second); err != nil {
+	if err := waitReleased([]listenPort{{port, netbind.ServeAddrs(port)}}, 5*time.Second); err != nil {
 		t.Fatalf("waitReleased: %v", err)
 	}
 	if waited := time.Since(start); waited < 150*time.Millisecond {
@@ -41,8 +42,23 @@ func TestWaitReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stuck.Close()
-	if err := waitReleased([]int{port}, 300*time.Millisecond); err == nil || err.Error() != fmt.Sprintf("port %d is still in use after the proxy stopped", port) {
+	if err := waitReleased([]listenPort{{port, netbind.ServeAddrs(port)}}, 300*time.Millisecond); err == nil || err.Error() != fmt.Sprintf("port %d is still in use after the proxy stopped", port) {
 		t.Errorf("waitReleased on a held port = %v", err)
+	}
+}
+
+// The proxy waits for each port at the addresses it listens on it: the
+// page's port at the loopback addresses, which a wait at the wildcard
+// address would not see held on macOS.
+func TestPortsAreWaitedForWhereTheyListen(t *testing.T) {
+	p := New(Options{StorageRoot: t.TempDir(), HTTPSPort: 8443, HTTPPort: 8080, WebPort: 6327})
+	want := []listenPort{
+		{8443, netbind.ServeAddrs(8443)},
+		{8080, netbind.ServeAddrs(8080)},
+		{6327, netbind.LoopbackAddrs(6327)},
+	}
+	if got := p.ports(); !reflect.DeepEqual(got, want) {
+		t.Errorf("ports = %v, want %v", got, want)
 	}
 }
 
@@ -76,9 +92,9 @@ func TestStopWithoutSitesWaitsForNoPort(t *testing.T) {
 // Caddy still holds. (The engine reloads with no sites when the last
 // project stops, before it stops the proxy.)
 func TestApplyWithoutSitesWaitsForThePorts(t *testing.T) {
-	var waited [][]int
+	var waited [][]listenPort
 	orig := releasePorts
-	releasePorts = func(ports []int, timeout time.Duration) error {
+	releasePorts = func(ports []listenPort, timeout time.Duration) error {
 		waited = append(waited, ports)
 		return orig(ports, timeout)
 	}
@@ -89,7 +105,7 @@ func TestApplyWithoutSitesWaitsForThePorts(t *testing.T) {
 	if err := h.p.Apply(nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(waited) != 1 || waited[0][0] != h.httpsPort || waited[0][1] != h.httpPort {
+	if len(waited) != 1 || waited[0][0].port != h.httpsPort || waited[0][1].port != h.httpPort {
 		t.Fatalf("waited for %v after the last site went, want [%d %d]", waited, h.httpsPort, h.httpPort)
 	}
 	if err := h.p.Apply(nil); err != nil {

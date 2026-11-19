@@ -4,12 +4,18 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -144,4 +150,106 @@ func TestServersHaveNoListenerWrappersOnUnix(t *testing.T) {
 			t.Errorf("server %s has listener wrappers %q, want none", name, w)
 		}
 	}
+}
+
+// Nearhost's page listens on the loopback addresses alone, while the sites'
+// https and http ports keep the wildcard address that Docker clients reach.
+func TestPageListensOnLoopbackOnUnix(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
+		Options{StorageRoot: t.TempDir(), HTTPSPort: 8443, HTTPPort: 8080, WebPort: 6327})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"nearhost":      {":8443"},
+		"nearhost_http": {":8080"},
+		"nearhost_web":  {"127.0.0.1:6327", "[::1]:6327"},
+	}
+	if l, err := net.Listen("tcp", "[::1]:0"); err != nil {
+		want["nearhost_web"] = want["nearhost_web"][:1] // no IPv6 loopback here
+	} else {
+		l.Close()
+	}
+	for name, addrs := range want {
+		if got := strs(dig(t, cfg, "apps", "http", "servers", name, "listen")); !slices.Equal(got, addrs) {
+			t.Errorf("server %s listens on %q, want %q", name, got, addrs)
+		}
+	}
+}
+
+// The page answers on 127.0.0.1, and a connection to another of this
+// machine's addresses on its port is refused by the kernel.
+func TestPageRefusesConnectionsOffLoopback(t *testing.T) {
+	h := startProxyOpts(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "project"))}}, Options{WebPort: freePort(t)})
+	h.pageAnswers(t, "127.0.0.1")
+	tried := 0
+	for _, ip := range nonLoopbackAddrs(t) {
+		// An address that cannot be listened on cannot be dialed either,
+		// such as one still in IPv6 duplicate address detection.
+		probe, err := net.Listen("tcp", net.JoinHostPort(ip.String(), "0"))
+		if err != nil {
+			continue
+		}
+		probe.Close()
+		tried++
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(h.webPort)), 5*time.Second)
+		if err == nil {
+			c.Close()
+			t.Errorf("a connection to %s on the page's port %d was accepted", ip, h.webPort)
+			continue
+		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			t.Errorf("a connection to %s on the page's port: %v, want connection refused", ip, err)
+		}
+	}
+	if tried == 0 {
+		t.Skip("this machine has no address but loopback")
+	}
+}
+
+// A machine without the IPv6 loopback still serves the page, on 127.0.0.1
+// alone.
+func TestPageWithoutIPv6Loopback(t *testing.T) {
+	orig := pageAddrs
+	var asked []string
+	pageAddrs = func(port int) []string {
+		asked = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
+		return asked
+	}
+	t.Cleanup(func() { pageAddrs = orig })
+	h := startProxyOpts(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(named(t, "project"))}}, Options{WebPort: freePort(t)})
+	h.pageAnswers(t, "127.0.0.1")
+	if asked == nil {
+		t.Fatal("the config did not take the page's addresses from pageAddrs")
+	}
+	if c, err := net.DialTimeout("tcp", net.JoinHostPort("::1", strconv.Itoa(h.webPort)), 5*time.Second); err == nil {
+		c.Close()
+		t.Errorf("the page answered on [::1]:%d though only 127.0.0.1 was asked for", h.webPort)
+	}
+}
+
+// pageAnswers fails the test unless Nearhost's page answers 200 at
+// localhost on host and the harness's web port within 10 s.
+func (h *harness) pageAnswers(t *testing.T, host string) {
+	t.Helper()
+	tr := &http.Transport{
+		TLSClientConfig:   &tls.Config{RootCAs: h.pool, ServerName: homeHost},
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(host, strconv.Itoa(h.webPort)))
+		},
+	}
+	c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	waitUntil(t, 10*time.Second, func() bool {
+		resp, err := c.Get(fmt.Sprintf("https://localhost:%d/", h.webPort))
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == 200
+	}, "Nearhost's page on "+host)
 }
