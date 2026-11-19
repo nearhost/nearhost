@@ -35,7 +35,7 @@ type logEntry struct {
 // plain is the entry as text, for searching.
 func (e logEntry) plain() string {
 	if e.req != nil {
-		return fmt.Sprintf("%s %s %s %s %d", e.at.Format("15:04:05"), e.source, e.req.Method, clean(e.req.URI), e.req.Status)
+		return fmt.Sprintf("%s %s %s %s %d", e.at.Format("15:04:05"), e.source, clean(e.req.Method), clean(e.req.URI), e.req.Status)
 	}
 	return e.at.Format("15:04:05") + " " + e.source + " " + e.text
 }
@@ -180,11 +180,12 @@ func entryLines(e logEntry, width int, sources bool) []string {
 		return []string{fit(lead+e.plain(), width)}
 	}
 	if e.req != nil {
+		method := clean(e.req.Method)
 		if sources {
-			text := e.req.Method + " " + requestText(*e.req, room-len(e.req.Method)-1)
+			text := method + " " + requestText(*e.req, room-len(method)-1)
 			return []string{fit(lead+fit(e.source, logSourceWidth)+"  "+text, width)}
 		}
-		return []string{fit(lead+fit(e.req.Method, logSourceWidth)+"  "+requestText(*e.req, room), width)}
+		return []string{fit(lead+fit(method, logSourceWidth)+"  "+requestText(*e.req, room), width)}
 	}
 	text := e.text
 	if e.err {

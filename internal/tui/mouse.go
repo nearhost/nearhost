@@ -2,10 +2,12 @@ package tui
 
 import (
 	"image/color"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -41,6 +43,15 @@ type mouseState struct {
 	shown     bool
 	lastClick point
 	lastAt    time.Time
+	// pending is the address in log text the last click was on, with the
+	// row it is on, its columns [lo, hi) and the row's text, and pendingAt
+	// when: a second click on the same place within doubleClick opens it.
+	pending    string
+	pendingRow string
+	pendingY   int
+	pendingLo  int
+	pendingHi  int
+	pendingAt  time.Time
 }
 
 // doubleClick is the longest time between the clicks of a double-click.
@@ -103,10 +114,11 @@ func (m *Model) mouseMove(mouse tea.Mouse) {
 	}
 }
 
-// mouseUp ends a press: a drag copies what it selected, a click on an
-// address opens it, one on a row or a key does what clicking there does,
-// and a second click on the same cell of anything else selects and copies
-// the word there.
+// mouseUp ends a press: a drag copies what it selected, a click on a link
+// the interface drew opens it, and one on an address in log text opens it
+// on a second click. A click on a row or a key does what clicking there
+// does, and a second click on the same cell of anything else selects and
+// copies the word there.
 func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	ms := &m.mouse
 	if !ms.down || mouse.Button != tea.MouseLeft {
@@ -122,21 +134,33 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		return m.copySelection()
 	}
 	lines := m.screenLines()
-	if url := linkAt(lines, ms.to); url != "" {
+	prev := *ms
+	ms.pending, ms.pendingAt = "", time.Time{}
+	if url, own, lo, hi := linkAt(lines, ms.to); url != "" {
 		ms.lastAt = time.Time{}
-		key := m.sel
-		open := openURL
-		if url == m.pageURL() {
-			// Nearhost's page opens with its key, so the browser can see
-			// the documents it lists.
-			open = func(string) error { return m.b.OpenPage() }
-		}
-		return func() tea.Msg {
-			if err := open(url); err != nil {
-				return openFailedMsg{key, url, err}
+		if own {
+			if url == m.pageURL() {
+				// Nearhost's page opens with its key, so the browser can
+				// see the documents it lists. Only the link the interface
+				// drew does: an address in log text never gets the key.
+				return m.openWith(url, func(string) error { return m.b.OpenPage() })
 			}
-			return nil
+			return m.open(url)
 		}
+		// An address in log text came from the network or a dev server, so
+		// one click only says where it leads and a second opens it.
+		row := rowText(lines[ms.to.y])
+		at := m.now()
+		if url == prev.pending && ms.to.y == prev.pendingY && lo == prev.pendingLo && hi == prev.pendingHi &&
+			row == prev.pendingRow && at.Sub(prev.pendingAt) <= doubleClick {
+			return m.open(url)
+		}
+		toast, ok := m.addressToast(url)
+		if !ok {
+			return m.showToast(toast, true)
+		}
+		ms.pending, ms.pendingRow, ms.pendingY, ms.pendingLo, ms.pendingHi, ms.pendingAt = url, row, ms.to.y, lo, hi, at
+		return m.showToast(toast, false)
 	}
 	if m.clickable(mouse) {
 		ms.lastAt = time.Time{}
@@ -156,6 +180,52 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 	return nil
 }
 
+// addressToast is what the first click on an address in log text says: the
+// address with its scheme and host whole, and its path cut to fit the toast.
+// With no room for the host it says the address will not open, and ok is
+// false.
+func (m *Model) addressToast(raw string) (text string, ok bool) {
+	const lead = "Click again to open "
+	room := m.toastRoom() - ansi.StringWidth(lead)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "Address too long to show; not opened", false
+	}
+	if ansi.StringWidth(raw) <= room {
+		return lead + raw, true
+	}
+	origin := u.Scheme + "://" + u.Host
+	if ansi.StringWidth(origin)+len("/…") > room {
+		return "Address too long to show; not opened", false
+	}
+	return lead + origin + "/…", true
+}
+
+// rowText is the text of a row of cells.
+func rowText(row uv.Line) string {
+	var sb strings.Builder
+	for _, c := range row {
+		sb.WriteString(c.Content)
+	}
+	return sb.String()
+}
+
+// open opens a web address in the browser, and says if it could not.
+func (m *Model) open(url string) tea.Cmd {
+	return m.openWith(url, openURL)
+}
+
+// openWith opens url with open, and says so on the row if it fails.
+func (m *Model) openWith(url string, open func(string) error) tea.Cmd {
+	key := m.sel
+	return func() tea.Msg {
+		if err := open(url); err != nil {
+			return openFailedMsg{key, url, err}
+		}
+		return nil
+	}
+}
+
 // openFailedMsg says an address could not be opened, from the row key.
 type openFailedMsg struct {
 	key, url string
@@ -166,6 +236,7 @@ type openFailedMsg struct {
 // does.
 func (m *Model) clearSelection() {
 	m.mouse.shown = false
+	m.mouse.pending = ""
 }
 
 // copySelection puts the selected text on the clipboard and says so.
@@ -316,36 +387,68 @@ func (m *Model) highlight(content string) string {
 // without a link.
 var webAddress = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
-// linkAt is the http or https address at p: the link the cell is drawn
-// with, or an address written there. Anything else is not opened, as a log
-// line from a project could name any scheme.
-func linkAt(lines []uv.Line, p point) string {
+// linkAt is the http or https address at p, and whether it is a link the
+// interface drew (own) or an address found in text. Own links are the
+// cells drawn with a terminal hyperlink, which carry the address the
+// interface holds, not the text shown. Text from logs has its escape
+// sequences stripped, so it cannot carry one, and an address in it is only
+// found by its look and has to pass safeAddress. Anything else is not
+// opened, as a log line from a project could name any scheme.
+func linkAt(lines []uv.Line, p point) (url string, own bool, lo, hi int) {
 	if p.y < 0 || p.y >= len(lines) || p.x < 0 || p.x >= len(lines[p.y]) {
-		return ""
+		return "", false, 0, 0
 	}
 	row := lines[p.y]
-	url := row[p.x].Link.URL
-	if url == "" {
-		var sb strings.Builder
-		col := make([]int, 0, len(row)) // the cell of each byte
-		for x, c := range row {
-			sb.WriteString(c.Content)
-			for range len(c.Content) {
-				col = append(col, x)
-			}
+	if url := row[p.x].Link.URL; url != "" {
+		if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+			return url, true, 0, 0
 		}
-		text := sb.String()
-		for _, loc := range webAddress.FindAllStringIndex(text, -1) {
-			end := loc[0] + len(strings.TrimRight(text[loc[0]:loc[1]], ".,;:!?)]}…"))
-			if col[loc[0]] <= p.x && p.x <= col[end-1] {
-				url = text[loc[0]:end]
-			}
+		return "", false, 0, 0
+	}
+	var sb strings.Builder
+	col := make([]int, 0, len(row)) // the cell of each byte
+	for x, c := range row {
+		sb.WriteString(c.Content)
+		for range len(c.Content) {
+			col = append(col, x)
 		}
 	}
-	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-		return url
+	text := sb.String()
+	for _, loc := range webAddress.FindAllStringIndex(text, -1) {
+		end := loc[0] + len(strings.TrimRight(text[loc[0]:loc[1]], ".,;:!?)]}…"))
+		if col[loc[0]] > p.x || p.x > col[end-1] {
+			continue
+		}
+		// A row cut short ends in … and may have lost the end of the
+		// address, and one that runs to the last cell or up to an edge may
+		// have been cut without a mark: what is shown is not the address.
+		if strings.Contains(text[loc[0]:loc[1]], "…") || col[loc[1]-1] >= len(row)-1 ||
+			col[loc[1]-1]+1 < len(row) && row[col[loc[1]-1]+1].Content == edge {
+			return "", false, 0, 0
+		}
+		if url := text[loc[0]:end]; safeAddress(url) {
+			return url, false, col[loc[0]], col[end-1] + 1
+		}
 	}
-	return ""
+	return "", false, 0, 0
+}
+
+// safeAddress reports whether an address found in text is one to open: an
+// http or https address with a host, in ASCII so a look-alike host is not
+// opened, with no control characters or spaces and no user name or
+// password, which is how https://nearhost.test@evil.example is made to look
+// like a host it is not.
+func safeAddress(s string) bool {
+	if !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '\\' || r > unicode.MaxASCII {
+			return false
+		}
+	}
+	u, err := url.Parse(s)
+	return err == nil && u.User == nil && u.Hostname() != "" && !strings.Contains(u.Host, "@")
 }
 
 // wordAt is the columns of the word at p, [lo, hi): the run of cells around

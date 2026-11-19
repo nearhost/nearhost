@@ -61,6 +61,17 @@ func (m *Model) toastDone(msg toastDoneMsg) {
 	}
 }
 
+// toastRoom is the most cells a toast's text takes: toastWidth, or less where
+// the main panel is narrower. It is over the main panel alone, where the
+// sidebar is not drawn: the sidebar's rows take clicks, the toast does not.
+func (m *Model) toastRoom() int {
+	room := m.width - 10
+	if m.logView == nil && !m.empty() {
+		room = m.mainWidth() - 7 // the box's edges, padding and dot, and the gap at the right
+	}
+	return min(toastWidth, room)
+}
+
 // withToast draws the toast over content, at the right, just above the
 // footer's rule, and clear of the sidebar.
 func (m *Model) withToast(content string) string {
@@ -71,13 +82,7 @@ func (m *Model) withToast(content string) string {
 	if m.toast.problem {
 		dot = styleAmber.Render("●")
 	}
-	// Over the main panel alone, where the sidebar is drawn: the sidebar's
-	// rows take clicks, the toast does not.
-	room := m.width - 10
-	if m.logView == nil && !m.empty() {
-		room = m.mainWidth() - 7 // the box's edges, padding and dot, and the gap at the right
-	}
-	text := ansi.Truncate(clean(m.toast.text), min(toastWidth, room), "…")
+	text := ansi.Truncate(clean(m.toast.text), m.toastRoom(), "…")
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colourBoxEdge).Padding(0, 1).
 		Render(dot + " " + styleText.Render(text))
 	w, h := lipgloss.Width(box), lipgloss.Height(box)

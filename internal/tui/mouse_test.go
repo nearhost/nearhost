@@ -115,6 +115,7 @@ func TestClickOpensAddresses(t *testing.T) {
 	m.logs.noteOn(m.sel, "Or file:///etc/passwd.")
 	x, y = find(t, m, "https://nearhost.dev/docs/")
 	run(m, click(m, x+10, y))
+	run(m, click(m, x+10, y)) // a log address opens on a double click
 	fx, fy := find(t, m, "file:///etc/passwd")
 	run(m, click(m, fx+2, fy))
 	// Nearhost's page opens through the backend, with its key.
@@ -202,11 +203,11 @@ func TestDragInAFormKeepsToTheBox(t *testing.T) {
 func TestLinkAtOpensOnlyWebAddresses(t *testing.T) {
 	lines := uv.NewStyledString(ansi.SetHyperlink("file:///etc/passwd") + "passwd" + ansi.ResetHyperlink() + " " +
 		ansi.SetHyperlink("https://a.test") + "a.test" + ansi.ResetHyperlink()).Lines(ansi.WcWidth)
-	if got := linkAt(lines, point{2, 0}); got != "" {
+	if got, _, _, _ := linkAt(lines, point{2, 0}); got != "" {
 		t.Errorf("a file: link opens %q", got)
 	}
-	if got := linkAt(lines, point{9, 0}); got != "https://a.test" {
-		t.Errorf("the https link opens %q", got)
+	if got, own, _, _ := linkAt(lines, point{9, 0}); got != "https://a.test" || !own {
+		t.Errorf("the https link opens %q, own %v", got, own)
 	}
 }
 
