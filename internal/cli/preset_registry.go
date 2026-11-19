@@ -32,6 +32,8 @@ func newPresetRegistryCmd(b presetBackend) *cobra.Command {
 		Long: "A preset registry is a public GitHub repository of presets. No registry is\n" +
 			"trusted until you add it, and until then nearhost asks no registry for\n" +
 			"anything. Presets from a registry are named <registry>/<name>.",
+
+		RunE: groupRun,
 	}
 	cmd.AddCommand(newRegistryAddCmd(b), newRegistryListCmd(b), newRegistryRemoveCmd())
 	return cmd

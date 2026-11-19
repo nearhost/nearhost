@@ -45,6 +45,8 @@ func newHostsCmd() *cobra.Command {
 		Use:   "hosts",
 		Short: "Manage the nearhost block in " + hosts.DefaultPath,
 		Long:  "Manage the nearhost block in " + hosts.DefaultPath + ".\n\n" + elevationNote,
+
+		RunE: groupRun,
 	}
 	var file string
 	cmd.PersistentFlags().StringVar(&file, "file", hosts.DefaultPath, "hosts file to edit")
