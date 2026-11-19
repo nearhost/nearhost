@@ -226,6 +226,12 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 	case err != nil:
 		add(check{"config", levelFail, err.Error(), "edit " + path})
 	default:
+		if msg := missingConfigMessage(cmd); msg != "" {
+			// The file named with --config is not there: say so, as ls
+			// and up do, rather than call a file that is not there ok.
+			add(check{"config", levelWarn, msg, "check the path; `nearhost add` with the same --config creates the file"})
+			break
+		}
 		add(checkUnknownKeys(path))
 	}
 

@@ -240,6 +240,10 @@ func (c contextReader) Read(p []byte) (int, error) {
 func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) error {
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
+		// Some load errors are whole sentences already.
+		if strings.HasSuffix(err.Error(), ".") {
+			return fmt.Errorf("%w Fix the config before adding to it.", err)
+		}
 		return fmt.Errorf("%w; fix the config before adding to it", err)
 	}
 	// Every question reads its answer from the same input, so that lines

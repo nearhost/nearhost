@@ -1070,3 +1070,14 @@ func TestIsAddrInUse(t *testing.T) {
 		t.Error("EADDRINUSE is in use")
 	}
 }
+
+// A --config file that does not exist is named as missing, as `ls` and `up`
+// name it, and is a warning: doctor checks nothing of it.
+func TestDoctorWarnsOfAMissingConfigFile(t *testing.T) {
+	missing := filepath.Join(filepath.Dir(configHome(t)), "missing.yaml")
+	out, _ := execute(t, newDoctorCmd(healthy().backend()), "doctor", "--config", missing)
+	if strings.Contains(out, "ok    config") {
+		t.Errorf("a missing config file is ok:\n%s", out)
+	}
+	wantContains(t, out, "warn  config           No projects in "+missing+" (the file does not exist yet).")
+}
