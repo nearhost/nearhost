@@ -116,6 +116,13 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 	switch st {
 	case engine.StateDegraded:
 		fix = fmt.Sprintf("none needed while nearhost reconnects; if the project stays degraded, run `ssh %s` once in a terminal to fix access", host)
+	case engine.StateStarting:
+		// A start that waits for its server runs by itself once it connects.
+		// The reason is the event's own, read when it happened: a start
+		// that runs as the session connects has none, and needs no hint.
+		if reason != "" && p.eng.Status(name).Waiting != "" {
+			fix = fmt.Sprintf("none needed: the project starts once nearhost connects to its server; if it keeps waiting, run `ssh %s` once in a terminal to fix access", host)
+		}
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.

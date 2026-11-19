@@ -110,6 +110,13 @@ type ProjectStatus struct {
 	// Notice is why the project's .nearhostrc could not be taken into
 	// account at its last read; empty when nothing went wrong.
 	Notice string
+	// Waiting is the name of the server whose session the project's start
+	// waits for, to run once it connects; empty when the start waits for
+	// nothing. It is set while the project shows starting and while it
+	// shows the error of a server that gave up, and goes with the state
+	// shown: while a stop tears such a project down, until it records
+	// stopped.
+	Waiting string
 }
 
 // Engine owns the proxy, one SSH session per server and the runtime state of
@@ -146,6 +153,14 @@ type ProjectStatus struct {
 // holds up the session. The engine in turn never calls a session method that
 // runs ssh while holding mu. So the only orders that exist are fwdMu -> mu ->
 // session state lock, and they cannot deadlock.
+//
+// A project whose start waits for its server is started, once the session
+// connects, by a goroutine of its own (resumeStart) that serverLog hands the
+// start to under mu: the start takes the project's op, which serverLog must
+// never wait for. It runs only while the project still waits, which StopProject
+// clears under mu, so a stop never races it into starting. StopProject also
+// takes that op under mu when the project waits, with TryLock, which never
+// waits: so the order above still holds.
 //
 // Which process holds the port of a lost forward is asked by a goroutine of
 // its own (lookupHolder). It holds no lock while it asks, and takes mu
@@ -191,8 +206,9 @@ type Engine struct {
 	lookups sync.WaitGroup
 	// dockerLoops counts the Docker refresh loops, which run under ctx too.
 	dockerLoops sync.WaitGroup
-	// starts counts the project starts Apply has begun. Shutdown waits for
-	// them; each returns at once when it finds the engine closed.
+	// starts counts the project starts Apply has begun, and those of
+	// projects that waited for their server (resumeStart). Shutdown waits
+	// for them; each returns at once when it finds the engine closed.
 	starts sync.WaitGroup
 
 	// releaseInstance lets go of the run directory's instance lock, which
@@ -244,6 +260,16 @@ type Engine struct {
 	// beforeForward, when set, runs in OpenPassthrough after the local port
 	// is claimed and before it is forwarded. Tests use it to hold an open.
 	beforeForward func(id string)
+	// beforeWaiting, when set, runs in a start whose server did not connect
+	// in time, after the wait and before the start records that it waits,
+	// with the start's context. Tests use it to stop the project there.
+	beforeWaiting func(ctx context.Context, name string)
+	// startQueued, when set, runs in a start that was not refused as busy,
+	// just before it takes the project's op. stopHeld, when set, runs in
+	// StopProject once it holds op, before the teardown. Tests use them to
+	// order a start after a stop.
+	startQueued func(name string)
+	stopHeld    func(name string)
 	// afterClose, when set, runs in ClosePassthrough once the record is gone
 	// and mu is released, before the close is published. Tests use it to
 	// open the same id again there.
@@ -780,6 +806,15 @@ func (e *Engine) Status(name string) ProjectStatus {
 		st, msg = e.effectiveLocked(run)
 	}
 	status := ProjectStatus{State: st, Message: msg, Alias: run.alias, Pending: run.pending, Notice: run.notice}
+	// Waiting goes with the state shown: while a stop tears the project
+	// down, that is the one announced before it began.
+	waiting := run.shownWaiting
+	if run.announced == "" {
+		waiting = run.waiting
+	}
+	if waiting {
+		status.Waiting = run.server
+	}
 	if len(run.webLocals) > 0 {
 		status.WebLocalPort = run.webLocals[0]
 		status.WebLocalPorts = make(map[int]int, len(run.webLocals))
