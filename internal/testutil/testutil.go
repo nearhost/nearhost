@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/netbind"
 )
 
 // SetHome points the user's home folder at dir: os.UserHomeDir reads HOME on
@@ -121,18 +123,20 @@ func ProxyPort(t testing.TB) int {
 }
 
 // bindable reports whether port can be bound right now on TCP and on UDP,
-// on every interface and on 127.0.0.1, where the proxy listens. Both are
-// tried because Windows lets a socket bind every interface on a port that
-// another process has bound on 127.0.0.1.
+// on every interface and on 127.0.0.1, where the proxy listens. It binds as
+// Nearhost and its tests do, through netbind, which on Windows asks for
+// exclusive use of the port: a plain bind there succeeds beside a socket
+// that holds the port on another address, and beside the connections a
+// closed listener left open, and the exclusive bind that follows then fails.
 func bindable(port int) bool {
 	for _, host := range []string{"", "127.0.0.1"} {
 		addr := net.JoinHostPort(host, strconv.Itoa(port))
-		l, err := net.Listen("tcp", addr)
+		l, err := netbind.Listen("tcp", addr)
 		if err != nil {
 			return false
 		}
 		l.Close()
-		pc, err := net.ListenPacket("udp", addr)
+		pc, err := netbind.ListenPacket("udp", addr)
 		if err != nil {
 			return false
 		}
