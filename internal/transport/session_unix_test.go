@@ -653,8 +653,8 @@ func TestNewGivesASessionAsConfigured(t *testing.T) {
 	}
 
 	d := New(Config{Name: "mini", Host: "mini.lan", RunDir: dir}).(*Session)
-	if d.SSHPath != "ssh" {
-		t.Errorf("default SSHPath = %q, want ssh", d.SSHPath)
+	if d.SSHPath != "" {
+		t.Errorf("default SSHPath = %q, want \"\" (the ssh on PATH)", d.SSHPath)
 	}
 	d.Logf("ignored %d", 1) // a nil Config.Logf must not panic
 }

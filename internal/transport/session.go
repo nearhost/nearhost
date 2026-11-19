@@ -44,7 +44,7 @@ type forward struct {
 // Session supervises one OpenSSH ControlMaster connection to a server.
 type Session struct {
 	supervision
-	SSHPath string   // ssh binary, default "ssh"
+	SSHPath string   // ssh binary; "" means the one on PATH, as SSHCommand finds it
 	Env     []string // extra environment for ssh (tests)
 	// Foreground keeps the master and the SFTP process in this process's
 	// group, so the terminal's Ctrl-C reaches them as it reaches nearhost.
@@ -77,7 +77,6 @@ type Session struct {
 // NewSession creates an idle session. Call Start to connect.
 func NewSession(name, host, runDir string) *Session {
 	s := &Session{
-		SSHPath:  "ssh",
 		runDir:   runDir,
 		forwards: map[string]forward{},
 	}
@@ -164,9 +163,7 @@ func hashedName(name string) string {
 }
 
 func (s *Session) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, s.SSHPath, args...)
-	cmd.Env = append(os.Environ(), s.Env...)
-	return cmd
+	return SSHCommand(ctx, s.SSHPath, s.Env, args...)
 }
 
 // longLived is command for the two ssh processes that stay up: the master and
@@ -590,9 +587,6 @@ func EndStaleMasters(ctx context.Context, runDir, sshPath string, env []string) 
 	entries, err := os.ReadDir(runDir)
 	if err != nil {
 		return []error{fmt.Errorf("list the run directory: %w", err)}
-	}
-	if sshPath == "" {
-		sshPath = "ssh"
 	}
 	s := &Session{SSHPath: sshPath, Env: env}
 	var (

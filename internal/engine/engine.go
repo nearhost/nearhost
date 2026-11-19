@@ -39,7 +39,7 @@ const (
 type Options struct {
 	RunDir      string   // SSH control sockets
 	StorageRoot string   // Caddy storage
-	SSHPath     string   // ssh binary; empty means "ssh"
+	SSHPath     string   // ssh binary; empty means the one on PATH, found once
 	SSHEnv      []string // extra environment for ssh (tests)
 	HTTPSPort   int      // 0 means 443
 	HTTPPort    int      // 0 means 80
@@ -487,6 +487,11 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	// program holds them, as it always has.
 	if err := e.lockRunDir(); err != nil {
 		return err
+	}
+	// Fix the ssh this run uses now, before anything starts one. One that
+	// is not found is reported when an ssh first runs, as it always was.
+	if e.opts.SSHPath == "" {
+		transport.FindSSH()
 	}
 	// From here the run directory, and any master socket left in it, is
 	// this engine's alone. A master left by a run that was killed still

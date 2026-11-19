@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -84,9 +83,6 @@ func newPerProcess(c Config) *perProcess {
 	if c.Logf != nil {
 		p.Logf = c.Logf
 	}
-	if p.SSHPath == "" {
-		p.SSHPath = "ssh"
-	}
 	return p
 }
 
@@ -142,9 +138,7 @@ func configConflicts(host, config string) error {
 func (p *perProcess) Preflight() error { return nil }
 
 func (p *perProcess) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, p.SSHPath, args...)
-	cmd.Env = append(os.Environ(), p.Env...)
-	return cmd
+	return SSHCommand(ctx, p.SSHPath, p.Env, args...)
 }
 
 // longLived is command for an ssh that stays up: the link, and SFTP. As with

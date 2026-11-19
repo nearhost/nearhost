@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"runtime"
 	"strings"
@@ -20,7 +19,8 @@ import (
 )
 
 // sshClient says which OpenSSH client the commands run. The zero value is the
-// ssh on PATH; tests point it at a fake.
+// ssh on PATH, found once and run by its path after (transport.SSHCommand);
+// tests point it at a fake.
 type sshClient struct {
 	path string
 	env  []string
@@ -49,12 +49,7 @@ func (c sshClient) check(ctx context.Context, srv config.Server) error {
 // version runs `ssh -V` and returns the first line it prints, which ssh
 // writes on stderr.
 func (c sshClient) version(ctx context.Context) (string, error) {
-	path := c.path
-	if path == "" {
-		path = "ssh"
-	}
-	cmd := exec.CommandContext(ctx, path, "-V")
-	cmd.Env = append(os.Environ(), c.env...)
+	cmd := transport.SSHCommand(ctx, c.path, c.env, "-V")
 	out, err := cmd.CombinedOutput()
 	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 	line = strings.TrimSpace(line)
@@ -67,12 +62,7 @@ func (c sshClient) version(ctx context.Context) (string, error) {
 // config runs `ssh -G` for host and returns what it prints. It connects to
 // nothing.
 func (c sshClient) config(ctx context.Context, host string) (string, error) {
-	path := c.path
-	if path == "" {
-		path = "ssh"
-	}
-	cmd := exec.CommandContext(ctx, path, "-G", "--", host)
-	cmd.Env = append(os.Environ(), c.env...)
+	cmd := transport.SSHCommand(ctx, c.path, c.env, "-G", "--", host)
 	out, err := cmd.Output()
 	return string(out), err
 }

@@ -15,9 +15,7 @@ func New(c Config) Transport {
 		return newPerProcess(c)
 	}
 	s := NewSession(c.Name, c.Host, c.RunDir)
-	if c.SSHPath != "" {
-		s.SSHPath = c.SSHPath
-	}
+	s.SSHPath = c.SSHPath
 	s.Env = c.Env
 	if c.Logf != nil {
 		s.Logf = c.Logf
