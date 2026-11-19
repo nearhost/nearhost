@@ -290,3 +290,45 @@ func TestForgetDropsTheCache(t *testing.T) {
 		t.Error("still cached")
 	}
 }
+
+// Each wording of a refused password is ErrWrongPassword, whichever sudo
+// printed it: sudo, and sudo-rs before and after it lower-cased its count
+// line (stderr as printed by sudo-rs v0.2.8 and v0.2.15).
+func TestValidateReadsEachSudosWrongPassword(t *testing.T) {
+	for _, name := range []string{
+		"sudo-three-wrong.txt",
+		"sudo-rs-retry.txt",
+		"sudo-rs-three-wrong.txt",
+		"sudo-rs-0.2.8-three-wrong.txt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake(t, "secret")
+			t.Setenv("FAKE_SUDO_WRONG_FILE", filepath.Join("testdata", "stderr", name))
+			if err := Validate(context.Background(), "wrong"); !errors.Is(err, ErrWrongPassword) {
+				t.Errorf("a wrong password: %v", err)
+			}
+		})
+	}
+}
+
+// A refusal that is not about the password is an error that says what sudo
+// said, so the box does not offer another try.
+func TestValidateKeepsOtherRefusalsApart(t *testing.T) {
+	tests := []struct {
+		file, env, want string
+	}{
+		{"sudo-not-in-sudoers.txt", "FAKE_SUDO_REFUSE_FILE", "sudo: ferris is not in the sudoers file."},
+		{"sudo-rs-not-allowed.txt", "FAKE_SUDO_REFUSE_FILE", "sudo: Sorry, user ferris may not run sudo on host."},
+		{"sudo-rs-pam-expired.txt", "FAKE_SUDO_WRONG_FILE", "sudo: Account or password is expired, reset your password and try again"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			fake(t, "secret")
+			t.Setenv(tt.env, filepath.Join("testdata", "stderr", tt.file))
+			err := Validate(context.Background(), "wrong")
+			if err == nil || errors.Is(err, ErrWrongPassword) || err.Error() != tt.want {
+				t.Errorf("got %v, want an error %q that is not a wrong password", err, tt.want)
+			}
+		})
+	}
+}

@@ -84,7 +84,7 @@ func Validate(ctx context.Context, password string) error {
 			return ctxErr
 		}
 		said := stderr.String()
-		if strings.Contains(said, "incorrect password") || strings.Contains(said, "Sorry, try again") {
+		if refusedPassword(said) {
 			return ErrWrongPassword
 		}
 		if msg := strings.TrimSpace(said); msg != "" {
@@ -93,6 +93,25 @@ func Validate(ctx context.Context, password string) error {
 		return fmt.Errorf("sudo: %w", err)
 	}
 	return nil
+}
+
+// refusedPassword reports whether said, sudo's stderr in the C locale, is a
+// refusal of the password. sudo says "Sorry, try again." and "N incorrect
+// password attempts". sudo-rs says "Authentication failed, try again." and
+// "N incorrect authentication attempts", with a capital M and "Maximum" before
+// v0.2.11.
+func refusedPassword(said string) bool {
+	for _, wording := range []string{
+		"incorrect password",
+		"Sorry, try again",
+		"incorrect authentication attempt",
+		"Authentication failed, try again",
+	} {
+		if strings.Contains(said, wording) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstLine(s string) string {

@@ -1,0 +1,1 @@
+sudo: Sorry, user ferris may not run sudo on host.
