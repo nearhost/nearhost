@@ -59,6 +59,26 @@ const (
 	// reloadTimeout bounds one re-read of a project's .nearhostrc, which
 	// may read it over ssh.
 	reloadTimeout = 45 * time.Second
+	// doctorBusy refuses a doctor run while another is going for the same
+	// origin, as each starts an ssh login from the laptop. Its 429 differs
+	// from a refusal's, which says "refused; ask again in N s".
+	doctorBusy = "a doctor run is already going for this server"
+	// reopenWindow is how long a document opened without a prompt answers a
+	// request to open it again, from the same origin and requester, with
+	// the same reply, so a loop can't open tab after tab.
+	reopenWindow = 5 * time.Second
+	// maxFreeOpens is how many documents one origin may open without a
+	// prompt in any freeOpenWindow; past it the user is asked. A repeat
+	// answered under reopenWindow, and an open the user approved, don't
+	// count.
+	maxFreeOpens   = 5
+	freeOpenWindow = time.Minute
+	// doctorGap is the least time between the starts of two doctor runs
+	// for one origin. Its 429 says "a doctor run for this server started
+	// moments ago; ask again in N s", which a refusal's does not match.
+	doctorGap = 5 * time.Second
+	// idleTimeout closes a connection left idle between requests.
+	idleTimeout = 2 * time.Minute
 	// backoff is how long, after the user says No to a passthrough or a
 	// document, that origin's next request of the same kind is refused
 	// without a prompt, so an agent can't wear the user down with one
@@ -215,7 +235,13 @@ type Server struct {
 	docSeq    uint64                 // counts document requests, for their order
 	docOpens  uint64                 // counts document requests that opened
 	refused   map[refusal]time.Time  // when the user last said No, by origin and kind
-	closed    bool
+	doctoring map[string]bool        // origins with a doctor run going
+	doctored  map[string]time.Time   // when each origin's last doctor run started
+	freeOpens map[string][]time.Time // when each origin's recent opens without a prompt began
+	// reopenWaiting, when set, is called as a document request starts
+	// waiting for another's Show to end. Tests set it.
+	reopenWaiting func()
+	closed        bool
 }
 
 // change is one change of a project's .nearhostrc: the project's name and
@@ -292,6 +318,12 @@ func (s *Server) backingOffLocked(w http.ResponseWriter, origin, kind string) bo
 	return true
 }
 
+// readTimeout bounds reading a request, its headers and body. net/http
+// lifts the read deadline once the body is in, so it does not end a long
+// poll or a doctor run that lasts longer. A var so tests can shorten it.
+// The write deadline stays unset, as a long poll writes only at its end.
+var readTimeout = 15 * time.Second
+
 type originKey struct{}
 
 // New creates a server that listens nowhere yet.
@@ -299,7 +331,7 @@ func New(opts Options) *Server {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}, refused: map[refusal]time.Time{}}
+	s := &Server{opts: opts, listeners: map[string]*listener{}, proposals: map[string]*proposal{}, passes: map[string]*passRecord{}, docs: map[string]*docRecord{}, refused: map[refusal]time.Time{}, doctoring: map[string]bool{}, doctored: map[string]time.Time{}, freeOpens: map[string][]time.Time{}}
 	s.handler = s.routes()
 	return s
 }
@@ -405,6 +437,8 @@ func (s *Server) serve(origin string, l net.Listener, ln *listener, h http.Handl
 	ln.srv = &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
 		BaseContext: func(net.Listener) context.Context {
 			return context.WithValue(context.Background(), originKey{}, origin)
 		},

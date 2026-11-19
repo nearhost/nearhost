@@ -176,6 +176,39 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.sweepDocsLocked()
+	for allowed {
+		rec := s.reopenLocked(o, req.Requester, res)
+		if rec == nil {
+			break
+		}
+		if !rec.opening {
+			out := s.viewDocLocked(rec, false)
+			s.mu.Unlock()
+			reply(w, http.StatusCreated, out)
+			return
+		}
+		// It is being shown: its answer is this one's too, unless Show
+		// fails, when this one shows it again.
+		done, waiting := rec.done, s.reopenWaiting
+		s.mu.Unlock()
+		if waiting != nil {
+			waiting()
+		}
+		select {
+		case <-done:
+		case <-r.Context().Done():
+			return
+		}
+		s.mu.Lock()
+	}
+	// Past maxFreeOpens the user is asked, as a loop with a token or in a
+	// served tree could otherwise open tab after tab.
+	if allowed && s.freeOpensLocked(o) >= maxFreeOpens {
+		allowed = false
+	}
+	if allowed {
+		s.freeOpens[o] = append(s.freeOpens[o], s.opts.Now())
+	}
 	reviewer := s.reviewer
 	if !allowed {
 		if rec := s.repeatLocked(o, res, req); rec != nil {
@@ -246,6 +279,40 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		reviewer.Shown(o, req.Requester, res.Doc)
 	}
 	reply(w, http.StatusCreated, out)
+}
+
+// reopenLocked is origin's request by requester for res that opened
+// without a prompt under reopenWindow ago, or is being shown so, or nil.
+// One that was prompted is left out, as its reply may hold a token.
+func (s *Server) reopenLocked(origin, requester string, res Resolved) *docRecord {
+	now := s.opts.Now()
+	for _, r := range s.docs {
+		if r.Origin != origin || r.prompted || r.Requester != requester || r.Root != res.Root || r.Doc != res.Doc {
+			continue
+		}
+		if r.opening || r.state == StateOpen && now.Sub(r.ended) < reopenWindow {
+			return r
+		}
+	}
+	return nil
+}
+
+// freeOpensLocked counts origin's opens without a prompt under
+// freeOpenWindow ago, forgetting those older.
+func (s *Server) freeOpensLocked(origin string) int {
+	now := s.opts.Now()
+	recent := s.freeOpens[origin][:0]
+	for _, at := range s.freeOpens[origin] {
+		if now.Sub(at) < freeOpenWindow {
+			recent = append(recent, at)
+		}
+	}
+	if len(recent) == 0 {
+		delete(s.freeOpens, origin)
+	} else {
+		s.freeOpens[origin] = recent
+	}
+	return len(recent)
 }
 
 // repeatLocked is origin's pending prompt for the same document, requester
