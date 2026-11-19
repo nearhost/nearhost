@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,8 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
@@ -75,6 +78,12 @@ type doctorBackend struct {
 	// Nearhost on. nil skips the check.
 	checkAgents func(ctx context.Context, srv config.Server) error
 	goos        string
+	// stderrTTY reports whether stderr is a terminal, where a slow check
+	// says it is running. nil means it is not.
+	stderrTTY func() bool
+	// slowAfter is how long a check runs before doctor says so. Zero means
+	// slowCheckAfter.
+	slowAfter time.Duration
 	// exe is the path of the running binary, or "" when it is not known.
 	exe string
 	// lowPorts reports whether this process may bind port on Linux.
@@ -110,6 +119,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		checkServer:     sshClient{}.check,
 		checkAgents:     sshClient{}.checkAgents,
 		goos:            runtime.GOOS,
+		stderrTTY:       func() bool { return term.IsTerminal(int(os.Stderr.Fd())) },
 		exe:             realExecutable(),
 		sshAgentService: sshAgentService,
 		sshVersion:      sshClient{}.version,
@@ -139,18 +149,21 @@ func newDoctorCmd(b doctorBackend) *cobra.Command {
 			if err := flags.validate(); err != nil {
 				return err
 			}
-			m := runChecks(cmd, b, flags)
+			// Text mode prints each check as it finishes. --json prints one
+			// document at the end, so it streams nothing.
+			st := newDoctorStream(cmd, b, asJSON)
+			m := runChecks(cmd, b, flags, st)
 			var projects []projectReport
 			if m.cfg != nil && b.openFiles != nil {
 				env := b.env
 				env.noHosts = env.noHosts || flags.noHosts
-				projects = checkProjects(cmd.Context(), b, env, m.cfg, m.cfgPath, m.reachable)
+				projects = checkProjectsStreaming(cmd.Context(), b, env, m.cfg, m.cfgPath, m.reachable, st.projectHooks(m.hostsMissing))
 				projects = withoutReported(projects, m.hostsMissing)
 			}
 			if asJSON {
 				return reportJSON(cmd, m.checks, projects)
 			}
-			return report(cmd, m.checks, projects)
+			return st.summary(m.checks, projects)
 		},
 	}
 	flags.bind(cmd)
@@ -190,22 +203,28 @@ func withoutReported(projects []projectReport, missing []string) []projectReport
 	return out
 }
 
-func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
+func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctorStream) machine {
 	var checks []check
+	// add records checks and, in text mode, prints them.
+	add := func(cs ...check) {
+		checks = append(checks, cs...)
+		st.printChecks(cs...)
+	}
 	cfg, path, err := loadConfig(cmd)
 	switch {
 	case err != nil && path == "":
-		checks = append(checks, check{"config", levelFail, err.Error(), "set HOME or XDG_CONFIG_HOME, or pass --config"})
+		add(check{"config", levelFail, err.Error(), "set HOME or XDG_CONFIG_HOME, or pass --config"})
 	case err != nil:
-		checks = append(checks, check{"config", levelFail, err.Error(), "edit " + path})
+		add(check{"config", levelFail, err.Error(), "edit " + path})
 	default:
-		checks = append(checks, checkUnknownKeys(path))
+		add(checkUnknownKeys(path))
 	}
 
 	ctx := cmd.Context()
-	checks = append(checks, checkPort(ctx, b, flags.httpsPort, "--https-port", true), checkPort(ctx, b, flags.httpPort, "--http-port", false))
+	add(st.slow(fmt.Sprintf("port %d", flags.httpsPort), func() check { return checkPort(ctx, b, flags.httpsPort, "--https-port", true) }))
+	add(st.slow(fmt.Sprintf("port %d", flags.httpPort), func() check { return checkPort(ctx, b, flags.httpPort, "--http-port", false) }))
 	if flags.webPort != 0 {
-		c := checkPort(ctx, b, flags.webPort, "--web-port", false)
+		c := st.slow(fmt.Sprintf("port %d", flags.webPort), func() check { return checkPort(ctx, b, flags.webPort, "--web-port", false) })
 		if c.level == levelFail {
 			// A page port Nearhost cannot bind costs only the page:
 			// `nearhost up` runs without it. checkPort's fix stands for a
@@ -215,7 +234,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 				c.fix = "Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another"
 			}
 		}
-		checks = append(checks, c)
+		add(c)
 	}
 	if low := min(flags.httpsPort, flags.httpPort); b.goos == "linux" && low < 1024 {
 		lv, detail := b.lowPorts(low)
@@ -223,21 +242,23 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 		if lv != levelOK {
 			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
 		}
-		checks = append(checks, c)
+		add(c)
 	}
-	checks = append(checks, checkCA(b.trust)...)
+	st.slowMany("local CA", func() []check { return checkCA(b.trust) }, add)
 	if b.goos == "windows" && b.sshAgentService != nil {
-		checks = append(checks, checkSSHAgentService(b))
+		add(checkSSHAgentService(b))
 	}
 	var sshVer sshVersion
 	if b.goos == "windows" && b.sshVersion != nil {
 		var c check
-		c, sshVer = checkSSHVersion(ctx, b)
-		checks = append(checks, c)
+		st.slowMany("ssh", func() []check {
+			c, sshVer = checkSSHVersion(ctx, b)
+			return []check{c}
+		}, add)
 	}
 	if b.goos == "windows" && b.firefoxRootsOff != nil {
 		if where, off := b.firefoxRootsOff(); off {
-			checks = append(checks, firefoxRootsCheck(where))
+			add(firefoxRootsCheck(where))
 		}
 	}
 	if cfg == nil {
@@ -247,22 +268,25 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 			return check{name, levelWarn, "not checked: the config could not be read", "correct the config (see above), then run `nearhost doctor` again"}
 		}
 		if !flags.noHosts {
-			checks = append(checks, unread("hosts block"))
+			add(unread("hosts block"))
 		}
-		return machine{checks: append(checks, unread("servers")), cfgPath: path}
+		add(unread("servers"))
+		return machine{checks: checks, cfgPath: path}
 	}
-	checks = append(checks, checkAliases(cfg, path)...)
-	checks = append(checks, checkPatternConflicts(cfg, path)...)
-	checks = append(checks, checkOwnLoopbacks(cfg, path, flags)...)
+	add(checkAliases(cfg, path)...)
+	add(checkPatternConflicts(cfg, path)...)
+	add(checkOwnLoopbacks(cfg, path, flags)...)
 	var missing []string
 	if !flags.noHosts {
-		var c check
-		c, missing = checkHosts(ctx, b, cfg)
-		checks = append(checks, c)
+		st.slowMany("hosts block", func() []check {
+			var c check
+			c, missing = checkHosts(ctx, b, cfg)
+			return []check{c}
+		}, add)
 	}
 	reachable := map[string]bool{config.LocalServer: true}
 	for _, srv := range cfg.Servers {
-		c := checkServer(ctx, b, srv)
+		c := st.slow("server "+srv.Name, func() check { return checkServer(ctx, b, srv) })
 		// ssh 9.5 for Windows does not resolve an alias named as a ProxyJump
 		// hop. When the server check fails and its jump names one, that is
 		// the likely cause, so the fix says so; ssh's own words stay as the
@@ -273,10 +297,10 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags) machine {
 					alias.name + "'s address (" + alias.address + ") or use a ProxyCommand, then run `nearhost doctor` again"
 			}
 		}
-		checks = append(checks, c)
+		add(c)
 		reachable[srv.Name] = c.level == levelOK
 		if c.level == levelOK && b.checkAgents != nil {
-			checks = append(checks, checkAgents(ctx, b, srv))
+			add(st.slow("agents on "+srv.Name, func() check { return checkAgents(ctx, b, srv) }))
 		}
 	}
 	return machine{checks: checks, cfg: cfg, cfgPath: path, reachable: reachable, hostsMissing: missing}
@@ -336,23 +360,23 @@ func failure(failed int) error {
 	return exitError{code: 1, msg: plural(failed, "check") + " failed"}
 }
 
-// report prints the checks, then the project section, and returns an error
-// when a check failed or a project has an error.
-func report(cmd *cobra.Command, checks []check, projects []projectReport) error {
-	out := cmd.OutOrStdout()
-	failed, warned := tally(checks, projects)
-	for _, c := range checks {
-		// A detail of several lines (ssh can print more than one) keeps its
-		// lines, aligned under the first. What ssh printed comes from the
-		// server too, and a check's name can hold a server's, so neither
-		// keeps its control characters.
-		detail := strings.ReplaceAll(strings.TrimRight(printableLines(c.detail), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
-		fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, printable(c.name), detail)
-		if c.fix != "" {
-			fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
-		}
+// printCheck prints one check: its line, and its fix under it.
+func printCheck(out io.Writer, c check) {
+	// A detail of several lines (ssh can print more than one) keeps its
+	// lines, aligned under the first. What ssh printed comes from the
+	// server too, and a check's name can hold a server's, so neither
+	// keeps its control characters.
+	detail := strings.ReplaceAll(strings.TrimRight(printableLines(c.detail), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
+	fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, printable(c.name), detail)
+	if c.fix != "" {
+		fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
 	}
-	printProjects(out, projects)
+}
+
+// printSummary prints the blank line and the closing sentence, and returns
+// the error doctor exits with when a check failed or a project has an error.
+func printSummary(out io.Writer, checks []check, projects []projectReport) error {
+	failed, warned := tally(checks, projects)
 	fmt.Fprintln(out)
 	switch {
 	case failed > 0:

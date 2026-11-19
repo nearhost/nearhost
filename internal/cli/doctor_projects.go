@@ -216,6 +216,20 @@ func unchecked(project, message, fix string) doctor.Finding {
 // the end. A project on a server ssh does not reach, or whose files can't be
 // opened, is reported unchecked.
 func checkProjects(ctx context.Context, b doctorBackend, env doctorEnv, cfg *config.Config, cfgPath string, reachable map[string]bool) []projectReport {
+	return checkProjectsStreaming(ctx, b, env, cfg, cfgPath, reachable, projectHooks{})
+}
+
+// projectHooks lets the caller watch checkProjects work. Either may be nil.
+type projectHooks struct {
+	// begin is called before a project's checks and returns what to call
+	// when they have finished.
+	begin func(name string) (end func())
+	// emit is called with each project's report as soon as it is ready.
+	emit func(projectReport)
+}
+
+// checkProjectsStreaming is checkProjects with hooks on each project.
+func checkProjectsStreaming(ctx context.Context, b doctorBackend, env doctorEnv, cfg *config.Config, cfgPath string, reachable map[string]bool, hooks projectHooks) []projectReport {
 	const sshFix = "Make ssh to the server work (see the server check above), then run `nearhost doctor` again."
 	opened := map[string]serverFiles{}
 	// skip says why the projects of a server are not checked.
@@ -234,33 +248,41 @@ func checkProjects(ctx context.Context, b doctorBackend, env doctorEnv, cfg *con
 		add := func(findings ...doctor.Finding) {
 			reports = append(reports, projectReport{name: p.Name, findings: findings})
 		}
-		if !reachable[p.Server] {
-			add(unchecked(p.Name, "not checked: server "+p.Server+" can't be reached", sshFix))
-			continue
-		}
-		if why, ok := skip[p.Server]; ok {
-			why.Project = p.Name
-			add(why)
-			continue
-		}
-		files, ok := opened[p.Server]
-		if !ok {
-			srv, _ := cfg.Server(p.Server)
-			var err error
-			if files, err = b.openFiles(ctx, srv); err != nil {
-				skip[p.Server] = unchecked(p.Name, "not checked: server "+p.Server+" can't be reached: "+err.Error(), sshFix)
-				add(skip[p.Server])
-				continue
+		func() {
+			if hooks.begin != nil {
+				defer hooks.begin(p.Name)()
 			}
-			opened[p.Server] = files
+			if !reachable[p.Server] {
+				add(unchecked(p.Name, "not checked: server "+p.Server+" can't be reached", sshFix))
+				return
+			}
+			if why, ok := skip[p.Server]; ok {
+				why.Project = p.Name
+				add(why)
+				return
+			}
+			files, ok := opened[p.Server]
+			if !ok {
+				srv, _ := cfg.Server(p.Server)
+				var err error
+				if files, err = b.openFiles(ctx, srv); err != nil {
+					skip[p.Server] = unchecked(p.Name, "not checked: server "+p.Server+" can't be reached: "+err.Error(), sshFix)
+					add(skip[p.Server])
+					return
+				}
+				opened[p.Server] = files
+			}
+			findings, ok := checkProject(ctx, env, cfg, cfgPath, p, files)
+			if !ok {
+				// The server's files stopped answering; its other projects
+				// would wait as long.
+				skip[p.Server] = findings[0]
+			}
+			add(findings...)
+		}()
+		if hooks.emit != nil {
+			hooks.emit(reports[len(reports)-1])
 		}
-		findings, ok := checkProject(ctx, env, cfg, cfgPath, p, files)
-		if !ok {
-			// The server's files stopped answering; its other projects
-			// would wait as long.
-			skip[p.Server] = findings[0]
-		}
-		add(findings...)
 	}
 	return oncePerRun(reports, "hosts.dns-unchecked")
 }
@@ -319,22 +341,32 @@ func printProjects(out io.Writer, projects []projectReport) {
 	if len(projects) == 0 {
 		return
 	}
+	printProjectsHeading(out)
+	for _, p := range projects {
+		printProject(out, p)
+	}
+}
+
+// printProjectsHeading starts the project section.
+func printProjectsHeading(out io.Writer) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Projects")
-	for _, p := range projects {
-		p.name = printable(p.name) // a project's name can come from a remote directory
-		if len(p.findings) == 0 {
-			fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
-			continue
-		}
-		for _, f := range p.findings {
-			message := strings.ReplaceAll(strings.TrimRight(printableLines(f.Message), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
-			fmt.Fprintf(out, "%-4s  %-16s %s\n", severityLabel(f.Severity), p.name, message)
-			fmt.Fprintf(out, "      fix: %s\n", printable(f.Fix.Text))
-			if f.Fix.Snippet != "" {
-				for _, line := range strings.Split(strings.TrimRight(printableLines(f.Fix.Snippet), "\n"), "\n") {
-					fmt.Fprintf(out, "          %s\n", line)
-				}
+}
+
+// printProject prints one project's findings, or its one line.
+func printProject(out io.Writer, p projectReport) {
+	p.name = printable(p.name) // a project's name can come from a remote directory
+	if len(p.findings) == 0 {
+		fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
+		return
+	}
+	for _, f := range p.findings {
+		message := strings.ReplaceAll(strings.TrimRight(printableLines(f.Message), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
+		fmt.Fprintf(out, "%-4s  %-16s %s\n", severityLabel(f.Severity), p.name, message)
+		fmt.Fprintf(out, "      fix: %s\n", printable(f.Fix.Text))
+		if f.Fix.Snippet != "" {
+			for _, line := range strings.Split(strings.TrimRight(printableLines(f.Fix.Snippet), "\n"), "\n") {
+				fmt.Fprintf(out, "          %s\n", line)
 			}
 		}
 	}
