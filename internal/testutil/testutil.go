@@ -45,7 +45,7 @@ func SetHome(t testing.TB, dir string) {
 // that got it ends.
 func FreePort(t testing.TB) int {
 	t.Helper()
-	for {
+	for range freePortTries {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
@@ -57,7 +57,13 @@ func FreePort(t testing.TB) int {
 			return port
 		}
 	}
+	t.Fatalf("FreePort: the system offered only ports that running tests hold, %d times in a row", freePortTries)
+	return 0
 }
+
+// freePortTries is how many ports FreePort asks the system for before it
+// fails the test, so a shortage of ports ends the test and never spins.
+const freePortTries = 1000
 
 // freePorts holds the ports FreePort has given to tests still running.
 var freePorts sync.Map
