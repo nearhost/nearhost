@@ -128,7 +128,8 @@ func TestLogViewOpensARequest(t *testing.T) {
 	press(m, "enter")
 	wantScreen(t, m, "│ request  host: myapp.test · accept: application/json · cookie: REDACTED",
 		"│ response 500 · application/json · 412 B", "│ route    80 web → 127.0.0.1:52114 → mini:80 over ssh", "c copy as curl · enter collapse")
-	if got := clipboardOf(press(m, "c")); got != "curl -i 'https://myapp.test/api/projects?page=1' -H 'Accept: application/json'" {
+	if got := clipboardOf(press(m, "c")); got != wantCurl("curl -i --globoff 'https://myapp.test/api/projects?page=1' -H 'Accept: application/json'",
+		"url = \"https://myapp.test/api/projects?page=1\"\nheader = \"Accept: application/json\"\ngloboff\ninclude\n") {
 		t.Errorf("copied %q", got)
 	}
 	press(m, "enter")
@@ -153,8 +154,9 @@ func TestCurlFor(t *testing.T) {
 	a := proxy.Access{Method: "POST", Host: "myapp.test", URI: "/it's", Headers: map[string][]string{
 		"Host": {"myapp.test"}, "Content-Type": {"application/json"}, "Authorization": {"REDACTED"},
 	}}
-	want := `curl -i -X POST 'https://myapp.test/it'\''s' -H 'Content-Type: application/json'`
-	if got := curlFor(a); got != want {
+	want := wantCurl(`curl -i --globoff -X POST 'https://myapp.test/it'\''s' -H 'Content-Type: application/json'`,
+		"url = \"https://myapp.test/it's\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\ngloboff\ninclude\n")
+	if got, err := curlFor(a); err != nil || got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
@@ -233,10 +235,61 @@ func TestLogViewShowsKeptBodies(t *testing.T) {
 		"c copy as curl · r replay · v reveal · enter collapse")
 	press(m, "v")
 	wantScreen(t, m, "cookie: session=secret", "v hide")
-	want := `curl -i -X POST 'https://myapp.test/api/projects' -H 'Content-Type: application/json' -H 'Cookie: session=secret' --data-binary '{"owner":1}'`
+	want := wantCurl(`curl -i --globoff -X POST 'https://myapp.test/api/projects' -H 'Content-Type: application/json' -H 'Cookie: session=secret' --data-raw '{"owner":1}'`,
+		"url = \"https://myapp.test/api/projects\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Cookie: session=secret\"\n"+
+			`data-raw = "{\"owner\":1}"`+"\ngloboff\ninclude\n")
 	if got := clipboardOf(press(m, "c")); got != want {
 		t.Errorf("copied %s\nwant   %s", got, want)
 	}
+	wantScreen(t, m, "Copied POST /api/projects as curl.")
+}
+
+// A kept request whose body was cut is copied without it, and the toast
+// says why.
+func TestLogViewCopiesACutBodyAsCurl(t *testing.T) {
+	m := capturedModel(t)
+	ex := m.b.(*fakeBackend).edit.captured["ab12"]
+	ex.ReqBodySize = 100 << 10
+	m.b.(*fakeBackend).edit.captured["ab12"] = ex
+	press(m, "k")
+	want := wantCurl(`curl -i --globoff -X POST 'https://myapp.test/api/projects' -H 'Content-Type: application/json' -H 'Cookie: session=secret'`,
+		"url = \"https://myapp.test/api/projects\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Cookie: session=secret\"\ngloboff\ninclude\n")
+	if got := clipboardOf(press(m, "c")); got != want {
+		t.Errorf("copied %s\nwant   %s", got, want)
+	}
+	wantScreen(t, m, "Copied POST /api/projects as curl, without its body: only its start was kept.")
+}
+
+// A kept request with a NUL byte in its body is not copied, and the toast
+// says so.
+func TestLogViewRefusesToCopyANUL(t *testing.T) {
+	m := capturedModel(t)
+	ex := m.b.(*fakeBackend).edit.captured["ab12"]
+	ex.ReqBody, ex.ReqBodySize = []byte("a\x00b"), 3
+	m.b.(*fakeBackend).edit.captured["ab12"] = ex
+	press(m, "k")
+	if cmd := press(m, "c"); cmd != nil {
+		if got := clipboardOf(cmd); got != "" {
+			t.Errorf("copied %q", got)
+		}
+	}
+	wantScreen(t, m, "This request cannot be copied as curl.")
+}
+
+// A kept request whose body would erase the pasted line is not copied.
+func TestLogViewRefusesToCopyControlCharacters(t *testing.T) {
+	m := capturedModel(t)
+	ex := m.b.(*fakeBackend).edit.captured["ab12"]
+	ex.ReqBody = []byte("\x1b[201~\x15echo PWNED; : \\")
+	ex.ReqBodySize = int64(len(ex.ReqBody))
+	m.b.(*fakeBackend).edit.captured["ab12"] = ex
+	press(m, "k")
+	if cmd := press(m, "c"); cmd != nil {
+		if got := clipboardOf(cmd); got != "" {
+			t.Errorf("copied %q", got)
+		}
+	}
+	wantScreen(t, m, "This request cannot be copied as curl.")
 }
 
 // A request whose exchange is no longer kept says so.
@@ -330,7 +383,7 @@ func TestLogViewMarksAShortBody(t *testing.T) {
 	wantScreen(t, m, "(client sent 8.2 kB of 30.7 kB, then stopped)")
 	press(m, "r")
 	wantScreen(t, m, "The client stopped sending this request's body, so Nearhost cannot send it again.")
-	if got := clipboardOf(press(m, "c")); strings.Contains(got, "--data-binary") {
+	if got := clipboardOf(press(m, "c")); strings.Contains(got, "--data-raw") || strings.Contains(got, "data-raw =") {
 		t.Errorf("copied the short body, %d bytes of command", len(got))
 	}
 	wantScreen(t, m, "Copied POST /api/projects as curl, without its body: the client stopped sending it.")

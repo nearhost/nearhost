@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -193,15 +194,21 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 	case "c":
 		if at >= 0 && shown[at].req != nil {
 			a := shown[at].req
+			line := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+			var command string
+			var err error
 			if ex, kept := m.b.Captured(a.ID); kept && a.ID != "" {
-				said := "Copied " + a.Method + " " + clean(a.URI) + " as curl."
+				command, err = curlForExchange(ex)
 				if why := bodyLeftOut(ex); why != "" {
-					said = strings.TrimSuffix(said, ".") + ", without its body: " + why + "."
+					line = strings.TrimSuffix(line, ".") + ", without its body: " + why + "."
 				}
-				return tea.Batch(copyText(v.key, curlForExchange(ex)), m.alert(v.key, said))
+			} else {
+				command, err = curlFor(*a)
 			}
-			note := m.alert(v.key, "Copied "+a.Method+" "+clean(a.URI)+" as curl.")
-			return tea.Batch(copyText(v.key, curlFor(*a)), note)
+			if err != nil {
+				return m.alertProblem(v.key, "This request cannot be copied as curl.")
+			}
+			return tea.Batch(copyText(v.key, command), m.alert(v.key, line))
 		}
 	case "v":
 		v.reveal = !v.reveal
@@ -624,58 +631,48 @@ var skipInCurl = map[string]bool{
 }
 
 // curlForExchange is a curl command that makes a kept request again, with
-// its real headers and, when it was kept whole, its body.
-func curlForExchange(ex proxy.Exchange) string {
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	parts := []string{"curl", "-i"}
-	if ex.Method != "" && ex.Method != "GET" {
-		parts = append(parts, "-X", ex.Method)
-	}
-	parts = append(parts, quote("https://"+ex.Host+ex.URI))
+// its real headers and, when it was kept whole, its body. It fails for a
+// request that holds a control character.
+func curlForExchange(ex proxy.Exchange) (string, error) {
 	names := make([]string, 0, len(ex.ReqHeader))
 	for name := range ex.ReqHeader {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	var headers [][2]string
 	for _, name := range names {
 		if skipInCurl[strings.ToLower(name)] {
 			continue
 		}
 		for _, value := range ex.ReqHeader[name] {
-			parts = append(parts, "-H", quote(name+": "+value))
+			headers = append(headers, [2]string{name, value})
 		}
 	}
-	if ex.ReqBodySize > 0 && !ex.ReqBodyCut() && !ex.ReqBodyShort {
-		parts = append(parts, "--data-binary", quote(string(ex.ReqBody)))
-	}
-	return strings.Join(parts, " ")
+	leftOut := ex.ReqBodyCut() || ex.ReqBodyShort
+	return curlCommand(runtime.GOOS, ex.Method, "https://"+ex.Host+ex.URI, headers, ex.ReqBody, leftOut)
 }
 
 // curlFor is a curl command that makes the request again. Headers whose
-// values Caddy redacted are left out, as is Host, which the URL carries.
-func curlFor(a proxy.Access) string {
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	parts := []string{"curl", "-i"}
-	if a.Method != "" && a.Method != "GET" {
-		parts = append(parts, "-X", a.Method)
-	}
-	parts = append(parts, quote("https://"+a.Host+a.URI))
+// values Caddy redacted are left out, as is Host, which the URL carries. It
+// fails for a request that holds a control character.
+func curlFor(a proxy.Access) (string, error) {
 	names := make([]string, 0, len(a.Headers))
 	for name := range a.Headers {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	var headers [][2]string
 	for _, name := range names {
 		if strings.EqualFold(name, "Host") {
 			continue
 		}
 		for _, value := range a.Headers[name] {
 			if value != "REDACTED" {
-				parts = append(parts, "-H", quote(name+": "+value))
+				headers = append(headers, [2]string{name, value})
 			}
 		}
 	}
-	return strings.Join(parts, " ")
+	return curlCommand(runtime.GOOS, a.Method, "https://"+a.Host+a.URI, headers, nil, false)
 }
 
 // scrollbar is a column height cells tall, with a thumb where the view is
