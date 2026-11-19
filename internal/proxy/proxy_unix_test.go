@@ -113,8 +113,8 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 			if body, err := get(host, host); err != nil || body != "docker page" {
 				t.Errorf("client %s asking for %s: body %q, err %v, want the upstream's answer", ip, host, body, err)
 			}
-			if _, status, err := h.plainHTTP(t, ip, host); err != nil || status != 308 {
-				t.Errorf("http from %s to %s: status %d, err %v, want 308", ip, host, status, err)
+			if _, status, err := h.plainHTTP(t, ip, host); err != nil || status != 307 {
+				t.Errorf("http from %s to %s: status %d, err %v, want 307", ip, host, status, err)
 			}
 		}
 		for _, host := range []string{"b.test", "api.local.x.io"} {

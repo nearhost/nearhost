@@ -445,8 +445,8 @@ func TestProxyRuntime(t *testing.T) {
 		t.Fatalf("GET http: %v", err)
 	}
 	redir.Body.Close()
-	if loc := redir.Header.Get("Location"); redir.StatusCode/100 != 3 || !strings.HasPrefix(loc, "https://a.test") {
-		t.Fatalf("expected redirect to https, got %d %q", redir.StatusCode, loc)
+	if loc := redir.Header.Get("Location"); redir.StatusCode != 307 || redir.Header.Get("Cache-Control") != "no-store" || !strings.HasPrefix(loc, "https://a.test") {
+		t.Fatalf("expected an uncacheable 307 to https, got %d %q %q", redir.StatusCode, redir.Header.Get("Cache-Control"), loc)
 	}
 
 	// 7: access log tagged with the right alias.
@@ -1070,14 +1070,14 @@ func TestOnDemandRefusesUnconfiguredName(t *testing.T) {
 	}
 }
 
-func TestPlainHTTPAnswers308ForEveryKindOfHost(t *testing.T) {
+func TestPlainHTTPAnswers307ForEveryKindOfHost(t *testing.T) {
 	h := startProxy(t, []Site{
 		{Alias: "a.test", Hosts: []string{"a.test", "localhost", "*.local.example.pro", "internal.*.local.example.pro"}, Upstream: "127.0.0.1:1"},
 	})
 	for _, host := range []string{"a.test", "localhost", "acme.local.example.pro", "internal.acme.local.example.pro"} {
 		resp := h.postHTTP(t, host, "/auth/callback", "x=1")
-		if resp.StatusCode != 308 || resp.Header.Get("Location") != "https://"+host+"/auth/callback" {
-			t.Errorf("%s: %d %q, want 308 to https://%s/auth/callback", host, resp.StatusCode, resp.Header.Get("Location"), host)
+		if resp.StatusCode != 307 || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Location") != "https://"+host+"/auth/callback" {
+			t.Errorf("%s: %d %q %q, want an uncacheable 307 to https://%s/auth/callback", host, resp.StatusCode, resp.Header.Get("Cache-Control"), resp.Header.Get("Location"), host)
 		}
 	}
 	h.waitCerts(t, "a.test", "localhost")
@@ -1151,8 +1151,8 @@ func TestPlainHTTPDropsWhatItDoesNotServe(t *testing.T) {
 				served = append(served, "acme.local.example.pro")
 			}
 			for _, host := range served {
-				if resp := h.postHTTP(t, host, "/cb", "x=1"); resp.StatusCode != 308 {
-					t.Errorf("loopback %s: status %d, want 308", host, resp.StatusCode)
+				if resp := h.postHTTP(t, host, "/cb", "x=1"); resp.StatusCode != 307 {
+					t.Errorf("loopback %s: status %d, want 307", host, resp.StatusCode)
 				}
 			}
 			for _, host := range []string{"nothing.test", "evil.example.com"} {
@@ -1206,8 +1206,8 @@ func TestHomePageAtLocalhost(t *testing.T) {
 	if r.StatusCode != 405 {
 		t.Errorf("POST /: status %d, want 405", r.StatusCode)
 	}
-	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 308 || r.Header.Get("Location") != "https://localhost/" {
-		t.Errorf("http POST /: %d %q, want 308 to https://localhost/", r.StatusCode, r.Header.Get("Location"))
+	if r := h.postHTTP(t, "localhost", "/", "x=1"); r.StatusCode != 307 || r.Header.Get("Location") != "https://localhost/" {
+		t.Errorf("http POST /: %d %q, want 307 to https://localhost/", r.StatusCode, r.Header.Get("Location"))
 	}
 	// The page is no project's, so its access lines are dropped like any
 	// untagged line. A tagged request afterwards is logged after them.

@@ -357,8 +357,10 @@ func coversAll(ranges, union []string) bool {
 }
 
 // httpServer is the server on the http port. It serves the clients each of
-// hosts is served to (loopback, and a site's extra ranges) a 308 to the same
-// URL over https, and drops every other connection without an answer, as the
+// hosts is served to (loopback, and a site's extra ranges) a 307 to the same
+// URL over https, which carries Cache-Control: no-store so that a browser
+// keeps no memory of it (a 308 is cached for good, and a host that stops
+// being served or moves to another tool would stay stuck on https), and drops every other connection without an answer, as the
 // https server does. union is the union of all those ranges.
 //
 // Its routes are, in order: a drop for a client outside union; for each
@@ -395,9 +397,10 @@ func httpServer(hosts []hostRanges, union []string, httpPort int) map[string]any
 			}},
 			"handle": []any{map[string]any{
 				"handler":     "static_response",
-				"status_code": 308,
+				"status_code": 307,
 				"headers": map[string]any{
-					"Location": []string{"https://{http.request.host}{http.request.uri}"},
+					"Location":      []string{"https://{http.request.host}{http.request.uri}"},
+					"Cache-Control": []string{"no-store"},
 				},
 			}},
 			"terminal": true,
