@@ -195,6 +195,14 @@ type Engine struct {
 	// them; each returns at once when it finds the engine closed.
 	starts sync.WaitGroup
 
+	// releaseInstance lets go of the run directory's instance lock, which
+	// Start takes and Shutdown releases; nil while the engine holds none.
+	// lifeMu guards it.
+	releaseInstance func()
+	// startErr is why the last Start failed, nil when none has; mu guards
+	// it. ensureSession gives it while the engine has not started.
+	startErr error
+
 	lifeMu    sync.Mutex
 	hostsTurn chan struct{} // holds one token while a hosts update runs
 	applyMu   sync.Mutex
@@ -397,15 +405,24 @@ func (e *Engine) Config() *config.Config {
 
 // Start prepares the engine: it creates the run directory, checks that the
 // proxy's HTTPS and HTTP ports, and any page port, can be bound (the HTTPS
-// port on UDP as well), and loads the proxy with no sites, which creates the
+// port on UDP as well), takes the run directory's instance lock, which it
+// holds until Shutdown, and loads the proxy with no sites, which creates the
 // local CA and listens on every port to serve Nearhost's own page at
 // localhost. If the HTTPS or HTTP port is taken it returns an error naming
-// the port and the engine stays unstarted; Start can then be called again. A
+// the port, and if another engine holds the run directory it says so; either
+// way the engine stays unstarted and Start can be called again. A
 // taken page port only publishes an event, and the proxy runs without the
 // page. Starting a started engine does nothing.
-func (e *Engine) Start(ctx context.Context) error {
+func (e *Engine) Start(ctx context.Context) (err error) {
 	e.lifeMu.Lock()
 	defer e.lifeMu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		if !e.started {
+			e.startErr = err
+		}
+		e.mu.Unlock()
+	}()
 	e.mu.Lock()
 	started, closed := e.started, e.closed
 	e.mu.Unlock()
@@ -433,6 +450,14 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.probePort(ctx, "HTTP", e.opts.HTTPPort, 80); err != nil {
 		return err
 	}
+	// After the probes, so a second Nearhost on the same ports says which
+	// program holds them, as it always has.
+	if err := e.lockRunDir(); err != nil {
+		return err
+	}
+	// From here the run directory, and any master socket left in it, is
+	// this engine's alone.
+
 	// A taken page port costs only the page, not the proxy. A Start that
 	// failed after dropping it tries the port again.
 	e.proxy.SetWebPort(e.opts.WebPort)
@@ -455,10 +480,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
 	e.applyMu.Lock()
-	err := e.proxy.Apply(nil)
+	err = e.proxy.Apply(nil)
 	e.applyMu.Unlock()
 	if err != nil {
 		proxy.SetSink(nil)
+		e.unlockRunDir()
 		return fmt.Errorf("start proxy: %w", err)
 	}
 	e.mu.Lock()
@@ -666,7 +692,33 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		proxy.SetSink(nil)
 		proxy.ClearCaptured()
 	}
+	// Every master has ended, so the run directory is free for the next.
+	e.unlockRunDir()
 	return errors.Join(errs...)
+}
+
+// lockRunDir takes the run directory's instance lock, unless the
+// engine holds it already or has no run directory. Another engine holding it
+// is an *instanceError. lifeMu must be held.
+func (e *Engine) lockRunDir() error {
+	if e.releaseInstance != nil || e.opts.RunDir == "" {
+		return nil
+	}
+	release, err := lockInstance(e.opts.RunDir)
+	if err != nil {
+		return err
+	}
+	e.releaseInstance = release
+	return nil
+}
+
+// unlockRunDir releases the instance lock if the engine holds it.
+// lifeMu must be held.
+func (e *Engine) unlockRunDir() {
+	if e.releaseInstance != nil {
+		e.releaseInstance()
+		e.releaseInstance = nil
+	}
 }
 
 // Sites lists the sites published to the proxy, in config order.

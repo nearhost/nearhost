@@ -87,9 +87,13 @@ var executable = func() string {
 // down: setcap on Linux when the port needs a privilege, the program using
 // the port when it is taken. Caddy can return the error as text with the
 // errno lost, so the message is the fallback. A file Nearhost could not
-// create, such as its run directory, is no port problem.
+// create, such as its run directory, is no port problem. Another Nearhost
+// holding the run directory gets no fix line: its message says what to do.
 func proxyFix(err error, goos, exe string) string {
 	const ports = "pass --https-port and --http-port."
+	if engine.IsAlreadyRunning(err) {
+		return ""
+	}
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
 		if errors.Is(pe.Err, fs.ErrPermission) {

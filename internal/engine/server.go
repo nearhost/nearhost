@@ -12,6 +12,19 @@ import (
 
 var errShutDown = errors.New("engine is shut down")
 
+// errNotStarted refuses to connect a server before Start has succeeded.
+var errNotStarted = errors.New("Nearhost has not started, so it connects to no server")
+
+// notStartedErr is why an engine that has not started connects no server:
+// the instance error when another Nearhost holds the run directory, which
+// says what to do, and errNotStarted otherwise.
+func notStartedErr(startErr error) error {
+	if IsAlreadyRunning(startErr) {
+		return startErr
+	}
+	return errNotStarted
+}
+
 // serverConn is the SSH session of one remote server. It is created the first
 // time a project on the server starts and lives until Shutdown.
 type serverConn struct {
@@ -25,9 +38,18 @@ type serverConn struct {
 // ensureSession returns the server's session with its supervisor running. A
 // session whose supervisor gave up (authentication failed) is started afresh,
 // so starting a project again retries the connection. After Shutdown it
-// starts nothing and returns an error.
+// starts nothing and returns an error, and so does it before Start has
+// succeeded.
 func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 	e.mu.Lock()
+	if !e.started && !e.closed {
+		// A session's start clears its socket in the run directory, ending
+		// any master there. Before Start has the run directory's lock, that
+		// master may be another Nearhost's.
+		err := notStartedErr(e.startErr)
+		e.mu.Unlock()
+		return nil, err
+	}
 	c := e.servers[srv.Name]
 	if c == nil && !e.closed {
 		s := transport.New(transport.Config{
