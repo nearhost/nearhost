@@ -714,8 +714,8 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
-	if got := strs(web["listen"]); !slices.Equal(got, netbind.LoopbackAddrs(6327)) {
-		t.Errorf("listen = %v, want %v", got, netbind.LoopbackAddrs(6327))
+	if got := strs(web["listen"]); !slices.Equal(got, netbind.PageAddrs(6327)) {
+		t.Errorf("listen = %v, want %v", got, netbind.PageAddrs(6327))
 	}
 	if got := strs(web["protocols"]); !slices.Equal(got, []string{"h1", "h2"}) {
 		t.Errorf("protocols = %v, want h1 and h2, so no UDP port", got)
@@ -746,6 +746,43 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 	cfg = buildJSON(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}})
 	if _, ok := dig(t, cfg, "apps", "http", "servers").(map[string]any)["nearhost_web"]; ok {
 		t.Error("config without a web port has a web server")
+	}
+}
+
+// Where the page listens on the wildcard address, as on macOS for a port
+// below 1024, its server still admits loopback clients alone: the TLS
+// policy and the home route match loopback sources, and every other
+// request is dropped.
+func TestBuildConfigWildcardPageAdmitsLoopbackOnly(t *testing.T) {
+	orig := pageAddrs
+	pageAddrs = netbind.ServeAddrs
+	t.Cleanup(func() { pageAddrs = orig })
+	raw, err := BuildConfig([]Site{
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"},
+	}, Options{StorageRoot: t.TempDir(), WebPort: 444})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
+	if got := strs(web["listen"]); !slices.Equal(got, netbind.ServeAddrs(444)) {
+		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(444))
+	}
+	if got := strs(dig(t, web, "tls_connection_policies", 0, "match", "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+		t.Errorf("TLS policy remote_ip = %v, want loopback", got)
+	}
+	routes := web["routes"].([]any)
+	if len(routes) != 2 || dig(t, routes[0], "handle", 0, "handler") != homeModule || dig(t, routes[1], "handle", 0, "abort") != true {
+		t.Fatalf("routes = %v, want the home page, then a drop", routes)
+	}
+	if got := strs(dig(t, routes[0], "match", 0, "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
+		t.Errorf("home route remote_ip = %v, want loopback", got)
+	}
+	if _, ok := routes[1].(map[string]any)["match"]; ok {
+		t.Errorf("the drop route has a matcher: %v", routes[1])
 	}
 }
 

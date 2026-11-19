@@ -7,6 +7,8 @@ package netbind
 
 import (
 	"net"
+	"os"
+	"runtime"
 	"strconv"
 	"sync"
 )
@@ -34,10 +36,29 @@ func ServeAddrs(port int) []string {
 // LoopbackAddrs returns the loopback addresses of port: 127.0.0.1 and [::1],
 // or 127.0.0.1 alone on a machine without the IPv6 loopback, where a listen
 // on [::1] would fail and take the rest of the proxy's configuration with it.
-// Nearhost's page listens on these on every system, so the kernel refuses a
-// client on any other machine before a request is read.
 func LoopbackAddrs(port int) []string {
 	return joinPort(loopbackHosts(), port)
+}
+
+// PageAddrs returns the addresses Nearhost's page listens on at port, and so
+// the ones to bind to learn whether it is free. They are LoopbackAddrs, so
+// the kernel refuses a client on any other machine before a request is read,
+// except on macOS for a port below 1024 in a process that is not root: macOS
+// lets such a process bind a low port on the wildcard address alone, so the
+// page listens on ServeAddrs there, and the page's check of the source
+// address alone keeps it to loopback clients.
+func PageAddrs(port int) []string {
+	return pageAddrsFor(runtime.GOOS, os.Geteuid(), port)
+}
+
+// pageAddrsFor is PageAddrs on the system goos, in a process whose effective
+// user id is euid.
+func pageAddrsFor(goos string, euid, port int) []string {
+	// Port 0 asks the system for a free port, which is never a low one.
+	if goos == "darwin" && port > 0 && port < 1024 && euid != 0 {
+		return ServeAddrs(port)
+	}
+	return LoopbackAddrs(port)
 }
 
 // loopbackHosts are the hosts LoopbackAddrs binds.

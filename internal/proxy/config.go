@@ -307,15 +307,18 @@ func homeRoute(opts Options) map[string]any {
 	}
 }
 
-// pageAddrs is netbind.LoopbackAddrs; tests stand in a machine without the
-// IPv6 loopback.
-var pageAddrs = netbind.LoopbackAddrs
+// pageAddrs is netbind.PageAddrs; tests stand in a machine without the IPv6
+// loopback, or macOS with a page port below 1024.
+var pageAddrs = netbind.PageAddrs
 
 // webServer is the server on opts.WebPort, which serves the home page at
-// localhost to loopback clients and drops everything else. It listens on the
-// loopback addresses alone, on every system, so the kernel refuses a
-// connection from another machine to this port before a request is read.
-// The loopback ranges below stay as a second check. The same page is also
+// localhost to loopback clients and drops everything else. It listens on
+// netbind.PageAddrs: the loopback addresses alone, so the kernel refuses a
+// connection from another machine to this port before a request is read,
+// except on macOS for a port below 1024 when Nearhost is not root, where it
+// listens on the wildcard address. The loopback ranges below hold in both
+// cases, and in the second they alone keep the page to loopback clients,
+// as on the https port. The same page is also
 // served at https://localhost on the https port while no project claims
 // that host (see homeRoute); that server listens on netbind.ServeAddrs, and
 // there the source-address check alone keeps it to loopback clients. It has
