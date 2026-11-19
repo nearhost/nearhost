@@ -240,3 +240,57 @@ func firstOf(ls map[*retireListener]struct{}) *retireListener {
 	}
 	return nil
 }
+
+// A reload waits for the listeners of the configuration it replaces: when
+// Apply returns none of them is open, so no new connection can reach one. A
+// load of the configuration that already runs closes nothing and waits for
+// nothing.
+func TestAReloadWaitsForTheOldListeners(t *testing.T) {
+	upA, upB := upstream(t, "a"), upstream(t, "b")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}
+	h := startProxy(t, []Site{a})
+	old := retiring.snapshot()
+	if len(old) == 0 {
+		t.Fatal("no listener is recorded for a running proxy")
+	}
+	var waited []map[*retireListener]struct{}
+	orig := retired
+	retired = func(ls map[*retireListener]struct{}, timeout time.Duration) map[*retireListener]struct{} {
+		waited = append(waited, ls)
+		return orig(ls, timeout)
+	}
+	t.Cleanup(func() { retired = orig })
+
+	if err := h.p.Apply([]Site{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) != 1 || len(waited[0]) != len(old) {
+		t.Fatalf("the reload waited for %v, want once for the %d old listeners", waited, len(old))
+	}
+	for l := range old {
+		if _, ok := waited[0][l]; !ok {
+			t.Fatal("the reload did not wait for one of the old listeners")
+		}
+		select {
+		case <-l.closed:
+		default:
+			t.Fatal("an old listener was still open when the reload returned")
+		}
+	}
+	now := retiring.snapshot()
+	if len(now) != len(old) {
+		t.Fatalf("%d listeners open after the reload, want %d", len(now), len(old))
+	}
+
+	waited = nil
+	if err := h.p.Apply([]Site{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) != 0 {
+		t.Errorf("a load of the running configuration waited for %d listeners", len(waited[0]))
+	}
+	if after := retiring.snapshot(); len(retiring.since(now)) != 0 || len(after) != len(now) {
+		t.Errorf("a load of the running configuration changed the open listeners")
+	}
+}
