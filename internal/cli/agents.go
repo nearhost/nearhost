@@ -49,12 +49,17 @@ func agentSocket(home, id string) string {
 	return filepath.Join(home, transport.AgentDir, id+".sock")
 }
 
-// nearhostRunning reports whether another Nearhost is serving on this machine:
-// every run serves coding agents on the same socket, so one answering there
-// means a Nearhost is up. When the socket can't be worked out it says yes, the
-// cautious answer for its callers. Working it out needs the install id, so
-// config.InstallID creates the id file if there is none yet.
+// nearhostRunning reports whether another Nearhost is serving on this
+// machine: every run holds the run directory's instance lock (see
+// instanceHeld), and serves coding agents on the same socket, so one
+// answering there means a Nearhost is up, even one from before the lock.
+// When the socket can't be worked out it says yes, the cautious answer for
+// its callers. Working it out needs the install id, so config.InstallID
+// creates the id file if there is none yet.
 func nearhostRunning() bool {
+	if instanceHeld(config.RunDir) {
+		return true
+	}
 	id, err := config.InstallID()
 	if err != nil {
 		return true
@@ -64,6 +69,19 @@ func nearhostRunning() bool {
 		return true
 	}
 	return agentapi.Answers(agentSocket(home, id))
+}
+
+// instanceHeld reports whether an engine holds the instance lock in the run
+// directory runDir gives: whether a Nearhost of this version or later runs,
+// with or without an agent socket. It is false when that cannot be told,
+// so callers ask the agent socket next.
+func instanceHeld(runDir func() (string, error)) bool {
+	dir, err := runDir()
+	if err != nil {
+		return false
+	}
+	up, err := engine.InstanceRunning(dir)
+	return err == nil && up
 }
 
 // laptopName is the user and the short host name, as in dev@laptop.
