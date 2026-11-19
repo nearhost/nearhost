@@ -1033,3 +1033,33 @@ func TestBuildConfigServesDownPageOnSiteErrors(t *testing.T) {
 		}
 	}
 }
+
+// handlers are the names of route's handlers, in order.
+func handlers(t *testing.T, route any) []string {
+	t.Helper()
+	var out []string
+	for _, h := range dig(t, route, "handle").([]any) {
+		out = append(out, dig(t, h, "handler").(string))
+	}
+	return out
+}
+
+// A forwarded site's gate, naming its upstream, comes right before the
+// reverse proxy; a site that is not forwarded has none.
+func TestBuildConfigForwardedSiteIsGated(t *testing.T) {
+	cfg := build(t, []Site{
+		{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:8080", Forwarded: true},
+		{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: "localhost:5173"},
+	})
+	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
+	got := handlers(t, routes[0])
+	if n := len(got); n < 2 || got[n-2] != gateModule || got[n-1] != "reverse_proxy" {
+		t.Fatalf("forwarded site handlers %q, want a gate then the proxy", got)
+	}
+	if gate := dig(t, routes[0], "handle", len(got)-2).(map[string]any); gate["upstream"] != "127.0.0.1:8080" || gate["project"] != "a.test" {
+		t.Errorf("gate %v", gate)
+	}
+	if slices.Contains(handlers(t, routes[1]), gateModule) {
+		t.Errorf("a local site is gated: %q", handlers(t, routes[1]))
+	}
+}

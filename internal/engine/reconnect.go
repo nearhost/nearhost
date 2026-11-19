@@ -20,19 +20,28 @@ func (e *Engine) ReconnectServer(name string) error {
 	if err := e.stillCurrent(name, c); err != nil {
 		return err
 	}
+	// The server refused the logins: Start makes the session try once at
+	// once, or leaves an attempt under way to answer for this one too, so
+	// pressing r again and again cannot spend a refusal each time.
+	h := c.sess.Health()
+	refused := h.Refused && h.Status != transport.StatusConnected
 	e.mu.Lock()
 	delete(e.held, name)
+	if !refused {
+		// Stop frees the forwards' ports before the session says it is
+		// disconnected: the sites dial nothing from the log line below.
+		e.restarting[name] = true
+	}
 	e.mu.Unlock()
 	e.serverLog(name, "reconnecting, as asked")
-	if h := c.sess.Health(); h.Refused && h.Status != transport.StatusConnected {
-		// The server refused the logins: Start makes the session try once
-		// at once, or leaves an attempt under way to answer for this one
-		// too, so pressing r again and again cannot spend a refusal each
-		// time.
+	if refused {
 		c.sess.Start()
 		return nil
 	}
 	c.sess.Stop()
+	e.mu.Lock()
+	delete(e.restarting, name) // the session is disconnected now
+	e.mu.Unlock()
 	c.sess.Start()
 	return nil
 }

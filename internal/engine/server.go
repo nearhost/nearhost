@@ -62,6 +62,7 @@ func (e *Engine) ensureSession(srv config.Server) (transport.Transport, error) {
 			Logf: func(format string, args ...any) {
 				e.serverLog(srv.Name, fmt.Sprintf(format, args...))
 			},
+			Notify: func() { e.serverChanged(srv.Name) },
 		})
 		c = &serverConn{sess: s}
 		e.servers[srv.Name] = c
@@ -128,13 +129,23 @@ func (e *Engine) serverLog(server, msg string) {
 	e.mu.Unlock()
 }
 
+// serverChanged is told by a server's session that its connection, or one
+// of its forwards, has just stopped carrying anything, before the session
+// logs why. The review shuts the proxy's gates for what was lost at once.
+func (e *Engine) serverChanged(server string) {
+	e.mu.Lock()
+	e.reviewServerLocked(server)
+	e.mu.Unlock()
+}
+
 // reviewServerLocked announces the effective state of every project on
 // server. A forward found lost is announced at once, naming its port; who
 // holds that port is asked in the background, unless the forward is only
 // reconnecting. A project whose start waits for the server has that start
 // handed to resumeStart once the session is connected, whatever connected it:
 // the supervisor retrying, ReconnectServer, ConnectServer, or another start
-// reviving a session that gave up.
+// reviving a session that gave up. The proxy's gates follow each project's
+// forwards.
 func (e *Engine) reviewServerLocked(server string) {
 	for _, name := range e.order {
 		run := e.runs[name]
@@ -176,6 +187,9 @@ func (e *Engine) reviewServerLocked(server string) {
 			e.lookups.Add(1) // under mu and before closed is set, so before Shutdown waits
 			go e.lookupHolder(run, port, e.lookup)
 		}
+		// The gates first, so the proxy has stopped dialling a forward that
+		// went down by the time the change is announced.
+		e.syncGatesLocked(run)
 		e.announceLocked(run)
 	}
 }

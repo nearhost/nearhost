@@ -77,20 +77,26 @@ func (d *Down) Provision(ctx caddy.Context) error {
 	if d.LogOnly {
 		return nil
 	}
-	server := d.Server
+	var err error
+	d.page, err = renderDownPage(d.Project, d.Port, d.Server, false)
+	return err
+}
+
+// renderDownPage renders Nearhost's page for project's app, which listens
+// on port on server (empty for this machine): that nothing answered there,
+// or with reconnecting, that Nearhost is reconnecting to the server.
+func renderDownPage(project string, port int, server string, reconnecting bool) ([]byte, error) {
 	if server == "" {
 		server = thisMachine
 	}
 	var buf bytes.Buffer
-	if err := downPage.Execute(&buf, struct {
-		Project string
-		Port    int
-		Server  string
-	}{d.Project, d.Port, server}); err != nil {
-		return err
-	}
-	d.page = buf.Bytes()
-	return nil
+	err := downPage.Execute(&buf, struct {
+		Project      string
+		Port         int
+		Server       string
+		Reconnecting bool
+	}{project, port, server, reconnecting})
+	return buf.Bytes(), err
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error at
@@ -124,9 +130,15 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if d.LogOnly || !downStatus(status) || !wantsPage(r) {
 		return next.ServeHTTP(w, r)
 	}
+	return writePage(w, r, status, d.page)
+}
+
+// writePage answers r with status and page, one of Nearhost's own pages,
+// with no body for a HEAD.
+func writePage(w http.ResponseWriter, r *http.Request, status int, page []byte) error {
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
-	hdr.Set("Content-Length", strconv.Itoa(len(d.page)))
+	hdr.Set("Content-Length", strconv.Itoa(len(page)))
 	hdr.Set("Content-Security-Policy", homeCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Cache-Control", "no-store")
@@ -134,7 +146,7 @@ func (d *Down) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	_, err = w.Write(d.page)
+	_, err := w.Write(page)
 	return err
 }
 

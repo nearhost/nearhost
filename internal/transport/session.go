@@ -391,12 +391,25 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		// remembers the last fatal line, which the ring may drop under later
 		// chatter, until the master connects.
 		stderr := newSSHStderr("", "")
-		master.Stderr = stderr
 		// A ProxyCommand or ProxyJump child of the master can keep the
-		// stderr pipe open after the master is gone. Wait then gives up on
-		// the pipe after procWaitDelay rather than wait for that child.
+		// stderr pipe open after the master is gone. The pipe is the
+		// master's own, so Wait returns when the master is reaped and the
+		// drop is noticed then; the pipe is read to its end, or for
+		// stderrDrainWait, only to say why.
+		pipe, err := pipeStderr(master, stderr)
+		if err != nil {
+			retryNow := s.attemptFailed("start ssh: "+err.Error(), true, backoff)
+			if !s.waitToRetry(ctx, retryNow, &backoff) {
+				s.setStatus(StatusDisconnected, "")
+				return
+			}
+			continue
+		}
 		master.WaitDelay = procWaitDelay
-		if err := master.Start(); err != nil {
+		err = master.Start()
+		pipe.started()
+		if err != nil {
+			pipe.end(0)
 			// Usually a missing binary, occasionally a passing fork failure:
 			// retry, but give up for now after the same number of attempts.
 			retryNow := s.attemptFailed("start ssh: "+err.Error(), true, backoff)
@@ -413,6 +426,7 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 		go func() {
 			master.Wait()
 			close(exited)
+			pipe.end(stderrDrainWait)
 		}()
 
 		if s.waitForSocket(ctx, exited) {
@@ -445,9 +459,13 @@ func (s *Session) run(ctx context.Context, cancel context.CancelFunc, done chan 
 			s.setStatus(StatusDisconnected, "")
 			return
 		case <-exited:
+			// The master's forwards went with it: say so before reading
+			// why, which may wait on a child holding its stderr.
+			s.dropped()
 			s.mu.Lock()
 			s.agentPath = "" // the server dropped it with the master
 			s.mu.Unlock()
+			<-pipe.done
 			msg, fatal := stderr.ExitMessage()
 			retryNow := s.attemptFailed(msg, fatal, backoff)
 			if !s.waitToRetry(ctx, retryNow, &backoff) {

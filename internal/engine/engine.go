@@ -180,6 +180,10 @@ type ProjectStatus struct {
 // ClosePassthrough needs it. Shutdown waits for all of them (passWork), then
 // lets go of the passthroughs that are left.
 //
+// The proxy's gates (see gate.go) are set under mu, as a leaf lock. A
+// forward that goes down or comes back changes only its gate: the proxy is
+// not reloaded.
+//
 // The Docker networks are asked for the same way, with no lock held: by a
 // start, before it publishes, and by the refresh loop (refreshDocker). An
 // answer that changes them is applied under applyMu then mu, like a site
@@ -253,6 +257,9 @@ type Engine struct {
 	// session, so a reload that replaces the session keeps it.
 	held  map[string]bool
 	ports map[int]string // local port held by a forward -> project name or passthroughOwner
+	// restarting names the servers whose session ReconnectServer is ending
+	// on purpose: their sites dial nothing until the session has stopped.
+	restarting map[string]bool
 	// relays are the [::1] listeners of loopback forwards, by port; they
 	// go when the port is released.
 	relays map[int]net.Listener
@@ -311,6 +318,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		hostsTurn:    make(chan struct{}, 1),
 		servers:      map[string]*serverConn{},
 		held:         map[string]bool{},
+		restarting:   map[string]bool{},
 		ports:        map[int]string{},
 		relays:       map[int]net.Listener{},
 		passthroughs: map[string]*passthrough{},
@@ -772,7 +780,8 @@ func (e *Engine) Sites() []proxy.Site {
 }
 
 // sitesLocked lists the published sites, one per web route of each project,
-// leaving out those of skip.
+// leaving out those of skip. A remote project's site is Forwarded: the
+// proxy's gate decides each request (see gate.go).
 func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 	var sites []proxy.Site
 	for _, name := range e.order {
@@ -800,7 +809,7 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		for i, w := range run.web {
 			sites = append(sites, proxy.Site{
 				Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
-				Project: run.name, Port: w.Port, Server: server,
+				Forwarded: server != "", Project: run.name, Port: w.Port, Server: server,
 			})
 		}
 	}

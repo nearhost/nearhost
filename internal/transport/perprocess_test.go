@@ -1431,11 +1431,8 @@ func TestPerProcessWaitsForTheTargetsAuthentication(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if p.link == nil {
-			return false
-		}
-		w, ok := p.link.Stderr.(*sshStderr)
-		return ok && slices.ContainsFunc(w.Lines(), func(l string) bool {
+		w := p.linkStderr
+		return w != nil && slices.ContainsFunc(w.Lines(), func(l string) bool {
 			return strings.HasPrefix(l, "Authenticated to jump.example ")
 		})
 	}, "the jump host's authentication")
@@ -1463,11 +1460,8 @@ func TestPerProcessWithoutAJumpAnyAuthenticationCounts(t *testing.T) {
 		waitFor(t, 5*time.Second, func() bool {
 			p.mu.Lock()
 			defer p.mu.Unlock()
-			if p.link == nil {
-				return false
-			}
-			w, ok := p.link.Stderr.(*sshStderr)
-			if !ok {
+			w := p.linkStderr
+			if w == nil {
 				return false
 			}
 			select {

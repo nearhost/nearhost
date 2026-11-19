@@ -365,9 +365,16 @@ func (p *perProcess) superviseForward(ctx context.Context, f *perProcessForward,
 			p.mu.Unlock()
 			return
 		}
+		// The port is free from the moment ssh exited: say so before
+		// reading why, which may wait on a child holding its stderr.
+		p.mu.Lock()
+		f.proc, f.applied, f.retrying, f.err, f.portRefused = nil, false, true, "ssh exited", false
+		p.mu.Unlock()
+		p.Notify()
+		<-proc.drained
 		msg := exitMessage(proc.stderr.Lines())
 		p.mu.Lock()
-		f.proc, f.applied, f.retrying, f.err, f.portRefused = nil, false, true, msg, false
+		f.err = msg
 		p.mu.Unlock()
 		p.Logf("%s: forward %s lost: %s", p.Name, spec, msg)
 		if reply = p.pause(ctx, &backoff, kick); ctx.Err() != nil {
@@ -466,6 +473,7 @@ func (p *perProcess) launchForward(ctx context.Context, local, remote int) (*ssh
 	case <-stderr.ready:
 		return proc, nil
 	case <-proc.exited:
+		<-proc.drained
 		msg := exitMessage(stderr.Lines())
 		err := fmt.Errorf("ssh -L %s: %s", spec, msg)
 		if refusesPort(msg) {

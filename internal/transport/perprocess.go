@@ -28,10 +28,12 @@ type perProcess struct {
 	Foreground bool
 
 	lifecycle sync.Mutex // serialises Start and Stop; held while Stop waits for the supervisor
-	// link is the running `ssh -N`, nil while there is none.
-	link   *exec.Cmd
-	cancel context.CancelFunc
-	done   chan struct{}
+	// link is the running `ssh -N`, nil while there is none, and
+	// linkStderr what it has written.
+	link       *exec.Cmd
+	linkStderr *sshStderr
+	cancel     context.CancelFunc
+	done       chan struct{}
 	// live counts the long-lived ssh processes started and not yet reaped.
 	live int
 
@@ -82,6 +84,9 @@ func newPerProcess(c Config) *perProcess {
 	}
 	if c.Logf != nil {
 		p.Logf = c.Logf
+	}
+	if c.Notify != nil {
+		p.Notify = c.Notify
 	}
 	return p
 }
@@ -409,11 +414,11 @@ func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, 
 		return linkEnd{msg: "start ssh: " + err.Error(), fatal: true}, true
 	}
 	p.mu.Lock()
-	p.link = link.cmd
+	p.link, p.linkStderr = link.cmd, stderr
 	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
-		p.link = nil
+		p.link, p.linkStderr = nil, nil
 		p.agentPath = "" // the server drops it with the link
 		p.mu.Unlock()
 	}()
@@ -466,6 +471,7 @@ wait:
 		}
 	}
 
+	<-link.drained // why the link exited is in what it wrote last
 	if refusal := stderr.Refusal(); refusal != "" && !end.connected {
 		err := fmt.Errorf("the server refused to forward %s: %s", remote, refusal)
 		problem := AgentRefused
@@ -509,6 +515,10 @@ func (p *perProcess) linkUp(ctx context.Context, link *sshProc, remote string) b
 		select {
 		case <-ctx.Done():
 		case <-link.exited:
+			// The forwards are carried no more: say so before the caller
+			// reads why, which may wait on a child holding the link's
+			// stderr.
+			p.dropped()
 		}
 	}
 	if ctx.Err() != nil {
@@ -564,33 +574,47 @@ type sshProc struct {
 	stderr *sshStderr
 	// exited closes once the process has been reaped.
 	exited chan struct{}
+	// drained closes once stderr has been read after that: to its end, or
+	// for stderrDrainWait while a child of ssh holds the pipe. Read why
+	// the process exited only after it.
+	drained <-chan struct{}
 }
 
-// procWaitDelay bounds how long reaping a killed link, forward or SFTP
-// session waits for its stderr to close. A ProxyCommand or ProxyJump child
-// that inherited the pipe would otherwise hold Wait, and with it
-// CancelForward, Stop and SFTP's Close, until it exits.
+// procWaitDelay bounds how long reaping an SFTP session or a short ssh
+// waits for its stderr to close: a ProxyCommand or ProxyJump child that
+// inherited the pipe would otherwise hold Wait, and with it SFTP's Close,
+// until it exits. A long-lived ssh writes its stderr to a pipe of its own
+// (see stderrPipe), so its Wait returns once it is reaped; it keeps the
+// setting for any pipe exec still makes for it.
 const procWaitDelay = 5 * time.Second
 
-// startProc starts a long-lived ssh with args, its stderr going to stderr,
-// and reaps it when it exits; running counts it until then.
+// startProc starts a long-lived ssh with args, its stderr going to stderr
+// through a pipe of its own (see stderrPipe), and reaps it when it exits;
+// running counts it until then.
 func (p *perProcess) startProc(args []string, stderr *sshStderr) (*sshProc, error) {
 	cmd := p.longLived(context.Background(), args...) // not tied to a context: we stop it ourselves
-	cmd.Stderr = stderr
+	pipe, err := pipeStderr(cmd, stderr)
+	if err != nil {
+		return nil, err
+	}
 	cmd.WaitDelay = procWaitDelay
-	if err := p.startSSH(cmd); err != nil {
+	err = p.startSSH(cmd)
+	pipe.started()
+	if err != nil {
+		pipe.end(0)
 		return nil, err
 	}
 	p.mu.Lock()
 	p.live++
 	p.mu.Unlock()
-	proc := &sshProc{cmd: cmd, stderr: stderr, exited: make(chan struct{})}
+	proc := &sshProc{cmd: cmd, stderr: stderr, exited: make(chan struct{}), drained: pipe.done}
 	go func() {
 		cmd.Wait()
 		p.mu.Lock()
 		p.live--
 		p.mu.Unlock()
 		close(proc.exited)
+		pipe.end(stderrDrainWait)
 	}()
 	return proc, nil
 }

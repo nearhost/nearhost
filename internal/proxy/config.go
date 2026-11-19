@@ -40,8 +40,14 @@ type Site struct {
 	Alias string
 	// Hosts are the names served, exact or patterns such as
 	// *.local.example.io. There must be at least one.
-	Hosts    []string
-	Upstream string // host:port, e.g. 127.0.0.1:54321
+	Hosts []string
+	// Upstream is the address requests are sent to, host:port, e.g.
+	// 127.0.0.1:54321.
+	Upstream string
+	// Forwarded marks an Upstream that is a forward to the app's server.
+	// The site then sends a request on only while SetForwardUp says the
+	// forward is up, and otherwise answers 502 itself (see Gate).
+	Forwarded bool
 	// Clients are extra client ranges, in CIDR form (IPv4 or IPv6), the
 	// site's hosts are served to besides loopback, such as the networks
 	// of local Docker containers. nil means loopback only.
@@ -140,10 +146,15 @@ func accessWriter() map[string]any {
 
 // siteRoute is the route serving one host of a site: it tags the request
 // with the site's alias, keeps the exchange when opts.Capture is on, and
-// proxies to the upstream, naming Nearhost in Via each way.
+// proxies to the upstream, naming Nearhost in Via each way. A Forwarded
+// site's gate comes just before the proxy.
 func siteRoute(s Site, host string, ranges []string, opts Options) map[string]any {
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
+	match := []any{map[string]any{
+		"host":      []string{host},
+		"remote_ip": map[string]any{"ranges": ranges},
+	}}
 	// Caddy adds "Via: 1.1 Caddy" to the response after the proxy's own
 	// header operations, so its entry is renamed here, deferred to when the
 	// response is written. Hops the upstream's own proxies added stay.
@@ -151,6 +162,17 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 		"handler":  "headers",
 		"response": map[string]any{"replace": viaReplace(opts.Version), "deferred": true},
 	})
+	if s.Forwarded {
+		project := s.Project
+		if project == "" {
+			project = s.Alias
+		}
+		gate := map[string]any{"handler": gateModule, "upstream": s.Upstream, "project": project}
+		if s.Server != "" {
+			gate["server"] = s.Server
+		}
+		handle = append(handle, gate)
+	}
 	handle = append(handle, map[string]any{
 		"handler":        "reverse_proxy",
 		"upstreams":      []any{map[string]any{"dial": s.Upstream}},
@@ -174,10 +196,7 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	return map[string]any{
 		// One match set, so both must hold: the host is this one and the
 		// client is on this machine or in one of the site's extra ranges.
-		"match": []any{map[string]any{
-			"host":      []string{host},
-			"remote_ip": map[string]any{"ranges": ranges},
-		}},
+		"match":    match,
 		"handle":   handle,
 		"terminal": true,
 	}
