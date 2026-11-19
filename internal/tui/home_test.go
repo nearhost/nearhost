@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -134,5 +136,16 @@ func TestProxyFix(t *testing.T) {
 		if !strings.Contains(got, c.want) {
 			t.Errorf("%s: proxyFix = %q, want it to contain %q", c.name, got, c.want)
 		}
+	}
+}
+
+// With the proxy down and a server that cannot connect, Home names r once.
+func TestHomeNamesROnce(t *testing.T) {
+	m, _ := problemModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 50})
+	run(m, func() tea.Msg { return startedMsg{errBoom} })
+	wantScreen(t, m, "✕ proxy  down", "r retry now · y copy command")
+	if n := strings.Count(screen(m), "r tries again") + strings.Count(screen(m), "r retry now"); n != 1 {
+		t.Errorf("the r hint shows %d times:\n%s", n, screen(m))
 	}
 }
