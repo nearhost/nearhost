@@ -210,8 +210,20 @@ func validKeyLine(head string) bool {
 
 // ReadEnv reads .env then .env.local, later files overriding earlier ones.
 func ReadEnv(r FileReader) (map[string]string, error) {
+	return readEnvFiles(r, ".env", ".env.local")
+}
+
+// ReadComposeEnv reads .env alone, the one file Compose fills in variables
+// in a Compose file from.
+func ReadComposeEnv(r FileReader) (map[string]string, error) {
+	return readEnvFiles(r, ".env")
+}
+
+// readEnvFiles reads the env files names, later files overriding earlier
+// ones. A missing file is skipped.
+func readEnvFiles(r FileReader, names ...string) (map[string]string, error) {
 	merged := map[string]string{}
-	for _, name := range []string{".env", ".env.local"} {
+	for _, name := range names {
 		data, err := r.ReadFile(name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue

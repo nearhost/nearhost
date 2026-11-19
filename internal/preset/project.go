@@ -19,7 +19,7 @@ type Reader interface {
 // Project is everything a preset may see of a project.
 type Project struct {
 	Env     map[string]string
-	Compose string // text of the Compose file, empty when there is none
+	Compose string // text of the Compose file then its override, joined by a newline; empty when there is none
 	Files   Reader
 }
 

@@ -1,7 +1,11 @@
 package discovery
 
 import (
+	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -89,13 +93,127 @@ func TestParseComposeRejectsInvalidYAML(t *testing.T) {
 }
 
 func TestReadComposeNamesTheFile(t *testing.T) {
-	name, data, err := ReadCompose(DirReader{Root: "testdata/compose-literal"})
-	if err != nil || name != "compose.yaml" || len(data) == 0 {
-		t.Fatalf("compose.yaml not found: name=%q err=%v", name, err)
+	files, err := ReadCompose(DirReader{Root: "testdata/compose-literal"})
+	if err != nil || len(files) != 1 || files[0].Name != "compose.yaml" || len(files[0].Data) == 0 {
+		t.Fatalf("compose.yaml not found: files=%+v err=%v", files, err)
 	}
-	name, data, err = ReadCompose(DirReader{Root: "testdata/empty"})
-	if err != nil || name != "" || data != nil {
-		t.Fatalf("expected not found, got name=%q err=%v", name, err)
+	files, err = ReadCompose(DirReader{Root: "testdata/empty"})
+	if err != nil || files != nil {
+		t.Fatalf("expected not found, got files=%+v err=%v", files, err)
+	}
+}
+
+// composeNames lists the names of files.
+func composeNames(files []ComposeFile) string {
+	var names []string
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// Compose prefers compose.yaml, its canonical name, over the older
+// docker-compose names, and reads the first override file beside it.
+func TestReadComposeFollowsComposesOrder(t *testing.T) {
+	const svc = "services: {}\n"
+	cases := []struct {
+		files memReader
+		want  string
+	}{
+		{memReader{"compose.yaml": svc, "docker-compose.yml": svc}, "compose.yaml"},
+		{memReader{"compose.yml": svc, "docker-compose.yml": svc}, "compose.yml"},
+		{memReader{"docker-compose.yml": svc, "docker-compose.yaml": svc}, "docker-compose.yml"},
+		{memReader{"docker-compose.yaml": svc}, "docker-compose.yaml"},
+		{memReader{"compose.yaml": svc, "compose.override.yaml": svc}, "compose.yaml,compose.override.yaml"},
+		{memReader{"compose.yaml": svc, "compose.override.yml": svc, "compose.override.yaml": svc}, "compose.yaml,compose.override.yml"},
+		{memReader{"docker-compose.yml": svc, "docker-compose.override.yml": svc}, "docker-compose.yml,docker-compose.override.yml"},
+		// compose-go takes the first override present whatever the
+		// Compose file's name.
+		{memReader{"compose.yaml": svc, "docker-compose.override.yml": svc}, "compose.yaml,docker-compose.override.yml"},
+		// An override with no Compose file beside it is not read.
+		{memReader{"compose.override.yaml": svc}, ""},
+	}
+	for _, c := range cases {
+		files, err := ReadCompose(c.files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := composeNames(files); got != c.want {
+			t.Errorf("files %v: read %q, want %q", slices.Sorted(maps.Keys(c.files)), got, c.want)
+		}
+	}
+}
+
+// An override's ports add to the service's, and a port both files publish
+// is listed once.
+func TestParseComposeFilesMergesTheOverride(t *testing.T) {
+	files, err := ReadCompose(DirReader{Root: "testdata/compose-override"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseComposeFiles(files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.SortFunc(got, func(a, b ComposePort) int { return a.Published - b.Published })
+	want := []ComposePort{{Service: "web", Published: 8080, Target: 80}, {Service: "db", Published: 5433, Target: 5432}}
+	slices.SortFunc(want, func(a, b ComposePort) int { return a.Published - b.Published })
+	if !slices.Equal(got, want) {
+		t.Errorf("ports = %+v, want %+v", got, want)
+	}
+}
+
+// Compose's merge tags in an override: !reset clears a service's ports or
+// removes the service, !override replaces its ports. A port in the short
+// syntax in one file and the long syntax in the other is listed once.
+func TestParseComposeFilesMergeTags(t *testing.T) {
+	const base = "services:\n  web:\n    ports:\n      - '8080:80'\n  db:\n    ports:\n      - '5433:5432'\n"
+	cases := []struct {
+		name, override, want string
+	}{
+		{"ports reset to a list", "services:\n  web:\n    ports: !reset []\n", "db:5433"},
+		{"ports reset to null", "services:\n  web:\n    ports: !reset null\n", "db:5433"},
+		{"ports overridden", "services:\n  web:\n    ports: !override\n      - '9000:80'\n", "db:5433 web:9000"},
+		{"service reset", "services:\n  web: !reset null\n", "db:5433"},
+		{"service reset to a map", "services:\n  web: !reset {}\n", "db:5433"},
+		{"long over short", "services:\n  web:\n    ports:\n      - published: 8080\n        target: 80\n", "db:5433 web:8080"},
+		{"plain append", "services:\n  web:\n    ports:\n      - '9000:80'\n", "db:5433 web:8080 web:9000"},
+	}
+	for _, c := range cases {
+		files := []ComposeFile{{Name: "compose.yaml", Data: []byte(base)}, {Name: "compose.override.yaml", Data: []byte(c.override)}}
+		got, err := ParseComposeFiles(files, nil)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		var parts []string
+		for _, p := range got {
+			parts = append(parts, fmt.Sprintf("%s:%d", p.Service, p.Published))
+		}
+		if s := strings.Join(parts, " "); s != c.want {
+			t.Errorf("%s: ports = %q, want %q", c.name, s, c.want)
+		}
+	}
+}
+
+// The long syntax in the Compose file and the short syntax in the override
+// publish the same port once.
+func TestParseComposeFilesShortOverLong(t *testing.T) {
+	files := []ComposeFile{
+		{Name: "compose.yaml", Data: []byte("services:\n  web:\n    ports:\n      - published: '8080'\n        target: 80\n")},
+		{Name: "compose.override.yaml", Data: []byte("services:\n  web:\n    ports:\n      - '8080:80/tcp'\n")},
+	}
+	got, err := ParseComposeFiles(files, nil)
+	if err != nil || len(got) != 1 || got[0].Published != 8080 || got[0].Target != 80 {
+		t.Fatalf("ports = %+v, err = %v", got, err)
+	}
+}
+
+// A parse error names the file that holds it.
+func TestParseComposeFilesNamesTheBadFile(t *testing.T) {
+	files := []ComposeFile{{Name: "compose.yaml", Data: []byte("services: {}\n")}, {Name: "compose.override.yaml", Data: []byte("services: [\n")}}
+	if _, err := ParseComposeFiles(files, nil); err == nil || !strings.HasPrefix(err.Error(), "compose.override.yaml: ") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
