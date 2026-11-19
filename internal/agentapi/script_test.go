@@ -1816,6 +1816,31 @@ func TestScriptPassthroughRefusedWaits(t *testing.T) {
 	})
 }
 
+// The cap on open passthroughs is a 429 too, but no refusal: the scripts
+// report it as a failure with Nearhost's message, and do not ask again.
+func TestScriptPassthroughCapFails(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		g := &fakeGrants{tokens: map[[2]string]string{{"mini", "claude-code"}: "good"}}
+		scriptServerWith(t, home, "k3f9q2", "mini", true, Options{ID: "lid", Source: fakeSource{"mini": mini},
+			Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: g})
+		sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+		for port := 3000; port < 3000+maxPassthroughs; port++ {
+			if st, out := call(t, sock, "POST", "/v1/passthroughs", fmt.Sprintf(`{"port": %d, "requester": "claude-code", "token": "good"}`, port)); st != http.StatusCreated {
+				t.Fatalf("port %d: %d %v", port, st, out)
+			}
+		}
+		posts, front := countPosts(t, home)
+		r := shell.run(t, home, append([]string{"NEARHOST_SOCKET=" + front}, claudeEnv...), "passthrough", "4000")
+		if r.code != 1 || !strings.Contains(r.stdout, tooManyPasses) || strings.Contains(r.stderr, "said No") {
+			t.Fatalf("%+v", r)
+		}
+		if n := posts(); n != 1 {
+			t.Fatalf("the script asked %d times, want 1", n)
+		}
+	})
+}
+
 func TestScriptOpenRefusedWaits(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)

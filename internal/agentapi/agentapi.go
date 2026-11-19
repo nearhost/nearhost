@@ -39,6 +39,13 @@ const (
 	maxBody = 4 << 10
 	// maxPending is how many proposals one origin may have waiting.
 	maxPending = 3
+	// maxPassthroughs is how many passthroughs one origin may have open or
+	// opening. Each holds a listener and file descriptors in the process
+	// that runs the proxy, and a token opens them without a prompt.
+	maxPassthroughs = 16
+	// tooManyPasses refuses a passthrough past maxPassthroughs. Its 429
+	// differs from a refusal's, which says "refused; ask again in N s".
+	tooManyPasses = "16 passthroughs are open for this server; close one first"
 	// expiry is how long a proposal waits for an answer.
 	expiry = 10 * time.Minute
 	// maxWait bounds one long poll.
