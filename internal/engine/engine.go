@@ -456,7 +456,12 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 		return err
 	}
 	// From here the run directory, and any master socket left in it, is
-	// this engine's alone.
+	// this engine's alone. A master left by a run that was killed still
+	// holds its forwards, and nothing else ends one for a server since
+	// disabled or removed.
+	for _, err := range transport.EndStaleMasters(ctx, e.opts.RunDir, e.opts.SSHPath, e.opts.SSHEnv) {
+		e.bus.Publish(Event{Message: err.Error()})
+	}
 
 	// A taken page port costs only the page, not the proxy. A Start that
 	// failed after dropping it tries the port again.

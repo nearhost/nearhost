@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -597,4 +598,84 @@ func TestNewGivesASessionAsConfigured(t *testing.T) {
 		t.Errorf("default SSHPath = %q, want ssh", d.SSHPath)
 	}
 	d.Logf("ignored %d", 1) // a nil Config.Logf must not panic
+}
+
+func TestIsMasterSocketName(t *testing.T) {
+	for stem, want := range map[string]bool{
+		"mini":                true,
+		"h-0123456789abcdef":  true,
+		"H-0123456789ABCDEF":  true, // a hash, as a case-blind file system may show it
+		".":                   true, // "..sock" is the socket of a server named "."
+		"agent-0123456789ab":  false,
+		"agent-0123456789AB":  true, // not a name internal/cli gives an agent socket
+		"agent-0123456789abc": true,
+		"agent":               true,
+		"":                    false,
+		"a b":                 false,
+		"h-0123456789abcdeg":  true, // plain, not a hash
+	} {
+		if got := isMasterSocketName(stem); got != want {
+			t.Errorf("isMasterSocketName(%q) = %v, want %v", stem, got, want)
+		}
+	}
+}
+
+func TestEndStaleMastersTouchesOnlySocketsWithAMasterName(t *testing.T) {
+	ssh := testutil.FakeSSH(t)
+	logPath := filepath.Join(t.TempDir(), "ssh.log")
+	dir := shortDir(t)
+	listen := func(path string) {
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln.(*net.UnixListener).SetUnlinkOnClose(false)
+		t.Cleanup(func() { ln.Close() })
+	}
+	// A live socket outside the run directory, for a link in it to point at.
+	elsewhere := filepath.Join(shortDir(t), "x.sock")
+	listen(elsewhere)
+	link := filepath.Join(dir, "x.sock")
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "y.sock")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agent := filepath.Join(dir, "agent-0123456789ab.sock")
+	listen(agent)
+	dots := filepath.Join(dir, "..sock")
+	listen(dots)
+	upper := filepath.Join(dir, "H-0123456789ABCDEF.sock")
+	listen(upper)
+
+	errs := EndStaleMasters(context.Background(), dir, ssh, []string{"FAKE_SSH_LOG=" + logPath})
+	if len(errs) != 0 {
+		t.Fatalf("EndStaleMasters: %v", errs)
+	}
+	log := readLog(t, logPath)
+	for _, path := range []string{dots, upper} {
+		if !strings.Contains(log, "-S "+path+" -O exit") {
+			t.Errorf("the master at %s was not asked to exit; ssh log:\n%s", path, log)
+		}
+	}
+	for _, path := range []string{link, file, agent, elsewhere} {
+		if strings.Contains(log, path) {
+			t.Errorf("ssh was run on %s; ssh log:\n%s", path, log)
+		}
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("%s is gone: %v", path, err)
+		}
+	}
+}
+
+func TestLeftMasterErrorQuotesThePathForTheShell(t *testing.T) {
+	got := leftMasterError("/home/o'neil/run/a.sock", "did not end when asked").Error()
+	want := `An ssh connection left by an earlier Nearhost did not end when asked (/home/o'neil/run/a.sock). ` +
+		`End it with: pkill -f 'ssh -N -M -S /home/o'\''neil/run/a\.sock'. ` +
+		`Nearhost removes the socket the next time it starts.`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
 }

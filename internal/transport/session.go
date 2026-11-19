@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -197,7 +199,12 @@ func (s *Session) longLived(ctx context.Context, args ...string) *exec.Cmd {
 // sends the master every LocalForward and RemoteForward the configuration
 // lists for the host along with the forward it was asked for.
 func (s *Session) control(ctx context.Context, args ...string) *exec.Cmd {
-	return s.command(ctx, append([]string{"-F", "/dev/null", "-S", s.SocketPath()}, args...)...)
+	return s.controlAt(ctx, s.SocketPath(), args...)
+}
+
+// controlAt is control for the master socket at path.
+func (s *Session) controlAt(ctx context.Context, path string, args ...string) *exec.Cmd {
+	return s.command(ctx, append([]string{"-F", "/dev/null", "-S", path}, args...)...)
 }
 
 // Check verifies that ssh can reach the host without prompting. It makes a
@@ -472,15 +479,120 @@ func (s *Session) cleanStaleSocket(ctx context.Context) {
 	if _, err := os.Stat(s.SocketPath()); err != nil {
 		return
 	}
-	check := s.control(ctx, "-O", "check", "--", s.host)
-	if check.Run() == nil {
-		// A master from a crashed run is still alive on this socket. Ask it
-		// to exit so the new master is the one we supervise.
-		exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s.control(exitCtx, "-O", "exit", "--", s.host).Run()
-	}
+	exitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.clearSocket(ctx, exitCtx, s.SocketPath(), s.host)
+	// The new master needs the path, even where the old one would not go:
+	// a master left on it would turn the new one's multiplexing off.
 	os.Remove(s.SocketPath())
+}
+
+// clearSocket asks a master still alive on the socket at path to exit, so
+// that the new master is the one we supervise, and removes the socket. host
+// is what the control commands name; a master answers whatever it is. The
+// socket is the only way to reach its master, so it stays when the master
+// may still be running: when the exit failed, or ctx ended before the check
+// could tell. clearSocket then returns why.
+func (s *Session) clearSocket(ctx, exitCtx context.Context, path, host string) error {
+	if err := s.controlAt(ctx, path, "-O", "check", "--", host).Run(); err == nil {
+		if err := s.controlAt(exitCtx, path, "-O", "exit", "--", host).Run(); err != nil {
+			return leftMasterError(path, "did not end when asked")
+		}
+	} else if ctx.Err() != nil {
+		return leftMasterError(path, "did not answer")
+	}
+	// A master that exits removes its socket itself.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("could not remove the ssh socket left at %s: %w", path, err)
+	}
+	return nil
+}
+
+// leftMasterError is the error for a master on the socket at path that
+// Nearhost could not end; happened says why. It tells the user how to end
+// it: a pkill pattern that matches the master's own arguments, "-N -M -S
+// path" (see run), quoted for the shell.
+func leftMasterError(path, happened string) error {
+	pattern := "ssh -N -M -S " + regexp.QuoteMeta(path)
+	return fmt.Errorf("An ssh connection left by an earlier Nearhost %s (%s). End it with: pkill -f %s. Nearhost removes the socket the next time it starts.",
+		happened, path, shellQuote(pattern))
+}
+
+// shellQuote quotes s as one word for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// staleMasterTimeout bounds the clearing of each socket by EndStaleMasters.
+const staleMasterTimeout = 3 * time.Second
+
+// EndStaleMasters ends the ssh masters that an earlier run of nearhost left
+// in runDir when it was killed, and removes their sockets, so that no master
+// outlives its run, not even one for a server since disabled or removed. It
+// touches only sockets named as a Session names its own, all at once, each
+// for at most staleMasterTimeout, and returns what it could not clear; a
+// socket whose master may still be running stays for the next start. The
+// caller must hold runDir's instance lock: a master there may otherwise be
+// another nearhost's. Windows' ssh has no masters, so there it does nothing.
+func EndStaleMasters(ctx context.Context, runDir, sshPath string, env []string) []error {
+	if runtime.GOOS == "windows" || runDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		return []error{fmt.Errorf("list the run directory: %w", err)}
+	}
+	if sshPath == "" {
+		sshPath = "ssh"
+	}
+	s := &Session{SSHPath: sshPath, Env: env}
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+	)
+	for _, entry := range entries {
+		stem, ok := strings.CutSuffix(entry.Name(), ".sock")
+		if !ok || entry.Type()&os.ModeSocket == 0 || !isMasterSocketName(stem) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(ctx, staleMasterTimeout)
+			defer cancel()
+			if err := s.clearSocket(ctx, ctx, filepath.Join(runDir, entry.Name()), stem); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return errs
+}
+
+// isMasterSocketName reports whether a socket named stem plus ".sock" can be
+// a Session's: a plain name socketName keeps, or a hashed one. The agent
+// sockets beside them, "agent-" and 12 hex digits (see listenAgent in
+// internal/cli), are left alone.
+func isMasterSocketName(stem string) bool {
+	if looksHashed(stem) {
+		return true
+	}
+	if socketName(stem) != stem {
+		return false
+	}
+	agent, ok := strings.CutPrefix(stem, "agent-")
+	if !ok || len(agent) != 12 {
+		return true
+	}
+	for _, c := range agent {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return true
+		}
+	}
+	return false
 }
 
 // exitMaster asks the master to exit politely, then kills it.
