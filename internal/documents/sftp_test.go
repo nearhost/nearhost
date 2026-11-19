@@ -11,6 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -177,6 +179,8 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 	testutil.Symlink(t, "../outside", filepath.Join(f.root, "link"))
 	testutil.Symlink(t, "root", filepath.Join(f.dir, "rootlink"))
 	client := inProcessSFTP(t, f.dir)
+	// A root stored as a symlink resolves elsewhere, so both serve it as
+	// gone.
 	viaLink := f.table.Add("apollo", path.Join(f.dir, "rootlink"), "claude", "plan.md")
 	local := NewHandler(f.table, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
 	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return volumeFS{SFTPFS(client)}, nil })
@@ -195,6 +199,65 @@ func TestHandlerOverSFTPMatchesLocal(t *testing.T) {
 			if got.Code != want.Code || got.Body.String() != want.Body.String() {
 				t.Errorf("%s: over SFTP %d %q, locally %d %q", p, got.Code, got.Body.String(), want.Code, want.Body.String())
 			}
+		}
+	}
+}
+
+// TestHiddenTreeOverSFTPMatchesLocal checks that a tree in a hidden folder on
+// a server serves only documents and web assets, as one on the laptop does.
+func TestHiddenTreeOverSFTPMatchesLocal(t *testing.T) {
+	f := newFixtureAt(t, ".ssh")
+	writeHiddenFiles(t, f)
+	client := inProcessSFTP(t, f.dir)
+	local := NewHandler(f.table, func(context.Context, string) (FS, error) { return LocalFS{}, nil })
+	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return volumeFS{SFTPFS(client)}, nil })
+	for _, p := range append(hiddenServed, hiddenRefused...) {
+		do := func(h http.Handler) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+f.tree.ID+"/"+p, nil))
+			return rec
+		}
+		want, got := do(local), do(remote)
+		if got.Code != want.Code || got.Body.String() != want.Body.String() {
+			t.Errorf("%s: over SFTP %d %q, locally %d %q", p, got.Code, got.Body.String(), want.Code, want.Body.String())
+		}
+		if slices.Contains(hiddenRefused, p) && got.Code != 404 {
+			t.Errorf("%s over SFTP: %d, want 404", p, got.Code)
+		}
+	}
+}
+
+// TestSwappedRootOverSFTPServesNothing checks that a tree on a server whose
+// root was swapped for a symlink serves nothing from it, as on the laptop.
+func TestSwappedRootOverSFTPServesNothing(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, "notes/a.md", "# A")
+	target := filepath.Join(f.dir, ".ssh")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "id_ed25519"), []byte("SECRET"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := inProcessSFTP(t, f.dir)
+	remote := NewHandler(f.table, func(context.Context, string) (FS, error) { return volumeFS{SFTPFS(client)}, nil })
+	do := func(p string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		remote.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+f.tree.ID+"/"+p, nil))
+		return rec
+	}
+	if rec := do("notes/a.md?raw"); rec.Code != 200 || rec.Body.String() != "# A" {
+		t.Fatalf("unchanged root over SFTP: %d %q", rec.Code, rec.Body.String())
+	}
+	// The link is relative, as a link on a Unix server may be, because
+	// the test's server is pkg/sftp's on this machine: on Windows its
+	// readlink returns an absolute target as C:\…, a spelling no server
+	// Nearhost reaches uses and SFTPFS doesn't take as absolute. A
+	// relative target reads back the same on every system.
+	swapRoot(t, f, filepath.Base(target))
+	for _, p := range []string{"id_ed25519", "id_ed25519?raw", "notes/a.md"} {
+		if rec := do(p); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+			t.Errorf("%s over SFTP after the swap: %d %q", p, rec.Code, rec.Body.String())
 		}
 	}
 }

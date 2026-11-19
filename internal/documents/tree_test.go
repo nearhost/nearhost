@@ -34,25 +34,46 @@ func TestBelow(t *testing.T) {
 }
 
 func TestChooseRoot(t *testing.T) {
-	hasGit := func(dir string) bool { return dir == "/home/ed/app" }
+	hasGit := func(dir string) bool {
+		return dir == "/home/ed/app" || dir == "/home/ed/code/app" || dir == "/home/ed/.local/src/app"
+	}
 	tests := []struct {
 		sent, doc, want string
-		ok              bool
+		hidden, ok      bool
 	}{
-		{"/home/ed/app", "/home/ed/app/docs/p.md", "/home/ed/app", true},
-		{"/home/ed/app", "/home/ed/app/.superpowers/b/x.html", "/home/ed/app/.superpowers/b", true},
-		{"/etc", "/etc/x/p.md", "/etc/x", true},
-		{"/home/ed", "/home/ed/n/p.md", "/home/ed/n", true},
-		{"/home/ed", "/home/ed/p.md", "", false},
-		{"/", "/p.md", "", false},
-		{"/", "/tmp/p.md", "/tmp", true},
-		{"/home", "/home/ed/app/p.md", "/home/ed/app", true},
-		{"/home/ed/.claude/plans", "/home/ed/.claude/plans/x.md", "/home/ed/.claude/plans", true},
+		{"/home/ed/app", "/home/ed/app/docs/p.md", "/home/ed/app", false, true},
+		{"/home/ed/code/app", "/home/ed/code/app/docs/plan.md", "/home/ed/code/app", false, true},
+		{"", "/home/ed/code/app/docs/plan.md", "/home/ed/code/app/docs", false, true},
+		{"/home/ed/app", "/home/ed/app/.superpowers/b/x.html", "/home/ed/app/.superpowers/b", true, true},
+		{"/etc", "/etc/x/p.md", "/etc/x", false, true},
+		{"/home/ed", "/home/ed/n/p.md", "/home/ed/n", false, true},
+		{"/home/ed", "/home/ed/p.md", "", false, false},
+		{"/", "/p.md", "", false, false},
+		{"/", "/tmp/p.md", "/tmp", false, true},
+		{"/home", "/home/ed/app/p.md", "/home/ed/app", false, true},
+		{"/home/ed/.claude/plans", "/home/ed/.claude/plans/x.md", "/home/ed/.claude/plans", true, true},
+		{"", "/home/ed/.ssh/notes.md", "/home/ed/.ssh", true, true},
+		{"/home/ed/.ssh", "/home/ed/.ssh/notes.md", "/home/ed/.ssh", true, true},
+		{"", "/home/ed/code/.cache/x/doc.md", "/home/ed/code/.cache/x", true, true},
+		{"/home/ed/.local/src/app", "/home/ed/.local/src/app/docs/plan.md", "/home/ed/.local/src/app", true, true},
+		{"/home/ed/.local/src/app", "/home/ed/.local/src/app/.notes/p.md", "/home/ed/.local/src/app/.notes", true, true},
 	}
 	for _, tt := range tests {
-		got, ok := ChooseRoot(tt.sent, tt.doc, "/home/ed", hasGit)
-		if ok != tt.ok || got != tt.want {
-			t.Errorf("ChooseRoot(%q, %q) = %q, %v; want %q, %v", tt.sent, tt.doc, got, ok, tt.want, tt.ok)
+		got, hidden, ok := ChooseRoot(tt.sent, tt.doc, "/home/ed", hasGit)
+		if ok != tt.ok || got != tt.want || hidden != tt.hidden {
+			t.Errorf("ChooseRoot(%q, %q) = %q, %v, %v; want %q, %v, %v", tt.sent, tt.doc, got, hidden, ok, tt.want, tt.hidden, tt.ok)
+		}
+	}
+}
+
+func TestInHiddenFolder(t *testing.T) {
+	for p, want := range map[string]bool{
+		`C:\Users\me\.ssh\keys`: true, "C:/Users/me/.ssh": true, "/C:/Users/me/.aws": true,
+		"/home/ed/.claude/plans": true, "C:/Users/me/code/app": false, "/home/ed/code/app": false,
+		"/": false,
+	} {
+		if got := InHiddenFolder(p); got != want {
+			t.Errorf("InHiddenFolder(%q) = %v, want %v", p, got, want)
 		}
 	}
 }
@@ -158,11 +179,15 @@ func TestBelowWithAVolume(t *testing.T) {
 
 func TestChooseRootWithAVolume(t *testing.T) {
 	noGit := func(string) bool { return false }
-	got, ok := ChooseRoot("", "C:/Users/me/notes/p.md", "C:/Users/me", noGit)
-	if !ok || got != "C:/Users/me/notes" {
-		t.Errorf("ChooseRoot = %q, %v; want C:/Users/me/notes, true", got, ok)
+	got, hidden, ok := ChooseRoot("", "C:/Users/me/notes/p.md", "C:/Users/me", noGit)
+	if !ok || hidden || got != "C:/Users/me/notes" {
+		t.Errorf("ChooseRoot = %q, %v, %v; want C:/Users/me/notes, false, true", got, hidden, ok)
 	}
-	got, ok = ChooseRoot("", "C:/Users/me/p.md", "C:/Users/me", noGit)
+	got, hidden, ok = ChooseRoot("", "C:/Users/me/.ssh/notes.md", "C:/Users/me", noGit)
+	if !ok || !hidden || got != "C:/Users/me/.ssh" {
+		t.Errorf("ChooseRoot in .ssh = %q, %v, %v; want C:/Users/me/.ssh, true, true", got, hidden, ok)
+	}
+	got, _, ok = ChooseRoot("", "C:/Users/me/p.md", "C:/Users/me", noGit)
 	if ok || got != "" {
 		t.Errorf("ChooseRoot in home = %q, %v; want empty, false", got, ok)
 	}

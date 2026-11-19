@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 )
 
 // realHome is this machine's home folder with its symlinks resolved, as the
@@ -178,7 +179,11 @@ func (f *docForm) lines(width int) []string {
 		what += " (" + l + ")"
 	}
 	lines := wrap(what, width)
-	lines = append(lines, wrap("Nearhost will serve files in "+f.root+", except dotfiles.", width)...)
+	serves := "Nearhost will serve files in " + f.root + ", except dotfiles."
+	if documents.InHiddenFolder(f.r.Root) {
+		serves = "Nearhost will serve files in " + f.root + ". It is in a hidden folder, so only documents and their assets are served from it."
+	}
+	lines = append(lines, wrap(serves, width)...)
 	if f.busy {
 		lines = append(lines, "", busyLine("Opening…"))
 	}

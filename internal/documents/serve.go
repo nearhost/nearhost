@@ -134,6 +134,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	if err != nil {
 		return err
 	}
+	// A tree is bound to the resolved root it was approved with. A root
+	// that resolves elsewhere now, as when a folder of it was swapped for
+	// a symlink to ~/.ssh or /etc, is answered as gone for every path, so
+	// the root rules applied when the tree was made can't be escaped.
+	if path.Clean(root) != path.Clean(tr.Root) {
+		return fs.ErrNotExist
+	}
 	real, err := fsys.RealPath(ctx, path.Join(root, rel))
 	if err != nil {
 		return explain(ctx, fsys, root, rel, err)
@@ -146,6 +153,12 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	info, err := fsys.Stat(ctx, real)
 	if err != nil {
 		return err
+	}
+	// A tree in a hidden folder, such as ~/.ssh, serves only documents and
+	// web assets; any other file there is missing, by the name of the file
+	// it resolves to, with or without a trailing slash.
+	if tr.Hidden && !info.IsDir() && !documentOrAsset(path.Base(real)) {
+		return fs.ErrNotExist
 	}
 	name := path.Base(rel)
 	if info.IsDir() {
@@ -170,6 +183,11 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	} else if slash {
 		return errRefused
 	}
+	// The gate again, on the file finally served: a folder's index.html
+	// is judged by the name it resolves to as well.
+	if tr.Hidden && !documentOrAsset(path.Base(real)) {
+		return fs.ErrNotExist
+	}
 	if !info.Mode().IsRegular() {
 		return errRefused
 	}
@@ -180,6 +198,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, tr Tree, rel str
 	}
 	defer f.Close()
 	return sendFile(w, r, f, name, info.Size())
+}
+
+// documentOrAsset reports whether name is a document (IsDocument) or has a
+// web asset extension (assetTypes).
+func documentOrAsset(name string) bool {
+	_, asset := assetTypes[strings.ToLower(path.Ext(name))]
+	return asset || IsDocument(name)
 }
 
 // assetName returns the name to serve the file at real as, when it was

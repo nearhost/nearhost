@@ -56,13 +56,27 @@ func aboveOrAt(dir, p string) bool {
 	return p == dir || strings.HasPrefix(p, dir+"/")
 }
 
+// InHiddenFolder reports whether a segment of p starts with ".", as in
+// ~/.ssh or repo/.superpowers/b. It splits on a backslash as well as "/", so
+// a Windows path in either form is checked whole.
+func InHiddenFolder(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 // ChooseRoot picks the folder to serve doc from. The root the agent sent is
 // accepted only when it is doc's folder or holds a .git entry (hasGit), is not
 // "/", home or above home, and contains doc. If the way from the root down to
 // doc has a segment starting with ".", or the sent root is not accepted, doc's
 // folder is used. ok is false when that folder is "/", home or above home, so
-// there is no acceptable root. All paths are absolute and resolved.
-func ChooseRoot(sent, doc, home string, hasGit func(dir string) bool) (root string, ok bool) {
+// there is no acceptable root. hidden reports whether the root is in a hidden
+// folder (InHiddenFolder), where a tree serves only documents and web assets.
+// All paths are absolute and resolved.
+func ChooseRoot(sent, doc, home string, hasGit func(dir string) bool) (root string, hidden, ok bool) {
 	doc, home = path.Clean(doc), path.Clean(home)
 	dir := path.Dir(doc)
 	barred := func(p string) bool { return aboveOrAt(p, home) }
@@ -70,14 +84,14 @@ func ChooseRoot(sent, doc, home string, hasGit func(dir string) bool) (root stri
 		sent = path.Clean(sent)
 		if (sent == dir || hasGit(sent)) && !barred(sent) {
 			if _, below := Below(sent, doc); below {
-				return sent, true
+				return sent, InHiddenFolder(sent), true
 			}
 		}
 	}
 	if barred(dir) {
-		return "", false
+		return "", false, false
 	}
-	return dir, true
+	return dir, InHiddenFolder(dir), true
 }
 
 // Doc is one document in a tree. Path is relative to the tree's root.
@@ -86,12 +100,17 @@ type Doc struct {
 	Opened time.Time
 }
 
-// Tree is a folder Nearhost serves on a server. Docs is newest first.
-// Requester is the agent the tree was approved for.
+// Tree is a folder Nearhost serves on a server. Root is resolved, as the
+// server's FS.RealPath gives it: a tree whose root resolves elsewhere later
+// serves nothing. Docs is newest first.
+// Requester is the agent the tree was approved for. Hidden is set when Root
+// is in a hidden folder (InHiddenFolder): such a tree serves only documents
+// and web assets.
 type Tree struct {
 	ID, Server, Root, Requester string
 	Docs                        []Doc
 	Opened                      time.Time
+	Hidden                      bool
 }
 
 // clone returns a copy of tr that shares no memory with it.
@@ -123,16 +142,16 @@ func newID() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Add finds the tree for server and root, or makes one with a fresh ID, moves
+// Add finds the tree for server and root, a resolved path, or makes one with a fresh ID, moves
 // doc to the front of its Docs without duplicating it, and returns a copy.
-// requester is recorded only when the tree is made.
+// requester is recorded only when the tree is made, as is Hidden, from root.
 func (t *Table) Add(server, root, requester, doc string) Tree {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	tr := t.find(server, root)
 	if tr == nil {
-		tr = &Tree{ID: newID(), Server: server, Root: root, Requester: requester}
+		tr = &Tree{ID: newID(), Server: server, Root: root, Requester: requester, Hidden: InHiddenFolder(root)}
 		t.trees[tr.ID] = tr
 	}
 	docs := []Doc{{Path: doc, Opened: now}}
