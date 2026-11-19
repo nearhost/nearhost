@@ -385,3 +385,28 @@ func executeWithInput(t *testing.T, input string, cmd *cobra.Command, args ...st
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
 }
+
+// The help of each command whose exit status a script may depend on says
+// when it exits non-zero.
+func TestHelpSaysWhenACommandExitsNonZero(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--help"}, "Without a terminal, nearhost prints that it needs one and exits 1; use nearhost up there."},
+		{[]string{"up", "--help"}, "It stops and exits 1 when no project can be served and none is still starting or reconnecting."},
+		{[]string{"untrust", "--help"}, "It exits non-zero while anything, such as a browser or another trust store, still trusts the CA."},
+		{[]string{"add", "--help"}, "Interrupted (Ctrl-C), add saves nothing and exits 130."},
+	} {
+		root := NewRoot()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs(tc.args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if got := strings.Join(strings.Fields(out.String()), " "); !strings.Contains(got, tc.want) {
+			t.Errorf("nearhost %s lacks %q:\n%s", strings.Join(tc.args, " "), tc.want, out.String())
+		}
+	}
+}

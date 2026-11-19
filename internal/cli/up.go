@@ -168,7 +168,9 @@ func newUpCmd(b upBackend) *cobra.Command {
 		Use:   "up [project...]",
 		Short: "Start projects and serve them until interrupted",
 		Long: "Start the named projects, or every enabled project when none is named,\n" +
-			"and serve them at https://<alias> until interrupted (Ctrl-C).",
+			"and serve them at https://<alias> until interrupted (Ctrl-C).\n" +
+			"It stops and exits 1 when no project can be served and none is still\n" +
+			"starting or reconnecting.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUp(cmd, b, flags, args)
 		},

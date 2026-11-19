@@ -334,8 +334,10 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "untrust",
 		Short: "Remove the Nearhost Local CA from " + trustStore,
-		Long:  "Remove the Nearhost Local CA from " + trustStore + ".\n\n" + elevationNote,
-		Args:  cobra.NoArgs,
+		Long: "Remove the Nearhost Local CA from " + trustStore + ".\n" +
+			"It exits non-zero while anything, such as a browser or another\n" +
+			"trust store, still trusts the CA.\n\n" + elevationNote,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !deleteKey {
 				if yes {

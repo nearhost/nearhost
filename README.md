@@ -216,17 +216,17 @@ An agent can also open a document it wrote, such as a plan, spec or HTML mockup,
 
 | Command | What it does |
 | --- | --- |
-| `nearhost` | Open the interface, which serves every enabled project |
-| `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it |
+| `nearhost` | Open the interface, which serves every enabled project; without a terminal it exits 1 |
+| `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it. Interrupted, it saves nothing and exits 130 |
 | `nearhost ls` | List the configured projects and their routes |
-| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface |
+| `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface; exits 1 when no project can be served |
 | `nearhost export [project]` | Write the project's setup to a `.nearhostrc` to commit with it |
 | `nearhost preset` | Manage presets and the registries you trust |
 | `nearhost update` | Update Nearhost the way you installed it |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block, server access and whether agents there reach Nearhost |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts`, or your hosts file on Windows |
 | `nearhost trust` | Trust the local certificate authority; asks for your password, or on Windows for your confirmation |
-| `nearhost untrust` | Remove the certificate authority from the trust store |
+| `nearhost untrust` | Remove the certificate authority from the trust store; exits non-zero while a browser or another store still trusts it |
 
 `nearhost --version` prints the version. Every command takes `--help`. The [documentation](https://nearhost.dev/docs/) covers routes and roles, the config file and troubleshooting in more depth.
 

@@ -149,7 +149,8 @@ func newAddCmd(b addBackend) *cobra.Command {
 			"runs at a terminal, it first asks whether to trust the official one.\n" +
 			"With --server the path is on that server and its files are read over\n" +
 			"SFTP; a server not in the config is offered to be added, at a terminal.\n" +
-			"Nothing is started and no project file is changed.",
+			"Nothing is started and no project file is changed. Interrupted (Ctrl-C),\n" +
+			"add saves nothing and exits 130.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("web") {
