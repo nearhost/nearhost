@@ -3,6 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -10,8 +13,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 )
@@ -1369,5 +1374,105 @@ func TestAddNotesALonePortVariable(t *testing.T) {
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", filepath.Join(t.TempDir(), "config.yaml"), "add", dir, "--name", "myapp")
 	if err != nil || !strings.Contains(out, "Warning: APP_PORT is the only port Nearhost found") {
 		t.Errorf("APP_PORT alone: %v\n%s", err, out)
+	}
+}
+
+// addEnding runs `add` with the given running-Nearhost probe and returns the
+// last line it printed.
+func addEnding(t *testing.T, running func() runMode, extra ...string) string {
+	t.Helper()
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	b := noRemote(t)
+	b.running = running
+	args := append([]string{"--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080"}, extra...)
+	out, err := execute(t, newAddCmd(b), args...)
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+// serveRunning starts an agent API as a run of nearhost does, with or without
+// the interface, and returns a probe for the socket it listens on.
+func serveRunning(t *testing.T, withInterface bool) func() runMode {
+	t.Helper()
+	home := agentHome(t)
+	a, note := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatalf("agents not served: %s", note)
+	}
+	t.Cleanup(a.close)
+	if withInterface {
+		a.api.SetReviewer(nopReviewer{})
+	}
+	return func() runMode { return agentRunMode(agentSocket(home, "k3f9q2")) }
+}
+
+// nopReviewer is a reviewer that reviews nothing; it makes the API say it has
+// an interface.
+type nopReviewer struct{}
+
+func (nopReviewer) Review(agentapi.Proposal)               {}
+func (nopReviewer) ReviewPassthrough(agentapi.PassRequest) {}
+func (nopReviewer) Opened(agentapi.Passthrough)            {}
+func (nopReviewer) ReviewDocument(agentapi.DocRequest)     {}
+func (nopReviewer) Shown(string, string, string)           {}
+
+func TestAddWhenNothingRunsSaysToStartIt(t *testing.T) {
+	home := agentHome(t)
+	got := addEnding(t, func() runMode { return agentRunMode(agentSocket(home, "k3f9q2")) })
+	if want := "Start it with `nearhost up`."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddWithTheInterfaceRunningSaysItPicksTheProjectUp(t *testing.T) {
+	got := addEnding(t, serveRunning(t, true))
+	if want := "The running Nearhost picks it up in a moment."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddWithUpRunningSaysToRestartIt(t *testing.T) {
+	got := addEnding(t, serveRunning(t, false))
+	if want := "nearhost up is running and does not reload. Stop it and start it again to serve this project."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddWithAnOlderNearhostRunningSaysSomethingTrueForBoth(t *testing.T) {
+	home := agentHome(t)
+	sock := agentSocket(home, "k3f9q2")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"api":1,"origin":"local"}`)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	got := addEnding(t, func() runMode { return agentRunMode(sock) })
+	if want := "Nearhost is running. If it does not pick the project up in a moment, stop it and start it again."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddDisabledWithTheInterfaceRunningSaysToStartItThere(t *testing.T) {
+	got := addEnding(t, serveRunning(t, true), "--disabled")
+	if want := "The running Nearhost lists it in a moment. Start it there."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+func TestAddDisabledWithUpRunningSaysHowToStartIt(t *testing.T) {
+	got := addEnding(t, serveRunning(t, false), "--disabled")
+	want := "nearhost up is running and does not reload. Stop it and start it again with `" + config.UpCommand("myapp") + "` to serve this project."
+	if got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
