@@ -32,9 +32,12 @@ func init() {
 // on each server the proxy knows every open listener and when its close has
 // returned, and a load waits for those it closes.
 //
-// A connection that arrives while a reload is running, between the new
-// socket's bind and the old one's close, can still be queued on the old
-// socket and reset.
+// Two losses remain for a connection that arrives while a reload is
+// running, between the new socket's bind and the old one's close. One still
+// queued on the old socket at the close is reset. One the old server
+// accepted just before it began to shut down has its HTTP/1 request read
+// and then dropped unanswered, as net/http's conn.serve returns once the
+// server is shutting down: the client gets EOF.
 //
 // It wraps TCP listeners only. The UDP sockets of HTTP/3 are deliberately
 // not tracked: Caddy keeps one until its connections end, which nothing

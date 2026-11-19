@@ -19,8 +19,11 @@ import (
 // connection on it and reset it at the close (see Retire).
 //
 // Without the fixes 0.4-2.9% of such requests failed on the Windows CI
-// runner, and 4% on Linux under the race detector with two CPUs, far fewer
-// without it, so the default 500 reloads catch it on most runs there;
+// runner, so the default 500 reloads catch it on most runs there. On Linux
+// 4% failed under the race detector with two CPUs, which 500 reloads catch
+// on every run, but 0.06% without it (3 of 5000): CI's main run has no race
+// detector, and there 500 reloads catch it on about one run in four. The
+// test that always catches it is TestAReloadWaitsForTheOldListeners.
 // NEARHOST_RELOAD_TEST_COUNT sets another count, to look harder.
 func TestARequestJustAfterAReloadIsServed(t *testing.T) {
 	reloads := 500

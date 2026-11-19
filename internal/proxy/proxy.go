@@ -109,7 +109,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// returned reaches the new configuration. A load Caddy skips, as it runs
 	// that configuration already, opens no listener and closes none.
 	if len(retiring.since(before)) > 0 {
-		retired(before, releaseWait)
+		retiring.settle(before, "a reload")
 	}
 	was := listening
 	listening = listens(sites, p.opts)

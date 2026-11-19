@@ -294,3 +294,55 @@ func TestAReloadWaitsForTheOldListeners(t *testing.T) {
 		t.Errorf("a load of the running configuration changed the open listeners")
 	}
 }
+
+// A reload whose old listeners do not close in time says so, applies the
+// configuration all the same, and the next reload does not wait for them
+// again.
+func TestAReloadSaysWhichListenersDidNotClose(t *testing.T) {
+	upA, upB := upstream(t, "a"), upstream(t, "b")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}
+	h := startProxy(t, []Site{a})
+	left := stuck(retiring, 2)
+	t.Cleanup(func() {
+		retiring.mu.Lock()
+		defer retiring.mu.Unlock()
+		for l := range left {
+			delete(retiring.open, l)
+		}
+	})
+	waited := standRetired(t, func(ls map[*retireListener]struct{}) map[*retireListener]struct{} {
+		out := map[*retireListener]struct{}{}
+		for l := range left {
+			if _, ok := ls[l]; ok {
+				out[l] = struct{}{}
+			}
+		}
+		return out
+	})
+
+	if err := h.p.Apply([]Site{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	const want = "2 proxy listeners were still open 5s after a reload: 127.0.0.1:8080, 127.0.0.1:8081"
+	if !h.rec.hasFor("", want) {
+		t.Errorf("the log lacks %q", want)
+	}
+	if !h.p.Running() {
+		t.Error("not Running after a reload whose old listeners stayed open")
+	}
+	if err := h.p.Apply([]Site{a}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*waited) != 2 {
+		t.Fatalf("waited %d times over two reloads, want twice", len(*waited))
+	}
+	for l := range left {
+		if _, ok := (*waited)[1][l]; ok {
+			t.Fatal("the second reload waited again for a listener that had not closed")
+		}
+	}
+	if n := h.rec.countFor("", "still open"); n != 1 {
+		t.Errorf("%d lines about open listeners, want 1", n)
+	}
+}
