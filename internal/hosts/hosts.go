@@ -21,6 +21,10 @@ const (
 	EndMarker   = "# nearhost:end"
 )
 
+// ErrInvalidHost is the error, wrapped with the host, for an alias Nearhost
+// does not write to the hosts file.
+var ErrInvalidHost = errors.New("invalid host")
+
 // validEntry reports whether a is a name nearhost writes to the hosts file:
 // a valid exact host, so neither a wildcard pattern nor localhost, which the
 // system already resolves.
@@ -38,7 +42,7 @@ func normalize(aliases []string) ([]string, error) {
 			continue
 		}
 		if !validEntry(a) {
-			return nil, fmt.Errorf("invalid host %q: must be a lowercase host name, not localhost or a wildcard", a)
+			return nil, fmt.Errorf("%w %q: must be a lowercase host name, not localhost or a wildcard", ErrInvalidHost, a)
 		}
 		if !uniq[a] {
 			uniq[a] = true

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,4 +180,58 @@ func TestUACRunStopsWaitingWhileThePromptIsUpOnWindows(t *testing.T) {
 		t.Fatal("runAs did not return after release")
 	}
 	time.Sleep(100 * time.Millisecond) // let the goroutine finish; a panic would fail the run
+}
+
+// HelperDir makes a new folder in the temp directory, owned by this
+// process's user, whose access list passes nothing down from the temp
+// directory and lets in no one but that user, SYSTEM and Administrators.
+func TestHelperDirIsPrivateOnWindows(t *testing.T) {
+	temp := tempDir(t)
+	dir, err := HelperDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if filepath.Dir(dir) != filepath.Clean(temp) || !strings.HasPrefix(filepath.Base(dir), HelperDirPrefix) {
+		t.Fatalf("dir %s, want %s in %s", dir, HelperDirPrefix+"...", temp)
+	}
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := user.User.Sid.String()
+	// Both through SDDL, so a SID with a short name is spelt alike.
+	want, err := windows.SecurityDescriptorFromString("O:" + me + "D:P(A;OICI;FA;;;" + me + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// NTFS may mark the access list auto-inherited (PAI), which changes
+	// nothing for this folder.
+	if got := strings.Replace(sd.String(), "D:PAI(", "D:P(", 1); got != want.String() {
+		t.Fatalf("security descriptor %s, want %s", got, want)
+	}
+	other, err := HelperDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(other)
+	if other == dir {
+		t.Fatalf("HelperDir gave %s twice", dir)
+	}
+}
+
+// A helper that refuses its folder exits with HelperRefusedCode and leaves
+// no report; Run names the folder and says what it must be.
+func TestUACRunExplainsARefusedFolderOnWindows(t *testing.T) {
+	dir := tempDir(t)
+	err := System().Run(context.Background(), helperCommand(t, "", "exit", strconv.Itoa(HelperRefusedCode)))
+	if err == nil || !strings.HasPrefix(err.Error(), "the administrator's helper refused the folder "+filepath.Join(dir, HelperDirPrefix)) ||
+		!strings.HasSuffix(err.Error(), ": it must be on a local NTFS or ReFS drive (check TMP)") {
+		t.Fatalf("Run: %v", err)
+	}
+	leftOver(t, dir)
 }

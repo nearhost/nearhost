@@ -2,12 +2,15 @@ package elevate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -48,7 +51,12 @@ func (uac) Validate(context.Context, string) error { return errors.ErrUnsupporte
 
 // Run runs c through the UAC prompt and waits for it to finish. c.Input is
 // written to a file named by --input, and when the child fails, the last
-// line of the file named by --report is the error. When ctx ends, while the
+// line of the file named by --report is the error. Both files are in a new
+// folder from HelperDir, which the elevated helper insists on, and the
+// folder goes when Run returns, whether the child ran, failed to start or
+// was declined. A child that refuses the folder writes no report and exits
+// with HelperRefusedCode, which Run turns into an error that names the
+// folder; other exits without a report give their code. When ctx ends, while the
 // prompt is up or while the child runs, Run stops waiting and removes both
 // files, without killing the child: one that has not read its input yet
 // then fails, so an approval given after a stop changes nothing. c.Prompt
@@ -57,7 +65,7 @@ func (uac) Run(ctx context.Context, c Command) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dir, err := os.MkdirTemp("", "nearhost-elevate-*")
+	dir, err := HelperDir()
 	if err != nil {
 		return err
 	}
@@ -119,7 +127,54 @@ func (uac) Run(ctx context.Context, c Command) error {
 	if line := reportLine(report); line != "" {
 		return errors.New(line)
 	}
+	if code == HelperRefusedCode {
+		return fmt.Errorf("the administrator's helper refused the folder %s: it must be on a local NTFS or ReFS drive (check TMP)", dir)
+	}
 	return fmt.Errorf("exited with code %d", code)
+}
+
+// HelperDirPrefix starts the name of every folder HelperDir makes.
+const HelperDirPrefix = "nearhost-elevate-"
+
+// HelperDir makes a new folder for one elevated run's input and report, in
+// the user's temp directory (TMP), with a random name that starts with
+// HelperDirPrefix. Its owner is this process's user and its access list,
+// protected from what the temp directory passes down, grants that user,
+// SYSTEM and Administrators alone, so the elevated helper's check that no
+// one else can write in it passes whatever the temp directory allows. The
+// helper still refuses it when TMP is not on a local NTFS or ReFS drive: a
+// network share, UNC or a Samba share on a drive letter, or a FAT32 or
+// exFAT drive, which has no owner or access list.
+func HelperDir() (string, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("find this process's user: %w", err)
+	}
+	sid := user.User.Sid.String()
+	sd, err := windows.SecurityDescriptorFromString("O:" + sid + "D:P(A;OICI;FA;;;" + sid + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if err != nil {
+		return "", err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	for range 10 {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		dir := filepath.Join(os.TempDir(), HelperDirPrefix+hex.EncodeToString(b[:]))
+		name, err := windows.UTF16PtrFromString(dir)
+		if err != nil {
+			return "", err
+		}
+		err = windows.CreateDirectory(name, sa)
+		if err == nil {
+			return dir, nil
+		}
+		if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return "", &os.PathError{Op: "mkdir", Path: dir, Err: err}
+		}
+	}
+	return "", fmt.Errorf("make a folder in %s: every name tried was taken", os.TempDir())
 }
 
 // reportLine is the last non-blank line of the file at path, or "" when there
