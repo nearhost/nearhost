@@ -577,6 +577,34 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 	}
 }
 
+// The redirect to https names the https port unless it is 443, where the
+// Location stays as it was. A port of 0 means 443.
+func TestBuildConfigRedirectKeepsHTTPSPort(t *testing.T) {
+	for _, tc := range []struct {
+		port int
+		want string
+	}{
+		{0, "https://{http.request.host}{http.request.uri}"},
+		{443, "https://{http.request.host}{http.request.uri}"},
+		{18443, "https://{http.request.host}:18443{http.request.uri}"},
+	} {
+		raw, err := BuildConfig([]Site{
+			{Alias: "pro.test", Hosts: []string{"pro.test"}, Upstream: "127.0.0.1:1"},
+		}, Options{StorageRoot: t.TempDir(), HTTPSPort: tc.port, HTTPPort: 8080})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
+		if got := dig(t, routes[1], "handle", 0, "headers", "Location", 0); got != tc.want {
+			t.Errorf("https port %d: Location = %v, want %s", tc.port, got, tc.want)
+		}
+	}
+}
+
 // The http port gets the same server without patterns, as Caddy's own
 // redirect server would answer any client.
 func TestBuildConfigHasHTTPServerWithoutPatterns(t *testing.T) {
