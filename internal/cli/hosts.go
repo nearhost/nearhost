@@ -19,6 +19,21 @@ import (
 // hostsPrompt is the password prompt of the commands that update the hosts file.
 var hostsPrompt = "nearhost needs your password to update " + hosts.DefaultPath + ": "
 
+// isElevated reports whether this process runs as root or administrator.
+// Tests replace it, as CI's Windows runner is elevated.
+var isElevated = elevate.Elevated
+
+// checkElevatedFile refuses a file other than the system hosts file when
+// this process is elevated. The hosts helper runs elevated through sudo or
+// the UAC prompt, and whoever starts it chooses --file, so it would
+// otherwise write Nearhost's block into any file as root or administrator.
+func checkElevatedFile(file string) error {
+	if isElevated() && !hosts.IsSystemPath(file) {
+		return fmt.Errorf("an elevated run only writes %s", hosts.SystemPath())
+	}
+	return nil
+}
+
 // newElevatedApplier is a variable so tests can avoid real sudo. Nothing
 // interrupts it while sudo waits for a password.
 var newElevatedApplier = func(exe, path string) hosts.Applier {
@@ -45,7 +60,10 @@ func newHostsCmd() *cobra.Command {
 			// apply and the report are done.
 			var dirs heldDirs
 			defer dirs.Close()
-			err := applyAliases(cmd.InOrStdin(), file, input, &dirs)
+			err := checkElevatedFile(file)
+			if err == nil {
+				err = applyAliases(cmd.InOrStdin(), file, input, &dirs)
+			}
 			if err != nil && report != "" {
 				if rerr := writeReport(&dirs, report, err); rerr != nil {
 					return errors.Join(err, rerr)
@@ -62,11 +80,14 @@ func newHostsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		Short: cleanShort,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exe, err := os.Executable()
+			if err := checkElevatedFile(file); err != nil {
+				return err
+			}
+			apply, err := cleanApplier(file)
 			if err != nil {
 				return err
 			}
-			changed, err := hosts.Ensure(file, nil, newElevatedApplier(exe, file))
+			changed, err := hosts.Ensure(file, nil, apply)
 			if err != nil {
 				return err
 			}
@@ -81,6 +102,21 @@ func newHostsCmd() *cobra.Command {
 
 	cmd.AddCommand(apply, clean)
 	return cmd
+}
+
+// cleanApplier is how `hosts clean` writes file: through the elevated
+// helper for the system hosts file, and in this process for any other file,
+// which the user names with --file and so must be able to write. The
+// elevated helper writes only the system hosts file.
+func cleanApplier(file string) (hosts.Applier, error) {
+	if !hosts.IsSystemPath(file) {
+		return func(aliases []string) error { return hosts.Apply(file, aliases) }, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return newElevatedApplier(exe, file), nil
 }
 
 // maxInput is the most `hosts apply --input` reads: a hosts block never

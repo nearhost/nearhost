@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,29 +28,51 @@ func TestHostsApplyReadsAliasesFromStdin(t *testing.T) {
 	}
 }
 
-func TestHostsCleanPassesFilePathToApplier(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hosts")
-	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
-	os.WriteFile(path, []byte(content), 0o644)
-	var gotPath string
+// noElevation makes the elevated helper fail the test if anything starts it.
+func noElevation(t *testing.T) {
+	t.Helper()
 	orig := newElevatedApplier
 	t.Cleanup(func() { newElevatedApplier = orig })
 	newElevatedApplier = func(exe, p string) hosts.Applier {
-		gotPath = p
-		return func(aliases []string) error { return hosts.Apply(p, aliases) }
+		t.Errorf("the elevated helper was started for %s", p)
+		return func([]string) error { return errors.New("elevated") }
 	}
+}
+
+// Clean writes a file other than the system hosts file in this process, with
+// no elevation: the elevated helper would refuse it.
+func TestHostsCleanWritesAnotherFileWithoutElevation(t *testing.T) {
+	noElevation(t)
+	path := filepath.Join(t.TempDir(), "hosts")
+	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
+	os.WriteFile(path, []byte(content), 0o644)
 	root := NewRoot()
 	root.SetOut(&bytes.Buffer{})
 	root.SetArgs([]string{"hosts", "clean", "--file", path})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != path {
-		t.Fatalf("applier got path %q, want %q", gotPath, path)
-	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "127.0.0.1 localhost\n" {
 		t.Fatalf("unexpected hosts:\n%s", data)
+	}
+}
+
+// Clean hands the system hosts file to the elevated helper.
+func TestHostsCleanElevatesForTheSystemFile(t *testing.T) {
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	var gotPath string
+	newElevatedApplier = func(exe, p string) hosts.Applier {
+		gotPath = p
+		return func([]string) error { return nil }
+	}
+	apply, err := cleanApplier(hosts.DefaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(nil); err != nil || gotPath != hosts.DefaultPath {
+		t.Fatalf("err %v, helper got %q, want %q", err, gotPath, hosts.DefaultPath)
 	}
 }
 
@@ -226,5 +249,119 @@ func TestHostsApplyRefusesAnInputInALinkedDirectory(t *testing.T) {
 	testutil.Symlink(t, real, link)
 	if _, err := runApply(t, "--input", filepath.Join(link, "in")); err == nil || strings.Contains(err.Error(), "secret line") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// runElevated makes the hosts commands see an elevated process until the
+// test ends. TestMain makes them see an unelevated one, whatever the runner
+// is, as CI's Windows runner is elevated.
+func runElevated(t *testing.T) {
+	t.Helper()
+	orig := isElevated
+	isElevated = func() bool { return true }
+	t.Cleanup(func() { isElevated = orig })
+}
+
+// An elevated apply writes no file but the system hosts file: the caller
+// chooses --file, and the helper runs as root or administrator.
+func TestElevatedHostsApplyRefusesAnotherFile(t *testing.T) {
+	runElevated(t)
+	report := filepath.Join(t.TempDir(), "report")
+	path, err := runApply(t, "--report", report)
+	want := "an elevated run only writes " + hosts.SystemPath()
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "127.0.0.1 localhost\n" {
+		t.Fatalf("file modified:\n%s", data)
+	}
+	if data, _ := os.ReadFile(report); strings.TrimSpace(string(data)) != want {
+		t.Fatalf("report %q, want %q", data, want)
+	}
+}
+
+// A link to another file is refused by its path, as the helper writes
+// through links.
+func TestElevatedHostsApplyRefusesALinkToAnotherFile(t *testing.T) {
+	runElevated(t)
+	target := writeTemp(t, "127.0.0.1 localhost\n")
+	link := filepath.Join(t.TempDir(), "hosts")
+	testutil.Symlink(t, target, link)
+	root := NewRoot()
+	root.SetIn(strings.NewReader("a.test\n"))
+	root.SetOut(&bytes.Buffer{})
+	root.SetArgs([]string{"hosts", "apply", "--file", link})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "an elevated run only writes") {
+		t.Fatalf("err = %v", err)
+	}
+	if data, _ := os.ReadFile(target); string(data) != "127.0.0.1 localhost\n" {
+		t.Fatalf("file modified:\n%s", data)
+	}
+}
+
+// An elevated clean refuses another file before it reads it or starts the
+// helper.
+func TestElevatedHostsCleanRefusesAnotherFile(t *testing.T) {
+	runElevated(t)
+	path := filepath.Join(t.TempDir(), "hosts")
+	content := "127.0.0.1 localhost\n# nearhost:start\n127.0.0.1 a.test\n::1 a.test\n# nearhost:end\n"
+	os.WriteFile(path, []byte(content), 0o644)
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	called := false
+	newElevatedApplier = func(exe, p string) hosts.Applier {
+		return func(aliases []string) error { called = true; return hosts.Apply(p, aliases) }
+	}
+	root := NewRoot()
+	root.SetOut(&bytes.Buffer{})
+	root.SetArgs([]string{"hosts", "clean", "--file", path})
+	want := "an elevated run only writes " + hosts.SystemPath()
+	if err := root.Execute(); err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	if called {
+		t.Fatal("the helper ran")
+	}
+	if data, _ := os.ReadFile(path); string(data) != content {
+		t.Fatalf("file modified:\n%s", data)
+	}
+}
+
+// Without --file an elevated clean works on the system hosts file. The
+// helper is replaced, so the real file is only read.
+func TestElevatedHostsCleanWithoutFileUsesTheSystemFile(t *testing.T) {
+	runElevated(t)
+	orig := newElevatedApplier
+	t.Cleanup(func() { newElevatedApplier = orig })
+	newElevatedApplier = func(exe, p string) hosts.Applier {
+		return func([]string) error { return nil }
+	}
+	out := &bytes.Buffer{}
+	root := NewRoot()
+	root.SetOut(out)
+	root.SetArgs([]string{"hosts", "clean"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), hosts.DefaultPath) {
+		t.Fatalf("output %q does not name %s", out, hosts.DefaultPath)
+	}
+}
+
+// The elevated check passes the path Nearhost hands the helper.
+func TestElevatedFileCheckAcceptsTheSystemFile(t *testing.T) {
+	runElevated(t)
+	for _, p := range []string{hosts.DefaultPath, hosts.SystemPath()} {
+		if err := checkElevatedFile(p); err != nil {
+			t.Errorf("checkElevatedFile(%q) = %v", p, err)
+		}
+	}
+}
+
+// An unelevated run writes any file it is given, as tests and a hand-run
+// apply do.
+func TestUnelevatedFileCheckAcceptsAnyFile(t *testing.T) {
+	if err := checkElevatedFile(filepath.Join(t.TempDir(), "hosts")); err != nil {
+		t.Fatal(err)
 	}
 }
