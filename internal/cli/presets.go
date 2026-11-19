@@ -8,13 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/registry"
+	"github.com/nearhost/nearhost/internal/safetext"
 )
 
 // presetsDir is where preset files live: beside the config file in use.
@@ -80,7 +79,7 @@ func loadEnabled(cfg *config.Config, cfgPath string) ([]*preset.Preset, []string
 
 func printWarnings(w io.Writer, warnings []string) {
 	for _, warning := range warnings {
-		fmt.Fprintf(w, "Warning: %s\n", warning)
+		fmt.Fprintf(w, "Warning: %s\n", printable(warning))
 	}
 }
 
@@ -257,27 +256,11 @@ func (b presetBackend) install(ctx context.Context, cfg *config.Config, cfgPath 
 	return p, nil
 }
 
-// printable makes text from a preset or the registry safe to print: one line, no control characters.
-func printable(s string) string {
-	return strings.TrimSpace(strings.Map(func(r rune) rune {
-		switch {
-		case r == '\n' || r == '\r' || r == '\t':
-			return ' '
-		case !unicode.IsPrint(r):
-			return -1
-		}
-		return r
-	}, s))
-}
+// printable makes text from a preset, a registry, a project or a server safe
+// to print: one line, no control characters.
+func printable(s string) string { return safetext.Line(s) }
 
-// printableLines makes advice safe to print. Unlike printable it keeps line
-// breaks, tabs and indentation, which a snippet may need, and drops the
-// other characters printable would.
-func printableLines(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && r != '\t' && !unicode.IsPrint(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
+// printableLines makes advice and error text safe to print. Unlike printable
+// it keeps line breaks, tabs and indentation, which a snippet or a message of
+// several lines needs, and drops the other characters printable would.
+func printableLines(s string) string { return safetext.Lines(s) }

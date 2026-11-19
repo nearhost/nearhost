@@ -161,6 +161,21 @@ func TestDiscoverSingleUnknownPortBecomesWeb(t *testing.T) {
 	}
 }
 
+// A Compose service name becomes a route's label, which is printed and
+// saved; a double-quoted key can hold escape sequences, such as an OSC 52
+// clipboard write, that the saved label must not.
+func TestDiscoverCleansComposeLabels(t *testing.T) {
+	compose := "services:\n  \"web\\e]52;c;AAAA\\a\\nforged\":\n    ports:\n      - '${WEB_PORT:-4000}:4000'\n"
+	res := discover(t, memReader{"compose.yaml": compose}, Options{Presets: testPresets(t, "compose")})
+	routes := res.ConfigRoutes()
+	if len(routes) != 1 {
+		t.Fatalf("routes = %+v", routes)
+	}
+	if got, want := routes[0].Label, "web]52;c;AAAA forged (WEB_PORT)"; got != want {
+		t.Errorf("Label = %q, want %q", got, want)
+	}
+}
+
 func TestDiscoverPublishedPort80IsWebWhenTheTargetIsUnknown(t *testing.T) {
 	res := discover(t, memReader{"compose.yaml": "services:\n  a:\n    ports:\n      - published: 80\n  b:\n    ports:\n      - '9000:9000'\n"}, Options{Presets: testPresets(t, "compose")})
 	if m := routeMap(res); m[80].Role != config.RoleWeb || m[9000].Role != config.RoleIgnore {

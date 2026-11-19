@@ -322,6 +322,7 @@ func printProjects(out io.Writer, projects []projectReport) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Projects")
 	for _, p := range projects {
+		p.name = printable(p.name) // a project's name can come from a remote directory
 		if len(p.findings) == 0 {
 			fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
 			continue
@@ -367,11 +368,19 @@ type jsonReport struct {
 // returns the error report would.
 func reportJSON(cmd *cobra.Command, checks []check, projects []projectReport) error {
 	r := jsonReport{Checks: []jsonCheck{}, Findings: []doctor.Finding{}}
+	// encoding/json escapes only the C0 controls and U+2028/U+2029, and a
+	// reader may print what it decodes, so the JSON holds the same cleaned
+	// text the plain report prints: ssh's output, names from a server and
+	// messages that quote a project's files.
 	for _, c := range checks {
-		r.Checks = append(r.Checks, jsonCheck{Name: c.name, Level: strings.ToLower(c.level.String()), Detail: c.detail, Fix: upperFirst(c.fix)})
+		r.Checks = append(r.Checks, jsonCheck{Name: printable(c.name), Level: strings.ToLower(c.level.String()), Detail: printableLines(c.detail), Fix: upperFirst(printable(c.fix))})
 	}
 	for _, p := range projects {
-		r.Findings = append(r.Findings, p.findings...)
+		for _, f := range p.findings {
+			f.Project, f.Message, f.File = printable(f.Project), printableLines(f.Message), printable(f.File)
+			f.Fix.Text, f.Fix.Snippet = printable(f.Fix.Text), printableLines(f.Fix.Snippet)
+			r.Findings = append(r.Findings, f)
+		}
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)

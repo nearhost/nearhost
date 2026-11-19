@@ -21,6 +21,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/safetext"
 )
 
 const (
@@ -93,7 +94,7 @@ type rawRoute struct {
 }
 
 // Parse decodes data and fills ${VAR} references in ports, hosts, labels,
-// roles and the alias from env.
+// roles and the alias from env. Labels lose their control characters.
 // Every error starts with ".nearhostrc" so callers can show it as it is.
 func Parse(data []byte, env map[string]string) (*File, error) {
 	// Editors on Windows add a byte order mark that YAML would read as text.
@@ -244,6 +245,14 @@ func fill(rr rawRoute, env map[string]string, restore *strings.Replacer) (Route,
 	role, name, ok := discovery.Expand(restore.Replace(string(rr.Role)), env)
 	if !ok {
 		return Route{}, unset(name)
+	}
+	// A label is printed and saved, and a double-quoted YAML string or a
+	// variable can give it escape sequences, so it loses its control
+	// characters before it is hashed. A label without any is left as it is,
+	// so the hash of a file approved before stays the same; one that had
+	// some is also trimmed, as a line break at its end would leave a space.
+	if clean := safetext.Clean(label); clean != label {
+		label = strings.TrimSpace(clean)
 	}
 	r := Route{Role: config.Role(role), Label: label}
 	if r.Role == "" {

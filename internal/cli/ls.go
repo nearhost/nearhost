@@ -41,7 +41,9 @@ func newLsCmd() *cobra.Command {
 						routes = append(routes, fmt.Sprintf("%s :%d", r.Role, r.Port))
 					}
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Server, p.Alias, state, strings.Join(routes, ", "))
+				// A name can come from a remote directory, and a config
+				// saved by an earlier version may hold one uncleaned.
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", printable(p.Name), printable(p.Server), printable(p.Alias), state, strings.Join(routes, ", "))
 			}
 			return tw.Flush()
 		},

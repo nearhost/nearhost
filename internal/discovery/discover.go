@@ -11,6 +11,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/preset"
+	"github.com/nearhost/nearhost/internal/safetext"
 )
 
 // Offer is a preset that is not enabled and could be, with the expression
@@ -368,11 +369,13 @@ func assignWeb(routes []Candidate) ([]Candidate, int) {
 	return routes, pick
 }
 
-// ConfigRoutes converts candidates to config routes.
+// ConfigRoutes converts candidates to config routes. A label comes from a
+// Compose service name, a variable or a preset, any of which can hold escape
+// sequences, and is printed and saved, so it is made one printable line.
 func (res *Result) ConfigRoutes() []config.Route {
 	out := make([]config.Route, 0, len(res.Routes))
 	for _, c := range res.Routes {
-		out = append(out, config.Route{Port: c.Port, Role: c.Role, Label: c.Label, Hosts: slices.Clone(c.Hosts)})
+		out = append(out, config.Route{Port: c.Port, Role: c.Role, Label: safetext.Line(c.Label), Hosts: slices.Clone(c.Hosts)})
 	}
 	return out
 }

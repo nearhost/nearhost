@@ -123,6 +123,46 @@ func TestParseFillsVariablesInLabels(t *testing.T) {
 	}
 }
 
+// A label is printed and saved, so the escape sequences a YAML double-quoted
+// string can hold, here an OSC 52 clipboard write, never leave Parse, from
+// the file or from a variable, and the hash is of the cleaned label.
+func TestParseCleansLabels(t *testing.T) {
+	for name, file := range map[string]string{
+		"file":     "version: 1\nroutes:\n  - port: 80\n    label: \"web\\e]52;c;AAAA\\a\\nforged row\"\n",
+		"variable": "version: 1\nroutes:\n  - port: 80\n    label: ${L}\n",
+	} {
+		f, err := Parse([]byte(file), map[string]string{"L": "web\x1b]52;c;AAAA\a\nforged row"})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := f.Routes[0].Label; got != "web]52;c;AAAA forged row" {
+			t.Errorf("%s: Label = %q, want no ESC, BEL or newline", name, got)
+		}
+		canon, _ := json.Marshal(f.Routes)
+		if sum := sha256.Sum256(canon); f.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Errorf("%s: SHA256 is not the hash of the cleaned routes", name)
+		}
+	}
+}
+
+// Cleaning leaves a label without control characters as it was, so a file
+// approved by an earlier version, with such labels, keeps its hash and is not
+// asked about again.
+func TestParseKeepsTheHashOfCleanLabels(t *testing.T) {
+	labels := []string{"web", "Café 日本語", "管理\u3000画面", "team 👨\u200d👩\u200d👧", "  padded  "}
+	for _, label := range labels {
+		quoted, _ := json.Marshal(label) // a JSON string is a YAML double-quoted one
+		f, err := Parse([]byte("version: 1\nroutes:\n  - port: 80\n    label: "+string(quoted)+"\n"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canon, _ := json.Marshal([]Route{{Port: 80, Role: config.RoleWeb, Label: label}})
+		if sum := sha256.Sum256(canon); f.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Errorf("label %q: Label = %q and the hash changed", label, f.Routes[0].Label)
+		}
+	}
+}
+
 func TestParseErrorsShowVariablesNotTokens(t *testing.T) {
 	_, err := Parse([]byte("version: 1\nroutes:\n  - port: 1\n    hosts: ${H}\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "${H}") || strings.Contains(err.Error(), "nhrcvar") {

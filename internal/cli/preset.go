@@ -235,7 +235,7 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 				line, did, err := b.update(cmd.Context(), cfg, cfgPath, reg, indexes[alias], ref, force)
 				if err != nil {
 					failed++
-					fmt.Fprintf(out, "%s: not updated: %v\n", ref.Name, err)
+					fmt.Fprintf(out, "%s: not updated: %s\n", ref.Name, printable(err.Error()))
 					continue
 				}
 				if did {

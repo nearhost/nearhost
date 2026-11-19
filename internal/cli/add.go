@@ -161,7 +161,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return err
 	}
 	if opened != project.Path && !strings.HasPrefix(project.Path, "~") {
-		fmt.Fprintf(out, "Read %s as %s on %s, since the shell turned ~ into this machine's home.\n\n", project.Path, opened, srv.Name)
+		fmt.Fprintf(out, "Read %s as %s on %s, since the shell turned ~ into this machine's home.\n\n", printable(project.Path), printable(opened), printable(srv.Name))
 	}
 	project.Path = opened
 	// A name with characters a .test name can't hold, typed or from the
@@ -258,7 +258,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if newServer {
 		fmt.Fprintf(out, "Added server %s, reached with `ssh %s`.\n", printable(srv.Name), printable(srv.SSHHost))
 	}
-	fmt.Fprintf(out, "Added %s on %s at https://%s\n", project.Name, project.Server, project.Alias)
+	fmt.Fprintf(out, "Added %s on %s at https://%s\n", printable(project.Name), printable(project.Server), printable(project.Alias))
 	if len(refused) > 0 {
 		names := make([]string, len(refused))
 		for i, n := range refused {
@@ -380,7 +380,7 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		routes, notes := withoutTakenHosts(cfg, *project, inferred)
 		project.Routes = routes
 		for _, n := range notes {
-			fmt.Fprintln(cmd.ErrOrStderr(), n)
+			fmt.Fprintln(cmd.ErrOrStderr(), printable(n))
 		}
 	}
 
@@ -716,7 +716,7 @@ func chooseWeb(answers *bufio.Reader, out io.Writer, routes []config.Route) int 
 	fmt.Fprintln(out, "Which one is the web app?")
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	for i, r := range routes {
-		fmt.Fprintf(tw, "  %d) %s\t%d\n", i+1, r.Label, r.Port)
+		fmt.Fprintf(tw, "  %d) %s\t%d\n", i+1, printable(r.Label), r.Port)
 	}
 	tw.Flush()
 	fmt.Fprintln(out, "  0) none")
@@ -782,7 +782,7 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		}
 		projectPath = abs
 		if name == "" {
-			name = filepath.Base(projectPath)
+			name = defaultName(srv, projectPath)
 		}
 	} else {
 		if !path.IsAbs(projectPath) && projectPath != "~" && !strings.HasPrefix(projectPath, "~/") {
@@ -790,7 +790,7 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		}
 		projectPath = path.Clean(projectPath)
 		if name == "" {
-			name = path.Base(projectPath)
+			name = defaultName(srv, projectPath)
 		}
 	}
 	var taken *nameTakenError
@@ -864,17 +864,21 @@ func forceWeb(routes []config.Route, port int) []config.Route {
 	return config.MovePrimary(out, port)
 }
 
+// printRoutes prints the routes found for p. Its name and path can come
+// from a server and its labels from the project's files, or from a config
+// saved by a version that did not clean them, so all are made printable.
 func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
+	name, server, dir := printable(p.Name), printable(p.Server), printable(p.Path)
 	if len(p.Routes) == 0 && composeUnread {
 		_, err := fmt.Fprintf(out, "No port variables found in the .env files of %s (%s:%s).\n"+
-			"Its Compose file is read only when a preset asks for it with compose: ports.\n", p.Name, p.Server, p.Path)
+			"Its Compose file is read only when a preset asks for it with compose: ports.\n", name, server, dir)
 		return err
 	}
 	if len(p.Routes) == 0 {
-		_, err := fmt.Fprintf(out, "No ports found in the files of %s (%s:%s).\n", p.Name, p.Server, p.Path)
+		_, err := fmt.Fprintf(out, "No ports found in the files of %s (%s:%s).\n", name, server, dir)
 		return err
 	}
-	fmt.Fprintf(out, "Routes found for %s (%s:%s):\n", p.Name, p.Server, p.Path)
+	fmt.Fprintf(out, "Routes found for %s (%s:%s):\n", name, server, dir)
 	withHosts := false
 	for _, r := range p.Routes {
 		withHosts = withHosts || len(r.Hosts) > 0
@@ -887,9 +891,9 @@ func printRoutes(out io.Writer, p config.Project, composeUnread bool) error {
 	}
 	for _, r := range p.Routes {
 		if withHosts {
-			fmt.Fprintf(tw, "  %d\t%s\t%s\t%s\n", r.Port, r.Role, printable(strings.Join(r.Hosts, ", ")), r.Label)
+			fmt.Fprintf(tw, "  %d\t%s\t%s\t%s\n", r.Port, r.Role, printable(strings.Join(r.Hosts, ", ")), printable(r.Label))
 		} else {
-			fmt.Fprintf(tw, "  %d\t%s\t%s\n", r.Port, r.Role, r.Label)
+			fmt.Fprintf(tw, "  %d\t%s\t%s\n", r.Port, r.Role, printable(r.Label))
 		}
 	}
 	return tw.Flush()

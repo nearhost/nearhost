@@ -207,12 +207,15 @@ func aliasProblem(cfg *config.Config, alias string) error {
 	return nil
 }
 
-// defaultName is the name a project in dir gets unless one is given.
+// defaultName is the name a project in dir gets unless one is given. A
+// directory's name can hold escape sequences, and the project's name is
+// printed and saved, so it is made printable; one with nothing printable in
+// it gives "", which nameProblem refuses.
 func defaultName(srv config.Server, dir string) string {
 	if srv.Name == config.LocalServer {
-		return filepath.Base(dir)
+		return printable(filepath.Base(dir))
 	}
-	return path.Base(dir)
+	return printable(path.Base(dir))
 }
 
 // discoverOnce runs discovery with the enabled presets, offering the presets

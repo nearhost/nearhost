@@ -94,9 +94,9 @@ func runExport(cmd *cobra.Command, b exportBackend, flags exportFlags, args []st
 	}
 	where := ""
 	if p.Server != config.LocalServer {
-		where = " on server " + p.Server
+		where = " on server " + printable(p.Server)
 	}
-	_, err = fmt.Fprintf(out, "Wrote %s%s. Commit it so others get this setup when they add the project.\n", fileIn(p, dir), where)
+	_, err = fmt.Fprintf(out, "Wrote %s%s. Commit it so others get this setup when they add the project.\n", printable(fileIn(p, dir)), where)
 	return err
 }
 
