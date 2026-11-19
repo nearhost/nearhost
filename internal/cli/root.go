@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -28,8 +31,36 @@ const (
 	dnsFailTTL = 10 * time.Second
 )
 
-// Version is set at build time by the release tooling.
+// Version is set at build time by the release tooling. A build without it,
+// such as `go install …@latest`, takes its module version (see
+// buildVersion).
 var Version = "dev"
+
+func init() { Version = buildVersion(Version, debug.ReadBuildInfo) }
+
+// pseudoVersion matches the end of a Go pseudo-version, such as
+// v0.13.1-0.20261118120000-abcdef123456: a commit that is not a release.
+var pseudoVersion = regexp.MustCompile(`(^|[-.])\d{14}-[0-9a-f]{12}$`)
+
+// buildVersion is version, the release tooling's value, or for a build
+// without one ("dev") the module version Go recorded, without its v: a
+// `go install …@v0.6.0` or `@latest` build records v0.6.0, which is that
+// release's code. A local build records (devel), a pseudo-version or a
+// +dirty version, and stays dev.
+func buildVersion(version string, read func() (*debug.BuildInfo, bool)) string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := read()
+	if !ok || info == nil {
+		return version
+	}
+	v := info.Main.Version
+	if !strings.HasPrefix(v, "v") || strings.Contains(v, "+") || pseudoVersion.MatchString(v) || !update.IsRelease(v) {
+		return version
+	}
+	return strings.TrimPrefix(v, "v")
+}
 
 // NewRoot builds the root command and all subcommands. It is the only place
 // where the commands are wired to the real machine.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -58,6 +59,11 @@ type updateBackend struct {
 	// downloadLimit is the longest the download may take: downloadTimeLimit
 	// in production.
 	downloadLimit time.Duration
+	// probe runs `<path> version` and returns the version it prints, or
+	// an error when the binary does not start or fails.
+	probe func(ctx context.Context, path string) (string, error)
+	// lookPath finds a command on PATH, as exec.LookPath does.
+	lookPath func(name string) (string, error)
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -80,9 +86,8 @@ func systemUpdate() updateBackend {
 		},
 		goos: runtime.GOOS,
 		run: func(ctx context.Context, m update.Method, stdout, stderr io.Writer) error {
-			c := exec.CommandContext(ctx, m.Args[0], m.Args[1:]...)
-			c.Env = updateEnv(os.Environ(), m)
-			c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
+			c := updateCommand(ctx, m)
+			c.Stdout, c.Stderr = stdout, stderr
 			return c.Run()
 		},
 		download:  update.Downloader{HTTP: downloadHTTP()}.Fetch,
@@ -99,7 +104,111 @@ func systemUpdate() updateBackend {
 			return signals, func() { signal.Stop(signals) }
 		},
 		downloadLimit: downloadTimeLimit,
+		probe:         probeVersion,
+		lookPath:      exec.LookPath,
 	}
+}
+
+// updateCommand is the command that runs m, found on PATH, with m.Env added
+// to the environment. It has the terminal on stdin, for a package manager
+// that asks something, except the install script's: piped into sh, the
+// installer never had one, so it printed the setcap advice instead of
+// asking, and it still does.
+func updateCommand(ctx context.Context, m update.Method) *exec.Cmd {
+	c := exec.CommandContext(ctx, m.Args[0], m.Args[1:]...)
+	c.Env = updateEnv(os.Environ(), m)
+	if m.Kind != update.Script {
+		c.Stdin = os.Stdin
+	}
+	return c
+}
+
+// probeTimeLimit is the longest `<exe> version` may take after an update.
+const probeTimeLimit = 10 * time.Second
+
+// probeVersion runs `<path> version` and returns the version it prints.
+func probeVersion(ctx context.Context, path string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeLimit)
+	defer cancel()
+	c := exec.CommandContext(ctx, path, "version")
+	c.WaitDelay = time.Second
+	out, err := c.Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("it gave no answer within %s", probeTimeLimit)
+	}
+	if err != nil {
+		return "", err
+	}
+	return installedVersion(string(out)), nil
+}
+
+// installedVersion is the version in the output of `nearhost version`,
+// "nearhost <version>", or the output's first line when it is not that.
+func installedVersion(out string) string {
+	line, _, _ := strings.Cut(out, "\n")
+	line = strings.TrimSpace(line)
+	if v, ok := strings.CutPrefix(line, "nearhost "); ok {
+		return strings.TrimSpace(v)
+	}
+	return line
+}
+
+// probePath is the nearhost the user's next run starts once m has updated
+// exe, the running binary with symlinks resolved, or "" when that cannot
+// be told. A Homebrew upgrade installs the new version in a new Caskroom
+// folder and links it as <prefix>/bin/nearhost, while the old folder can
+// stay. pnpm's store has the version in the path too, so its shim on PATH
+// is what runs next. Every other method puts the new binary at exe: the
+// install script and go install write to its folder, npm and bun to the
+// same package path each version, and the Windows replacement renames the
+// new copy to exe.
+func probePath(b updateBackend, m update.Method, exe string) string {
+	switch m.Kind {
+	case update.Homebrew:
+		if prefix, _, ok := strings.Cut(exe, "/Caskroom/nearhost/"); ok {
+			return prefix + "/bin/nearhost"
+		}
+		// Not reached: Detect names Homebrew only for a Caskroom path.
+		fallthrough
+	case update.PNPM:
+		if p, err := b.lookPath("nearhost"); err == nil {
+			return p
+		}
+		return ""
+	}
+	return exe
+}
+
+// verifyUpdate checks that the nearhost the next run starts is latest, now
+// that the update command m has succeeded. It prints and returns the
+// failure: the binary does not start, or it is still another version.
+func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe, latest string) error {
+	path := probePath(b, m, exe)
+	if path == "" {
+		return nil
+	}
+	byHand := m.String()
+	if byHand == "" { // a Windows copy nearhost replaces itself
+		byHand = update.InstallScriptWindows
+	}
+	shown := printable(filepath.Clean(path))
+	installed, err := b.probe(ctx, path)
+	var msg string
+	switch {
+	case err != nil:
+		msg = fmt.Sprintf("The update ran, but %s did not start: %s. Run it again, or install by hand: %s.", shown, printable(err.Error()), byHand)
+	case installed == "":
+		msg = fmt.Sprintf("The update ran, but %s printed no version. Run it again, or install by hand: %s.", shown, byHand)
+	case !update.SameVersion(installed, latest):
+		msg = fmt.Sprintf("The update ran, but %s is still %s. Run it again, or install by hand: %s.", shown, printable(installed), byHand)
+		if m.Kind == update.PNPM && shadowsPnpm(b, path) {
+			msg += " Another nearhost comes before pnpm's on PATH."
+		}
+	default:
+		return nil
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), msg)
+	return exitError{code: 1, msg: msg}
 }
 
 // downloadTimeLimit is the longest the Windows download may take. The
@@ -217,10 +326,20 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		}
 	}
 	if b.goos != "windows" {
-		if err := b.run(ctx, m, out, cmd.ErrOrStderr()); err != nil {
+		// The installer installs exactly the version checked below, whatever
+		// NEARHOST_VERSION the user's shell exports. The command shown stays
+		// the plain one.
+		run := m
+		if m.Kind == update.Script {
+			run = m.Pinned(latest)
+		}
+		if err := b.run(ctx, run, out, cmd.ErrOrStderr()); err != nil {
 			return fmt.Errorf("`%s` failed: %w", m, err)
 		}
 	} else if err := runAside(ctx, cmd, b, m, exe, latest, native); err != nil {
+		return err
+	}
+	if err := verifyUpdate(ctx, cmd, b, m, exe, latest); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
@@ -334,10 +453,45 @@ func samePathEveryVersion(k update.Kind) bool {
 	return false
 }
 
+// shadowsPnpm reports whether path, the nearhost found on PATH, is outside
+// pnpm's bin folder, so another copy runs before pnpm's. That folder is
+// PNPM_HOME, or PNPM_HOME/bin in newer pnpm. It is false when PNPM_HOME is
+// not set.
+func shadowsPnpm(b updateBackend, path string) bool {
+	home := b.getenv("PNPM_HOME")
+	if home == "" {
+		return false
+	}
+	dir := path
+	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
+		dir = path[:i]
+	}
+	home = strings.TrimRight(home, `/\`)
+	for _, bin := range []string{home, home + "/bin", home + `\bin`} {
+		if dir == bin || b.goos == "windows" && strings.EqualFold(dir, bin) {
+			return false
+		}
+	}
+	return true
+}
+
+// installerVars are the install script's variables that would change what
+// it installs or where it downloads from. A script update sets the ones it
+// needs in m.Env and drops the rest from the environment it inherits, so a
+// variable left exported in the user's shell cannot pin, redirect or
+// dry-run the update.
+var installerVars = []string{"NEARHOST_VERSION=", "NEARHOST_BASE_URL=", "NEARHOST_INSTALL_DRY_RUN=", "NEARHOST_INSTALL_DIR="}
+
 // updateEnv is the environment the update command m runs with: environ and
-// m.Env.
+// m.Env, without installerVars from environ for the install script.
 func updateEnv(environ []string, m update.Method) []string {
-	return append(slices.Clone(environ), m.Env...)
+	env := slices.Clone(environ)
+	if m.Kind == update.Script {
+		env = slices.DeleteFunc(env, func(e string) bool {
+			return slices.ContainsFunc(installerVars, func(p string) bool { return strings.HasPrefix(e, p) })
+		})
+	}
+	return append(env, m.Env...)
 }
 
 // envOf is the value m sets name to, or "". A pre-release build's method
