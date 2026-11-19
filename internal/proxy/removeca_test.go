@@ -30,8 +30,8 @@ var caFiles = []string{
 	"pki/authorities/local/intermediate.key",
 }
 
-// exists reports whether path is there, without following a final link.
-func exists(path string) bool {
+// present reports whether path is there, without following a final link.
+func present(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
@@ -53,7 +53,7 @@ func TestRemoveCARemovesTheAuthorityAndItsCertificatesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, gone := range []string{"pki/authorities/local", "certificates/local"} {
-		if exists(filepath.Join(root, filepath.FromSlash(gone))) {
+		if present(filepath.Join(root, filepath.FromSlash(gone))) {
 			t.Errorf("%s is still there", gone)
 		}
 	}
@@ -63,7 +63,7 @@ func TestRemoveCARemovesTheAuthorityAndItsCertificatesOnly(t *testing.T) {
 		"locks/app.test.lock",
 		"instance.uuid",
 	} {
-		if !exists(filepath.Join(root, filepath.FromSlash(kept))) {
+		if !present(filepath.Join(root, filepath.FromSlash(kept))) {
 			t.Errorf("%s was removed", kept)
 		}
 	}
@@ -89,9 +89,9 @@ func TestRemoveCARefusesARelativeRoot(t *testing.T) {
 	}
 }
 
-// symlinkOrSkip makes link point at target, skipping the test where the
+// linkOrSkip makes link point at target, skipping the test where the
 // system does not allow it (Windows without the privilege).
-func symlinkOrSkip(t *testing.T, target, link string) {
+func linkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 		t.Fatal(err)
@@ -108,12 +108,12 @@ func TestRemoveCARefusesALinkOutOfTheRoot(t *testing.T) {
 	outside := t.TempDir()
 	writeFiles(t, outside, "root.key", "root.crt")
 	link := filepath.Join(root, "pki", "authorities", "local")
-	symlinkOrSkip(t, outside, link)
+	linkOrSkip(t, outside, link)
 	err := RemoveCA(root)
 	if err == nil || !strings.Contains(err.Error(), link) {
 		t.Fatalf("err = %v", err)
 	}
-	if !exists(filepath.Join(outside, "root.key")) || !exists(link) {
+	if !present(filepath.Join(outside, "root.key")) || !present(link) {
 		t.Fatal("RemoveCA removed something outside the storage root")
 	}
 }
@@ -123,11 +123,11 @@ func TestRemoveCARefusesAParentLinkOutOfTheRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	writeFiles(t, outside, "authorities/local/root.key")
-	symlinkOrSkip(t, outside, filepath.Join(root, "pki"))
+	linkOrSkip(t, outside, filepath.Join(root, "pki"))
 	if err := RemoveCA(root); err == nil {
 		t.Fatal("RemoveCA followed pki out of the storage root")
 	}
-	if !exists(filepath.Join(outside, "authorities", "local", "root.key")) {
+	if !present(filepath.Join(outside, "authorities", "local", "root.key")) {
 		t.Fatal("RemoveCA removed something outside the storage root")
 	}
 }
@@ -152,14 +152,14 @@ func TestRemoveCARefusesEveryLinkOnTheWay(t *testing.T) {
 			if err := os.Rename(link, moved); err != nil {
 				t.Fatal(err)
 			}
-			symlinkOrSkip(t, moved, link)
+			linkOrSkip(t, moved, link)
 			err := RemoveCA(root)
 			if err == nil || !strings.Contains(err.Error(), link) || !strings.Contains(err.Error(), "link") {
 				t.Fatalf("err = %v", err)
 			}
 			// Nothing went: neither side's files nor the link.
-			if !exists(link) || !exists(filepath.Join(root, "pki", "authorities", "local", "root.key")) ||
-				!exists(filepath.Join(root, "certificates", "local", "app.test", "app.test.crt")) {
+			if !present(link) || !present(filepath.Join(root, "pki", "authorities", "local", "root.key")) ||
+				!present(filepath.Join(root, "certificates", "local", "app.test", "app.test.crt")) {
 				t.Fatal("RemoveCA removed something")
 			}
 		})
@@ -172,11 +172,11 @@ func TestRemoveCARefusesALinkToItsParent(t *testing.T) {
 	root := t.TempDir()
 	writeFiles(t, root, "pki/authorities/other/root.key")
 	link := filepath.Join(root, "pki", "authorities", "local")
-	symlinkOrSkip(t, filepath.Join(root, "pki"), link)
+	linkOrSkip(t, filepath.Join(root, "pki"), link)
 	if err := RemoveCA(root); err == nil {
 		t.Fatal("RemoveCA removed the link's parent")
 	}
-	if !exists(filepath.Join(root, "pki", "authorities", "other", "root.key")) {
+	if !present(filepath.Join(root, "pki", "authorities", "other", "root.key")) {
 		t.Fatal("RemoveCA removed another authority")
 	}
 }
@@ -187,11 +187,11 @@ func TestRemoveCAThroughALinkedRoot(t *testing.T) {
 	real := t.TempDir()
 	writeFiles(t, real, caFiles...)
 	root := filepath.Join(t.TempDir(), "caddy")
-	symlinkOrSkip(t, real, root)
+	linkOrSkip(t, real, root)
 	if err := RemoveCA(root); err != nil {
 		t.Fatal(err)
 	}
-	if exists(filepath.Join(real, "pki", "authorities", "local")) {
+	if present(filepath.Join(real, "pki", "authorities", "local")) {
 		t.Fatal("the CA is still there")
 	}
 }
