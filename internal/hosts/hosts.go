@@ -155,8 +155,9 @@ func rewrite(existing string, aliases []string, ipv6 bool) (string, error) {
 }
 
 // withPage returns aliases with Nearhost's page, hostname.PageHost, added
-// when there are any: every block Nearhost writes holds the page's name, so
-// Safari and command-line tools, which ask the system resolver, find it.
+// when there are any: every block Nearhost writes holds the page's name.
+// Current macOS, Windows 11, Linux with systemd-resolved, Chrome and Firefox
+// resolve it to loopback themselves; the line covers resolvers that do not.
 // With no aliases there is no block, and no line for the page either.
 func withPage(aliases []string) []string {
 	if len(aliases) == 0 {
