@@ -69,10 +69,13 @@ func TestRetireWaitsUntilACloseHasReturned(t *testing.T) {
 // A load that fails had opened some listeners before the one it could not.
 // Caddy closes them in goroutines it does not wait for, and the proxy waits
 // for them: when Apply returns, none is open and the failed configuration's
-// other ports can be bound at once. Which servers Caddy starts first varies,
-// so the load is failed several times. The check that the wait was asked for
-// does the real work: Caddy has closed the listeners by the time Apply
-// returns on all but a few runs, so the bind rarely fails without the wait.
+// other port can be bound at once. Which server Caddy starts first varies,
+// and a load that meets the held port first opens nothing, so the load is
+// failed, with the HTTP port and the HTTPS port held by turns, until one has
+// opened a listener. The check that the wait was asked
+// for does the real work: Caddy has closed the listeners by the time Apply
+// returns on all but a few runs, so the set waited for is empty on most and
+// the bind rarely fails without the wait.
 func TestAFailedLoadWaitsForTheListenersItOpened(t *testing.T) {
 	var waited []map[*retireListener]struct{}
 	orig := retired
@@ -82,9 +85,20 @@ func TestAFailedLoadWaitsForTheListenersItOpened(t *testing.T) {
 	}
 	t.Cleanup(func() { retired = orig })
 	sites := []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}}
-	for try := 0; try < 10; try++ {
+	wrapped := func() int {
+		retiring.mu.Lock()
+		defer retiring.mu.Unlock()
+		return retiring.wrapped
+	}
+	var last error
+	for try := 0; try < 40; try++ {
+		opened := wrapped()
 		https, http := freePort(t), freePort(t)
-		held, err := netbind.Listen("tcp", netbind.ServeAddrs(https)[0])
+		taken, free := http, https
+		if try%2 == 1 {
+			taken, free = https, http
+		}
+		held, err := netbind.Listen("tcp", netbind.ServeAddrs(taken)[0])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,8 +108,9 @@ func TestAFailedLoadWaitsForTheListenersItOpened(t *testing.T) {
 		held.Close()
 		if err == nil {
 			p.Stop()
-			t.Fatal("Apply succeeded with the HTTPS port held")
+			t.Fatalf("Apply succeeded with port %d held", taken)
 		}
+		last = err
 		if p.Running() {
 			t.Fatal("Running after a load that failed")
 		}
@@ -105,14 +120,18 @@ func TestAFailedLoadWaitsForTheListenersItOpened(t *testing.T) {
 		if n := len(retiring.snapshot()); n != 0 {
 			t.Fatalf("%d listeners open after the failed load returned", n)
 		}
-		for _, a := range netbind.ServeAddrs(http) {
+		for _, a := range netbind.ServeAddrs(free) {
 			l, err := netbind.Listen("tcp", a)
 			if err != nil {
-				t.Fatalf("the HTTP port right after the failed load: %v", err)
+				t.Fatalf("the port that was not held, right after the failed load: %v", err)
 			}
 			l.Close()
 		}
+		if wrapped() > opened {
+			return
+		}
 	}
+	t.Fatalf("no failed load opened a listener in 40 tries, so none was waited for; the last error: %v", last)
 }
 
 // stuckListener is a listener at addr that is never closed.

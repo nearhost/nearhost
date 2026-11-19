@@ -56,6 +56,9 @@ var retiring = &retireSet{open: map[*retireListener]struct{}{}}
 type retireSet struct {
 	mu   sync.Mutex
 	open map[*retireListener]struct{}
+	// wrapped counts every listener wrapped, open or closed since; tests
+	// read it to tell that a load opened one.
+	wrapped int
 }
 
 // retireListener is one server's listener on one address.
@@ -71,6 +74,7 @@ func (s *retireSet) wrap(ln net.Listener) net.Listener {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.open[l] = struct{}{}
+	s.wrapped++
 	return l
 }
 
