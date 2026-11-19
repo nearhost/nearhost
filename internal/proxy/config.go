@@ -441,15 +441,17 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 }
 
-// listenerWrappers sets server's listener wrappers: Handoff, before TLS,
-// where configurations share their sockets, and none elsewhere.
+// listenerWrappers sets server's listener wrappers, before TLS: Handoff
+// where configurations share their sockets, and Retire everywhere.
 func listenerWrappers(server map[string]any) map[string]any {
+	wrappers := []any{}
 	if sharedSockets {
-		server["listener_wrappers"] = []any{
-			map[string]any{"wrapper": handoffModule},
-			map[string]any{"wrapper": "tls"},
-		}
+		wrappers = append(wrappers, map[string]any{"wrapper": handoffModule})
 	}
+	server["listener_wrappers"] = append(wrappers,
+		map[string]any{"wrapper": retireModule},
+		map[string]any{"wrapper": "tls"},
+	)
 	return server
 }
 

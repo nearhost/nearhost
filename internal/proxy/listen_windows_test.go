@@ -105,11 +105,12 @@ func TestARequestJustAfterAReloadIsServedOnWindows(t *testing.T) {
 }
 
 // Each server hands its connections over through Handoff, before TLS, so
-// a stopping server is given none (see Handoff).
+// a stopping server is given none (see Handoff), and Retire, around it, sees
+// each server's listener close.
 func TestServersHandConnectionsToTheNewestConfigOnWindows(t *testing.T) {
 	for name, w := range serverWrappers(t) {
-		if !slices.Equal(w, []string{handoffModule, "tls"}) {
-			t.Errorf("server %s has listener wrappers %q, want %q then tls", name, w, handoffModule)
+		if !slices.Equal(w, []string{handoffModule, retireModule, "tls"}) {
+			t.Errorf("server %s has listener wrappers %q, want %q, %q then tls", name, w, handoffModule, retireModule)
 		}
 	}
 }
