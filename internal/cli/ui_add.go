@@ -48,15 +48,16 @@ const (
 	connectAgain = "press r to connect again"
 )
 
+// SSHHosts lists the hosts of the user's ssh config and the files it includes.
 func (u *uiEngine) SSHHosts() []string {
-	if u.b.sshConfig == nil {
+	if u.b.sshHosts == nil {
 		return nil
 	}
-	data, err := u.b.sshConfig()
+	hosts, err := u.b.sshHosts()
 	if err != nil {
 		return nil
 	}
-	return sshHosts(data)
+	return hosts
 }
 
 func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
