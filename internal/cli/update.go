@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,9 +11,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	slashpath "path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -64,6 +68,19 @@ type updateBackend struct {
 	probe func(ctx context.Context, path string) (string, error)
 	// lookPath finds a command on PATH, as exec.LookPath does.
 	lookPath func(name string) (string, error)
+	// realPath resolves the symlinks in path, as filepath.EvalSymlinks does.
+	realPath func(path string) (string, error)
+	// readHead returns the start of the file at path, enough to tell a
+	// shell script from a binary and to read a shim's target.
+	readHead func(path string) ([]byte, error)
+	// netBindCap reports whether the file at path has the file capability
+	// cap_net_bind_service. known is false when that cannot be told.
+	netBindCap func(path string) (has, known bool)
+	// isFile reports whether path is an existing regular file.
+	isFile func(path string) bool
+	// unprivilegedPortStart is the first port any user may bind
+	// (net.ipv4.ip_unprivileged_port_start), and whether it could be read.
+	unprivilegedPortStart func() (int, bool)
 }
 
 // systemUpdate is the production backend. Only NewRoot wires it in.
@@ -106,6 +123,21 @@ func systemUpdate() updateBackend {
 		downloadLimit: downloadTimeLimit,
 		probe:         probeVersion,
 		lookPath:      exec.LookPath,
+		realPath:      filepath.EvalSymlinks,
+		readHead:      readHead,
+		netBindCap:    fileNetBindCap,
+		isFile: func(path string) bool {
+			info, err := os.Stat(path)
+			return err == nil && info.Mode().IsRegular()
+		},
+		unprivilegedPortStart: func() (int, bool) {
+			data, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+			if err != nil {
+				return 0, false
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			return n, err == nil
+		},
 	}
 }
 
@@ -297,7 +329,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		if v := envOf(m, "NEARHOST_VERSION"); v != "" {
 			pin = " NEARHOST_VERSION=" + v
 		}
-		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s%s sh\n", m.Dir, m.Dir, pin)
+		fmt.Fprintf(out, "You cannot write to %s, so run the installer as root:\n\n  curl -fsSL https://nearhost.dev/install.sh | sudo NEARHOST_INSTALL_DIR=%s%s sh\n", m.Dir, shellQuote(m.Dir), pin)
 		return nil
 	}
 
@@ -344,14 +376,115 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
 	if b.goos == "linux" {
-		switch m.Kind {
-		case update.Go:
-			fmt.Fprintf(out, "Let the new binary bind ports 80 and 443 again:\n\n  %s\n", doctor.SetcapFix(exe))
-		case update.Homebrew:
-			fmt.Fprintln(out, "Let the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep \"$(readlink -f \"$(command -v nearhost)\")\"")
-		}
+		printSetcapAdvice(out, b, m, exe)
 	}
 	return nil
+}
+
+// printSetcapAdvice tells the user how to let the new binary bind ports 80
+// and 443 again, when it cannot. A file capability belongs to the file, so
+// every update that replaces the binary drops it. Nothing is printed when
+// the new binary has the capability; when that cannot be checked, the
+// command is printed anyway.
+func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe string) {
+	if first, ok := b.unprivilegedPortStart(); ok && first <= 80 {
+		return // this system lets any program bind ports 80 and 443
+	}
+	bin, found := realBinary(b, m, exe)
+	if found {
+		if has, known := b.netBindCap(bin); known && has {
+			return
+		}
+	}
+	const lead = "Let the new binary bind ports 80 and 443 again"
+	if found {
+		fmt.Fprintf(out, "%s:\n\n  %s\n", lead, doctor.SetcapFix(bin))
+		return
+	}
+	// The path the user runs may be a launcher script, which a capability
+	// does nothing for, so say so rather than print it as the binary.
+	run := probePath(b, m, exe)
+	fmt.Fprintf(out, "%s. Nearhost could not tell which file is the binary, so check that %s is the binary and not a launcher script before running:\n\n  %s\n", lead, printable(run), doctor.SetcapFix(run))
+}
+
+// realBinary is the file the new nearhost runs as, the one setcap must
+// name, or false when that cannot be told. A symlink or a shell shim on PATH
+// is not it: the capability goes on the file the link or shim leads to.
+func realBinary(b updateBackend, m update.Method, exe string) (string, bool) {
+	p := probePath(b, m, exe)
+	if p == "" {
+		return "", false
+	}
+	var bin string
+	switch m.Kind {
+	case update.Homebrew:
+		real, err := b.realPath(p)
+		if err != nil {
+			return "", false
+		}
+		bin = real
+	case update.PNPM:
+		var ok bool
+		if bin, ok = pnpmBinary(b, p); !ok {
+			return "", false
+		}
+	default:
+		bin = p
+	}
+	return bin, b.isFile(bin)
+}
+
+// pnpmBinary finds the platform binary behind pnpm's shim at shim. The
+// shim is a symlink to the npm launcher (nearhost.js) or a shell script
+// that runs it, and the launcher resolves the platform package
+// (@nearhost/cli-<os>-<arch>) beside its own, which this repeats.
+func pnpmBinary(b updateBackend, shim string) (string, bool) {
+	real, err := b.realPath(shim)
+	if err != nil {
+		return "", false
+	}
+	launcher := ""
+	if strings.HasSuffix(real, ".js") {
+		launcher = real
+	} else {
+		head, err := b.readHead(real)
+		if err != nil {
+			return "", false
+		}
+		if !bytes.HasPrefix(head, []byte("#!")) {
+			return real, true // a binary, linked or copied
+		}
+		m := shimTarget.FindSubmatch(head)
+		if m == nil {
+			return "", false
+		}
+		launcher = slashpath.Join(slashpath.Dir(real), string(m[1]))
+		if resolved, err := b.realPath(launcher); err == nil {
+			launcher = resolved
+		}
+	}
+	// <...>/node_modules/@nearhost/cli/bin/nearhost.js
+	// These are Linux paths, so they take slashes whatever system built this.
+	scope := slashpath.Dir(slashpath.Dir(slashpath.Dir(launcher)))
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
+	bin := slashpath.Join(scope, "cli-linux-"+arch, "bin", "nearhost")
+	return bin, b.isFile(bin)
+}
+
+// shimTarget finds the launcher in a pnpm shell shim: the quoted
+// "$basedir/<path>/nearhost.js" its exec line runs.
+var shimTarget = regexp.MustCompile(`"\$basedir/([^"]*/nearhost\.js)"`)
+
+// shellQuote is s as one word of a POSIX shell command: unchanged when it
+// has only characters the shell leaves alone, otherwise in single quotes
+// with each embedded single quote written '\”.
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_@%+=:,./-", r))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runAside runs the update on Windows, which will not let anything overwrite
@@ -624,4 +757,19 @@ func downloadHTTP() *http.Client {
 	tr.TLSHandshakeTimeout = 10 * time.Second
 	tr.ResponseHeaderTimeout = 30 * time.Second
 	return &http.Client{Transport: tr}
+}
+
+// readHead returns up to the first 4 KiB of the file at path.
+func readHead(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	buf := make([]byte, 4096)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:n], nil
 }
