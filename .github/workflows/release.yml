@@ -12,6 +12,9 @@ concurrency:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    # The release environment admits only main and v* tags, and holds the
+    # macOS signing and notary secrets, so no other workflow or ref reads them.
+    environment: release
     permissions:
       contents: write
       id-token: write
