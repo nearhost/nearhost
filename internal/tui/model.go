@@ -121,6 +121,10 @@ type Model struct {
 	// a change was saved after it had read the file.
 	reloadAfter bool
 
+	// guard is the request box nextAsked opened last, which ignores keys
+	// for askGuard after it opens.
+	guard askGuarded
+
 	now func() time.Time // the clock; tests set their own
 	// getenv reads the environment, to tell which terminal this is; tests
 	// set their own.
@@ -428,7 +432,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.password != nil {
 			return m, m.password.update(msg)
 		}
-		if m.form != nil {
+		if m.form != nil && !m.guarding() {
 			return m, m.form.update(msg)
 		}
 	case tea.KeyPressMsg:
@@ -442,6 +446,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
 		return m, m.alertProblem(msg.key, "Could not open "+msg.url+": "+msg.err.Error())
+	case askGuardEndedMsg:
+		return m, nil // the redraw shows the box's keys
 	case toastDoneMsg:
 		m.toastDone(msg)
 	case copyFailedMsg:

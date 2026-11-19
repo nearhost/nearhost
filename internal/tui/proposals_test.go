@@ -17,12 +17,14 @@ import (
 )
 
 // propose gives the model p, as an agent's proposal arriving, and runs what
-// follows until the form waits for the user.
+// follows until the form waits for the user. The clock then moves past the
+// guard, as the user reads the box.
 func propose(m *Model, p Proposal) {
 	if p.Expires.IsZero() {
 		p.Expires = m.now().Add(10 * time.Minute)
 	}
 	settle(m, func() tea.Msg { return proposalMsg{p} })
+	wait(m, askGuard)
 }
 
 func TestAProposalOpensTheAddFormFilledIn(t *testing.T) {
@@ -100,6 +102,7 @@ func TestAProposalWaitsForTheOpenFormThenOpens(t *testing.T) {
 	m.form = nil
 	wantScreen(t, m, "agents    ● 2 requests waiting · p to review")
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	wantScreen(t, m, "Proposed by an agent on mini")
 	settle(m, press(m, "esc"))
 	settle(m, press(m, "esc"))
@@ -119,6 +122,7 @@ func TestAProposalThatExpiredUnreviewedIsDropped(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(time.Hour) }
 	m.form = nil
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.form != nil || len(m.waiting) != 0 || len(f.proposalAnswers()) != 0 {
 		t.Fatalf("form %T, waiting %d, answers %v", m.form, len(m.waiting), f.proposalAnswers())
 	}
@@ -145,6 +149,7 @@ func TestAProposalWaitsWhileTheFilterIsTyped(t *testing.T) {
 	}
 	press(m, "esc") // stops typing the filter
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.proposing == nil {
 		t.Fatal("p did not open it")
 	}
@@ -158,6 +163,7 @@ func TestPOpensAProposalFromTheLogView(t *testing.T) {
 		t.Fatal("a proposal opened over the log view")
 	}
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.logView != nil || m.proposing == nil {
 		t.Fatalf("log view %v, proposing %v", m.logView, m.proposing)
 	}

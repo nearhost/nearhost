@@ -19,9 +19,11 @@ func passReq(m *Model) PassRequest {
 	}
 }
 
-// ask gives the model r, as a request arriving, and runs what follows.
+// ask gives the model r, as a request arriving, and runs what follows. The
+// clock then moves past the guard, as the user reads the box.
 func ask(m *Model, r PassRequest) {
 	settle(m, func() tea.Msg { return passMsg{r} })
+	wait(m, askGuard)
 }
 
 func keyLabels(f form) []string {
@@ -42,7 +44,7 @@ func TestPassPromptOpens(t *testing.T) {
 	if got := pf.heading().title; got != "Open a port" {
 		t.Fatalf("heading %q", got)
 	}
-	if got := keyLabels(pf); !slices.Equal(got, []string{"y", "n", "a"}) {
+	if got := keyLabels(pf); !slices.Equal(got, []string{"y", "n", "A"}) {
 		t.Fatalf("keys %v", got)
 	}
 	wantScreen(t, m, "Open a port", "Claude Code on apollo wants to open port 41873 on this laptop.")
@@ -65,7 +67,7 @@ func TestPassPromptNoAlwaysForAgent(t *testing.T) {
 	if got := keyLabels(m.form); !slices.Equal(got, []string{"y", "n"}) {
 		t.Fatalf("keys %v", got)
 	}
-	settle(m, press(m, "a"))
+	settle(m, press(m, "A"))
 	if _, ok := m.form.(*passForm); !ok || len(f.passthroughCalls()) != 0 {
 		t.Fatalf("form %T, calls %v", m.form, f.passthroughCalls())
 	}
@@ -86,7 +88,7 @@ func TestPassPromptAnswers(t *testing.T) {
 		log  string
 	}{
 		{"y", "answer r1 1", "Opened port 41873 for Claude Code on apollo."},
-		{"a", "answer r1 2", "Opened port 41873 for Claude Code on apollo."},
+		{"A", "answer r1 2", "Opened port 41873 for Claude Code on apollo."},
 		{"n", "answer r1 0", "Declined to open port 41873 for Claude Code on apollo."},
 		{"esc", "answer r1 0", "Declined to open port 41873 for Claude Code on apollo."},
 	} {
@@ -171,7 +173,7 @@ func TestPassPromptSessionClosedWhileShownEscCloses(t *testing.T) {
 	f.mu.Lock()
 	f.endPass("r1", errors.New("the request for port 41873 has ended: closed"))
 	f.mu.Unlock()
-	settle(m, press(m, "a"))
+	settle(m, press(m, "A"))
 	wantScreen(t, m, "The request for port 41873 has ended: closed", "This request has ended")
 	settle(m, press(m, "esc"))
 	if m.form != nil {
@@ -219,6 +221,7 @@ func TestPassAndProposalQueue(t *testing.T) {
 	m.form = nil
 	wantScreen(t, m, "agents    ● 3 requests waiting · p to review")
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	wantScreen(t, m, "Proposed by an agent on mini", "path      /home/dev/code/blog")
 	for i := 0; i < 2; i++ {
 		if _, ok := m.form.(*projectForm); ok {
@@ -229,8 +232,10 @@ func TestPassAndProposalQueue(t *testing.T) {
 	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("second was %T", m.form)
 	}
+	wait(m, askGuard)
 	settle(m, press(m, "n"))
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	wantScreen(t, m, "path      /work/here")
 	if got := f.proposalAnswers(); !slices.Equal(got, []string{"decline p1"}) {
 		t.Fatalf("answers %v", got)
@@ -244,6 +249,7 @@ func TestPassExpiredSkipped(t *testing.T) {
 	m.now = func() time.Time { return time.Now().Add(time.Hour) }
 	m.form = nil
 	settle(m, press(m, "p"))
+	wait(m, askGuard)
 	if m.form != nil || len(m.waiting) != 0 || len(f.passthroughCalls()) != 0 {
 		t.Fatalf("form %T, waiting %d, calls %v", m.form, len(m.waiting), f.passthroughCalls())
 	}
@@ -318,7 +324,7 @@ func TestAlwaysNotSavedStillLogsOpen(t *testing.T) {
 	m, f, _ := projectFormModel(t)
 	f.passErr = fmt.Errorf("%w: disk full", ErrAllowNotSaved)
 	ask(m, passReq(m))
-	settle(m, press(m, "a"))
+	settle(m, press(m, "A"))
 	if _, ok := m.form.(*passForm); !ok {
 		t.Fatalf("form %T", m.form)
 	}
@@ -341,7 +347,7 @@ func TestAlwaysEndedAndNotSavedLogsEnded(t *testing.T) {
 	m, f, _ := projectFormModel(t)
 	f.passErr = fmt.Errorf("%w; %w", ErrRequestEnded, ErrAllowNotSaved)
 	ask(m, passReq(m))
-	settle(m, press(m, "a"))
+	settle(m, press(m, "A"))
 	log := logText(m, homeKey)
 	if !strings.Contains(log, "The request to open port 41873 for Claude Code on apollo had already ended.") ||
 		strings.Contains(log, "Opened port") {

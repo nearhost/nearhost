@@ -20,6 +20,9 @@ func (m *Model) footerItems() []footerItem {
 		return nil
 	}
 	if m.form != nil {
+		if m.guarding() {
+			return nil
+		}
 		return m.form.keys()
 	}
 	if m.empty() {
@@ -231,6 +234,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.password.update(k)
 	}
 	if m.form != nil {
+		if m.guarding() {
+			return nil // a request box that has only just opened
+		}
 		return m.form.update(k)
 	}
 	if m.logView != nil {

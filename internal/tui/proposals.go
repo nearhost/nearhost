@@ -221,7 +221,7 @@ func (m *Model) nextAsked() tea.Cmd {
 				continue
 			}
 			m.form = &passForm{b: m.b, w: m.work, r: r}
-			return nil
+			return m.openGuard()
 		}
 		if a.doc != nil {
 			r := *a.doc
@@ -230,7 +230,7 @@ func (m *Model) nextAsked() tea.Cmd {
 				continue
 			}
 			m.form = &docForm{b: m.b, w: m.work, r: r, root: m.shownRoot(r)}
-			return nil
+			return m.openGuard()
 		}
 		p := *a.prop
 		if !m.now().Before(p.Expires) {
@@ -247,9 +247,42 @@ func (m *Model) nextAsked() tea.Cmd {
 		}
 		f, connect := newProposalForm(m.b, m.cfg, srv, p, m.work)
 		m.form, m.proposing = f, &proposing{p: p, form: f}
-		return connect
+		return tea.Batch(connect, m.openGuard())
 	}
 	return nil
+}
+
+// askGuard is how long a box that opens by itself for an agent's request
+// ignores keys, so that a key meant for the main screen, pressed as the
+// request arrives, cannot answer it.
+const askGuard = 750 * time.Millisecond
+
+// askGuarded is the box nextAsked opened last and when it opened.
+type askGuarded struct {
+	form   form
+	opened time.Time
+}
+
+// askGuardEndedMsg says a request box's guard has ended, so its keys are
+// drawn again.
+type askGuardEndedMsg struct{}
+
+// guardTimer redraws once a request box's guard has ended. Tests replace it
+// with one that never fires.
+var guardTimer = func() tea.Cmd {
+	return tea.Tick(askGuard, func(time.Time) tea.Msg { return askGuardEndedMsg{} })
+}
+
+// openGuard starts the guard of the form nextAsked has just opened.
+func (m *Model) openGuard() tea.Cmd {
+	m.guard = askGuarded{form: m.form, opened: m.now()}
+	return guardTimer()
+}
+
+// guarding reports whether the open form is a request box that opened too
+// recently to take a key.
+func (m *Model) guarding() bool {
+	return m.form != nil && m.form == m.guard.form && m.now().Sub(m.guard.opened) < askGuard
 }
 
 // endProposal answers the proposal whose form has closed without saving.

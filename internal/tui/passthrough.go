@@ -80,7 +80,7 @@ func (f *passForm) update(msg tea.Msg) tea.Cmd {
 		switch msg.String() {
 		case "y":
 			return f.answer(AnswerYes)
-		case "a":
+		case "A", "shift+a":
 			if f.r.CanAlways {
 				return f.answer(AnswerAlways)
 			}
@@ -164,7 +164,7 @@ func (f *passForm) keys() []footerItem {
 	}
 	items := []footerItem{{"y", "yes"}, {"n", "no"}}
 	if f.r.CanAlways {
-		items = append(items, footerItem{"a", "always allow"})
+		items = append(items, footerItem{"A", "always allow"})
 	}
 	return items
 }
