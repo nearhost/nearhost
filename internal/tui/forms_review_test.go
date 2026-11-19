@@ -100,11 +100,13 @@ func TestQuitEndsAFormStepBlockedOnItsConnection(t *testing.T) {
 	toPath(t, m, 1)
 	listed := hangOnList(t, m, files)
 	quitWithin(t, m)
-	select {
-	case <-listed:
-	default:
-		t.Error("the shutdown did not wait for the step its close ended")
+	// The files' own count says whether the step had gone on by the time
+	// quitting returned. listed is sent after the shutdown stopped waiting
+	// for the step, and could be late.
+	if n := files.resumed.Load(); n != 1 {
+		t.Errorf("the shutdown did not wait for the step its close ended: %d steps had gone on", n)
 	}
+	<-listed
 	if files.closed != 1 || len(f.shutdown) != 1 {
 		t.Errorf("files closed %d times, shut down %d times", files.closed, len(f.shutdown))
 	}
@@ -178,11 +180,7 @@ func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 	typeText(m, "box")
 	press(m, "enter")
 	check := press(m, "enter")
-	ended := make(chan error, 1)
-	go func() {
-		check()
-		ended <- nil
-	}()
+	go check()
 	// Quit once the check is running: a check that has not begun is not
 	// waited for, it never starts.
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
@@ -207,10 +205,14 @@ func TestQuitEndsAndWaitsForARunningCheck(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("quitting did not end the check")
 	}
-	select {
-	case <-ended:
-	default:
-		t.Error("the shutdown did not wait for the check")
+	// The backend's own count says whether the check had returned by the
+	// time quitting did. A signal sent by the goroutine that ran the check
+	// would come after the shutdown stopped waiting, and could be late.
+	f.mu.Lock()
+	ended := f.forms.checkEnded
+	f.mu.Unlock()
+	if ended != 1 {
+		t.Errorf("the shutdown did not wait for the check: %d checks had ended", ended)
 	}
 }
 

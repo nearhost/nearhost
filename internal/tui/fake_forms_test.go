@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -20,6 +21,7 @@ type formFake struct {
 	checkErr    error
 	checkBlocks bool // CheckServer waits for its context to end
 	checked     []config.Server
+	checkEnded  int // the CheckServer calls that have returned
 	addedSrv    []config.Server
 	openErr     error
 	opened      []config.Server
@@ -55,6 +57,7 @@ type fakeFiles struct {
 	hung     chan struct{}
 	keepHung bool
 	unhang   sync.Once
+	resumed  atomic.Int32 // the waits on hang that have ended
 }
 
 func (f *fakeFiles) abs(p string) string {
@@ -72,6 +75,7 @@ func (f *fakeFiles) wait(ctx context.Context) error {
 	}
 	f.hung <- struct{}{}
 	<-f.hang
+	f.resumed.Add(1)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -146,6 +150,11 @@ func (f *fakeBackend) CheckServer(ctx context.Context, srv config.Server) error 
 	f.forms.checked = append(f.forms.checked, srv)
 	blocks, err := f.forms.checkBlocks, f.forms.checkErr
 	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.forms.checkEnded++
+		f.mu.Unlock()
+	}()
 	if blocks {
 		<-ctx.Done()
 		return ctx.Err()
