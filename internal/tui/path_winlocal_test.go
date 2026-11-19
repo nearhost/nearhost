@@ -34,7 +34,7 @@ func winForm(srv, path string, l *dirLister) *projectForm {
 		laptopWindows: true, srv: config.Server{Name: srv}, files: l,
 		w: newWorker(), listings: map[string]listing{}, step: projectStepPath,
 	}
-	f.path.value = path
+	f.path.set(path)
 	return f
 }
 

@@ -92,7 +92,7 @@ func TestProjectFormCompletesPaths(t *testing.T) {
 	if f.forms.opened[0].Name != "mini" {
 		t.Fatalf("opened %+v", f.forms.opened)
 	}
-	wantScreen(t, m, "path      ~/▏", "tab complete · enter next · ctrl+r reconnect · esc back")
+	wantScreen(t, m, "path      ~/▏", "tab complete · ←→ move · enter next · ctrl+r reconnect · esc back")
 	settle(m, press(m, "tab")) // ~/ holds code and .cache; dot names wait for a dot
 	wantScreen(t, m, "path      ~/code/▏")
 	typeText(m, "b")
@@ -489,7 +489,7 @@ func TestRoutesStepEditsHosts(t *testing.T) {
 	wantScreen(t, m, "Only a web route has hosts")
 	press(m, "up")
 	press(m, "h")
-	wantScreen(t, m, "hosts     ▏", "enter set hosts · esc cancel")
+	wantScreen(t, m, "hosts     ▏", "enter set hosts · ←→ move · esc cancel")
 	typeText(m, "a.local.x.io  B.local.x.io a.local.x.io")
 	press(m, "enter")
 	if h := pf.routes[0].Hosts; len(h) != 2 || h[0] != "a.local.x.io" || h[1] != "b.local.x.io" {

@@ -43,7 +43,8 @@ type serverForm struct {
 func newServerEditForm(b Backend, cfg *config.Config, srv config.Server, w *worker) (*serverForm, tea.Cmd) {
 	f, load := newServerForm(b, cfg, w)
 	f.edit = &srv
-	f.host.value, f.name.value = srv.SSHHost, srv.Name
+	f.host.set(srv.SSHHost)
+	f.name.set(srv.Name)
 	return f, load
 }
 
@@ -185,9 +186,10 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 				f.err = "an SSH host cannot be empty, start with - or contain spaces"
 				return nil
 			}
-			f.host.value, f.err = host, ""
+			f.host.set(host)
+			f.err = ""
 			if f.edit == nil {
-				f.name.value = hostName(host) // an edited server keeps its name
+				f.name.set(hostName(host)) // an edited server keeps its name
 			}
 			f.step = serverStepName
 			return nil
@@ -206,7 +208,8 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 			case taken && (f.edit == nil || name != f.edit.Name):
 				f.err = "a server called " + name + " already exists"
 			default:
-				f.name.value, f.err = name, ""
+				f.name.set(name)
+				f.err = ""
 				f.step = serverStepCheck
 				return f.check()
 			}
@@ -301,9 +304,9 @@ var serverStepTitles = map[int]string{serverStepHost: "host", serverStepName: "n
 func (f *serverForm) keys() []footerItem {
 	switch f.step {
 	case serverStepHost:
-		return []footerItem{{"enter", "next"}, {"↑↓", "choose"}, {"esc", "cancel"}}
+		return []footerItem{{"enter", "next"}, {"↑↓", "choose"}, {"←→", "move"}, {"esc", "cancel"}}
 	case serverStepName:
-		return []footerItem{{"enter", "check"}, {"esc", "back"}}
+		return []footerItem{{"enter", "check"}, {"←→", "move"}, {"esc", "back"}}
 	}
 	if f.fail != "" {
 		return []footerItem{{"r", "check again"}, {"esc", "back"}}

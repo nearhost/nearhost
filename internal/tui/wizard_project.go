@@ -186,8 +186,10 @@ func newProjectEditForm(b Backend, cfg *config.Config, p config.Project, w *work
 	f := newProjectForm(b, cfg, "", p.Server, w)
 	f.edit = &p
 	f.srv, _ = cfg.Server(p.Server)
-	f.step, f.resolved, f.path.value = projectStepPath, p.Path, p.Path
-	f.name.value, f.alias.value = p.Name, p.Alias
+	f.step, f.resolved = projectStepPath, p.Path
+	f.path.set(p.Path)
+	f.name.set(p.Name)
+	f.alias.set(p.Alias)
 	f.aliasEdited = p.Alias != config.AliasFor(p.Name)
 	return f, f.connect()
 }
@@ -199,9 +201,11 @@ func newProjectEditForm(b Backend, cfg *config.Config, p config.Project, w *work
 func newProposalForm(b Backend, cfg *config.Config, srv config.Server, p Proposal, w *worker) (*projectForm, tea.Cmd) {
 	f := newProjectForm(b, cfg, "", srv.Name, w)
 	f.proposal = &p
-	f.srv, f.step, f.path.value = srv, projectStepPath, p.Path
+	f.srv, f.step = srv, projectStepPath
+	f.path.set(p.Path)
 	if p.Name != "" {
-		f.name.value, f.alias.value = p.Name, config.AliasFor(p.Name)
+		f.name.set(p.Name)
+		f.alias.set(config.AliasFor(p.Name))
 	}
 	return f, f.connect()
 }
@@ -442,11 +446,6 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		switch s {
 		case "tab":
 			return f.tab()
-		case "right":
-			if f.suggestion() != "" {
-				return f.accept()
-			}
-			return nil
 		case "down", "up":
 			if n := len(f.candidates()); n > 1 {
 				step := 1
@@ -459,9 +458,13 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "enter":
 			return f.resolve()
 		}
+		if s == "right" && f.suggestion() != "" {
+			return f.accept()
+		}
 		if f.path.key(k) {
 			return f.edited()
 		}
+		f.listNote = "" // a move of the cursor leaves the rest as it is, but the note is stale
 	case projectStepRegistry:
 		switch s {
 		case "up":
@@ -516,7 +519,8 @@ func (f *projectForm) key(k tea.KeyPressMsg) tea.Cmd {
 		case "enter":
 			f.seq = nextSeq()
 			f.busy, f.nameErr, f.aliasErr = "Checking…", "", ""
-			f.name.value, f.alias.value = strings.TrimSpace(f.name.value), strings.TrimSpace(f.alias.value)
+			f.name.set(strings.TrimSpace(f.name.value))
+			f.alias.set(strings.TrimSpace(f.alias.value))
 			seq, b, name, alias := f.seq, f.b, f.name.value, f.alias.value
 			files, dir, routes := f.files, f.resolved, append([]config.Route(nil), f.routes...)
 			items, edit := f.needsApproval(), f.edit
@@ -625,7 +629,7 @@ func (f *projectForm) paste(s string) tea.Cmd {
 func (f *projectForm) nameChanged() {
 	f.nameErr, f.aliasErr = "", ""
 	if !f.aliasEdited && !f.aliasFromRc {
-		f.alias.value = config.AliasFor(strings.TrimSpace(f.name.value))
+		f.alias.set(config.AliasFor(strings.TrimSpace(f.name.value)))
 	}
 }
 
@@ -664,7 +668,7 @@ func (f *projectForm) routesKey(k tea.KeyPressMsg) tea.Cmd {
 			f.err = "only a web route has hosts; make this one web with ← or → first"
 			return nil
 		}
-		f.hosts.value = strings.Join(f.routes[f.routeRow].Hosts, " ")
+		f.hosts.set(strings.Join(f.routes[f.routeRow].Hosts, " "))
 		f.editingHosts, f.hostsErr, f.err = true, "", ""
 	case "up":
 		f.routeRow = max(f.routeRow-1, 0)
@@ -909,9 +913,9 @@ func (f *projectForm) winLocal() bool {
 // pick goes on with srv: to the path step, connecting to the server.
 func (f *projectForm) pick(srv config.Server) tea.Cmd {
 	f.srv, f.step, f.err = srv, projectStepPath, ""
-	f.path.value = "~/"
+	f.path.set("~/")
 	if srv.Name == config.LocalServer {
-		f.path.value = f.dir
+		f.path.set(f.dir)
 	}
 	return f.connect()
 }
@@ -1049,8 +1053,12 @@ func (f *projectForm) edited() tea.Cmd {
 }
 
 // candidates are the parent's directories that start with the part being
-// typed, in the listing's order. Hidden ones wait for a dot.
+// typed, in the listing's order. Hidden ones wait for a dot. There are none
+// while the cursor is not at the end of the path.
 func (f *projectForm) candidates() []string {
+	if !f.path.atEnd() {
+		return nil // completion works at the end of the path only
+	}
 	parent, part := splitPath(f.path.value, f.winLocal())
 	l := f.listings[parent]
 	if !l.done || l.err != nil || part == "~" && parent == "" || driveRelative(parent, part, f.winLocal()) {
@@ -1079,19 +1087,23 @@ func (f *projectForm) suggestion() string {
 // accept puts the suggestion in the path, as a directory.
 func (f *projectForm) accept() tea.Cmd {
 	parent, _ := splitPath(f.path.value, f.winLocal())
-	f.path.value = parent + f.suggestion() + pathSep(parent, f.winLocal())
+	f.path.set(parent + f.suggestion() + pathSep(parent, f.winLocal()))
 	return f.edited()
 }
 
 // tab completes the path: it accepts the suggestion, else gives ~, . and ..
 // their slash, else lists the parent again, as it may have changed since.
 func (f *projectForm) tab() tea.Cmd {
+	if !f.path.atEnd() {
+		f.listNote = "Move to the end of the path to complete." // the path is the only field of its step
+		return nil
+	}
 	parent, part := splitPath(f.path.value, f.winLocal())
 	switch {
 	case f.suggestion() != "":
 		return f.accept()
 	case isDirName(parent, part):
-		f.path.value += pathSep(parent, f.winLocal())
+		f.path.set(f.path.value + pathSep(parent, f.winLocal()))
 		return f.edited()
 	case driveRelative(parent, part, f.winLocal()):
 		f.listNote = "no directories match"
@@ -1221,9 +1233,11 @@ func (f *projectForm) toRoutes() {
 	if f.proposal != nil && f.proposal.Web != 0 {
 		f.proposeWeb(f.proposal.Web)
 	}
-	f.routeRow, f.webPort.value, f.editingHosts = 0, "", false
+	f.routeRow, f.editingHosts = 0, false
+	f.webPort.set("")
 	if f.name.value == "" {
-		f.name.value, f.alias.value = f.draft.Name, f.draft.Alias
+		f.name.set(f.draft.Name)
+		f.alias.set(f.draft.Alias)
 	}
 	// When adding, the main name the project's .nearhostrc gives fills the
 	// alias field unless one was typed, as `nearhost add` lets --alias win.
@@ -1233,9 +1247,11 @@ func (f *projectForm) toRoutes() {
 	if f.edit == nil && !f.aliasEdited {
 		switch rc := f.draft.Nearhostrc; {
 		case rc != nil && rc.Alias != "":
-			f.alias.value, f.aliasFromRc = rc.Alias, true
+			f.alias.set(rc.Alias)
+			f.aliasFromRc = true
 		case f.aliasFromRc:
-			f.alias.value, f.aliasFromRc = config.AliasFor(strings.TrimSpace(f.name.value)), false
+			f.alias.set(config.AliasFor(strings.TrimSpace(f.name.value)))
+			f.aliasFromRc = false
 		}
 	}
 	f.step, f.err = projectStepRoutes, ""
@@ -1269,7 +1285,8 @@ func (f *projectForm) mergeRc() {
 	// start would take it, unless the field was changed here already. It
 	// came from the file, not from typing, so a real domain is asked about.
 	if merged.Alias != f.edit.Alias && f.alias.value == f.edit.Alias {
-		f.alias.value, f.aliasEdited, f.aliasFromRc = merged.Alias, false, true
+		f.alias.set(merged.Alias)
+		f.aliasEdited, f.aliasFromRc = false, true
 	}
 }
 
@@ -1767,7 +1784,7 @@ func (f *projectForm) keys() []footerItem {
 			}
 			return append(items, footerItem{"esc", "back"})
 		}
-		items := []footerItem{{"tab", "complete"}}
+		items := []footerItem{{"tab", "complete"}, {"←→", "move"}}
 		if len(f.candidates()) > 1 {
 			items = append(items, footerItem{"↑↓", "choose"})
 		}
@@ -1785,7 +1802,7 @@ func (f *projectForm) keys() []footerItem {
 			return []footerItem{{"enter", "next"}, {"esc", "back"}}
 		}
 		if f.editingHosts {
-			return []footerItem{{"enter", "set hosts"}, {"esc", "cancel"}}
+			return []footerItem{{"enter", "set hosts"}, {"←→", "move"}, {"esc", "cancel"}}
 		}
 		items := []footerItem{{"space", "toggle"}, {"←/→", "role"}}
 		if f.routes[f.routeRow].Role == config.RoleWeb {
@@ -1793,7 +1810,7 @@ func (f *projectForm) keys() []footerItem {
 		}
 		return append(items, footerItem{"enter", "next"}, footerItem{"esc", "back"})
 	case projectStepDetails:
-		return []footerItem{{"tab", "switch"}, {"enter", "next"}, {"esc", "back"}}
+		return []footerItem{{"tab", "switch"}, {"←→", "move"}, {"enter", "next"}, {"esc", "back"}}
 	}
 	if len(f.approval) > 0 {
 		return []footerItem{{"enter", "approve and save"}, {"esc", "back"}}

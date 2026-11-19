@@ -51,41 +51,116 @@ type (
 
 func closeForm() tea.Msg { return formClosedMsg{} }
 
-// textField is a one-line text input, edited at its end.
+// textField is a one-line text input with a cursor. value is the text and
+// the source of truth; cur is the cursor's place in runes, 0 to the rune
+// count, so an edit never splits a multi-byte character. Code sets the text
+// with set, which puts the cursor at the end; a cursor left out of range by
+// a direct write to value is clamped when it is used.
 type textField struct {
 	value string
+	cur   int
 }
 
-// key edits the field and reports whether the key was for it.
-func (f *textField) key(k tea.KeyPressMsg) bool {
-	switch k.String() {
-	case "backspace":
-		if _, size := utf8.DecodeLastRuneInString(f.value); size > 0 {
-			f.value = f.value[:len(f.value)-size]
+// set replaces the text from code and puts the cursor at its end.
+func (f *textField) set(s string) {
+	f.value = s
+	f.cur = utf8.RuneCountInString(s)
+}
+
+// cursor is the cursor's place in runes, kept inside the text.
+func (f *textField) cursor() int {
+	f.cur = min(max(f.cur, 0), utf8.RuneCountInString(f.value))
+	return f.cur
+}
+
+// atEnd reports whether the cursor is after the last character, the only
+// place where completion works.
+func (f *textField) atEnd() bool {
+	return f.cursor() == utf8.RuneCountInString(f.value)
+}
+
+// offset is the byte offset of the rune at index n.
+func (f *textField) offset(n int) int {
+	for i := range f.value {
+		if n == 0 {
+			return i
 		}
-		return true
+		n--
+	}
+	return len(f.value)
+}
+
+// key edits the field and reports whether the key changed its text. A key
+// that only moves the cursor, or does nothing, reports false; whether the
+// field took the key does not matter to the forms, since no other step
+// binds these keys.
+func (f *textField) key(k tea.KeyPressMsg) bool {
+	if k.Text != "" {
+		return f.insert(k.Text)
+	}
+	cur := f.cursor()
+	n := utf8.RuneCountInString(f.value)
+	switch k.String() {
+	case "left":
+		f.cur = max(cur-1, 0)
+	case "right":
+		f.cur = min(cur+1, n)
+	case "home", "ctrl+a":
+		f.cur = 0
+	case "end", "ctrl+e":
+		f.cur = n
+	case "backspace":
+		if cur > 0 {
+			f.value = f.value[:f.offset(cur-1)] + f.value[f.offset(cur):]
+			f.cur = cur - 1
+			return true
+		}
+	case "delete":
+		if cur < n {
+			f.value = f.value[:f.offset(cur)] + f.value[f.offset(cur+1):]
+			return true
+		}
 	case "ctrl+u":
-		f.value = ""
-		return true
+		changed := f.value != ""
+		f.set("")
+		return changed
 	}
-	if k.Text == "" {
-		return false
-	}
-	f.value += strings.Map(func(r rune) rune {
+	return false
+}
+
+// insert adds text at the cursor, without control characters, and reports
+// whether anything was added.
+func (f *textField) insert(s string) bool {
+	text := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
-	}, k.Text)
-	return true
+	}, s)
+	at := f.offset(f.cursor())
+	f.value = f.value[:at] + text + f.value[at:]
+	f.cur += utf8.RuneCountInString(text)
+	return text != ""
 }
 
-// view draws the field, with a cursor when it has the focus.
-func (f textField) view(focused bool) string {
-	if focused {
-		return clean(f.value) + styleBeacon.Render("▏")
+// view draws the field, with a cursor when it has the focus. The cursor
+// after the last character is a bar; on a character it shows that character
+// reversed, so the text does not shift and a wide character keeps its width.
+func (f *textField) view(focused bool) string {
+	if !focused {
+		return clean(f.value)
 	}
-	return clean(f.value)
+	at := f.offset(f.cursor())
+	before, after := f.value[:at], f.value[at:]
+	if after == "" {
+		return clean(before) + styleBeacon.Render("▏")
+	}
+	r, size := utf8.DecodeRuneInString(after)
+	under := clean(string(r))
+	if under == "" {
+		under = " " // a format character has no cell of its own
+	}
+	return clean(before) + styleBeacon.Reverse(true).Render(under) + clean(after[size:])
 }
 
 // busyLine is the line a form shows while it waits for a background step.
@@ -204,5 +279,5 @@ func (w *worker) stop(ctx context.Context, unblock func()) {
 // paste adds pasted text to the field, without line breaks or control
 // characters.
 func (f *textField) paste(s string) {
-	f.key(tea.KeyPressMsg{Text: s})
+	f.insert(s)
 }
