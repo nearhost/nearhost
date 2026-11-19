@@ -203,6 +203,10 @@ func reportText(err error, elevated bool) string {
 		return "the host list could not be read"
 	case errors.Is(err, hosts.ErrInvalidHost):
 		return "the host list is not valid"
+	case errors.Is(err, hosts.ErrReadOnly):
+		// The message names only the system hosts file, which an elevated
+		// run refuses to write anywhere but, and says how to clear it.
+		return err.Error()
 	}
 	return err.Error()
 }

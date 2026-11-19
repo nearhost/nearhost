@@ -45,3 +45,19 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 		t.Fatalf("printed:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
+
+// A stopped project refused for a read-only hosts file gets no fix line: its
+// reason says how to clear the file, and approving again would fail the same.
+func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
+	var out bytes.Buffer
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p.fix("api", engine.StateStopped, `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`)
+	if out.Len() != 0 {
+		t.Fatalf("output = %q, want none", out.String())
+	}
+	p.fix("api", engine.StateStopped, "hosts update declined")
+	if out.Len() == 0 {
+		t.Fatal("another reason lost its fix line")
+	}
+}

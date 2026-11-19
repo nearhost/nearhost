@@ -25,6 +25,34 @@ const (
 // does not write to the hosts file.
 var ErrInvalidHost = errors.New("invalid host")
 
+// ErrReadOnly is wrapped by the error replaceFile returns when the hosts file
+// has the read-only attribute set, which only Windows has.
+var ErrReadOnly = errors.New("hosts file is read-only")
+
+// readOnlyError is the error for a hosts file that is read-only. Its message
+// says how to clear the attribute; Nearhost does not clear it, because a
+// read-only hosts file is often deliberate.
+type readOnlyError struct{ path string }
+
+// readOnlyMarker is the fixed part of the read-only message.
+const readOnlyMarker = " is read-only. Clear it with: attrib -r "
+
+// Error returns the message shown to the user.
+func (e *readOnlyError) Error() string {
+	return fmt.Sprintf("%s%s\"%s\" (in an administrator terminal), or run with --no-hosts.", e.path, readOnlyMarker, e.path)
+}
+
+// IsReadOnlyMessage reports whether s is the read-only message, for code that
+// only has an error's text, such as a project's status reason.
+func IsReadOnlyMessage(s string) bool { return strings.Contains(s, readOnlyMarker) }
+
+// Is reports a match with ErrReadOnly.
+func (e *readOnlyError) Is(target error) bool { return target == ErrReadOnly }
+
+// isReadOnly reports whether the file at path has the read-only attribute.
+// Tests replace it to reach the message on systems without the attribute.
+var isReadOnly = readOnly
+
 // validEntry reports whether a is a name nearhost writes to the hosts file:
 // a valid exact host, so neither a wildcard pattern nor localhost, which the
 // system already resolves.
@@ -265,6 +293,11 @@ func replaceFile(path, content string) (err error) {
 		// it points would create a file in a place nobody chose.
 		dest, _ := os.Readlink(path)
 		return fmt.Errorf("write %s: it is a symbolic link to %s, which does not exist; create that file or remove the link", path, dest)
+	}
+
+	// Before any temporary file exists, so a refused update leaves nothing.
+	if isReadOnly(target) {
+		return &readOnlyError{path: target}
 	}
 
 	dir := filepath.Dir(target)
