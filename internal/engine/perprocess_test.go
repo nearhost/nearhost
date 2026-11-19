@@ -231,6 +231,53 @@ func TestPerProcessStopStartTouchesOnlyThatProject(t *testing.T) {
 	}
 }
 
+// offerPorts makes the engine's pick of a free port return ports, in order,
+// and then what the system offers.
+func offerPorts(h *harness, ports ...int) {
+	var mu sync.Mutex
+	h.eng.freePort = func() (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(ports) == 0 {
+			return transport.FreePort()
+		}
+		port := ports[0]
+		ports = ports[1:]
+		return port, nil
+	}
+}
+
+// The system may offer the same free port twice in a row. A project's
+// second web route leaves the port its first is forwarded from alone.
+func TestWebForwardLeavesTheProjectsOtherWebPortAlone(t *testing.T) {
+	for _, tr := range []string{"default", "per-process"} {
+		t.Run(tr, func(t *testing.T) {
+			if tr != "default" {
+				t.Setenv("NEARHOST_TRANSPORT", tr)
+			}
+			h := newHarness(t, remoteTwoWebConfig(testutil.FreePort(t)))
+			first := testutil.FreePort(t)
+			offers := []int{first}
+			for range webPortAttempts + 1 {
+				offers = append(offers, first)
+			}
+			offerPorts(h, offers...)
+			mustStart(t, h, "myapp")
+			st := h.eng.Status("myapp")
+			l80, l81 := st.WebLocalPorts[80], st.WebLocalPorts[81]
+			if st.State != StateRunning || st.Message != "" || l80 != first || l81 == 0 || l81 == first {
+				t.Fatalf("status = %+v, want port 80 forwarded from %d and port 81 from another port", st, first)
+			}
+			fwd := h.forwarded("mini")
+			for _, f := range [][2]int{{l80, 80}, {l81, 81}} {
+				if !slices.Contains(fwd, spec(f[0], f[1])) {
+					t.Fatalf("forward %d -> %d missing: %q", f[0], f[1], fwd)
+				}
+			}
+		})
+	}
+}
+
 // The system may offer, as a free port for a web forward, the port of a
 // loopback route, which nothing holds until that route is forwarded. The
 // web forward leaves it for the route, here its own project's and another
@@ -250,18 +297,13 @@ func TestWebForwardLeavesTheLoopbackPortsAlone(t *testing.T) {
 				},
 			}
 			h := newHarness(t, cfg)
-			var mu sync.Mutex
-			offers := []int{own, other}
-			h.eng.freePort = func() (int, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				if len(offers) == 0 {
-					return transport.FreePort()
-				}
-				port := offers[0]
-				offers = offers[1:]
-				return port, nil
+			// More of them than the ports a web forward tries: a port
+			// passed over is no attempt.
+			var offers []int
+			for range webPortAttempts + 1 {
+				offers = append(offers, own, other)
 			}
+			offerPorts(h, offers...)
 			mustStart(t, h, "first")
 			mustStart(t, h, "second")
 			st := h.eng.Status("first")
