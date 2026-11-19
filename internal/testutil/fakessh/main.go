@@ -448,13 +448,19 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 		fmt.Fprintf(&out, "debug1: remote forward success for: listen %s, connect %s\n", listen, connect)
 	}
 
+	// The drop file is named for the pid, which the system hands out again
+	// once a process has ended: a file left for an earlier process with
+	// this pid is removed before the pid is logged, so a test can drop
+	// only this process once it has seen it there, and the file that ends
+	// this process is removed before it exits and frees the pid.
 	pid := os.Getpid()
-	appendLine(os.Getenv("FAKE_SSH_PID_LOG"), fmt.Sprintf("%d %s", pid, strings.Join(os.Args[1:], " ")))
-	os.Stderr.WriteString(out.String())
 	drop := ""
 	if dir := os.Getenv("FAKE_SSH_DROP_DIR"); dir != "" {
 		drop = filepath.Join(dir, strconv.Itoa(pid))
+		os.Remove(drop)
 	}
+	appendLine(os.Getenv("FAKE_SSH_PID_LOG"), fmt.Sprintf("%d %s", pid, strings.Join(os.Args[1:], " ")))
+	os.Stderr.WriteString(out.String())
 	for {
 		select {
 		case <-signals:
@@ -463,6 +469,7 @@ func runPlain(host string, lforwards, rforwards []string, exitOnFail bool, paren
 		case <-time.After(50 * time.Millisecond):
 		}
 		if exists(drop) {
+			os.Remove(drop)
 			fmt.Fprintln(os.Stderr, "client_loop: send disconnect: Broken pipe")
 			return 255
 		}

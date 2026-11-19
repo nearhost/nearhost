@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -346,6 +347,10 @@ func TestFakeSSHDropsWhenAsked(t *testing.T) {
 	}
 	if !strings.Contains(p.stderr.String(), "Broken pipe") {
 		t.Errorf("stderr = %q, want Broken pipe", p.stderr.String())
+	}
+	// A later fake that gets the same pid must not find the file and end.
+	if _, err := os.Stat(filepath.Join(drops, pid)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the drop file outlived the fake it ended: %v", err)
 	}
 }
 
