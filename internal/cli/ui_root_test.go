@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/sudo"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -254,5 +256,72 @@ func TestAsRootSuccessKeepsTheCredentials(t *testing.T) {
 	}
 	if s.runs != 1 || f.forgot != 0 {
 		t.Errorf("runs %d, forgot %d", s.runs, f.forgot)
+	}
+}
+
+// A cancelled check that never returns holds the turn for at most
+// cancelledCheckWait, so a stuck sudo cannot block every later prompt. The
+// step whose check it was forgets nothing itself; the check, when it ends
+// with the credentials cached after all, forgets them.
+func TestAsRootStuckCheckReleasesTheTurn(t *testing.T) {
+	orig := cancelledCheckWait
+	cancelledCheckWait = 20 * time.Millisecond
+	t.Cleanup(func() { cancelledCheckWait = orig })
+	var forgot atomic.Int32
+	started, release, checkEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var second step
+	root := asRoot{
+		width: func() int { return 60 },
+		turn:  make(chan struct{}, 1),
+		sudo: rootBackend{
+			needed:        func() bool { return true },
+			takesPassword: func() bool { return true },
+			cached:        func(context.Context) bool { return false },
+			validate: func(context.Context, string) error {
+				close(started)
+				<-release // a sudo that no signal reaches
+				return nil
+			},
+			forget: func(context.Context) { forgot.Add(1) },
+		},
+		ask: func(ctx context.Context, why string, check func(context.Context, string) error) error {
+			if why != "First." {
+				return tui.ErrPasswordCancelled
+			}
+			checkCtx, cancel := context.WithCancel(ctx)
+			go func() {
+				_ = check(checkCtx, "secret")
+				close(checkEnded)
+			}()
+			<-started
+			cancel()
+			return tui.ErrPasswordCancelled
+		},
+	}
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- root.run(context.Background(), "First.", "Done.", (&step{}).run) }()
+	select {
+	case err := <-firstDone:
+		if !errors.Is(err, tui.ErrPasswordCancelled) {
+			t.Fatalf("first step: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("the stuck check held the first step past its bound")
+	}
+	if n := forgot.Load(); n != 0 {
+		t.Errorf("the step forgot %d times while its check ran", n)
+	}
+	// The turn is free: the next step gets its box.
+	if err := root.run(context.Background(), "Second.", "Done.", second.run); !errors.Is(err, tui.ErrPasswordCancelled) {
+		t.Fatalf("second step: %v", err)
+	}
+	if n := forgot.Load(); n != 1 {
+		t.Errorf("forgot %d times after the second box, want 1", n)
+	}
+	close(release) // the stuck check ends, having cached the credentials
+	<-checkEnded
+	if n := forgot.Load(); n != 2 {
+		t.Errorf("forgot %d times after the late check, want 2", n)
 	}
 }

@@ -297,3 +297,45 @@ func TestServerFormErrorShowsWithTheFieldAndAShorterList(t *testing.T) {
 		t.Errorf("after an edit the list should show eight rows and no error:\n%s", s)
 	}
 }
+
+// After enter on a host picked from the list and esc back from the name
+// step, the list marks no host: enter takes the host in the field, which
+// is the one picked.
+func TestServerFormBackFromAPickedHostMarksNothing(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.forms.hosts = []string{"x", "db", "prod-db"}
+	m := sized(f)
+	settle(m, press(m, "s"))
+	press(m, "down")
+	press(m, "down") // db
+	press(m, "enter")
+	wantScreen(t, m, "name      db▏")
+	press(m, "esc")
+	if s := screen(m); strings.Contains(s, "▸ ") {
+		t.Errorf("a host is marked after esc back:\n%s", s)
+	}
+	press(m, "enter")
+	if got := m.form.(*serverForm).host.value; got != "db" {
+		t.Errorf("enter took %q, want db", got)
+	}
+}
+
+// After enter on a host picked low in a long list and esc back, the list
+// draws that host.
+func TestServerFormBackFromAHostLowInTheListDrawsIt(t *testing.T) {
+	m := manyHostsModel(t, 12)
+	for range 10 {
+		press(m, "down") // h10, with the window moved down
+	}
+	press(m, "enter")
+	press(m, "esc")
+	found := false
+	for _, l := range m.form.(*serverForm).lines(70)[1:] {
+		if strings.HasSuffix(strings.TrimRight(l, " "), "h10") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the list does not draw h10:\n%s", screen(m))
+	}
+}

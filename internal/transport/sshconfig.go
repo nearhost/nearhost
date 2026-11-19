@@ -29,7 +29,8 @@ const (
 // without wildcard or negated patterns and without duplicates. Include
 // directives are followed; relative paths resolve against ~/.ssh, and missing
 // targets are ignored. Match blocks are conditions, not aliases, and are
-// skipped.
+// skipped. A Host block the parser rejects is skipped too, and the hosts of
+// the other blocks are still listed.
 func ListHosts(r io.Reader) ([]string, error) {
 	l := &hostLister{seen: map[string]bool{}}
 	if home, err := os.UserHomeDir(); err == nil {

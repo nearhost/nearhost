@@ -222,7 +222,10 @@ func (f *serverForm) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			f.host.set(host)
-			f.err = ""
+			// The list filters by the host now, so a pick or a window
+			// kept from the full list would mark or hide the wrong row
+			// after esc back.
+			f.pick, f.top, f.err = -1, 0, ""
 			if f.edit == nil {
 				f.name.set(hostName(host)) // an edited server keeps its name
 			}

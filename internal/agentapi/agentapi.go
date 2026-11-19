@@ -34,6 +34,10 @@ import (
 // Version is the API version, reported by GET /v1.
 const Version = 1
 
+// tooManyPasses refuses a passthrough past maxPassthroughs. Its 429 differs
+// from a refusal's, which says "refused; ask again in N s".
+var tooManyPasses = fmt.Sprintf("%d passthroughs are open for this server; close one first", maxPassthroughs)
+
 const (
 	// maxBody bounds a request body.
 	maxBody = 4 << 10
@@ -43,9 +47,6 @@ const (
 	// opening. Each holds a listener and file descriptors in the process
 	// that runs the proxy, and a token opens them without a prompt.
 	maxPassthroughs = 16
-	// tooManyPasses refuses a passthrough past maxPassthroughs. Its 429
-	// differs from a refusal's, which says "refused; ask again in N s".
-	tooManyPasses = "16 passthroughs are open for this server; close one first"
 	// expiry is how long a proposal waits for an answer.
 	expiry = 10 * time.Minute
 	// maxWait bounds one long poll.
