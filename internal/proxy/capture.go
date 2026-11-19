@@ -187,7 +187,13 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			if r.ContentLength >= 0 {
 				e.ReqBodyShort = e.ReqBodySize < r.ContentLength
 			} else {
-				e.ReqBodyShort = !eof
+				// HTTP/3 gives no length, and a body object, to a
+				// request that has no body. When nothing read it, as
+				// when the gate or a failed dial answered, a method
+				// with no body as a rule had none. A real body on such
+				// a method that nothing read looks the same, and its
+				// replay goes without it.
+				e.ReqBodyShort = !eof && (e.ReqBodySize > 0 || failed || carriesBody(r.Method))
 			}
 		}
 	}
@@ -197,6 +203,18 @@ func (c *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 	keep(e, gen)
 	return err
+}
+
+// carriesBody reports whether a request with method carries a body as a
+// rule. It is the rule Caddy's reverse proxy applies to a request of
+// unknown length.
+func carriesBody(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions,
+		http.MethodDelete, http.MethodTrace, http.MethodConnect:
+		return false
+	}
+	return true
 }
 
 // newID names an exchange.
