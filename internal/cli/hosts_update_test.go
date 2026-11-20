@@ -119,11 +119,12 @@ func TestHostsUpdateUpToDate(t *testing.T) {
 // fakeCore listens on the control socket of the test's run directory and
 // counts the HostsChanged calls.
 type fakeCore struct {
+	info    control.Info
 	mu      sync.Mutex
 	changed int
 }
 
-func (f *fakeCore) Info() control.Info     { return control.Info{} }
+func (f *fakeCore) Info() control.Info     { return f.info }
 func (f *fakeCore) Status() control.Status { return control.Status{} }
 func (f *fakeCore) Stop()                  {}
 func (f *fakeCore) HostsChanged(context.Context) {

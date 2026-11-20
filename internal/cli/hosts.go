@@ -59,9 +59,9 @@ var newHostsUpdateApplier = func(ctx context.Context, terminal bool) hosts.Appli
 	return upHostsApplier(ctx, elevate.System(), exe, terminal)
 }
 
-// hostsUpdateNoTerminal is what `hosts update` says when sudo needs a
+// errHostsUpdateNoTerminal is what `hosts update` says when sudo needs a
 // password and there is no terminal to ask in.
-const hostsUpdateNoTerminal = "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost hosts update in a terminal."
+var errHostsUpdateNoTerminal = errors.New("The hosts file needs sudo, and there is no terminal to ask in. Run nearhost hosts update in a terminal.")
 
 // hostsChangedWait is how long `hosts update` waits for a running core to
 // take the news: the core answers at once and retries its projects itself.
@@ -178,7 +178,7 @@ func runHostsUpdate(cmd *cobra.Command, lookup hosts.Lookup) error {
 	names := hosts.Wanted(ctx, cfg.HostsFileNames(), lookup)
 	changed, err := hosts.Ensure(path, names, newHostsUpdateApplier(ctx, terminal))
 	if errors.Is(err, errNoTerminal) {
-		return errors.New(hostsUpdateNoTerminal)
+		return errHostsUpdateNoTerminal
 	}
 	if err != nil {
 		return err
