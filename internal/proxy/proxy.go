@@ -90,6 +90,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// holds the run directory's instance lock, so no other Nearhost
 		// writes to the storage either.
 		pruneExpiredCertificates(p.opts.StorageRoot, time.Now())
+		clear(certified)
 	}
 	quietCaddy()
 	// A replaced intermediate is read only when Caddy loads the config,
@@ -126,6 +127,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// applied either way; a port someone else took meanwhile is theirs.
 		_ = releasePorts(p.ports(), releaseWait)
 	}
+	p.awaitCertificates(sites)
 	return true, nil
 }
 
