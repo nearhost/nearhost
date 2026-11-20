@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,18 +54,48 @@ func TestAHostAddedByAReloadIsAnsweredAtOnce(t *testing.T) {
 	h.answersAtOnce("n0.test")
 }
 
+// recordAsked returns the hosts every load from here to the test's end
+// asks for, in order.
+func recordAsked(t *testing.T) *[]string {
+	t.Helper()
+	var asked []string
+	certAsked = func(hosts []string) { asked = append(asked, hosts...) }
+	t.Cleanup(func() { certAsked = nil })
+	return &asked
+}
+
 // A pattern names no host to ask for, so a load does not wait for it; its
 // names are issued at their first handshake.
 func TestAPatternHostIsNotWaitedFor(t *testing.T) {
+	asked := recordAsked(t)
 	up := upstream(t, "a")
 	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test", "*.a.test"}, Upstream: addr(up.Server)}})
-	caddyMu.Lock()
-	n := len(certified)
-	caddyMu.Unlock()
-	if n != 1 {
-		t.Fatalf("%d hosts were waited for, want a.test alone", n)
+	if got := strings.Join(*asked, ","); got != "a.test" {
+		t.Fatalf("the load asked for %q, want a.test alone", got)
 	}
 	h.getEventually(h.client("x.a.test", false), "x.a.test", "/hello")
+}
+
+// A host that has answered is not asked for again by the next load, and a
+// proxy that takes Caddy over asks afresh.
+func TestAHostIsAskedForOnceForEachOwner(t *testing.T) {
+	asked := recordAsked(t)
+	up := upstream(t, "a")
+	site := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	other := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up.Server)}
+	h := startProxy(t, []Site{site})
+	if err := h.p.Apply([]Site{site, other}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(*asked, ","); got != "a.test,b.test" {
+		t.Fatalf("one proxy's loads asked for %q, want a.test then b.test", got)
+	}
+	*asked = nil
+	h2 := startProxyOpts(t, []Site{site}, Options{StorageRoot: h.storage})
+	if got := strings.Join(*asked, ","); got != "a.test" {
+		t.Fatalf("the proxy that took over asked for %q, want a.test again", got)
+	}
+	h2.answersAtOnce("a.test")
 }
 
 // The wait ends at its deadline for an address that never answers.

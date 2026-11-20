@@ -90,6 +90,10 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// holds the run directory's instance lock, so no other Nearhost
 		// writes to the storage either.
 		pruneExpiredCertificates(p.opts.StorageRoot, time.Now())
+	}
+	if owner != p {
+		// Caddy starts, or changes hands to a proxy with a storage and a
+		// CA of its own: no host has answered for this one yet.
 		clear(certified)
 	}
 	quietCaddy()

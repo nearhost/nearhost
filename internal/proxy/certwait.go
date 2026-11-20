@@ -22,8 +22,13 @@ var (
 )
 
 // certified holds the hosts whose certificate has answered a handshake since
-// Caddy last started, by the port they were asked on. Guarded by caddyMu.
+// the proxy that owns Caddy took it, by the port they were asked on. Guarded
+// by caddyMu.
 var certified = map[string]struct{}{}
+
+// certAsked, when set, is told the hosts a load is about to ask for. Tests
+// set it to see which hosts a load waits for.
+var certAsked func(hosts []string)
 
 // awaitCertificates waits until the proxy answers a TLS handshake for each
 // host of sites that has not answered one yet, for certWait at most in all.
@@ -78,13 +83,26 @@ func (p *Proxy) awaitCertificates(sites []Site) {
 	if len(ask) == 0 {
 		return
 	}
+	sort.Strings(ask)
+	if certAsked != nil {
+		hosts := make([]string, len(ask))
+		for i, k := range ask {
+			_, hosts[i], _ = strings.Cut(k, " ")
+		}
+		certAsked(hosts)
+	}
+	deadline := time.Now().Add(certWait)
+	// The CA an answer is checked against is made by Caddy's load, or was
+	// by the caller; it is waited for like the rest, should it be late.
 	root, err := RootCert(p.opts.StorageRoot)
-	if err != nil {
-		return // no CA to check an answer against; nothing to wait for
+	for err != nil && time.Now().Before(deadline) {
+		time.Sleep(certPoll)
+		root, err = RootCert(p.opts.StorageRoot)
 	}
 	pool := x509.NewCertPool()
-	pool.AddCert(root)
-	deadline := time.Now().Add(certWait)
+	if err == nil {
+		pool.AddCert(root)
+	}
 	answered := make([]bool, len(ask))
 	var wg sync.WaitGroup
 	for i, k := range ask {
