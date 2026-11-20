@@ -157,11 +157,17 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 	term.waitFor("the project's page, with what to do", "▌  ○ shop", "Press enter and approve the password prompt", "enter start")
 	term.press(keyEnter)
 	term.waitFor("the password box again", "Password needed", "add shop.test to")
-	for _, wrong := range []string{"one", "two", "three"} {
+	for i, wrong := range []string{"one", "two", "three"} {
 		term.typeText(wrong)
 		term.waitFor("the password typed", "password  "+strings.Repeat("•", len(wrong)))
 		term.press(keyEnter)
-		term.waitGone("the password to be taken", "password  •")
+		// The check runs after the field is emptied: the next password is
+		// typed once it has answered.
+		if i < 2 {
+			term.waitUntil("the refusal and an empty box", func(s string) bool {
+				return strings.Contains(s, "Sorry, try again.") && !strings.Contains(s, "password  •")
+			})
+		}
 	}
 	term.waitGone("the password box to close", "Password needed")
 	term.waitFor("the project stopped again", "○ shop", "three wrong passwords", "enter start")
