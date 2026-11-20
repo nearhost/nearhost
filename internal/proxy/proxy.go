@@ -91,6 +91,11 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// writes to the storage either.
 		pruneExpiredCertificates(p.opts.StorageRoot, time.Now())
 	}
+	if owner != p {
+		// Caddy starts, or changes hands to a proxy with a storage and a
+		// CA of its own: no host has answered for this one yet.
+		clear(certified)
+	}
 	quietCaddy()
 	// A replaced intermediate is read only when Caddy loads the config,
 	// which it skips for one it already runs.
@@ -126,6 +131,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// applied either way; a port someone else took meanwhile is theirs.
 		_ = releasePorts(p.ports(), releaseWait)
 	}
+	p.awaitCertificates(sites)
 	return true, nil
 }
 
