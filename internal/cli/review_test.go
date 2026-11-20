@@ -156,7 +156,7 @@ func TestSaveToReplacesTheProject(t *testing.T) {
 func TestUpPrintsWhereToApproveAPendingChange(t *testing.T) {
 	cfg := &config.Config{Projects: []config.Project{{Name: "app", Server: config.LocalServer, Path: "/a", Alias: "app.test"}}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	at := time.Date(2026, 10, 16, 9, 30, 0, 0, time.Local)
 	p.event(engine.Event{Time: at, Project: "app", Message: engine.PendingPrefix + "app.example.com, *.example.com"})
 	want := "09:30:00 [app] .nearhostrc asks for changes that need approval: app.example.com, *.example.com\n" +

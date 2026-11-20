@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -15,8 +14,9 @@ import (
 // upPrinter writes what `up` reports. It is used from one goroutine.
 type upPrinter struct {
 	out io.Writer
+	// eng is read for the config too: a reload can add projects and
+	// servers, which the fixes name.
 	eng *engine.Engine
-	cfg *config.Config
 	// advise makes a state change come with what to do about it. It is off
 	// while the projects start, because the summary that follows says it.
 	advise bool
@@ -155,12 +155,13 @@ func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
 
 // fix prints what to do about a project in the given state, if anything.
 func (p *upPrinter) fix(name string, st engine.State, reason string) {
-	proj, ok := p.cfg.Project(name)
+	cfg := p.eng.Config()
+	proj, ok := cfg.Project(name)
 	if !ok {
 		return
 	}
 	host := ""
-	if srv, ok := p.cfg.Server(proj.Server); ok {
+	if srv, ok := cfg.Server(proj.Server); ok {
 		host = srv.SSHHost
 	}
 	var fix string
