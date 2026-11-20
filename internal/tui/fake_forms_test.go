@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
@@ -20,20 +21,24 @@ type formFake struct {
 	checkErr    error
 	checkBlocks bool // CheckServer waits for its context to end
 	checked     []config.Server
-	addedSrv    []config.Server
-	openErr     error
-	opened      []config.Server
-	files       *fakeFiles
-	askRegistry bool
-	answers     []RegistryAnswer
-	answerNote  string
-	enabled     [][]string
-	enableNotes []string
-	nameErr     error
-	aliasErr    error
-	saveErr     error
-	saved       []config.Project
-	public      map[string]string // the internet addresses of hosts, for PublicAddress
+	checkEnded  int // the CheckServer calls that have returned
+	// checkRelease, when set, holds a CheckServer whose context has ended
+	// until it is closed, as a check slow to let go of its connection.
+	checkRelease chan struct{}
+	addedSrv     []config.Server
+	openErr      error
+	opened       []config.Server
+	files        *fakeFiles
+	askRegistry  bool
+	answers      []RegistryAnswer
+	answerNote   string
+	enabled      [][]string
+	enableNotes  []string
+	nameErr      error
+	aliasErr     error
+	saveErr      error
+	saved        []config.Project
+	public       map[string]string // the internet addresses of hosts, for PublicAddress
 }
 
 // fakeFiles is a server's files: dirs lists every directory, by path, and
@@ -55,6 +60,10 @@ type fakeFiles struct {
 	hung     chan struct{}
 	keepHung bool
 	unhang   sync.Once
+	resumed  atomic.Int32 // the waits on hang that have ended
+	// release, when set, holds a wait that hang has let go until it is
+	// closed, as a step slow to end after its connection closed.
+	release chan struct{}
 }
 
 func (f *fakeFiles) abs(p string) string {
@@ -72,6 +81,10 @@ func (f *fakeFiles) wait(ctx context.Context) error {
 	}
 	f.hung <- struct{}{}
 	<-f.hang
+	if f.release != nil {
+		<-f.release
+	}
+	f.resumed.Add(1)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -145,9 +158,18 @@ func (f *fakeBackend) CheckServer(ctx context.Context, srv config.Server) error 
 	f.mu.Lock()
 	f.forms.checked = append(f.forms.checked, srv)
 	blocks, err := f.forms.checkBlocks, f.forms.checkErr
+	release := f.forms.checkRelease
 	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.forms.checkEnded++
+		f.mu.Unlock()
+	}()
 	if blocks {
 		<-ctx.Done()
+		if release != nil {
+			<-release
+		}
 		return ctx.Err()
 	}
 	return err
