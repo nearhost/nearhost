@@ -106,13 +106,13 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	}
 	owner = p
 	// A reload starts the new servers, and Caddy then closes the old ones'
-	// listeners in goroutines it does not wait for. On Unix each
-	// configuration binds its own sockets: until an old one is closed the
-	// kernel still queues connections on it, and resets them at the close.
-	// Wait for the old listeners, so a request made once the reload has
-	// returned reaches the new configuration. A load Caddy skips, as it runs
-	// that configuration already, opens no listener and closes none; one
-	// that takes the last site away opens none and closes the old ones.
+	// listeners in goroutines it does not wait for. Wait for them, so that
+	// once a reload has returned no listener of the old configuration is
+	// open. The sockets themselves stay open, shared with the new servers
+	// (see Handoff). A load Caddy skips, as it runs that configuration
+	// already, opens no listener and closes none; one that takes the last
+	// site away opens none and closes the old ones, and with them the
+	// sockets.
 	was := listening
 	listening = listens(sites, p.opts)
 	if len(retiring.since(before)) > 0 || was && !listening {

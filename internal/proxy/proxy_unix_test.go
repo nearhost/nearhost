@@ -144,16 +144,6 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 	}
 }
 
-// On Unix each configuration binds its own sockets, so servers need no
-// Handoff: their one wrapper of Nearhost's is Retire, before TLS.
-func TestServersOnlyRetireTheirListenersOnUnix(t *testing.T) {
-	for name, w := range serverWrappers(t) {
-		if !slices.Equal(w, []string{retireModule, "tls"}) {
-			t.Errorf("server %s has listener wrappers %q, want %q then tls", name, w, retireModule)
-		}
-	}
-}
-
 // Nearhost's page listens on the loopback addresses alone, while the sites'
 // https and http ports keep the wildcard address that Docker clients reach.
 func TestPageListensOnLoopbackOnUnix(t *testing.T) {
@@ -167,9 +157,9 @@ func TestPageListensOnLoopbackOnUnix(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"nearhost":      {":8443"},
-		"nearhost_http": {":8080"},
-		"nearhost_web":  {"127.0.0.1:6327", "[::1]:6327"},
+		"nearhost":      {sharedNetwork + "/:8443"},
+		"nearhost_http": {sharedNetwork + "/:8080"},
+		"nearhost_web":  {sharedNetwork + "/127.0.0.1:6327", sharedNetwork + "/[::1]:6327"},
 	}
 	if l, err := net.Listen("tcp", "[::1]:0"); err != nil {
 		want["nearhost_web"] = want["nearhost_web"][:1] // no IPv6 loopback here
@@ -287,4 +277,51 @@ func (h *harness) pageAnswers(t *testing.T, host string) {
 		resp.Body.Close()
 		return resp.StatusCode == 200
 	}, "Nearhost's page on "+host)
+}
+
+// Every configuration shares the one socket of an address, so a reload
+// leaves the sockets as they were: none is closed with a connection queued
+// on it. A stop closes them, and the ports can be bound at once.
+func TestASocketOutlivesAReloadAndClosesWithTheProxy(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxy(t, []Site{a})
+	open := func() map[string]net.Listener {
+		sockets.mu.Lock()
+		defer sockets.mu.Unlock()
+		out := map[string]net.Listener{}
+		for addr, s := range sockets.open {
+			out[addr] = s.ln
+		}
+		return out
+	}
+	before := open()
+	if len(before) != 2 {
+		t.Fatalf("%d sockets open, want the https and http ports'", len(before))
+	}
+	if err := h.p.Apply([]Site{a, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up.Server)}}); err != nil {
+		t.Fatal(err)
+	}
+	after := open()
+	if len(after) != len(before) {
+		t.Fatalf("%d sockets open after a reload, want %d", len(after), len(before))
+	}
+	for addr, ln := range before {
+		if after[addr] != ln {
+			t.Errorf("the socket of %s changed in a reload", addr)
+		}
+	}
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if n := sockets.count(); n != 0 {
+		t.Fatalf("%d sockets open after Stop", n)
+	}
+	for _, port := range []int{h.httpsPort, h.httpPort} {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			t.Fatalf("port %d not released: %v", port, err)
+		}
+		l.Close()
+	}
 }

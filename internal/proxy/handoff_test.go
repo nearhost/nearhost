@@ -3,8 +3,10 @@ package proxy
 import (
 	"errors"
 	"net"
+	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -239,4 +241,56 @@ func TestHandoffStopsAcceptingWhenEveryServerCloses(t *testing.T) {
 	c, _ := sock.connect(t)
 	takes(t, accepted(again), c, "a server started after the others closed")
 	again.Close()
+}
+
+// A newer listener of an address opens only once the older server has had
+// the first request read from every connection it was given: until then
+// Caddy cannot begin to shut that server down, which would drop the
+// request unanswered. The wait counts a connection from the moment Accept
+// returns it, before net/http records it as new.
+func TestHandoffWaitsForTheOlderServersFirstRequests(t *testing.T) {
+	orig := requestWait
+	requestWait = time.Minute
+	t.Cleanup(func() { requestWait = orig })
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	olderConns, newerConns := newServerConns(), newServerConns()
+	older := set.wrapFor(sock.view(), olderConns)
+	fromOlder := accepted(older)
+	c, _ := sock.connect(t)
+	takes(t, fromOlder, c, "the only server")
+
+	waiting := make(chan struct{}, 1)
+	olderConns.waiting = func() {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+	}
+	var read atomic.Bool
+	opened := make(chan bool, 1)
+	go func() {
+		newer := set.wrapFor(sock.view(), newerConns)
+		opened <- read.Load()
+		newer.Close()
+	}()
+	select {
+	case <-waiting:
+	case <-opened:
+		t.Fatal("the newer listener opened without waiting for the older server")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the newer listener never waited for the older server")
+	}
+	olderConns.state(c, http.StateNew)
+	read.Store(true)
+	olderConns.state(c, http.StateActive)
+	select {
+	case ok := <-opened:
+		if !ok {
+			t.Fatal("the newer listener opened before the older server had read its connection's request")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the newer listener never opened")
+	}
+	older.Close()
 }

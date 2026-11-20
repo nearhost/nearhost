@@ -320,7 +320,7 @@ var pageAddrs = netbind.PageAddrs
 // redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
-		"listen": pageAddrs(opts.WebPort),
+		"listen": listenAddrs(pageAddrs(opts.WebPort)),
 		"tls_connection_policies": []any{map[string]any{
 			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 		}},
@@ -429,7 +429,7 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 	routes = append(routes, map[string]any{"handle": abort})
 	return map[string]any{
-		"listen": netbind.ServeAddrs(httpPort),
+		"listen": listenAddrs(netbind.ServeAddrs(httpPort)),
 		"routes": routes,
 		// This server is plain HTTP by design. Saying so stops Caddy
 		// warning on every reload that it cannot have automatic HTTPS (it
@@ -441,17 +441,15 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 }
 
-// listenerWrappers sets server's listener wrappers, before TLS: Handoff
-// where configurations share their sockets, and Retire everywhere.
+// listenerWrappers sets server's listener wrappers, before TLS: Handoff,
+// as every configuration shares the one socket of an address (see
+// listenAddrs), and Retire.
 func listenerWrappers(server map[string]any) map[string]any {
-	wrappers := []any{}
-	if sharedSockets {
-		wrappers = append(wrappers, map[string]any{"wrapper": handoffModule})
-	}
-	server["listener_wrappers"] = append(wrappers,
+	server["listener_wrappers"] = []any{
+		map[string]any{"wrapper": handoffModule},
 		map[string]any{"wrapper": retireModule},
 		map[string]any{"wrapper": "tls"},
-	)
+	}
 	return server
 }
 
@@ -663,7 +661,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 
 	server := map[string]any{
-		"listen": netbind.ServeAddrs(httpsPort),
+		"listen": listenAddrs(netbind.ServeAddrs(httpsPort)),
 		// Policies are first-match. The first is for loopback clients; the
 		// others, one per set of extra client ranges, are for those clients
 		// and the hosts of the sites that opted in. A handshake from

@@ -19,25 +19,19 @@ func init() {
 }
 
 // Retire is a listener wrapper that records which of Caddy's listeners are
-// open, so the proxy can wait for the ones a load closes.
+// open, so the proxy can wait for the ones a load or a stop closes.
 //
 // Caddy closes a server's listeners in goroutines it does not wait for, so a
-// load can return while a listener it is done with is still open. After a
-// load that failed, a listener the failed configuration had opened still
-// holds its port for that moment, and a start tried again at once finds the
-// port in use. After a reload on Unix, where each configuration binds its
-// own sockets with SO_REUSEPORT, the kernel goes on queueing some new
-// connections on the old configuration's socket for that moment, and resets
-// them when it is closed: the client gets EOF or a reset. With this wrapper
-// on each server the proxy knows every open listener and when its close has
-// returned, and a load waits for those it closes.
-//
-// Two losses remain for a connection that arrives while a reload is
-// running, between the new socket's bind and the old one's close. One still
-// queued on the old socket at the close is reset. One the old server
-// accepted just before it began to shut down has its HTTP/1 request read
-// and then dropped unanswered, as net/http's conn.serve returns once the
-// server is shutting down: the client gets EOF.
+// load or a stop can return while a listener it is done with is still open.
+// After a load that failed, a listener the failed configuration had opened
+// still holds its port for that moment, and a start tried again at once
+// finds the port in use; so it does after a stop. With this wrapper on each
+// server the proxy knows every open listener and when its close has
+// returned, and a load or a stop waits for those it closes. Every
+// configuration shares the one socket of an address (see Handoff), and the
+// socket closes with the last listener of it, so the wait after a stop, or
+// after a failed first load, is for the port itself; after a reload it is
+// only for the old listeners' handles.
 //
 // It wraps TCP listeners only. The UDP sockets of HTTP/3 are deliberately
 // not tracked: Caddy keeps one until its connections end, which nothing

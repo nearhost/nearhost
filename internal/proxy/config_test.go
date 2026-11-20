@@ -57,8 +57,8 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 		t.Error("ports not set")
 	}
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost")
-	if got := strs(dig(t, srv, "listen")); !slices.Equal(got, netbind.ServeAddrs(8443)) {
-		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(8443))
+	if got := strs(dig(t, srv, "listen")); !slices.Equal(got, listenAddrs(netbind.ServeAddrs(8443))) {
+		t.Errorf("listen = %v, want %v", got, listenAddrs(netbind.ServeAddrs(8443)))
 	}
 	if dig(t, srv, "routes", 0, "match", 0, "host", 0) != "a.test" {
 		t.Error("route host mismatch")
@@ -252,8 +252,8 @@ func TestBuildConfigKeepsAutomaticHTTPSRedirect(t *testing.T) {
 	if a, ok := srv["automatic_https"]; ok {
 		t.Errorf("automatic_https must stay default so port 80 redirects: %v", a)
 	}
-	if got := strs(srv["listen"]); !slices.Equal(got, netbind.ServeAddrs(443)) {
-		t.Errorf("listen = %v, want only %v", got, netbind.ServeAddrs(443))
+	if got := strs(srv["listen"]); !slices.Equal(got, listenAddrs(netbind.ServeAddrs(443))) {
+		t.Errorf("listen = %v, want only %v", got, listenAddrs(netbind.ServeAddrs(443)))
 	}
 }
 
@@ -576,8 +576,8 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost_http").(map[string]any)
-	if got := strs(srv["listen"]); !slices.Equal(got, netbind.ServeAddrs(8080)) {
-		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(8080))
+	if got := strs(srv["listen"]); !slices.Equal(got, listenAddrs(netbind.ServeAddrs(8080))) {
+		t.Errorf("listen = %v, want %v", got, listenAddrs(netbind.ServeAddrs(8080)))
 	}
 	routes := srv["routes"].([]any)
 	if len(routes) != 4 {
@@ -770,8 +770,8 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
-	if got := strs(web["listen"]); !slices.Equal(got, netbind.PageAddrs(6327)) {
-		t.Errorf("listen = %v, want %v", got, netbind.PageAddrs(6327))
+	if got := strs(web["listen"]); !slices.Equal(got, listenAddrs(netbind.PageAddrs(6327))) {
+		t.Errorf("listen = %v, want %v", got, listenAddrs(netbind.PageAddrs(6327)))
 	}
 	if got := strs(web["protocols"]); !slices.Equal(got, []string{"h1", "h2"}) {
 		t.Errorf("protocols = %v, want h1 and h2, so no UDP port", got)
@@ -824,8 +824,8 @@ func TestBuildConfigWildcardPageAdmitsLoopbackOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
-	if got := strs(web["listen"]); !slices.Equal(got, netbind.ServeAddrs(444)) {
-		t.Errorf("listen = %v, want %v", got, netbind.ServeAddrs(444))
+	if got := strs(web["listen"]); !slices.Equal(got, listenAddrs(netbind.ServeAddrs(444))) {
+		t.Errorf("listen = %v, want %v", got, listenAddrs(netbind.ServeAddrs(444)))
 	}
 	if got := strs(dig(t, web, "tls_connection_policies", 0, "match", "remote_ip", "ranges")); !slices.Equal(got, loopbackRanges) {
 		t.Errorf("TLS policy remote_ip = %v, want loopback", got)
@@ -1081,10 +1081,10 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 		}
 		return
 	}
-	// The golden file records Unix's wildcard listeners; Windows listens on
-	// loopback only, so there the expected listen values come from
-	// ServeAddrs, each server hands its connections over (see Handoff), and
-	// the rest is compared as JSON.
+	// The golden file records Unix's wildcard listeners on the shared
+	// network; Windows listens on loopback only, with Caddy's own, so there
+	// the expected listen values come from ServeAddrs, and the rest is
+	// compared as JSON.
 	var gotCfg, wantCfg map[string]any
 	if err := json.Unmarshal(raw, &gotCfg); err != nil {
 		t.Fatal(err)
@@ -1095,15 +1095,10 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 	servers := dig(t, wantCfg, "apps", "http", "servers").(map[string]any)
 	for name, port := range map[string]int{"nearhost": 8443, "nearhost_http": 8080} {
 		listen := []any{}
-		for _, a := range netbind.ServeAddrs(port) {
+		for _, a := range listenAddrs(netbind.ServeAddrs(port)) {
 			listen = append(listen, a)
 		}
 		servers[name].(map[string]any)["listen"] = listen
-		servers[name].(map[string]any)["listener_wrappers"] = []any{
-			map[string]any{"wrapper": handoffModule},
-			map[string]any{"wrapper": retireModule},
-			map[string]any{"wrapper": "tls"},
-		}
 	}
 	if !reflect.DeepEqual(gotCfg, wantCfg) {
 		wantRaw, _ := json.Marshal(wantCfg)
