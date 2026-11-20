@@ -21,6 +21,10 @@
 //     running project, since the screen is read while it is being drawn;
 //   - press a key only once the screen shows the thing the key acts on;
 //   - share nothing between journeys: each has its own sandbox and ports.
+//   - keep a journey on this machine: never click an address, which opens
+//     a browser, never answer yes to the presets question, which fetches a
+//     registry, and never ask to trust the CA or manage the hosts file,
+//     which run the real sudo.
 //
 // A failed wait prints the screen as it was.
 package e2e
@@ -38,6 +42,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
@@ -88,9 +93,10 @@ type terminal struct {
 	raw strings.Builder // every byte the program wrote, for a failure's report
 }
 
-// start runs the program at path with args and env in a new terminal. The
-// program is killed when the test ends, should it still run.
-func start(t *testing.T, env []string, path string, args ...string) *terminal {
+// start runs the program at path with args and env in a new terminal, in
+// the folder dir, or this one when dir is empty. The program is killed when
+// the test ends, should it still run.
+func start(t *testing.T, env []string, dir, path string, args ...string) *terminal {
 	t.Helper()
 	pty, err := xpty.NewPty(cols, rows)
 	if err != nil {
@@ -98,6 +104,7 @@ func start(t *testing.T, env []string, path string, args ...string) *terminal {
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Env = env
+	cmd.Dir = dir
 	ownTerminal(cmd)
 	if err := pty.Start(cmd); err != nil {
 		pty.Close()
@@ -234,6 +241,45 @@ func (term *terminal) press(code rune, mod ...uv.KeyMod) {
 		k.Mod |= m
 	}
 	term.emu.SendKey(k)
+}
+
+// find is the column and row of the first place sub shows on the screen,
+// and fails the test when it does not show.
+func (term *terminal) find(sub string) (x, y int) {
+	term.t.Helper()
+	s := term.screen()
+	for y, line := range strings.Split(s, "\n") {
+		if i := strings.Index(line, sub); i >= 0 {
+			return utf8.RuneCountInString(line[:i]), y
+		}
+	}
+	term.t.Fatalf("%q is not on the screen:\n%s", sub, s)
+	return 0, 0
+}
+
+// click presses and lets go of the left mouse button on the first place sub
+// shows on the screen. Never click an address: the interface opens it in a
+// browser.
+func (term *terminal) click(sub string) {
+	term.t.Helper()
+	x, y := term.find(sub)
+	at := uv.Mouse{X: x, Y: y, Button: uv.MouseLeft}
+	term.emu.SendMouse(uv.MouseClickEvent(at))
+	term.emu.SendMouse(uv.MouseReleaseEvent(at))
+}
+
+// wheel turns the mouse wheel by n notches over the first place sub shows on
+// the screen: up for a negative n, down for a positive one.
+func (term *terminal) wheel(sub string, n int) {
+	term.t.Helper()
+	x, y := term.find(sub)
+	button := uv.MouseWheelDown
+	if n < 0 {
+		button, n = uv.MouseWheelUp, -n
+	}
+	for range n {
+		term.emu.SendMouse(uv.MouseWheelEvent(uv.Mouse{X: x, Y: y, Button: button}))
+	}
 }
 
 // resize gives the terminal a new size, which the program is told of.

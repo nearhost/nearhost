@@ -24,6 +24,10 @@ type sandbox struct {
 	https, http int
 	env         []string
 	args        []string
+	// cwd is the folder nearhost is started in, as a shell's current
+	// folder: the add-project form offers it as the path. Empty for the
+	// test's own.
+	cwd string
 }
 
 // newSandbox makes a sandbox whose config file holds config. env adds
@@ -56,7 +60,7 @@ func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 // start runs nearhost in the sandbox, in a terminal of its own.
 func (s *sandbox) start() *terminal {
 	s.t.Helper()
-	return start(s.t, s.env, nearhostBin, s.args...)
+	return start(s.t, s.env, s.cwd, nearhostBin, s.args...)
 }
 
 func (s *sandbox) sshLogPath() string { return filepath.Join(s.dir, "ssh.log") }
