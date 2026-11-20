@@ -205,6 +205,9 @@ type Engine struct {
 	// with. Tests replace them.
 	listen       func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
+	// freePort is transport.FreePort, which picks the local port of a web
+	// forward. Tests replace it.
+	freePort func() (int, error)
 	// applySites gives the proxy the set of sites that includes a project
 	// being started. It is the proxy's Apply; tests wrap it.
 	applySites func(sites []proxy.Site) error
@@ -317,6 +320,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 		holderOf:     PortHolder,
 		listen:       netbind.Listen,
 		listenPacket: netbind.ListenPacket,
+		freePort:     transport.FreePort,
 		hostsTurn:    make(chan struct{}, 1),
 		servers:      map[string]*serverConn{},
 		held:         map[string]bool{},

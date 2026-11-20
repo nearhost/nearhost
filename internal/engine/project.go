@@ -24,6 +24,11 @@ const cleanupTimeout = 15 * time.Second
 // webPortAttempts is how many local ports are tried for a web forward.
 const webPortAttempts = 3
 
+// webPortSkips is how many ports offered for a web forward may be passed
+// over, as kept for another route, before the forward fails. They do not
+// count as attempts.
+const webPortSkips = 100
+
 type forward struct{ local, remote int }
 
 // projectRun is the runtime state of one project. name and server never
@@ -370,8 +375,9 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 	}
 	var problems []string
 	if sess != nil {
+		loopback := loopbackPorts(cfg, p)
 		for i, w := range web {
-			local, err := e.forwardWeb(ctx, sess, run, w.Port)
+			local, err := e.forwardWeb(ctx, sess, run, w.Port, loopback)
 			if err != nil {
 				// The web routes forwarded so far go with the rest.
 				return StateError, errors.Join(fmt.Errorf("web port %d: %w", w.Port, err), e.rollBack(ctx, run))
@@ -482,16 +488,60 @@ func (e *Engine) releasePortLocked(port int) {
 	}
 }
 
+// loopbackPorts are the ports of the loopback routes in cfg and of p, the
+// project being started, should cfg not hold it as it is. Each is forwarded
+// from the same port on this machine.
+func loopbackPorts(cfg *config.Config, p *config.Project) map[int]bool {
+	ports := map[int]bool{}
+	add := func(routes []config.Route) {
+		for _, r := range routes {
+			if r.Role == config.RoleLoopback {
+				ports[r.Port] = true
+			}
+		}
+	}
+	for _, other := range cfg.Projects {
+		add(other.Routes)
+	}
+	add(p.Routes)
+	return ports
+}
+
+// forwardsFrom reports whether run already has a forward from local.
+func (e *Engine) forwardsFrom(run *projectRun, local int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, f := range run.forwards {
+		if f.local == local {
+			return true
+		}
+	}
+	return false
+}
+
 // forwardWeb forwards a web route's remote port to a free local port chosen
 // here and returns that port. The forward is recorded on run, so a rollback
 // cancels it; the proxy learns the port when the site is published.
-func (e *Engine) forwardWeb(ctx context.Context, sess transport.Transport, run *projectRun, remote int) (int, error) {
+//
+// A free port is any that nothing holds, or that the system thinks nothing
+// holds, so two kinds are passed over. One is a port in loopback, the ports
+// of the loopback routes: such a port is free until its route is forwarded,
+// which would then find it taken. The other is a port run already forwards
+// from, which the claim below would let through, as run holds it. A port
+// passed over is no attempt; webPortSkips bounds them.
+func (e *Engine) forwardWeb(ctx context.Context, sess transport.Transport, run *projectRun, remote int, loopback map[int]bool) (int, error) {
 	var last error
-	for attempt := 0; attempt < webPortAttempts && ctx.Err() == nil; attempt++ {
-		local, err := transport.FreePort()
+	for attempt, skips := 0, 0; attempt < webPortAttempts && skips < webPortSkips && ctx.Err() == nil; {
+		local, err := e.freePort()
 		if err != nil {
 			return 0, err
 		}
+		if loopback[local] || e.forwardsFrom(run, local) {
+			last = fmt.Errorf("local port %d is kept for another route", local)
+			skips++
+			continue
+		}
+		attempt++
 		if holder, ok := e.claimPort(run, local); !ok {
 			last = fmt.Errorf("local port %d is held by %s", local, holder)
 			continue
