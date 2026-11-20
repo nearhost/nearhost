@@ -3,13 +3,17 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 // sharedSocket stands in for the one socket that every configuration shares
@@ -258,7 +262,7 @@ func TestHandoffGivesALoadConnectionsOnceItHasStarted(t *testing.T) {
 	c, _ := sock.connect(t)
 	takes(t, fromOlder, c, "the running server, while the load starts")
 	set.started()
-	set.endLoad()
+	set.endLoad(true)
 	c, _ = sock.connect(t)
 	takes(t, fromNewer, c, "the started server")
 	older.Close()
@@ -275,7 +279,7 @@ func TestHandoffGivesAFailedLoadNoConnection(t *testing.T) {
 	set.beginLoad()
 	failed := set.wrapFor(sock.view(), newServerConns())
 	fromFailed := accepted(failed)
-	set.endLoad()
+	set.endLoad(false)
 	for i := 0; i < 5; i++ {
 		c, _ := sock.connect(t)
 		takes(t, fromOlder, c, "the running server")
@@ -346,12 +350,12 @@ func TestHandoffWaitsForTheOlderServersRequestsToReachAHandler(t *testing.T) {
 	var read atomic.Bool
 	opened := startedAfter(set, &read)
 	waitsAgain(t, waiting, opened, "before net/http had the connection")
-	olderConns.connContext(context.Background(), c)
+	ctx := olderConns.connContext(context.Background(), c)
 	waitsAgain(t, waiting, opened, "once net/http had the connection")
 	olderConns.state(c, http.StateActive)
 	waitsAgain(t, waiting, opened, "at StateActive")
 	read.Store(true)
-	olderConns.done(c)
+	olderConns.done(ctx.Value(handoffConnKey{}).(*handoffConn))
 	select {
 	case ok := <-opened:
 		if !ok {
@@ -360,7 +364,7 @@ func TestHandoffWaitsForTheOlderServersRequestsToReachAHandler(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the load never stopped waiting")
 	}
-	set.endLoad()
+	set.endLoad(true)
 	newer.Close()
 	older.Close()
 }
@@ -386,7 +390,7 @@ func TestHandoffDoesNotWaitForAnIdleConnection(t *testing.T) {
 	set.beginLoad()
 	newer := set.wrapFor(sock.view(), newServerConns())
 	set.started()
-	set.endLoad()
+	set.endLoad(true)
 	if waits != 0 {
 		t.Errorf("the load waited %d times for an idle connection", waits)
 	}
@@ -396,19 +400,24 @@ func TestHandoffDoesNotWaitForAnIdleConnection(t *testing.T) {
 
 // A load waits requestWait at most in all, however many addresses it
 // opens. Each older server here has a connection whose request never
-// comes, so each would be waited for until the deadline: with a deadline
-// of each server's own, the two waits would come to twice requestWait.
+// comes, so each would be waited for until its deadline. With one deadline
+// for the load, the server waited for second finds it passed and does not
+// wait; with a deadline of each server's own, both would wait.
 func TestHandoffWaitsOnceForALoad(t *testing.T) {
 	orig := requestWait
-	requestWait = time.Second
+	requestWait = 200 * time.Millisecond
 	t.Cleanup(func() { requestWait = orig })
 	set := &handoffSet{addrs: map[string]*handoffAddr{}}
 	var olds, news []net.Listener
 	var socks []*sharedSocket
+	var waited atomic.Int32 // older servers that waited at all
 	for port := 1; port <= 2; port++ {
 		sock := newSharedSocket(port)
 		socks = append(socks, sock)
-		old := set.wrapFor(sock.view(), newServerConns())
+		srv := newServerConns()
+		var once sync.Once
+		srv.waiting = func() { once.Do(func() { waited.Add(1) }) }
+		old := set.wrapFor(sock.view(), srv)
 		olds = append(olds, old)
 		c, _ := sock.connect(t)
 		takes(t, accepted(old), c, "the only server")
@@ -418,17 +427,144 @@ func TestHandoffWaitsOnceForALoad(t *testing.T) {
 	for _, sock := range socks {
 		news = append(news, set.wrapFor(sock.view(), newer))
 	}
-	start := time.Now()
 	set.started()
-	took := time.Since(start)
-	set.endLoad()
-	if took < requestWait*9/10 {
-		t.Errorf("the load waited %s for connections whose requests never came, want about %s", took, requestWait)
-	}
-	if took >= requestWait*3/2 {
-		t.Errorf("the load waited %s, more than %s in all", took, requestWait)
+	set.endLoad(true)
+	if n := waited.Load(); n > 1 {
+		t.Errorf("%d older servers were waited for, want one at most: the load's deadline is for all of them", n)
 	}
 	for _, l := range append(olds, news...) {
 		l.Close()
 	}
+}
+
+// If Caddy's "started" event never reaches the handoff, a load that ran
+// still has its listeners put live as it ends, and says so in the log:
+// otherwise no server would be given a connection again.
+func TestHandoffPutsALoadLiveWhenItsStartIsMissed(t *testing.T) {
+	rec := &recorder{}
+	SetSink(rec)
+	t.Cleanup(func() { SetSink(nil) })
+	missedStartedOnce = sync.Once{}
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	older := set.wrap(sock.view())
+	set.beginLoad()
+	newer := set.wrapFor(sock.view(), newServerConns())
+	fromNewer := accepted(newer)
+	set.endLoad(true)
+	older.Close()
+	c, _ := sock.connect(t)
+	takes(t, fromNewer, c, "the server of the load whose start was missed")
+	if !rec.hasFor("", "did not hear that its configuration had started") {
+		t.Errorf("log = %q, want the missed start said", rec.lines)
+	}
+	newer.Close()
+}
+
+// A connection taken while the first load is starting waits for its
+// listener to go live. If the load fails instead and its listeners close,
+// the connection is closed at once, and the address is let go.
+func TestHandoffClosesAConnectionWhenAFailedLoadLeavesNoListener(t *testing.T) {
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	set.beginLoad()
+	failed := set.wrapFor(sock.view(), newServerConns())
+	_, client := sock.connect(t)
+	set.endLoad(false)
+	failed.Close()
+	client.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("the client's read = %v, want EOF as its connection is closed", err)
+	}
+	waitUntil(t, 10*time.Second, func() bool {
+		set.mu.Lock()
+		defer set.mu.Unlock()
+		return len(set.addrs) == 0
+	}, "the accepting goroutine to end")
+}
+
+// An accept error goes to the live server, never to one a load is still
+// starting, whose accept loop it could end before it went live.
+func TestHandoffPassesAnAcceptErrorToTheLiveServer(t *testing.T) {
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	sock := newSharedSocket(1)
+	olderView := sock.view()
+	older := set.wrap(olderView)
+	set.beginLoad()
+	view := sock.view()
+	newer := set.wrapFor(view, newServerConns())
+	newerErrs := make(chan error, 1)
+	go func() {
+		_, err := newer.Accept()
+		newerErrs <- err
+	}()
+	boom := errors.New("too many open files")
+	// The accepting goroutine accepts through whichever view was newest
+	// when it began to wait.
+	select {
+	case olderView.errs <- boom:
+	case view.errs <- boom:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no one accepted through either view")
+	}
+	errs := make(chan error, 1)
+	go func() {
+		_, err := older.Accept()
+		errs <- err
+	}()
+	select {
+	case err := <-errs:
+		if err != boom {
+			t.Fatalf("the live server's Accept = %v, want the socket's error", err)
+		}
+	case err := <-newerErrs:
+		t.Fatalf("the server still starting got %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the socket's error never reached the live server")
+	}
+	set.endLoad(false)
+	newer.Close()
+	older.Close()
+}
+
+// Reached ends the wait for its connection: a request that has reached
+// the handlers is answered whatever happens to its server next. The wait
+// goes on at StateActive and ends only at Reached.
+func TestReachedEndsTheWaitForItsConnection(t *testing.T) {
+	orig := requestWait
+	requestWait = time.Minute
+	t.Cleanup(func() { requestWait = orig })
+	srv := newServerConns()
+	waiting := watchWaits(srv)
+	conn, _ := net.Pipe()
+	defer conn.Close()
+	ctx := srv.connContext(context.Background(), conn)
+	settled := make(chan struct{})
+	go func() {
+		srv.settle(time.Now().Add(requestWait))
+		close(settled)
+	}()
+	waitsAgain(t, waiting, settledBool(settled), "before the request was read")
+	srv.state(conn, http.StateActive)
+	waitsAgain(t, waiting, settledBool(settled), "at StateActive")
+	req := httptest.NewRequest("GET", "/", nil).WithContext(ctx)
+	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return nil })
+	if err := (Reached{}).ServeHTTP(httptest.NewRecorder(), req, next); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-settled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wait went on after the request reached the handlers")
+	}
+}
+
+// settledBool turns a closed channel into a send of false, for waitsAgain.
+func settledBool(settled <-chan struct{}) <-chan bool {
+	out := make(chan bool, 1)
+	go func() {
+		<-settled
+		out <- false
+	}()
+	return out
 }

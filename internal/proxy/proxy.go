@@ -100,7 +100,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// has started all of it (see Handoff).
 	handoffs.beginLoad()
 	err = caddy.Load(cfg, force)
-	handoffs.endLoad()
+	handoffs.endLoad(err == nil)
 	if err != nil {
 		// Caddy closes the listeners the failed configuration had opened in
 		// goroutines it does not wait for: wait for them, so a caller that

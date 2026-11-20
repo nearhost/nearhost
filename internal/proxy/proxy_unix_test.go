@@ -368,3 +368,37 @@ func TestEveryServerOnTheSharedSocketsHasHandoff(t *testing.T) {
 		}
 	}
 }
+
+// Every handle on the shared sockets is one of Handoff's listeners: no
+// server Caddy made by itself, without Handoff, shares a socket. Checked on
+// a running proxy, after its start and after a reload.
+func TestEveryHandleOnTheSharedSocketsIsHandedOff(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxyOpts(t, []Site{a}, Options{WebPort: freePort(t)})
+	check := func(when string) {
+		t.Helper()
+		sockets.mu.Lock()
+		defer sockets.mu.Unlock()
+		handoffs.mu.Lock()
+		defer handoffs.mu.Unlock()
+		if len(sockets.open) == 0 {
+			t.Fatalf("no shared socket is open %s", when)
+		}
+		for addr, s := range sockets.open {
+			key := s.ln.Addr().Network() + " " + s.ln.Addr().String()
+			n := 0
+			if a := handoffs.addrs[key]; a != nil {
+				n = len(a.open)
+			}
+			if n != s.refs {
+				t.Errorf("%s: the socket of %s has %d handles, but Handoff has %d listeners there", when, addr, s.refs, n)
+			}
+		}
+	}
+	check("after the start")
+	if err := h.p.Apply([]Site{a, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up.Server)}}); err != nil {
+		t.Fatal(err)
+	}
+	check("after a reload")
+}

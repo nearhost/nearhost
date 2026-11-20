@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -57,15 +58,20 @@ func init() {
 // This relies on every server that listens on sharedNetwork carrying this
 // wrapper and Reached: a server without them would take connections from
 // the shared socket while it shuts down. BuildConfig gives them to each of
-// its servers (see handedOff). A server Caddy adds by itself, such as one
-// for automatic HTTPS redirects, would listen on plain TCP instead, and its
-// bind would fail against the shared socket, failing the load. It also
-// relies on Caddy emitting "started" between starting the new
-// configuration and stopping the old one, as Caddy 2.11 does; without it a
-// load's listeners would never go live, which TestARequestDuringAReloadIsServed
-// would show at once.
+// its servers (see handedOff). A server Caddy adds by itself would not have
+// them: automatic HTTPS adds one for its redirects when no server listens
+// on the http port at the HTTPS listener's network and host, and gives it
+// that network, so it would share the socket. None is added today, as
+// nearhost_http always listens there; TestEveryHandleOnTheSharedSocketsIsHandedOff
+// checks on a running proxy that every handle on the shared sockets is one
+// of Handoff's. It also relies on Caddy emitting "started" between starting
+// the new configuration and stopping the old one, as Caddy 2.11 does; a
+// load that ran without it has its listeners put live as it returns (see
+// endLoad), without the old servers waited for.
 //
-// What remains: a reload that drops an address does not wait, so the old
+// What remains: HTTP/3 is not handed over, as its UDP sockets are Caddy's
+// own (see sharedNetwork), so a QUIC request made during a reload is not
+// covered. A reload that drops an address does not wait, so the old
 // server takes that address's connections until it shuts down, and drops
 // an unread request as before. A request whose bytes arrive only after
 // requestWait is dropped if the shutdown has begun. And a request on an
@@ -144,16 +150,19 @@ type serverConns struct {
 	// has yet to give a context; it does so before it accepts again.
 	accepted int
 	// unread holds each connection given a context whose first request
-	// has not reached a handler, and when it was given one.
-	unread  map[net.Conn]time.Time
-	changed chan struct{} // closed, and replaced, at every change
+	// has not reached a handler.
+	unread  map[net.Conn]*handoffConn
+	changed chan struct{} // closed, and replaced, when a wait should look again
+	// waits counts the settles waiting, so a change no one waits for costs
+	// no new channel.
+	waits atomic.Int32
 
 	// waiting, when set, is called as settle begins to wait; tests watch it.
 	waiting func()
 }
 
 func newServerConns() *serverConns {
-	return &serverConns{unread: map[net.Conn]time.Time{}, changed: make(chan struct{})}
+	return &serverConns{unread: map[net.Conn]*handoffConn{}, changed: make(chan struct{})}
 }
 
 // handoffConnKey is the context key of a connection's handoffConn.
@@ -161,8 +170,10 @@ type handoffConnKey struct{}
 
 // handoffConn is a connection of a followed server, for Reached.
 type handoffConn struct {
-	srv  *serverConns
-	conn net.Conn
+	srv    *serverConns
+	conn   net.Conn
+	since  time.Time   // when net/http gave it a context
+	unread atomic.Bool // still in srv.unread
 }
 
 // taken records a connection Accept is returning.
@@ -177,45 +188,68 @@ func (c *serverConns) taken() {
 // calls on every connection Accept returns, before it accepts again. The
 // context it returns is the parent of the connection's requests'.
 func (c *serverConns) connContext(ctx context.Context, conn net.Conn) context.Context {
+	hc := &handoffConn{srv: c, conn: conn, since: time.Now()}
+	hc.unread.Store(true)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.accepted > 0 {
 		c.accepted--
 	}
-	c.unread[conn] = time.Now()
+	c.unread[conn] = hc
 	c.notify()
-	return context.WithValue(ctx, handoffConnKey{}, handoffConn{c, conn})
+	return context.WithValue(ctx, handoffConnKey{}, hc)
 }
 
 // state is the server's net/http ConnState hook. A connection idle after a
 // response, or with its HTTP/2 preface read, closed or hijacked, has no
 // request net/http could still drop. StateActive is no such sign: net/http
 // sets it before it checks for a shutdown, and drops the request if one
-// has begun.
+// has begun. It runs on every request of a keep-alive connection, so it
+// takes the lock only to stop following a connection or to wake a wait.
 func (c *serverConns) state(conn net.Conn, st http.ConnState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	switch st {
 	case http.StateIdle, http.StateHijacked, http.StateClosed:
-		delete(c.unread, conn)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if hc := c.unread[conn]; hc != nil {
+			c.forget(hc)
+		}
+	default:
+		// A wait looks again, so tests can see that StateActive does not
+		// end it.
+		if c.waits.Load() > 0 {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.notify()
+		}
 	}
-	// Any change wakes a wait, which looks again, so tests can see that
-	// StateActive does not end it.
+}
+
+// done records that hc's request has reached a handler. Every request of a
+// connection comes here; only the first takes the lock.
+func (c *serverConns) done(hc *handoffConn) {
+	if !hc.unread.Load() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if hc.unread.Load() {
+		c.forget(hc)
+	}
+}
+
+// forget stops following hc. Call it with c.mu held.
+func (c *serverConns) forget(hc *handoffConn) {
+	hc.unread.Store(false)
+	delete(c.unread, hc.conn)
 	c.notify()
 }
 
-// done records that conn's request has reached a handler, or that it has
-// none to lose.
-func (c *serverConns) done(conn net.Conn) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.unread[conn]; ok {
-		delete(c.unread, conn)
-		c.notify()
-	}
-}
-
+// notify wakes the waiting settles, if any. Call it with c.mu held.
 func (c *serverConns) notify() {
+	if c.waits.Load() == 0 {
+		return
+	}
 	close(c.changed)
 	c.changed = make(chan struct{})
 }
@@ -229,19 +263,23 @@ func (c *serverConns) settle(deadline time.Time) {
 		now := time.Now()
 		wait := c.accepted > 0
 		next := deadline
-		for _, since := range c.unread {
-			if idle := since.Add(requestWait); idle.After(now) {
+		for _, hc := range c.unread {
+			if idle := hc.since.Add(requestWait); idle.After(now) {
 				wait = true
 				if idle.Before(next) {
 					next = idle
 				}
 			}
 		}
-		changed := c.changed
-		c.mu.Unlock()
 		if !wait || !now.Before(deadline) {
+			c.mu.Unlock()
 			return
 		}
+		// Counted under the lock, so a change made after this look closes
+		// the channel taken here.
+		c.waits.Add(1)
+		changed := c.changed
+		c.mu.Unlock()
 		if c.waiting != nil {
 			c.waiting()
 		}
@@ -251,6 +289,7 @@ func (c *serverConns) settle(deadline time.Time) {
 		case <-t.C:
 		}
 		t.Stop()
+		c.waits.Add(-1)
 	}
 }
 
@@ -283,13 +322,37 @@ func (s *handoffSet) beginLoad() {
 	s.load++
 }
 
-// endLoad ends the load beginLoad started. Listeners of a load that failed
-// before it started stay out of the handoff until Caddy closes them.
-func (s *handoffSet) endLoad() {
+// endLoad ends the load beginLoad started; loaded reports that Caddy ran
+// it. Listeners of a load that failed before it started stay out of the
+// handoff until Caddy closes them. Those of a load that ran but whose
+// "started" event never reached Started go live now, so the proxy is not
+// left with no server given connections; the old servers were not waited
+// for, which is said in the log, once.
+func (s *handoffSet) endLoad(loaded bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loading = false
+	if !loaded {
+		return
+	}
+	missed := false
+	for _, a := range s.addrs {
+		for _, l := range a.open {
+			if !l.live && l.load == s.load {
+				l.live, missed = true, true
+			}
+		}
+	}
+	if missed {
+		s.notify()
+		missedStartedOnce.Do(func() {
+			emit("", "the proxy did not hear that its configuration had started, so a request made during that reload could be dropped")
+		})
+	}
 }
+
+// missedStartedOnce keeps endLoad's line to one per process.
+var missedStartedOnce sync.Once
 
 // started puts the listeners of the load that is running into the handoff,
 // newest of their addresses, and then waits, requestWait at most in all,
@@ -485,7 +548,7 @@ func (s *handoffSet) pump(key string) {
 				// socket to wake its own accept; Caddy has cleared it.
 				continue
 			}
-			l.fail(err)
+			s.fail(key, err)
 			continue
 		}
 		s.deliver(key, c)
@@ -514,6 +577,27 @@ func (s *handoffSet) deliver(key string, c net.Conn) {
 		case <-l.done:
 			// Closed while c waited: the next one gets it.
 		}
+	}
+}
+
+// fail passes err, an error accepting the connections of key, to the
+// newest live listener's Accept, as that server would have taken the
+// connection: one not yet live is still being started, and an error that
+// ended its accept loop would leave it serving nothing once live. While
+// none is live but some is open, it waits for one; with none open, or if
+// that listener closes first, the error is dropped, and the next accept
+// says what is wrong if anything still is.
+func (s *handoffSet) fail(key string, err error) {
+	for {
+		l, changed := s.recipient(key)
+		if l != nil {
+			l.fail(err)
+			return
+		}
+		if changed == nil {
+			return
+		}
+		<-changed
 	}
 }
 
@@ -566,6 +650,9 @@ func (l *handoffListener) Close() error {
 				break
 			}
 		}
+		// A connection waiting for a live listener looks again, and is
+		// closed if none is left open.
+		l.set.notify()
 		l.set.mu.Unlock()
 		close(l.done)
 		err = l.Listener.Close()
@@ -613,8 +700,8 @@ func (Reached) CaddyModule() caddy.ModuleInfo {
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (Reached) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	if hc, ok := r.Context().Value(handoffConnKey{}).(handoffConn); ok {
-		hc.srv.done(hc.conn)
+	if hc, ok := r.Context().Value(handoffConnKey{}).(*handoffConn); ok {
+		hc.srv.done(hc)
 	}
 	return next.ServeHTTP(w, r)
 }

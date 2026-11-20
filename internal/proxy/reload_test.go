@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"sync"
@@ -186,4 +187,57 @@ func getHello(c *http.Client, url string) error {
 		return fmt.Errorf("status %d, body %q", resp.StatusCode, body)
 	}
 	return nil
+}
+
+// A request that has reached the handlers does not hold a reload back,
+// however long it runs, as a dev server's event stream or HMR socket does:
+// the reload waits only for requests to reach the handlers. The request
+// is answered once its upstream lets it go.
+func TestALongRequestDoesNotHoldAReloadBack(t *testing.T) {
+	orig := requestWait
+	requestWait = time.Minute // a wait for the request would outlast the test
+	t.Cleanup(func() { requestWait = orig })
+	arrived, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/hold" {
+			once.Do(func() { close(arrived) })
+			<-release
+		}
+		fmt.Fprint(w, "hello from b")
+	}))
+	t.Cleanup(slow.Close)
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(letGo)
+	upA := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(slow)}
+	h := startProxy(t, []Site{a, b})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+	c := h.client("b.test", false)
+	h.getEventually(c, "b.test", "/hello")
+	answered := make(chan error, 1)
+	go func() { answered <- getHello(c, h.url("b.test", "/hold")) }()
+	select {
+	case <-arrived:
+	case err := <-answered:
+		t.Fatalf("the long request ended before it reached its upstream: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the long request never reached its upstream")
+	}
+	applied := make(chan error, 1)
+	go func() { applied <- h.p.Apply([]Site{b}) }()
+	select {
+	case err := <-applied:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the reload waited for a request that had reached the handlers")
+	}
+	letGo()
+	if err := <-answered; err != nil {
+		t.Errorf("the long request: %v", err)
+	}
 }
