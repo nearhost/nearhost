@@ -155,10 +155,17 @@ func TestClosePassthrough(t *testing.T) {
 	}
 }
 
+// A passthrough opened before a project's loopback route was configured may
+// hold the route's port.
 func TestProjectLoopbackNamesPassthrough(t *testing.T) {
 	port := testutil.FreePort(t)
-	h, _ := passthroughHarness(t, remoteProject("one", "apollo", port))
+	h, _ := passthroughHarness(t)
 	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := h.eng.Config()
+	cfg.Projects = []config.Project{remoteProject("one", "apollo", port)}
+	if err := h.eng.Apply(bg, cfg); err != nil {
 		t.Fatal(err)
 	}
 	err := h.eng.StartProject(bg, "one")
@@ -251,7 +258,7 @@ func TestClosePassthroughDuringOpen(t *testing.T) {
 
 func TestOwnerTextDuringOpen(t *testing.T) {
 	port := testutil.FreePort(t)
-	h, _ := passthroughHarness(t, remoteProject("one", "apollo", port))
+	h, _ := passthroughHarness(t)
 	reached, release := holdOpen(h)
 	done := make(chan error, 1)
 	go func() {
@@ -259,6 +266,14 @@ func TestOwnerTextDuringOpen(t *testing.T) {
 		done <- err
 	}()
 	<-reached
+	// The route is configured once the open has its port: an open leaves
+	// the port of a route it knows of alone.
+	cfg := h.eng.Config()
+	cfg.Projects = []config.Project{remoteProject("one", "apollo", port)}
+	if err := h.eng.Apply(bg, cfg); err != nil {
+		release()
+		t.Fatal(err)
+	}
 	err := h.eng.StartProject(bg, "one")
 	release()
 	if openErr := <-done; openErr != nil {
@@ -755,5 +770,65 @@ func TestReopenAfterCloseKeepsItsPort(t *testing.T) {
 		t.Fatalf("the reopen's [::1] relay is gone: %v", err)
 	} else {
 		c.Close()
+	}
+}
+
+// A stopped project's loopback route needs its port on this machine when
+// the project starts. A passthrough leaves it alone, though it is free.
+func TestOpenPassthroughLeavesALoopbackRoutesPortAlone(t *testing.T) {
+	kept := testutil.FreePort(t)
+	h, _ := passthroughHarness(t, remoteProject("myapp", "apollo", kept))
+
+	// The server's port is the route's: another is used.
+	got, err := h.eng.OpenPassthrough(bg, passthroughSpec(kept))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Local == kept || got.Local == 0 || got.Remote != kept {
+		t.Fatalf("a passthrough of the route's port: %+v", got)
+	}
+
+	// The system offers the route's port: it is passed over.
+	other := testutil.FreePort(t)
+	spare := testutil.FreePort(t)
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(other))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	offerPorts(h, kept, kept, spare)
+	spec := passthroughSpec(other)
+	spec.ID = "p2"
+	got, err = h.eng.OpenPassthrough(bg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Local != spare {
+		t.Fatalf("Local = %d, want %d, the first port offered that no route needs", got.Local, spare)
+	}
+	if !h.eng.PortFree(kept) {
+		t.Fatal("the loopback route's port is taken")
+	}
+}
+
+// Every port offered is one a loopback route needs: the open fails with the
+// reason, and does not go on asking.
+func TestOpenPassthroughGivesUpWhenOnlyRoutePortsAreOffered(t *testing.T) {
+	kept := testutil.FreePort(t)
+	h, _ := passthroughHarness(t, remoteProject("myapp", "apollo", kept))
+	offers := 0
+	h.eng.freePort = func() (int, error) {
+		offers++
+		return kept, nil
+	}
+	_, err := h.eng.OpenPassthrough(bg, passthroughSpec(kept))
+	if err == nil || !strings.Contains(err.Error(), "kept for a project's route") {
+		t.Fatalf("err = %v", err)
+	}
+	if offers != webPortSkips {
+		t.Fatalf("%d ports asked for, want %d", offers, webPortSkips)
+	}
+	if len(h.eng.Passthroughs("")) != 0 || !h.eng.PortFree(kept) {
+		t.Fatal("the failed open left a passthrough or a port behind")
 	}
 }

@@ -206,7 +206,8 @@ type Engine struct {
 	listen       func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
 	// freePort is transport.FreePort, which picks the local port of a web
-	// forward. Tests replace it.
+	// forward, and of a passthrough whose own port is taken. Tests replace
+	// it.
 	freePort func() (int, error)
 	// applySites gives the proxy the set of sites that includes a project
 	// being started. It is the proxy's Apply; tests wrap it.
