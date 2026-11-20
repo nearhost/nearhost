@@ -25,8 +25,8 @@ func init() { systemOverride = func() Elevator { return &theE2E } }
 
 var theE2E e2eElevator
 
-// e2eElevator stands in for sudo. The password it takes is the one in
-// $NEARHOST_E2E_PASSWORD, and with none set it takes no password at all. A
+// e2eElevator stands in for sudo. The password it accepts is the one in
+// $NEARHOST_E2E_PASSWORD; with none set it refuses every password. A
 // command it is given runs as this user, not as root, and is written to the
 // file $NEARHOST_E2E_ELEVATED names, a line a command.
 type e2eElevator struct {
