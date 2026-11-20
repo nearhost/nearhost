@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.1](https://github.com/nearhost/nearhost/compare/v0.14.0...v0.14.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **documents:** a file on a server whose folder is being written is checked again ([#513](https://github.com/nearhost/nearhost/issues/513)) ([f639a56](https://github.com/nearhost/nearhost/commit/f639a56238ead4929c170d04cda4cc72b4a6581e))
+* **engine:** a web forward leaves the loopback routes' ports alone ([#506](https://github.com/nearhost/nearhost/issues/506)) ([46869c0](https://github.com/nearhost/nearhost/commit/46869c004f29b83c91ffe16bba39bd1508fa5a74))
+* **proxy:** a load that fails waits for the listeners it had opened ([#501](https://github.com/nearhost/nearhost/issues/501)) ([9f0532a](https://github.com/nearhost/nearhost/commit/9f0532a0197afa7c5b1bfbd6d3e280ebad776a11))
+* **proxy:** a reload waits for the old listeners to close ([#502](https://github.com/nearhost/nearhost/issues/502)) ([bb2c3e7](https://github.com/nearhost/nearhost/commit/bb2c3e7a9cb2e93f657fa9a227efba23658bc912))
+
 ## [0.14.0](https://github.com/nearhost/nearhost/compare/v0.13.0...v0.14.0) (2026-11-19)
 
 
