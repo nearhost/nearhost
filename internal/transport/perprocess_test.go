@@ -928,13 +928,11 @@ func (f *perProcessFake) drop(t *testing.T, pid int) {
 	}
 }
 
+// freePort is testutil.FreePort: two calls in one test never return the same
+// port, as two of FreePort's own may.
 func freePort(t *testing.T) int {
 	t.Helper()
-	port, err := FreePort()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return port
+	return testutil.FreePort(t)
 }
 
 // portFree reports whether nothing listens on 127.0.0.1:port.

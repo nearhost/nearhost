@@ -60,3 +60,16 @@ func TestProxyPortBlocksEndBelowTheEphemeralRanges(t *testing.T) {
 		t.Fatalf("the blocks span %d-%d, want them inside 20000-29999", proxyPortFirst, end-1)
 	}
 }
+
+// Linux picks a free port at random among some 7,000, so 500 picks hold the
+// same port twice almost every time unless FreePort keeps them apart.
+func TestFreePortGivesATestNoPortTwice(t *testing.T) {
+	given := map[int]bool{}
+	for range 500 {
+		port := FreePort(t)
+		if given[port] {
+			t.Fatalf("port %d was given twice", port)
+		}
+		given[port] = true
+	}
+}
