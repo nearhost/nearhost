@@ -35,7 +35,11 @@ type sandbox struct {
 // ssh.
 func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 	t.Helper()
-	dir := testutil.TempDir(t, "nh")
+	// The folder's path is kept short, and is the config folder itself:
+	// a server's control socket goes in <dir>/nearhost/run, and its whole
+	// path must fit ssh's limit of 86 bytes. A Mac's temporary folder
+	// alone takes 49 of them.
+	dir := testutil.TempDir(t, "n")
 	s := &sandbox{t: t, dir: dir, config: filepath.Join(dir, "config.yaml")}
 	if err := os.WriteFile(s.config, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -43,7 +47,7 @@ func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 	fake := filepath.Dir(testutil.FakeSSH(t))
 	s.env = append(os.Environ(),
 		"HOME="+dir, "USERPROFILE="+dir,
-		"XDG_CONFIG_HOME="+filepath.Join(dir, "c"),
+		"XDG_CONFIG_HOME="+dir,
 		"XDG_DATA_HOME="+filepath.Join(dir, "d"),
 		"PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"FAKE_SSH_LOG="+s.sshLogPath(),

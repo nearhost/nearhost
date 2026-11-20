@@ -42,7 +42,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
@@ -247,13 +246,30 @@ func (term *terminal) press(code rune, mod ...uv.KeyMod) {
 // and fails the test when it does not show.
 func (term *terminal) find(sub string) (x, y int) {
 	term.t.Helper()
-	s := term.screen()
-	for y, line := range strings.Split(s, "\n") {
-		if i := strings.Index(line, sub); i >= 0 {
-			return utf8.RuneCountInString(line[:i]), y
+	term.mu.Lock()
+	for y := range term.emu.Height() {
+		// The row's text, and the column each of its bytes is drawn in: a
+		// wide character takes two columns and one place in the text.
+		var line strings.Builder
+		var cols []int
+		for x := 0; x < term.emu.Width(); {
+			content, width := " ", 1
+			if c := term.emu.CellAt(x, y); c != nil && c.Content != "" {
+				content, width = c.Content, max(c.Width, 1)
+			}
+			for range len(content) {
+				cols = append(cols, x)
+			}
+			line.WriteString(content)
+			x += width
+		}
+		if i := strings.Index(line.String(), sub); i >= 0 {
+			term.mu.Unlock()
+			return cols[i], y
 		}
 	}
-	term.t.Fatalf("%q is not on the screen:\n%s", sub, s)
+	term.mu.Unlock()
+	term.t.Fatalf("%q is not on the screen:\n%s", sub, term.screen())
 	return 0, 0
 }
 

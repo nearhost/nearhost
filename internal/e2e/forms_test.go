@@ -59,7 +59,10 @@ func TestNAddsAProjectThatIsThenServed(t *testing.T) {
 	if body, err := sb.get("blog.test", "/"); err != nil || !strings.HasPrefix(body, "blog:blog.test") {
 		t.Errorf("the added project answered %q, %v", body, err)
 	}
-	if cfg := sb.configFile(); !strings.Contains(cfg, "name: blog") || !strings.Contains(cfg, "alias: blog.test") {
+	// The path is the folder nearhost was started in, which the form
+	// offered: on the screen a long one wraps, so it is read here.
+	if cfg := sb.configFile(); !strings.Contains(cfg, "name: blog") || !strings.Contains(cfg, "alias: blog.test") ||
+		!strings.Contains(cfg, "path: "+folder) {
 		t.Errorf("the config file does not hold the project:\n%s", cfg)
 	}
 	// The first project is as it was.
@@ -103,20 +106,21 @@ func TestSAddsAServerThatThenConnects(t *testing.T) {
 
 	term.press('s')
 	term.waitFor("the host step", "Add server · host", "1 of 3")
-	term.typeText("mini.lan")
-	term.waitFor("the host typed", "host      mini.lan")
+	// A short name: the server's control socket is named after it.
+	term.typeText("mini")
+	term.waitFor("the host typed", "host      mini")
 	term.press(keyEnter)
-	term.waitFor("the name step, named after the host", "Add server · name", "name      mini.lan", "enter check")
+	term.waitFor("the name step, named after the host", "Add server · name", "name      mini", "enter check")
 	term.press(keyEnter)
 
-	term.waitFor("the server added", "Added server mini.lan.", "ssh host  mini.lan", "projects  none")
+	term.waitFor("the server added", "Added server mini.", "ssh host  mini", "projects  none")
 	term.waitGone("the form to close", "Add server")
-	if cfg := sb.configFile(); !strings.Contains(cfg, "ssh_host: mini.lan") {
+	if cfg := sb.configFile(); !strings.Contains(cfg, "ssh_host: mini") {
 		t.Errorf("the config file does not hold the server:\n%s", cfg)
 	}
 	// The check was made with ssh, to the host typed.
-	if log := sb.sshLog(); !strings.Contains(log, "mini.lan") {
-		t.Errorf("ssh was not run for mini.lan:\n%s", log)
+	if log := sb.sshLog(); !strings.Contains(log, "-- mini") {
+		t.Errorf("ssh was not run for mini:\n%s", log)
 	}
 
 	term.waitFor("the server's page, not connected", "○ disconnected", "c connect")
