@@ -143,6 +143,43 @@ func TestThreeWrongPasswordsCloseTheBox(t *testing.T) {
 	quit(term)
 }
 
+// A project left stopped by a refused password is started again with enter,
+// as its page says, and that start asks for the password again: after a
+// cancel, and after three wrong passwords.
+func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
+	sb, term := shopWithHosts(t)
+	term.press(keyEscape)
+	term.waitGone("the password box to close", "Password needed")
+	skipWelcome(term)
+	term.waitFor("the project stopped", "○ shop", "you cancelled")
+
+	term.click("○ shop")
+	term.waitFor("the project's page, with what to do", "▌  ○ shop", "Press enter and approve the password prompt", "enter start")
+	term.press(keyEnter)
+	term.waitFor("the password box again", "Password needed", "add shop.test to")
+	for _, wrong := range []string{"one", "two", "three"} {
+		term.typeText(wrong)
+		term.waitFor("the password typed", "password  "+strings.Repeat("•", len(wrong)))
+		term.press(keyEnter)
+		term.waitGone("the password to be taken", "password  •")
+	}
+	term.waitGone("the password box to close", "Password needed")
+	term.waitFor("the project stopped again", "○ shop", "three wrong passwords", "enter start")
+	if got := sb.hostsFile(); got != untouched {
+		t.Errorf("the hosts file changed:\n%s", got)
+	}
+
+	term.press(keyEnter)
+	term.waitFor("the password box a third time", "Password needed", "add shop.test to")
+	term.typeText(password)
+	term.press(keyEnter)
+	term.waitFor("the project running", "● shop", "hosts ok")
+	if got := sb.hostsFile(); !hasShop(got) {
+		t.Errorf("the hosts file: %q", got)
+	}
+	quit(term)
+}
+
 // The stand-ins for sudo and the hosts file are in builds made with the e2e
 // tag alone. A build without it, as a release is, holds none of them.
 func TestAReleaseBuildHasNoTestSeam(t *testing.T) {

@@ -362,6 +362,13 @@ type uiEngine struct {
 // remove them is shown in the log and does not fail the Apply. Neither does
 // an Apply that began while the config file was missing: a missing file
 // loads as no servers, and the file may be back by the time the apply ends.
+// StartProject starts a project, saying when the start was asked for: a
+// start the user asks for after a refused hosts update asks for the
+// password again, where the starts that were already under way do not.
+func (u *uiEngine) StartProject(ctx context.Context, name string) error {
+	return u.Engine.StartProject(askedNow(ctx), name)
+}
+
 func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
 	_, statErr := os.Stat(u.path)
 	if err := u.Engine.Apply(ctx, cfg); err != nil {
