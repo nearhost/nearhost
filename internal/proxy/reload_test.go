@@ -3,9 +3,14 @@ package proxy
 import (
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // A request made on a new connection as soon as a reload returns is served.
@@ -65,5 +70,174 @@ func TestARequestJustAfterAReloadIsServed(t *testing.T) {
 	}
 	if failed > 0 {
 		t.Errorf("%d of %d requests made just after a reload failed", failed, reloads)
+	}
+}
+
+// A request made on a new connection while a reload runs is served, by the
+// configuration the reload replaces or by the one it loads. Several clients
+// keep making such requests throughout a run of reloads, and each reload
+// waits until every client has finished a request begun since the one
+// before, so requests and reloads overlap on every run whatever the
+// machine's speed.
+func TestARequestDuringAReloadIsServed(t *testing.T) {
+	const clients, reloads = 4, 100
+	// A cap on the requests a client makes, so a reload that never returns
+	// cannot keep the clients going: each request is bounded by the
+	// client's timeout.
+	const maxRequests = 50 * reloads
+	// A reload waits requestWait at most for the old servers' connections
+	// to have their requests read. On a slow runner, or under the race
+	// detector, a client's TLS handshake can take longer than the usual
+	// second, and the reload would then stop waiting for it and drop its
+	// request: that is the bound working, not the loss this test is
+	// about. Wait as long as a client's own timeout instead, so a failure
+	// here is the loss itself.
+	orig := requestWait
+	requestWait = 10 * time.Second
+	t.Cleanup(func() { requestWait = orig })
+	upA, upB := upstream(t, "a"), upstream(t, "b")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}
+	h := startProxy(t, []Site{a, b})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+	c := h.client("b.test", false)
+	h.getEventually(c, "b.test", "/hello")
+
+	var (
+		stop     atomic.Bool
+		finished [clients]atomic.Int64 // requests each client has finished
+		made     atomic.Int64
+		failed   atomic.Int64
+		progress = make(chan struct{}, 1) // a client has finished a request
+		mu       sync.Mutex
+		first    []string // the first few failures
+		wg       sync.WaitGroup
+	)
+	for i := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < maxRequests && !stop.Load(); n++ {
+				err := getHello(c, h.url("b.test", "/hello"))
+				made.Add(1)
+				if err != nil {
+					failed.Add(1)
+					mu.Lock()
+					if len(first) < 3 {
+						first = append(first, err.Error())
+					}
+					mu.Unlock()
+				}
+				finished[i].Add(1)
+				select {
+				case progress <- struct{}{}:
+				default:
+				}
+			}
+		}()
+	}
+	done := func() [clients]int64 {
+		var out [clients]int64
+		for i := range finished {
+			out[i] = finished[i].Load()
+		}
+		return out
+	}
+	for i := 0; i < reloads; i++ {
+		sites := []Site{b}
+		if i%2 == 1 {
+			sites = []Site{a, b}
+		}
+		before := done()
+		if err := h.p.Apply(sites); err != nil {
+			stop.Store(true)
+			wg.Wait()
+			t.Fatal(err)
+		}
+		// Each client finishes one request begun after the reload started,
+		// or has stopped at its cap, before the next reload.
+		for j := 0; j < clients; {
+			if n := finished[j].Load(); n >= before[j]+2 || n >= maxRequests {
+				j++
+				continue
+			}
+			<-progress
+		}
+	}
+	stop.Store(true)
+	wg.Wait()
+	for _, f := range first {
+		t.Error(f)
+	}
+	if n := failed.Load(); n > 0 {
+		t.Errorf("%d of %d requests made during %d reloads failed", n, made.Load(), reloads)
+	}
+}
+
+// getHello makes a GET of url with c and reports how it was not answered
+// with b's hello.
+func getHello(c *http.Client, url string) error {
+	resp, err := c.Get(url)
+	if err != nil {
+		return err
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "hello from b" {
+		return fmt.Errorf("status %d, body %q", resp.StatusCode, body)
+	}
+	return nil
+}
+
+// A request that has reached the handlers does not hold a reload back,
+// however long it runs, as a dev server's event stream or HMR socket does:
+// the reload waits only for requests to reach the handlers. The request
+// is answered once its upstream lets it go.
+func TestALongRequestDoesNotHoldAReloadBack(t *testing.T) {
+	orig := requestWait
+	requestWait = time.Minute // a wait for the request would outlast the test
+	t.Cleanup(func() { requestWait = orig })
+	arrived, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/hold" {
+			once.Do(func() { close(arrived) })
+			<-release
+		}
+		fmt.Fprint(w, "hello from b")
+	}))
+	t.Cleanup(slow.Close)
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(letGo)
+	upA := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
+	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(slow)}
+	h := startProxy(t, []Site{a, b})
+	h.getEventually(h.client("a.test", false), "a.test", "/hello")
+	c := h.client("b.test", false)
+	h.getEventually(c, "b.test", "/hello")
+	answered := make(chan error, 1)
+	go func() { answered <- getHello(c, h.url("b.test", "/hold")) }()
+	select {
+	case <-arrived:
+	case err := <-answered:
+		t.Fatalf("the long request ended before it reached its upstream: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the long request never reached its upstream")
+	}
+	applied := make(chan error, 1)
+	go func() { applied <- h.p.Apply([]Site{b}) }()
+	select {
+	case err := <-applied:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the reload waited for a request that had reached the handlers")
+	}
+	letGo()
+	if err := <-answered; err != nil {
+		t.Errorf("the long request: %v", err)
 	}
 }

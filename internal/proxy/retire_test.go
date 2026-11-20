@@ -407,3 +407,93 @@ func TestAReloadToNoSitesSettlesTheOldListeners(t *testing.T) {
 		t.Errorf("%d lines about open listeners, want 1", n)
 	}
 }
+
+// Stop waits for the listeners it closes, as a load does: when it returns
+// none of them is open, so their ports can be bound at once.
+func TestAStopWaitsForItsListeners(t *testing.T) {
+	up := upstream(t, "a")
+	h := startProxy(t, []Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}})
+	old := retiring.snapshot()
+	if len(old) == 0 {
+		t.Fatal("no listener is recorded for a running proxy")
+	}
+	var waited []map[*retireListener]struct{}
+	orig := retired
+	retired = func(ls map[*retireListener]struct{}, timeout time.Duration) map[*retireListener]struct{} {
+		waited = append(waited, ls)
+		return orig(ls, timeout)
+	}
+	t.Cleanup(func() { retired = orig })
+
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) != 1 || len(waited[0]) != len(old) {
+		t.Fatalf("Stop waited for %v, want once for the %d listeners", waited, len(old))
+	}
+	for l := range old {
+		if _, ok := waited[0][l]; !ok {
+			t.Fatal("Stop did not wait for one of the listeners")
+		}
+		select {
+		case <-l.closed:
+		default:
+			t.Fatal("a listener was still open when Stop returned")
+		}
+	}
+	if n := len(retiring.snapshot()); n != 0 {
+		t.Errorf("%d listeners open after Stop", n)
+	}
+}
+
+// A stop whose listeners do not close in time says so and forgets them, so
+// the next start does not take them for listeners its load replaced and
+// wait for them again.
+func TestAStopSaysWhichListenersDidNotClose(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxy(t, []Site{a})
+	left := stuck(retiring, 1)
+	t.Cleanup(func() {
+		retiring.mu.Lock()
+		defer retiring.mu.Unlock()
+		for l := range left {
+			delete(retiring.open, l)
+		}
+	})
+	waited := standRetired(t, func(ls map[*retireListener]struct{}) map[*retireListener]struct{} {
+		out := map[*retireListener]struct{}{}
+		for l := range left {
+			if _, ok := ls[l]; ok {
+				out[l] = struct{}{}
+			}
+		}
+		return out
+	})
+
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if len(*waited) != 1 {
+		t.Fatalf("Stop waited %d times for its listeners, want once", len(*waited))
+	}
+	const want = "1 proxy listener was still open 5s after a stop: 127.0.0.1:8080"
+	if !h.rec.hasFor("", want) {
+		t.Errorf("the log lacks %q", want)
+	}
+	if _, ok := retiring.snapshot()[firstOf(left)]; ok {
+		t.Fatal("the listener that did not close is still waited for")
+	}
+
+	if err := h.p.Apply([]Site{a}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ls := range (*waited)[1:] {
+		if _, ok := ls[firstOf(left)]; ok {
+			t.Fatal("the next start waited again for the listener that had not closed")
+		}
+	}
+	if n := h.rec.countFor("", "still open"); n != 1 {
+		t.Errorf("%d lines about open listeners, want 1", n)
+	}
+}

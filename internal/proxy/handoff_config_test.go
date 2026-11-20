@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -39,4 +40,15 @@ func serverWrappers(t *testing.T) map[string][]string {
 		t.Fatalf("servers = %v, want the HTTPS, HTTP and web servers", out)
 	}
 	return out
+}
+
+// Each server hands its connections over through Handoff, before TLS, so
+// a stopping server is given none (see Handoff), and Retire, around it, sees
+// each server's listener close.
+func TestServersHandConnectionsToTheNewestConfig(t *testing.T) {
+	for name, w := range serverWrappers(t) {
+		if !slices.Equal(w, []string{handoffModule, retireModule, "tls"}) {
+			t.Errorf("server %s has listener wrappers %q, want %q, %q then tls", name, w, handoffModule, retireModule)
+		}
+	}
 }

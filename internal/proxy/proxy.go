@@ -101,7 +101,12 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// which it skips for one it already runs.
 	force := freshenIntermediate(p.opts.StorageRoot)
 	before := retiring.snapshot()
-	if err := caddy.Load(cfg, force); err != nil {
+	// The servers this load starts are given connections only once Caddy
+	// has started all of it (see Handoff).
+	handoffs.beginLoad()
+	err = caddy.Load(cfg, force)
+	handoffs.endLoad(err == nil)
+	if err != nil {
 		// Caddy closes the listeners the failed configuration had opened in
 		// goroutines it does not wait for: wait for them, so a caller that
 		// tries again at once does not find a port held by its own failed
@@ -111,13 +116,13 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	}
 	owner = p
 	// A reload starts the new servers, and Caddy then closes the old ones'
-	// listeners in goroutines it does not wait for. On Unix each
-	// configuration binds its own sockets: until an old one is closed the
-	// kernel still queues connections on it, and resets them at the close.
-	// Wait for the old listeners, so a request made once the reload has
-	// returned reaches the new configuration. A load Caddy skips, as it runs
-	// that configuration already, opens no listener and closes none; one
-	// that takes the last site away opens none and closes the old ones.
+	// listeners in goroutines it does not wait for. Wait for them, so that
+	// once a reload has returned no listener of the old configuration is
+	// open. The sockets themselves stay open, shared with the new servers
+	// (see Handoff). A load Caddy skips, as it runs that configuration
+	// already, opens no listener and closes none; one that takes the last
+	// site away opens none and closes the old ones, and with them the
+	// sockets.
 	was := listening
 	listening = listens(sites, p.opts)
 	if len(retiring.since(before)) > 0 || was && !listening {
@@ -179,17 +184,24 @@ func (p *Proxy) Stop() error {
 	if owner != p {
 		return nil
 	}
+	before := retiring.snapshot()
 	if err := stopCaddy(); err != nil {
 		return err
 	}
 	owner = nil
+	// Caddy starts its servers' shutdowns in goroutines and returns once
+	// they have started, so a listener can stay open a moment after Stop.
+	// Wait for the listeners it closes, as a load does, so a caller can bind
+	// their ports again at once. One still open after the wait is said in
+	// the log and forgotten; were it remembered, the next start would count
+	// it as a listener its load replaced and wait for it all over again.
+	retiring.settle(before, "a stop")
 	if !listening {
 		return nil
 	}
 	listening = false
-	// Caddy starts its servers' shutdowns in goroutines and returns once
-	// they have started, so a listener can stay open a moment after Stop.
-	// Wait for the ports, so a caller can bind them again at once.
+	// Then wait for the ports themselves, which a listener that did not
+	// close in time still holds, and which the caller is about to bind.
 	return releasePorts(p.ports(), releaseWait)
 }
 
@@ -198,8 +210,8 @@ func (p *Proxy) Stop() error {
 // again after a failure finds nothing left to stop and succeeds.
 var stopCaddy = caddy.Stop
 
-// releaseWait bounds how long Stop waits for the proxy's ports, and how long
-// a load waits for the listeners it closes (see Retire).
+// releaseWait bounds how long a load or Stop waits for the listeners it
+// closes (see Retire), and how long Stop waits for the proxy's ports.
 const releaseWait = 5 * time.Second
 
 // listenPort is a TCP port the proxy listens on and the addresses it binds
