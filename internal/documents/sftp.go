@@ -83,6 +83,11 @@ func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, str
 			defer sftpCheckHook("end")
 		}
 		for try := 1; ; try++ {
+			// A request that ended during the wait opens nothing more:
+			// the select below may pick the timer though ctx is done.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			file, err := f.c.Open(p)
 			if err != nil {
 				return nil, mapError("open", p, err)
@@ -99,10 +104,6 @@ func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, str
 				return nil, err
 			case try == openTries:
 				return nil, &fs.PathError{Op: "open", Path: p, Err: ErrChanging}
-			}
-			// Asked first, so a request that has ended starts no wait.
-			if err := ctx.Err(); err != nil {
-				return nil, err
 			}
 			select {
 			case <-ctx.Done():
