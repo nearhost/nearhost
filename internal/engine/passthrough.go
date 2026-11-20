@@ -133,6 +133,7 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 	}
 	p := &passthrough{Passthrough: Passthrough{PassthroughSpec: spec}, sess: c.sess, opening: true}
 	e.passthroughs[spec.ID] = p
+	loopback := loopbackPorts(e.cfg, nil)
 	e.passOps.Add(1) // under mu and before closed is set, so before Shutdown waits
 	e.mu.Unlock()
 	defer e.passOps.Done()
@@ -142,7 +143,7 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 		delete(e.passthroughs, spec.ID)
 		e.mu.Unlock()
 	}
-	local, err := e.claimPassthroughPort(ctx, passthroughOwner(spec.ID), spec.Remote)
+	local, err := e.claimPassthroughPort(ctx, passthroughOwner(spec.ID), spec.Remote, loopback)
 	if err != nil {
 		forget()
 		return Passthrough{}, err
@@ -208,16 +209,30 @@ func (e *Engine) OpenPassthrough(ctx context.Context, spec PassthroughSpec) (Pas
 
 // claimPassthroughPort claims a local port for owner and starts its [::1]
 // relay. It prefers the port the server uses, then tries free ports.
-func (e *Engine) claimPassthroughPort(ctx context.Context, owner string, remote int) (int, error) {
-	if e.tryLocalPort(owner, remote) == nil {
-		return remote, nil
+//
+// A port in loopback, the ports of the configured loopback routes, is passed
+// over, the server's own among them: such a port is free while its project
+// is stopped, and the project's next start would find it taken and leave
+// the route out. A port passed over is no attempt; webPortSkips bounds
+// them.
+func (e *Engine) claimPassthroughPort(ctx context.Context, owner string, remote int, loopback map[int]bool) (int, error) {
+	last := fmt.Errorf("local port %d is kept for a project's route", remote)
+	if !loopback[remote] {
+		if last = e.tryLocalPort(owner, remote); last == nil {
+			return remote, nil
+		}
 	}
-	var last error
-	for attempt := 0; attempt < webPortAttempts && ctx.Err() == nil; attempt++ {
-		local, err := transport.FreePort()
+	for attempt, skips := 0, 0; attempt < webPortAttempts && skips < webPortSkips && ctx.Err() == nil; {
+		local, err := e.freePort()
 		if err != nil {
 			return 0, err
 		}
+		if loopback[local] {
+			last = fmt.Errorf("local port %d is kept for a project's route", local)
+			skips++
+			continue
+		}
+		attempt++
 		if last = e.tryLocalPort(owner, local); last == nil {
 			return local, nil
 		}

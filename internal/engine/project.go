@@ -489,8 +489,8 @@ func (e *Engine) releasePortLocked(port int) {
 }
 
 // loopbackPorts are the ports of the loopback routes in cfg and of p, the
-// project being started, should cfg not hold it as it is. Each is forwarded
-// from the same port on this machine.
+// project being started, should cfg not hold it as it is; p may be nil.
+// Each is forwarded from the same port on this machine.
 func loopbackPorts(cfg *config.Config, p *config.Project) map[int]bool {
 	ports := map[int]bool{}
 	add := func(routes []config.Route) {
@@ -503,7 +503,9 @@ func loopbackPorts(cfg *config.Config, p *config.Project) map[int]bool {
 	for _, other := range cfg.Projects {
 		add(other.Routes)
 	}
-	add(p.Routes)
+	if p != nil {
+		add(p.Routes)
+	}
 	return ports
 }
 
