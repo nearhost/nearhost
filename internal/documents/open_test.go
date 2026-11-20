@@ -504,7 +504,7 @@ func touchFolderDuringChecks(t *testing.T, dir string, n int32) *atomic.Int32 {
 		switch {
 		case stage == "walk":
 			checks.Add(1)
-		case checks.Load() <= n:
+		case stage == "fstat" && checks.Load() <= n:
 			at = at.Add(time.Minute)
 			if err := os.Chtimes(filepath.Join(dir, "notes"), at, at); err != nil {
 				t.Error(err)
@@ -517,17 +517,21 @@ func touchFolderDuringChecks(t *testing.T, dir string, n int32) *atomic.Int32 {
 func TestSFTPFolderWrittenDuringChecksIsServedOnceItSettles(t *testing.T) {
 	dir, p := openTree(t)
 	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
-	checks := touchFolderDuringChecks(t, dir, openTries-1)
+	// Two checks, which was as many as Open once made. The folders above
+	// the test's own are on the path too, and other tests write there, so
+	// the later tries are left spare.
+	const written = 2
+	checks := touchFolderDuringChecks(t, dir, written)
 	r, rel, err := fsys.Open(context.Background(), dir, "", p)
 	if err != nil {
-		t.Fatalf("a folder written to during %d checks: %v", openTries-1, err)
+		t.Fatalf("a folder written to during %d checks: %v", written, err)
 	}
 	defer r.Close()
 	if b, err := io.ReadAll(r); err != nil || string(b) != "notes/a.md" || rel != "notes/a.md" {
 		t.Errorf("read %q as %q, %v", b, rel, err)
 	}
-	if n := checks.Load(); n != openTries {
-		t.Errorf("%d checks, want %d", n, openTries)
+	if n := checks.Load(); n <= written {
+		t.Errorf("%d checks, want more than %d", n, written)
 	}
 }
 
@@ -583,15 +587,19 @@ func TestSFTPOpenStopsTryingWhenTheRequestEnds(t *testing.T) {
 	// the folder change.
 	var checks atomic.Int32
 	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	ended := make(chan struct{})
 	setSFTPCheckHook(t, func(stage string) {
-		if stage == "walk" {
+		switch stage {
+		case "walk":
 			checks.Add(1)
-			return
+		case "fstat":
+			if err := os.Chtimes(filepath.Join(dir, "notes"), at, at); err != nil {
+				t.Error(err)
+			}
+			cancel()
+		case "end":
+			close(ended)
 		}
-		if err := os.Chtimes(filepath.Join(dir, "notes"), at, at); err != nil {
-			t.Error(err)
-		}
-		cancel()
 	})
 	r, _, err := fsys.Open(ctx, dir, "", p)
 	if r != nil {
@@ -601,7 +609,11 @@ func TestSFTPOpenStopsTryingWhenTheRequestEnds(t *testing.T) {
 		t.Fatalf("err = %v, want the request's cancellation", err)
 	}
 	// Open returns at the cancel; the check it was in ends just after.
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Open's work went on after the request ended")
+	}
 	if n := checks.Load(); n != 1 {
 		t.Errorf("%d checks, want 1", n)
 	}

@@ -70,13 +70,18 @@ func (f sftpFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 //
 // A file or folder written to during the check is opened and checked again,
 // up to openTries times; ErrChanging is the error when every try saw a
-// change.
+// change. Someone who writes in the tree can cause that change, so one
+// request gives them up to openTries opens to beat, where a reload gives
+// them as many as they like.
 func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, string, error) {
 	rel, ok := Below(root, p)
 	if !ok {
 		return nil, "", &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
 	}
 	r, err := withContext(ctx, func() (io.ReadCloser, error) {
+		if sftpCheckHook != nil {
+			defer sftpCheckHook("end")
+		}
 		for try := 1; ; try++ {
 			file, err := f.c.Open(p)
 			if err != nil {
@@ -95,6 +100,7 @@ func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, str
 			case try == openTries:
 				return nil, &fs.PathError{Op: "open", Path: p, Err: ErrChanging}
 			}
+			// Asked first, so a request that has ended starts no wait.
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -120,8 +126,8 @@ var ErrChanging = errors.New("the file or a folder above it keeps changing")
 // openTries is how many times Open opens and checks a file that changes
 // while it is checked, and openPause the wait after the first try, doubled
 // after each: 150ms in all. Each try opens the file again, so a try is a
-// whole check of its own and gives a folder swap no more time than one
-// check does.
+// whole check of its own: a folder swap gets no more time within a try than
+// one check gives it, though it gets openTries tries.
 const openTries = 5
 
 var openPause = 10 * time.Millisecond
@@ -136,7 +142,9 @@ var (
 
 // sftpCheckHook, when set, runs in compareOpened at stage "walk", before the
 // path is walked, and "fstat", between the walk's last lstat and the open
-// file's stat. Tests set it to change the tree in those windows.
+// file's stat; and at stage "end" when Open's work has ended, which may be
+// after Open returned for a request that ended. Tests set it to change the
+// tree in those windows.
 var sftpCheckHook func(stage string)
 
 // compareOpened walks p with lstat, requiring each element to be what it
