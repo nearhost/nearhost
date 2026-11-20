@@ -487,6 +487,28 @@ func waitStateEvent(t *testing.T, events <-chan Event, project, message string) 
 	}
 }
 
+// waitAnnounced waits for a state event of project announcing st and fails the
+// test if none arrives. Earlier events are dropped.
+func waitAnnounced(t *testing.T, events <-chan Event, project string, st State) {
+	t.Helper()
+	var seen []State
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Project != project || ev.State == "" {
+				continue
+			}
+			if ev.State == st {
+				return
+			}
+			seen = append(seen, ev.State)
+		case <-deadline:
+			t.Fatalf("no state event %s for %s; got %v", st, project, seen)
+		}
+	}
+}
+
 // transportLines returns the lines the transport of server has logged
 // since the harness was built. Both transports log "<server>: forward
 // <spec>" when a forward is set up, and "<server>: cancel <spec>" when one
