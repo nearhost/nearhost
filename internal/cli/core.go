@@ -106,6 +106,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	ctx, again, release := b.notify(base)
 	defer release()
 	if err := b.start(eng, ctx); err != nil {
+		if engine.IsAlreadyRunning(err) {
+			return alreadyRunning{err}
+		}
 		return b.bind.advise(err)
 	}
 
@@ -121,7 +124,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
 		if errors.Is(err, control.ErrInUse) {
-			err = errors.New("Another Nearhost answers on " + control.SocketPath(opts.RunDir) + ". Stop it first.")
+			err = errors.New("Another Nearhost answers on " + control.SocketPath(opts.RunDir) + ". " + stopAdvice)
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
@@ -221,6 +224,23 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	return nil
 }
+
+// stopAdvice is how to stop the Nearhost that is in the way, and see it.
+const stopAdvice = "Stop it with `nearhost stop`, or see it with `nearhost status`."
+
+// alreadyRunning is the engine's refusal to start beside another Nearhost,
+// told how to stop the other from the command line. The engine's own
+// "Stop it first." is for the interface, which says it on its home screen.
+type alreadyRunning struct{ err error }
+
+// Error is the engine's message, with stopAdvice for what to do.
+func (e alreadyRunning) Error() string {
+	return strings.TrimSuffix(e.err.Error(), " Stop it first.") + " " + stopAdvice
+}
+
+// Unwrap is the engine's refusal, so it still matches
+// engine.ErrAlreadyRunning.
+func (e alreadyRunning) Unwrap() error { return e.err }
 
 // watchConfig applies the config file to eng each time a change to it has
 // settled, until ctx ends. A file that cannot be loaded or applied leaves

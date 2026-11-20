@@ -36,8 +36,11 @@ type detachBackend struct {
 	spawn func(exe string, args []string) (wait func() error, err error)
 	// dial reaches the running core, or returns control.ErrNotRunning.
 	dial func() (*control.Client, error)
-	// logTail returns the last n lines of the core log, or fewer.
-	logTail func(n int) []string
+	// logSize is the size of the core log, 0 when there is none.
+	logSize func() int64
+	// logTail returns the last n lines, or fewer, of what was written to
+	// the core log from offset from on.
+	logTail func(from int64, n int) []string
 	// exe is the path of this program, which the child runs.
 	exe func() string
 	// timeout is how long to wait for the child to answer; zero is
@@ -48,7 +51,13 @@ type detachBackend struct {
 // systemDetach is the production backend.
 func systemDetach() detachBackend {
 	return detachBackend{
-		spawn: spawnDetached,
+		spawn: func(exe string, args []string) (func() error, error) {
+			path, err := config.LogPath()
+			if err != nil {
+				return nil, err
+			}
+			return spawnDetached(exe, args, path)
+		},
 		dial: func() (*control.Client, error) {
 			dir, err := config.RunDir()
 			if err != nil {
@@ -56,12 +65,23 @@ func systemDetach() detachBackend {
 			}
 			return control.Dial(dir)
 		},
-		logTail: func(n int) []string {
+		logSize: func() int64 {
+			path, err := config.LogPath()
+			if err != nil {
+				return 0
+			}
+			fi, err := os.Stat(path)
+			if err != nil {
+				return 0
+			}
+			return fi.Size()
+		},
+		logTail: func(from int64, n int) []string {
 			path, err := config.LogPath()
 			if err != nil {
 				return nil
 			}
-			return tailLines(path, n)
+			return tailLines(path, from, n)
 		},
 		exe: func() string {
 			if exe, err := os.Executable(); err == nil {
@@ -85,7 +105,13 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 	}
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if info, ok := detachInfo(ctx, b); ok {
-		fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, info.StartedBy)
+		switch info.StartedBy {
+		case control.StartedForeground, control.StartedTUI:
+			// `nearhost up`, or a daemon run by hand, in a terminal.
+			fmt.Fprintf(out, "Nearhost is already running in a terminal (pid %d). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n", info.PID)
+		default:
+			fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, printable(string(info.StartedBy)))
+		}
 		return nil
 	}
 	logPath, err := config.LogPath()
@@ -96,6 +122,9 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
+	// The log may hold earlier runs: only what this one writes after this
+	// says why it stopped.
+	logFrom := b.logSize()
 	wait, err := b.spawn(b.exe(), args)
 	if err != nil {
 		return fmt.Errorf("start Nearhost in the background: %w", err)
@@ -118,7 +147,7 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 		}
 		select {
 		case werr := <-exited:
-			return childStopped(errOut, logPath, b.logTail(detachTailLines), werr)
+			return childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
 		default:
 		}
 		if !time.Now().Before(deadline) {
@@ -205,18 +234,29 @@ func detachArgs(cmd *cobra.Command) ([]string, error) {
 // (Unix) or detached console-less process (Windows) apart from this one's,
 // with the null device for its standard input and output, and in the home
 // directory, so that it holds no directory the user may want to remove. Its
-// output goes to the core log, which the daemon opens itself.
-func spawnDetached(exe string, args []string) (func() error, error) {
+// output goes to the core log, which the daemon opens itself; its standard
+// error is appended to the log at logPath too, so that what the runtime says
+// there, as a panic, which no one else would see, is kept. It is unstamped,
+// and both append, so it lands between the core's own lines.
+func spawnDetached(exe string, args []string, logPath string) (func() error, error) {
 	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
 	}
 	// The child has its own copies once it has started.
 	defer null.Close()
+	// Opened as the core opens it, so a log over the limit is set aside
+	// now, and the core finds it small: once the child holds it open,
+	// Windows would not let it be renamed.
+	logFile, err := openCoreLog(logPath, coreLogMayRotate())
+	if err != nil {
+		return nil, fmt.Errorf("open the core log: %w", err)
+	}
+	defer logFile.Close()
 	dir, _ := os.UserHomeDir()
 	c, err := startDetached(func() *exec.Cmd {
 		c := exec.Command(exe, args...)
-		c.Stdin, c.Stdout, c.Stderr = null, null, null
+		c.Stdin, c.Stdout, c.Stderr = null, null, logFile
 		c.Dir = dir
 		return c
 	})
@@ -258,9 +298,11 @@ func noteInCoreLog(line string) {
 // many more lines than it is asked for.
 const tailBytes = 64 << 10
 
-// tailLines returns the last n lines of the file at path, without their
-// line endings. A file that is missing or empty has none.
-func tailLines(path string, n int) []string {
+// tailLines returns the last n lines of what the file at path holds from
+// offset from on, without their line endings. A file that is missing or has
+// nothing past from has none. A file shorter than from has been set aside
+// and started afresh since (see openCoreLog), so all of it is read.
+func tailLines(path string, from int64, n int) []string {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -270,12 +312,15 @@ func tailLines(path string, n int) []string {
 	if err != nil {
 		return nil
 	}
-	off := max(fi.Size()-tailBytes, 0)
+	if from > fi.Size() {
+		from = 0
+	}
+	off := max(fi.Size()-tailBytes, from)
 	data, err := io.ReadAll(io.NewSectionReader(f, off, fi.Size()-off))
 	if err != nil {
 		return nil
 	}
-	if off > 0 {
+	if off > from {
 		// The first line read is most likely the end of a longer one.
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {
 			data = data[i+1:]

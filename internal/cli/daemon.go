@@ -65,16 +65,7 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return err
 	}
-	// A core that already runs keeps writing to the log it has open: this
-	// one, which its instance lock is about to turn away, must not set that
-	// log aside under it.
-	rotate := true
-	if runDir, err := config.RunDir(); err == nil {
-		if held, err := engine.InstanceRunning(runDir); held || err != nil {
-			rotate = false
-		}
-	}
-	logFile, err := openCoreLog(path, rotate)
+	logFile, err := openCoreLog(path, coreLogMayRotate())
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
@@ -105,11 +96,23 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	return err
 }
 
+// coreLogMayRotate reports whether the core log may be set aside: not while
+// a core runs, which keeps writing to the log it has open. A core that its
+// instance lock is about to turn away must not move that log under it.
+func coreLogMayRotate() bool {
+	runDir, err := config.RunDir()
+	if err != nil {
+		return false
+	}
+	held, err := engine.InstanceRunning(runDir)
+	return !held && err == nil
+}
+
 // openCoreLog opens the log at path to append to it, creating it and its
 // folder as needed. With rotate, a log over coreLogLimit is first renamed to path.1,
 // replacing any older one. A log that cannot be renamed, as one another core
 // still has open on Windows, is appended to.
-func openCoreLog(path string, rotate bool) (io.WriteCloser, error) {
+func openCoreLog(path string, rotate bool) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}

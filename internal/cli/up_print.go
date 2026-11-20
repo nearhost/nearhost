@@ -211,10 +211,8 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// without was simply stopped.
 		// A read-only hosts file's reason already says how to clear it, and
 		// approving again would fail the same way. Without a terminal no
-		// prompt can appear, and up has already said what to do instead; a
-		// core in the background asks for none, and its reason says what to
-		// do.
-		// A core in the background asks for no prompt: `hosts update`
+		// prompt can appear, and up has already said what to do instead. A
+		// core in the background asks for no prompt: `hosts update`
 		// updates the file in a terminal and has the core try again.
 		switch {
 		case reason == "" || hosts.IsReadOnlyMessage(reason) || strings.Contains(reason, errNoTerminal.Error()) || strings.Contains(reason, errHostsNeedTerminal.Error()):
