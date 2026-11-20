@@ -83,7 +83,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	ag, agentNote := serveAgents(b.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
 		ssh: b.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot), restart: true,
 	})
-	defer ag.close()
+	// Closed once, before the engine's shutdown lets go of the instance
+	// lock: a core started as soon as that is free must find the agents'
+	// socket free too. The deferred close covers a run that ends earlier.
+	closeAgents := sync.OnceFunc(ag.close)
+	defer closeAgents()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
 	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
@@ -170,8 +174,10 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 
 	// No client may talk to an engine that is stopping, nor a new config
 	// reach it: the socket goes first, so one that asks from here on finds
-	// no core.
+	// no core. Agents go next, for the same reason, and so that their
+	// socket is free before the lock is.
 	closeControl()
+	closeAgents()
 	stopWatch()
 
 	// A second signal must not end the process: the ssh masters are outside
