@@ -96,7 +96,7 @@ func (p *Proxy) awaitCertificates(sites []Site) {
 	// by the caller; it is waited for like the rest, should it be late.
 	root, err := RootCert(p.opts.StorageRoot)
 	for err != nil && time.Now().Before(deadline) {
-		time.Sleep(certPoll)
+		time.Sleep(min(certPoll, time.Until(deadline)))
 		root, err = RootCert(p.opts.StorageRoot)
 	}
 	pool := x509.NewCertPool()
