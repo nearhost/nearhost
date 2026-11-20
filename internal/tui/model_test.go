@@ -135,6 +135,25 @@ func TestProjectPanel(t *testing.T) {
 	wantScreen(t, m, "1 ignored: 3306  ·  i show")
 }
 
+// socketPathReason is transport's message for a run directory too long for
+// a control socket.
+const socketPathReason = "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
+
+// ssh by hand works when the run directory is too long, and fixes nothing.
+func TestServerFixForARunDirectoryTooLong(t *testing.T) {
+	if !transport.IsSocketPathMessage(socketPathReason) {
+		t.Fatal("socketPathReason is not transport's message")
+	}
+	for _, st := range []transport.Status{transport.StatusAuthFailed, transport.StatusReconnecting} {
+		if got := serverFix(st, socketPathReason, "mini.lan"); got != socketPathFix || strings.Contains(got, "ssh mini.lan") {
+			t.Errorf("serverFix(%s) = %q", st, got)
+		}
+	}
+	if got := serverFix(transport.StatusAuthFailed, "Permission denied (publickey).", "mini.lan"); !strings.Contains(got, "Run ssh mini.lan once") {
+		t.Errorf("another reason lost the ssh advice: %q", got)
+	}
+}
+
 func TestFixFor(t *testing.T) {
 	withGOOS(t, "linux")
 	for _, c := range []struct {
@@ -149,6 +168,7 @@ func TestFixFor(t *testing.T) {
 		{engine.StateDegraded, "", false, "run `ssh mini.lan` once"},
 		{engine.StateError, "auth", false, "Run `ssh mini.lan` once in a terminal to fix access, then press enter."},
 		{engine.StateError, "port", true, "Resolve what is named above"},
+		{engine.StateError, socketPathReason, false, socketPathFix},
 	} {
 		if got := fixFor(c.st, c.reason, c.serverUp, "mini.lan"); !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
 			t.Errorf("fixFor(%s, %q, %v) = %q, want %q", c.st, c.reason, c.serverUp, got, c.want)

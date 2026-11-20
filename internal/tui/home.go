@@ -160,9 +160,15 @@ func (m *Model) problems() []problem {
 				on = append(on, clean(p.Name))
 			}
 		}
-		out = append(out, problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), why: h.LastError,
-			fix:    serverFix(h.Status, srv.SSHHost),
-			blocks: on, server: srv.Name, host: srv.SSHHost})
+		pr := problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), why: h.LastError,
+			fix:    serverFix(h.Status, h.LastError, srv.SSHHost),
+			blocks: on, server: srv.Name, host: srv.SSHHost}
+		// Neither r nor the ssh command that y copies helps a run
+		// directory that is too long, so Home offers neither for it.
+		if transport.IsSocketPathMessage(h.LastError) {
+			pr.server, pr.host = "", ""
+		}
+		out = append(out, pr)
 	}
 	for _, p := range m.cfg.Projects {
 		st := m.b.Status(p.Name)
@@ -313,9 +319,20 @@ func (m *Model) connectionText(h engine.ServerHealth) string {
 	return text
 }
 
-// serverFix says what to do about a server in state st. A server that gave
-// up waits for r; one that is reconnecting tries again by itself.
-func serverFix(st transport.Status, host string) string {
+// socketPathFix is what to do about a run directory too long for ssh's
+// control socket.
+//
+// XDG_CONFIG_HOME also says where the config is read from, so the folder
+// goes with it. Nearhost reads both as it starts: no retry here helps.
+const socketPathFix = "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then quit Nearhost and start it again."
+
+// serverFix says what to do about a server in state st whose last error is
+// reason. A server that gave up waits for r; one that is reconnecting tries
+// again by itself.
+func serverFix(st transport.Status, reason, host string) string {
+	if transport.IsSocketPathMessage(reason) {
+		return socketPathFix
+	}
 	if st == transport.StatusReconnecting {
 		return "Nearhost tries again by itself. If it keeps failing, run ssh " + clean(host) + " once in a terminal to check access."
 	}

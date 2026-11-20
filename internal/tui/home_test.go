@@ -41,6 +41,27 @@ func TestHomeShowsProblems(t *testing.T) {
 		"· 2 problems", " r retry · l log · / filter")
 }
 
+// A run directory too long for ssh is fixed by neither r nor ssh in a
+// terminal, so Home offers neither and r reconnects nothing.
+func TestHomeOffersNoRetryForARunDirectoryTooLong(t *testing.T) {
+	m, f := problemModel(t)
+	f.srvErrs["vps"] = socketPathReason
+	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
+	wantScreen(t, m, "✕ vps  auth failed", "Set XDG_CONFIG_HOME to a shorter path", "blocks    clientsite")
+	for _, not := range []string{"r retry", "copy command", "ssh deploy@vps.example"} {
+		if strings.Contains(screen(m), not) {
+			t.Errorf("Home shows %q:\n%s", not, screen(m))
+		}
+	}
+	run(m, press(m, "r"))
+	if len(f.edit.reconnected) != 0 {
+		t.Errorf("r reconnected %v", f.edit.reconnected)
+	}
+	if cmd := press(m, "y"); cmd != nil && clipboardOf(cmd) != "" {
+		t.Errorf("y copied %q", clipboardOf(cmd))
+	}
+}
+
 // r on Home reconnects every server that cannot connect; y copies the ssh
 // command that fixes access.
 func TestHomeRetriesAndCopies(t *testing.T) {

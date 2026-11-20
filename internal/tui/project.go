@@ -260,6 +260,11 @@ func fixFor(st engine.State, reason string, serverUp bool, host string) string {
 			return "Press enter and " + approvePrompt() + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and run nearhost with --no-hosts."
 		}
 	case engine.StateError:
+		// The run directory is read as Nearhost starts, and ssh by hand
+		// would work and fix nothing.
+		if transport.IsSocketPathMessage(reason) {
+			return socketPathFix
+		}
 		if !serverUp {
 			return "Run `ssh " + clean(host) + "` once in a terminal to fix access, then press enter."
 		}

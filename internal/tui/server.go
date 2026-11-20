@@ -59,7 +59,7 @@ func (m *Model) serverPanel(name string, width, height int) []string {
 		lines = append(lines, field("fix", "Press c to connect it.", width)...)
 	} else if lastErr != "" && st != transport.StatusConnected {
 		lines = append(lines, field("why", clean(lastErr), width)...)
-		lines = append(lines, field("fix", serverFix(st, srv.SSHHost), width)...)
+		lines = append(lines, field("fix", serverFix(st, lastErr, srv.SSHHost), width)...)
 	}
 	if st == transport.StatusConnected {
 		switch {
