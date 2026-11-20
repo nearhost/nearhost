@@ -441,15 +441,20 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 }
 
-// listenerWrappers sets server's listener wrappers, before TLS: Handoff,
-// as every configuration shares the one socket of an address (see
-// listenAddrs), and Retire.
-func listenerWrappers(server map[string]any) map[string]any {
+// handedOff makes server hand its connections over across reloads (see
+// Handoff): its listener wrappers, before TLS, are Handoff and Retire, and
+// its first route, with no matcher, is Reached, which tells Handoff that a
+// request has reached the handlers.
+func handedOff(server map[string]any) map[string]any {
 	server["listener_wrappers"] = []any{
 		map[string]any{"wrapper": handoffModule},
 		map[string]any{"wrapper": retireModule},
 		map[string]any{"wrapper": "tls"},
 	}
+	routes, _ := server["routes"].([]any)
+	server["routes"] = append([]any{map[string]any{
+		"handle": []any{map[string]any{"handler": reachedModule}},
+	}}, routes...)
 	return server
 }
 
@@ -684,7 +689,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		})
 		server["errors"] = map[string]any{"routes": downRoutes}
 	}
-	servers := map[string]any{"nearhost": listenerWrappers(server)}
+	servers := map[string]any{"nearhost": handedOff(server)}
 	if len(all) == 0 {
 		// For a server with no host at all, automatic HTTPS adds a redirect
 		// of every host to the http port, ahead of our routes when another
@@ -699,9 +704,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = listenerWrappers(httpServer(hosts, union, httpPort, httpsPort))
+	servers["nearhost_http"] = handedOff(httpServer(hosts, union, httpPort, httpsPort))
 	if web {
-		servers["nearhost_web"] = listenerWrappers(webServer(opts))
+		servers["nearhost_web"] = handedOff(webServer(opts))
 	}
 
 	cfg := map[string]any{

@@ -96,6 +96,8 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// which it skips for one it already runs.
 	force := freshenIntermediate(p.opts.StorageRoot)
 	before := retiring.snapshot()
+	// The servers this load starts are given connections only once Caddy
+	// has started all of it (see Handoff).
 	handoffs.beginLoad()
 	err = caddy.Load(cfg, force)
 	handoffs.endLoad()

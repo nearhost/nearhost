@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -44,7 +45,7 @@ func TestBuildConfigProducesRoutesTLSAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, raw)
 	}
 	if dig(t, cfg, "admin", "disabled") != true {
@@ -113,7 +114,7 @@ func TestBuildConfigDefaultsPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	json.Unmarshal(raw, &cfg)
+	decodeConfig(raw, &cfg)
 	if dig(t, cfg, "apps", "http", "https_port") != float64(443) || dig(t, cfg, "apps", "http", "http_port") != float64(80) {
 		t.Error("default ports wrong")
 	}
@@ -125,7 +126,7 @@ func TestBuildConfigNoSitesHasNoListenersButKeepsCA(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	json.Unmarshal(raw, &cfg)
+	decodeConfig(raw, &cfg)
 	apps := dig(t, cfg, "apps").(map[string]any)
 	if _, ok := apps["http"]; ok {
 		t.Error("zero-site config must not include the http app")
@@ -148,7 +149,7 @@ func TestBuildConfigHomeWithNoSites(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := routeHosts(cfg); len(got) != 0 {
@@ -173,7 +174,7 @@ func TestBuildConfigHomeWithNoSites(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg = map[string]any{}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if len(homeRoutes(t, cfg)) != 0 {
@@ -215,7 +216,7 @@ func build(t *testing.T, sites []Site) map[string]any {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	return cfg
@@ -330,7 +331,7 @@ func TestBuildConfigKeepsUpgradedStreamsAcrossReloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	handler := proxyHandler(t, dig(t, cfg, "apps", "http", "servers", "nearhost", "routes", 0))
@@ -346,7 +347,7 @@ func TestBuildConfigDisablesStorageClean(t *testing.T) {
 			t.Fatal(err)
 		}
 		var cfg map[string]any
-		if err := json.Unmarshal(raw, &cfg); err != nil {
+		if err := decodeConfig(raw, &cfg); err != nil {
 			t.Fatal(err)
 		}
 		if dig(t, cfg, "apps", "tls", "disable_storage_clean") != true {
@@ -424,6 +425,44 @@ func TestLoopbackRangesAreExactlyLoopback(t *testing.T) {
 }
 
 // buildJSON is BuildConfig for sites, decoded.
+// decodeConfig decodes a built config into cfg, as json.Unmarshal does,
+// leaving out the Reached route that heads every server's routes: the
+// tests of what the routes do read them without it. A server without it
+// is an error (see handedOff).
+func decodeConfig(raw []byte, cfg *map[string]any) error {
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		return err
+	}
+	apps, _ := (*cfg)["apps"].(map[string]any)
+	httpApp, _ := apps["http"].(map[string]any)
+	servers, _ := httpApp["servers"].(map[string]any)
+	for name, v := range servers {
+		srv := v.(map[string]any)
+		routes, _ := srv["routes"].([]any)
+		first, _ := firstHandler(routes)
+		if first != reachedModule {
+			return fmt.Errorf("server %s's first route is not %s", name, reachedModule)
+		}
+		srv["routes"] = routes[1:]
+	}
+	return nil
+}
+
+// firstHandler is the handler of routes' first route, when it is a route
+// with no matcher and one handler.
+func firstHandler(routes []any) (string, bool) {
+	if len(routes) == 0 {
+		return "", false
+	}
+	r := routes[0].(map[string]any)
+	hs, _ := r["handle"].([]any)
+	if _, ok := r["match"]; ok || len(hs) != 1 {
+		return "", false
+	}
+	h, _ := hs[0].(map[string]any)["handler"].(string)
+	return h, true
+}
+
 func buildJSON(t *testing.T, sites []Site) map[string]any {
 	t.Helper()
 	raw, err := BuildConfig(sites, Options{StorageRoot: t.TempDir()})
@@ -431,7 +470,7 @@ func buildJSON(t *testing.T, sites []Site) map[string]any {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	return cfg
@@ -518,7 +557,7 @@ func TestBuildConfigTagsBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	routes := dig(t, cfg, "apps", "http", "servers", "nearhost", "routes").([]any)
@@ -572,7 +611,7 @@ func TestBuildConfigRedirectsEveryHostFromHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	srv := dig(t, cfg, "apps", "http", "servers", "nearhost_http").(map[string]any)
@@ -628,7 +667,7 @@ func TestBuildConfigRedirectKeepsHTTPSPort(t *testing.T) {
 			t.Fatal(err)
 		}
 		var cfg map[string]any
-		if err := json.Unmarshal(raw, &cfg); err != nil {
+		if err := decodeConfig(raw, &cfg); err != nil {
 			t.Fatal(err)
 		}
 		routes := dig(t, cfg, "apps", "http", "servers", "nearhost_http", "routes").([]any)
@@ -701,7 +740,7 @@ func TestBuildConfigHTTPSServerNeverServesHomePage(t *testing.T) {
 				t.Fatal(err)
 			}
 			var cfg map[string]any
-			if err := json.Unmarshal(raw, &cfg); err != nil {
+			if err := decodeConfig(raw, &cfg); err != nil {
 				t.Fatal(err)
 			}
 			if got := routeHosts(cfg); !slices.Equal(got, []string{"pro.test", "*.local.example.pro"}) {
@@ -742,7 +781,7 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 				t.Fatal(err)
 			}
 			var cfg map[string]any
-			if err := json.Unmarshal(raw, &cfg); err != nil {
+			if err := decodeConfig(raw, &cfg); err != nil {
 				t.Fatal(err)
 			}
 			for _, host := range []string{"localhost", "nearhost.localhost"} {
@@ -766,7 +805,7 @@ func TestBuildConfigWebPortServesHomePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
@@ -820,7 +859,7 @@ func TestBuildConfigWildcardPageAdmitsLoopbackOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	web := dig(t, cfg, "apps", "http", "servers", "nearhost_web").(map[string]any)
@@ -848,7 +887,7 @@ func TestBuildConfigHomePageVersionDefaultsToDev(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := decodeConfig(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	home := dig(t, cfg, "apps", "http", "servers", "nearhost_web", "routes", 0, "handle", 0)
