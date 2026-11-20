@@ -41,10 +41,11 @@ func newFakeDetach(t *testing.T) *fakeDetach {
 
 // answer starts a core with info on the fake's socket.
 func (f *fakeDetach) answer(info control.Info) {
-	f.t.Helper()
 	srv, err := control.Listen(control.SocketPath(f.runDir), infoCore{info})
 	if err != nil {
-		f.t.Fatal(err)
+		// Not Fatal: answer may run on a goroutine of the fake child's.
+		f.t.Error(err)
+		return
 	}
 	f.mu.Lock()
 	f.srv = srv
@@ -63,7 +64,8 @@ func (f *fakeDetach) backend(child func() func() error) detachBackend {
 			return child(), nil
 		},
 		dial:    func() (*control.Client, error) { return control.Dial(f.runDir) },
-		logTail: func(n int) []string { return nil },
+		logSize: func() int64 { return 0 },
+		logTail: func(from int64, n int) []string { return nil },
 		exe:     func() string { return "/bin/nearhost" },
 	}
 }
@@ -150,6 +152,70 @@ func TestDetachAlreadyRunning(t *testing.T) {
 	}
 }
 
+// A core in a terminal is not in the background, and -d says how to put it
+// there.
+func TestDetachAlreadyRunningInATerminal(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	f.answer(control.Info{API: 1, PID: 98, StartedBy: control.StartedForeground})
+	b := f.backend(func() func() error {
+		t.Error("spawned with a core running")
+		return running()
+	})
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Nearhost is already running in a terminal (pid 98). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+}
+
+// What the log held before -d started the core is another run's: a core
+// that stops while starting shows only what it wrote itself, and says so
+// plainly when that is nothing.
+func TestDetachChildFailsShowsOnlyItsOwnLog(t *testing.T) {
+	cfgPath := configHome(t)
+	logPath := filepath.Join(filepath.Dir(cfgPath), "core.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("an old run's line\nits last line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, wrote := range map[string]string{"wrote": "this run's line\n", "wrote nothing": ""} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeDetach(t)
+			b := f.backend(func() func() error {
+				if wrote != "" {
+					lf, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					lf.WriteString(wrote)
+					lf.Close()
+				}
+				return func() error { return errors.New("exit status 1") }
+			})
+			sys := systemDetach()
+			b.logSize, b.logTail = sys.logSize, sys.logTail
+			b.timeout = 10 * time.Second
+			ui := fakeUI(t, true, new(bool))
+			ui.detach = b
+			_, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+			want := "Nearhost stopped while starting (exit status 1), before it wrote to " + logPath + ".\n"
+			if wrote != "" {
+				want = "Nearhost stopped while starting. The end of " + logPath + ":\nthis run's line\n"
+			}
+			if code != 1 || stderr != want {
+				t.Errorf("code %d, stderr %q, want %q", code, stderr, want)
+			}
+		})
+	}
+}
+
 func TestDetachChildFails(t *testing.T) {
 	cfgPath := configHome(t)
 	logPath := filepath.Join(filepath.Dir(cfgPath), "core.log")
@@ -162,7 +228,7 @@ func TestDetachChildFails(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("line %d", i))
 	}
 	asked := 0
-	b.logTail = func(n int) []string {
+	b.logTail = func(from int64, n int) []string {
 		asked = n
 		return lines[len(lines)-n:]
 	}
@@ -265,20 +331,31 @@ func TestDetachRefusesBadFlags(t *testing.T) {
 func TestTailLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "core.log")
-	if got := tailLines(path, 20); len(got) != 0 {
+	if got := tailLines(path, 0, 20); len(got) != 0 {
 		t.Errorf("missing log: %q", got)
 	}
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := tailLines(path, 20); len(got) != 0 {
+	if got := tailLines(path, 0, 20); len(got) != 0 {
 		t.Errorf("empty log: %q", got)
 	}
 	if err := os.WriteFile(path, []byte("a\r\nb\nc"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := tailLines(path, 2); !reflect.DeepEqual(got, []string{"b", "c"}) {
+	if got := tailLines(path, 0, 2); !reflect.DeepEqual(got, []string{"b", "c"}) {
 		t.Errorf("short log: %q", got)
+	}
+	// Only what was written from an offset on.
+	if got := tailLines(path, 3, 20); !reflect.DeepEqual(got, []string{"b", "c"}) {
+		t.Errorf("from 3: %q", got)
+	}
+	if got := tailLines(path, 6, 20); len(got) != 0 {
+		t.Errorf("from the end: %q", got)
+	}
+	// A log shorter than the offset was set aside and started afresh.
+	if got := tailLines(path, 100, 20); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Errorf("from past the end: %q", got)
 	}
 	// A long log is read from its end, without the line cut in half.
 	var b strings.Builder
@@ -288,7 +365,7 @@ func TestTailLines(t *testing.T) {
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := tailLines(path, 3)
+	got := tailLines(path, 0, 3)
 	if want := []string{"line 19997 of the log", "line 19998 of the log", "line 19999 of the log"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("long log: %q", got)
 	}

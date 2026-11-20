@@ -244,6 +244,10 @@ func TestDaemonRefusesASecondCore(t *testing.T) {
 	if !errors.Is(err, engine.ErrAlreadyRunning) || !strings.Contains(err.Error(), "Another Nearhost is already running") {
 		t.Fatalf("the second daemon returned %v", err)
 	}
+	// It says how to stop the other, which runs in the background.
+	if msg := err.Error(); !strings.HasSuffix(msg, ". Stop it with `nearhost stop`, or see it with `nearhost status`.") || strings.Contains(msg, "Stop it first") {
+		t.Errorf("the refusal reads %q", msg)
+	}
 	if code := exitCode(err, io.Discard); code != 1 {
 		t.Errorf("exit code %d, want 1", code)
 	}
