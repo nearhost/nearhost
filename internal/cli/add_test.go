@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
@@ -1540,5 +1542,71 @@ func TestAddOverABrokenConfigPunctuatesOnce(t *testing.T) {
 	want := cfgPath + " is empty. Restore it from a backup, or delete it to start afresh. Fix the config before adding to it."
 	if err == nil || err.Error() != want {
 		t.Fatalf("add = %v, want %q", err, want)
+	}
+}
+
+// addUnderCore runs `add` of a new enabled project while a core that reloads
+// answers on the control socket of h's run directory, with the hosts update
+// add runs pointed at h. It returns add's output and the core.
+func addUnderCore(t *testing.T, h *updateHarness) (string, *fakeCore) {
+	t.Helper()
+	core := &fakeCore{info: reloadingCore}
+	runDir := filepath.Join(filepath.Dir(h.cfgPath), "run")
+	srv, err := control.Listen(control.SocketPath(runDir), core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	b := noRemote(t)
+	b.running = probe(runDir, "")
+	b.updateHosts = func(cmd *cobra.Command) error { return runHostsUpdate(cmd, nil) }
+	out, err := execute(t, newAddCmd(b), "--config", h.cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp", "--web", "8080")
+	if err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	return out, core
+}
+
+// A core in the background never elevates, so add, in a terminal, brings the
+// hosts block up to date for the new project and tells the core.
+func TestAddWithACoreThatReloadsUpdatesTheHostsFile(t *testing.T) {
+	h := newUpdateHarness(t, updateConfig(), "127.0.0.1 localhost\n")
+	out, core := addUnderCore(t, h)
+	if b, _ := os.ReadFile(h.hostsTo); !strings.Contains(string(b), "myapp.test") {
+		t.Errorf("the hosts file lacks myapp.test:\n%s", b)
+	}
+	if core.changed != 1 {
+		t.Errorf("HostsChanged called %d times, want once", core.changed)
+	}
+	if !strings.Contains(out, "Updated "+h.hostsTo+".\n") {
+		t.Errorf("add did not say it updated the hosts file:\n%s", out)
+	}
+	if want := "The running Nearhost picks it up in a moment.\n"; !strings.HasSuffix(out, want) {
+		t.Errorf("add ended:\n%s\nwant %q", out, want)
+	}
+}
+
+// With no terminal to ask for sudo in, or a hosts update that fails, add
+// does not claim the core picks the project up: it says what to run.
+func TestAddWithACoreThatReloadsSaysToUpdateTheHostsFile(t *testing.T) {
+	for name, applyErr := range map[string]error{"no terminal": errNoTerminal, "refused": errors.New("sudo: no")} {
+		t.Run(name, func(t *testing.T) {
+			h := newUpdateHarness(t, updateConfig(), "127.0.0.1 localhost\n")
+			h.terminal = applyErr != errNoTerminal
+			h.applyErr = applyErr
+			out, core := addUnderCore(t, h)
+			if core.changed != 0 {
+				t.Errorf("the core was told after a failed update")
+			}
+			if want := "The running Nearhost serves it once the hosts file is up to date. Run `nearhost hosts update` in a terminal.\n"; !strings.HasSuffix(out, want) {
+				t.Errorf("add ended:\n%s\nwant %q", out, want)
+			}
+			if strings.Contains(out, "picks it up") {
+				t.Errorf("add claimed the core picks the project up:\n%s", out)
+			}
+			if applyErr != errNoTerminal && !strings.Contains(out, "sudo: no") {
+				t.Errorf("add did not say why the update failed:\n%s", out)
+			}
+		})
 	}
 }
