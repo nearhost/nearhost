@@ -119,17 +119,24 @@ func (s *Session) Preflight() error {
 	if len(path) <= maxSocketPath {
 		return nil
 	}
-	return fmt.Errorf("control socket path %s%sit is %d bytes and at most %d bytes fit; "+
-		"the run directory %s is too long, set a shorter XDG_CONFIG_HOME", path, socketPathMarker, len(path), maxSocketPath, s.runDir)
+	return fmt.Errorf("%s%s%sit is %d bytes and at most %d bytes fit; "+
+		"the run directory %s is too long, set a shorter XDG_CONFIG_HOME", socketPathPrefix, path, socketPathMarker, len(path), maxSocketPath, s.runDir)
 }
 
-// socketPathMarker is the part of Preflight's message that no other has.
-const socketPathMarker = " is too long for ssh: "
+// socketPathPrefix and socketPathMarker are the parts of Preflight's message
+// that, in that order, no other has.
+const (
+	socketPathPrefix = "control socket path "
+	socketPathMarker = " is too long for ssh: "
+)
 
 // IsSocketPathMessage reports whether s is Preflight's message, for code
 // that only has an error's text, such as a project's status reason. ssh
 // itself is not the trouble then, so running it by hand fixes nothing.
-func IsSocketPathMessage(s string) bool { return strings.Contains(s, socketPathMarker) }
+func IsSocketPathMessage(s string) bool {
+	_, rest, ok := strings.Cut(s, socketPathPrefix)
+	return ok && strings.Contains(rest, socketPathMarker)
+}
 
 // socketName returns name when it is a plain file name ssh takes literally.
 // Anything else (path separators, "%" tokens, an empty name) is replaced by a
