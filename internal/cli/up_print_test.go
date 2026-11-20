@@ -59,7 +59,7 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 		t.Fatal("the reason is not transport's message")
 	}
 	p.fix("api", engine.StateError, reason)
-	if got := out.String(); !strings.Contains(got, "a shorter XDG_CONFIG_HOME as named above, then run `nearhost up` again") || strings.Contains(got, "`ssh") {
+	if got := out.String(); !strings.Contains(got, "XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then run `nearhost up` again") || strings.Contains(got, "`ssh") {
 		t.Fatalf("printed %q", got)
 	}
 	out.Reset()

@@ -168,7 +168,7 @@ func TestFixFor(t *testing.T) {
 		{engine.StateDegraded, "", false, "run `ssh mini.lan` once"},
 		{engine.StateError, "auth", false, "Run `ssh mini.lan` once in a terminal to fix access, then press enter."},
 		{engine.StateError, "port", true, "Resolve what is named above"},
-		{engine.StateError, socketPathReason, false, "Set a shorter XDG_CONFIG_HOME as named above, then quit Nearhost and start it again."},
+		{engine.StateError, socketPathReason, false, "move the nearhost folder that holds your config there, then quit Nearhost and start it again."},
 	} {
 		if got := fixFor(c.st, c.reason, c.serverUp, "mini.lan"); !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
 			t.Errorf("fixFor(%s, %q, %v) = %q, want %q", c.st, c.reason, c.serverUp, got, c.want)
