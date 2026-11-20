@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // The engine announces a state again when its reason changes. Each distinct
@@ -43,6 +45,27 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 		"09:30:00 [api] bind: address already in use\n"
 	if out.String() != want {
 		t.Fatalf("printed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// A run directory too long for a control socket is not fixed by ssh in a
+// terminal, which works: the fix names the setting.
+func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
+	var out bytes.Buffer
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	reason := "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
+	if !transport.IsSocketPathMessage(reason) {
+		t.Fatal("the reason is not transport's message")
+	}
+	p.fix("api", engine.StateError, reason)
+	if got := out.String(); !strings.Contains(got, "a shorter XDG_CONFIG_HOME as named above, then run `nearhost up` again") || strings.Contains(got, "`ssh") {
+		t.Fatalf("printed %q", got)
+	}
+	out.Reset()
+	p.fix("api", engine.StateError, "ssh mini: Permission denied (publickey).")
+	if got := out.String(); !strings.Contains(got, "`ssh mini.lan` once") {
+		t.Fatalf("another reason lost the ssh advice: %q", got)
 	}
 }
 

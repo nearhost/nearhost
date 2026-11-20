@@ -182,7 +182,11 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		}
 	case engine.StateError:
 		fix = "resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again"
-		if status, _ := p.eng.ServerStatus(proj.Server); status != transport.StatusConnected {
+		if transport.IsSocketPathMessage(reason) {
+			// Nothing reached the server, and nothing will until the run
+			// directory is shorter: ssh by hand would work and fix nothing.
+			fix = "set a shorter XDG_CONFIG_HOME as named above, then run `nearhost up` again"
+		} else if status, _ := p.eng.ServerStatus(proj.Server); status != transport.StatusConnected {
 			fix = sshHint(host, "run `nearhost up` again")
 			// A session with a next attempt tries by itself, and the
 			// project waits for it and starts once it connects. One that

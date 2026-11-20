@@ -161,7 +161,7 @@ func (m *Model) problems() []problem {
 			}
 		}
 		out = append(out, problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), why: h.LastError,
-			fix:    serverFix(h.Status, srv.SSHHost),
+			fix:    serverFix(h.Status, h.LastError, srv.SSHHost),
 			blocks: on, server: srv.Name, host: srv.SSHHost})
 	}
 	for _, p := range m.cfg.Projects {
@@ -313,9 +313,17 @@ func (m *Model) connectionText(h engine.ServerHealth) string {
 	return text
 }
 
-// serverFix says what to do about a server in state st. A server that gave
-// up waits for r; one that is reconnecting tries again by itself.
-func serverFix(st transport.Status, host string) string {
+// socketPathFix is what to do about a run directory too long for ssh's
+// control socket.
+const socketPathFix = "Set a shorter XDG_CONFIG_HOME as named above, then quit Nearhost and start it again."
+
+// serverFix says what to do about a server in state st whose last error is
+// reason. A server that gave up waits for r; one that is reconnecting tries
+// again by itself.
+func serverFix(st transport.Status, reason, host string) string {
+	if transport.IsSocketPathMessage(reason) {
+		return socketPathFix
+	}
 	if st == transport.StatusReconnecting {
 		return "Nearhost tries again by itself. If it keeps failing, run ssh " + clean(host) + " once in a terminal to check access."
 	}
