@@ -308,11 +308,11 @@ func TestCoreHostsChangedRetriesTheProjectsTheHostsFileStopped(t *testing.T) {
 		}
 	})
 	u.waitFor("[one] state: stopped: ")
-	u.waitFor("Press Ctrl-C to stop.\n")
+	u.waitFor("\nNothing is being served.\n")
 	time.Sleep(200 * time.Millisecond)
 	u.stillRunning()
-	if out := u.out.String(); strings.Contains(out, nothingServedLine) {
-		t.Errorf("a core that keeps running said it was stopping:\n%s", out)
+	if out := u.out.String(); strings.Contains(out, nothingServedLine) || strings.Contains(out, "Ctrl-C") {
+		t.Errorf("a core that keeps running said it was stopping, or to press Ctrl-C:\n%s", out)
 	}
 	c := u.control()
 	if info, err := c.Info(context.Background()); err != nil || info.StartedBy != control.StartedDetached || info.Reloads {

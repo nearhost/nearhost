@@ -35,6 +35,9 @@ type coreMode struct {
 	hosts func(ctx context.Context, aliases []string) error
 	// watch applies changes to the config file as they are saved.
 	watch bool
+	// stamped says out puts the date and time before each line itself, so
+	// event lines leave out their own time.
+	stamped bool
 }
 
 // runCore runs the engine and serves the projects named in args, or every
@@ -83,7 +86,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	defer ag.close()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
-	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning}
+	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()

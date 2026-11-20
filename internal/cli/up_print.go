@@ -23,12 +23,17 @@ type upPrinter struct {
 	// shown is the last state line printed for each project.
 	shown map[string]string
 	// keepRunning is set for a core that keeps going with nothing to
-	// serve: the summary then never says it is stopping.
+	// serve and that no one stops from a terminal: the summary then never
+	// says it is stopping, nor to press Ctrl-C.
 	keepRunning bool
+	// stamped leaves the time out of event lines: out puts a full one
+	// before every line.
+	stamped bool
 }
 
-// event prints one engine event as "<time> [<source>] <message>", and under a
-// state change that needs attention, what to do about it.
+// event prints one engine event as "<time> [<source>] <message>", or without
+// the time when p.stamped, and under a state change that needs attention,
+// what to do about it.
 func (p *upPrinter) event(ev engine.Event) {
 	source, msg := "proxy", ev.Message
 	switch {
@@ -55,7 +60,11 @@ func (p *upPrinter) event(ev engine.Event) {
 	// The message can carry text from ssh or the server, and the source a
 	// project's name from a remote directory: neither may act on the
 	// terminal or start a line of its own.
-	fmt.Fprintf(p.out, "%s [%s] %s\n", ev.Time.Format("15:04:05"), printable(source), printable(msg))
+	line := fmt.Sprintf("[%s] %s", printable(source), printable(msg))
+	if !p.stamped {
+		line = ev.Time.Format("15:04:05") + " " + line
+	}
+	fmt.Fprintln(p.out, line)
 	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
 		// Approving takes the interface, which shows each change and why it
 		// needs approval; up only says where to go.
@@ -83,7 +92,8 @@ func (p *upPrinter) buffered(events <-chan engine.Event) {
 // summary prints one line per started project with the state it is in now,
 // which is not always what its start returned: a project can come up degraded.
 // It reports whether nothing can be served (see nothingToServe), and then
-// ends with the line that says up is stopping, unless p.keepRunning.
+// ends with the line that says up is stopping, unless p.keepRunning. A core
+// that keeps running is stopped with `nearhost stop`, not Ctrl-C.
 func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
 	fmt.Fprintln(p.out)
 	for i, name := range names {
@@ -107,11 +117,16 @@ func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
 		fmt.Fprintln(p.out, "\nNothing can be served, so nearhost up is stopping.")
 		return true
 	}
-	if len(p.eng.Sites()) == 0 {
+	switch {
+	case len(p.eng.Sites()) == 0 && p.keepRunning:
+		fmt.Fprintln(p.out, "\nNothing is being served.")
+	case len(p.eng.Sites()) == 0:
 		fmt.Fprintln(p.out, "\nNothing is being served. Press Ctrl-C to stop.")
-		return false
+	case p.keepRunning:
+		fmt.Fprintln(p.out, "\nServing until stopped with `nearhost stop`.")
+	default:
+		fmt.Fprintln(p.out, "\nServing until interrupted. Press Ctrl-C to stop.")
 	}
-	fmt.Fprintln(p.out, "\nServing until interrupted. Press Ctrl-C to stop.")
 	return false
 }
 
@@ -180,8 +195,10 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// without was simply stopped.
 		// A read-only hosts file's reason already says how to clear it, and
 		// approving again would fail the same way. Without a terminal no
-		// prompt can appear, and up has already said what to do instead.
-		if reason != "" && !hosts.IsReadOnlyMessage(reason) && !strings.Contains(reason, errNoTerminal.Error()) {
+		// prompt can appear, and up has already said what to do instead; a
+		// core in the background asks for none, and its reason says what to
+		// do.
+		if reason != "" && !hosts.IsReadOnlyMessage(reason) && !strings.Contains(reason, errNoTerminal.Error()) && !strings.Contains(reason, errHostsNeedTerminal.Error()) {
 			fix = "run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts"
 		}
 	case engine.StateError:
