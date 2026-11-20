@@ -8,6 +8,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -82,5 +83,45 @@ func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
 	p.fix("api", engine.StateStopped, "hosts update declined")
 	if out.Len() == 0 {
 		t.Fatal("another reason lost its fix line")
+	}
+}
+
+// A core in the background is not started again with `nearhost up`: its
+// fixes say how to start it again in the background, and up's stay as they
+// are.
+func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api"), localProject("web", 5173, true)}}
+	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
+	for _, tc := range []struct {
+		name       string
+		background bool
+		print      func(p *upPrinter)
+		want       string
+	}{
+		{"ssh", false, func(p *upPrinter) { p.fix("api", engine.StateError, "server mini is unreachable") },
+			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"},
+		{"ssh", true, func(p *upPrinter) { p.fix("api", engine.StateError, "server mini is unreachable") },
+			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost stop` and `nearhost -d`\n"},
+		{"port", false, func(p *upPrinter) { p.fix("web", engine.StateError, "port 5173 is in use") },
+			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again\n"},
+		{"port", true, func(p *upPrinter) { p.fix("web", engine.StateError, "port 5173 is in use") },
+			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost stop` and `nearhost -d`\n"},
+		{"hosts", false, func(p *upPrinter) { p.fix("web", engine.StateStopped, "hosts update failed") },
+			"  fix: Run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts\n"},
+		{"hosts", true, func(p *upPrinter) { p.fix("web", engine.StateStopped, "hosts update failed") },
+			"  fix: Run `nearhost hosts update` in a terminal, and Nearhost starts the project\n"},
+		{"pending", false, func(p *upPrinter) {
+			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  open nearhost to approve them; nearhost up cannot\n"},
+		{"pending", true, func(p *upPrinter) {
+			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot\n"},
+	} {
+		var out bytes.Buffer
+		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
+		tc.print(p)
+		if out.String() != tc.want {
+			t.Errorf("%s, background %v:\n%s\nwant:\n%s", tc.name, tc.background, out.String(), tc.want)
+		}
 	}
 }
