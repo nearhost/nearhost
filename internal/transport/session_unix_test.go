@@ -859,9 +859,7 @@ func TestSessionDropIsNoticedWhileAChildHoldsStderr(t *testing.T) {
 		st, states := s.ForwardStates()
 		return st != StatusConnected && len(states) == 1 && !states[0].Applied
 	}, "the drop to be noticed")
-	if notified.Load() == n0 {
-		t.Error("Notify was not told of the drop")
-	}
+	waitNotified(t, notified, n0, "the drop")
 	t.Logf("noticed after %s", time.Since(start).Round(time.Millisecond))
 	s.Stop()
 	waitNoStderrReaders(t)
