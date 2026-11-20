@@ -50,6 +50,21 @@ func counter() (*atomic.Int32, func()) {
 	return &n, func() { n.Add(1) }
 }
 
+// waitNotified waits for a Notify call past the n0 counted before the loss.
+// A transport records a loss and then calls Notify, so a test that has just
+// read the loss may be ahead of the call.
+func waitNotified(t *testing.T, notified *atomic.Int32, n0 int32, what string) {
+	t.Helper()
+	deadline := time.Now().Add(noticeBound)
+	for notified.Load() == n0 {
+		if time.Now().After(deadline) {
+			t.Errorf("Notify was not told of %s", what)
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestPerProcessLinkDropIsNoticedWhileAChildHoldsStderr(t *testing.T) {
 	p := newTestPerProcess(t, stderrHolder(t))
 	notified, notify := counter()
@@ -60,9 +75,7 @@ func TestPerProcessLinkDropIsNoticedWhileAChildHoldsStderr(t *testing.T) {
 	start := time.Now()
 	p.drop(t, p.linkPid())
 	waitFor(t, noticeBound, func() bool { return p.Status() != StatusConnected }, "the drop to be noticed")
-	if notified.Load() == n0 {
-		t.Error("Notify was not told of the drop")
-	}
+	waitNotified(t, notified, n0, "the drop")
 	t.Logf("noticed after %s", time.Since(start).Round(time.Millisecond))
 	// Why it dropped is read after, from what ssh wrote last.
 	waitFor(t, 5*time.Second, func() bool { return strings.Contains(p.LastError(), "Broken pipe") }, "the drop's message")
@@ -90,9 +103,7 @@ func TestPerProcessForwardDropIsNoticedWhileAChildHoldsStderr(t *testing.T) {
 	n0 := notified.Load()
 	p.drop(t, p.forwardPid(local, 80))
 	waitFor(t, noticeBound, func() bool { return !applied() }, "the lost forward to be noticed")
-	if notified.Load() == n0 {
-		t.Error("Notify was not told of the lost forward")
-	}
+	waitNotified(t, notified, n0, "the lost forward")
 	waitFor(t, 5*time.Second, func() bool {
 		_, states := p.ForwardStates()
 		return len(states) == 1 && (states[0].Applied || strings.Contains(states[0].Err, "Broken pipe"))
