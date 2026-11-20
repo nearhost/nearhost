@@ -62,6 +62,19 @@ func missingPage(w http.ResponseWriter, server, path string) {
 	})
 }
 
+// changingPage says the file at path on server, or a folder above it, kept
+// changing while Nearhost checked it, so nothing was read.
+func changingPage(w http.ResponseWriter, server, path string) {
+	w.Header().Set("Retry-After", "1")
+	writePage(w, http.StatusServiceUnavailable, page{
+		Title: "This file's folder keeps changing",
+		Lines: []template.HTML{
+			code(path) + " on " + code(server) + " or a folder above it changed each time Nearhost checked it, so Nearhost read nothing.",
+			"Something is writing there. Reload this page once it has finished.",
+		},
+	})
+}
+
 // notConnectedPage says Nearhost isn't connected to server, and how to
 // connect it.
 func notConnectedPage(w http.ResponseWriter, server string) {

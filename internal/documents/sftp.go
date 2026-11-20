@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -66,27 +67,64 @@ func (f sftpFS) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
 // attributes of the one outside; the owner comparison stops another
 // account's swap. A tree on a server has no RootHandle, so rootHandle is
 // not used.
+//
+// A file or folder written to during the check is opened and checked again,
+// up to openTries times; ErrChanging is the error when every try saw a
+// change.
 func (f sftpFS) Open(ctx context.Context, root, _, p string) (io.ReadCloser, string, error) {
 	rel, ok := Below(root, p)
 	if !ok {
 		return nil, "", &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
 	}
 	r, err := withContext(ctx, func() (io.ReadCloser, error) {
-		file, err := f.c.Open(p)
-		if err != nil {
-			return nil, mapError("open", p, err)
-		}
-		if err := f.checkOpened(file, p); err != nil {
+		for try := 1; ; try++ {
+			file, err := f.c.Open(p)
+			if err != nil {
+				return nil, mapError("open", p, err)
+			}
+			err = f.compareOpened(file, p)
+			if err == nil {
+				return file, nil
+			}
 			file.Close()
-			return nil, err
+			switch {
+			case errors.Is(err, errMoved):
+				return nil, &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
+			case !errors.Is(err, errChanged):
+				return nil, err
+			case try == openTries:
+				return nil, &fs.PathError{Op: "open", Path: p, Err: ErrChanging}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(openPause << (try - 1)):
+			}
 		}
-		return file, nil
 	}, func(r io.ReadCloser) { r.Close() })
 	if err != nil {
 		return nil, "", err
 	}
 	return r, rel, nil
 }
+
+// ErrChanging is Open's error for a file on a server whose path kept
+// changing: on every try the file, or a folder on the way to it, changed in
+// size or modification time while it was checked. Nothing was read. It is
+// not fs.ErrNotExist, because the file is there.
+var ErrChanging = errors.New("the file or a folder above it keeps changing")
+
+// openTries is how many times Open opens and checks a file that changes
+// while it is checked, and openPause the wait after the first try, doubled
+// after each: 150ms in all. Each try opens the file again, so a try is a
+// whole check of its own and gives a folder swap no more time than one
+// check does.
+const openTries = 5
+
+var openPause = 10 * time.Millisecond
 
 // errMoved and errChanged are what compareOpened finds: the open file isn't
 // the one at the path, or it or a folder on the way changed in size or
@@ -95,21 +133,6 @@ var (
 	errMoved   = errors.New("the opened file isn't the one at its path")
 	errChanged = errors.New("the opened file changed while it was checked")
 )
-
-// checkOpened returns nil when file, opened by the path p, is the file at p
-// now, and an error wrapping fs.ErrNotExist when it isn't. A change in size
-// or modification time alone is checked once more first. Errors talking to
-// the server are kept.
-func (f sftpFS) checkOpened(file *sftp.File, p string) error {
-	err := f.compareOpened(file, p)
-	if errors.Is(err, errChanged) {
-		err = f.compareOpened(file, p)
-	}
-	if errors.Is(err, errMoved) || errors.Is(err, errChanged) {
-		return &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist}
-	}
-	return err
-}
 
 // sftpCheckHook, when set, runs in compareOpened at stage "walk", before the
 // path is walked, and "fstat", between the walk's last lstat and the open

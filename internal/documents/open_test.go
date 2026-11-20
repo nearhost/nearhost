@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -486,4 +487,141 @@ func TestFileDeletedAfterOpenIsMissing(t *testing.T) {
 	if _, err := openedBelowRoot(f, dir, rootHandlePath(dir), p); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a file deleted after the open: err = %v, want fs.ErrNotExist", err)
 	}
+}
+
+// touchFolderDuringChecks sets sftpCheckHook to give dir/notes a new
+// modification time in the middle of each of the first n checks, as a write
+// to the folder does, and returns the number of checks begun. The waits
+// between tries are cut short for the test.
+func touchFolderDuringChecks(t *testing.T, dir string, n int32) *atomic.Int32 {
+	t.Helper()
+	pause := openPause
+	openPause = time.Microsecond
+	t.Cleanup(func() { openPause = pause })
+	checks := new(atomic.Int32)
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	setSFTPCheckHook(t, func(stage string) {
+		switch {
+		case stage == "walk":
+			checks.Add(1)
+		case checks.Load() <= n:
+			at = at.Add(time.Minute)
+			if err := os.Chtimes(filepath.Join(dir, "notes"), at, at); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	return checks
+}
+
+func TestSFTPFolderWrittenDuringChecksIsServedOnceItSettles(t *testing.T) {
+	dir, p := openTree(t)
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
+	checks := touchFolderDuringChecks(t, dir, openTries-1)
+	r, rel, err := fsys.Open(context.Background(), dir, "", p)
+	if err != nil {
+		t.Fatalf("a folder written to during %d checks: %v", openTries-1, err)
+	}
+	defer r.Close()
+	if b, err := io.ReadAll(r); err != nil || string(b) != "notes/a.md" || rel != "notes/a.md" {
+		t.Errorf("read %q as %q, %v", b, rel, err)
+	}
+	if n := checks.Load(); n != openTries {
+		t.Errorf("%d checks, want %d", n, openTries)
+	}
+}
+
+func TestSFTPFolderWrittenDuringEveryCheckIsChanging(t *testing.T) {
+	dir, p := openTree(t)
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
+	checks := touchFolderDuringChecks(t, dir, openTries)
+	r, _, err := fsys.Open(context.Background(), dir, "", p)
+	if r != nil {
+		r.Close()
+	}
+	if !errors.Is(err, ErrChanging) {
+		t.Fatalf("err = %v, want ErrChanging", err)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Error("ErrChanging reads as a missing file")
+	}
+	if n := checks.Load(); n != openTries {
+		t.Errorf("%d checks, want %d", n, openTries)
+	}
+	if brokenClient(context.Background(), err) {
+		t.Error("a folder that keeps changing dropped the pooled client")
+	}
+}
+
+// A swap is refused at the first check: only a change in size or time is
+// tried again.
+func TestSFTPSwappedPathIsCheckedOnce(t *testing.T) {
+	dir, p := openTree(t)
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
+	swapNotes(t, dir)
+	checks := 0
+	setSFTPCheckHook(t, func(stage string) {
+		if stage == "walk" {
+			checks++
+		}
+	})
+	r, _, err := fsys.Open(context.Background(), dir, "", p)
+	if r != nil {
+		r.Close()
+	}
+	if !errors.Is(err, fs.ErrNotExist) || checks != 1 {
+		t.Errorf("err = %v after %d checks, want fs.ErrNotExist after 1", err, checks)
+	}
+}
+
+func TestSFTPOpenStopsTryingWhenTheRequestEnds(t *testing.T) {
+	dir, p := openTree(t)
+	fsys := volumeFS{SFTPFS(inProcessSFTP(t, dir))}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The request ends in the middle of the first check, which also sees
+	// the folder change.
+	var checks atomic.Int32
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	setSFTPCheckHook(t, func(stage string) {
+		if stage == "walk" {
+			checks.Add(1)
+			return
+		}
+		if err := os.Chtimes(filepath.Join(dir, "notes"), at, at); err != nil {
+			t.Error(err)
+		}
+		cancel()
+	})
+	r, _, err := fsys.Open(ctx, dir, "", p)
+	if r != nil {
+		r.Close()
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the request's cancellation", err)
+	}
+	// Open returns at the cancel; the check it was in ends just after.
+	time.Sleep(50 * time.Millisecond)
+	if n := checks.Load(); n != 1 {
+		t.Errorf("%d checks, want 1", n)
+	}
+}
+
+func TestChangingPage(t *testing.T) {
+	tbl := NewTable(time.Now)
+	tr := tbl.Add("apollo", "/srv/app", "claude", "plan.md")
+	h := NewHandler(tbl, func(context.Context, string) (FS, error) {
+		return fakeFS{err: &fs.PathError{Op: "open", Path: "/srv/app/plan.md", Err: ErrChanging}}, nil
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+tr.ID+"/plan.md", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("status %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	for _, want := range []string{"folder keeps changing", "/srv/app/plan.md", "apollo", "Reload this page"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("page lacks %q:\n%s", want, rec.Body.String())
+		}
+	}
+	checkHeaders(t, rec, mdCSP)
 }
