@@ -47,7 +47,7 @@ func TestHomeOffersNoRetryForARunDirectoryTooLong(t *testing.T) {
 	m, f := problemModel(t)
 	f.srvErrs["vps"] = socketPathReason
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
-	wantScreen(t, m, "✕ vps  auth failed", "move the nearhost folder", "blocks    clientsite")
+	wantScreen(t, m, "✕ vps  auth failed", "Set XDG_CONFIG_HOME to a shorter path", "blocks    clientsite")
 	for _, not := range []string{"r retry", "copy command", "ssh deploy@vps.example"} {
 		if strings.Contains(screen(m), not) {
 			t.Errorf("Home shows %q:\n%s", not, screen(m))
