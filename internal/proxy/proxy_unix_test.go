@@ -144,12 +144,12 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 	}
 }
 
-// On Unix each configuration binds its own sockets, so servers have no
-// listener wrappers of Nearhost's.
-func TestServersHaveNoListenerWrappersOnUnix(t *testing.T) {
+// On Unix each configuration binds its own sockets, so servers need no
+// Handoff: their one wrapper of Nearhost's is Retire, before TLS.
+func TestServersOnlyRetireTheirListenersOnUnix(t *testing.T) {
 	for name, w := range serverWrappers(t) {
-		if len(w) != 0 {
-			t.Errorf("server %s has listener wrappers %q, want none", name, w)
+		if !slices.Equal(w, []string{retireModule, "tls"}) {
+			t.Errorf("server %s has listener wrappers %q, want %q then tls", name, w, retireModule)
 		}
 	}
 }

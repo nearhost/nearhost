@@ -1101,6 +1101,7 @@ func TestBuildConfigWithoutClientsIsUnchanged(t *testing.T) {
 		servers[name].(map[string]any)["listen"] = listen
 		servers[name].(map[string]any)["listener_wrappers"] = []any{
 			map[string]any{"wrapper": handoffModule},
+			map[string]any{"wrapper": retireModule},
 			map[string]any{"wrapper": "tls"},
 		}
 	}
