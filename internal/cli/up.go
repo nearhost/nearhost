@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -180,115 +181,15 @@ func newUpCmd(b upBackend) *cobra.Command {
 	return cmd
 }
 
+// runUp is `nearhost up`: the core, run in the terminal, which reloads the
+// config only when it serves every enabled project. Named projects are a run
+// of their own, which a change to the file must not widen.
 func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) error {
-	if err := flags.validate(); err != nil {
-		return err
-	}
-	// Before anything reads the CA's directory, so this run serves from
-	// where it lands.
-	migrateCA(cmd.ErrOrStderr())
-	cfg, cfgPath, err := loadConfig(cmd)
-	if err != nil {
-		return err
-	}
-	if msg := missingConfigMessage(cmd); msg != "" && len(cfg.Projects) == 0 {
-		return errors.New(msg)
-	}
-	names, err := upTargets(cfg, args)
-	if err != nil {
-		return err
-	}
-	opts, err := engineOptions(b.ssh, flags, warnNoTerminal(cmd.ErrOrStderr(), b.ensureHosts), b.lookup)
-	if err != nil {
-		return err
-	}
-	// Each start re-reads the project's .nearhostrc. up never reloads the
-	// config, so a change that needs no approval is saved for the next run
-	// and served at once; one that does waits for the interface.
-	opts.Review = reviewProject(saveTo(cfgPath))
-	// Agents can read the projects' status. Without the interface there is
-	// no one to review a proposal, so the API refuses them.
-	ag, agentNote := serveAgents(b.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
-		ssh: b.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot), restart: true,
+	return runCore(cmd, b, flags, args, coreMode{
+		out:       cmd.OutOrStdout(),
+		startedBy: control.StartedForeground,
+		watch:     len(args) == 0,
 	})
-	defer ag.close()
-	eng := engine.New(cfg, opts)
-	ag.attach(eng)
-	p := &upPrinter{out: cmd.OutOrStdout(), eng: eng, cfg: cfg}
-
-	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
-	defer unsubscribe()
-	if agentNote != "" {
-		eng.Events().Publish(engine.Event{Message: agentNote})
-	}
-	ag.publishHeld(eng)
-	ctx, again, release := b.notify(cmd.Context())
-	defer release()
-	if err := b.start(eng, ctx); err != nil {
-		return b.bind.advise(err)
-	}
-
-	// Projects start side by side: one whose server is slow to answer does
-	// not hold the others up, and a failure stays with its project.
-	startErrs := make([]error, len(names))
-	var starts sync.WaitGroup
-	for i, name := range names {
-		starts.Add(1)
-		go func() {
-			defer starts.Done()
-			startErrs[i] = eng.StartProject(ctx, name)
-		}()
-	}
-	started := make(chan struct{})
-	go func() {
-		starts.Wait()
-		close(started)
-	}()
-
-	// Whether the system trusts the local CA is asked on the side, so a slow
-	// trust store holds nothing up.
-	trustHint := make(chan string, 1)
-	go func() { trustHint <- untrustedCA(b.trust, opts.StorageRoot) }()
-	nothing := p.untilInterrupted(ctx, events, started, trustHint, names, startErrs)
-
-	// A second signal must not end the process: the ssh masters are outside
-	// its process group and would be left running. It cuts the shutdown
-	// short instead; the engine then gives up on what it was waiting for and
-	// still ends every master.
-	p.advise = false // what goes wrong while stopping is not for the user to fix
-	fmt.Fprintln(p.out, "shutting down")
-	stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	stopped := make(chan error, 1)
-	go func() { stopped <- b.shutdown(eng, stopCtx) }()
-	var stopErr error
-	hurry := again
-	for stopping := true; stopping; {
-		select {
-		case ev := <-events:
-			p.event(ev)
-		case <-hurry:
-			hurry = nil
-			fmt.Fprintln(p.out, "stopping now")
-			cancel()
-		case stopErr = <-stopped:
-			stopping = false
-		}
-	}
-	<-started // Shutdown interrupted any start still in flight
-	unsubscribe()
-	for ev := range events {
-		p.event(ev)
-	}
-	if stopErr != nil {
-		return fmt.Errorf("shut down: %w", stopErr)
-	}
-	fmt.Fprintln(p.out, "stopped")
-	if nothing {
-		// The summary has said why; Main adds nothing.
-		return exitError{code: 1, msg: "nothing can be served"}
-	}
-	return nil
 }
 
 // untilInterrupted prints the engine's events until ctx ends and, once every
