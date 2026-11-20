@@ -14,6 +14,8 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/vt v0.1.0
+	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.6.0
@@ -55,6 +57,8 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/charmbracelet/x/conpty v0.2.0 // indirect
+	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
@@ -64,6 +68,7 @@ require (
 	github.com/cloudflare/circl v1.6.5 // indirect
 	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/dgraph-io/badger v1.6.2 // indirect
 	github.com/dgraph-io/badger/v2 v2.2007.4 // indirect
 	github.com/dgraph-io/ristretto v0.2.0 // indirect
