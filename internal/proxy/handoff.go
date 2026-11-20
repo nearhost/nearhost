@@ -40,16 +40,30 @@ func init() {
 // newer one has its listener. Then, before the newer server takes its
 // first connection, and so before Caddy can begin to shut the older one
 // down, the newer listener waits for the older server's connections to
-// leave net/http's StateNew, which they do once their first request has
-// been read; each new listener waits for at most requestWait. A connection
-// that has had no request for requestWait (an idle client) is not waited
-// for, and if its request comes after the shutdown has begun it is dropped
-// as before. So, in principle, is one whose goroutine is held up between
-// net/http's state hook and its check for a shutdown for the whole rest of
-// the reload: the hook runs just before the check, and nothing later and
-// before the handler can be watched. HTTP/2 connections leave StateNew as
-// they start, so they are not waited for; an HTTP/2 server shuts down with
-// a GOAWAY of its own rather than net/http's drop.
+// leave net/http's StateNew, which an HTTP/1 connection does once its
+// first request has been read, and an HTTP/2 one once its TLS handshake
+// and the client's preface are done. The listeners a load opens share one
+// deadline, so a reload waits requestWait at most in all. A connection
+// that has been in StateNew for requestWait (an idle client) is not waited
+// for.
+//
+// This relies on every server that listens on sharedNetwork carrying this
+// wrapper: a server without it would take connections from the shared
+// socket while it shuts down. BuildConfig puts it on each of its servers
+// (see listenerWrappers). A server Caddy adds by itself, such as one for
+// automatic HTTPS redirects, would listen on plain TCP instead, and its
+// bind would fail against the shared socket, failing the load.
+//
+// What remains: a connection whose goroutine is held up between net/http's
+// state hook and its check for a shutdown for the whole rest of the reload
+// is still dropped, as the hook runs just before the check and nothing
+// between the check and the handler can be watched. A reload that drops an
+// address does not wait: the old server takes that address's connections
+// until it shuts down, and drops an unread request as before. When a load
+// fails, connections already handed to its listeners during its start are
+// dropped as Caddy cleans it up. And a request on an idle keep-alive
+// connection can still meet the shutdown's close of idle connections, as
+// it always could; most clients retry an idempotent request then.
 type Handoff struct {
 	conns *serverConns // the server's connections; nil if it has none
 }
@@ -66,12 +80,25 @@ func (Handoff) CaddyModule() caddy.ModuleInfo {
 // server's connections, which Caddy lets a module of the server do before
 // the server starts.
 func (h *Handoff) Provision(ctx caddy.Context) error {
-	if srv, ok := ctx.Value(caddyhttp.ServerCtxKey).(*caddyhttp.Server); ok {
-		h.conns = newServerConns()
-		srv.RegisterConnState(h.conns.state)
+	srv, ok := ctx.Value(caddyhttp.ServerCtxKey).(*caddyhttp.Server)
+	if !ok {
+		// Caddy no longer gives a listener wrapper its server: connections
+		// are still handed to the newest server, but a reload no longer
+		// waits for the old one's, which can drop a request. Say so once,
+		// so an upgrade of Caddy that breaks this is seen.
+		noServerOnce.Do(func() {
+			emit("", "the proxy cannot follow its servers' connections, so a request made during a reload can be dropped")
+		})
+		return nil
 	}
+	h.conns = newServerConns()
+	srv.RegisterConnState(h.conns.state)
 	return nil
 }
+
+// noServerOnce keeps Provision's line about a missing server to one per
+// process.
+var noServerOnce sync.Once
 
 // WrapListener implements caddy.ListenerWrapper.
 func (h *Handoff) WrapListener(ln net.Listener) net.Listener {
@@ -83,10 +110,10 @@ var (
 	_ caddy.Provisioner     = (*Handoff)(nil)
 )
 
-// requestWait bounds how long a new listener waits for the older server's
-// connections to have their first request read, and is how long one can go
-// without a request before it is taken for idle and not waited for. Tests
-// change it.
+// requestWait bounds how long a load's new listeners, together, wait for
+// the older servers' connections to leave StateNew, and is how long one can
+// stay there before it is taken for idle and not waited for. Tests change
+// it.
 var requestWait = time.Second
 
 // serverConns follows a server's connections from its Accept until net/http
@@ -178,9 +205,30 @@ type handoffSet struct {
 	mu    sync.Mutex
 	addrs map[string]*handoffAddr
 
+	// deadline, while a load runs, is when every listener it wraps stops
+	// waiting for the older servers, so a load waits requestWait at most
+	// in all, however many listeners it opens (see beginLoad).
+	deadline time.Time
+
 	// delivering, when set, is called as the accepting goroutine offers a
 	// connection to l; tests watch it.
 	delivering func(l *handoffListener)
+}
+
+// beginLoad starts a load: the listeners wrapped until endLoad share one
+// deadline, requestWait from now. Call it with caddyMu held, as Caddy runs
+// one load at a time.
+func (s *handoffSet) beginLoad() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deadline = time.Now().Add(requestWait)
+}
+
+// endLoad ends the load beginLoad started.
+func (s *handoffSet) endLoad() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deadline = time.Time{}
 }
 
 type handoffAddr struct {
@@ -232,10 +280,14 @@ func (s *handoffSet) wrapFor(ln net.Listener, srv *serverConns) net.Listener {
 		}
 	}
 	a.open = append(a.open, l)
+	deadline := s.deadline
 	s.mu.Unlock()
+	if deadline.IsZero() {
+		// Wrapped outside a load Nearhost started.
+		deadline = time.Now().Add(requestWait)
+	}
 	// No older listener's Accept returns a connection from here on, so
 	// what its server has is all it will get.
-	deadline := time.Now().Add(requestWait)
 	for _, o := range older {
 		o.settle(deadline)
 	}

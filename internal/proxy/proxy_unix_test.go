@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -323,5 +324,42 @@ func TestASocketOutlivesAReloadAndClosesWithTheProxy(t *testing.T) {
 			t.Fatalf("port %d not released: %v", port, err)
 		}
 		l.Close()
+	}
+}
+
+// Every server that listens on the shared sockets hands its connections
+// over through Handoff, first of its wrappers: a server without it would
+// take connections from a shared socket while it shuts down.
+func TestEveryServerOnTheSharedSocketsHasHandoff(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
+		Options{StorageRoot: t.TempDir(), HTTPSPort: 8443, HTTPPort: 8080, WebPort: 6327, HomeWithNoSites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Listen   []string `json:"listen"`
+					Wrappers []struct {
+						Wrapper string `json:"wrapper"`
+					} `json:"listener_wrappers"`
+				} `json:"servers"`
+			} `json:"http"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range cfg.Apps.HTTP.Servers {
+		for _, l := range s.Listen {
+			if !strings.HasPrefix(l, sharedNetwork+"/") {
+				t.Errorf("server %s listens on %s, not on the shared sockets", name, l)
+				continue
+			}
+			if len(s.Wrappers) == 0 || s.Wrappers[0].Wrapper != handoffModule {
+				t.Errorf("server %s listens on %s without %s first of its wrappers", name, l, handoffModule)
+			}
+		}
 	}
 }

@@ -294,3 +294,52 @@ func TestHandoffWaitsForTheOlderServersFirstRequests(t *testing.T) {
 	}
 	older.Close()
 }
+
+// The listeners a load opens share one deadline: once a first listener has
+// waited requestWait for an idle connection, a second one does not wait
+// for another, so a reload waits requestWait at most in all.
+func TestHandoffWaitsOnceForALoad(t *testing.T) {
+	orig := requestWait
+	// Long enough that the first connection is still young when its
+	// listener opens, even on a slow machine.
+	requestWait = 500 * time.Millisecond
+	t.Cleanup(func() { requestWait = orig })
+	set := &handoffSet{addrs: map[string]*handoffAddr{}}
+	older := map[int]*serverConns{1: newServerConns(), 2: newServerConns()}
+	waits := map[int]*atomic.Int32{1: new(atomic.Int32), 2: new(atomic.Int32)}
+	var olds []net.Listener
+	views := map[int]*sharedSocket{}
+	conns := map[int]net.Conn{}
+	for port, srv := range older {
+		waits := waits[port]
+		srv.waiting = func() { waits.Add(1) }
+		sock := newSharedSocket(port)
+		views[port] = sock
+		old := set.wrapFor(sock.view(), srv)
+		olds = append(olds, old)
+		c, _ := sock.connect(t)
+		takes(t, accepted(old), c, "the only server")
+		conns[port] = c
+	}
+
+	newer := newServerConns()
+	set.beginLoad()
+	// Each connection becomes new just before its address's listener is
+	// wrapped, and no request ever comes on it, so each is young enough
+	// to be waited for when its own listener opens: the second turns idle
+	// only after the load's deadline.
+	older[1].state(conns[1], http.StateNew)
+	first := set.wrapFor(views[1].view(), newer)
+	older[2].state(conns[2], http.StateNew)
+	second := set.wrapFor(views[2].view(), newer)
+	set.endLoad()
+	if waits[1].Load() == 0 {
+		t.Fatal("the first listener did not wait for the idle connection")
+	}
+	if n := waits[2].Load(); n != 0 {
+		t.Errorf("the second listener waited %d times after the load's deadline", n)
+	}
+	for _, l := range append(olds, first, second) {
+		l.Close()
+	}
+}

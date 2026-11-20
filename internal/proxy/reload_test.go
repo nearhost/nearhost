@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // A request made on a new connection as soon as a reload returns is served.
@@ -83,6 +84,16 @@ func TestARequestDuringAReloadIsServed(t *testing.T) {
 	// cannot keep the clients going: each request is bounded by the
 	// client's timeout.
 	const maxRequests = 50 * reloads
+	// A reload waits requestWait at most for the old servers' connections
+	// to have their requests read. On a slow runner, or under the race
+	// detector, a client's TLS handshake can take longer than the usual
+	// second, and the reload would then stop waiting for it and drop its
+	// request: that is the bound working, not the loss this test is
+	// about. Wait as long as a client's own timeout instead, so a failure
+	// here is the loss itself.
+	orig := requestWait
+	requestWait = 10 * time.Second
+	t.Cleanup(func() { requestWait = orig })
 	upA, upB := upstream(t, "a"), upstream(t, "b")
 	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(upA.Server)}
 	b := Site{Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(upB.Server)}

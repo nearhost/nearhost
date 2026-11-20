@@ -96,7 +96,10 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// which it skips for one it already runs.
 	force := freshenIntermediate(p.opts.StorageRoot)
 	before := retiring.snapshot()
-	if err := caddy.Load(cfg, force); err != nil {
+	handoffs.beginLoad()
+	err = caddy.Load(cfg, force)
+	handoffs.endLoad()
+	if err != nil {
 		// Caddy closes the listeners the failed configuration had opened in
 		// goroutines it does not wait for: wait for them, so a caller that
 		// tries again at once does not find a port held by its own failed
