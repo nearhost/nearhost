@@ -110,6 +110,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		notConnectedPage(w, tr.Server)
 	case errors.Is(err, fs.ErrNotExist):
 		missingPage(w, tr.Server, shown)
+	case errors.Is(err, ErrChanging):
+		changingPage(w, tr.Server, shown)
 	case errors.Is(err, errRefused):
 		notFound(w)
 	default:

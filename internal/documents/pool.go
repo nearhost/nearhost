@@ -335,6 +335,7 @@ func brokenClient(ctx context.Context, err error) bool {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, ErrNotConnected), errors.Is(err, fs.ErrNotExist),
+		errors.Is(err, ErrChanging),
 		errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.ENOTDIR),
 		errors.Is(err, syscall.ELOOP), errors.As(err, &status):
 		return false
