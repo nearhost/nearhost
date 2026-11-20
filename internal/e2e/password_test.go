@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -33,6 +35,16 @@ func hasShop(hostsFile string) bool {
 // managed, and waits for the password box that asks to add its name.
 func shopWithHosts(t *testing.T) (*sandbox, *terminal) {
 	t.Helper()
+	// Windows asks for consent in a dialog of its own, not in the password
+	// box. And a run with administrator rights, as GitHub's Windows
+	// runners and root are, writes the machine's own hosts file alone,
+	// which the stand-in's command would then be refused.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows asks through its own prompt, not the password box")
+	}
+	if elevate.Elevated() {
+		t.Skip("an elevated run writes the machine's hosts file alone")
+	}
 	sb := newSandbox(t, fmt.Sprintf(localShop, t.TempDir(), testutil.Upstream(t, "shop")))
 	sb.manageHosts = true
 	term := sb.start()
