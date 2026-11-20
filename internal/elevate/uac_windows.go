@@ -32,7 +32,12 @@ type started struct {
 }
 
 // System is this OS's Elevator.
-func System() Elevator { return uac{} }
+func System() Elevator {
+	if systemOverride != nil {
+		return systemOverride()
+	}
+	return uac{}
+}
 
 // uac runs privileged steps through the UAC prompt. The elevated child gets
 // no standard streams back to Nearhost, so its input and its report travel

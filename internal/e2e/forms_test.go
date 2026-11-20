@@ -24,7 +24,13 @@ func (s *sandbox) configFile() string {
 // takes a web port, and names the project after the folder. The project is
 // written to the config, started and served.
 func TestNAddsAProjectThatIsThenServed(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), "blog")
+	// The folder by its real path, which is what a program started in it
+	// is told: a Mac's temporary folder is reached through a symlink.
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(parent, "blog")
 	if err := os.Mkdir(folder, 0o755); err != nil {
 		t.Fatal(err)
 	}

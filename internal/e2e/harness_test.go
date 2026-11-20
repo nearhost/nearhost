@@ -23,8 +23,11 @@
 //   - share nothing between journeys: each has its own sandbox and ports.
 //   - keep a journey on this machine: never click an address, which opens
 //     a browser, never answer yes to the presets question, which fetches a
-//     registry, and never ask to trust the CA or manage the hosts file,
-//     which run the real sudo.
+//     registry, and never ask to trust the CA, which runs the real sudo.
+//
+// The binary is built with the e2e tag. In that build alone a stand-in takes
+// sudo's place and the hosts file is the sandbox's own, so a journey can go
+// through the password box (password_test.go); a release has neither.
 //
 // A failed wait prints the screen as it was.
 package e2e
@@ -67,7 +70,10 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		nearhostBin += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", nearhostBin, "github.com/nearhost/nearhost/cmd/nearhost")
+	// The e2e tag swaps sudo and the hosts file for stand-ins inside the
+	// sandbox (internal/elevate/e2e.go, internal/hosts/e2e.go), so a
+	// journey can go through the password box.
+	build := exec.Command("go", "build", "-tags", "e2e", "-o", nearhostBin, "github.com/nearhost/nearhost/cmd/nearhost")
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build nearhost: %v\n%s", err, out)
 		os.Exit(1)
