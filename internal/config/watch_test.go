@@ -48,12 +48,18 @@ func (r *watchRecorder) lastApplied() *Config {
 // startWatch runs Watch until the test ends.
 func startWatch(t *testing.T, path string) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
+	return startWatchEvery(t, path, watchInterval)
+}
+
+// startWatchEvery is startWatch with its own poll interval.
+func startWatchEvery(t *testing.T, path string, interval time.Duration) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
+	t.Helper()
 	r := &watchRecorder{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Watch(ctx, path, watchInterval, r.apply, r.badf)
+		Watch(ctx, path, interval, r.apply, r.badf)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -107,19 +113,27 @@ func TestWatchAppliesAChange(t *testing.T) {
 }
 
 func TestWatchWaitsForTheFileToSettle(t *testing.T) {
+	// The file keeps changing, a write every 30 ms, so no two polls 100 ms
+	// apart see the same file until the writes stop. Without the debounce
+	// the first poll after the first write would apply a half-written state.
+	const interval = 100 * time.Millisecond
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeProjects(t, path, "a")
-	r, _, _ := startWatch(t, path)
-	time.Sleep(3 * watchInterval)
-	writeProjects(t, path, "a", "b")
-	time.Sleep(5 * time.Millisecond)
-	writeProjects(t, path, "a", "b", "c")
+	r, _, _ := startWatchEvery(t, path, interval)
+	time.Sleep(3 * interval)
+	names := []string{"a"}
+	for _, n := range []string{"b", "c", "d", "e", "f", "g", "h", "i"} {
+		names = append(names, n)
+		writeProjects(t, path, names...)
+		time.Sleep(30 * time.Millisecond)
+	}
 	waitFor(t, "apply", func() bool { n, _ := r.counts(); return n >= 1 })
-	settle()
-	// A slow runner can stretch the 5 ms gap past a tick, so the first apply
-	// may be either content, but the last must be the second write.
-	if got := len(r.lastApplied().Projects); got != 3 {
-		t.Fatalf("last applied %d projects, want 3", got)
+	time.Sleep(5 * interval)
+	if n, _ := r.counts(); n != 1 {
+		t.Fatalf("apply called %d times, want once", n)
+	}
+	if got := len(r.lastApplied().Projects); got != len(names) {
+		t.Fatalf("applied %d projects, want %d (the last write)", got, len(names))
 	}
 }
 
