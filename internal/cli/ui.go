@@ -169,8 +169,9 @@ func (f *stopForwarder) forward(p *tea.Program, sigs <-chan os.Signal, done <-ch
 }
 
 // bindUI makes bare `nearhost` open the interface at a terminal, with the
-// serving flags of `up`, and fail with a pointer to `up` otherwise. With -d
-// it starts the core in the background instead, which needs no terminal.
+// serving flags of `up`, and fail with a pointer to -d and `up` otherwise.
+// With -d it starts the core in the background instead, which needs no
+// terminal.
 func bindUI(root *cobra.Command, b uiBackend) {
 	var flags serveFlags
 	var detach bool
@@ -193,7 +194,7 @@ func bindUI(root *cobra.Command, b uiBackend) {
 // input and output both being one, and returns the exit status 1 for Main.
 // The message is printed here so that Main adds no "nearhost: " prefix.
 func noTerminal(stderr io.Writer) error {
-	msg := "nearhost needs a terminal for its interface. Use nearhost up to serve without one."
+	msg := "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one."
 	if hostOS == "windows" {
 		msg += " In Git Bash, run it through winpty or use Windows Terminal."
 	}

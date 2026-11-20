@@ -15,10 +15,12 @@ import (
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // noRemote is an add backend for tests that must stay on this machine.
@@ -1394,8 +1396,8 @@ func addEnding(t *testing.T, running func() runMode, extra ...string) string {
 }
 
 // serveRunning starts an agent API as a run of nearhost does, with or without
-// the interface, and returns a probe for the socket it listens on.
-func serveRunning(t *testing.T, withInterface bool) func() runMode {
+// the interface, and returns the socket it listens on.
+func serveRunning(t *testing.T, withInterface bool) string {
 	t.Helper()
 	home := agentHome(t)
 	a, note := serveAgents(fakeAgents(home), &engine.Options{RunDir: home}, nil, "", 443, agentEnv{})
@@ -1406,8 +1408,33 @@ func serveRunning(t *testing.T, withInterface bool) func() runMode {
 	if withInterface {
 		a.api.SetReviewer(nopReviewer{})
 	}
-	return func() runMode { return agentRunMode(agentSocket(home, "k3f9q2")) }
+	return agentSocket(home, "k3f9q2")
 }
+
+// serveCore answers info on a control socket, as a running core does, and
+// returns its run directory.
+func serveCore(t *testing.T, info control.Info) string {
+	t.Helper()
+	runDir := testutil.TempDir(t, "nhc")
+	srv, err := control.Listen(control.SocketPath(runDir), infoCore{info})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	return runDir
+}
+
+// probe is the running-Nearhost probe of runDir's control socket and the
+// agent socket at agentSock; an empty one is not asked.
+func probe(runDir, agentSock string) func() runMode {
+	return func() runMode { return runModeAt(runDir, agentSock) }
+}
+
+// A core that reloads, as `nearhost -d` is.
+var reloadingCore = control.Info{API: control.APIVersion, PID: 1, StartedBy: control.StartedDetached, Reloads: true}
+
+// `nearhost up` with projects named, which does not reload.
+var upCore = control.Info{API: control.APIVersion, PID: 1, StartedBy: control.StartedForeground}
 
 // nopReviewer is a reviewer that reviews nothing; it makes the API say it has
 // an interface.
@@ -1421,22 +1448,39 @@ func (nopReviewer) Shown(string, string, string)           {}
 
 func TestAddWhenNothingRunsSaysToStartIt(t *testing.T) {
 	home := agentHome(t)
-	got := addEnding(t, func() runMode { return agentRunMode(agentSocket(home, "k3f9q2")) })
+	got := addEnding(t, probe(testutil.TempDir(t, "nhc"), agentSocket(home, "k3f9q2")))
 	if want := "Start it with `nearhost up`."; got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
 
-func TestAddWithTheInterfaceRunningSaysItPicksTheProjectUp(t *testing.T) {
-	got := addEnding(t, serveRunning(t, true))
+func TestAddWithACoreThatReloadsSaysItPicksTheProjectUp(t *testing.T) {
+	got := addEnding(t, probe(serveCore(t, reloadingCore), ""))
+	if want := "The running Nearhost picks it up in a moment."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+// The control socket is asked first: what the core says there is what it
+// does, whatever its agent socket says.
+func TestAddAsksTheCoreBeforeTheAgentSocket(t *testing.T) {
+	got := addEnding(t, probe(serveCore(t, reloadingCore), serveRunning(t, false)))
 	if want := "The running Nearhost picks it up in a moment."; got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
 
 func TestAddWithUpRunningSaysToRestartIt(t *testing.T) {
-	got := addEnding(t, serveRunning(t, false))
+	got := addEnding(t, probe(serveCore(t, upCore), ""))
 	if want := "nearhost up is running and does not reload. Stop it and start it again to serve this project."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
+// The interface answers on the agent socket only.
+func TestAddWithTheInterfaceRunningSaysItPicksTheProjectUp(t *testing.T) {
+	got := addEnding(t, probe(testutil.TempDir(t, "nhc"), serveRunning(t, true)))
+	if want := "The running Nearhost picks it up in a moment."; got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
@@ -1456,21 +1500,29 @@ func TestAddWithAnOlderNearhostRunningSaysSomethingTrueForBoth(t *testing.T) {
 	})}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
-	got := addEnding(t, func() runMode { return agentRunMode(sock) })
+	got := addEnding(t, probe("", sock))
 	if want := "Nearhost is running. If it does not pick the project up in a moment, stop it and start it again."; got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
 
 func TestAddDisabledWithTheInterfaceRunningSaysToStartItThere(t *testing.T) {
-	got := addEnding(t, serveRunning(t, true), "--disabled")
+	got := addEnding(t, probe("", serveRunning(t, true)), "--disabled")
 	if want := "The running Nearhost lists it in a moment. Start it there."; got != want {
 		t.Fatalf("ending = %q, want %q", got, want)
 	}
 }
 
+// A core with no interface lists only the projects it serves.
+func TestAddDisabledWithACoreThatReloadsSaysToEnableIt(t *testing.T) {
+	got := addEnding(t, probe(serveCore(t, reloadingCore), ""), "--disabled")
+	if want := "The running Nearhost serves it once it is enabled in the config."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
 func TestAddDisabledWithUpRunningSaysHowToStartIt(t *testing.T) {
-	got := addEnding(t, serveRunning(t, false), "--disabled")
+	got := addEnding(t, probe(serveCore(t, upCore), ""), "--disabled")
 	want := "nearhost up is running and does not reload. Stop it and start it again with `" + config.UpCommand("myapp") + "` to serve this project."
 	if got != want {
 		t.Fatalf("ending = %q, want %q", got, want)

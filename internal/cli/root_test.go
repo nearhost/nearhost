@@ -162,6 +162,9 @@ func TestRootHelpSaysWhatBareNearhostDoes(t *testing.T) {
   nearhost add .     Add the project in this directory
   nearhost           Open the interface, which serves every enabled project
   nearhost up        Serve them without the interface
+  nearhost -d        Serve them in the background
+  nearhost status    Show what the background Nearhost is serving
+  nearhost stop      Stop it
   nearhost doctor    Check the machine and each project`
 	if !strings.Contains(out.String(), block) {
 		t.Fatalf("help lacks the getting started block:\n%s", out.String())
