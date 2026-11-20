@@ -25,9 +25,19 @@ func init() {
 // load can return while a listener it is done with is still open. After a
 // load that failed, a listener the failed configuration had opened still
 // holds its port for that moment, and a start tried again at once finds the
-// port in use. With this wrapper on each server the proxy knows every open
-// listener and when its close has returned, and a load waits for those it
-// closes.
+// port in use. After a reload on Unix, where each configuration binds its
+// own sockets with SO_REUSEPORT, the kernel goes on queueing some new
+// connections on the old configuration's socket for that moment, and resets
+// them when it is closed: the client gets EOF or a reset. With this wrapper
+// on each server the proxy knows every open listener and when its close has
+// returned, and a load waits for those it closes.
+//
+// Two losses remain for a connection that arrives while a reload is
+// running, between the new socket's bind and the old one's close. One still
+// queued on the old socket at the close is reset. One the old server
+// accepted just before it began to shut down has its HTTP/1 request read
+// and then dropped unanswered, as net/http's conn.serve returns once the
+// server is shutting down: the client gets EOF.
 //
 // It wraps TCP listeners only. The UDP sockets of HTTP/3 are deliberately
 // not tracked: Caddy keeps one until its connections end, which nothing

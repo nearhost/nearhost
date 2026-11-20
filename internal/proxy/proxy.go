@@ -48,7 +48,12 @@ func (p *Proxy) SetWebPort(port int) {
 }
 
 // Apply loads a configuration serving exactly the given sites. Existing
-// connections survive; it is safe to call repeatedly and concurrently.
+// connections survive; it is safe to call repeatedly and concurrently. Once
+// it has returned, a new connection reaches the configuration it loaded,
+// unless a listener of the configuration it replaced was still open after
+// releaseWait: Apply then says so in the log and returns without an error,
+// as the new configuration is applied, and that listener can still take a
+// connection until Caddy closes it.
 func (p *Proxy) Apply(sites []Site) error {
 	_, err := p.apply(sites, false)
 	return err
@@ -100,8 +105,19 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
+	// A reload starts the new servers, and Caddy then closes the old ones'
+	// listeners in goroutines it does not wait for. On Unix each
+	// configuration binds its own sockets: until an old one is closed the
+	// kernel still queues connections on it, and resets them at the close.
+	// Wait for the old listeners, so a request made once the reload has
+	// returned reaches the new configuration. A load Caddy skips, as it runs
+	// that configuration already, opens no listener and closes none; one
+	// that takes the last site away opens none and closes the old ones.
 	was := listening
 	listening = listens(sites, p.opts)
+	if len(retiring.since(before)) > 0 || was && !listening {
+		retiring.settle(before, "a reload")
+	}
 	if was && !listening {
 		// Caddy stops the old listeners as Stop does, in goroutines it
 		// does not wait for: wait for the ports, so the proxy never takes
