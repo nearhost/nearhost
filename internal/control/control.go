@@ -88,6 +88,10 @@ type errorBody struct {
 // listens on fails with there. syscall has no Errno for it on Windows.
 const wsaConnRefused = 10061
 
+// wsaNetDown is Windows' WSAENETDOWN. Dialling a unix socket whose folder is
+// missing fails with it there, where Linux and macOS say ENOENT.
+const wsaNetDown = 10050
+
 // nobodyListens reports whether err from dialling the socket means that
 // nothing answers on it: the file is missing, or is left over from a core that
 // has gone.
@@ -96,5 +100,5 @@ func nobodyListens(err error) bool {
 		return true
 	}
 	var errno syscall.Errno
-	return runtime.GOOS == "windows" && errors.As(err, &errno) && errno == wsaConnRefused
+	return runtime.GOOS == "windows" && errors.As(err, &errno) && (errno == wsaConnRefused || errno == wsaNetDown)
 }

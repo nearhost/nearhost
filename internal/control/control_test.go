@@ -235,6 +235,13 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 	}
 }
 
+func TestDialMissingRunDir(t *testing.T) {
+	_, err := Dial(filepath.Join("no-such-dir", "run")) // short and relative, under the unix socket path limit
+	if !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Dial of a missing run folder = %v, want ErrNotRunning", err)
+	}
+}
+
 func TestSocketPath(t *testing.T) {
 	if got, want := SocketPath(filepath.Join("a", "b")), filepath.Join("a", "b", "control.sock"); got != want {
 		t.Fatalf("SocketPath = %q, want %q", got, want)
