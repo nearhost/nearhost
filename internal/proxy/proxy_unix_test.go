@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -144,16 +145,6 @@ func TestProxyServesDockerClientsOnlyForOptedInSites(t *testing.T) {
 	}
 }
 
-// On Unix each configuration binds its own sockets, so servers need no
-// Handoff: their one wrapper of Nearhost's is Retire, before TLS.
-func TestServersOnlyRetireTheirListenersOnUnix(t *testing.T) {
-	for name, w := range serverWrappers(t) {
-		if !slices.Equal(w, []string{retireModule, "tls"}) {
-			t.Errorf("server %s has listener wrappers %q, want %q then tls", name, w, retireModule)
-		}
-	}
-}
-
 // Nearhost's page listens on the loopback addresses alone, while the sites'
 // https and http ports keep the wildcard address that Docker clients reach.
 func TestPageListensOnLoopbackOnUnix(t *testing.T) {
@@ -167,9 +158,9 @@ func TestPageListensOnLoopbackOnUnix(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"nearhost":      {":8443"},
-		"nearhost_http": {":8080"},
-		"nearhost_web":  {"127.0.0.1:6327", "[::1]:6327"},
+		"nearhost":      {sharedNetwork + "/:8443"},
+		"nearhost_http": {sharedNetwork + "/:8080"},
+		"nearhost_web":  {sharedNetwork + "/127.0.0.1:6327", sharedNetwork + "/[::1]:6327"},
 	}
 	if l, err := net.Listen("tcp", "[::1]:0"); err != nil {
 		want["nearhost_web"] = want["nearhost_web"][:1] // no IPv6 loopback here
@@ -287,4 +278,127 @@ func (h *harness) pageAnswers(t *testing.T, host string) {
 		resp.Body.Close()
 		return resp.StatusCode == 200
 	}, "Nearhost's page on "+host)
+}
+
+// Every configuration shares the one socket of an address, so a reload
+// leaves the sockets as they were: none is closed with a connection queued
+// on it. A stop closes them, and the ports can be bound at once.
+func TestASocketOutlivesAReloadAndClosesWithTheProxy(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxy(t, []Site{a})
+	open := func() map[string]net.Listener {
+		sockets.mu.Lock()
+		defer sockets.mu.Unlock()
+		out := map[string]net.Listener{}
+		for addr, s := range sockets.open {
+			out[addr] = s.ln
+		}
+		return out
+	}
+	before := open()
+	if len(before) != 2 {
+		t.Fatalf("%d sockets open, want the https and http ports'", len(before))
+	}
+	if err := h.p.Apply([]Site{a, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up.Server)}}); err != nil {
+		t.Fatal(err)
+	}
+	after := open()
+	if len(after) != len(before) {
+		t.Fatalf("%d sockets open after a reload, want %d", len(after), len(before))
+	}
+	for addr, ln := range before {
+		if after[addr] != ln {
+			t.Errorf("the socket of %s changed in a reload", addr)
+		}
+	}
+	if err := h.p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if n := sockets.count(); n != 0 {
+		t.Fatalf("%d sockets open after Stop", n)
+	}
+	for _, port := range []int{h.httpsPort, h.httpPort} {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			t.Fatalf("port %d not released: %v", port, err)
+		}
+		l.Close()
+	}
+}
+
+// Every server that listens on the shared sockets hands its connections
+// over through Handoff, first of its wrappers, with Reached first of its
+// routes: a server without them would take connections from a shared
+// socket while it shuts down.
+func TestEveryServerOnTheSharedSocketsHasHandoff(t *testing.T) {
+	raw, err := BuildConfig([]Site{{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: "127.0.0.1:1"}},
+		Options{StorageRoot: t.TempDir(), HTTPSPort: 8443, HTTPPort: 8080, WebPort: 6327, HomeWithNoSites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Listen   []string `json:"listen"`
+					Routes   []any    `json:"routes"`
+					Wrappers []struct {
+						Wrapper string `json:"wrapper"`
+					} `json:"listener_wrappers"`
+				} `json:"servers"`
+			} `json:"http"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range cfg.Apps.HTTP.Servers {
+		for _, l := range s.Listen {
+			if !strings.HasPrefix(l, sharedNetwork+"/") {
+				t.Errorf("server %s listens on %s, not on the shared sockets", name, l)
+				continue
+			}
+			if len(s.Wrappers) == 0 || s.Wrappers[0].Wrapper != handoffModule {
+				t.Errorf("server %s listens on %s without %s first of its wrappers", name, l, handoffModule)
+			}
+			if h, _ := firstHandler(s.Routes); h != reachedModule {
+				t.Errorf("server %s listens on %s without %s first of its routes", name, l, reachedModule)
+			}
+		}
+	}
+}
+
+// Every handle on the shared sockets is one of Handoff's listeners: no
+// server Caddy made by itself, without Handoff, shares a socket. Checked on
+// a running proxy, after its start and after a reload.
+func TestEveryHandleOnTheSharedSocketsIsHandedOff(t *testing.T) {
+	up := upstream(t, "a")
+	a := Site{Alias: "a.test", Hosts: []string{"a.test"}, Upstream: addr(up.Server)}
+	h := startProxyOpts(t, []Site{a}, Options{WebPort: freePort(t)})
+	check := func(when string) {
+		t.Helper()
+		sockets.mu.Lock()
+		defer sockets.mu.Unlock()
+		handoffs.mu.Lock()
+		defer handoffs.mu.Unlock()
+		if len(sockets.open) == 0 {
+			t.Fatalf("no shared socket is open %s", when)
+		}
+		for addr, s := range sockets.open {
+			key := s.ln.Addr().Network() + " " + s.ln.Addr().String()
+			n := 0
+			if a := handoffs.addrs[key]; a != nil {
+				n = len(a.open)
+			}
+			if n != s.refs {
+				t.Errorf("%s: the socket of %s has %d handles, but Handoff has %d listeners there", when, addr, s.refs, n)
+			}
+		}
+	}
+	check("after the start")
+	if err := h.p.Apply([]Site{a, {Alias: "b.test", Hosts: []string{"b.test"}, Upstream: addr(up.Server)}}); err != nil {
+		t.Fatal(err)
+	}
+	check("after a reload")
 }

@@ -320,7 +320,7 @@ var pageAddrs = netbind.PageAddrs
 // redirects of its own.
 func webServer(opts Options) map[string]any {
 	return map[string]any{
-		"listen": pageAddrs(opts.WebPort),
+		"listen": listenAddrs(pageAddrs(opts.WebPort)),
 		"tls_connection_policies": []any{map[string]any{
 			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
 		}},
@@ -429,7 +429,7 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 	routes = append(routes, map[string]any{"handle": abort})
 	return map[string]any{
-		"listen": netbind.ServeAddrs(httpPort),
+		"listen": listenAddrs(netbind.ServeAddrs(httpPort)),
 		"routes": routes,
 		// This server is plain HTTP by design. Saying so stops Caddy
 		// warning on every reload that it cannot have automatic HTTPS (it
@@ -441,17 +441,20 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 }
 
-// listenerWrappers sets server's listener wrappers, before TLS: Handoff
-// where configurations share their sockets, and Retire everywhere.
-func listenerWrappers(server map[string]any) map[string]any {
-	wrappers := []any{}
-	if sharedSockets {
-		wrappers = append(wrappers, map[string]any{"wrapper": handoffModule})
-	}
-	server["listener_wrappers"] = append(wrappers,
+// handedOff makes server hand its connections over across reloads (see
+// Handoff): its listener wrappers, before TLS, are Handoff and Retire, and
+// its first route, with no matcher, is Reached, which tells Handoff that a
+// request has reached the handlers.
+func handedOff(server map[string]any) map[string]any {
+	server["listener_wrappers"] = []any{
+		map[string]any{"wrapper": handoffModule},
 		map[string]any{"wrapper": retireModule},
 		map[string]any{"wrapper": "tls"},
-	)
+	}
+	routes, _ := server["routes"].([]any)
+	server["routes"] = append([]any{map[string]any{
+		"handle": []any{map[string]any{"handler": reachedModule}},
+	}}, routes...)
 	return server
 }
 
@@ -663,7 +666,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 
 	server := map[string]any{
-		"listen": netbind.ServeAddrs(httpsPort),
+		"listen": listenAddrs(netbind.ServeAddrs(httpsPort)),
 		// Policies are first-match. The first is for loopback clients; the
 		// others, one per set of extra client ranges, are for those clients
 		// and the hosts of the sites that opted in. A handshake from
@@ -686,7 +689,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		})
 		server["errors"] = map[string]any{"routes": downRoutes}
 	}
-	servers := map[string]any{"nearhost": listenerWrappers(server)}
+	servers := map[string]any{"nearhost": handedOff(server)}
 	if len(all) == 0 {
 		// For a server with no host at all, automatic HTTPS adds a redirect
 		// of every host to the http port, ahead of our routes when another
@@ -701,9 +704,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = listenerWrappers(httpServer(hosts, union, httpPort, httpsPort))
+	servers["nearhost_http"] = handedOff(httpServer(hosts, union, httpPort, httpsPort))
 	if web {
-		servers["nearhost_web"] = listenerWrappers(webServer(opts))
+		servers["nearhost_web"] = handedOff(webServer(opts))
 	}
 
 	cfg := map[string]any{
