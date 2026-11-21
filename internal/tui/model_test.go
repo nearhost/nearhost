@@ -281,32 +281,62 @@ func TestEventsFillTheLogs(t *testing.T) {
 	}
 }
 
-func TestChangedConfigFileIsApplied(t *testing.T) {
+// The interface no longer reads the config file: on the clock it takes the
+// config the backend runs, which the core changes when the file does.
+func TestConfigFollowsTheBackend(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
-	if cmd := m.checkConfig(); cmd != nil {
-		t.Fatal("applied an unchanged config")
-	}
+	// A file the interface read would be refused, and say so.
 	if err := os.WriteFile(f.path, []byte("projects: [{name: a, server: nowhere}]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	f.applyErr = errBoom
-	// The file is applied once it has stayed the same for a tick, so a save
-	// caught half way is not.
-	if cmd := m.checkConfig(); cmd != nil {
-		t.Fatal("applied a change on the tick that first saw it")
+	next := sampleConfig()
+	next.Projects = append(next.Projects, config.Project{Name: "blog", Server: config.LocalServer, Path: "/code/blog",
+		Alias: "blog.test", Enabled: true, Routes: []config.Route{{Port: 4000, Role: config.RoleWeb}}})
+	m.Update(tickMsg(time.Now()))
+	if s := screen(m); strings.Contains(s, "blog") {
+		t.Fatalf("a project the backend does not run is shown:\n%s", s)
 	}
-	run(m, m.checkConfig())
-	if len(f.applied) != 1 {
-		t.Fatalf("applied %d times", len(f.applied))
+	f.mu.Lock()
+	f.cfg = next
+	f.mu.Unlock()
+	m.Update(tickMsg(time.Now()))
+	wantScreen(t, m, "○ blog")
+	if m.sel != rowKey(rowProject, "blog") {
+		t.Errorf("the new project is not selected: %q", m.sel)
 	}
-	if cmd := m.checkConfig(); cmd != nil {
-		t.Error("a refused change was applied again")
+	if n := f.reloadCount(); n != 0 {
+		t.Errorf("the tick reloaded %d times", n)
 	}
-	wantScreen(t, m, "Ignored a change to")
-	// The path is long on Windows and wraps on screen, so read the log entry.
-	if log := logText(m, homeKey); !strings.Contains(log, "Ignored a change to "+f.path+": boom. Save the file again to apply it.") {
-		t.Errorf("log:\n%s", log)
+	if log := logText(m, homeKey); strings.Contains(log, "Ignored a change") {
+		t.Errorf("the interface read the file:\n%s", log)
+	}
+}
+
+// Saving the add-project form has the backend reload its config once.
+func TestFormSaveReloads(t *testing.T) {
+	m, f, files := projectFormModel(t)
+	files.drafts["/work/here"] = Draft{Routes: []config.Route{web(8080, "app")}}
+	toPath(t, m, 0) // Local
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · routes")
+	press(m, "enter")
+	settle(m, press(m, "enter"))
+	wantScreen(t, m, "Add project · confirm")
+	cmd := press(m, "enter")
+	for i := 0; cmd != nil && i < 10; i++ {
+		msg := cmd()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			cmd = run(m, tea.Batch(batch...))
+			continue
+		}
+		_, cmd = m.Update(msg)
+	}
+	if len(f.forms.saved) != 1 {
+		t.Fatalf("saved %+v", f.forms.saved)
+	}
+	if n := f.reloadCount(); n != 1 {
+		t.Errorf("reloaded %d times, want once", n)
 	}
 }
 
@@ -431,27 +461,6 @@ func TestOutsideTextIsCleaned(t *testing.T) {
 	wantScreen(t, m, "app next", "bad thing")
 }
 
-// An editor that truncates the file before writing it leaves it empty for a
-// moment. An empty file is not applied, so it never stops every project.
-func TestEmptyConfigFileIsIgnored(t *testing.T) {
-	f := newFake(t, sampleConfig())
-	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	m := sized(f)
-	if err := os.WriteFile(f.path, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	m.checkConfig()
-	run(m, m.checkConfig())
-	if len(f.applied) != 0 {
-		t.Fatalf("applied an empty file: %+v", f.applied)
-	}
-	if log := logText(m, homeKey); !strings.Contains(log, "Ignored a change to "+f.path+": the file is empty") {
-		t.Errorf("log:\n%s", log)
-	}
-}
-
 // A start or stop the engine refuses outright, such as one while the proxy
 // is down, changes no state; the refusal is shown instead.
 func TestRefusedStartIsShown(t *testing.T) {
@@ -505,11 +514,11 @@ func TestIgnoredChangeSaysHowToRetry(t *testing.T) {
 	wantScreen(t, m, "nearhost  Ignored a change to /etc/nh.yaml: boom. Save the", "file again to apply it.")
 }
 
-// Quitting while an Apply runs ends it, so the shutdown does not wait for
+// Quitting while a Reload runs ends it, so the shutdown does not wait for
 // the projects it is stopping.
-func TestQuitEndsAnApplyInFlight(t *testing.T) {
+func TestQuitEndsAReloadInFlight(t *testing.T) {
 	f := newFake(t, sampleConfig())
-	f.applyBlocks = true
+	f.reloadBlocks = true
 	m := sized(f)
 	if err := os.WriteFile(f.path, []byte("projects: []\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -521,10 +530,10 @@ func TestQuitEndsAnApplyInFlight(t *testing.T) {
 	select {
 	case msg := <-done:
 		if am, ok := msg.(appliedMsg); !ok || am.err == nil {
-			t.Errorf("Apply ended with %#v", msg)
+			t.Errorf("Reload ended with %#v", msg)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("the Apply kept running after q")
+		t.Fatal("the Reload kept running after q")
 	}
 }
 

@@ -26,8 +26,8 @@ const (
 	// eventBuffer is how many engine events may wait for the interface; the
 	// bus drops what does not fit, and the next tick redraws from Status.
 	eventBuffer = 1024
-	// tickEvery is how often the config file is checked and the screen
-	// redrawn from the engine's state.
+	// tickEvery is how often the screen is redrawn from the engine's state,
+	// and its config taken afresh.
 	tickEvery = time.Second
 	// shutdownTimeout bounds stopping everything on quit.
 	shutdownTimeout = 30 * time.Second
@@ -64,6 +64,8 @@ type Model struct {
 	// password asks for the user's password over everything else; nil when
 	// nothing is asking.
 	password *passwordBox
+	// quitBox asks whether quitting stops Nearhost; nil when it is not open.
+	quitBox *quitBox
 	// waiting are the agents' requests to be reviewed, oldest first;
 	// proposing is the proposal whose form is open, nil when none is.
 	waiting   []asked
@@ -102,17 +104,19 @@ type Model struct {
 	// presses wait for the answer.
 	proxyRetrying bool
 	quitting      bool
+	leaving       bool               // the quit leaves Nearhost running
 	cutShort      context.CancelFunc // ends the shutdown's context
+	// lostErr is why the core could no longer be reached, which ended the
+	// program; see Err.
+	lostErr error
 	// leftEmpty is set once a server is connected from the first-run
 	// screen: the main screen stays up for this run, with nothing to serve.
 	leftEmpty bool
 
 	events      <-chan engine.Event
 	unsubscribe func()
-	stamp       fileStamp          // the config file as last applied, or refused
-	seen        fileStamp          // the config file at the last tick
-	applying    bool               // an Apply is running
-	endApply    context.CancelFunc // ends the running Apply; quitting calls it
+	applying    bool               // a Reload is running
+	endApply    context.CancelFunc // ends the running Reload; quitting calls it
 
 	// What Home shows about the machine. Reading it can be slow (the trust
 	// store, /etc/hosts), so it is read on the clock, not on every redraw.
@@ -128,7 +132,7 @@ type Model struct {
 	// editing holds role changes back from when one is saved until the
 	// config with it is applied, so each starts from the project as it is.
 	editing bool
-	// reloadAfter applies the config again once the running Apply is done:
+	// reloadAfter applies the config again once the running Reload is done:
 	// a change was saved after it had read the file.
 	reloadAfter bool
 
@@ -157,7 +161,6 @@ type Model struct {
 // New creates the interface for b. dir is where `nearhost` was started.
 func New(b Backend, dir string) *Model {
 	events, unsubscribe := b.Events().Subscribe(eventBuffer)
-	stamp := stampOf(b.ConfigPath())
 	m := &Model{
 		b: b, dir: dir,
 		cfg:       b.Config(),
@@ -169,7 +172,6 @@ func New(b Backend, dir string) *Model {
 		getenv:    os.Getenv,
 		homeDir:   realHome,
 		events:    events, unsubscribe: unsubscribe,
-		stamp: stamp, seen: stamp,
 		caTrusted: b.CATrusted(), caExpires: b.CAExpires(), hostsState: b.HostsState(),
 		work: newWorker(),
 		help: newHelp(), spinner: newSpinner(), filter: newFilter(),
@@ -180,12 +182,16 @@ func New(b Backend, dir string) *Model {
 
 // Messages the model sends itself.
 type (
-	startedMsg     struct{ err error }
-	eventMsg       engine.Event
-	tickMsg        time.Time
-	appliedMsg     struct{ err error }
-	resumedMsg     struct{}
-	shutdownMsg    struct{ err error }
+	startedMsg struct{ err error }
+	eventMsg   engine.Event
+	tickMsg    time.Time
+	appliedMsg struct{ err error }
+	resumedMsg struct{}
+	// shutdownMsg is the end of a quit: err is the Shutdown's or Leave's,
+	// and unsaved says why the quit box's answer could not be remembered.
+	shutdownMsg struct {
+		err, unsaved error
+	}
 	projectDoneMsg struct {
 		name string
 		err  error
@@ -204,12 +210,13 @@ type (
 	}
 )
 
-// Init starts the engine, listens for its events and starts the clock. It
-// asks the terminal for its background colour, to pick the palette.
+// Init starts the engine, listens for its events and for the core being
+// lost, and starts the clock. It asks the terminal for its background
+// colour, to pick the palette.
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(func() tea.Msg {
 		return startedMsg{m.b.Start(context.Background())}
-	}, m.listen(), tick(), tea.RequestBackgroundColor, backgroundTimer())
+	}, m.listen(), m.waitLost(), tick(), tea.RequestBackgroundColor, backgroundTimer())
 }
 
 // backgroundWait is how long the interface waits for the terminal to say
@@ -370,7 +377,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.listen()
 	case tickMsg:
 		m.trackUptime()
-		return m, tea.Batch(tick(), m.checkConfig(), m.readMachine())
+		// The config the backend runs changes when its file does: the core
+		// applies the file. A Reload that is running takes it when it ends.
+		if cfg := m.b.Config(); cfg != m.cfg && !m.applying && !m.quitting {
+			m.setConfig(cfg)
+		}
+		return m, tea.Batch(tick(), m.readMachine())
 	case machineMsg:
 		// A read that began before the trust step finished may have seen the
 		// old bundle; it must not undo the success.
@@ -397,7 +409,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appliedMsg:
 		m.applying, m.endApply = false, nil
 		if m.reloadAfter {
-			// A change was saved while that Apply ran: apply it too.
+			// A change was saved while that Reload ran: reload again.
 			m.reloadAfter = false
 			m.setConfig(m.b.Config())
 			return m, m.reloadConfig()
@@ -422,11 +434,20 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return resumedMsg{}
 		})
 	case shutdownMsg:
+		if msg.unsaved != nil {
+			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ".")
+		}
 		if msg.err != nil {
-			m.logs.note("Stopping: " + msg.err.Error())
+			verb := "Stopping: "
+			if m.leaving {
+				verb = "Leaving: "
+			}
+			m.logs.note(verb + msg.err.Error())
 		}
 		m.unsubscribe()
 		return m, tea.Quit
+	case lostMsg:
+		return m, m.lose(msg.err)
 	case connectedMsg:
 		// Only the add-project form, waiting on its own, takes a
 		// connection. Any other is closed: its form is gone or going.
@@ -518,6 +539,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.password != nil {
 			return m, m.password.update(msg)
+		}
+		if m.quitBox != nil {
+			return m, nil // it has nothing to type into
 		}
 		if m.form != nil {
 			if m.guarding() {
@@ -623,43 +647,6 @@ func (m *Model) readMachine() tea.Cmd {
 	}
 }
 
-// quit stops everything, then ends the program. Asked again while stopping,
-// it cuts the shutdown short.
-func (m *Model) quit() tea.Cmd {
-	if m.quitting {
-		m.cutShort()
-		return nil
-	}
-	m.quitting = true
-	if m.password != nil {
-		m.password.answer(ErrPasswordCancelled)
-		m.password = nil
-	}
-	if m.endApply != nil {
-		m.endApply() // the shutdown would otherwise wait for it
-	}
-	// The open form's connection, and those its running steps are opening,
-	// go before the engine does. The connection closes first, as a step may
-	// be stuck reading from it, then the steps are waited for, but only for
-	// formStopTimeout, so the engine keeps the rest of the time to stop.
-	var unblock func()
-	if pf, ok := m.form.(*projectForm); ok && pf.files != nil {
-		files := pf.files
-		pf.files = nil
-		unblock = func() { files.Close() }
-	}
-	work := m.work
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	m.cutShort = cancel
-	return func() tea.Msg {
-		defer cancel()
-		steps, stopped := context.WithTimeout(ctx, formStopTimeout)
-		work.stop(steps, unblock)
-		stopped()
-		return shutdownMsg{m.b.Shutdown(ctx)}
-	}
-}
-
 // View draws the screen, with any text selected with the mouse highlighted.
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.withToast(m.highlight(m.content())))
@@ -683,6 +670,9 @@ func (m *Model) content() string {
 		}
 		if m.form != nil {
 			content = m.formBox(content, m.form)
+		}
+		if m.quitBox != nil {
+			content = m.formBox(content, m.quitBox)
 		}
 		if m.password != nil {
 			content = m.formBox(content, m.password)
@@ -763,70 +753,24 @@ func (m *Model) selected() (rowKind, string) {
 	return rowHome, ""
 }
 
-// fileStamp is what is checked to notice a change to the config file.
-type fileStamp struct {
-	exists bool
-	mod    time.Time
-	size   int64
-}
-
-func stampOf(path string) fileStamp {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fileStamp{}
-	}
-	return fileStamp{exists: true, mod: info.ModTime(), size: info.Size()}
-}
-
-// checkConfig applies the config file when it has changed and then stayed
-// the same for a tick, and no Apply is running. Waiting a tick keeps a save
-// caught half way from being applied. An empty file is never applied: an
-// editor that truncates before it writes leaves one for a moment, and
-// applying it would stop every project.
-func (m *Model) checkConfig() tea.Cmd {
-	if m.applying || m.quitting {
-		return nil
-	}
-	path := m.b.ConfigPath()
-	now := stampOf(path)
-	if now == m.stamp {
-		m.seen = now
-		return nil
-	}
-	if now != m.seen {
-		m.seen = now // changed since the last tick: wait for it to settle
-		return nil
-	}
-	if now.exists && now.size == 0 {
-		m.stamp = now
-		m.logs.note("Ignored a change to " + path + ": the file is empty")
-		return nil
-	}
-	return m.reloadConfig()
-}
-
-// applyNow applies the config file now, after a form saved to it, unless an
-// Apply is running; the clock picks the change up after that one.
+// applyNow has the backend apply the config file now, after a form saved
+// to it. While a Reload runs it waits for that one to end, then reloads.
 func (m *Model) applyNow() tea.Cmd {
 	if m.applying {
+		m.reloadAfter = true
 		return nil
 	}
 	return m.reloadConfig()
 }
 
-// reloadConfig reads the config file and gives it to the engine.
+// reloadConfig has the backend apply the config file.
 func (m *Model) reloadConfig() tea.Cmd {
-	path := m.b.ConfigPath()
-	m.stamp = stampOf(path)
 	m.applying = true
 	ctx, cancel := context.WithCancel(context.Background())
 	m.endApply = cancel
+	b := m.b
 	return func() tea.Msg {
 		defer cancel()
-		cfg, err := config.Load(path)
-		if err == nil {
-			err = m.b.Apply(ctx, cfg)
-		}
-		return appliedMsg{err}
+		return appliedMsg{b.Reload(ctx)}
 	}
 }

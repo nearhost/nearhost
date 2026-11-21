@@ -398,18 +398,15 @@ func TestLostWhenTheCoreGoes(t *testing.T) {
 	}
 }
 
-// Reload, and Apply of today's interface, have the core load its file.
+// Reload has the core load its file.
 func TestReloadGoesToTheCore(t *testing.T) {
 	h := newMirrorHarness(t)
 	b := h.backend(t, h.state(t), nil, nil)
 	if err := b.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Apply(context.Background(), &config.Config{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := h.core.asked(); !slices.Equal(got, []string{"Reload", "Reload"}) {
-		t.Errorf("the core was asked %q, want two reloads", got)
+	if got := h.core.asked(); !slices.Equal(got, []string{"Reload"}) {
+		t.Errorf("the core was asked %q, want one reload", got)
 	}
 }
 

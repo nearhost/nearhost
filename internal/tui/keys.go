@@ -19,6 +19,9 @@ func (m *Model) footerItems() []footerItem {
 	if m.quitting {
 		return nil
 	}
+	if m.quitBox != nil {
+		return m.quitBox.keys()
+	}
 	if m.form != nil {
 		if m.guarding() {
 			return nil
@@ -152,12 +155,15 @@ const footerSep = " · "
 // is. With help open it is the full list of keys.
 func (m *Model) footer() string {
 	if m.quitting {
+		if m.leaving {
+			return m.bar(styleAmber.Render("Leaving Nearhost running…"), "")
+		}
 		return m.bar(styleAmber.Render("Stopping…"), "")
 	}
 	if m.showHelp {
 		return m.fullHelp()
 	}
-	if m.form != nil {
+	if m.form != nil || m.quitBox != nil {
 		return m.bar("", "") // the form's box has its keys
 	}
 	right := styleDim.Render(m.footerContext())
@@ -173,7 +179,7 @@ func (m *Model) footerRoom() int {
 // footerContext says where the selection is: the project and its place
 // among the projects, the server, or home.
 func (m *Model) footerContext() string {
-	if m.form != nil || m.empty() {
+	if m.form != nil || m.quitBox != nil || m.empty() {
 		return ""
 	}
 	kind, name := m.selected()
@@ -222,24 +228,27 @@ func (m *Model) footerKeyAt(x int) string {
 func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if s == "ctrl+c" {
-		return m.quit()
+		return m.quit(true)
 	}
 	if m.small() {
 		// Nothing is drawn but the notice, so only quit acts, even over a
 		// box that would take a q as text.
 		if s == "q" {
-			return m.quit()
+			return m.quit(false)
 		}
 		return nil
 	}
 	if m.quitting {
 		if s == "q" {
-			return m.quit()
+			return m.quit(false)
 		}
 		return nil
 	}
 	if m.password != nil {
 		return m.password.update(k)
+	}
+	if m.quitBox != nil {
+		return m.quitBoxKey(s)
 	}
 	if m.form != nil {
 		if m.guarding() {
@@ -351,7 +360,7 @@ func (m *Model) action(s string) tea.Cmd {
 			return m.copySSH()
 		}
 	case "q":
-		return m.quit()
+		return m.quit(false)
 	case "?":
 		m.showHelp = true
 	case "l":
@@ -464,7 +473,8 @@ func (m *Model) enter() tea.Cmd {
 // clickable reports whether a click at mouse does something: on a footer
 // key, or a sidebar row, while no box covers them.
 func (m *Model) clickable(mouse tea.Mouse) bool {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.logView != nil || m.small() {
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.quitBox != nil ||
+		m.logView != nil || m.small() {
 		return false
 	}
 	if mouse.Y == m.height-1 {
@@ -516,7 +526,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
-	if m.password != nil {
+	if m.password != nil || m.quitBox != nil {
 		return
 	}
 	if m.logView != nil && m.form == nil {

@@ -429,6 +429,10 @@ type Config struct {
 	// coding agent asks to add a project, open a passthrough or show a
 	// document. The prompts still open. Absent means notify.
 	Notifications *bool `yaml:"notifications,omitempty"`
+	// KeepRunning is what quitting the interface does to the Nearhost it
+	// started: true leaves it running in the background, false stops it.
+	// Absent means ask.
+	KeepRunning *bool `yaml:"keep_running,omitempty"`
 }
 
 // NotificationsOff reports whether the config holds notifications: false.
