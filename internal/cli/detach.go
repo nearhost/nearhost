@@ -245,7 +245,8 @@ func noteInCoreLog(line string) {
 	if err != nil {
 		return
 	}
-	f, err := openCoreLog(path)
+	// Never set aside: the core may have it open already.
+	f, err := openCoreLog(path, false)
 	if err != nil {
 		return
 	}
