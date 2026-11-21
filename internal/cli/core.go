@@ -83,7 +83,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	ag, agentNote := serveAgents(b.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
 		ssh: b.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot), restart: true,
 	})
-	defer ag.close()
+	// Closed once, before the engine's shutdown lets go of the instance
+	// lock: a core started as soon as that is free must find the agents'
+	// socket free too. The deferred close covers a run that ends earlier.
+	closeAgents := sync.OnceFunc(ag.close)
+	defer closeAgents()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
 	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
@@ -102,6 +106,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	ctx, again, release := b.notify(base)
 	defer release()
 	if err := b.start(eng, ctx); err != nil {
+		if engine.IsAlreadyRunning(err) {
+			return alreadyRunning{err}
+		}
 		return b.bind.advise(err)
 	}
 
@@ -117,10 +124,13 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
 		if errors.Is(err, control.ErrInUse) {
-			err = errors.New("Another Nearhost answers on " + control.SocketPath(opts.RunDir) + ". Stop it first.")
+			err = errors.New("Another Nearhost answers on " + control.SocketPath(opts.RunDir) + ". " + stopAdvice)
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
+		// The agents' socket goes first, as in the shutdown below, so the
+		// lock is never free while it still answers.
+		closeAgents()
 		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if stopErr := b.shutdown(eng, stopCtx); stopErr != nil {
@@ -170,8 +180,10 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 
 	// No client may talk to an engine that is stopping, nor a new config
 	// reach it: the socket goes first, so one that asks from here on finds
-	// no core.
+	// no core. Agents go next, for the same reason, and so that their
+	// socket is free before the lock is.
 	closeControl()
+	closeAgents()
 	stopWatch()
 
 	// A second signal must not end the process: the ssh masters are outside
@@ -215,6 +227,23 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	return nil
 }
+
+// stopAdvice is how to stop the Nearhost that is in the way, and see it.
+const stopAdvice = "Stop it with `nearhost stop`, or see it with `nearhost status`."
+
+// alreadyRunning is the engine's refusal to start beside another Nearhost,
+// told how to stop the other from the command line. The engine's own
+// "Stop it first." is for the interface, which says it on its home screen.
+type alreadyRunning struct{ err error }
+
+// Error is the engine's message, with stopAdvice for what to do.
+func (e alreadyRunning) Error() string {
+	return strings.TrimSuffix(e.err.Error(), " Stop it first.") + " " + stopAdvice
+}
+
+// Unwrap is the engine's refusal, so it still matches
+// engine.ErrAlreadyRunning.
+func (e alreadyRunning) Unwrap() error { return e.err }
 
 // watchConfig applies the config file to eng each time a change to it has
 // settled, until ctx ends. A file that cannot be loaded or applied leaves

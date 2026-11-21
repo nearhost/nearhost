@@ -50,6 +50,11 @@ type addBackend struct {
 	// running reports which Nearhost, if any, is serving on this machine, so
 	// that add can say whether it picks the new project up. Nil means none.
 	running func() runMode
+	// updateHosts brings the hosts block up to date and tells a running
+	// core, as `nearhost hosts update` does: add runs it for a core in the
+	// background, which never asks for sudo itself. Nil leaves the hosts
+	// file alone.
+	updateHosts func(cmd *cobra.Command) error
 }
 
 // runMode is which Nearhost, if any, runs on this machine.
@@ -112,6 +117,9 @@ func systemAdd() addBackend {
 		presets:    systemPresets(),
 		lookup:     hosts.DNSLookup,
 		running:    systemRunMode,
+		updateHosts: func(cmd *cobra.Command) error {
+			return runHostsUpdate(cmd, hosts.DNSLookup)
+		},
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
@@ -407,7 +415,24 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if !project.Enabled {
 		start = config.UpCommand(project.Name)
 	}
-	_, err = fmt.Fprintln(out, runningAdvice(b.running, project.Enabled, start))
+	mode := modeNone
+	if b.running != nil {
+		mode = b.running()
+	}
+	// A core in the background leaves a project stopped while the hosts
+	// file lacks its name, as it never asks for sudo: add brings the block
+	// up to date in its stead, as `nearhost hosts update` does, which then
+	// tells the core.
+	if mode == modeCore && project.Enabled && b.updateHosts != nil {
+		if err := b.updateHosts(cmd); err != nil {
+			if !errors.Is(err, errHostsUpdateNoTerminal) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "The hosts file could not be updated:", err)
+			}
+			_, err = fmt.Fprintln(out, "The running Nearhost serves it once the hosts file is up to date. Run `nearhost hosts update` in a terminal.")
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(out, runningAdvice(mode, project.Enabled, start))
 	return err
 }
 
@@ -1072,14 +1097,10 @@ func loopbackClash(cfg *config.Config, p config.Project) error {
 }
 
 // runningAdvice is the last line of add: what the user does next, given the
-// Nearhost that is running, if any. start is the command that starts the
+// Nearhost that is running, if any, as mode. start is the command that starts the
 // project when nothing runs. A disabled project is listed but not started by
 // the interface, and is started by naming it under `up`.
-func runningAdvice(running func() runMode, enabled bool, start string) string {
-	mode := modeNone
-	if running != nil {
-		mode = running()
-	}
+func runningAdvice(mode runMode, enabled bool, start string) string {
 	switch mode {
 	case modeInterface:
 		if !enabled {

@@ -14,7 +14,8 @@ import (
 // and its wait reports how the child ended.
 func TestSpawnDetachedRunsInItsOwnSession(t *testing.T) {
 	out := t.TempDir() + "/sid"
-	wait, err := spawnDetached("/bin/sh", []string{"-c", `echo $$ $(ps -o pgid= -p $$) > "$1"; exit 3`, "sh", out})
+	logPath := t.TempDir() + "/core.log"
+	wait, err := spawnDetached("/bin/sh", []string{"-c", `echo $$ $(ps -o pgid= -p $$) > "$1"; echo panic: oops >&2; exit 3`, "sh", out}, logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,5 +44,9 @@ func TestSpawnDetachedRunsInItsOwnSession(t *testing.T) {
 	// session.
 	if pgid != pid || pgid == own {
 		t.Errorf("child %d is in group %d, want its own (this process is in %d)", pid, pgid, own)
+	}
+	// What the child says on stderr, as a Go panic, is in the core log.
+	if b, err := os.ReadFile(logPath); err != nil || string(b) != "panic: oops\n" {
+		t.Errorf("core log %q, %v", b, err)
 	}
 }
