@@ -62,6 +62,30 @@ func startWatch(t *testing.T, path string) (*watchRecorder, context.CancelFunc, 
 	return r, cancel, done
 }
 
+// tickedWatch runs the watcher on path until the test ends, polling only
+// when the test calls tick, which returns once that poll is done.
+func tickedWatch(t *testing.T, path string) (*watchRecorder, func()) {
+	t.Helper()
+	r := &watchRecorder{}
+	ticks := make(chan time.Time)
+	polled := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchTicks(ctx, path, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	tick := func() {
+		ticks <- time.Now()
+		<-polled
+	}
+	return r, tick
+}
+
 // waitFor polls cond until the generous deadline, which loaded CI runners need.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -113,23 +137,7 @@ func TestWatchWaitsForTheFileToSettle(t *testing.T) {
 	// waits for each poll to be done before it writes again.
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeProjects(t, path, "a")
-	r := &watchRecorder{}
-	ticks := make(chan time.Time)
-	polled := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		watchTicks(ctx, path, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
-	tick := func() {
-		ticks <- time.Now()
-		<-polled
-	}
+	r, tick := tickedWatch(t, path)
 
 	tick()
 	names := []string{"a"}
@@ -231,5 +239,28 @@ func TestWatchStopsWithCtx(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Watch did not return after the context ended")
+	}
+}
+
+// A file deleted between the poll that finds it settled and the read is
+// never applied: it would load as an empty config and stop every project.
+func TestWatchIgnoresAFileDeletedAsItIsRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeProjects(t, path, "a")
+	real := readFile
+	readFile = func(name string) ([]byte, error) {
+		if err := os.Remove(name); err != nil {
+			return nil, err
+		}
+		return real(name)
+	}
+	t.Cleanup(func() { readFile = real })
+	r, tick := tickedWatch(t, path)
+	writeProjects(t, path, "a", "b")
+	tick() // the change
+	tick() // settled: read, and gone by then
+	tick()
+	if a, b := r.counts(); a != 0 || b != 0 {
+		t.Fatalf("apply %d, bad %d; want neither", a, b)
 	}
 }

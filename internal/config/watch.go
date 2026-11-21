@@ -56,15 +56,24 @@ func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, polled
 			seen = now // changed since the last tick: wait for it to settle
 			return
 		}
-		stamp = now
 		if !now.exists {
+			stamp = now
 			return
 		}
 		if now.size == 0 {
+			stamp = now
 			bad(fmt.Errorf("ignored a change to %s: the file is empty", path))
 			return
 		}
 		cfg, err := Load(path)
+		// A file deleted or replaced after the stat would load as another,
+		// or as an empty config, which stops every project: what was read
+		// counts only if the file is still the one that settled.
+		if after := stampOf(path); after != now {
+			seen = after
+			return
+		}
+		stamp = now
 		if err == nil {
 			err = cfg.Validate()
 		}
