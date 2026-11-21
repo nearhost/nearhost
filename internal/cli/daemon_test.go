@@ -226,7 +226,7 @@ func TestCoreLogRotates(t *testing.T) {
 	if err := os.WriteFile(path+".1", []byte("older\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	w, err := openCoreLog(path)
+	w, err := openCoreLog(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestCoreLogRotates(t *testing.T) {
 	}
 
 	// A log under the limit is appended to.
-	w, err = openCoreLog(path)
+	w, err = openCoreLog(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +252,24 @@ func TestCoreLogRotates(t *testing.T) {
 	w.Close()
 	if b, _ := os.ReadFile(path); string(b) != "new\nmore\n" {
 		t.Errorf("core.log = %q, want it appended to", b)
+	}
+
+	// Without rotate, as while another core runs, a log over the limit is
+	// appended to and left where it is.
+	if err := os.WriteFile(path, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w, err = openCoreLog(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.WriteString(w, "turned away\n")
+	w.Close()
+	if b, _ := os.ReadFile(path); len(b) != len(big)+len("turned away\n") {
+		t.Errorf("core.log holds %d bytes, want the old log and the new line", len(b))
+	}
+	if b, _ := os.ReadFile(path + ".1"); !bytes.Equal(b, big) {
+		t.Errorf("core.log.1 was replaced")
 	}
 }
 

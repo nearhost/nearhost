@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 )
 
@@ -64,7 +65,16 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return err
 	}
-	logFile, err := openCoreLog(path)
+	// A core that already runs keeps writing to the log it has open: this
+	// one, which its instance lock is about to turn away, must not set that
+	// log aside under it.
+	rotate := true
+	if runDir, err := config.RunDir(); err == nil {
+		if held, err := engine.InstanceRunning(runDir); held || err != nil {
+			rotate = false
+		}
+	}
+	logFile, err := openCoreLog(path, rotate)
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
@@ -96,14 +106,14 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 }
 
 // openCoreLog opens the log at path to append to it, creating it and its
-// folder as needed. A log over coreLogLimit is first renamed to path.1,
+// folder as needed. With rotate, a log over coreLogLimit is first renamed to path.1,
 // replacing any older one. A log that cannot be renamed, as one another core
 // still has open on Windows, is appended to.
-func openCoreLog(path string) (io.WriteCloser, error) {
+func openCoreLog(path string, rotate bool) (io.WriteCloser, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > coreLogLimit {
+	if fi, err := os.Stat(path); rotate && err == nil && fi.Size() > coreLogLimit {
 		_ = os.Rename(path, path+".1")
 	}
 	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
