@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.2](https://github.com/nearhost/nearhost/compare/v0.14.1...v0.14.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* a run directory too long for ssh gets advice that fixes it ([#515](https://github.com/nearhost/nearhost/issues/515)) ([c51182b](https://github.com/nearhost/nearhost/commit/c51182bcc5376888e41f5f97fb45e4e322a04bc8))
+* **cli:** enter asks for the password again after a refused hosts update ([#531](https://github.com/nearhost/nearhost/issues/531)) ([0622a76](https://github.com/nearhost/nearhost/commit/0622a76da417c89fec606d2d27938736e6e7c3b9))
+* **config:** a read of the id file waits out a sharing violation on Windows ([#536](https://github.com/nearhost/nearhost/issues/536)) ([7c05203](https://github.com/nearhost/nearhost/commit/7c05203ba3616365465a9f0c9882094bb90c7283))
+* **engine:** a passthrough leaves the loopback routes' ports alone ([#514](https://github.com/nearhost/nearhost/issues/514)) ([dada512](https://github.com/nearhost/nearhost/commit/dada512fe4878b0402d16c716c9f8d4a0b7b3164))
+* **proxy:** a load waits for the certificates of the hosts it adds ([#529](https://github.com/nearhost/nearhost/issues/529)) ([46b34d6](https://github.com/nearhost/nearhost/commit/46b34d69d4deeb4c9af7217a11572d4dc4707f67))
+* **proxy:** a stop waits for its listeners to close ([#516](https://github.com/nearhost/nearhost/issues/516)) ([2846ea4](https://github.com/nearhost/nearhost/commit/2846ea4d0ce69f01fe3dd23926fbdad86a71cbec))
+
 ## [0.14.1](https://github.com/nearhost/nearhost/compare/v0.14.0...v0.14.1) (2026-11-20)
 
 
