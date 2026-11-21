@@ -66,6 +66,8 @@ type uiBackend struct {
 	// rootMade, when set, is given the interface's way to run steps as
 	// root. Tests use it to lend the terminal; it is nil otherwise.
 	rootMade func(asRoot)
+	// detach starts the core in the background, for `nearhost -d`.
+	detach detachBackend
 	// engineMade, when set, is given the engine as soon as it is made,
 	// before anything is published on its bus. Tests use it to listen;
 	// it is nil otherwise.
@@ -109,6 +111,7 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 		sshHosts:     transport.DefaultHosts,
 		updateNotice: func() <-chan string { return updates.wait() },
 		stops:        notifyUIStop,
+		detach:       systemDetach(),
 	}
 }
 
@@ -166,13 +169,19 @@ func (f *stopForwarder) forward(p *tea.Program, sigs <-chan os.Signal, done <-ch
 }
 
 // bindUI makes bare `nearhost` open the interface at a terminal, with the
-// serving flags of `up`, and fail with a pointer to `up` otherwise.
+// serving flags of `up`, and fail with a pointer to `up` otherwise. With -d
+// it starts the core in the background instead, which needs no terminal.
 func bindUI(root *cobra.Command, b uiBackend) {
 	var flags serveFlags
+	var detach bool
 	flags.bind(root)
 	flags.bindCapture(root)
+	root.Flags().BoolVarP(&detach, "detach", "d", false, "start Nearhost in the background, with no interface, and return once it answers")
 	root.Args = rootArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if detach {
+			return runDetach(cmd, b.detach, flags)
+		}
 		if b.interactive == nil || !b.interactive() {
 			return noTerminal(cmd.ErrOrStderr())
 		}
