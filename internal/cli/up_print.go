@@ -22,6 +22,9 @@ type upPrinter struct {
 	advise bool
 	// shown is the last state line printed for each project.
 	shown map[string]string
+	// keepRunning is set for a core that keeps going with nothing to
+	// serve: the summary then never says it is stopping.
+	keepRunning bool
 }
 
 // event prints one engine event as "<time> [<source>] <message>", and under a
@@ -80,7 +83,7 @@ func (p *upPrinter) buffered(events <-chan engine.Event) {
 // summary prints one line per started project with the state it is in now,
 // which is not always what its start returned: a project can come up degraded.
 // It reports whether nothing can be served (see nothingToServe), and then
-// ends with the line that says up is stopping.
+// ends with the line that says up is stopping, unless p.keepRunning.
 func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
 	fmt.Fprintln(p.out)
 	for i, name := range names {
@@ -100,7 +103,7 @@ func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
 		fmt.Fprintln(p.out, line)
 		p.fix(name, st.State, reason)
 	}
-	if p.nothingToServe(names) {
+	if !p.keepRunning && p.nothingToServe(names) {
 		fmt.Fprintln(p.out, "\nNothing can be served, so nearhost up is stopping.")
 		return true
 	}

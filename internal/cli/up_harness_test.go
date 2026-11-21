@@ -271,7 +271,7 @@ func leftoverGoroutines() string {
 	buf = buf[:runtime.Stack(buf, true)]
 	var out []string
 	for _, g := range strings.Split(string(buf), "\n\n") {
-		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") || strings.Contains(g, "transport.(*perProcess)") || strings.Contains(g, "cli.runUp") {
+		if strings.Contains(g, "engine.(*Engine)") || strings.Contains(g, "transport.(*Session)") || strings.Contains(g, "transport.(*perProcess)") || strings.Contains(g, "cli.runUp") || strings.Contains(g, "cli.runCore") || strings.Contains(g, "config.Watch") {
 			out = append(out, g)
 		}
 	}
