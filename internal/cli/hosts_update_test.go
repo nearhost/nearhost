@@ -132,6 +132,13 @@ func (f *fakeCore) HostsChanged(context.Context) {
 	f.mu.Unlock()
 }
 
+// calls is how many HostsChanged calls the core has had.
+func (f *fakeCore) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.changed
+}
+
 func TestHostsUpdateTellsTheCore(t *testing.T) {
 	h := newUpdateHarness(t, updateConfig(), "127.0.0.1 localhost\n")
 
@@ -154,8 +161,8 @@ func TestHostsUpdateTellsTheCore(t *testing.T) {
 	if _, err := h.run(); err != nil {
 		t.Fatal(err)
 	}
-	if core.changed != 1 {
-		t.Errorf("HostsChanged called %d times, want once", core.changed)
+	if n := core.calls(); n != 1 {
+		t.Errorf("HostsChanged called %d times, want once", n)
 	}
 }
 
@@ -171,7 +178,7 @@ func TestHostsUpdateFailureLeavesTheCoreAlone(t *testing.T) {
 	if _, err := h.run(); err == nil {
 		t.Fatal("hosts update succeeded")
 	}
-	if core.changed != 0 {
+	if core.calls() != 0 {
 		t.Errorf("the core was told after a failed update")
 	}
 }
