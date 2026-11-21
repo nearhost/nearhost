@@ -15,7 +15,7 @@ import (
 func TestSpawnDetachedRunsInItsOwnSession(t *testing.T) {
 	out := t.TempDir() + "/sid"
 	logPath := t.TempDir() + "/core.log"
-	wait, err := spawnDetached("/bin/sh", []string{"-c", `echo $$ $(ps -o pgid= -p $$) > "$1"; echo panic: oops >&2; exit 3`, "sh", out}, logPath)
+	_, wait, err := spawnDetached("/bin/sh", []string{"-c", `echo $$ $(ps -o pgid= -p $$) > "$1"; echo panic: oops >&2; exit 3`, "sh", out}, logPath)
 	if err != nil {
 		t.Fatal(err)
 	}

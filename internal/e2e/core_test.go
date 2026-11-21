@@ -16,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -91,18 +92,30 @@ func (s *sandbox) stopCore(pid int) {
 }
 
 // stopAnyCore stops the core running in the sandbox, if one is, as stopCore
-// does: a failed journey must leave no core behind.
+// does: a failed journey must leave no core behind. A core still starting
+// holds the instance lock before it answers, so it is asked again until the
+// lock is free, for coreWait at most.
 func (s *sandbox) stopAnyCore() {
-	out, code := s.nearhost("status", "--json")
-	if code != 0 {
-		return
+	runDir := filepath.Join(s.dir, "nearhost", "run")
+	deadline := time.Now().Add(coreWait)
+	for {
+		if out, code := s.nearhost("status", "--json"); code == 0 {
+			var st control.Status
+			if err := json.Unmarshal([]byte(out), &st); err != nil {
+				s.t.Errorf("nearhost status --json printed %q: %v", out, err)
+				return
+			}
+			s.stopCore(st.Info.PID)
+		}
+		if held, err := engine.InstanceRunning(runDir); err == nil && !held {
+			return
+		}
+		if time.Now().After(deadline) {
+			s.t.Errorf("a core still holds %s after %s; its log:\n%s", runDir, coreWait, s.coreLog())
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	var st control.Status
-	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		s.t.Errorf("nearhost status --json printed %q: %v", out, err)
-		return
-	}
-	s.stopCore(st.Info.PID)
 }
 
 // coreLog is what the core has logged, in <config folder>/nearhost/core.log.

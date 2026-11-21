@@ -450,7 +450,7 @@ func (b *clientBackend) Leave(context.Context) error {
 // answers for the user, and a core started elsewhere, or that another client
 // follows, is left running.
 func (b *clientBackend) QuitChoice() tui.QuitChoice {
-	if !b.started || b.mirror.clients() >= 2 {
+	if !b.started || b.quitClients() >= 2 {
 		return tui.QuitLeave
 	}
 	switch keep := b.mirror.config().KeepRunning; {
@@ -460,6 +460,22 @@ func (b *clientBackend) QuitChoice() tui.QuitChoice {
 		return tui.QuitLeave
 	}
 	return tui.QuitStop
+}
+
+// quitChoiceWait is how long QuitChoice waits for the core to say how many
+// clients follow it, before it goes by the mirror's count.
+const quitChoiceWait = 500 * time.Millisecond
+
+// quitClients is how many clients follow the core now: a client that
+// attached since the mirror last took the state counts. A core that does not
+// answer in time leaves the mirror's count.
+func (b *clientBackend) quitClients() int {
+	ctx, cancel := context.WithTimeout(context.Background(), quitChoiceWait)
+	defer cancel()
+	if st, err := b.c.State(ctx); err == nil {
+		return st.Clients
+	}
+	return b.mirror.clients()
 }
 
 // Reload has the core load its config file and apply it.

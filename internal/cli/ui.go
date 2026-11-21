@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -238,23 +239,33 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
-	c, info, spawned, err := ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	ensure := func() (*control.Client, control.Info, bool, error) {
+		return ensureInterruptible(cmd, b, flags)
+	}
+	c, info, spawned, err := ensure()
 	if err != nil {
 		return err
 	}
 	if !spawned {
-		if c, spawned, err = handshake(cmd, b.detach, flags, c, info); err != nil {
+		// The core is checked before it is offered a restart: a restart
+		// must not replace a core serving another file.
+		if err := knownAPI(cmd, info); err != nil {
+			return err
+		}
+		st, err := c.State(ctx)
+		if err != nil {
+			return fmt.Errorf("ask Nearhost in the background what it serves: %w", err)
+		}
+		if err := sameConfig(cmd, st.ConfigPath); err != nil {
+			return err
+		}
+		if c, spawned, err = offerRestart(cmd, b.detach, c, info, ensure); err != nil {
 			return err
 		}
 	}
 	st, err := c.State(ctx)
 	if err != nil {
 		return fmt.Errorf("ask Nearhost in the background what it serves: %w", err)
-	}
-	if !spawned {
-		if err := sameConfig(cmd, st.ConfigPath); err != nil {
-			return err
-		}
 	}
 	// What the core writes to its log from here on says whether it was
 	// asked to stop, should it go while the interface runs.
@@ -320,17 +331,60 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	return err
 }
 
-// handshake checks that this nearhost can drive the core c, which says info
-// of itself. A core that speaks another version of the API is refused. One
-// of another release, as after `nearhost update`, is offered a restart, at
-// the terminal: c is then the new core's, and restarted says it was started
-// here.
-func handshake(cmd *cobra.Command, d detachBackend, flags serveFlags, c *control.Client, info control.Info) (_ *control.Client, restarted bool, err error) {
-	if info.API != control.APIVersion {
-		msg := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost."
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return nil, false, exitError{code: 1, msg: msg}
+// ensureInterruptible is ensureCore for the interface, with the stop
+// signals caught while it waits: one ends the wait, and the core started
+// here, which no interface would follow, is stopped. The process then exits
+// as an interrupted command does.
+func ensureInterruptible(cmd *cobra.Command, b uiBackend, flags serveFlags) (*control.Client, control.Info, bool, error) {
+	if b.stops == nil {
+		return ensureCore(cmd, b.detach, flags, control.StartedTUI)
 	}
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, interrupt := context.WithCancel(parent)
+	defer interrupt()
+	sigs, release := b.stops()
+	defer release()
+	done, caught := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(caught)
+		select {
+		case <-sigs:
+			interrupt()
+		case <-done:
+		}
+	}()
+	cmd.SetContext(ctx)
+	c, info, spawned, err := ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	cmd.SetContext(parent)
+	close(done)
+	<-caught
+	if err != nil && ctx.Err() != nil && parent.Err() == nil {
+		msg := "Interrupted while Nearhost started in the background, so it was stopped."
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
+		return nil, control.Info{}, false, exitError{code: interruptedCode, msg: msg}
+	}
+	return c, info, spawned, err
+}
+
+// knownAPI refuses a core that speaks another version of the API, which
+// this nearhost cannot drive.
+func knownAPI(cmd *cobra.Command, info control.Info) error {
+	if info.API == control.APIVersion {
+		return nil
+	}
+	msg := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost."
+	fmt.Fprintln(cmd.ErrOrStderr(), msg)
+	return exitError{code: 1, msg: msg}
+}
+
+// offerRestart offers, at the terminal, to restart the core c, which says
+// info of itself, when it is of another release, as after `nearhost update`.
+// Restarted, the core is stopped and ensure starts this release's: c is then
+// the new core's, and restarted says it was started here.
+func offerRestart(cmd *cobra.Command, d detachBackend, c *control.Client, info control.Info, ensure func() (*control.Client, control.Info, bool, error)) (_ *control.Client, restarted bool, err error) {
 	if info.Version == Version {
 		return c, false, nil
 	}
@@ -351,7 +405,7 @@ func handshake(cmd *cobra.Command, d detachBackend, flags serveFlags, c *control
 			return nil, false, err
 		}
 	}
-	c, _, spawned, err := ensureCore(cmd, d, flags, control.StartedTUI)
+	c, _, spawned, err := ensure()
 	return c, spawned, err
 }
 
@@ -460,10 +514,15 @@ const lostLogLines = 1000
 
 // stoppedOnRequest reports whether the core's log lines say it began to shut
 // down, as it does when stopped through `nearhost stop` or a signal, rather
-// than ending some other way.
+// than ending some other way. Its line is its stamp and "shutting down"
+// alone: a project's output may say the same words after its own name.
 func stoppedOnRequest(lines []string) bool {
 	for _, l := range lines {
-		if l == "shutting down" || strings.HasSuffix(l, " shutting down") {
+		stamp, rest, ok := strings.Cut(l, " ")
+		if !ok || rest != "shutting down" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, stamp); err == nil {
 			return true
 		}
 	}

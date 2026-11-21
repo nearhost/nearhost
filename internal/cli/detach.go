@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 )
 
 const (
@@ -31,9 +32,10 @@ const (
 // detachBackend is the seam between `nearhost -d` and the machine.
 type detachBackend struct {
 	// spawn starts exe with args detached from this process and its
-	// terminal. wait returns once the child has ended, with how it ended,
-	// and may be called more than once.
-	spawn func(exe string, args []string) (wait func() error, err error)
+	// terminal, and returns the child's pid. wait returns once the child has
+	// ended, with how it ended, and may be called more than once. A pid of
+	// 0 says nothing of which core is the child's (tests).
+	spawn func(exe string, args []string) (pid int, wait func() error, err error)
 	// dial reaches the running core, or returns control.ErrNotRunning.
 	dial func() (*control.Client, error)
 	// logSize is the size of the core log, 0 when there is none.
@@ -46,6 +48,8 @@ type detachBackend struct {
 	// gone waits until the core has stopped and let go of the instance
 	// lock, as `nearhost stop` waits.
 	gone func(ctx context.Context) error
+	// held reports whether a core holds the instance lock; nil is never.
+	held func() bool
 	// timeout is how long to wait for the child to answer; zero is
 	// detachTimeout. Tests shorten it.
 	timeout time.Duration
@@ -54,10 +58,10 @@ type detachBackend struct {
 // systemDetach is the production backend.
 func systemDetach() detachBackend {
 	return detachBackend{
-		spawn: func(exe string, args []string) (func() error, error) {
+		spawn: func(exe string, args []string) (int, func() error, error) {
 			path, err := config.LogPath()
 			if err != nil {
-				return nil, err
+				return 0, nil, err
 			}
 			return spawnDetached(exe, args, path)
 		},
@@ -98,6 +102,14 @@ func systemDetach() detachBackend {
 				return err
 			}
 			return waitStopped(ctx, dir)
+		},
+		held: func() bool {
+			dir, err := config.RunDir()
+			if err != nil {
+				return false
+			}
+			held, err := engine.InstanceRunning(dir)
+			return held && err == nil
 		},
 	}
 }
@@ -152,7 +164,7 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	// The log may hold earlier runs: only what this one writes after this
 	// says why it stopped.
 	logFrom := b.logSize()
-	wait, err := b.spawn(b.exe(), args)
+	pid, wait, err := b.spawn(b.exe(), args)
 	if err != nil {
 		return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
 	}
@@ -165,16 +177,25 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	deadline := time.Now().Add(timeout)
 	tick := time.NewTicker(detachPoll)
 	defer tick.Stop()
+	// lost is set once the child has stopped because another core, started
+	// at the same moment, holds the lock: that core is waited for instead.
+	lost := false
 	for {
 		// The socket first: a core that answers and then stops at once
 		// was running, and whatever stopped it is not a failure to start.
 		if c, info, ok := detachInfo(ctx, b); ok {
-			return c, info, true, nil
+			// Another nearhost may have started the core that answers.
+			return c, info, !lost && (pid == 0 || info.PID == pid), nil
 		}
-		select {
-		case werr := <-exited:
-			return nil, control.Info{}, false, childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
-		default:
+		if !lost {
+			select {
+			case werr := <-exited:
+				if b.held == nil || !b.held() {
+					return nil, control.Info{}, false, childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
+				}
+				lost = true
+			default:
+			}
 		}
 		if !time.Now().Before(deadline) {
 			msg := "Nearhost is still starting. See " + logPath + " for how it is going."
@@ -184,7 +205,37 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 		select {
 		case <-tick.C:
 		case <-ctx.Done():
+			if startedBy == control.StartedTUI && !lost {
+				stopSpawned(b, pid, exited, deadline)
+			}
 			return nil, control.Info{}, false, ctx.Err()
+		}
+	}
+}
+
+// stopSpawned stops the core this process spawned for the interface, which
+// was interrupted while the core started: with no interface, nobody would
+// know to stop it. The core is stopped once it answers, as it cannot be
+// asked before; one that stops by itself, or still does not answer at
+// deadline, is left.
+func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Time) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	tick := time.NewTicker(detachPoll)
+	defer tick.Stop()
+	for {
+		if c, info, ok := detachInfo(ctx, b); ok {
+			if pid == 0 || info.PID == pid {
+				_ = c.Stop(ctx)
+			}
+			return
+		}
+		select {
+		case <-exited:
+			return
+		case <-tick.C:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -265,10 +316,10 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 // error is appended to the log at logPath too, so that what the runtime says
 // there, as a panic, which no one else would see, is kept. It is unstamped,
 // and both append, so it lands between the core's own lines.
-func spawnDetached(exe string, args []string, logPath string) (func() error, error) {
+func spawnDetached(exe string, args []string, logPath string) (int, func() error, error) {
 	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	// The child has its own copies once it has started.
 	defer null.Close()
@@ -277,7 +328,7 @@ func spawnDetached(exe string, args []string, logPath string) (func() error, err
 	// Windows would not let it be renamed.
 	logFile, err := openCoreLog(logPath, coreLogMayRotate())
 	if err != nil {
-		return nil, fmt.Errorf("open the core log: %w", err)
+		return 0, nil, fmt.Errorf("open the core log: %w", err)
 	}
 	defer logFile.Close()
 	dir, _ := os.UserHomeDir()
@@ -288,7 +339,7 @@ func spawnDetached(exe string, args []string, logPath string) (func() error, err
 		return c
 	})
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	// Waited for at once, whether or not anyone asks, so a child that
 	// stops is reaped rather than left a zombie.
@@ -298,7 +349,7 @@ func spawnDetached(exe string, args []string, logPath string) (func() error, err
 		werr = c.Wait()
 		close(done)
 	}()
-	return func() error {
+	return c.Process.Pid, func() error {
 		<-done
 		return werr
 	}, nil

@@ -60,7 +60,7 @@ func (r *clientRun) flags() []string {
 func (r *clientRun) detach() detachBackend {
 	sys := systemDetach()
 	return detachBackend{
-		spawn: func(exe string, args []string) (func() error, error) {
+		spawn: func(exe string, args []string) (int, func() error, error) {
 			r.mu.Lock()
 			r.spawned = append(r.spawned, append([]string{exe}, args...))
 			r.mu.Unlock()
@@ -68,7 +68,8 @@ func (r *clientRun) detach() detachBackend {
 			done := make(chan error, 1)
 			go func() { done <- executeInto(context.Background(), &out, newDaemonCmd(r.u.backend()), args...) }()
 			r.t.Cleanup(func() { r.stopCore(done) })
-			return func() error {
+			// The daemon runs in this process, and says its pid.
+			return os.Getpid(), func() error {
 				err := <-done
 				done <- err
 				return err
@@ -79,6 +80,7 @@ func (r *clientRun) detach() detachBackend {
 		logTail: sys.logTail,
 		exe:     func() string { return "/bin/nearhost" },
 		gone:    sys.gone,
+		held:    sys.held,
 		timeout: 30 * time.Second,
 	}
 }
@@ -241,7 +243,10 @@ func TestQuitChoice(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			b := newClientBackend(nil, control.State{Config: string(data), Clients: tc.clients}, &localOps{}, &tui.Proposals{}, tc.started)
+			// A core that no longer answers: the count is the mirror's.
+			h := newMirrorHarness(t)
+			h.srv.Close()
+			b := newClientBackend(h.c, control.State{Config: string(data), Clients: tc.clients}, &localOps{}, &tui.Proposals{}, tc.started)
 			if got := b.QuitChoice(); got != tc.want {
 				t.Errorf("QuitChoice = %v, want %v", got, tc.want)
 			}
@@ -371,14 +376,14 @@ func (f *steeredCore) log(lines ...string) {
 func (f *steeredCore) detach(spawn func(args []string)) detachBackend {
 	sys := systemDetach()
 	return detachBackend{
-		spawn: func(exe string, args []string) (func() error, error) {
+		spawn: func(exe string, args []string) (int, func() error, error) {
 			if spawn == nil {
 				f.t.Errorf("spawned %q with a core running", args)
-				return nil, errors.New("no core can be started in this test")
+				return 0, nil, errors.New("no core can be started in this test")
 			}
 			spawn(args)
 			block := make(chan struct{})
-			return func() error { <-block; return nil }, nil
+			return 0, func() error { <-block; return nil }, nil
 		},
 		dial:    sys.dial,
 		logSize: sys.logSize,
@@ -732,5 +737,129 @@ func TestHostsNotAskedOnceClosed(t *testing.T) {
 	}
 	if n := h.root.times(); n != 1 {
 		t.Errorf("asked %d times, want no more once closed", n)
+	}
+}
+
+// The core starts the enabled projects. The interface that follows it
+// starts none: a project the user stopped from another client stays
+// stopped.
+func TestTheInterfaceStartsNoProjectOnOpen(t *testing.T) {
+	f := newSteeredCore(t, configHome(t))
+	f.set(func(st *control.State) { st.Projects["web"] = engine.ProjectStatus{State: engine.StateStopped} })
+	f.serve()
+	b := fakeUI(t, true, new(bool))
+	b.detach = f.detach(nil)
+	b.run = runProgram(func(p *tea.Program) {
+		testutil.WaitUntil(t, 10*time.Second, func() bool { return f.hub.Clients() == 1 }, "the interface to follow the core")
+		// Long enough for a start the interface made on opening to reach
+		// the core.
+		time.Sleep(500 * time.Millisecond)
+		p.Send(keyQ)
+	})
+	if _, stderr, code := runRootSplit(t, uiRoot(b)); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	for _, a := range f.asked() {
+		if strings.HasPrefix(a, "StartProject") {
+			t.Errorf("the interface asked the core to %s on opening", a)
+		}
+	}
+}
+
+// Only the core's own line says it was asked to stop: its stamp, then
+// "shutting down" alone.
+func TestStoppedOnRequestMatchesTheCoresLineOnly(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"2026-11-21T18:26:25Z shutting down", true},
+		{"2026-11-21T18:26:25+01:00 shutting down", true},
+		{"2026-11-21T18:26:25Z [app] app: Gracefully shutting down", false},
+		{"2026-11-21T18:26:25Z app: shutting down", false},
+		{"shutting down", false},
+		{"not-a-stamp shutting down", false},
+		{"2026-11-21T18:26:25Z shutting down now", false},
+	} {
+		if got := stoppedOnRequest([]string{"2026-11-21T18:26:24Z an earlier line", tc.line}); got != tc.want {
+			t.Errorf("%q: %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
+// A --config naming another file is refused before a restart is offered:
+// answering yes must not replace a core that serves another file.
+func TestOtherConfigRefusedBeforeARestart(t *testing.T) {
+	old := newSteeredCore(t, configHome(t))
+	old.info.Version = "0.0.1"
+	old.serve()
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.detach = old.detach(nil)
+	t.Chdir(t.TempDir())
+	root := uiRoot(b)
+	root.SetIn(strings.NewReader("y\n"))
+	stdout, stderr, code := runRootSplit(t, root, "--config", "other.yaml")
+	if code != 1 || ran || stdout != "" || !strings.HasPrefix(stderr, "Nearhost in the background serves ") {
+		t.Errorf("exit %d, ran %v, stdout %q, stderr %q", code, ran, stdout, stderr)
+	}
+	if slices.Contains(old.asked(), "Stop") {
+		t.Error("the core serving another file was stopped")
+	}
+}
+
+// Ctrl-C while the core this nearhost started is still starting ends the
+// wait, and stops that core once it answers: no interface would follow it.
+func TestInterruptedWhileTheCoreStartsStopsIt(t *testing.T) {
+	cfgPath := configHome(t)
+	core := newSteeredCore(t, cfgPath)
+	sigs := make(chan os.Signal, 1)
+	spawned := make(chan struct{})
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.stops = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+	b.detach = core.detach(func([]string) {
+		close(spawned)
+		go func() {
+			time.Sleep(300 * time.Millisecond) // the core takes a moment to answer
+			core.serve()
+		}()
+	})
+	go func() {
+		<-spawned
+		sigs <- os.Interrupt
+	}()
+	_, stderr, code := runRootSplit(t, uiRoot(b))
+	if want := "Interrupted while Nearhost started in the background, so it was stopped.\n"; code != 130 || ran || stderr != want {
+		t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
+	}
+	if !slices.Contains(core.asked(), "Stop") {
+		t.Error("the core started here was left running")
+	}
+}
+
+// A client that attached just before the quit counts, though the mirror has
+// not yet taken a state that says so: quitting leaves the core to it.
+func TestQuitChoiceCountsAClientAttachedJustBefore(t *testing.T) {
+	h := newMirrorHarness(t)
+	b := newClientBackend(h.c, h.state(t), &localOps{}, &tui.Proposals{}, true)
+	t.Cleanup(b.Close)
+	if err := b.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return h.hub.Clients() == 1 }, "the backend to follow the core")
+	if got := b.QuitChoice(); got != tui.QuitAsk {
+		t.Fatalf("QuitChoice = %v with one client, want QuitAsk", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, _, err := h.c.Events(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b.mirror.clients() >= 2 {
+		t.Skip("the mirror took a fresh state already")
+	}
+	if got := b.QuitChoice(); got != tui.QuitLeave {
+		t.Errorf("QuitChoice = %v with a second client, want QuitLeave", got)
 	}
 }

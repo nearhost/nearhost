@@ -57,8 +57,8 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 		// gives its own.
 		detach: detachBackend{
 			dial: func() (*control.Client, error) { return nil, control.ErrNotRunning },
-			spawn: func(string, []string) (func() error, error) {
-				return nil, errors.New("no core can be started in this test")
+			spawn: func(string, []string) (int, func() error, error) {
+				return 0, nil, errors.New("no core can be started in this test")
 			},
 			logSize: func() int64 { return 0 },
 			logTail: func(int64, int) []string { return nil },

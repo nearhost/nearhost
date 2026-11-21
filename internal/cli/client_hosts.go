@@ -158,6 +158,13 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time) erro
 				h.refused[p.Name] = hostsRefusal{err: err, at: at}
 			}
 			h.mu.Unlock()
+			// A start's refusal is its error, which the interface logs; the
+			// fixer's is logged here, as the engine's start logged it.
+			if asked.IsZero() {
+				for _, p := range ask {
+					b.bus.Publish(engine.Event{Time: at, Project: p.Name, State: engine.StateStopped, Message: hostsNotFixed(p.Name, err).Error()})
+				}
+			}
 		}
 		return err
 	}

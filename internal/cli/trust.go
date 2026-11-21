@@ -126,8 +126,8 @@ func migrateCA(w io.Writer) {
 	}
 }
 
-// migrateCANote is migrateCA for the interface, which hides stderr while it
-// runs: it returns the warnings, "" for none, for the interface's log.
+// migrateCANote is migrateCA's work: it returns the warnings, "" for none,
+// which migrateCA prints.
 //
 // It also makes private the CA's folder, once it is where it stays, and
 // the copy older versions left in the config directory, which still holds
