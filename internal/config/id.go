@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/fsretry"
 )
 
 // idChars is how long an install id is.
@@ -77,7 +79,7 @@ var errEmptyID = errors.New("the id file is empty")
 // and the error is errEmptyID. A file of only white space counts as empty.
 func readIDFile(path string) (id, fingerprint string, err error) {
 	for wait := 0; ; wait++ {
-		data, err := os.ReadFile(path)
+		data, err := readIDBytes(path)
 		if err != nil {
 			return "", "", err
 		}
@@ -101,6 +103,29 @@ func readIDFile(path string) (id, fingerprint string, err error) {
 	}
 }
 
+// idReadEvery and idReadFor bound how long a read of the id file waits out
+// another process replacing it.
+const (
+	idReadEvery = 20 * time.Millisecond
+	idReadFor   = 2 * time.Second
+)
+
+// idReadFile reads the id file. Tests replace it.
+var idReadFile = os.ReadFile
+
+// readIDBytes reads the file at path. On Windows, opening a file while
+// another process renames a new one over it fails with a sharing
+// violation, which passes once the rename is done: that is read again,
+// every idReadEvery for up to idReadFor.
+func readIDBytes(path string) ([]byte, error) {
+	data, err := idReadFile(path)
+	for waited := time.Duration(0); err != nil && fsretry.Sharing(err) && waited < idReadFor; waited += idReadEvery {
+		time.Sleep(idReadEvery)
+		data, err = idReadFile(path)
+	}
+	return data, err
+}
+
 // olderThan reports whether the file at path was last written more than d
 // ago. A file that cannot be examined counts as old.
 func olderThan(path string, d time.Duration) bool {
@@ -122,7 +147,7 @@ func replaceEmptyID(path string, fingerprint func() string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readIDBytes(path)
 	if err == nil && len(strings.Fields(string(data))) > 0 {
 		// Another process got here first.
 		unlock()
