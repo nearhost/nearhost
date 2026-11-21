@@ -476,6 +476,7 @@ func TestVersionSkewAsks(t *testing.T) {
 			cfgPath := configHome(t)
 			old := newSteeredCore(t, cfgPath)
 			old.info.Version = "0.0.1"
+			old.info.StartedBy = control.StartedTUI
 			old.serve()
 			var spawned [][]string
 			ran := false

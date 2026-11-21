@@ -239,10 +239,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
-	ensure := func() (*control.Client, control.Info, bool, error) {
-		return ensureInterruptible(cmd, b, flags)
-	}
-	c, info, spawned, err := ensure()
+	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
+		return ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	})
 	if err != nil {
 		return err
 	}
@@ -259,7 +258,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		if err := sameConfig(cmd, st.ConfigPath); err != nil {
 			return err
 		}
-		if c, spawned, err = offerRestart(cmd, b.detach, c, info, ensure); err != nil {
+		if c, spawned, err = offerRestart(cmd, b, c, info, st); err != nil {
 			return err
 		}
 	}
@@ -331,13 +330,13 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	return err
 }
 
-// ensureInterruptible is ensureCore for the interface, with the stop
-// signals caught while it waits: one ends the wait, and the core started
-// here, which no interface would follow, is stopped. The process then exits
-// as an interrupted command does.
-func ensureInterruptible(cmd *cobra.Command, b uiBackend, flags serveFlags) (*control.Client, control.Info, bool, error) {
+// ensureInterruptible runs start, ensureCore or startCore for the interface,
+// with the stop signals caught while it waits: one ends the wait, and the
+// core started here for the interface, which no interface would follow, is
+// stopped. The process then exits as an interrupted command does.
+func ensureInterruptible(cmd *cobra.Command, b uiBackend, start func() (*control.Client, control.Info, bool, error)) (*control.Client, control.Info, bool, error) {
 	if b.stops == nil {
-		return ensureCore(cmd, b.detach, flags, control.StartedTUI)
+		return start()
 	}
 	parent := cmd.Context()
 	if parent == nil {
@@ -357,7 +356,7 @@ func ensureInterruptible(cmd *cobra.Command, b uiBackend, flags serveFlags) (*co
 		}
 	}()
 	cmd.SetContext(ctx)
-	c, info, spawned, err := ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	c, info, spawned, err := start()
 	cmd.SetContext(parent)
 	close(done)
 	<-caught
@@ -381,11 +380,19 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 }
 
 // offerRestart offers, at the terminal, to restart the core c, which says
-// info of itself, when it is of another release, as after `nearhost update`.
-// Restarted, the core is stopped and ensure starts this release's: c is then
-// the new core's, and restarted says it was started here.
-func offerRestart(cmd *cobra.Command, d detachBackend, c *control.Client, info control.Info, ensure func() (*control.Client, control.Info, bool, error)) (_ *control.Client, restarted bool, err error) {
+// info of itself and serves as st says, when it is of another release, as
+// after `nearhost update`. Restarted, the core is stopped and this release's
+// is started as the old one was: on its config file and ports, and said to
+// be started by what started the old one. c is then the new core's, and
+// restarted says the interface started it, as it did the old one. A core
+// that runs in a terminal is not offered a restart: it was started by hand,
+// and only there can it be started again.
+func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, restarted bool, err error) {
 	if info.Version == Version {
+		return c, false, nil
+	}
+	if info.StartedBy == control.StartedForeground {
+		fmt.Fprintf(cmd.OutOrStdout(), "Nearhost running in a terminal is %s; this is %s. It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n", printable(info.Version), Version)
 		return c, false, nil
 	}
 	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
@@ -400,13 +407,21 @@ func offerRestart(cmd *cobra.Command, d detachBackend, c *control.Client, info c
 	if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
 		return nil, false, err
 	}
-	if d.gone != nil {
-		if err := d.gone(ctx); err != nil {
+	if b.detach.gone != nil {
+		if err := b.detach.gone(ctx); err != nil {
 			return nil, false, err
 		}
 	}
-	c, _, spawned, err := ensure()
-	return c, spawned, err
+	by := info.StartedBy
+	if by == "" {
+		// A core that does not say is not taken for the interface's.
+		by = control.StartedDetached
+	}
+	args := restartArgs(by, st)
+	c, _, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
+		return startCore(cmd, b.detach, args, by)
+	})
+	return c, spawned && by == control.StartedTUI, err
 }
 
 // askRestart asks at the terminal whether to restart the core, which is the

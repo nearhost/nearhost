@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,6 +146,16 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	if err := flags.validate(); err != nil {
 		return nil, control.Info{}, false, err
 	}
+	args, err := detachArgs(cmd, startedBy)
+	if err != nil {
+		return nil, control.Info{}, false, err
+	}
+	return startCore(cmd, b, args, startedBy)
+}
+
+// startCore dials the core, or starts one with args, which say it was
+// started by startedBy, and waits for it, as ensureCore says.
+func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy) (c *control.Client, info control.Info, spawned bool, err error) {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -154,10 +165,6 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 		return c, info, false, nil
 	}
 	logPath, err := config.LogPath()
-	if err != nil {
-		return nil, control.Info{}, false, err
-	}
-	args, err := detachArgs(cmd, startedBy)
 	if err != nil {
 		return nil, control.Info{}, false, err
 	}
@@ -306,6 +313,25 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 		}
 	}
 	return args, nil
+}
+
+// restartArgs are the arguments that start a core again as the one that
+// says st of itself was started: by startedBy, on the config file it served
+// and on its ports. --no-hosts and --no-capture are not in a core's state,
+// so a core started with them is started again without.
+func restartArgs(startedBy control.StartedBy, st control.State) []string {
+	args := []string{"daemon", "--started-by", string(startedBy)}
+	if st.ConfigPath != "" {
+		args = append(args, "--config", st.ConfigPath)
+	}
+	if st.HTTPSPort > 0 {
+		args = append(args, "--https-port", strconv.Itoa(st.HTTPSPort))
+	}
+	if st.HTTPPort > 0 {
+		args = append(args, "--http-port", strconv.Itoa(st.HTTPPort))
+	}
+	// 0 is no page.
+	return append(args, "--web-port", strconv.Itoa(st.WebPort))
 }
 
 // spawnDetached starts exe with args as a process of its own: in a session
