@@ -460,24 +460,46 @@ func warnNoTerminal(w io.Writer, ensure func(context.Context, []string) error) f
 	}
 }
 
-// askOnce wraps a hosts function so that a refusal stands for the rest of the
-// run. The engine asks again for every project it starts; without this, a
-// declined password prompt would come back once per project. An update that
-// was interrupted (its context ended) is not a refusal and is not remembered.
-// The engine never makes two calls at the same time.
+// askOnce wraps a hosts function so that a refusal stands for the starts
+// already asked for. The engine asks again for every project it starts;
+// without this, a declined password prompt would come back once per project.
+// An update that was interrupted (its context ended) is not a refusal and is
+// not remembered. The engine never makes two calls at the same time.
+//
+// `nearhost up` asks for all its starts at once, so there a refusal stands
+// for the rest of the run. The interface also starts a project when the user
+// asks it to, long after: such a start says when it was asked for
+// (askedNow), and one asked for after the refusal asks again. The interface
+// tells the user to do just that.
 func askOnce(ensure func(context.Context, []string) error) func(context.Context, []string) error {
 	var refused error
+	var refusedAt time.Time
 	return func(ctx context.Context, aliases []string) error {
 		if refused != nil {
-			return refused
+			if asked, ok := ctx.Value(askedKey{}).(time.Time); !ok || !asked.After(refusedAt) {
+				return refused
+			}
+			refused = nil
 		}
 		err := ensure(ctx, aliases)
 		if err != nil && ctx.Err() == nil {
-			refused = err
+			refused, refusedAt = err, askClock()
 		}
 		return err
 	}
 }
+
+// askedKey is the context key of the time a start was asked for.
+type askedKey struct{}
+
+// askedNow returns ctx saying its start was asked for now.
+func askedNow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, askedKey{}, askClock())
+}
+
+// askClock is the clock a start's asking and a refusal are timed by. Tests
+// replace it.
+var askClock = time.Now
 
 // bindAdvice is an error from a proxy port the user may not bind, with the
 // command that lets nearhost bind it.

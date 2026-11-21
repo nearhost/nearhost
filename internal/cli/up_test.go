@@ -596,6 +596,40 @@ func TestAskOnceRemembersARefusalButNotAnInterruption(t *testing.T) {
 	}
 }
 
+// A start asked for after a refusal asks again; the starts asked for before
+// it, and those that do not say when, get the refusal.
+func TestAskOnceAsksAgainForAStartAskedForAfterTheRefusal(t *testing.T) {
+	// A clock that moves on a second each time it is read.
+	at := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	askClock = func() time.Time { at = at.Add(time.Second); return at }
+	t.Cleanup(func() { askClock = time.Now })
+	calls := 0
+	result := errors.New("you cancelled the password")
+	ask := askOnce(func(context.Context, []string) error { calls++; return result })
+
+	before := askedNow(context.Background())
+	first := ask(askedNow(context.Background()), nil)
+	if first == nil || calls != 1 {
+		t.Fatalf("the first call: %v after %d calls", first, calls)
+	}
+	// Asked for with the first, and waiting behind it.
+	if err := ask(before, nil); err != first || calls != 1 {
+		t.Fatalf("a start asked for before the refusal: %v after %d calls", err, calls)
+	}
+	// One that does not say when, as `nearhost up` and the engine's own.
+	if err := ask(context.Background(), nil); err != first || calls != 1 {
+		t.Fatalf("a start that does not say when: %v after %d calls", err, calls)
+	}
+	result = nil
+	if err := ask(askedNow(context.Background()), nil); err != nil || calls != 2 {
+		t.Fatalf("a start asked for after the refusal: %v after %d calls", err, calls)
+	}
+	// The refusal is over for every start after one that went through.
+	if err := ask(context.Background(), nil); err != nil || calls != 3 {
+		t.Fatalf("after the retry went through: %v after %d calls", err, calls)
+	}
+}
+
 // The engine filters the hosts file names through the lookup it is given,
 // the one instance the interface and doctor share, and through none with
 // --no-hosts, which writes no hosts file.
