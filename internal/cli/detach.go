@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -212,37 +213,74 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 		select {
 		case <-tick.C:
 		case <-ctx.Done():
-			if startedBy == control.StartedTUI && !lost {
-				stopSpawned(b, pid, exited, deadline)
+			fate := fateLeft
+			switch {
+			case lost:
+				fate = fateOther
+			case startedBy == control.StartedTUI:
+				fate = stopSpawned(b, pid, exited, deadline)
 			}
-			return nil, control.Info{}, false, ctx.Err()
+			return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fate}
 		}
 	}
 }
+
+// spawnedFate is what became of a core whose start was interrupted.
+type spawnedFate int
+
+const (
+	// fateLeft is a core left to go on starting: one started for -d, or
+	// to restart a core that was not the interface's.
+	fateLeft spawnedFate = iota
+	// fateStopped is a core stopped once it answered.
+	fateStopped
+	// fateExited is a core that stopped by itself before it answered.
+	fateExited
+	// fateNoAnswer is a core that did not answer by the deadline, and may
+	// still be starting.
+	fateNoAnswer
+	// fateOther is a core that stopped because another nearhost's holds the
+	// lock, or was found answering in place of the one started here: the
+	// core that runs is another's, and is left running.
+	fateOther
+)
+
+// interruptedStart is the error of a start whose context ended: the
+// context's error, and what became of the core started.
+type interruptedStart struct {
+	err  error
+	fate spawnedFate
+}
+
+func (e interruptedStart) Error() string { return e.err.Error() }
+func (e interruptedStart) Unwrap() error { return e.err }
 
 // stopSpawned stops the core this process spawned for the interface, which
 // was interrupted while the core started: with no interface, nobody would
 // know to stop it. The core is stopped once it answers, as it cannot be
 // asked before; one that stops by itself, or still does not answer at
-// deadline, is left.
-func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Time) {
+// deadline, is left. It returns what became of the core.
+func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Time) spawnedFate {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	tick := time.NewTicker(detachPoll)
 	defer tick.Stop()
 	for {
 		if c, info, ok := detachInfo(ctx, b); ok {
-			if pid == 0 || info.PID == pid {
-				_ = c.Stop(ctx)
+			if pid != 0 && info.PID != pid {
+				return fateOther
 			}
-			return
+			if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
+				return fateNoAnswer
+			}
+			return fateStopped
 		}
 		select {
 		case <-exited:
-			return
+			return fateExited
 		case <-tick.C:
 		case <-ctx.Done():
-			return
+			return fateNoAnswer
 		}
 	}
 }

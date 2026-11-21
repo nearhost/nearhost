@@ -2,11 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
@@ -137,4 +141,155 @@ func TestACoreInATerminalIsNotRestarted(t *testing.T) {
 	if slices.Contains(old.asked(), "Stop") {
 		t.Error("the core in a terminal was stopped")
 	}
+}
+
+// A core that ran in a terminal and went says so with no log: its terminal
+// was its log.
+func TestCoreInATerminalGoneHasNoLogTail(t *testing.T) {
+	stderr, code := coreGoneFrom(t, func(f *steeredCore) { f.info.StartedBy = control.StartedForeground }, func(f *steeredCore) { f.close() })
+	if want := "Nearhost stopped. It ran in a terminal, which shows why.\n"; code != 1 || stderr != want {
+		t.Errorf("exit %d, stderr %q, want %q", code, stderr, want)
+	}
+}
+
+// quitRun runs bare nearhost on the fake core f, served by the time the
+// interface opens, and quits it with q. It returns what the run printed.
+func quitRun(t *testing.T, f *steeredCore, spawn func(args []string)) (stdout, stderr string, code int) {
+	t.Helper()
+	b := fakeUI(t, true, new(bool))
+	b.detach = f.detach(spawn)
+	b.run = runProgram(func(p *tea.Program) {
+		testutil.WaitUntil(t, 10*time.Second, func() bool { return f.hub.Clients() == 1 }, "the interface to follow the core")
+		p.Send(keyQ)
+	})
+	type result struct {
+		stdout, stderr string
+		code           int
+	}
+	done := make(chan result, 1)
+	go func() {
+		stdout, stderr, code := runRootSplit(t, uiRoot(b))
+		done <- result{stdout, stderr, code}
+	}()
+	select {
+	case r := <-done:
+		return r.stdout, r.stderr, r.code
+	case <-time.After(30 * time.Second):
+		t.Fatal("q did not quit the interface")
+	}
+	return "", "", 0
+}
+
+// keepRunningConfig is the YAML of webConfig with keep_running set to keep.
+func keepRunningConfig(t *testing.T, keep bool) string {
+	t.Helper()
+	cfg, err := config.Parse([]byte(webConfig(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.KeepRunning = &keep
+	data, err := config.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// Quitting the interface and leaving the core running says so, once the
+// terminal is the shell's again; quitting that stops the core says nothing.
+func TestLeavingTheCoreRunningSaysSo(t *testing.T) {
+	const still = "Nearhost is still running in the background. Stop it with nearhost stop.\n"
+	t.Run("started elsewhere", func(t *testing.T) {
+		f := newSteeredCore(t, configHome(t))
+		f.serve()
+		stdout, stderr, code := quitRun(t, f, nil)
+		if code != 0 || stdout != still {
+			t.Errorf("exit %d, stdout %q, want %q; stderr %q", code, stdout, still, stderr)
+		}
+	})
+	t.Run("keep_running true", func(t *testing.T) {
+		f := newSteeredCore(t, configHome(t))
+		f.st.Config = keepRunningConfig(t, true)
+		stdout, stderr, code := quitRun(t, f, func([]string) { f.serve() })
+		if code != 0 || stdout != still {
+			t.Errorf("exit %d, stdout %q, want %q; stderr %q", code, stdout, still, stderr)
+		}
+		if slices.Contains(f.asked(), "Stop") {
+			t.Error("the core was stopped")
+		}
+	})
+	t.Run("keep_running false", func(t *testing.T) {
+		f := newSteeredCore(t, configHome(t))
+		f.st.Config = keepRunningConfig(t, false)
+		stdout, stderr, code := quitRun(t, f, func([]string) { f.serve() })
+		if code != 0 || stdout != "" {
+			t.Errorf("exit %d, stdout %q, want nothing; stderr %q", code, stdout, stderr)
+		}
+		if !slices.Contains(f.asked(), "Stop") {
+			t.Error("the core was not stopped")
+		}
+	})
+}
+
+// A core started for the interface is stopped when the interface fails to
+// run: no interface would follow it.
+func TestACoreStartedForAnInterfaceThatFailsIsStopped(t *testing.T) {
+	f := newSteeredCore(t, configHome(t))
+	b := fakeUI(t, true, new(bool))
+	b.detach = f.detach(func([]string) { f.serve() })
+	b.run = func(*tui.Model, func(*tea.Program)) error { return errors.New("no terminal after all") }
+	if _, stderr, code := runRootSplit(t, uiRoot(b)); code == 0 {
+		t.Fatalf("exit 0, stderr %q", stderr)
+	}
+	if !slices.Contains(f.asked(), "Stop") {
+		t.Error("the core started for the interface was left running")
+	}
+}
+
+// Ctrl-C while a core starts says what became of it: when another nearhost's
+// core answered in its place, that one is left running; when the core does
+// not answer before the wait is over, it may still be starting.
+func TestInterruptedWhileTheCoreStartsSaysWhatHappened(t *testing.T) {
+	t.Run("another nearhost's core", func(t *testing.T) {
+		core := newSteeredCore(t, configHome(t))
+		sigs := make(chan os.Signal, 1)
+		ran := false
+		b := fakeUI(t, true, &ran)
+		b.stops = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+		d := core.detach(nil)
+		// The child stops at once, because another core holds the lock.
+		d.spawn = func(string, []string) (int, func() error, error) { return 0, func() error { return nil }, nil }
+		d.held = func() bool {
+			sigs <- os.Interrupt
+			return true
+		}
+		b.detach = d
+		_, stderr, code := runRootSplit(t, uiRoot(b))
+		want := "Interrupted while Nearhost started in the background. Another nearhost started the Nearhost that runs, so it was left running.\n"
+		if code != 130 || ran || stderr != want {
+			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
+		}
+	})
+	t.Run("no answer", func(t *testing.T) {
+		core := newSteeredCore(t, configHome(t))
+		sigs := make(chan os.Signal, 1)
+		ran := false
+		b := fakeUI(t, true, &ran)
+		b.stops = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+		d := core.detach(func([]string) { sigs <- os.Interrupt })
+		d.timeout = 2 * time.Second
+		b.detach = d
+		_, stderr, code := runRootSplit(t, uiRoot(b))
+		logPath, err := config.LogPath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Interrupted while Nearhost started in the background. It did not answer in time to be stopped, so it may still be starting: see " + logPath + ", and stop it with nearhost stop.\n"
+		if code != 130 || ran || stderr != want {
+			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
+		}
+		if slices.Contains(core.asked(), "Stop") {
+			t.Error("a core that never answered was asked to stop")
+		}
+	})
 }

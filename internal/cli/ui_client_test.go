@@ -673,8 +673,18 @@ func TestHostsStartSaysTheRefusal(t *testing.T) {
 // then has end end the core, and returns what the run printed.
 func coreGone(t *testing.T, end func(f *steeredCore)) (stderr string, code int) {
 	t.Helper()
+	return coreGoneFrom(t, nil, end)
+}
+
+// coreGoneFrom is coreGone with a core that setup, when set, changes before
+// it serves.
+func coreGoneFrom(t *testing.T, setup func(f *steeredCore), end func(f *steeredCore)) (stderr string, code int) {
+	t.Helper()
 	f := newSteeredCore(t, configHome(t))
 	f.log("an earlier line", "the core's last words")
+	if setup != nil {
+		setup(f)
+	}
 	f.serve()
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(nil)

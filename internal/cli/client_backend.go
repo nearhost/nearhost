@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
@@ -97,7 +98,23 @@ type clientBackend struct {
 	// hosts fixes the hosts file for the projects the core leaves waiting
 	// on it (see client_hosts.go).
 	hosts *clientHosts
+
+	// quitWith is set by the quit: quitLeft by Leave, quitStopped by
+	// Shutdown.
+	quitWith atomic.Int32
 }
+
+// The quits the interface made, for quitWith.
+const (
+	quitLeft    = 1
+	quitStopped = 2
+)
+
+// quit reports whether the interface quit, leaving the core or stopping it.
+func (b *clientBackend) quit() bool { return b.quitWith.Load() != 0 }
+
+// left reports whether the interface quit leaving the core running.
+func (b *clientBackend) left() bool { return b.quitWith.Load() == quitLeft }
 
 // capturedAnswer is what the core said about a captured exchange: the
 // exchange, or that it is not kept. When the core could not be asked,
@@ -451,6 +468,7 @@ func (b *clientBackend) Grants(server string) ([]grants.Grant, error) {
 // a Nearhost started at once after finds the ports free. ctx ending cuts the
 // wait short. A core that has already gone has done what was asked.
 func (b *clientBackend) Shutdown(ctx context.Context) error {
+	b.quitWith.Store(quitStopped)
 	err := b.c.Stop(ctx)
 	b.Close()
 	if err != nil && !errors.Is(err, control.ErrNotRunning) {
@@ -464,6 +482,7 @@ func (b *clientBackend) Shutdown(ctx context.Context) error {
 
 // Leave stops following the core, which keeps running.
 func (b *clientBackend) Leave(context.Context) error {
+	b.quitWith.Store(quitLeft)
 	b.Close()
 	return nil
 }

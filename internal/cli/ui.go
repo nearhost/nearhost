@@ -258,12 +258,25 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		if err := sameConfig(cmd, st.ConfigPath); err != nil {
 			return err
 		}
-		if c, spawned, err = offerRestart(cmd, b, c, info, st); err != nil {
+		if c, info, spawned, err = offerRestart(cmd, b, c, info, st); err != nil {
 			return err
+		}
+	}
+	// A core started for this interface is stopped should the interface not
+	// take over: no interface would follow it.
+	abandon := func() {
+		if !spawned {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), detachTimeout)
+		defer cancel()
+		if err := c.Stop(ctx); err == nil && b.detach.gone != nil {
+			_ = b.detach.gone(ctx)
 		}
 	}
 	st, err := c.State(ctx)
 	if err != nil {
+		abandon()
 		return fmt.Errorf("ask Nearhost in the background what it serves: %w", err)
 	}
 	// What the core writes to its log from here on says whether it was
@@ -271,6 +284,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	logFrom := b.detach.logSize()
 	storage, err := config.CaddyDir()
 	if err != nil {
+		abandon()
 		return err
 	}
 	var suspender tui.Suspender
@@ -325,7 +339,15 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	})
 	back.Close()
 	if m.Err() != nil {
-		return coreLost(errOut, b.detach, logFrom)
+		return coreLost(errOut, b.detach, logFrom, info.StartedBy)
+	}
+	if err != nil && !back.quit() {
+		abandon()
+	}
+	// Said once the terminal is the shell's again. A core in a terminal
+	// shows there that it runs.
+	if err == nil && back.left() && info.StartedBy != control.StartedForeground {
+		fmt.Fprintln(cmd.OutOrStdout(), "Nearhost is still running in the background. Stop it with nearhost stop.")
 	}
 	return err
 }
@@ -361,11 +383,33 @@ func ensureInterruptible(cmd *cobra.Command, b uiBackend, start func() (*control
 	close(done)
 	<-caught
 	if err != nil && ctx.Err() != nil && parent.Err() == nil {
-		msg := "Interrupted while Nearhost started in the background, so it was stopped."
+		var fate spawnedFate
+		if ie := (interruptedStart{}); errors.As(err, &ie) {
+			fate = ie.fate
+		}
+		msg := interruptedMessage(fate)
 		fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		return nil, control.Info{}, false, exitError{code: interruptedCode, msg: msg}
 	}
 	return c, info, spawned, err
+}
+
+// interruptedMessage says that the start was interrupted, and what became of
+// the core: fate.
+func interruptedMessage(fate spawnedFate) string {
+	const interrupted = "Interrupted while Nearhost started in the background"
+	switch fate {
+	case fateStopped:
+		return interrupted + ", so it was stopped."
+	case fateExited:
+		return interrupted + ". It stopped before it answered."
+	case fateOther:
+		return interrupted + ". Another nearhost started the Nearhost that runs, so it was left running."
+	case fateNoAnswer:
+		path, _ := config.LogPath()
+		return interrupted + ". It did not answer in time to be stopped, so it may still be starting: see " + path + ", and stop it with nearhost stop."
+	}
+	return interrupted + ". It goes on starting; stop it with nearhost stop."
 }
 
 // knownAPI refuses a core that speaks another version of the API, which
@@ -386,17 +430,18 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 // be started by what started the old one. c is then the new core's, and
 // restarted says the interface started it, as it did the old one. A core
 // that runs in a terminal is not offered a restart: it was started by hand,
-// and only there can it be started again.
-func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, restarted bool, err error) {
+// and only there can it be started again. info is what the core followed
+// from here on says of itself.
+func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, _ control.Info, restarted bool, err error) {
 	if info.Version == Version {
-		return c, false, nil
+		return c, info, false, nil
 	}
 	if info.StartedBy == control.StartedForeground {
 		fmt.Fprintf(cmd.OutOrStdout(), "Nearhost running in a terminal is %s; this is %s. It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n", printable(info.Version), Version)
-		return c, false, nil
+		return c, info, false, nil
 	}
 	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
-		return c, false, nil
+		return c, info, false, nil
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -405,11 +450,11 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 	// A core that stops between the dial and this call has done what was
 	// asked.
 	if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
-		return nil, false, err
+		return nil, info, false, err
 	}
 	if b.detach.gone != nil {
 		if err := b.detach.gone(ctx); err != nil {
-			return nil, false, err
+			return nil, info, false, err
 		}
 	}
 	by := info.StartedBy
@@ -418,10 +463,10 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 		by = control.StartedDetached
 	}
 	args := restartArgs(by, st)
-	c, _, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
+	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
 		return startCore(cmd, b.detach, args, by)
 	})
-	return c, spawned && by == control.StartedTUI, err
+	return c, info, spawned && by == control.StartedTUI, err
 }
 
 // askRestart asks at the terminal whether to restart the core, which is the
@@ -510,8 +555,16 @@ func ignoredFlags(cmd *cobra.Command, st control.State) string {
 
 // coreLost prints that the core went while the interface ran, with the end
 // of its log, where it said why, unless what it wrote since from says it was
-// asked to stop. It returns the exit status 1 for Main.
-func coreLost(w io.Writer, d detachBackend, from int64) error {
+// asked to stop. A core that ran in a terminal, which by says, had the
+// terminal for its log, so none is shown. It returns the exit status 1 for
+// Main.
+func coreLost(w io.Writer, d detachBackend, from int64, by control.StartedBy) error {
+	if by == control.StartedForeground {
+		// Its terminal was its log.
+		msg := "Nearhost stopped. It ran in a terminal, which shows why."
+		fmt.Fprintln(w, msg)
+		return exitError{code: 1, msg: msg}
+	}
 	msg := "Nearhost in the background stopped."
 	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
 		if tail := d.logTail(0, detachTailLines); len(tail) > 0 {
