@@ -78,6 +78,7 @@ func NewRoot() *cobra.Command {
 		newTrustCmd(systemTrust()),
 		newUntrustCmd(systemTrust()),
 		newUpCmd(systemUp(lookup)),
+		newDaemonCmd(systemUp(lookup)),
 		newAddCmd(systemAdd()),
 		newExportCmd(systemExport()),
 		newLsCmd(),
