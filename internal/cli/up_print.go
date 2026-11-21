@@ -23,9 +23,10 @@ type upPrinter struct {
 	// shown is the last state line printed for each project.
 	shown map[string]string
 	// keepRunning is set for a core that keeps going with nothing to
-	// serve and that no one stops from a terminal: the summary then never
-	// says it is stopping, nor to press Ctrl-C, and a fix never says to run
-	// `nearhost up` again (see restart).
+	// serve and that Ctrl-C does not reach, as it runs in the background:
+	// the summary then never says it is stopping, nor to press Ctrl-C, and
+	// a fix says to run `nearhost stop` and `nearhost -d`, not `nearhost
+	// up` again (see restart).
 	keepRunning bool
 	// stamped leaves the time out of event lines: out puts a full one
 	// before every line.
