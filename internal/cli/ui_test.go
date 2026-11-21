@@ -281,3 +281,22 @@ func TestTheInterfaceEngineFollowsTheConfigFile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Quitting the interface ends the engine's watch on the config file before
+// the engine shuts down, so a change saved meanwhile is not applied mid-quit.
+func TestUIShutdownEndsTheConfigWatchFirst(t *testing.T) {
+	watching, endWatch := context.WithCancel(context.Background())
+	defer endWatch()
+	u := &uiEngine{localOps: &localOps{}, endWatch: endWatch}
+	watchEnded := false
+	u.b.up.shutdown = func(*engine.Engine, context.Context) error {
+		watchEnded = watching.Err() != nil
+		return nil
+	}
+	if err := u.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !watchEnded {
+		t.Error("the engine shut down while the config watch still ran")
+	}
+}

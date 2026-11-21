@@ -408,6 +408,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case appliedMsg:
 		m.applying, m.endApply = false, nil
+		if m.quitting {
+			// The quit cancelled that Reload, and nothing more is applied
+			// while quitting: a change saved meanwhile waits in the file.
+			m.reloadAfter, m.editing = false, false
+			return m, nil
+		}
 		if m.reloadAfter {
 			// A change was saved while that Reload ran: reload again.
 			m.reloadAfter = false

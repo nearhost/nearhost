@@ -537,6 +537,46 @@ func TestQuitEndsAReloadInFlight(t *testing.T) {
 	}
 }
 
+// A form saved while a Reload ran waits to reload after it. A quit that
+// cancels the running Reload drops that one too: nothing is applied while
+// quitting, and the cancelled Reload is not said to have ignored a change.
+func TestQuitDropsTheReloadWaitingForARunningOne(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.reloadBlocks = true
+	m := sized(f)
+	cmd := m.reloadConfig()
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	m.Update(projectAddedMsg{name: "website", edited: true})
+	if !m.reloadAfter {
+		t.Fatal("the save did not wait for the running Reload")
+	}
+	quit := press(m, "q")
+	var applied tea.Msg
+	select {
+	case applied = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the Reload kept running after q")
+	}
+	f.mu.Lock()
+	f.reloadBlocks = false // a second Reload would return at once, and count
+	f.mu.Unlock()
+	_, next := m.Update(applied)
+	run(m, next)
+	f.mu.Lock()
+	calls := f.reloadCalls
+	f.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("Reload was called %d times, want once", calls)
+	}
+	if log := logText(m, homeKey); strings.Contains(log, "Ignored a change") {
+		t.Errorf("the cancelled Reload was noted:\n%s", log)
+	}
+	if _, final := m.Update(quit()); final == nil {
+		t.Fatal("no quit after shutdown")
+	}
+}
+
 // A password request that arrives while the interface is quitting is
 // answered at once, without taking the terminal.
 func TestSuspendWhileQuittingIsRefused(t *testing.T) {

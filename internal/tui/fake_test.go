@@ -50,6 +50,8 @@ type fakeBackend struct {
 	hostsState string
 	// reloadBlocks makes Reload wait for its context to end.
 	reloadBlocks bool
+	// reloadCalls counts the calls to Reload, those that block included.
+	reloadCalls int
 	// quitChoice is what QuitChoice says, and lost what Lost returns.
 	quitChoice QuitChoice
 	lost       chan error
@@ -309,6 +311,7 @@ func (f *fakeBackend) ConfigPath() string { return f.path }
 // Reload loads the config file and takes it as the config, as a core does.
 func (f *fakeBackend) Reload(ctx context.Context) error {
 	f.mu.Lock()
+	f.reloadCalls++
 	blocks := f.reloadBlocks
 	f.mu.Unlock()
 	if blocks {

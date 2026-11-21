@@ -269,9 +269,10 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		eng.Shutdown(ctx)
 	}()
 	// The interface no longer reads the config file, so the engine follows
-	// it as the core's does, until the interface ends and before the engine
-	// is shut down.
+	// it as the core's does, until the interface begins to shut the engine
+	// down, or ends.
 	watchCtx, endWatch := context.WithCancel(context.Background())
+	back.endWatch = endWatch
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
@@ -359,6 +360,9 @@ type uiEngine struct {
 	*coreOps
 	// localOps is what the interface does in its own process.
 	*localOps
+	// endWatch ends the engine's watch on the config file; nil when there
+	// is none.
+	endWatch context.CancelFunc
 }
 
 // The methods below that the engine and coreOps both have are coreOps',
@@ -405,8 +409,12 @@ func (u *uiEngine) Replay(ctx context.Context, id string) (int, error) {
 }
 
 // Shutdown stops every project and the engine through the up backend's
-// shutdown, which tests count; ctx ending cuts it short.
+// shutdown, which tests count; ctx ending cuts it short. The watch on the
+// config file ends first, so nothing is applied while the engine stops.
 func (u *uiEngine) Shutdown(ctx context.Context) error {
+	if u.endWatch != nil {
+		u.endWatch()
+	}
 	if u.b.up.shutdown != nil {
 		return u.b.up.shutdown(u.Engine, ctx)
 	}
