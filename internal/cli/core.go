@@ -14,9 +14,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
-	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
-	"github.com/nearhost/nearhost/internal/grants"
 )
 
 // coreWatchInterval is how often the core looks at the config file, as the
@@ -93,9 +91,16 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
 	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
+	ops := &coreOps{eng: eng, agents: ag, path: cfgPath, httpsPort: flags.httpsPort}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()
+	// The clients of the control API see what the engine publishes. The
+	// engine publishes an event once its state has changed, so a client
+	// that fetches the state on an event finds the change in it.
+	hub := control.NewHub()
+	stopForwarding := forwardEvents(eng.Events(), hub)
+	defer stopForwarding()
 	if agentNote != "" {
 		eng.Events().Publish(engine.Event{Message: agentNote})
 	}
@@ -115,16 +120,14 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 
 	core := &coreBackend{
-		eng: eng, ctx: ctx, stop: stopCore, cfgPath: cfgPath,
-		httpsPort: flags.httpsPort, httpPort: flags.httpPort, webPort: flags.webPort,
+		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
+		httpPort: flags.httpPort, webPort: flags.webPort,
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
 		},
 	}
-	// Nothing publishes to the hub yet: the engine's events reach it once
-	// the interface runs as a client of the core.
-	ctl, err := control.Listen(control.SocketPath(opts.RunDir), core, control.NewHub())
+	ctl, err := control.Listen(control.SocketPath(opts.RunDir), core, hub)
 	if err != nil {
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
@@ -154,7 +157,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if mode.watch {
 		go func() {
 			defer close(watched)
-			watchConfig(watchCtx, eng, cfgPath)
+			watchConfig(watchCtx, ops)
 		}()
 	} else {
 		close(watched)
@@ -222,6 +225,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	for ev := range events {
 		p.event(ev)
 	}
+	stopForwarding()
 	if stopErr != nil {
 		return fmt.Errorf("shut down: %w", stopErr)
 	}
@@ -250,12 +254,14 @@ func (e alreadyRunning) Error() string {
 // engine.ErrAlreadyRunning.
 func (e alreadyRunning) Unwrap() error { return e.err }
 
-// watchConfig applies the config file to eng each time a change to it has
-// settled, until ctx ends. A file that cannot be loaded or applied leaves
-// the engine serving what it served, and that is said as an event of the
-// engine's, which the printer prints like any other: the engine's own
-// "config applied" says when one was applied.
-func watchConfig(ctx context.Context, eng *engine.Engine, path string) {
+// watchConfig applies the config file to the engine through ops each time a
+// change to it has settled, until ctx ends: one Apply at a time with the
+// clients' reloads, and pruning the agents' grants as they do. A file that
+// cannot be loaded or applied leaves the engine serving what it served, and
+// that is said as an event of the engine's, which the printer prints like
+// any other: the engine's own "config applied" says when one was applied.
+func watchConfig(ctx context.Context, ops *coreOps) {
+	path := ops.path
 	bad := func(err error) {
 		if ctx.Err() != nil {
 			return // cut short by the shutdown: the file is not at fault
@@ -265,10 +271,10 @@ func watchConfig(ctx context.Context, eng *engine.Engine, path string) {
 		if !strings.Contains(msg, path) {
 			msg = path + ": " + msg
 		}
-		eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
+		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
 	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
-		if err := eng.Apply(ctx, cfg); err != nil {
+		if err := ops.Apply(ctx, cfg); err != nil {
 			bad(err)
 		}
 	}, bad)
@@ -276,18 +282,19 @@ func watchConfig(ctx context.Context, eng *engine.Engine, path string) {
 
 // coreBackend is the engine, as the control API sees it.
 type coreBackend struct {
-	// The actions the terminal interface asks for are not done here yet.
-	control.UnimplementedActions
-	eng  *engine.Engine
+	// coreOps does the actions the interface asks for.
+	*coreOps
+	// hub streams what happens in the core to its clients.
+	hub  *control.Hub
 	info control.Info
 	// ctx is the core's: it ends when the shutdown begins, and so do the
 	// retries HostsChanged starts.
 	ctx context.Context
 	// stop begins the shutdown, as the first signal does.
-	stop    func()
-	cfgPath string
-	// httpsPort, httpPort and webPort are the ports the core serves on.
-	httpsPort, httpPort, webPort int
+	stop func()
+	// httpPort and webPort are ports the core serves on, beside coreOps'
+	// httpsPort.
+	httpPort, webPort int
 	// retries counts the starts HostsChanged has under way, which the
 	// shutdown waits for. closed, under mu, is set once it has begun: a
 	// request still being answered then starts nothing.
@@ -322,19 +329,11 @@ func (c *coreBackend) Status() control.Status {
 	return st
 }
 
-// State says what this core is, where its config is and the ports it
-// serves on. What it serves is not filled in yet.
+// State is what this core is and serves, and the ports it serves on.
 func (c *coreBackend) State() control.State {
-	return control.State{
-		Info: c.info, ConfigPath: c.cfgPath,
-		HTTPSPort: c.httpsPort, HTTPPort: c.httpPort, WebPort: c.webPort,
-		Projects:     map[string]engine.ProjectStatus{},
-		Servers:      map[string]control.ServerState{},
-		Passthroughs: []engine.Passthrough{},
-		Documents:    []documents.Tree{},
-		Grants:       []grants.Grant{},
-		Approvals:    []control.Approval{},
-	}
+	st := c.coreOps.State()
+	st.Info, st.HTTPPort, st.WebPort = c.info, c.httpPort, c.webPort
+	return st
 }
 
 // close waits for the starts HostsChanged began, and makes it start no more.

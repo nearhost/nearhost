@@ -632,7 +632,7 @@ func postAgentJSON(t *testing.T, f transport.AgentForward, path, body string) (i
 // interface.
 func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 	for _, accept := range []bool{true, false} {
-		u, path := pendingUI(t, []string{"app.local.example.io"})
+		u, path := pendingOps(t, []string{"app.local.example.io"})
 		home := agentHome(t)
 		opts := engine.Options{RunDir: filepath.Join(home, "run")}
 		a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
@@ -640,7 +640,7 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 			t.Fatal(note)
 		}
 		defer a.close()
-		a.attach(u.Engine)
+		a.attach(u.eng)
 		a.review(&tui.Proposals{})
 		u.agents = a
 		sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
@@ -668,7 +668,7 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 // pending change before the save returns. An agent polling then still sees
 // its reload waiting, and then accepted.
 func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
-	u, path := pendingUI(t, []string{"app.local.example.io"})
+	u, path := pendingOps(t, []string{"app.local.example.io"})
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
 	a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
@@ -676,7 +676,7 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 		t.Fatal(note)
 	}
 	defer a.close()
-	a.attach(u.Engine)
+	a.attach(u.eng)
 	a.review(&tui.Proposals{})
 	u.agents = a
 	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
@@ -689,7 +689,7 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 	var during any
 	u.acceptSaving = func() {
 		// What a re-read in another goroutine could do meanwhile.
-		u.Engine.DeclineChange("two", "new")
+		u.eng.DeclineChange("two", "new")
 		during = getJSON(t, sock, "/v1/proposals/"+id)["state"]
 	}
 	if err := u.AcceptChange("two", "new"); err != nil {
@@ -707,7 +707,7 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 // waits, and lets go of it when it no longer does, so that the reload
 // waiting on it then ends superseded.
 func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
-	u, path := pendingUI(t, []string{"app.local.example.io"})
+	u, path := pendingOps(t, []string{"app.local.example.io"})
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
 	a, note := serveAgents(fakeAgents(home), &opts, nil, path, 443, agentEnv{})
@@ -715,7 +715,7 @@ func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
 		t.Fatal(note)
 	}
 	defer a.close()
-	a.attach(u.Engine)
+	a.attach(u.eng)
 	a.review(&tui.Proposals{})
 	u.agents = a
 	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
@@ -725,7 +725,7 @@ func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
 	}
 	id := out["id"].(string)
 
-	u.Engine.DeclineChange("two", "new")
+	u.eng.DeclineChange("two", "new")
 	if err := u.AcceptChange("two", "new"); err == nil {
 		t.Fatal("accepted a change that no longer waits")
 	}
@@ -1054,8 +1054,9 @@ func loaded(t *testing.T, path string) *config.Config {
 	return cfg
 }
 
-// applyRun is a running interface backend with grants on apollo and mini.
-func applyRun(t *testing.T) (u *uiEngine, home string) {
+// applyRun is the core's side of a running interface, with grants on apollo
+// and mini.
+func applyRun(t *testing.T) (u *coreOps, home string) {
 	t.Helper()
 	home = agentHome(t)
 	grantTo(t, grantFile(home), "apollo", "mini")
@@ -1068,12 +1069,12 @@ func applyRun(t *testing.T) (u *uiEngine, home string) {
 	}
 	t.Cleanup(a.close)
 	eng := engine.New(cfg, engine.Options{RunDir: home})
-	return &uiEngine{Engine: eng, agents: a, path: cfgPath}, home
+	return &coreOps{eng: eng, agents: a, path: cfgPath}, home
 }
 
 func TestApplyPrunesRemovedServers(t *testing.T) {
 	u, home := applyRun(t)
-	events, unsubscribe := u.Events().Subscribe(16)
+	events, unsubscribe := u.eng.Events().Subscribe(16)
 	defer unsubscribe()
 	next := &config.Config{Servers: []config.Server{{Name: "apollo", SSHHost: "apollo.example"}}}
 	if err := u.Apply(context.Background(), next); err != nil {

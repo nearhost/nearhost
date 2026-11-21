@@ -15,7 +15,8 @@ import (
 
 // statusCore is a control backend that answers with a fixed status.
 type statusCore struct {
-	control.UnimplementedActions
+	// The actions are the core's, which these tests never take: nil.
+	*coreOps
 	st control.Status
 }
 

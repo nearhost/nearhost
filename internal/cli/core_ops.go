@@ -1,0 +1,376 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sync"
+	"unicode/utf8"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/documents"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/tui"
+)
+
+// coreOps is what the interface asks of the engine and the agents' API,
+// with no terminal: the half of uiEngine that runs in the core.
+type coreOps struct {
+	eng *engine.Engine
+	// agents answers the agents' proposals; nil when none can reach
+	// nearhost.
+	agents *agents
+	// path is the config file.
+	path      string
+	httpsPort int
+	// reload lets one Apply run at a time, the watcher's included.
+	reload sync.Mutex
+	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it
+	// to re-read meanwhile; it is nil otherwise.
+	acceptSaving func()
+	// acceptLocking, when set, runs in AcceptChange after it has checked
+	// the change and before it takes the config's lock. Tests use it to
+	// save meanwhile; it is nil otherwise.
+	acceptLocking func()
+	// applied, when set, runs in Apply after the engine has applied and
+	// before the grants are pruned. Tests use it to change the config file
+	// meanwhile; it is nil otherwise.
+	applied func()
+}
+
+var _ control.Actions = (*coreOps)(nil)
+
+// Apply applies cfg to the engine, one Apply at a time. Once it has applied,
+// the grants of servers cfg no longer has are removed, so a server added
+// later under the same name does not inherit them. A failed Apply removes
+// none, and a failure to remove them is shown in the log and does not fail
+// the Apply. Neither does an Apply that began while the config file was
+// missing: a missing file loads as no servers, and the file may be back by
+// the time the apply ends.
+func (o *coreOps) Apply(ctx context.Context, cfg *config.Config) error {
+	o.reload.Lock()
+	defer o.reload.Unlock()
+	_, statErr := os.Stat(o.path)
+	if err := o.eng.Apply(ctx, cfg); err != nil {
+		return err
+	}
+	if o.applied != nil {
+		o.applied()
+	}
+	if statErr != nil {
+		return nil
+	}
+	if msg := o.agents.prune(o.path, cfg); msg != "" {
+		o.eng.Events().Publish(engine.Event{Message: msg})
+	}
+	return nil
+}
+
+// Reload loads the config file and applies it now. A file that does not
+// load is not applied, and the error names it.
+func (o *coreOps) Reload(ctx context.Context) error {
+	cfg, err := config.Load(o.path)
+	if err != nil {
+		return err
+	}
+	return o.Apply(ctx, cfg)
+}
+
+// edit reads the config file afresh, runs fn on it, checks the result and
+// saves it, as the interface's EditConfig does.
+func (o *coreOps) edit(fn func(cfg *config.Config) error) error {
+	return editConfig(o.path, fn)
+}
+
+// editConfig is config.Update with the config validated first, and the file
+// named in what the validation finds.
+func editConfig(path string, fn func(cfg *config.Config) error) error {
+	return config.Update(path, func(cfg *config.Config) error {
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		return fn(cfg)
+	})
+}
+
+// AcceptChange saves the routes and snapshot of the change with hash sha
+// that the project's .nearhostrc waits on. It must be the change pending
+// now: the user approved what the review showed, and a newer file may ask
+// for more. The config poll then applies the save, which restarts the
+// project with it. An agent waiting on the change is told once it is saved;
+// until then its reload is held, from before the change is read, so that a
+// re-read clearing the pending change meanwhile does not end it superseded.
+//
+// The check is made again under the config's lock, with the approved snapshot
+// the change was reviewed against: a review that saved a newer file while
+// this waited for the lock would otherwise be overwritten.
+func (o *coreOps) AcceptChange(project, sha string) error {
+	done := o.agents.accepting(project, sha)
+	stale := fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
+	change := o.eng.Status(project).Pending
+	if change == nil || change.SHA256 != sha {
+		done(false)
+		return stale
+	}
+	approved := approvedRc(o.eng.Config(), project)
+	if o.acceptLocking != nil {
+		o.acceptLocking()
+	}
+	err := o.edit(func(cfg *config.Config) error {
+		if now := o.eng.Status(project).Pending; now == nil || now.SHA256 != sha || approvedRc(cfg, project) != approved {
+			return stale
+		}
+		before := append([]config.Project(nil), cfg.Projects...)
+		if err := takeRc(cfg, change.Project, o.path); err != nil {
+			return err
+		}
+		if o.acceptSaving != nil {
+			o.acceptSaving()
+		}
+		p, _ := cfg.Project(project)
+		if hc, clash := cfg.HostConflictSince(before, *p); clash {
+			return hc
+		}
+		return nil
+	})
+	done(err == nil)
+	return err
+}
+
+// approvedRc is the hash of the .nearhostrc approved for project in cfg, ""
+// for none.
+func approvedRc(cfg *config.Config, project string) string {
+	if p, ok := cfg.Project(project); ok && p.Nearhostrc != nil {
+		return p.Nearhostrc.SHA256
+	}
+	return ""
+}
+
+// DeclineChange is the engine's, and tells an agent waiting on the change.
+// The agent is told first: once the engine forgets the change nothing
+// waits, and a poll in between would find its reload superseded.
+func (o *coreOps) DeclineChange(project, sha string) {
+	o.agents.changeAnswered(project, sha, false)
+	o.eng.DeclineChange(project, sha)
+}
+
+// StartProject starts a project, saying when the start was asked for: a
+// start the user asks for after a refused hosts update asks for the
+// password again, where the starts that were already under way do not.
+func (o *coreOps) StartProject(ctx context.Context, name string) error {
+	return o.eng.StartProject(askedNow(ctx), name)
+}
+
+// StopProject stops a project.
+func (o *coreOps) StopProject(ctx context.Context, name string) error {
+	return o.eng.StopProject(ctx, name)
+}
+
+// Recheck reads a project's .nearhostrc again without restarting it.
+func (o *coreOps) Recheck(ctx context.Context, name string) error {
+	return o.eng.Recheck(ctx, name)
+}
+
+func (o *coreOps) ConnectServer(_ context.Context, name string) error {
+	return o.eng.ConnectServer(name)
+}
+
+func (o *coreOps) DisconnectServer(_ context.Context, name string) error {
+	return o.eng.DisconnectServer(name)
+}
+
+func (o *coreOps) ReconnectServer(_ context.Context, name string) error {
+	return o.eng.ReconnectServer(name)
+}
+
+func (o *coreOps) AcceptProposal(id, name string) { o.agents.accept(id, name) }
+
+func (o *coreOps) DeclineProposal(id, reason string) { o.agents.decline(id, reason) }
+
+// ClosePassthrough closes the passthrough id for the user.
+func (o *coreOps) ClosePassthrough(ctx context.Context, id string) error {
+	return o.eng.ClosePassthrough(ctx, id, "closed in Nearhost")
+}
+
+// answerOf is the interface's answer that the control API's answer names.
+func answerOf(s string) (tui.Answer, error) {
+	switch s {
+	case "yes":
+		return tui.AnswerYes, nil
+	case "no":
+		return tui.AnswerNo, nil
+	case "always":
+		return tui.AnswerAlways, nil
+	case "close":
+		return tui.AnswerClose, nil
+	}
+	return 0, fmt.Errorf("the answer must be yes, no, always or close, not %q", s)
+}
+
+// AnswerPassthrough gives the user's answer to a coding agent's request for
+// a passthrough to the agent API.
+func (o *coreOps) AnswerPassthrough(ctx context.Context, id, answer string) error {
+	a, err := answerOf(answer)
+	if err != nil {
+		return err
+	}
+	return controlAnswerError(o.agents.answerPassthrough(ctx, id, a))
+}
+
+// AnswerDocument gives the user's answer to a coding agent's request to
+// show a document to the agent API.
+func (o *coreOps) AnswerDocument(ctx context.Context, id, answer string) error {
+	a, err := answerOf(answer)
+	if err != nil {
+		return err
+	}
+	return controlAnswerError(o.agents.answerDocument(ctx, id, a))
+}
+
+// controlAnswerError is the error of an answer, marked for the control API
+// as well when its request had ended.
+func controlAnswerError(err error) error {
+	if errors.Is(err, tui.ErrRequestEnded) {
+		return controlEnded{err}
+	}
+	return err
+}
+
+// controlEnded is an error that reads as its own, and is also
+// control.ErrRequestEnded.
+type controlEnded struct{ error }
+
+// Unwrap is the error and control.ErrRequestEnded.
+func (e controlEnded) Unwrap() []error { return []error{e.error, control.ErrRequestEnded} }
+
+// Grants lists the grants of every kind on server, or says why they cannot
+// be read in this run.
+func (o *coreOps) Grants(server string) ([]grants.Grant, error) {
+	return o.agents.grantsOf(server)
+}
+
+// RevokeGrant takes back requester's grant of kind on server, or says why
+// it cannot be taken back in this run.
+func (o *coreOps) RevokeGrant(server, requester, kind string) error {
+	return o.agents.revokeGrant(server, requester, kind)
+}
+
+// Documents lists the trees of documents served on server, newest first.
+func (o *coreOps) Documents(server string) []documents.Tree {
+	return o.agents.documents(server)
+}
+
+// OpenDocument opens the newest document of the tree id in the browser.
+func (o *coreOps) OpenDocument(id string) error { return o.agents.openDocument(id) }
+
+// RemoveDocuments stops serving the tree id.
+func (o *coreOps) RemoveDocuments(id string) error { return o.agents.removeDocuments(id) }
+
+// Captured is the exchange the proxy kept under id, while it is kept.
+func (o *coreOps) Captured(id string) (proxy.Exchange, bool) { return o.eng.Captured(id) }
+
+// Replay sends the request kept under id again and returns its status.
+func (o *coreOps) Replay(ctx context.Context, id string) (int, error) {
+	return o.eng.Replay(ctx, id)
+}
+
+// PageKeyURL is the address of Nearhost's page at /?k=<secret>, which gives
+// the browser the cookie the page's document list needs.
+func (o *coreOps) PageKeyURL() (string, error) {
+	base, err := o.eng.PageURL()
+	if err != nil {
+		return "", err
+	}
+	return proxy.PageKeyURL(base)
+}
+
+// State is what the core serves: the config the engine runs, and the state
+// of each of its projects and servers, the open passthroughs, the documents
+// served and the grants. The caller adds what the core is, the ports it was
+// asked for, and the requests that wait for an answer.
+func (o *coreOps) State() control.State {
+	cfg := o.eng.Config()
+	st := control.State{
+		ConfigPath:   o.path,
+		HTTPSPort:    o.httpsPort,
+		Projects:     map[string]engine.ProjectStatus{},
+		Servers:      map[string]control.ServerState{},
+		Passthroughs: o.eng.Passthroughs(""),
+		Documents:    o.agents.documents(""),
+		Grants:       []grants.Grant{},
+		Approvals:    []control.Approval{},
+	}
+	if data, err := config.Marshal(cfg); err == nil {
+		st.Config = string(data)
+	}
+	for _, p := range cfg.Projects {
+		st.Projects[p.Name] = o.eng.Status(p.Name)
+	}
+	for _, name := range serverNames(cfg) {
+		status, msg := o.eng.ServerStatus(name)
+		st.Servers[name] = control.ServerState{Health: o.eng.ServerHealth(name), Status: status, Message: msg}
+	}
+	if st.Passthroughs == nil {
+		st.Passthroughs = []engine.Passthrough{}
+	}
+	if st.Documents == nil {
+		st.Documents = []documents.Tree{}
+	}
+	if err := o.agents.grantsErr(); err != nil {
+		st.GrantsError = err.Error()
+		return st
+	}
+	for _, s := range cfg.Servers {
+		gs, err := o.agents.grantsOf(s.Name)
+		if err != nil {
+			st.GrantsError = err.Error()
+			break
+		}
+		st.Grants = append(st.Grants, gs...)
+	}
+	return st
+}
+
+// maxEventMessage is the longest event message the core streams to its
+// clients. A client reads an envelope of 1 MiB at most, and one longer
+// would break every client's stream; engine messages are far shorter.
+const maxEventMessage = 64 << 10
+
+// cutMessage is ev with a message longer than maxEventMessage cut to it,
+// ending in an ellipsis, and never inside a character.
+func cutMessage(ev engine.Event) engine.Event {
+	if len(ev.Message) <= maxEventMessage {
+		return ev
+	}
+	const ellipsis = "…"
+	end := maxEventMessage - len(ellipsis)
+	for end > 0 && !utf8.RuneStart(ev.Message[end]) {
+		end--
+	}
+	ev.Message = ev.Message[:end] + ellipsis
+	return ev
+}
+
+// forwardEvents publishes each event of the engine's bus to hub, until stop
+// is called; stop returns once the last one has gone. A full subscriber
+// drops events, as any subscriber of the bus does.
+func forwardEvents(bus *engine.Bus, hub *control.Hub) (stop func()) {
+	events, unsubscribe := bus.Subscribe(eventBuffer)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range events {
+			ev = cutMessage(ev)
+			hub.Publish(control.Envelope{Kind: control.KindEvent, Event: &ev})
+		}
+	}()
+	return sync.OnceFunc(func() {
+		unsubscribe()
+		<-done
+	})
+}

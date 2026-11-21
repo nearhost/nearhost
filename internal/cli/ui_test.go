@@ -14,11 +14,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
-	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
-	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -194,134 +192,6 @@ func TestHostsStateFirstCallSkipsTheLookup(t *testing.T) {
 	}
 	if got := u.HostsState(); got != "missing web.test" {
 		t.Errorf("second call = %q", got)
-	}
-}
-
-// pendingUI is an interface backend whose config file at path has enabled
-// "one" serving x.local.example.io and "two" serving two.local.example.io,
-// and whose engine has a change pending for "two" that serves next's hosts.
-func pendingUI(t *testing.T, next []string) (*uiEngine, string) {
-	t.Helper()
-	one := localProject("one", 8001, true)
-	one.Routes[0].Hosts = []string{"x.local.example.io"}
-	two := localProject("two", 8002, true)
-	two.Routes[0].Hosts = []string{"two.local.example.io"}
-	cfg := &config.Config{Projects: []config.Project{one, two}}
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := config.Save(path, cfg); err != nil {
-		t.Fatal(err)
-	}
-	changed := two
-	changed.Routes = []config.Route{{Port: 8002, Role: config.RoleWeb, Hosts: next}}
-	changed.Nearhostrc = &config.RcSnapshot{SHA256: "new", Routes: changed.Routes}
-	var items []nearhostrc.Item
-	for _, h := range next {
-		items = append(items, nearhostrc.Item{Port: 8002, Host: h, Why: "a real domain"})
-	}
-	review := func(context.Context, config.Project, discovery.FileReader) engine.Review {
-		return engine.Review{Pending: &engine.Change{SHA256: "new", Project: changed, Items: items}}
-	}
-	u := &uiEngine{Engine: engine.New(cfg, engine.Options{Review: review}), path: path}
-	if err := u.Recheck(context.Background(), "two"); err != nil {
-		t.Fatal(err)
-	}
-	if u.Status("two").Pending == nil {
-		t.Fatal("nothing pending after the recheck")
-	}
-	return u, path
-}
-
-func TestAcceptRefusesAHostAnotherProjectServes(t *testing.T) {
-	u, path := pendingUI(t, []string{"x.local.example.io"})
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = u.AcceptChange("two", "new")
-	if want := `host x.local.example.io is already served by project "one"`; err == nil || err.Error() != want {
-		t.Fatalf("AcceptChange = %v, want %s", err, want)
-	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
-		t.Errorf("the config changed:\n%s", after)
-	}
-}
-
-// Accepting saves the change's routes and snapshot, and keeps the rest of
-// the project as the file has it now.
-func TestAcceptSavesOnlyTheRoutesAndSnapshot(t *testing.T) {
-	u, path := pendingUI(t, []string{"app.local.example.io"})
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Projects[1].Path = "/tmp/moved"
-	if err := config.Save(path, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := u.AcceptChange("two", "new"); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err = config.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p, _ := cfg.Project("two")
-	if p.Path != "/tmp/moved" || p.Routes[0].Hosts[0] != "app.local.example.io" || p.Nearhostrc == nil || p.Nearhostrc.SHA256 != "new" {
-		t.Errorf("saved %+v", p)
-	}
-}
-
-// Declining drops the pending change.
-func TestDeclineDropsTheChange(t *testing.T) {
-	u, _ := pendingUI(t, []string{"app.local.example.io"})
-	u.DeclineChange("two", "new")
-	if st := u.Status("two"); st.Pending != nil {
-		t.Errorf("still pending: %+v", st.Pending)
-	}
-}
-
-// A change other than the one pending now is refused, and nothing is saved.
-func TestAcceptRefusesAStaleChange(t *testing.T) {
-	u, path := pendingUI(t, []string{"app.local.example.io"})
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = u.AcceptChange("two", "older")
-	if want := "the .nearhostrc changed again; review it again"; err == nil || err.Error() != want {
-		t.Fatalf("AcceptChange = %v, want %s", err, want)
-	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
-		t.Errorf("the config changed:\n%s", after)
-	}
-}
-
-// A newer .nearhostrc that a review saved while the accept waited for the
-// config's lock is not overwritten with the change the user approved.
-func TestAcceptRefusesAChangeANewerReviewSaved(t *testing.T) {
-	u, path := pendingUI(t, []string{"app.local.example.io"})
-	var before []byte
-	// The review saves after the accept checked the change and before it
-	// holds the lock.
-	u.acceptLocking = func() {
-		if err := config.Update(path, func(cfg *config.Config) error {
-			p, _ := cfg.Project("two")
-			p.Nearhostrc = &config.RcSnapshot{SHA256: "newer", Routes: p.Routes}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-		var err error
-		if before, err = os.ReadFile(path); err != nil {
-			t.Fatal(err)
-		}
-	}
-	err := u.AcceptChange("two", "new")
-	if want := "the .nearhostrc changed again; review it again"; err == nil || err.Error() != want {
-		t.Fatalf("AcceptChange = %v, want %s", err, want)
-	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
-		t.Errorf("the config changed:\n%s", after)
 	}
 }
 

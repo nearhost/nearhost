@@ -18,7 +18,8 @@ import (
 
 // infoCore is a control backend that answers with info.
 type infoCore struct {
-	control.UnimplementedActions
+	// The actions are the core's, which these tests never take: nil.
+	*coreOps
 	info control.Info
 }
 

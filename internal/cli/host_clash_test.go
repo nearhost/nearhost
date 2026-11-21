@@ -156,7 +156,7 @@ func TestAcceptKeepsAPairTheConfigHad(t *testing.T) {
 	review := func(context.Context, config.Project, discovery.FileReader) engine.Review {
 		return engine.Review{Pending: &engine.Change{SHA256: "new", Project: changed, Items: []nearhostrc.Item{{Port: 5432, Why: "a loopback port"}}}}
 	}
-	u := &uiEngine{Engine: engine.New(cfg, engine.Options{Review: review}), path: path}
+	u := &coreOps{eng: engine.New(cfg, engine.Options{Review: review}), path: path}
 	if err := u.Recheck(context.Background(), "shop"); err != nil {
 		t.Fatal(err)
 	}

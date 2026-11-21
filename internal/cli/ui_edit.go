@@ -9,19 +9,13 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/elevate"
-	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
 // What the interface asks of nearhost to change what is configured.
 
 func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
-	return config.Update(u.path, func(cfg *config.Config) error {
-		if err := u.check(cfg); err != nil {
-			return err
-		}
-		return fn(cfg)
-	})
+	return editConfig(u.path, fn)
 }
 
 // saveRc is the save of the interface engine's Options.Review: it writes a
@@ -31,79 +25,6 @@ func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
 // project serves.
 func (u *uiEngine) saveRc(p config.Project) error {
 	return u.EditConfig(func(cfg *config.Config) error { return takeServedRc(cfg, p, u.path) })
-}
-
-// AcceptChange saves the routes and snapshot of the change with hash sha
-// that the project's .nearhostrc waits on. It must be the change pending
-// now: the user approved what the review showed, and a newer file may ask
-// for more. The config poll then applies the save, which restarts the
-// project with it. An agent waiting on the change is told once it is saved;
-// until then its reload is held, from before the change is read, so that a
-// re-read clearing the pending change meanwhile does not end it superseded.
-//
-// The check is made again under the config's lock, with the approved snapshot
-// the change was reviewed against: a review that saved a newer file while
-// this waited for the lock would otherwise be overwritten.
-func (u *uiEngine) AcceptChange(project, sha string) error {
-	done := u.agents.accepting(project, sha)
-	stale := fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
-	change := u.Status(project).Pending
-	if change == nil || change.SHA256 != sha {
-		done(false)
-		return stale
-	}
-	approved := approvedRc(u.Config(), project)
-	if u.acceptLocking != nil {
-		u.acceptLocking()
-	}
-	err := u.EditConfig(func(cfg *config.Config) error {
-		if now := u.Status(project).Pending; now == nil || now.SHA256 != sha || approvedRc(cfg, project) != approved {
-			return stale
-		}
-		before := append([]config.Project(nil), cfg.Projects...)
-		if err := takeRc(cfg, change.Project, u.path); err != nil {
-			return err
-		}
-		if u.acceptSaving != nil {
-			u.acceptSaving()
-		}
-		p, _ := cfg.Project(project)
-		if hc, clash := cfg.HostConflictSince(before, *p); clash {
-			return hc
-		}
-		return nil
-	})
-	done(err == nil)
-	return err
-}
-
-// approvedRc is the hash of the .nearhostrc approved for project in cfg, ""
-// for none.
-func approvedRc(cfg *config.Config, project string) string {
-	if p, ok := cfg.Project(project); ok && p.Nearhostrc != nil {
-		return p.Nearhostrc.SHA256
-	}
-	return ""
-}
-
-// DeclineChange is the engine's, and tells an agent waiting on the change.
-// The agent is told first: once the engine forgets the change nothing
-// waits, and a poll in between would find its reload superseded.
-func (u *uiEngine) DeclineChange(project, sha string) {
-	u.agents.changeAnswered(project, sha, false)
-	u.Engine.DeclineChange(project, sha)
-}
-
-func (u *uiEngine) ReconnectServer(_ context.Context, name string) error {
-	return u.Engine.ReconnectServer(name)
-}
-
-func (u *uiEngine) DisconnectServer(_ context.Context, name string) error {
-	return u.Engine.DisconnectServer(name)
-}
-
-func (u *uiEngine) ConnectServer(_ context.Context, name string) error {
-	return u.Engine.ConnectServer(name)
 }
 
 // Advice works out the advice for a configured project, on a connection of
