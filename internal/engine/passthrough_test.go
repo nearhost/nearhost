@@ -294,7 +294,11 @@ func TestOwnerTextDuringOpen(t *testing.T) {
 	// The route is configured once the open has its port: an open leaves
 	// the port of a route it knows of alone.
 	cfg := h.eng.Config()
-	cfg.Projects = []config.Project{remoteProject("one", "apollo", port)}
+	// Disabled, as in TestProjectLoopbackNamesPassthrough: the start below
+	// must not find Apply's own start of the project in flight.
+	p := remoteProject("one", "apollo", port)
+	p.Enabled = false
+	cfg.Projects = []config.Project{p}
 	if err := h.eng.Apply(bg, cfg); err != nil {
 		release()
 		t.Fatal(err)
