@@ -53,7 +53,7 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	reason := "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
 	if !transport.IsSocketPathMessage(reason) {
 		t.Fatal("the reason is not transport's message")
