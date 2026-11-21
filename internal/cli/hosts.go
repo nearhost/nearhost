@@ -9,9 +9,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
 )
@@ -40,7 +44,30 @@ var newElevatedApplier = func(exe, path string) hosts.Applier {
 	return hosts.ElevatedApplier(context.Background(), elevate.System(), exe, path, hostsPrompt, true)
 }
 
-func newHostsCmd() *cobra.Command {
+// stdinIsTerminal reports whether sudo can ask for a password on stdin. Tests
+// replace it.
+var stdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
+// newHostsUpdateApplier is how `hosts update` writes the system hosts file:
+// as `nearhost up` does, through sudo or the UAC prompt, asking for a password
+// only when terminal is true. A variable so tests can avoid real sudo.
+var newHostsUpdateApplier = func(ctx context.Context, terminal bool) hosts.Applier {
+	exe, err := os.Executable()
+	if err != nil {
+		return func([]string) error { return err }
+	}
+	return upHostsApplier(ctx, elevate.System(), exe, terminal)
+}
+
+// hostsUpdateNoTerminal is what `hosts update` says when sudo needs a
+// password and there is no terminal to ask in.
+const hostsUpdateNoTerminal = "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost hosts update in a terminal."
+
+// hostsChangedWait is how long `hosts update` waits for a running core to
+// take the news: the core answers at once and retries its projects itself.
+const hostsChangedWait = 5 * time.Second
+
+func newHostsCmd(lookup hosts.Lookup) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hosts",
 		Short: "Manage the nearhost block in " + hosts.DefaultPath,
@@ -113,8 +140,81 @@ func newHostsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(apply, clean)
+	update := &cobra.Command{
+		Use:   "update",
+		Args:  cobra.NoArgs,
+		Short: "Bring the nearhost block up to date for every enabled project",
+		Long: "Bring the nearhost block in " + hosts.DefaultPath + " up to date for every enabled\n" +
+			"project, then tell a running core, which starts the projects that were\n" +
+			"waiting for it. Run it in a terminal: Nearhost in the background never\n" +
+			"asks for sudo, so it leaves a project stopped when the hosts file needs\n" +
+			"changing.\n\n" + elevationNote,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("file") {
+				return errors.New("hosts update only updates " + hosts.DefaultPath)
+			}
+			return runHostsUpdate(cmd, lookup)
+		},
+	}
+
+	cmd.AddCommand(apply, clean, update)
 	return cmd
+}
+
+// runHostsUpdate is `nearhost hosts update`: it asks for the same names the
+// engine asks for when it starts a project (see engine.ensureHosts), so the
+// background core finds the block up to date.
+func runHostsUpdate(cmd *cobra.Command, lookup hosts.Lookup) error {
+	cfg, _, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	path := hosts.DefaultPath
+	terminal := stdinIsTerminal()
+	names := hosts.Wanted(ctx, cfg.HostsFileNames(), lookup)
+	changed, err := hosts.Ensure(path, names, newHostsUpdateApplier(ctx, terminal))
+	if errors.Is(err, errNoTerminal) {
+		return errors.New(hostsUpdateNoTerminal)
+	}
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if changed {
+		fmt.Fprintf(out, "Updated %s.\n", path)
+	} else {
+		fmt.Fprintf(out, "%s is already up to date.\n", path)
+	}
+	// Told even when nothing changed: a core may have stopped projects on a
+	// block that an earlier run of this command has since fixed.
+	tellCore(cmd)
+	return nil
+}
+
+// tellCore asks a running core to retry the projects the hosts file stopped.
+// No core running is the usual case and says nothing; a core that cannot be
+// told is no failure of the update, which has been done, so it only says so.
+func tellCore(cmd *cobra.Command) {
+	runDir, err := config.RunDir()
+	if err != nil {
+		return
+	}
+	c, err := control.Dial(runDir)
+	if errors.Is(err, control.ErrNotRunning) {
+		return
+	}
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), hostsChangedWait)
+		defer cancel()
+		err = c.HostsChanged(ctx)
+	}
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "The hosts file is updated, but the running core could not be told:", err)
+	}
 }
 
 // cleanApplier is how `hosts clean` writes file: through the elevated

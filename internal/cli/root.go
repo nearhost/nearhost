@@ -74,7 +74,7 @@ func NewRoot() *cobra.Command {
 	root := newRootCmd()
 	root.AddCommand(
 		newVersionCmd(),
-		newHostsCmd(),
+		newHostsCmd(lookup),
 		newTrustCmd(systemTrust()),
 		newUntrustCmd(systemTrust()),
 		newUpCmd(systemUp(lookup)),
