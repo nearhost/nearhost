@@ -24,6 +24,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -51,7 +52,7 @@ type addBackend struct {
 	running func() runMode
 }
 
-// runMode is which Nearhost, if any, answers on this machine's agent socket.
+// runMode is which Nearhost, if any, runs on this machine.
 type runMode int
 
 const (
@@ -60,6 +61,9 @@ const (
 	// modeInterface is the interface, which watches the config and applies
 	// a change to it.
 	modeInterface
+	// modeCore is a core with no interface that applies a change to the
+	// config, as `nearhost -d` and `nearhost up` with no projects named are.
+	modeCore
 	// modeUp is `nearhost up`, which reads the config once.
 	modeUp
 	// modeUnknown is a Nearhost that answers without saying which it is, as
@@ -1082,6 +1086,13 @@ func runningAdvice(running func() runMode, enabled bool, start string) string {
 			return "The running Nearhost lists it in a moment. Start it there."
 		}
 		return "The running Nearhost picks it up in a moment."
+	case modeCore:
+		// A core with no interface serves only enabled projects, and
+		// lists no other.
+		if !enabled {
+			return "The running Nearhost serves it once it is enabled in the config."
+		}
+		return "The running Nearhost picks it up in a moment."
 	case modeUp:
 		if !enabled {
 			return fmt.Sprintf("nearhost up is running and does not reload. Stop it and start it again with `%s` to serve this project.", start)
@@ -1093,17 +1104,44 @@ func runningAdvice(running func() runMode, enabled bool, start string) string {
 	return fmt.Sprintf("Start it with `%s`.", start)
 }
 
-// systemRunMode is the production probe: this machine's own agent socket.
-// When the socket cannot be worked out it says nothing runs, which leaves
-// the plain advice to start Nearhost.
+// systemRunMode is the production probe: this machine's control socket,
+// then its own agent socket. When neither can be worked out it says nothing
+// runs, which leaves the plain advice to start Nearhost.
 func systemRunMode() runMode {
-	id, err := config.InstallID()
-	if err != nil {
+	runDir, _ := config.RunDir()
+	agentSock := ""
+	if id, err := config.InstallID(); err == nil {
+		if home, err := os.UserHomeDir(); err == nil {
+			agentSock = agentSocket(home, id)
+		}
+	}
+	return runModeAt(runDir, agentSock)
+}
+
+// runModeAt is which Nearhost runs: the core that answers on the control
+// socket in runDir, which says whether it reloads the config, or else the
+// one that answers on the agent socket at agentSock. The interface and an
+// older Nearhost answer only there. An empty path is not asked.
+func runModeAt(runDir, agentSock string) runMode {
+	if runDir != "" {
+		if c, err := control.Dial(runDir); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			info, err := c.Info(ctx)
+			cancel()
+			switch {
+			case err != nil:
+				return modeUnknown
+			case !info.Reloads:
+				return modeUp
+			case info.StartedBy == control.StartedTUI:
+				return modeInterface
+			default:
+				return modeCore
+			}
+		}
+	}
+	if agentSock == "" {
 		return modeNone
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return modeNone
-	}
-	return agentRunMode(agentSocket(home, id))
+	return agentRunMode(agentSock)
 }

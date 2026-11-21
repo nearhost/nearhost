@@ -16,7 +16,8 @@ func newLsCmd() *cobra.Command {
 		Short: "List configured projects",
 		Long: "List the configured projects. STATE is what the config says: an enabled\n" +
 			"project starts with `nearhost up`, a disabled one only when named. Whether a\n" +
-			"project is being served right now is shown by the `nearhost up` that serves it.",
+			"project is being served right now is shown by `nearhost status`, or in the\n" +
+			"interface.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, _, err := loadConfig(cmd)
