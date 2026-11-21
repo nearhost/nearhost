@@ -14,7 +14,9 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/grants"
 )
 
 // coreWatchInterval is how often the core looks at the config file, as the
@@ -113,13 +115,16 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 
 	core := &coreBackend{
-		eng: eng, ctx: ctx, stop: stopCore, httpsPort: flags.httpsPort,
+		eng: eng, ctx: ctx, stop: stopCore, cfgPath: cfgPath,
+		httpsPort: flags.httpsPort, httpPort: flags.httpPort, webPort: flags.webPort,
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
 		},
 	}
-	ctl, err := control.Listen(control.SocketPath(opts.RunDir), core)
+	// Nothing publishes to the hub yet: the engine's events reach it once
+	// the interface runs as a client of the core.
+	ctl, err := control.Listen(control.SocketPath(opts.RunDir), core, control.NewHub())
 	if err != nil {
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
@@ -277,8 +282,10 @@ type coreBackend struct {
 	// retries HostsChanged starts.
 	ctx context.Context
 	// stop begins the shutdown, as the first signal does.
-	stop      func()
-	httpsPort int
+	stop    func()
+	cfgPath string
+	// httpsPort, httpPort and webPort are the ports the core serves on.
+	httpsPort, httpPort, webPort int
 	// retries counts the starts HostsChanged has under way, which the
 	// shutdown waits for. closed, under mu, is set once it has begun: a
 	// request still being answered then starts nothing.
@@ -311,6 +318,21 @@ func (c *coreBackend) Status() control.Status {
 		})
 	}
 	return st
+}
+
+// State says what this core is, where its config is and the ports it
+// serves on. What it serves is not filled in yet.
+func (c *coreBackend) State() control.State {
+	return control.State{
+		Info: c.info, ConfigPath: c.cfgPath,
+		HTTPSPort: c.httpsPort, HTTPPort: c.httpPort, WebPort: c.webPort,
+		Projects:     map[string]engine.ProjectStatus{},
+		Servers:      map[string]control.ServerState{},
+		Passthroughs: []engine.Passthrough{},
+		Documents:    []documents.Tree{},
+		Grants:       []grants.Grant{},
+		Approvals:    []control.Approval{},
+	}
 }
 
 // close waits for the starts HostsChanged began, and makes it start no more.

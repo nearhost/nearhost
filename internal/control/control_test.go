@@ -20,6 +20,7 @@ import (
 type fakeBackend struct {
 	info   Info
 	status Status
+	state  State
 
 	mu      sync.Mutex
 	stops   int
@@ -28,6 +29,7 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Info() Info     { return f.info }
 func (f *fakeBackend) Status() Status { return f.status }
+func (f *fakeBackend) State() State   { return f.state }
 func (f *fakeBackend) Stop() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -69,7 +71,7 @@ func newFake() *fakeBackend {
 func serve(t *testing.T, b Backend) string {
 	t.Helper()
 	dir := testutil.TempDir(t, "ctl")
-	s, err := Listen(SocketPath(dir), b)
+	s, err := Listen(SocketPath(dir), b, NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func (c *closingBackend) Stop() {
 func TestStopAnswersBeforeTheSocketCloses(t *testing.T) {
 	dir := testutil.TempDir(t, "ctl")
 	b := &closingBackend{fakeBackend: newFake()}
-	s, err := Listen(SocketPath(dir), b)
+	s, err := Listen(SocketPath(dir), b, NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +203,7 @@ func TestListenReplacesStaleSocket(t *testing.T) {
 	dir := testutil.TempDir(t, "ctl")
 	staleSocket(t, SocketPath(dir))
 	b := newFake()
-	s, err := Listen(SocketPath(dir), b)
+	s, err := Listen(SocketPath(dir), b, NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +215,7 @@ func TestListenReplacesStaleSocket(t *testing.T) {
 
 func TestListenRefusesLiveSocket(t *testing.T) {
 	dir := serve(t, newFake())
-	s, err := Listen(SocketPath(dir), newFake())
+	s, err := Listen(SocketPath(dir), newFake(), NewHub())
 	if !errors.Is(err, ErrInUse) {
 		if s != nil {
 			s.Close()
@@ -228,7 +230,7 @@ func TestListenRefusesLiveSocket(t *testing.T) {
 
 func TestCloseRemovesSocket(t *testing.T) {
 	dir := testutil.TempDir(t, "ctl")
-	s, err := Listen(SocketPath(dir), newFake())
+	s, err := Listen(SocketPath(dir), newFake(), NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,6 +251,8 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 	}{
 		{"GET", "/v1/stop", http.StatusMethodNotAllowed},
 		{"POST", "/v1", http.StatusMethodNotAllowed},
+		{"POST", "/v1/state", http.StatusMethodNotAllowed},
+		{"POST", "/v1/events", http.StatusMethodNotAllowed},
 		{"GET", "/v2", http.StatusNotFound},
 	} {
 		code, body, err := c.raw(context.Background(), tc.method, tc.path)

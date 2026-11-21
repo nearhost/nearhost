@@ -21,6 +21,7 @@ type infoCore struct{ info control.Info }
 
 func (c infoCore) Info() control.Info               { return c.info }
 func (c infoCore) Status() control.Status           { return control.Status{Info: c.info} }
+func (c infoCore) State() control.State             { return control.State{Info: c.info} }
 func (c infoCore) Stop()                            {}
 func (c infoCore) HostsChanged(ctx context.Context) {}
 
@@ -41,7 +42,7 @@ func newFakeDetach(t *testing.T) *fakeDetach {
 
 // answer starts a core with info on the fake's socket.
 func (f *fakeDetach) answer(info control.Info) {
-	srv, err := control.Listen(control.SocketPath(f.runDir), infoCore{info})
+	srv, err := control.Listen(control.SocketPath(f.runDir), infoCore{info}, control.NewHub())
 	if err != nil {
 		// Not Fatal: answer may run on a goroutine of the fake child's.
 		f.t.Error(err)

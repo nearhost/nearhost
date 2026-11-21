@@ -1418,7 +1418,7 @@ func serveRunning(t *testing.T, withInterface bool) string {
 func serveCore(t *testing.T, info control.Info) string {
 	t.Helper()
 	runDir := testutil.TempDir(t, "nhc")
-	srv, err := control.Listen(control.SocketPath(runDir), infoCore{info})
+	srv, err := control.Listen(control.SocketPath(runDir), infoCore{info}, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1552,7 +1552,7 @@ func addUnderCore(t *testing.T, h *updateHarness) (string, *fakeCore) {
 	t.Helper()
 	core := &fakeCore{info: reloadingCore}
 	runDir := filepath.Join(filepath.Dir(h.cfgPath), "run")
-	srv, err := control.Listen(control.SocketPath(runDir), core)
+	srv, err := control.Listen(control.SocketPath(runDir), core, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}

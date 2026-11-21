@@ -18,6 +18,7 @@ type statusCore struct{ st control.Status }
 
 func (c statusCore) Info() control.Info               { return c.st.Info }
 func (c statusCore) Status() control.Status           { return c.st }
+func (c statusCore) State() control.State             { return control.State{Info: c.st.Info} }
 func (c statusCore) Stop()                            {}
 func (c statusCore) HostsChanged(ctx context.Context) {}
 
@@ -30,7 +31,7 @@ func serveStatus(t *testing.T, st control.Status) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := control.Listen(control.SocketPath(runDir), statusCore{st})
+	srv, err := control.Listen(control.SocketPath(runDir), statusCore{st}, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}

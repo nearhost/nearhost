@@ -126,6 +126,7 @@ type fakeCore struct {
 
 func (f *fakeCore) Info() control.Info     { return f.info }
 func (f *fakeCore) Status() control.Status { return control.Status{} }
+func (f *fakeCore) State() control.State   { return control.State{Info: f.info} }
 func (f *fakeCore) Stop()                  {}
 func (f *fakeCore) HostsChanged(context.Context) {
 	f.mu.Lock()
@@ -150,7 +151,7 @@ func TestHostsUpdateTellsTheCore(t *testing.T) {
 	}
 
 	core := &fakeCore{}
-	srv, err := control.Listen(control.SocketPath(filepath.Join(filepath.Dir(h.cfgPath), "run")), core)
+	srv, err := control.Listen(control.SocketPath(filepath.Join(filepath.Dir(h.cfgPath), "run")), core, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestHostsUpdateFailureLeavesTheCoreAlone(t *testing.T) {
 	h := newUpdateHarness(t, updateConfig(), "127.0.0.1 localhost\n")
 	h.applyErr = errors.New("sudo: no")
 	core := &fakeCore{}
-	srv, err := control.Listen(control.SocketPath(filepath.Join(filepath.Dir(h.cfgPath), "run")), core)
+	srv, err := control.Listen(control.SocketPath(filepath.Join(filepath.Dir(h.cfgPath), "run")), core, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}

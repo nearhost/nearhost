@@ -1,6 +1,8 @@
 package control
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -15,7 +18,15 @@ import (
 var ErrNotRunning = errors.New("Nearhost is not running")
 
 // callTimeout bounds every call, unless the context's deadline is sooner.
+// For the event stream it bounds only the wait for the answer to begin.
 const callTimeout = 5 * time.Second
+
+// maxEnvelope is the longest line of the event stream the client reads. An
+// event can carry a whole exchange, so it is generous.
+const maxEnvelope = 1 << 20
+
+// errStreamEnded is why a stream the core closed ended.
+var errStreamEnded = errors.New("the core ended the event stream")
 
 // Client calls the control API of a running core. Its methods are safe for
 // concurrent use.
@@ -79,11 +90,7 @@ func (c *Client) call(ctx context.Context, method, path string, want int, out an
 		return err
 	}
 	if code != want {
-		var e errorBody
-		if json.Unmarshal(body, &e) == nil && e.Error != "" {
-			return fmt.Errorf("the core answered %d: %s", code, e.Error)
-		}
-		return fmt.Errorf("the core answered %d", code)
+		return answerError(code, body)
 	}
 	if out == nil {
 		return nil
@@ -92,6 +99,16 @@ func (c *Client) call(ctx context.Context, method, path string, want int, out an
 		return fmt.Errorf("the core's answer is not understood: %w", err)
 	}
 	return nil
+}
+
+// answerError describes an answer with the status code code and the body
+// body that the caller did not want.
+func answerError(code int, body []byte) error {
+	var e errorBody
+	if json.Unmarshal(body, &e) == nil && e.Error != "" {
+		return fmt.Errorf("the core answered %d: %s", code, e.Error)
+	}
+	return fmt.Errorf("the core answered %d", code)
 }
 
 // Info returns what the core says it is.
@@ -106,6 +123,109 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	var st Status
 	err := c.call(ctx, http.MethodGet, "/v1/status", http.StatusOK, &st)
 	return st, err
+}
+
+// State returns everything a client mirrors, as of the envelope numbered
+// State.Seq.
+func (c *Client) State(ctx context.Context) (State, error) {
+	var st State
+	err := c.call(ctx, http.MethodGet, "/v1/state", http.StatusOK, &st)
+	return st, err
+}
+
+// Events streams the envelopes numbered after after, until ctx ends or the
+// stream breaks. The channel closes then, and err, which waits for that,
+// says why: nil when ctx ended. A reset on the channel means envelopes were
+// missed: the caller fetches State again and goes on with the envelopes
+// numbered after the reset's. Events returns ErrNotRunning when nothing
+// answers on the socket.
+func (c *Client) Events(ctx context.Context, after uint64) (ch <-chan Envelope, err func() error, e error) {
+	ctx, cancel := context.WithCancel(ctx)
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, "http://nearhost/v1/events?after="+strconv.FormatUint(after, 10), nil)
+	if rerr != nil {
+		cancel()
+		return nil, nil, rerr
+	}
+	// The stream has no end in time, but its answer begins at once.
+	timer := time.AfterFunc(callTimeout, cancel)
+	resp, rerr := c.http.Do(req)
+	if !timer.Stop() {
+		if rerr == nil {
+			resp.Body.Close()
+		}
+		cancel()
+		return nil, nil, fmt.Errorf("the core did not answer within %v", callTimeout)
+	}
+	if rerr != nil {
+		cancel()
+		if nobodyListens(rerr) {
+			return nil, nil, ErrNotRunning
+		}
+		return nil, nil, rerr
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		cancel()
+		return nil, nil, answerError(resp.StatusCode, body)
+	}
+	out := make(chan Envelope, 64)
+	done := make(chan struct{})
+	var why error
+	go func() {
+		defer close(done)
+		defer close(out)
+		defer cancel()
+		defer resp.Body.Close()
+		why = readStream(ctx, resp.Body, out)
+		if ctx.Err() != nil {
+			why = nil
+		}
+	}()
+	return out, func() error { <-done; return why }, nil
+}
+
+// readStream sends the envelopes of the server-sent events in r to out until
+// r ends or ctx does, and returns why it stopped.
+func readStream(ctx context.Context, r io.Reader, out chan<- Envelope) error {
+	lines := bufio.NewScanner(r)
+	lines.Buffer(make([]byte, 0, 64<<10), maxEnvelope)
+	var data []byte
+	for lines.Scan() {
+		line := lines.Bytes()
+		switch {
+		case len(line) == 0:
+			// A blank line ends an event; one that had no data is nothing.
+			if data == nil {
+				continue
+			}
+			var e Envelope
+			if err := json.Unmarshal(data, &e); err != nil {
+				return fmt.Errorf("the core sent an envelope that is not understood: %w", err)
+			}
+			data = nil
+			select {
+			case out <- e:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		case line[0] == ':':
+			// A comment, such as a keepalive.
+		case bytes.HasPrefix(line, []byte("data:")):
+			v := bytes.TrimPrefix(line[len("data:"):], []byte(" "))
+			// Not nil once a data line is read, even an empty one.
+			if data == nil {
+				data = []byte{}
+			} else {
+				data = append(data, '\n')
+			}
+			data = append(data, v...)
+		}
+	}
+	if err := lines.Err(); err != nil {
+		return fmt.Errorf("the event stream broke: %w", err)
+	}
+	return errStreamEnded
 }
 
 // Stop asks the core to shut down. It returns once the core has begun, not
