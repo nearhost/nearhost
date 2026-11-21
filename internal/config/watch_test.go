@@ -48,18 +48,12 @@ func (r *watchRecorder) lastApplied() *Config {
 // startWatch runs Watch until the test ends.
 func startWatch(t *testing.T, path string) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
-	return startWatchEvery(t, path, watchInterval)
-}
-
-// startWatchEvery is startWatch with its own poll interval.
-func startWatchEvery(t *testing.T, path string, interval time.Duration) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
-	t.Helper()
 	r := &watchRecorder{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Watch(ctx, path, interval, r.apply, r.badf)
+		Watch(ctx, path, watchInterval, r.apply, r.badf)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -113,22 +107,36 @@ func TestWatchAppliesAChange(t *testing.T) {
 }
 
 func TestWatchWaitsForTheFileToSettle(t *testing.T) {
-	// The file keeps changing, a write every 30 ms, so no two polls 100 ms
-	// apart see the same file until the writes stop. Without the debounce
-	// the first poll after the first write would apply a half-written state.
-	const interval = 100 * time.Millisecond
+	// The file changes before every poll until the writes stop, so no two
+	// polls see the same file. Without the debounce a poll after the first
+	// write would apply a half-written state. The test sends the ticks: a
+	// send returns once the watcher has taken the tick, which it does only
+	// after it has handled the one before.
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeProjects(t, path, "a")
-	r, _, _ := startWatchEvery(t, path, interval)
-	time.Sleep(3 * interval)
+	r := &watchRecorder{}
+	ticks := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchTicks(ctx, path, ticks, r.apply, r.badf)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	tick := func() { ticks <- time.Now() }
+
+	tick()
 	names := []string{"a"}
 	for _, n := range []string{"b", "c", "d", "e", "f", "g", "h", "i"} {
 		names = append(names, n)
 		writeProjects(t, path, names...)
-		time.Sleep(30 * time.Millisecond)
+		tick()
 	}
-	waitFor(t, "apply", func() bool { n, _ := r.counts(); return n >= 1 })
-	time.Sleep(5 * interval)
+	tick() // the file is as the last poll saw it: settled, and applied
+	tick() // the poll before has been handled
 	if n, _ := r.counts(); n != 1 {
 		t.Fatalf("apply called %d times, want once", n)
 	}

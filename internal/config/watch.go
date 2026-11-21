@@ -34,15 +34,21 @@ func stampOf(path string) fileStamp {
 // and one that is created later is applied like any other change. The file
 // as it is when Watch starts counts as already applied.
 func Watch(ctx context.Context, path string, interval time.Duration, apply func(*Config), bad func(error)) {
-	stamp := stampOf(path) // the last state handled
-	seen := stamp          // the state at the previous tick
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	watchTicks(ctx, path, ticker.C, apply, bad)
+}
+
+// watchTicks is Watch, polling at each tick from ticks: a test sends them
+// itself, so what a poll sees does not hang on how the machine is loaded.
+func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, apply func(*Config), bad func(error)) {
+	stamp := stampOf(path) // the last state handled
+	seen := stamp          // the state at the previous tick
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 		}
 		now := stampOf(path)
 		if now == stamp {
