@@ -128,6 +128,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
+		// The agents' socket goes first, as in the shutdown below, so the
+		// lock is never free while it still answers.
+		closeAgents()
 		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if stopErr := b.shutdown(eng, stopCtx); stopErr != nil {
