@@ -19,7 +19,7 @@ import (
 )
 
 // coreOps is what the interface asks of the engine and the agents' API,
-// with no terminal: the half of uiEngine that runs in the core.
+// with no terminal: what the core does for its clients.
 type coreOps struct {
 	eng *engine.Engine
 	// agents answers the agents' proposals; nil when none can reach

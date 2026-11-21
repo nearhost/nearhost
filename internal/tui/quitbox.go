@@ -227,7 +227,7 @@ func (m *Model) end(how QuitChoice, remember bool) tea.Cmd {
 type lostMsg struct{ err error }
 
 // waitLost waits for the backend to say the core is lost; nil when it never
-// can, as for an engine in this process.
+// can.
 func (m *Model) waitLost() tea.Cmd {
 	lost := m.b.Lost()
 	if lost == nil {

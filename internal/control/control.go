@@ -40,7 +40,8 @@ const (
 	StartedService StartedBy = "service"
 	// StartedDetached is a core started in the background by nearhost -d.
 	StartedDetached StartedBy = "detached"
-	// StartedTUI is a core that runs inside the terminal interface.
+	// StartedTUI is a core started in the background by bare nearhost, the
+	// terminal interface, because none was running.
 	StartedTUI StartedBy = "tui"
 	// StartedForeground is a core run in a terminal by nearhost daemon.
 	StartedForeground StartedBy = "foreground"

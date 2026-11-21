@@ -55,7 +55,10 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if err != nil {
 		return err
 	}
-	if msg := missingConfigMessage(cmd); msg != "" && len(cfg.Projects) == 0 {
+	// A config file named that does not exist is a mistake, but for the
+	// core the interface starts: the interface offers to add the first
+	// project, which makes the file.
+	if msg := missingConfigMessage(cmd); msg != "" && len(cfg.Projects) == 0 && mode.startedBy != control.StartedTUI {
 		return errors.New(msg)
 	}
 	names, err := upTargets(cfg, args)

@@ -441,7 +441,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 	case shutdownMsg:
 		if msg.unsaved != nil {
-			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ".")
+			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ". The quit box asks again next time; to stop it asking, set keep_running in that file.")
 		}
 		if msg.err != nil {
 			verb := "Stopping: "

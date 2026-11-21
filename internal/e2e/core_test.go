@@ -90,6 +90,21 @@ func (s *sandbox) stopCore(pid int) {
 	}
 }
 
+// stopAnyCore stops the core running in the sandbox, if one is, as stopCore
+// does: a failed journey must leave no core behind.
+func (s *sandbox) stopAnyCore() {
+	out, code := s.nearhost("status", "--json")
+	if code != 0 {
+		return
+	}
+	var st control.Status
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		s.t.Errorf("nearhost status --json printed %q: %v", out, err)
+		return
+	}
+	s.stopCore(st.Info.PID)
+}
+
 // coreLog is what the core has logged, in <config folder>/nearhost/core.log.
 func (s *sandbox) coreLog() string {
 	b, _ := os.ReadFile(filepath.Join(s.dir, "nearhost", "core.log"))
@@ -263,5 +278,53 @@ func TestHostsUpdateLetsTheCoreInTheBackgroundServe(t *testing.T) {
 	sb.waitProject("shop", "running")
 	if body, err := sb.get("shop.test", "/"); err != nil || !strings.HasPrefix(body, "shop:shop.test") {
 		t.Errorf("the project answered %q, %v", body, err)
+	}
+}
+
+// nearhost starts the core in the background when none runs. Quitting asks
+// whether to stop it; left running, it goes on serving, as `nearhost status`
+// says, until `nearhost stop`.
+func TestTheInterfaceLeavesTheCoreRunning(t *testing.T) {
+	sb, term := shop(t)
+	term.press('q')
+	term.waitFor("the quit box, Stop first", quitQuestion, "▸ [ Stop ]")
+	term.press(keyTab)
+	term.waitFor("Leave running chosen", "▸ [ Leave running ]")
+	term.press(keyEnter)
+	restored(term)
+
+	sb.waitProject("shop", "running")
+	if info := sb.status().Info; info.StartedBy != control.StartedTUI {
+		t.Errorf("the core says it was started by %q, want tui", info.StartedBy)
+	}
+	if body, err := sb.get("shop.test", "/"); err != nil || !strings.HasPrefix(body, "shop:shop.test") {
+		t.Errorf("the project answered %q, %v, with the interface gone", body, err)
+	}
+	if out, code := sb.nearhost("stop"); code != 0 || out != "Stopped.\n" {
+		t.Fatalf("nearhost stop: exit %d, printed %q", code, out)
+	}
+	if out, code := sb.nearhost("status"); code != 3 {
+		t.Errorf("nearhost status after stop: exit %d, printed %q", code, out)
+	}
+}
+
+// nearhost on a core started with -d follows it: it shows what the core
+// serves, and quitting asks nothing and leaves the core running.
+func TestTheInterfaceAttachesToABackgroundCore(t *testing.T) {
+	sb := newSandbox(t, fmt.Sprintf(localShop, t.TempDir(), testutil.Upstream(t, "shop")))
+	pid := sb.startCore()
+	sb.waitProject("shop", "running")
+
+	term := sb.start()
+	skipWelcome(term)
+	term.waitFor("the core's project running", "● shop", "running   1 of 1 projects")
+	leave(term)
+
+	st := sb.status()
+	if st.Info.PID != pid {
+		t.Errorf("the core answering is pid %d, want %d", st.Info.PID, pid)
+	}
+	if p, ok := project(st, "shop"); !ok || p.State != "running" {
+		t.Errorf("the core says shop is %+v once the interface quit", p)
 	}
 }

@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -15,11 +18,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/desktop"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
-	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -63,12 +66,13 @@ type uiBackend struct {
 	// rootMade, when set, is given the interface's way to run steps as
 	// root. Tests use it to lend the terminal; it is nil otherwise.
 	rootMade func(asRoot)
-	// detach starts the core in the background, for `nearhost -d`.
+	// detach reaches the core, and starts it in the background when none
+	// runs, for bare `nearhost` and `nearhost -d`.
 	detach detachBackend
-	// engineMade, when set, is given the engine as soon as it is made,
-	// before anything is published on its bus. Tests use it to listen;
-	// it is nil otherwise.
-	engineMade func(*engine.Engine)
+	// clientMade, when set, is given the interface's backend as soon as it
+	// is made, before anything is published on its bus. Tests use it to
+	// listen; it is nil otherwise.
+	clientMade func(*clientBackend)
 }
 
 // systemUI is the production backend. Only NewRoot wires it in, with the
@@ -210,24 +214,52 @@ func rootArgs(cmd *cobra.Command, args []string) error {
 	return cobra.NoArgs(cmd, args)
 }
 
+// runUI is bare `nearhost`: it opens the interface as a client of the core,
+// which it starts in the background first when none runs. The interface's
+// own work stays in this process: the terminal, the hosts file, the trust
+// store and the config file it edits.
 func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err := flags.validate(); err != nil {
 		return err
 	}
-	// Before anything reads the CA's directory, so this run serves from
-	// where it lands. The warning goes to the interface's log; a run that
-	// fails before there is one prints it.
-	migrateNote := migrateCANote()
-	defer func() {
-		if migrateNote != "" {
-			fmt.Fprintln(cmd.ErrOrStderr(), migrateNote)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	errOut := cmd.ErrOrStderr()
+	// A config that does not load is refused here, before a core is
+	// started on it only to stop.
+	if _, _, ok := detachInfo(ctx, b.detach); !ok {
+		if _, _, err := loadConfig(cmd); err != nil {
+			return err
 		}
-	}()
-	cfg, cfgPath, err := loadConfig(cmd)
+	}
+	dir, err := b.workDir()
 	if err != nil {
 		return err
 	}
-	dir, err := b.workDir()
+	c, info, spawned, err := ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	if err != nil {
+		return err
+	}
+	if !spawned {
+		if c, spawned, err = handshake(cmd, b.detach, flags, c, info); err != nil {
+			return err
+		}
+	}
+	st, err := c.State(ctx)
+	if err != nil {
+		return fmt.Errorf("ask Nearhost in the background what it serves: %w", err)
+	}
+	if !spawned {
+		if err := sameConfig(cmd, st.ConfigPath); err != nil {
+			return err
+		}
+	}
+	// What the core writes to its log from here on says whether it was
+	// asked to stop, should it go while the interface runs.
+	logFrom := b.detach.logSize()
+	storage, err := config.CaddyDir()
 	if err != nil {
 		return err
 	}
@@ -237,53 +269,19 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// Every sudo the interface runs, the CA's included, which cannot be
 	// given a prompt of its own, words its prompt as Nearhost's.
 	os.Setenv("SUDO_PROMPT", terminalPrompt)
-	opts, err := engineOptions(b.up.ssh, flags, hostsThrough(root, hosts.DefaultPath, b.applier), b.lookup)
-	if err != nil {
-		return err
-	}
-	// Each start, and r on a project, re-reads its .nearhostrc. A change
-	// that needs no approval is saved as the interface's own edits are, one
-	// at a time with them; one that does waits for a to review it.
 	if b.rootMade != nil {
 		b.rootMade(root)
 	}
-	back := &uiEngine{localOps: &localOps{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}}
-	opts.Review = reviewProject(back.saveRc)
-	ag, agentNote := serveAgents(b.up.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
-		ssh: b.up.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot),
-	})
-	defer ag.close()
-	eng := engine.New(cfg, opts)
-	if b.engineMade != nil {
-		b.engineMade(eng)
+	var proposals tui.Proposals
+	local := &localOps{b: b, path: st.ConfigPath, flags: flags, storage: storage, root: root}
+	back := newClientBackend(c, st, local, &proposals, spawned)
+	back.gone = b.detach.gone
+	defer back.Close()
+	if b.clientMade != nil {
+		b.clientMade(back)
 	}
-	back.Engine = eng
-	back.running = eng.Config
-	back.coreOps = &coreOps{eng: eng, agents: ag, path: cfgPath, httpsPort: flags.httpsPort}
-	ag.attach(eng)
-	// The interface shuts the engine down when it quits; this covers a
-	// program that ends any other way, within the bound up has.
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		eng.Shutdown(ctx)
-	}()
-	// The interface no longer reads the config file, so the engine follows
-	// it as the core's does, until the interface begins to shut the engine
-	// down, or ends.
-	watchCtx, endWatch := context.WithCancel(context.Background())
-	back.endWatch = endWatch
-	watched := make(chan struct{})
-	go func() {
-		defer close(watched)
-		watchConfig(watchCtx, back.coreOps)
-	}()
-	defer func() {
-		endWatch()
-		<-watched
-	}()
-	// From here a closed terminal or a kill quits the interface, so the
-	// shutdown above runs.
+	// From here a closed terminal or a kill quits the interface, which
+	// stops the core or leaves it as a quit does.
 	var sigs <-chan os.Signal
 	if b.stops != nil {
 		var release func()
@@ -292,38 +290,194 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	}
 	running := make(chan struct{})
 	defer close(running)
-	var proposals tui.Proposals
-	ag.review(reviewer{&proposals})
 	m := tui.New(back, dir)
-	for _, note := range []string{migrateNote, agentNote} {
-		if note != "" {
-			eng.Events().Publish(engine.Event{Message: note})
+	// The interface has subscribed: what is published from here on is in
+	// its log, before anything from the core, which it follows once it
+	// starts.
+	if !spawned {
+		if note := ignoredFlags(cmd, st); note != "" {
+			back.bus.Publish(engine.Event{Message: note})
 		}
 	}
-	ag.publishHeld(eng)
-	migrateNote = "" // in the log now
 	if b.updateNotice != nil {
 		go func() {
 			for n := range b.updateNotice() {
-				eng.Events().Publish(engine.Event{Message: n})
+				back.bus.Publish(engine.Event{Message: n})
 			}
 		}()
 	}
-	return b.run(m, func(p *tea.Program) {
+	err = b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)
 		proposals.Attach(p)
 		if sigs != nil {
 			go stops.forward(p, sigs, running)
 		}
 	})
+	back.Close()
+	if m.Err() != nil {
+		return coreLost(errOut, b.detach, logFrom)
+	}
+	return err
 }
 
-// hostsThrough is an EnsureHosts for the interface: when the hosts block has
-// to change, it runs the privileged write as root, asking for the password
-// in the interface when sudo needs it (on Windows, Windows asks).
-func hostsThrough(root asRoot, path string, applier func(ctx context.Context, prompt bool) hosts.Applier) func(context.Context, []string) error {
-	return func(ctx context.Context, aliases []string) error {
-		_, err := hosts.Ensure(path, aliases, func(want []string) error {
+// handshake checks that this nearhost can drive the core c, which says info
+// of itself. A core that speaks another version of the API is refused. One
+// of another release, as after `nearhost update`, is offered a restart, at
+// the terminal: c is then the new core's, and restarted says it was started
+// here.
+func handshake(cmd *cobra.Command, d detachBackend, flags serveFlags, c *control.Client, info control.Info) (_ *control.Client, restarted bool, err error) {
+	if info.API != control.APIVersion {
+		msg := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost."
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
+		return nil, false, exitError{code: 1, msg: msg}
+	}
+	if info.Version == Version {
+		return c, false, nil
+	}
+	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
+		return c, false, nil
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// A core that stops between the dial and this call has done what was
+	// asked.
+	if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
+		return nil, false, err
+	}
+	if d.gone != nil {
+		if err := d.gone(ctx); err != nil {
+			return nil, false, err
+		}
+	}
+	c, _, spawned, err := ensureCore(cmd, d, flags, control.StartedTUI)
+	return c, spawned, err
+}
+
+// askRestart asks at the terminal whether to restart the core, which is the
+// release old, and reports the answer: yes or just enter restarts it, no
+// leaves it, and anything else is asked again. Input that ends unanswered
+// leaves it.
+func askRestart(in io.Reader, out io.Writer, old string) bool {
+	r := bufio.NewReader(in)
+	for {
+		fmt.Fprintf(out, "Nearhost in the background is %s; this is %s. Restart it now? [Y/n] ", printable(old), Version)
+		line, err := r.ReadString('\n')
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "", "y", "yes":
+			if err != nil && line == "" {
+				fmt.Fprintln(out)
+				return false
+			}
+			return true
+		case "n", "no":
+			return false
+		}
+		if err != nil {
+			fmt.Fprintln(out)
+			return false
+		}
+	}
+}
+
+// sameConfig refuses a --config that names another file than served, the
+// one the running core serves: the interface edits the core's file.
+func sameConfig(cmd *cobra.Command, served string) error {
+	if !cmd.Flags().Changed("config") {
+		return nil
+	}
+	given, err := cmd.Flags().GetString("config")
+	if err != nil || given == "" {
+		return err
+	}
+	if given, err = filepath.Abs(given); err != nil {
+		return err
+	}
+	if samePath(given, served) {
+		return nil
+	}
+	msg := fmt.Sprintf("Nearhost in the background serves %s. Stop it with nearhost stop to use %s, or open nearhost without --config.", printable(served), printable(given))
+	fmt.Fprintln(cmd.ErrOrStderr(), msg)
+	return exitError{code: 1, msg: msg}
+}
+
+// samePath reports whether a and b name the same file: the same path, or
+// two paths to one file, as through a macOS temporary folder's symlink.
+func samePath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ai, aerr := os.Stat(a)
+	bi, berr := os.Stat(b)
+	return aerr == nil && berr == nil && os.SameFile(ai, bi)
+}
+
+// ignoredFlags is the note that the serve flags given on cmd do nothing to
+// the core already running, which serves as st says; "" when none was
+// given, or each port given is the one the core has.
+func ignoredFlags(cmd *cobra.Command, st control.State) string {
+	ports := map[string]int{"https-port": st.HTTPSPort, "http-port": st.HTTPPort, "web-port": st.WebPort}
+	var names []string
+	for _, name := range detachServeFlags {
+		f := cmd.Flags().Lookup(name)
+		if f == nil || !f.Changed {
+			continue
+		}
+		if port, ok := ports[name]; ok && f.Value.String() == strconv.Itoa(port) {
+			continue
+		}
+		names = append(names, "--"+name)
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0] + " applies only when Nearhost starts; the running Nearhost keeps its settings."
+	}
+	list := strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	return list + " apply only when Nearhost starts; the running Nearhost keeps its settings."
+}
+
+// coreLost prints that the core went while the interface ran, with the end
+// of its log, where it said why, unless what it wrote since from says it was
+// asked to stop. It returns the exit status 1 for Main.
+func coreLost(w io.Writer, d detachBackend, from int64) error {
+	msg := "Nearhost in the background stopped."
+	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
+		if tail := d.logTail(0, detachTailLines); len(tail) > 0 {
+			path, _ := config.LogPath()
+			msg += " The end of " + path + ":\n" + printableLines(strings.Join(tail, "\n"))
+		}
+	}
+	fmt.Fprintln(w, msg)
+	return exitError{code: 1, msg: msg}
+}
+
+// lostLogLines is how many of the lines a lost core wrote are looked at for
+// its shutdown: more than a shutdown writes after it.
+const lostLogLines = 1000
+
+// stoppedOnRequest reports whether the core's log lines say it began to shut
+// down, as it does when stopped through `nearhost stop` or a signal, rather
+// than ending some other way.
+func stoppedOnRequest(lines []string) bool {
+	for _, l := range lines {
+		if l == "shutting down" || strings.HasSuffix(l, " shutting down") {
+			return true
+		}
+	}
+	return false
+}
+
+// hostsThrough brings the hosts block up to date for the interface: when the
+// block has to hold other names than it does, block, it runs the privileged
+// write as root, asking for the password in the interface when sudo needs it
+// (on Windows, Windows asks). aliases are the names of the projects that wait
+// on it, which the box names.
+func hostsThrough(root asRoot, path string, applier func(ctx context.Context, prompt bool) hosts.Applier) func(ctx context.Context, aliases, block []string) error {
+	return func(ctx context.Context, aliases, block []string) error {
+		_, err := hosts.Ensure(path, block, func(want []string) error {
 			// A start that has ended since it asked needs no password.
 			if err := ctx.Err(); err != nil {
 				return err
@@ -350,123 +504,3 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 		return err
 	}
 }
-
-// uiEngine is the interface's backend: the engine, and what the interface
-// asks of the machine.
-type uiEngine struct {
-	*engine.Engine
-	// coreOps is what the interface asks of the engine and the agents, the
-	// half a core serves to its clients.
-	*coreOps
-	// localOps is what the interface does in its own process.
-	*localOps
-	// endWatch ends the engine's watch on the config file; nil when there
-	// is none.
-	endWatch context.CancelFunc
-}
-
-// The methods below that the engine and coreOps both have are coreOps',
-// which the interface asks for.
-
-func (u *uiEngine) StartProject(ctx context.Context, name string) error {
-	return u.coreOps.StartProject(ctx, name)
-}
-
-func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
-	return u.coreOps.Apply(ctx, cfg)
-}
-
-func (u *uiEngine) StopProject(ctx context.Context, name string) error {
-	return u.coreOps.StopProject(ctx, name)
-}
-
-func (u *uiEngine) Recheck(ctx context.Context, name string) error {
-	return u.coreOps.Recheck(ctx, name)
-}
-
-func (u *uiEngine) DeclineChange(project, sha string) { u.coreOps.DeclineChange(project, sha) }
-
-func (u *uiEngine) ConnectServer(ctx context.Context, name string) error {
-	return u.coreOps.ConnectServer(ctx, name)
-}
-
-func (u *uiEngine) DisconnectServer(ctx context.Context, name string) error {
-	return u.coreOps.DisconnectServer(ctx, name)
-}
-
-func (u *uiEngine) ReconnectServer(ctx context.Context, name string) error {
-	return u.coreOps.ReconnectServer(ctx, name)
-}
-
-func (u *uiEngine) ClosePassthrough(ctx context.Context, id string) error {
-	return u.coreOps.ClosePassthrough(ctx, id)
-}
-
-func (u *uiEngine) Captured(id string) (proxy.Exchange, bool) { return u.coreOps.Captured(id) }
-
-func (u *uiEngine) Replay(ctx context.Context, id string) (int, error) {
-	return u.coreOps.Replay(ctx, id)
-}
-
-// Shutdown stops every project and the engine through the up backend's
-// shutdown, which tests count; ctx ending cuts it short. The watch on the
-// config file ends first, so nothing is applied while the engine stops.
-func (u *uiEngine) Shutdown(ctx context.Context) error {
-	if u.endWatch != nil {
-		u.endWatch()
-	}
-	if u.b.up.shutdown != nil {
-		return u.b.up.shutdown(u.Engine, ctx)
-	}
-	return u.Engine.Shutdown(ctx)
-}
-
-// Leave is Shutdown: the engine runs in this process, so it cannot be left
-// running.
-func (u *uiEngine) Leave(ctx context.Context) error { return u.Shutdown(ctx) }
-
-// QuitChoice is QuitStop: quitting stops the engine in this process.
-func (u *uiEngine) QuitChoice() tui.QuitChoice { return tui.QuitStop }
-
-// Lost is nil: an engine in this process is never out of reach.
-func (u *uiEngine) Lost() <-chan error { return nil }
-
-// Reload loads the config file and applies it, as a core's Reload does.
-func (u *uiEngine) Reload(ctx context.Context) error { return u.coreOps.Reload(ctx) }
-
-// AnswerPassthrough gives the user's answer to a coding agent's request for
-// a passthrough to the agent API.
-func (u *uiEngine) AnswerPassthrough(ctx context.Context, id string, a tui.Answer) error {
-	return u.agents.answerPassthrough(ctx, id, a)
-}
-
-// AnswerDocument gives the user's answer to a coding agent's request to
-// show a document to the agent API.
-func (u *uiEngine) AnswerDocument(ctx context.Context, id string, a tui.Answer) error {
-	return u.agents.answerDocument(ctx, id, a)
-}
-
-func (u *uiEngine) ConfigPath() string { return u.localOps.path }
-
-func (u *uiEngine) Ports() (int, int) { return u.flags.httpsPort, u.flags.httpPort }
-
-// OpenPage opens Nearhost's page at /?k=<secret>, which gives the browser
-// the cookie the page's document list needs and sends it on to the page.
-// The keyed address is opened only: no error names it.
-func (u *uiEngine) OpenPage() error {
-	base, err := u.PageURL()
-	if err != nil {
-		return err
-	}
-	keyed, err := proxy.PageKeyURL(base)
-	if err != nil {
-		return err
-	}
-	if err := u.b.open(keyed); err != nil {
-		return errors.New(strings.ReplaceAll(err.Error(), keyed, base))
-	}
-	return nil
-}
-
-// uiEngine must satisfy the interface's backend.
-var _ tui.Backend = (*uiEngine)(nil)

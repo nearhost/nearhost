@@ -121,7 +121,7 @@ func TestQuitBoxRememberFailureStillQuits(t *testing.T) {
 	if len(f.shutdown) != 1 {
 		t.Fatalf("shutdown %d", len(f.shutdown))
 	}
-	if log := logText(m, homeKey); !strings.Contains(log, "Could not save the answer to "+f.path+": boom.") {
+	if log := logText(m, homeKey); !strings.Contains(log, "Could not save the answer to "+f.path+": boom. The quit box asks again next time; to stop it asking, set keep_running in that file.") {
 		t.Errorf("log:\n%s", log)
 	}
 }

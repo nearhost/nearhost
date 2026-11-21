@@ -149,7 +149,7 @@ func TestEditConfigSerialisesEdits(t *testing.T) {
 	}
 }
 
-// The interface's add forms and the background .nearhostrc save both load,
+// The interface's add forms and the core's .nearhostrc save both load,
 // change and save the config file. Run at once, neither may save a config
 // without the other's change.
 func TestSaveProjectAndSaveRcDoNotEraseEachOther(t *testing.T) {
@@ -176,7 +176,7 @@ func TestSaveProjectAndSaveRcDoNotEraseEachOther(t *testing.T) {
 			moved := app
 			moved.Routes = []config.Route{{Port: 3001, Role: config.RoleWeb}}
 			moved.Nearhostrc = &config.RcSnapshot{SHA256: "new", Routes: moved.Routes}
-			errs <- u.saveRc(moved)
+			errs <- saveTo(u.path)(moved)
 		}()
 	}
 	wg.Wait()

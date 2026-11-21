@@ -43,6 +43,9 @@ type detachBackend struct {
 	logTail func(from int64, n int) []string
 	// exe is the path of this program, which the child runs.
 	exe func() string
+	// gone waits until the core has stopped and let go of the instance
+	// lock, as `nearhost stop` waits.
+	gone func(ctx context.Context) error
 	// timeout is how long to wait for the child to answer; zero is
 	// detachTimeout. Tests shorten it.
 	timeout time.Duration
@@ -89,6 +92,13 @@ func systemDetach() detachBackend {
 			}
 			return os.Args[0]
 		},
+		gone: func(ctx context.Context) error {
+			dir, err := config.RunDir()
+			if err != nil {
+				return err
+			}
+			return waitStopped(ctx, dir)
+		},
 	}
 }
 
@@ -96,38 +106,55 @@ func systemDetach() detachBackend {
 // terminal and returns once its control socket answers. A core that is
 // already running is left be.
 func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
-	if err := flags.validate(); err != nil {
+	_, info, spawned, err := ensureCore(cmd, b, flags, control.StartedDetached)
+	if err != nil {
 		return err
+	}
+	out := cmd.OutOrStdout()
+	switch {
+	case spawned:
+		fmt.Fprintf(out, "Nearhost is running in the background (pid %d). Stop it with nearhost stop.\n", info.PID)
+	case info.StartedBy == control.StartedForeground:
+		// `nearhost up`, or a daemon run by hand, in a terminal.
+		fmt.Fprintf(out, "Nearhost is already running in a terminal (pid %d). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n", info.PID)
+	default:
+		fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, printable(string(info.StartedBy)))
+	}
+	return nil
+}
+
+// ensureCore dials the core, or starts one with startedBy and waits for it
+// as -d does. spawned says this call started it. flags are refused before
+// anything is dialled when they do not go together; the core is given those
+// the user set on cmd. A core that stops while starting, or is still starting
+// once the wait is over, is said on standard error, and the error is the exit
+// status 1 for Main.
+func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy control.StartedBy) (c *control.Client, info control.Info, spawned bool, err error) {
+	if err := flags.validate(); err != nil {
+		return nil, control.Info{}, false, err
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
-	if info, ok := detachInfo(ctx, b); ok {
-		switch info.StartedBy {
-		case control.StartedForeground, control.StartedTUI:
-			// `nearhost up`, or a daemon run by hand, in a terminal.
-			fmt.Fprintf(out, "Nearhost is already running in a terminal (pid %d). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n", info.PID)
-		default:
-			fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, printable(string(info.StartedBy)))
-		}
-		return nil
+	errOut := cmd.ErrOrStderr()
+	if c, info, ok := detachInfo(ctx, b); ok {
+		return c, info, false, nil
 	}
 	logPath, err := config.LogPath()
 	if err != nil {
-		return err
+		return nil, control.Info{}, false, err
 	}
-	args, err := detachArgs(cmd)
+	args, err := detachArgs(cmd, startedBy)
 	if err != nil {
-		return err
+		return nil, control.Info{}, false, err
 	}
 	// The log may hold earlier runs: only what this one writes after this
 	// says why it stopped.
 	logFrom := b.logSize()
 	wait, err := b.spawn(b.exe(), args)
 	if err != nil {
-		return fmt.Errorf("start Nearhost in the background: %w", err)
+		return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- wait() }()
@@ -141,37 +168,36 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 	for {
 		// The socket first: a core that answers and then stops at once
 		// was running, and whatever stopped it is not a failure to start.
-		if info, ok := detachInfo(ctx, b); ok {
-			fmt.Fprintf(out, "Nearhost is running in the background (pid %d). Stop it with nearhost stop.\n", info.PID)
-			return nil
+		if c, info, ok := detachInfo(ctx, b); ok {
+			return c, info, true, nil
 		}
 		select {
 		case werr := <-exited:
-			return childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
+			return nil, control.Info{}, false, childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
 		default:
 		}
 		if !time.Now().Before(deadline) {
 			msg := "Nearhost is still starting. See " + logPath + " for how it is going."
 			fmt.Fprintln(errOut, msg)
-			return exitError{code: 1, msg: msg}
+			return nil, control.Info{}, false, exitError{code: 1, msg: msg}
 		}
 		select {
 		case <-tick.C:
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, control.Info{}, false, ctx.Err()
 		}
 	}
 }
 
-// detachInfo returns what the running core says of itself, and false when
-// nothing answers.
-func detachInfo(ctx context.Context, b detachBackend) (control.Info, bool) {
+// detachInfo returns a client of the running core and what the core says of
+// itself, and false when nothing answers.
+func detachInfo(ctx context.Context, b detachBackend) (*control.Client, control.Info, bool) {
 	c, err := b.dial()
 	if err != nil {
-		return control.Info{}, false
+		return nil, control.Info{}, false
 	}
 	info, err := c.Info(ctx)
-	return info, err == nil
+	return c, info, err == nil
 }
 
 // childStopped prints that the core stopped while starting, with the end of
@@ -194,11 +220,12 @@ func childStopped(w io.Writer, logPath string, tail []string, werr error) error 
 // detachServeFlags are the flags of bare `nearhost` that the core takes too.
 var detachServeFlags = []string{"https-port", "http-port", "web-port", "no-hosts", "no-capture"}
 
-// detachArgs are the arguments of the core that `nearhost -d` starts: the
-// daemon, said to be detached, with --config and the serve flags the user
-// gave. Flags not given are left out, so the core's defaults are its own.
-func detachArgs(cmd *cobra.Command) ([]string, error) {
-	args := []string{"daemon", "--started-by", string(control.StartedDetached)}
+// detachArgs are the arguments of the core that `nearhost -d` and bare
+// `nearhost` start: the daemon, said to be started by startedBy, with
+// --config and the serve flags the user gave. Flags not given are left out,
+// so the core's defaults are its own.
+func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, error) {
+	args := []string{"daemon", "--started-by", string(startedBy)}
 	if cmd.Flags().Changed("config") {
 		path, err := cmd.Flags().GetString("config")
 		if err != nil {

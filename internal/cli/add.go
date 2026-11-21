@@ -1154,8 +1154,6 @@ func runModeAt(runDir, agentSock string) runMode {
 				return modeUnknown
 			case !info.Reloads:
 				return modeUp
-			case info.StartedBy == control.StartedTUI:
-				return modeInterface
 			default:
 				return modeCore
 			}

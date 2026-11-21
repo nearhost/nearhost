@@ -159,3 +159,10 @@ func (m *mirror) grants(server string) ([]grants.Grant, error) {
 	}
 	return out, nil
 }
+
+// clients is how many clients follow the core's stream, this one included.
+func (m *mirror) clients() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state.Clients
+}

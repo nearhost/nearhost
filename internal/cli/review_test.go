@@ -211,12 +211,6 @@ func TestSaveToRefusesAHostAnotherProjectServes(t *testing.T) {
 	checkClashRefused(t, path, saveTo(path), app)
 }
 
-func TestSaveRcRefusesAHostAnotherProjectServes(t *testing.T) {
-	u := formEngine(t)
-	app := clashSetup(t, u.path)
-	checkClashRefused(t, u.path, u.saveRc, app)
-}
-
 // rcAliasSetup writes a config in which app, approved with alias a.test from
 // its .nearhostrc, now has a file whose alias is next. It returns the
 // project as the engine has it.

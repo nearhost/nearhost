@@ -92,13 +92,18 @@ func (s *sandbox) hostsFile() string {
 	return string(b)
 }
 
-// start runs nearhost in the sandbox, in a terminal of its own.
+// start runs nearhost in the sandbox, in a terminal of its own. nearhost
+// starts its core in the background, outside the terminal, when none runs:
+// whatever the journey leaves running is stopped when it ends.
 func (s *sandbox) start() *terminal {
 	s.t.Helper()
 	args := s.args
 	if !s.manageHosts {
 		args = append(args[:len(args):len(args)], "--no-hosts")
 	}
+	// Registered first, so it runs once the terminal's own cleanup has
+	// killed nearhost, which leaves its core running.
+	s.t.Cleanup(s.stopAnyCore)
 	return start(s.t, s.env, s.cwd, nearhostBin, args...)
 }
 
@@ -164,9 +169,26 @@ func skipWelcome(term *terminal) {
 	term.waitGone("the welcome dialog to close", "Welcome to Nearhost")
 }
 
-// quit presses q and checks nearhost exits cleanly and leaves the terminal
-// as it found it: off the alternate screen, with the cursor showing.
+// quitQuestion is what the quit box asks, when nearhost started the core it
+// follows.
+const quitQuestion = "Stop Nearhost, or leave it running in the background?"
+
+// quit presses q, which asks whether to stop the core nearhost started,
+// answers with the default, which stops it, and checks nearhost exits
+// cleanly and leaves the terminal as it found it: off the alternate screen,
+// with the cursor showing.
 func quit(term *terminal) {
+	term.t.Helper()
+	term.press('q')
+	term.waitFor("the quit box", quitQuestion, "[ Stop ]", "[ Leave running ]")
+	term.press(keyEnter)
+	restored(term)
+}
+
+// leave presses q and, nearhost not having started the core it follows,
+// checks it quits without asking and leaves the terminal as it found it:
+// were the quit box to ask, nearhost would not exit.
+func leave(term *terminal) {
 	term.t.Helper()
 	term.press('q')
 	restored(term)

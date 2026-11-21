@@ -157,6 +157,27 @@ func TestDetachAlreadyRunning(t *testing.T) {
 	}
 }
 
+// A core bare nearhost started runs in the background, outside the
+// interface's terminal, and stays when the interface leaves it.
+func TestDetachAlreadyRunningStartedByTheInterface(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	f.answer(control.Info{API: 1, PID: 97, StartedBy: control.StartedTUI})
+	b := f.backend(func() func() error {
+		t.Error("spawned with a core running")
+		return running()
+	})
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Nearhost is already running in the background (pid 97, started by tui).\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+}
+
 // A core in a terminal is not in the background, and -d says how to put it
 // there.
 func TestDetachAlreadyRunningInATerminal(t *testing.T) {
