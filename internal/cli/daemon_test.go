@@ -144,6 +144,47 @@ func TestDaemonNeverElevates(t *testing.T) {
 	}
 }
 
+// The message the daemon leaves says to run `nearhost hosts update`: after it
+// does, the daemon starts the project it had left stopped.
+func TestDaemonStartsAProjectAfterHostsUpdate(t *testing.T) {
+	stale := filepath.Join(testutil.TempDir(t, "hosts"), "hosts")
+	if err := os.WriteFile(stale, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, beforeApplier, beforeTerm := hosts.DefaultPath, newHostsUpdateApplier, stdinIsTerminal
+	t.Cleanup(func() { hosts.DefaultPath, newHostsUpdateApplier, stdinIsTerminal = before, beforeApplier, beforeTerm })
+	hosts.DefaultPath = stale
+	stdinIsTerminal = func() bool { return true }
+	newHostsUpdateApplier = func(context.Context, bool) hosts.Applier {
+		return func(aliases []string) error { return hosts.Apply(stale, aliases) }
+	}
+
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("one", testutil.Upstream(t, "one"), true)}})
+	u.adjust = func(b *upBackend) {
+		b.ensureHosts = func(context.Context, []string) error {
+			t.Error("the daemon called the hosts function that elevates")
+			return errors.New("elevated")
+		}
+	}
+	u.startDaemon()
+	u.waitForLog("Nothing is being served.\n")
+	if st, err := u.control().Status(context.Background()); err != nil || len(st.Projects) != 1 || st.Projects[0].State == string(engine.StateRunning) {
+		t.Fatalf("before the update: %+v, %v; want one project not running", st, err)
+	}
+
+	var out syncBuffer
+	if err := executeInto(context.Background(), &out, newHostsCmd(nil), "hosts", "update", "--config", u.cfgPath); err != nil {
+		t.Fatalf("hosts update: %v\n%s", err, out.String())
+	}
+	u.waitForLog("[one] state: running\n")
+	if got := u.get("one.test"); !strings.HasPrefix(got, "one:one.test") {
+		t.Errorf("served %q through the proxy", got)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}
+
 func TestDaemonKeepsRunningWithNothingToServe(t *testing.T) {
 	fastWatch(t)
 	u := newUpRun(t, &config.Config{})
