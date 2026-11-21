@@ -109,24 +109,27 @@ func TestWatchAppliesAChange(t *testing.T) {
 func TestWatchWaitsForTheFileToSettle(t *testing.T) {
 	// The file changes before every poll until the writes stop, so no two
 	// polls see the same file. Without the debounce a poll after the first
-	// write would apply a half-written state. The test sends the ticks: a
-	// send returns once the watcher has taken the tick, which it does only
-	// after it has handled the one before.
+	// write would apply a half-written state. The test sends the ticks and
+	// waits for each poll to be done before it writes again.
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeProjects(t, path, "a")
 	r := &watchRecorder{}
 	ticks := make(chan time.Time)
+	polled := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		watchTicks(ctx, path, ticks, r.apply, r.badf)
+		watchTicks(ctx, path, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
 	}()
 	t.Cleanup(func() {
 		cancel()
 		<-done
 	})
-	tick := func() { ticks <- time.Now() }
+	tick := func() {
+		ticks <- time.Now()
+		<-polled
+	}
 
 	tick()
 	names := []string{"a"}
@@ -136,7 +139,6 @@ func TestWatchWaitsForTheFileToSettle(t *testing.T) {
 		tick()
 	}
 	tick() // the file is as the last poll saw it: settled, and applied
-	tick() // the poll before has been handled
 	if n, _ := r.counts(); n != 1 {
 		t.Fatalf("apply called %d times, want once", n)
 	}

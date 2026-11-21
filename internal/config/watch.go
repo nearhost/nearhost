@@ -36,36 +36,33 @@ func stampOf(path string) fileStamp {
 func Watch(ctx context.Context, path string, interval time.Duration, apply func(*Config), bad func(error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	watchTicks(ctx, path, ticker.C, apply, bad)
+	watchTicks(ctx, path, ticker.C, nil, apply, bad)
 }
 
-// watchTicks is Watch, polling at each tick from ticks: a test sends them
-// itself, so what a poll sees does not hang on how the machine is loaded.
-func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, apply func(*Config), bad func(error)) {
+// watchTicks is Watch, polling at each tick from ticks and calling polled,
+// when it is not nil, once a poll is done: a test sends the ticks itself and
+// waits for each poll, so what a poll sees does not hang on how the machine
+// is loaded.
+func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, polled func(), apply func(*Config), bad func(error)) {
 	stamp := stampOf(path) // the last state handled
 	seen := stamp          // the state at the previous tick
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticks:
-		}
+	poll := func() {
 		now := stampOf(path)
 		if now == stamp {
 			seen = now
-			continue
+			return
 		}
 		if now != seen {
 			seen = now // changed since the last tick: wait for it to settle
-			continue
+			return
 		}
 		stamp = now
 		if !now.exists {
-			continue
+			return
 		}
 		if now.size == 0 {
 			bad(fmt.Errorf("ignored a change to %s: the file is empty", path))
-			continue
+			return
 		}
 		cfg, err := Load(path)
 		if err == nil {
@@ -73,8 +70,19 @@ func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, apply 
 		}
 		if err != nil {
 			bad(err)
-			continue
+			return
 		}
 		apply(cfg)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+		}
+		poll()
+		if polled != nil {
+			polled()
+		}
 	}
 }
