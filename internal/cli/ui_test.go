@@ -166,7 +166,7 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 }
 
 func TestHostsState(t *testing.T) {
-	u := &uiEngine{flags: serveFlags{noHosts: true}}
+	u := &localOps{flags: serveFlags{noHosts: true}}
 	if got := u.HostsState(); got != "not managed (--no-hosts)" {
 		t.Errorf("--no-hosts: %q", got)
 	}
@@ -177,8 +177,8 @@ func TestHostsState(t *testing.T) {
 func TestHostsStateFirstCallSkipsTheLookup(t *testing.T) {
 	cfg := &config.Config{Projects: []config.Project{localProject("web", 8000, true)}}
 	var asked []string
-	u := &uiEngine{
-		Engine: engine.New(cfg, engine.Options{}),
+	u := &localOps{
+		running: engine.New(cfg, engine.Options{}).Config,
 		b: uiBackend{
 			readHosts: func() (string, error) { return "127.0.0.1 localhost\n", nil },
 			lookup: func(_ context.Context, name string) ([]netip.Addr, error) {
@@ -221,13 +221,13 @@ func TestOpenPageOpensItWithTheKey(t *testing.T) {
 	var openErr error
 	u := &uiEngine{
 		Engine: engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443, WebPort: 6327}),
-		b: uiBackend{open: func(url string) error {
+		localOps: &localOps{b: uiBackend{open: func(url string) error {
 			opened = append(opened, url)
 			if openErr != nil {
 				return fmt.Errorf("could not run the opener for %s: %w", url, openErr)
 			}
 			return nil
-		}},
+		}}},
 	}
 	if err := u.OpenPage(); err != nil {
 		t.Fatalf("OpenPage: %v", err)

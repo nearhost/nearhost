@@ -21,7 +21,7 @@ import (
 // a terminal, is not lost either.
 
 // current reads and checks the config file.
-func (u *uiEngine) current() (*config.Config, error) {
+func (u *localOps) current() (*config.Config, error) {
 	cfg, err := config.Load(u.path)
 	if err != nil {
 		return nil, err
@@ -34,7 +34,7 @@ func (u *uiEngine) current() (*config.Config, error) {
 
 // check validates cfg as read from the config file, naming the file in what
 // it finds.
-func (u *uiEngine) check(cfg *config.Config) error {
+func (u *localOps) check(cfg *config.Config) error {
 	return validateConfig(u.path, cfg)
 }
 
@@ -46,7 +46,7 @@ const (
 )
 
 // SSHHosts lists the hosts of the user's ssh config and the files it includes.
-func (u *uiEngine) SSHHosts() []string {
+func (u *localOps) SSHHosts() []string {
 	if u.b.sshHosts == nil {
 		return nil
 	}
@@ -57,7 +57,7 @@ func (u *uiEngine) SSHHosts() []string {
 	return hosts
 }
 
-func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
+func (u *localOps) CheckServer(ctx context.Context, srv config.Server) error {
 	files, err := u.b.up.ssh.openServer(ctx, srv, checkAgain)
 	if err != nil {
 		return err
@@ -65,11 +65,11 @@ func (u *uiEngine) CheckServer(ctx context.Context, srv config.Server) error {
 	return files.close()
 }
 
-func (u *uiEngine) AddServer(srv config.Server) error {
+func (u *localOps) AddServer(srv config.Server) error {
 	return u.EditConfig(func(cfg *config.Config) error { return addServerTo(cfg, srv) })
 }
 
-func (u *uiEngine) OpenServer(ctx context.Context, srv config.Server) (tui.ServerFiles, error) {
+func (u *localOps) OpenServer(ctx context.Context, srv config.Server) (tui.ServerFiles, error) {
 	files, err := openFiles(ctx, u.b.up.ssh, srv, connectAgain)
 	if err != nil {
 		return nil, err
@@ -77,12 +77,12 @@ func (u *uiEngine) OpenServer(ctx context.Context, srv config.Server) (tui.Serve
 	return &uiFiles{u: u, srv: srv, files: files}, nil
 }
 
-func (u *uiEngine) RegistryQuestion() bool {
+func (u *localOps) RegistryQuestion() bool {
 	cfg, err := u.current()
 	return err == nil && len(cfg.Registries) == 0 && !cfg.RegistryPromptOff()
 }
 
-func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer) (string, error) {
+func (u *localOps) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer) (string, error) {
 	cfg, err := u.current()
 	if err != nil {
 		return "", err
@@ -97,7 +97,7 @@ func (u *uiEngine) AnswerRegistry(ctx context.Context, answer tui.RegistryAnswer
 	return answerRegistry(ctx, io.Discard, u.b.presets, cfg, u.path, a)
 }
 
-func (u *uiEngine) EnablePresets(ctx context.Context, names []string) []string {
+func (u *localOps) EnablePresets(ctx context.Context, names []string) []string {
 	cfg, err := u.current()
 	if err != nil {
 		return []string{err.Error()}
@@ -111,7 +111,7 @@ func (u *uiEngine) EnablePresets(ctx context.Context, names []string) []string {
 	return notes
 }
 
-func (u *uiEngine) CheckNames(name, alias string) (error, error) {
+func (u *localOps) CheckNames(name, alias string) (error, error) {
 	cfg, err := u.current()
 	if err != nil {
 		return err, nil
@@ -119,7 +119,7 @@ func (u *uiEngine) CheckNames(name, alias string) (error, error) {
 	return formNameProblem(cfg, name), aliasProblem(cfg, alias)
 }
 
-func (u *uiEngine) SaveProject(p config.Project) error {
+func (u *localOps) SaveProject(p config.Project) error {
 	err := u.EditConfig(func(cfg *config.Config) error {
 		if err := errors.Join(formNameProblem(cfg, p.Name), aliasProblem(cfg, p.Alias)); err != nil {
 			return err
@@ -135,7 +135,7 @@ func (u *uiEngine) SaveProject(p config.Project) error {
 
 // PublicAddress looks host up with the lookup the engine and the hosts
 // state share, so an answer is cached for all of them.
-func (u *uiEngine) PublicAddress(ctx context.Context, host string) (string, bool) {
+func (u *localOps) PublicAddress(ctx context.Context, host string) (string, bool) {
 	return firstPublic(ctx, u.b.lookup, host)
 }
 
@@ -155,7 +155,7 @@ func formNameProblem(cfg *config.Config, name string) error {
 // it takes, and a read stuck on a server that stopped answering ends when
 // Close, which quitting calls even while a step runs, cuts the connection.
 type uiFiles struct {
-	u     *uiEngine
+	u     *localOps
 	srv   config.Server
 	files serverFiles
 
