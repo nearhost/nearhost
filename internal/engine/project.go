@@ -432,9 +432,6 @@ func (e *Engine) ensureHosts(ctx context.Context, web []config.WebHosts) error {
 		return ctx.Err()
 	}
 	defer func() { <-e.hostsTurn }()
-	if err := ctx.Err(); err != nil {
-		return err // interrupted just as its turn came
-	}
 	e.mu.Lock()
 	names := append([]string(nil), e.hostNames...)
 	e.mu.Unlock()
@@ -448,7 +445,15 @@ func (e *Engine) ensureHosts(ctx context.Context, web []config.WebHosts) error {
 	}
 	slices.Sort(names)
 	names = slices.Compact(names)
-	return e.opts.EnsureHosts(ctx, hosts.Wanted(ctx, names, e.opts.Lookup))
+	wanted := hosts.Wanted(ctx, names, e.opts.Lookup)
+	// Looked at last, once mu has been taken: Shutdown cancels the starts
+	// one by one under mu, so the turn can pass from a start it cancelled
+	// to one it has yet to cancel, and only once mu is free are both
+	// cancelled. An interrupted start never begins an update.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return e.opts.EnsureHosts(ctx, wanted)
 }
 
 // claimPort reserves a local port for a forward of run. It describes the
