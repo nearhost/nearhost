@@ -373,6 +373,9 @@ func (e *Engine) setConfigLocked(next *config.Config, replace map[string]bool) {
 	e.cfg, e.order, e.runs, e.byAlias, e.hostNames = next, order, runs, byAlias, next.HostsFileNames()
 }
 
+// cloneConfig copies every top-level field of cfg, deep enough that the copy
+// shares no slice or pointer with it. The core reports its configuration to
+// its clients from such a copy, so a field left out here never reaches them.
 func cloneConfig(cfg *config.Config) *config.Config {
 	out := &config.Config{}
 	if cfg == nil {
@@ -384,7 +387,22 @@ func cloneConfig(cfg *config.Config) *config.Config {
 		out.Projects[i].Routes = cloneRoutes(out.Projects[i].Routes)
 		out.Projects[i].Nearhostrc = out.Projects[i].Nearhostrc.Clone()
 	}
+	out.Registries = append([]config.Registry(nil), cfg.Registries...)
+	out.Presets = append([]config.PresetRef(nil), cfg.Presets...)
+	out.RegistryPrompt = cloneBool(cfg.RegistryPrompt)
+	out.Notifications = cloneBool(cfg.Notifications)
+	out.KeepRunning = cloneBool(cfg.KeepRunning)
 	return out
+}
+
+// cloneBool copies an optional setting, so the copy shares nothing with the
+// original. Absent stays absent.
+func cloneBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
 }
 
 // cloneRoutes copies routes along with their hosts, so a copy of the
