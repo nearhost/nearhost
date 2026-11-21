@@ -122,6 +122,37 @@ func TestStopCallsBackend(t *testing.T) {
 	}
 }
 
+// closingBackend closes its server as soon as it is asked to stop, as the
+// core's shutdown does.
+type closingBackend struct {
+	*fakeBackend
+	srv *Server
+}
+
+func (c *closingBackend) Stop() {
+	c.fakeBackend.Stop()
+	c.srv.Close()
+}
+
+// A core that closes its socket the moment it is asked to stop still answers
+// the stop: the client is told it worked, not cut off with an EOF.
+func TestStopAnswersBeforeTheSocketCloses(t *testing.T) {
+	dir := testutil.TempDir(t, "ctl")
+	b := &closingBackend{fakeBackend: newFake()}
+	s, err := Listen(SocketPath(dir), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.srv = s
+	t.Cleanup(func() { s.Close() })
+	if err := dial(t, dir).Stop(context.Background()); err != nil {
+		t.Fatalf("Stop = %v, want nil", err)
+	}
+	if stops, _ := b.calls(); stops != 1 {
+		t.Fatalf("Stop called %d times, want 1", stops)
+	}
+}
+
 func TestHostsChangedCallsBackend(t *testing.T) {
 	b := newFake()
 	c := dial(t, serve(t, b))

@@ -114,8 +114,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "/v1/status":
 		reply(w, http.StatusOK, s.b.Status())
 	case "/v1/stop":
-		s.b.Stop()
+		// Answer before the shutdown starts: the shutdown closes this
+		// socket, and would cut the answer off, leaving the client an EOF.
+		// The length says the answer is whole once flushed.
+		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusAccepted)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		s.b.Stop()
 	case "/v1/hosts/changed":
 		s.b.HostsChanged(r.Context())
 		w.WriteHeader(http.StatusNoContent)
