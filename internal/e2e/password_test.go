@@ -36,9 +36,9 @@ func hasShop(hostsFile string) bool {
 func shopWithHosts(t *testing.T) (*sandbox, *terminal) {
 	t.Helper()
 	// Windows asks for consent in a dialog of its own, not in the password
-	// box. And a run with administrator rights, as GitHub's Windows
-	// runners and root are, writes the machine's own hosts file alone,
-	// which the stand-in's command would then be refused.
+	// box: consent_test.go has its journeys. And a run as root writes the
+	// machine's own hosts file alone, which the stand-in's command would
+	// then be refused.
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows asks through its own prompt, not the password box")
 	}
@@ -186,8 +186,8 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 	quit(term)
 }
 
-// The stand-ins for sudo and the hosts file are in builds made with the e2e
-// tag alone. A build without it, as a release is, holds none of them.
+// The stand-ins for sudo, the Windows prompt and the hosts file are in builds
+// made with the e2e tag alone. A build without it, as a release is, holds none of them.
 func TestAReleaseBuildHasNoTestSeam(t *testing.T) {
 	plain := filepath.Join(t.TempDir(), "nearhost-plain")
 	if out, err := exec.Command("go", "build", "-o", plain, "github.com/nearhost/nearhost/cmd/nearhost").CombinedOutput(); err != nil {

@@ -19,6 +19,11 @@ import (
 // terminate before it is killed.
 const sudoStopDelay = 2 * time.Second
 
+// systemOverride, when set, gives the Elevator System returns. Nothing sets
+// it in a release: the one file that does is built with the e2e tag alone,
+// for the journeys in internal/e2e.
+var systemOverride func() Elevator
+
 // System is this OS's Elevator.
 func System() Elevator {
 	if systemOverride != nil {

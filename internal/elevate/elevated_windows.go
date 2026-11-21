@@ -1,3 +1,5 @@
+//go:build !e2e
+
 package elevate
 
 import "golang.org/x/sys/windows"
