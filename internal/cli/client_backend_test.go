@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,6 +138,9 @@ func (f *mirrorCore) RevokeGrant(server, requester, kind string) error {
 }
 func (f *mirrorCore) Captured(id string) (proxy.Exchange, bool) {
 	f.hit("Captured " + id)
+	if strings.HasPrefix(id, "gone") {
+		return proxy.Exchange{}, false
+	}
 	return proxy.Exchange{ID: id}, true
 }
 func (f *mirrorCore) Replay(_ context.Context, id string) (int, error) {
@@ -523,4 +527,63 @@ func TestClientCloseEndsItsWork(t *testing.T) {
 		t.Errorf("Close reported the core lost: %v", err)
 	default:
 	}
+}
+
+// An exchange the core no longer keeps is asked about once, and a core that
+// cannot be asked is not asked again on every redraw.
+func TestCapturedMissIsKept(t *testing.T) {
+	h := newMirrorHarness(t)
+	b := h.backend(t, h.state(t), nil, nil)
+	for range 2 {
+		if _, ok := b.Captured("gone1"); ok {
+			t.Error("Captured found an exchange the core does not keep")
+		}
+	}
+	if got := h.core.asked(); !slices.Equal(got, []string{"Captured gone1"}) {
+		t.Errorf("the core was asked %q, want once", got)
+	}
+	h.srv.Close()
+	if _, ok := b.Captured("r9"); ok {
+		t.Error("Captured found an exchange with no core")
+	}
+	b.capturedMu.Lock()
+	a := b.captured["r9"]
+	b.capturedMu.Unlock()
+	if a.kept || a.retry.Before(time.Now()) {
+		t.Errorf("after a failed ask: %+v, want a retry time ahead", a)
+	}
+}
+
+// An Always allow the core could not save reaches the interface as such, in
+// the core's words, with the end of its request when that came too.
+func TestAnswerAllowNotSavedMapsToTui(t *testing.T) {
+	h := newMirrorHarness(t)
+	b := h.backend(t, h.state(t), nil, nil)
+	ctx := context.Background()
+	h.core.answerErr = fmt.Errorf("opened, but: %w", control.ErrAllowNotSaved)
+	err := b.AnswerPassthrough(ctx, "x1", tui.AnswerAlways)
+	if !errors.Is(err, tui.ErrAllowNotSaved) || errors.Is(err, tui.ErrRequestEnded) || err.Error() != h.core.answerErr.Error() {
+		t.Errorf("not saved = %v", err)
+	}
+	h.core.answerErr = fmt.Errorf("gone: %w, and %w", control.ErrRequestEnded, control.ErrAllowNotSaved)
+	err = b.AnswerDocument(ctx, "d1", tui.AnswerAlways)
+	if !errors.Is(err, tui.ErrAllowNotSaved) || !errors.Is(err, tui.ErrRequestEnded) || err.Error() != h.core.answerErr.Error() {
+		t.Errorf("both = %v", err)
+	}
+}
+
+// An ended approval is forgotten: given again, it reaches the interface
+// again.
+func TestEndedApprovalIsForgotten(t *testing.T) {
+	h := newMirrorHarness(t)
+	props := &tui.Proposals{}
+	h.backend(t, h.state(t), nil, props)
+	p := control.Approval{ID: "p1", Proposal: &agentapi.Proposal{ID: "p1", Origin: "local", Path: "/code/blog"}}
+	h.hub.Publish(control.Envelope{Kind: control.KindApproval, Approval: &p})
+	h.hub.Publish(control.Envelope{Kind: control.KindEnded, ID: "p1"})
+	h.hub.Publish(control.Envelope{Kind: control.KindApproval, Approval: &p})
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		got, _, _, _, _ := props.Waiting()
+		return len(got) == 2
+	}, "the proposal given twice")
 }

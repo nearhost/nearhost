@@ -31,9 +31,14 @@ const refreshEvery = time.Second
 // missedNote is the log line said when the stream skipped envelopes.
 const missedNote = "Some log lines were missed."
 
-// keptExchanges is how many captured exchanges the backend keeps once it has
-// fetched them.
+// keptExchanges is how many answers about captured exchanges the backend
+// keeps once it has fetched them: the exchanges, and the IDs the core no
+// longer keeps.
 const keptExchanges = 32
+
+// capturedRetry is how long the backend waits before it asks the core again
+// for an exchange it could not ask for. The interface asks on every redraw.
+const capturedRetry = 3 * time.Second
 
 // clientBackend is the interface's backend over the control API of a core
 // running in another process. It mirrors the core's state, which every read
@@ -71,9 +76,23 @@ type clientBackend struct {
 	// given twice. Only the constructor and the stream's goroutine use it.
 	given map[string]bool
 
+	// lostMu orders Close and the send on lost, so nothing is sent once
+	// Close has been called.
+	lostMu sync.Mutex
+	closed bool
+
 	capturedMu sync.Mutex
-	captured   map[string]proxy.Exchange
+	captured   map[string]capturedAnswer
 	capturedIn []string // the IDs in captured, oldest first
+}
+
+// capturedAnswer is what the core said about a captured exchange: the
+// exchange, or that it is not kept. When the core could not be asked,
+// retry is when to ask again.
+type capturedAnswer struct {
+	ex    proxy.Exchange
+	kept  bool
+	retry time.Time
 }
 
 var _ tui.Backend = (*clientBackend)(nil)
@@ -98,7 +117,7 @@ func newClientBackend(c *control.Client, st control.State, local *localOps, prop
 		done:     make(chan struct{}),
 		want:     make(chan struct{}, 1),
 		given:    map[string]bool{},
-		captured: map[string]proxy.Exchange{},
+		captured: map[string]capturedAnswer{},
 	}
 	local.running = b.mirror.config
 	b.give(st.Approvals)
@@ -113,6 +132,9 @@ func newClientBackend(c *control.Client, st control.State, local *localOps, prop
 // Close stops following the core and returns once the backend's goroutines
 // have ended. It leaves the core running, and may be called more than once.
 func (b *clientBackend) Close() {
+	b.lostMu.Lock()
+	b.closed = true
+	b.lostMu.Unlock()
 	b.cancel()
 	<-b.done
 }
@@ -135,7 +157,11 @@ func (b *clientBackend) follow(after uint64) {
 			return
 		}
 		if redialed {
-			b.lost <- err
+			b.lostMu.Lock()
+			if !b.closed {
+				b.lost <- err
+			}
+			b.lostMu.Unlock()
 			b.cancel()
 			return
 		}
@@ -225,8 +251,9 @@ func (b *clientBackend) take(e control.Envelope) {
 		}
 	case control.KindEnded:
 		// The interface has no way yet to take back a request it shows: one
-		// that has ended says so when it is answered. An unknown ID, or one
-		// given from a state, needs nothing either way.
+		// that has ended says so when it is answered. The ID is forgotten,
+		// as nothing will give it again; an unknown one needs nothing.
+		delete(b.given, e.ID)
 	}
 }
 
@@ -314,18 +341,18 @@ func (b *clientBackend) refresh(ctx context.Context) {
 	}
 }
 
-// acted returns err, the error of an action, once the state is fetched
-// again: what the action changed shows when it returns, even when it
-// publishes no event.
-func (b *clientBackend) acted(err error) error {
-	b.refresh(context.Background())
+// acted returns err, the error of an action made with ctx, once the state
+// is fetched again with ctx: what the action changed shows when it returns,
+// even when it publishes no event.
+func (b *clientBackend) acted(ctx context.Context, err error) error {
+	b.refresh(ctx)
 	return err
 }
 
 // logged publishes err as a log line, for an action the interface wants no
 // error from.
 func (b *clientBackend) logged(err error) {
-	if err = b.acted(err); err != nil {
+	if err = b.acted(context.Background(), err); err != nil {
 		b.bus.Publish(engine.Event{Message: err.Error()})
 	}
 }
@@ -374,22 +401,22 @@ func (b *clientBackend) Shutdown(ctx context.Context) error { return b.c.Stop(ct
 func (b *clientBackend) Apply(ctx context.Context, _ *config.Config) error { return b.Reload(ctx) }
 
 // Reload has the core load its config file and apply it.
-func (b *clientBackend) Reload(ctx context.Context) error { return b.acted(b.c.Reload(ctx)) }
+func (b *clientBackend) Reload(ctx context.Context) error { return b.acted(ctx, b.c.Reload(ctx)) }
 
 func (b *clientBackend) StartProject(ctx context.Context, name string) error {
-	return b.acted(b.c.StartProject(ctx, name))
+	return b.acted(ctx, b.c.StartProject(ctx, name))
 }
 
 func (b *clientBackend) StopProject(ctx context.Context, name string) error {
-	return b.acted(b.c.StopProject(ctx, name))
+	return b.acted(ctx, b.c.StopProject(ctx, name))
 }
 
 func (b *clientBackend) Recheck(ctx context.Context, project string) error {
-	return b.acted(b.c.Recheck(ctx, project))
+	return b.acted(ctx, b.c.Recheck(ctx, project))
 }
 
 func (b *clientBackend) AcceptChange(project, sha string) error {
-	return b.acted(b.c.AcceptChange(context.Background(), project, sha))
+	return b.acted(context.Background(), b.c.AcceptChange(context.Background(), project, sha))
 }
 
 func (b *clientBackend) DeclineChange(project, sha string) {
@@ -397,15 +424,15 @@ func (b *clientBackend) DeclineChange(project, sha string) {
 }
 
 func (b *clientBackend) ConnectServer(ctx context.Context, name string) error {
-	return b.acted(b.c.ConnectServer(ctx, name))
+	return b.acted(ctx, b.c.ConnectServer(ctx, name))
 }
 
 func (b *clientBackend) DisconnectServer(ctx context.Context, name string) error {
-	return b.acted(b.c.DisconnectServer(ctx, name))
+	return b.acted(ctx, b.c.DisconnectServer(ctx, name))
 }
 
 func (b *clientBackend) ReconnectServer(ctx context.Context, name string) error {
-	return b.acted(b.c.ReconnectServer(ctx, name))
+	return b.acted(ctx, b.c.ReconnectServer(ctx, name))
 }
 
 func (b *clientBackend) AcceptProposal(id, name string) {
@@ -417,41 +444,50 @@ func (b *clientBackend) DeclineProposal(id, reason string) {
 }
 
 func (b *clientBackend) ClosePassthrough(ctx context.Context, id string) error {
-	return b.acted(b.c.ClosePassthrough(ctx, id))
+	return b.acted(ctx, b.c.ClosePassthrough(ctx, id))
 }
 
 func (b *clientBackend) AnswerPassthrough(ctx context.Context, id string, a tui.Answer) error {
-	return b.acted(tuiAnswerError(b.c.AnswerPassthrough(ctx, id, answerWord(a))))
+	return b.acted(ctx, tuiAnswerError(b.c.AnswerPassthrough(ctx, id, answerWord(a))))
 }
 
 func (b *clientBackend) AnswerDocument(ctx context.Context, id string, a tui.Answer) error {
-	return b.acted(tuiAnswerError(b.c.AnswerDocument(ctx, id, answerWord(a))))
+	return b.acted(ctx, tuiAnswerError(b.c.AnswerDocument(ctx, id, answerWord(a))))
 }
 
 func (b *clientBackend) OpenDocument(id string) error {
-	return b.acted(b.c.OpenDocument(context.Background(), id))
+	return b.acted(context.Background(), b.c.OpenDocument(context.Background(), id))
 }
 
 func (b *clientBackend) RemoveDocuments(id string) error {
-	return b.acted(b.c.RemoveDocuments(context.Background(), id))
+	return b.acted(context.Background(), b.c.RemoveDocuments(context.Background(), id))
 }
 
 func (b *clientBackend) RevokeGrant(server, requester, kind string) error {
-	return b.acted(b.c.RevokeGrant(context.Background(), server, requester, kind))
+	return b.acted(context.Background(), b.c.RevokeGrant(context.Background(), server, requester, kind))
 }
 
 // Captured fetches the exchange kept under id from the core, once: the
-// backend keeps the last keptExchanges it has fetched.
+// backend keeps its answer, the exchange or that it is not kept, for the
+// last keptExchanges IDs it has asked about. When the core cannot be asked,
+// the answer is that it is not kept, and the core is not asked about id
+// again for capturedRetry. The fetch is made in the call: the core is on
+// this machine, and answers at once.
 func (b *clientBackend) Captured(id string) (proxy.Exchange, bool) {
 	b.capturedMu.Lock()
-	ex, ok := b.captured[id]
+	a, ok := b.captured[id]
 	b.capturedMu.Unlock()
-	if ok {
-		return ex, true
+	if ok && (a.retry.IsZero() || time.Now().Before(a.retry)) {
+		return a.ex, a.kept
 	}
-	ex, ok = b.c.Captured(context.Background(), id)
-	if !ok {
-		return proxy.Exchange{}, false
+	ex, err := b.c.CapturedExchange(context.Background(), id)
+	switch {
+	case err == nil:
+		a = capturedAnswer{ex: ex, kept: true}
+	case errors.Is(err, control.ErrNotFound):
+		a = capturedAnswer{}
+	default:
+		a = capturedAnswer{retry: time.Now().Add(capturedRetry)}
 	}
 	b.capturedMu.Lock()
 	defer b.capturedMu.Unlock()
@@ -462,8 +498,8 @@ func (b *clientBackend) Captured(id string) (proxy.Exchange, bool) {
 			b.capturedIn = b.capturedIn[1:]
 		}
 	}
-	b.captured[id] = ex
-	return ex, true
+	b.captured[id] = a
+	return a.ex, a.kept
 }
 
 func (b *clientBackend) Replay(ctx context.Context, id string) (int, error) {
@@ -501,8 +537,12 @@ func answerWord(a tui.Answer) string {
 }
 
 // tuiAnswerError is the core's error for an answer, marked for the
-// interface as the end of its request when the core says it had ended.
+// interface as the core marked it: as an Always allow that was not saved,
+// and as the end of its request. It reads as the core's.
 func tuiAnswerError(err error) error {
+	if errors.Is(err, control.ErrAllowNotSaved) {
+		err = notSaved{err}
+	}
 	if errors.Is(err, control.ErrRequestEnded) {
 		return tui.RequestEnded(err)
 	}
