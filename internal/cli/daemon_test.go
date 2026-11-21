@@ -35,14 +35,17 @@ func (u *upRun) startDaemon(extra ...string) {
 	u.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel = cancel
-	u.done = make(chan error, 1)
+	// The goroutine sends to its own channel: a test that starts a second
+	// daemon replaces u.done while the first may still be returning.
+	done := make(chan error, 1)
+	u.done = done
 	b := u.backend()
 	if u.adjust != nil {
 		u.adjust(&b)
 	}
 	args := u.args(extra...)
 	args[0] = "daemon"
-	go func() { u.done <- executeInto(ctx, &u.out, newDaemonCmd(b), args...) }()
+	go func() { done <- executeInto(ctx, &u.out, newDaemonCmd(b), args...) }()
 	u.t.Cleanup(func() {
 		if u.done != nil {
 			u.stop()
