@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build e2e && unix
 
 package elevate
 
@@ -18,8 +18,8 @@ import (
 // This file is in builds made with the e2e tag alone, which the journeys in
 // internal/e2e make and no release does: TestAReleaseBuildHasNoTestSeam
 // there checks a build without the tag. In such a build nothing here runs
-// sudo or asks Windows for consent, so a journey can go through the password
-// box without touching the machine.
+// sudo, so a journey can go through the password box without touching the
+// machine. e2e_windows.go is the same for the Windows prompt.
 
 func init() { systemOverride = func() Elevator { return &theE2E } }
 
