@@ -23,8 +23,10 @@ type upPrinter struct {
 	// shown is the last state line printed for each project.
 	shown map[string]string
 	// keepRunning is set for a core that keeps going with nothing to
-	// serve and that no one stops from a terminal: the summary then never
-	// says it is stopping, nor to press Ctrl-C.
+	// serve and that Ctrl-C does not reach, as it runs in the background:
+	// the summary then never says it is stopping, nor to press Ctrl-C, and
+	// a fix says to run `nearhost stop` and `nearhost -d`, not `nearhost
+	// up` again (see restart).
 	keepRunning bool
 	// stamped leaves the time out of event lines: out puts a full one
 	// before every line.
@@ -67,8 +69,13 @@ func (p *upPrinter) event(ev engine.Event) {
 	fmt.Fprintln(p.out, line)
 	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
 		// Approving takes the interface, which shows each change and why it
-		// needs approval; up only says where to go.
-		fmt.Fprintln(p.out, "  open nearhost to approve them; nearhost up cannot")
+		// needs approval; up only says where to go. The interface cannot
+		// start while a core in the background runs.
+		if p.keepRunning {
+			fmt.Fprintln(p.out, "  run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot")
+		} else {
+			fmt.Fprintln(p.out, "  open nearhost to approve them; nearhost up cannot")
+		}
 	}
 	if ev.State != "" && p.advise {
 		// A state change reads "state: <state>" or "state: <state>: <reason>".
@@ -168,6 +175,15 @@ func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
 	return health.Status != transport.StatusAuthFailed || !health.NextAttempt.IsZero()
 }
 
+// restart is how a fix says to start Nearhost again: a core in the
+// background is stopped and started in the background, not with up.
+func (p *upPrinter) restart() string {
+	if p.keepRunning {
+		return "run `nearhost stop` and `nearhost -d`"
+	}
+	return "run `nearhost up` again"
+}
+
 // fix prints what to do about a project in the given state, if anything.
 func (p *upPrinter) fix(name string, st engine.State, reason string) {
 	cfg := p.eng.Config()
@@ -198,19 +214,25 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// prompt can appear, and up has already said what to do instead; a
 		// core in the background asks for none, and its reason says what to
 		// do.
-		if reason != "" && !hosts.IsReadOnlyMessage(reason) && !strings.Contains(reason, errNoTerminal.Error()) && !strings.Contains(reason, errHostsNeedTerminal.Error()) {
+		// A core in the background asks for no prompt: `hosts update`
+		// updates the file in a terminal and has the core try again.
+		switch {
+		case reason == "" || hosts.IsReadOnlyMessage(reason) || strings.Contains(reason, errNoTerminal.Error()) || strings.Contains(reason, errHostsNeedTerminal.Error()):
+		case p.keepRunning:
+			fix = "run `nearhost hosts update` in a terminal, and Nearhost starts the project"
+		default:
 			fix = "run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts"
 		}
 	case engine.StateError:
-		fix = "resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again"
+		fix = "resolve what is named above (a port in use: stop the process holding it), then " + p.restart()
 		if transport.IsSocketPathMessage(reason) {
 			// Nothing reached the server, and nothing will until the run
 			// directory is shorter: ssh by hand would work and fix nothing.
 			// XDG_CONFIG_HOME also says where the config is read from, so
 			// the folder goes with it.
-			fix = "set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then run `nearhost up` again"
+			fix = "set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then " + p.restart()
 		} else if status, _ := p.eng.ServerStatus(proj.Server); status != transport.StatusConnected {
-			fix = sshHint(host, "run `nearhost up` again")
+			fix = sshHint(host, p.restart())
 			// A session with a next attempt tries by itself, and the
 			// project waits for it and starts once it connects. One that
 			// gave up for good (it cannot run at all) has none.

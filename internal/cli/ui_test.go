@@ -69,11 +69,11 @@ func runRootSplit(t *testing.T, root *cobra.Command, args ...string) (stdout, st
 	return out.String(), errOut.String(), code
 }
 
-func TestBareNearhostWithoutATerminalSaysToUseUp(t *testing.T) {
+func TestBareNearhostWithoutATerminalSaysToUseDetachOrUp(t *testing.T) {
 	for _, tc := range []struct{ goos, want string }{
-		{"linux", "nearhost needs a terminal for its interface. Use nearhost up to serve without one.\n"},
-		{"darwin", "nearhost needs a terminal for its interface. Use nearhost up to serve without one.\n"},
-		{"windows", "nearhost needs a terminal for its interface. Use nearhost up to serve without one. In Git Bash, run it through winpty or use Windows Terminal.\n"},
+		{"linux", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one.\n"},
+		{"darwin", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one.\n"},
+		{"windows", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one. In Git Bash, run it through winpty or use Windows Terminal.\n"},
 	} {
 		t.Run(tc.goos, func(t *testing.T) {
 			setHostOS(t, tc.goos)

@@ -79,6 +79,8 @@ func NewRoot() *cobra.Command {
 		newUntrustCmd(systemTrust()),
 		newUpCmd(systemUp(lookup)),
 		newDaemonCmd(systemUp(lookup)),
+		newStopCmd(),
+		newStatusCmd(),
 		newAddCmd(systemAdd()),
 		newExportCmd(systemExport()),
 		newLsCmd(),
@@ -106,10 +108,13 @@ Getting started:
   nearhost add .     Add the project in this directory
   nearhost           Open the interface, which serves every enabled project
   nearhost up        Serve them without the interface
+  nearhost -d        Serve them in the background
+  nearhost status    Show what the background Nearhost is serving
+  nearhost stop      Stop it
   nearhost doctor    Check the machine and each project
 
 The interface needs a terminal. Without a terminal, nearhost prints that it
-needs one and exits 1; use nearhost up there.`,
+needs one and exits 1; use nearhost -d or nearhost up there.`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,

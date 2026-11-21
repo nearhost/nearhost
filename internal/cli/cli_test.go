@@ -393,7 +393,8 @@ func TestHelpSaysWhenACommandExitsNonZero(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--help"}, "Without a terminal, nearhost prints that it needs one and exits 1; use nearhost up there."},
+		{[]string{"--help"}, "Without a terminal, nearhost prints that it needs one and exits 1; use nearhost -d or nearhost up there."},
+		{[]string{"status", "--help"}, "It exits 3 when Nearhost is not running."},
 		{[]string{"up", "--help"}, "It stops and exits 1 when no project can be served and none is still starting or reconnecting."},
 		{[]string{"untrust", "--help"}, "It exits non-zero while anything, such as a browser or another trust store, still trusts the CA."},
 		{[]string{"add", "--help"}, "Interrupted (Ctrl-C), add saves nothing and exits 130."},
