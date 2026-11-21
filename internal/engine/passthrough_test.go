@@ -184,7 +184,12 @@ func TestProjectLoopbackNamesPassthrough(t *testing.T) {
 	h, _ := passthroughHarness(t)
 	port := openOnSamePort(t, h)
 	cfg := h.eng.Config()
-	cfg.Projects = []config.Project{remoteProject("one", "apollo", port)}
+	// Disabled, so Apply does not start it on a goroutine of its own: while
+	// that start ran, the start below would find the project busy and
+	// return nil.
+	p := remoteProject("one", "apollo", port)
+	p.Enabled = false
+	cfg.Projects = []config.Project{p}
 	if err := h.eng.Apply(bg, cfg); err != nil {
 		t.Fatal(err)
 	}
