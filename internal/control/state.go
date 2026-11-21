@@ -63,8 +63,10 @@ type ServerState struct {
 // State is what GET /v1/state answers: everything a client mirrors.
 type State struct {
 	Info Info `json:"info"`
-	// Seq is the number of the last envelope this state includes. A client
-	// applies the envelopes numbered after it.
+	// Seq is an envelope number the state is at least as new as: it
+	// includes every envelope up to Seq, and may include some numbered
+	// after it. A client applies the envelopes numbered after Seq, which
+	// must therefore be harmless to apply twice.
 	Seq          uint64                          `json:"seq"`
 	ConfigPath   string                          `json:"configPath"`
 	Config       string                          `json:"config"` // the YAML the engine runs

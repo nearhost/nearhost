@@ -165,7 +165,11 @@ func TestOnAttached(t *testing.T) {
 	cancel1()
 	testutil.WaitUntil(t, 5*time.Second, func() bool { return hub.Clients() == 1 }, "the first stream to close")
 	cancel2()
-	testutil.WaitUntil(t, 5*time.Second, func() bool { return hub.Clients() == 0 }, "the second stream to close")
+	// The hook is told after the stream is gone, so wait for it.
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return len(log.get()) >= 2 }, "the hook to be told the last stream closed")
+	if hub.Clients() != 0 {
+		t.Fatalf("%d clients attached, want 0", hub.Clients())
+	}
 	if got := log.get(); !reflect.DeepEqual(got, []bool{true, false}) {
 		t.Fatalf("the hook got %v, want [true false]", got)
 	}
@@ -196,6 +200,25 @@ func TestEventsEndWithServer(t *testing.T) {
 	}
 	if err := errf(); err == nil {
 		t.Fatal("err() = nil, want why the stream ended")
+	}
+}
+
+// A server given no hub streams from one of its own.
+func TestListenWithoutHub(t *testing.T) {
+	dir := testutil.TempDir(t, "ctl")
+	s, err := Listen(SocketPath(dir), newFake(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	c := dial(t, dir)
+	openEvents(t, c, 0)
+	st, err := c.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Seq != 0 || st.Clients != 1 {
+		t.Fatalf("State has %d clients at %d, want 1 at 0", st.Clients, st.Seq)
 	}
 }
 
@@ -253,13 +276,28 @@ func TestKeepalive(t *testing.T) {
 	if !strings.Contains(lines.Text(), `"seq":1`) {
 		t.Fatalf("got %q, want the data line of envelope 1", lines.Text())
 	}
+}
 
-	ch, _, _ := openEvents(t, c, 1)
-	// Long enough for several keepalives, which must not show on ch.
-	time.Sleep(50 * time.Millisecond)
-	hub.Publish(event("second"))
-	if e := next(t, ch); e.Seq != 2 || e.Event == nil || e.Event.Message != "second" {
-		t.Fatalf("got %+v, want event 2", e)
+// The client passes over comments and fields other than data, and joins the
+// data lines of one event.
+func TestReadStreamSkipsComments(t *testing.T) {
+	in := ": keepalive\n\n" +
+		"data: {\"seq\":1,\"kind\":\"reset\"}\n\n" +
+		": keepalive\n\n" +
+		"id: 7\n\n" +
+		"data: {\"seq\":2,\ndata: \"kind\":\"ended\",\"id\":\"a1\"}\n\n"
+	out := make(chan Envelope, 4)
+	if err := readStream(context.Background(), strings.NewReader(in), out); !errors.Is(err, errStreamEnded) {
+		t.Fatalf("readStream = %v, want errStreamEnded", err)
+	}
+	close(out)
+	var got []Envelope
+	for e := range out {
+		got = append(got, e)
+	}
+	want := []Envelope{{Seq: 1, Kind: KindReset}, {Seq: 2, Kind: KindEnded, ID: "a1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
 

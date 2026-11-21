@@ -20,7 +20,7 @@ type Backend interface {
 	Status() Status
 	// State is everything a client mirrors, but for Seq and Clients, which
 	// the server sets. It must include every envelope published before it
-	// is called.
+	// is called, and may include ones published while it runs.
 	State() State
 	// Stop starts the shutdown and returns at once.
 	Stop()
@@ -50,11 +50,12 @@ type Server struct {
 var keepaliveEvery = 15 * time.Second
 
 // Listen starts serving the control API for b on a Unix socket at path,
-// streaming what is published to hub. It makes the socket's directory,
+// streaming what is published to hub. When hub is nil, Listen makes a hub
+// of its own, to which nothing publishes. It makes the socket's directory,
 // private to the user, and the socket readable and writable by the user
-// alone. A socket that answers belongs to a running
-// core, which Listen leaves be and reports as ErrInUse; one that does not is
-// left from a core that was killed, and is replaced.
+// alone. A socket that answers belongs to a running core, which Listen
+// leaves be and reports as ErrInUse; one that does not is left from a core
+// that was killed, and is replaced.
 func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -72,6 +73,9 @@ func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		l.Close()
 		return nil, err
+	}
+	if hub == nil {
+		hub = NewHub()
 	}
 	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
 	s.srv = &http.Server{
@@ -128,8 +132,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case "/v1/status":
 		reply(w, http.StatusOK, s.b.Status())
 	case "/v1/state":
-		// The number is read first: the state then includes at least
-		// every envelope up to it.
+		// The number is read first: the state then includes every
+		// envelope up to it, and may include some after it.
 		seq := s.hub.Seq()
 		st := s.b.State()
 		st.Seq, st.Clients = seq, s.hub.Clients()
