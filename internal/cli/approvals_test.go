@@ -198,6 +198,43 @@ func TestAnsweredApprovalEnds(t *testing.T) {
 	}
 }
 
+// An answer the agent API refuses leaves its request waiting, so a client
+// can still answer it: the queue keeps it and publishes no "ended". An
+// answer it takes ends the request.
+func TestRefusedAnswerStaysPending(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	f, _ := opts.Agent("mini")
+	q, pub, _ := newQueue(t, newFakeClock())
+	q.now = time.Now // the agent API's requests expire by the real clock
+	a.review(q)
+	o := &coreOps{agents: a, approvals: q}
+	// An agent that does not say which tool it is can't be always allowed.
+	status, out := postAgentJSON(t, f, "/v1/passthroughs", `{"port": 5173, "requester": "`+agentapi.RequesterUnknown+`", "session": "s1"}`)
+	if status != 202 {
+		t.Fatalf("passthrough request: %d %v", status, out)
+	}
+	id := out["id"].(string)
+	err := o.AnswerPassthrough(context.Background(), id, "always")
+	if err == nil || errors.Is(err, control.ErrRequestEnded) {
+		t.Fatalf("always for an unnamed agent: %v", err)
+	}
+	if got := q.Pending(); len(got) != 1 || got[0].ID != id || pub.ended(id) {
+		t.Fatalf("after the refusal: pending %+v, published %+v", got, pub.all())
+	}
+	if err := o.AnswerPassthrough(context.Background(), id, "no"); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Pending()) != 0 || !pub.ended(id) {
+		t.Errorf("after the answer: pending %+v, published %+v", q.Pending(), pub.all())
+	}
+}
+
 // agentUp is an up that serves coding agents, with grants, on home's socket.
 func agentUp(t *testing.T) (u *upRun, sock string) {
 	t.Helper()
@@ -273,8 +310,14 @@ func TestStateCarriesPending(t *testing.T) {
 			t.Fatal("the request was not streamed")
 		}
 	}
-	st, err := u.control().State(context.Background())
+	// Client B attaches after the request came, as a client does that
+	// mirrors the state and follows the stream from its number.
+	b := u.control()
+	st, err := b.State(context.Background())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Events(ctx, st.Seq); err != nil {
 		t.Fatal(err)
 	}
 	if len(st.Approvals) != 1 || st.Approvals[0].ID != id || st.Approvals[0].Doc == nil || st.Approvals[0].Doc.Doc != "docs/p.md" {
