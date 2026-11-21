@@ -276,6 +276,8 @@ func watchConfig(ctx context.Context, eng *engine.Engine, path string) {
 
 // coreBackend is the engine, as the control API sees it.
 type coreBackend struct {
+	// The actions the terminal interface asks for are not done here yet.
+	control.UnimplementedActions
 	eng  *engine.Engine
 	info control.Info
 	// ctx is the core's: it ends when the shutdown begins, and so do the

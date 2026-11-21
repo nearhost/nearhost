@@ -19,7 +19,7 @@ var ErrNotRunning = errors.New("Nearhost is not running")
 
 // callTimeout bounds every call, unless the context's deadline is sooner.
 // For the event stream it bounds only the wait for the answer to begin.
-const callTimeout = 5 * time.Second
+var callTimeout = 5 * time.Second
 
 // maxEnvelope is the longest line of the event stream the client reads. An
 // event can carry a whole exchange, so it is generous.
@@ -64,11 +64,28 @@ func Dial(runDir string) (*Client, error) {
 
 // raw makes one request and returns the status code and body of the answer.
 func (c *Client) raw(ctx context.Context, method, path string) (int, []byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, "http://nearhost"+path, nil)
+	return c.send(ctx, method, path, nil, true)
+}
+
+// send makes one request with data as its JSON body unless that is nil, and
+// returns the status code and body of the answer. The call is bounded by
+// callTimeout when capped is set, and by ctx alone when not.
+func (c *Client) send(ctx context.Context, method, path string, data []byte, capped bool) (int, []byte, error) {
+	if capped {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+	}
+	var rd io.Reader
+	if data != nil {
+		rd = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://nearhost"+path, rd)
 	if err != nil {
 		return 0, nil, err
+	}
+	if data != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

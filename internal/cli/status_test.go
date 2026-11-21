@@ -14,7 +14,10 @@ import (
 )
 
 // statusCore is a control backend that answers with a fixed status.
-type statusCore struct{ st control.Status }
+type statusCore struct {
+	control.UnimplementedActions
+	st control.Status
+}
 
 func (c statusCore) Info() control.Info               { return c.st.Info }
 func (c statusCore) Status() control.Status           { return c.st }
@@ -31,7 +34,7 @@ func serveStatus(t *testing.T, st control.Status) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := control.Listen(control.SocketPath(runDir), statusCore{st}, control.NewHub())
+	srv, err := control.Listen(control.SocketPath(runDir), statusCore{st: st}, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}
