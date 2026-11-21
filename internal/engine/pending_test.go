@@ -37,6 +37,11 @@ func waitingHarness(t *testing.T) (h *harness, down string) {
 	if err == nil || !strings.HasPrefix(err.Error(), "waiting for mini") {
 		t.Fatalf("StartProject = %v, want it to say it waits for mini", err)
 	}
+	// The start stops waiting after connectWait, which on a slow machine can
+	// come before ssh has failed: the session's error shows once it has.
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		return strings.Contains(h.eng.Status("myapp").Message, "Connection refused")
+	}, "the waiting project to show the session's error")
 	st := h.eng.Status("myapp")
 	if st.State != StateStarting || !strings.HasPrefix(st.Message, "waiting for mini: ") || !strings.Contains(st.Message, "Connection refused") {
 		t.Fatalf("status = %+v, want starting, waiting for mini with the session's error", st)

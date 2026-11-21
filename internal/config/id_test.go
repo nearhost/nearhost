@@ -166,15 +166,26 @@ func TestInstallIDWaitsForAWriterThatIsStillAtWork(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		if err := os.WriteFile(path, []byte("abcdef\n"), 0o600); err != nil {
-			t.Error(err)
+	// The writer finishes while the reader waits for it the first time, not
+	// after a sleep of its own: on a loaded machine that sleep could outlast
+	// the reader's patience.
+	saved := idPause
+	t.Cleanup(func() { idPause = saved })
+	waits := 0
+	idPause = func(d time.Duration) {
+		if waits++; waits == 1 {
+			if err := os.WriteFile(path, []byte("abcdef\n"), 0o600); err != nil {
+				t.Error(err)
+			}
 		}
-	}()
+		saved(d)
+	}
 	id, err := installIDFor(path, fingerprint(""))
 	if err != nil || id != "abcdef" {
 		t.Fatalf("got %q %v, want the writer's id", id, err)
+	}
+	if waits != 1 {
+		t.Fatalf("%d waits, want the reader to wait once for the writer", waits)
 	}
 }
 
