@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 func TestStopStopsTheCore(t *testing.T) {
@@ -88,6 +90,67 @@ func TestStopAfterStopStartsAgain(t *testing.T) {
 	}
 	if log := u.coreLog(); strings.Contains(log, "already running") || strings.Contains(log, "address already in use") {
 		t.Errorf("the second daemon found the first in its way:\n%s", log)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}
+
+// The core lets go of the agents' socket before its instance lock, so a core
+// started as soon as stop returns serves coding agents: it does not find the
+// old socket still answering and run its whole life without them.
+func TestStopAfterStopServesAgents(t *testing.T) {
+	home := agentHome(t)
+	u := newUpRun(t, &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}})
+	u.noHosts = true
+	u.sshEnv = []string{"FAKE_SSH_HANG=1"}
+	sock := agentSocket(home, "k3f9q2")
+	// Whether the agents' socket answered when the engine let go of its
+	// lock, which is what stop waits for: the window a new core may start
+	// in is too small to hit on purpose.
+	answeredAtRelease := make(chan bool, 2)
+	u.adjust = func(b *upBackend) {
+		b.agents = fakeAgents(home)
+		shutdown := b.shutdown
+		b.shutdown = func(eng *engine.Engine, ctx context.Context) error {
+			err := shutdown(eng, ctx)
+			answeredAtRelease <- agentapi.Answers(sock)
+			return err
+		}
+	}
+	u.startDaemon("--started-by", "detached")
+	u.waitForLog("[api] state: starting")
+	if !agentapi.Answers(sock) {
+		t.Fatalf("the first daemon does not serve agents; log:\n%s", u.coreLog())
+	}
+
+	var out syncBuffer
+	if err := executeInto(context.Background(), &out, newStopCmd(), "stop"); err != nil || out.String() != "Stopped.\n" {
+		t.Fatalf("stop: %v, output %q", err, out.String())
+	}
+	if <-answeredAtRelease {
+		t.Errorf("the agents' socket still answered when the core let go of its lock")
+	}
+
+	first := u.done
+	u.startDaemon("--started-by", "detached")
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		_, err := control.Dial(u.runDir())
+		return err == nil
+	}, "the second daemon to answer")
+	if log := u.coreLog(); strings.Contains(log, "already serving coding agents") {
+		t.Errorf("the second daemon found the first one's agents' socket in its way:\n%s", log)
+	}
+	if !agentapi.Answers(sock) {
+		t.Errorf("the second daemon does not serve agents; log:\n%s", u.coreLog())
+	}
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Errorf("the first daemon returned %v; log:\n%s", err, u.coreLog())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the first daemon did not return")
 	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
