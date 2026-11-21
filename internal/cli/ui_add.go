@@ -35,10 +35,7 @@ func (u *uiEngine) current() (*config.Config, error) {
 // check validates cfg as read from the config file, naming the file in what
 // it finds.
 func (u *uiEngine) check(cfg *config.Config) error {
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("%s: %w", u.path, err)
-	}
-	return nil
+	return validateConfig(u.path, cfg)
 }
 
 // What to do after fixing access, in the words of the forms: the add-server

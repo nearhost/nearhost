@@ -91,11 +91,20 @@ func (o *coreOps) edit(fn func(cfg *config.Config) error) error {
 // named in what the validation finds.
 func editConfig(path string, fn func(cfg *config.Config) error) error {
 	return config.Update(path, func(cfg *config.Config) error {
-		if err := cfg.Validate(); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+		if err := validateConfig(path, cfg); err != nil {
+			return err
 		}
 		return fn(cfg)
 	})
+}
+
+// validateConfig validates cfg as read from the config file at path, naming
+// the file in what it finds.
+func validateConfig(path string, cfg *config.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
 }
 
 // AcceptChange saves the routes and snapshot of the change with hash sha
@@ -291,8 +300,9 @@ func (o *coreOps) PageKeyURL() (string, error) {
 
 // State is what the core serves: the config the engine runs, and the state
 // of each of its projects and servers, the open passthroughs, the documents
-// served and the grants. The caller adds what the core is, the ports it was
-// asked for, and the requests that wait for an answer.
+// served and the grants, this machine's included. The caller adds what the
+// core is, the ports it was asked for, and the requests that wait for an
+// answer.
 func (o *coreOps) State() control.State {
 	cfg := o.eng.Config()
 	st := control.State{
@@ -325,8 +335,8 @@ func (o *coreOps) State() control.State {
 		st.GrantsError = err.Error()
 		return st
 	}
-	for _, s := range cfg.Servers {
-		gs, err := o.agents.grantsOf(s.Name)
+	for _, name := range serverNames(cfg) {
+		gs, err := o.agents.grantsOf(name)
 		if err != nil {
 			st.GrantsError = err.Error()
 			break

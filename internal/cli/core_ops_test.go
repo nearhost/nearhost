@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -319,5 +320,23 @@ func TestCutMessage(t *testing.T) {
 	}
 	if !utf8.ValidString(got.Message) {
 		t.Error("the cut split a character")
+	}
+}
+
+// The state lists the grants on this machine and on every configured server.
+func TestCoreStateListsGrants(t *testing.T) {
+	u, home := applyRun(t)
+	grantTo(t, grantFile(home), config.LocalServer)
+	st := u.State()
+	if st.GrantsError != "" {
+		t.Fatalf("GrantsError = %q", st.GrantsError)
+	}
+	var servers []string
+	for _, g := range st.Grants {
+		servers = append(servers, g.Server)
+	}
+	slices.Sort(servers)
+	if want := []string{"apollo", config.LocalServer, "mini"}; !slices.Equal(servers, want) {
+		t.Errorf("grants on %v, want %v", servers, want)
 	}
 }
