@@ -21,6 +21,13 @@
 //     running project, since the screen is read while it is being drawn;
 //   - press a key only once the screen shows the thing the key acts on;
 //   - share nothing between journeys: each has its own sandbox and ports.
+//   - keep a journey on this machine: never click an address, which opens
+//     a browser, never answer yes to the presets question, which fetches a
+//     registry, and never ask to trust the CA, which runs the real sudo.
+//
+// The binary is built with the e2e tag. In that build alone a stand-in takes
+// sudo's place and the hosts file is the sandbox's own, so a journey can go
+// through the password box (password_test.go); a release has neither.
 //
 // A failed wait prints the screen as it was.
 package e2e
@@ -63,7 +70,10 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		nearhostBin += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", nearhostBin, "github.com/nearhost/nearhost/cmd/nearhost")
+	// The e2e tag swaps sudo and the hosts file for stand-ins inside the
+	// sandbox (internal/elevate/e2e.go, internal/hosts/e2e.go), so a
+	// journey can go through the password box.
+	build := exec.Command("go", "build", "-tags", "e2e", "-o", nearhostBin, "github.com/nearhost/nearhost/cmd/nearhost")
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build nearhost: %v\n%s", err, out)
 		os.Exit(1)
@@ -88,9 +98,10 @@ type terminal struct {
 	raw strings.Builder // every byte the program wrote, for a failure's report
 }
 
-// start runs the program at path with args and env in a new terminal. The
-// program is killed when the test ends, should it still run.
-func start(t *testing.T, env []string, path string, args ...string) *terminal {
+// start runs the program at path with args and env in a new terminal, in
+// the folder dir, or this one when dir is empty. The program is killed when
+// the test ends, should it still run.
+func start(t *testing.T, env []string, dir, path string, args ...string) *terminal {
 	t.Helper()
 	pty, err := xpty.NewPty(cols, rows)
 	if err != nil {
@@ -98,6 +109,7 @@ func start(t *testing.T, env []string, path string, args ...string) *terminal {
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Env = env
+	cmd.Dir = dir
 	ownTerminal(cmd)
 	if err := pty.Start(cmd); err != nil {
 		pty.Close()
@@ -234,6 +246,62 @@ func (term *terminal) press(code rune, mod ...uv.KeyMod) {
 		k.Mod |= m
 	}
 	term.emu.SendKey(k)
+}
+
+// find is the column and row of the first place sub shows on the screen,
+// and fails the test when it does not show.
+func (term *terminal) find(sub string) (x, y int) {
+	term.t.Helper()
+	term.mu.Lock()
+	for y := range term.emu.Height() {
+		// The row's text, and the column each of its bytes is drawn in: a
+		// wide character takes two columns and one place in the text.
+		var line strings.Builder
+		var cols []int
+		for x := 0; x < term.emu.Width(); {
+			content, width := " ", 1
+			if c := term.emu.CellAt(x, y); c != nil && c.Content != "" {
+				content, width = c.Content, max(c.Width, 1)
+			}
+			for range len(content) {
+				cols = append(cols, x)
+			}
+			line.WriteString(content)
+			x += width
+		}
+		if i := strings.Index(line.String(), sub); i >= 0 {
+			term.mu.Unlock()
+			return cols[i], y
+		}
+	}
+	term.mu.Unlock()
+	term.t.Fatalf("%q is not on the screen:\n%s", sub, term.screen())
+	return 0, 0
+}
+
+// click presses and lets go of the left mouse button on the first place sub
+// shows on the screen. Never click an address: the interface opens it in a
+// browser.
+func (term *terminal) click(sub string) {
+	term.t.Helper()
+	x, y := term.find(sub)
+	at := uv.Mouse{X: x, Y: y, Button: uv.MouseLeft}
+	term.emu.SendMouse(uv.MouseClickEvent(at))
+	term.emu.SendMouse(uv.MouseReleaseEvent(at))
+}
+
+// wheel turns the mouse wheel by n notches over the first place sub shows on
+// the screen: up for a negative n, down for a positive one.
+func (term *terminal) wheel(sub string, n int) {
+	term.t.Helper()
+	x, y := term.find(sub)
+	button := uv.MouseWheelDown
+	if n < 0 {
+		button, n = uv.MouseWheelUp, -n
+	}
+	for range n {
+		term.emu.SendMouse(uv.MouseWheelEvent(uv.Mouse{X: x, Y: y, Button: button}))
+	}
 }
 
 // resize gives the terminal a new size, which the program is told of.

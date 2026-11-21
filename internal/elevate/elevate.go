@@ -27,6 +27,11 @@ var ErrDeclined = errors.New("the Windows prompt was declined or went unanswered
 // either, so it leaves no report behind.
 const HelperRefusedCode = 3
 
+// systemOverride, when set, gives the Elevator System returns. Nothing sets
+// it in a release: the one file that does is built with the e2e tag alone,
+// for the journeys in internal/e2e.
+var systemOverride func() Elevator
+
 // Elevator is how privileged steps are run on this OS.
 type Elevator interface {
 	// Needed reports whether steps go through Run.

@@ -20,7 +20,12 @@ import (
 const sudoStopDelay = 2 * time.Second
 
 // System is this OS's Elevator.
-func System() Elevator { return sudoElevator{} }
+func System() Elevator {
+	if systemOverride != nil {
+		return systemOverride()
+	}
+	return sudoElevator{}
+}
 
 // sudoElevator runs privileged steps through sudo.
 type sudoElevator struct{}

@@ -24,6 +24,13 @@ type sandbox struct {
 	https, http int
 	env         []string
 	args        []string
+	// manageHosts lets nearhost manage the hosts file, the sandbox's own,
+	// which asks for the password. Without it nearhost runs --no-hosts.
+	manageHosts bool
+	// cwd is the folder nearhost is started in, as a shell's current
+	// folder: the add-project form offers it as the path. Empty for the
+	// test's own.
+	cwd string
 }
 
 // newSandbox makes a sandbox whose config file holds config. env adds
@@ -31,7 +38,11 @@ type sandbox struct {
 // ssh.
 func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 	t.Helper()
-	dir := testutil.TempDir(t, "nh")
+	// The folder's path is kept short, and is the config folder itself:
+	// a server's control socket goes in <dir>/nearhost/run, and its whole
+	// path must fit ssh's limit of 86 bytes. A Mac's temporary folder
+	// alone takes 49 of them.
+	dir := testutil.TempDir(t, "n")
 	s := &sandbox{t: t, dir: dir, config: filepath.Join(dir, "config.yaml")}
 	if err := os.WriteFile(s.config, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -39,24 +50,53 @@ func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 	fake := filepath.Dir(testutil.FakeSSH(t))
 	s.env = append(os.Environ(),
 		"HOME="+dir, "USERPROFILE="+dir,
-		"XDG_CONFIG_HOME="+filepath.Join(dir, "c"),
+		"XDG_CONFIG_HOME="+dir,
 		"XDG_DATA_HOME="+filepath.Join(dir, "d"),
 		"PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"FAKE_SSH_LOG="+s.sshLogPath(),
 		"TERM=xterm-256color",
+		// For the stand-ins of the e2e build: the hosts file, the password
+		// the stand-in for sudo takes, and where it writes what it ran.
+		"NEARHOST_E2E_HOSTS="+s.hostsPath(),
+		"NEARHOST_E2E_PASSWORD="+password,
+		"NEARHOST_E2E_ELEVATED="+filepath.Join(dir, "elevated.log"),
 		"NEARHOST_NO_UPDATE_CHECK=1",
 	)
 	s.env = append(s.env, env...)
 	s.https, s.http = testutil.ProxyPorts(t)
-	s.args = []string{"--config", s.config, "--no-hosts",
+	s.args = []string{"--config", s.config,
 		"--https-port", fmt.Sprint(s.https), "--http-port", fmt.Sprint(s.http), "--web-port", "0"}
+	if err := os.WriteFile(s.hostsPath(), []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return s
+}
+
+// password is the one the stand-in for sudo takes.
+const password = "open sesame"
+
+// hostsPath is the sandbox's hosts file, which the e2e build manages in
+// place of the machine's.
+func (s *sandbox) hostsPath() string { return filepath.Join(s.dir, "hosts") }
+
+// hostsFile is the sandbox's hosts file as it is now.
+func (s *sandbox) hostsFile() string {
+	s.t.Helper()
+	b, err := os.ReadFile(s.hostsPath())
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return string(b)
 }
 
 // start runs nearhost in the sandbox, in a terminal of its own.
 func (s *sandbox) start() *terminal {
 	s.t.Helper()
-	return start(s.t, s.env, nearhostBin, s.args...)
+	args := s.args
+	if !s.manageHosts {
+		args = append(args[:len(args):len(args)], "--no-hosts")
+	}
+	return start(s.t, s.env, s.cwd, nearhostBin, args...)
 }
 
 func (s *sandbox) sshLogPath() string { return filepath.Join(s.dir, "ssh.log") }
