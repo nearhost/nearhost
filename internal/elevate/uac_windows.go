@@ -17,7 +17,8 @@ import (
 	"github.com/nearhost/nearhost/internal/winsys"
 )
 
-// runAs starts a program as administrator; tests replace it.
+// runAs starts a program as administrator; tests replace it, and so does a
+// build with the e2e tag, which no release is (see e2e_windows.go).
 var runAs = winsys.RunAs
 
 // promptTurn lets one UAC prompt be on screen at a time. ShellExecuteEx
@@ -33,9 +34,6 @@ type started struct {
 
 // System is this OS's Elevator.
 func System() Elevator {
-	if systemOverride != nil {
-		return systemOverride()
-	}
 	return uac{}
 }
 

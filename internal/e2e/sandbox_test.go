@@ -60,6 +60,9 @@ func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 		"NEARHOST_E2E_HOSTS="+s.hostsPath(),
 		"NEARHOST_E2E_PASSWORD="+password,
 		"NEARHOST_E2E_ELEVATED="+filepath.Join(dir, "elevated.log"),
+		// And for the stand-in for the Windows prompt: where it finds its
+		// answer.
+		"NEARHOST_E2E_CONSENT="+filepath.Join(dir, "consent"),
 		"NEARHOST_NO_UPDATE_CHECK=1",
 	)
 	s.env = append(s.env, env...)
