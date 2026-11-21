@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -178,7 +179,11 @@ func TestUpReloadsTheConfig(t *testing.T) {
 	cfg.Projects[1].Enabled = true
 	saveConfig(t, u.cfgPath, cfg)
 	u.waitFor("[b] state: running")
-	u.waitFor("config reloaded\n")
+	// The engine says the config was applied; the watcher adds nothing.
+	u.waitFor(" [proxy] config applied\n")
+	if out := u.out.String(); strings.Contains(out, "reloaded") || strings.Count(out, "config applied") != 1 {
+		t.Errorf("the reload was not reported once, as the engine's event:\n%s", out)
+	}
 	if got := u.get("b.test"); !strings.HasPrefix(got, "b:b.test") {
 		t.Fatalf("served %q through the proxy", got)
 	}
@@ -208,7 +213,7 @@ func TestUpWithNamedProjectsDoesNotReload(t *testing.T) {
 	cfg.Projects[1].Enabled = true
 	saveConfig(t, u.cfgPath, cfg)
 	time.Sleep(500 * time.Millisecond) // ten polls of a watcher, were there one
-	if out := u.out.String(); strings.Contains(out, "[b]") || strings.Contains(out, "reloaded") {
+	if out := u.out.String(); strings.Contains(out, "[b]") || strings.Contains(out, "config applied") {
 		t.Errorf("up a applied the changed config:\n%s", out)
 	}
 	if err := u.stop(); err != nil {
@@ -241,6 +246,10 @@ func TestUpLogsAnInvalidConfigAndKeepsServing(t *testing.T) {
 	if !strings.Contains(line, u.cfgPath) || !strings.Contains(line, "parse") || strings.Count(line, u.cfgPath) != 1 {
 		t.Errorf("the line does not name the file once and the error: %q", line)
 	}
+	// It is an event line like any other, printed by the printer.
+	if !eventLine.MatchString(line) {
+		t.Errorf("the line is not an event line: %q", line)
+	}
 	if got := u.get("a.test"); !strings.HasPrefix(got, "a:a.test") {
 		t.Fatalf("served %q through the proxy", got)
 	}
@@ -251,6 +260,29 @@ func TestUpLogsAnInvalidConfigAndKeepsServing(t *testing.T) {
 	if len(st.Projects) != 1 || st.Projects[0].State != string(engine.StateRunning) {
 		t.Errorf("Projects = %+v, want a running", st.Projects)
 	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// eventLine is the start of a line the printer prints for an event.
+var eventLine = regexp.MustCompile(`^\d\d:\d\d:\d\d \[proxy\] `)
+
+// A project the reload adds gets the same fix as one up started: the
+// printer knows it from the engine's config, not the one up started with.
+func TestUpHintsForAProjectTheReloadAdds(t *testing.T) {
+	fastWatch(t)
+	cfg := &config.Config{Projects: []config.Project{localProject("a", testutil.Upstream(t, "a"), true)}}
+	u := newUpRun(t, cfg)
+	u.start()
+	u.waitFor("Serving until interrupted")
+	u.mu.Lock()
+	u.hostsErr = errors.New("sudo: a password is required")
+	u.mu.Unlock()
+	cfg.Projects = append(cfg.Projects, localProject("c", testutil.Upstream(t, "c"), true))
+	saveConfig(t, u.cfgPath, cfg)
+	u.waitFor("[c] state: stopped: ")
+	u.waitFor("  fix: Run `nearhost up` again and " + hostsApprove)
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
@@ -276,11 +308,11 @@ func TestCoreHostsChangedRetriesTheProjectsTheHostsFileStopped(t *testing.T) {
 		}
 	})
 	u.waitFor("[one] state: stopped: ")
-	u.waitFor("Press Ctrl-C to stop.\n")
+	u.waitFor("\nNothing is being served.\n")
 	time.Sleep(200 * time.Millisecond)
 	u.stillRunning()
-	if out := u.out.String(); strings.Contains(out, nothingServedLine) {
-		t.Errorf("a core that keeps running said it was stopping:\n%s", out)
+	if out := u.out.String(); strings.Contains(out, nothingServedLine) || strings.Contains(out, "Ctrl-C") {
+		t.Errorf("a core that keeps running said it was stopping, or to press Ctrl-C:\n%s", out)
 	}
 	c := u.control()
 	if info, err := c.Info(context.Background()); err != nil || info.StartedBy != control.StartedDetached || info.Reloads {

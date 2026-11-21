@@ -16,7 +16,7 @@ import (
 func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api"), remoteProject("blog")}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg, advise: true}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), advise: true}
 	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
 	state := func(project string, st engine.State, msg string) {
 		p.event(engine.Event{Time: at, Project: project, Server: "mini", State: st, Message: msg})
@@ -53,7 +53,7 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	reason := "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
 	if !transport.IsSocketPathMessage(reason) {
 		t.Fatal("the reason is not transport's message")
@@ -74,7 +74,7 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	p.fix("api", engine.StateStopped, `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`)
 	if out.Len() != 0 {
 		t.Fatalf("output = %q, want none", out.String())

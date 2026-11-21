@@ -35,6 +35,9 @@ type coreMode struct {
 	hosts func(ctx context.Context, aliases []string) error
 	// watch applies changes to the config file as they are saved.
 	watch bool
+	// stamped says out puts the date and time before each line itself, so
+	// event lines leave out their own time.
+	stamped bool
 }
 
 // runCore runs the engine and serves the projects named in args, or every
@@ -83,9 +86,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	defer ag.close()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
-	// The config watcher writes beside the printer.
-	out := &lockedWriter{w: mode.out}
-	p := &upPrinter{out: out, eng: eng, cfg: cfg, keepRunning: mode.keepRunning}
+	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()
@@ -138,7 +139,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if mode.watch {
 		go func() {
 			defer close(watched)
-			watchConfig(watchCtx, eng, cfgPath, out)
+			watchConfig(watchCtx, eng, cfgPath)
 		}()
 	} else {
 		close(watched)
@@ -216,9 +217,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 }
 
 // watchConfig applies the config file to eng each time a change to it has
-// settled, until ctx ends, and says on out what came of it. A file that
-// cannot be loaded or applied leaves the engine serving what it served.
-func watchConfig(ctx context.Context, eng *engine.Engine, path string, out io.Writer) {
+// settled, until ctx ends. A file that cannot be loaded or applied leaves
+// the engine serving what it served, and that is said as an event of the
+// engine's, which the printer prints like any other: the engine's own
+// "config applied" says when one was applied.
+func watchConfig(ctx context.Context, eng *engine.Engine, path string) {
 	bad := func(err error) {
 		if ctx.Err() != nil {
 			return // cut short by the shutdown: the file is not at fault
@@ -228,28 +231,13 @@ func watchConfig(ctx context.Context, eng *engine.Engine, path string, out io.Wr
 		if !strings.Contains(msg, path) {
 			msg = path + ": " + msg
 		}
-		fmt.Fprintf(out, "%s; still serving the last good config\n", printable(msg))
+		eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
 	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
 		if err := eng.Apply(ctx, cfg); err != nil {
 			bad(err)
-			return
 		}
-		fmt.Fprintln(out, "config reloaded")
 	}, bad)
-}
-
-// lockedWriter lets more than one goroutine write lines to w without their
-// writes interleaving.
-type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (l *lockedWriter) Write(b []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(b)
 }
 
 // coreBackend is the engine, as the control API sees it.

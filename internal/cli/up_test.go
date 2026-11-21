@@ -546,7 +546,7 @@ func TestUpInterruptedAsTheStartsReturnPrintsNoSummary(t *testing.T) {
 	// Go picks among ready cases at random, so each round is a fresh draw.
 	for range 64 {
 		var out bytes.Buffer
-		p := &upPrinter{out: &out, eng: eng, cfg: cfg}
+		p := &upPrinter{out: &out, eng: eng}
 		p.untilInterrupted(ctx, nil, started, nil, []string{"api"}, []error{context.Canceled})
 		if out.Len() != 0 || p.advise {
 			t.Fatalf("an interrupted run was summed up:\n%s", out.String())

@@ -57,6 +57,9 @@ func DefaultPath() (string, error) { return sub("config.yaml") }
 // RunDir holds SSH control sockets.
 func RunDir() (string, error) { return sub("run") }
 
+// LogPath is the log of the core run in the background, `nearhost daemon`.
+func LogPath() (string, error) { return sub("core.log") }
+
 // GrantsPath is the file of "Always allow" grants, which hold token hashes.
 func GrantsPath() (string, error) { return sub("grants.json") }
 

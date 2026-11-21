@@ -47,7 +47,7 @@ func TestExitCodePrintsErrorsWithoutControlCharacters(t *testing.T) {
 func TestUpPrintsEventsWithoutControlCharacters(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg, advise: true}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), advise: true}
 	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
 	p.event(engine.Event{Time: at, Project: "api", Message: "ssh: " + osc52 + "\n09:30:00 [api] forged"})
 	p.event(engine.Event{Time: at, Project: "api", Server: "mini", State: engine.StateError, Message: "state: error: " + osc52})
@@ -67,7 +67,7 @@ func TestUpSummaryWithoutControlCharacters(t *testing.T) {
 	proj := remoteProject("api" + osc52)
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{proj}}
 	var out bytes.Buffer
-	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), cfg: cfg}
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	p.summary([]string{proj.Name}, []error{errors.New("ssh said " + osc52)})
 	noControl(t, out.String())
 }

@@ -301,3 +301,15 @@ func TestPageSecretPathIsInDataDir(t *testing.T) {
 		t.Errorf("PageSecretPath() = %q, %v; want %q", got, err, want)
 	}
 }
+
+func TestLogPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	got, err := LogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "nearhost", "core.log"); got != want {
+		t.Errorf("LogPath() = %q, want %q", got, want)
+	}
+}
