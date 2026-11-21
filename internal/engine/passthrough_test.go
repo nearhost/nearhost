@@ -43,6 +43,29 @@ func passthroughSpec(remote int) PassthroughSpec {
 	return PassthroughSpec{ID: "p1", Server: "apollo", Requester: "claude-code", Session: "1a2b3c4d5e6f", Label: "web", Remote: remote}
 }
 
+// openOnSamePort opens a passthrough whose local port is its remote one, and
+// returns the port. A port FreePort found free can be taken by another test
+// before the passthrough claims it, and the passthrough then takes another
+// local port: that is tried again with a new port.
+func openOnSamePort(t *testing.T, h *harness) int {
+	t.Helper()
+	for try := 0; try < 5; try++ {
+		port := testutil.FreePort(t)
+		got, err := h.eng.OpenPassthrough(bg, passthroughSpec(port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Local == port {
+			return port
+		}
+		if err := h.eng.ClosePassthrough(bg, got.ID, "the port was taken"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Fatal("no passthrough got its own port in 5 tries")
+	return 0
+}
+
 func TestOpenPassthroughSamePort(t *testing.T) {
 	h, at := passthroughHarness(t)
 	port := testutil.FreePort(t)
@@ -158,11 +181,8 @@ func TestClosePassthrough(t *testing.T) {
 // A passthrough opened before a project's loopback route was configured may
 // hold the route's port.
 func TestProjectLoopbackNamesPassthrough(t *testing.T) {
-	port := testutil.FreePort(t)
 	h, _ := passthroughHarness(t)
-	if _, err := h.eng.OpenPassthrough(bg, passthroughSpec(port)); err != nil {
-		t.Fatal(err)
-	}
+	port := openOnSamePort(t, h)
 	cfg := h.eng.Config()
 	cfg.Projects = []config.Project{remoteProject("one", "apollo", port)}
 	if err := h.eng.Apply(bg, cfg); err != nil {
