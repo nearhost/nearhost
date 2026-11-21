@@ -239,14 +239,24 @@ func (b *clientBackend) stream(after, floor *uint64, connected func()) error {
 }
 
 // reset takes st in place of the envelopes the stream skipped: the events
-// waiting go out, as they came before the gap, the approvals in st not given
-// yet are given, and the log says lines were missed.
+// waiting go out, as they came before the gap, the approvals given that st
+// no longer holds are taken back, as they ended in the gap, those in st not
+// given yet are given, and the log says lines were missed.
 func (b *clientBackend) reset(st control.State) {
 	b.fetchMu.Lock()
 	b.mirror.replace(st)
 	b.lastFetch = time.Now()
 	b.flush(true)
 	b.fetchMu.Unlock()
+	pending := make(map[string]bool, len(st.Approvals))
+	for _, a := range st.Approvals {
+		pending[a.ID] = true
+	}
+	for id := range b.given {
+		if !pending[id] {
+			b.ended(id)
+		}
+	}
 	b.give(st.Approvals)
 	b.bus.Publish(engine.Event{Message: missedNote})
 	b.hostsChanged()
@@ -279,10 +289,23 @@ func (b *clientBackend) take(e control.Envelope) {
 			r.Shown(e.Shown.Origin, e.Shown.Requester, e.Shown.Doc)
 		}
 	case control.KindEnded:
-		// The interface has no way yet to take back a request it shows: one
-		// that has ended says so when it is answered. The ID is forgotten,
-		// as nothing will give it again; an unknown one needs nothing.
-		delete(b.given, e.ID)
+		// The first answer wins: a request answered in another window, or
+		// that expired, is taken back from the interface, which drops it
+		// from its queue or closes its box. The ID is forgotten, as nothing
+		// will give it again; an unknown one needs nothing.
+		b.ended(e.ID)
+	}
+}
+
+// ended takes back from the interface the request id, given to it, which
+// waits no longer. An ID not given needs nothing.
+func (b *clientBackend) ended(id string) {
+	if !b.given[id] {
+		return
+	}
+	delete(b.given, id)
+	if b.props != nil {
+		b.props.Ended(id)
 	}
 }
 

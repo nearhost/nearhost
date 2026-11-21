@@ -1343,10 +1343,16 @@ func (f *projectForm) project() config.Project {
 
 // back goes back a step: from the first it closes the form, and a step that
 // was waiting stops waiting.
+// saving reports whether the form is saving something: answering the
+// registry, enabling presets or saving the project.
+func (f *projectForm) saving() bool {
+	return f.busy != "" && (f.step == projectStepRegistry || f.step == projectStepPresets || f.step == projectStepConfirm)
+}
+
 func (f *projectForm) back() tea.Cmd {
 	// A step that saves runs to its end, so what is saved is what the form
 	// shows: answering the registry, enabling presets, saving the project.
-	if f.busy != "" && (f.step == projectStepRegistry || f.step == projectStepPresets || f.step == projectStepConfirm) {
+	if f.saving() {
 		return nil
 	}
 	f.seq = nextSeq() // what a background step says now is not wanted

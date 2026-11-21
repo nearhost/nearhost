@@ -617,11 +617,95 @@ func TestEndedApprovalIsForgotten(t *testing.T) {
 	props := &tui.Proposals{}
 	h.backend(t, h.state(t), nil, props)
 	p := control.Approval{ID: "p1", Proposal: &agentapi.Proposal{ID: "p1", Origin: "local", Path: "/code/blog"}}
+	queued := func(n int, what string) {
+		t.Helper()
+		testutil.WaitUntil(t, 5*time.Second, func() bool {
+			got, _, _, _, _ := props.Waiting()
+			return len(got) == n
+		}, what)
+	}
 	h.hub.Publish(control.Envelope{Kind: control.KindApproval, Approval: &p})
+	queued(1, "the proposal given")
 	h.hub.Publish(control.Envelope{Kind: control.KindEnded, ID: "p1"})
+	queued(0, "the ended proposal dropped")
 	h.hub.Publish(control.Envelope{Kind: control.KindApproval, Approval: &p})
+	queued(1, "the proposal given again")
+}
+
+// answeringCore is a mirrorCore whose proposals wait in a real approvals
+// queue, which an answer takes off, as the core's does.
+type answeringCore struct {
+	*mirrorCore
+	q *approvals
+}
+
+func (f answeringCore) DeclineProposal(id, reason string) {
+	f.mirrorCore.DeclineProposal(id, reason)
+	f.q.take(id)
+}
+
+// A request one client answers is dropped from every other client's queue:
+// the first answer wins, and no other window opens it after.
+func TestARequestAnsweredInOneClientLeavesTheOthers(t *testing.T) {
+	core := &mirrorCore{st: control.State{Config: webConfig(t), Projects: map[string]engine.ProjectStatus{}, Servers: map[string]control.ServerState{}}}
+	hub := control.NewHub()
+	q := newApprovals(hub, time.Now)
+	t.Cleanup(q.close)
+	runDir := testutil.TempDir(t, "nhm")
+	srv, err := control.Listen(control.SocketPath(runDir), answeringCore{core, q}, hub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	client := func() (*clientBackend, *tui.Proposals) {
+		c, err := control.Dial(runDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := c.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		props := &tui.Proposals{}
+		b := newClientBackend(c, st, &localOps{}, props, false)
+		t.Cleanup(b.Close)
+		if err := b.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return b, props
+	}
+	a, propsA := client()
+	_, propsB := client()
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return hub.Clients() == 2 }, "both clients to follow the core")
+
+	q.Review(agentapi.Proposal{ID: "p1", Origin: "local", Path: "/code/blog", Expires: time.Now().Add(time.Hour)})
+	for _, props := range []*tui.Proposals{propsA, propsB} {
+		testutil.WaitUntil(t, 5*time.Second, func() bool {
+			got, _, _, _, _ := props.Waiting()
+			return len(got) == 1
+		}, "the proposal to reach each client")
+	}
+	a.DeclineProposal("p1", "")
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		got, _, _, _, _ := propsB.Waiting()
+		return len(got) == 0
+	}, "the other client to drop the answered proposal")
+}
+
+// A request given before a reset that the state after it no longer holds
+// ended in the gap: it is taken back from the interface, as its "ended"
+// would have.
+func TestResetTakesBackARequestThatEndedInTheGap(t *testing.T) {
+	h := newMirrorHarness(t)
+	st := h.state(t)
+	st.Approvals = []control.Approval{{ID: "p1", Proposal: &agentapi.Proposal{ID: "p1", Origin: "local", Path: "/code/blog", Expires: time.Now().Add(time.Hour)}}}
+	// A state ahead of the hub: the stream answers with a reset, and the
+	// core's state holds no request.
+	st.Seq = 100
+	props := &tui.Proposals{}
+	h.backend(t, st, nil, props)
 	testutil.WaitUntil(t, 5*time.Second, func() bool {
 		got, _, _, _, _ := props.Waiting()
-		return len(got) == 2
-	}, "the proposal given twice")
+		return len(got) == 0
+	}, "the request that ended in the gap to be taken back")
 }
