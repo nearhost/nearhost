@@ -17,8 +17,9 @@ import (
 // sandbox's own: nothing asks Windows for consent and the machine's hosts
 // file is never touched. The elevator around the prompt is the release's
 // own, and so is the helper that writes the file, but for what a helper
-// checks only as administrator: it runs as this user. The real prompt, and
-// a helper that runs as administrator, are checked by hand.
+// checks only when it finds itself elevated, which this build never does.
+// The real prompt, and a helper that knows it is administrator, are checked
+// by hand.
 
 // shopAsking starts nearhost with the project "shop" and the hosts file
 // managed, and waits for the prompt that asks to add its name.

@@ -20,8 +20,8 @@ import (
 // without a person at the machine. The rest of the UAC elevator is the
 // release's own: its turns, the folder it makes for the helper, the input
 // and the report. The helper is this build too, and so believes it is not
-// elevated: what a helper checks only as administrator, the folder's access
-// list among it, no journey reaches.
+// elevated, whatever rights it has: what a helper checks only as
+// administrator, the folder's access list among it, no journey reaches.
 
 func init() { runAs = consent }
 
@@ -38,9 +38,9 @@ const consentWait = 2 * time.Minute
 // consent stands in for the UAC prompt. It appends the command it is asked
 // to run to the file $NEARHOST_E2E_CONSENT names with ".asked" after it,
 // then waits for the file $NEARHOST_E2E_CONSENT names, which is the answer:
-// it removes the file, and "yes" in it starts the command, as this user and
-// not as administrator. Any other answer, none in consentWait, or no file
-// named, is a declined prompt.
+// it removes the file, and "yes" in it starts the command with the rights
+// nearhost itself has, which it does not raise. Any other answer, none in
+// consentWait, or no file named, is a declined prompt.
 func consent(file string, args []string) (windows.Handle, error) {
 	answer := os.Getenv("NEARHOST_E2E_CONSENT")
 	if answer == "" {
