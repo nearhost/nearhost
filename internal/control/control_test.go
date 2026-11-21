@@ -117,9 +117,8 @@ func TestStopCallsBackend(t *testing.T) {
 	if err := c.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if stops, _ := b.calls(); stops != 1 {
-		t.Fatalf("Stop called %d times, want 1", stops)
-	}
+	// The answer goes out before the backend is told to stop.
+	testutil.WaitUntil(t, 5*time.Second, func() bool { stops, _ := b.calls(); return stops == 1 }, "the backend to be told to stop")
 }
 
 // closingBackend closes its server as soon as it is asked to stop, as the
@@ -148,9 +147,8 @@ func TestStopAnswersBeforeTheSocketCloses(t *testing.T) {
 	if err := dial(t, dir).Stop(context.Background()); err != nil {
 		t.Fatalf("Stop = %v, want nil", err)
 	}
-	if stops, _ := b.calls(); stops != 1 {
-		t.Fatalf("Stop called %d times, want 1", stops)
-	}
+	// The answer goes out before the backend is told to stop.
+	testutil.WaitUntil(t, 5*time.Second, func() bool { stops, _ := b.calls(); return stops == 1 }, "the backend to be told to stop")
 }
 
 func TestHostsChangedCallsBackend(t *testing.T) {
