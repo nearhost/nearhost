@@ -92,10 +92,56 @@ type terminal struct {
 	cmd  *exec.Cmd
 	exit chan error // the program's exit, once
 
-	// mu guards the emulator's screen, whose cells screen reads in place,
-	// and raw.
-	mu  sync.Mutex
-	raw strings.Builder // every byte the program wrote, for a failure's report
+	// mu guards the emulator's screen, whose cells screen reads in place.
+	mu sync.Mutex
+
+	// rawMu guards raw, apart from mu: the program's output is recorded as
+	// it is read, even while the emulator is busy.
+	rawMu sync.Mutex
+	raw   strings.Builder // every byte the program wrote, for a failure's report
+}
+
+// outputQueue holds what the program wrote until the emulator draws it. It
+// has no limit, so reading the program's output never waits on the
+// emulator.
+type outputQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	chunks [][]byte
+	closed bool
+}
+
+func newOutputQueue() *outputQueue {
+	q := &outputQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *outputQueue) put(b []byte) {
+	q.mu.Lock()
+	q.chunks = append(q.chunks, b)
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+func (q *outputQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+// take waits for what has been put since the last take, and returns nil
+// once the queue is closed and empty.
+func (q *outputQueue) take() [][]byte {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.chunks) == 0 && !q.closed {
+		q.cond.Wait()
+	}
+	chunks := q.chunks
+	q.chunks = nil
+	return chunks
 }
 
 // start runs the program at path with args and env in a new terminal, in
@@ -116,20 +162,40 @@ func start(t *testing.T, env []string, dir, path string, args ...string) *termin
 		t.Fatalf("start %s: %v", path, err)
 	}
 	term := &terminal{t: t, pty: pty, emu: vt.NewSafeEmulator(cols, rows), cmd: cmd, exit: make(chan error, 1)}
-	// What the program writes goes to the emulator, which draws it.
+	// What the program writes goes to the emulator, which draws it. The
+	// output is read into a queue and drawn from it apart: drawing waits
+	// on the emulator, which a key being sent holds while it waits for the
+	// program to read, and a program that cannot write its output reads no
+	// keys.
+	queue := newOutputQueue()
 	go func() {
+		defer queue.close()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := pty.Read(buf)
 			if n > 0 {
-				term.mu.Lock()
-				term.raw.Write(buf[:n])
-				_, _ = term.emu.Write(buf[:n])
-				term.mu.Unlock()
+				chunk := append([]byte(nil), buf[:n]...)
+				term.rawMu.Lock()
+				term.raw.Write(chunk)
+				term.rawMu.Unlock()
+				queue.put(chunk)
 			}
 			if err != nil {
 				return
 			}
+		}
+	}()
+	go func() {
+		for {
+			chunks := queue.take()
+			if chunks == nil {
+				return
+			}
+			term.mu.Lock()
+			for _, c := range chunks {
+				_, _ = term.emu.Write(c)
+			}
+			term.mu.Unlock()
 		}
 	}()
 	// What the emulator sends goes to the program: the keys typed here, and
@@ -338,7 +404,7 @@ func (term *terminal) waitExit() int {
 
 // output is every byte the program wrote, escape sequences included.
 func (term *terminal) output() string {
-	term.mu.Lock()
-	defer term.mu.Unlock()
+	term.rawMu.Lock()
+	defer term.rawMu.Unlock()
 	return term.raw.String()
 }
