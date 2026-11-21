@@ -3,6 +3,7 @@
 package elevate
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/sudo"
 )
@@ -60,11 +63,17 @@ func (e *e2eElevator) Forget(context.Context) {
 	e.mu.Unlock()
 }
 
-// Run runs c as this user once a password has been taken. Without one it
-// fails as sudo -n does: the stand-in has no terminal to ask on.
+// Run runs c as this user once a password has been taken. Without one, an
+// interactive command asks for it on the terminal, as sudo -p does, and any
+// other fails as sudo -n does.
 func (e *e2eElevator) Run(ctx context.Context, c Command) error {
 	if !e.Cached(ctx) {
-		return errors.New("a password is required")
+		if !c.Interactive {
+			return errors.New("a password is required")
+		}
+		if err := e.ask(ctx, c.Prompt); err != nil {
+			return err
+		}
 	}
 	if log := os.Getenv("NEARHOST_E2E_ELEVATED"); log != "" {
 		f, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -87,4 +96,36 @@ func (e *e2eElevator) Run(ctx context.Context, c Command) error {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(said.String()))
 	}
 	return nil
+}
+
+// ask reads a password from standard input, prompting on standard error,
+// as sudo does: three tries, "Sorry, try again." after a wrong one, and what
+// is typed never shown on a terminal.
+func (e *e2eElevator) ask(ctx context.Context, prompt string) error {
+	in := bufio.NewReader(os.Stdin)
+	for try := 0; try < 3; try++ {
+		if try > 0 {
+			fmt.Fprintln(os.Stderr, "Sorry, try again.")
+		}
+		fmt.Fprint(os.Stderr, prompt)
+		var password string
+		if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+			b, err := term.ReadPassword(fd)
+			fmt.Fprintln(os.Stderr)
+			if err != nil {
+				return err
+			}
+			password = string(b)
+		} else {
+			line, err := in.ReadString('\n')
+			if err != nil && line == "" {
+				return err
+			}
+			password = strings.TrimRight(line, "\r\n")
+		}
+		if e.Validate(ctx, password) == nil {
+			return nil
+		}
+	}
+	return errors.New("3 incorrect password attempts")
 }
