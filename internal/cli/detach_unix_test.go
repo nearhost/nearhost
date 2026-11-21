@@ -14,7 +14,7 @@ import (
 // and its wait reports how the child ended.
 func TestSpawnDetachedRunsInItsOwnSession(t *testing.T) {
 	out := t.TempDir() + "/sid"
-	wait, err := spawnDetached("/bin/sh", []string{"-c", "echo $$ $(ps -o pgid= -p $$) > " + out + "; exit 3"})
+	wait, err := spawnDetached("/bin/sh", []string{"-c", `echo $$ $(ps -o pgid= -p $$) > "$1"; exit 3`, "sh", out})
 	if err != nil {
 		t.Fatal(err)
 	}
