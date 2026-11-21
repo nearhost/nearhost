@@ -279,7 +279,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	running := make(chan struct{})
 	defer close(running)
 	var proposals tui.Proposals
-	ag.review(&proposals)
+	ag.review(reviewer{&proposals})
 	m := tui.New(back, dir)
 	for _, note := range []string{migrateNote, agentNote} {
 		if note != "" {

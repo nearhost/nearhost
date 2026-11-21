@@ -408,7 +408,7 @@ func TestAlwaysAllowedFolderSurvivesARestart(t *testing.T) {
 		if a == nil {
 			t.Fatal(note)
 		}
-		a.review(&tui.Proposals{})
+		a.review(reviewer{&tui.Proposals{}})
 		a.attach(engine.New(&config.Config{}, opts))
 		a.docs.open = func(string) error { return nil }
 		return a

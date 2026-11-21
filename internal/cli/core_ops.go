@@ -25,6 +25,9 @@ type coreOps struct {
 	// agents answers the agents' proposals; nil when none can reach
 	// nearhost.
 	agents *agents
+	// approvals is the queue of what the agents ask, which the answers take
+	// requests off; nil when nothing is queued.
+	approvals *approvals
 	// path is the config file.
 	path      string
 	httpsPort int
@@ -197,9 +200,17 @@ func (o *coreOps) ReconnectServer(_ context.Context, name string) error {
 	return o.eng.ReconnectServer(name)
 }
 
-func (o *coreOps) AcceptProposal(id, name string) { o.agents.accept(id, name) }
+// AcceptProposal takes the proposal id off the queue and accepts it.
+func (o *coreOps) AcceptProposal(id, name string) {
+	o.approvals.take(id)
+	o.agents.accept(id, name)
+}
 
-func (o *coreOps) DeclineProposal(id, reason string) { o.agents.decline(id, reason) }
+// DeclineProposal takes the proposal id off the queue and declines it.
+func (o *coreOps) DeclineProposal(id, reason string) {
+	o.approvals.take(id)
+	o.agents.decline(id, reason)
+}
 
 // ClosePassthrough closes the passthrough id for the user.
 func (o *coreOps) ClosePassthrough(ctx context.Context, id string) error {
@@ -222,22 +233,27 @@ func answerOf(s string) (tui.Answer, error) {
 }
 
 // AnswerPassthrough gives the user's answer to a coding agent's request for
-// a passthrough to the agent API.
+// a passthrough to the agent API, once it has taken the request off the
+// queue. One not queued still reaches the agent API, which says whether it
+// has ended: an Always allow open is answered with close, and never queued.
 func (o *coreOps) AnswerPassthrough(ctx context.Context, id, answer string) error {
 	a, err := answerOf(answer)
 	if err != nil {
 		return err
 	}
+	o.approvals.take(id)
 	return controlAnswerError(o.agents.answerPassthrough(ctx, id, a))
 }
 
 // AnswerDocument gives the user's answer to a coding agent's request to
-// show a document to the agent API.
+// show a document to the agent API, once it has taken the request off the
+// queue, as AnswerPassthrough does.
 func (o *coreOps) AnswerDocument(ctx context.Context, id, answer string) error {
 	a, err := answerOf(answer)
 	if err != nil {
 		return err
 	}
+	o.approvals.take(id)
 	return controlAnswerError(o.agents.answerDocument(ctx, id, a))
 }
 
@@ -300,9 +316,9 @@ func (o *coreOps) PageKeyURL() (string, error) {
 
 // State is what the core serves: the config the engine runs, and the state
 // of each of its projects and servers, the open passthroughs, the documents
-// served and the grants, this machine's included. The caller adds what the
-// core is, the ports it was asked for, and the requests that wait for an
-// answer.
+// served, the grants, this machine's included, and the requests that wait
+// for an answer. The caller adds what the core is and the ports it was asked
+// for.
 func (o *coreOps) State() control.State {
 	cfg := o.eng.Config()
 	st := control.State{
@@ -313,7 +329,7 @@ func (o *coreOps) State() control.State {
 		Passthroughs: o.eng.Passthroughs(""),
 		Documents:    o.agents.documents(""),
 		Grants:       []grants.Grant{},
-		Approvals:    []control.Approval{},
+		Approvals:    o.approvals.Pending(),
 	}
 	if data, err := config.Marshal(cfg); err == nil {
 		st.Config = string(data)
@@ -330,6 +346,9 @@ func (o *coreOps) State() control.State {
 	}
 	if st.Documents == nil {
 		st.Documents = []documents.Tree{}
+	}
+	if st.Approvals == nil {
+		st.Approvals = []control.Approval{}
 	}
 	if err := o.agents.grantsErr(); err != nil {
 		st.GrantsError = err.Error()

@@ -322,12 +322,14 @@ func (a *agents) publishHeld(eng *engine.Engine) {
 	a.unsent = nil
 }
 
-// review has the interface review the agents' proposals, and the changes
-// their reloads find.
-func (a *agents) review(to *tui.Proposals) {
+// review has r review the agents' proposals and requests, and the changes
+// their reloads find: the in-process interface, or the core's queue while a
+// client follows it. A nil r reviews nothing, so the agent API refuses what
+// needs an answer, as `nearhost up` does.
+func (a *agents) review(r agentapi.Reviewer) {
 	if a != nil {
-		a.api.SetReviewer(reviewer{to})
-		a.src.reviewed.Store(true)
+		a.api.SetReviewer(r)
+		a.src.reviewed.Store(r != nil)
 	}
 }
 
