@@ -344,15 +344,21 @@ func TestChangeApprove(t *testing.T) {
 		t.Errorf("a form lacks the token:\n%s", body)
 	}
 	resp = do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"approve"}, "sha": {"sha1"}})
-	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=approve" {
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=approve&sha=sha1" {
 		t.Fatalf("approve: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if got := c.called(); !slices.Equal(got, []string{"AcceptChange web sha1"}) {
 		t.Errorf("calls %q", got)
 	}
-	// While the change still waits, answered shows it, not an answer.
-	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); strings.Contains(body, "Answered") || !strings.Contains(body, "api.example.com") {
-		t.Errorf("answered while the change waits:\n%s", body)
+	// The approval is saved, but the change waits until the config is read
+	// again: the answer shows for the change approved, and for no other.
+	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve&sha=sha1", nil)); !strings.Contains(body, "Answered: Approved.") || buttons(body) != nil {
+		t.Errorf("approved while the change is applied:\n%s", body)
+	}
+	for _, q := range []string{"answered=approve", "answered=approve&sha=sha0", "answered=decline&sha=sha1"} {
+		if body := bodyOf(t, do(newPage(c), "GET", "/change/web?"+q, nil)); strings.Contains(body, "Answered") || !strings.Contains(body, "api.example.com") {
+			t.Errorf("%s answered while the change waits:\n%s", q, body)
+		}
 	}
 	c.state.Projects["web"] = engine.ProjectStatus{}
 	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); !strings.Contains(body, "Answered: Approved.") {

@@ -270,15 +270,20 @@ const realDomainNote = "Serving it here hides the real site on this machine."
 
 // change serves /change/{name}: what the project's .nearhostrc asks for
 // that needs approval, and the answers it takes. With answered set to an
-// answer, once no change waits, it says the answer was given.
+// answer, once no change waits, it says the answer was given. An approval
+// is saved at once but applied when the config is next read, so with sha
+// set too it says so while the change it approved still waits.
 func (p *page) change(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pending := p.o.Core.State().Projects[name].Pending
+	q := r.URL.Query()
+	label, given := changeLabels[q.Get("answered")]
+	applying := pending != nil && q.Get("answered") == "approve" && q.Get("sha") != "" && q.Get("sha") == pending.SHA256
+	if given && (pending == nil || applying) {
+		render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
+		return
+	}
 	if pending == nil {
-		if label, given := changeLabels[r.URL.Query().Get("answered")]; given {
-			render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
-			return
-		}
 		render(w, r, "change", http.StatusNotFound, changeView{base: p.base("Nothing to review"), Gone: true})
 		return
 	}
@@ -342,7 +347,11 @@ func (p *page) answerChange(w http.ResponseWriter, r *http.Request) {
 		render(w, r, "change", http.StatusConflict, v)
 		return
 	}
-	http.Redirect(w, r, "/change/"+url.PathEscape(name)+"?answered="+ans, http.StatusSeeOther)
+	answered := url.Values{"answered": {ans}}
+	if ans == "approve" {
+		answered.Set("sha", sha)
+	}
+	http.Redirect(w, r, "/change/"+url.PathEscape(name)+"?"+answered.Encode(), http.StatusSeeOther)
 }
 
 // sortedNames lists m's keys in order.
