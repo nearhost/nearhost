@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -248,5 +249,37 @@ func TestStatusJSONHasApprovalsAndPage(t *testing.T) {
 	}
 	if strings.Contains(out, "?k=") {
 		t.Errorf("JSON carries the key:\n%s", out)
+	}
+}
+
+// failingWriter fails each write that contains bad.
+type failingWriter struct{ bad string }
+
+var errClosedPipe = errors.New("closed pipe")
+
+func (f failingWriter) Write(b []byte) (int, error) {
+	if strings.Contains(string(b), f.bad) {
+		return 0, errClosedPipe
+	}
+	return len(b), nil
+}
+
+// A write that fails, as to a closed pipe, is printStatus's error wherever
+// it falls.
+func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
+	noProjects := testStatus
+	noProjects.Projects = nil
+	for _, c := range []struct {
+		name string
+		st   control.Status
+		bad  string
+	}{
+		{"no projects", noProjects, "No projects"},
+		{"approvals", waitingStatus(), "Waiting"},
+		{"page", waitingStatus(), "Page:"},
+	} {
+		if err := printStatus(failingWriter{c.bad}, c.st, false); !errors.Is(err, errClosedPipe) {
+			t.Errorf("%s: printStatus = %v", c.name, err)
+		}
 	}
 }

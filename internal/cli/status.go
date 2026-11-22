@@ -90,7 +90,9 @@ var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd()))
 // servers and one of its projects, aligned as `ls` aligns its own, then what
 // waits for an answer and the page's address. The address carries the page's
 // key only when terminal is true: a pipe or a log keeps no secret.
-func printStatus(w io.Writer, st control.Status, terminal bool) error {
+func printStatus(out io.Writer, st control.Status, terminal bool) error {
+	// The first write that fails is the error, as for a closed pipe.
+	w := &stickyWriter{w: out}
 	info := st.Info
 	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
 		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
@@ -140,7 +142,23 @@ func printStatus(w io.Writer, st control.Status, terminal bool) error {
 		}
 		fmt.Fprintf(w, "\nPage: %s\n", printable(page))
 	}
-	return nil
+	return w.err
+}
+
+// stickyWriter writes to w until a write fails, then keeps that error and
+// writes nothing more.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) Write(b []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.w.Write(b)
+	s.err = err
+	return n, err
 }
 
 // writeTable writes rows in aligned columns. Every cell ends with a tab, so
