@@ -23,7 +23,7 @@ If that is empty or reads as a placeholder, take `add`, `status`, `doctor`, `pas
 1. Work out the dev server's port only if the project's own files say it plainly, such as `server.port` in `vite.config.ts` or `PORT=` in `.env`. Otherwise leave it to Nearhost, which reads them itself.
 2. Run `<script> propose [--web <port>] [--name <name>] .` from the project's directory. Pass `--name` only when the user gave one.
 3. If the JSON says `"state":"exists"`, the project is already in Nearhost: report its `url` and `state`, and stop.
-4. Otherwise it printed an `id`. Tell the user: "Review it in Nearhost on <laptop>." Get `<laptop>` from `<script> socket`.
+4. Otherwise it printed an `id`. Tell the user to review it in Nearhost on <laptop>, and give them the link the script printed, as is, so they can open it. Get `<laptop>` from `<script> socket`.
 5. Run `<script> wait <id>`. While it prints `"state":"pending"`, run it again. Each run waits up to 50 seconds.
 6. On `"state":"accepted"`, report the project's `url`. Run `<script> status` a few seconds apart while its `state` is `starting`, for 30 seconds at most. Then run `<script> doctor .` whatever the state is: it reports a project that is stopped or degraded itself. If that exits with status 5, this Nearhost has no doctor: skip it without saying so. When it finds errors or warnings, offer to work through them as in `doctor`.
 7. Exit status 6 means the user declined it: say so, with the `reason` if there is one. Exit status 7 means nobody answered within 10 minutes: say so; the user can run `/nearhost add` again.
@@ -43,10 +43,10 @@ Use this when a project isn't served as the user expects.
 1. Run `<script> doctor .` and read `findings`. Work through `error` findings, then `warning`. Mention `info` only when it bears on what the user asked.
 2. For a fix of kind `project`: show the user the change, the `snippet` at `file`:`line`, and make it in the project's files with their agreement. Never make it in Nearhost's config. When the setup is more than Nearhost can infer (several hosts, patterns, `localhost`, Docker callbacks), write or edit `.nearhostrc`. `nearhost export` writes the current setup, to start from.
 3. After editing `.nearhostrc`, and for the findings `nearhostrc.pending` and `nearhostrc.not-applied`, run `<script> reload .`.
-   - On `"state":"pending"` (status 202), tell the user: "Approve it in Nearhost on <laptop>." Then run `<script> wait <id>` as in add.
+   - On `"state":"pending"` (status 202), tell the user to approve it in Nearhost on <laptop>, and give them the link the script printed, as is, so they can open it. Then run `<script> wait <id>` as in add.
    - Exit status 6 means the user declined it.
    - Exit status 8 means the file changed again, or the change stopped waiting: run `reload .` again.
-   - Exit status 3 means Nearhost runs as `nearhost up`: ask the user to open `nearhost`.
+   - Exit status 3 means Nearhost on the laptop has no page or window to ask in: ask the user to open `nearhost` there, then try again.
 4. Any other fix of kind `nearhost` is something the user does in Nearhost, and a reload changes nothing for it. Pass its `text` on to the user, or offer to write the port or host into `.nearhostrc` instead and then reload as above.
 5. For a fix of kind `manual`, tell the user plainly what its `text` says. The user does those.
 6. Run `doctor .` again. Stop when no error or warning is left that you can fix, then say what is left.
@@ -58,10 +58,10 @@ Do not edit Nearhost's config file yourself.
 Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev server's port in the user's browser on the laptop.
 
 1. Before you give the user a `localhost:<port>` URL, run `<script> passthrough <port> --label "browser preview"`. Do not ask the user in chat first: Nearhost asks them.
-2. If the JSON has an `id` and no `state`, it is waiting. Tell the user: "Approve it in Nearhost on <laptop>." Get `<laptop>` from `<script> socket`. Then run `<script> passthrough-wait <id>`, and again while it prints `"state":"pending"`, as in add.
+2. If the JSON has an `id` and no `state`, it is waiting. Tell the user to approve it in Nearhost on <laptop>, and give them the link the script printed, as is, so they can open it. Get `<laptop>` from `<script> socket`. Then run `<script> passthrough-wait <id>`, and again while it prints `"state":"pending"`, as in add.
 3. On `"state":"open"`, give the user the returned `url` with the path of the page appended, not the `localhost` URL you started with. It is the laptop's port, which may differ from the server's. On `"state":"closed"`, tell the user the passthrough is closed, so no preview is available.
 4. Exit status 6 means the user said No: do not ask again for that port in this session. When the script says the user said No to a passthrough or to another one, Nearhost did not ask the user about this one: pass on what the script printed, and ask again only if the user asks you to. Exit status 1 with `Nearhost could not open the port: <reason>` means the user said yes but opening it failed: pass the reason on to the user, and ask again only once it is fixed. Exit status 7 means nobody answered within 10 minutes.
-5. On exit status 2 and 5, pass on the message the script printed as it is. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop.
+5. On exit status 2 and 5, pass on the message the script printed as it is. On exit status 3, Nearhost on the laptop has no page or window to ask in: ask the user to open `nearhost` there, then try again.
 6. Never run `passthrough-close` yourself, unless the user asks you to close one. Nearhost closes a session's passthroughs when the session ends.
 
 When the user picks "Always allow" in Nearhost, the script keeps the token it is given under `$XDG_STATE_HOME/nearhost/tokens` (by default `~/.local/state/nearhost`) and later asks without a prompt. Do not read, print or edit those files.
@@ -71,10 +71,10 @@ When the user picks "Always allow" in Nearhost, the script keeps the token it is
 Use this when you have written a document for the user to read, such as a plan, spec, report, write-up or HTML mockup, and are about to tell them where it is. It works on the laptop and on a server. Never use it for code or config files.
 
 1. Before you tell the user where the document is, run `<script> open <path> --label "<what it is>"`. The path is a `.md`, `.markdown`, `.html` or `.htm` file. Do not ask the user in chat first: Nearhost asks them.
-2. If the JSON has an `id` and no `state`, it is waiting. Tell the user: "Approve it in Nearhost on <laptop>." Get `<laptop>` from `<script> socket`. Then run `<script> open-wait <id>`, and again while it prints `"state":"pending"`, as in add.
+2. If the JSON has an `id` and no `state`, it is waiting. Tell the user to approve it in Nearhost on <laptop>, and give them the link the script printed, as is, so they can open it. Get `<laptop>` from `<script> socket`. Then run `<script> open-wait <id>`, and again while it prints `"state":"pending"`, as in add.
 3. On `"state":"open"`, give the user the returned `url` as well as the document's path, and say it is open in their browser.
 4. Exit status 6 means the user said No: do not offer that folder or its project again in this session, and give them the path only. When the script says the user said No to a document or to another one, Nearhost did not ask the user about this one: pass on what the script printed, give them the path, and ask again only if the user asks you to. Exit status 1 with `Nearhost could not show the document: <reason>` means the user said yes but showing it failed: pass on the reason and give them the path. Exit status 1 from `open` with an `error` means Nearhost refused the document: pass on its `error` and give them the path. Exit status 7 means nobody answered within 10 minutes: give them the path.
-5. On exit status 2 and 5, pass on the message the script printed as it is, and give the user the document's path: `open` repeats it, but `open-wait` cannot. On exit status 3, Nearhost runs as `nearhost up`: ask the user to open `nearhost` on the laptop, and give them the path.
+5. On exit status 2 and 5, pass on the message the script printed as it is, and give the user the document's path: `open` repeats it, but `open-wait` cannot. On exit status 3, Nearhost on the laptop has no page or window to ask in: ask the user to open `nearhost` there, then try again, and give them the path.
 
 When the user picks "Always allow" in Nearhost, the script keeps the token it is given next to the passthrough token, in a file ending in `.documents`. A later document in a folder the user approved opens without a prompt; one in any other folder asks again. Do not read, print or edit those files.
 
@@ -87,7 +87,7 @@ When the user picks "Always allow" in Nearhost, the script keeps the token it is
   - On a Windows laptop, if it says Nearhost is not installed, pass that on: the user installs it first.
   - On the laptop, if it says the `nearhost` command is here and nothing was proposed yet: `nearhost add` writes the user's config with no review, so ask first: "Nearhost is not answering. Shall I run `nearhost add <path>` to add this project?", with `<path>` the project's absolute path. End your turn and wait for the answer. Run it only if the user answers yes in plain words, such as "yes" or "go ahead". If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it. On anything else, run nothing: tell them to run `nearhost add <path>` themselves, then start `nearhost`.
 - **Exit status 2 and the script printed `curl is needed`**: this machine has no curl, so nothing was asked of Nearhost. Tell the user to install curl. Do not run `nearhost add` instead.
-- **Exit status 3**: Nearhost is running as `nearhost up`, which cannot show proposals. Tell the user to open `nearhost` on the laptop and try again.
+- **Exit status 3**: Nearhost on the laptop has no page or window to ask in. Tell the user to open `nearhost` there, then try again.
 - **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API, or this Nearhost is too old for `doctor` or `reload`. Pass on which one to update.
 - **Exit status 8 from `wait`**: the change of `.nearhostrc` that waited no longer does, as a newer one replaced it or the file changed back. Run `reload .` again.

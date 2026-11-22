@@ -17,7 +17,7 @@
 #   nearhost.ps1 open-wait <id>                          wait up to 50s for the answer
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
-# 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost runs without its interface, 4 several
+# 2 no Nearhost reachable or no curl to reach it with, 3 Nearhost has no page or window to ask the user in, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
 # by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
@@ -308,10 +308,34 @@ function ConvertTo-Body($Fields) {
 	return ConvertTo-Json -InputObject $Fields -Compress
 }
 
+# Write-ApproveLink prints on stderr where the user can answer the request in
+# Body, a 202, on Nearhost's page, when the API gave the link: approve_link in
+# nearhost.sh. For a proposal to add a project, which the page cannot accept,
+# Add gives the advice and the link to decline it.
+function Write-ApproveLink([switch]$Add) {
+	$url = Get-Text approve_url $script:Body
+	if (-not $url) {
+		return
+	}
+	$advice = ''
+	if ($Add) {
+		$advice = Get-Text advice $script:Body
+	}
+	if ($advice) {
+		Write-Err "$advice Or decline it at $url"
+	} else {
+		Write-Err "Answer in Nearhost on $(Get-Field laptop $script:Hello), or open $url"
+	}
+}
+
 # Exit-Answer prints Body and exits for Status: 0 for success, otherwise with
-# the API's error.
-function Exit-Answer {
+# the API's error. It gives the link to answer a 202 first, as Write-ApproveLink
+# does for Add.
+function Exit-Answer([switch]$Add) {
 	Write-Out $script:Body
+	if ($script:Status -eq '202') {
+		Write-ApproveLink -Add:$Add
+	}
 	if ($script:Status -match '^2\d\d\z') {
 		exit 0
 	}
@@ -662,7 +686,7 @@ switch -CaseSensitive ($cmd) {
 		if (-not (Invoke-Api -Sock $script:Sock -Limit 10 -Arguments @('-X', 'POST', '-H', 'Content-Type: application/json', '--data-binary', '@-', 'http://nearhost/v1/proposals') -Data (ConvertTo-Body $fields))) {
 			Exit-Script 2 'Nearhost stopped answering.'
 		}
-		Exit-Answer
+		Exit-Answer -Add
 	}
 	'wait' {
 		if (-not (Test-Id $first)) {
@@ -761,6 +785,7 @@ switch -CaseSensitive ($cmd) {
 			}
 			'202' {
 				Write-Out $script:Body
+				Write-ApproveLink
 				Save-Session
 				exit 0
 			}
@@ -921,6 +946,7 @@ switch -CaseSensitive ($cmd) {
 			}
 			'202' {
 				Write-Out $script:Body
+				Write-ApproveLink
 				exit 0
 			}
 			'409' {
@@ -929,7 +955,7 @@ switch -CaseSensitive ($cmd) {
 				$msg = Get-Text error $script:Body
 				if ($script:Body.Contains('has no page or window to ask you in') -or $script:Body.Contains('nearhost up')) {
 					if (-not $msg) {
-						$msg = 'Nearhost runs as nearhost up, which cannot show prompts.'
+						$msg = 'Nearhost on the laptop has no page or window to ask you in; open nearhost there, then ask again.'
 					}
 					Exit-Script 3 $msg
 				}
