@@ -27,16 +27,23 @@
 //
 // The binary is built with the e2e tag. In that build alone a stand-in takes
 // sudo's place and the hosts file is the sandbox's own, so a journey can go
-// through the password box (password_test.go); a release has neither.
+// through the password box (password_test.go), and a browser is never
+// opened: what Nearhost opens is written to a file of the sandbox's. A
+// release has none of these.
 //
 // A failed wait prints the screen as it was.
 package e2e
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +56,8 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 	"github.com/charmbracelet/x/xpty"
+
+	"github.com/nearhost/nearhost/internal/hostname"
 )
 
 // Screen size of every terminal the tests open.
@@ -407,4 +416,27 @@ func (term *terminal) output() string {
 	term.rawMu.Lock()
 	defer term.rawMu.Unlock()
 	return term.raw.String()
+}
+
+// browserClient is an HTTPS client for Nearhost's page, as a browser on this
+// machine opens it: it trusts root alone, reaches hostname.PageHost at
+// 127.0.0.1 on port without a hosts entry, keeps the cookies it is given and
+// follows redirects. It has no time limit, as the page's event stream lasts:
+// each request carries a context with its own.
+func browserClient(t *testing.T, root *x509.Certificate, port int) *http.Client {
+	t.Helper()
+	pool := x509.NewCertPool()
+	pool.AddCert(root)
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: hostname.PageHost},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", port))
+		},
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Transport: tr, Jar: jar}
 }

@@ -17,13 +17,15 @@ import (
 // sandbox is a home folder of its own for one nearhost, with a config file,
 // and the environment and flags that keep nearhost inside it: its own
 // config and data folders, the fake ssh first on PATH, ports of its own, no
-// hosts file and no page.
+// hosts file and no page unless servePage asks for one.
 type sandbox struct {
 	t           *testing.T
 	dir, config string
 	https, http int
-	env         []string
-	args        []string
+	// web is the port of Nearhost's page, 0 while it is not served.
+	web  int
+	env  []string
+	args []string
 	// manageHosts lets nearhost manage the hosts file, the sandbox's own,
 	// which asks for the password. Without it nearhost runs --no-hosts.
 	manageHosts bool
@@ -63,6 +65,9 @@ func newSandbox(t *testing.T, config string, env ...string) *sandbox {
 		// And for the stand-in for the Windows prompt: where it finds its
 		// answer.
 		"NEARHOST_E2E_CONSENT="+filepath.Join(dir, "consent"),
+		// And for the stand-in for the browser: where it writes the
+		// addresses it is asked to open.
+		"NEARHOST_E2E_OPENED="+s.openedPath(),
 		"NEARHOST_NO_UPDATE_CHECK=1",
 	)
 	s.env = append(s.env, env...)
@@ -81,6 +86,10 @@ const password = "open sesame"
 // hostsPath is the sandbox's hosts file, which the e2e build manages in
 // place of the machine's.
 func (s *sandbox) hostsPath() string { return filepath.Join(s.dir, "hosts") }
+
+// openedPath is where the stand-in for the browser writes the addresses
+// nearhost opens, a line each.
+func (s *sandbox) openedPath() string { return filepath.Join(s.dir, "opened.log") }
 
 // hostsFile is the sandbox's hosts file as it is now.
 func (s *sandbox) hostsFile() string {
