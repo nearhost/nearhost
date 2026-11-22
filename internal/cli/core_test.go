@@ -3,10 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +26,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -689,4 +695,103 @@ func TestApprovalLinesDoNotWaitForTheOutput(t *testing.T) {
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
+}
+
+// With its page served, the core takes an answer given on the page: a Yes
+// posted through the proxy, with the page's cookie, origin and token,
+// opens the document the agent asked to show.
+func TestCorePageAnswersAnAgent(t *testing.T) {
+	engines := make(chan *engine.Engine, 1)
+	opened := make(chan string, 1)
+	u, sock := agentUp(t, func(u *upRun) {
+		u.adjust = func(b *upBackend) {
+			giveEngine(engines)(b)
+			b.agents.open = func(url string) error {
+				opened <- url
+				return nil
+			}
+		}
+	})
+	eng := <-engines
+	base, err := eng.PageURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, out := askToShow(t, sock)
+	if status != 202 {
+		t.Fatalf("document request: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	c := pageBrowser(t, eng.WebPort())
+	keyed, err := proxy.PageKeyURL(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view string
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		resp, err := c.Get(keyed + "&next=/approve/" + id)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		view = string(b)
+		return resp.StatusCode == 200 && strings.Contains(view, "docs/p.md")
+	}, "the approval on the page")
+	m := regexp.MustCompile(`name="csrf" value="([0-9a-f]+)"`).FindStringSubmatch(view)
+	if m == nil {
+		t.Fatalf("the approval has no token:\n%s", view)
+	}
+	form := url.Values{"csrf": {m[1]}, "answer": {"yes"}}
+	req, err := http.NewRequest("POST", base+"/approve/"+id, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", base)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "Answered: Yes.") {
+		t.Fatalf("POST /approve/%s: %d\n%s", id, resp.StatusCode, b)
+	}
+	doc := getJSON(t, sock, "/v1/documents/"+id+"?wait=1")
+	if doc["state"] != "open" {
+		t.Fatalf("the agent was told %v", doc)
+	}
+	select {
+	case got := <-opened:
+		if got != doc["url"] {
+			t.Errorf("opened %s, want %v", got, doc["url"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the document was not opened")
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// pageBrowser is a browser of Nearhost's page on port: it keeps cookies,
+// and dials 127.0.0.1 for nearhost.localhost. It does not check the page's
+// certificate, which the test's own CA signed.
+func pageBrowser(t *testing.T, port int) *http.Client {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fmt.Sprintf("127.0.0.1:%d", port))
+		},
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	return &http.Client{Transport: tr, Jar: jar, Timeout: 30 * time.Second}
 }

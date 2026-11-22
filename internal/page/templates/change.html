@@ -1,0 +1,27 @@
+{{define "content"}}
+  <h1>{{.Title}}</h1>
+  {{- if .Answered}}
+  <p>Answered: {{.Answered}}.</p>
+  {{- else if and .Gone (not .Error)}}
+  <p>This request has been answered or has ended.</p>
+  {{- else}}
+  {{- if .Items}}
+  <div class="asks">
+    <p>Its .nearhostrc changed. Until you approve it, the project keeps serving what was approved before.</p>
+    <p>Needs your approval:</p>
+  </div>
+  <section class="status">
+    <ul>
+      {{- range .Items}}
+      <li>{{.}}</li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- end}}
+  {{- if .Error}}
+  <p class="error" role="alert" data-stay>{{.Error}}</p>
+  {{- end}}
+  {{- if .Buttons}}{{template "buttons" .Buttons}}{{end}}
+  {{- end}}
+  <p><a href="/">Back to Nearhost's page</a></p>
+{{end}}

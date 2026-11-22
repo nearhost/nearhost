@@ -16,6 +16,8 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/page"
+	"github.com/nearhost/nearhost/internal/proxy"
 )
 
 // coreWatchInterval is how often the core looks at the config file, as the
@@ -148,11 +150,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// line is handed to a writer of its own, never written there: output
 	// that blocks must not hold up the agents, nor the answers. The page's
 	// address is fixed for the run once the engine has started.
-	page, _ := eng.PageURL() // "" when the page is not served
+	pageURL, _ := eng.PageURL() // "" when the page is not served
 	lines := newLineWriter(mode.out, approvalLinesBuffer)
 	defer lines.close()
 	queue.onAdd = func(a control.Approval) {
-		line := approvalLine(a, page)
+		line := approvalLine(a, pageURL)
 		if !mode.stamped {
 			line = time.Now().Format("15:04:05") + " " + line
 		}
@@ -206,6 +208,23 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	closeControl := sync.OnceFunc(func() { ctl.Close() })
 	defer closeControl()
 
+	// Nearhost's page shows the core's status and takes answers while it
+	// is served, from the core in this process, never through the control
+	// socket. It is cleared before the engine stops, and its event streams
+	// end with it.
+	closePage := func() {}
+	if eng.WebPort() != 0 {
+		pageDone := make(chan struct{})
+		proxy.SetConsole(page.New(page.Options{
+			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
+		}))
+		closePage = sync.OnceFunc(func() {
+			proxy.SetConsole(nil)
+			close(pageDone)
+		})
+	}
+	defer closePage()
+
 	// The watcher has a context of its own: a core that stops because it
 	// has nothing to serve was not interrupted, and ctx goes on.
 	watchCtx, stopWatch := context.WithCancel(ctx)
@@ -248,6 +267,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// no core. Agents go next, for the same reason, and so that their
 	// socket is free before the lock is.
 	closeControl()
+	closePage()
 	closeAgents()
 	lines.close() // the agents ask no more: what they asked is said first
 	stopWatch()

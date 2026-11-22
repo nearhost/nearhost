@@ -1,0 +1,249 @@
+package page
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/nearhost/nearhost/internal/agentapi"
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
+)
+
+func passApproval(id string, always bool) control.Approval {
+	return control.Approval{ID: id, Pass: &agentapi.PassRequest{
+		ID: id, Origin: "leto", Requester: "claude-code", Label: "vite", Remote: 5173, CanAlways: always,
+	}}
+}
+
+func docApproval(id string) control.Approval {
+	return control.Approval{ID: id, Doc: &agentapi.DocRequest{
+		ID: id, Origin: config.LocalServer, Requester: "codex", Root: "/home/dev/app", Doc: "docs/plan.md", CanAlways: true,
+	}}
+}
+
+func propApproval(id string) control.Approval {
+	return control.Approval{ID: id, Proposal: &agentapi.Proposal{ID: id, Origin: "leto", Path: "/srv/shop", Name: "shop", Web: 8000}}
+}
+
+// answer posts answer to the approval id, with the form token.
+func answer(id, answer string) url.Values {
+	return url.Values{"csrf": {testToken}, "answer": {answer}}
+}
+
+func TestApprovalViews(t *testing.T) {
+	taken := passApproval("p3", false)
+	taken.Pass.LocalTaken = true
+	for _, tc := range []struct {
+		name    string
+		a       control.Approval
+		buttons []string
+		says    []string
+	}{
+		{"passthrough with always", passApproval("p1", true), []string{"Yes", "No", "Always allow"},
+			[]string{"Claude Code on leto wants to open port 5173 on this laptop (vite).", "It opens on port 5173 here."}},
+		{"passthrough without always", passApproval("p2", false), []string{"Yes", "No"}, []string{"Claude Code on leto"}},
+		{"passthrough on a taken port", taken, []string{"Yes", "No"}, []string{"Port 5173 is in use here, so it will open on another port."}},
+		{"document", docApproval("d1"), []string{"Yes", "No", "Always allow"},
+			[]string{"Codex on this machine wants to show docs/plan.md.", "Nearhost will serve files in /home/dev/app, except dotfiles."}},
+		{"proposal", propApproval("x"), []string{"No"},
+			[]string{"on leto", "/srv/shop", "shop", "8000", "Run nearhost on this machine to review it."}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := do(newPage(newCore(tc.a)), "GET", "/approve/"+tc.a.ID, nil)
+			body := bodyOf(t, resp)
+			if resp.StatusCode != 200 {
+				t.Fatalf("status %d:\n%s", resp.StatusCode, body)
+			}
+			if got := buttons(body); !slices.Equal(got, tc.buttons) {
+				t.Errorf("buttons %q, want %q", got, tc.buttons)
+			}
+			if !eachFormHasToken(body) {
+				t.Errorf("a form lacks the token:\n%s", body)
+			}
+			if !strings.Contains(body, `action="/approve/`+tc.a.ID+`"`) {
+				t.Errorf("the forms do not post to the approval:\n%s", body)
+			}
+			for _, s := range tc.says {
+				if !strings.Contains(body, s) {
+					t.Errorf("the view lacks %q:\n%s", s, body)
+				}
+			}
+		})
+	}
+}
+
+func TestAnswerYes(t *testing.T) {
+	c := newCore(passApproval("p1", true))
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/approve/p1?answered=yes" {
+		t.Fatalf("POST: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); !slices.Equal(got, []string{"AnswerPassthrough p1 yes"}) {
+		t.Errorf("calls %q", got)
+	}
+	// The request has gone from the queue by the time the browser follows
+	// the redirect.
+	c.state.Approvals = nil
+	body := bodyOf(t, do(newPage(c), "GET", "/approve/p1?answered=yes", nil))
+	if !strings.Contains(body, "Answered: Yes.") || !strings.Contains(body, `href="/"`) {
+		t.Errorf("after the answer:\n%s", body)
+	}
+}
+
+func TestAnswerDocumentAlways(t *testing.T) {
+	c := newCore(docApproval("d1"))
+	resp := do(newPage(c), "POST", "/approve/d1", answer("d1", "always"))
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/approve/d1?answered=always" {
+		t.Fatalf("POST: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); !slices.Equal(got, []string{"AnswerDocument d1 always"}) {
+		t.Errorf("calls %q", got)
+	}
+	c.state.Approvals = nil
+	if body := bodyOf(t, do(newPage(c), "GET", "/approve/d1?answered=always", nil)); !strings.Contains(body, "Answered: Always allow.") {
+		t.Errorf("after the answer:\n%s", body)
+	}
+}
+
+func TestAnswerRefusesWhatIsNotOffered(t *testing.T) {
+	c := newCore(passApproval("p2", false))
+	for _, a := range []string{"always", "maybe", ""} {
+		if resp := do(newPage(c), "POST", "/approve/p2", answer("p2", a)); resp.StatusCode != 400 {
+			t.Errorf("answer %q: %d", a, resp.StatusCode)
+		}
+	}
+	if got := c.called(); len(got) != 0 {
+		t.Errorf("calls %q", got)
+	}
+}
+
+func TestProposalOnlyNo(t *testing.T) {
+	c := newCore(propApproval("x"))
+	if resp := do(newPage(c), "POST", "/approve/x", answer("x", "yes")); resp.StatusCode != 400 {
+		t.Errorf("yes on a proposal: %d", resp.StatusCode)
+	}
+	if got := c.called(); len(got) != 0 {
+		t.Fatalf("yes on a proposal called %q", got)
+	}
+	resp := do(newPage(c), "POST", "/approve/x", answer("x", "no"))
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/approve/x?answered=no" {
+		t.Fatalf("no: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); !slices.Equal(got, []string{"DeclineProposal x declined on Nearhost's page"}) {
+		t.Errorf("calls %q", got)
+	}
+}
+
+func TestAnsweredElsewhere(t *testing.T) {
+	const gone = "This request has been answered or has ended."
+	c := newCore(passApproval("p1", true))
+	c.err = fmt.Errorf("answer: %w", control.ErrRequestEnded)
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	if body := bodyOf(t, resp); resp.StatusCode != 409 || !strings.Contains(body, gone) {
+		t.Errorf("answered elsewhere: %d\n%s", resp.StatusCode, body)
+	}
+	resp = do(newPage(c), "GET", "/approve/nope", nil)
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 404 || !strings.Contains(body, gone) || strings.Contains(body, "<form") {
+		t.Errorf("an id not pending: %d\n%s", resp.StatusCode, body)
+	}
+	// One withdrawn while the view showed it gets the same answer to its
+	// POST, and nothing is called.
+	calls := len(c.called())
+	resp = do(newPage(c), "POST", "/approve/nope", answer("nope", "yes"))
+	if body := bodyOf(t, resp); resp.StatusCode != 409 || !strings.Contains(body, gone) || len(c.called()) != calls {
+		t.Errorf("POST to an id not pending: %d\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestAnswerErrorShown(t *testing.T) {
+	c := newCore(passApproval("p1", true))
+	c.err = errors.New("port 3000 on leto: not connected")
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 502 || !strings.Contains(body, "port 3000 on leto: not connected") || !strings.Contains(body, "Claude Code on leto") {
+		t.Errorf("a failed answer: %d\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "<html") {
+		t.Errorf("a failed answer is not a page:\n%s", body)
+	}
+}
+
+// changeCore is a core whose project web's .nearhostrc waits on a change.
+func changeCore() *fakeCore {
+	c := newCore()
+	c.state.Projects["web"] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "sha1", Items: []nearhostrc.Item{
+		{Port: 3000, Host: "api.example.com", Why: "a real domain"},
+		{Option: nearhostrc.OptionDockerClients, Why: "opens the project to containers"},
+	}}}
+	return c
+}
+
+func TestChangeApprove(t *testing.T) {
+	c := changeCore()
+	resp := do(newPage(c), "GET", "/change/web", nil)
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET: %d\n%s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"api.example.com (a real domain)", "docker_clients (opens the project to containers)", `name="sha" value="sha1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the change lacks %q:\n%s", want, body)
+		}
+	}
+	if got := buttons(body); !slices.Equal(got, []string{"Approve", "Decline"}) {
+		t.Errorf("buttons %q", got)
+	}
+	if !eachFormHasToken(body) {
+		t.Errorf("a form lacks the token:\n%s", body)
+	}
+	resp = do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"approve"}, "sha": {"sha1"}})
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=approve" {
+		t.Fatalf("approve: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); !slices.Equal(got, []string{"AcceptChange web sha1"}) {
+		t.Errorf("calls %q", got)
+	}
+	c.state.Projects["web"] = engine.ProjectStatus{}
+	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); !strings.Contains(body, "Answered: Approved.") {
+		t.Errorf("after the answer:\n%s", body)
+	}
+}
+
+func TestChangeDecline(t *testing.T) {
+	c := changeCore()
+	resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"decline"}, "sha": {"sha1"}})
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=decline" {
+		t.Fatalf("decline: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); !slices.Equal(got, []string{"DeclineChange web sha1"}) {
+		t.Errorf("calls %q", got)
+	}
+}
+
+func TestChangeStale(t *testing.T) {
+	c := changeCore()
+	c.err = errors.New("the .nearhostrc changed again; review it again")
+	resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"approve"}, "sha": {"sha0"}})
+	if body := bodyOf(t, resp); resp.StatusCode != 409 || !strings.Contains(body, "changed again; review it again") {
+		t.Errorf("a stale approve: %d\n%s", resp.StatusCode, body)
+	}
+	// A stale decline is not passed on: it would decline nothing.
+	calls := len(c.called())
+	resp = do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"decline"}, "sha": {"sha0"}})
+	if body := bodyOf(t, resp); resp.StatusCode != 409 || !strings.Contains(body, "changed again; review it again") || len(c.called()) != calls {
+		t.Errorf("a stale decline: %d\n%s", resp.StatusCode, body)
+	}
+	if resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"maybe"}, "sha": {"sha1"}}); resp.StatusCode != 400 {
+		t.Errorf("a bad answer: %d", resp.StatusCode)
+	}
+	if resp := do(newPage(c), "GET", "/change/api", nil); resp.StatusCode != 404 {
+		t.Errorf("a project with no change: %d", resp.StatusCode)
+	}
+}

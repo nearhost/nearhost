@@ -1,0 +1,24 @@
+{{define "content"}}
+  <h1>{{.Title}}</h1>
+  {{- if .Answered}}
+  <p>Answered: {{.Answered}}.</p>
+  <p><a href="/">Back to Nearhost's page</a></p>
+  {{- else if .Gone}}
+  <p>This request has been answered or has ended.</p>
+  <p><a href="/">Back to Nearhost's page</a></p>
+  {{- else}}
+  <div class="asks">
+    {{- range .Lines}}
+    <p>{{.}}</p>
+    {{- end}}
+    {{- if .Advice}}
+    <p>{{.Advice}}</p>
+    {{- end}}
+  </div>
+  {{- if .Error}}
+  <p class="error" role="alert" data-stay>{{.Error}}</p>
+  {{- end}}
+  {{- if .Buttons}}{{template "buttons" .Buttons}}{{end}}
+  <p><a href="/">Back to Nearhost's page</a></p>
+  {{- end}}
+{{end}}

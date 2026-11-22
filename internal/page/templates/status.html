@@ -1,0 +1,62 @@
+{{define "content"}}
+  <h1>Run it anywhere. Open it <span>here</span>.</h1>
+  <p>Nearhost started {{.Started}}, by {{.StartedBy}}. This page answers at nearhost.localhost:{{.WebPort}}.</p>
+  <nav aria-label="Nearhost links">
+    <a href="https://nearhost.dev">Website</a>
+    <a href="https://nearhost.dev/docs/">Docs</a>
+    <a href="https://github.com/nearhost/nearhost">GitHub</a>
+  </nav>
+  <section class="status">
+    <h2>Servers</h2>
+    <ul>
+      {{- range .Servers}}
+      <li>{{.Name}} <span>is {{.Health}}.{{if .Message}} {{.Message}}{{end}}</span></li>
+      {{- end}}
+    </ul>
+  </section>
+  <section class="status">
+    <h2>Projects</h2>
+    {{- if .Projects}}
+    <ul>
+      {{- range .Projects}}
+      <li>{{.Name}} <span>is {{.State}}.{{if .Message}} {{.Message}}{{end}}</span>{{if .URL}}<br><a href="{{.URL}}">{{.URL}}</a>{{end}}</li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p>No project is served. Add one with nearhost add in its folder.</p>
+    {{- end}}
+  </section>
+  {{- if .Passthroughs}}
+  <section class="status">
+    <h2>Passthroughs</h2>
+    <ul>
+      {{- range .Passthroughs}}
+      <li>{{.Who}}{{if .Label}} ({{.Label}}){{end}} <span>has port {{.Remote}} there open on port {{.Local}} here{{if .Opened}}, since {{.Opened}}{{end}}.</span></li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- end}}
+  <section class="waiting">
+    <h2>Waiting for your answer</h2>
+    {{- if .Approvals}}
+    <ul>
+      {{- range .Approvals}}
+      <li><a href="{{.Href}}">{{.Text}}</a></li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p>Nothing waits for your answer.</p>
+    {{- end}}
+  </section>
+  {{- range .Trees}}
+  <section class="docs">
+    <h2>{{.Server}}</h2>
+    <p>{{.Root}}</p>
+    <ul>
+      {{- range .Docs}}
+      <li><a href="{{.URL}}">{{.Path}}</a></li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- end}}
+{{end}}

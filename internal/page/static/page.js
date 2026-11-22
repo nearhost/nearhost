@@ -1,0 +1,47 @@
+// Keeps Nearhost's page up to date: on each change the core's event stream
+// tells of, and every 15 seconds while the page is in view, it fetches the
+// page again and puts its main part in place of the one shown. One fetch
+// runs at a time, with at most one more queued. A view showing an error is
+// left as it is, so the error stays until the user moves on.
+"use strict";
+(function () {
+  var main = document.querySelector("main");
+  if (!main) return;
+  var busy = false, again = false;
+  function refresh() {
+    if (main.querySelector("[data-stay]")) return;
+    if (busy) { again = true; return; }
+    busy = true;
+    fetch(location.pathname + location.search, {
+      headers: { "X-Nearhost-Part": "main" }, credentials: "same-origin", cache: "no-store"
+    }).then(function (r) {
+      return r.ok || r.status === 404 ? r.text() : null;
+    }).then(function (html) {
+      if (html !== null) main.innerHTML = html;
+    }).catch(function () {}).then(function () {
+      busy = false;
+      if (again) { again = false; refresh(); }
+    });
+  }
+  var failed = false;
+  function connect() {
+    var source = new EventSource("/events");
+    source.addEventListener("message", function (e) {
+      if (e.data === "changed") refresh();
+    });
+    source.addEventListener("open", function () {
+      // A reconnect may follow a core that restarted: what it shows may
+      // have changed meanwhile.
+      if (failed) { failed = false; refresh(); }
+    });
+    source.addEventListener("error", function () {
+      failed = true;
+      // A stream refused outright is not retried by the browser.
+      if (source.readyState === EventSource.CLOSED) setTimeout(connect, 5000);
+    });
+  }
+  if (window.EventSource) connect();
+  setInterval(function () {
+    if (document.visibilityState === "visible") refresh();
+  }, 15000);
+})();
