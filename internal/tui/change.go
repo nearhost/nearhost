@@ -2,10 +2,7 @@ package tui
 
 import (
 	"context"
-	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -144,53 +141,13 @@ func (f *changeForm) keys() []footerItem {
 	return []footerItem{{"y", "approve"}, {"n", "decline"}, {"esc", "later"}}
 }
 
-// moves says, a line each as was → now, what the change from old to next
-// takes away from what old serves: a host moved to another port or gone, and
-// a route whose port is gone, unless its hosts moved with it.
+// moves is nearhostrc.Moves, each line made safe to show.
 func moves(old, next config.Project) []string {
-	var out []string
-	for _, r := range old.Routes {
-		if r.Role == config.RoleIgnore {
-			continue
-		}
-		moved := false
-		for _, h := range r.Hosts {
-			if r.Role != config.RoleWeb {
-				break
-			}
-			switch now := portOf(next, h); {
-			case now == 0:
-				out = append(out, fmt.Sprintf("%s port %d → removed", clean(h), r.Port))
-			case now != r.Port:
-				moved = true
-				out = append(out, fmt.Sprintf("%s port %d → %d", clean(h), r.Port, now))
-			}
-		}
-		gone := !slices.ContainsFunc(next.Routes, func(q config.Route) bool { return q.Port == r.Port })
-		if gone && !moved {
-			what := "port " + strconv.Itoa(r.Port)
-			if r.Label != "" {
-				what += " (" + clean(r.Label) + ")"
-			}
-			out = append(out, what+" → removed")
-		}
+	out := nearhostrc.Moves(old, next)
+	for i, l := range out {
+		out[i] = clean(l)
 	}
 	return out
-}
-
-// portOf is the port of the web route of p that serves host, or 0.
-func portOf(p config.Project, host string) int {
-	for _, r := range p.Routes {
-		if r.Role != config.RoleWeb {
-			continue
-		}
-		for _, h := range r.Hosts {
-			if strings.EqualFold(h, host) {
-				return r.Port
-			}
-		}
-	}
-	return 0
 }
 
 // pendingLines say that a project's .nearhostrc waits for approval, or why it
