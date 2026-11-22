@@ -123,9 +123,10 @@ func (s *Server) documenting() bool {
 // grant for its root. When the grant for Always allow fails to save, the
 // error wraps ErrAllowNotSaved. Every error for a request that is no longer
 // waiting wraps ErrPassEnded, and one for a request this answer ended
-// because it could not show it wraps ErrNotOpened too. A No to a waiting
-// request refuses its origin's next document requests for backoff, and
-// ends its other prompts as held back; AnswerClose does neither.
+// because it could not show it wraps ErrNotOpened too. An answer while
+// another still opens the request wraps ErrBeingAnswered. A No to a
+// waiting request refuses its origin's next document requests for backoff,
+// and ends its other prompts as held back; AnswerClose does neither.
 func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error {
 	if !s.documenting() {
 		return errors.New("this nearhost has no documents")
@@ -143,7 +144,7 @@ func (s *Server) AnswerDocument(ctx context.Context, id string, a Answer) error 
 		return passEnded{fmt.Errorf("no document request %s; it may have ended over 10 minutes ago", id)}
 	case r.opening:
 		s.mu.Unlock()
-		return fmt.Errorf("the request for %s is already being answered", r.Doc)
+		return fmt.Errorf("the request for %s is %w", r.Doc, ErrBeingAnswered)
 	case r.state != StatePending:
 		state := r.state
 		s.mu.Unlock()

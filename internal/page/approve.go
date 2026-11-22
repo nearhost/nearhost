@@ -87,7 +87,8 @@ func (p *page) gone(w http.ResponseWriter, r *http.Request, status int) {
 // answer serves POST /approve/{id}: it gives the core the answer in the
 // form's answer field, then sends the browser to the view that says it was
 // given. An answer the request does not offer is refused, and nothing is
-// called. A request that no longer waits gets 409, and an answer the core
+// called. A request that no longer waits, or that another answer still
+// opens, gets 409, and an answer the core
 // could not give shows its error on the request's view, as does one that
 // ended the request because what it asked for could not be opened.
 func (p *page) answer(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +124,8 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		v.Gone, v.Error = true, safetext.Line(err.Error())
 		render(w, r, "approve", http.StatusBadGateway, v)
 		return
-	case errors.Is(err, control.ErrRequestEnded):
+	case errors.Is(err, control.ErrRequestEnded), errors.Is(err, agentapi.ErrBeingAnswered):
+		// Another answer won, or still opens it: this one has lost.
 		p.gone(w, r, http.StatusConflict)
 		return
 	case err != nil:

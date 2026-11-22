@@ -171,6 +171,21 @@ func TestAnsweredElsewhere(t *testing.T) {
 	}
 }
 
+// An answer while another still opens the request has lost, as one after
+// it has: 409, and nothing left to answer.
+func TestAnswerWhileAnotherOpens(t *testing.T) {
+	c := newCore(passApproval("p1", true))
+	c.err = fmt.Errorf("the request for port 5173 is %w", agentapi.ErrBeingAnswered)
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 409 || !strings.Contains(body, "This request has been answered or has ended.") {
+		t.Errorf("an answer while another opens: %d\n%s", resp.StatusCode, body)
+	}
+	if got := buttons(body); len(got) != 0 || strings.Contains(body, "<form") {
+		t.Errorf("an answer while another opens offers %q:\n%s", got, body)
+	}
+}
+
 func TestAnswerErrorShown(t *testing.T) {
 	c := newCore(passApproval("p1", true))
 	c.err = errors.New("port 3000 on leto: not connected")

@@ -128,6 +128,11 @@ var ErrPassEnded = errors.New("the request has ended")
 // shown. The error reads as the reason it failed.
 var ErrNotOpened = errors.New("the request could not be opened")
 
+// ErrBeingAnswered is wrapped by an answer's error when another answer to
+// the request is still opening it. The request is not over yet, but this
+// answer has lost to that one.
+var ErrBeingAnswered = errors.New("already being answered")
+
 // notOpened is err, why an answer could not open its request, as an error
 // that also wraps ErrNotOpened.
 type notOpened struct{ error }
@@ -192,7 +197,8 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // allow fails to save, the error wraps ErrAllowNotSaved. Every error for a
 // request that is no longer waiting wraps ErrPassEnded, and one for a
 // request this answer ended because it could not open it wraps
-// ErrNotOpened too. A No to a waiting request refuses its origin's next
+// ErrNotOpened too. An answer while another still opens the request wraps
+// ErrBeingAnswered. A No to a waiting request refuses its origin's next
 // passthrough requests for backoff, and ends its other prompts as held
 // back; AnswerClose does neither.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
@@ -212,7 +218,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		return passEnded{fmt.Errorf("no passthrough request %s; it may have ended over 10 minutes ago", id)}
 	case r.opening:
 		s.mu.Unlock()
-		return fmt.Errorf("the request for port %d is already being answered", r.Remote)
+		return fmt.Errorf("the request for port %d is %w", r.Remote, ErrBeingAnswered)
 	case r.state != StatePending:
 		state := r.state
 		s.mu.Unlock()
