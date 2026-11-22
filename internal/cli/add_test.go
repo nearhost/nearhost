@@ -1418,7 +1418,7 @@ func serveRunning(t *testing.T, withInterface bool) string {
 func serveCore(t *testing.T, info control.Info) string {
 	t.Helper()
 	runDir := testutil.TempDir(t, "nhc")
-	srv, err := control.Listen(control.SocketPath(runDir), infoCore{info}, control.NewHub())
+	srv, err := control.Listen(control.SocketPath(runDir), infoCore{info: info}, control.NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}

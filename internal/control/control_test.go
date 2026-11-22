@@ -18,6 +18,7 @@ import (
 
 // fakeBackend is a Backend that records the calls it gets.
 type fakeBackend struct {
+	UnimplementedActions
 	info   Info
 	status Status
 	state  State

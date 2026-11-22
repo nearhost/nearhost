@@ -26,6 +26,7 @@ type Backend interface {
 	Stop()
 	// HostsChanged retries the projects that failed on the hosts file.
 	HostsChanged(ctx context.Context)
+	Actions
 }
 
 // ErrInUse is returned by Listen when another core answers on the socket.
@@ -79,7 +80,7 @@ func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	}
 	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
 	s.srv = &http.Server{
-		Handler:           http.HandlerFunc(s.serve),
+		Handler:           s.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go s.srv.Serve(l)
@@ -106,41 +107,27 @@ func (s *Server) Close() error {
 	return err
 }
 
-// serve routes a request. The routes are matched by hand, not with ServeMux
-// patterns, so that a wrong method and an unknown path both answer in JSON.
-func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	var method string
-	switch r.URL.Path {
-	case "/v1":
-		method = http.MethodGet
-	case "/v1/status", "/v1/state", "/v1/events":
-		method = http.MethodGet
-	case "/v1/stop", "/v1/hosts/changed":
-		method = http.MethodPost
-	default:
-		fail(w, http.StatusNotFound, "no such route: "+r.URL.Path)
-		return
-	}
-	if r.Method != method {
-		w.Header().Set("Allow", method)
-		fail(w, http.StatusMethodNotAllowed, fmt.Sprintf("%s takes %s, not %s", r.URL.Path, method, r.Method))
-		return
-	}
-	switch r.URL.Path {
-	case "/v1":
+// routes returns the handler of the API. Unknown paths answer 404 and wrong
+// methods 405, in JSON like every other failure, which ServeMux alone would
+// answer in plain text.
+func (s *Server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Info())
-	case "/v1/status":
+	})
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Status())
-	case "/v1/state":
+	})
+	mux.HandleFunc("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
 		// The number is read first: the state then includes every
 		// envelope up to it, and may include some after it.
 		seq := s.hub.Seq()
 		st := s.b.State()
 		st.Seq, st.Clients = seq, s.hub.Clients()
 		reply(w, http.StatusOK, st)
-	case "/v1/events":
-		s.stream(w, r)
-	case "/v1/stop":
+	})
+	mux.HandleFunc("GET /v1/events", s.stream)
+	mux.HandleFunc("POST /v1/stop", func(w http.ResponseWriter, r *http.Request) {
 		// Answer before the shutdown starts: the shutdown closes this
 		// socket, and would cut the answer off, leaving the client an EOF.
 		// The length says the answer is whole once flushed.
@@ -150,11 +137,40 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			f.Flush()
 		}
 		s.b.Stop()
-	case "/v1/hosts/changed":
+	})
+	mux.HandleFunc("POST /v1/hosts/changed", func(w http.ResponseWriter, r *http.Request) {
 		s.b.HostsChanged(r.Context())
 		w.WriteHeader(http.StatusNoContent)
-	}
+	})
+	s.registerActions(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h, pattern := mux.Handler(r)
+		if pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		// No route matches: let the mux say which way, then say it in JSON.
+		probe := &probeWriter{header: http.Header{}}
+		h.ServeHTTP(probe, r)
+		if probe.code == http.StatusMethodNotAllowed {
+			allow := probe.header.Get("Allow")
+			w.Header().Set("Allow", allow)
+			fail(w, http.StatusMethodNotAllowed, fmt.Sprintf("%s does not take %s; it takes %s", r.URL.Path, r.Method, allow))
+			return
+		}
+		fail(w, http.StatusNotFound, "no such route: "+r.URL.Path)
+	})
 }
+
+// probeWriter is a ResponseWriter that keeps only the status and headers.
+type probeWriter struct {
+	header http.Header
+	code   int
+}
+
+func (p *probeWriter) Header() http.Header         { return p.header }
+func (p *probeWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (p *probeWriter) WriteHeader(code int)        { p.code = code }
 
 // stream sends the envelopes after the one numbered by the query's after, 0
 // when it has none, as server-sent events, until the client goes or the
