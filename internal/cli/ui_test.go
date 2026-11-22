@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
@@ -53,6 +53,17 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 		readHosts: func() (string, error) { return "", nil },
 		open:      func(string) error { return nil },
 		workDir:   func() (string, error) { return t.TempDir(), nil },
+		// No core runs, and none can be started: a test that needs one
+		// gives its own.
+		detach: detachBackend{
+			dial: func() (*control.Client, error) { return nil, control.ErrNotRunning },
+			spawn: func(string, []string) (int, func() error, error) {
+				return 0, nil, errors.New("no core can be started in this test")
+			},
+			logSize: func() int64 { return 0 },
+			logTail: func(int64, int) []string { return nil },
+			exe:     func() string { return "/bin/nearhost" },
+		},
 	}
 }
 
@@ -96,15 +107,6 @@ func TestHelpWithoutATerminalStillSucceeds(t *testing.T) {
 	}
 }
 
-func TestBareNearhostOpensTheInterfaceWithNoConfigFile(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // the engine's run and CA directories
-	ran := false
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	if _, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080"); err != nil || !ran {
-		t.Fatalf("err %v, ran %v", err, ran)
-	}
-}
-
 func TestBareNearhostRefusesWhatUpRefuses(t *testing.T) {
 	ran := false
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -138,10 +140,10 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 		}
 	}
 	ensure := hostsThrough(f.root(), path, applier)
-	if err := ensure(context.Background(), []string{"a.test", "b.test"}); err != nil {
+	if err := ensure(context.Background(), []string{"a.test", "b.test"}, []string{"a.test", "b.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensure(context.Background(), []string{"a.test", "b.test"}); err != nil {
+	if err := ensure(context.Background(), []string{"a.test", "b.test"}, []string{"a.test", "b.test"}); err != nil {
 		t.Fatal(err)
 	}
 	if want := "Nearhost needs your password to add a.test, b.test to " + path + "."; strings.Join(f.asked, "|") != want {
@@ -154,7 +156,7 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	// nothing.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := ensure(ctx, []string{"d.test"}); err == nil {
+	if err := ensure(ctx, []string{"d.test"}, []string{"d.test"}); err == nil {
 		t.Error("an ended start updated the hosts block")
 	}
 	if len(f.asked) != 1 {
@@ -162,7 +164,7 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	}
 	// A password cancelled says what was not done.
 	cancelled := hostsThrough((&fakeRoot{needed: true, askErr: tui.ErrPasswordCancelled}).root(), path, applier)
-	if err := cancelled(context.Background(), []string{"c.test"}); err == nil || err.Error() != "you cancelled the password, so c.test was not added to "+path {
+	if err := cancelled(context.Background(), []string{"c.test"}, []string{"c.test"}); err == nil || err.Error() != "you cancelled the password, so c.test was not added to "+path {
 		t.Errorf("cancelled = %v", err)
 	}
 }
@@ -207,96 +209,9 @@ func TestHostsThroughSaysTheUserDeclined(t *testing.T) {
 		return func([]string) error { return fmt.Errorf("hosts apply: %w", elevate.ErrDeclined) }
 	}
 	ensure := hostsThrough(f.root(), path, applier)
-	err := ensure(context.Background(), []string{"a.test"})
+	err := ensure(context.Background(), []string{"a.test"}, []string{"a.test"})
 	want := "you declined the Windows prompt, so a.test was not added to " + path
 	if err == nil || err.Error() != want {
 		t.Fatalf("err %v, want %q", err, want)
-	}
-}
-
-// The interface opens Nearhost's page at /?k=<secret>, and an opener that
-// fails gives an error that names the page's plain address, not the key.
-func TestOpenPageOpensItWithTheKey(t *testing.T) {
-	data := t.TempDir()
-	t.Setenv("XDG_DATA_HOME", data)
-	var opened []string
-	var openErr error
-	u := &uiEngine{
-		Engine: engine.New(&config.Config{}, engine.Options{HTTPSPort: 8443, WebPort: 6327}),
-		localOps: &localOps{b: uiBackend{open: func(url string) error {
-			opened = append(opened, url)
-			if openErr != nil {
-				return fmt.Errorf("could not run the opener for %s: %w", url, openErr)
-			}
-			return nil
-		}}},
-	}
-	if err := u.OpenPage(); err != nil {
-		t.Fatalf("OpenPage: %v", err)
-	}
-	secret, err := os.ReadFile(filepath.Join(data, "nearhost", "page-secret"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "https://nearhost.localhost:6327/?k=" + string(secret); len(opened) != 1 || opened[0] != want {
-		t.Fatalf("opened %d addresses, want the page with its key", len(opened))
-	}
-
-	openErr = fmt.Errorf("no browser")
-	err = u.OpenPage()
-	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://nearhost.localhost:6327") {
-		t.Errorf("a failed open: the error is nil, holds the secret, or does not name the page")
-	}
-}
-
-// Until the interface is a client of the core, its engine follows the
-// config file as the core's does, so `nearhost add` from another terminal
-// still reaches it: the interface itself no longer reads the file.
-func TestTheInterfaceEngineFollowsTheConfigFile(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // the engine's run and CA directories
-	before := coreWatchInterval
-	coreWatchInterval = 20 * time.Millisecond
-	t.Cleanup(func() { coreWatchInterval = before })
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	if err := config.Save(cfgPath, &config.Config{}); err != nil {
-		t.Fatal(err)
-	}
-	var eng *engine.Engine
-	b := fakeUI(t, true, new(bool))
-	b.engineMade = func(e *engine.Engine) { eng = e }
-	b.run = func(*tui.Model, func(*tea.Program)) error {
-		next := &config.Config{Projects: []config.Project{{Name: "blog", Server: config.LocalServer, Path: "/code/blog",
-			Alias: "blog.test", Routes: []config.Route{{Port: 4000, Role: config.RoleWeb}}}}}
-		if err := config.Save(cfgPath, next); err != nil {
-			return err
-		}
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			if _, ok := eng.Config().Project("blog"); ok {
-				return nil
-			}
-		}
-		return errors.New("the engine did not take the change to the config file")
-	}
-	if _, err := runRoot(t, uiRoot(b), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Quitting the interface ends the engine's watch on the config file before
-// the engine shuts down, so a change saved meanwhile is not applied mid-quit.
-func TestUIShutdownEndsTheConfigWatchFirst(t *testing.T) {
-	watching, endWatch := context.WithCancel(context.Background())
-	defer endWatch()
-	u := &uiEngine{localOps: &localOps{}, endWatch: endWatch}
-	watchEnded := false
-	u.b.up.shutdown = func(*engine.Engine, context.Context) error {
-		watchEnded = watching.Err() != nil
-		return nil
-	}
-	if err := u.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if !watchEnded {
-		t.Error("the engine shut down while the config watch still ran")
 	}
 }

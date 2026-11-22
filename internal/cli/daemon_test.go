@@ -219,10 +219,10 @@ func TestDaemonStartedBy(t *testing.T) {
 		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
 	}
 
-	for _, by := range []string{"tui", "launchd", ""} {
+	for _, by := range []string{"launchd", ""} {
 		var out syncBuffer
 		err := executeInto(context.Background(), &out, newDaemonCmd(u.backend()), "daemon", "--started-by", by)
-		if err == nil || err.Error() != "--started-by must be detached or service" {
+		if err == nil || err.Error() != "--started-by must be detached, service or tui" {
 			t.Errorf("--started-by %q: %v", by, err)
 		}
 	}

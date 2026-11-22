@@ -25,17 +25,18 @@ import (
 // CLI wires it to the engine and the machine; tests use a fake. Every method
 // may be called from any goroutine.
 type Backend interface {
-	// Start starts the engine: it checks the proxy ports and creates the
-	// local CA. An error leaves the proxy down; projects cannot start.
+	// Start begins following the core, once the interface has subscribed
+	// to Events. An error leaves the proxy down; projects cannot start.
 	Start(ctx context.Context) error
-	// Shutdown stops every project and the engine. ctx ending cuts it short.
+	// Shutdown stops the core, every project with it. ctx ending cuts it
+	// short.
 	Shutdown(ctx context.Context) error
 	// Leave detaches from the core, which keeps running. Shutdown stops it.
 	Leave(ctx context.Context) error
 	// QuitChoice says what quitting does: QuitStop, QuitLeave or QuitAsk.
 	QuitChoice() QuitChoice
 	// Lost gets one error when the core can no longer be reached. It is
-	// nil when the engine runs in this process.
+	// nil when the core can never be lost.
 	Lost() <-chan error
 	// Config is the configuration the engine runs. The interface takes it
 	// afresh on the clock, so it follows changes to the config file.

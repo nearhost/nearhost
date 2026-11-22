@@ -62,11 +62,11 @@ func (f *fakeDetach) answer(info control.Info) {
 // command and calls child, which returns the child's wait.
 func (f *fakeDetach) backend(child func() func() error) detachBackend {
 	return detachBackend{
-		spawn: func(exe string, args []string) (func() error, error) {
+		spawn: func(exe string, args []string) (int, func() error, error) {
 			f.mu.Lock()
 			f.spawned = append(f.spawned, append([]string{exe}, args...))
 			f.mu.Unlock()
-			return child(), nil
+			return 0, child(), nil
 		},
 		dial:    func() (*control.Client, error) { return control.Dial(f.runDir) },
 		logSize: func() int64 { return 0 },
@@ -153,6 +153,27 @@ func TestDetachAlreadyRunning(t *testing.T) {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
 	if want := "Nearhost is already running in the background (pid 99, started by service).\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+}
+
+// A core bare nearhost started runs in the background, outside the
+// interface's terminal, and stays when the interface leaves it.
+func TestDetachAlreadyRunningStartedByTheInterface(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	f.answer(control.Info{API: 1, PID: 97, StartedBy: control.StartedTUI})
+	b := f.backend(func() func() error {
+		t.Error("spawned with a core running")
+		return running()
+	})
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Nearhost is already running in the background (pid 97, started by tui).\n"; stdout != want {
 		t.Errorf("stdout %q, want %q", stdout, want)
 	}
 }
@@ -373,5 +394,53 @@ func TestTailLines(t *testing.T) {
 	got := tailLines(path, 0, 3)
 	if want := []string{"line 19997 of the log", "line 19998 of the log", "line 19999 of the log"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("long log: %q", got)
+	}
+}
+
+// Two nearhost started at once both start a core; one core takes the lock
+// and the other stops saying another is running. The nearhost whose core
+// stopped waits for the other's to answer, and says it was already running.
+func TestDetachLosesTheRaceToAnotherCore(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			f.answer(control.Info{API: 1, PID: 77, StartedBy: control.StartedTUI})
+		}()
+		return func() error { return errors.New("exit status 1") }
+	})
+	b.held = func() bool { return true }
+	b.timeout = 10 * time.Second
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Nearhost is already running in the background (pid 77, started by tui).\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+}
+
+// The core that answers first may be another nearhost's: only one whose pid
+// is the child's was started here.
+func TestDetachAnotherCoreAnswersFirst(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		f.answer(control.Info{API: 1, PID: 77, StartedBy: control.StartedTUI})
+		return running()
+	})
+	spawn := b.spawn
+	b.spawn = func(exe string, args []string) (int, func() error, error) {
+		_, wait, err := spawn(exe, args)
+		return 1234, wait, err
+	}
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, _, code := runRootSplit(t, uiRoot(ui), "-d")
+	if want := "Nearhost is already running in the background (pid 77, started by tui).\n"; code != 0 || stdout != want {
+		t.Errorf("code %d, stdout %q, want %q", code, stdout, want)
 	}
 }

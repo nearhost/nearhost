@@ -87,14 +87,20 @@ func TestProxyThatCannotStartIsShownAndNothingStarts(t *testing.T) {
 	}
 }
 
-func TestStartedEngineStartsEveryEnabledProject(t *testing.T) {
+// The core starts the enabled projects: the interface that follows it
+// starts none, so one the user stopped stays stopped.
+func TestStartedBackendStartsNoProject(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	m := sized(f)
 	_, cmd := m.Update(startedMsg{})
-	for _, c := range cmd().(tea.BatchMsg) {
-		c()
+	if msg := cmd(); msg != nil {
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				c()
+			}
+		}
 	}
-	if strings.Join(f.started, ",") != "website,myapp" {
+	if len(f.started) != 0 {
 		t.Errorf("started %v", f.started)
 	}
 }
@@ -666,7 +672,7 @@ func TestRTriesTheProxyAgainAndTheItemGoes(t *testing.T) {
 	f.startErrs = []error{nil}
 	m := proxyDown(t, f, errBoom)
 	wantScreen(t, m, "✕ proxy  down", "r tries again")
-	run(m, run(m, press(m, "r"))) // the answer, then the projects it starts
+	run(m, run(m, press(m, "r"))) // the answer, then what it reads
 	if f.startCalls != 1 {
 		t.Fatalf("Start called %d times, want 1", f.startCalls)
 	}
@@ -674,8 +680,9 @@ func TestRTriesTheProxyAgainAndTheItemGoes(t *testing.T) {
 		t.Errorf("the proxy item stays after a good retry:\n%s", got)
 	}
 	wantScreen(t, m, "proxy     ● https :443 · http :80")
-	if strings.Join(f.started, ",") != "website,myapp" {
-		t.Errorf("projects started %v, want website,myapp once", f.started)
+	// The core starts the projects, not the interface.
+	if len(f.started) != 0 {
+		t.Errorf("projects started %v", f.started)
 	}
 }
 

@@ -323,8 +323,7 @@ func (a *agents) publishHeld(eng *engine.Engine) {
 }
 
 // review has r review the agents' proposals and requests, and the changes
-// their reloads find: the in-process interface, or the core's queue while a
-// client follows it. A nil r reviews nothing, so the agent API refuses what
+// their reloads find: the core's queue while a client follows it. A nil r reviews nothing, so the agent API refuses what
 // needs an answer, as `nearhost up` does.
 func (a *agents) review(r agentapi.Reviewer) {
 	if a != nil {
@@ -362,35 +361,6 @@ func (a *agents) decline(id, reason string) {
 		a.api.Decline(id, reason)
 	}
 }
-
-// reviewer hands the agent API's proposals to the interface.
-type reviewer struct{ to *tui.Proposals }
-
-func (r reviewer) Review(p agentapi.Proposal) {
-	r.to.Propose(tui.Proposal{ID: p.ID, Origin: p.Origin, Path: p.Path, Name: p.Name, Web: p.Web, Expires: p.Expires})
-}
-
-// ReviewPassthrough shows the interface a passthrough request.
-func (r reviewer) ReviewPassthrough(p agentapi.PassRequest) {
-	r.to.Pass(tui.PassRequest{
-		ID: p.ID, Origin: p.Origin, Requester: p.Requester, Session: p.Session, Label: p.Label,
-		Remote: p.Remote, LocalTaken: p.LocalTaken, CanAlways: p.CanAlways, Expires: p.Expires,
-	})
-}
-
-// Opened tells the interface of a passthrough that opened without asking.
-func (r reviewer) Opened(p agentapi.Passthrough) { r.to.Opened(p.Origin, p.Requester, p.Remote) }
-
-// ReviewDocument shows the interface a request to show a document.
-func (r reviewer) ReviewDocument(d agentapi.DocRequest) {
-	r.to.Doc(tui.DocRequest{
-		ID: d.ID, Origin: d.Origin, Requester: d.Requester, Session: d.Session, Label: d.Label,
-		Root: d.Root, Doc: d.Doc, CanAlways: d.CanAlways, NewRoot: d.NewRoot, Expires: d.Expires,
-	})
-}
-
-// Shown tells the interface of a document opened without asking.
-func (r reviewer) Shown(origin, requester, doc string) { r.to.Shown(origin, requester, doc) }
 
 // passer opens passthroughs on the engine, once it is attached.
 type passer struct {

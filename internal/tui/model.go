@@ -364,13 +364,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.proxyErr = nil
 		m.started = true
-		cmds := []tea.Cmd{m.readMachine()} // the engine has just created the CA
-		for _, p := range m.cfg.Projects {
-			if p.Enabled {
-				cmds = append(cmds, m.startProject(p.Name))
-			}
-		}
-		return m, tea.Batch(cmds...)
+		// The core starts the enabled projects itself, and has by now: a
+		// project stopped since stays stopped until the user starts it.
+		return m, m.readMachine() // the core may have just created the CA
 	case eventMsg:
 		m.logs.event(engine.Event(msg), m.cfg)
 		m.trackUptime()
@@ -441,7 +437,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 	case shutdownMsg:
 		if msg.unsaved != nil {
-			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ".")
+			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ". The quit box asks again next time; to stop it asking, set keep_running in that file.")
 		}
 		if msg.err != nil {
 			verb := "Stopping: "

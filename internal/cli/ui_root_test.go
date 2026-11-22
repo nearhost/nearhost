@@ -153,10 +153,13 @@ func TestSystemRootTranslatesAWrongPassword(t *testing.T) {
 // The interface words sudo's prompt as Nearhost's for every sudo it runs,
 // the CA's included, which cannot be given a prompt of their own.
 func TestTheInterfaceWordsSudosPrompt(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("SUDO_PROMPT", "")
+	core := newSteeredCore(t, configHome(t))
+	core.serve()
 	ran := false
-	if _, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "--config", t.TempDir()+"/config.yaml", "--https-port", "8443", "--http-port", "8080"); err != nil || !ran {
+	b := fakeUI(t, true, &ran)
+	b.detach = core.detach(nil)
+	if _, err := runRoot(t, uiRoot(b)); err != nil || !ran {
 		t.Fatalf("err %v, ran %v", err, ran)
 	}
 	if got := os.Getenv("SUDO_PROMPT"); got != " Password for %p: " {

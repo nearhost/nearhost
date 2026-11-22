@@ -29,14 +29,38 @@ type mirrorCore struct {
 	actions []string
 	// answerErr is what the answers return.
 	answerErr error
+	// info, when set, is what Info says; otherwise a core of the API this
+	// client speaks, of the release "test".
+	info *control.Info
+	// onStop, when set, is run on a goroutine of its own when Stop is
+	// asked for, as a core begins its shutdown.
+	onStop func()
+	// onHosts, when set, changes the state when HostsChanged is asked for,
+	// as a core starts the projects that waited on the hosts file.
+	onHosts func(st *control.State)
 }
 
 func (f *mirrorCore) Info() control.Info {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.info != nil {
+		return *f.info
+	}
 	return control.Info{API: control.APIVersion, Version: "test"}
 }
-func (f *mirrorCore) Status() control.Status       { return control.Status{} }
-func (f *mirrorCore) Stop()                        { f.hit("Stop") }
-func (f *mirrorCore) HostsChanged(context.Context) { f.hit("HostsChanged") }
+func (f *mirrorCore) Status() control.Status { return control.Status{} }
+func (f *mirrorCore) Stop() {
+	f.hit("Stop")
+	if f.onStop != nil {
+		go f.onStop()
+	}
+}
+func (f *mirrorCore) HostsChanged(context.Context) {
+	f.hit("HostsChanged")
+	if f.onHosts != nil {
+		f.set(f.onHosts)
+	}
+}
 
 func (f *mirrorCore) State() control.State {
 	f.mu.Lock()
@@ -217,6 +241,9 @@ func (h *mirrorHarness) backend(t *testing.T, st control.State, local *localOps,
 	}
 	b := newClientBackend(h.c, st, local, props, false)
 	t.Cleanup(b.Close)
+	if err := b.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	return b
 }
 
@@ -508,16 +535,30 @@ func TestClientOpenPageHidesTheKey(t *testing.T) {
 	}
 }
 
-// Close ends the backend's goroutines, and is safe to call twice.
+// Close ends the backend's goroutines, and is safe to call twice; one
+// closed before it started starts nothing.
 func TestClientCloseEndsItsWork(t *testing.T) {
 	h := newMirrorHarness(t)
 	b := newClientBackend(h.c, h.state(t), &localOps{}, &tui.Proposals{}, false)
+	if err := b.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return h.hub.Clients() == 1 }, "the backend to follow the stream")
 	b.Close()
 	b.Close()
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return h.hub.Clients() == 0 }, "the stream to end after Close")
+	unstarted := newClientBackend(h.c, h.state(t), &localOps{}, &tui.Proposals{}, false)
+	unstarted.Close()
+	if err := unstarted.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	select {
-	case <-b.done:
-	default:
-		t.Error("the backend's goroutines are still running after Close")
+	case err := <-unstarted.Lost():
+		t.Errorf("a backend closed before it started followed the core: %v", err)
+	case <-time.After(2 * redialAfter):
+	}
+	if n := h.hub.Clients(); n != 0 {
+		t.Errorf("a backend closed before it started follows the stream")
 	}
 	select {
 	case err := <-b.Lost():

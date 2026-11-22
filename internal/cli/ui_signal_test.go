@@ -5,17 +5,14 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -24,8 +21,9 @@ import (
 type signalRun struct {
 	// sigs carries the stop signals the interface listens for.
 	sigs chan os.Signal
-	// shutdowns counts the shutdowns the interface asked for.
-	shutdowns atomic.Int32
+	// core is the core the interface starts, which counts the shutdowns
+	// the interface asked for.
+	core *steeredCore
 	// program receives the program once it is made.
 	program chan *tea.Program
 	// passwordOpened is closed once the program has taken the message
@@ -37,13 +35,15 @@ type signalRun struct {
 	root asRoot
 }
 
-// startSignalRun starts bare `nearhost` and returns once its program is
-// made. The program is killed when the test ends, should it still run.
+// startSignalRun starts bare `nearhost`, which starts its core, and returns
+// once its program is made. The program is killed when the test ends,
+// should it still run.
 func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // the engine's run and CA directories
+	cfgPath := configHome(t)
 	r := &signalRun{
 		sigs:           make(chan os.Signal, 2),
+		core:           newSteeredCore(t, cfgPath),
 		program:        make(chan *tea.Program, 1),
 		passwordOpened: make(chan struct{}),
 		ended:          make(chan error, 1),
@@ -51,10 +51,7 @@ func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 	ran := false
 	b := fakeUI(t, true, &ran)
 	b.stops = func() (<-chan os.Signal, func()) { return r.sigs, func() {} }
-	b.up.shutdown = func(eng *engine.Engine, ctx context.Context) error {
-		r.shutdowns.Add(1)
-		return eng.Shutdown(ctx)
-	}
+	b.detach = r.core.detach(func([]string) { r.core.serve() })
 	b.rootMade = func(root asRoot) { r.root = root }
 	var opened sync.Once
 	b.run = func(m *tui.Model, attach func(*tea.Program)) error {
@@ -70,7 +67,6 @@ func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 		_, err := p.Run()
 		return err
 	}
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	go func() {
 		_, err := runRoot(t, uiRoot(b), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080")
 		r.ended <- err
@@ -103,13 +99,24 @@ func (r *signalRun) waitQuit(t *testing.T, why string) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("the interface did not quit on %s", why)
 	}
-	if n := r.shutdowns.Load(); n != 1 {
+	if n := r.shutdowns(); n != 1 {
 		t.Errorf("the interface asked for %d shutdowns, want 1", n)
 	}
 }
 
-// A closed terminal sends a hangup. The interface quits as it does on q:
-// it shuts the engine down, then ends.
+// shutdowns is how many times the interface asked the core to stop.
+func (r *signalRun) shutdowns() int {
+	n := 0
+	for _, a := range r.core.asked() {
+		if a == "Stop" {
+			n++
+		}
+	}
+	return n
+}
+
+// A closed terminal sends a hangup. The interface quits as it does on
+// Ctrl-C, which never asks: it stops the core it started, then ends.
 func TestTheInterfaceQuitsOnAHangup(t *testing.T) {
 	r, _ := startSignalRun(t)
 	r.sigs <- syscall.SIGHUP
@@ -198,14 +205,14 @@ func TestAnInterruptWhileTheTerminalIsLentEndsOnlyTheStep(t *testing.T) {
 		t.Fatalf("the interface quit on Ctrl-C at the step: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if n := r.shutdowns.Load(); n != 0 {
+	if n := r.shutdowns(); n != 0 {
 		t.Fatalf("the interface asked for %d shutdowns on Ctrl-C at the step", n)
 	}
 
 	release, lent = r.lend(t)
 	r.sigs <- syscall.SIGHUP
 	r.waitTaken(t)
-	if n := r.shutdowns.Load(); n != 0 {
+	if n := r.shutdowns(); n != 0 {
 		t.Fatalf("the interface asked for %d shutdowns while the step ran", n)
 	}
 	release()

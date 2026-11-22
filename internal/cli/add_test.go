@@ -1463,6 +1463,18 @@ func TestAddWithACoreThatReloadsSaysItPicksTheProjectUp(t *testing.T) {
 	}
 }
 
+// A core that bare nearhost started runs in the background, as one -d
+// started does, and serves only enabled projects: the interface that
+// started it may have quit.
+func TestAddWithACoreTheInterfaceStartedIsACore(t *testing.T) {
+	tuiCore := reloadingCore
+	tuiCore.StartedBy = control.StartedTUI
+	got := addEnding(t, probe(serveCore(t, tuiCore), ""), "--disabled")
+	if want := "The running Nearhost serves it once it is enabled in the config."; got != want {
+		t.Fatalf("ending = %q, want %q", got, want)
+	}
+}
+
 // The control socket is asked first: what the core says there is what it
 // does, whatever its agent socket says.
 func TestAddAsksTheCoreBeforeTheAgentSocket(t *testing.T) {

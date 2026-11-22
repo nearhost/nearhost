@@ -1,0 +1,205 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/hosts"
+)
+
+// A core never asks for the password: it leaves a project whose names the
+// hosts file lacks stopped, with errHostsNeedTerminal in its message. The
+// interface has a terminal, so it brings the hosts block up to date itself,
+// asking for the password in its box as it always has, then tells the core,
+// which starts the projects again.
+//
+// A refusal (a cancelled password box, three wrong passwords, a declined
+// Windows prompt) stands as a start's did in the interface's own engine (see
+// askOnce): nothing asks again until the user starts the project, and the
+// project says why it waits.
+
+// clientHosts is what the client knows of the fixes it has made.
+type clientHosts struct {
+	// want asks the fixer to look at the projects again.
+	want chan struct{}
+	// turn lets one fix run at a time, so that one waiting finds what the
+	// one before it did.
+	turn sync.Mutex
+
+	mu sync.Mutex
+	// fixing holds the projects a fix is asking for now.
+	fixing map[string]bool
+	// refused holds the projects whose fix was refused, with why and when.
+	refused map[string]hostsRefusal
+}
+
+// hostsRefusal is a refused fix: why, and when it was refused.
+type hostsRefusal struct {
+	err error
+	at  time.Time
+}
+
+func newClientHosts() *clientHosts {
+	return &clientHosts{
+		want:    make(chan struct{}, 1),
+		fixing:  map[string]bool{},
+		refused: map[string]hostsRefusal{},
+	}
+}
+
+// hostsChanged asks the fixer to look at the projects again, as the mirror
+// has changed.
+func (b *clientBackend) hostsChanged() {
+	select {
+	case b.hosts.want <- struct{}{}:
+	default:
+	}
+}
+
+// hostsFixer fixes the hosts file each time it is asked to, until the
+// backend's work ends. Its refusals show in the projects' state.
+func (b *clientBackend) hostsFixer() {
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-b.hosts.want:
+			_ = b.fixHosts(b.ctx)
+		}
+	}
+}
+
+// waitsOnHosts reports whether the core left the project stopped because the
+// hosts file lacks its names.
+func (b *clientBackend) waitsOnHosts(name string) bool {
+	st := b.mirror.status(name)
+	return st.State == engine.StateStopped && strings.Contains(st.Message, errHostsNeedTerminal.Error())
+}
+
+// fixHosts brings the hosts block up to date for the projects the core says
+// wait on it, asking for the password in the interface, then tells the core.
+// It asks once per call, and not for a project whose last fix was refused.
+func (b *clientBackend) fixHosts(ctx context.Context) error {
+	return b.fixHostsAsked(ctx, time.Time{})
+}
+
+// fixHostsAsked is fixHosts for a start the user asked for at asked: it also
+// asks for a project whose fix was refused before then. A zero asked is no
+// start's. The error is the fix's, or the refusal that stands.
+func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time) error {
+	if b.flags.noHosts {
+		return nil
+	}
+	// A start's fix ends with the backend too: once the interface has quit,
+	// nothing may ask for the password.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(b.ctx, cancel)()
+	h := b.hosts
+	h.turn.Lock()
+	defer h.turn.Unlock()
+	if err := b.ctx.Err(); err != nil {
+		return err
+	}
+	cfg := b.mirror.config()
+	var ask []config.Project
+	var standing error
+	h.mu.Lock()
+	for _, p := range cfg.Projects {
+		if !p.Enabled || !b.waitsOnHosts(p.Name) {
+			continue
+		}
+		if r, ok := h.refused[p.Name]; ok && (asked.IsZero() || !asked.After(r.at)) {
+			standing = r.err
+			continue
+		}
+		ask = append(ask, p)
+	}
+	// A refusal is forgotten once its project no longer waits: it runs, or
+	// is no longer to be served.
+	for name := range h.refused {
+		p, ok := cfg.Project(name)
+		if !ok || !p.Enabled || b.mirror.status(name).State == engine.StateRunning {
+			delete(h.refused, name)
+		}
+	}
+	for _, p := range ask {
+		h.fixing[p.Name] = true
+	}
+	h.mu.Unlock()
+	if len(ask) == 0 {
+		return standing
+	}
+	defer func() {
+		h.mu.Lock()
+		for _, p := range ask {
+			delete(h.fixing, p.Name)
+		}
+		h.mu.Unlock()
+	}()
+	names := make([]string, len(ask))
+	for i, p := range ask {
+		names[i] = p.Alias
+	}
+	// The names `nearhost hosts update` writes, which are those the core
+	// checks the block against.
+	block := hosts.Wanted(ctx, cfg.HostsFileNames(), b.b.lookup)
+	if err := hostsThrough(b.root, hosts.DefaultPath, b.b.applier)(ctx, names, block); err != nil {
+		// An update cut short by a quit or a stop is not a refusal.
+		if ctx.Err() == nil {
+			at := askClock()
+			h.mu.Lock()
+			for _, p := range ask {
+				h.refused[p.Name] = hostsRefusal{err: err, at: at}
+			}
+			h.mu.Unlock()
+			// A start's refusal is its error, which the interface logs; the
+			// fixer's is logged here, as the engine's start logged it.
+			if asked.IsZero() {
+				for _, p := range ask {
+					b.bus.Publish(engine.Event{Time: at, Project: p.Name, State: engine.StateStopped, Message: hostsNotFixed(p.Name, err).Error()})
+				}
+			}
+		}
+		return err
+	}
+	h.mu.Lock()
+	for _, p := range ask {
+		delete(h.refused, p.Name)
+	}
+	h.mu.Unlock()
+	return b.acted(ctx, b.c.HostsChanged(ctx))
+}
+
+// hostsStatus is st, the core's state of project, as the interface shows it:
+// a project waiting on the hosts file is starting while this process asks for
+// it, as it was while the interface's own engine asked, and says why it waits
+// once that was refused, in place of the core's advice to run a command.
+func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) engine.ProjectStatus {
+	if st.State != engine.StateStopped || !strings.Contains(st.Message, errHostsNeedTerminal.Error()) {
+		return st
+	}
+	h := b.hosts
+	h.mu.Lock()
+	fixing := h.fixing[project]
+	r, refused := h.refused[project]
+	h.mu.Unlock()
+	switch {
+	case fixing:
+		st.State, st.Message = engine.StateStarting, ""
+	case refused:
+		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Error(), r.err.Error(), 1)
+	}
+	return st
+}
+
+// hostsNotFixed is the error of a start that waits on a hosts file that was
+// not fixed, worded as the engine words it.
+func hostsNotFixed(project string, err error) error {
+	return fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", project, err)
+}

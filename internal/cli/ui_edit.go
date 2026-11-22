@@ -18,15 +18,6 @@ func (u *localOps) EditConfig(fn func(cfg *config.Config) error) error {
 	return editConfig(u.path, fn)
 }
 
-// saveRc is the save of the interface engine's Options.Review: it writes a
-// project's routes and approved snapshot through EditConfig, so it never
-// saves over an edit the interface is making, and keeps every other field
-// as the file has it now. Like saveTo, it refuses a host another enabled
-// project serves.
-func (u *localOps) saveRc(p config.Project) error {
-	return u.EditConfig(func(cfg *config.Config) error { return takeServedRc(cfg, p, u.path) })
-}
-
 // Advice works out the advice for a configured project, on a connection of
 // its own to the project's server.
 func (u *localOps) Advice(ctx context.Context, project string) (tui.ProjectAdvice, error) {
