@@ -13,6 +13,16 @@
   <section class="status">
     <ul>
       {{- range .Items}}
+      <li>{{.Text}}{{if .Note}}<br><span>{{.Note}}</span>{{end}}</li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- end}}
+  {{- if .Moves}}
+  <p>It also moves or removes what is served now:</p>
+  <section class="status">
+    <ul>
+      {{- range .Moves}}
       <li>{{.}}</li>
       {{- end}}
     </ul>

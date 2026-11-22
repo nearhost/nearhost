@@ -1,6 +1,6 @@
 {{define "content"}}
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
-  <p>Nearhost started {{.Started}}, by {{.StartedBy}}. This page answers at nearhost.localhost:{{.WebPort}}.</p>
+  <p>{{if .Started}}Nearhost started {{.Started}}, by {{.StartedBy}}.{{else}}Nearhost was started by {{.StartedBy}}.{{end}} This page answers at nearhost.localhost:{{.WebPort}}.</p>
   <nav aria-label="Nearhost links">
     <a href="https://nearhost.dev">Website</a>
     <a href="https://nearhost.dev/docs/">Docs</a>
@@ -31,7 +31,7 @@
     <h2>Passthroughs</h2>
     <ul>
       {{- range .Passthroughs}}
-      <li>{{.Who}}{{if .Label}} ({{.Label}}){{end}} <span>has port {{.Remote}} there open on port {{.Local}} here{{if .Opened}}, since {{.Opened}}{{end}}.</span></li>
+      <li>{{.Who}}{{if .Label}} ({{.Label}}){{end}} <span>has port {{.Remote}} there open on port {{.Local}} here{{if .Opened}}, opened {{.Opened}}{{end}}.</span></li>
       {{- end}}
     </ul>
   </section>

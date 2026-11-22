@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -124,6 +125,11 @@ func render(w http.ResponseWriter, r *http.Request, view string, status int, dat
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Content-Length", strconv.Itoa(buf.Len()))
+	if name == "main" {
+		// The marker tells page.js that this is the page's own part, not a
+		// page from something else answering at the address meanwhile.
+		h.Set(partHeader, "main")
+	}
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
 		w.Write(buf.Bytes())
@@ -194,12 +200,12 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	for _, a := range state.Approvals {
-		v.Approvals = append(v.Approvals, approvalRow{Href: "/approve/" + a.ID, Text: summary(a)})
+		v.Approvals = append(v.Approvals, approvalRow{Href: "/approve/" + url.PathEscape(a.ID), Text: summary(a)})
 	}
 	for _, name := range sortedNames(state.Projects) {
 		if state.Projects[name].Pending != nil {
 			v.Approvals = append(v.Approvals, approvalRow{
-				Href: "/change/" + name,
+				Href: "/change/" + url.PathEscape(name),
 				Text: fmt.Sprintf("The .nearhostrc of %s asks for changes that need your approval", safetext.Line(name)),
 			})
 		}

@@ -1,6 +1,7 @@
 package page
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -87,6 +88,10 @@ func TestAnswerYes(t *testing.T) {
 	if got := c.called(); !slices.Equal(got, []string{"AnswerPassthrough p1 yes"}) {
 		t.Errorf("calls %q", got)
 	}
+	// While the request still waits, answered shows it, not an answer.
+	if body := bodyOf(t, do(newPage(c), "GET", "/approve/p1?answered=yes", nil)); strings.Contains(body, "Answered") || len(buttons(body)) != 3 {
+		t.Errorf("answered while the request waits:\n%s", body)
+	}
 	// The request has gone from the queue by the time the browser follows
 	// the redirect.
 	c.state.Approvals = nil
@@ -138,6 +143,10 @@ func TestProposalOnlyNo(t *testing.T) {
 	if got := c.called(); !slices.Equal(got, []string{"DeclineProposal x declined on Nearhost's page"}) {
 		t.Errorf("calls %q", got)
 	}
+	c.state.Approvals = nil
+	if body := bodyOf(t, do(newPage(c), "GET", "/approve/x?answered=no", nil)); !strings.Contains(body, "Answered: No.") {
+		t.Errorf("after the decline:\n%s", body)
+	}
 }
 
 func TestAnsweredElsewhere(t *testing.T) {
@@ -173,13 +182,50 @@ func TestAnswerErrorShown(t *testing.T) {
 	if !strings.Contains(body, "<html") {
 		t.Errorf("a failed answer is not a page:\n%s", body)
 	}
+	if got := buttons(body); len(got) != 3 {
+		t.Errorf("a request that still waits offers %q", got)
+	}
 }
 
-// changeCore is a core whose project web's .nearhostrc waits on a change.
+// An answer that failed for a request that waits no longer shows its error
+// with nothing left to answer.
+func TestAnswerErrorWithoutButtons(t *testing.T) {
+	c := &endingCore{newCore(passApproval("p1", true))}
+	c.err = errors.New("Always allow was not saved: disk full")
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "always"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 502 || !strings.Contains(body, "disk full") || !strings.Contains(body, "Claude Code on leto") {
+		t.Errorf("a failed answer: %d\n%s", resp.StatusCode, body)
+	}
+	if got := buttons(body); len(got) != 0 || strings.Contains(body, "<form") {
+		t.Errorf("a request that waits no longer offers %q:\n%s", got, body)
+	}
+}
+
+// endingCore is a fakeCore whose requests stop waiting once answered.
+type endingCore struct{ *fakeCore }
+
+func (c *endingCore) AnswerPassthrough(ctx context.Context, id, answer string) error {
+	err := c.fakeCore.AnswerPassthrough(ctx, id, answer)
+	c.state.Approvals = nil
+	return err
+}
+
+// changeCore is a core whose project web's .nearhostrc waits on a change:
+// it serves web.test on port 80 now, and the change moves it to 8080 and
+// asks for api.example.com there, and for docker_clients.
 func changeCore() *fakeCore {
 	c := newCore()
-	c.state.Projects["web"] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "sha1", Items: []nearhostrc.Item{
-		{Port: 3000, Host: "api.example.com", Why: "a real domain"},
+	web := config.Project{Name: "web", Alias: "web.test", Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"web.test"}}}}
+	data, err := config.Marshal(&config.Config{Projects: []config.Project{web}})
+	if err != nil {
+		panic(err)
+	}
+	c.state.Config = string(data)
+	next := web
+	next.Routes = []config.Route{{Port: 8080, Role: config.RoleWeb, Hosts: []string{"web.test", "api.example.com"}}}
+	c.state.Projects["web"] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "sha1", Project: next, Items: []nearhostrc.Item{
+		{Port: 8080, Host: "api.example.com", Why: nearhostrc.WhyRealDomain},
 		{Option: nearhostrc.OptionDockerClients, Why: "opens the project to containers"},
 	}}}
 	return c
@@ -192,7 +238,11 @@ func TestChangeApprove(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET: %d\n%s", resp.StatusCode, body)
 	}
-	for _, want := range []string{"api.example.com (a real domain)", "docker_clients (opens the project to containers)", `name="sha" value="sha1"`} {
+	for _, want := range []string{
+		"api.example.com on port 8080 (a real domain)", "Serving it here hides the real site on this machine.",
+		"docker_clients (opens the project to containers)", `name="sha" value="sha1"`,
+		"It also moves or removes what is served now:", "web.test port 80 → 8080",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the change lacks %q:\n%s", want, body)
 		}
@@ -209,6 +259,10 @@ func TestChangeApprove(t *testing.T) {
 	}
 	if got := c.called(); !slices.Equal(got, []string{"AcceptChange web sha1"}) {
 		t.Errorf("calls %q", got)
+	}
+	// While the change still waits, answered shows it, not an answer.
+	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); strings.Contains(body, "Answered") || !strings.Contains(body, "api.example.com") {
+		t.Errorf("answered while the change waits:\n%s", body)
 	}
 	c.state.Projects["web"] = engine.ProjectStatus{}
 	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); !strings.Contains(body, "Answered: Approved.") {

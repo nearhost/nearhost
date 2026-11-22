@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -60,17 +61,17 @@ func (p *page) pending(id string) (control.Approval, bool) {
 	return control.Approval{}, false
 }
 
-// approval serves /approve/{id}: the request, and the answers it takes. With
-// answered set to an answer, it says the answer was given.
+// approval serves /approve/{id}: the request, and the answers it takes.
+// With answered set to an answer, once the request waits no longer, it says
+// the answer was given.
 func (p *page) approval(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if label, ok := answerLabels[r.URL.Query().Get("answered")]; ok {
-		v := approveView{base: p.base("Answered"), Answered: label}
-		render(w, r, "approve", http.StatusOK, v)
-		return
-	}
 	a, ok := p.pending(id)
 	if !ok {
+		if label, given := answerLabels[r.URL.Query().Get("answered")]; given {
+			render(w, r, "approve", http.StatusOK, approveView{base: p.base("Answered"), Answered: label})
+			return
+		}
 		p.gone(w, r, http.StatusNotFound)
 		return
 	}
@@ -234,35 +235,60 @@ func proposalLines(r *agentapi.Proposal) []string {
 type changeView struct {
 	base
 	// Items are what needs approval, each with why.
-	Items    []string
+	Items []changeItem
+	// Moves say what is served now that the change moves or removes.
+	Moves    []string
 	Buttons  []button
 	Error    string
 	Answered string
 	Gone     bool
 }
 
+// changeItem is one thing a change needs approval for, and a note on it.
+type changeItem struct{ Text, Note string }
+
+// realDomainNote follows a host that is a real domain. The page looks up
+// no address, so it says what serving one does, not where it resolves.
+const realDomainNote = "Serving it here hides the real site on this machine."
+
 // change serves /change/{name}: what the project's .nearhostrc asks for
 // that needs approval, and the answers it takes. With answered set to an
-// answer, it says the answer was given.
+// answer, once no change waits, it says the answer was given.
 func (p *page) change(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if label, ok := changeLabels[r.URL.Query().Get("answered")]; ok {
-		render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
-		return
-	}
 	pending := p.o.Core.State().Projects[name].Pending
 	if pending == nil {
+		if label, given := changeLabels[r.URL.Query().Get("answered")]; given {
+			render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
+			return
+		}
 		render(w, r, "change", http.StatusNotFound, changeView{base: p.base("Nothing to review"), Gone: true})
 		return
 	}
 	render(w, r, "change", http.StatusOK, p.changeView(name, pending))
 }
 
-// changeView is the view of the change pending for the project name.
+// changeView is the view of the change pending for the project name, in
+// full as the interface's review shows it: each item with why it needs
+// approval, and what the change moves or removes.
 func (p *page) changeView(name string, c *engine.Change) changeView {
 	v := changeView{base: p.base("Review " + nearhostrc.FileName + " for " + safetext.Line(name))}
 	for _, it := range c.Items {
-		v.Items = append(v.Items, safetext.Line(it.Name())+" ("+it.Why+")")
+		item := changeItem{Text: safetext.Line(it.Name()) + " (" + it.Why + ")"}
+		if it.Host != "" {
+			item.Text = fmt.Sprintf("%s on port %d (%s)", safetext.Line(it.Host), it.Port, it.Why)
+			if it.Why == nearhostrc.WhyRealDomain {
+				item.Note = realDomainNote
+			}
+		}
+		v.Items = append(v.Items, item)
+	}
+	if cfg, err := config.Parse([]byte(p.o.Core.State().Config)); err == nil {
+		if old, ok := cfg.Project(name); ok {
+			for _, m := range nearhostrc.Moves(*old, c.Project) {
+				v.Moves = append(v.Moves, safetext.Line(m))
+			}
+		}
 	}
 	action := "/change/" + url.PathEscape(name)
 	v.Buttons = []button{

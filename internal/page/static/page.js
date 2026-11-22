@@ -1,8 +1,10 @@
 // Keeps Nearhost's page up to date: on each change the core's event stream
 // tells of, and every 15 seconds while the page is in view, it fetches the
 // page again and puts its main part in place of the one shown. One fetch
-// runs at a time, with at most one more queued. A view showing an error is
-// left as it is, so the error stays until the user moves on.
+// runs at a time, with at most one more queued. Only the page's own part,
+// marked so, replaces what is shown. A view showing an error is left as it
+// is, so the error stays until the user moves on, and the timed refresh
+// waits while a form's button has the focus.
 "use strict";
 (function () {
   var main = document.querySelector("main");
@@ -15,7 +17,7 @@
     fetch(location.pathname + location.search, {
       headers: { "X-Nearhost-Part": "main" }, credentials: "same-origin", cache: "no-store"
     }).then(function (r) {
-      return r.ok || r.status === 404 ? r.text() : null;
+      return r.headers.get("X-Nearhost-Part") === "main" ? r.text() : null;
     }).then(function (html) {
       if (html !== null) main.innerHTML = html;
     }).catch(function () {}).then(function () {
@@ -42,6 +44,8 @@
   }
   if (window.EventSource) connect();
   setInterval(function () {
+    var focus = document.activeElement;
+    if (focus && main.contains(focus) && focus.closest("form")) return;
     if (document.visibilityState === "visible") refresh();
   }, 15000);
 })();

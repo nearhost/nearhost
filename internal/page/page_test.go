@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -155,7 +156,7 @@ func TestStatusLists(t *testing.T) {
 		"leto", "reconnecting", "ssh: connection refused",
 		`<a href="https://web.test">https://web.test</a>`, "running",
 		"api", "waiting for the hosts file: run nearhost to update it",
-		"Claude Code", "5173", "5174", "vite", "10 min ago",
+		"Claude Code", "5173", "5174", "vite", "opened 10 min ago",
 		`<script src="/page.js" defer></script>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -209,6 +210,43 @@ func TestMainPart(t *testing.T) {
 		if !strings.Contains(body, "nearhost") {
 			t.Errorf("%s main part has no content:\n%s", path, body)
 		}
+		if resp.Header.Get("X-Nearhost-Part") != "main" {
+			t.Errorf("%s main part is not marked", path)
+		}
+	}
+}
+
+// A part for an approval that waits no longer is marked too, so page.js
+// shows that it has ended; the whole page is not marked.
+func TestMainPartMarker(t *testing.T) {
+	h := newPage(newCore())
+	if resp := do(h, "GET", "/approve/gone", nil, "X-Nearhost-Part", "main"); resp.StatusCode != 404 || resp.Header.Get("X-Nearhost-Part") != "main" {
+		t.Errorf("the part of an ended request: %d, marker %q", resp.StatusCode, resp.Header.Get("X-Nearhost-Part"))
+	}
+	if resp := do(h, "GET", "/", nil); resp.Header.Get("X-Nearhost-Part") != "" {
+		t.Error("the whole page is marked as a part")
+	}
+}
+
+// Links to what waits are escaped as paths.
+func TestStatusEscapesLinks(t *testing.T) {
+	c := newCore(control.Approval{ID: "a/b?c", Pass: passApproval("a/b?c", false).Pass})
+	c.state.Projects["my app"] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "abc"}}
+	body := bodyOf(t, do(newPage(c), "GET", "/", nil))
+	for _, want := range []string{`href="/approve/a%2Fb%3Fc"`, `href="/change/my%20app"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// A core whose start time is unknown says who started it, without an age.
+func TestStatusWithoutStart(t *testing.T) {
+	c := newCore()
+	c.status.Info.Started = time.Time{}
+	body := bodyOf(t, do(newPage(c), "GET", "/", nil))
+	if !strings.Contains(body, "Nearhost was started by the login service.") || strings.Contains(body, "started ,") {
+		t.Errorf("no start time:\n%s", body)
 	}
 }
 
@@ -265,11 +303,13 @@ func TestTemplatesEscape(t *testing.T) {
 	c.state.Passthroughs = []engine.Passthrough{{PassthroughSpec: engine.PassthroughSpec{ID: "p9", Server: evil, Requester: evil, Label: evil, Remote: 1}}}
 	c.status.Servers = []control.ServerInfo{{Name: evil, Message: evil}}
 	c.status.Projects = []control.ProjectInfo{{Name: evil, Message: evil, URL: "https://web.test"}}
-	c.state.Projects[evil] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "abc"}}
+	c.state.Projects[evil] = engine.ProjectStatus{Pending: &engine.Change{SHA256: "abc", Items: []nearhostrc.Item{
+		{Port: 80, Host: evil, Why: nearhostrc.WhyRealDomain},
+	}}}
 	h := New(Options{Core: c, Now: func() time.Time { return now }, Trees: func() []proxy.HomeTree {
 		return []proxy.HomeTree{{Server: evil, Root: evil, Docs: []proxy.HomeDoc{{Path: evil, URL: "/d/x/y"}}}}
 	}})
-	for _, path := range []string{"/", "/approve/p1", "/approve/d1", "/approve/x"} {
+	for _, path := range []string{"/", "/approve/p1", "/approve/d1", "/approve/x", "/change/" + url.PathEscape(evil)} {
 		body := bodyOf(t, do(h, "GET", path, nil))
 		if strings.Contains(body, "<img") {
 			t.Errorf("%s shows the label unescaped:\n%s", path, body)
