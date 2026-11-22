@@ -112,8 +112,10 @@ func TestSlowStreamGetsReset(t *testing.T) {
 		hub.Publish(event(long))
 		slowest = max(slowest, time.Since(start))
 	}
-	if slowest > 10*time.Millisecond {
-		t.Errorf("the slowest Publish took %v, want under 10ms", slowest)
+	// Generous for a busy runner: a Publish held up by the client would
+	// wait for good.
+	if slowest > time.Second {
+		t.Errorf("the slowest Publish took %v, want well under a second", slowest)
 	}
 	var prev uint64
 	resets := 0
@@ -253,7 +255,8 @@ func TestKeepalive(t *testing.T) {
 	keepaliveEvery = 10 * time.Millisecond
 	hub, c := serveHub(t, newFake())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Bounded, so a keepalive that never comes fails the test.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://nearhost/v1/events?after=0", nil)
 	if err != nil {
@@ -363,4 +366,31 @@ func TestStateRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("State =\n%+v\nwant\n%+v", got, want)
 	}
+}
+
+// A client that stops reading is let go once a write to it has waited
+// streamWriteTimeout, so it no longer counts as attached.
+func TestStreamLetsGoOfAClientThatDoesNotRead(t *testing.T) {
+	defer func(d time.Duration) { streamWriteTimeout = d }(streamWriteTimeout)
+	streamWriteTimeout = 50 * time.Millisecond
+	hub, c := serveHub(t, newFake())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://nearhost/v1/events?after=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() // never read
+	if hub.Clients() != 1 {
+		t.Fatalf("%d clients attached, want 1", hub.Clients())
+	}
+	long := strings.Repeat("x", 64<<10)
+	testutil.WaitUntil(t, 5*time.Second, func() bool {
+		hub.Publish(event(long))
+		return hub.Clients() == 0
+	}, "the stream to let the client go")
 }

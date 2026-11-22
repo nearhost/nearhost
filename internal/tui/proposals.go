@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -102,6 +103,38 @@ func (s *Proposals) Shown(origin, requester, doc string) {
 	s.push(docShownMsg{origin, requester, doc})
 }
 
+// Ended tells the interface that the request id, a proposal, a passthrough
+// or a document request, waits no longer: another window answered it, or its
+// agent stopped waiting. A request still queued here is dropped, so the
+// interface never sees it; otherwise the interface is told, in order with the
+// rest. It never blocks.
+func (s *Proposals) Ended(id string) {
+	s.mu.Lock()
+	for i, msg := range s.waiting {
+		if requestID(msg) == id {
+			s.waiting = slices.Delete(s.waiting, i, i+1)
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.mu.Unlock()
+	s.push(requestEndedMsg{id})
+}
+
+// requestID is the ID of the request msg gives the interface, or "" when msg
+// gives none.
+func requestID(msg tea.Msg) string {
+	switch msg := msg.(type) {
+	case proposalMsg:
+		return msg.p.ID
+	case passMsg:
+		return msg.r.ID
+	case docMsg:
+		return msg.r.ID
+	}
+	return ""
+}
+
 // Waiting returns a snapshot of the proposals, passthrough requests, notices
 // of passthroughs opened without asking, document requests and notices of
 // documents shown without asking that are queued and not yet sent to the
@@ -185,10 +218,17 @@ type docMsg struct{ r DocRequest }
 // docShownMsg is a document that opened without asking.
 type docShownMsg struct{ origin, requester, doc string }
 
+// requestEndedMsg says the request with the ID waits no longer.
+type requestEndedMsg struct{ id string }
+
 // proposing is the proposal whose form is open.
 type proposing struct {
 	p    Proposal
 	form *projectForm
+	// ended is set when the proposal waits no longer while the form saves
+	// something, which runs to its end: the form closes once it has, unless
+	// it saved the project.
+	ended bool
 }
 
 // gotProposal queues a proposal and says it came.
@@ -319,4 +359,108 @@ func (m *Model) proposalsWaiting(width int) []string {
 		what = fmt.Sprintf("%d requests waiting", n)
 	}
 	return field("agents", glyph(markAttention).String()+styleAmber.Render(" "+what)+styleDim.Render(" · ")+styleBeacon.Render("p")+styleDim.Render(" to review"), width)
+}
+
+// id is the request's ID.
+func (a asked) id() string {
+	switch {
+	case a.pass != nil:
+		return a.pass.ID
+	case a.doc != nil:
+		return a.doc.ID
+	}
+	return a.prop.ID
+}
+
+// what names the request in a sentence: "The proposal to add /x on mini",
+// "The request from Claude Code on apollo to open port 3000".
+func (a asked) what() string {
+	switch {
+	case a.pass != nil:
+		return fmt.Sprintf("The request from %s to open port %d", a.pass.who(), a.pass.Remote)
+	case a.doc != nil:
+		return fmt.Sprintf("The request from %s to show %s", a.doc.who(), clean(a.doc.Doc))
+	}
+	return fmt.Sprintf("The proposal to add %s %s", clean(a.prop.Path), a.prop.where())
+}
+
+// requestEnded takes the end of the request id, which waits no longer: another
+// window answered it, or its agent stopped waiting. One still queued is
+// dropped. One whose box is open closes it, unless this window's own answer
+// is under way, whose outcome the box shows; a proposal's form that is saving
+// closes once the save has ended. The log says what happened.
+func (m *Model) requestEnded(id string) tea.Cmd {
+	expired := func(a asked) bool { return !m.now().Before(a.expires()) }
+	for i, a := range m.waiting {
+		if a.id() != id {
+			continue
+		}
+		m.waiting = slices.Delete(m.waiting, i, i+1)
+		if expired(a) {
+			m.logs.note(a.what() + " expired before it was reviewed.")
+		} else {
+			m.logs.note(a.what() + " was answered in another window.")
+		}
+		return nil
+	}
+	var a asked
+	switch f := m.form.(type) {
+	case *projectForm:
+		pr := m.proposing
+		if pr == nil || pr.form != f || pr.p.ID != id {
+			return nil
+		}
+		if f.saving() {
+			pr.ended = true
+			return nil
+		}
+		return m.closeProposal(pr)
+	case *passForm:
+		if f.r.ID != id || f.busy || f.err != "" {
+			return nil
+		}
+		a = asked{pass: &f.r}
+	case *docForm:
+		if f.r.ID != id || f.busy || f.err != "" {
+			return nil
+		}
+		a = asked{doc: &f.r}
+	default:
+		return nil
+	}
+	m.form = nil
+	if expired(a) {
+		m.logs.note(a.what() + " expired before it was answered, so this box closed.")
+	} else {
+		m.logs.note(a.what() + " was answered in another window, so this box closed.")
+	}
+	return nil
+}
+
+// closeProposal closes the form of pr, a proposal that waits no longer,
+// which adds nothing and answers nothing: the first answer was another's.
+func (m *Model) closeProposal(pr *proposing) tea.Cmd {
+	m.form, m.proposing = nil, nil
+	a := asked{prop: &pr.p}
+	if !m.now().Before(pr.p.Expires) {
+		m.logs.note(a.what() + " expired before it was answered, so this form closed without adding it.")
+	} else {
+		m.logs.note(a.what() + " was answered in another window, so this form closed without adding it.")
+	}
+	return pr.form.closeFiles()
+}
+
+// closeEndedProposal closes the form of a proposal that ended while the form
+// saved something, once the save has ended: at once after the registry or
+// the presets, and after the project's save only when that failed. A save
+// that took is the project added, which projectAddedMsg takes.
+func (m *Model) closeEndedProposal() tea.Cmd {
+	pr := m.proposing
+	if pr == nil || !pr.ended || m.form != pr.form || pr.form.saving() {
+		return nil
+	}
+	if pr.form.step == projectStepConfirm && pr.form.err == "" {
+		return nil
+	}
+	return m.closeProposal(pr)
 }

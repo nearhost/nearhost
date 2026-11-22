@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
@@ -97,7 +98,23 @@ type clientBackend struct {
 	// hosts fixes the hosts file for the projects the core leaves waiting
 	// on it (see client_hosts.go).
 	hosts *clientHosts
+
+	// quitWith is set by the quit: quitLeft by Leave, quitStopped by
+	// Shutdown.
+	quitWith atomic.Int32
 }
+
+// The quits the interface made, for quitWith.
+const (
+	quitLeft    = 1
+	quitStopped = 2
+)
+
+// quit reports whether the interface quit, leaving the core or stopping it.
+func (b *clientBackend) quit() bool { return b.quitWith.Load() != 0 }
+
+// left reports whether the interface quit leaving the core running.
+func (b *clientBackend) left() bool { return b.quitWith.Load() == quitLeft }
 
 // capturedAnswer is what the core said about a captured exchange: the
 // exchange, or that it is not kept. When the core could not be asked,
@@ -239,14 +256,24 @@ func (b *clientBackend) stream(after, floor *uint64, connected func()) error {
 }
 
 // reset takes st in place of the envelopes the stream skipped: the events
-// waiting go out, as they came before the gap, the approvals in st not given
-// yet are given, and the log says lines were missed.
+// waiting go out, as they came before the gap, the approvals given that st
+// no longer holds are taken back, as they ended in the gap, those in st not
+// given yet are given, and the log says lines were missed.
 func (b *clientBackend) reset(st control.State) {
 	b.fetchMu.Lock()
 	b.mirror.replace(st)
 	b.lastFetch = time.Now()
 	b.flush(true)
 	b.fetchMu.Unlock()
+	pending := make(map[string]bool, len(st.Approvals))
+	for _, a := range st.Approvals {
+		pending[a.ID] = true
+	}
+	for id := range b.given {
+		if !pending[id] {
+			b.ended(id)
+		}
+	}
 	b.give(st.Approvals)
 	b.bus.Publish(engine.Event{Message: missedNote})
 	b.hostsChanged()
@@ -279,10 +306,23 @@ func (b *clientBackend) take(e control.Envelope) {
 			r.Shown(e.Shown.Origin, e.Shown.Requester, e.Shown.Doc)
 		}
 	case control.KindEnded:
-		// The interface has no way yet to take back a request it shows: one
-		// that has ended says so when it is answered. The ID is forgotten,
-		// as nothing will give it again; an unknown one needs nothing.
-		delete(b.given, e.ID)
+		// The first answer wins: a request answered in another window, or
+		// that expired, is taken back from the interface, which drops it
+		// from its queue or closes its box. The ID is forgotten, as nothing
+		// will give it again; an unknown one needs nothing.
+		b.ended(e.ID)
+	}
+}
+
+// ended takes back from the interface the request id, given to it, which
+// waits no longer. An ID not given needs nothing.
+func (b *clientBackend) ended(id string) {
+	if !b.given[id] {
+		return
+	}
+	delete(b.given, id)
+	if b.props != nil {
+		b.props.Ended(id)
 	}
 }
 
@@ -428,6 +468,7 @@ func (b *clientBackend) Grants(server string) ([]grants.Grant, error) {
 // a Nearhost started at once after finds the ports free. ctx ending cuts the
 // wait short. A core that has already gone has done what was asked.
 func (b *clientBackend) Shutdown(ctx context.Context) error {
+	b.quitWith.Store(quitStopped)
 	err := b.c.Stop(ctx)
 	b.Close()
 	if err != nil && !errors.Is(err, control.ErrNotRunning) {
@@ -441,6 +482,7 @@ func (b *clientBackend) Shutdown(ctx context.Context) error {
 
 // Leave stops following the core, which keeps running.
 func (b *clientBackend) Leave(context.Context) error {
+	b.quitWith.Store(quitLeft)
 	b.Close()
 	return nil
 }
@@ -490,7 +532,10 @@ func (b *clientBackend) StartProject(ctx context.Context, name string) error {
 	if !b.waitsOnHosts(name) {
 		return err
 	}
-	if err := b.fixHostsAsked(ctx, asked); err != nil {
+	if err := b.fixHostsAsked(ctx, asked, name); err != nil {
+		if errors.As(err, new(coreNotTold)) {
+			return err // the file was fixed
+		}
 		return hostsNotFixed(name, err)
 	}
 	// The core retries the projects that waited once told the file is fixed;

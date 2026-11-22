@@ -176,6 +176,7 @@ func TestAnsweredApprovalEnds(t *testing.T) {
 	f, _ := opts.Agent("mini")
 	clock := newFakeClock()
 	q, pub, _ := newQueue(t, clock)
+	q.now = time.Now // the agent API's requests expire by the real clock
 	a.review(q)
 	o := &coreOps{agents: a, approvals: q}
 	status, out := postPass(t, f, "")
@@ -326,5 +327,39 @@ func TestStateCarriesPending(t *testing.T) {
 	cancel()
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// A No to one passthrough ends the origin's other prompts in the agent API,
+// and so in the queue: no client is left showing one that has ended.
+func TestNoEndsTheOriginsOtherRequests(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	f, _ := opts.Agent("mini")
+	q, pub, _ := newQueue(t, newFakeClock())
+	q.now = time.Now // the agent API's requests expire by the real clock
+	a.review(q)
+	o := &coreOps{agents: a, approvals: q}
+	var ids []string
+	for _, port := range []string{"5173", "5174"} {
+		status, out := postAgentJSON(t, f, "/v1/passthroughs", `{"port": `+port+`, "requester": "claude-code", "session": "s1", "label": "vite"}`)
+		if status != 202 {
+			t.Fatalf("passthrough request for %s: %d %v", port, status, out)
+		}
+		ids = append(ids, out["id"].(string))
+	}
+	if got := q.Pending(); len(got) != 2 {
+		t.Fatalf("pending %+v, want both", got)
+	}
+	if err := o.AnswerPassthrough(context.Background(), ids[0], "no"); err != nil {
+		t.Fatal(err)
+	}
+	if got := q.Pending(); len(got) != 0 || !pub.ended(ids[1]) {
+		t.Errorf("after the No: pending %+v, published %+v", got, pub.all())
 	}
 }

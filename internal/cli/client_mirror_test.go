@@ -104,9 +104,13 @@ func TestMirrorTakesNewerStates(t *testing.T) {
 	if !m.take(control.State{Seq: 7, Config: string(other)}) || len(m.config().Projects) != 0 {
 		t.Error("a changed config was not parsed")
 	}
-	// A config that does not parse leaves the last one that did.
-	m.take(control.State{Seq: 8, Config: "projects: ["})
-	if m.config() == nil {
-		t.Error("no config after one that does not parse")
+	// A config that does not parse leaves the last one that did, and the
+	// state is still taken.
+	last := m.config()
+	if !m.take(control.State{Seq: 8, Config: "projects: ["}) || m.seq() != 8 {
+		t.Errorf("the state with a config that does not parse was not taken: at %d", m.seq())
+	}
+	if m.config() != last {
+		t.Error("a config that does not parse replaced the last one that did")
 	}
 }

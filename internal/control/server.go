@@ -172,6 +172,10 @@ func (p *probeWriter) Header() http.Header         { return p.header }
 func (p *probeWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (p *probeWriter) WriteHeader(code int)        { p.code = code }
 
+// streamWriteTimeout is how long a write to a stream may wait on a client
+// that does not read.
+var streamWriteTimeout = 30 * time.Second
+
 // stream sends the envelopes after the one numbered by the query's after, 0
 // when it has none, as server-sent events, until the client goes or the
 // server closes.
@@ -192,11 +196,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	flush := func() error { return http.NewResponseController(w).Flush() }
-	if err := flush(); err != nil {
+	// Each write has a deadline, so a client that stops reading, as a
+	// suspended interface does, is let go rather than counted as attached
+	// for good: it fetches the state again when it reads once more.
+	rc := http.NewResponseController(w)
+	deadline := func() error { return rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout)) }
+	flush := func() error { return rc.Flush() }
+	if deadline() != nil || flush() != nil {
 		return
 	}
-	if writeEnvelopes(w, backlog) != nil || flush() != nil {
+	if writeEnvelopes(w, backlog, deadline) != nil || deadline() != nil || flush() != nil {
 		return
 	}
 	keepalive := time.NewTicker(s.keepalive)
@@ -206,25 +215,34 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-sub.ready:
-			if writeEnvelopes(w, sub.take()) != nil {
+			if writeEnvelopes(w, sub.take(), deadline) != nil {
 				return
 			}
 		case <-keepalive.C:
+			if deadline() != nil {
+				return
+			}
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 		}
-		if flush() != nil {
+		// The flush gets a deadline of its own.
+		if deadline() != nil || flush() != nil {
 			return
 		}
 	}
 }
 
-// writeEnvelopes writes each of es as one server-sent event.
-func writeEnvelopes(w io.Writer, es []Envelope) error {
+// writeEnvelopes writes each of es as one server-sent event, calling
+// deadline before each, so a long batch to a client that reads is not cut
+// short: only a write that waits too long is.
+func writeEnvelopes(w io.Writer, es []Envelope, deadline func() error) error {
 	for _, e := range es {
 		data, err := json.Marshal(e)
 		if err != nil {
+			return err
+		}
+		if err := deadline(); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {

@@ -239,10 +239,9 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if err != nil {
 		return err
 	}
-	ensure := func() (*control.Client, control.Info, bool, error) {
-		return ensureInterruptible(cmd, b, flags)
-	}
-	c, info, spawned, err := ensure()
+	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
+		return ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	})
 	if err != nil {
 		return err
 	}
@@ -259,12 +258,25 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		if err := sameConfig(cmd, st.ConfigPath); err != nil {
 			return err
 		}
-		if c, spawned, err = offerRestart(cmd, b.detach, c, info, ensure); err != nil {
+		if c, info, spawned, err = offerRestart(cmd, b, c, info, st); err != nil {
 			return err
+		}
+	}
+	// A core started for this interface is stopped should the interface not
+	// take over: no interface would follow it.
+	abandon := func() {
+		if !spawned {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), detachTimeout)
+		defer cancel()
+		if err := c.Stop(ctx); err == nil && b.detach.gone != nil {
+			_ = b.detach.gone(ctx)
 		}
 	}
 	st, err := c.State(ctx)
 	if err != nil {
+		abandon()
 		return fmt.Errorf("ask Nearhost in the background what it serves: %w", err)
 	}
 	// What the core writes to its log from here on says whether it was
@@ -272,6 +284,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	logFrom := b.detach.logSize()
 	storage, err := config.CaddyDir()
 	if err != nil {
+		abandon()
 		return err
 	}
 	var suspender tui.Suspender
@@ -284,7 +297,12 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		b.rootMade(root)
 	}
 	var proposals tui.Proposals
-	local := &localOps{b: b, path: st.ConfigPath, flags: flags, storage: storage, root: root}
+	// Whether the hosts file is managed is the core's to say: --no-hosts
+	// given to an interface that found the core running is ignored, as the
+	// note says, and one the core was started with is shown.
+	localFlags := flags
+	localFlags.noHosts = st.NoHosts
+	local := &localOps{b: b, path: st.ConfigPath, flags: localFlags, storage: storage, root: root}
 	back := newClientBackend(c, st, local, &proposals, spawned)
 	back.gone = b.detach.gone
 	defer back.Close()
@@ -326,18 +344,26 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	})
 	back.Close()
 	if m.Err() != nil {
-		return coreLost(errOut, b.detach, logFrom)
+		return coreLost(errOut, b.detach, logFrom, info.StartedBy)
+	}
+	if err != nil && !back.quit() {
+		abandon()
+	}
+	// Said once the terminal is the shell's again. A core in a terminal
+	// shows there that it runs.
+	if err == nil && back.left() && info.StartedBy != control.StartedForeground {
+		fmt.Fprintln(cmd.OutOrStdout(), "Nearhost is still running in the background. Stop it with nearhost stop.")
 	}
 	return err
 }
 
-// ensureInterruptible is ensureCore for the interface, with the stop
-// signals caught while it waits: one ends the wait, and the core started
-// here, which no interface would follow, is stopped. The process then exits
-// as an interrupted command does.
-func ensureInterruptible(cmd *cobra.Command, b uiBackend, flags serveFlags) (*control.Client, control.Info, bool, error) {
+// ensureInterruptible runs start, ensureCore or startCore for the interface,
+// with the stop signals caught while it waits: one ends the wait, and the
+// core started here for the interface, which no interface would follow, is
+// stopped. The process then exits as an interrupted command does.
+func ensureInterruptible(cmd *cobra.Command, b uiBackend, start func() (*control.Client, control.Info, bool, error)) (*control.Client, control.Info, bool, error) {
 	if b.stops == nil {
-		return ensureCore(cmd, b.detach, flags, control.StartedTUI)
+		return start()
 	}
 	parent := cmd.Context()
 	if parent == nil {
@@ -357,16 +383,40 @@ func ensureInterruptible(cmd *cobra.Command, b uiBackend, flags serveFlags) (*co
 		}
 	}()
 	cmd.SetContext(ctx)
-	c, info, spawned, err := ensureCore(cmd, b.detach, flags, control.StartedTUI)
+	c, info, spawned, err := start()
 	cmd.SetContext(parent)
 	close(done)
 	<-caught
 	if err != nil && ctx.Err() != nil && parent.Err() == nil {
-		msg := "Interrupted while Nearhost started in the background, so it was stopped."
+		var fate spawnedFate
+		if ie := (interruptedStart{}); errors.As(err, &ie) {
+			fate = ie.fate
+		}
+		msg := interruptedMessage(fate)
 		fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		return nil, control.Info{}, false, exitError{code: interruptedCode, msg: msg}
 	}
 	return c, info, spawned, err
+}
+
+// interruptedMessage says that the start was interrupted, and what became of
+// the core: fate.
+func interruptedMessage(fate spawnedFate) string {
+	const interrupted = "Interrupted while Nearhost started in the background"
+	switch fate {
+	case fateStopped:
+		return interrupted + ", so it was stopped."
+	case fateExited:
+		return interrupted + ". It stopped before it answered."
+	case fateOther:
+		return interrupted + ". Another nearhost started the Nearhost that runs, so it was left running."
+	case fateStopping:
+		return interrupted + ". It was asked to stop and has yet to finish; nearhost stop waits until it has."
+	case fateNoAnswer:
+		path, _ := config.LogPath()
+		return interrupted + ". It did not answer in time to be stopped, so it may still be starting: see " + path + ", and stop it with nearhost stop."
+	}
+	return interrupted + ". It goes on starting; stop it with nearhost stop."
 }
 
 // knownAPI refuses a core that speaks another version of the API, which
@@ -381,15 +431,24 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 }
 
 // offerRestart offers, at the terminal, to restart the core c, which says
-// info of itself, when it is of another release, as after `nearhost update`.
-// Restarted, the core is stopped and ensure starts this release's: c is then
-// the new core's, and restarted says it was started here.
-func offerRestart(cmd *cobra.Command, d detachBackend, c *control.Client, info control.Info, ensure func() (*control.Client, control.Info, bool, error)) (_ *control.Client, restarted bool, err error) {
+// info of itself and serves as st says, when it is of another release, as
+// after `nearhost update`. Restarted, the core is stopped and this release's
+// is started as the old one was: on its config file and ports, and said to
+// be started by what started the old one. c is then the new core's, and
+// restarted says the interface started it, as it did the old one. A core
+// that runs in a terminal is not offered a restart: it was started by hand,
+// and only there can it be started again. info is what the core followed
+// from here on says of itself.
+func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, _ control.Info, restarted bool, err error) {
 	if info.Version == Version {
-		return c, false, nil
+		return c, info, false, nil
+	}
+	if info.StartedBy == control.StartedForeground {
+		fmt.Fprintf(cmd.OutOrStdout(), "Nearhost running in a terminal is %s; this is %s. It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n", printable(info.Version), Version)
+		return c, info, false, nil
 	}
 	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
-		return c, false, nil
+		return c, info, false, nil
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -398,15 +457,23 @@ func offerRestart(cmd *cobra.Command, d detachBackend, c *control.Client, info c
 	// A core that stops between the dial and this call has done what was
 	// asked.
 	if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
-		return nil, false, err
+		return nil, info, false, err
 	}
-	if d.gone != nil {
-		if err := d.gone(ctx); err != nil {
-			return nil, false, err
+	if b.detach.gone != nil {
+		if err := b.detach.gone(ctx); err != nil {
+			return nil, info, false, err
 		}
 	}
-	c, _, spawned, err := ensure()
-	return c, spawned, err
+	by := info.StartedBy
+	if by == "" {
+		// A core that does not say is not taken for the interface's.
+		by = control.StartedDetached
+	}
+	args := restartArgs(by, st)
+	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
+		return startCore(cmd, b.detach, args, by)
+	})
+	return c, info, spawned && by == control.StartedTUI, err
 }
 
 // askRestart asks at the terminal whether to restart the core, which is the
@@ -495,8 +562,16 @@ func ignoredFlags(cmd *cobra.Command, st control.State) string {
 
 // coreLost prints that the core went while the interface ran, with the end
 // of its log, where it said why, unless what it wrote since from says it was
-// asked to stop. It returns the exit status 1 for Main.
-func coreLost(w io.Writer, d detachBackend, from int64) error {
+// asked to stop. A core that ran in a terminal, which by says, had the
+// terminal for its log, so none is shown. It returns the exit status 1 for
+// Main.
+func coreLost(w io.Writer, d detachBackend, from int64, by control.StartedBy) error {
+	if by == control.StartedForeground {
+		// Its terminal was its log.
+		msg := "Nearhost stopped. It ran in a terminal, which shows why."
+		fmt.Fprintln(w, msg)
+		return exitError{code: 1, msg: msg}
+	}
 	msg := "Nearhost in the background stopped."
 	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
 		if tail := d.logTail(0, detachTailLines); len(tail) > 0 {

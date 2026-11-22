@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if err != nil {
 		return err
 	}
+	// Absolute, as the state reports it: a core restarted from it runs in
+	// another directory.
+	if abs, err := filepath.Abs(cfgPath); err == nil {
+		cfgPath = abs
+	}
 	// A config file named that does not exist is a mistake, but for the
 	// core the interface starts: the interface offers to add the first
 	// project, which makes the file.
@@ -101,7 +107,8 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	hub := control.NewHub()
 	// What the agents ask waits in the queue, which streams it to the
 	// clients. The queue is the agents' reviewer only while a client follows
-	// the stream, so an agent is never left waiting on no one.
+	// the stream, so no new request waits on a reviewer that is not there;
+	// one already queued when the last client goes waits until it expires.
 	queue := newApprovals(hub, time.Now)
 	defer queue.close()
 	hub.OnAttached(func(attached bool) {
@@ -137,7 +144,8 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 
 	core := &coreBackend{
 		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
-		httpPort: flags.httpPort, webPort: flags.webPort,
+		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
+		noHosts: flags.noHosts,
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
@@ -289,6 +297,10 @@ func watchConfig(ctx context.Context, ops *coreOps) {
 		}
 		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
+	// What Watch read and validated is applied: it refuses a file caught
+	// empty or half saved. A client's Reload reads in Apply's turn, so it
+	// never applies an older read over this one; should this one be older
+	// than a Reload's, the change after it is seen on the next poll.
 	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
 		if err := ops.Apply(ctx, cfg); err != nil {
 			bad(err)
@@ -311,6 +323,8 @@ type coreBackend struct {
 	// httpPort and webPort are ports the core serves on, beside coreOps'
 	// httpsPort.
 	httpPort, webPort int
+	// noHosts is set when the core was started with --no-hosts.
+	noHosts bool
 	// retries counts the starts HostsChanged has under way, which the
 	// shutdown waits for. closed, under mu, is set once it has begun: a
 	// request still being answered then starts nothing.
@@ -348,7 +362,7 @@ func (c *coreBackend) Status() control.Status {
 // State is what this core is and serves, and the ports it serves on.
 func (c *coreBackend) State() control.State {
 	st := c.coreOps.State()
-	st.Info, st.HTTPPort, st.WebPort = c.info, c.httpPort, c.webPort
+	st.Info, st.HTTPPort, st.WebPort, st.NoHosts = c.info, c.httpPort, c.webPort, c.noHosts
 	return st
 }
 

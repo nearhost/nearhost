@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,6 +147,16 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	if err := flags.validate(); err != nil {
 		return nil, control.Info{}, false, err
 	}
+	args, err := detachArgs(cmd, startedBy)
+	if err != nil {
+		return nil, control.Info{}, false, err
+	}
+	return startCore(cmd, b, args, startedBy)
+}
+
+// startCore dials the core, or starts one with args, which say it was
+// started by startedBy, and waits for it, as ensureCore says.
+func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy) (c *control.Client, info control.Info, spawned bool, err error) {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -154,10 +166,6 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 		return c, info, false, nil
 	}
 	logPath, err := config.LogPath()
-	if err != nil {
-		return nil, control.Info{}, false, err
-	}
-	args, err := detachArgs(cmd, startedBy)
 	if err != nil {
 		return nil, control.Info{}, false, err
 	}
@@ -205,37 +213,82 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 		select {
 		case <-tick.C:
 		case <-ctx.Done():
-			if startedBy == control.StartedTUI && !lost {
-				stopSpawned(b, pid, exited, deadline)
+			fate := fateLeft
+			switch {
+			case lost:
+				fate = fateOther
+			case startedBy == control.StartedTUI:
+				fate = stopSpawned(b, pid, exited, deadline)
 			}
-			return nil, control.Info{}, false, ctx.Err()
+			return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fate}
 		}
 	}
 }
+
+// spawnedFate is what became of a core whose start was interrupted.
+type spawnedFate int
+
+const (
+	// fateLeft is a core left to go on starting: one started for -d, or
+	// to restart a core that was not the interface's.
+	fateLeft spawnedFate = iota
+	// fateStopped is a core stopped once it answered.
+	fateStopped
+	// fateExited is a core that stopped by itself before it answered.
+	fateExited
+	// fateNoAnswer is a core that did not answer by the deadline, and may
+	// still be starting.
+	fateNoAnswer
+	// fateStopping is a core asked to stop that had not let go of the
+	// instance lock by the deadline.
+	fateStopping
+	// fateOther is a core that stopped because another nearhost's holds the
+	// lock, or was found answering in place of the one started here: the
+	// core that runs is another's, and is left running.
+	fateOther
+)
+
+// interruptedStart is the error of a start whose context ended: the
+// context's error, and what became of the core started.
+type interruptedStart struct {
+	err  error
+	fate spawnedFate
+}
+
+func (e interruptedStart) Error() string { return e.err.Error() }
+func (e interruptedStart) Unwrap() error { return e.err }
 
 // stopSpawned stops the core this process spawned for the interface, which
 // was interrupted while the core started: with no interface, nobody would
 // know to stop it. The core is stopped once it answers, as it cannot be
 // asked before; one that stops by itself, or still does not answer at
-// deadline, is left.
-func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Time) {
+// deadline, is left. It returns what became of the core.
+func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Time) spawnedFate {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	tick := time.NewTicker(detachPoll)
 	defer tick.Stop()
 	for {
 		if c, info, ok := detachInfo(ctx, b); ok {
-			if pid == 0 || info.PID == pid {
-				_ = c.Stop(ctx)
+			if pid != 0 && info.PID != pid {
+				return fateOther
 			}
-			return
+			if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
+				return fateNoAnswer
+			}
+			// Gone, as `nearhost stop` waits for, so a nearhost run next
+			// does not find it still stopping.
+			if b.gone != nil && b.gone(ctx) != nil {
+				return fateStopping
+			}
+			return fateStopped
 		}
 		select {
 		case <-exited:
-			return
+			return fateExited
 		case <-tick.C:
 		case <-ctx.Done():
-			return
+			return fateNoAnswer
 		}
 	}
 }
@@ -306,6 +359,30 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 		}
 	}
 	return args, nil
+}
+
+// restartArgs are the arguments that start a core again as the one that
+// says st of itself was started: by startedBy, on the config file it served
+// on its ports, and with --no-hosts when it had it. --no-capture is not in a
+// core's state, so a core started with it is started again without.
+func restartArgs(startedBy control.StartedBy, st control.State) []string {
+	args := []string{"daemon", "--started-by", string(startedBy)}
+	// The default file is not named: a core given --config refuses a file
+	// that does not exist yet, and the default one may not.
+	if def, err := config.DefaultPath(); st.ConfigPath != "" && (err != nil || !samePath(st.ConfigPath, def)) {
+		args = append(args, "--config", st.ConfigPath)
+	}
+	if st.NoHosts {
+		args = append(args, "--no-hosts")
+	}
+	if st.HTTPSPort > 0 {
+		args = append(args, "--https-port", strconv.Itoa(st.HTTPSPort))
+	}
+	if st.HTTPPort > 0 {
+		args = append(args, "--http-port", strconv.Itoa(st.HTTPPort))
+	}
+	// 0 is no page.
+	return append(args, "--web-port", strconv.Itoa(st.WebPort))
 }
 
 // spawnDetached starts exe with args as a process of its own: in a session

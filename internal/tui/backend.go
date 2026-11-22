@@ -39,7 +39,9 @@ type Backend interface {
 	// nil when the core can never be lost.
 	Lost() <-chan error
 	// Config is the configuration the engine runs. The interface takes it
-	// afresh on the clock, so it follows changes to the config file.
+	// afresh on the clock, so it follows changes to the config file. It is
+	// shared and read-only, and a new pointer only once the config changes,
+	// which is how the interface sees that it did.
 	Config() *config.Config
 	// ConfigPath is the config file, which may not exist yet.
 	ConfigPath() string

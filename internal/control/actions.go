@@ -64,8 +64,9 @@ type Actions interface {
 }
 
 // UnimplementedActions is an Actions that can do none of them: each action
-// that returns an error returns ErrUnimplemented. Embed it in a Backend that
-// does not do them yet.
+// that returns an error returns ErrUnimplemented. One that returns no error
+// cannot say so, and does nothing: its route answers as for success. Embed it
+// in a Backend that does not do them yet; tests do.
 type UnimplementedActions struct{}
 
 var _ Actions = UnimplementedActions{}
@@ -330,6 +331,8 @@ func actionError(code int, body []byte) error {
 		return &answerFailed{msg: e.Error, ended: e.Ended, notSaved: e.AllowNotSaved}
 	case code == http.StatusNotFound:
 		return &notFoundError{e.Error}
+	case code == http.StatusNotImplemented:
+		return ErrUnimplemented
 	}
 	return errors.New(e.Error)
 }

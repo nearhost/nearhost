@@ -287,9 +287,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// next request, a proposal or a passthrough, opens once nothing else is
 	// open.
 	m.endProposal()
+	// A proposal that ended while its form saved closes once the save has.
+	ended := m.closeEndedProposal()
 	// The advice of the selected project is read when it is not known, once
 	// the selection has rested on it.
-	return model, tea.Batch(cmd, m.nextAsked(), m.waitForAdvice(), m.fetchGrants(), m.spin())
+	return model, tea.Batch(cmd, ended, m.nextAsked(), m.waitForAdvice(), m.fetchGrants(), m.spin())
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -489,6 +491,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.gotDoc(msg.r)
 	case docShownMsg:
 		return m, m.docShown(msg)
+	case requestEndedMsg:
+		return m, m.requestEnded(msg.id)
 	case docAnsweredMsg:
 		return m, m.docAnswered(msg)
 	case grantsMsg:
@@ -504,9 +508,15 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case passAnsweredMsg:
 		return m, m.passAnswered(msg)
 	case projectAddedMsg:
-		if m.proposing != nil && m.form == m.proposing.form {
-			m.b.AcceptProposal(m.proposing.p.ID, msg.name)
-			m.logs.note(fmt.Sprintf("Added %s, as an agent %s proposed.", msg.name, m.proposing.p.where()))
+		if pr := m.proposing; pr != nil && m.form == pr.form {
+			if pr.ended {
+				// Saved after another window answered: the agent has its
+				// answer already.
+				m.logs.note(fmt.Sprintf("Added %s. The agent's proposal %s was answered in another window while this one saved.", msg.name, pr.p.where()))
+			} else {
+				m.b.AcceptProposal(pr.p.ID, msg.name)
+				m.logs.note(fmt.Sprintf("Added %s, as an agent %s proposed.", msg.name, pr.p.where()))
+			}
 			m.proposing = nil
 		}
 		m.form = nil

@@ -67,12 +67,15 @@ type State struct {
 	// includes every envelope up to Seq, and may include some numbered
 	// after it. A client applies the envelopes numbered after Seq, which
 	// must therefore be harmless to apply twice.
-	Seq          uint64                          `json:"seq"`
-	ConfigPath   string                          `json:"configPath"`
-	Config       string                          `json:"config"` // the YAML the engine runs
-	HTTPSPort    int                             `json:"httpsPort"`
-	HTTPPort     int                             `json:"httpPort"`
-	WebPort      int                             `json:"webPort"`
+	Seq        uint64 `json:"seq"`
+	ConfigPath string `json:"configPath"`
+	Config     string `json:"config"` // the YAML the engine runs
+	HTTPSPort  int    `json:"httpsPort"`
+	HTTPPort   int    `json:"httpPort"`
+	WebPort    int    `json:"webPort"`
+	// NoHosts is set when the core does not manage the hosts file: it was
+	// started with --no-hosts.
+	NoHosts      bool                            `json:"noHosts"`
 	Projects     map[string]engine.ProjectStatus `json:"projects"`
 	Servers      map[string]ServerState          `json:"servers"`
 	Passthroughs []engine.Passthrough            `json:"passthroughs"`
