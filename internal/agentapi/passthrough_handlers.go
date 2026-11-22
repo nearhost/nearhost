@@ -182,7 +182,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	ctx, cancel := detached(r.Context(), openTimeout)
+	ctx, cancel := detached(r.Context(), OpenTimeout)
 	local, err := s.opts.Passer.Open(ctx, p)
 	cancel()
 	s.mu.Lock()

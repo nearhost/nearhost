@@ -298,10 +298,12 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 // does not leave the rest with none. It is a variable so tests can shorten it.
 var closeTimeout = 10 * time.Second
 
-// openTimeout bounds opening a forward for a request with a token, which
+// OpenTimeout bounds opening a forward for a request with a token, which
 // runs detached from the agent's hang-up so a forward is never left half
-// applied; the agent finds the result by asking again.
-const openTimeout = 45 * time.Second
+// applied; the agent finds the result by asking again. Callers of
+// AnswerPassthrough and AnswerDocument that should not cancel an open
+// midway bound it by the same time.
+const OpenTimeout = 45 * time.Second
 
 // detached is ctx's values without its cancellation, bounded by d.
 func detached(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {

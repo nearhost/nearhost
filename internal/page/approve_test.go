@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
@@ -242,6 +244,61 @@ func (c *endingCore) AnswerPassthrough(ctx context.Context, id, answer string) e
 	err := c.fakeCore.AnswerPassthrough(ctx, id, answer)
 	c.state.Approvals = nil
 	return err
+}
+
+// slowCore is a fakeCore whose answers block until release closes, then
+// record their context's error and deadline.
+type slowCore struct {
+	*fakeCore
+	started, release chan struct{}
+	ctxErr           error
+	deadline         time.Time
+}
+
+func (c *slowCore) wait(ctx context.Context) {
+	c.started <- struct{}{}
+	<-c.release
+	c.ctxErr = ctx.Err()
+	c.deadline, _ = ctx.Deadline()
+}
+
+func (c *slowCore) AnswerPassthrough(ctx context.Context, id, answer string) error {
+	c.wait(ctx)
+	return c.fakeCore.AnswerPassthrough(ctx, id, answer)
+}
+
+func (c *slowCore) AnswerDocument(ctx context.Context, id, answer string) error {
+	c.wait(ctx)
+	return c.fakeCore.AnswerDocument(ctx, id, answer)
+}
+
+// A browser that goes away while the answer opens does not cancel it: the
+// open runs on, bounded by the agent API's open time.
+func TestAnswerOutlivesTheBrowser(t *testing.T) {
+	for _, a := range []control.Approval{passApproval("p1", true), docApproval("p1")} {
+		c := &slowCore{fakeCore: newCore(a), started: make(chan struct{}, 1), release: make(chan struct{})}
+		ctx, hangUp := context.WithCancel(context.Background())
+		r := httptest.NewRequestWithContext(ctx, "POST", "/approve/p1", strings.NewReader(answer("p1", "yes").Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			newPage(c).ServeHTTP(httptest.NewRecorder(), r)
+		}()
+		<-c.started
+		hangUp()
+		close(c.release)
+		<-done
+		if c.ctxErr != nil {
+			t.Errorf("the hang-up cancelled the answer: %v", c.ctxErr)
+		}
+		if left := time.Until(c.deadline); left <= 0 || left > agentapi.OpenTimeout {
+			t.Errorf("the answer's deadline is %v away, want within %v", left, agentapi.OpenTimeout)
+		}
+		if got := c.called(); len(got) != 1 {
+			t.Errorf("calls %q", got)
+		}
+	}
 }
 
 // changeCore is a core whose project web's .nearhostrc waits on a change:

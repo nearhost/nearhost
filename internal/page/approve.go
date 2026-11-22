@@ -1,6 +1,7 @@
 package page
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -107,14 +108,19 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "That answer is not one this request offers. Open the request again and choose one of its buttons.", http.StatusBadRequest)
 		return
 	}
+	// The browser going away does not cancel an open midway, which would
+	// decline the agent's request with "context canceled": the open has
+	// the agent API's own time instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentapi.OpenTimeout)
+	defer cancel()
 	var err error
 	switch {
 	case a.Proposal != nil:
 		p.o.Core.DeclineProposal(id, declineReason)
 	case a.Pass != nil:
-		err = p.o.Core.AnswerPassthrough(r.Context(), id, ans)
+		err = p.o.Core.AnswerPassthrough(ctx, id, ans)
 	case a.Doc != nil:
-		err = p.o.Core.AnswerDocument(r.Context(), id, ans)
+		err = p.o.Core.AnswerDocument(ctx, id, ans)
 	}
 	switch {
 	case errors.Is(err, agentapi.ErrNotOpened):
