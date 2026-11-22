@@ -11,7 +11,7 @@ import (
 
 func TestSocketMode(t *testing.T) {
 	dir := testutil.TempDir(t, "ctl")
-	s, err := Listen(SocketPath(dir), newFake())
+	s, err := Listen(SocketPath(dir), newFake(), NewHub())
 	if err != nil {
 		t.Fatal(err)
 	}

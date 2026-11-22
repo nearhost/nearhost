@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -16,6 +18,10 @@ import (
 type Backend interface {
 	Info() Info
 	Status() Status
+	// State is everything a client mirrors, but for Seq and Clients, which
+	// the server sets. It must include every envelope published before it
+	// is called, and may include ones published while it runs.
+	State() State
 	// Stop starts the shutdown and returns at once.
 	Stop()
 	// HostsChanged retries the projects that failed on the hosts file.
@@ -34,14 +40,23 @@ type Server struct {
 	srv *http.Server
 	l   net.Listener
 	b   Backend
+	hub *Hub
+	// keepalive is keepaliveEvery when the server started.
+	keepalive time.Duration
 }
 
-// Listen starts serving the control API for b on a Unix socket at path. It
-// makes the socket's directory, private to the user, and the socket readable
-// and writable by the user alone. A socket that answers belongs to a running
-// core, which Listen leaves be and reports as ErrInUse; one that does not is
-// left from a core that was killed, and is replaced.
-func Listen(path string, b Backend) (*Server, error) {
+// keepaliveEvery is how often an idle stream is sent a comment, so that
+// neither end takes it for dead. Tests shorten it before Listen.
+var keepaliveEvery = 15 * time.Second
+
+// Listen starts serving the control API for b on a Unix socket at path,
+// streaming what is published to hub. When hub is nil, Listen makes a hub
+// of its own, to which nothing publishes. It makes the socket's directory,
+// private to the user, and the socket readable and writable by the user
+// alone. A socket that answers belongs to a running core, which Listen
+// leaves be and reports as ErrInUse; one that does not is left from a core
+// that was killed, and is replaced.
+func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -59,7 +74,10 @@ func Listen(path string, b Backend) (*Server, error) {
 		l.Close()
 		return nil, err
 	}
-	s := &Server{b: b, l: l}
+	if hub == nil {
+		hub = NewHub()
+	}
+	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
 	s.srv = &http.Server{
 		Handler:           http.HandlerFunc(s.serve),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -95,7 +113,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1":
 		method = http.MethodGet
-	case "/v1/status":
+	case "/v1/status", "/v1/state", "/v1/events":
 		method = http.MethodGet
 	case "/v1/stop", "/v1/hosts/changed":
 		method = http.MethodPost
@@ -113,6 +131,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Info())
 	case "/v1/status":
 		reply(w, http.StatusOK, s.b.Status())
+	case "/v1/state":
+		// The number is read first: the state then includes every
+		// envelope up to it, and may include some after it.
+		seq := s.hub.Seq()
+		st := s.b.State()
+		st.Seq, st.Clients = seq, s.hub.Clients()
+		reply(w, http.StatusOK, st)
+	case "/v1/events":
+		s.stream(w, r)
 	case "/v1/stop":
 		// Answer before the shutdown starts: the shutdown closes this
 		// socket, and would cut the answer off, leaving the client an EOF.
@@ -127,6 +154,68 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.b.HostsChanged(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// stream sends the envelopes after the one numbered by the query's after, 0
+// when it has none, as server-sent events, until the client goes or the
+// server closes.
+func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
+	var after uint64
+	if q := r.URL.Query().Get("after"); q != "" {
+		n, err := strconv.ParseUint(q, 10, 64)
+		if err != nil {
+			fail(w, http.StatusBadRequest, "after must be an envelope number, not "+strconv.Quote(q))
+			return
+		}
+		after = n
+	}
+	// Attached before the answer starts, so a client counts as attached
+	// once Events returns.
+	sub, backlog := s.hub.subscribe(after)
+	defer s.hub.unsubscribe(sub)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	flush := func() error { return http.NewResponseController(w).Flush() }
+	if err := flush(); err != nil {
+		return
+	}
+	if writeEnvelopes(w, backlog) != nil || flush() != nil {
+		return
+	}
+	keepalive := time.NewTicker(s.keepalive)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-sub.ready:
+			if writeEnvelopes(w, sub.take()) != nil {
+				return
+			}
+		case <-keepalive.C:
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+		}
+		if flush() != nil {
+			return
+		}
+	}
+}
+
+// writeEnvelopes writes each of es as one server-sent event.
+func writeEnvelopes(w io.Writer, es []Envelope) error {
+	for _, e := range es {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reply answers with v as JSON.

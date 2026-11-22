@@ -79,6 +79,13 @@ func TestUpAnswersTheControlSocket(t *testing.T) {
 	if info.Started.IsZero() || time.Since(info.Started) > time.Minute {
 		t.Errorf("Started = %v", info.Started)
 	}
+	st, err := u.control().State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Info != info || st.ConfigPath != u.cfgPath || st.HTTPSPort != u.httpsPort || st.HTTPPort != u.httpPort || st.WebPort != u.webPort {
+		t.Errorf("State = %+v; want the core's info, config path %s and ports %d, %d and %d", st, u.cfgPath, u.httpsPort, u.httpPort, u.webPort)
+	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
