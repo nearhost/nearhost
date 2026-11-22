@@ -7,13 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/proxy"
 )
 
 // statusNotRunning is what `nearhost status` says when no core answers.
@@ -76,12 +79,18 @@ func runStatus(cmd *cobra.Command, asJSON bool) error {
 		_, err = fmt.Fprintf(out, "%s\n", b)
 		return err
 	}
-	return printStatus(out, st)
+	return printStatus(out, st, stdoutIsTerminal())
 }
 
+// stdoutIsTerminal reports whether status writes to a terminal, where the
+// page's key may be shown. Tests replace it.
+var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+
 // printStatus writes st as a line about the core, then a table of its
-// servers and one of its projects, aligned as `ls` aligns its own.
-func printStatus(w io.Writer, st control.Status) error {
+// servers and one of its projects, aligned as `ls` aligns its own, then what
+// waits for an answer and the page's address. The address carries the page's
+// key only when terminal is true: a pipe or a log keeps no secret.
+func printStatus(w io.Writer, st control.Status, terminal bool) error {
 	info := st.Info
 	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
 		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
@@ -102,14 +111,36 @@ func printStatus(w io.Writer, st control.Status) error {
 	}
 	fmt.Fprintln(w)
 	if len(st.Projects) == 0 {
-		_, err := fmt.Fprintln(w, "No projects are being served. Enable one in the config, or add one with `nearhost add <path>`.")
-		return err
+		fmt.Fprintln(w, "No projects are being served. Enable one in the config, or add one with `nearhost add <path>`.")
+	} else {
+		rows := [][]string{{"PROJECT", "STATE", "URL", "MESSAGE"}}
+		for _, p := range st.Projects {
+			rows = append(rows, []string{printable(p.Name), printable(p.State), printable(p.URL), printable(p.Message)})
+		}
+		if err := writeTable(w, rows); err != nil {
+			return err
+		}
 	}
-	rows := [][]string{{"PROJECT", "STATE", "URL", "MESSAGE"}}
-	for _, p := range st.Projects {
-		rows = append(rows, []string{printable(p.Name), printable(p.State), printable(p.URL), printable(p.Message)})
+	if len(st.Approvals) > 0 {
+		fmt.Fprintf(w, "\nWaiting for your answer:\n")
+		for _, a := range st.Approvals {
+			if a.URL == "" {
+				fmt.Fprintf(w, "  %s\n", printable(a.Summary))
+			} else {
+				fmt.Fprintf(w, "  %s: %s\n", printable(a.Summary), printable(a.URL))
+			}
+		}
 	}
-	return writeTable(w, rows)
+	if st.Page != "" {
+		page := st.Page
+		if terminal {
+			if keyed, err := proxy.PageKeyURL(st.Page); err == nil {
+				page = keyed
+			}
+		}
+		fmt.Fprintf(w, "\nPage: %s\n", printable(page))
+	}
+	return nil
 }
 
 // writeTable writes rows in aligned columns. Every cell ends with a tab, so
