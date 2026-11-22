@@ -641,7 +641,7 @@ func TestAnsweringAChangeTellsTheAgents(t *testing.T) {
 		}
 		defer a.close()
 		a.attach(u.eng)
-		a.review(&tui.Proposals{})
+		a.review(reviewer{&tui.Proposals{}})
 		u.agents = a
 		sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
 		status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
@@ -677,7 +677,7 @@ func TestAcceptingAChangeHoldsItsReloadsWhileSaving(t *testing.T) {
 	}
 	defer a.close()
 	a.attach(u.eng)
-	a.review(&tui.Proposals{})
+	a.review(reviewer{&tui.Proposals{}})
 	u.agents = a
 	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
 	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
@@ -716,7 +716,7 @@ func TestAcceptingAChangeThatNoLongerWaitsReleasesItsReloads(t *testing.T) {
 	}
 	defer a.close()
 	a.attach(u.eng)
-	a.review(&tui.Proposals{})
+	a.review(reviewer{&tui.Proposals{}})
 	u.agents = a
 	sock := filepath.Join(home, ".nearhost", "k3f9q2.sock")
 	status, out := postJSON(t, sock, "/v1/projects/reload", `{"path": "/tmp/two"}`)
@@ -963,7 +963,7 @@ func TestCorruptGrantsServesAgentsWithoutPassthrough(t *testing.T) {
 		t.Fatalf("agents are off: %s", note)
 	}
 	defer a.close()
-	a.review(&tui.Proposals{})
+	a.review(reviewer{&tui.Proposals{}})
 	if !strings.Contains(note, grantFile(home)) || !strings.Contains(note, "passthrough and documents are off") {
 		t.Fatalf("note %q", note)
 	}

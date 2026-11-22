@@ -25,6 +25,9 @@ type coreOps struct {
 	// agents answers the agents' proposals; nil when none can reach
 	// nearhost.
 	agents *agents
+	// approvals is the queue of what the agents ask, which the answers take
+	// requests off; nil when nothing is queued.
+	approvals *approvals
 	// path is the config file.
 	path      string
 	httpsPort int
@@ -197,9 +200,18 @@ func (o *coreOps) ReconnectServer(_ context.Context, name string) error {
 	return o.eng.ReconnectServer(name)
 }
 
-func (o *coreOps) AcceptProposal(id, name string) { o.agents.accept(id, name) }
+// AcceptProposal accepts the proposal id and takes it off the queue. The
+// agent API refuses no answer to a proposal, so it always ends.
+func (o *coreOps) AcceptProposal(id, name string) {
+	o.agents.accept(id, name)
+	o.approvals.take(id)
+}
 
-func (o *coreOps) DeclineProposal(id, reason string) { o.agents.decline(id, reason) }
+// DeclineProposal declines the proposal id and takes it off the queue.
+func (o *coreOps) DeclineProposal(id, reason string) {
+	o.agents.decline(id, reason)
+	o.approvals.take(id)
+}
 
 // ClosePassthrough closes the passthrough id for the user.
 func (o *coreOps) ClosePassthrough(ctx context.Context, id string) error {
@@ -222,23 +234,40 @@ func answerOf(s string) (tui.Answer, error) {
 }
 
 // AnswerPassthrough gives the user's answer to a coding agent's request for
-// a passthrough to the agent API.
+// a passthrough to the agent API, then takes the request off the queue
+// unless it still waits; see settle. One not queued, such as an Always
+// allow open answered with close, still reaches the agent API.
 func (o *coreOps) AnswerPassthrough(ctx context.Context, id, answer string) error {
 	a, err := answerOf(answer)
 	if err != nil {
 		return err
 	}
-	return controlAnswerError(o.agents.answerPassthrough(ctx, id, a))
+	return o.settle(id, o.agents.answerPassthrough(ctx, id, a))
 }
 
 // AnswerDocument gives the user's answer to a coding agent's request to
-// show a document to the agent API.
+// show a document to the agent API, then settles it as AnswerPassthrough
+// does.
 func (o *coreOps) AnswerDocument(ctx context.Context, id, answer string) error {
 	a, err := answerOf(answer)
 	if err != nil {
 		return err
 	}
-	return controlAnswerError(o.agents.answerDocument(ctx, id, a))
+	return o.settle(id, o.agents.answerDocument(ctx, id, a))
+}
+
+// settle takes the request id off the queue once err, the agent API's
+// answer to it, says it waits no longer: it was answered, it had ended, or
+// it was answered and only its Always allow was not saved. Any other error
+// refused the answer and left the request waiting, as an Always allow for
+// an agent that did not say which tool it is does, so it stays queued for a
+// client to answer. It returns err marked for the control API.
+func (o *coreOps) settle(id string, err error) error {
+	err = controlAnswerError(err)
+	if err == nil || errors.Is(err, control.ErrRequestEnded) || errors.Is(err, tui.ErrAllowNotSaved) {
+		o.approvals.take(id)
+	}
+	return err
 }
 
 // controlAnswerError is the error of an answer, marked for the control API
@@ -300,9 +329,9 @@ func (o *coreOps) PageKeyURL() (string, error) {
 
 // State is what the core serves: the config the engine runs, and the state
 // of each of its projects and servers, the open passthroughs, the documents
-// served and the grants, this machine's included. The caller adds what the
-// core is, the ports it was asked for, and the requests that wait for an
-// answer.
+// served, the grants, this machine's included, and the requests that wait
+// for an answer. The caller adds what the core is and the ports it was asked
+// for.
 func (o *coreOps) State() control.State {
 	cfg := o.eng.Config()
 	st := control.State{
@@ -313,7 +342,7 @@ func (o *coreOps) State() control.State {
 		Passthroughs: o.eng.Passthroughs(""),
 		Documents:    o.agents.documents(""),
 		Grants:       []grants.Grant{},
-		Approvals:    []control.Approval{},
+		Approvals:    o.approvals.Pending(),
 	}
 	if data, err := config.Marshal(cfg); err == nil {
 		st.Config = string(data)
@@ -330,6 +359,9 @@ func (o *coreOps) State() control.State {
 	}
 	if st.Documents == nil {
 		st.Documents = []documents.Tree{}
+	}
+	if st.Approvals == nil {
+		st.Approvals = []control.Approval{}
 	}
 	if err := o.agents.grantsErr(); err != nil {
 		st.GrantsError = err.Error()

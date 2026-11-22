@@ -78,8 +78,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// approval is saved to the config and served at once; one that does
 	// waits for the interface.
 	opts.Review = reviewProject(saveTo(cfgPath))
-	// Agents can read the projects' status. Without the interface there is
-	// no one to review a proposal, so the API refuses them.
+	// Agents can read the projects' status. What needs the user's answer is
+	// reviewed only while a client follows the core's stream, below: with no
+	// one to answer, the API refuses it.
 	ag, agentNote := serveAgents(b.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
 		ssh: b.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot), restart: true,
 	})
@@ -91,14 +92,26 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
 	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
-	ops := &coreOps{eng: eng, agents: ag, path: cfgPath, httpsPort: flags.httpsPort}
-
-	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
-	defer unsubscribe()
 	// The clients of the control API see what the engine publishes. The
 	// engine publishes an event once its state has changed, so a client
 	// that fetches the state on an event finds the change in it.
 	hub := control.NewHub()
+	// What the agents ask waits in the queue, which streams it to the
+	// clients. The queue is the agents' reviewer only while a client follows
+	// the stream, so an agent is never left waiting on no one.
+	queue := newApprovals(hub, time.Now)
+	defer queue.close()
+	hub.OnAttached(func(attached bool) {
+		if attached {
+			ag.review(queue)
+		} else {
+			ag.review(nil)
+		}
+	})
+	ops := &coreOps{eng: eng, agents: ag, approvals: queue, path: cfgPath, httpsPort: flags.httpsPort}
+
+	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
+	defer unsubscribe()
 	stopForwarding := forwardEvents(eng.Events(), hub)
 	defer stopForwarding()
 	if agentNote != "" {
