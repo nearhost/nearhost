@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -2123,6 +2124,79 @@ func TestScriptExit3NewCopy(t *testing.T) {
 			}
 			r := shell.run(t, h, claudeEnv, args...)
 			if r.code != 3 || !strings.Contains(r.stdout+r.stderr, copy) || strings.Contains(r.stdout+r.stderr, "nearhost up") {
+				t.Fatalf("%s: %+v", args[0], r)
+			}
+		}
+	})
+}
+
+// legacyNoPrompts is what an older Nearhost answered a request with when
+// nothing could ask the user, as it ran as nearhost up.
+const legacyNoPrompts = "open nearhost on dev@k3f9q2 to approve this; `nearhost up` cannot show prompts"
+
+// legacyScript serves origin on home/.nearhost/k3f9q2.sock as pageScript
+// does with nothing to answer on, but as an older Nearhost: each 409 that
+// says so has its body in that Nearhost's words.
+func legacyScript(t *testing.T, home, origin string) {
+	t.Helper()
+	_, src := scriptProject(t, home, origin)
+	realHome := shortDir(t)
+	scriptServerWith(t, realHome, "k3f9q2", origin, false, Options{
+		ID: "lid", Source: src,
+		Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: &fakeGrants{tokens: map[[2]string]string{}},
+		Shower: &fakeShower{served: map[[2]string]string{}}, DocGrants: newFakeDocGrants(),
+	})
+	realSock := filepath.Join(realHome, ".nearhost", "k3f9q2.sock")
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) { r.Out.URL.Scheme, r.Out.URL.Host = "http", "nearhost" },
+		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", realSock)
+		}},
+		ModifyResponse: func(resp *http.Response) error {
+			if resp.StatusCode != http.StatusConflict {
+				return nil
+			}
+			b, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(b, []byte("has no page or window to ask you in")) {
+				b, _ = json.Marshal(map[string]string{"error": legacyNoPrompts})
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(b))
+			resp.ContentLength = int64(len(b))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
+			return nil
+		},
+	}
+	os.MkdirAll(filepath.Join(home, ".nearhost"), 0o700)
+	l, err := net.Listen("unix", filepath.Join(home, ".nearhost", "k3f9q2.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: proxy}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+}
+
+// An older Nearhost that says it cannot show prompts as nearhost up still
+// gets exit 3 for a passthrough and a document.
+func TestScriptExit3LegacyCopy(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		legacyScript(t, home, shell.origin())
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		serverHome := shortDir(t)
+		legacyScript(t, serverHome, "mini")
+		for _, args := range [][]string{{"passthrough", "3000"}, {"open", p}} {
+			h := home
+			if args[0] == "passthrough" {
+				// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+				h = serverHome
+			}
+			r := shell.run(t, h, claudeEnv, args...)
+			if r.code != 3 || !strings.Contains(r.stdout+r.stderr, "cannot show prompts") {
 				t.Fatalf("%s: %+v", args[0], r)
 			}
 		}
