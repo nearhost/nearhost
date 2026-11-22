@@ -495,6 +495,13 @@ func TestActionsGoToTheCore(t *testing.T) {
 			t.Error(err)
 		}
 	}
+	// The control server answers Stop with 202 before it calls the core's
+	// Stop (so the shutdown can't cut the answer off), so the fake records
+	// "Stop" a moment after Shutdown returns. Wait for it, bounded, so the
+	// order below stays exact and the calls after it can't overtake it.
+	for deadline := time.Now().Add(2 * time.Second); !slices.Contains(h.core.asked(), "Stop") && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	b.DeclineChange("web", "abc")
 	b.AcceptProposal("p1", "blog")
 	b.DeclineProposal("p2", "not now")
