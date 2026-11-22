@@ -123,6 +123,18 @@ var ErrAllowNotSaved = errors.New("always allow was not saved")
 // answered already, or opening it failed, which ends it declined.
 var ErrPassEnded = errors.New("the request has ended")
 
+// ErrNotOpened is wrapped by an answer's error when Yes or Always allow
+// ended the request because what it asked for could not be opened or
+// shown. The error reads as the reason it failed.
+var ErrNotOpened = errors.New("the request could not be opened")
+
+// notOpened is err, why an answer could not open its request, as an error
+// that also wraps ErrNotOpened.
+type notOpened struct{ error }
+
+// Unwrap is the error and ErrNotOpened.
+func (e notOpened) Unwrap() []error { return []error{e.error, ErrNotOpened} }
+
 // passEnded is an error that ended the request it answered, or found it
 // ended. Its message is the error's own; it also wraps ErrPassEnded.
 type passEnded struct{ error }
@@ -178,9 +190,11 @@ func (r *passRecord) passthrough(opened time.Time) Passthrough {
 // way; No on a request that has ended returns the same error Yes would, so
 // the caller can say the answer came too late. When the grant for Always
 // allow fails to save, the error wraps ErrAllowNotSaved. Every error for a
-// request that is no longer waiting wraps ErrPassEnded. A No to a waiting
-// request refuses its origin's next passthrough requests for backoff, and
-// ends its other prompts as held back; AnswerClose does neither.
+// request that is no longer waiting wraps ErrPassEnded, and one for a
+// request this answer ended because it could not open it wraps
+// ErrNotOpened too. A No to a waiting request refuses its origin's next
+// passthrough requests for backoff, and ends its other prompts as held
+// back; AnswerClose does neither.
 func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) error {
 	if s.opts.Passer == nil || s.opts.Grants == nil {
 		return errors.New("this nearhost has no passthroughs")
@@ -220,7 +234,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 	if s.passCountLocked(r.Origin) >= maxPassthroughs {
 		s.endPassLocked(r, StateDeclined, tooManyPasses)
 		s.mu.Unlock()
-		return passEnded{errors.New(tooManyPasses)}
+		return passEnded{notOpened{errors.New(tooManyPasses)}}
 	}
 	r.opening = true
 	p := r.passthrough(s.opts.Now())
@@ -232,7 +246,7 @@ func (s *Server) AnswerPassthrough(ctx context.Context, id string, a Answer) err
 		r.opening = false
 		s.endPassLocked(r, StateDeclined, err.Error())
 		s.mu.Unlock()
-		return passEnded{err}
+		return passEnded{notOpened{err}}
 	}
 	if r.state != StatePending {
 		// Its session was closed while it opened: close the forward, and

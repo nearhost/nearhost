@@ -187,6 +187,24 @@ func TestAnswerErrorShown(t *testing.T) {
 	}
 }
 
+// A Yes that ended the request, because it could not be opened, says why
+// with nothing left to answer, rather than that it was answered elsewhere.
+func TestAnswerNotOpenedShowsWhy(t *testing.T) {
+	c := &endingCore{newCore(passApproval("p1", true))}
+	c.err = errors.Join(errors.New("apollo: not connected; run nearhost doctor"), agentapi.ErrNotOpened, control.ErrRequestEnded)
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 502 || !strings.Contains(body, "apollo: not connected; run nearhost doctor") || !strings.Contains(body, "Claude Code on leto") {
+		t.Errorf("a failed open: %d\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "This request has been answered or has ended.") {
+		t.Errorf("a failed open reads as answered elsewhere:\n%s", body)
+	}
+	if got := buttons(body); len(got) != 0 || strings.Contains(body, "<form") {
+		t.Errorf("a request that waits no longer offers %q:\n%s", got, body)
+	}
+}
+
 // An answer that failed for a request that waits no longer shows its error
 // with nothing left to answer.
 func TestAnswerErrorWithoutButtons(t *testing.T) {

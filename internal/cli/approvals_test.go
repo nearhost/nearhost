@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"html"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/page"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -499,5 +503,49 @@ func TestLineWriterDropsWhenFull(t *testing.T) {
 	w.put("d") // after close: dropped, and no panic
 	if got, want := buf.String(), "a\nb\n"+missedLines+"\n"; got != want {
 		t.Errorf("wrote %q, want %q", got, want)
+	}
+}
+
+// A Yes on the page to a passthrough whose server is not connected shows
+// why it could not open, through the whole chain from the page to the
+// agent API, rather than that the request was answered elsewhere.
+func TestPageShowsWhyAPassthroughDidNotOpen(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	// The engine is never attached, so the passer finds no server
+	// connected, as when it drops before the answer.
+	f, _ := opts.Agent("mini")
+	q, _, _ := newQueue(t, newFakeClock())
+	q.now = time.Now // the agent API's requests expire by the real clock
+	a.review(q)
+	core := &coreBackend{coreOps: &coreOps{eng: engine.New(&config.Config{}, opts), agents: a, approvals: q}}
+	status, out := postPass(t, f, "")
+	if status != 202 {
+		t.Fatalf("passthrough request: %d %v", status, out)
+	}
+	id := out["id"].(string)
+
+	form := url.Values{"answer": {"yes"}}
+	r := httptest.NewRequest(http.MethodPost, "/approve/"+id, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	page.New(page.Options{Core: core}).ServeHTTP(w, r)
+	body := w.Body.String()
+	if w.Code != http.StatusBadGateway || !strings.Contains(body, html.EscapeString(agentapi.ErrNotConnected.Error())) {
+		t.Errorf("a Yes that could not open: %d\n%s", w.Code, body)
+	}
+	if strings.Contains(body, "This request has been answered or has ended.") || strings.Contains(body, "<form") {
+		t.Errorf("a Yes that could not open reads as answered elsewhere, or offers answers:\n%s", body)
+	}
+	if got := q.Pending(); len(got) != 0 {
+		t.Errorf("the request still waits: %+v", got)
+	}
+	if out := getAgentJSON(t, f, "/v1/passthroughs/"+id); out["state"] != "declined" {
+		t.Errorf("the agent API says %v", out)
 	}
 }

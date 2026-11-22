@@ -43,7 +43,8 @@ type approveView struct {
 	// Advice follows the lines: what to do instead of answering here.
 	Advice  string
 	Buttons []button
-	// Error is why the answer given failed.
+	// Error is why the answer given failed. With Gone set, it is why the
+	// answer ended the request.
 	Error string
 	// Answered is the answer given, once it has been, and Gone is set when
 	// the request waits no longer: either replaces the request.
@@ -87,7 +88,8 @@ func (p *page) gone(w http.ResponseWriter, r *http.Request, status int) {
 // form's answer field, then sends the browser to the view that says it was
 // given. An answer the request does not offer is refused, and nothing is
 // called. A request that no longer waits gets 409, and an answer the core
-// could not give shows its error on the request's view.
+// could not give shows its error on the request's view, as does one that
+// ended the request because what it asked for could not be opened.
 func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ans := r.PostFormValue("answer")
@@ -114,6 +116,13 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		err = p.o.Core.AnswerDocument(r.Context(), id, ans)
 	}
 	switch {
+	case errors.Is(err, agentapi.ErrNotOpened):
+		// The answer ended the request, as what it asked for could not be
+		// opened: say why, with nothing left to answer.
+		v := p.approveView(a, false)
+		v.Gone, v.Error = true, safetext.Line(err.Error())
+		render(w, r, "approve", http.StatusBadGateway, v)
+		return
 	case errors.Is(err, control.ErrRequestEnded):
 		p.gone(w, r, http.StatusConflict)
 		return

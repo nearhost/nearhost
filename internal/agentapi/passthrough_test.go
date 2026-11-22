@@ -467,8 +467,13 @@ func TestPassthroughOpenFails(t *testing.T) {
 	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
 	id := out["id"].(string)
 	err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
-	if err == nil || err.Error() != "ssh: the forward failed" || !errors.Is(err, ErrPassEnded) || !errors.Is(err, e.p.err) {
+	if err == nil || err.Error() != "ssh: the forward failed" || !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNotOpened) || !errors.Is(err, e.p.err) {
 		t.Fatalf("got %v", err)
+	}
+	// Answering it again finds it ended, not that it failed to open.
+	err = e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
+	if !errors.Is(err, ErrPassEnded) || errors.Is(err, ErrNotOpened) {
+		t.Fatalf("again: %v", err)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "declined" || out["reason"] != "ssh: the forward failed" {
 		t.Fatalf("%v", out)

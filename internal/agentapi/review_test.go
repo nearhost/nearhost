@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -55,6 +56,27 @@ func TestEndedAfterAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantEndedOnce(t, e.r, yes)
+
+	// A Yes whose open fails ends it too, declined with why.
+	e.c.add(backoff)
+	e.p.mu.Lock()
+	e.p.err = errors.New("apollo: not connected")
+	e.p.mu.Unlock()
+	failed := askPass(t, e, 3002, "s")
+	if err := e.s.AnswerPassthrough(context.Background(), failed, AnswerYes); !errors.Is(err, ErrNotOpened) {
+		t.Fatalf("a failed open: %v", err)
+	}
+	wantEndedOnce(t, e.r, failed)
+
+	d := newDocServer(t, true)
+	d.sh.mu.Lock()
+	d.sh.showErr = errors.New("the tunnel dropped")
+	d.sh.mu.Unlock()
+	doc := askDoc(t, d, "plan.md")
+	if err := d.s.AnswerDocument(context.Background(), doc, AnswerYes); !errors.Is(err, ErrNotOpened) {
+		t.Fatalf("a failed show: %v", err)
+	}
+	wantEndedOnce(t, d.r, doc)
 }
 
 func TestEndedWhenWithdrawn(t *testing.T) {

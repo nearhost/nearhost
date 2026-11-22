@@ -397,7 +397,7 @@ func TestDocumentAnswerNoAndFailures(t *testing.T) {
 	e.sh.showErr = fmt.Errorf("%w: --web-port is 0", ErrNoPage)
 	e.sh.mu.Unlock()
 	err := e.s.AnswerDocument(context.Background(), id, AnswerYes)
-	if !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNoPage) {
+	if !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNotOpened) || !errors.Is(err, ErrNoPage) {
 		t.Fatalf("a failed show: %v", err)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "declined" || !strings.Contains(fmt.Sprint(out["reason"]), "--web-port is 0") {
