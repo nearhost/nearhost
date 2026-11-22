@@ -833,3 +833,21 @@ func TestHiddenTreeIndexSymlinkToAKeyIsMissing(t *testing.T) {
 		t.Errorf("site/: %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// TestDocumentsStaySandboxed guards the sandbox of every document. The
+// page's approvals rely on it: documents are served at the page's own
+// origin, below /d/, and a sandbox without allow-same-origin gives a
+// document an opaque origin, so its requests to the page carry Origin null
+// and no cookie of the page's to script, and it can't navigate the page.
+func TestDocumentsStaySandboxed(t *testing.T) {
+	for name, csp := range map[string]string{"fileCSP": fileCSP, "markdownCSP": markdownCSP} {
+		if !strings.Contains(csp, "sandbox") {
+			t.Errorf("%s %q has no sandbox", name, csp)
+		}
+		for _, bad := range []string{"allow-same-origin", "allow-top-navigation"} {
+			if strings.Contains(csp, bad) {
+				t.Errorf("%s %q allows %s", name, csp, bad)
+			}
+		}
+	}
+}

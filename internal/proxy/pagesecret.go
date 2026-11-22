@@ -29,6 +29,11 @@ const pageCookie = "__Host-nearhost"
 // opens its page at so the browser gets the cookie.
 const pageKeyParam = "k"
 
+// pageNextParam is the query parameter of /?k=<secret>&next=<path>, the
+// page's own path the browser is sent on to once it has the cookie: an
+// approval or a project's change, opened from a link in another browser.
+const pageNextParam = "next"
+
 // pageSecretBytes is how many random bytes the secret holds; the file holds
 // them as hex.
 const pageSecretBytes = 32
