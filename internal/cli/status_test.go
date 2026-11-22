@@ -28,6 +28,15 @@ func (c statusCore) State() control.State             { return control.State{Inf
 func (c statusCore) Stop()                            {}
 func (c statusCore) HostsChanged(ctx context.Context) {}
 
+// PageKeyURL is the page's address with the core's key, which status
+// prints on a terminal.
+func (c statusCore) PageKeyURL() (string, error) {
+	if c.st.Page == "" {
+		return "", errors.New("Nearhost's page isn't served")
+	}
+	return c.st.Page + "/?k=the-core-s-key", nil
+}
+
 // serveStatus answers st on the control socket of the test's own config
 // folder, where status looks.
 func serveStatus(t *testing.T, st control.Status) {
@@ -209,7 +218,8 @@ func TestStatusPageKeyedOnTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327/?k=") {
+	// The key is the core's, not one this process would find.
+	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327/?k=the-core-s-key\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	// The approval links stay without the key.
@@ -278,7 +288,7 @@ func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
 		{"approvals", waitingStatus(), "Waiting"},
 		{"page", waitingStatus(), "Page:"},
 	} {
-		if err := printStatus(failingWriter{c.bad}, c.st, false); !errors.Is(err, errClosedPipe) {
+		if err := printStatus(failingWriter{c.bad}, c.st, ""); !errors.Is(err, errClosedPipe) {
 			t.Errorf("%s: printStatus = %v", c.name, err)
 		}
 	}
