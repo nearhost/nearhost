@@ -138,6 +138,9 @@ type passRecord struct {
 	// a valid token opens without one and does not count against
 	// maxPending.
 	prompted bool
+	// shown is set while the reviewer has been shown it and not yet told
+	// it ended.
+	shown bool
 	// opening is set while Passer.Open runs for it. It does not expire
 	// meanwhile, and can't be answered again.
 	opening bool
@@ -333,6 +336,7 @@ func (s *Server) endPassLocked(r *passRecord, state State, reason string) {
 	}
 	r.state, r.reason, r.ended = state, reason, s.opts.Now()
 	close(r.done)
+	s.endedLocked(&r.shown, r.ID)
 }
 
 // holdPassesLocked ends origin's passthrough prompts still waiting for the
@@ -355,6 +359,7 @@ func (s *Server) openPassLocked(r *passRecord, local int, token string) {
 	s.passGen++
 	r.state, r.local, r.token, r.gen = StateOpen, local, token, s.passGen
 	close(r.done)
+	s.endedLocked(&r.shown, r.ID)
 }
 
 // closePassLocked records an open passthrough as closed.
@@ -370,6 +375,7 @@ func (s *Server) expirePassLocked(r *passRecord) {
 	if r.state == StatePending && !r.opening && !s.opts.Now().Before(r.Expires) {
 		r.state, r.ended = StateExpired, r.Expires
 		close(r.done)
+		s.endedLocked(&r.shown, r.ID)
 	}
 }
 

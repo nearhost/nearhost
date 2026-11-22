@@ -369,7 +369,7 @@ func TestUpShowsDocumentsWithAToken(t *testing.T) {
 	repo := gitRepo(t)
 	doc := filepath.Join(repo, "docs", "p.md")
 
-	if status, out := postDoc(t, a.sock, doc, repo, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
+	if status, out := postDoc(t, a.sock, doc, repo, ""); status != 409 || !strings.Contains(out["error"].(string), "has no page or window to ask you in") {
 		t.Fatalf("no token: %d %v", status, out)
 	}
 	// The grant covers the root as Resolve gives it: resolved and in slash

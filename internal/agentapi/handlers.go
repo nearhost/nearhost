@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"slices"
@@ -335,6 +336,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := s.pageURL()
 	s.mu.Lock()
 	s.sweepLocked()
 	reviewer := s.reviewer
@@ -346,7 +348,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	}
 	if reviewer == nil {
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to review proposals; `nearhost up` cannot show them")
+		fail(w, http.StatusConflict, s.noReviewer())
 		return
 	}
 	if pending >= maxPending {
@@ -361,11 +363,16 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 		},
 		state: StatePending,
 		done:  make(chan struct{}),
+		shown: true,
 	}
 	s.proposals[p.ID] = p
-	s.mu.Unlock()
 	reviewer.Review(p.Proposal)
-	reply(w, http.StatusAccepted, map[string]any{"id": p.ID, "expires_at": p.Expires.UTC().Format(time.RFC3339)})
+	s.mu.Unlock()
+	out := withLink(map[string]any{"id": p.ID, "expires_at": p.Expires.UTC().Format(time.RFC3339)}, page, "/approve/"+p.ID)
+	if page != "" {
+		out["advice"] = "Run nearhost on " + s.laptop() + " to review it."
+	}
+	reply(w, http.StatusAccepted, out)
 }
 
 type reloadRequest struct {
@@ -420,15 +427,12 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := s.pageURL()
 	s.mu.Lock()
 	s.sweepLocked()
 	if s.reviewer == nil {
 		s.mu.Unlock()
-		reply(w, http.StatusConflict, map[string]any{
-			"error": "open nearhost on " + s.laptop() + " to approve what .nearhostrc asks for (" +
-				strings.Join(got.Items, ", ") + "); `nearhost up` cannot show it",
-			"items": got.Items,
-		})
+		reply(w, http.StatusConflict, map[string]any{"error": s.noReviewer(), "items": got.Items})
 		return
 	}
 	// Agents reload in a loop: the same change waits on one record, and a
@@ -460,9 +464,9 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	}
 	id, expires := rec.ID, rec.Expires
 	s.mu.Unlock()
-	reply(w, http.StatusAccepted, map[string]any{
+	reply(w, http.StatusAccepted, withLink(map[string]any{
 		"id": id, "state": StatePending, "items": got.Items, "expires_at": expires.UTC().Format(time.RFC3339),
-	})
+	}, page, "/change/"+url.PathEscape(found.Name)))
 }
 
 func (s *Server) laptop() string {

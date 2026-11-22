@@ -714,3 +714,6 @@ func (r reviewer) ReviewDocument(d agentapi.DocRequest) {
 
 // Shown tells the interface of a document opened without asking.
 func (r reviewer) Shown(origin, requester, doc string) { r.to.Shown(origin, requester, doc) }
+
+// Ended takes back from the interface a request that waits no longer.
+func (r reviewer) Ended(id string) { r.to.Ended(id) }

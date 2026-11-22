@@ -177,6 +177,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		allowed = true
 	}
 
+	page := s.pageURL()
 	s.mu.Lock()
 	s.sweepDocsLocked()
 	for allowed {
@@ -222,7 +223,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 				rec.granted = granted
 			}
 			s.mu.Unlock()
-			reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
+			reply(w, http.StatusAccepted, pendingReply(rec.ID, rec.Expires, page))
 			return
 		}
 		if s.backingOffLocked(w, o, kindDocument) {
@@ -231,7 +232,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if reviewer == nil {
 			s.mu.Unlock()
-			fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to approve this; `nearhost up` cannot show prompts")
+			fail(w, http.StatusConflict, s.noReviewer())
 			return
 		}
 		if n := s.docPromptsLocked(o); n >= maxPending {
@@ -252,19 +253,20 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		},
 		granted:  granted,
 		prompted: !allowed,
+		shown:    !allowed,
 		opening:  allowed,
 		state:    StatePending,
 		seq:      s.docSeq,
 		done:     make(chan struct{}),
 	}
 	s.docs[rec.ID] = rec
-	s.mu.Unlock()
-
 	if !allowed {
 		reviewer.ReviewDocument(rec.DocRequest)
-		reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
+		s.mu.Unlock()
+		reply(w, http.StatusAccepted, pendingReply(rec.ID, rec.Expires, page))
 		return
 	}
+	s.mu.Unlock()
 
 	ctx, cancel = detached(r.Context(), openTimeout)
 	url, err := s.opts.Shower.Show(ctx, o, res.Root, res.Doc, req.Requester)
@@ -286,11 +288,10 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.openDocLocked(rec, url, "")
 	out := s.viewDocLocked(rec, false)
-	reviewer = s.reviewer
-	s.mu.Unlock()
-	if reviewer != nil {
-		reviewer.Shown(o, req.Requester, res.Doc)
+	if s.reviewer != nil {
+		s.reviewer.Shown(o, req.Requester, res.Doc)
 	}
+	s.mu.Unlock()
 	reply(w, http.StatusCreated, out)
 }
 

@@ -798,7 +798,7 @@ func TestUpHonoursGrants(t *testing.T) {
 	defer a.close() // no a.review: this is `nearhost up`
 	f, _ := opts.Agent("mini")
 
-	if status, out := postPass(t, f, ""); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
+	if status, out := postPass(t, f, ""); status != 409 || !strings.Contains(out["error"].(string), "has no page or window to ask you in") {
 		t.Fatalf("no token: %d %v", status, out)
 	}
 	token, err := a.grants.Allow("mini", "claude-code", grants.KindPassthrough)

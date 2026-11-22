@@ -315,7 +315,7 @@ func TestScriptSaysWhenNearhostRunsWithoutItsInterface(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		scriptServer(t, home, "k3f9q2", shell.origin(), false)
-		if r := shell.run(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "open nearhost on dev@k3f9q2") {
+		if r := shell.run(t, home, nil, "propose", home); r.code != 3 || !strings.Contains(r.stdout, "Nearhost on dev@k3f9q2 has no page or window to ask you in") {
 			t.Fatalf("%+v", r)
 		}
 	})
@@ -1630,7 +1630,7 @@ func TestScriptOpenNotConnectedAndUp(t *testing.T) {
 		p = docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		docScript(t, home, shell.origin(), false)
 		r = shell.run(t, home, nil, "open", p)
-		if r.code != 3 || !strings.Contains(r.stderr, "nearhost up") || !strings.Contains(r.stderr, p) {
+		if r.code != 3 || !strings.Contains(r.stderr, "has no page or window to ask you in") || !strings.Contains(r.stderr, p) {
 			t.Fatalf("up: %+v", r)
 		}
 	})

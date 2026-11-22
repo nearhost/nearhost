@@ -279,7 +279,7 @@ func TestReviewerOnlyWhileAttached(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WaitUntil(t, 5*time.Second, func() bool { return interfaceOn(t, sock) == false }, "the agent API to say no client reviews")
-	if status, out := askToShow(t, sock); status != 409 || !strings.Contains(out["error"].(string), "cannot show prompts") {
+	if status, out := askToShow(t, sock); status != 409 || !strings.Contains(out["error"].(string), "has no page or window to ask you in") {
 		t.Errorf("a request with no client: %d %v", status, out)
 	}
 	if err := u.stop(); err != nil {

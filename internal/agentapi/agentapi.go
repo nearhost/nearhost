@@ -154,7 +154,9 @@ type Proposal struct {
 }
 
 // Reviewer is shown each proposal, passthrough request and document request
-// as it arrives. None of its methods may block.
+// as it arrives. None of its methods may block. Server calls them with its
+// lock held, so that a request's Ended never reaches the reviewer before the
+// request does; they must not call back into Server.
 type Reviewer interface {
 	Review(p Proposal)
 	// ReviewPassthrough asks the user about a passthrough, answered with
@@ -170,6 +172,10 @@ type Reviewer interface {
 	// asking: with an Always allow token, or in a tree already served for
 	// its requester. doc is relative to its tree's root.
 	Shown(origin, requester, doc string)
+	// Ended is told once for every proposal, passthrough request and document
+	// request the reviewer was shown, when it stops waiting, however it ended:
+	// answered, withdrawn, held, expired or the server closing.
+	Ended(id string)
 }
 
 // State is where a proposal is.
@@ -214,6 +220,9 @@ type Options struct {
 	// DocGrants keeps the documents grants given with Always allow, apart
 	// from the passthrough grants in Grants.
 	DocGrants DocGrants
+	// PageURL is the address of Nearhost's page, such as
+	// https://nearhost.localhost:6327, or "" while it is not served.
+	PageURL func() string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -277,6 +286,9 @@ type proposal struct {
 	done    chan struct{}
 	reload  bool
 	sha     string
+	// shown is set while the reviewer has been shown it and not yet told
+	// it ended.
+	shown bool
 }
 
 // refusal is an origin and the kind of request the user said No to:
@@ -338,11 +350,57 @@ func New(opts Options) *Server {
 }
 
 // SetReviewer sets who reviews proposals. Without one (nil, as under
-// `nearhost up`) proposals are refused.
+// `nearhost up`) proposals are refused. The new reviewer is not told of
+// requests shown to the one it replaces ending.
 func (s *Server) SetReviewer(r Reviewer) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.reviewer = r
-	s.mu.Unlock()
+	for _, p := range s.proposals {
+		p.shown = false
+	}
+	for _, p := range s.passes {
+		p.shown = false
+	}
+	for _, d := range s.docs {
+		d.shown = false
+	}
+}
+
+// endedLocked tells the reviewer that the request id, which *shown says it
+// was shown, has ended, once.
+func (s *Server) endedLocked(shown *bool, id string) {
+	if !*shown {
+		return
+	}
+	*shown = false
+	if s.reviewer != nil {
+		s.reviewer.Ended(id)
+	}
+}
+
+// noReviewer is the error for a request that needs the user's answer when
+// nothing can ask for it.
+func (s *Server) noReviewer() string {
+	return "Nearhost on " + s.laptop() + " has no page or window to ask you in; open nearhost there, then ask again."
+}
+
+// pageURL is the address of Nearhost's page, or "" when it has none. It is
+// asked without s.mu held.
+func (s *Server) pageURL() string {
+	if s.opts.PageURL == nil {
+		return ""
+	}
+	return s.opts.PageURL()
+}
+
+// withLink adds to out, the 202 for a request, the link to answer it on
+// Nearhost's page at page, as path under it, when there is a page.
+func withLink(out map[string]any, page, path string) map[string]any {
+	if page != "" {
+		out["approve_url"] = page + path
+	}
+	return out
 }
 
 // Listen serves the API for origin on a Unix socket at path, creating its
@@ -481,10 +539,20 @@ func (s *Server) Listening(origin string) bool {
 
 // Close stops serving everywhere, removes the sockets and closes the
 // loopback ports. Proposals still waiting end their long polls: the
-// connections close with the servers.
+// connections close with the servers. The reviewer is told that every
+// request it was shown and that still waits has ended.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
+	for _, p := range s.proposals {
+		s.endedLocked(&p.shown, p.ID)
+	}
+	for _, p := range s.passes {
+		s.endedLocked(&p.shown, p.ID)
+	}
+	for _, d := range s.docs {
+		s.endedLocked(&d.shown, d.ID)
+	}
 	ls := s.listeners
 	s.listeners = map[string]*listener{}
 	s.mu.Unlock()
@@ -623,6 +691,7 @@ func (s *Server) endLocked(p *proposal, state State, reason, name string) {
 	}
 	p.state, p.reason, p.project, p.ended = state, reason, name, s.opts.Now()
 	close(p.done)
+	s.endedLocked(&p.shown, p.ID)
 }
 
 // expireLocked ends a pending proposal whose time has passed.
@@ -630,6 +699,7 @@ func (s *Server) expireLocked(p *proposal) {
 	if p.state == StatePending && !s.opts.Now().Before(p.Expires) {
 		p.state, p.ended = StateExpired, p.Expires
 		close(p.done)
+		s.endedLocked(&p.shown, p.ID)
 	}
 }
 
