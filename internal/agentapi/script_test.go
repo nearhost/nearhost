@@ -2041,7 +2041,10 @@ func TestScriptPrintsApproveURL(t *testing.T) {
 			return "Answer in Nearhost on dev@k3f9q2, or open " + page + path + "\n"
 		}
 
-		r := shell.run(t, home, claudeEnv, "passthrough", "3000")
+		// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", true, page)
+		r := shell.run(t, serverHome, claudeEnv, "passthrough", "3000")
 		id := proposalID.FindStringSubmatch(r.stdout)
 		if r.code != 0 || id == nil || r.stderr != answer("/approve/"+id[1]) {
 			t.Fatalf("passthrough: %+v", r)
@@ -2066,8 +2069,15 @@ func TestScriptNoURLNoLine(t *testing.T) {
 		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		fresh := filepath.Join(home, "new")
 		os.Mkdir(fresh, 0o755)
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", true, "")
 		for _, args := range [][]string{{"passthrough", "3000"}, {"open", p}, {"reload", dir}, {"propose", fresh}} {
-			r := shell.run(t, home, claudeEnv, args...)
+			h := home
+			if args[0] == "passthrough" {
+				// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+				h = serverHome
+			}
+			r := shell.run(t, h, claudeEnv, args...)
 			if r.code != 0 || !strings.Contains(r.stdout, `"expires_at"`) || r.stderr != "" {
 				t.Fatalf("%s: %+v", args[0], r)
 			}
@@ -2103,8 +2113,15 @@ func TestScriptExit3NewCopy(t *testing.T) {
 		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
 		fresh := filepath.Join(home, "new")
 		os.Mkdir(fresh, 0o755)
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", false, "")
 		for _, args := range [][]string{{"propose", fresh}, {"reload", dir}, {"passthrough", "3000"}, {"open", p}} {
-			r := shell.run(t, home, claudeEnv, args...)
+			h := home
+			if args[0] == "passthrough" {
+				// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+				h = serverHome
+			}
+			r := shell.run(t, h, claudeEnv, args...)
 			if r.code != 3 || !strings.Contains(r.stdout+r.stderr, copy) || strings.Contains(r.stdout+r.stderr, "nearhost up") {
 				t.Fatalf("%s: %+v", args[0], r)
 			}
