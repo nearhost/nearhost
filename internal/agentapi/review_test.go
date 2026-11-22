@@ -268,7 +268,7 @@ func TestReviewBeforeEnded(t *testing.T) {
 	}
 }
 
-// pageEnv is a server with every call, whose page is at page.
+// pageEnv is a server built with fakes for what it calls, whose page URL is page.
 type pageEnv struct {
 	s      *Server
 	remote string // apollo's socket
