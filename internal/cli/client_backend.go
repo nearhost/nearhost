@@ -396,9 +396,12 @@ func (b *clientBackend) Start(context.Context) error { return nil }
 // Shutdown asks the core to stop.
 func (b *clientBackend) Shutdown(ctx context.Context) error { return b.c.Stop(ctx) }
 
-// Apply has the core load its config file and apply it. cfg is not sent:
-// the interface saves its changes to the file before it applies them.
-func (b *clientBackend) Apply(ctx context.Context, _ *config.Config) error { return b.Reload(ctx) }
+// Leave ends this client's hold on the core, which keeps running. For now
+// it stops the core, as Shutdown does.
+func (b *clientBackend) Leave(ctx context.Context) error { return b.Shutdown(ctx) }
+
+// QuitChoice is QuitStop for now: quitting stops the core.
+func (b *clientBackend) QuitChoice() tui.QuitChoice { return tui.QuitStop }
 
 // Reload has the core load its config file and apply it.
 func (b *clientBackend) Reload(ctx context.Context) error { return b.acted(ctx, b.c.Reload(ctx)) }

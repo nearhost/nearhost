@@ -268,6 +268,20 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		defer cancel()
 		eng.Shutdown(ctx)
 	}()
+	// The interface no longer reads the config file, so the engine follows
+	// it as the core's does, until the interface begins to shut the engine
+	// down, or ends.
+	watchCtx, endWatch := context.WithCancel(context.Background())
+	back.endWatch = endWatch
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		watchConfig(watchCtx, back.coreOps)
+	}()
+	defer func() {
+		endWatch()
+		<-watched
+	}()
 	// From here a closed terminal or a kill quits the interface, so the
 	// shutdown above runs.
 	var sigs <-chan os.Signal
@@ -346,6 +360,9 @@ type uiEngine struct {
 	*coreOps
 	// localOps is what the interface does in its own process.
 	*localOps
+	// endWatch ends the engine's watch on the config file; nil when there
+	// is none.
+	endWatch context.CancelFunc
 }
 
 // The methods below that the engine and coreOps both have are coreOps',
@@ -392,13 +409,30 @@ func (u *uiEngine) Replay(ctx context.Context, id string) (int, error) {
 }
 
 // Shutdown stops every project and the engine through the up backend's
-// shutdown, which tests count; ctx ending cuts it short.
+// shutdown, which tests count; ctx ending cuts it short. The watch on the
+// config file ends first, so nothing is applied while the engine stops.
 func (u *uiEngine) Shutdown(ctx context.Context) error {
+	if u.endWatch != nil {
+		u.endWatch()
+	}
 	if u.b.up.shutdown != nil {
 		return u.b.up.shutdown(u.Engine, ctx)
 	}
 	return u.Engine.Shutdown(ctx)
 }
+
+// Leave is Shutdown: the engine runs in this process, so it cannot be left
+// running.
+func (u *uiEngine) Leave(ctx context.Context) error { return u.Shutdown(ctx) }
+
+// QuitChoice is QuitStop: quitting stops the engine in this process.
+func (u *uiEngine) QuitChoice() tui.QuitChoice { return tui.QuitStop }
+
+// Lost is nil: an engine in this process is never out of reach.
+func (u *uiEngine) Lost() <-chan error { return nil }
+
+// Reload loads the config file and applies it, as a core's Reload does.
+func (u *uiEngine) Reload(ctx context.Context) error { return u.coreOps.Reload(ctx) }
 
 // AnswerPassthrough gives the user's answer to a coding agent's request for
 // a passthrough to the agent API.

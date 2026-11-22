@@ -23,9 +23,16 @@ type wideForm interface {
 	wide() bool
 }
 
+// boxed is what is drawn in a box: a form, or the quit box.
+type boxed interface {
+	lines(width int) []string
+	keys() []footerItem
+	heading() heading
+}
+
 // formBox draws the open form in a box over base, the screen drawn faint
 // behind it: a terminal has no transparency, so dimming is redrawing.
-func (m *Model) formBox(base string, f form) string {
+func (m *Model) formBox(base string, f boxed) string {
 	w := boxWidth
 	if wf, ok := f.(wideForm); ok && wf.wide() {
 		w = wideBoxWidth

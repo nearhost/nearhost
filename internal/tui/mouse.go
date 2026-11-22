@@ -134,6 +134,12 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		return m.copySelection()
 	}
 	lines := m.screenLines()
+	if m.quitBox != nil && m.password == nil && !m.quitting {
+		// The quit box takes clicks on its buttons and check box, and
+		// nothing else: it waits for an answer.
+		ms.lastAt = time.Time{}
+		return m.quitAnswered(m.quitBox.click(lines, ms.to))
+	}
 	prev := *ms
 	ms.pending, ms.pendingAt = "", time.Time{}
 	if url, own, lo, hi := linkAt(lines, ms.to); url != "" {

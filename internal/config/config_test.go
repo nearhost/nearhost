@@ -520,6 +520,38 @@ func TestNotificationsAreOnUnlessTurnedOff(t *testing.T) {
 	}
 }
 
+// keep_running is the remembered answer to the quit box: true and false load
+// and save, and absent stays nil, so the interface asks.
+func TestKeepRunningRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	for content, want := range map[string]*bool{
+		"projects: []\n": nil, "keep_running: true\n": ptrTo(true), "keep_running: false\n": ptrTo(false),
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+		if (cfg.KeepRunning == nil) != (want == nil) || (want != nil && *cfg.KeepRunning != *want) {
+			t.Errorf("%q: keep_running %v, want %v", content, cfg.KeepRunning, want)
+		}
+		if err := Save(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(path)
+		switch {
+		case want == nil && strings.Contains(string(raw), "keep_running"):
+			t.Errorf("%q: saved keep_running when it was absent:\n%s", content, raw)
+		case want != nil && !strings.Contains(string(raw), fmt.Sprintf("keep_running: %v\n", *want)):
+			t.Errorf("%q: saved without keep_running: %v:\n%s", content, *want, raw)
+		}
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }
+
 func TestValidateWebRoutesAndHosts(t *testing.T) {
 	base := func(routes ...Route) *Config {
 		return &Config{Projects: []Project{{Name: "dd", Server: LocalServer, Alias: "dd.test", Enabled: true, Routes: routes}}}

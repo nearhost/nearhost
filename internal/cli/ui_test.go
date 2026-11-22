@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -244,5 +246,57 @@ func TestOpenPageOpensItWithTheKey(t *testing.T) {
 	err = u.OpenPage()
 	if err == nil || strings.Contains(err.Error(), string(secret)) || !strings.Contains(err.Error(), "https://nearhost.localhost:6327") {
 		t.Errorf("a failed open: the error is nil, holds the secret, or does not name the page")
+	}
+}
+
+// Until the interface is a client of the core, its engine follows the
+// config file as the core's does, so `nearhost add` from another terminal
+// still reaches it: the interface itself no longer reads the file.
+func TestTheInterfaceEngineFollowsTheConfigFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // the engine's run and CA directories
+	before := coreWatchInterval
+	coreWatchInterval = 20 * time.Millisecond
+	t.Cleanup(func() { coreWatchInterval = before })
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.Save(cfgPath, &config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	var eng *engine.Engine
+	b := fakeUI(t, true, new(bool))
+	b.engineMade = func(e *engine.Engine) { eng = e }
+	b.run = func(*tui.Model, func(*tea.Program)) error {
+		next := &config.Config{Projects: []config.Project{{Name: "blog", Server: config.LocalServer, Path: "/code/blog",
+			Alias: "blog.test", Routes: []config.Route{{Port: 4000, Role: config.RoleWeb}}}}}
+		if err := config.Save(cfgPath, next); err != nil {
+			return err
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if _, ok := eng.Config().Project("blog"); ok {
+				return nil
+			}
+		}
+		return errors.New("the engine did not take the change to the config file")
+	}
+	if _, err := runRoot(t, uiRoot(b), "--config", cfgPath, "--https-port", "8443", "--http-port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Quitting the interface ends the engine's watch on the config file before
+// the engine shuts down, so a change saved meanwhile is not applied mid-quit.
+func TestUIShutdownEndsTheConfigWatchFirst(t *testing.T) {
+	watching, endWatch := context.WithCancel(context.Background())
+	defer endWatch()
+	u := &uiEngine{localOps: &localOps{}, endWatch: endWatch}
+	watchEnded := false
+	u.b.up.shutdown = func(*engine.Engine, context.Context) error {
+		watchEnded = watching.Err() != nil
+		return nil
+	}
+	if err := u.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !watchEnded {
+		t.Error("the engine shut down while the config watch still ran")
 	}
 }

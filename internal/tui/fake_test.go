@@ -40,7 +40,7 @@ type fakeBackend struct {
 	startCalls int // calls to Start
 	reads      int // calls to CATrusted and HostsState
 	openErr    error
-	applyErr   error
+	reloadErr  error
 	forms      formFake
 	edit       editFake
 	change     changeFake
@@ -48,15 +48,23 @@ type fakeBackend struct {
 	caExpires  time.Time
 	// hostsState is what HostsState says; empty means "2 names".
 	hostsState string
-	// applyBlocks makes Apply wait for its context to end.
-	applyBlocks bool
+	// reloadBlocks makes Reload wait for its context to end.
+	reloadBlocks bool
+	// reloadCalls counts the calls to Reload, those that block included.
+	reloadCalls int
+	// quitChoice is what QuitChoice says, and lost what Lost returns.
+	quitChoice QuitChoice
+	lost       chan error
 
 	started  []string
 	stopped  []string
-	applied  []*config.Config
+	reloads  []*config.Config // what each Reload loaded
 	opened   []string
 	shutdown []context.Context
-	answers  []string // "accept <id> <name>" or "decline <id> <reason>"
+	left     []context.Context // the contexts Leave was called with
+	// quitEdits are the config edits made before each Shutdown or Leave.
+	quitEdits []int
+	answers   []string // "accept <id> <name>" or "decline <id> <reason>"
 
 	// passes are what Passthroughs lists, and grantList what Grants lists.
 	passes    []engine.Passthrough
@@ -270,8 +278,28 @@ func (f *fakeBackend) proposalAnswers() []string {
 func (f *fakeBackend) Shutdown(ctx context.Context) error {
 	f.mu.Lock()
 	f.shutdown = append(f.shutdown, ctx)
+	f.quitEdits = append(f.quitEdits, f.edit.edits)
 	f.mu.Unlock()
 	return nil
+}
+
+// Leave records its context, as Shutdown does.
+func (f *fakeBackend) Leave(ctx context.Context) error {
+	f.mu.Lock()
+	f.left = append(f.left, ctx)
+	f.quitEdits = append(f.quitEdits, f.edit.edits)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeBackend) QuitChoice() QuitChoice { return f.quitChoice }
+
+// Lost is nil unless the test made lost, as for a backend in this process.
+func (f *fakeBackend) Lost() <-chan error {
+	if f.lost == nil {
+		return nil
+	}
+	return f.lost
 }
 func (f *fakeBackend) Config() *config.Config {
 	f.mu.Lock()
@@ -279,22 +307,36 @@ func (f *fakeBackend) Config() *config.Config {
 	return f.cfg
 }
 func (f *fakeBackend) ConfigPath() string { return f.path }
-func (f *fakeBackend) Apply(ctx context.Context, cfg *config.Config) error {
+
+// Reload loads the config file and takes it as the config, as a core does.
+func (f *fakeBackend) Reload(ctx context.Context) error {
 	f.mu.Lock()
-	blocks := f.applyBlocks
+	f.reloadCalls++
+	blocks := f.reloadBlocks
 	f.mu.Unlock()
 	if blocks {
 		<-ctx.Done()
 		return ctx.Err()
 	}
+	cfg, err := config.Load(f.path)
+	if err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.applied = append(f.applied, cfg)
-	if f.applyErr != nil {
-		return f.applyErr
+	f.reloads = append(f.reloads, cfg)
+	if f.reloadErr != nil {
+		return f.reloadErr
 	}
 	f.cfg = cfg
 	return nil
+}
+
+// reloadCount is how many times Reload loaded the file.
+func (f *fakeBackend) reloadCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.reloads)
 }
 func (f *fakeBackend) Status(name string) engine.ProjectStatus {
 	f.mu.Lock()

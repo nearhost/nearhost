@@ -30,12 +30,21 @@ type Backend interface {
 	Start(ctx context.Context) error
 	// Shutdown stops every project and the engine. ctx ending cuts it short.
 	Shutdown(ctx context.Context) error
-	// Config is the configuration the engine runs.
+	// Leave detaches from the core, which keeps running. Shutdown stops it.
+	Leave(ctx context.Context) error
+	// QuitChoice says what quitting does: QuitStop, QuitLeave or QuitAsk.
+	QuitChoice() QuitChoice
+	// Lost gets one error when the core can no longer be reached. It is
+	// nil when the engine runs in this process.
+	Lost() <-chan error
+	// Config is the configuration the engine runs. The interface takes it
+	// afresh on the clock, so it follows changes to the config file.
 	Config() *config.Config
 	// ConfigPath is the config file, which may not exist yet.
 	ConfigPath() string
-	// Apply moves the engine to cfg.
-	Apply(ctx context.Context, cfg *config.Config) error
+	// Reload applies the config file now. It replaces Apply: the core applies
+	// the file, and the interface no longer reads it on a timer.
+	Reload(ctx context.Context) error
 	Status(project string) engine.ProjectStatus
 	ServerStatus(server string) (transport.Status, string)
 	// ServerHealth is ServerStatus with the attempts that failed since the
@@ -165,6 +174,18 @@ type Backend interface {
 	// RemoveDocuments stops serving the tree id.
 	RemoveDocuments(id string) error
 }
+
+// QuitChoice is what quitting the interface does to the core.
+type QuitChoice int
+
+const (
+	// QuitStop stops the core.
+	QuitStop QuitChoice = iota
+	// QuitLeave leaves the core running in the background.
+	QuitLeave
+	// QuitAsk asks which of the two, in the quit box.
+	QuitAsk
+)
 
 // ErrRequestEnded is wrapped by Backend.AnswerPassthrough's error when the
 // request has ended: it expired, its agent's session ended, it was answered

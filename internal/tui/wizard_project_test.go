@@ -294,13 +294,16 @@ func TestProjectFormBackAndCancel(t *testing.T) {
 	}
 }
 
-// An add that finishes while an Apply runs leaves its change to the clock,
-// so only one Apply runs at a time.
-func TestAddedProjectWaitsForARunningApply(t *testing.T) {
+// An add that finishes while a Reload runs reloads once that one ends, so
+// only one Reload runs at a time.
+func TestAddedProjectWaitsForARunningReload(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.applying = true
 	if _, cmd := m.Update(projectAddedMsg{name: "blog"}); cmd != nil {
-		t.Error("a second Apply began while one was running")
+		t.Error("a second Reload began while one was running")
+	}
+	if !m.reloadAfter {
+		t.Error("no Reload waits for the running one to end")
 	}
 	if !strings.Contains(screen(m), "Added blog.") {
 		t.Errorf("no note:\n%s", screen(m))
