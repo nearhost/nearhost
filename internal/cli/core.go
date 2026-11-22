@@ -117,18 +117,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// that fetches the state on an event finds the change in it.
 	hub := control.NewHub()
 	// What the agents ask waits in the queue, which streams it to the
-	// clients, and is said where the core's events are, with where to
-	// answer it.
+	// clients.
 	queue := newApprovals(hub, time.Now)
 	defer queue.close()
-	queue.onAdd = func(a control.Approval) {
-		page, _ := eng.PageURL() // "" when the page is not served
-		line := approvalLine(a, page)
-		if !mode.stamped {
-			line = time.Now().Format("15:04:05") + " " + line
-		}
-		fmt.Fprintln(mode.out, line)
-	}
 	ops := &coreOps{eng: eng, agents: ag, approvals: queue, path: cfgPath, httpsPort: flags.httpsPort}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
@@ -151,6 +142,21 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 			return alreadyRunning{err}
 		}
 		return b.bind.advise(err)
+	}
+	// Each request is said where the core's events are, with where to
+	// answer it. The agent API tells the queue with its lock held, so the
+	// line is handed to a writer of its own, never written there: output
+	// that blocks must not hold up the agents, nor the answers. The page's
+	// address is fixed for the run once the engine has started.
+	page, _ := eng.PageURL() // "" when the page is not served
+	lines := newLineWriter(mode.out, approvalLinesBuffer)
+	defer lines.close()
+	queue.onAdd = func(a control.Approval) {
+		line := approvalLine(a, page)
+		if !mode.stamped {
+			line = time.Now().Format("15:04:05") + " " + line
+		}
+		lines.put(line)
 	}
 	// The queue is the agents' reviewer whenever someone can answer: for
 	// the whole run when the page is served, as its web port is fixed once
@@ -243,6 +249,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// socket is free before the lock is.
 	closeControl()
 	closeAgents()
+	lines.close() // the agents ask no more: what they asked is said first
 	stopWatch()
 
 	// A second signal must not end the process: the ssh masters are outside

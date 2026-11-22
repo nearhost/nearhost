@@ -4,15 +4,13 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -26,22 +24,28 @@ import (
 // serverAgentUp is an up serving the project api on mini, with coding
 // agents and grants, and the page. It returns once mini's agent socket
 // answers, with the forward that reaches it.
-func serverAgentUp(t *testing.T) (*upRun, transport.AgentForward) {
+// adjust, when not nil, changes the backend too.
+func serverAgentUp(t *testing.T, adjust func(*upBackend)) (*upRun, transport.AgentForward) {
 	t.Helper()
 	home := agentHome(t)
 	u := newUpRun(t, &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}})
 	u.noHosts = true
-	u.adjust = func(b *upBackend) { b.agents = withGrants(fakeAgents(home), home) }
+	u.adjust = func(b *upBackend) {
+		b.agents = withGrants(fakeAgents(home), home)
+		if adjust != nil {
+			adjust(b)
+		}
+	}
 	u.start()
-	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte("mini")))[:len("agent-")+12]
-	f := transport.AgentForward{Local: filepath.Join(u.runDir(), name+".sock")}
+	f := transport.AgentForward{Local: serverAgentSocket(u.runDir(), "mini")}
 	testutil.WaitUntil(t, 30*time.Second, func() bool { return agentapi.Answers(f.Local) }, "mini's agent socket to answer")
 	return u, f
 }
 
 func TestUpPrintsApprovalLines(t *testing.T) {
-	u, f := serverAgentUp(t)
-	st, err := u.control().State(context.Background())
+	engines := make(chan *engine.Engine, 1)
+	u, f := serverAgentUp(t, giveEngine(engines))
+	page, err := (<-engines).PageURL()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +54,6 @@ func TestUpPrintsApprovalLines(t *testing.T) {
 		t.Fatalf("passthrough request: %d %v", status, out)
 	}
 	id := out["id"].(string)
-	page := fmt.Sprintf("https://nearhost.localhost:%d", st.WebPort)
 	u.waitFor("Claude Code on mini asks to open port 5173. Answer at " + page + "/approve/" + id + "\n")
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
@@ -60,7 +63,7 @@ func TestUpPrintsApprovalLines(t *testing.T) {
 // A passthrough request the agent withdraws while it waits leaves the core's
 // state, and a client following the stream is told it ended.
 func TestWithdrawnRequestLeavesTheQueue(t *testing.T) {
-	u, f := serverAgentUp(t)
+	u, f := serverAgentUp(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c := u.control()

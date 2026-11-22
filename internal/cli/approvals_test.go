@@ -481,3 +481,23 @@ func TestApprovalLine(t *testing.T) {
 		t.Errorf("approvalLine kept an escape: %q", got)
 	}
 }
+
+// A line that finds the writer's buffer full is dropped, and the output is
+// told once that some were missed.
+func TestLineWriterDropsWhenFull(t *testing.T) {
+	var buf syncBuffer
+	out := &gatedWriter{out: &buf}
+	out.hold()
+	t.Cleanup(out.release)
+	w := newLineWriter(out, 1)
+	w.put("a")
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return len(w.lines) == 0 }, "the writer to take the first line")
+	w.put("b") // waits in the buffer
+	w.put("c") // finds it full
+	out.release()
+	w.close()
+	w.put("d") // after close: dropped, and no panic
+	if got, want := buf.String(), "a\nb\n"+missedLines+"\n"; got != want {
+		t.Errorf("wrote %q, want %q", got, want)
+	}
+}

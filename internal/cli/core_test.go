@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,6 +47,9 @@ func (u *upRun) startCore(mode func(cmd *cobra.Command) coreMode, extra ...strin
 	u.cancel = cancel
 	u.done = make(chan error, 1)
 	b := u.backend()
+	if u.adjust != nil {
+		u.adjust(&b)
+	}
 	var flags serveFlags
 	cmd := &cobra.Command{Use: "up", RunE: func(cmd *cobra.Command, args []string) error {
 		return runCore(cmd, b, flags, args, mode(cmd))
@@ -386,8 +393,12 @@ func TestCoreStateListsEverything(t *testing.T) {
 }
 
 // engineOf has the up the test runs give its engine to got once it starts.
-func (u *upRun) engineOf(got chan<- *engine.Engine) {
-	u.adjust = func(b *upBackend) {
+func (u *upRun) engineOf(got chan<- *engine.Engine) { u.adjust = giveEngine(got) }
+
+// giveEngine is an adjust that has up give its engine to got once it
+// starts.
+func giveEngine(got chan<- *engine.Engine) func(*upBackend) {
+	return func(b *upBackend) {
 		start := b.start
 		b.start = func(eng *engine.Engine, ctx context.Context) error {
 			got <- eng
@@ -579,6 +590,101 @@ func TestCoreWithoutPageReviewsOnlyWhileAttached(t *testing.T) {
 	want := "Nearhost on dev@laptop has no page or window to ask you in; open nearhost there, then ask again."
 	if status, out := askToShow(t, sock); status != 409 || out["error"] != want {
 		t.Errorf("a request with no client: %d %v, want 409 %q", status, out, want)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// gatedWriter writes to out, but while held every write waits for the
+// release, as a terminal whose output is paused does.
+type gatedWriter struct {
+	out  io.Writer
+	mu   sync.Mutex
+	gate chan struct{} // nil while open
+}
+
+func (w *gatedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	g := w.gate
+	w.mu.Unlock()
+	if g != nil {
+		<-g
+	}
+	return w.out.Write(p)
+}
+
+func (w *gatedWriter) hold() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.gate = make(chan struct{})
+}
+
+func (w *gatedWriter) release() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gate != nil {
+		close(w.gate)
+		w.gate = nil
+	}
+}
+
+// Output that blocks holds up neither the agents nor the core: requests
+// still get their 202 at once, and their lines are written once the output
+// takes them again.
+func TestApprovalLinesDoNotWaitForTheOutput(t *testing.T) {
+	home := agentHome(t)
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.noHosts = true
+	u.adjust = func(b *upBackend) { b.agents = withGrants(fakeAgents(home), home) }
+	out := &gatedWriter{out: &u.out}
+	u.startCore(func(cmd *cobra.Command) coreMode {
+		return coreMode{out: out, startedBy: control.StartedForeground}
+	})
+	u.waitFor("Serving until interrupted")
+	sock := agentSocket(home, "k3f9q2")
+	repo := gitRepo(t)
+	writeFile(t, filepath.Join(repo, "docs", "q.md"), "# Notes\n")
+	out.hold()
+	t.Cleanup(out.release)
+	type answer struct {
+		status int
+		id     string
+		err    error
+	}
+	ask := func(doc, session string) answer {
+		body, _ := json.Marshal(map[string]string{"path": filepath.Join(repo, "docs", doc), "root": repo, "requester": "claude-code", "session": session})
+		resp, err := agentClient(transport.AgentForward{Local: sock}).Post("http://nearhost/v1/documents", "application/json", bytes.NewReader(body))
+		if err != nil {
+			return answer{err: err}
+		}
+		defer resp.Body.Close()
+		var got struct{ ID string }
+		err = json.NewDecoder(resp.Body).Decode(&got)
+		return answer{status: resp.StatusCode, id: got.ID, err: err}
+	}
+	var ids []string
+	for i, doc := range []string{"p.md", "q.md"} {
+		answered := make(chan answer, 1)
+		go func() { answered <- ask(doc, fmt.Sprintf("s%d", i)) }()
+		select {
+		case a := <-answered:
+			if a.err != nil || a.status != 202 {
+				t.Fatalf("request for %s while the output is held: %d %v", doc, a.status, a.err)
+			}
+			ids = append(ids, a.id)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("the request for %s waited for the output", doc)
+		}
+	}
+	if strings.Contains(u.out.String(), "asks to show") {
+		t.Fatalf("a line was written while the output was held:\n%s", u.out.String())
+	}
+	out.release()
+	u.waitFor("asks to show docs/p.md. Answer at ")
+	u.waitFor("asks to show docs/q.md. Answer at ")
+	for _, id := range ids {
+		u.waitFor("/approve/" + id + "\n")
 	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())

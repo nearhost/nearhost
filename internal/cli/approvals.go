@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
@@ -35,7 +37,8 @@ type approvals struct {
 	now     func() time.Time
 	// onAdd, when set, is told of each request once it is queued and
 	// published, with mu not held. It is set before the queue reviews
-	// anything.
+	// anything. The agent API calls the queue with its own lock held, so
+	// onAdd must not block.
 	onAdd func(control.Approval)
 
 	mu      sync.Mutex
@@ -195,16 +198,16 @@ func (q *approvals) close() {
 // stop: "Claude Code on mini asks to open port 5173". What the agent sent
 // is made safe to print.
 func approvalSummary(a control.Approval) string {
-	var s string
 	switch {
 	case a.Pass != nil:
-		s = fmt.Sprintf("%s %s asks to open port %d", tui.RequesterName(a.Pass.Requester), onOrigin(a.Pass.Origin), a.Pass.Remote)
+		return fmt.Sprintf("%s %s asks to open port %d", tui.RequesterName(a.Pass.Requester), onOrigin(a.Pass.Origin), a.Pass.Remote)
 	case a.Doc != nil:
-		s = fmt.Sprintf("%s %s asks to show %s", tui.RequesterName(a.Doc.Requester), onOrigin(a.Doc.Origin), a.Doc.Doc)
+		return fmt.Sprintf("%s %s asks to show %s", tui.RequesterName(a.Doc.Requester), onOrigin(a.Doc.Origin), printable(a.Doc.Doc))
 	case a.Proposal != nil:
-		s = fmt.Sprintf("A coding agent %s proposes adding %s", onOrigin(a.Proposal.Origin), a.Proposal.Path)
+		return fmt.Sprintf("A coding agent %s proposes adding %s", onOrigin(a.Proposal.Origin), printable(a.Proposal.Path))
 	}
-	return printable(s)
+	// The queue only holds the three kinds; an approval of none asks nothing.
+	return "A coding agent asks for something"
 }
 
 // onOrigin names the machine a request came from in a sentence, as the
@@ -213,7 +216,77 @@ func onOrigin(origin string) string {
 	if origin == config.LocalServer {
 		return "on this machine"
 	}
-	return "on " + origin
+	return "on " + printable(origin)
+}
+
+// approvalLinesBuffer is how many approval lines may wait for a slow
+// output before more are dropped.
+const approvalLinesBuffer = 64
+
+// missedLines is said once the output takes lines again after some were
+// dropped.
+const missedLines = "Some approval lines were missed."
+
+// lineWriter writes lines to out from a goroutine of its own, so that one
+// who hands it a line never waits for out: a terminal whose output is
+// paused, or a pipe nobody reads. Lines that find the buffer full are
+// dropped and counted, and missedLines is written once it drains.
+type lineWriter struct {
+	out    io.Writer
+	lines  chan string
+	missed atomic.Int64
+	done   chan struct{}
+
+	mu     sync.Mutex
+	closed bool
+}
+
+// newLineWriter starts writing to out the lines handed to put, up to
+// buffer of them waiting, until close.
+func newLineWriter(out io.Writer, buffer int) *lineWriter {
+	w := &lineWriter{out: out, lines: make(chan string, buffer), done: make(chan struct{})}
+	go w.run()
+	return w
+}
+
+// put hands line to the writer without waiting: when the buffer is full,
+// or the writer closed, the line is dropped.
+func (w *lineWriter) put(line string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	select {
+	case w.lines <- line:
+	default:
+		w.missed.Add(1)
+	}
+}
+
+func (w *lineWriter) run() {
+	defer close(w.done)
+	for line := range w.lines {
+		fmt.Fprintln(w.out, line)
+		if len(w.lines) == 0 && w.missed.Swap(0) > 0 {
+			fmt.Fprintln(w.out, missedLines)
+		}
+	}
+	if w.missed.Swap(0) > 0 {
+		fmt.Fprintln(w.out, missedLines)
+	}
+}
+
+// close writes the lines still waiting and stops the writer; lines put
+// after it are dropped. It may be called more than once.
+func (w *lineWriter) close() {
+	w.mu.Lock()
+	if !w.closed {
+		w.closed = true
+		close(w.lines)
+	}
+	w.mu.Unlock()
+	<-w.done
 }
 
 // approvalLine is what up and the core's log say of a request as it comes:
