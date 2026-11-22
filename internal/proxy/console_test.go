@@ -92,7 +92,7 @@ func TestConsoleNeedsTheCookie(t *testing.T) {
 			if !strings.Contains(body, "Open Nearhost&#39;s page from this machine first") && !strings.Contains(body, "Open Nearhost's page from this machine first") {
 				t.Errorf("GET %s: body lacks the heading:\n%s", name, body)
 			}
-			if !strings.Contains(body, "Run nearhost status here and open the page address it prints, or press o in nearhost. Then open this link again.") {
+			if !strings.Contains(body, "Run nearhost status here and open the page address it prints, or click the page address in nearhost. Then open this link again.") {
 				t.Errorf("GET %s: body lacks the advice", name)
 			}
 			if strings.Contains(body, "abc") {
