@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/tui"
 )
 
 // approvalSweep is how often the queue looks for requests that have expired,
@@ -30,6 +33,10 @@ type approvals struct {
 	// publish is the hub's Publish. Tests wrap it to see what is published.
 	publish func(control.Envelope) uint64
 	now     func() time.Time
+	// onAdd, when set, is told of each request once it is queued and
+	// published, with mu not held. It is set before the queue reviews
+	// anything.
+	onAdd func(control.Approval)
 
 	mu      sync.Mutex
 	pending []queued // in the order they came
@@ -82,7 +89,6 @@ func (q *approvals) Ended(id string) { q.take(id) }
 // look for it expiring.
 func (q *approvals) add(a control.Approval, expires time.Time) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	q.sweepLocked()
 	q.pending = append(q.pending, queued{approval: a, expires: expires})
 	q.publish(control.Envelope{Kind: control.KindApproval, Approval: &a})
@@ -90,6 +96,10 @@ func (q *approvals) add(a control.Approval, expires time.Time) {
 		q.sweeping = true
 		q.sweeper.Add(1)
 		go q.sweep()
+	}
+	q.mu.Unlock()
+	if q.onAdd != nil {
+		q.onAdd(a)
 	}
 }
 
@@ -123,37 +133,6 @@ func (q *approvals) take(id string) bool {
 	}
 	q.endLocked(i)
 	return true
-}
-
-// endWhere removes every request for which match is true, and publishes
-// each one's "ended".
-func (q *approvals) endWhere(match func(control.Approval) bool) {
-	if q == nil {
-		return
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for i := 0; i < len(q.pending); {
-		if match(q.pending[i].approval) {
-			q.endLocked(i)
-			continue
-		}
-		i++
-	}
-}
-
-// find returns the pending request id, and false when it is not pending.
-func (q *approvals) find(id string) (control.Approval, bool) {
-	if q == nil {
-		return control.Approval{}, false
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	i := slices.IndexFunc(q.pending, func(p queued) bool { return p.approval.ID == id })
-	if i < 0 {
-		return control.Approval{}, false
-	}
-	return q.pending[i].approval, true
 }
 
 // endLocked removes the request at i and publishes its "ended".
@@ -210,4 +189,44 @@ func (q *approvals) close() {
 	close(q.stop)
 	q.mu.Unlock()
 	q.sweeper.Wait()
+}
+
+// approvalSummary says what a request asks, in a sentence without its full
+// stop: "Claude Code on mini asks to open port 5173". What the agent sent
+// is made safe to print.
+func approvalSummary(a control.Approval) string {
+	var s string
+	switch {
+	case a.Pass != nil:
+		s = fmt.Sprintf("%s %s asks to open port %d", tui.RequesterName(a.Pass.Requester), onOrigin(a.Pass.Origin), a.Pass.Remote)
+	case a.Doc != nil:
+		s = fmt.Sprintf("%s %s asks to show %s", tui.RequesterName(a.Doc.Requester), onOrigin(a.Doc.Origin), a.Doc.Doc)
+	case a.Proposal != nil:
+		s = fmt.Sprintf("A coding agent %s proposes adding %s", onOrigin(a.Proposal.Origin), a.Proposal.Path)
+	}
+	return printable(s)
+}
+
+// onOrigin names the machine a request came from in a sentence, as the
+// interface does: "on mini", or "on this machine".
+func onOrigin(origin string) string {
+	if origin == config.LocalServer {
+		return "on this machine"
+	}
+	return "on " + origin
+}
+
+// approvalLine is what up and the core's log say of a request as it comes:
+// what it asks, and where to answer it. pageURL is the address of
+// Nearhost's page, or "" when it is not served. A proposal is only
+// declined on the page: accepting one takes the interface.
+func approvalLine(a control.Approval, pageURL string) string {
+	if pageURL == "" {
+		return approvalSummary(a) + ". Open nearhost to answer."
+	}
+	link := pageURL + "/approve/" + a.ID
+	if a.Proposal != nil {
+		return approvalSummary(a) + ". Review it with nearhost, or decline it at " + link
+	}
+	return approvalSummary(a) + ". Answer at " + link
 }

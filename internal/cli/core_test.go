@@ -522,3 +522,65 @@ func TestCoreStartProjectAsksAgain(t *testing.T) {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
 }
+
+// With its page served, the core reviews what agents ask with no client
+// attached: the 202 links to the request's approval on the page, and up
+// says where to answer it.
+func TestCoreReviewsWithThePage(t *testing.T) {
+	engines := make(chan *engine.Engine, 1)
+	u, sock := agentUp(t, func(u *upRun) { u.engineOf(engines) })
+	eng := <-engines
+	page, err := eng.PageURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := interfaceOn(t, sock); got != true {
+		t.Errorf("with the page and no client: interface %v", got)
+	}
+	status, out := askToShow(t, sock)
+	if status != 202 {
+		t.Fatalf("document request: %d %v", status, out)
+	}
+	id := out["id"].(string)
+	if link, _ := out["approve_url"].(string); link != page+"/approve/"+id {
+		t.Errorf("approve_url %q, want %s/approve/%s", link, page, id)
+	}
+	u.waitFor("Claude Code on this machine asks to show docs/p.md. Answer at " + page + "/approve/" + id + "\n")
+	st, err := u.control().State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Approvals) != 1 || st.Approvals[0].ID != id {
+		t.Errorf("approvals %+v, want %s", st.Approvals, id)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// Without its page, the core reviews what agents ask while a client follows
+// its stream, and only then.
+func TestCoreWithoutPageReviewsOnlyWhileAttached(t *testing.T) {
+	u, sock := agentUp(t, func(u *upRun) { u.webPort = 0 })
+	if got := interfaceOn(t, sock); got != false {
+		t.Fatalf("before any client: interface %v", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, streamErr, err := u.control().Events(ctx, u.hubSeq(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return interfaceOn(t, sock) == true }, "the agent API to say a client reviews")
+	cancel()
+	if err := streamErr(); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return interfaceOn(t, sock) == false }, "the agent API to say no client reviews")
+	want := "Nearhost on dev@laptop has no page or window to ask you in; open nearhost there, then ask again."
+	if status, out := askToShow(t, sock); status != 409 || out["error"] != want {
+		t.Errorf("a request with no client: %d %v, want 409 %q", status, out, want)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}

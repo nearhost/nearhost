@@ -116,13 +116,13 @@ func age(now, t time.Time) string {
 func (m *Model) rowText(r passRow) string {
 	now := m.now()
 	if g := r.grant; g != nil {
-		return requesterName(g.Requester) + " · " + clean(g.Kind) + " · since " + g.Created.Local().Format("2 Jan")
+		return RequesterName(g.Requester) + " · " + clean(g.Kind) + " · since " + g.Created.Local().Format("2 Jan")
 	}
 	if tr := r.tree; tr != nil {
 		return m.treeText(*tr)
 	}
 	p := r.pass
-	parts := []string{fmt.Sprintf("%d → localhost:%d", p.Remote, p.Local), requesterName(p.Requester)}
+	parts := []string{fmt.Sprintf("%d → localhost:%d", p.Remote, p.Local), RequesterName(p.Requester)}
 	if l := clean(p.Label); l != "" {
 		parts = append(parts, l)
 	}
@@ -346,7 +346,7 @@ func (m *Model) passClosed(msg passClosedMsg) {
 		m.refused(msg.key, msg.err)
 		return
 	}
-	m.logs.noteOn(msg.key, fmt.Sprintf("Closed port %d for %s.", msg.p.Remote, requesterName(msg.p.Requester)))
+	m.logs.noteOn(msg.key, fmt.Sprintf("Closed port %d for %s.", msg.p.Remote, RequesterName(msg.p.Requester)))
 }
 
 // revokeForm asks before taking back a grant, and takes it back on yes. It is
@@ -407,7 +407,7 @@ func (f *revokeForm) lines(width int) []string {
 
 // heading is the question.
 func (f *revokeForm) heading() heading {
-	return heading{title: "Stop always allowing " + requesterName(f.requester) + grantWhat(f.kind) + " " + docWhere(f.server) + "?"}
+	return heading{title: "Stop always allowing " + RequesterName(f.requester) + grantWhat(f.kind) + " " + docWhere(f.server) + "?"}
 }
 
 // keys are y and n, and none while the revoke runs.
@@ -451,7 +451,7 @@ func (m *Model) revoked(msg revokedMsg) {
 		})
 		e.at, e.busy = time.Time{}, false
 	}
-	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s%s.", requesterName(msg.requester), grantWhat(msg.kind)))
+	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s%s.", RequesterName(msg.requester), grantWhat(msg.kind)))
 }
 
 // agentCounts are the lines of Home's agents: how many passthroughs are

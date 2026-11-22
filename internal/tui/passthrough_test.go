@@ -293,8 +293,8 @@ func TestRequesterName(t *testing.T) {
 		"claude-code": "Claude Code", "codex": "Codex", "agent": "An agent",
 		"cursor": "cursor", "cl\x1b[31maude": "claude",
 	} {
-		if got := requesterName(in); got != want {
-			t.Errorf("requesterName(%q) = %q, want %q", in, got, want)
+		if got := RequesterName(in); got != want {
+			t.Errorf("RequesterName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

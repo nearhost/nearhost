@@ -10,10 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// requesterName is how a requester is named in a sentence. The tools Nearhost
+// RequesterName is how a requester is named in a sentence. The tools Nearhost
 // knows get their proper names; anything else is shown as it was given, only
 // cleaned, never prettified.
-func requesterName(r string) string {
+func RequesterName(r string) string {
 	switch r {
 	case "claude-code":
 		return "Claude Code"
@@ -29,7 +29,7 @@ func requesterName(r string) string {
 func (r PassRequest) where() string { return "on " + clean(r.Origin) }
 
 // who names the requester and its server: "Claude Code on apollo".
-func (r PassRequest) who() string { return requesterName(r.Requester) + " " + r.where() }
+func (r PassRequest) who() string { return RequesterName(r.Requester) + " " + r.where() }
 
 // passForm asks whether to open a port for an agent: yes, no, or always
 // allow. The answer is given on the worker, since opening the forward blocks.
@@ -191,7 +191,7 @@ func (m *Model) gotPass(r PassRequest) tea.Cmd {
 
 // passOpened tells that a passthrough opened without asking.
 func (m *Model) passOpened(msg passOpenedMsg) tea.Cmd {
-	text := fmt.Sprintf("%s on %s opened port %d", requesterName(msg.requester), clean(msg.origin), msg.remote)
+	text := fmt.Sprintf("%s on %s opened port %d", RequesterName(msg.requester), clean(msg.origin), msg.remote)
 	m.logs.note(text + ".")
 	return m.showToast(text, false)
 }

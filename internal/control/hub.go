@@ -23,6 +23,8 @@ type Hub struct {
 	seq  uint64     // the number of the last envelope published
 	ring []Envelope // envelope n is at (n-1) % RingSize
 	subs map[*sub]struct{}
+	// watches are signalled after each Publish; see Watch.
+	watches map[chan struct{}]struct{}
 }
 
 // sub is one attached stream: the envelopes waiting for it, at most
@@ -64,7 +66,7 @@ func (s *sub) take() []Envelope {
 
 // NewHub returns a hub that has published nothing.
 func NewHub() *Hub {
-	return &Hub{ring: make([]Envelope, RingSize), subs: map[*sub]struct{}{}}
+	return &Hub{ring: make([]Envelope, RingSize), subs: map[*sub]struct{}{}, watches: map[chan struct{}]struct{}{}}
 }
 
 // Publish numbers e, keeps it, queues it for every stream, and returns its
@@ -79,7 +81,29 @@ func (h *Hub) Publish(e Envelope) uint64 {
 	for s := range h.subs {
 		s.put(e)
 	}
+	for w := range h.watches {
+		select {
+		case w <- struct{}{}:
+		default: // already signalled, and not yet read
+		}
+	}
 	return e.Seq
+}
+
+// Watch is signalled after each Publish, coalesced (buffer 1): a reader
+// that falls behind finds one signal for any number of envelopes. It is
+// not an attached stream: Clients and OnAttached do not count it. stop
+// ends the watch; it may be called more than once.
+func (h *Hub) Watch() (changed <-chan struct{}, stop func()) {
+	w := make(chan struct{}, 1)
+	h.mu.Lock()
+	h.watches[w] = struct{}{}
+	h.mu.Unlock()
+	return w, func() {
+		h.mu.Lock()
+		delete(h.watches, w)
+		h.mu.Unlock()
+	}
 }
 
 // Seq returns the number of the last envelope published, 0 before the first.
