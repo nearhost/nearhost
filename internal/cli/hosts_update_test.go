@@ -119,7 +119,8 @@ func TestHostsUpdateUpToDate(t *testing.T) {
 // fakeCore listens on the control socket of the test's run directory and
 // counts the HostsChanged calls.
 type fakeCore struct {
-	control.UnimplementedActions
+	// The actions are the core's, which these tests never take: nil.
+	*coreOps
 	info    control.Info
 	mu      sync.Mutex
 	changed int

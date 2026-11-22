@@ -17,10 +17,8 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/desktop"
-	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
-	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -260,7 +258,8 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if b.engineMade != nil {
 		b.engineMade(eng)
 	}
-	back.Engine, back.agents = eng, ag
+	back.Engine = eng
+	back.coreOps = &coreOps{eng: eng, agents: ag, path: cfgPath, httpsPort: flags.httpsPort}
 	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
 	// program that ends any other way, within the bound up has.
@@ -342,58 +341,60 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 // asks of the machine.
 type uiEngine struct {
 	*engine.Engine
+	// coreOps is what the interface asks of the engine and the agents, the
+	// half a core serves to its clients.
+	*coreOps
 	b       uiBackend
 	path    string
 	flags   serveFlags
 	storage string
 	// root runs steps that need root.
 	root asRoot
-	// agents answers the agents' proposals; nil when none can reach
-	// nearhost.
-	agents *agents
 	// hostsAsked is set by the first HostsState call.
 	hostsAsked atomic.Bool
-	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it
-	// to re-read meanwhile; it is nil otherwise.
-	acceptSaving func()
-	// acceptLocking, when set, runs in AcceptChange after it has checked
-	// the change and before it takes the config's lock. Tests use it to
-	// save meanwhile; it is nil otherwise.
-	acceptLocking func()
-	// applied, when set, runs in Apply after the engine has applied and
-	// before the grants are pruned. Tests use it to change the config file
-	// meanwhile; it is nil otherwise.
-	applied func()
 }
 
-// Apply applies cfg to the engine. Once it has applied, the grants of servers
-// cfg no longer has are removed, so a server added later under the same name
-// does not inherit them. A failed Apply removes none, and a failure to
-// remove them is shown in the log and does not fail the Apply. Neither does
-// an Apply that began while the config file was missing: a missing file
-// loads as no servers, and the file may be back by the time the apply ends.
-// StartProject starts a project, saying when the start was asked for: a
-// start the user asks for after a refused hosts update asks for the
-// password again, where the starts that were already under way do not.
+// The methods below that the engine and coreOps both have are coreOps',
+// which the interface asks for.
+
 func (u *uiEngine) StartProject(ctx context.Context, name string) error {
-	return u.Engine.StartProject(askedNow(ctx), name)
+	return u.coreOps.StartProject(ctx, name)
 }
 
 func (u *uiEngine) Apply(ctx context.Context, cfg *config.Config) error {
-	_, statErr := os.Stat(u.path)
-	if err := u.Engine.Apply(ctx, cfg); err != nil {
-		return err
-	}
-	if u.applied != nil {
-		u.applied()
-	}
-	if statErr != nil {
-		return nil
-	}
-	if msg := u.agents.prune(u.ConfigPath(), cfg); msg != "" {
-		u.Engine.Events().Publish(engine.Event{Message: msg})
-	}
-	return nil
+	return u.coreOps.Apply(ctx, cfg)
+}
+
+func (u *uiEngine) StopProject(ctx context.Context, name string) error {
+	return u.coreOps.StopProject(ctx, name)
+}
+
+func (u *uiEngine) Recheck(ctx context.Context, name string) error {
+	return u.coreOps.Recheck(ctx, name)
+}
+
+func (u *uiEngine) DeclineChange(project, sha string) { u.coreOps.DeclineChange(project, sha) }
+
+func (u *uiEngine) ConnectServer(ctx context.Context, name string) error {
+	return u.coreOps.ConnectServer(ctx, name)
+}
+
+func (u *uiEngine) DisconnectServer(ctx context.Context, name string) error {
+	return u.coreOps.DisconnectServer(ctx, name)
+}
+
+func (u *uiEngine) ReconnectServer(ctx context.Context, name string) error {
+	return u.coreOps.ReconnectServer(ctx, name)
+}
+
+func (u *uiEngine) ClosePassthrough(ctx context.Context, id string) error {
+	return u.coreOps.ClosePassthrough(ctx, id)
+}
+
+func (u *uiEngine) Captured(id string) (proxy.Exchange, bool) { return u.coreOps.Captured(id) }
+
+func (u *uiEngine) Replay(ctx context.Context, id string) (int, error) {
+	return u.coreOps.Replay(ctx, id)
 }
 
 // Shutdown stops every project and the engine through the up backend's
@@ -403,15 +404,6 @@ func (u *uiEngine) Shutdown(ctx context.Context) error {
 		return u.b.up.shutdown(u.Engine, ctx)
 	}
 	return u.Engine.Shutdown(ctx)
-}
-
-func (u *uiEngine) AcceptProposal(id, name string) { u.agents.accept(id, name) }
-
-func (u *uiEngine) DeclineProposal(id, reason string) { u.agents.decline(id, reason) }
-
-// ClosePassthrough closes the passthrough id for the user.
-func (u *uiEngine) ClosePassthrough(ctx context.Context, id string) error {
-	return u.Engine.ClosePassthrough(ctx, id, "closed in Nearhost")
 }
 
 // AnswerPassthrough gives the user's answer to a coding agent's request for
@@ -425,29 +417,6 @@ func (u *uiEngine) AnswerPassthrough(ctx context.Context, id string, a tui.Answe
 func (u *uiEngine) AnswerDocument(ctx context.Context, id string, a tui.Answer) error {
 	return u.agents.answerDocument(ctx, id, a)
 }
-
-// Grants lists the grants of every kind on server, or says why they cannot
-// be read in this run.
-func (u *uiEngine) Grants(server string) ([]grants.Grant, error) {
-	return u.agents.grantsOf(server)
-}
-
-// RevokeGrant takes back requester's grant of kind on server, or says why
-// it cannot be taken back in this run.
-func (u *uiEngine) RevokeGrant(server, requester, kind string) error {
-	return u.agents.revokeGrant(server, requester, kind)
-}
-
-// Documents lists the trees of documents served on server, newest first.
-func (u *uiEngine) Documents(server string) []documents.Tree {
-	return u.agents.documents(server)
-}
-
-// OpenDocument opens the newest document of the tree id in the browser.
-func (u *uiEngine) OpenDocument(id string) error { return u.agents.openDocument(id) }
-
-// RemoveDocuments stops serving the tree id.
-func (u *uiEngine) RemoveDocuments(id string) error { return u.agents.removeDocuments(id) }
 
 func (u *uiEngine) ConfigPath() string { return u.path }
 

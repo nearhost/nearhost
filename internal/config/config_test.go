@@ -55,6 +55,34 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 }
 
+// Marshal is the YAML Save writes, and Parse reads it back as Load would.
+func TestConfigMarshalParseRoundTrip(t *testing.T) {
+	data, err := Marshal(sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, sample()); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := os.ReadFile(path); string(saved) != string(data) {
+		t.Errorf("Marshal gave\n%s\nSave wrote\n%s", data, saved)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, sample()) {
+		t.Errorf("Parse gave %+v, want %+v", got, sample())
+	}
+	if _, err := Parse(nil); err == nil {
+		t.Error("Parse took an empty config")
+	}
+	if _, err := Parse([]byte("projects: [unclosed")); err == nil {
+		t.Error("Parse took invalid YAML")
+	}
+}
+
 func TestLoadRejectsInvalidYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	os.WriteFile(path, []byte("projects: [unclosed"), 0o644)

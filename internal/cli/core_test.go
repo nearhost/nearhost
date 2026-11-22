@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // runDir is the run directory of the up the test runs, where its control
@@ -341,5 +342,183 @@ func TestCoreHostsChangedRetriesTheProjectsTheHostsFileStopped(t *testing.T) {
 	}
 	if len(u.ensureCalls()) != 0 {
 		t.Error("the backend's hosts function was called in place of the mode's")
+	}
+}
+
+// The state lists every project and server, the config the engine runs and
+// the file it was read from.
+func TestCoreStateListsEverything(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}}
+	u := newUpRun(t, cfg)
+	u.noHosts = true
+	u.start()
+	u.waitFor("Serving until interrupted")
+	st, err := u.control().State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := st.Projects["web"]; !ok || p.State != engine.StateRunning {
+		t.Errorf("Projects = %+v, want web running", st.Projects)
+	}
+	if _, ok := st.Servers[config.LocalServer]; !ok {
+		t.Errorf("Servers = %+v, want this machine", st.Servers)
+	}
+	if s, ok := st.Servers["mini"]; !ok || s.Status != transport.StatusDisconnected {
+		t.Errorf("Servers = %+v, want mini, not connected", st.Servers)
+	}
+	got, err := config.Parse([]byte(st.Config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Projects) != 1 || got.Projects[0].Name != "web" || len(got.Servers) != 1 || got.Servers[0].Name != "mini" {
+		t.Errorf("Config = %s", st.Config)
+	}
+	if st.ConfigPath != u.cfgPath {
+		t.Errorf("ConfigPath = %s, want %s", st.ConfigPath, u.cfgPath)
+	}
+	// This run serves no agents, so it has no grants to read.
+	if st.Grants == nil || len(st.Grants) != 0 || st.GrantsError == "" {
+		t.Errorf("Grants = %v, GrantsError = %q", st.Grants, st.GrantsError)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// engineOf has the up the test runs give its engine to got once it starts.
+func (u *upRun) engineOf(got chan<- *engine.Engine) {
+	u.adjust = func(b *upBackend) {
+		start := b.start
+		b.start = func(eng *engine.Engine, ctx context.Context) error {
+			got <- eng
+			return start(eng, ctx)
+		}
+	}
+}
+
+// nextEvent returns the next envelope on envs that carries an event whose
+// message has the prefix prefix.
+func nextEvent(t *testing.T, envs <-chan control.Envelope, prefix string) control.Envelope {
+	t.Helper()
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case env, ok := <-envs:
+			if !ok {
+				t.Fatalf("the stream ended before an event %q", prefix)
+			}
+			if env.Event != nil && strings.HasPrefix(env.Event.Message, prefix) {
+				return env
+			}
+		case <-timeout:
+			t.Fatalf("no event %q on the stream", prefix)
+		}
+	}
+}
+
+// What the engine publishes reaches the clients' stream, and a message too
+// long for it is cut, so the stream goes on.
+func TestCoreStreamsEngineEvents(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.noHosts = true
+	engs := make(chan *engine.Engine, 1)
+	u.engineOf(engs)
+	u.start()
+	u.waitFor("Serving until interrupted")
+	eng := <-engs
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	envs, _, err := u.control().Events(ctx, u.hubSeq(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.Events().Publish(engine.Event{Project: "web", State: engine.StateRunning, Message: "hello from the engine"})
+	env := nextEvent(t, envs, "hello")
+	if env.Kind != control.KindEvent || env.Event.Project != "web" || env.Event.State != engine.StateRunning || env.Event.Message != "hello from the engine" {
+		t.Errorf("envelope %+v, event %+v", env, *env.Event)
+	}
+	// Longer than a client reads in one envelope.
+	eng.Events().Publish(engine.Event{Project: "web", Message: "long " + strings.Repeat("x", 2<<20)})
+	long := nextEvent(t, envs, "long ")
+	if n := len(long.Event.Message); n > maxEventMessage || !strings.HasSuffix(long.Event.Message, "…") {
+		t.Errorf("a long message arrived as %d bytes", n)
+	}
+	eng.Events().Publish(engine.Event{Message: "after the long one"})
+	nextEvent(t, envs, "after the long one")
+	cancel()
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// hubSeq is the newest envelope's number, which a stream opened after it
+// starts from.
+func (u *upRun) hubSeq(t *testing.T) uint64 {
+	t.Helper()
+	st, err := u.control().State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Seq
+}
+
+// Reload applies the file before it returns, without waiting for the
+// watcher.
+func TestCoreReloadAppliesTheFile(t *testing.T) {
+	before := coreWatchInterval
+	coreWatchInterval = time.Hour // only the Reload applies
+	t.Cleanup(func() { coreWatchInterval = before })
+	cfg := &config.Config{Projects: []config.Project{
+		localProject("a", testutil.Upstream(t, "a"), true),
+		localProject("b", testutil.Upstream(t, "b"), false),
+	}}
+	u := newUpRun(t, cfg)
+	u.noHosts = true
+	u.start()
+	u.waitFor("Serving until interrupted")
+	cfg.Projects[1].Enabled = true
+	saveConfig(t, u.cfgPath, cfg)
+	c := u.control()
+	if err := c.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := config.Parse([]byte(st.Config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := running.Project("b"); !ok || !p.Enabled {
+		t.Fatalf("after Reload the engine runs %s", st.Config)
+	}
+	u.waitFor("[b] state: running")
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+}
+
+// A start asked for through the core after the hosts file was refused asks
+// for it again, as one asked for in the interface does.
+func TestCoreStartProjectAsksAgain(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("one", testutil.Upstream(t, "one"), true)}})
+	u.hostsErr = errors.New("sudo: a password is required")
+	u.startCore(func(cmd *cobra.Command) coreMode {
+		return coreMode{out: cmd.OutOrStdout(), startedBy: control.StartedDetached, keepRunning: true}
+	})
+	u.waitFor("[one] state: stopped: ")
+	u.mu.Lock()
+	u.hostsErr = nil
+	u.mu.Unlock()
+	if err := u.control().StartProject(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	u.waitFor("[one] state: running")
+	if n := len(u.ensureCalls()); n != 2 {
+		t.Errorf("the hosts file was asked for %d times, want 2", n)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}
 }

@@ -509,11 +509,37 @@ func load(path string) (*Config, []byte, error) {
 	if len(data) == 0 {
 		return nil, nil, fmt.Errorf("%s is empty. Restore it from a backup, or delete it to start afresh.", path)
 	}
-	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	c, err := Parse(data)
+	if err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return &c, data, nil
+	return c, data, nil
+}
+
+// errEmpty is Parse's error for no data. Load names the file instead.
+var errEmpty = errors.New("the config is empty")
+
+// Parse reads a config from the YAML that Marshal writes, as Load does once
+// it has read the file. No data is an error, as an empty file is to Load.
+// Like Load, it does not validate what it reads.
+func Parse(data []byte) (*Config, error) {
+	if len(data) == 0 {
+		return nil, errEmpty
+	}
+	var c Config
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Marshal is the YAML that Save writes for c.
+func Marshal(c *Config) ([]byte, error) {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	return data, nil
 }
 
 // Unknown is a key in the config file that Nearhost does not know, with the
@@ -690,9 +716,9 @@ func Save(path string, c *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	data, err := yaml.Marshal(c)
+	data, err := Marshal(c)
 	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
+		return err
 	}
 	if err := WriteFileAtomic(path, data, 0o644); err != nil {
 		return fmt.Errorf("save config: %w", err)
