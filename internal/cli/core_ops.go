@@ -271,20 +271,31 @@ func (o *coreOps) settle(id string, err error) error {
 }
 
 // controlAnswerError is the error of an answer, marked for the control API
-// as well when its request had ended.
+// as well: as the end of its request, and as an Always allow that was not
+// saved.
 func controlAnswerError(err error) error {
+	var marks []error
 	if errors.Is(err, tui.ErrRequestEnded) {
-		return controlEnded{err}
+		marks = append(marks, control.ErrRequestEnded)
 	}
-	return err
+	if errors.Is(err, tui.ErrAllowNotSaved) {
+		marks = append(marks, control.ErrAllowNotSaved)
+	}
+	if len(marks) == 0 {
+		return err
+	}
+	return controlMarked{err, marks}
 }
 
-// controlEnded is an error that reads as its own, and is also
-// control.ErrRequestEnded.
-type controlEnded struct{ error }
+// controlMarked is an error that reads as its own, and is also each of the
+// control API's errors in marks.
+type controlMarked struct {
+	error
+	marks []error
+}
 
-// Unwrap is the error and control.ErrRequestEnded.
-func (e controlEnded) Unwrap() []error { return []error{e.error, control.ErrRequestEnded} }
+// Unwrap is the error and its marks.
+func (e controlMarked) Unwrap() []error { return append([]error{e.error}, e.marks...) }
 
 // Grants lists the grants of every kind on server, or says why they cannot
 // be read in this run.

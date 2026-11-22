@@ -289,6 +289,21 @@ func TestAnswerEndedReachesTheControlAPI(t *testing.T) {
 	}
 }
 
+// An Always allow that was not saved says so to the control API, alone or
+// with the end of its request.
+func TestAllowNotSavedReachesTheControlAPI(t *testing.T) {
+	notSavedErr := notSaved{errors.New("opened, but the grant could not be saved")}
+	err := controlAnswerError(notSavedErr)
+	if !errors.Is(err, control.ErrAllowNotSaved) || errors.Is(err, control.ErrRequestEnded) || err.Error() != notSavedErr.Error() {
+		t.Errorf("not saved: %v", err)
+	}
+	both := tui.RequestEnded(notSavedErr)
+	err = controlAnswerError(both)
+	if !errors.Is(err, control.ErrAllowNotSaved) || !errors.Is(err, control.ErrRequestEnded) || !errors.Is(err, tui.ErrAllowNotSaved) {
+		t.Errorf("both: %v", err)
+	}
+}
+
 // The page's address comes with its key, for the client to open.
 func TestPageKeyURL(t *testing.T) {
 	data := t.TempDir()

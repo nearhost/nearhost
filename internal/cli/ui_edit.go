@@ -14,7 +14,7 @@ import (
 
 // What the interface asks of nearhost to change what is configured.
 
-func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
+func (u *localOps) EditConfig(fn func(cfg *config.Config) error) error {
 	return editConfig(u.path, fn)
 }
 
@@ -23,13 +23,13 @@ func (u *uiEngine) EditConfig(fn func(cfg *config.Config) error) error {
 // saves over an edit the interface is making, and keeps every other field
 // as the file has it now. Like saveTo, it refuses a host another enabled
 // project serves.
-func (u *uiEngine) saveRc(p config.Project) error {
+func (u *localOps) saveRc(p config.Project) error {
 	return u.EditConfig(func(cfg *config.Config) error { return takeServedRc(cfg, p, u.path) })
 }
 
 // Advice works out the advice for a configured project, on a connection of
 // its own to the project's server.
-func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvice, error) {
+func (u *localOps) Advice(ctx context.Context, project string) (tui.ProjectAdvice, error) {
 	cfg, err := u.current()
 	if err != nil {
 		return tui.ProjectAdvice{}, err
@@ -52,7 +52,7 @@ func (u *uiEngine) Advice(ctx context.Context, project string) (tui.ProjectAdvic
 // adviceOn is Advice for p on srv's files, which it closes. Ending ctx
 // closes them too, which ends a read stuck on a server that stopped
 // answering, as quitting while a remote project is selected may find.
-func (u *uiEngine) adviceOn(ctx context.Context, cfg *config.Config, p config.Project, srv config.Server, files serverFiles) (tui.ProjectAdvice, error) {
+func (u *localOps) adviceOn(ctx context.Context, cfg *config.Config, p config.Project, srv config.Server, files serverFiles) (tui.ProjectAdvice, error) {
 	uf := &uiFiles{u: u, srv: srv, files: files}
 	stop := context.AfterFunc(ctx, func() { uf.Close() })
 	defer stop()
@@ -64,7 +64,7 @@ func (u *uiEngine) adviceOn(ctx context.Context, cfg *config.Config, p config.Pr
 // in the interface when the elevator takes one (sudo; on Windows, Windows
 // asks). Its output goes to the terminal only
 // when it runs there.
-func (u *uiEngine) Trust(ctx context.Context) error {
+func (u *localOps) Trust(ctx context.Context) error {
 	if u.root.ask == nil {
 		return errors.New("the interface is not running")
 	}

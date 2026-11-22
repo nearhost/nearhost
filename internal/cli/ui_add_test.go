@@ -20,7 +20,7 @@ import (
 )
 
 func TestSSHHosts(t *testing.T) {
-	u := &uiEngine{b: uiBackend{sshHosts: func() ([]string, error) { return []string{"mini", "vps"}, nil }}}
+	u := &localOps{b: uiBackend{sshHosts: func() ([]string, error) { return []string{"mini", "vps"}, nil }}}
 	if got, want := u.SSHHosts(), []string{"mini", "vps"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("SSHHosts = %v, want %v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestSSHHostsFollowsInclude(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.SetHome(t, home)
-	u := &uiEngine{b: uiBackend{sshHosts: transport.DefaultHosts}}
+	u := &localOps{b: uiBackend{sshHosts: transport.DefaultHosts}}
 	if got, want := u.SSHHosts(), []string{"vps", "mini"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("SSHHosts = %v, want %v", got, want)
 	}
@@ -51,10 +51,10 @@ func TestSSHHostsFollowsInclude(t *testing.T) {
 
 // formEngine is the interface's backend over a config that trusts the test
 // registry, which offers the stack and bundler presets.
-func formEngine(t *testing.T) *uiEngine {
+func formEngine(t *testing.T) *localOps {
 	t.Helper()
 	cfgPath, _, presets := trusted(t)
-	return &uiEngine{b: uiBackend{presets: presets}, path: cfgPath}
+	return &localOps{b: uiBackend{presets: presets}, path: cfgPath}
 }
 
 func TestFormDiscoveryOffersPresetsAndEnablesThem(t *testing.T) {
@@ -123,7 +123,7 @@ func TestFormListsAndResolvesUnderHome(t *testing.T) {
 
 func TestFormRegistryQuestion(t *testing.T) {
 	cfgPath, _, b := asking(t, false)
-	u := &uiEngine{b: uiBackend{presets: b.presets}, path: cfgPath}
+	u := &localOps{b: uiBackend{presets: b.presets}, path: cfgPath}
 	ctx := context.Background()
 	if !u.RegistryQuestion() {
 		t.Fatal("no question with no registry trusted")
@@ -139,7 +139,7 @@ func TestFormRegistryQuestion(t *testing.T) {
 	}
 
 	cfgPath, _, b = asking(t, false)
-	u = &uiEngine{b: uiBackend{presets: b.presets}, path: cfgPath}
+	u = &localOps{b: uiBackend{presets: b.presets}, path: cfgPath}
 	if _, err := u.AnswerRegistry(ctx, tui.RegistryNever); err != nil || u.RegistryQuestion() {
 		t.Errorf("never: %v, asks again %v", err, u.RegistryQuestion())
 	}
@@ -346,7 +346,7 @@ func TestFormSaveRefusesAHostAnotherProjectServes(t *testing.T) {
 
 // PublicAddress is the first address DNS gives a host that is not loopback.
 func TestFormPublicAddress(t *testing.T) {
-	u := &uiEngine{b: uiBackend{lookup: func(_ context.Context, name string) ([]netip.Addr, error) {
+	u := &localOps{b: uiBackend{lookup: func(_ context.Context, name string) ([]netip.Addr, error) {
 		switch name {
 		case "app.local.dd.io":
 			return []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("93.184.216.34")}, nil

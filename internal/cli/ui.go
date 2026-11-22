@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -248,7 +247,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if b.rootMade != nil {
 		b.rootMade(root)
 	}
-	back := &uiEngine{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}
+	back := &uiEngine{localOps: &localOps{b: b, path: cfgPath, flags: flags, storage: opts.StorageRoot, root: root}}
 	opts.Review = reviewProject(back.saveRc)
 	ag, agentNote := serveAgents(b.up.agents, &opts, cfg, cfgPath, flags.httpsPort, agentEnv{
 		ssh: b.up.ssh, doctor: systemDoctorEnv(b.lookup, flags.noHosts, opts.StorageRoot),
@@ -259,6 +258,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		b.engineMade(eng)
 	}
 	back.Engine = eng
+	back.running = eng.Config
 	back.coreOps = &coreOps{eng: eng, agents: ag, path: cfgPath, httpsPort: flags.httpsPort}
 	ag.attach(eng)
 	// The interface shuts the engine down when it quits; this covers a
@@ -344,14 +344,8 @@ type uiEngine struct {
 	// coreOps is what the interface asks of the engine and the agents, the
 	// half a core serves to its clients.
 	*coreOps
-	b       uiBackend
-	path    string
-	flags   serveFlags
-	storage string
-	// root runs steps that need root.
-	root asRoot
-	// hostsAsked is set by the first HostsState call.
-	hostsAsked atomic.Bool
+	// localOps is what the interface does in its own process.
+	*localOps
 }
 
 // The methods below that the engine and coreOps both have are coreOps',
@@ -418,40 +412,9 @@ func (u *uiEngine) AnswerDocument(ctx context.Context, id string, a tui.Answer) 
 	return u.agents.answerDocument(ctx, id, a)
 }
 
-func (u *uiEngine) ConfigPath() string { return u.path }
+func (u *uiEngine) ConfigPath() string { return u.localOps.path }
 
 func (u *uiEngine) Ports() (int, int) { return u.flags.httpsPort, u.flags.httpPort }
-
-func (u *uiEngine) CATrusted() bool { return untrustedCA(u.b.up.trust, u.storage) == "" }
-
-func (u *uiEngine) CAExpires() time.Time {
-	if u.b.up.trust.rootCert == nil {
-		return time.Time{}
-	}
-	cert, err := u.b.up.trust.rootCert(u.storage)
-	if err != nil {
-		return time.Time{}
-	}
-	return cert.NotAfter
-}
-
-func (u *uiEngine) HostsState() string {
-	if u.flags.noHosts {
-		return "not managed (--no-hosts)"
-	}
-	// The interface asks once while it is built, before anything is drawn.
-	// That call must not wait on DNS; the refresh that follows it does the
-	// lookup and replaces this answer.
-	if !u.hostsAsked.Swap(true) {
-		return "checking"
-	}
-	// The same names doctor checks, filtered the same way, so the interface
-	// and `nearhost doctor` never disagree about what the file should hold.
-	c, _ := checkHosts(context.Background(), doctorBackend{env: doctorEnv{readHosts: u.b.readHosts, lookup: u.b.lookup}}, u.Config())
-	return c.detail
-}
-
-func (u *uiEngine) Open(url string) error { return u.b.open(url) }
 
 // OpenPage opens Nearhost's page at /?k=<secret>, which gives the browser
 // the cookie the page's document list needs and sends it on to the page.

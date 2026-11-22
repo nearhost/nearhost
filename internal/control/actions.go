@@ -16,6 +16,11 @@ import (
 // an agent gave up on it, it expired, or someone else answered first.
 var ErrRequestEnded = errors.New("the request has ended")
 
+// ErrAllowNotSaved is what an answer of always gives when the request was
+// answered but the Always allow grant could not be saved. It may come with
+// ErrRequestEnded.
+var ErrAllowNotSaved = errors.New("always allow was not saved")
+
 // ErrNotFound is what asking for something the core does not have gives.
 var ErrNotFound = errors.New("not found")
 
@@ -104,10 +109,12 @@ func (UnimplementedActions) PageKeyURL() (string, error) { return "", ErrUnimple
 const maxActionBody = 64 << 10
 
 // actionErrorBody is the JSON body of an action that failed. Ended is set when
-// the request to answer had ended.
+// the request to answer had ended, and AllowNotSaved when the answer's Always
+// allow could not be saved; both may be.
 type actionErrorBody struct {
-	Error string `json:"error"`
-	Ended bool   `json:"ended,omitempty"`
+	Error         string `json:"error"`
+	Ended         bool   `json:"ended,omitempty"`
+	AllowNotSaved bool   `json:"allowNotSaved,omitempty"`
 }
 
 // validAnswers are the answers a passthrough or document request takes.
@@ -277,7 +284,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 
 // failAction answers with the status that says why an action failed.
 func failAction(w http.ResponseWriter, err error) {
-	body := actionErrorBody{Error: err.Error()}
+	body := actionErrorBody{Error: err.Error(), AllowNotSaved: errors.Is(err, ErrAllowNotSaved)}
 	code := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, ErrUnimplemented):
@@ -290,12 +297,17 @@ func failAction(w http.ResponseWriter, err error) {
 	reply(w, code, body)
 }
 
-// endedError is an error that reads as the core's text and is
-// ErrRequestEnded.
-type endedError struct{ msg string }
+// answerFailed is an error that reads as the core's text, and is
+// ErrRequestEnded when ended is set and ErrAllowNotSaved when notSaved is.
+type answerFailed struct {
+	msg             string
+	ended, notSaved bool
+}
 
-func (e *endedError) Error() string        { return e.msg }
-func (e *endedError) Is(target error) bool { return target == ErrRequestEnded }
+func (e *answerFailed) Error() string { return e.msg }
+func (e *answerFailed) Is(target error) bool {
+	return (target == ErrRequestEnded && e.ended) || (target == ErrAllowNotSaved && e.notSaved)
+}
 
 // notFoundError is likewise ErrNotFound.
 type notFoundError struct{ msg string }
@@ -314,8 +326,8 @@ func actionError(code int, body []byte) error {
 		return fmt.Errorf("the core answered %d", code)
 	}
 	switch {
-	case e.Ended:
-		return &endedError{e.Error}
+	case e.Ended || e.AllowNotSaved:
+		return &answerFailed{msg: e.Error, ended: e.Ended, notSaved: e.AllowNotSaved}
 	case code == http.StatusNotFound:
 		return &notFoundError{e.Error}
 	}
@@ -443,11 +455,19 @@ func (c *Client) RevokeGrant(ctx context.Context, server, requester, kind string
 // Captured returns the captured exchange with the id, and false when the core
 // no longer keeps it or cannot be asked.
 func (c *Client) Captured(ctx context.Context, id string) (proxy.Exchange, bool) {
+	ex, err := c.CapturedExchange(ctx, id)
+	return ex, err == nil
+}
+
+// CapturedExchange returns the captured exchange with the id, or an error for
+// which errors.Is(err, ErrNotFound) when the core no longer keeps it. Any
+// other error says the core could not be asked.
+func (c *Client) CapturedExchange(ctx context.Context, id string) (proxy.Exchange, error) {
 	var ex proxy.Exchange
 	if err := c.actMethod(ctx, http.MethodGet, "/v1/captured/"+esc(id), nil, &ex, false); err != nil {
-		return proxy.Exchange{}, false
+		return proxy.Exchange{}, err
 	}
-	return ex, true
+	return ex, nil
 }
 
 // Replay sends a captured request again and returns the status it got.

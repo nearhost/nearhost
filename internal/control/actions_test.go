@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // errEnded is the marker the fake's ended errors wrap.
@@ -173,6 +174,41 @@ func TestAnswerPassthroughEnded(t *testing.T) {
 	}
 	if err.Error() != errEnded.Error() {
 		t.Fatalf("error reads %q, want %q", err, errEnded)
+	}
+}
+
+// An answer whose Always allow was not saved says so, with the core's words,
+// and with the end of its request when that came too.
+func TestAnswerAllowNotSaved(t *testing.T) {
+	b := newActionFake()
+	c := dial(t, serve(t, b))
+	ctx := context.Background()
+	b.err = fmt.Errorf("opened, but: %w", ErrAllowNotSaved)
+	err := c.AnswerDocument(ctx, "r1", "always")
+	if !errors.Is(err, ErrAllowNotSaved) || errors.Is(err, ErrRequestEnded) || err.Error() != b.err.Error() {
+		t.Fatalf("error = %v, want ErrAllowNotSaved alone, in the core's words", err)
+	}
+	b.err = fmt.Errorf("%w: %w", errEnded, ErrAllowNotSaved)
+	err = c.AnswerPassthrough(ctx, "r2", "always")
+	if !errors.Is(err, ErrAllowNotSaved) || !errors.Is(err, ErrRequestEnded) || err.Error() != b.err.Error() {
+		t.Fatalf("error = %v, want both marks, in the core's words", err)
+	}
+	b.err = errEnded
+	if err := c.AnswerPassthrough(ctx, "r3", "yes"); errors.Is(err, ErrAllowNotSaved) {
+		t.Fatalf("an ended answer = %v, marked as not saved", err)
+	}
+}
+
+// CapturedExchange tells an exchange no longer kept from a core that cannot
+// be asked.
+func TestCapturedExchangeSaysWhy(t *testing.T) {
+	c := dial(t, serve(t, newActionFake()))
+	if _, err := c.CapturedExchange(context.Background(), "gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("not kept: %v, want ErrNotFound", err)
+	}
+	none := newClient(SocketPath(testutil.TempDir(t, "ctn")))
+	if _, err := none.CapturedExchange(context.Background(), "gone"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("no core: %v, want an error that is not ErrNotFound", err)
 	}
 }
 
