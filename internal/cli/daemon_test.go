@@ -222,7 +222,7 @@ func TestDaemonStartedBy(t *testing.T) {
 	for _, by := range []string{"launchd", ""} {
 		var out syncBuffer
 		err := executeInto(context.Background(), &out, newDaemonCmd(u.backend()), "daemon", "--started-by", by)
-		if err == nil || err.Error() != "--started-by must be detached, service or tui" {
+		if err == nil || err.Error() != "--started-by must be foreground, detached, service or tui" {
 			t.Errorf("--started-by %q: %v", by, err)
 		}
 	}

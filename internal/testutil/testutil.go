@@ -71,14 +71,23 @@ var freePorts sync.Map
 // WaitUntil polls cond until it holds and fails the test after timeout.
 func WaitUntil(t testing.TB, timeout time.Duration, cond func() bool, what string) {
 	t.Helper()
+	if !Eventually(timeout, cond) {
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// Eventually polls cond until it is true or timeout passes, and reports
+// whether it came true. Unlike WaitUntil it fails no test, so it may be used
+// off the test's goroutine, where t.Fatal must not be called.
+func Eventually(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cond() {
-			return
+			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", what)
+	return false
 }
 
 // HTTPSClient returns a client that trusts only root and reaches alias by

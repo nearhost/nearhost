@@ -324,8 +324,8 @@ func TestUnimplementedActions(t *testing.T) {
 		"Reload":            c.Reload(ctx),
 		"RevokeGrant":       c.RevokeGrant(ctx, "a", "b", "c"),
 	} {
-		if err == nil || err.Error() != text {
-			t.Errorf("%s: error = %v, want %q", name, err, text)
+		if !errors.Is(err, ErrUnimplemented) || err.Error() != text {
+			t.Errorf("%s: error = %v, want ErrUnimplemented", name, err)
 		}
 	}
 	code, body, err := c.raw(ctx, http.MethodPost, "/v1/config/reload")

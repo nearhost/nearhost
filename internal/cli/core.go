@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if err != nil {
 		return err
 	}
+	// Absolute, as the state reports it: a core restarted from it runs in
+	// another directory.
+	if abs, err := filepath.Abs(cfgPath); err == nil {
+		cfgPath = abs
+	}
 	// A config file named that does not exist is a mistake, but for the
 	// core the interface starts: the interface offers to add the first
 	// project, which makes the file.
@@ -101,7 +107,8 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	hub := control.NewHub()
 	// What the agents ask waits in the queue, which streams it to the
 	// clients. The queue is the agents' reviewer only while a client follows
-	// the stream, so an agent is never left waiting on no one.
+	// the stream, so no new request waits on a reviewer that is not there;
+	// one already queued when the last client goes waits until it expires.
 	queue := newApprovals(hub, time.Now)
 	defer queue.close()
 	hub.OnAttached(func(attached bool) {
@@ -137,7 +144,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 
 	core := &coreBackend{
 		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
-		httpPort: flags.httpPort, webPort: flags.webPort,
+		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
@@ -289,8 +296,10 @@ func watchConfig(ctx context.Context, ops *coreOps) {
 		}
 		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
-	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
-		if err := ops.Apply(ctx, cfg); err != nil {
+	// The file is read again in Reload's turn, so a client's reload that
+	// read it earlier cannot be applied after it.
+	config.Watch(ctx, path, coreWatchInterval, func(*config.Config) {
+		if err := ops.Reload(ctx); err != nil {
 			bad(err)
 		}
 	}, bad)

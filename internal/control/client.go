@@ -25,6 +25,10 @@ var callTimeout = 5 * time.Second
 // event can carry a whole exchange, so it is generous.
 const maxEnvelope = 1 << 20
 
+// maxAnswer is the most a client reads of an answer. The state, which lists
+// every document an agent has shown, may be far larger than an envelope.
+const maxAnswer = 64 << 20
+
 // errStreamEnded is why a stream the core closed ended.
 var errStreamEnded = errors.New("the core ended the event stream")
 
@@ -95,7 +99,10 @@ func (c *Client) send(ctx context.Context, method, path string, data []byte, cap
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
+	if err == nil && len(body) > maxAnswer {
+		err = fmt.Errorf("the core's answer to %s is over %d MiB", path, maxAnswer>>20)
+	}
 	return resp.StatusCode, body, err
 }
 

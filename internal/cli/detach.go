@@ -239,6 +239,9 @@ const (
 	// fateNoAnswer is a core that did not answer by the deadline, and may
 	// still be starting.
 	fateNoAnswer
+	// fateStopping is a core asked to stop that had not let go of the
+	// instance lock by the deadline.
+	fateStopping
 	// fateOther is a core that stopped because another nearhost's holds the
 	// lock, or was found answering in place of the one started here: the
 	// core that runs is another's, and is left running.
@@ -272,6 +275,11 @@ func stopSpawned(b detachBackend, pid int, exited <-chan error, deadline time.Ti
 			}
 			if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
 				return fateNoAnswer
+			}
+			// Gone, as `nearhost stop` waits for, so a nearhost run next
+			// does not find it still stopping.
+			if b.gone != nil && b.gone(ctx) != nil {
+				return fateStopping
 			}
 			return fateStopped
 		}
@@ -359,7 +367,9 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 // so a core started with them is started again without.
 func restartArgs(startedBy control.StartedBy, st control.State) []string {
 	args := []string{"daemon", "--started-by", string(startedBy)}
-	if st.ConfigPath != "" {
+	// The default file is not named: a core given --config refuses a file
+	// that does not exist yet, and the default one may not.
+	if def, err := config.DefaultPath(); st.ConfigPath != "" && (err != nil || !samePath(st.ConfigPath, def)) {
 		args = append(args, "--config", st.ConfigPath)
 	}
 	if st.HTTPSPort > 0 {

@@ -628,8 +628,9 @@ type agentSource struct {
 	httpsPort int
 	env       agentEnv
 	eng       atomic.Pointer[engine.Engine]
-	// reviewed is set once the interface reviews what agents ask for, so a
-	// reload can point the user at a change that waits.
+	// reviewed is set while a reviewer takes what agents ask for, and
+	// cleared once none does, so a reload can point the user at a change
+	// that waits.
 	reviewed atomic.Bool
 
 	// openFiles opens a server's files for the doctor; nil opens them with

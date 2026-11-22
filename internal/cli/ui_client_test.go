@@ -574,6 +574,13 @@ type hostsHarness struct {
 
 func newHostsHarness(t *testing.T, askErr error) *hostsHarness {
 	t.Helper()
+	return newHostsHarnessOf(t, askErr, "")
+}
+
+// newHostsHarnessOf is newHostsHarness with the core running cfg, when it is
+// not "".
+func newHostsHarnessOf(t *testing.T, askErr error, cfg string) *hostsHarness {
+	t.Helper()
 	h := &hostsHarness{mirrorHarness: newMirrorHarness(t), root: &hostsRoot{askErr: askErr}}
 	h.path = filepath.Join(t.TempDir(), "hosts")
 	if err := os.WriteFile(h.path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
@@ -583,6 +590,9 @@ func newHostsHarness(t *testing.T, askErr error) *hostsHarness {
 	hosts.DefaultPath = h.path
 	t.Cleanup(func() { hosts.DefaultPath = was })
 	h.core.set(func(st *control.State) {
+		if cfg != "" {
+			st.Config = cfg
+		}
 		st.Projects["web"] = engine.ProjectStatus{State: engine.StateStopped, Message: hostsNotFixed("web", errHostsNeedTerminal).Error()}
 	})
 	h.core.onHosts = func(st *control.State) {
@@ -634,8 +644,9 @@ func TestHostsCancelledIsNotAskedAgainUntilAStart(t *testing.T) {
 	}
 	// The state is fetched again on the clock, and on each event.
 	ev := engine.Event{Message: "something happened"}
-	h.hub.Publish(control.Envelope{Kind: control.KindEvent, Event: &ev})
-	time.Sleep(3 * refreshEvery)
+	seq := h.hub.Publish(control.Envelope{Kind: control.KindEvent, Event: &ev})
+	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.b.mirror.seq() >= seq }, "the state after the event")
+	time.Sleep(2 * refreshEvery) // and fetched on the clock
 	if n := h.root.times(); n != 1 {
 		t.Fatalf("asked for the password %d times after a cancel, want once", n)
 	}
@@ -648,6 +659,28 @@ func TestHostsCancelledIsNotAskedAgainUntilAStart(t *testing.T) {
 	}
 	if n := h.root.times(); n != 2 {
 		t.Errorf("asked for the password %d times, want once more for the start", n)
+	}
+	if st := h.b.Status("web"); st.State != engine.StateRunning {
+		t.Errorf("web is %+v after the start", st)
+	}
+}
+
+// A project that is not enabled but started by hand has its hosts fixed
+// too: the start asks for the password, and the project runs.
+func TestHostsFixedForAStartedProjectNotEnabled(t *testing.T) {
+	data, err := config.Marshal(&config.Config{Projects: []config.Project{localProject("web", 8000, false)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHostsHarnessOf(t, nil, string(data))
+	if err := h.b.StartProject(context.Background(), "web"); err != nil {
+		t.Fatalf("StartProject = %v", err)
+	}
+	if n := h.root.times(); n != 1 {
+		t.Errorf("asked for the password %d times, want once", n)
+	}
+	if data, _ := os.ReadFile(h.path); !strings.Contains(string(data), "127.0.0.1 web.test") {
+		t.Errorf("the hosts file:\n%s", data)
 	}
 	if st := h.b.Status("web"); st.State != engine.StateRunning {
 		t.Errorf("web is %+v after the start", st)
@@ -689,7 +722,11 @@ func coreGoneFrom(t *testing.T, setup func(f *steeredCore), end func(f *steeredC
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(nil)
 	b.run = runProgram(func(*tea.Program) {
-		testutil.WaitUntil(t, 10*time.Second, func() bool { return f.hub.Clients() == 1 }, "the interface to follow the core")
+		// Off the test's goroutine, so no t.Fatal: the run goes on, and
+		// ends, either way.
+		if !testutil.Eventually(10*time.Second, func() bool { return f.hub.Clients() == 1 }) {
+			t.Error("timed out waiting for the interface to follow the core")
+		}
 		end(f)
 	})
 	type result struct {
@@ -761,7 +798,11 @@ func TestTheInterfaceStartsNoProjectOnOpen(t *testing.T) {
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(nil)
 	b.run = runProgram(func(p *tea.Program) {
-		testutil.WaitUntil(t, 10*time.Second, func() bool { return f.hub.Clients() == 1 }, "the interface to follow the core")
+		// Off the test's goroutine, so no t.Fatal: the run goes on, and
+		// ends, either way.
+		if !testutil.Eventually(10*time.Second, func() bool { return f.hub.Clients() == 1 }) {
+			t.Error("timed out waiting for the interface to follow the core")
+		}
 		// Long enough for a start the interface made on opening to reach
 		// the core.
 		time.Sleep(500 * time.Millisecond)

@@ -532,7 +532,10 @@ func (b *clientBackend) StartProject(ctx context.Context, name string) error {
 	if !b.waitsOnHosts(name) {
 		return err
 	}
-	if err := b.fixHostsAsked(ctx, asked); err != nil {
+	if err := b.fixHostsAsked(ctx, asked, name); err != nil {
+		if errors.As(err, new(coreNotTold)) {
+			return err // the file was fixed
+		}
 		return hostsNotFixed(name, err)
 	}
 	// The core retries the projects that waited once told the file is fixed;

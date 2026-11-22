@@ -159,7 +159,11 @@ func quitRun(t *testing.T, f *steeredCore, spawn func(args []string)) (stdout, s
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(spawn)
 	b.run = runProgram(func(p *tea.Program) {
-		testutil.WaitUntil(t, 10*time.Second, func() bool { return f.hub.Clients() == 1 }, "the interface to follow the core")
+		// Off the test's goroutine, so no t.Fatal: the run goes on, and
+		// ends, either way.
+		if !testutil.Eventually(10*time.Second, func() bool { return f.hub.Clients() == 1 }) {
+			t.Error("timed out waiting for the interface to follow the core")
+		}
 		p.Send(keyQ)
 	})
 	type result struct {

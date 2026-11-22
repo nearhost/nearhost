@@ -46,7 +46,7 @@ func newDaemonCmd(b upBackend) *cobra.Command {
 	flags.bindCapture(cmd)
 	// What started the core, which `nearhost -d`, bare `nearhost` and a
 	// service say. Run by hand, it is the default.
-	cmd.Flags().StringVar(&startedBy, "started-by", string(control.StartedForeground), "what started the core: detached, service or tui")
+	cmd.Flags().StringVar(&startedBy, "started-by", string(control.StartedForeground), "what started the core: foreground, detached, service or tui")
 	cmd.Flags().MarkHidden("started-by")
 	return cmd
 }
@@ -59,7 +59,7 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	switch by {
 	case control.StartedForeground, control.StartedDetached, control.StartedService, control.StartedTUI:
 	default:
-		return errors.New("--started-by must be detached, service or tui")
+		return errors.New("--started-by must be foreground, detached, service or tui")
 	}
 	path, err := config.LogPath()
 	if err != nil {

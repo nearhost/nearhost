@@ -297,7 +297,14 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		b.rootMade(root)
 	}
 	var proposals tui.Proposals
-	local := &localOps{b: b, path: st.ConfigPath, flags: flags, storage: storage, root: root}
+	// --no-hosts given to an interface that found the core running is
+	// ignored, as the note says: the core says whether it manages the hosts
+	// file, and one that does not leaves no project waiting on it.
+	localFlags := flags
+	if !spawned {
+		localFlags.noHosts = false
+	}
+	local := &localOps{b: b, path: st.ConfigPath, flags: localFlags, storage: storage, root: root}
 	back := newClientBackend(c, st, local, &proposals, spawned)
 	back.gone = b.detach.gone
 	defer back.Close()
@@ -405,6 +412,8 @@ func interruptedMessage(fate spawnedFate) string {
 		return interrupted + ". It stopped before it answered."
 	case fateOther:
 		return interrupted + ". Another nearhost started the Nearhost that runs, so it was left running."
+	case fateStopping:
+		return interrupted + ". It was asked to stop and has yet to finish; nearhost stop waits until it has."
 	case fateNoAnswer:
 		path, _ := config.LogPath()
 		return interrupted + ". It did not answer in time to be stopped, so it may still be starting: see " + path + ", and stop it with nearhost stop."

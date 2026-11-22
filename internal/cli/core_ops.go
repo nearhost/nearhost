@@ -58,6 +58,11 @@ var _ control.Actions = (*coreOps)(nil)
 func (o *coreOps) Apply(ctx context.Context, cfg *config.Config) error {
 	o.reload.Lock()
 	defer o.reload.Unlock()
+	return o.applyLocked(ctx, cfg)
+}
+
+// applyLocked is Apply, with o.reload held.
+func (o *coreOps) applyLocked(ctx context.Context, cfg *config.Config) error {
 	_, statErr := os.Stat(o.path)
 	if err := o.eng.Apply(ctx, cfg); err != nil {
 		return err
@@ -75,13 +80,17 @@ func (o *coreOps) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 // Reload loads the config file and applies it now. A file that does not
-// load is not applied, and the error names it.
+// load is not applied, and the error names it. It loads in Apply's turn, so
+// two reloads apply the file in the order they read it: an older read is
+// never applied over a newer one.
 func (o *coreOps) Reload(ctx context.Context) error {
+	o.reload.Lock()
+	defer o.reload.Unlock()
 	cfg, err := config.Load(o.path)
 	if err != nil {
 		return err
 	}
-	return o.Apply(ctx, cfg)
+	return o.applyLocked(ctx, cfg)
 }
 
 // edit reads the config file afresh, runs fn on it, checks the result and
@@ -242,7 +251,14 @@ func (o *coreOps) AnswerPassthrough(ctx context.Context, id, answer string) erro
 	if err != nil {
 		return err
 	}
-	return o.settle(id, o.agents.answerPassthrough(ctx, id, a))
+	asked, _ := o.approvals.find(id)
+	err = o.settle(id, o.agents.answerPassthrough(ctx, id, a))
+	if err == nil && a == tui.AnswerNo && asked.Pass != nil {
+		// The agent API ends the origin's other prompts with this No.
+		origin := asked.Pass.Origin
+		o.approvals.endWhere(func(ap control.Approval) bool { return ap.Pass != nil && ap.Pass.Origin == origin })
+	}
+	return err
 }
 
 // AnswerDocument gives the user's answer to a coding agent's request to
@@ -253,7 +269,14 @@ func (o *coreOps) AnswerDocument(ctx context.Context, id, answer string) error {
 	if err != nil {
 		return err
 	}
-	return o.settle(id, o.agents.answerDocument(ctx, id, a))
+	asked, _ := o.approvals.find(id)
+	err = o.settle(id, o.agents.answerDocument(ctx, id, a))
+	if err == nil && a == tui.AnswerNo && asked.Doc != nil {
+		// The agent API ends the origin's other prompts with this No.
+		origin := asked.Doc.Origin
+		o.approvals.endWhere(func(ap control.Approval) bool { return ap.Doc != nil && ap.Doc.Origin == origin })
+	}
+	return err
 }
 
 // settle takes the request id off the queue once err, the agent API's

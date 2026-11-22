@@ -120,6 +120,37 @@ func (q *approvals) take(id string) bool {
 	return true
 }
 
+// endWhere removes every request for which match is true, and publishes
+// each one's "ended".
+func (q *approvals) endWhere(match func(control.Approval) bool) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i := 0; i < len(q.pending); {
+		if match(q.pending[i].approval) {
+			q.endLocked(i)
+			continue
+		}
+		i++
+	}
+}
+
+// find returns the pending request id, and false when it is not pending.
+func (q *approvals) find(id string) (control.Approval, bool) {
+	if q == nil {
+		return control.Approval{}, false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	i := slices.IndexFunc(q.pending, func(p queued) bool { return p.approval.ID == id })
+	if i < 0 {
+		return control.Approval{}, false
+	}
+	return q.pending[i].approval, true
+}
+
 // endLocked removes the request at i and publishes its "ended".
 func (q *approvals) endLocked(i int) {
 	id := q.pending[i].approval.ID

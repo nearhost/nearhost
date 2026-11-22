@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,13 +86,22 @@ func (b *clientBackend) waitsOnHosts(name string) bool {
 // wait on it, asking for the password in the interface, then tells the core.
 // It asks once per call, and not for a project whose last fix was refused.
 func (b *clientBackend) fixHosts(ctx context.Context) error {
-	return b.fixHostsAsked(ctx, time.Time{})
+	return b.fixHostsAsked(ctx, time.Time{}, "")
 }
 
-// fixHostsAsked is fixHosts for a start the user asked for at asked: it also
-// asks for a project whose fix was refused before then. A zero asked is no
-// start's. The error is the fix's, or the refusal that stands.
-func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time) error {
+// coreNotTold is the error of a hosts file fixed that the core could not be
+// told of: the file was written.
+type coreNotTold struct{ err error }
+
+func (e coreNotTold) Error() string { return "tell Nearhost the hosts file is fixed: " + e.err.Error() }
+func (e coreNotTold) Unwrap() error { return e.err }
+
+// fixHostsAsked is fixHosts for a start of the project started the user
+// asked for at asked: it also asks for a project whose fix was refused
+// before then, and for started even when it is not enabled. A zero asked is
+// no start's. The error is the fix's, the refusal that stands, or a
+// coreNotTold.
+func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time, started string) error {
 	if b.flags.noHosts {
 		return nil
 	}
@@ -107,6 +117,15 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time) erro
 		return err
 	}
 	cfg := b.mirror.config()
+	// A project started by hand is served whether or not it is enabled, so
+	// its names are wanted as an enabled one's are. cfg is shared: changed
+	// only in a copy.
+	if i := slices.IndexFunc(cfg.Projects, func(p config.Project) bool { return p.Name == started }); i >= 0 && !cfg.Projects[i].Enabled {
+		c := *cfg
+		c.Projects = slices.Clone(cfg.Projects)
+		c.Projects[i].Enabled = true
+		cfg = &c
+	}
 	var ask []config.Project
 	var standing error
 	h.mu.Lock()
@@ -173,7 +192,10 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time) erro
 		delete(h.refused, p.Name)
 	}
 	h.mu.Unlock()
-	return b.acted(ctx, b.c.HostsChanged(ctx))
+	if err := b.acted(ctx, b.c.HostsChanged(ctx)); err != nil {
+		return coreNotTold{err}
+	}
+	return nil
 }
 
 // hostsStatus is st, the core's state of project, as the interface shows it:
