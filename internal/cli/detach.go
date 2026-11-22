@@ -363,14 +363,17 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 
 // restartArgs are the arguments that start a core again as the one that
 // says st of itself was started: by startedBy, on the config file it served
-// and on its ports. --no-hosts and --no-capture are not in a core's state,
-// so a core started with them is started again without.
+// on its ports, and with --no-hosts when it had it. --no-capture is not in a
+// core's state, so a core started with it is started again without.
 func restartArgs(startedBy control.StartedBy, st control.State) []string {
 	args := []string{"daemon", "--started-by", string(startedBy)}
 	// The default file is not named: a core given --config refuses a file
 	// that does not exist yet, and the default one may not.
 	if def, err := config.DefaultPath(); st.ConfigPath != "" && (err != nil || !samePath(st.ConfigPath, def)) {
 		args = append(args, "--config", st.ConfigPath)
+	}
+	if st.NoHosts {
+		args = append(args, "--no-hosts")
 	}
 	if st.HTTPSPort > 0 {
 		args = append(args, "--https-port", strconv.Itoa(st.HTTPSPort))

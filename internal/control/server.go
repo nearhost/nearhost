@@ -205,7 +205,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if deadline() != nil || flush() != nil {
 		return
 	}
-	if writeEnvelopes(w, backlog) != nil || flush() != nil {
+	if writeEnvelopes(w, backlog, deadline) != nil || deadline() != nil || flush() != nil {
 		return
 	}
 	keepalive := time.NewTicker(s.keepalive)
@@ -215,10 +215,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-sub.ready:
-			if deadline() != nil {
-				return
-			}
-			if writeEnvelopes(w, sub.take()) != nil {
+			if writeEnvelopes(w, sub.take(), deadline) != nil {
 				return
 			}
 		case <-keepalive.C:
@@ -229,17 +226,23 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if flush() != nil {
+		// The flush gets a deadline of its own.
+		if deadline() != nil || flush() != nil {
 			return
 		}
 	}
 }
 
-// writeEnvelopes writes each of es as one server-sent event.
-func writeEnvelopes(w io.Writer, es []Envelope) error {
+// writeEnvelopes writes each of es as one server-sent event, calling
+// deadline before each, so a long batch to a client that reads is not cut
+// short: only a write that waits too long is.
+func writeEnvelopes(w io.Writer, es []Envelope, deadline func() error) error {
 	for _, e := range es {
 		data, err := json.Marshal(e)
 		if err != nil {
+			return err
+		}
+		if err := deadline(); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {

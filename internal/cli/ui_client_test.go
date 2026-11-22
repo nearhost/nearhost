@@ -687,6 +687,31 @@ func TestHostsFixedForAStartedProjectNotEnabled(t *testing.T) {
 	}
 }
 
+// The projects served, enabled or not, have their names in the hosts block:
+// one being started, and one running.
+func TestServedConfig(t *testing.T) {
+	cfg := &config.Config{Projects: []config.Project{
+		localProject("on", 8000, true), localProject("started", 8001, false),
+		localProject("running", 8002, false), localProject("off", 8003, false),
+	}}
+	got := servedConfig(cfg, "started", func(name string) bool { return name == "running" })
+	var enabled []string
+	for _, p := range got.Projects {
+		if p.Enabled {
+			enabled = append(enabled, p.Name)
+		}
+	}
+	if want := []string{"on", "started", "running"}; !slices.Equal(enabled, want) {
+		t.Errorf("enabled %q, want %q", enabled, want)
+	}
+	if cfg.Projects[1].Enabled || cfg.Projects[2].Enabled {
+		t.Error("the shared config was changed")
+	}
+	if servedConfig(cfg, "", func(string) bool { return false }) != cfg {
+		t.Error("a config with nothing to change was copied")
+	}
+}
+
 // A start the user asks for while the password is refused again says why,
 // as the engine's own start says it.
 func TestHostsStartSaysTheRefusal(t *testing.T) {

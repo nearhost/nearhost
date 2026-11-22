@@ -145,6 +145,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	core := &coreBackend{
 		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
 		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
+		noHosts: flags.noHosts,
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
@@ -296,10 +297,12 @@ func watchConfig(ctx context.Context, ops *coreOps) {
 		}
 		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
-	// The file is read again in Reload's turn, so a client's reload that
-	// read it earlier cannot be applied after it.
-	config.Watch(ctx, path, coreWatchInterval, func(*config.Config) {
-		if err := ops.Reload(ctx); err != nil {
+	// What Watch read and validated is applied: it refuses a file caught
+	// empty or half saved. A client's Reload reads in Apply's turn, so it
+	// never applies an older read over this one; should this one be older
+	// than a Reload's, the change after it is seen on the next poll.
+	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
+		if err := ops.Apply(ctx, cfg); err != nil {
 			bad(err)
 		}
 	}, bad)
@@ -320,6 +323,8 @@ type coreBackend struct {
 	// httpPort and webPort are ports the core serves on, beside coreOps'
 	// httpsPort.
 	httpPort, webPort int
+	// noHosts is set when the core was started with --no-hosts.
+	noHosts bool
 	// retries counts the starts HostsChanged has under way, which the
 	// shutdown waits for. closed, under mu, is set once it has begun: a
 	// request still being answered then starts nothing.
@@ -357,7 +362,7 @@ func (c *coreBackend) Status() control.Status {
 // State is what this core is and serves, and the ports it serves on.
 func (c *coreBackend) State() control.State {
 	st := c.coreOps.State()
-	st.Info, st.HTTPPort, st.WebPort = c.info, c.httpPort, c.webPort
+	st.Info, st.HTTPPort, st.WebPort, st.NoHosts = c.info, c.httpPort, c.webPort, c.noHosts
 	return st
 }
 

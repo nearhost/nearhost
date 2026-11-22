@@ -297,13 +297,11 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		b.rootMade(root)
 	}
 	var proposals tui.Proposals
-	// --no-hosts given to an interface that found the core running is
-	// ignored, as the note says: the core says whether it manages the hosts
-	// file, and one that does not leaves no project waiting on it.
+	// Whether the hosts file is managed is the core's to say: --no-hosts
+	// given to an interface that found the core running is ignored, as the
+	// note says, and one the core was started with is shown.
 	localFlags := flags
-	if !spawned {
-		localFlags.noHosts = false
-	}
+	localFlags.noHosts = st.NoHosts
 	local := &localOps{b: b, path: st.ConfigPath, flags: localFlags, storage: storage, root: root}
 	back := newClientBackend(c, st, local, &proposals, spawned)
 	back.gone = b.detach.gone

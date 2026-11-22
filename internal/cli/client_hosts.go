@@ -116,16 +116,9 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time, star
 	if err := b.ctx.Err(); err != nil {
 		return err
 	}
-	cfg := b.mirror.config()
-	// A project started by hand is served whether or not it is enabled, so
-	// its names are wanted as an enabled one's are. cfg is shared: changed
-	// only in a copy.
-	if i := slices.IndexFunc(cfg.Projects, func(p config.Project) bool { return p.Name == started }); i >= 0 && !cfg.Projects[i].Enabled {
-		c := *cfg
-		c.Projects = slices.Clone(cfg.Projects)
-		c.Projects[i].Enabled = true
-		cfg = &c
-	}
+	cfg := servedConfig(b.mirror.config(), started, func(name string) bool {
+		return b.mirror.status(name).State == engine.StateRunning
+	})
 	var ask []config.Project
 	var standing error
 	h.mu.Lock()
@@ -196,6 +189,30 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time, star
 		return coreNotTold{err}
 	}
 	return nil
+}
+
+// servedConfig is cfg with the projects that are served marked enabled: the
+// one being started, and each running, as a project started by hand is
+// served whether or not it is enabled. Their names are then wanted in the
+// hosts block as an enabled project's are, and a later fix keeps them. cfg
+// is shared, so it is cfg itself when none changes, and a copy otherwise.
+func servedConfig(cfg *config.Config, started string, running func(string) bool) *config.Config {
+	var out *config.Config
+	for i, p := range cfg.Projects {
+		if p.Enabled || (p.Name != started && !running(p.Name)) {
+			continue
+		}
+		if out == nil {
+			c := *cfg
+			c.Projects = slices.Clone(cfg.Projects)
+			out = &c
+		}
+		out.Projects[i].Enabled = true
+	}
+	if out == nil {
+		return cfg
+	}
+	return out
 }
 
 // hostsStatus is st, the core's state of project, as the interface shows it:

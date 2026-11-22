@@ -297,3 +297,20 @@ func TestInterruptedWhileTheCoreStartsSaysWhatHappened(t *testing.T) {
 		}
 	})
 }
+
+// A restart names the config file only when it is not the default one, which
+// may not exist yet, and keeps --no-hosts and the ports.
+func TestRestartArgs(t *testing.T) {
+	def := configHome(t)
+	got := restartArgs(control.StartedDetached, control.State{ConfigPath: def, HTTPSPort: 8443, WebPort: 6327, NoHosts: true})
+	want := []string{"daemon", "--started-by", "detached", "--no-hosts", "--https-port", "8443", "--web-port", "6327"}
+	if !slices.Equal(got, want) {
+		t.Errorf("on the default file: %q, want %q", got, want)
+	}
+	other := filepath.Join(t.TempDir(), "other.yaml")
+	got = restartArgs(control.StartedTUI, control.State{ConfigPath: other})
+	want = []string{"daemon", "--started-by", "tui", "--config", other, "--web-port", "0"}
+	if !slices.Equal(got, want) {
+		t.Errorf("on another file: %q, want %q", got, want)
+	}
+}
