@@ -397,3 +397,18 @@ func TestChangeStale(t *testing.T) {
 		t.Errorf("a project with no change: %d", resp.StatusCode)
 	}
 }
+
+// An answer to a change that no longer waits, as one answered in another
+// window, says it has ended, not that the file changed again.
+func TestChangeAnsweredElsewhere(t *testing.T) {
+	for _, ans := range []string{"approve", "decline"} {
+		c := changeCore()
+		c.state.Projects["web"] = engine.ProjectStatus{}
+		c.err = errors.New("the .nearhostrc changed again; review it again")
+		resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {ans}, "sha": {"sha1"}})
+		body := bodyOf(t, resp)
+		if resp.StatusCode != 409 || !strings.Contains(body, "This request has been answered or has ended.") || strings.Contains(body, "changed again") || buttons(body) != nil {
+			t.Errorf("%s: %d\n%s", ans, resp.StatusCode, body)
+		}
+	}
+}

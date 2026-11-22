@@ -339,11 +339,13 @@ func (p *page) answerChange(w http.ResponseWriter, r *http.Request) {
 		p.o.Core.DeclineChange(name, sha)
 	}
 	if err != nil {
+		// With no change waiting, another answer has ended it; otherwise
+		// the one that waits now is shown, with why this answer failed.
 		v := changeView{base: p.base("Review " + nearhostrc.FileName + " for " + safetext.Line(name)), Gone: true}
 		if now := p.o.Core.State().Projects[name].Pending; now != nil {
 			v = p.changeView(name, now)
+			v.Error = safetext.Line(err.Error())
 		}
-		v.Error = safetext.Line(err.Error())
 		render(w, r, "change", http.StatusConflict, v)
 		return
 	}
