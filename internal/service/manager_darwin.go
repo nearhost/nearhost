@@ -68,6 +68,18 @@ func (m *launchdManager) Uninstall(ctx context.Context) error {
 }
 
 func (m *launchdManager) Start(ctx context.Context) error {
+	// A job launchd reports as running is either the old core of a restart,
+	// which frees its lock just before its process exits, or a core that is
+	// starting at login. Wait to see which: one that stops is loaded again,
+	// one that stays is left alone.
+	running, _ := m.Active(ctx)
+	for i := 0; running && i < 20; i++ {
+		m.sleep(ctx, 100*time.Millisecond)
+		running, _ = m.Active(ctx)
+	}
+	if running {
+		return nil
+	}
 	_, _ = m.run(ctx, "launchctl", "bootout", m.target())
 	// Right after a bootout launchd may still be tearing the service down
 	// and answer with I/O error (5) or operation in progress (37), so try
