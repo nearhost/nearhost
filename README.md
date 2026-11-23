@@ -136,7 +136,7 @@ Then start Nearhost and open `https://myapp.test`:
 nearhost
 ```
 
-`nearhost` opens the interface: your servers and projects, full screen. It starts every enabled project, shows each one's state, routes and log, and stops them all when you press `q`. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the interface. With no projects yet it opens on the Nearhost mark and asks you to add one.
+`nearhost` opens the interface: your servers and projects, full screen. It serves every enabled project from the background Nearhost, starting one if none runs, and shows each one's state, routes and log. When you press `q` after the interface started that Nearhost, it asks whether to stop it or leave it running in the background; a Nearhost that something else started keeps running. Press `n` to add a project and `s` to add a server, `enter` to start or stop the selected project and `o` to open it in your browser. Adding a project walks through the server, the path (`tab` completes it, on a server too), the routes Nearhost found (`space` ticks a route to serve it, `←` and `→` change its role), and the name, in a box over the interface. With no projects yet it opens on the Nearhost mark and asks you to add one.
 
 `/` filters the sidebar by name. `l` opens the selected project's log, or every log from Home, across the whole window: `tab` shows requests, events or errors, `/` searches, `enter` opens a request to show its headers, the body sent and the body that came back, and its route, `v` reveals its cookies, `c` copies it as a curl command, `r` sends it again (asking first unless it is a GET, HEAD or OPTIONS), and `G` follows new lines again. Home lists anything that needs you, such as a server that cannot connect, with how many attempts failed and when the next is, and how to fix it; there `r` retries the connection and `y` copies the `ssh` command that fixes access. On a server, `c` drops its connection and holds it closed, its projects waiting, until `c` connects it again. `?` lists every key. The mouse works too: drag to select and copy text, double-click to copy a word, and click an address to open it.
 
@@ -144,7 +144,7 @@ To show bodies and send requests again, the proxy keeps each request and its res
 
 Everything else you would change in the config is there too. On a project, `tab` moves to its routes, where `space` switches a route between loopback and ignore and `w` makes it the web route; its advice shows below them, and `y` copies the suggested snippets. `e` edits a project, running discovery again, and `d` removes it. On a server, `r` reconnects it, `e` edits its host or name, and `d` removes it with its projects. While the local certificate authority is not trusted, Nearhost opens with a screen that explains the two prompts and trusts it for you. On macOS and Linux, when Nearhost needs your password, to update `/etc/hosts` or to trust the CA, it asks in a box over the interface; sudo keeps it for a few minutes, so you are rarely asked twice. Where sudo is set to ask every time, Nearhost asks in the terminal instead, and comes back to the interface afterwards. On Windows, Nearhost asks you to approve the Windows prompt each time it updates the hosts file.
 
-For scripts and terminals without a screen, `nearhost up` serves the same projects headless until you press Ctrl-C.
+For scripts and terminals without a screen, `nearhost -d` serves the same projects in the background, `nearhost service install` starts them at each login, and `nearhost up` serves them in the foreground until you press Ctrl-C.
 
 ### Nearhost's page
 
@@ -216,7 +216,11 @@ An agent can also open a document it wrote, such as a plan, spec or HTML mockup,
 
 | Command | What it does |
 | --- | --- |
-| `nearhost` | Open the interface, which serves every enabled project; without a terminal it exits 1 |
+| `nearhost` | Open the interface, which serves every enabled project; without a terminal it exits 1 (use `nearhost -d` or `nearhost up`) |
+| `nearhost -d` | Start Nearhost in the background, with no interface, and return once it answers |
+| `nearhost stop` | Stop the Nearhost running in the background |
+| `nearhost status` | Show what the background Nearhost serves; `--json` prints JSON, and it exits 3 when Nearhost is not running |
+| `nearhost service install` / `uninstall` | Start Nearhost at login as a service, or remove the service |
 | `nearhost add [path]` | Add a project, discovering its ports from its files; `--alias`, `--host`, `--server` and `--web` shape it. Interrupted, it saves nothing and exits 130 |
 | `nearhost ls` | List the configured projects and their routes |
 | `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface; exits 1 when no project can be served |
