@@ -133,8 +133,12 @@ func printStatus(out io.Writer, st control.Status, keyed string) error {
 		// This copy is already that release, as after brew upgrade: the
 		// core is what is out of date.
 		fmt.Fprintf(w, "This copy is %s; restart Nearhost to run it: nearhost stop, then nearhost -d.\n", this)
+		// Said here: Main's notice of the same release is dropped. Main
+		// reads it only once the command has returned.
+		updates = nil
 	} else if st.Update != "" {
 		fmt.Fprintf(w, "Nearhost %s is available. Run nearhost update.\n", printable(st.Update))
+		updates = nil
 	}
 	if !info.Reloads {
 		fmt.Fprintln(w, "It serves the projects it was started with and does not reload the config.")

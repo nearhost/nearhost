@@ -223,7 +223,7 @@ func TestDoctorService(t *testing.T) {
 		{"another exe", &fakeManager{installed: true, def: service.Definition{Exe: "/usr/bin/nearhost"}}, "", "warn  service          runs /usr/bin/nearhost, not this copy (" + exe + ")\n", "Run nearhost service install from the copy you use"},
 		{"active", &fakeManager{installed: true, def: mine, active: true}, control.StartedService, "ok    service          installed and running\n", ""},
 		{"active with its log folder", &fakeManager{installed: true, def: withLog, active: true}, control.StartedService, "ok    service          installed and running\n", ""},
-		{"log folder missing", &fakeManager{installed: true, def: withGoneLog}, "", "warn  service          its log folder " + gone + " is missing, so the service cannot start\n", "Run nearhost service install"},
+		{"log folder missing", &fakeManager{installed: true, def: withGoneLog}, "", "warn  service          its log folder " + gone + " is missing, so the service cannot start again\n", "Run nearhost service install"},
 		{"inactive, no core", &fakeManager{installed: true, def: mine}, "", "warn  service          installed but not running\n", "Start it with nearhost -d"},
 		{"inactive beside a detached core", &fakeManager{installed: true, def: mine}, control.StartedDetached,
 			"info  service          installed; the running Nearhost was started by detached, so the service takes over at your next login\n", ""},

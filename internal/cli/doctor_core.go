@@ -105,7 +105,7 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 	case d.LogPath != "" && folderMissing(filepath.Dir(d.LogPath)):
 		// The manager fails the unit before it runs when the folder of the
 		// log it sends the core's output to is missing.
-		return check{"service", levelWarn, fmt.Sprintf("its log folder %s is missing, so the service cannot start", printable(filepath.Dir(d.LogPath))), "run nearhost service install"}
+		return check{"service", levelWarn, fmt.Sprintf("its log folder %s is missing, so the service cannot start again", printable(filepath.Dir(d.LogPath))), "run nearhost service install"}
 	}
 	active, err := m.Active(ctx)
 	switch {

@@ -342,3 +342,51 @@ func TestStatusUpdateThisCopyHas(t *testing.T) {
 		}
 	}
 }
+
+// Main's notice of a new release is dropped when the core's status has said
+// one, so status says it once; with no core to say it, Main's stays.
+func TestStatusSaysOneUpdateNotice(t *testing.T) {
+	check := func(t *testing.T) *backgroundCheck {
+		t.Helper()
+		orig := updates
+		t.Cleanup(func() { updates = orig })
+		c := startBackgroundCheck("1.2.3", func(context.Context) (string, error) { return "1.3.0", nil })
+		<-c.done
+		updates = c
+		return c
+	}
+	t.Run("the core says it", func(t *testing.T) {
+		check(t)
+		st := testStatus
+		st.Update = "1.3.0"
+		serveStatus(t, st)
+		out, err := execute(t, newStatusCmd(nil), "status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(out, "1.3.0"); n != 1 {
+			t.Errorf("status names the release %d times, want once:\n%s", n, out)
+		}
+		if n := updates.notice(0); n != "" {
+			t.Errorf("Main's notice is still given: %q", n)
+		}
+	})
+	t.Run("the core knows of none", func(t *testing.T) {
+		c := check(t)
+		serveStatus(t, testStatus)
+		if _, err := execute(t, newStatusCmd(nil), "status"); err != nil {
+			t.Fatal(err)
+		}
+		if updates != c {
+			t.Error("Main's notice was dropped, though the core said none")
+		}
+	})
+	t.Run("no core", func(t *testing.T) {
+		c := check(t)
+		configHome(t)
+		_, _ = execute(t, newStatusCmd(nil), "status")
+		if updates != c || !strings.Contains(updates.notice(0), "1.3.0") {
+			t.Error("Main's notice was dropped with no core running")
+		}
+	})
+}
