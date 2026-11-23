@@ -249,10 +249,10 @@ func Main(args []string) int {
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
 	elevated := elevate.Elevated()
 	clearOldCopies(elevated)
-	if shouldCheckForUpdate(args, os.Getenv, Version, elevated, tty) {
+	root := NewRoot()
+	if shouldCheckForUpdate(root, args, os.Getenv, Version, elevated, tty) {
 		updates = startBackgroundCheck(Version, cachedLatest)
 	}
-	root := NewRoot()
 	root.SetArgs(args)
 	code := exitCode(root.Execute(), os.Stderr)
 	if n := updates.notice(updateGrace); n != "" {

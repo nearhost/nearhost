@@ -676,15 +676,8 @@ func updateHTTP() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 // which is the hosts helper running with administrator rights, not when stderr is
 // not a terminal to say so on, not for a development build, and not when
 // NEARHOST_NO_UPDATE_CHECK is set.
-func shouldCheckForUpdate(args []string, getenv func(string) string, version string, elevated bool, tty bool) bool {
+func shouldCheckForUpdate(root *cobra.Command, args []string, getenv func(string) string, version string, elevated bool, tty bool) bool {
 	if !updateChecksAllowed(getenv, version) || elevated || !tty {
-		return false
-	}
-	// Bare nearhost has no command: nothing, or flags, comes first.
-	if len(args) == 0 || args[0] == "up" || args[0] == "daemon" {
-		return false
-	}
-	if strings.HasPrefix(args[0], "-") && !slices.Contains([]string{"--help", "-h", "--version"}, args[0]) {
 		return false
 	}
 	for _, a := range args {
@@ -692,6 +685,12 @@ func shouldCheckForUpdate(args []string, getenv func(string) string, version str
 		case "update", "version", "help", "completion", "__complete", "--help", "-h", "--version":
 			return false
 		}
+	}
+	// The command cobra resolves, past any root flags before it: the root
+	// itself is the interface, or `nearhost -d`.
+	cmd, _, err := root.Find(args)
+	if err != nil || cmd == root || cmd.Name() == "up" || cmd.Name() == "daemon" {
+		return false
 	}
 	return true
 }
