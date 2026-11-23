@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -442,5 +443,210 @@ func TestDetachAnotherCoreAnswersFirst(t *testing.T) {
 	stdout, _, code := runRootSplit(t, uiRoot(ui), "-d")
 	if want := "Nearhost is already running in the background (pid 77, started by tui).\n"; code != 0 || stdout != want {
 		t.Errorf("code %d, stdout %q, want %q", code, stdout, want)
+	}
+}
+
+// fakeService is an installed service that runs exe, whose Start calls start.
+// Active is what the test sets. installed, when set, is what Installed
+// returns instead.
+type fakeService struct {
+	exe       string
+	start     func() error
+	installed func(ctx context.Context) error
+	// startCtx, when set, is Start in place of start.
+	startCtx func(ctx context.Context) error
+
+	mu      sync.Mutex
+	active  bool
+	starts  int
+	lookups int
+}
+
+// lookup is the fake as a detachBackend's service, looked up as the real
+// one is.
+func (s *fakeService) lookup() func(context.Context) (service.Manager, service.Definition) {
+	return func(ctx context.Context) (service.Manager, service.Definition) {
+		s.mu.Lock()
+		s.lookups++
+		s.mu.Unlock()
+		return installedService(ctx, s)
+	}
+}
+
+func (s *fakeService) Installed(ctx context.Context) (service.Definition, bool, error) {
+	if s.installed != nil {
+		if err := s.installed(ctx); err != nil {
+			return service.Definition{}, false, err
+		}
+	}
+	return service.Definition{Exe: s.exe}, true, nil
+}
+
+func (s *fakeService) Install(context.Context, service.Definition) (bool, error) {
+	return false, errors.New("no service is installed in this test")
+}
+
+func (s *fakeService) Uninstall(context.Context) error {
+	return errors.New("no service is removed in this test")
+}
+
+func (s *fakeService) Start(ctx context.Context) error {
+	s.mu.Lock()
+	s.starts++
+	start, startCtx := s.start, s.startCtx
+	s.mu.Unlock()
+	if startCtx != nil {
+		return startCtx(ctx)
+	}
+	if start == nil {
+		return nil
+	}
+	return start()
+}
+
+func (s *fakeService) Active(context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active, nil
+}
+
+func (s *fakeService) ManagerEnv(context.Context) map[string]string { return nil }
+func (s *fakeService) Graphical(context.Context) bool               { return false }
+
+// counts returns how often the service was started and looked up.
+func (s *fakeService) counts() (starts, lookups int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.starts, s.lookups
+}
+
+// With a service installed, -d starts the core through it, and says so.
+func TestDetachThroughService(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		t.Error("spawned with a service installed")
+		return running()
+	})
+	svc := &fakeService{exe: "/bin/nearhost", active: true, start: func() error {
+		f.answer(control.Info{API: 1, PID: 4343, StartedBy: control.StartedService})
+		return nil
+	}}
+	b.service = svc.lookup()
+	b.timeout = 10 * time.Second
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Nearhost is running in the background as a service (pid 4343). Stop it with nearhost stop.\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+	if starts, _ := svc.counts(); starts != 1 {
+		t.Errorf("the service was started %d times, want once", starts)
+	}
+
+	// The core now runs: -d again leaves it be, and does not look for the
+	// service.
+	stdout, _, code = runRootSplit(t, uiRoot(ui), "-d")
+	if want := "Nearhost is already running in the background (pid 4343, started by service).\n"; code != 0 || stdout != want {
+		t.Errorf("code %d, stdout %q, want %q", code, stdout, want)
+	}
+	if starts, lookups := svc.counts(); starts != 1 || lookups != 1 {
+		t.Errorf("the service was started %d and looked up %d times, want once each", starts, lookups)
+	}
+}
+
+// A serve flag is the user's own setting, which the service does not have:
+// the core is started directly, with a note.
+func TestDetachWithFlagsSpawns(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		f.answer(control.Info{API: 1, PID: 7, StartedBy: control.StartedDetached})
+		return running()
+	})
+	svc := &fakeService{exe: "/bin/nearhost", start: func() error {
+		t.Error("started the service with flags given")
+		return nil
+	}}
+	b.service = svc.lookup()
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d", "--web-port", "7000")
+	if code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
+	if want := "Nearhost is running in the background (pid 7). Stop it with nearhost stop.\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+	want := [][]string{{"/bin/nearhost", "daemon", "--started-by", "detached", "--web-port", "7000"}}
+	if got := f.calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("spawned %q, want %q", got, want)
+	}
+}
+
+// A service that cannot be started is no reason not to start the core: it
+// is spawned as with no service, and the reason is said.
+func TestServiceStartFailsFallsBack(t *testing.T) {
+	configHome(t)
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		f.answer(control.Info{API: 1, PID: 8, StartedBy: control.StartedDetached})
+		return running()
+	})
+	svc := &fakeService{exe: "/bin/nearhost", start: func() error {
+		return errors.New("launchctl kickstart: exit status 113\nCould not find service")
+	}}
+	b.service = svc.lookup()
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	if code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if want := "Starting Nearhost through its service failed (launchctl kickstart: exit status 113), so it was started directly.\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
+	if want := "Nearhost is running in the background (pid 8). Stop it with nearhost stop.\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+	want := [][]string{{"/bin/nearhost", "daemon", "--started-by", "detached"}}
+	if got := f.calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("spawned %q, want %q", got, want)
+	}
+}
+
+// A service whose core stops while starting is said as a spawned core's is,
+// with the end of the log; it is given a moment to become active first.
+func TestServiceStartStops(t *testing.T) {
+	cfgPath := configHome(t)
+	logPath := filepath.Join(filepath.Dir(cfgPath), "core.log")
+	f := newFakeDetach(t)
+	b := f.backend(func() func() error {
+		t.Error("spawned with a service installed")
+		return running()
+	})
+	svc := &fakeService{exe: "/bin/nearhost"}
+	b.service = svc.lookup()
+	b.logTail = func(int64, int) []string { return []string{"the service's last line"} }
+	b.timeout = 10 * time.Second
+	ui := fakeUI(t, true, new(bool))
+	ui.detach = b
+	start := time.Now()
+	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
+	took := time.Since(start)
+	if code != 1 || stdout != "" {
+		t.Fatalf("code %d, stdout %q", code, stdout)
+	}
+	if want := "Nearhost stopped while starting. The end of " + logPath + ":\nthe service's last line\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
+	if took < serviceGrace || took > 8*time.Second {
+		t.Errorf("took %s, want the grace of %s and a little more", took, serviceGrace)
 	}
 }

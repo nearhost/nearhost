@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/service"
 )
 
 const (
@@ -29,6 +31,13 @@ const (
 	// detachTailLines is how much of the core log it shows when the core
 	// stops while starting.
 	detachTailLines = 20
+	// serviceGrace is how long a core started through its service is given
+	// before the service is asked whether it is active: a service manager
+	// may take a moment to say a service it was just asked to start runs.
+	serviceGrace = 2 * time.Second
+	// servicePoll is how often the service is asked after that. It is
+	// slower than detachPoll: on Windows each ask starts PowerShell.
+	servicePoll = time.Second
 )
 
 // detachBackend is the seam between `nearhost -d` and the machine.
@@ -55,6 +64,11 @@ type detachBackend struct {
 	// timeout is how long to wait for the child to answer; zero is
 	// detachTimeout. Tests shorten it.
 	timeout time.Duration
+	// service is the manager of the installed service and what it runs, or
+	// a nil manager when none is installed (or the OS has none, or it cannot
+	// be read): see installedService. Tests set a fake; a nil service is
+	// never one.
+	service func(ctx context.Context) (service.Manager, service.Definition)
 }
 
 // systemDetach is the production backend.
@@ -113,6 +127,13 @@ func systemDetach() detachBackend {
 			held, err := engine.InstanceRunning(dir)
 			return held && err == nil
 		},
+		service: func(ctx context.Context) (service.Manager, service.Definition) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, service.Definition{}
+			}
+			return installedService(ctx, service.New(service.DefaultNames, home, service.ExecRunner))
+		},
 	}
 }
 
@@ -126,6 +147,8 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 	}
 	out := cmd.OutOrStdout()
 	switch {
+	case spawned && info.StartedBy == control.StartedService:
+		fmt.Fprintf(out, "Nearhost is running in the background as a service (pid %d). Stop it with nearhost stop.\n", info.PID)
 	case spawned:
 		fmt.Fprintf(out, "Nearhost is running in the background (pid %d). Stop it with nearhost stop.\n", info.PID)
 	case info.StartedBy == control.StartedForeground:
@@ -140,9 +163,11 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 // ensureCore dials the core, or starts one with startedBy and waits for it
 // as -d does. spawned says this call started it. flags are refused before
 // anything is dialled when they do not go together; the core is given those
-// the user set on cmd. A core that stops while starting, or is still starting
-// once the wait is over, is said on standard error, and the error is the exit
-// status 1 for Main.
+// the user set on cmd. With a service installed, the core is started through
+// it, unless the user set --config or a serve flag, which the service does
+// not have. A core that stops while starting, or is still starting once the
+// wait is over, is said on standard error, and the error is the exit status 1
+// for Main.
 func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy control.StartedBy) (c *control.Client, info control.Info, spawned bool, err error) {
 	if err := flags.validate(); err != nil {
 		return nil, control.Info{}, false, err
@@ -151,12 +176,58 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	if err != nil {
 		return nil, control.Info{}, false, err
 	}
-	return startCore(cmd, b, args, startedBy)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// The service is looked for only when a core has to be started: on
+	// Windows that takes a moment, which a running core is not kept waiting
+	// for.
+	if c, info, ok := detachInfo(ctx, b); ok {
+		return c, info, false, nil
+	}
+	b, m, _ := b.withService(ctx)
+	// Interrupted while looking, nothing was started, and nothing is.
+	if err := ctx.Err(); err != nil {
+		return nil, control.Info{}, false, interruptedStart{err: err, fate: fateNone}
+	}
+	viaService := m != nil && slices.Equal(args, []string{"daemon", "--started-by", string(startedBy)})
+	if m != nil && !viaService {
+		fmt.Fprintln(cmd.ErrOrStderr(), "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.")
+	}
+	return startCore(cmd, b, args, startedBy, viaService)
+}
+
+// installedService returns m and what its service runs when that service is
+// installed, and a nil manager otherwise. A service that cannot be read is
+// not one to start through: it counts as none.
+func installedService(ctx context.Context, m service.Manager) (service.Manager, service.Definition) {
+	d, ok, err := m.Installed(ctx)
+	if err != nil || !ok {
+		return nil, service.Definition{}
+	}
+	return m, d
+}
+
+// withService looks for the installed service once, and returns its manager,
+// nil when there is none, and what it runs, with b, whose service gives that
+// answer from then on without looking again.
+func (b detachBackend) withService(ctx context.Context) (detachBackend, service.Manager, service.Definition) {
+	var m service.Manager
+	var d service.Definition
+	if b.service != nil {
+		m, d = b.service(ctx)
+	}
+	b.service = func(context.Context) (service.Manager, service.Definition) { return m, d }
+	return b, m, d
 }
 
 // startCore dials the core, or starts one with args, which say it was
-// started by startedBy, and waits for it, as ensureCore says.
-func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy) (c *control.Client, info control.Info, spawned bool, err error) {
+// started by startedBy, and waits for it, as ensureCore says. viaService
+// starts it through b.service rather than spawning it, which is then the
+// fallback should the service not start; the service's core runs with the
+// service's own arguments, and is said to be started by the service.
+func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy, viaService bool) (c *control.Client, info control.Info, spawned bool, err error) {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -172,9 +243,33 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 	// The log may hold earlier runs: only what this one writes after this
 	// says why it stopped.
 	logFrom := b.logSize()
-	pid, wait, err := b.spawn(b.exe(), args)
-	if err != nil {
-		return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
+	var pid int
+	var wait func() error
+	if viaService {
+		viaService = false
+		if m, _ := b.service(ctx); m != nil {
+			if err := m.Start(ctx); err != nil {
+				// Interrupted, the start may have gone through: no core is
+				// spawned beside the one the service may be starting.
+				if ctx.Err() != nil {
+					return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fateLeft}
+				}
+				first, _, _ := strings.Cut(err.Error(), "\n")
+				fmt.Fprintf(errOut, "Starting Nearhost through its service failed (%s), so it was started directly.\n", printable(first))
+			} else {
+				viaService = true
+				// Stops asking the service once this returns.
+				waitCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				wait = serviceWait(waitCtx, m)
+			}
+		}
+	}
+	if !viaService {
+		pid, wait, err = b.spawn(b.exe(), args)
+		if err != nil {
+			return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
+		}
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- wait() }()
@@ -192,8 +287,14 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 		// The socket first: a core that answers and then stops at once
 		// was running, and whatever stopped it is not a failure to start.
 		if c, info, ok := detachInfo(ctx, b); ok {
-			// Another nearhost may have started the core that answers.
-			return c, info, !lost && (pid == 0 || info.PID == pid), nil
+			// Another nearhost may have started the core that answers. The
+			// service's core is known by what it says started it, as the
+			// service manager does not give its pid.
+			mine := !lost && (pid == 0 || info.PID == pid)
+			if viaService {
+				mine = mine && info.StartedBy == control.StartedService
+			}
+			return c, info, mine, nil
 		}
 		if !lost {
 			select {
@@ -217,10 +318,34 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 			switch {
 			case lost:
 				fate = fateOther
+			case viaService:
+				// The service's core is never the interface's to stop.
 			case startedBy == control.StartedTUI:
 				fate = stopSpawned(b, pid, exited, deadline)
 			}
 			return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fate}
+		}
+	}
+}
+
+// serviceWait is the wait of a core started through the service m: it
+// returns once m says the service is no longer active, which it is first
+// asked serviceGrace after the start, or once ctx ends.
+func serviceWait(ctx context.Context, m service.Manager) func() error {
+	return func() error {
+		delay := serviceGrace
+		for {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			// An error says nothing of whether it runs: the wait goes on
+			// until the core answers or the time is up.
+			if active, err := m.Active(ctx); err == nil && !active {
+				return nil
+			}
+			delay = servicePoll
 		}
 	}
 }
@@ -246,6 +371,9 @@ const (
 	// lock, or was found answering in place of the one started here: the
 	// core that runs is another's, and is left running.
 	fateOther
+	// fateNone is no core at all: the start was interrupted before one was
+	// started.
+	fateNone
 )
 
 // interruptedStart is the error of a start whose context ended: the

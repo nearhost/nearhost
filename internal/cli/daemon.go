@@ -90,6 +90,13 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 			return err
 		},
 	})
+	if by == control.StartedService && engine.IsAlreadyRunning(err) {
+		// The service starts a core at login whether or not one runs. That
+		// one serves, so this start has nothing to do, and is no failure
+		// for the service manager to report or retry.
+		fmt.Fprintln(log, "Another Nearhost is already running, so this service start does nothing.")
+		return nil
+	}
 	if err != nil {
 		fmt.Fprintln(log, "nearhost:", printableLines(err.Error()))
 	}

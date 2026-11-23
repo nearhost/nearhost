@@ -261,6 +261,43 @@ func TestDaemonRefusesASecondCore(t *testing.T) {
 	}
 }
 
+// A service starts its core at login whether or not one runs: beside another
+// core, the service's start does nothing and succeeds, so the service
+// manager does not count it a failure. Other starts still refuse.
+func TestServiceDaemonBesideACore(t *testing.T) {
+	u := newUpRun(t, &config.Config{})
+	u.noHosts = true
+	u.startDaemon()
+	u.waitForLog("Nothing is being served.\n")
+
+	// Ports of its own, so it is the instance lock that turns it away.
+	https, http := testutil.ProxyPorts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	daemon := func(by string) error {
+		var out syncBuffer
+		return executeInto(ctx, &out, newDaemonCmd(u.backend()), "daemon", "--started-by", by, "--no-hosts",
+			"--https-port", strconv.Itoa(https), "--http-port", strconv.Itoa(http), "--web-port", "0")
+	}
+	if err := daemon("service"); err != nil {
+		t.Errorf("the service's daemon returned %v", err)
+	}
+	if log := u.coreLog(); !strings.Contains(log, "Another Nearhost is already running, so this service start does nothing.\n") {
+		t.Errorf("the log does not say the service start did nothing:\n%s", log)
+	}
+	err := daemon("detached")
+	if !errors.Is(err, engine.ErrAlreadyRunning) {
+		t.Fatalf("the detached daemon returned %v", err)
+	}
+	if code := exitCode(err, io.Discard); code != 1 {
+		t.Errorf("exit code %d, want 1", code)
+	}
+	u.stillRunning()
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}
+
 func TestCoreLogRotates(t *testing.T) {
 	dir := testutil.TempDir(t, "log")
 	path := filepath.Join(dir, "core.log")
