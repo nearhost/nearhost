@@ -309,6 +309,19 @@ func (w *lineWriter) close() {
 	<-w.done
 }
 
+// lockedWriter takes one Write at a time, so writes from goroutines that
+// share an output never interleave.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
+}
+
 // approvalLine is what up and the core's log say of a request as it comes:
 // what it asks, and where to answer it. pageURL is the address of
 // Nearhost's page, or "" when it is not served. A proposal is only

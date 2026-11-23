@@ -115,7 +115,11 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	defer closeAgents()
 	eng := engine.New(cfg, opts)
 	ag.attach(eng)
-	p := &upPrinter{out: mode.out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
+	// The printer and the approval lines' writer share the output from
+	// goroutines of their own: each Write goes out whole, whatever the
+	// output is.
+	out := &lockedWriter{w: mode.out}
+	p := &upPrinter{out: out, eng: eng, keepRunning: mode.keepRunning, stamped: mode.stamped}
 	// The clients of the control API see what the engine publishes. The
 	// engine publishes an event once its state has changed, so a client
 	// that fetches the state on an event finds the change in it.
@@ -153,7 +157,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// that blocks must not hold up the agents, nor the answers. The page's
 	// address is fixed for the run once the engine has started.
 	pageURL, _ := eng.PageURL() // "" when the page is not served
-	lines := newLineWriter(mode.out, approvalLinesBuffer)
+	lines := newLineWriter(out, approvalLinesBuffer)
 	defer lines.close()
 	queue.onAdd = func(a control.Approval) {
 		line := approvalLine(a, pageURL)
