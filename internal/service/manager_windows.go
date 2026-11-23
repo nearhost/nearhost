@@ -31,12 +31,14 @@ func notFound(out []byte) bool {
 // errNotInstalled is what a command on a task that does not exist returns.
 var errNotInstalled = errors.New("the Nearhost task is not installed")
 
+// schtasks runs schtasks.exe. A failure carries its output, which the
+// caller can also test with notFound.
 func (m *taskManager) schtasks(ctx context.Context, args ...string) ([]byte, error) {
 	out, err := m.run(ctx, "schtasks.exe", args...)
-	if err != nil && !notFound(out) {
+	if err != nil {
 		return out, fmt.Errorf("schtasks %s: %w: %s", args[0], err, output(out))
 	}
-	return out, err
+	return out, nil
 }
 
 // Installed reads the task through PowerShell, in UTF-8: schtasks /Query /XML
