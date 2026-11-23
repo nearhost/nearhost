@@ -196,7 +196,8 @@ func runUp(cmd *cobra.Command, b upBackend, flags serveFlags, args []string) err
 // start has returned (started is closed), the summary of names, whose starts
 // returned startErrs, unless ctx has ended by then. The trust store's hint is
 // printed after the summary, whichever comes first. Everything is printed
-// from this goroutine, so lines never interleave.
+// from this goroutine, each event and the summary in one Write, so an
+// approval line from the core's writer never splits one.
 //
 // When the summary finds nothing served and nothing waiting (see
 // nothingToServe), it returns at once and reports true: up then stops as it

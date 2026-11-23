@@ -841,9 +841,19 @@ func TestHiddenTreeIndexSymlinkToAKeyIsMissing(t *testing.T) {
 // and no cookie of the page's to script, and it can't navigate the page.
 func TestDocumentsStaySandboxed(t *testing.T) {
 	for name, csp := range map[string]string{"fileCSP": fileCSP, "markdownCSP": markdownCSP} {
-		if !strings.Contains(csp, "sandbox") {
-			t.Errorf("%s %q has no sandbox", name, csp)
+		// The directive itself, by name: "sandboxed" or a sandbox inside
+		// another directive's value would not sandbox anything.
+		found := false
+		for _, d := range strings.Split(csp, ";") {
+			if f := strings.Fields(d); len(f) > 0 && f[0] == "sandbox" {
+				found = true
+			}
 		}
+		if !found {
+			t.Errorf("%s %q has no sandbox directive", name, csp)
+		}
+		// Neither belongs anywhere in the policy, so the whole of it is
+		// searched, not the directive's tokens alone.
 		for _, bad := range []string{"allow-same-origin", "allow-top-navigation"} {
 			if strings.Contains(csp, bad) {
 				t.Errorf("%s %q allows %s", name, csp, bad)

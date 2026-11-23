@@ -60,17 +60,18 @@ func changes(lines <-chan string, d time.Duration) int {
 }
 
 func TestEventsSignal(t *testing.T) {
-	signal := make(chan struct{}, 1)
+	// Unbuffered: each send returns once the stream has taken the signal,
+	// so both land in one window with no wait between them.
+	signal := make(chan struct{})
 	stopped := make(chan struct{})
 	h := New(Options{Core: newCore(), Watch: func() (<-chan struct{}, func()) {
 		return signal, func() { close(stopped) }
 	}})
 	lines, cancel := streamLines(t, h)
 	signal <- struct{}{}
-	time.Sleep(20 * time.Millisecond)
 	signal <- struct{}{}
 	if n := changes(lines, 600*time.Millisecond); n != 1 {
-		t.Fatalf("two signals within 50 ms gave %d changes, want 1", n)
+		t.Fatalf("two signals in one window gave %d changes, want 1", n)
 	}
 	signal <- struct{}{}
 	if n := changes(lines, 600*time.Millisecond); n != 1 {

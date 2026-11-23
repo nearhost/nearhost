@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -11,7 +12,10 @@ import (
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
-// upPrinter writes what `up` reports. It is used from one goroutine.
+// upPrinter writes what `up` reports. It is used from one goroutine, but
+// the core's approval lines go to the same output from another, so each
+// event with what follows it, and the summary, is written in one Write (see
+// atOnce): a line from elsewhere falls between them, never inside one.
 type upPrinter struct {
 	out io.Writer
 	// eng is read for the config too: a reload can add projects and
@@ -37,6 +41,25 @@ type upPrinter struct {
 // the time when p.stamped, and under a state change that needs attention,
 // what to do about it.
 func (p *upPrinter) event(ev engine.Event) {
+	p.atOnce(func() { p.writeEvent(ev) })
+}
+
+// atOnce runs write with p.out held back in a buffer, then writes what it
+// wrote in one Write.
+func (p *upPrinter) atOnce(write func()) {
+	out := p.out
+	var buf bytes.Buffer
+	p.out = &buf
+	defer func() {
+		p.out = out
+		if buf.Len() > 0 {
+			out.Write(buf.Bytes()) // unchecked, as every other line up prints
+		}
+	}()
+	write()
+}
+
+func (p *upPrinter) writeEvent(ev engine.Event) {
 	source, msg := "proxy", ev.Message
 	switch {
 	case ev.Project != "":
@@ -102,6 +125,11 @@ func (p *upPrinter) buffered(events <-chan engine.Event) {
 // ends with the line that says up is stopping, unless p.keepRunning. A core
 // that keeps running is stopped with `nearhost stop`, not Ctrl-C.
 func (p *upPrinter) summary(names []string, startErrs []error) (nothing bool) {
+	p.atOnce(func() { nothing = p.writeSummary(names, startErrs) })
+	return nothing
+}
+
+func (p *upPrinter) writeSummary(names []string, startErrs []error) (nothing bool) {
 	fmt.Fprintln(p.out)
 	for i, name := range names {
 		st := p.eng.Status(name)
