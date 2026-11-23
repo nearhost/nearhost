@@ -148,6 +148,30 @@ func TestServiceEnvJudgesADanglingLinkByItsTarget(t *testing.T) {
 	if err := os.Symlink(filepath.Join(forwarded, "gone", "agent.42"), link); err != nil {
 		t.Fatal(err)
 	}
+	judge(t, link, home)
+
+	// Through a chain of links, each followed to the end.
+	middle := filepath.Join(home, ".ssh", "middle")
+	if err := os.Rename(link, middle); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("middle", link); err != nil {
+		t.Fatal(err)
+	}
+	judge(t, link, home)
+
+	// A loop ends, and is judged where the following stopped.
+	if err := os.Remove(middle); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("ssh_auth_sock", middle); err != nil {
+		t.Fatal(err)
+	}
+	resolved(link)
+}
+
+func judge(t *testing.T, link, home string) {
+	t.Helper()
 	getenv := func(n string) string {
 		return map[string]string{"PATH": "/bin", "SSH_AUTH_SOCK": link}[n]
 	}

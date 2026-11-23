@@ -73,17 +73,31 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 // path that does not exist. A link to a path that does not exist, as one to
 // a forwarded agent's socket once that login has ended, is where it leads.
 func resolved(p string) string {
+	return follow(p, maxLinks)
+}
+
+// maxLinks is how many links follow goes through before it gives up, as on
+// a loop: Linux's own limit.
+const maxLinks = 40
+
+// follow is resolved with up to n more links to go through. A path that
+// does not exist is followed link by link to the one that is missing, and
+// that is returned with its folder resolved.
+func follow(p string, n int) string {
 	if p == "" {
 		return p
 	}
 	if r, err := resolve(p); err == nil {
 		return r
 	}
-	if t, err := os.Readlink(p); err == nil {
+	if t, err := os.Readlink(p); err == nil && n > 0 {
 		if !filepath.IsAbs(t) {
 			t = filepath.Join(filepath.Dir(p), t)
 		}
-		return filepath.Join(resolved(filepath.Dir(t)), filepath.Base(t))
+		return follow(t, n-1)
+	}
+	if dir := filepath.Dir(p); dir != p {
+		return filepath.Join(follow(dir, n), filepath.Base(p))
 	}
 	return p
 }
