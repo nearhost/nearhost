@@ -81,8 +81,11 @@ func plistValue(dec *xml.Decoder, start xml.StartElement) (any, error) {
 	case "false":
 		return false, dec.Skip()
 	case "string", "integer", "real", "date", "data":
+		// Decoded before the return: the order in which a return statement
+		// reads s and calls DecodeElement is not specified.
 		var s string
-		return s, dec.DecodeElement(&s, &start)
+		err := dec.DecodeElement(&s, &start)
+		return s, err
 	case "array":
 		var out []any
 		for {
