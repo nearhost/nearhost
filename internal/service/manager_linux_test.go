@@ -71,32 +71,36 @@ func TestInstallChangedReenables(t *testing.T) {
 // A changed unit that systemd fails to take is put back as it was, so the
 // next install sees the change again and retries what failed.
 func TestInstallChangedFailureRestoresTheUnit(t *testing.T) {
-	fail := false
-	f := &fakeRunner{handle: func(call string) ([]byte, error) {
-		if fail && strings.HasSuffix(call, "reenable nearhost-test.service") {
-			return []byte("Failed to reenable unit\n"), errors.New("exit status 1")
-		}
-		return nil, nil
-	}}
-	m := New(testNames, t.TempDir(), f.run)
-	d := plain()
-	if _, err := m.Install(context.Background(), d); err != nil {
-		t.Fatal(err)
-	}
-	next := d
-	next.Exe = "/opt/nearhost/bin/nearhost"
-	fail = true
-	if _, err := m.Install(context.Background(), next); err == nil {
-		t.Fatal("Install succeeded, want the reenable failure")
-	}
-	if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
-		t.Errorf("Installed = %+v, %v, %v; want the unit as it was, %+v", got, ok, err, d.For(Unit))
-	}
-	fail = false
-	f.reset()
-	changed, err := m.Install(context.Background(), next)
-	if err != nil || !changed || len(f.calls) != 2 {
-		t.Errorf("retry: Install = %v, %v, commands %q; want true, nil, the reload and reenable", changed, err, f.calls)
+	for _, failing := range []string{"daemon-reload", "reenable nearhost-test.service"} {
+		t.Run(failing, func(t *testing.T) {
+			fail := false
+			f := &fakeRunner{handle: func(call string) ([]byte, error) {
+				if fail && strings.HasSuffix(call, " "+failing) {
+					return []byte("Failed\n"), errors.New("exit status 1")
+				}
+				return nil, nil
+			}}
+			m := New(testNames, t.TempDir(), f.run)
+			d := plain()
+			if _, err := m.Install(context.Background(), d); err != nil {
+				t.Fatal(err)
+			}
+			next := d
+			next.Exe = "/opt/nearhost/bin/nearhost"
+			fail = true
+			if _, err := m.Install(context.Background(), next); err == nil {
+				t.Fatalf("Install succeeded, want the %s failure", failing)
+			}
+			if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
+				t.Errorf("Installed = %+v, %v, %v; want the unit as it was, %+v", got, ok, err, d.For(Unit))
+			}
+			fail = false
+			f.reset()
+			changed, err := m.Install(context.Background(), next)
+			if err != nil || !changed || len(f.calls) != 2 {
+				t.Errorf("retry: Install = %v, %v, commands %q; want true, nil, the reload and reenable", changed, err, f.calls)
+			}
+		})
 	}
 }
 
