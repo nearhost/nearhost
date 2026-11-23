@@ -56,9 +56,6 @@ type uiBackend struct {
 	// sshHosts lists the host names in the user's OpenSSH client config and
 	// the files it includes.
 	sshHosts func() ([]string, error)
-	// updateNotice delivers a line saying a new release is out, if one is;
-	// nil means no check.
-	updateNotice func() <-chan string
 	// stops listens, from the call until the release, for the signals
 	// that ask the process to stop. Each one the interface gets is
 	// handled as Ctrl-C: the first quits, the next cuts the shutdown
@@ -106,14 +103,13 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 			data, err := os.ReadFile(hosts.DefaultPath)
 			return string(data), err
 		},
-		lookup:       lookup,
-		open:         desktop.OpenURL,
-		workDir:      os.Getwd,
-		presets:      systemPresets(),
-		sshHosts:     transport.DefaultHosts,
-		updateNotice: func() <-chan string { return updates.wait() },
-		stops:        notifyUIStop,
-		detach:       systemDetach(),
+		lookup:   lookup,
+		open:     desktop.OpenURL,
+		workDir:  os.Getwd,
+		presets:  systemPresets(),
+		sshHosts: transport.DefaultHosts,
+		stops:    notifyUIStop,
+		detach:   systemDetach(),
 	}
 }
 
@@ -331,13 +327,6 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		if note := ignoredFlags(cmd, st); note != "" {
 			back.bus.Publish(engine.Event{Message: note})
 		}
-	}
-	if b.updateNotice != nil {
-		go func() {
-			for n := range b.updateNotice() {
-				back.bus.Publish(engine.Event{Message: n})
-			}
-		}()
 	}
 	err = b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)

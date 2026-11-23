@@ -293,3 +293,27 @@ func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
 		}
 	}
 }
+
+// A release newer than the core's is said after the core line, and only then.
+func TestStatusShowsUpdate(t *testing.T) {
+	st := testStatus
+	st.Update = "0.16.0"
+	serveStatus(t, st)
+	out, err := execute(t, newStatusCmd(nil), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 || !strings.Contains(lines[0], "is running") || lines[1] != "Nearhost 0.16.0 is available. Run nearhost update." {
+		t.Errorf("the line after the core line is not the update line:\n%s", out)
+	}
+
+	serveStatus(t, testStatus)
+	out, err = execute(t, newStatusCmd(nil), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "is available") {
+		t.Errorf("an update is said with none known:\n%s", out)
+	}
+}

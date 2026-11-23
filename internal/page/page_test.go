@@ -339,3 +339,17 @@ func eachFormHasToken(body string) bool {
 	forms := strings.Count(body, "<form")
 	return forms > 0 && strings.Count(body, `<input type="hidden" name="csrf" value="`+testToken+`">`) == forms
 }
+
+// The status page says a newer release is out, only when the core knows one.
+func TestStatusUpdateLine(t *testing.T) {
+	c := newCore()
+	c.status.Update = "0.16.0"
+	body := bodyOf(t, do(newPage(c), "GET", "/", nil))
+	if !strings.Contains(body, "Nearhost 0.16.0 is available. Run nearhost update.") {
+		t.Errorf("the status page lacks the update line:\n%s", body)
+	}
+	body = bodyOf(t, do(newPage(newCore()), "GET", "/", nil))
+	if strings.Contains(body, "is available") {
+		t.Errorf("the status page says an update is out with none known:\n%s", body)
+	}
+}

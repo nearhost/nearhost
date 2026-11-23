@@ -676,10 +676,7 @@ func updateHTTP() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 // not a terminal to say so on, not for a development build, and not when
 // NEARHOST_NO_UPDATE_CHECK is set.
 func shouldCheckForUpdate(args []string, getenv func(string) string, version string, elevated bool, tty bool) bool {
-	if getenv("NEARHOST_NO_UPDATE_CHECK") != "" || elevated || !tty {
-		return false
-	}
-	if !update.IsRelease(version) {
+	if !updateChecksAllowed(getenv, version) || elevated || !tty {
 		return false
 	}
 	for _, a := range args {
@@ -745,24 +742,6 @@ func (c *backgroundCheck) notice(grace time.Duration) string {
 		return ""
 	}
 	return fmt.Sprintf("A new nearhost is available: %s → %s. Run `nearhost update` to update.", c.current, c.latest)
-}
-
-// wait is the notice once the check has finished, on a channel the
-// interface can wait on without holding anything up.
-func (c *backgroundCheck) wait() <-chan string {
-	ch := make(chan string, 1)
-	if c == nil {
-		close(ch)
-		return ch
-	}
-	go func() {
-		<-c.done
-		if n := c.notice(0); n != "" {
-			ch <- n
-		}
-		close(ch)
-	}()
-	return ch
 }
 
 // cachedLatest is the background check's source: GitHub, asked at most once

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1164,5 +1165,13 @@ func TestRestartWithAnUnreadableServiceSpawns(t *testing.T) {
 	// The service manager did not start it, so it does not say it did.
 	if len(spawned) != 1 || !slices.Equal(spawned[0][:3], []string{"daemon", "--started-by", "detached"}) {
 		t.Errorf("spawned %q, want one core started directly, as detached", spawned)
+	}
+}
+
+// The core says when a new release is out, through the stream the log
+// follows: the interface keeps no check of its own.
+func TestUIBackendHasNoUpdateNotice(t *testing.T) {
+	if _, ok := reflect.TypeOf(uiBackend{}).FieldByName("updateNotice"); ok {
+		t.Error("uiBackend still has an updateNotice: the core tells the interface")
 	}
 }

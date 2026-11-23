@@ -160,6 +160,20 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 			StartedBy: mode.startedBy, Reloads: mode.watch,
 		},
 	}
+	// The core looks for a new release for as long as it runs, and says so
+	// once, through the events every client already follows. Its own
+	// context ends it, with the core's.
+	var updated sync.WaitGroup
+	defer updated.Wait()
+	if updateChecksAllowed(os.Getenv, Version) {
+		core.updates = newUpdateWatch(eng.Events().Publish)
+		updated.Add(1)
+		go func() {
+			defer updated.Done()
+			core.updates.run(ctx)
+		}()
+	}
+
 	// Nearhost's page shows the core's status and takes answers while it
 	// is served, from the core in this process, never through the control
 	// socket. It is put in place before any link to it is given: an
@@ -388,6 +402,8 @@ type coreBackend struct {
 	httpPort, webPort int
 	// noHosts is set when the core was started with --no-hosts.
 	noHosts bool
+	// updates is the check for a new release; nil when this core makes none.
+	updates *updateWatch
 	// retries counts the starts HostsChanged has under way, which the
 	// shutdown waits for. closed, under mu, is set once it has begun: a
 	// request still being answered then starts nothing.
@@ -407,6 +423,7 @@ func (c *coreBackend) Status() control.Status {
 	cfg := c.eng.Config()
 	st := control.Status{Info: c.info, Servers: []control.ServerInfo{}, Projects: []control.ProjectInfo{}, Approvals: []control.ApprovalInfo{}}
 	st.Page, _ = c.eng.PageURL() // "" when the page is not served
+	st.Update = c.updates.latestNewer()
 	for _, name := range serverNames(cfg) {
 		status, msg := c.eng.ServerStatus(name)
 		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(status), Message: msg})

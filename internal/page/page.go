@@ -161,6 +161,7 @@ func script(w http.ResponseWriter, r *http.Request) {
 // statusView is what / shows.
 type statusView struct {
 	base
+	Update       string // a newer release, without "v"; "" when none is known
 	Started      string // an age: "3 min ago"
 	StartedBy    string
 	WebPort      int
@@ -191,6 +192,7 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		base:      p.base("Nearhost"),
 		Started:   age(now, st.Info.Started),
 		StartedBy: startedBy(st.Info.StartedBy),
+		Update:    safetext.Line(st.Update),
 		WebPort:   state.WebPort,
 	}
 	for _, s := range st.Servers {
