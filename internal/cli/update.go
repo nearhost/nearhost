@@ -313,6 +313,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	if !update.Newer(current, latest) {
 		if update.IsRelease(current) {
 			fmt.Fprintf(out, "nearhost %s is the latest.\n", current)
+			if !check {
+				return restartOlderCore(cmd, b, yes, current)
+			}
 		} else if latest == "" {
 			fmt.Fprintf(out, "This is a development build of nearhost (%s). The newest release has no files for this platform.\n", Version)
 		} else {
@@ -415,6 +418,33 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		noBind = printSetcapAdvice(out, b, m, exe)
 	}
 	return restartAfterUpdate(cmd, b, in, yes, noBind, latest, restartExe(b, m, exe, path))
+}
+
+// restartOlderCore restarts a core in the background that runs a release
+// before current, this copy's, as after an update: this copy may have been
+// updated another way, as by brew upgrade, with the old core left running.
+// The restart asks and refuses as restartAfterUpdate does. A core of this
+// release or a later one, or none, is left be.
+func restartOlderCore(cmd *cobra.Command, b updateBackend, yes bool, current string) error {
+	if b.detach.dial == nil {
+		return nil
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, info, ok := detachInfo(ctx, b.detach); !ok || !update.Newer(info.Version, current) {
+		return nil
+	}
+	exe := b.exe()
+	m := update.DetectOn(b.goos, exe, b.getenv)
+	noBind := false
+	if b.goos == "linux" {
+		// The copy was replaced, which drops a capability as an update does.
+		noBind = printSetcapAdvice(cmd.OutOrStdout(), b, m, exe)
+	}
+	in := bufio.NewReader(cmd.InOrStdin())
+	return restartAfterUpdate(cmd, b, in, yes, noBind, current, restartExe(b, m, exe, exe))
 }
 
 // restartExe is the new binary a core is restarted on: path, the one

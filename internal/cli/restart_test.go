@@ -505,3 +505,60 @@ func TestUpdateServiceCoreWithAnUnreadableService(t *testing.T) {
 		t.Errorf("spawned %q, want one core started detached", got)
 	}
 }
+
+// A copy updated outside nearhost update, as by brew upgrade, is the latest,
+// while the core in the background still runs the release before: update
+// restarts it as it would after updating, with the same questions.
+func TestUpdateLatestRestartsAnOlderCore(t *testing.T) {
+	t.Run("restarted", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		f := updateFor(rig, false)
+		out, err := runUpdate(t, f, "0.6.0", "")
+		if err != nil {
+			t.Fatalf("err %v, out %q", err, out)
+		}
+		if want := "nearhost 0.6.0 is the latest.\n" + restartedLine; out != want {
+			t.Errorf("out %q, want %q", out, want)
+		}
+		want := append([]string{"/usr/local/bin/nearhost"}, restartArgs(control.StartedDetached, rig.old.st)...)
+		if got := rig.spawns(); len(got) != 1 || !slices.Equal(got[0], want) {
+			t.Errorf("spawned %q, want %q", got, want)
+		}
+	})
+	t.Run("live, asked", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		liveState(t, &rig.old.st)
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, true), "0.6.0", "n\n")
+		if err != nil {
+			t.Fatalf("err %v, out %q", err, out)
+		}
+		want := "nearhost 0.6.0 is the latest.\n" +
+			"Restart Nearhost now to run 0.6.0? This closes 2 passthroughs and 1 forward for a moment. [Y/n] " +
+			"Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+		if out != want || rig.stopped() {
+			t.Errorf("out %q, want %q; stopped %v", out, want, rig.stopped())
+		}
+	})
+	t.Run("check only", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, false), "0.6.0", "", "--check")
+		if err != nil || out != "nearhost 0.6.0 is the latest.\n" || rig.stopped() {
+			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
+		}
+	})
+	t.Run("a newer core", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.info.Version = "0.7.0"
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, false), "0.6.0", "")
+		if err != nil || out != "nearhost 0.6.0 is the latest.\n" || rig.stopped() {
+			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
+		}
+	})
+}

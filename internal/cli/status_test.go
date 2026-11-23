@@ -317,3 +317,28 @@ func TestStatusShowsUpdate(t *testing.T) {
 		t.Errorf("an update is said with none known:\n%s", out)
 	}
 }
+
+// A core that knows of a release this copy already is, as after brew
+// upgrade, is to be restarted rather than updated.
+func TestStatusUpdateThisCopyHas(t *testing.T) {
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+	st := testStatus
+	st.Update = "0.16.0"
+	for v, want := range map[string]string{
+		"0.16.0":  "This copy is 0.16.0; restart Nearhost to run it: nearhost stop, then nearhost -d.",
+		"v0.17.0": "This copy is 0.17.0; restart Nearhost to run it: nearhost stop, then nearhost -d.",
+		"0.15.0":  "Nearhost 0.16.0 is available. Run nearhost update.",
+		"dev":     "Nearhost 0.16.0 is available. Run nearhost update.",
+	} {
+		Version = v
+		serveStatus(t, st)
+		out, err := execute(t, newStatusCmd(nil), "status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lines := strings.Split(out, "\n"); len(lines) < 2 || lines[1] != want {
+			t.Errorf("this copy %s: the line after the core line is not %q:\n%s", v, want, out)
+		}
+	}
+}
