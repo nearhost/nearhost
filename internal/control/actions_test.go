@@ -214,10 +214,12 @@ func TestCapturedExchangeSaysWhy(t *testing.T) {
 
 func TestAnswerHasNoFiveSecondCap(t *testing.T) {
 	old := callTimeout
-	callTimeout = 50 * time.Millisecond
+	// Wide enough that a quick call on a loaded Windows runner still fits
+	// under the cap, and the slow answer still runs well past it.
+	callTimeout = 500 * time.Millisecond
 	t.Cleanup(func() { callTimeout = old })
 	b := newActionFake()
-	b.slow = 100 * time.Millisecond
+	b.slow = time.Second
 	c := dial(t, serve(t, b))
 	if err := c.AnswerPassthrough(context.Background(), "r1", "yes"); err != nil {
 		t.Fatalf("a slow answer failed: %v", err)
