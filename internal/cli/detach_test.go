@@ -447,10 +447,14 @@ func TestDetachAnotherCoreAnswersFirst(t *testing.T) {
 }
 
 // fakeService is an installed service that runs exe, whose Start calls start.
-// Active is what the test sets.
+// Active is what the test sets. installed, when set, is what Installed
+// returns instead.
 type fakeService struct {
-	exe   string
-	start func() error
+	exe       string
+	start     func() error
+	installed func(ctx context.Context) error
+	// startCtx, when set, is Start in place of start.
+	startCtx func(ctx context.Context) error
 
 	mu      sync.Mutex
 	active  bool
@@ -458,17 +462,23 @@ type fakeService struct {
 	lookups int
 }
 
-// lookup is the fake as a detachBackend's service.
-func (s *fakeService) lookup() func(context.Context) service.Manager {
-	return func(context.Context) service.Manager {
+// lookup is the fake as a detachBackend's service, looked up as the real
+// one is.
+func (s *fakeService) lookup() func(context.Context) (service.Manager, service.Definition) {
+	return func(ctx context.Context) (service.Manager, service.Definition) {
 		s.mu.Lock()
 		s.lookups++
 		s.mu.Unlock()
-		return s
+		return installedService(ctx, s)
 	}
 }
 
-func (s *fakeService) Installed(context.Context) (service.Definition, bool, error) {
+func (s *fakeService) Installed(ctx context.Context) (service.Definition, bool, error) {
+	if s.installed != nil {
+		if err := s.installed(ctx); err != nil {
+			return service.Definition{}, false, err
+		}
+	}
 	return service.Definition{Exe: s.exe}, true, nil
 }
 
@@ -480,14 +490,18 @@ func (s *fakeService) Uninstall(context.Context) error {
 	return errors.New("no service is removed in this test")
 }
 
-func (s *fakeService) Start(context.Context) error {
+func (s *fakeService) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.starts++
+	start, startCtx := s.start, s.startCtx
 	s.mu.Unlock()
-	if s.start == nil {
+	if startCtx != nil {
+		return startCtx(ctx)
+	}
+	if start == nil {
 		return nil
 	}
-	return s.start()
+	return start()
 }
 
 func (s *fakeService) Active(context.Context) (bool, error) {

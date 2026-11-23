@@ -463,10 +463,10 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 	viaService := false
 	if info.StartedBy == control.StartedService {
 		var m service.Manager
-		detach, m = detach.withService(ctx)
+		var d service.Definition
+		detach, m, d = detach.withService(ctx)
 		if m != nil {
-			d, ok, err := m.Installed(ctx)
-			if err == nil && ok && !samePath(d.Exe, detach.exe()) {
+			if !samePath(d.Exe, detach.exe()) {
 				fmt.Fprintf(cmd.OutOrStdout(), "Nearhost's service runs %s, which is %s. To have it run this copy (%s), run nearhost service install from it.\n", printable(d.Exe), printable(info.Version), Version)
 				return c, info, false, nil
 			}

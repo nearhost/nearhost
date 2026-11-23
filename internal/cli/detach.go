@@ -64,10 +64,11 @@ type detachBackend struct {
 	// timeout is how long to wait for the child to answer; zero is
 	// detachTimeout. Tests shorten it.
 	timeout time.Duration
-	// service is the manager of the installed service, or nil when none is
-	// installed (or the OS has none). Tests set a fake; a nil service is
+	// service is the manager of the installed service and what it runs, or
+	// a nil manager when none is installed (or the OS has none, or it cannot
+	// be read): see installedService. Tests set a fake; a nil service is
 	// never one.
-	service func(ctx context.Context) service.Manager
+	service func(ctx context.Context) (service.Manager, service.Definition)
 }
 
 // systemDetach is the production backend.
@@ -126,17 +127,12 @@ func systemDetach() detachBackend {
 			held, err := engine.InstanceRunning(dir)
 			return held && err == nil
 		},
-		service: func(ctx context.Context) service.Manager {
+		service: func(ctx context.Context) (service.Manager, service.Definition) {
 			home, err := os.UserHomeDir()
 			if err != nil {
-				return nil
+				return nil, service.Definition{}
 			}
-			m := service.New(service.DefaultNames, home, service.ExecRunner)
-			// A service that cannot be read is not one to start through.
-			if _, ok, err := m.Installed(ctx); err != nil || !ok {
-				return nil
-			}
-			return m
+			return installedService(ctx, service.New(service.DefaultNames, home, service.ExecRunner))
 		},
 	}
 }
@@ -190,7 +186,11 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	if c, info, ok := detachInfo(ctx, b); ok {
 		return c, info, false, nil
 	}
-	b, m := b.withService(ctx)
+	b, m, _ := b.withService(ctx)
+	// Interrupted while looking, nothing was started, and nothing is.
+	if err := ctx.Err(); err != nil {
+		return nil, control.Info{}, false, interruptedStart{err: err, fate: fateLeft}
+	}
 	viaService := m != nil && slices.Equal(args, []string{"daemon", "--started-by", string(startedBy)})
 	if m != nil && !viaService {
 		fmt.Fprintln(cmd.ErrOrStderr(), "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.")
@@ -198,16 +198,28 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	return startCore(cmd, b, args, startedBy, viaService)
 }
 
-// withService looks for the installed service once, and returns its manager,
-// nil when there is none, with b, whose service gives that answer from then
-// on without looking again.
-func (b detachBackend) withService(ctx context.Context) (detachBackend, service.Manager) {
-	var m service.Manager
-	if b.service != nil {
-		m = b.service(ctx)
+// installedService returns m and what its service runs when that service is
+// installed, and a nil manager otherwise. A service that cannot be read is
+// not one to start through: it counts as none.
+func installedService(ctx context.Context, m service.Manager) (service.Manager, service.Definition) {
+	d, ok, err := m.Installed(ctx)
+	if err != nil || !ok {
+		return nil, service.Definition{}
 	}
-	b.service = func(context.Context) service.Manager { return m }
-	return b, m
+	return m, d
+}
+
+// withService looks for the installed service once, and returns its manager,
+// nil when there is none, and what it runs, with b, whose service gives that
+// answer from then on without looking again.
+func (b detachBackend) withService(ctx context.Context) (detachBackend, service.Manager, service.Definition) {
+	var m service.Manager
+	var d service.Definition
+	if b.service != nil {
+		m, d = b.service(ctx)
+	}
+	b.service = func(context.Context) (service.Manager, service.Definition) { return m, d }
+	return b, m, d
 }
 
 // startCore dials the core, or starts one with args, which say it was
@@ -235,8 +247,13 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 	var wait func() error
 	if viaService {
 		viaService = false
-		if m := b.service(ctx); m != nil {
+		if m, _ := b.service(ctx); m != nil {
 			if err := m.Start(ctx); err != nil {
+				// Interrupted, the start may have gone through: no core is
+				// spawned beside the one the service may be starting.
+				if ctx.Err() != nil {
+					return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fateLeft}
+				}
 				first, _, _ := strings.Cut(err.Error(), "\n")
 				fmt.Fprintf(errOut, "Starting Nearhost through its service failed (%s), so it was started directly.\n", printable(first))
 			} else {

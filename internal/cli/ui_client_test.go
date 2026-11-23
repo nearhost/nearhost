@@ -1080,3 +1080,83 @@ func TestNoRestartForAnotherExe(t *testing.T) {
 		t.Error("the service's core was stopped")
 	}
 }
+
+// Ctrl-C while the service is looked for or started ends the wait: the
+// interrupted command fails as the manager's would, so nothing is spawned
+// beside a core the service may be starting, and no fallback is said.
+func TestServiceStartInterrupted(t *testing.T) {
+	interrupt := func(sigs chan os.Signal) func(ctx context.Context) error {
+		return func(ctx context.Context) error {
+			sigs <- os.Interrupt
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	for _, during := range []string{"lookup", "start"} {
+		t.Run(during, func(t *testing.T) {
+			core := newSteeredCore(t, configHome(t))
+			sigs := make(chan os.Signal, 1)
+			svc := &fakeService{exe: "/bin/nearhost"}
+			if during == "lookup" {
+				svc.installed = interrupt(sigs)
+			} else {
+				svc.startCtx = interrupt(sigs)
+			}
+			ran := false
+			b := fakeUI(t, true, &ran)
+			b.stops = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+			b.detach = core.detach(nil) // a spawn is an error
+			b.detach.service = svc.lookup()
+			_, stderr, code := runRootSplit(t, uiRoot(b))
+			if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || stderr != want {
+				t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
+			}
+			wantStarts := 1
+			if during == "lookup" {
+				wantStarts = 0
+			}
+			if starts, _ := svc.counts(); starts != wantStarts {
+				t.Errorf("the service was started %d times, want %d", starts, wantStarts)
+			}
+		})
+	}
+}
+
+// A service that cannot be read counts as none: its core of another release
+// is restarted directly, as with no service, not through the manager.
+func TestRestartWithAnUnreadableServiceSpawns(t *testing.T) {
+	cfgPath := configHome(t)
+	old := newSteeredCore(t, cfgPath)
+	old.info.Version = "0.0.1"
+	old.info.StartedBy = control.StartedService
+	old.serve()
+	svc := &fakeService{
+		exe:       "/opt/nearhost/bin/nearhost",
+		installed: func(context.Context) error { return errors.New("launchctl print: exit status 5") },
+		start: func() error {
+			t.Error("the service was started")
+			return nil
+		},
+	}
+	var spawned [][]string
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.detach = old.detach(func(args []string) {
+		spawned = append(spawned, args)
+		core := newSteeredCore(t, cfgPath)
+		core.info.StartedBy = control.StartedService
+		core.serve()
+	})
+	b.detach.service = svc.lookup()
+	root := uiRoot(b)
+	root.SetIn(strings.NewReader("y\n"))
+	if _, stderr, code := runRootSplit(t, root); code != 0 || !ran {
+		t.Fatalf("exit %d, ran %v, stderr %q", code, ran, stderr)
+	}
+	if !slices.Contains(old.asked(), "Stop") {
+		t.Error("the old core was not stopped")
+	}
+	if len(spawned) != 1 || !slices.Equal(spawned[0][:3], []string{"daemon", "--started-by", "service"}) {
+		t.Errorf("spawned %q, want one core started directly", spawned)
+	}
+}
