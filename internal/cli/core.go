@@ -52,6 +52,17 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// Before anything reads the CA's directory, so this run serves from
 	// where it lands.
 	migrateCA(cmd.ErrOrStderr())
+	// The watcher looks at the file before it is read, so a change saved
+	// from here on is applied once the watcher runs, after the engine
+	// starts.
+	var watcher *config.Watcher
+	if mode.watch {
+		path, err := configPath(cmd)
+		if err != nil {
+			return err
+		}
+		watcher = config.NewWatcher(path)
+	}
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
 		return err
@@ -181,7 +192,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if mode.watch {
 		go func() {
 			defer close(watched)
-			watchConfig(watchCtx, ops)
+			watchConfig(watchCtx, ops, watcher)
 		}()
 	} else {
 		close(watched)
@@ -278,13 +289,14 @@ func (e alreadyRunning) Error() string {
 // engine.ErrAlreadyRunning.
 func (e alreadyRunning) Unwrap() error { return e.err }
 
-// watchConfig applies the config file to the engine through ops each time a
-// change to it has settled, until ctx ends: one Apply at a time with the
-// clients' reloads, and pruning the agents' grants as they do. A file that
-// cannot be loaded or applied leaves the engine serving what it served, and
-// that is said as an event of the engine's, which the printer prints like
-// any other: the engine's own "config applied" says when one was applied.
-func watchConfig(ctx context.Context, ops *coreOps) {
+// watchConfig applies the config file, which w watches, to the engine
+// through ops each time a change to it has settled, until ctx ends: one
+// Apply at a time with the clients' reloads, and pruning the agents' grants
+// as they do. A file that cannot be loaded or applied leaves the engine
+// serving what it served, and that is said as an event of the engine's,
+// which the printer prints like any other: the engine's own "config
+// applied" says when one was applied.
+func watchConfig(ctx context.Context, ops *coreOps, w *config.Watcher) {
 	path := ops.path
 	bad := func(err error) {
 		if ctx.Err() != nil {
@@ -297,11 +309,11 @@ func watchConfig(ctx context.Context, ops *coreOps) {
 		}
 		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
 	}
-	// What Watch read and validated is applied: it refuses a file caught
+	// What the watcher read and validated is applied: it refuses a file caught
 	// empty or half saved. A client's Reload reads in Apply's turn, so it
 	// never applies an older read over this one; should this one be older
 	// than a Reload's, the change after it is seen on the next poll.
-	config.Watch(ctx, path, coreWatchInterval, func(cfg *config.Config) {
+	w.Run(ctx, coreWatchInterval, func(cfg *config.Config) {
 		if err := ops.Apply(ctx, cfg); err != nil {
 			bad(err)
 		}
