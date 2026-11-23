@@ -4,7 +4,16 @@
   <p>Answered: {{.Answered}}.</p>
   <p><a href="/">Back to Nearhost's page</a></p>
   {{- else if .Gone}}
+  {{- if .Error}}
+  <div class="asks">
+    {{- range .Lines}}
+    <p>{{.}}</p>
+    {{- end}}
+  </div>
+  <p class="error" role="alert" data-stay>It could not be opened: {{.Error}}</p>
+  {{- else}}
   <p>This request has been answered or has ended.</p>
+  {{- end}}
   <p><a href="/">Back to Nearhost's page</a></p>
   {{- else}}
   <div class="asks">

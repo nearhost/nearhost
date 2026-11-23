@@ -29,6 +29,13 @@ import (
 // and whose engine has a change pending for "two" that serves next's hosts.
 func pendingOps(t *testing.T, next []string) (*coreOps, string) {
 	t.Helper()
+	return pendingOpsOn(t, next, 0)
+}
+
+// pendingOpsOn is pendingOps with Nearhost's page served on webPort, or not
+// when it is 0.
+func pendingOpsOn(t *testing.T, next []string, webPort int) (*coreOps, string) {
+	t.Helper()
 	one := localProject("one", 8001, true)
 	one.Routes[0].Hosts = []string{"x.local.example.io"}
 	two := localProject("two", 8002, true)
@@ -48,7 +55,7 @@ func pendingOps(t *testing.T, next []string) (*coreOps, string) {
 	review := func(context.Context, config.Project, discovery.FileReader) engine.Review {
 		return engine.Review{Pending: &engine.Change{SHA256: "new", Project: changed, Items: items}}
 	}
-	u := &coreOps{eng: engine.New(cfg, engine.Options{Review: review}), path: path}
+	u := &coreOps{eng: engine.New(cfg, engine.Options{Review: review, WebPort: webPort}), path: path}
 	if err := u.Recheck(context.Background(), "two"); err != nil {
 		t.Fatal(err)
 	}
@@ -361,22 +368,31 @@ func TestCoreStateListsGrants(t *testing.T) {
 // Status lists the queue's requests, then the changes that wait, each with its
 // link on the page, or without one when the page is not served.
 func TestCoreStatusListsWhatWaits(t *testing.T) {
-	u, _ := pendingOps(t, []string{"shop.example.com", "api.example.com"})
-	u.approvals = newApprovals(control.NewHub(), time.Now)
-	t.Cleanup(u.approvals.close)
-	u.approvals.ReviewPassthrough(agentapi.PassRequest{ID: "p1", Origin: "mini", Requester: "claude", Remote: 5173, Expires: time.Now().Add(time.Hour)})
-	b := &coreBackend{coreOps: u, ctx: context.Background()}
+	status := func(webPort int) control.Status {
+		u, _ := pendingOpsOn(t, []string{"shop.example.com", "api.example.com"}, webPort)
+		u.approvals = newApprovals(control.NewHub(), time.Now)
+		t.Cleanup(u.approvals.close)
+		u.approvals.ReviewPassthrough(agentapi.PassRequest{ID: "p1", Origin: "mini", Requester: "claude", Remote: 5173, Expires: time.Now().Add(time.Hour)})
+		b := &coreBackend{coreOps: u, ctx: context.Background()}
+		return b.Status()
+	}
 
-	st := b.Status()
-	if st.Page != "" || len(st.Approvals) != 2 || st.Approvals[0].ID != "p1" || st.Approvals[0].URL != "" {
+	st := status(0)
+	if st.Page != "" || len(st.Approvals) != 2 || st.Approvals[0].ID != "p1" || st.Approvals[0].URL != "" || st.Approvals[1].URL != "" {
 		t.Fatalf("without a page: %+v", st)
 	}
 	if want := "two's .nearhostrc asks for shop.example.com, api.example.com"; st.Approvals[1].Summary != want {
 		t.Errorf("change summary = %q, want %q", st.Approvals[1].Summary, want)
 	}
 
-	u.eng = engine.New(u.eng.Config(), engine.Options{HTTPSPort: 8443, WebPort: 6327, Review: nil})
-	if st := b.Status(); st.Page != "https://nearhost.localhost:6327" {
-		t.Errorf("page = %q", st.Page)
+	st = status(6327)
+	if st.Page != "https://nearhost.localhost:6327" || len(st.Approvals) != 2 {
+		t.Fatalf("with the page: %+v", st)
+	}
+	if got, want := st.Approvals[0].URL, "https://nearhost.localhost:6327/approve/p1"; got != want {
+		t.Errorf("passthrough link = %q, want %q", got, want)
+	}
+	if got, want := st.Approvals[1].URL, "https://nearhost.localhost:6327/change/two"; got != want {
+		t.Errorf("change link = %q, want %q", got, want)
 	}
 }

@@ -2,7 +2,7 @@
   <h1>{{.Title}}</h1>
   {{- if .Answered}}
   <p>Answered: {{.Answered}}.</p>
-  {{- else if and .Gone (not .Error)}}
+  {{- else if .Gone}}
   <p>This request has been answered or has ended.</p>
   {{- else}}
   {{- if .Items}}

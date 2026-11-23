@@ -397,7 +397,7 @@ func TestDocumentAnswerNoAndFailures(t *testing.T) {
 	e.sh.showErr = fmt.Errorf("%w: --web-port is 0", ErrNoPage)
 	e.sh.mu.Unlock()
 	err := e.s.AnswerDocument(context.Background(), id, AnswerYes)
-	if !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNoPage) {
+	if !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNotOpened) || !errors.Is(err, ErrNoPage) {
 		t.Fatalf("a failed show: %v", err)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/documents/"+id, ""); out["state"] != "declined" || !strings.Contains(fmt.Sprint(out["reason"]), "--web-port is 0") {
@@ -1101,5 +1101,33 @@ func TestDocumentNoHoldsBackTheQueue(t *testing.T) {
 	}
 	if len(e.sh.showed()) != 0 {
 		t.Fatal("a held request was shown")
+	}
+}
+
+// A second answer while the first still shows the document is told so, by
+// an error that does not say the request ended.
+func TestDocumentAnsweredWhileShowing(t *testing.T) {
+	e := newDocServer(t, true)
+	id := askDoc(t, e, "plan.md")
+	gate := make(chan struct{})
+	e.sh.mu.Lock()
+	e.sh.gate = gate
+	e.sh.mu.Unlock()
+	first := make(chan error, 1)
+	go func() { first <- e.s.AnswerDocument(context.Background(), id, AnswerYes) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(e.sh.showed()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("Show did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	err := e.s.AnswerDocument(context.Background(), id, AnswerYes)
+	if !errors.Is(err, ErrBeingAnswered) || errors.Is(err, ErrPassEnded) || err.Error() != "the request for plan.md is already being answered" {
+		t.Fatalf("answer while showing: %v", err)
+	}
+	close(gate)
+	if err := <-first; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -135,7 +135,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	doc := path.Clean(req.Path)
 
-	ctx, cancel := detached(r.Context(), openTimeout)
+	ctx, cancel := detached(r.Context(), OpenTimeout)
 	res, err := s.opts.Shower.Resolve(ctx, o, doc, path.Clean(req.Root))
 	cancel()
 	switch {
@@ -268,7 +268,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	ctx, cancel = detached(r.Context(), openTimeout)
+	ctx, cancel = detached(r.Context(), OpenTimeout)
 	url, err := s.opts.Shower.Show(ctx, o, res.Root, res.Doc, req.Requester)
 	cancel()
 	s.mu.Lock()

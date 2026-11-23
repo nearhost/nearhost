@@ -1,6 +1,7 @@
 package page
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,7 +44,8 @@ type approveView struct {
 	// Advice follows the lines: what to do instead of answering here.
 	Advice  string
 	Buttons []button
-	// Error is why the answer given failed.
+	// Error is why the answer given failed. With Gone set, it is why the
+	// answer ended the request.
 	Error string
 	// Answered is the answer given, once it has been, and Gone is set when
 	// the request waits no longer: either replaces the request.
@@ -86,8 +88,10 @@ func (p *page) gone(w http.ResponseWriter, r *http.Request, status int) {
 // answer serves POST /approve/{id}: it gives the core the answer in the
 // form's answer field, then sends the browser to the view that says it was
 // given. An answer the request does not offer is refused, and nothing is
-// called. A request that no longer waits gets 409, and an answer the core
-// could not give shows its error on the request's view.
+// called. A request that no longer waits, or that another answer still
+// opens, gets 409, and an answer the core
+// could not give shows its error on the request's view, as does one that
+// ended the request because what it asked for could not be opened.
 func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ans := r.PostFormValue("answer")
@@ -104,17 +108,30 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "That answer is not one this request offers. Open the request again and choose one of its buttons.", http.StatusBadRequest)
 		return
 	}
+	// The browser going away does not cancel an open midway, which would
+	// decline the agent's request with "context canceled": the open has
+	// the agent API's own time instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentapi.OpenTimeout)
+	defer cancel()
 	var err error
 	switch {
 	case a.Proposal != nil:
 		p.o.Core.DeclineProposal(id, declineReason)
 	case a.Pass != nil:
-		err = p.o.Core.AnswerPassthrough(r.Context(), id, ans)
+		err = p.o.Core.AnswerPassthrough(ctx, id, ans)
 	case a.Doc != nil:
-		err = p.o.Core.AnswerDocument(r.Context(), id, ans)
+		err = p.o.Core.AnswerDocument(ctx, id, ans)
 	}
 	switch {
-	case errors.Is(err, control.ErrRequestEnded):
+	case errors.Is(err, agentapi.ErrNotOpened):
+		// The answer ended the request, as what it asked for could not be
+		// opened: say why, with nothing left to answer.
+		v := p.approveView(a, false)
+		v.Gone, v.Error = true, safetext.Line(err.Error())
+		render(w, r, "approve", http.StatusBadGateway, v)
+		return
+	case errors.Is(err, control.ErrRequestEnded), errors.Is(err, agentapi.ErrBeingAnswered):
+		// Another answer won, or still opens it: this one has lost.
 		p.gone(w, r, http.StatusConflict)
 		return
 	case err != nil:
@@ -253,15 +270,20 @@ const realDomainNote = "Serving it here hides the real site on this machine."
 
 // change serves /change/{name}: what the project's .nearhostrc asks for
 // that needs approval, and the answers it takes. With answered set to an
-// answer, once no change waits, it says the answer was given.
+// answer, once no change waits, it says the answer was given. An approval
+// is saved at once but applied when the config is next read, so with sha
+// set too it says so while the change it approved still waits.
 func (p *page) change(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pending := p.o.Core.State().Projects[name].Pending
+	q := r.URL.Query()
+	label, given := changeLabels[q.Get("answered")]
+	applying := pending != nil && q.Get("answered") == "approve" && q.Get("sha") != "" && q.Get("sha") == pending.SHA256
+	if given && (pending == nil || applying) {
+		render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
+		return
+	}
 	if pending == nil {
-		if label, given := changeLabels[r.URL.Query().Get("answered")]; given {
-			render(w, r, "change", http.StatusOK, changeView{base: p.base("Answered"), Answered: label})
-			return
-		}
 		render(w, r, "change", http.StatusNotFound, changeView{base: p.base("Nothing to review"), Gone: true})
 		return
 	}
@@ -317,15 +339,21 @@ func (p *page) answerChange(w http.ResponseWriter, r *http.Request) {
 		p.o.Core.DeclineChange(name, sha)
 	}
 	if err != nil {
+		// With no change waiting, another answer has ended it; otherwise
+		// the one that waits now is shown, with why this answer failed.
 		v := changeView{base: p.base("Review " + nearhostrc.FileName + " for " + safetext.Line(name)), Gone: true}
 		if now := p.o.Core.State().Projects[name].Pending; now != nil {
 			v = p.changeView(name, now)
+			v.Error = safetext.Line(err.Error())
 		}
-		v.Error = safetext.Line(err.Error())
 		render(w, r, "change", http.StatusConflict, v)
 		return
 	}
-	http.Redirect(w, r, "/change/"+url.PathEscape(name)+"?answered="+ans, http.StatusSeeOther)
+	answered := url.Values{"answered": {ans}}
+	if ans == "approve" {
+		answered.Set("sha", sha)
+	}
+	http.Redirect(w, r, "/change/"+url.PathEscape(name)+"?"+answered.Encode(), http.StatusSeeOther)
 }
 
 // sortedNames lists m's keys in order.

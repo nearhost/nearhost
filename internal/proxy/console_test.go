@@ -92,7 +92,7 @@ func TestConsoleNeedsTheCookie(t *testing.T) {
 			if !strings.Contains(body, "Open Nearhost&#39;s page from this machine first") && !strings.Contains(body, "Open Nearhost's page from this machine first") {
 				t.Errorf("GET %s: body lacks the heading:\n%s", name, body)
 			}
-			if !strings.Contains(body, "Run nearhost status here and open the page address it prints, or press o in nearhost. Then open this link again.") {
+			if !strings.Contains(body, "Run nearhost status here and open the page address it prints, or click the page address in nearhost. Then open this link again.") {
 				t.Errorf("GET %s: body lacks the advice", name)
 			}
 			if strings.Contains(body, "abc") {
@@ -206,10 +206,15 @@ func TestConsoleMethods(t *testing.T) {
 			t.Errorf("POST %s: status %d, want 405", p, w.Code)
 		}
 	}
-	for _, p := range []string{"/approve/abc", "/approve/a/b", "/approve/", "/change/", "/events/x"} {
+	// A console path refuses the method; a path that is none is not found.
+	for p, want := range map[string]int{
+		"/approve/abc": http.StatusMethodNotAllowed, "/change/myapp": http.StatusMethodNotAllowed,
+		"/events": http.StatusMethodNotAllowed, "/approve/a/b": http.StatusNotFound,
+		"/approve/": http.StatusNotFound, "/change/": http.StatusNotFound, "/events/x": http.StatusNotFound,
+	} {
 		r := withCookieMethod("DELETE", p, secret)
-		if w := serveHomeRequest(t, r); w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
-			t.Errorf("DELETE %s: status %d", p, w.Code)
+		if w := serveHomeRequest(t, r); w.Code != want {
+			t.Errorf("DELETE %s: status %d, want %d", p, w.Code, want)
 		}
 	}
 	for _, p := range []string{"/approve/a/b", "/approve/", "/events/x", "/nope"} {

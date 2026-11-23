@@ -16,7 +16,6 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
-	"github.com/nearhost/nearhost/internal/proxy"
 )
 
 // statusNotRunning is what `nearhost status` says when no core answers.
@@ -79,7 +78,15 @@ func runStatus(cmd *cobra.Command, asJSON bool) error {
 		_, err = fmt.Fprintf(out, "%s\n", b)
 		return err
 	}
-	return printStatus(out, st, stdoutIsTerminal())
+	// The key is the core's: the one its page checks, wherever this
+	// process would look for it. A pipe or a log keeps no secret.
+	page := ""
+	if st.Page != "" && stdoutIsTerminal() {
+		if keyed, err := c.PageKeyURL(ctx); err == nil {
+			page = keyed
+		}
+	}
+	return printStatus(out, st, page)
 }
 
 // stdoutIsTerminal reports whether status writes to a terminal, where the
@@ -88,9 +95,11 @@ var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd()))
 
 // printStatus writes st as a line about the core, then a table of its
 // servers and one of its projects, aligned as `ls` aligns its own, then what
-// waits for an answer and the page's address. The address carries the page's
-// key only when terminal is true: a pipe or a log keeps no secret.
-func printStatus(w io.Writer, st control.Status, terminal bool) error {
+// waits for an answer and the page's address: keyed, the address with the
+// page's key, when it is set, and otherwise the address without it.
+func printStatus(out io.Writer, st control.Status, keyed string) error {
+	// The first write that fails is the error, as for a closed pipe.
+	w := &stickyWriter{w: out}
 	info := st.Info
 	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
 		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
@@ -133,14 +142,28 @@ func printStatus(w io.Writer, st control.Status, terminal bool) error {
 	}
 	if st.Page != "" {
 		page := st.Page
-		if terminal {
-			if keyed, err := proxy.PageKeyURL(st.Page); err == nil {
-				page = keyed
-			}
+		if keyed != "" {
+			page = keyed
 		}
 		fmt.Fprintf(w, "\nPage: %s\n", printable(page))
 	}
-	return nil
+	return w.err
+}
+
+// stickyWriter writes to w until a write fails, then keeps that error and
+// writes nothing more.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) Write(b []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.w.Write(b)
+	s.err = err
+	return n, err
 }
 
 // writeTable writes rows in aligned columns. Every cell ends with a tab, so

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,6 +27,15 @@ func (c statusCore) Status() control.Status           { return c.st }
 func (c statusCore) State() control.State             { return control.State{Info: c.st.Info} }
 func (c statusCore) Stop()                            {}
 func (c statusCore) HostsChanged(ctx context.Context) {}
+
+// PageKeyURL is the page's address with the core's key, which status
+// prints on a terminal.
+func (c statusCore) PageKeyURL() (string, error) {
+	if c.st.Page == "" {
+		return "", errors.New("Nearhost's page isn't served")
+	}
+	return c.st.Page + "/?k=the-core-s-key", nil
+}
 
 // serveStatus answers st on the control socket of the test's own config
 // folder, where status looks.
@@ -208,7 +218,8 @@ func TestStatusPageKeyedOnTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327/?k=") {
+	// The key is the core's, not one this process would find.
+	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327/?k=the-core-s-key\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	// The approval links stay without the key.
@@ -248,5 +259,37 @@ func TestStatusJSONHasApprovalsAndPage(t *testing.T) {
 	}
 	if strings.Contains(out, "?k=") {
 		t.Errorf("JSON carries the key:\n%s", out)
+	}
+}
+
+// failingWriter fails each write that contains bad.
+type failingWriter struct{ bad string }
+
+var errClosedPipe = errors.New("closed pipe")
+
+func (f failingWriter) Write(b []byte) (int, error) {
+	if strings.Contains(string(b), f.bad) {
+		return 0, errClosedPipe
+	}
+	return len(b), nil
+}
+
+// A write that fails, as to a closed pipe, is printStatus's error wherever
+// it falls.
+func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
+	noProjects := testStatus
+	noProjects.Projects = nil
+	for _, c := range []struct {
+		name string
+		st   control.Status
+		bad  string
+	}{
+		{"no projects", noProjects, "No projects"},
+		{"approvals", waitingStatus(), "Waiting"},
+		{"page", waitingStatus(), "Page:"},
+	} {
+		if err := printStatus(failingWriter{c.bad}, c.st, ""); !errors.Is(err, errClosedPipe) {
+			t.Errorf("%s: printStatus = %v", c.name, err)
+		}
 	}
 }

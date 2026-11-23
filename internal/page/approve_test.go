@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
@@ -171,6 +173,21 @@ func TestAnsweredElsewhere(t *testing.T) {
 	}
 }
 
+// An answer while another still opens the request has lost, as one after
+// it has: 409, and nothing left to answer.
+func TestAnswerWhileAnotherOpens(t *testing.T) {
+	c := newCore(passApproval("p1", true))
+	c.err = fmt.Errorf("the request for port 5173 is %w", agentapi.ErrBeingAnswered)
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 409 || !strings.Contains(body, "This request has been answered or has ended.") {
+		t.Errorf("an answer while another opens: %d\n%s", resp.StatusCode, body)
+	}
+	if got := buttons(body); len(got) != 0 || strings.Contains(body, "<form") {
+		t.Errorf("an answer while another opens offers %q:\n%s", got, body)
+	}
+}
+
 func TestAnswerErrorShown(t *testing.T) {
 	c := newCore(passApproval("p1", true))
 	c.err = errors.New("port 3000 on leto: not connected")
@@ -184,6 +201,24 @@ func TestAnswerErrorShown(t *testing.T) {
 	}
 	if got := buttons(body); len(got) != 3 {
 		t.Errorf("a request that still waits offers %q", got)
+	}
+}
+
+// A Yes that ended the request, because it could not be opened, says why
+// with nothing left to answer, rather than that it was answered elsewhere.
+func TestAnswerNotOpenedShowsWhy(t *testing.T) {
+	c := &endingCore{newCore(passApproval("p1", true))}
+	c.err = errors.Join(errors.New("apollo: not connected; run nearhost doctor"), agentapi.ErrNotOpened, control.ErrRequestEnded)
+	resp := do(newPage(c), "POST", "/approve/p1", answer("p1", "yes"))
+	body := bodyOf(t, resp)
+	if resp.StatusCode != 502 || !strings.Contains(body, "apollo: not connected; run nearhost doctor") || !strings.Contains(body, "Claude Code on leto") {
+		t.Errorf("a failed open: %d\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "This request has been answered or has ended.") {
+		t.Errorf("a failed open reads as answered elsewhere:\n%s", body)
+	}
+	if got := buttons(body); len(got) != 0 || strings.Contains(body, "<form") {
+		t.Errorf("a request that waits no longer offers %q:\n%s", got, body)
 	}
 }
 
@@ -209,6 +244,61 @@ func (c *endingCore) AnswerPassthrough(ctx context.Context, id, answer string) e
 	err := c.fakeCore.AnswerPassthrough(ctx, id, answer)
 	c.state.Approvals = nil
 	return err
+}
+
+// slowCore is a fakeCore whose answers block until release closes, then
+// record their context's error and deadline.
+type slowCore struct {
+	*fakeCore
+	started, release chan struct{}
+	ctxErr           error
+	deadline         time.Time
+}
+
+func (c *slowCore) wait(ctx context.Context) {
+	c.started <- struct{}{}
+	<-c.release
+	c.ctxErr = ctx.Err()
+	c.deadline, _ = ctx.Deadline()
+}
+
+func (c *slowCore) AnswerPassthrough(ctx context.Context, id, answer string) error {
+	c.wait(ctx)
+	return c.fakeCore.AnswerPassthrough(ctx, id, answer)
+}
+
+func (c *slowCore) AnswerDocument(ctx context.Context, id, answer string) error {
+	c.wait(ctx)
+	return c.fakeCore.AnswerDocument(ctx, id, answer)
+}
+
+// A browser that goes away while the answer opens does not cancel it: the
+// open runs on, bounded by the agent API's open time.
+func TestAnswerOutlivesTheBrowser(t *testing.T) {
+	for _, a := range []control.Approval{passApproval("p1", true), docApproval("p1")} {
+		c := &slowCore{fakeCore: newCore(a), started: make(chan struct{}, 1), release: make(chan struct{})}
+		ctx, hangUp := context.WithCancel(context.Background())
+		r := httptest.NewRequestWithContext(ctx, "POST", "/approve/p1", strings.NewReader(answer("p1", "yes").Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			newPage(c).ServeHTTP(httptest.NewRecorder(), r)
+		}()
+		<-c.started
+		hangUp()
+		close(c.release)
+		<-done
+		if c.ctxErr != nil {
+			t.Errorf("the hang-up cancelled the answer: %v", c.ctxErr)
+		}
+		if left := time.Until(c.deadline); left <= 0 || left > agentapi.OpenTimeout {
+			t.Errorf("the answer's deadline is %v away, want within %v", left, agentapi.OpenTimeout)
+		}
+		if got := c.called(); len(got) != 1 {
+			t.Errorf("calls %q", got)
+		}
+	}
 }
 
 // changeCore is a core whose project web's .nearhostrc waits on a change:
@@ -254,15 +344,21 @@ func TestChangeApprove(t *testing.T) {
 		t.Errorf("a form lacks the token:\n%s", body)
 	}
 	resp = do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"approve"}, "sha": {"sha1"}})
-	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=approve" {
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/change/web?answered=approve&sha=sha1" {
 		t.Fatalf("approve: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if got := c.called(); !slices.Equal(got, []string{"AcceptChange web sha1"}) {
 		t.Errorf("calls %q", got)
 	}
-	// While the change still waits, answered shows it, not an answer.
-	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); strings.Contains(body, "Answered") || !strings.Contains(body, "api.example.com") {
-		t.Errorf("answered while the change waits:\n%s", body)
+	// The approval is saved, but the change waits until the config is read
+	// again: the answer shows for the change approved, and for no other.
+	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve&sha=sha1", nil)); !strings.Contains(body, "Answered: Approved.") || buttons(body) != nil {
+		t.Errorf("approved while the change is applied:\n%s", body)
+	}
+	for _, q := range []string{"answered=approve", "answered=approve&sha=sha0", "answered=decline&sha=sha1"} {
+		if body := bodyOf(t, do(newPage(c), "GET", "/change/web?"+q, nil)); strings.Contains(body, "Answered") || !strings.Contains(body, "api.example.com") {
+			t.Errorf("%s answered while the change waits:\n%s", q, body)
+		}
 	}
 	c.state.Projects["web"] = engine.ProjectStatus{}
 	if body := bodyOf(t, do(newPage(c), "GET", "/change/web?answered=approve", nil)); !strings.Contains(body, "Answered: Approved.") {
@@ -299,5 +395,20 @@ func TestChangeStale(t *testing.T) {
 	}
 	if resp := do(newPage(c), "GET", "/change/api", nil); resp.StatusCode != 404 {
 		t.Errorf("a project with no change: %d", resp.StatusCode)
+	}
+}
+
+// An answer to a change that no longer waits, as one answered in another
+// window, says it has ended, not that the file changed again.
+func TestChangeAnsweredElsewhere(t *testing.T) {
+	for _, ans := range []string{"approve", "decline"} {
+		c := changeCore()
+		c.state.Projects["web"] = engine.ProjectStatus{}
+		c.err = errors.New("the .nearhostrc changed again; review it again")
+		resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {ans}, "sha": {"sha1"}})
+		body := bodyOf(t, resp)
+		if resp.StatusCode != 409 || !strings.Contains(body, "This request has been answered or has ended.") || strings.Contains(body, "changed again") || buttons(body) != nil {
+			t.Errorf("%s: %d\n%s", ans, resp.StatusCode, body)
+		}
 	}
 }

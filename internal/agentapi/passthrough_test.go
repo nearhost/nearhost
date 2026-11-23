@@ -467,11 +467,42 @@ func TestPassthroughOpenFails(t *testing.T) {
 	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
 	id := out["id"].(string)
 	err := e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
-	if err == nil || err.Error() != "ssh: the forward failed" || !errors.Is(err, ErrPassEnded) || !errors.Is(err, e.p.err) {
+	if err == nil || err.Error() != "ssh: the forward failed" || !errors.Is(err, ErrPassEnded) || !errors.Is(err, ErrNotOpened) || !errors.Is(err, e.p.err) {
 		t.Fatalf("got %v", err)
+	}
+	// Answering it again finds it ended, not that it failed to open.
+	err = e.s.AnswerPassthrough(context.Background(), id, AnswerYes)
+	if !errors.Is(err, ErrPassEnded) || errors.Is(err, ErrNotOpened) {
+		t.Fatalf("again: %v", err)
 	}
 	if _, out := call(t, e.remote, "GET", "/v1/passthroughs/"+id, ""); out["state"] != "declined" || out["reason"] != "ssh: the forward failed" {
 		t.Fatalf("%v", out)
+	}
+}
+
+// A second answer while the first still opens the request is told so, by
+// an error that does not say the request ended, and opens nothing.
+func TestPassthroughAnsweredWhileOpening(t *testing.T) {
+	e := newPassServer(t, true)
+	_, out := e.ask(t, `{"port": 3000, "requester": "claude-code"}`)
+	id := out["id"].(string)
+	release := e.p.blocking()
+	defer release()
+	first := make(chan error, 1)
+	go func() { first <- e.s.AnswerPassthrough(context.Background(), id, AnswerYes) }()
+	e.waitStarted(t)
+	for _, a := range []Answer{AnswerYes, AnswerNo} {
+		err := e.s.AnswerPassthrough(context.Background(), id, a)
+		if !errors.Is(err, ErrBeingAnswered) || errors.Is(err, ErrPassEnded) || err.Error() != "the request for port 3000 is already being answered" {
+			t.Fatalf("answer %v while opening: %v", a, err)
+		}
+	}
+	release()
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.p.opened()); n != 1 {
+		t.Fatalf("%d opens, want 1", n)
 	}
 }
 
