@@ -79,9 +79,7 @@ func TestServiceJourney(t *testing.T) {
 	if err := os.WriteFile(exe, src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The Linux manager finds its unit folder through XDG_CONFIG_HOME in this
-	// process, so it is left alone here: the service gets the sandbox's
-	// folders through its own environment instead.
+	// The service gets the sandbox's folders through its own environment.
 	def := service.Definition{
 		Exe:  exe,
 		Args: sb.serveArgs(),
