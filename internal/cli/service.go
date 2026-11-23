@@ -187,9 +187,11 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		if err != nil {
 			return err
 		}
-		if !spawned {
+		// A core that answers as the service's is its own, whoever started it:
+		// a manager may start the job on install.
+		if !spawned && info.StartedBy != control.StartedService {
 			// Another nearhost started a core while this one did.
-			fmt.Fprintf(out, "%s Nearhost is already running (started by %s), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.\n", installed, printable(string(info.StartedBy)))
+			fmt.Fprintln(out, installed+handedOver(info))
 			return nil
 		}
 		fmt.Fprintf(out, "%s Nearhost is running now (pid %d).\n", installed, info.PID)
@@ -211,9 +213,14 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		}
 		fmt.Fprintln(out, "Restarted Nearhost with the new settings.")
 	default:
-		fmt.Fprintf(out, "%s Nearhost is already running (started by %s), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.\n", installed, printable(string(info.StartedBy)))
+		fmt.Fprintln(out, installed+handedOver(info))
 	}
 	return nil
+}
+
+// handedOver is what install adds when a core that is not the service's runs.
+func handedOver(info control.Info) string {
+	return fmt.Sprintf(" Nearhost is already running (started by %s), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.", printable(string(info.StartedBy)))
 }
 
 // stopCore asks the core c to stop and waits until it has gone.
@@ -258,6 +265,10 @@ func runServiceUninstall(cmd *cobra.Command, b serviceBackend) error {
 		stopped = true
 	}
 	if err := m.Uninstall(ctx); err != nil {
+		if stopped {
+			// Said before the error, as the user may think it still runs.
+			fmt.Fprintln(out, "Stopped Nearhost, which the service ran.")
+		}
 		return serviceFailure(cmd, err)
 	}
 	msg := "Removed the Nearhost service."

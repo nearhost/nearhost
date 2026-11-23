@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -105,6 +106,10 @@ func serviceInstalled(ctx context.Context, manager func() service.Manager) bool 
 	if m == nil {
 		return false
 	}
+	// A manager may start a program to answer, as Windows does: it is not
+	// waited for long.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	_, ok, err := m.Installed(ctx)
 	return ok && err == nil
 }

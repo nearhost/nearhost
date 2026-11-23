@@ -24,6 +24,8 @@ type recordingService struct {
 	got       service.Definition
 	// onStart runs on Start, as the service manager starting the core.
 	onStart func()
+	// uninstallErr is what Uninstall returns.
+	uninstallErr error
 }
 
 func (r *recordingService) note(s string) {
@@ -50,7 +52,10 @@ func (r *recordingService) Install(_ context.Context, d service.Definition) (boo
 	return r.changed, r.err
 }
 
-func (r *recordingService) Uninstall(context.Context) error { r.note("uninstall"); return nil }
+func (r *recordingService) Uninstall(context.Context) error {
+	r.note("uninstall")
+	return r.uninstallErr
+}
 
 func (r *recordingService) Start(context.Context) error {
 	r.note("start")
@@ -220,6 +225,9 @@ func TestReinstallAsksToRestart(t *testing.T) {
 					t.Errorf("gone events %v", *x.log)
 				}
 			} else {
+				if len(*x.log) != 0 {
+					t.Errorf("Nearhost was stopped: gone events %v", *x.log)
+				}
 				if got := x.m.log(); got != "install" {
 					t.Errorf("calls %q", got)
 				}
@@ -344,5 +352,43 @@ func TestStatusRunningByServiceAddsNothing(t *testing.T) {
 	out, err := execute(t, newStatusCmd(func() service.Manager { return m }), "status")
 	if err != nil || strings.Contains(out, "A service is installed") {
 		t.Fatalf("err %v, out %q", err, out)
+	}
+}
+
+// A core that says the service started it, found once install has run, is
+// the service's: install says it is running, not that another core is.
+func TestInstallFindsTheServiceCoreStartedByTheManager(t *testing.T) {
+	x := newServiceFixture(t)
+	dial := x.b.detach.dial
+	dials := 0
+	x.b.detach.dial = func() (*control.Client, error) {
+		dials++
+		if dials == 2 {
+			x.f.answer(control.Info{API: 1, PID: 88, StartedBy: control.StartedService})
+		}
+		return dial()
+	}
+	out, err := x.run(t, "", "service", "install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Nearhost is running now (pid 88).") || strings.Contains(out, "already running") {
+		t.Errorf("out %q", out)
+	}
+	if got := x.m.log(); got != "install" {
+		t.Errorf("calls %q", got)
+	}
+}
+
+func TestUninstallFailureSaysNearhostWasStopped(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.uninstallErr = errors.New("launchctl failed")
+	x.f.answer(control.Info{API: 1, PID: 9, StartedBy: control.StartedService})
+	out, err := x.run(t, "", "service", "uninstall")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if !strings.Contains(out, "Stopped Nearhost, which the service ran.") || !strings.Contains(out, "launchctl failed") {
+		t.Errorf("out %q", out)
 	}
 }
