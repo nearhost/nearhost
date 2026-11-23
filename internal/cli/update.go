@@ -738,7 +738,8 @@ func updateHTTP() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 // shouldCheckForUpdate reports whether this run of nearhost checks for a new
 // release in the background: not for the commands about versions and help,
 // not for bare `nearhost`, `up` and `daemon`, whose core says so through the
-// events they show, not elevated (as root, or an elevated Windows process),
+// events they show, not for `status`, which says what the core found, not
+// elevated (as root, or an elevated Windows process),
 // which is the hosts helper running with administrator rights, not when stderr is
 // not a terminal to say so on, not for a development build, and not when
 // NEARHOST_NO_UPDATE_CHECK is set.
@@ -755,7 +756,11 @@ func shouldCheckForUpdate(root *cobra.Command, args []string, getenv func(string
 	// The command cobra resolves, past any root flags before it: the root
 	// itself is the interface, or `nearhost -d`.
 	cmd, _, err := root.Find(args)
-	if err != nil || cmd == root || cmd.Name() == "up" || cmd.Name() == "daemon" {
+	if err != nil || cmd == root {
+		return false
+	}
+	switch cmd.Name() {
+	case "up", "daemon", "status":
 		return false
 	}
 	return true
