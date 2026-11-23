@@ -215,7 +215,7 @@ func TestConfigFlagOverridesTheDefaultPath(t *testing.T) {
 // A seam left nil would only show as a panic on a real machine, so check the
 // production backends without calling anything in them.
 func TestSystemBackendsLeaveNoSeamUnset(t *testing.T) {
-	for name, backend := range map[string]any{"up": systemUp(hosts.DNSLookup), "add": systemAdd(), "doctor": systemDoctor(hosts.DNSLookup), "trust": systemTrust(), "update": systemUpdate()} {
+	for name, backend := range map[string]any{"up": systemUp(hosts.DNSLookup), "add": systemAdd(), "doctor": systemDoctor(hosts.DNSLookup), "trust": systemTrust(), "service": systemService(), "update": systemUpdate()} {
 		v := reflect.ValueOf(backend)
 		for i := 0; i < v.NumField(); i++ {
 			// The ssh-agent service query and the Firefox check exist only on

@@ -71,7 +71,7 @@ var testStatus = control.Status{
 
 func TestStatusPrints(t *testing.T) {
 	serveStatus(t, testStatus)
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestStatusSaysWhenItDoesNotReload(t *testing.T) {
 	st.Info.StartedBy = control.StartedForeground
 	st.Projects = nil
 	serveStatus(t, st)
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestStatusSaysWhenItDoesNotReload(t *testing.T) {
 
 func TestStatusJSON(t *testing.T) {
 	serveStatus(t, testStatus)
-	out, err := execute(t, newStatusCmd(), "status", "--json")
+	out, err := execute(t, newStatusCmd(nil), "status", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestStatusNotRunning(t *testing.T) {
 
 func statusRoot() *cobra.Command {
 	root := newRootCmd()
-	root.AddCommand(newStatusCmd())
+	root.AddCommand(newStatusCmd(nil))
 	return root
 }
 
@@ -168,7 +168,7 @@ func setStdoutTerminal(t *testing.T, tty bool) {
 func TestStatusListsApprovals(t *testing.T) {
 	setStdoutTerminal(t, false)
 	serveStatus(t, waitingStatus())
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestStatusApprovalWithoutPage(t *testing.T) {
 	st.Page = ""
 	st.Approvals = []control.ApprovalInfo{{ID: "a1", Summary: "Claude Code on mini asks to open port 5173"}}
 	serveStatus(t, st)
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestStatusApprovalWithoutPage(t *testing.T) {
 func TestStatusNoApprovalsNoHeading(t *testing.T) {
 	setStdoutTerminal(t, false)
 	serveStatus(t, testStatus)
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestStatusPageKeyedOnTerminal(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	setStdoutTerminal(t, true)
 	serveStatus(t, waitingStatus())
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestStatusPageUnkeyedInAPipe(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	setStdoutTerminal(t, false)
 	serveStatus(t, waitingStatus())
-	out, err := execute(t, newStatusCmd(), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestStatusJSONHasApprovalsAndPage(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	setStdoutTerminal(t, true)
 	serveStatus(t, waitingStatus())
-	out, err := execute(t, newStatusCmd(), "status", "--json")
+	out, err := execute(t, newStatusCmd(nil), "status", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}

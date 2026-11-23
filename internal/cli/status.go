@@ -16,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/service"
 )
 
 // statusNotRunning is what `nearhost status` says when no core answers.
@@ -25,7 +26,9 @@ const statusNotRunning = "Nearhost is not running. Start it with nearhost -d, or
 // service manager's status command gives for a service that is not running.
 const statusNotRunningCode = 3
 
-func newStatusCmd() *cobra.Command {
+// newStatusCmd is `nearhost status`. manager gives the service manager, which
+// it asks only when no core runs; nil, or one that returns nil, is none.
+func newStatusCmd(manager func() service.Manager) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -35,7 +38,7 @@ func newStatusCmd() *cobra.Command {
 			"--json it prints the same as JSON. It exits 3 when Nearhost is not running.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd, asJSON)
+			return runStatus(cmd, asJSON, manager)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the status as JSON")
@@ -43,7 +46,7 @@ func newStatusCmd() *cobra.Command {
 }
 
 // runStatus is `nearhost status`.
-func runStatus(cmd *cobra.Command, asJSON bool) error {
+func runStatus(cmd *cobra.Command, asJSON bool, manager func() service.Manager) error {
 	runDir, err := config.RunDir()
 	if err != nil {
 		return err
@@ -64,6 +67,9 @@ func runStatus(cmd *cobra.Command, asJSON bool) error {
 			w = cmd.ErrOrStderr()
 		}
 		fmt.Fprintln(w, statusNotRunning)
+		if serviceInstalled(ctx, manager) {
+			fmt.Fprintln(w, "A service is installed: start it with nearhost -d.")
+		}
 		return exitError{code: statusNotRunningCode, msg: statusNotRunning}
 	}
 	if err != nil {
@@ -87,6 +93,20 @@ func runStatus(cmd *cobra.Command, asJSON bool) error {
 		}
 	}
 	return printStatus(out, st, page)
+}
+
+// serviceInstalled reports whether a service is installed. A manager that
+// cannot say adds nothing to what status tells.
+func serviceInstalled(ctx context.Context, manager func() service.Manager) bool {
+	if manager == nil {
+		return false
+	}
+	m := manager()
+	if m == nil {
+		return false
+	}
+	_, ok, err := m.Installed(ctx)
+	return ok && err == nil
 }
 
 // stdoutIsTerminal reports whether status writes to a terminal, where the

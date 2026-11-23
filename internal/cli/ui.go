@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -507,25 +506,7 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 // leaves it, and anything else is asked again. Input that ends unanswered
 // leaves it.
 func askRestart(in io.Reader, out io.Writer, old string) bool {
-	r := bufio.NewReader(in)
-	for {
-		fmt.Fprintf(out, "Nearhost in the background is %s; this is %s. Restart it now? [Y/n] ", printable(old), Version)
-		line, err := r.ReadString('\n')
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "", "y", "yes":
-			if err != nil && line == "" {
-				fmt.Fprintln(out)
-				return false
-			}
-			return true
-		case "n", "no":
-			return false
-		}
-		if err != nil {
-			fmt.Fprintln(out)
-			return false
-		}
-	}
+	return askYesNo(in, out, fmt.Sprintf("Nearhost in the background is %s; this is %s. Restart it now? [Y/n] ", printable(old), Version))
 }
 
 // sameConfig refuses a --config that names another file than served, the
