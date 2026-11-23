@@ -154,7 +154,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	core := &coreBackend{
 		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
 		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
-		noHosts: flags.noHosts,
+		noHosts: flags.noHosts, noCapture: flags.noCapture,
 		info: control.Info{
 			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
 			StartedBy: mode.startedBy, Reloads: mode.watch,
@@ -409,6 +409,8 @@ type coreBackend struct {
 	httpPort, webPort int
 	// noHosts is set when the core was started with --no-hosts.
 	noHosts bool
+	// noCapture is set when the core was started with --no-capture.
+	noCapture bool
 	// updates is the check for a new release; nil when this core makes none.
 	updates *updateWatch
 	// retries counts the starts HostsChanged has under way, which the
@@ -472,7 +474,7 @@ func (c *coreBackend) Status() control.Status {
 // State is what this core is and serves, and the ports it serves on.
 func (c *coreBackend) State() control.State {
 	st := c.coreOps.State()
-	st.Info, st.HTTPPort, st.WebPort, st.NoHosts = c.info, c.httpPort, c.webPort, c.noHosts
+	st.Info, st.HTTPPort, st.WebPort, st.NoHosts, st.NoCapture = c.info, c.httpPort, c.webPort, c.noHosts, c.noCapture
 	return st
 }
 

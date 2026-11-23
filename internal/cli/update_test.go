@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -78,6 +79,8 @@ type fakeUpdate struct {
 	// lowUnreadable is that it could not be read.
 	lowStart      int
 	lowUnreadable bool
+	// detach reaches the running core; nil is none running.
+	detach *detachBackend
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -86,7 +89,12 @@ func (f *fakeUpdate) backend() updateBackend {
 	if limit == 0 {
 		limit = time.Minute
 	}
+	det := detachBackend{dial: func() (*control.Client, error) { return nil, control.ErrNotRunning }}
+	if f.detach != nil {
+		det = *f.detach
+	}
 	return updateBackend{
+		detach: det,
 		latest: func(context.Context) (string, error) { return f.latest, f.err },
 		exe:    func() string { return f.exe },
 		// Go's default GOPATH is under USERPROFILE on Windows.

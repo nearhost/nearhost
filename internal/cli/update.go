@@ -30,6 +30,8 @@ import (
 
 // updateBackend is the seam between `nearhost update` and the machine.
 type updateBackend struct {
+	// detach reaches the running core, to restart it on the new binary.
+	detach detachBackend
 	// latest returns the latest released version.
 	latest func(ctx context.Context) (string, error)
 	// exe is the running binary's path with symlinks resolved.
@@ -103,6 +105,7 @@ func readUnprivilegedPortStart() (int, bool) {
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
+		detach: systemDetach(),
 		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
 		exe:    realExecutable,
 		getenv: os.Getenv,
@@ -219,12 +222,13 @@ func probePath(b updateBackend, m update.Method, exe string) string {
 }
 
 // verifyUpdate checks that the nearhost the next run starts is latest, now
-// that the update command m has succeeded. It prints and returns the
-// failure: the binary does not start, or it is still another version.
-func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe, latest string) error {
+// that the update command m has succeeded, and returns its path, "" when that
+// cannot be told. It prints and returns the failure: the binary does not
+// start, or it is still another version.
+func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m update.Method, exe, latest string) (string, error) {
 	path := probePath(b, m, exe)
 	if path == "" {
-		return nil
+		return "", nil
 	}
 	byHand := m.String()
 	if byHand == "" { // a Windows copy nearhost replaces itself
@@ -244,10 +248,10 @@ func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m up
 			msg += " Another nearhost comes before pnpm's on PATH."
 		}
 	default:
-		return nil
+		return path, nil
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), msg)
-	return exitError{code: 1, msg: msg}
+	return "", exitError{code: 1, msg: msg}
 }
 
 // downloadTimeLimit is the longest the Windows download may take. The
@@ -357,6 +361,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	// A Windows copy from the PowerShell installer or a zip: nearhost
 	// downloads the release itself.
 	native := m.Kind == update.Script && b.goos == "windows"
+	// One reader for every question: a reader of its own for each would
+	// leave the next answer in the buffer of the one before.
+	in := bufio.NewReader(cmd.InOrStdin())
 	if !yes {
 		switch {
 		case !b.interactive() && native:
@@ -370,7 +377,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		default:
 			fmt.Fprintf(out, "Run `%s`? [Y/n] ", m)
 		}
-		answer, rerr := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+		answer, rerr := in.ReadString('\n')
 		answer = strings.ToLower(strings.TrimSpace(answer))
 		// An empty line is the default, yes. A read that failed or hit the
 		// end of input with no text (stdin closed, /dev/null, Ctrl-D) is
@@ -398,40 +405,56 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	} else if err := runAside(ctx, cmd, b, m, exe, latest, native); err != nil {
 		return err
 	}
-	if err := verifyUpdate(ctx, cmd, b, m, exe, latest); err != nil {
+	path, err := verifyUpdate(ctx, cmd, b, m, exe, latest)
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
+	noBind := false
 	if b.goos == "linux" {
-		printSetcapAdvice(out, b, m, exe)
+		noBind = printSetcapAdvice(out, b, m, exe)
 	}
-	return nil
+	return restartAfterUpdate(cmd, b, in, yes, noBind, latest, restartExe(b, m, exe, path))
+}
+
+// restartExe is the new binary a core is restarted on: path, the one
+// verifyUpdate checked, or the binary behind it when that is pnpm's shim,
+// which is a script that only starts it. On Windows, where the running exe
+// was moved aside, the new one is at its path.
+func restartExe(b updateBackend, m update.Method, exe, path string) string {
+	if m.Kind == update.PNPM {
+		if bin, ok := realBinary(b, m, exe); ok {
+			return bin
+		}
+	}
+	return path
 }
 
 // printSetcapAdvice tells the user how to let the new binary bind ports 80
 // and 443 again, when it cannot. A file capability belongs to the file, so
 // every update that replaces the binary drops it. Nothing is printed when
 // the new binary has the capability; when that cannot be checked, the
-// command is printed anyway.
-func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe string) {
+// command is printed anyway. It reports whether it printed it.
+func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe string) bool {
 	if first, ok := b.unprivilegedPortStart(); ok && first <= 80 {
-		return // this system lets any program bind ports 80 and 443
+		return false // this system lets any program bind ports 80 and 443
 	}
 	bin, found := realBinary(b, m, exe)
 	if found {
 		if has, known := b.netBindCap(bin); known && has {
-			return
+			return false
 		}
 	}
 	const lead = "Let the new binary bind ports 80 and 443 again"
 	if found {
 		fmt.Fprintf(out, "%s:\n\n  %s\n", lead, doctor.SetcapFix(bin))
-		return
+		return true
 	}
 	// The path the user runs may be a launcher script, which a capability
 	// does nothing for, so say so rather than print it as the binary.
 	run := probePath(b, m, exe)
 	fmt.Fprintf(out, "%s. Nearhost could not tell which file is the binary, so check that %s is the binary and not a launcher script before running:\n\n  %s\n", lead, printable(run), doctor.SetcapFix(run))
+	return true
 }
 
 // realBinary is the file the new nearhost runs as, the one setcap must

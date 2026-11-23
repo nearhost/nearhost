@@ -75,7 +75,10 @@ type State struct {
 	WebPort    int    `json:"webPort"`
 	// NoHosts is set when the core does not manage the hosts file: it was
 	// started with --no-hosts.
-	NoHosts      bool                            `json:"noHosts"`
+	NoHosts bool `json:"noHosts"`
+	// NoCapture is set when the core keeps no requests and responses in
+	// memory: it was started with --no-capture.
+	NoCapture    bool                            `json:"noCapture"`
 	Projects     map[string]engine.ProjectStatus `json:"projects"`
 	Servers      map[string]ServerState          `json:"servers"`
 	Passthroughs []engine.Passthrough            `json:"passthroughs"`
