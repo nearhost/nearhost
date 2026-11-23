@@ -33,7 +33,7 @@ Nearhost gives each project a name, a certificate your browser trusts and forwar
 - **Presets when you want them.** Framework-specific setups, such as Docker Compose, Laravel Sail or Vite, come from preset registries. No registry is trusted until you add one, and you can publish and trust your own.
 - **Your traffic stays yours.** No relay, no account and no public URL. Requests travel over your own SSH connection.
 - **Tidy about your machine.** Nearhost owns one marked block in `/etc/hosts` (`C:\Windows\System32\drivers\etc\hosts` on Windows), with each name on `127.0.0.1` and `::1`, asks for `sudo` only when that block changes (on Windows, you approve the change in a prompt), and removes it again with `nearhost hosts clean`.
-- **Runs in the foreground.** `nearhost up` serves until you press Ctrl-C, and the forwards close with it. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
+- **Runs in the background.** `nearhost -d`, or a service that starts at login, keeps your projects served with no terminal open; `nearhost` opens the interface, and `nearhost up` still runs in the foreground for scripts. `nearhost doctor` tells you what is wrong, and how to fix it, before you start.
 
 ## Install
 
