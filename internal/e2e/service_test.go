@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,10 +61,18 @@ func TestServiceJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := context.Background()
+	mgr := service.New(serviceNames, home, nil)
 	// The service's binary stays put for the whole journey: TestMain's folder
 	// goes when the package's tests end, which a failed Uninstall would
 	// outlive. The copy is removed after Uninstall.
 	scratch := filepath.Join(home, ".nht")
+	// The journey removes its service when it ends, so it refuses to start
+	// over one it did not install: only an earlier run's, which runs a copy
+	// in scratch, is replaced.
+	if d, ok, err := mgr.Installed(ctx); err != nil || ok && !strings.HasPrefix(d.Exe, filepath.Join(scratch, "svc-e2e-")) {
+		t.Fatalf("a service named %v is installed that this journey did not install (%+v, %v); remove it first", serviceNames, d, err)
+	}
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +102,6 @@ func TestServiceJourney(t *testing.T) {
 		LogPath: sb.dir + "/service.log",
 	}
 
-	ctx := context.Background()
-	mgr := service.New(serviceNames, home, nil)
 	t.Cleanup(func() {
 		// Stop the core first, as the caller of Uninstall must.
 		sb.nearhost("stop")
