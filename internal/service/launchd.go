@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 )
 
 const plistHeader = `<?xml version="1.0" encoding="UTF-8"?>
@@ -133,7 +132,7 @@ func plistValue(dec *xml.Decoder, start xml.StartElement) (any, error) {
 			}
 		}
 	}
-	return nil, io.ErrUnexpectedEOF
+	return nil, errors.New("unexpected <" + start.Name.Local + "> in the plist")
 }
 
 func definitionFromPlist(top []plistPair) (Definition, error) {

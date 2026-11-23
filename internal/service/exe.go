@@ -11,7 +11,7 @@ import (
 const nvmDir = "/.nvm/versions/node/"
 
 func copyError(how string) error {
-	return errors.New("This copy of nearhost was " + how + " for one run, so a service could not start it later. " +
+	return errors.New("This copy of nearhost was " + how + ", so a service could not start it later. " +
 		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy.")
 }
 
@@ -19,17 +19,15 @@ func copyError(how string) error {
 // binary exe, and a note for the user ("" for none). It refuses a copy that
 // will not be there at the next login.
 func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(string) (string, error)) (path, note string, err error) {
-	slashed := filepath.ToSlash(exe)
-	if goos == "windows" {
-		slashed = strings.ReplaceAll(exe, `\`, "/")
+	slashed := strings.ReplaceAll(exe, `\`, "/")
+	kind := update.DetectOn(goos, exe, getenv).Kind
+	if kind == update.Ephemeral {
+		return "", "", copyError("fetched by npx for one run")
 	}
-	if update.DetectOn(goos, exe, getenv).Kind == update.Ephemeral {
-		return "", "", copyError("fetched by npx")
-	}
-	if strings.Contains(slashed, "/go-build") {
+	if inGoBuild(slashed) {
 		return "", "", copyError("built by go run")
 	}
-	if update.DetectOn(goos, exe, getenv).Kind == update.Homebrew {
+	if kind == update.Homebrew {
 		if p, e := lookPath("nearhost"); e == nil && sameFile(p, exe) {
 			return p, "", nil
 		}
@@ -52,4 +50,17 @@ func sameFile(a, b string) bool {
 	}
 	rb, err := filepath.EvalSymlinks(b)
 	return err == nil && ra == rb
+}
+
+// inGoBuild reports whether the slash-separated path p is inside go run's
+// build directory: a segment that is "go-build" or "go-build" and digits
+// (the temporary directory is go-build123456), not one that merely starts
+// with it, such as go-builder.
+func inGoBuild(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if rest, ok := strings.CutPrefix(seg, "go-build"); ok && strings.Trim(rest, "0123456789") == "" {
+			return true
+		}
+	}
+	return false
 }

@@ -26,6 +26,7 @@ func TestPlistKeepAlive(t *testing.T) {
 		"<key>RunAtLoad</key>\n\t<true/>",
 		"<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>",
 		"<string>dev.nearhost.core</string>",
+		"<key>ProcessType</key>\n\t<string>Interactive</string>",
 		"<key>StandardOutPath</key>\n\t<string>/dev/null</string>",
 	} {
 		if !strings.Contains(s, want) {
@@ -35,7 +36,7 @@ func TestPlistKeepAlive(t *testing.T) {
 }
 
 func TestParsePlistRejects(t *testing.T) {
-	for _, in := range []string{"", "not xml", "<plist><dict><key>Label</key><string>x</string></dict></plist>"} {
+	for _, in := range []string{"", "not xml", "<plist><dict><key>Label</key><string>x</string></dict></plist>", "<plist><dict><key>A</key><bogus/></dict></plist>"} {
 		if _, err := ParsePlist([]byte(in)); err == nil {
 			t.Errorf("ParsePlist(%q) succeeded", in)
 		}

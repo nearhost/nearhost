@@ -37,9 +37,13 @@ func TestServiceExe(t *testing.T) {
 		want, note, err string
 	}{
 		{"npx", "linux", "/home/u/.npm/_npx/ab/node_modules/@nearhost/cli-linux-x64/bin/nearhost", missing,
-			"", "", "fetched by npx"},
+			"", "", "fetched by npx for one run"},
 		{"go run", "linux", "/home/u/.cache/go-build/ab/exe/nearhost", missing,
 			"", "", "built by go run"},
+		{"go run temp dir", "linux", "/home/u/tmp/go-build123456/b001/exe/nearhost", missing,
+			"", "", "built by go run"},
+		{"go-builder is not go run", "linux", "/opt/go-builder/bin/nearhost", missing,
+			"/opt/go-builder/bin/nearhost", "", ""},
 		{"homebrew symlink", "darwin", cask, found, link, "", ""},
 		{"homebrew without symlink", "darwin", orphan, found,
 			"", "", "Homebrew's versioned folder"},
@@ -75,7 +79,7 @@ func TestServiceExe(t *testing.T) {
 
 func TestServiceExeRefusalsSayWhatToDo(t *testing.T) {
 	_, _, err := ServiceExe("linux", "/home/u/.cache/go-build/ab/exe/nearhost", func(string) string { return "" }, nil)
-	want := "This copy of nearhost was built by go run for one run, so a service could not start it later. " +
+	want := "This copy of nearhost was built by go run, so a service could not start it later. " +
 		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy."
 	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)

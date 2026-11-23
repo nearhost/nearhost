@@ -14,7 +14,10 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 	if goos == "windows" {
 		return nil, nil
 	}
-	env := []EnvVar{{"PATH", getenv("PATH")}}
+	var env []EnvVar
+	if p := getenv("PATH"); p != "" { // PATH= would hide the manager's own
+		env = append(env, EnvVar{"PATH", p})
+	}
 	names := []string{"DOCKER_HOST", "DOCKER_CONTEXT", "XDG_CONFIG_HOME", "XDG_DATA_HOME"}
 	for _, n := range names {
 		if v := getenv(n); v != "" {

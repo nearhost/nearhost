@@ -47,6 +47,13 @@ func TestServiceEnv(t *testing.T) {
 			env("PATH", "/bin", "DOCKER_HOST", "unix:///d.sock", "DOCKER_CONTEXT", "c", "XDG_CONFIG_HOME", "/c", "XDG_DATA_HOME", "/d",
 				"DISPLAY", ":0", "SSH_AUTH_SOCK", "/private/tmp/com.apple.launchd.a/b"), nil,
 			[]EnvVar{path, {"DOCKER_HOST", "unix:///d.sock"}, {"DOCKER_CONTEXT", "c"}, {"XDG_CONFIG_HOME", "/c"}, {"XDG_DATA_HOME", "/d"}}, ""},
+		{"dbus", "linux", env("PATH", "/bin", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus", "SSH_AUTH_SOCK", "/run/user/1000/s"),
+			map[string]string{"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"},
+			[]EnvVar{path, {"SSH_AUTH_SOCK", "/run/user/1000/s"}}, ""},
+		{"dbus differs", "linux", env("PATH", "/bin", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/x", "SSH_AUTH_SOCK", "/run/user/1000/s"),
+			map[string]string{"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"},
+			[]EnvVar{path, {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/x"}, {"SSH_AUTH_SOCK", "/run/user/1000/s"}}, ""},
+		{"empty path", "linux", env("SSH_AUTH_SOCK", "/run/user/1000/s"), nil, []EnvVar{{"SSH_AUTH_SOCK", "/run/user/1000/s"}}, ""},
 		{"windows", "windows", env("PATH", `C:\bin`), nil, nil, ""},
 	}
 	for _, tc := range tests {

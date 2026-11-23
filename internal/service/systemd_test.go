@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ func TestRoundTripUnit(t *testing.T) {
 	for name, d := range map[string]Definition{"plain": plain(), "nasty": nasty(), "empty": {Exe: "/x"}} {
 		for _, g := range []bool{false, true} {
 			d.Graphical = g
-			t.Run(name, func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s graphical=%v", name, g), func(t *testing.T) {
 				got, err := ParseUnit(RenderUnit(d))
 				if err != nil {
 					t.Fatal(err)

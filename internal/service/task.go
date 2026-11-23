@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"unicode/utf16"
 )
@@ -88,10 +89,7 @@ func splitCommandLine(s string) []string {
 // restarts a failed daemon after a minute, three times, and never stops it
 // for running on battery or for running a long time.
 func RenderTask(d Definition, user string) []byte {
-	args := []string{"--headless"}
-	for _, a := range d.command() {
-		args = append(args, a)
-	}
+	args := slices.Concat([]string{"--headless"}, d.command())
 	for i := range args {
 		args[i] = escapeArg(args[i])
 	}
