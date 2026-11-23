@@ -14,6 +14,10 @@ const openGrace = 500 * time.Millisecond
 // opener builds the command that opens a URL. Tests replace it.
 var opener = openCommand
 
+// standIn, when set, opens URLs in the opener's place. Only the e2e build
+// sets it (e2e.go), so a journey never opens a browser.
+var standIn func(url string) error
+
 // OpenURL opens url with the system's opener and returns once the opener has
 // started. Some openers, such as xdg-open without a desktop environment, run
 // the browser in the foreground until it closes, so OpenURL does not wait for
@@ -21,6 +25,9 @@ var opener = openCommand
 // start, or exits non-zero within that time, returns an error. The opener's
 // output is discarded so it cannot disturb a full-screen terminal.
 func OpenURL(url string) error {
+	if standIn != nil {
+		return standIn(url)
+	}
 	args := opener(url)
 	cmd := exec.Command(args[0], args[1:]...)
 	if err := cmd.Start(); err != nil {
