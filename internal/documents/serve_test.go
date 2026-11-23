@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -844,18 +843,19 @@ func TestDocumentsStaySandboxed(t *testing.T) {
 	for name, csp := range map[string]string{"fileCSP": fileCSP, "markdownCSP": markdownCSP} {
 		// The directive itself, by name: "sandboxed" or a sandbox inside
 		// another directive's value would not sandbox anything.
-		var sandbox []string
 		found := false
 		for _, d := range strings.Split(csp, ";") {
 			if f := strings.Fields(d); len(f) > 0 && f[0] == "sandbox" {
-				sandbox, found = f[1:], true
+				found = true
 			}
 		}
 		if !found {
 			t.Errorf("%s %q has no sandbox directive", name, csp)
 		}
+		// Neither belongs anywhere in the policy, so the whole of it is
+		// searched, not the directive's tokens alone.
 		for _, bad := range []string{"allow-same-origin", "allow-top-navigation"} {
-			if slices.Contains(sandbox, bad) || strings.Contains(csp, bad) {
+			if strings.Contains(csp, bad) {
 				t.Errorf("%s %q allows %s", name, csp, bad)
 			}
 		}
