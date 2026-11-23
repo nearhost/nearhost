@@ -50,6 +50,10 @@ type upBackend struct {
 	// next one, which cuts the shutdown short. It is one subscription, so
 	// no signal falls between the two.
 	notify func(parent context.Context) (ctx context.Context, again <-chan struct{}, release func())
+	// updates makes the core's check for a new release, which publishes
+	// the release it finds through publish; nil, or one that returns nil,
+	// means no check.
+	updates func(publish func(engine.Event)) *updateWatch
 	// agents reaches what the agent API needs; a zero one serves no agents.
 	agents agentsBackend
 	// shutdown stops the engine once up has been interrupted, giving up
@@ -99,6 +103,12 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			terminal := term.IsTerminal(int(os.Stdin.Fd()))
 			_, err = hosts.Ensure(hosts.DefaultPath, aliases, upHostsApplier(ctx, elevate.System(), exe, terminal))
 			return err
+		},
+		updates: func(publish func(engine.Event)) *updateWatch {
+			if !updateChecksAllowed(os.Getenv, Version) {
+				return nil
+			}
+			return newUpdateWatch(publish)
 		},
 		notify:         notifyStop,
 		start:          (*engine.Engine).Start,

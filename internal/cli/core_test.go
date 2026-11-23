@@ -795,3 +795,84 @@ func pageBrowser(t *testing.T, port int) *http.Client {
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr, Jar: jar, Timeout: 30 * time.Second}
 }
+
+// fakeUpdateWatch is a watch that finds release 9.9.9 at once, and waits an
+// hour for each check after it.
+func fakeUpdateWatch(publish func(engine.Event)) *updateWatch {
+	return &updateWatch{
+		current: "0.15.0", publish: publish, first: 0, every: time.Hour,
+		latest: func(context.Context) (string, error) { return "9.9.9", nil },
+	}
+}
+
+// The core's update watch says the release on the events' stream, reports it
+// in its status, and ends with the core.
+func TestCoreRunsTheUpdateWatch(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.noHosts = true
+	u.adjust = func(b *upBackend) { b.updates = fakeUpdateWatch }
+	u.start()
+	u.waitFor("Serving until interrupted")
+	envs, _, err := u.control().Events(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextEvent(t, envs, "A new nearhost is available: 0.15.0 → 9.9.9.")
+	st, err := u.control().Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Update != "9.9.9" {
+		t.Errorf("Status.Update = %q, want 9.9.9", st.Update)
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+	}
+	if n := strings.Count(u.out.String(), "A new nearhost is available"); n != 1 {
+		t.Errorf("the notice is printed %d times, want once:\n%s", n, u.out.String())
+	}
+}
+
+// The production backend makes no watch when updates are switched off, and
+// the test binary's development version never has one.
+func TestCoreRunsNoUpdateWatchByDefault(t *testing.T) {
+	t.Setenv("NEARHOST_NO_UPDATE_CHECK", "1")
+	if w := systemUp(nil).updates(func(engine.Event) {}); w != nil {
+		t.Error("a watch is made with NEARHOST_NO_UPDATE_CHECK set")
+	}
+}
+
+// A core that cannot serve its control socket returns at once, whatever its
+// update watch is waiting for.
+func TestCoreWithBusySocketDoesNotWaitForTheUpdateWatch(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.noHosts = true
+	u.adjust = func(b *upBackend) {
+		b.updates = fakeUpdateWatch
+		start := b.start
+		b.start = func(eng *engine.Engine, ctx context.Context) error {
+			if err := start(eng, ctx); err != nil {
+				return err
+			}
+			// Another core answers on the socket by the time this one
+			// listens: the engine clears stale sockets as it starts.
+			srv, err := control.Listen(control.SocketPath(u.runDir()), infoCore{}, control.NewHub())
+			if err != nil {
+				return err
+			}
+			t.Cleanup(func() { srv.Close() })
+			return nil
+		}
+	}
+	u.start()
+	done := make(chan error, 1)
+	go func() { done <- u.exited() }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "Another Nearhost answers") {
+			t.Errorf("up returned %v, want a refusal for the busy socket", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("up waits for the update watch after the control socket failed")
+	}
+}

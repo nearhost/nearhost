@@ -1175,3 +1175,50 @@ func TestUIBackendHasNoUpdateNotice(t *testing.T) {
 		t.Error("uiBackend still has an updateNotice: the core tells the interface")
 	}
 }
+
+// An event with the notice's text, which the core publishes, reaches the
+// interface's log.
+func TestUpdateNoticeReachesTheInterfaceLog(t *testing.T) {
+	const notice = "A new nearhost is available: 0.15.0 → 0.16.0. Run `nearhost update` to update."
+	f := newSteeredCore(t, configHome(t))
+	f.serve()
+	seen := make(chan struct{})
+	var once sync.Once
+	b := fakeUI(t, true, new(bool))
+	b.detach = f.detach(nil)
+	var back *clientBackend
+	b.clientMade = func(c *clientBackend) {
+		back = c
+		events, unsubscribe := c.Events().Subscribe(16)
+		t.Cleanup(unsubscribe)
+		go func() {
+			for ev := range events {
+				if ev.Message == notice {
+					once.Do(func() { close(seen) })
+				}
+			}
+		}()
+	}
+	b.run = func(*tui.Model, func(*tea.Program)) error {
+		// The interface's model starts the backend as it opens.
+		back.Start(context.Background())
+		// The core publishes once the interface follows its stream; try
+		// until it has.
+		for i := 0; i < 500; i++ {
+			seq := f.hub.Publish(control.Envelope{Kind: control.KindEvent, Event: &engine.Event{Message: notice}})
+			// The interface shows an event once its mirror of the core's
+			// state is as new.
+			f.set(func(st *control.State) { st.Seq = seq })
+			select {
+			case <-seen:
+				return nil
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		t.Error("the notice did not reach the interface's log")
+		return nil
+	}
+	if _, stderr, code := runRootSplit(t, uiRoot(b)); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+}

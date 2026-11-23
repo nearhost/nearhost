@@ -162,15 +162,22 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	// The core looks for a new release for as long as it runs, and says so
 	// once, through the events every client already follows. Its own
-	// context ends it, with the core's.
+	// context ends it, with the core's, and every return ends it first, so
+	// a core that fails to start never waits for the next check.
+	updateCtx, stopUpdates := context.WithCancel(ctx)
 	var updated sync.WaitGroup
-	defer updated.Wait()
-	if updateChecksAllowed(os.Getenv, Version) {
-		core.updates = newUpdateWatch(eng.Events().Publish)
+	defer func() {
+		stopUpdates()
+		updated.Wait()
+	}()
+	if b.updates != nil {
+		core.updates = b.updates(eng.Events().Publish)
+	}
+	if core.updates != nil {
 		updated.Add(1)
 		go func() {
 			defer updated.Done()
-			core.updates.run(ctx)
+			core.updates.run(updateCtx)
 		}()
 	}
 
