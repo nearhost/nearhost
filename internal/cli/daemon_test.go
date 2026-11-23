@@ -442,7 +442,40 @@ func TestLogRotationKeepsOtherHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	cur, _ := os.ReadFile(path)
-	if !strings.Contains(string(cur), "panic: after the rotation") {
-		t.Errorf("the other handle's text is not in the log: %q", cur)
+	// An append handle goes to the new end, not its old offset: no hole of
+	// zero bytes before the text.
+	if bytes.ContainsRune(cur, 0) || !strings.HasSuffix(string(cur), "panic: after the rotation\n") || len(cur) > 1024+100 {
+		t.Errorf("want the other handle's text after the lines kept, with no hole, in at most the limit and a line; got %d bytes: %q", len(cur), cur)
+	}
+}
+
+func TestLogRotationBacksOffAfterFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.log")
+	// A directory at path.1 makes every rename over it fail.
+	if err := os.MkdirAll(filepath.Join(path+".1", "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, err := newRotatingLog(path, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	short := []byte(strings.Repeat("y", 49) + "\n")
+	for i := 0; i < 22; i++ {
+		l.Write(short)
+	}
+	// The log is over the limit and the first copy failed.
+	for i := 0; i < 2; i++ {
+		l.Write(short)
+	}
+	if l.copies != 1 {
+		t.Fatalf("after the first failure, copies = %d, want 1", l.copies)
+	}
+	// Past a tenth of the limit more, it tries again.
+	for i := 0; i < 2; i++ {
+		l.Write(short)
+	}
+	if l.copies != 2 {
+		t.Errorf("after the log grew past the back-off, copies = %d, want 2", l.copies)
 	}
 }

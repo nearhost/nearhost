@@ -75,14 +75,17 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
-	// Closed before the process ends, so nothing stays open on Windows.
-	defer logFile.Close()
 	if by == control.StartedService {
+		// Not closed on return: Windows stderr points at this handle, and a
+		// panic during exit must still find it valid. The process ends next.
 		// The log is the file a service core's panics should land in, and
 		// stays open for the life of the process.
 		if err := redirectStderr(logFile.f); err != nil {
 			fmt.Fprintln(logFile, "could not send the core's standard error to this log:", err)
 		}
+	} else {
+		// Closed before the process ends, so nothing stays open on Windows.
+		defer logFile.Close()
 	}
 	log := tsWriter(logFile)
 	// A detached core's own output goes nowhere: what the core says on
@@ -155,6 +158,11 @@ type rotatingLog struct {
 	// size is an estimate of the file's size: it counts what is written
 	// here, and not what another handle (stderr) writes.
 	size int64
+	// retryAt is the size at which a failed rotation is tried again, so a
+	// log that cannot be set aside is not copied afresh on every write.
+	retryAt int64
+	// copies counts attempts to copy the log aside, for the tests.
+	copies int
 }
 
 func newRotatingLog(path string, limit int64) (*rotatingLog, error) {
@@ -175,7 +183,7 @@ func newRotatingLog(path string, limit int64) (*rotatingLog, error) {
 func (l *rotatingLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.size > l.limit {
+	if l.size > l.limit && l.size >= l.retryAt {
 		l.rotate()
 	}
 	n, err := l.f.Write(p)
@@ -196,16 +204,24 @@ func (l *rotatingLog) rotate() {
 	if l.size <= l.limit {
 		return
 	}
+	// Back off after a failure, as with a .1 that something holds open on
+	// Windows: try again once the log has grown by a tenth of the limit.
+	l.retryAt = l.size + l.limit/10
+	l.copies++
 	if copyAside(l.path, l.path+".1") != nil {
 		return
 	}
 	// A separate handle truncates: on Windows an append-only handle cannot.
+	// Text another handle (stderr) writes between the copy and this
+	// truncation is lost. That window is a few microseconds, and closing it
+	// would need a lock the other handle's writer does not take.
 	t, err := os.OpenFile(l.path, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return
 	}
 	t.Close()
 	l.size = 0
+	l.retryAt = 0
 }
 
 // copyAside copies src to dst by writing a temporary file beside dst and
