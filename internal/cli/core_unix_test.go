@@ -67,7 +67,7 @@ func TestWithdrawnRequestLeavesTheQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c := u.control()
-	envs, _, err := c.Events(ctx, u.hubSeq(t))
+	envs, streamErr, err := c.Events(ctx, u.hubSeq(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,10 @@ func TestWithdrawnRequestLeavesTheQueue(t *testing.T) {
 	timeout := time.After(10 * time.Second)
 	for ended := false; !ended; {
 		select {
-		case env := <-envs:
+		case env, ok := <-envs:
+			if !ok {
+				t.Fatalf("the stream ended before it said the request ended: %v", streamErr())
+			}
 			ended = env.Kind == control.KindEnded && env.ID == id
 		case <-timeout:
 			t.Fatal("the stream did not say the request ended")
