@@ -189,7 +189,7 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	b, m, _ := b.withService(ctx)
 	// Interrupted while looking, nothing was started, and nothing is.
 	if err := ctx.Err(); err != nil {
-		return nil, control.Info{}, false, interruptedStart{err: err, fate: fateLeft}
+		return nil, control.Info{}, false, interruptedStart{err: err, fate: fateNone}
 	}
 	viaService := m != nil && slices.Equal(args, []string{"daemon", "--started-by", string(startedBy)})
 	if m != nil && !viaService {
@@ -371,6 +371,9 @@ const (
 	// lock, or was found answering in place of the one started here: the
 	// core that runs is another's, and is left running.
 	fateOther
+	// fateNone is no core at all: the start was interrupted before one was
+	// started.
+	fateNone
 )
 
 // interruptedStart is the error of a start whose context ended: the

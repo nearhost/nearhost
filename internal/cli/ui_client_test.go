@@ -1108,7 +1108,12 @@ func TestServiceStartInterrupted(t *testing.T) {
 			b.detach = core.detach(nil) // a spawn is an error
 			b.detach.service = svc.lookup()
 			_, stderr, code := runRootSplit(t, uiRoot(b))
-			if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || stderr != want {
+			want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"
+			if during == "lookup" {
+				// Nothing was started yet, and nothing is.
+				want = "Interrupted before Nearhost was started in the background, so it is not running.\n"
+			}
+			if code != 130 || ran || stderr != want {
 				t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 			}
 			wantStarts := 1

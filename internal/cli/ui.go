@@ -415,6 +415,8 @@ func interruptedMessage(fate spawnedFate) string {
 		return interrupted + ". It stopped before it answered."
 	case fateOther:
 		return interrupted + ". Another nearhost started the Nearhost that runs, so it was left running."
+	case fateNone:
+		return "Interrupted before Nearhost was started in the background, so it is not running."
 	case fateStopping:
 		return interrupted + ". It was asked to stop and has yet to finish; nearhost stop waits until it has."
 	case fateNoAnswer:
