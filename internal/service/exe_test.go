@@ -98,6 +98,18 @@ func TestServiceExeNotesNodeUnderNVMDir(t *testing.T) {
 	}
 }
 
+// Windows paths ignore case, so NVM_DIR need not match the binary's in it.
+func TestServiceExeNotesNodeUnderNVMDirInAnyCase(t *testing.T) {
+	getenv := func(n string) string {
+		return map[string]string{"NVM_DIR": `C:\Users\Ed\AppData\Roaming\NVM`}[n]
+	}
+	exe := `C:\Users\ed\AppData\Roaming\nvm\versions\node\v26.13.0\nearhost.exe`
+	got, note, err := ServiceExe("windows", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
+	if err != nil || got != exe || !strings.Contains(note, "Node v26.13.0's folder") {
+		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
+	}
+}
+
 func TestServiceExeRefusalsSayWhatToDo(t *testing.T) {
 	_, _, err := ServiceExe("linux", "/home/u/.cache/go-build/ab/exe/nearhost", func(string) string { return "" }, nil)
 	want := "This copy of nearhost was built by go run, so a service could not start it later. " +
