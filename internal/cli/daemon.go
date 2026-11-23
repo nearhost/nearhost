@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,13 +67,7 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return err
 	}
-	// Set aside at open, if it may be, and from here on while the core runs.
-	f, err := openCoreLog(path, coreLogMayRotate())
-	if err != nil {
-		return fmt.Errorf("open the core log: %w", err)
-	}
-	f.Close()
-	logFile, err := newRotatingLog(path, coreLogLimit)
+	logFile, err := openDaemonLog(path, by, coreLogMayRotate())
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
@@ -132,6 +128,47 @@ func coreLogMayRotate() bool {
 	}
 	held, err := engine.InstanceRunning(runDir)
 	return !held && err == nil
+}
+
+// openDaemonLog opens the core log at path for a core started by by. It is
+// set aside at open, if it may be, and from here on while the core runs.
+// A service core's log is not renamed at open: on macOS and Linux the
+// service manager opened it as the core's stderr, which would go on writing
+// to core.log.1, and lose its text when that is next replaced. The
+// rotating log copies an oversized one aside at its first write instead.
+// Without mayRotate, another core holds the instance lock and this one is
+// about to be turned away: its log is never set aside, so the running core's
+// log, and its core.log.1, stay as they are. Otherwise the copies a core
+// that crashed while setting the log aside left behind are removed.
+func openDaemonLog(path string, by control.StartedBy, mayRotate bool) (*rotatingLog, error) {
+	if !mayRotate {
+		return newRotatingLog(path, math.MaxInt64)
+	}
+	removeStaleCopies(path)
+	if by != control.StartedService {
+		f, err := openCoreLog(path, true)
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+	}
+	return newRotatingLog(path, coreLogLimit)
+}
+
+// removeStaleCopies removes the temporary files copyAside writes beside
+// path.1 that a crash left behind. Only a core that no other core runs
+// beside calls it: a running core may be writing one.
+func removeStaleCopies(path string) {
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return
+	}
+	prefix := filepath.Base(path) + ".1.tmp"
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) && e.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
+		}
+	}
 }
 
 // openCoreLog opens the log at path to append to it, creating it and its

@@ -2,14 +2,20 @@ package service
 
 import (
 	"path"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
+
+// resolve follows symbolic links; tests replace it.
+var resolve = filepath.EvalSymlinks
 
 // ServiceEnv returns the environment to write into the service, and notes.
 // managerEnv is what the manager already gives its services (systemd's
 // show-environment; launchd's SSH_AUTH_SOCK); home and runtimeDir are $HOME
 // and $XDG_RUNTIME_DIR. A Windows logon task has the user's environment, so
-// it needs none.
+// it needs none. For a service of this system, SSH_AUTH_SOCK is judged by
+// where its links lead.
 func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]string, home, runtimeDir string) ([]EnvVar, []string) {
 	if goos == "windows" {
 		return nil, nil
@@ -35,20 +41,43 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 	}
 	var notes []string
 	sock := getenv("SSH_AUTH_SOCK")
+	// A socket is judged by where it leads: ~/.ssh/ssh_auth_sock, a link a
+	// login points at its forwarded agent, goes when that login ends. Only
+	// this system's disk can say, so another's paths are taken as they are.
+	real, realHome, realRun := sock, home, runtimeDir
+	if goos == runtime.GOOS && sock != "" {
+		real, realHome, realRun = resolved(sock), resolved(home), resolved(runtimeDir)
+	}
 	switch {
 	case sock == "":
 		notes = append(notes, "SSH_AUTH_SOCK is not set here, so the service uses the agent your login session provides. "+
 			"If servers do not connect, set IdentityAgent in ~/.ssh/config.")
 	case sock == managerEnv["SSH_AUTH_SOCK"],
-		goos == "darwin" && strings.HasPrefix(sock, "/private/tmp/com.apple.launchd."):
+		goos == "darwin" && strings.HasPrefix(real, "/private/tmp/com.apple.launchd."):
 		// The manager already provides it.
-	case under(sock, home) || under(sock, runtimeDir):
+	case under(real, realHome) || under(real, realRun):
 		env = append(env, EnvVar{"SSH_AUTH_SOCK", sock})
 	default:
-		notes = append(notes, "SSH_AUTH_SOCK here ("+sock+") changes at each login, so the service cannot use it. "+
+		where := sock
+		if real != sock {
+			where += ", a link to " + real
+		}
+		notes = append(notes, "SSH_AUTH_SOCK here ("+where+") changes at each login, so the service cannot use it. "+
 			"Set IdentityAgent in ~/.ssh/config to a lasting agent socket.")
 	}
 	return env, notes
+}
+
+// resolved is p with its links followed, or p when that fails, as for a
+// path that does not exist.
+func resolved(p string) string {
+	if p == "" {
+		return p
+	}
+	if r, err := resolve(p); err == nil {
+		return r
+	}
+	return p
 }
 
 // under reports whether the POSIX path p is inside dir. ServiceEnv writes

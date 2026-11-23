@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,8 @@ type recordingService struct {
 	onStart func()
 	// uninstallErr is what Uninstall returns.
 	uninstallErr error
+	// startErr is what Start returns.
+	startErr error
 }
 
 func (r *recordingService) note(s string) {
@@ -62,7 +66,7 @@ func (r *recordingService) Start(context.Context) error {
 	if r.onStart != nil {
 		r.onStart()
 	}
-	return nil
+	return r.startErr
 }
 
 func (r *recordingService) Active(context.Context) (bool, error) { return true, nil }
@@ -143,7 +147,7 @@ func TestInstallFresh(t *testing.T) {
 	if got := x.m.log(); got != "install,start" {
 		t.Errorf("calls %q", got)
 	}
-	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost. Nearhost is running now (pid 4343).\n"
+	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost.\nNearhost is running now (pid 4343).\n"
 	if out != want {
 		t.Errorf("out %q, want %q", out, want)
 	}
@@ -390,5 +394,83 @@ func TestUninstallFailureSaysNearhostWasStopped(t *testing.T) {
 	}
 	if !strings.Contains(out, "Stopped Nearhost, which the service ran.") || !strings.Contains(out, "launchctl failed") {
 		t.Errorf("out %q", out)
+	}
+}
+
+// A core spawned because the manager's Start failed was not started by the
+// service manager, so it must not say it was: it says detached.
+func TestInstallWhoseStartFailsSpawnsADetachedCore(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.startErr = errors.New("systemctl --user start nearhost.service: exit status 1")
+	var spawned [][]string
+	x.b.detach.spawn = func(exe string, args []string) (int, func() error, error) {
+		spawned = append(spawned, args)
+		x.f.answer(control.Info{API: 1, PID: 4344, StartedBy: control.StartedDetached})
+		return 0, running(), nil
+	}
+	out, err := x.run(t, "", "service", "install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spawned) != 1 || !slices.Equal(spawned[0], []string{"daemon", "--started-by", "detached"}) {
+		t.Errorf("spawned %q, want one core started detached", spawned)
+	}
+	if !strings.Contains(out, "Nearhost is running now (pid 4344).") {
+		t.Errorf("out %q", out)
+	}
+}
+
+// A service whose definition is there but cannot be read, as one edited by
+// hand, is still removed, and uninstall says why it could not read it.
+func TestUninstallRemovesAnUnreadableService(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.installed = false
+	x.m.instErr = fmt.Errorf("read /home/u/.config/systemd/user/nearhost.service: %w", service.Unreadable(errors.New("no ExecStart")))
+	x.f.answer(control.Info{API: 1, PID: 9, StartedBy: control.StartedService})
+	out, err := x.run(t, "", "service", "uninstall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x.m.log() != "uninstall" {
+		t.Errorf("calls %q", x.m.log())
+	}
+	want := "The Nearhost service cannot be read (read /home/u/.config/systemd/user/nearhost.service: no ExecStart), so it is removed as it is.\n" +
+		"Removed the Nearhost service. Stopped Nearhost, which it ran.\n"
+	if out != want {
+		t.Errorf("out %q, want %q", out, want)
+	}
+}
+
+// Any other error reading the service stops uninstall.
+func TestUninstallStopsAtOtherErrors(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.instErr = errors.New("permission denied")
+	out, err := x.run(t, "", "service", "uninstall")
+	if err == nil || !strings.Contains(out, "permission denied") {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if x.m.log() != "" {
+		t.Errorf("calls %q", x.m.log())
+	}
+}
+
+// A start that fails once the service is registered is said after the
+// install, which did work, so the user does not take it for a failed install.
+func TestInstallSaysItInstalledBeforeAFailedStart(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.startErr = errors.New("systemctl --user start nearhost.service: exit status 1")
+	x.b.detach.spawn = func(exe string, args []string) (int, func() error, error) {
+		return 0, func() error { return errors.New("exit status 2") }, nil
+	}
+	out, err := x.run(t, "", "service", "install")
+	var ee exitError
+	if !errors.As(err, &ee) || ee.code != 1 {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	installed := strings.Index(out, "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost.\n")
+	failed := strings.Index(out, "Starting Nearhost through its service failed")
+	stopped := strings.Index(out, "Nearhost stopped while starting")
+	if installed < 0 || failed < installed || stopped < failed {
+		t.Errorf("want the install, then the failed start, then the stopped core; out %q", out)
 	}
 }

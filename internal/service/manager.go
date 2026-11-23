@@ -16,6 +16,8 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 // manager: launchd, systemd --user or Task Scheduler.
 type Manager interface {
 	// Installed returns the installed definition; ok is false when none is.
+	// A definition that is there but cannot be parsed is an error that
+	// wraps ErrUnreadable.
 	Installed(ctx context.Context) (d Definition, ok bool, err error)
 	// Install writes and registers d so that it starts at login. It never
 	// starts the core. changed is false when d was installed already.
@@ -36,6 +38,22 @@ type Manager interface {
 // ErrNoUserManager is returned on Linux when systemctl --user cannot reach a
 // user manager, as in a container or a session without one.
 var ErrNoUserManager = errors.New("this system has no systemd user manager (systemctl --user does not answer), so Nearhost cannot be a service here. Run nearhost -d from your shell's startup instead.")
+
+// ErrUnreadable is what Installed's error wraps when a service is installed
+// but its definition cannot be parsed, as one edited by hand. Such a service
+// can still be uninstalled.
+var ErrUnreadable = errors.New("the installed service cannot be read")
+
+// unreadableError is an error that says the definition cannot be parsed,
+// and why, in the words of the error it wraps.
+type unreadableError struct{ err error }
+
+func (e unreadableError) Error() string   { return e.err.Error() }
+func (e unreadableError) Unwrap() []error { return []error{ErrUnreadable, e.err} }
+
+// Unreadable wraps err, which says why an installed definition cannot be
+// parsed, so that it is ErrUnreadable too. Fakes of Manager use it.
+func Unreadable(err error) error { return unreadableError{err} }
 
 // New returns the Manager for this operating system. home is the user's home
 // directory, and run is how commands are run (ExecRunner when nil).

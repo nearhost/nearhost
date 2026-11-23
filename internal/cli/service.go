@@ -183,6 +183,9 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	c, info, running := detachInfo(ctx, det)
 	switch {
 	case !running:
+		// Said before the start, which says on standard error how it fails:
+		// the service is installed either way.
+		fmt.Fprintln(out, installed)
 		_, info, spawned, err := startCore(cmd, det, serviceArgs, control.StartedService, true)
 		if err != nil {
 			return err
@@ -191,10 +194,10 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		// a manager may start the job on install.
 		if !spawned && info.StartedBy != control.StartedService {
 			// Another nearhost started a core while this one did.
-			fmt.Fprintln(out, installed+handedOver(info))
+			fmt.Fprintln(out, strings.TrimPrefix(handedOver(info), " "))
 			return nil
 		}
-		fmt.Fprintf(out, "%s Nearhost is running now (pid %d).\n", installed, info.PID)
+		fmt.Fprintf(out, "Nearhost is running now (pid %d).\n", info.PID)
 	case info.StartedBy == control.StartedService:
 		fmt.Fprintln(out, installed)
 		restart := yes
@@ -248,10 +251,14 @@ func runServiceUninstall(cmd *cobra.Command, b serviceBackend) error {
 		ctx = context.Background()
 	}
 	_, ok, err := m.Installed(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, service.ErrUnreadable):
+		// A definition edited by hand is still the service's, and the
+		// managers remove one without reading it.
+		fmt.Fprintf(out, "The Nearhost service cannot be read (%s), so it is removed as it is.\n", printable(strings.TrimSpace(err.Error())))
+	case err != nil:
 		return serviceFailure(cmd, err)
-	}
-	if !ok {
+	case !ok:
 		fmt.Fprintln(out, "No Nearhost service is installed.")
 		return nil
 	}

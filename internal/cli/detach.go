@@ -226,7 +226,8 @@ func (b detachBackend) withService(ctx context.Context) (detachBackend, service.
 // started by startedBy, and waits for it, as ensureCore says. viaService
 // starts it through b.service rather than spawning it, which is then the
 // fallback should the service not start; the service's core runs with the
-// service's own arguments, and is said to be started by the service.
+// service's own arguments, and is said to be started by the service. A core
+// spawned here is never said to be the service's: see directArgs.
 func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy, viaService bool) (c *control.Client, info control.Info, spawned bool, err error) {
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -266,7 +267,7 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 		}
 	}
 	if !viaService {
-		pid, wait, err = b.spawn(b.exe(), args)
+		pid, wait, err = b.spawn(b.exe(), directArgs(args))
 		if err != nil {
 			return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
 		}
@@ -326,6 +327,19 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 			return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fate}
 		}
 	}
+}
+
+// directArgs are args for a core this program spawns itself. A core the
+// service manager did not start is not the service's, though it was meant to
+// be (the manager's start failed, or the service could not be read): it says
+// it was started detached, so that nothing takes it for the service's: status
+// would say the service runs it, and service uninstall would stop it.
+func directArgs(args []string) []string {
+	if i := slices.Index(args, "--started-by"); i >= 0 && i+1 < len(args) && args[i+1] == string(control.StartedService) {
+		args = slices.Clone(args)
+		args[i+1] = string(control.StartedDetached)
+	}
+	return args
 }
 
 // serviceWait is the wait of a core started through the service m: it

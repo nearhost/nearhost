@@ -86,8 +86,9 @@ func splitCommandLine(s string) []string {
 
 // RenderTask is d as Task Scheduler XML for user, in UTF-16LE with a byte
 // order mark, which is what schtasks /Create /XML reads. Task Scheduler
-// restarts a failed daemon after a minute, three times, and never stops it
-// for running on battery or for running a long time.
+// restarts a failed daemon after a minute, three times, never stops it for
+// running on battery or for running a long time, and runs it at normal
+// priority.
 func RenderTask(d Definition, user string) []byte {
 	args := slices.Concat([]string{"--headless"}, d.command())
 	for i := range args {
@@ -106,6 +107,8 @@ func RenderTask(d Definition, user string) []byte {
 	x.WriteString("    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n")
 	x.WriteString("    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n")
 	x.WriteString("    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n")
+	// Task Scheduler's default priority, 7, is below normal; 5 is normal.
+	x.WriteString("    <Priority>5</Priority>\n")
 	x.WriteString("    <RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>\n")
 	x.WriteString("  </Settings>\n")
 	x.WriteString("  <Actions Context=\"Author\">\n    <Exec>\n")
@@ -128,8 +131,9 @@ type taskXML struct {
 	Arguments string `xml:"Actions>Exec>Arguments"`
 }
 
-// ParseTask reads a task RenderTask could have written, in UTF-16 (what
-// schtasks /Query /XML prints) or UTF-8.
+// ParseTask reads a task RenderTask could have written, in UTF-16 or in
+// UTF-8 (what PowerShell's Export-ScheduledTask prints), whatever its
+// declaration says.
 func ParseTask(b []byte) (Definition, error) {
 	if len(b) >= 2 && (b[0] == 0xFF && b[1] == 0xFE || b[0] == 0xFE && b[1] == 0xFF) {
 		be := b[0] == 0xFE

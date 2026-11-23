@@ -1,12 +1,24 @@
 package service
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
 
+// pureResolve makes ServiceEnv judge the paths as given, whatever is on
+// this machine's disk.
+func pureResolve(t *testing.T) {
+	before := resolve
+	resolve = func(p string) (string, error) { return p, nil }
+	t.Cleanup(func() { resolve = before })
+}
+
 func TestServiceEnv(t *testing.T) {
+	pureResolve(t)
 	env := func(kv ...string) func(string) string {
 		m := map[string]string{}
 		for i := 0; i < len(kv); i += 2 {
@@ -69,5 +81,88 @@ func TestServiceEnv(t *testing.T) {
 				t.Errorf("notes = %q, want one containing %q", notes, tc.note)
 			}
 		})
+	}
+}
+
+// A socket under the home folder that is a link to a forwarded agent's, as
+// ~/.ssh/ssh_auth_sock is, goes when that login ends: it is judged by where
+// it leads.
+func TestServiceEnvFollowsALink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Windows service has no environment of its own")
+	}
+	home, forwarded := t.TempDir(), t.TempDir()
+	target := filepath.Join(forwarded, "agent.42")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, ".ssh", "ssh_auth_sock")
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(n string) string {
+		return map[string]string{"PATH": "/bin", "SSH_AUTH_SOCK": link}[n]
+	}
+	env, notes := ServiceEnv(runtime.GOOS, getenv, nil, home, "")
+	if slices.ContainsFunc(env, func(v EnvVar) bool { return v.Name == "SSH_AUTH_SOCK" }) {
+		t.Errorf("env = %v, want no SSH_AUTH_SOCK", env)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "changes at each login") || !strings.Contains(notes[0], link) {
+		t.Errorf("notes = %q, want one that says the socket changes at each login", notes)
+	}
+
+	// A link to a socket that lasts, under the home folder, is written.
+	lasting := filepath.Join(home, ".1password", "agent.sock")
+	if err := os.MkdirAll(filepath.Dir(lasting), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lasting, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(lasting, link); err != nil {
+		t.Fatal(err)
+	}
+	env, notes = ServiceEnv(runtime.GOOS, getenv, nil, home, "")
+	if !slices.Contains(env, EnvVar{"SSH_AUTH_SOCK", link}) || len(notes) != 0 {
+		t.Errorf("env = %v, notes %q; want the link written, and no notes", env, notes)
+	}
+}
+
+// Links are followed only when the service is for this machine: another
+// system's paths mean nothing on this one's disk.
+func TestServiceEnvFollowsLinksOnlyOnThisSystem(t *testing.T) {
+	before := resolve
+	t.Cleanup(func() { resolve = before })
+	called := false
+	resolve = func(p string) (string, error) {
+		called = true
+		if p == "/Users/e/.ssh/ssh_auth_sock" {
+			return "/tmp/ssh-AbC/agent.42", nil
+		}
+		return p, nil
+	}
+	getenv := func(n string) string {
+		return map[string]string{"PATH": "/bin", "SSH_AUTH_SOCK": "/Users/e/.ssh/ssh_auth_sock"}[n]
+	}
+	other := "linux"
+	if runtime.GOOS == "linux" {
+		other = "darwin"
+	}
+	env, notes := ServiceEnv(other, getenv, nil, "/Users/e", "")
+	if called || !slices.Contains(env, EnvVar{"SSH_AUTH_SOCK", "/Users/e/.ssh/ssh_auth_sock"}) || len(notes) != 0 {
+		t.Errorf("for %s: resolved %v, env %v, notes %q; want the path judged as given", other, called, env, notes)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	_, notes = ServiceEnv(runtime.GOOS, getenv, nil, "/Users/e", "")
+	if !called || len(notes) != 1 || !strings.Contains(notes[0], "/tmp/ssh-AbC/agent.42") {
+		t.Errorf("for this system: resolved %v, notes %q; want a note naming where the link leads", called, notes)
 	}
 }

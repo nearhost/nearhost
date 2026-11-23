@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -477,5 +478,115 @@ func TestLogRotationBacksOffAfterFailure(t *testing.T) {
 	}
 	if l.copies != 2 {
 		t.Errorf("after the log grew past the back-off, copies = %d, want 2", l.copies)
+	}
+}
+
+// A service core's stderr is core.log, opened by launchd or systemd before
+// the core starts. The log is not renamed at open, which would leave stderr
+// writing to core.log.1, but copied aside and emptied at the first write.
+func TestServiceLogKeepsItsStderrAtOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.log")
+	big := bytes.Repeat([]byte("x"), coreLogLimit+1)
+	if err := os.WriteFile(path, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	l, err := openDaemonLog(path, control.StartedService, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, err := l.Write([]byte("starting\n")); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfi, err := stderr.Stat(); err != nil || !os.SameFile(fi, sfi) {
+		t.Fatalf("core.log is no longer the file stderr writes to (%v)", err)
+	}
+	if b, _ := os.ReadFile(path + ".1"); !bytes.Equal(b, big) {
+		t.Errorf("core.log.1 holds %d bytes, want the old log's %d", len(b), len(big))
+	}
+	if _, err := stderr.WriteString("panic: x\n"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "starting\npanic: x\n" {
+		t.Errorf("core.log = %q, want the new line and stderr's", b)
+	}
+}
+
+// A core that starts while another holds the instance lock is about to be
+// turned away, as a service core at login beside a running one: it never sets
+// aside the log the running core writes to, at open or after.
+func TestLogOfACoreTurnedAwayNeverRotates(t *testing.T) {
+	for _, by := range []control.StartedBy{control.StartedService, control.StartedDetached} {
+		t.Run(string(by), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "core.log")
+			big := bytes.Repeat([]byte("x"), coreLogLimit+1)
+			if err := os.WriteFile(path, big, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path+".1", []byte("older\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			l, err := openDaemonLog(path, by, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const line = "Another Nearhost is already running, so this service start does nothing.\n"
+			if _, err := l.Write([]byte(line)); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			if b, _ := os.ReadFile(path); len(b) != len(big)+len(line) {
+				t.Errorf("core.log holds %d bytes, want the old log and the new line", len(b))
+			}
+			if b, _ := os.ReadFile(path + ".1"); string(b) != "older\n" {
+				t.Errorf("core.log.1 was replaced")
+			}
+		})
+	}
+}
+
+// A crash while the log was copied aside leaves core.log.1.tmp files, which
+// the next core removes when it opens the log. One that is about to be
+// turned away leaves them: the running core may be copying.
+func TestLogOpenRemovesStaleCopies(t *testing.T) {
+	for _, tc := range []struct {
+		by        control.StartedBy
+		mayRotate bool
+	}{{control.StartedService, true}, {control.StartedDetached, true}, {control.StartedService, false}} {
+		t.Run(fmt.Sprintf("%s rotate %v", tc.by, tc.mayRotate), func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "core.log")
+			stale := []string{"core.log.1.tmp123", "core.log.1.tmp"}
+			kept := []string{"core.log.1", "other.log.1.tmp4", "core.log.2.tmp5"}
+			for _, name := range append(slices.Clone(stale), kept...) {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l, err := openDaemonLog(path, tc.by, tc.mayRotate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			for _, name := range stale {
+				if _, err := os.Stat(filepath.Join(dir, name)); tc.mayRotate != os.IsNotExist(err) {
+					t.Errorf("%s: stat %v, want removed %v", name, err, tc.mayRotate)
+				}
+			}
+			for _, name := range kept {
+				if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+					t.Errorf("%s was removed: %v", name, err)
+				}
+			}
+		})
 	}
 }

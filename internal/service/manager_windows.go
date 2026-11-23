@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -38,17 +39,24 @@ func (m *taskManager) schtasks(ctx context.Context, args ...string) ([]byte, err
 	return out, err
 }
 
+// Installed reads the task through PowerShell, in UTF-8: schtasks /Query /XML
+// prints to a pipe in the OEM code page, which mangles a path that is not
+// ASCII. The text still declares UTF-16, which ParseTask allows. A task that
+// does not exist prints nothing; exit 0 keeps that from failing the command,
+// as Export-ScheduledTask's ignored error would.
 func (m *taskManager) Installed(ctx context.Context) (Definition, bool, error) {
-	out, err := m.schtasks(ctx, "/Query", "/TN", m.names.Task, "/XML")
+	name := strings.ReplaceAll(m.names.Task, "'", "''")
+	cmd := "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName '" + name + "' -ErrorAction SilentlyContinue; exit 0"
+	out, err := m.run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd)
 	if err != nil {
-		if notFound(out) {
-			return Definition{}, false, nil
-		}
-		return Definition{}, false, err
+		return Definition{}, false, fmt.Errorf("powershell Export-ScheduledTask: %w: %s", err, output(out))
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return Definition{}, false, nil
 	}
 	d, err := ParseTask(out)
 	if err != nil {
-		return Definition{}, false, fmt.Errorf("read task %s: %w", m.names.Task, err)
+		return Definition{}, false, fmt.Errorf("read task %s: %w", m.names.Task, Unreadable(err))
 	}
 	return d, true, nil
 }
