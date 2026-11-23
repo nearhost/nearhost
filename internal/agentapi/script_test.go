@@ -2013,3 +2013,118 @@ func TestScriptOpenWaitHeldBack(t *testing.T) {
 		}
 	})
 }
+
+// pageScript serves origin like scriptServerWith, with everything a request
+// can ask for and page as the address of Nearhost's page, which "" leaves out.
+func pageScript(t *testing.T, home, origin string, review bool, page string) string {
+	t.Helper()
+	dir, src := scriptProject(t, home, origin)
+	rl := &fakeReloader{}
+	rl.answer(waiting, nil)
+	scriptServerWith(t, home, "k3f9q2", origin, review, Options{
+		ID: "lid", Source: src, Reload: rl,
+		Passer: &fakePasser{live: map[string]Passthrough{}, taken: map[int]bool{}}, Grants: &fakeGrants{tokens: map[[2]string]string{}},
+		Shower: &fakeShower{served: map[[2]string]string{}}, DocGrants: newFakeDocGrants(),
+		PageURL: func() string { return page },
+	})
+	return dir
+}
+
+// The scripts tell the agent where to answer a request on Nearhost's page,
+// for the user to open.
+func TestScriptPrintsApproveURL(t *testing.T) {
+	const page = "https://nearhost.localhost:6327"
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir := pageScript(t, home, shell.origin(), true, page)
+		answer := func(path string) string {
+			return "Answer in Nearhost on dev@k3f9q2, or open " + page + path + "\n"
+		}
+
+		// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", true, page)
+		r := shell.run(t, serverHome, claudeEnv, "passthrough", "3000")
+		id := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || id == nil || r.stderr != answer("/approve/"+id[1]) {
+			t.Fatalf("passthrough: %+v", r)
+		}
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		r = shell.run(t, home, claudeEnv, "open", p)
+		id = proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || id == nil || r.stderr != answer("/approve/"+id[1]) {
+			t.Fatalf("open: %+v", r)
+		}
+		r = shell.run(t, home, nil, "reload", dir)
+		if r.code != 0 || r.stderr != answer("/change/myapp") {
+			t.Fatalf("reload: %+v", r)
+		}
+	})
+}
+
+func TestScriptNoURLNoLine(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir := pageScript(t, home, shell.origin(), true, "")
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		fresh := filepath.Join(home, "new")
+		os.Mkdir(fresh, 0o755)
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", true, "")
+		for _, args := range [][]string{{"passthrough", "3000"}, {"open", p}, {"reload", dir}, {"propose", fresh}} {
+			h := home
+			if args[0] == "passthrough" {
+				// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+				h = serverHome
+			}
+			r := shell.run(t, h, claudeEnv, args...)
+			if r.code != 0 || !strings.Contains(r.stdout, `"expires_at"`) || r.stderr != "" {
+				t.Fatalf("%s: %+v", args[0], r)
+			}
+		}
+	})
+}
+
+// A proposal to add a project cannot be accepted on the page, so the script
+// gives the advice and the link to decline it.
+func TestScriptAddAdvice(t *testing.T) {
+	const page = "https://nearhost.localhost:6327"
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		pageScript(t, home, shell.origin(), true, page)
+		app := filepath.Join(home, "new")
+		os.Mkdir(app, 0o755)
+		r := shell.run(t, home, nil, "propose", app)
+		id := proposalID.FindStringSubmatch(r.stdout)
+		want := "Run nearhost on dev@k3f9q2 to review it. Or decline it at " + page + "/approve/"
+		if r.code != 0 || id == nil || r.stderr != want+id[1]+"\n" {
+			t.Fatalf("propose: %+v", r)
+		}
+	})
+}
+
+// With nothing to answer on, every request that needs an answer exits 3 and
+// says so as the API gave it.
+func TestScriptExit3NewCopy(t *testing.T) {
+	const copy = "Nearhost on dev@k3f9q2 has no page or window to ask you in; open nearhost there, then ask again."
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		dir := pageScript(t, home, shell.origin(), false, "")
+		p := docFile(t, filepath.Join(realDir(t, home), "notes"), "p.md")
+		fresh := filepath.Join(home, "new")
+		os.Mkdir(fresh, 0o755)
+		serverHome := shortDir(t)
+		pageScript(t, serverHome, "mini", false, "")
+		for _, args := range [][]string{{"propose", fresh}, {"reload", dir}, {"passthrough", "3000"}, {"open", p}} {
+			h := home
+			if args[0] == "passthrough" {
+				// A passthrough is a server's, so its Nearhost serves "mini" for both shells.
+				h = serverHome
+			}
+			r := shell.run(t, h, claudeEnv, args...)
+			if r.code != 3 || !strings.Contains(r.stdout+r.stderr, copy) || strings.Contains(r.stdout+r.stderr, "nearhost up") {
+				t.Fatalf("%s: %+v", args[0], r)
+			}
+		}
+	})
+}

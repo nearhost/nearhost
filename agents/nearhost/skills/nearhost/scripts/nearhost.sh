@@ -16,7 +16,7 @@
 #   nearhost.sh open-wait <id>                          wait up to 50s for the answer
 #
 # It prints the API's JSON. Exit status: 0 done, 1 refused or failed,
-# 2 no Nearhost reachable, no curl to reach it with or no token it accepts, 3 Nearhost runs without its interface, 4 several
+# 2 no Nearhost reachable, no curl to reach it with or no token it accepts, 3 Nearhost has no page or window to ask the user in, 4 several
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
 # by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
@@ -239,10 +239,28 @@ quote() {
 	}'
 }
 
+# approve_link prints on stderr where the user can answer the request in
+# BODY, a 202, on Nearhost's page, when the API gave the link. For a proposal
+# to add a project, which the page cannot accept, it gives the advice and
+# the link to decline it. It returns.
+approve_link() {
+	url=$(text_field approve_url "$BODY")
+	[ -n "$url" ] || return 0
+	advice=""
+	[ "${1:-}" = add ] && advice=$(text_field advice "$BODY")
+	if [ -n "$advice" ]; then
+		printf '%s Or decline it at %s\n' "$advice" "$url" >&2
+	else
+		printf 'Answer in Nearhost on %s, or open %s\n' "$(field laptop "$HELLO")" "$url" >&2
+	fi
+}
+
 # answer prints BODY and exits for STATUS: 0 for success, otherwise with the
-# API's error.
+# API's error. It gives the link to answer a 202 first, as approve_link does
+# for KIND.
 answer() {
 	printf '%s\n' "$BODY"
+	[ "$STATUS" = 202 ] && approve_link "${1:-}"
 	case $STATUS in
 	2??) exit 0 ;;
 	409) exit 3 ;;
@@ -520,7 +538,7 @@ propose)
 	[ -n "$name" ] && body="$body,\"name\":$(quote "$name")"
 	call "$SOCK" 10 -X POST -H 'Content-Type: application/json' --data-binary "$body}" http://nearhost/v1/proposals ||
 		die 2 "Nearhost stopped answering."
-	answer
+	answer add
 	;;
 wait)
 	id=${1:-}
@@ -595,6 +613,7 @@ passthrough)
 		;;
 	202)
 		printf '%s\n' "$BODY"
+		approve_link
 		save_session
 		exit 0
 		;;
@@ -718,6 +737,7 @@ open)
 		;;
 	202)
 		printf '%s\n' "$BODY"
+		approve_link
 		exit 0
 		;;
 	409)
@@ -725,7 +745,7 @@ open)
 		# An older Nearhost says it runs as nearhost up.
 		msg=$(text_field error "$BODY")
 		case $BODY in
-		*"has no page or window to ask you in"* | *"nearhost up"*) die 3 "${msg:-Nearhost runs as nearhost up, which cannot show prompts.}" ;;
+		*"has no page or window to ask you in"* | *"nearhost up"*) die 3 "${msg:-Nearhost on the laptop has no page or window to ask you in; open nearhost there, then ask again.}" ;;
 		*"isn't connected"*) die 2 "$msg" ;;
 		esac
 		printf '%s\n' "$BODY"
