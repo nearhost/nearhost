@@ -34,7 +34,11 @@ func restartCore(cmd *cobra.Command, b detachBackend, c *control.Client, info co
 		var m service.Manager
 		var d service.Definition
 		b, m, d = b.withService(ctx)
-		by, viaService = control.StartedService, m != nil && samePath(d.Exe, exe)
+		// With no service to read, the core is started directly, and is
+		// then not the service's.
+		if m != nil {
+			by, viaService = control.StartedService, samePath(d.Exe, exe)
+		}
 	}
 	c, info, _, err := stopAndStart(cmd, b, c, st, exe, by, viaService, nil)
 	return c, info, err
@@ -149,8 +153,10 @@ func restartAfterUpdate(cmd *cobra.Command, b updateBackend, in *bufio.Reader, y
 			return nil
 		}
 	}
-	if noBind && privilegedPorts(b, st) {
-		return leave()
+	if port, ok := privilegedPort(b, st); noBind && ok {
+		// After the setcap command, apart from it.
+		fmt.Fprintf(out, "\nNearhost in the background still runs %s: the new binary cannot serve on port %d until you run the command above. Run it, then restart Nearhost: nearhost stop, then nearhost -d.\n", old, port)
+		return nil
 	}
 	if p, f := live(st); (p > 0 || f > 0) && !yes {
 		if !b.interactive() {
@@ -173,13 +179,19 @@ func restartAfterUpdate(cmd *cobra.Command, b updateBackend, in *bufio.Reader, y
 	return nil
 }
 
-// privilegedPorts reports whether the core that says st of itself serves on a
-// port below the first any user may bind, which is taken to be 1024 when it
-// cannot be read.
-func privilegedPorts(b updateBackend, st control.State) bool {
+// privilegedPort is the lowest port the core that says st of itself serves
+// on that is below the first any user may bind, which is taken to be 1024
+// when it cannot be read, and false when there is none.
+func privilegedPort(b updateBackend, st control.State) (int, bool) {
 	first, ok := b.unprivilegedPortStart()
 	if !ok {
 		first = 1024
 	}
-	return st.HTTPSPort > 0 && st.HTTPSPort < first || st.HTTPPort > 0 && st.HTTPPort < first
+	lowest := 0
+	for _, p := range []int{st.HTTPSPort, st.HTTPPort} {
+		if p > 0 && p < first && (lowest == 0 || p < lowest) {
+			lowest = p
+		}
+	}
+	return lowest, lowest > 0
 }

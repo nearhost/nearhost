@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -360,8 +362,10 @@ func TestUpdateLeavesACoreTheNewBinaryCannotServe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %v, out %q", err, out)
 	}
-	if want := "Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"; !strings.HasSuffix(out, want) || !strings.Contains(out, "setcap") {
-		t.Errorf("out %q, want the setcap advice, then %q", out, want)
+	want := "Updated to 0.6.0.\nLet the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep '/usr/local/bin/nearhost'\n\n" +
+		"Nearhost in the background still runs 0.5.0: the new binary cannot serve on port 80 until you run the command above. Run it, then restart Nearhost: nearhost stop, then nearhost -d.\n"
+	if !strings.HasSuffix(out, want) {
+		t.Errorf("out %q, want it to end with %q", out, want)
 	}
 	if rig.stopped() {
 		t.Error("the core was stopped")
@@ -425,5 +429,79 @@ func TestLiveWords(t *testing.T) {
 		if got := liveWords(tc.p, tc.f); got != tc.want {
 			t.Errorf("liveWords(%d, %d) = %q, want %q", tc.p, tc.f, got, tc.want)
 		}
+	}
+}
+
+// A core is restarted only on a binary: a pnpm shim that is a Windows .cmd or
+// a #! script would start a shell or node in between, with a console window
+// and another pid, so the core is left for the user to restart.
+func TestUpdatePnpmRestartNeedsABinary(t *testing.T) {
+	const leaveLine = "Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+	darwinStore := "/Users/me/Library/pnpm/global/5/.pnpm/@nearhost+cli-darwin-arm64@0.5.0/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"
+	for _, tc := range []struct {
+		name    string
+		set     func(f *fakeUpdate)
+		restart string // the exe spawned; "" is none
+	}{
+		{"windows cmd shim", func(f *fakeUpdate) {
+			f.goos = "windows"
+			f.exe = `C:\Users\x\AppData\Local\pnpm\global\5\node_modules\.pnpm\@nearhost+cli-win32-x64@0.5.0\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`
+			f.onPath = `C:\Users\x\AppData\Local\pnpm\nearhost.CMD`
+		}, ""},
+		{"shell shim", func(f *fakeUpdate) {
+			f.exe = darwinStore
+			f.onPath = "/Users/me/Library/pnpm/nearhost"
+			f.files = map[string]string{"/Users/me/Library/pnpm/nearhost": "#!/bin/sh\nexec node \"$basedir/global/5/node_modules/@nearhost/cli/bin/nearhost.js\" \"$@\"\n"}
+			f.regular = map[string]bool{} // no platform package found behind it
+		}, ""},
+		{"binary", func(f *fakeUpdate) {
+			f.exe = darwinStore
+			f.onPath = "/Users/me/Library/pnpm/nearhost"
+		}, "/Users/me/Library/pnpm/nearhost"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newRestartRig(t, control.StartedDetached)
+			rig.old.serve()
+			f := updateFor(rig, false)
+			tc.set(f)
+			out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+			if err != nil {
+				t.Fatalf("err %v, out %q", err, out)
+			}
+			got := rig.spawns()
+			if tc.restart == "" {
+				if !strings.HasSuffix(out, leaveLine) || len(got) != 0 || rig.stopped() {
+					t.Errorf("out %q, spawned %q, stopped %v; want the core left", out, got, rig.stopped())
+				}
+				return
+			}
+			if !strings.HasSuffix(out, restartedLine) || len(got) != 1 || got[0][0] != tc.restart {
+				t.Errorf("out %q, spawned %q; want a restart from %s", out, got, tc.restart)
+			}
+		})
+	}
+}
+
+// The service's core is restarted directly, and said to be detached, when the
+// service cannot be read.
+func TestUpdateServiceCoreWithAnUnreadableService(t *testing.T) {
+	rig := newRestartRig(t, control.StartedService)
+	rig.old.serve()
+	svc := &fakeService{
+		exe:       "/usr/local/bin/nearhost",
+		installed: func(context.Context) error { return errors.New("launchctl print: exit status 5") },
+		start: func() error {
+			t.Error("the service was started")
+			return nil
+		},
+	}
+	f := updateFor(rig, false)
+	f.detach.service = svc.lookup()
+	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
+	if err != nil || !strings.HasSuffix(out, restartedLine) {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if got := rig.spawns(); len(got) != 1 || !slices.Equal(got[0][1:4], []string{"daemon", "--started-by", "detached"}) {
+		t.Errorf("spawned %q, want one core started detached", got)
 	}
 }

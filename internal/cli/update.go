@@ -418,14 +418,27 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 }
 
 // restartExe is the new binary a core is restarted on: path, the one
-// verifyUpdate checked, or the binary behind it when that is pnpm's shim,
-// which is a script that only starts it. On Windows, where the running exe
-// was moved aside, the new one is at its path.
+// verifyUpdate checked, or the binary behind it when that is pnpm's shim. On
+// Windows, where the running exe was moved aside, the new one is at its path.
+// It is "" when what was found is not a binary: a .cmd, .bat or .ps1 shim or
+// a #! script would run a shell or node in between, with a console window on
+// Windows and a pid that is not the core's, so the core is left for the user
+// to restart.
 func restartExe(b updateBackend, m update.Method, exe, path string) string {
 	if m.Kind == update.PNPM {
 		if bin, ok := realBinary(b, m, exe); ok {
-			return bin
+			path = bin
 		}
+	}
+	if path == "" {
+		return ""
+	}
+	switch strings.ToLower(filepath.Ext(strings.ReplaceAll(path, `\`, "/"))) {
+	case ".cmd", ".bat", ".ps1":
+		return ""
+	}
+	if head, err := b.readHead(path); err != nil || bytes.HasPrefix(head, []byte("#!")) {
+		return ""
 	}
 	return path
 }
