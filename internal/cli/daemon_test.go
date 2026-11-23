@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -548,6 +549,43 @@ func TestLogOfACoreTurnedAwayNeverRotates(t *testing.T) {
 			}
 			if b, _ := os.ReadFile(path + ".1"); string(b) != "older\n" {
 				t.Errorf("core.log.1 was replaced")
+			}
+		})
+	}
+}
+
+// A crash while the log was copied aside leaves core.log.1.tmp files, which
+// the next core removes when it opens the log. One that is about to be
+// turned away leaves them: the running core may be copying.
+func TestLogOpenRemovesStaleCopies(t *testing.T) {
+	for _, tc := range []struct {
+		by        control.StartedBy
+		mayRotate bool
+	}{{control.StartedService, true}, {control.StartedDetached, true}, {control.StartedService, false}} {
+		t.Run(fmt.Sprintf("%s rotate %v", tc.by, tc.mayRotate), func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "core.log")
+			stale := []string{"core.log.1.tmp123", "core.log.1.tmp"}
+			kept := []string{"core.log.1", "other.log.1.tmp4", "core.log.2.tmp5"}
+			for _, name := range append(slices.Clone(stale), kept...) {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l, err := openDaemonLog(path, tc.by, tc.mayRotate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			for _, name := range stale {
+				if _, err := os.Stat(filepath.Join(dir, name)); tc.mayRotate != os.IsNotExist(err) {
+					t.Errorf("%s: stat %v, want removed %v", name, err, tc.mayRotate)
+				}
+			}
+			for _, name := range kept {
+				if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+					t.Errorf("%s was removed: %v", name, err)
+				}
 			}
 		})
 	}

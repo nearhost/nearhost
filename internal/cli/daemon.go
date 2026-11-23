@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -137,11 +138,13 @@ func coreLogMayRotate() bool {
 // rotating log copies an oversized one aside at its first write instead.
 // Without mayRotate, another core holds the instance lock and this one is
 // about to be turned away: its log is never set aside, so the running core's
-// log, and its core.log.1, stay as they are.
+// log, and its core.log.1, stay as they are. Otherwise the copies a core
+// that crashed while setting the log aside left behind are removed.
 func openDaemonLog(path string, by control.StartedBy, mayRotate bool) (*rotatingLog, error) {
 	if !mayRotate {
 		return newRotatingLog(path, math.MaxInt64)
 	}
+	removeStaleCopies(path)
 	if by != control.StartedService {
 		f, err := openCoreLog(path, true)
 		if err != nil {
@@ -150,6 +153,22 @@ func openDaemonLog(path string, by control.StartedBy, mayRotate bool) (*rotating
 		f.Close()
 	}
 	return newRotatingLog(path, coreLogLimit)
+}
+
+// removeStaleCopies removes the temporary files copyAside writes beside
+// path.1 that a crash left behind. Only a core that no other core runs
+// beside calls it: a running core may be writing one.
+func removeStaleCopies(path string) {
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return
+	}
+	prefix := filepath.Base(path) + ".1.tmp"
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) && e.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(filepath.Dir(path), e.Name()))
+		}
+	}
 }
 
 // openCoreLog opens the log at path to append to it, creating it and its
