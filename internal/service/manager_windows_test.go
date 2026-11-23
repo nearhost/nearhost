@@ -234,7 +234,7 @@ func TestInstalledToleratesNoise(t *testing.T) {
 	xml := decodeUTF16(t, s.xml)
 	for name, out := range map[string]string{
 		"bom":    "\ufeff" + xml,
-		"clixml": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><S S=\"progress\">x</S></Objs>\r\n" + xml,
+		"clixml": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCustomObject</T></TN></Obj></Objs>\r\n" + xml,
 	} {
 		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(out), nil }}
 		got, ok, err := New(testNames, t.TempDir(), f.run).Installed(context.Background())
