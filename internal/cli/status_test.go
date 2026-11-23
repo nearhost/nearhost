@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,4 +134,119 @@ func statusRoot() *cobra.Command {
 	root := newRootCmd()
 	root.AddCommand(newStatusCmd())
 	return root
+}
+
+// waitingStatus is testStatus with two requests waiting, and the page served.
+func waitingStatus() control.Status {
+	st := testStatus
+	st.Page = "https://nearhost.localhost:6327"
+	st.Approvals = []control.ApprovalInfo{
+		{ID: "a1", Summary: "Claude Code on mini asks to open port 5173", URL: st.Page + "/approve/a1"},
+		{ID: "web", Summary: "web's .nearhostrc asks for stripe.com", URL: st.Page + "/change/web"},
+	}
+	return st
+}
+
+// setStdoutTerminal makes status see stdout as a terminal, or not.
+func setStdoutTerminal(t *testing.T, tty bool) {
+	t.Helper()
+	before := stdoutIsTerminal
+	t.Cleanup(func() { stdoutIsTerminal = before })
+	stdoutIsTerminal = func() bool { return tty }
+}
+
+func TestStatusListsApprovals(t *testing.T) {
+	setStdoutTerminal(t, false)
+	serveStatus(t, waitingStatus())
+	out, err := execute(t, newStatusCmd(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\nWaiting for your answer:\n" +
+		"  Claude Code on mini asks to open port 5173: https://nearhost.localhost:6327/approve/a1\n" +
+		"  web's .nearhostrc asks for stripe.com: https://nearhost.localhost:6327/change/web\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("output:\n%s\nwant it to contain:\n%s", out, want)
+	}
+	if strings.Contains(out, "?k=") {
+		t.Errorf("a link carries the key:\n%s", out)
+	}
+}
+
+func TestStatusApprovalWithoutPage(t *testing.T) {
+	setStdoutTerminal(t, true)
+	st := waitingStatus()
+	st.Page = ""
+	st.Approvals = []control.ApprovalInfo{{ID: "a1", Summary: "Claude Code on mini asks to open port 5173"}}
+	serveStatus(t, st)
+	out, err := execute(t, newStatusCmd(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Waiting for your answer:\n  Claude Code on mini asks to open port 5173\n") || strings.Contains(out, "Page:") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestStatusNoApprovalsNoHeading(t *testing.T) {
+	setStdoutTerminal(t, false)
+	serveStatus(t, testStatus)
+	out, err := execute(t, newStatusCmd(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Waiting") || strings.Contains(out, "Page:") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestStatusPageKeyedOnTerminal(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	setStdoutTerminal(t, true)
+	serveStatus(t, waitingStatus())
+	out, err := execute(t, newStatusCmd(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327/?k=") {
+		t.Errorf("output:\n%s", out)
+	}
+	// The approval links stay without the key.
+	if strings.Count(out, "?k=") != 1 {
+		t.Errorf("the key appears more than once:\n%s", out)
+	}
+}
+
+func TestStatusPageUnkeyedInAPipe(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	setStdoutTerminal(t, false)
+	serveStatus(t, waitingStatus())
+	out, err := execute(t, newStatusCmd(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "\nPage: https://nearhost.localhost:6327\n") || strings.Contains(out, "?k=") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+// JSON carries the new fields and never the key.
+func TestStatusJSONHasApprovalsAndPage(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	setStdoutTerminal(t, true)
+	serveStatus(t, waitingStatus())
+	out, err := execute(t, newStatusCmd(), "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got control.Status
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Page != "https://nearhost.localhost:6327" || len(got.Approvals) != 2 || got.Approvals[0].ID != "a1" {
+		t.Errorf("status: %+v", got)
+	}
+	if strings.Contains(out, "?k=") {
+		t.Errorf("JSON carries the key:\n%s", out)
+	}
 }

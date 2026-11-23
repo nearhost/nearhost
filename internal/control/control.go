@@ -78,6 +78,21 @@ type Status struct {
 	Info     Info          `json:"info"`
 	Servers  []ServerInfo  `json:"servers"`
 	Projects []ProjectInfo `json:"projects"`
+	// Approvals is what waits for an answer, oldest first, with the
+	// .nearhostrc changes after the queue's requests.
+	Approvals []ApprovalInfo `json:"approvals"`
+	// Page is the address of Nearhost's page, without its key, or "" when
+	// the page is not served.
+	Page string `json:"page"`
+}
+
+// ApprovalInfo is one request that waits for an answer, as status lists it.
+type ApprovalInfo struct {
+	ID string `json:"id"`
+	// Summary says what is asked, in a sentence without its full stop.
+	Summary string `json:"summary"`
+	// URL is the page's link to answer it, or "" when the page is not served.
+	URL string `json:"url"`
 }
 
 // errorBody is the JSON body of a failed request.

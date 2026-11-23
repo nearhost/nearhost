@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/page"
 	"github.com/nearhost/nearhost/internal/proxy"
 )
@@ -397,7 +399,8 @@ func (c *coreBackend) Info() control.Info { return c.info }
 // the projects that are enabled or are not stopped.
 func (c *coreBackend) Status() control.Status {
 	cfg := c.eng.Config()
-	st := control.Status{Info: c.info, Servers: []control.ServerInfo{}, Projects: []control.ProjectInfo{}}
+	st := control.Status{Info: c.info, Servers: []control.ServerInfo{}, Projects: []control.ProjectInfo{}, Approvals: []control.ApprovalInfo{}}
+	st.Page, _ = c.eng.PageURL() // "" when the page is not served
 	for _, name := range serverNames(cfg) {
 		status, msg := c.eng.ServerStatus(name)
 		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(status), Message: msg})
@@ -410,6 +413,28 @@ func (c *coreBackend) Status() control.Status {
 		st.Projects = append(st.Projects, control.ProjectInfo{
 			Name: p.Name, State: string(ps.State), Message: ps.Message, URL: siteURL(p.Alias, c.httpsPort),
 		})
+	}
+	for _, a := range c.approvals.Pending() {
+		info := control.ApprovalInfo{ID: a.ID, Summary: approvalSummary(a)}
+		if st.Page != "" {
+			info.URL = st.Page + "/approve/" + a.ID
+		}
+		st.Approvals = append(st.Approvals, info)
+	}
+	for _, p := range cfg.Projects {
+		change := c.eng.Status(p.Name).Pending
+		if change == nil {
+			continue
+		}
+		names := make([]string, len(change.Items))
+		for i, it := range change.Items {
+			names[i] = printable(it.Name())
+		}
+		info := control.ApprovalInfo{ID: p.Name, Summary: fmt.Sprintf("%s's %s asks for %s", printable(p.Name), nearhostrc.FileName, strings.Join(names, ", "))}
+		if st.Page != "" {
+			info.URL = st.Page + "/change/" + url.PathEscape(p.Name)
+		}
+		st.Approvals = append(st.Approvals, info)
 	}
 	return st
 }

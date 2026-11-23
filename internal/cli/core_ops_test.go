@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/nearhost/nearhost/internal/agentapi"
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/discovery"
@@ -354,5 +355,28 @@ func TestCoreStateListsGrants(t *testing.T) {
 	slices.Sort(servers)
 	if want := []string{"apollo", config.LocalServer, "mini"}; !slices.Equal(servers, want) {
 		t.Errorf("grants on %v, want %v", servers, want)
+	}
+}
+
+// Status lists the queue's requests, then the changes that wait, each with its
+// link on the page, or without one when the page is not served.
+func TestCoreStatusListsWhatWaits(t *testing.T) {
+	u, _ := pendingOps(t, []string{"shop.example.com", "api.example.com"})
+	u.approvals = newApprovals(control.NewHub(), time.Now)
+	t.Cleanup(u.approvals.close)
+	u.approvals.ReviewPassthrough(agentapi.PassRequest{ID: "p1", Origin: "mini", Requester: "claude", Remote: 5173, Expires: time.Now().Add(time.Hour)})
+	b := &coreBackend{coreOps: u, ctx: context.Background()}
+
+	st := b.Status()
+	if st.Page != "" || len(st.Approvals) != 2 || st.Approvals[0].ID != "p1" || st.Approvals[0].URL != "" {
+		t.Fatalf("without a page: %+v", st)
+	}
+	if want := "two's .nearhostrc asks for shop.example.com, api.example.com"; st.Approvals[1].Summary != want {
+		t.Errorf("change summary = %q, want %q", st.Approvals[1].Summary, want)
+	}
+
+	u.eng = engine.New(u.eng.Config(), engine.Options{HTTPSPort: 8443, WebPort: 6327, Review: nil})
+	if st := b.Status(); st.Page != "https://nearhost.localhost:6327" {
+		t.Errorf("page = %q", st.Page)
 	}
 }
