@@ -67,7 +67,6 @@ func TestStartCommands(t *testing.T) {
 	}
 	uid := os.Getuid()
 	want := []string{
-		fmt.Sprintf("launchctl print gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootout gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootstrap gui/%d %s", uid, plistPath(home)),
 	}
@@ -179,24 +178,5 @@ func TestStartGivesUpOnBootstrap(t *testing.T) {
 	m.(*launchdManager).sleep = func(context.Context, time.Duration) { t.Error("retried") }
 	if err := m.Start(context.Background()); err == nil {
 		t.Error("Start succeeded, want an error")
-	}
-}
-
-// A job launchd already runs, as one still starting at login, is left be:
-// a bootout would stop the core it starts.
-func TestStartLeavesARunningJobBe(t *testing.T) {
-	running := "dev.nearhost.test = {\n\tactive count = 1\n\tstate = running\n\tpid = 412\n}\n"
-	f := &fakeRunner{handle: func(call string) ([]byte, error) {
-		if strings.HasPrefix(call, "launchctl print ") {
-			return []byte(running), nil
-		}
-		return nil, nil
-	}}
-	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{fmt.Sprintf("launchctl print gui/%d/dev.nearhost.test", os.Getuid())}
-	if !reflect.DeepEqual(f.calls, want) {
-		t.Errorf("commands = %q, want %q", f.calls, want)
 	}
 }

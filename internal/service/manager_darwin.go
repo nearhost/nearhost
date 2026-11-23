@@ -67,13 +67,7 @@ func (m *launchdManager) Uninstall(ctx context.Context) error {
 	return nil
 }
 
-// Start loads the plist afresh and starts it, unless launchd runs the job
-// already, as at login, when the core may still be starting: a bootout
-// would stop it. The caller waits for that core to answer.
 func (m *launchdManager) Start(ctx context.Context) error {
-	if running, _ := m.Active(ctx); running {
-		return nil
-	}
 	_, _ = m.run(ctx, "launchctl", "bootout", m.target())
 	// Right after a bootout launchd may still be tearing the service down
 	// and answer with I/O error (5) or operation in progress (37), so try
