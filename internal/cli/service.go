@@ -183,6 +183,9 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	c, info, running := detachInfo(ctx, det)
 	switch {
 	case !running:
+		// Said before the start, which says on standard error how it fails:
+		// the service is installed either way.
+		fmt.Fprintln(out, installed)
 		_, info, spawned, err := startCore(cmd, det, serviceArgs, control.StartedService, true)
 		if err != nil {
 			return err
@@ -191,10 +194,10 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		// a manager may start the job on install.
 		if !spawned && info.StartedBy != control.StartedService {
 			// Another nearhost started a core while this one did.
-			fmt.Fprintln(out, installed+handedOver(info))
+			fmt.Fprintln(out, strings.TrimPrefix(handedOver(info), " "))
 			return nil
 		}
-		fmt.Fprintf(out, "%s Nearhost is running now (pid %d).\n", installed, info.PID)
+		fmt.Fprintf(out, "Nearhost is running now (pid %d).\n", info.PID)
 	case info.StartedBy == control.StartedService:
 		fmt.Fprintln(out, installed)
 		restart := yes

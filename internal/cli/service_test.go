@@ -147,7 +147,7 @@ func TestInstallFresh(t *testing.T) {
 	if got := x.m.log(); got != "install,start" {
 		t.Errorf("calls %q", got)
 	}
-	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost. Nearhost is running now (pid 4343).\n"
+	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost.\nNearhost is running now (pid 4343).\n"
 	if out != want {
 		t.Errorf("out %q, want %q", out, want)
 	}
@@ -451,5 +451,26 @@ func TestUninstallStopsAtOtherErrors(t *testing.T) {
 	}
 	if x.m.log() != "" {
 		t.Errorf("calls %q", x.m.log())
+	}
+}
+
+// A start that fails once the service is registered is said after the
+// install, which did work, so the user does not take it for a failed install.
+func TestInstallSaysItInstalledBeforeAFailedStart(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.startErr = errors.New("systemctl --user start nearhost.service: exit status 1")
+	x.b.detach.spawn = func(exe string, args []string) (int, func() error, error) {
+		return 0, func() error { return errors.New("exit status 2") }, nil
+	}
+	out, err := x.run(t, "", "service", "install")
+	var ee exitError
+	if !errors.As(err, &ee) || ee.code != 1 {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	installed := strings.Index(out, "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost.\n")
+	failed := strings.Index(out, "Starting Nearhost through its service failed")
+	stopped := strings.Index(out, "Nearhost stopped while starting")
+	if installed < 0 || failed < installed || stopped < failed {
+		t.Errorf("want the install, then the failed start, then the stopped core; out %q", out)
 	}
 }
