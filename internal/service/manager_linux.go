@@ -139,10 +139,23 @@ func (m *systemdManager) Active(ctx context.Context) (bool, error) {
 	if noBus.Match(out) {
 		return false, ErrNoUserManager
 	}
-	// is-active exits non-zero for every state but active.
-	_ = err
-	return strings.TrimSpace(string(out)) == "active", nil
+	// is-active exits non-zero for every state but active, and prints the
+	// state. A failure that prints none says nothing either way.
+	state := strings.TrimSpace(string(out))
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if !unitState.MatchString(state) {
+			return false, fmt.Errorf("systemctl --user is-active: %w: %s", err, output(out))
+		}
+	}
+	return state == "active", nil
 }
+
+// unitState matches a state systemctl is-active prints: inactive, failed,
+// activating and the like.
+var unitState = regexp.MustCompile(`^[a-z-]+$`)
 
 func (m *systemdManager) ManagerEnv(ctx context.Context) map[string]string {
 	out, err := m.systemctl(ctx, "show-environment")

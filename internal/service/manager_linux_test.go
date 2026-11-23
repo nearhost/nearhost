@@ -128,6 +128,22 @@ func TestActiveParses(t *testing.T) {
 	}
 }
 
+// A failure that prints no unit state says nothing of whether the core runs.
+func TestActiveFailure(t *testing.T) {
+	for _, out := range []string{"", "Access denied\n"} {
+		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(out), errors.New("exit status 1") }}
+		if _, err := New(testNames, t.TempDir(), f.run).Active(context.Background()); err == nil {
+			t.Errorf("Active(%q) error = nil, want one", out)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeRunner{handle: func(string) ([]byte, error) { return nil, context.Canceled }}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Active error = %v, want context.Canceled", err)
+	}
+}
+
 func TestNoUserManager(t *testing.T) {
 	for _, msg := range []string{
 		"Failed to connect to bus: No medium found\n",
