@@ -147,6 +147,23 @@ func TestActiveParses(t *testing.T) {
 	}
 }
 
+// Only a service launchd cannot find is inactive: any other failure of
+// launchctl print says nothing of whether the core runs.
+func TestActiveFailure(t *testing.T) {
+	f := &fakeRunner{handle: func(string) ([]byte, error) {
+		return []byte("Bad request.\n"), errors.New("exit status 5")
+	}}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(context.Background()); err == nil || !strings.Contains(err.Error(), "Bad request.") {
+		t.Errorf("Active error = %v, want launchctl's output", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f = &fakeRunner{handle: func(string) ([]byte, error) { return nil, context.Canceled }}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Active error = %v, want context.Canceled", err)
+	}
+}
+
 func TestManagerEnv(t *testing.T) {
 	f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte("/private/tmp/com.apple.launchd.x/Listeners\n"), nil }}
 	env := New(testNames, t.TempDir(), f.run).ManagerEnv(context.Background())

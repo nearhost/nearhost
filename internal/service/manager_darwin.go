@@ -95,10 +95,17 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 }
 
 func (m *launchdManager) Active(ctx context.Context) (bool, error) {
-	// print fails for a service that is not loaded.
+	// print fails for a service that is not loaded, which is not running.
+	// Any other failure says nothing either way.
 	out, err := m.run(ctx, "launchctl", "print", m.target())
 	if err != nil {
-		return false, nil
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if strings.Contains(string(out), "Could not find service") {
+			return false, nil
+		}
+		return false, fmt.Errorf("launchctl print: %w: %s", err, output(out))
 	}
 	return strings.Contains(string(out), "state = running"), nil
 }
