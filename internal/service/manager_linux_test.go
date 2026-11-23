@@ -201,3 +201,41 @@ func TestUnitDirFollowsXDGConfigHome(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// A unit that exists but cannot be parsed, as one edited by hand, is
+// ErrUnreadable, so uninstall can still remove it.
+func TestUnreadableUnit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[Service]\nExecStart=/bin/true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRunner{}
+	m := New(testNames, home, f.run)
+	if _, ok, err := m.Installed(context.Background()); ok || !errors.Is(err, ErrUnreadable) {
+		t.Fatalf("Installed = %v, %v; want ErrUnreadable", ok, err)
+	}
+	if err := m.Uninstall(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("unit file left: %v", err)
+	}
+}
+
+// A unit that cannot be read for another reason is not ErrUnreadable.
+func TestUnitReadErrorIsNotUnreadable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home := t.TempDir()
+	// A folder where the file should be cannot be read as one.
+	if err := os.MkdirAll(filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := New(testNames, home, (&fakeRunner{}).run).Installed(context.Background()); err == nil || errors.Is(err, ErrUnreadable) {
+		t.Errorf("Installed error = %v, want one that is not ErrUnreadable", err)
+	}
+}

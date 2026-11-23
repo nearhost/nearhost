@@ -40,7 +40,7 @@ func (m *launchdManager) Installed(context.Context) (Definition, bool, error) {
 	}
 	d, err := ParsePlist(b)
 	if err != nil {
-		return Definition{}, false, fmt.Errorf("read %s: %w", m.path, err)
+		return Definition{}, false, fmt.Errorf("read %s: %w", m.path, Unreadable(err))
 	}
 	return d, true, nil
 }

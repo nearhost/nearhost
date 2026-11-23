@@ -48,7 +48,7 @@ func (m *taskManager) Installed(ctx context.Context) (Definition, bool, error) {
 	}
 	d, err := ParseTask(out)
 	if err != nil {
-		return Definition{}, false, fmt.Errorf("read task %s: %w", m.names.Task, err)
+		return Definition{}, false, fmt.Errorf("read task %s: %w", m.names.Task, Unreadable(err))
 	}
 	return d, true, nil
 }

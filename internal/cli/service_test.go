@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -416,5 +417,39 @@ func TestInstallWhoseStartFailsSpawnsADetachedCore(t *testing.T) {
 	}
 	if !strings.Contains(out, "Nearhost is running now (pid 4344).") {
 		t.Errorf("out %q", out)
+	}
+}
+
+// A service whose definition is there but cannot be read, as one edited by
+// hand, is still removed, and uninstall says why it could not read it.
+func TestUninstallRemovesAnUnreadableService(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.installed = false
+	x.m.instErr = fmt.Errorf("read /home/u/.config/systemd/user/nearhost.service: %w", service.Unreadable(errors.New("no ExecStart")))
+	x.f.answer(control.Info{API: 1, PID: 9, StartedBy: control.StartedService})
+	out, err := x.run(t, "", "service", "uninstall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x.m.log() != "uninstall" {
+		t.Errorf("calls %q", x.m.log())
+	}
+	want := "The Nearhost service cannot be read (read /home/u/.config/systemd/user/nearhost.service: no ExecStart), so it is removed as it is.\n" +
+		"Removed the Nearhost service. Stopped Nearhost, which it ran.\n"
+	if out != want {
+		t.Errorf("out %q, want %q", out, want)
+	}
+}
+
+// Any other error reading the service stops uninstall.
+func TestUninstallStopsAtOtherErrors(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.instErr = errors.New("permission denied")
+	out, err := x.run(t, "", "service", "uninstall")
+	if err == nil || !strings.Contains(out, "permission denied") {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if x.m.log() != "" {
+		t.Errorf("calls %q", x.m.log())
 	}
 }

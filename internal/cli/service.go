@@ -248,10 +248,14 @@ func runServiceUninstall(cmd *cobra.Command, b serviceBackend) error {
 		ctx = context.Background()
 	}
 	_, ok, err := m.Installed(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, service.ErrUnreadable):
+		// A definition edited by hand is still the service's, and the
+		// managers remove one without reading it.
+		fmt.Fprintf(out, "The Nearhost service cannot be read (%s), so it is removed as it is.\n", printable(strings.TrimSpace(err.Error())))
+	case err != nil:
 		return serviceFailure(cmd, err)
-	}
-	if !ok {
+	case !ok:
 		fmt.Fprintln(out, "No Nearhost service is installed.")
 		return nil
 	}
