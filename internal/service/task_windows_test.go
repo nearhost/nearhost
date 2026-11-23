@@ -12,7 +12,7 @@ import (
 )
 
 // TestEscapeArgAgrees checks our escaping and splitting against the system's:
-// both escapers must give lines that both splitters read back as the arguments.
+// both escapers must give lines that both splitters read back as the arguments. The escaped text itself may differ, as syscall.EscapeArg leaves a quote without a space unwrapped.
 func TestEscapeArgAgrees(t *testing.T) {
 	cases := [][]string{
 		{`C:\Users\Ed Smith\AppData\Local\nearhost\nearhost.exe`, "daemon", "--started-by", "service"},
@@ -37,9 +37,6 @@ func TestEscapeArgAgrees(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(got, argv) {
 				t.Errorf("DecomposeCommandLine(%q) = %q, %v, want %q", line, got, err, argv)
 			}
-		}
-		if strings.Join(ours, " ") != strings.Join(sys, " ") {
-			t.Errorf("escapeArg %q differs from syscall.EscapeArg %q", ours, sys)
 		}
 	}
 }
