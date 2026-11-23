@@ -506,6 +506,20 @@ func TestLineWriterDropsWhenFull(t *testing.T) {
 	}
 }
 
+// A line dropped while the writer drains its last one still gets the
+// note, at once rather than with the next line: here the writer takes the
+// line that filled its buffer before the dropped one is counted.
+func TestLineWriterSaysMissedWithoutANextLine(t *testing.T) {
+	var buf syncBuffer
+	w := makeLineWriter(&buf, 1)
+	w.put("a") // fills the buffer
+	w.put("b") // dropped and counted
+	<-w.lines  // the writer took "a" before "b" was counted
+	go w.run()
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return buf.String() == missedLines+"\n" }, "the note that a line was missed")
+	w.close()
+}
+
 // A Yes on the page to a passthrough whose server is not connected shows
 // why it could not open, through the whole chain from the page to the
 // agent API, rather than that the request was answered elsewhere.

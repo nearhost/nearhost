@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,44 @@ func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
 		if out.String() != tc.want {
 			t.Errorf("%s, background %v:\n%s\nwant:\n%s", tc.name, tc.background, out.String(), tc.want)
 		}
+	}
+}
+
+// writeCounter records each Write on its own, as approval lines written
+// from another goroutine could fall between any two of them.
+type writeCounter struct{ writes []string }
+
+func (w *writeCounter) Write(p []byte) (int, error) {
+	w.writes = append(w.writes, string(p))
+	return len(p), nil
+}
+
+// An event and the fix under it, and the whole summary, are each written in
+// one Write: the core's approval lines, written from a goroutine of their
+// own, can come between them but never inside one.
+func TestUpPrintsEachBlockInOneWrite(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api"), remoteProject("blog")}}
+	var out writeCounter
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), advise: true}
+	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
+	p.event(engine.Event{Time: at, Project: "api", Server: "mini", State: engine.StateDegraded, Message: "state: degraded: server mini is reconnecting: connection refused"})
+	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "[api] state: degraded") || !strings.Contains(out.writes[0], "  fix: ") {
+		t.Errorf("an event and its fix took %d writes: %q", len(out.writes), out.writes)
+	}
+	out.writes = nil
+	p.event(engine.Event{Time: at, Project: "api", Message: engine.PendingPrefix + "routes"})
+	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "open nearhost to approve them") {
+		t.Errorf("a pending change and its note took %d writes: %q", len(out.writes), out.writes)
+	}
+	out.writes = nil
+	p.summary([]string{"api", "blog"}, []error{errors.New("server mini is unreachable"), nil})
+	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "api: ") || !strings.Contains(out.writes[0], "blog: ") || !strings.Contains(out.writes[0], "nearhost up is stopping") {
+		t.Errorf("the summary took %d writes: %q", len(out.writes), out.writes)
+	}
+	out.writes = nil
+	p.event(engine.Event{Time: at, Project: "api", Message: "nothing to fix"})
+	p.summary(nil, nil)
+	if len(out.writes) != 2 {
+		t.Errorf("a plain event and an empty summary took %d writes: %q", len(out.writes), out.writes)
 	}
 }

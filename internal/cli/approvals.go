@@ -235,7 +235,11 @@ type lineWriter struct {
 	out    io.Writer
 	lines  chan string
 	missed atomic.Int64
-	done   chan struct{}
+	// kick wakes the writer once a line is dropped, so the note does not
+	// wait for a next line when the writer had drained before it was
+	// counted.
+	kick chan struct{}
+	done chan struct{}
 
 	mu     sync.Mutex
 	closed bool
@@ -244,9 +248,14 @@ type lineWriter struct {
 // newLineWriter starts writing to out the lines handed to put, up to
 // buffer of them waiting, until close.
 func newLineWriter(out io.Writer, buffer int) *lineWriter {
-	w := &lineWriter{out: out, lines: make(chan string, buffer), done: make(chan struct{})}
+	w := makeLineWriter(out, buffer)
 	go w.run()
 	return w
+}
+
+// makeLineWriter is newLineWriter without starting it.
+func makeLineWriter(out io.Writer, buffer int) *lineWriter {
+	return &lineWriter{out: out, lines: make(chan string, buffer), kick: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 // put hands line to the writer without waiting: when the buffer is full,
@@ -261,19 +270,30 @@ func (w *lineWriter) put(line string) {
 	case w.lines <- line:
 	default:
 		w.missed.Add(1)
+		select {
+		case w.kick <- struct{}{}:
+		default: // the writer has been woken already
+		}
 	}
 }
 
 func (w *lineWriter) run() {
 	defer close(w.done)
-	for line := range w.lines {
-		fmt.Fprintln(w.out, line)
+	for {
+		select {
+		case line, ok := <-w.lines:
+			if !ok {
+				if w.missed.Swap(0) > 0 {
+					fmt.Fprintln(w.out, missedLines)
+				}
+				return
+			}
+			fmt.Fprintln(w.out, line)
+		case <-w.kick:
+		}
 		if len(w.lines) == 0 && w.missed.Swap(0) > 0 {
 			fmt.Fprintln(w.out, missedLines)
 		}
-	}
-	if w.missed.Swap(0) > 0 {
-		fmt.Fprintln(w.out, missedLines)
 	}
 }
 
