@@ -86,7 +86,10 @@ func TestStartCommands(t *testing.T) {
 		t.Fatalf("Start must ignore a service that was not loaded: %v", err)
 	}
 	uid := os.Getuid()
+	// Start first asks whether the job runs: one that does not is
+	// reloaded at once.
 	want := []string{
+		fmt.Sprintf("launchctl print gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootout gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootstrap gui/%d %s", uid, plistPath(home)),
 	}
