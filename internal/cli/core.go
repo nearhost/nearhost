@@ -151,6 +151,33 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		}
 		return b.bind.advise(err)
 	}
+	core := &coreBackend{
+		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
+		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
+		noHosts: flags.noHosts,
+		info: control.Info{
+			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
+			StartedBy: mode.startedBy, Reloads: mode.watch,
+		},
+	}
+	// Nearhost's page shows the core's status and takes answers while it
+	// is served, from the core in this process, never through the control
+	// socket. It is put in place before any link to it is given: an
+	// approval's, or the control API's. It is cleared before the engine
+	// stops, and its event streams end with it.
+	closePage := func() {}
+	if eng.WebPort() != 0 {
+		pageDone := make(chan struct{})
+		proxy.SetConsole(page.New(page.Options{
+			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
+		}))
+		closePage = sync.OnceFunc(func() {
+			proxy.SetConsole(nil)
+			close(pageDone)
+		})
+	}
+	defer closePage()
+
 	// Each request is said where the core's events are, with where to
 	// answer it. The agent API tells the queue with its lock held, so the
 	// line is handed to a writer of its own, never written there: output
@@ -183,15 +210,6 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		})
 	}
 
-	core := &coreBackend{
-		coreOps: ops, hub: hub, ctx: ctx, stop: stopCore,
-		httpPort: flags.httpPort, webPort: eng.WebPort(), // 0 once the page could not be served
-		noHosts: flags.noHosts,
-		info: control.Info{
-			API: control.APIVersion, Version: Version, PID: os.Getpid(), Started: time.Now(),
-			StartedBy: mode.startedBy, Reloads: mode.watch,
-		},
-	}
 	ctl, err := control.Listen(control.SocketPath(opts.RunDir), core, hub)
 	if err != nil {
 		// The engine's instance lock has already refused any other core
@@ -201,8 +219,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
-		// The agents' socket goes first, as in the shutdown below, so the
-		// lock is never free while it still answers.
+		// The page and the agents' socket go first, as in the shutdown
+		// below, so the lock is never free while they still answer.
+		closePage()
 		closeAgents()
 		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
@@ -213,23 +232,6 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	closeControl := sync.OnceFunc(func() { ctl.Close() })
 	defer closeControl()
-
-	// Nearhost's page shows the core's status and takes answers while it
-	// is served, from the core in this process, never through the control
-	// socket. It is cleared before the engine stops, and its event streams
-	// end with it.
-	closePage := func() {}
-	if eng.WebPort() != 0 {
-		pageDone := make(chan struct{})
-		proxy.SetConsole(page.New(page.Options{
-			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
-		}))
-		closePage = sync.OnceFunc(func() {
-			proxy.SetConsole(nil)
-			close(pageDone)
-		})
-	}
-	defer closePage()
 
 	// The watcher has a context of its own: a core that stops because it
 	// has nothing to serve was not interrupted, and ctx goes on.
