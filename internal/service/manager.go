@@ -25,7 +25,8 @@ type Manager interface {
 	// Uninstall unregisters and removes the service; none installed is no error.
 	// The caller stops a core the service runs first.
 	Uninstall(ctx context.Context) error
-	// Start loads the installed definition afresh and starts it.
+	// Start loads the installed definition afresh and starts it. A job
+	// launchd runs already is left running, as its core may be starting.
 	Start(ctx context.Context) error
 	// Active reports whether the manager is running the service now.
 	Active(ctx context.Context) (bool, error)
