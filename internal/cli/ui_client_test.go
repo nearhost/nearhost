@@ -1149,7 +1149,7 @@ func TestRestartWithAnUnreadableServiceSpawns(t *testing.T) {
 	b.detach = old.detach(func(args []string) {
 		spawned = append(spawned, args)
 		core := newSteeredCore(t, cfgPath)
-		core.info.StartedBy = control.StartedService
+		core.info.StartedBy = control.StartedDetached
 		core.serve()
 	})
 	b.detach.service = svc.lookup()
@@ -1161,7 +1161,8 @@ func TestRestartWithAnUnreadableServiceSpawns(t *testing.T) {
 	if !slices.Contains(old.asked(), "Stop") {
 		t.Error("the old core was not stopped")
 	}
-	if len(spawned) != 1 || !slices.Equal(spawned[0][:3], []string{"daemon", "--started-by", "service"}) {
-		t.Errorf("spawned %q, want one core started directly", spawned)
+	// The service manager did not start it, so it does not say it did.
+	if len(spawned) != 1 || !slices.Equal(spawned[0][:3], []string{"daemon", "--started-by", "detached"}) {
+		t.Errorf("spawned %q, want one core started directly, as detached", spawned)
 	}
 }

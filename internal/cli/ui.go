@@ -447,7 +447,8 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 // from here on says of itself. A core the installed service started is
 // restarted through the service, and is not offered a restart when the
 // service runs another copy of nearhost, which would start it again as it
-// was.
+// was. With no service to read, it is started directly, and then says it was
+// started detached, as the service manager did not start it.
 func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, _ control.Info, restarted bool, err error) {
 	if info.Version == Version {
 		return c, info, false, nil

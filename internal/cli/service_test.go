@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,8 @@ type recordingService struct {
 	onStart func()
 	// uninstallErr is what Uninstall returns.
 	uninstallErr error
+	// startErr is what Start returns.
+	startErr error
 }
 
 func (r *recordingService) note(s string) {
@@ -62,7 +65,7 @@ func (r *recordingService) Start(context.Context) error {
 	if r.onStart != nil {
 		r.onStart()
 	}
-	return nil
+	return r.startErr
 }
 
 func (r *recordingService) Active(context.Context) (bool, error) { return true, nil }
@@ -389,6 +392,29 @@ func TestUninstallFailureSaysNearhostWasStopped(t *testing.T) {
 		t.Fatal("no error")
 	}
 	if !strings.Contains(out, "Stopped Nearhost, which the service ran.") || !strings.Contains(out, "launchctl failed") {
+		t.Errorf("out %q", out)
+	}
+}
+
+// A core spawned because the manager's Start failed was not started by the
+// service manager, so it must not say it was: it says detached.
+func TestInstallWhoseStartFailsSpawnsADetachedCore(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.startErr = errors.New("systemctl --user start nearhost.service: exit status 1")
+	var spawned [][]string
+	x.b.detach.spawn = func(exe string, args []string) (int, func() error, error) {
+		spawned = append(spawned, args)
+		x.f.answer(control.Info{API: 1, PID: 4344, StartedBy: control.StartedDetached})
+		return 0, running(), nil
+	}
+	out, err := x.run(t, "", "service", "install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spawned) != 1 || !slices.Equal(spawned[0], []string{"daemon", "--started-by", "detached"}) {
+		t.Errorf("spawned %q, want one core started detached", spawned)
+	}
+	if !strings.Contains(out, "Nearhost is running now (pid 4344).") {
 		t.Errorf("out %q", out)
 	}
 }
