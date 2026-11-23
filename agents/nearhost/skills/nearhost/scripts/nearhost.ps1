@@ -765,8 +765,9 @@ switch -CaseSensitive ($cmd) {
 				exit 0
 			}
 			'409' {
-				# Nearhost runs as nearhost up, or the server dropped off.
-				if ($script:Body.Contains('nearhost up')) {
+				# Nothing on the laptop can ask the user, or the server dropped
+				# off. An older Nearhost says it runs as nearhost up.
+				if ($script:Body.Contains('has no page or window to ask you in') -or $script:Body.Contains('nearhost up')) {
 					Exit-Answer
 				}
 				if ($script:Body.Contains("isn't connected")) {
@@ -923,9 +924,10 @@ switch -CaseSensitive ($cmd) {
 				exit 0
 			}
 			'409' {
-				# Nearhost runs as nearhost up, or the server dropped off.
+				# Nothing on the laptop can ask the user, or the server dropped
+				# off. An older Nearhost says it runs as nearhost up.
 				$msg = Get-Text error $script:Body
-				if ($script:Body.Contains('nearhost up')) {
+				if ($script:Body.Contains('has no page or window to ask you in') -or $script:Body.Contains('nearhost up')) {
 					if (-not $msg) {
 						$msg = 'Nearhost runs as nearhost up, which cannot show prompts.'
 					}

@@ -73,6 +73,11 @@ func (q *approvals) Shown(origin, requester, doc string) {
 	q.publish(control.Envelope{Kind: control.KindShown, Shown: &control.Shown{Origin: origin, Requester: requester, Doc: doc}})
 }
 
+// Ended takes off the queue a request the agent API has stopped waiting
+// on, however it ended, and publishes its "ended"; nothing when it is not
+// pending.
+func (q *approvals) Ended(id string) { q.take(id) }
+
 // add queues a, which waits until expires, publishes it, and has the sweeper
 // look for it expiring.
 func (q *approvals) add(a control.Approval, expires time.Time) {

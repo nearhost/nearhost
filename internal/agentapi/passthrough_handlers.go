@@ -127,11 +127,12 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		taken = !s.opts.Passer.Free(req.Port)
 	}
 	snap := s.live(o)
+	page := s.pageURL()
 
 	s.mu.Lock()
 	s.syncLocked(snap)
 	s.sweepPassesLocked()
-	if s.heldLocked(w, o, req) {
+	if s.heldLocked(w, o, req, page) {
 		s.mu.Unlock()
 		return
 	}
@@ -148,7 +149,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if reviewer == nil {
 			s.mu.Unlock()
-			fail(w, http.StatusConflict, "open nearhost on "+s.laptop()+" to approve this; `nearhost up` cannot show prompts")
+			fail(w, http.StatusConflict, s.noReviewer())
 			return
 		}
 		if n := s.promptsLocked(o); n >= maxPending {
@@ -165,6 +166,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 			Expires: s.opts.Now().Add(expiry),
 		},
 		prompted: !allowed,
+		shown:    !allowed,
 		opening:  allowed,
 		state:    StatePending,
 		seq:      s.passSeq,
@@ -172,13 +174,13 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.passes[rec.ID] = rec
 	p := rec.passthrough(s.opts.Now())
-	s.mu.Unlock()
-
 	if !allowed {
 		reviewer.ReviewPassthrough(rec.PassRequest)
-		reply(w, http.StatusAccepted, map[string]any{"id": rec.ID, "expires_at": rec.Expires.UTC().Format(time.RFC3339)})
+		s.mu.Unlock()
+		reply(w, http.StatusAccepted, pendingReply(rec.ID, rec.Expires, page))
 		return
 	}
+	s.mu.Unlock()
 
 	ctx, cancel := detached(r.Context(), openTimeout)
 	local, err := s.opts.Passer.Open(ctx, p)
@@ -208,12 +210,11 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.openPassLocked(rec, local, "")
 	out := s.viewLocked(rec, false)
-	reviewer = s.reviewer
-	s.mu.Unlock()
 	p.Local = local
-	if reviewer != nil {
-		reviewer.Opened(p)
+	if s.reviewer != nil {
+		s.reviewer.Opened(p)
 	}
+	s.mu.Unlock()
 	reply(w, http.StatusCreated, out)
 }
 
@@ -236,8 +237,9 @@ func (s *Server) coveredByProject(origin string, port int) bool {
 // heldLocked answers a request for a port that already has an open or
 // pending passthrough on origin: with it, for the same requester and
 // session, as agents ask again before every URL they show, or with 409 for
-// anyone else. It reports whether it answered.
-func (s *Server) heldLocked(w http.ResponseWriter, origin string, req passBody) bool {
+// anyone else. page is Nearhost's page, for the link to a pending one. It
+// reports whether it answered.
+func (s *Server) heldLocked(w http.ResponseWriter, origin string, req passBody, page string) bool {
 	for _, r := range s.passes {
 		if r.Origin != origin || r.Remote != req.Port || (r.state != StatePending && r.state != StateOpen) {
 			continue
@@ -253,11 +255,18 @@ func (s *Server) heldLocked(w http.ResponseWriter, origin string, req passBody) 
 		case r.state == StateOpen:
 			reply(w, http.StatusOK, s.viewLocked(r, false))
 		default:
-			reply(w, http.StatusAccepted, map[string]any{"id": r.ID, "expires_at": r.Expires.UTC().Format(time.RFC3339)})
+			reply(w, http.StatusAccepted, pendingReply(r.ID, r.Expires, page))
 		}
 		return true
 	}
 	return false
+}
+
+// pendingReply is the 202 for the passthrough or document request id,
+// which waits until expires, with the link to answer it on Nearhost's page
+// at page when there is one.
+func pendingReply(id string, expires time.Time, page string) map[string]any {
+	return withLink(map[string]any{"id": id, "expires_at": expires.UTC().Format(time.RFC3339)}, page, "/approve/"+id)
 }
 
 // promptsLocked counts origin's passthrough prompts waiting for the user.

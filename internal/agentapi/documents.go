@@ -81,6 +81,9 @@ type docRecord struct {
 	// prompted is set for a request shown to the reviewer; one that opens
 	// without asking does not count against maxPending.
 	prompted bool
+	// shown is set while the reviewer has been shown it and not yet told
+	// it ended.
+	shown bool
 	// opening is set while Shower.Show runs for it. It does not expire
 	// meanwhile, and can't be answered again.
 	opening bool
@@ -209,6 +212,7 @@ func (s *Server) endDocLocked(r *docRecord, state State, reason string) {
 	}
 	r.state, r.reason, r.ended, r.granted = state, reason, s.opts.Now(), ""
 	close(r.done)
+	s.endedLocked(&r.shown, r.ID)
 }
 
 // holdDocsLocked ends origin's document prompts still waiting for the
@@ -233,6 +237,7 @@ func (s *Server) openDocLocked(r *docRecord, url, token string) {
 	r.state, r.url, r.token, r.ended, r.opened = StateOpen, url, token, s.opts.Now(), s.docOpens
 	r.granted = ""
 	close(r.done)
+	s.endedLocked(&r.shown, r.ID)
 }
 
 // expireDocLocked ends a pending request whose time has passed, unless it
@@ -241,6 +246,7 @@ func (s *Server) expireDocLocked(r *docRecord) {
 	if r.state == StatePending && !r.opening && !s.opts.Now().Before(r.Expires) {
 		r.state, r.ended, r.granted = StateExpired, r.Expires, ""
 		close(r.done)
+		s.endedLocked(&r.shown, r.ID)
 	}
 }
 

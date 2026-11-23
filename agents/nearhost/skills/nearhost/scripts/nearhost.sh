@@ -599,9 +599,10 @@ passthrough)
 		exit 0
 		;;
 	409)
-		# Nearhost runs as nearhost up, or the server dropped off.
+		# Nothing on the laptop can ask the user, or the server dropped off.
+		# An older Nearhost says it runs as nearhost up.
 		case $BODY in
-		*"nearhost up"*) answer ;;
+		*"has no page or window to ask you in"* | *"nearhost up"*) answer ;;
 		*"isn't connected"*)
 			host=$(hostname 2>/dev/null | cut -d. -f1)
 			die 2 "Nearhost isn't connected to this server. On your laptop, select ${host:-<server>} in Nearhost and press c, then ask again. Or forward it yourself: ssh -N -L $PORT:localhost:$PORT ${host:-<server>}"
@@ -720,10 +721,11 @@ open)
 		exit 0
 		;;
 	409)
-		# Nearhost runs as nearhost up, or the server dropped off.
+		# Nothing on the laptop can ask the user, or the server dropped off.
+		# An older Nearhost says it runs as nearhost up.
 		msg=$(text_field error "$BODY")
 		case $BODY in
-		*"nearhost up"*) die 3 "${msg:-Nearhost runs as nearhost up, which cannot show prompts.}" ;;
+		*"has no page or window to ask you in"* | *"nearhost up"*) die 3 "${msg:-Nearhost runs as nearhost up, which cannot show prompts.}" ;;
 		*"isn't connected"*) die 2 "$msg" ;;
 		esac
 		printf '%s\n' "$BODY"

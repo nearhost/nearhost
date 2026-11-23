@@ -511,7 +511,7 @@ func TestPassthroughHeadless(t *testing.T) {
 		t.Fatalf("a valid token: %d %v", st, out)
 	}
 	st, out := e.ask(t, `{"port": 3001, "requester": "claude-code"}`)
-	if st != 409 || !strings.Contains(out["error"].(string), "open nearhost on dev@laptop to approve this") {
+	if st != 409 || out["error"] != noReviewerCopy {
 		t.Fatalf("no token: %d %v", st, out)
 	}
 }

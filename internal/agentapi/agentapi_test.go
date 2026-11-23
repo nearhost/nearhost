@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -54,11 +55,54 @@ type fakeReviewer struct {
 	opened []Passthrough
 	docs   []DocRequest
 	shown  [][3]string // origin, requester, doc
+	// log is "review <id>" for each Review*, and "ended <id>" for each
+	// Ended, in the order they came.
+	log []string
+	// endedFirst holds the IDs whose Ended came before their Review*.
+	endedFirst []string
+	// slow, when set, is how long ReviewPassthrough takes before it records
+	// the request, so an Ended that could overtake it does.
+	slow time.Duration
+}
+
+// logLocked records that id was reviewed or ended.
+func (f *fakeReviewer) logLocked(what, id string) {
+	if what == "ended" && !slices.Contains(f.log, "review "+id) {
+		f.endedFirst = append(f.endedFirst, id)
+	}
+	f.log = append(f.log, what+" "+id)
+}
+
+func (f *fakeReviewer) Ended(id string) {
+	f.mu.Lock()
+	f.logLocked("ended", id)
+	f.mu.Unlock()
+}
+
+// endedCount is how many times Ended was told of id.
+func (f *fakeReviewer) endedCount(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, l := range f.log {
+		if l == "ended "+id {
+			n++
+		}
+	}
+	return n
+}
+
+// events is the log so far.
+func (f *fakeReviewer) events() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.log...)
 }
 
 func (f *fakeReviewer) ReviewDocument(r DocRequest) {
 	f.mu.Lock()
 	f.docs = append(f.docs, r)
+	f.logLocked("review", r.ID)
 	f.mu.Unlock()
 }
 
@@ -81,8 +125,10 @@ func (f *fakeReviewer) shownDocs() [][3]string {
 }
 
 func (f *fakeReviewer) ReviewPassthrough(r PassRequest) {
+	time.Sleep(f.slow)
 	f.mu.Lock()
 	f.passes = append(f.passes, r)
+	f.logLocked("review", r.ID)
 	f.mu.Unlock()
 }
 
@@ -107,6 +153,7 @@ func (f *fakeReviewer) notices() []Passthrough {
 func (f *fakeReviewer) Review(p Proposal) {
 	f.mu.Lock()
 	f.seen = append(f.seen, p)
+	f.logLocked("review", p.ID)
 	f.mu.Unlock()
 }
 
@@ -267,7 +314,7 @@ func TestProposeAPathAProjectHoldsSaysItExists(t *testing.T) {
 func TestProposeWithoutTheInterfaceIsRefused(t *testing.T) {
 	_, _, _, _, remote := newServer(t, false)
 	status, out := call(t, remote, "POST", "/v1/proposals", `{"path": "/srv/app"}`)
-	if status != 409 || !strings.Contains(out["error"].(string), "open nearhost on dev@laptop") {
+	if status != 409 || out["error"] != noReviewerCopy {
 		t.Fatalf("%d %v", status, out)
 	}
 	if _, out := call(t, remote, "GET", "/v1", ""); out["interface"] != false {
@@ -938,7 +985,7 @@ func TestReloadAnswers(t *testing.T) {
 	_, _, rl, _, sock = reloadServer(t, false)
 	rl.answer(waiting, nil)
 	status, out = call(t, sock, "POST", "/v1/projects/reload", `{"path": "/home/dev/code/myapp"}`)
-	if status != 409 || out["error"] != "open nearhost on dev@laptop to approve what .nearhostrc asks for (app.example.com, docker_clients); `nearhost up` cannot show it" ||
+	if status != 409 || out["error"] != noReviewerCopy ||
 		fmt.Sprint(out["items"]) != "[app.example.com docker_clients]" {
 		t.Fatalf("without the interface: %d %v", status, out)
 	}

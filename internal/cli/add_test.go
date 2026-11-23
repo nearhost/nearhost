@@ -1447,6 +1447,7 @@ func (nopReviewer) ReviewPassthrough(agentapi.PassRequest) {}
 func (nopReviewer) Opened(agentapi.Passthrough)            {}
 func (nopReviewer) ReviewDocument(agentapi.DocRequest)     {}
 func (nopReviewer) Shown(string, string, string)           {}
+func (nopReviewer) Ended(string)                           {}
 
 func TestAddWhenNothingRunsSaysToStartIt(t *testing.T) {
 	home := agentHome(t)

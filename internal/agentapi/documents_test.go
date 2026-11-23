@@ -859,7 +859,7 @@ func TestDocumentLimit(t *testing.T) {
 func TestDocumentHeadless(t *testing.T) {
 	e := newDocServer(t, false)
 	st, out := e.ask(t, docBody("plan.md", "claude-code", ""))
-	if st != 409 || !strings.Contains(fmt.Sprint(out["error"]), "nearhost up") {
+	if st != 409 || out["error"] != noReviewerCopy {
 		t.Fatalf("%d %v", st, out)
 	}
 	// A valid token opens it all the same.
