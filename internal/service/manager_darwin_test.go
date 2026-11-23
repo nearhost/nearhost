@@ -54,6 +54,26 @@ func TestInstallUnchanged(t *testing.T) {
 	}
 }
 
+// A definition that differs in a field the plist carries is written again.
+func TestInstallChanged(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	d.Exe = "/opt/homebrew/bin/nearhost"
+	d.Env = append(d.Env, EnvVar{"DOCKER_HOST", "unix:///var/run/docker.sock"})
+	changed, err := m.Install(context.Background(), d)
+	if err != nil || !changed || len(f.calls) != 0 {
+		t.Fatalf("Install = %v, %v, commands %q; want true, nil, none", changed, err, f.calls)
+	}
+	got, ok, err := m.Installed(context.Background())
+	if err != nil || !ok || !reflect.DeepEqual(got, d.For(Plist)) {
+		t.Errorf("Installed = %+v, %v, %v; want %+v", got, ok, err, d.For(Plist))
+	}
+}
+
 func TestStartCommands(t *testing.T) {
 	home := t.TempDir()
 	f := &fakeRunner{handle: func(call string) ([]byte, error) {
