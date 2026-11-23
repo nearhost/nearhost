@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -48,6 +49,8 @@ func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 		passwordOpened: make(chan struct{}),
 		ended:          make(chan error, 1),
 	}
+	// Started for the interface, as a core spawned for it says.
+	r.core.info.StartedBy = control.StartedTUI
 	ran := false
 	b := fakeUI(t, true, &ran)
 	b.stops = func() (<-chan os.Signal, func()) { return r.sigs, func() {} }

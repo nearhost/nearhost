@@ -213,6 +213,8 @@ func TestLeavingTheCoreRunningSaysSo(t *testing.T) {
 	})
 	t.Run("keep_running true", func(t *testing.T) {
 		f := newSteeredCore(t, configHome(t))
+		// Started for the interface, as a core spawned for it says.
+		f.info.StartedBy = control.StartedTUI
 		f.st.Config = keepRunningConfig(t, true)
 		stdout, stderr, code := quitRun(t, f, func([]string) { f.serve() })
 		if code != 0 || stdout != still {
@@ -224,6 +226,8 @@ func TestLeavingTheCoreRunningSaysSo(t *testing.T) {
 	})
 	t.Run("keep_running false", func(t *testing.T) {
 		f := newSteeredCore(t, configHome(t))
+		// Started for the interface, as a core spawned for it says.
+		f.info.StartedBy = control.StartedTUI
 		f.st.Config = keepRunningConfig(t, false)
 		stdout, stderr, code := quitRun(t, f, func([]string) { f.serve() })
 		if code != 0 || stdout != "" {
@@ -239,6 +243,7 @@ func TestLeavingTheCoreRunningSaysSo(t *testing.T) {
 // run: no interface would follow it.
 func TestACoreStartedForAnInterfaceThatFailsIsStopped(t *testing.T) {
 	f := newSteeredCore(t, configHome(t))
+	f.info.StartedBy = control.StartedTUI
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(func([]string) { f.serve() })
 	b.run = func(*tui.Model, func(*tea.Program)) error { return errors.New("no terminal after all") }

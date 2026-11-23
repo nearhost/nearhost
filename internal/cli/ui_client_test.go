@@ -940,3 +940,143 @@ func TestQuitChoiceCountsAClientAttachedJustBefore(t *testing.T) {
 		t.Errorf("QuitChoice = %v with a second client, want QuitLeave", got)
 	}
 }
+
+// A core started through the service for the interface is the service's, not
+// the interface's: quitting asks nothing and leaves it, and so does an
+// interrupted start.
+func TestTUILeavesAServiceCore(t *testing.T) {
+	t.Run("quit", func(t *testing.T) {
+		core := newSteeredCore(t, configHome(t))
+		core.info.StartedBy = control.StartedService
+		svc := &fakeService{exe: "/bin/nearhost", active: true, start: func() error {
+			core.serve()
+			return nil
+		}}
+		var back *clientBackend
+		var choice tui.QuitChoice
+		b := fakeUI(t, true, new(bool))
+		b.detach = core.detach(nil)
+		b.detach.service = svc.lookup()
+		b.run = runProgram(func(p *tea.Program) { p.Send(keyQ) })
+		b.clientMade = func(c *clientBackend) { back = c }
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if _, stderr, code := runRootSplit(t, uiRoot(b)); code != 0 {
+				t.Errorf("exit %d, stderr %q", code, stderr)
+				return
+			}
+			choice = back.QuitChoice()
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("q did not quit the interface")
+		}
+		if starts, _ := svc.counts(); starts != 1 {
+			t.Errorf("the service was started %d times, want once", starts)
+		}
+		if choice != tui.QuitLeave {
+			t.Errorf("QuitChoice = %v, want QuitLeave", choice)
+		}
+		if slices.Contains(core.asked(), "Stop") {
+			t.Error("the service's core was stopped")
+		}
+	})
+
+	t.Run("interrupted", func(t *testing.T) {
+		core := newSteeredCore(t, configHome(t))
+		core.info.StartedBy = control.StartedService
+		sigs := make(chan os.Signal, 1)
+		answered := make(chan struct{})
+		svc := &fakeService{exe: "/bin/nearhost", active: true, start: func() error {
+			go func() {
+				defer close(answered)
+				time.Sleep(300 * time.Millisecond) // the core takes a moment to answer
+				core.serve()
+			}()
+			sigs <- os.Interrupt
+			return nil
+		}}
+		ran := false
+		b := fakeUI(t, true, &ran)
+		b.stops = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+		b.detach = core.detach(nil)
+		b.detach.service = svc.lookup()
+		_, stderr, code := runRootSplit(t, uiRoot(b))
+		if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || stderr != want {
+			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
+		}
+		if starts, _ := svc.counts(); starts != 1 {
+			t.Fatalf("the service was started %d times, want once", starts)
+		}
+		<-answered
+		if slices.Contains(core.asked(), "Stop") {
+			t.Error("the service's core was stopped")
+		}
+	})
+}
+
+// A service's core of another release is restarted through the service.
+func TestRestartGoesThroughService(t *testing.T) {
+	cfgPath := configHome(t)
+	old := newSteeredCore(t, cfgPath)
+	old.info.Version = "0.0.1"
+	old.info.StartedBy = control.StartedService
+	old.serve()
+	svc := &fakeService{exe: "/bin/nearhost", active: true, start: func() error {
+		core := newSteeredCore(t, cfgPath)
+		core.info.StartedBy = control.StartedService
+		core.serve()
+		return nil
+	}}
+	var back *clientBackend
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.detach = old.detach(nil)
+	b.detach.service = svc.lookup()
+	b.clientMade = func(c *clientBackend) { back = c }
+	root := uiRoot(b)
+	root.SetIn(strings.NewReader("y\n"))
+	if _, stderr, code := runRootSplit(t, root); code != 0 || !ran {
+		t.Fatalf("exit %d, ran %v, stderr %q", code, ran, stderr)
+	}
+	if !slices.Contains(old.asked(), "Stop") {
+		t.Error("the old core was not stopped")
+	}
+	if starts, _ := svc.counts(); starts != 1 {
+		t.Errorf("the service was started %d times, want once", starts)
+	}
+	if got := back.QuitChoice(); got != tui.QuitLeave {
+		t.Errorf("QuitChoice = %v, want QuitLeave: the service's core is not the interface's", got)
+	}
+}
+
+// A service that runs another copy of nearhost would start that copy again:
+// no restart is offered, and the message says how to change the service.
+func TestNoRestartForAnotherExe(t *testing.T) {
+	old := newSteeredCore(t, configHome(t))
+	old.info.Version = "0.0.1"
+	old.info.StartedBy = control.StartedService
+	old.serve()
+	svc := &fakeService{exe: "/opt/nearhost/bin/nearhost", start: func() error {
+		t.Error("the service was started")
+		return nil
+	}}
+	ran := false
+	b := fakeUI(t, true, &ran)
+	b.detach = old.detach(nil)
+	b.detach.service = svc.lookup()
+	root := uiRoot(b)
+	root.SetIn(strings.NewReader("y\n"))
+	stdout, stderr, code := runRootSplit(t, root)
+	if code != 0 || !ran {
+		t.Fatalf("exit %d, ran %v, stderr %q", code, ran, stderr)
+	}
+	if want := "Nearhost's service runs /opt/nearhost/bin/nearhost, which is 0.0.1. To have it run this copy (" + Version + "), run nearhost service install from it.\n"; stdout != want {
+		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+	if slices.Contains(old.asked(), "Stop") {
+		t.Error("the service's core was stopped")
+	}
+}

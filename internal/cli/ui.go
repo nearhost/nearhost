@@ -24,6 +24,7 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -262,10 +263,14 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 			return err
 		}
 	}
+	// The core is the interface's only when it was started for it: one the
+	// service started, though for this interface, is the service's, and is
+	// left running as a core found running is.
+	owned := spawned && info.StartedBy == control.StartedTUI
 	// A core started for this interface is stopped should the interface not
 	// take over: no interface would follow it.
 	abandon := func() {
-		if !spawned {
+		if !owned {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), detachTimeout)
@@ -303,7 +308,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	localFlags := flags
 	localFlags.noHosts = st.NoHosts
 	local := &localOps{b: b, path: st.ConfigPath, flags: localFlags, storage: storage, root: root}
-	back := newClientBackend(c, st, local, &proposals, spawned)
+	back := newClientBackend(c, st, local, &proposals, owned)
 	back.gone = b.detach.gone
 	defer back.Close()
 	if b.clientMade != nil {
@@ -438,7 +443,10 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 // restarted says the interface started it, as it did the old one. A core
 // that runs in a terminal is not offered a restart: it was started by hand,
 // and only there can it be started again. info is what the core followed
-// from here on says of itself.
+// from here on says of itself. A core the installed service started is
+// restarted through the service, and is not offered a restart when the
+// service runs another copy of nearhost, which would start it again as it
+// was.
 func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info control.Info, st control.State) (_ *control.Client, _ control.Info, restarted bool, err error) {
 	if info.Version == Version {
 		return c, info, false, nil
@@ -447,12 +455,26 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 		fmt.Fprintf(cmd.OutOrStdout(), "Nearhost running in a terminal is %s; this is %s. It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n", printable(info.Version), Version)
 		return c, info, false, nil
 	}
-	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
-		return c, info, false, nil
-	}
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	detach := b.detach
+	viaService := false
+	if info.StartedBy == control.StartedService {
+		var m service.Manager
+		detach, m = detach.withService(ctx)
+		if m != nil {
+			d, ok, err := m.Installed(ctx)
+			if err == nil && ok && !samePath(d.Exe, detach.exe()) {
+				fmt.Fprintf(cmd.OutOrStdout(), "Nearhost's service runs %s, which is %s. To have it run this copy (%s), run nearhost service install from it.\n", printable(d.Exe), printable(info.Version), Version)
+				return c, info, false, nil
+			}
+			viaService = true
+		}
+	}
+	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
+		return c, info, false, nil
 	}
 	// A core that stops between the dial and this call has done what was
 	// asked.
@@ -471,9 +493,11 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 	}
 	args := restartArgs(by, st)
 	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
-		return startCore(cmd, b.detach, args, by)
+		return startCore(cmd, detach, args, by, viaService)
 	})
-	return c, info, spawned && by == control.StartedTUI, err
+	// Only a core started for the interface is the interface's: the
+	// service's is not, nor one started as -d's.
+	return c, info, spawned && info.StartedBy == control.StartedTUI, err
 }
 
 // askRestart asks at the terminal whether to restart the core, which is the
