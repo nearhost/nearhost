@@ -13,6 +13,7 @@ import (
 )
 
 func TestInstallThenInstalled(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	f := &fakeRunner{}
 	m := New(testNames, home, f.run)
@@ -35,6 +36,7 @@ func TestInstallThenInstalled(t *testing.T) {
 }
 
 func TestInstallUnchanged(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := &fakeRunner{}
 	m := New(testNames, t.TempDir(), f.run)
 	d := plain()
@@ -49,6 +51,7 @@ func TestInstallUnchanged(t *testing.T) {
 }
 
 func TestInstallChangedReenables(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := &fakeRunner{}
 	m := New(testNames, t.TempDir(), f.run)
 	d := plain()
@@ -68,6 +71,7 @@ func TestInstallChangedReenables(t *testing.T) {
 }
 
 func TestStartCommands(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := &fakeRunner{}
 	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -79,6 +83,7 @@ func TestStartCommands(t *testing.T) {
 }
 
 func TestUninstall(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	f := &fakeRunner{}
 	m := New(testNames, home, f.run)
@@ -102,6 +107,7 @@ func TestUninstall(t *testing.T) {
 }
 
 func TestUninstallWhenNone(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	f := &fakeRunner{}
 	if err := New(testNames, home, f.run).Uninstall(context.Background()); err != nil {
@@ -113,6 +119,7 @@ func TestUninstallWhenNone(t *testing.T) {
 }
 
 func TestActiveParses(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	for out, want := range map[string]bool{"active\n": true, "inactive\n": false, "failed\n": false} {
 		f := &fakeRunner{handle: func(string) ([]byte, error) {
 			if want {
@@ -128,6 +135,7 @@ func TestActiveParses(t *testing.T) {
 }
 
 func TestNoUserManager(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	for _, msg := range []string{
 		"Failed to connect to bus: No medium found\n",
 		"Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus of other user)\n",
@@ -157,6 +165,7 @@ func testNoUserManager(t *testing.T, msg string) {
 }
 
 func TestManagerEnvAndGraphical(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := &fakeRunner{handle: func(call string) ([]byte, error) {
 		if strings.HasSuffix(call, "show-environment") {
 			return []byte("LANG=en_GB.UTF-8\nSSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket\nODD=$'a b'\n"), nil
