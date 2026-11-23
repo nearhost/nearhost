@@ -90,13 +90,16 @@ func (m *systemdManager) Installed(ctx context.Context) (Definition, bool, error
 
 func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error) {
 	got, ok, err := m.Installed(ctx)
-	if unchanged(got, ok, d, Unit) {
+	path := m.unitPath(ctx)
+	prev, prevErr := os.ReadFile(path)
+	// The same definition in other text, as a unit an earlier release
+	// wrote without lines this one adds, is rewritten: those lines are
+	// settings the definition does not hold.
+	if unchanged(got, ok, d, Unit) && prevErr == nil && bytes.Equal(prev, RenderUnit(d)) {
 		return false, nil
 	}
 	// A unit we cannot read is replaced, as a changed one is.
 	fresh := !ok && err == nil
-	path := m.unitPath(ctx)
-	prev, prevErr := os.ReadFile(path)
 	// putBack restores what was there when the install fails, so the next
 	// install sees the change again and retries what failed.
 	putBack := func(err error) error {
