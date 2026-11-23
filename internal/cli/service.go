@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -162,6 +163,13 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	if err != nil {
 		return err
 	}
+	// The service sends its output to the log, whose folder the manager does
+	// not create: systemd fails the unit before it runs when it is missing.
+	// Made here, also when the service is up to date, so installing again
+	// heals a service whose folder has gone.
+	if err := makeLogFolder(logPath); err != nil {
+		return serviceFailure(cmd, err)
+	}
 	env, notes := service.ServiceEnv(b.goos, b.getenv, m.ManagerEnv(ctx), b.home, b.getenv("XDG_RUNTIME_DIR"))
 	def := service.Definition{Exe: exe, Env: env, LogPath: logPath, Graphical: m.Graphical(ctx)}
 	if note != "" {
@@ -217,6 +225,16 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		fmt.Fprintln(out, "Restarted Nearhost with the new settings.")
 	default:
 		fmt.Fprintln(out, installed+handedOver(info))
+	}
+	return nil
+}
+
+// makeLogFolder creates the folder of the log at logPath, which only its
+// owner may read, as the core makes it.
+func makeLogFolder(logPath string) error {
+	dir := filepath.Dir(logPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create the log folder %s: %w", dir, err)
 	}
 	return nil
 }

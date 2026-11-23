@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
@@ -68,6 +71,13 @@ func envLevel(s string) level {
 	return levelWarn
 }
 
+// folderMissing reports whether dir is known not to exist: a folder that
+// cannot be looked at is not said to be missing.
+func folderMissing(dir string) bool {
+	_, err := os.Stat(dir)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
 // checkService reports the login service. Its name is empty when this
 // system has no service manager to ask, and the check is left out.
 func checkService(ctx context.Context, b doctorBackend, coreRunning bool, startedBy control.StartedBy) check {
@@ -92,6 +102,10 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 		return check{"service", levelInfo, "not installed", "nearhost service install starts Nearhost at login (optional)"}
 	case b.exe != "" && !samePath(d.Exe, b.exe):
 		return check{"service", levelWarn, fmt.Sprintf("runs %s, not this copy (%s)", d.Exe, b.exe), "run nearhost service install from the copy you use"}
+	case d.LogPath != "" && folderMissing(filepath.Dir(d.LogPath)):
+		// The manager fails the unit before it runs when the folder of the
+		// log it sends the core's output to is missing.
+		return check{"service", levelWarn, fmt.Sprintf("its log folder %s is missing, so the service cannot start", printable(filepath.Dir(d.LogPath))), "run nearhost service install"}
 	}
 	active, err := m.Active(ctx)
 	switch {

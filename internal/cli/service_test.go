@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/service"
+	"github.com/nearhost/nearhost/internal/testutil"
 )
 
 // recordingService is a service manager that records what it is asked.
@@ -30,6 +34,8 @@ type recordingService struct {
 	uninstallErr error
 	// startErr is what Start returns.
 	startErr error
+	// onInstall runs on Install with the definition, before it returns.
+	onInstall func(service.Definition)
 }
 
 func (r *recordingService) note(s string) {
@@ -53,6 +59,9 @@ func (r *recordingService) Install(_ context.Context, d service.Definition) (boo
 	r.mu.Lock()
 	r.got = d
 	r.mu.Unlock()
+	if r.onInstall != nil {
+		r.onInstall(d)
+	}
 	return r.changed, r.err
 }
 
@@ -472,6 +481,63 @@ func TestInstallSaysItInstalledBeforeAFailedStart(t *testing.T) {
 	stopped := strings.Index(out, "Nearhost stopped while starting")
 	if installed < 0 || failed < installed || stopped < failed {
 		t.Errorf("want the install, then the failed start, then the stopped core; out %q", out)
+	}
+}
+
+// The service's log goes to a file in Nearhost's config folder, which a
+// manager does not create: systemd fails the unit before it runs when the
+// folder is missing. Install creates it, also when the service is already up
+// to date, so installing again heals a service whose folder went.
+func TestServiceInstallCreatesLogFolder(t *testing.T) {
+	for _, changed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("changed=%v", changed), func(t *testing.T) {
+			x := newServiceFixture(t)
+			cfg := filepath.Join(testutil.TempDir(t, "nh"), "missing")
+			t.Setenv("XDG_CONFIG_HOME", cfg)
+			x.m.changed = changed
+			x.m.onStart = func() { x.f.answer(control.Info{API: 1, PID: 4343, StartedBy: control.StartedService}) }
+			var seen bool
+			x.m.onInstall = func(d service.Definition) {
+				dir := filepath.Dir(d.LogPath)
+				if want := filepath.Join(cfg, "nearhost"); dir != want {
+					t.Errorf("log folder %q, want %q", dir, want)
+				}
+				fi, err := os.Stat(dir)
+				if err != nil {
+					t.Errorf("log folder at install: %v", err)
+					return
+				}
+				seen = true
+				if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+					t.Errorf("log folder mode %v, want 0700", fi.Mode().Perm())
+				}
+			}
+			if out, err := x.run(t, "", "service", "install"); err != nil {
+				t.Fatalf("err %v, out %q", err, out)
+			}
+			if !seen {
+				t.Error("the log folder was not there when the service was installed")
+			}
+		})
+	}
+}
+
+// A log folder that cannot be created fails the install as the manager's
+// errors do, before the manager is asked.
+func TestServiceInstallLogFolderFailure(t *testing.T) {
+	x := newServiceFixture(t)
+	file := filepath.Join(testutil.TempDir(t, "nh"), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", file)
+	out, err := x.run(t, "", "service", "install")
+	var ee exitError
+	if !errors.As(err, &ee) || ee.code != 1 || !strings.Contains(out, "log folder") {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if x.m.log() != "" {
+		t.Errorf("calls %q", x.m.log())
 	}
 }
 

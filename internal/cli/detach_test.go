@@ -451,6 +451,7 @@ func TestDetachAnotherCoreAnswersFirst(t *testing.T) {
 // returns instead.
 type fakeService struct {
 	exe       string
+	logPath   string
 	start     func() error
 	installed func(ctx context.Context) error
 	// startCtx, when set, is Start in place of start.
@@ -479,7 +480,7 @@ func (s *fakeService) Installed(ctx context.Context) (service.Definition, bool, 
 			return service.Definition{}, false, err
 		}
 	}
-	return service.Definition{Exe: s.exe}, true, nil
+	return service.Definition{Exe: s.exe, LogPath: s.logPath}, true, nil
 }
 
 func (s *fakeService) Install(context.Context, service.Definition) (bool, error) {
@@ -555,6 +556,46 @@ func TestDetachThroughService(t *testing.T) {
 	}
 	if starts, lookups := svc.counts(); starts != 1 || lookups != 1 {
 		t.Errorf("the service was started %d and looked up %d times, want once each", starts, lookups)
+	}
+}
+
+// The service's log folder may have gone since it was installed, and the
+// manager then fails the unit before it runs: -d creates it before starting
+// the service, the installed service's own folder when it says one.
+func TestDetachThroughServiceCreatesLogFolder(t *testing.T) {
+	for _, own := range []bool{false, true} {
+		t.Run(fmt.Sprintf("own=%v", own), func(t *testing.T) {
+			cfg := filepath.Join(testutil.TempDir(t, "nh"), "missing")
+			t.Setenv("XDG_CONFIG_HOME", cfg)
+			want := filepath.Join(cfg, "nearhost")
+			f := newFakeDetach(t)
+			b := f.backend(func() func() error {
+				t.Error("spawned with a service installed")
+				return running()
+			})
+			svc := &fakeService{exe: "/bin/nearhost", active: true}
+			if own {
+				want = filepath.Join(testutil.TempDir(t, "nh"), "gone", "logs")
+				svc.logPath = filepath.Join(want, "core.log")
+			}
+			svc.start = func() error {
+				if _, err := os.Stat(want); err != nil {
+					t.Errorf("log folder at start: %v", err)
+				}
+				f.answer(control.Info{API: 1, PID: 4343, StartedBy: control.StartedService})
+				return nil
+			}
+			b.service = svc.lookup()
+			b.timeout = 10 * time.Second
+			ui := fakeUI(t, true, new(bool))
+			ui.detach = b
+			if _, stderr, code := runRootSplit(t, uiRoot(ui), "-d"); code != 0 {
+				t.Fatalf("code %d, stderr %q", code, stderr)
+			}
+			if starts, _ := svc.counts(); starts != 1 {
+				t.Errorf("the service was started %d times, want once", starts)
+			}
+		})
 	}
 }
 

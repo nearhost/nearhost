@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -188,6 +189,10 @@ func (f *fakeManager) Active(context.Context) (bool, error) { return f.active, f
 func TestDoctorService(t *testing.T) {
 	const exe = "/opt/nearhost/bin/nearhost"
 	mine := service.Definition{Exe: exe}
+	logs := testutil.TempDir(t, "nh")
+	gone := filepath.Join(logs, "gone")
+	withLog := service.Definition{Exe: exe, LogPath: filepath.Join(logs, "core.log")}
+	withGoneLog := service.Definition{Exe: exe, LogPath: filepath.Join(gone, "core.log")}
 	tests := []struct {
 		name     string
 		m        *fakeManager
@@ -199,6 +204,8 @@ func TestDoctorService(t *testing.T) {
 		{"unreadable", &fakeManager{installed: true, instErr: service.Unreadable(errors.New("bad plist"))}, "", "warn  service          installed, but its definition cannot be read\n", "Nearhost service uninstall, then nearhost service install"},
 		{"another exe", &fakeManager{installed: true, def: service.Definition{Exe: "/usr/bin/nearhost"}}, "", "warn  service          runs /usr/bin/nearhost, not this copy (" + exe + ")\n", "Run nearhost service install from the copy you use"},
 		{"active", &fakeManager{installed: true, def: mine, active: true}, control.StartedService, "ok    service          installed and running\n", ""},
+		{"active with its log folder", &fakeManager{installed: true, def: withLog, active: true}, control.StartedService, "ok    service          installed and running\n", ""},
+		{"log folder missing", &fakeManager{installed: true, def: withGoneLog}, "", "warn  service          its log folder " + gone + " is missing, so the service cannot start\n", "Run nearhost service install"},
 		{"inactive, no core", &fakeManager{installed: true, def: mine}, "", "warn  service          installed but not running\n", "Start it with nearhost -d"},
 		{"inactive beside a detached core", &fakeManager{installed: true, def: mine}, control.StartedDetached,
 			"info  service          installed; the running Nearhost was started by detached, so the service takes over at your next login\n", ""},
