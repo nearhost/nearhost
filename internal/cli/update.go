@@ -443,8 +443,19 @@ func restartOlderCore(cmd *cobra.Command, b updateBackend, yes bool, current str
 		// The copy was replaced, which drops a capability as an update does.
 		noBind = printSetcapAdvice(cmd.OutOrStdout(), b, m, exe)
 	}
+	// The path the next run starts, as after an update, once it says it is
+	// this release; otherwise this copy, which is.
+	path := probePath(b, m, exe)
+	if path != "" && path != exe {
+		if v, err := b.probe(ctx, path); err != nil || !update.SameVersion(v, current) {
+			path = exe
+		}
+	}
+	if path == "" {
+		path = exe
+	}
 	in := bufio.NewReader(cmd.InOrStdin())
-	return restartAfterUpdate(cmd, b, in, yes, noBind, current, restartExe(b, m, exe, exe))
+	return restartAfterUpdate(cmd, b, in, yes, noBind, current, restartExe(b, m, exe, path))
 }
 
 // restartExe is the new binary a core is restarted on: path, the one

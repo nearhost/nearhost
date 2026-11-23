@@ -583,3 +583,30 @@ func TestUpdateRestartSaysTheStartedCoresVersion(t *testing.T) {
 		t.Errorf("out %q, want it to end with %q", out, want)
 	}
 }
+
+// After brew upgrade the copy that runs is in the new Caskroom folder: the
+// older core is restarted from bin/nearhost once that says it is this
+// release, as after nearhost update, and otherwise from this copy.
+func TestUpdateLatestRestartsFromTheCheckedPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed, want string
+	}{
+		{"bin is this release", "", "/opt/homebrew/bin/nearhost"},
+		{"bin is another", "0.5.0", "/opt/homebrew/Caskroom/nearhost/0.6.0/nearhost"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newRestartRig(t, control.StartedDetached)
+			rig.old.st.Passthroughs = nil
+			rig.old.serve()
+			f := updateFor(rig, false)
+			f.exe = "/opt/homebrew/Caskroom/nearhost/0.6.0/nearhost"
+			f.installed = tc.installed
+			if out, err := runUpdate(t, f, "0.6.0", ""); err != nil {
+				t.Fatalf("err %v, out %q", err, out)
+			}
+			if got := rig.spawns(); len(got) != 1 || got[0][0] != tc.want {
+				t.Errorf("spawned %q, want %s", got, tc.want)
+			}
+		})
+	}
+}
