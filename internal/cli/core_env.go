@@ -17,7 +17,7 @@ import (
 )
 
 // dockerProbeTimeout is how long the core waits for docker to answer.
-const dockerProbeTimeout = 5 * time.Second
+var dockerProbeTimeout = 5 * time.Second
 
 // envProbe is what coreEnvironment asks of the machine the core runs on, so
 // tests can give it any machine.
@@ -53,6 +53,9 @@ func systemEnvProbe() envProbe {
 			cmd := exec.CommandContext(ctx, name, args...)
 			// A command run by a core that has no console must not open one.
 			service.HideWindow(cmd)
+			// A child that keeps the output pipe open must not keep
+			// CombinedOutput waiting past the context.
+			cmd.WaitDelay = time.Second
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},

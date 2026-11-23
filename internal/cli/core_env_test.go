@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
 )
@@ -22,6 +23,8 @@ type envFake struct {
 	sessErr   error
 	sshPath   string
 	sshErr    error
+	hang      bool        // docker blocks until its context ends
+	calls     *[][]string // each run's name and args, when set
 }
 
 func (f envFake) probe() envProbe {
@@ -35,7 +38,14 @@ func (f envFake) probe() envProbe {
 			return "", errors.New("not found")
 		},
 		dialUnix: func(string) error { return f.dialErr },
-		run: func(_ context.Context, name string, args ...string) (string, error) {
+		run: func(ctx context.Context, name string, args ...string) (string, error) {
+			if f.calls != nil {
+				*f.calls = append(*f.calls, append([]string{name}, args...))
+			}
+			if f.hang && name != "launchctl" {
+				<-ctx.Done()
+				return "", ctx.Err()
+			}
 			if name == "launchctl" {
 				return f.launchctl, nil
 			}
@@ -155,5 +165,33 @@ func TestCoreEnvironmentCleansDetails(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestCoreEnvironmentAsksDocker(t *testing.T) {
+	var calls [][]string
+	f := envFake{goos: "windows", env: map[string]string{}, onPath: map[string]bool{"docker": true},
+		dockerOut: "29.9.2", session: true, sshPath: "/usr/bin/ssh", calls: &calls}
+	coreEnvironment(context.Background(), f.probe())
+	want := [][]string{{"/usr/bin/docker", "version", "--format", "{{.Server.Version}}"}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("commands run = %v, want %v", calls, want)
+	}
+}
+
+func TestCoreEnvironmentDockerHangs(t *testing.T) {
+	old := dockerProbeTimeout
+	dockerProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { dockerProbeTimeout = old })
+	f := envFake{goos: "windows", env: map[string]string{}, onPath: map[string]bool{"docker": true},
+		hang: true, session: true, sshPath: "/usr/bin/ssh"}
+	var docker control.EnvCheck
+	for _, c := range coreEnvironment(context.Background(), f.probe()) {
+		if c.Name == "docker" {
+			docker = c
+		}
+	}
+	if docker.Level != "warn" || docker.Detail != "docker did not answer within 5 seconds" {
+		t.Errorf("docker = %+v, want a warning that it did not answer", docker)
 	}
 }
