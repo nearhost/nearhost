@@ -135,6 +135,24 @@ func TestDoctorCoreOtherVersion(t *testing.T) {
 	}
 }
 
+// What the core says of itself is one line of plain text, as checkService
+// prints it: a line break in it does not start a line of doctor's own.
+func TestDoctorCorePrintsItsInfoPrintably(t *testing.T) {
+	for _, tc := range []struct{ version, by string }{
+		{Version, "detached\ninjected\x1b[2J"},
+		{"0.0.1\ninjected\x1b[2J", "detached"},
+	} {
+		m := newCoreMachine(t)
+		info := thisCore(control.StartedBy(tc.by))
+		info.Version = tc.version
+		m.answer(t, info, nil, nil)
+		out, _ := m.doctor(t, m.backend())
+		if strings.Contains(out, "\x1b") || strings.Contains(out, "\n"+strings.Repeat(" ", 23)+"injected") {
+			t.Errorf("version %q, started by %q: the core line is not one line of plain text:\n%s", tc.version, tc.by, out)
+		}
+	}
+}
+
 func TestDoctorCoreOtherAPI(t *testing.T) {
 	m := newCoreMachine(t)
 	info := thisCore(control.StartedDetached)

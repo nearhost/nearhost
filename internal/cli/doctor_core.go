@@ -42,9 +42,9 @@ func checkCore(ctx context.Context, b doctorBackend) (checks []check, info contr
 	case info.API != control.APIVersion:
 		return []check{{"core", levelWarn, "speaks a different version of its API", restartCoreFix}}, info, true
 	case info.Version != Version:
-		checks = append(checks, check{"core", levelWarn, fmt.Sprintf("%s is running; this is %s", info.Version, Version), restartCoreFix})
+		checks = append(checks, check{"core", levelWarn, fmt.Sprintf("%s is running; this is %s", printable(info.Version), Version), restartCoreFix})
 	default:
-		checks = append(checks, check{name: "core", detail: fmt.Sprintf("%s, started by %s (pid %d)", info.Version, info.StartedBy, info.PID)})
+		checks = append(checks, check{name: "core", detail: fmt.Sprintf("%s, started by %s (pid %d)", printable(info.Version), printable(string(info.StartedBy)), info.PID)})
 	}
 	env, err := c.Environment(ctx)
 	if err != nil {
