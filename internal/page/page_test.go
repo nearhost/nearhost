@@ -223,6 +223,11 @@ func TestMainPartMarker(t *testing.T) {
 	if resp := do(h, "GET", "/approve/gone", nil, "X-Nearhost-Part", "main"); resp.StatusCode != 404 || resp.Header.Get("X-Nearhost-Part") != "main" {
 		t.Errorf("the part of an ended request: %d, marker %q", resp.StatusCode, resp.Header.Get("X-Nearhost-Part"))
 	}
+	// The part carries the view's title too, escaped, so page.js can put
+	// it on the tab: an ended request no longer reads as one that waits.
+	if resp := do(h, "GET", "/approve/gone", nil, "X-Nearhost-Part", "main"); resp.Header.Get("X-Nearhost-Title") != "Nothing%20to%20answer" {
+		t.Errorf("the part's title is %q", resp.Header.Get("X-Nearhost-Title"))
+	}
 	if resp := do(h, "GET", "/", nil); resp.Header.Get("X-Nearhost-Part") != "" {
 		t.Error("the whole page is marked as a part")
 	}

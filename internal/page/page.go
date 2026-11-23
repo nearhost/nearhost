@@ -104,6 +104,15 @@ type base struct {
 	CSRF    string
 }
 
+func (b base) title() string { return b.Title }
+
+// titled is every view: each carries a base.
+type titled interface{ title() string }
+
+// titleHeader carries a part's title, path-escaped, for page.js to put
+// on the tab: a part replaces <main> alone.
+const titleHeader = "X-Nearhost-Title"
+
 func (p *page) base(title string) base {
 	token, _ := csrfToken() // the gate let the request in, so it reads
 	return base{Title: title, Version: p.o.Core.Status().Info.Version, CSRF: token}
@@ -129,6 +138,9 @@ func render(w http.ResponseWriter, r *http.Request, view string, status int, dat
 		// The marker tells page.js that this is the page's own part, not a
 		// page from something else answering at the address meanwhile.
 		h.Set(partHeader, "main")
+		if v, ok := data.(titled); ok {
+			h.Set(titleHeader, url.PathEscape(v.title()))
+		}
 	}
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
