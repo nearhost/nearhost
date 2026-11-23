@@ -92,6 +92,7 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	// A unit we cannot read is replaced, as a changed one is.
 	fresh := !ok && err == nil
 	path := m.unitPath(ctx)
+	prev, prevErr := os.ReadFile(path)
 	if err := writeFileAtomic(path, RenderUnit(d), 0o644); err != nil {
 		return false, err
 	}
@@ -101,8 +102,12 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {enable, m.names.Systemd}} {
 		if _, err := m.systemctl(ctx, args...); err != nil {
+			// Put back what was there, so the next install sees the change
+			// again and retries what failed.
 			if fresh {
 				_ = os.Remove(path)
+			} else if prevErr == nil {
+				_ = writeFileAtomic(path, prev, 0o644)
 			}
 			return false, err
 		}
