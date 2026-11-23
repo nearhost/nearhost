@@ -210,11 +210,12 @@ func TestReloadAndWatcherTakeTurns(t *testing.T) {
 		in--
 		mu.Unlock()
 	}
+	w := config.NewWatcher(path) // before the change, as the core makes it
 	ctx, cancel := context.WithCancel(context.Background())
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
-		watchConfig(ctx, o)
+		watchConfig(ctx, o, w)
 	}()
 	defer func() {
 		cancel()

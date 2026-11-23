@@ -49,11 +49,12 @@ func (r *watchRecorder) lastApplied() *Config {
 func startWatch(t *testing.T, path string) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	r := &watchRecorder{}
+	w := NewWatcher(path) // before the test changes the file
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Watch(ctx, path, watchInterval, r.apply, r.badf)
+		w.Run(ctx, watchInterval, r.apply, r.badf)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -69,11 +70,12 @@ func tickedWatch(t *testing.T, path string) (*watchRecorder, func()) {
 	r := &watchRecorder{}
 	ticks := make(chan time.Time)
 	polled := make(chan struct{})
+	w := NewWatcher(path) // before the test changes the file
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		watchTicks(ctx, path, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
+		w.runTicks(ctx, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -152,6 +154,36 @@ func TestWatchWaitsForTheFileToSettle(t *testing.T) {
 	}
 	if got := len(r.lastApplied().Projects); got != len(names) {
 		t.Fatalf("applied %d projects, want %d (the last write)", got, len(names))
+	}
+}
+
+// A change saved after the watcher was made but before it runs is applied:
+// the core makes its watcher before it reads the config, and starts it
+// once the engine is up.
+func TestWatchAppliesAChangeSavedBeforeItRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeProjects(t, path, "a")
+	w := NewWatcher(path)
+	writeProjects(t, path, "a", "b")
+	r := &watchRecorder{}
+	ticks := make(chan time.Time)
+	polled := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.runTicks(ctx, ticks, func() { polled <- struct{}{} }, r.apply, r.badf)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	for range 2 { // one poll sees the change, the next that it settled
+		ticks <- time.Now()
+		<-polled
+	}
+	if n, _ := r.counts(); n != 1 || len(r.lastApplied().Projects) != 2 {
+		t.Fatalf("applied %d times; want the change saved before the watcher ran, once", n)
 	}
 }
 

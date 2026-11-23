@@ -22,29 +22,44 @@ func stampOf(path string) fileStamp {
 	return fileStamp{exists: true, mod: info.ModTime(), size: info.Size()}
 }
 
-// Watch polls path every interval and calls apply with the newly loaded,
-// validated config after the file's (mtime, size) has changed and then
-// stayed the same for one more interval. A load or validation error is
-// passed to bad and the last good config stays. It returns when ctx ends.
+// Watcher watches a config file for changes made after it was created.
+type Watcher struct {
+	path  string
+	stamp fileStamp // the file as it was when the watcher was made
+}
+
+// NewWatcher returns a watcher of path that counts the file as it is now
+// as already applied. Make it before the file is read for the config
+// first served, so that a change saved after that read is applied once
+// Run runs, however late that is.
+func NewWatcher(path string) *Watcher {
+	return &Watcher{path: path, stamp: stampOf(path)}
+}
+
+// Run polls the file every interval and calls apply with the newly
+// loaded, validated config after the file's (mtime, size) has changed and
+// then stayed the same for one more interval. A load or validation error
+// is passed to bad and the last good config stays. It returns when ctx
+// ends. A Watcher is run once.
 //
 // Waiting an interval keeps a save caught half way from being applied. An
 // empty file is reported to bad and never applied, because an editor that
 // truncates before it writes leaves one for a moment and applying it would
 // stop every project. A file that is deleted is ignored for the same reason,
-// and one that is created later is applied like any other change. The file
-// as it is when Watch starts counts as already applied.
-func Watch(ctx context.Context, path string, interval time.Duration, apply func(*Config), bad func(error)) {
+// and one that is created later is applied like any other change.
+func (w *Watcher) Run(ctx context.Context, interval time.Duration, apply func(*Config), bad func(error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	watchTicks(ctx, path, ticker.C, nil, apply, bad)
+	w.runTicks(ctx, ticker.C, nil, apply, bad)
 }
 
-// watchTicks is Watch, polling at each tick from ticks and calling polled,
+// runTicks is Run, polling at each tick from ticks and calling polled,
 // when it is not nil, once a poll is done: a test sends the ticks itself and
 // waits for each poll, so what a poll sees does not hang on how the machine
 // is loaded.
-func watchTicks(ctx context.Context, path string, ticks <-chan time.Time, polled func(), apply func(*Config), bad func(error)) {
-	stamp := stampOf(path) // the last state handled
+func (w *Watcher) runTicks(ctx context.Context, ticks <-chan time.Time, polled func(), apply func(*Config), bad func(error)) {
+	path := w.path
+	stamp := w.stamp // the last state handled
 	seen := stamp          // the state at the previous tick
 	poll := func() {
 		now := stampOf(path)
