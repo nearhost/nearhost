@@ -22,7 +22,7 @@ func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(stri
 	slashed := strings.ReplaceAll(exe, `\`, "/")
 	kind := update.DetectOn(goos, exe, getenv).Kind
 	if kind == update.Ephemeral {
-		return "", "", copyError("fetched by npx for one run")
+		return "", "", copyError("fetched by npx, bunx or pnpm dlx for one run")
 	}
 	if inGoBuild(slashed) {
 		return "", "", copyError("built by go run")

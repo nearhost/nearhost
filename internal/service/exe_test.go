@@ -39,10 +39,14 @@ func TestServiceExe(t *testing.T) {
 		want, note, err string
 	}{
 		{"npx", "linux", "/home/u/.npm/_npx/ab/node_modules/@nearhost/cli-linux-x64/bin/nearhost", missing,
-			"", "", "fetched by npx for one run"},
+			"", "", "fetched by npx, bunx or pnpm dlx for one run"},
+		{"bunx", "linux", "/tmp/bunx-1000-@nearhost/cli@latest/node_modules/@nearhost/cli-linux-x64/bin/nearhost", missing,
+			"", "", "fetched by npx, bunx or pnpm dlx for one run"},
 		{"go run", "linux", "/home/u/.cache/go-build/ab/exe/nearhost", missing,
 			"", "", "built by go run"},
 		{"go run temp dir", "linux", "/home/u/tmp/go-build123456/b001/exe/nearhost", missing,
+			"", "", "built by go run"},
+		{"go run on windows", "windows", `C:\Users\u\AppData\Local\Temp\go-build123456\b001\exe\nearhost.exe`, missing,
 			"", "", "built by go run"},
 		{"go-builder is not go run", "linux", "/opt/go-builder/bin/nearhost", missing,
 			"/opt/go-builder/bin/nearhost", "", ""},
