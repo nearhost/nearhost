@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -289,6 +290,21 @@ func TestHomeUnchangedWithoutConsole(t *testing.T) {
 	after := serveHomeRequest(t, withCookie("/", secret))
 	if after.Body.String() != before.Body.String() {
 		t.Error("clearing the console changed the page")
+	}
+}
+
+// A project whose name holds a slash has its change at one escaped path
+// segment, /change/team%2Fweb, which reaches the console.
+func TestConsoleTakesAnEscapedSlash(t *testing.T) {
+	secret := freshSecret(t)
+	fake := setFakeConsole(t)
+	w := serveHomeRequest(t, withCookieMethod("GET", "/change/team%2Fweb", secret))
+	if w.Code != http.StatusOK || !slices.Equal(fake.called(), []string{"GET /change/team/web"}) {
+		t.Errorf("GET /change/team%%2Fweb: status %d, console called %v", w.Code, fake.called())
+	}
+	// A real second segment is still no console path.
+	if w := serveHomeRequest(t, withCookieMethod("GET", "/change/team/web", secret)); w.Code != http.StatusNotFound {
+		t.Errorf("GET /change/team/web: status %d, want 404", w.Code)
 	}
 }
 

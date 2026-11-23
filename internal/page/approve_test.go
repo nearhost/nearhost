@@ -366,6 +366,21 @@ func TestChangeApprove(t *testing.T) {
 	}
 }
 
+// A project whose name holds a slash is linked, shown and answered at
+// one escaped path segment.
+func TestChangeOfANameWithASlash(t *testing.T) {
+	c := changeCore()
+	c.state.Projects["team/web"] = c.state.Projects["web"]
+	delete(c.state.Projects, "web")
+	if body := bodyOf(t, do(newPage(c), "GET", "/", nil)); !strings.Contains(body, `href="/change/team%2Fweb"`) {
+		t.Errorf("the status page does not link the change at one segment:\n%s", body)
+	}
+	resp := do(newPage(c), "GET", "/change/team%2Fweb", nil)
+	if body := bodyOf(t, resp); resp.StatusCode != 200 || !strings.Contains(body, "api.example.com on port 8080") {
+		t.Errorf("GET /change/team%%2Fweb: %d\n%s", resp.StatusCode, body)
+	}
+}
+
 func TestChangeDecline(t *testing.T) {
 	c := changeCore()
 	resp := do(newPage(c), "POST", "/change/web", url.Values{"csrf": {testToken}, "answer": {"decline"}, "sha": {"sha1"}})

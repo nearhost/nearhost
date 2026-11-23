@@ -117,7 +117,8 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	}
 	con := currentConsole()
 	if r.URL.Path != "/" {
-		ok, post := consoleRoute(r.URL.Path)
+		// Matched escaped: a %2F in a name stays inside its segment.
+		ok, post := consoleRoute(r.URL.EscapedPath())
 		switch {
 		case !ok || con == nil:
 			http.NotFound(w, r)
