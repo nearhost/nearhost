@@ -8,7 +8,6 @@ import (
 	"github.com/nearhost/nearhost/internal/update"
 )
 
-const nvmDir = "/.nvm/versions/node/"
 
 func copyError(how string) error {
 	return errors.New("This copy of nearhost was " + how + ", so a service could not start it later. " +
@@ -34,12 +33,21 @@ func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(stri
 		return "", "", errors.New("This copy is inside Homebrew's versioned folder, which the next upgrade removes. " +
 			"Run nearhost service install as plain nearhost from Homebrew's bin folder.")
 	}
-	if _, after, ok := strings.Cut(slashed, nvmDir); ok {
+	if _, after, ok := strings.Cut(slashed, nodeVersions(getenv)); ok {
 		v, _, _ := strings.Cut(after, "/")
 		return exe, "The service runs nearhost from Node " + v + "'s folder. " +
 			"If you change your default Node version, run nearhost service install again.", nil
 	}
 	return exe, "", nil
+}
+
+// nodeVersions is the slash-separated part of a path that nvm keeps Node's
+// versions under: $NVM_DIR/versions/node/, or ~/.nvm's.
+func nodeVersions(getenv func(string) string) string {
+	if d := strings.TrimRight(strings.ReplaceAll(getenv("NVM_DIR"), `\`, "/"), "/"); d != "" {
+		return d + "/versions/node/"
+	}
+	return "/.nvm/versions/node/"
 }
 
 // sameFile reports whether a and b resolve to the same file.
