@@ -128,8 +128,9 @@ type taskXML struct {
 	Arguments string `xml:"Actions>Exec>Arguments"`
 }
 
-// ParseTask reads a task RenderTask could have written, in UTF-16 (what
-// schtasks /Query /XML prints) or UTF-8.
+// ParseTask reads a task RenderTask could have written, in UTF-16 or in
+// UTF-8 (what PowerShell's Export-ScheduledTask prints), whatever its
+// declaration says.
 func ParseTask(b []byte) (Definition, error) {
 	if len(b) >= 2 && (b[0] == 0xFF && b[1] == 0xFE || b[0] == 0xFE && b[1] == 0xFF) {
 		be := b[0] == 0xFE

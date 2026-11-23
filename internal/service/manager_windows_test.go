@@ -15,7 +15,8 @@ import (
 const missing = "ERROR: The system cannot find the file specified.\r\n"
 
 // taskStore plays Task Scheduler: /Create keeps the XML it is given and
-// /Query /XML returns it.
+// Export-ScheduledTask returns it, as UTF-8 text that still declares UTF-16,
+// as PowerShell prints it.
 type taskStore struct {
 	xml     []byte
 	running bool
@@ -39,11 +40,11 @@ func newTaskStore(t *testing.T) *taskStore {
 			}
 			s.xml = nil
 			return nil, nil
-		case strings.HasSuffix(call, "/XML"):
+		case strings.Contains(call, "Export-ScheduledTask"):
 			if s.xml == nil {
-				return []byte(missing), errors.New("exit status 1")
+				return nil, nil
 			}
-			return s.xml, nil
+			return []byte(decodeUTF16(t, s.xml)), nil
 		}
 		return nil, nil
 	}}
@@ -154,13 +155,55 @@ func TestNotFoundInAnyLanguage(t *testing.T) {
 	msg := "ERROR: " + syscall.Errno(2).Error() + "\r\n"
 	f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(msg), errors.New("exit status 1") }}
 	m := New(testNames, t.TempDir(), f.run)
-	if _, ok, err := m.Installed(context.Background()); ok || err != nil {
-		t.Errorf("Installed = %v, %v; want false, nil", ok, err)
-	}
 	if err := m.Uninstall(context.Background()); err != nil {
 		t.Errorf("Uninstall = %v", err)
 	}
 	if err := m.Start(context.Background()); !errors.Is(err, errNotInstalled) {
 		t.Errorf("Start = %v, want errNotInstalled", err)
+	}
+}
+
+// The task is read through PowerShell, in UTF-8: schtasks /Query /XML piped
+// prints the OEM code page, which mangles a path that is not ASCII.
+func TestInstalledCommand(t *testing.T) {
+	f := &fakeRunner{}
+	names := Names{Task: "Ed's Task"}
+	if _, ok, err := New(names, t.TempDir(), f.run).Installed(context.Background()); ok || err != nil {
+		t.Fatalf("Installed = %v, %v; want false, nil", ok, err)
+	}
+	want := []string{`powershell.exe -NoProfile -NonInteractive -Command [Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName 'Ed''s Task' -ErrorAction SilentlyContinue; exit 0`}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("commands = %q, want %q", f.calls, want)
+	}
+}
+
+func TestInstalledReadsAPathThatIsNotASCII(t *testing.T) {
+	s := newTaskStore(t)
+	m := New(testNames, t.TempDir(), s.fake.run)
+	d := Definition{Exe: `C:\Users\Jürgen Øster\AppData\Local\nearhost\nearhost.exe`}
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := m.Installed(context.Background())
+	if err != nil || !ok || got.Exe != d.Exe {
+		t.Errorf("Installed = %+v, %v, %v; want %q", got, ok, err, d.Exe)
+	}
+}
+
+func TestInstalledErrors(t *testing.T) {
+	for name, c := range map[string]struct {
+		out        string
+		err        error
+		unreadable bool
+	}{
+		"powershell fails": {"powershell.exe: not found", errors.New("exit status 1"), false},
+		"not a task":       {"<?xml version=\"1.0\"?><Other/>", nil, true},
+		"another program":  {"<Task><Actions><Exec><Command>x.exe</Command></Exec></Actions></Task>", nil, true},
+	} {
+		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(c.out), c.err }}
+		_, ok, err := New(testNames, t.TempDir(), f.run).Installed(context.Background())
+		if ok || err == nil || errors.Is(err, ErrUnreadable) != c.unreadable {
+			t.Errorf("%s: Installed = %v, %v; want an error, unreadable %v", name, ok, err, c.unreadable)
+		}
 	}
 }

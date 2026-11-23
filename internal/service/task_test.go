@@ -61,3 +61,22 @@ func TestTaskXML(t *testing.T) {
 		t.Errorf("UTF-8: %+v, %v", got, err)
 	}
 }
+
+// PowerShell's Export-ScheduledTask prints the task as UTF-8 text whose
+// declaration still says UTF-16; a path that is not ASCII must survive that.
+func TestParseTaskUTF8DeclaredUTF16(t *testing.T) {
+	d := Definition{Exe: `C:\Users\Jürgen\AppData\Local\nearhost\nearhost.exe`}
+	s := decodeUTF16(t, RenderTask(d, `PC\Jürgen`))
+	if !strings.HasPrefix(s, `<?xml version="1.0" encoding="UTF-16"?>`) {
+		t.Fatalf("declaration: %.50q", s)
+	}
+	got, err := ParseTask([]byte(s))
+	if err != nil || got.Exe != d.Exe {
+		t.Errorf("ParseTask = %+v, %v; want %q", got, err, d.Exe)
+	}
+	// With a byte order mark, as [Text.Encoding]::UTF8 may write one.
+	got, err = ParseTask(append([]byte{0xEF, 0xBB, 0xBF}, s...))
+	if err != nil || got.Exe != d.Exe {
+		t.Errorf("with a BOM: ParseTask = %+v, %v; want %q", got, err, d.Exe)
+	}
+}
