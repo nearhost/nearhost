@@ -8,7 +8,6 @@ import (
 	"github.com/nearhost/nearhost/internal/update"
 )
 
-
 func copyError(how string) error {
 	return errors.New("This copy of nearhost was " + how + ", so a service could not start it later. " +
 		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy.")
