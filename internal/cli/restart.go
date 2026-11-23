@@ -175,7 +175,9 @@ func restartAfterUpdate(cmd *cobra.Command, b updateBackend, in *bufio.Reader, y
 	if _, info, err = restartCore(cmd, det, c, info, st, exe); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Restarted Nearhost (pid %d); it now runs %s.\n", info.PID, latest)
+	// What the started core says, which is latest unless another copy
+	// answered in its place.
+	fmt.Fprintf(out, "Restarted Nearhost (pid %d); it now runs %s.\n", info.PID, printable(info.Version))
 	return nil
 }
 

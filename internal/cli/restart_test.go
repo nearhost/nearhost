@@ -24,6 +24,8 @@ type restartRig struct {
 	t       *testing.T
 	cfgPath string
 	old     *steeredCore
+	// version is what the cores a restart starts say they are; "" is 0.6.0.
+	version string
 
 	mu sync.Mutex
 	// spawned is each core spawned, as the exe and its arguments.
@@ -44,6 +46,9 @@ func newRestartRig(t *testing.T, by control.StartedBy) *restartRig {
 func (r *restartRig) next(by control.StartedBy) {
 	core := newSteeredCore(r.t, r.cfgPath)
 	core.info.Version = "0.6.0"
+	if r.version != "" {
+		core.info.Version = r.version
+	}
 	core.info.PID = 5151
 	core.info.StartedBy = by
 	core.serve()
@@ -561,4 +566,20 @@ func TestUpdateLatestRestartsAnOlderCore(t *testing.T) {
 			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
 		}
 	})
+}
+
+// The restart says the release the started core says it runs, which may not
+// be the one expected, as when another copy comes first in the service.
+func TestUpdateRestartSaysTheStartedCoresVersion(t *testing.T) {
+	rig := newRestartRig(t, control.StartedDetached)
+	rig.version = "0.6.1\x1b[2J"
+	rig.old.st.Passthroughs = nil
+	rig.old.serve()
+	out, err := runUpdate(t, updateFor(rig, false), "0.5.0", "", "--yes")
+	if err != nil {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if want := "Restarted Nearhost (pid 5151); it now runs 0.6.1[2J.\n"; !strings.HasSuffix(out, want) {
+		t.Errorf("out %q, want it to end with %q", out, want)
+	}
 }
