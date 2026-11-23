@@ -1,7 +1,7 @@
 package service
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -51,11 +51,11 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 	return env, notes
 }
 
-// under reports whether p is inside dir.
+// under reports whether the POSIX path p is inside dir. ServiceEnv writes
+// nothing on Windows, so every path it judges is POSIX, whatever the host.
 func under(p, dir string) bool {
 	if dir == "" {
 		return false
 	}
-	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../")
+	return strings.HasPrefix(path.Clean(p), strings.TrimSuffix(path.Clean(dir), "/")+"/")
 }

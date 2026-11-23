@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,8 @@ func TestServiceExe(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(cask, link); err != nil {
+	// Windows needs a privilege to symlink, and skips the Homebrew cases anyway.
+	if err := os.Symlink(cask, link); err != nil && runtime.GOOS != "windows" {
 		t.Fatal(err)
 	}
 	orphan := filepath.Join(root, "other", "Caskroom", "nearhost", "1.0", "nearhost")
@@ -57,6 +59,9 @@ func TestServiceExe(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.HasPrefix(tc.name, "homebrew") {
+				t.Skip("Homebrew exists on macOS and Linux only, and the test needs POSIX paths and symlinks")
+			}
 			got, note, err := ServiceExe(tc.goos, tc.exe, noEnv, tc.lookPath)
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
