@@ -479,3 +479,43 @@ func TestLogRotationBacksOffAfterFailure(t *testing.T) {
 		t.Errorf("after the log grew past the back-off, copies = %d, want 2", l.copies)
 	}
 }
+
+// A service core's stderr is core.log, opened by launchd or systemd before
+// the core starts. The log is not renamed at open, which would leave stderr
+// writing to core.log.1, but copied aside and emptied at the first write.
+func TestServiceLogKeepsItsStderrAtOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.log")
+	big := bytes.Repeat([]byte("x"), coreLogLimit+1)
+	if err := os.WriteFile(path, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	l, err := openDaemonLog(path, control.StartedService, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, err := l.Write([]byte("starting\n")); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfi, err := stderr.Stat(); err != nil || !os.SameFile(fi, sfi) {
+		t.Fatalf("core.log is no longer the file stderr writes to (%v)", err)
+	}
+	if b, _ := os.ReadFile(path + ".1"); !bytes.Equal(b, big) {
+		t.Errorf("core.log.1 holds %d bytes, want the old log's %d", len(b), len(big))
+	}
+	if _, err := stderr.WriteString("panic: x\n"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "starting\npanic: x\n" {
+		t.Errorf("core.log = %q, want the new line and stderr's", b)
+	}
+}

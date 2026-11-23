@@ -65,13 +65,7 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return err
 	}
-	// Set aside at open, if it may be, and from here on while the core runs.
-	f, err := openCoreLog(path, coreLogMayRotate())
-	if err != nil {
-		return fmt.Errorf("open the core log: %w", err)
-	}
-	f.Close()
-	logFile, err := newRotatingLog(path, coreLogLimit)
+	logFile, err := openDaemonLog(path, by, coreLogMayRotate())
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
@@ -132,6 +126,23 @@ func coreLogMayRotate() bool {
 	}
 	held, err := engine.InstanceRunning(runDir)
 	return !held && err == nil
+}
+
+// openDaemonLog opens the core log at path for a core started by by. It is
+// set aside at open, if it may be, and from here on while the core runs.
+// A service core's log is not renamed at open: on macOS and Linux the
+// service manager opened it as the core's stderr, which would go on writing
+// to core.log.1, and lose its text when that is next replaced. The
+// rotating log copies an oversized one aside at its first write instead.
+func openDaemonLog(path string, by control.StartedBy, mayRotate bool) (*rotatingLog, error) {
+	if mayRotate && by != control.StartedService {
+		f, err := openCoreLog(path, true)
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+	}
+	return newRotatingLog(path, coreLogLimit)
 }
 
 // openCoreLog opens the log at path to append to it, creating it and its
