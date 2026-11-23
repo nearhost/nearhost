@@ -61,6 +61,9 @@ type upBackend struct {
 	// bind is what up needs to say how to let the binary bind ports 80 and
 	// 443; the zero value says nothing.
 	bind bindEnv
+	// redirectStderr points the process's standard error at the core log of
+	// a service core; tests leave it nil, so they redirect nothing.
+	redirectStderr func(f *os.File) error
 }
 
 // bindEnv is the machine's side of the advice printed when a proxy port
@@ -97,10 +100,11 @@ func systemUp(lookup hosts.Lookup) upBackend {
 			_, err = hosts.Ensure(hosts.DefaultPath, aliases, upHostsApplier(ctx, elevate.System(), exe, terminal))
 			return err
 		},
-		notify:   notifyStop,
-		start:    (*engine.Engine).Start,
-		shutdown: (*engine.Engine).Shutdown,
-		agents:   systemAgents(),
+		notify:         notifyStop,
+		start:          (*engine.Engine).Start,
+		shutdown:       (*engine.Engine).Shutdown,
+		agents:         systemAgents(),
+		redirectStderr: redirectStderr,
 		bind: bindEnv{
 			goos: runtime.GOOS, notPermitted: engine.BindNotPermitted, elevated: isElevated, exe: realExecutable,
 			isFile: isRegularFile, unprivilegedPortStart: readUnprivilegedPortStart,

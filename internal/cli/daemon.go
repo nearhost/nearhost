@@ -75,15 +75,18 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
-	if by == control.StartedService {
-		// Not closed on return: Windows stderr points at this handle, and a
-		// panic during exit must still find it valid. The process ends next.
-		// The log is the file a service core's panics should land in, and
-		// stays open for the life of the process.
-		if err := redirectStderr(logFile.f); err != nil {
+	redirected := false
+	if by == control.StartedService && b.redirectStderr != nil {
+		// The log is the file a service core's panics should land in. Windows
+		// stderr then points at this handle, so it is not closed on return:
+		// a panic during exit must still find it valid. The process ends next.
+		if err := b.redirectStderr(logFile.f); err != nil {
 			fmt.Fprintln(logFile, "could not send the core's standard error to this log:", err)
+		} else {
+			redirected = true
 		}
-	} else {
+	}
+	if !redirected {
 		// Closed before the process ends, so nothing stays open on Windows.
 		defer logFile.Close()
 	}
