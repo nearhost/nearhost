@@ -60,7 +60,7 @@ func (w *Watcher) Run(ctx context.Context, interval time.Duration, apply func(*C
 func (w *Watcher) runTicks(ctx context.Context, ticks <-chan time.Time, polled func(), apply func(*Config), bad func(error)) {
 	path := w.path
 	stamp := w.stamp // the last state handled
-	seen := stamp          // the state at the previous tick
+	seen := stamp    // the state at the previous tick
 	poll := func() {
 		now := stampOf(path)
 		if now == stamp {
