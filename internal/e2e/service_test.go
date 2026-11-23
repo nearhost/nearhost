@@ -72,6 +72,12 @@ func TestServiceJourney(t *testing.T) {
 	// in scratch, is replaced.
 	if d, ok, err := mgr.Installed(ctx); err != nil || ok && !strings.HasPrefix(d.Exe, filepath.Join(scratch, "svc-e2e-")) {
 		t.Fatalf("a service named %v is installed that this journey did not install (%+v, %v); remove it first", serviceNames, d, err)
+	} else if ok {
+		// An interrupted run's core may still run: systemd would not start
+		// the new one over it, so the journey would watch the old core.
+		if active, err := mgr.Active(ctx); err != nil || active {
+			t.Fatalf("an earlier run's service still runs (active %v, %v); stop it first with systemctl --user stop %s or launchctl bootout gui/%d/%s", active, err, serviceNames.Systemd, os.Getuid(), serviceNames.Launchd)
+		}
 	}
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		t.Fatal(err)
