@@ -156,6 +156,10 @@ func ParseTask(b []byte) (Definition, error) {
 	if err := dec.Decode(&t); err != nil {
 		return Definition{}, errors.New("not a Task Scheduler task: " + err.Error())
 	}
+	// The command may be written as RenderTask writes it, or expanded.
+	if !strings.EqualFold(t.Command[strings.LastIndexAny(t.Command, `\/`)+1:], "conhost.exe") {
+		return Definition{}, errors.New("the task does not run nearhost through conhost --headless")
+	}
 	args := splitCommandLine(t.Arguments)
 	if len(args) == 0 || args[0] != "--headless" {
 		return Definition{}, errors.New("the task does not run nearhost through conhost --headless")

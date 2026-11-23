@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ import (
 // older "Failed to connect to bus" and, from systemd 248, "Failed to connect
 // to user scope bus via local transport".
 var noBus = regexp.MustCompile(`Failed to connect to (user scope )?bus`)
+
+// writeFile writes the unit; tests replace it.
+var writeFile = writeFileAtomic
 
 type systemdManager struct {
 	names Names
@@ -92,8 +96,28 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	// A unit we cannot read is replaced, as a changed one is.
 	fresh := !ok && err == nil
 	path := m.unitPath(ctx)
-	if err := writeFileAtomic(path, RenderUnit(d), 0o644); err != nil {
-		return false, err
+	prev, prevErr := os.ReadFile(path)
+	// putBack restores what was there when the install fails, so the next
+	// install sees the change again and retries what failed.
+	putBack := func(err error) error {
+		cur, cerr := os.ReadFile(path)
+		var rerr error
+		switch {
+		case fresh && errors.Is(cerr, fs.ErrNotExist),
+			!fresh && (prevErr != nil || cerr == nil && bytes.Equal(cur, prev)):
+			// Nothing was written, or nothing can be put back.
+		case fresh:
+			rerr = os.Remove(path)
+		default:
+			rerr = writeFile(path, prev, 0o644)
+		}
+		if rerr != nil {
+			return errors.Join(err, fmt.Errorf("%s could not be put back as it was, so remove it, then run nearhost service install again: %w", path, rerr))
+		}
+		return err
+	}
+	if err := writeFile(path, RenderUnit(d), 0o644); err != nil {
+		return false, putBack(err)
 	}
 	enable := "reenable"
 	if fresh {
@@ -101,10 +125,7 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {enable, m.names.Systemd}} {
 		if _, err := m.systemctl(ctx, args...); err != nil {
-			if fresh {
-				_ = os.Remove(path)
-			}
-			return false, err
+			return false, putBack(err)
 		}
 	}
 	return true, nil
@@ -139,10 +160,23 @@ func (m *systemdManager) Active(ctx context.Context) (bool, error) {
 	if noBus.Match(out) {
 		return false, ErrNoUserManager
 	}
-	// is-active exits non-zero for every state but active.
-	_ = err
-	return strings.TrimSpace(string(out)) == "active", nil
+	// is-active exits non-zero for every state but active, and prints the
+	// state. A failure that prints none says nothing either way.
+	state := strings.TrimSpace(string(out))
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if !unitState.MatchString(state) {
+			return false, fmt.Errorf("systemctl --user is-active: %w: %s", err, output(out))
+		}
+	}
+	return state == "active", nil
 }
+
+// unitState matches a state systemctl is-active prints: inactive, failed,
+// activating and the like.
+var unitState = regexp.MustCompile(`^[a-z-]+$`)
 
 func (m *systemdManager) ManagerEnv(ctx context.Context) map[string]string {
 	out, err := m.systemctl(ctx, "show-environment")

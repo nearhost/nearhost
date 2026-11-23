@@ -54,6 +54,26 @@ func TestInstallUnchanged(t *testing.T) {
 	}
 }
 
+// A definition that differs in a field the plist carries is written again.
+func TestInstallChanged(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	d.Exe = "/opt/homebrew/bin/nearhost"
+	d.Env = append(d.Env, EnvVar{"DOCKER_HOST", "unix:///var/run/docker.sock"})
+	changed, err := m.Install(context.Background(), d)
+	if err != nil || !changed || len(f.calls) != 0 {
+		t.Fatalf("Install = %v, %v, commands %q; want true, nil, none", changed, err, f.calls)
+	}
+	got, ok, err := m.Installed(context.Background())
+	if err != nil || !ok || !reflect.DeepEqual(got, d.For(Plist)) {
+		t.Errorf("Installed = %+v, %v, %v; want %+v", got, ok, err, d.For(Plist))
+	}
+}
+
 func TestStartCommands(t *testing.T) {
 	home := t.TempDir()
 	f := &fakeRunner{handle: func(call string) ([]byte, error) {
@@ -124,6 +144,23 @@ func TestActiveParses(t *testing.T) {
 		if err != nil || got != c.want {
 			t.Errorf("%s: Active = %v, %v; want %v", name, got, err, c.want)
 		}
+	}
+}
+
+// Only a service launchd cannot find is inactive: any other failure of
+// launchctl print says nothing of whether the core runs.
+func TestActiveFailure(t *testing.T) {
+	f := &fakeRunner{handle: func(string) ([]byte, error) {
+		return []byte("Bad request.\n"), errors.New("exit status 5")
+	}}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(context.Background()); err == nil || !strings.Contains(err.Error(), "Bad request.") {
+		t.Errorf("Active error = %v, want launchctl's output", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f = &fakeRunner{handle: func(string) ([]byte, error) { return nil, context.Canceled }}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Active error = %v, want context.Canceled", err)
 	}
 }
 

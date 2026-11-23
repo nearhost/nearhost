@@ -296,7 +296,7 @@ func askYesNo(in io.Reader, out io.Writer, prompt string) bool {
 		line, err := r.ReadString('\n')
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "", "y", "yes":
-			if err != nil && line == "" {
+			if err != nil && strings.TrimSpace(line) == "" {
 				fmt.Fprintln(out)
 				return false
 			}

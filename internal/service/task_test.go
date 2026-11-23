@@ -82,3 +82,20 @@ func TestParseTaskUTF8DeclaredUTF16(t *testing.T) {
 		t.Errorf("with a BOM: ParseTask = %+v, %v; want %q", got, err, d.Exe)
 	}
 }
+
+// A task that runs something other than conhost is not the one RenderTask
+// writes, whatever its arguments say, so it does not read as installed.
+func TestParseTaskWantsConhost(t *testing.T) {
+	s := decodeUTF16(t, RenderTask(Definition{Exe: `C:\nearhost.exe`}, `PC\u`))
+	for cmd, ok := range map[string]bool{
+		`C:\Windows\System32\conhost.exe`: true,
+		`C:\WINDOWS\system32\CONHOST.EXE`: true,
+		`C:\Windows\System32\cmd.exe`:     false,
+		``:                                false,
+	} {
+		x := strings.Replace(s, `%SystemRoot%\System32\conhost.exe`, cmd, 1)
+		if _, err := ParseTask([]byte(x)); (err == nil) != ok {
+			t.Errorf("Command %q: err %v, want ok %v", cmd, err, ok)
+		}
+	}
+}

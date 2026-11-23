@@ -8,8 +8,6 @@ import (
 	"github.com/nearhost/nearhost/internal/update"
 )
 
-const nvmDir = "/.nvm/versions/node/"
-
 func copyError(how string) error {
 	return errors.New("This copy of nearhost was " + how + ", so a service could not start it later. " +
 		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy.")
@@ -22,7 +20,7 @@ func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(stri
 	slashed := strings.ReplaceAll(exe, `\`, "/")
 	kind := update.DetectOn(goos, exe, getenv).Kind
 	if kind == update.Ephemeral {
-		return "", "", copyError("fetched by npx for one run")
+		return "", "", copyError("fetched by npx, bunx or pnpm dlx for one run")
 	}
 	if inGoBuild(slashed) {
 		return "", "", copyError("built by go run")
@@ -34,12 +32,36 @@ func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(stri
 		return "", "", errors.New("This copy is inside Homebrew's versioned folder, which the next upgrade removes. " +
 			"Run nearhost service install as plain nearhost from Homebrew's bin folder.")
 	}
-	if _, after, ok := strings.Cut(slashed, nvmDir); ok {
+	if after, ok := cutPath(goos, slashed, nodeVersions(getenv)); ok {
 		v, _, _ := strings.Cut(after, "/")
 		return exe, "The service runs nearhost from Node " + v + "'s folder. " +
 			"If you change your default Node version, run nearhost service install again.", nil
 	}
 	return exe, "", nil
+}
+
+// nodeVersions is the slash-separated part of a path that nvm keeps Node's
+// versions under: $NVM_DIR/versions/node/, or ~/.nvm's.
+func nodeVersions(getenv func(string) string) string {
+	if d := strings.TrimRight(strings.ReplaceAll(getenv("NVM_DIR"), `\`, "/"), "/"); d != "" {
+		return d + "/versions/node/"
+	}
+	return "/.nvm/versions/node/"
+}
+
+// cutPath returns what follows the first sep in p, ignoring case on Windows,
+// whose paths do, as DetectOn's do.
+func cutPath(goos, p, sep string) (string, bool) {
+	if goos != "windows" {
+		_, after, ok := strings.Cut(p, sep)
+		return after, ok
+	}
+	for i := 0; i+len(sep) <= len(p); i++ {
+		if strings.EqualFold(p[i:i+len(sep)], sep) {
+			return p[i+len(sep):], true
+		}
+	}
+	return "", false
 }
 
 // sameFile reports whether a and b resolve to the same file.

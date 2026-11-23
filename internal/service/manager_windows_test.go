@@ -207,3 +207,18 @@ func TestInstalledErrors(t *testing.T) {
 		}
 	}
 }
+
+// schtasks /Create can fail with the not-found text, as for an executable it
+// cannot find; what it printed must reach the user.
+func TestInstallFailureCarriesSchtasksOutput(t *testing.T) {
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.HasPrefix(call, "schtasks.exe /Create") {
+			return []byte(missing), errors.New("exit status 1")
+		}
+		return nil, nil
+	}}
+	_, err := New(testNames, t.TempDir(), f.run).Install(context.Background(), plain())
+	if err == nil || !strings.Contains(err.Error(), "cannot find the file specified") {
+		t.Errorf("Install = %v, want schtasks' output in the error", err)
+	}
+}

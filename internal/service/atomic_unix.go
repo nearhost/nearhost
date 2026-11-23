@@ -3,31 +3,19 @@
 package service
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/nearhost/nearhost/internal/config"
 )
 
-// writeFileAtomic writes b to path through a temporary file and a rename, so
-// a reader never sees half a file.
+// writeFileAtomic writes b to path, creating its folder, the way the config
+// is written: through a synced temporary file and a rename, so a reader or a
+// crash never sees half a file, and through a link, so a service file that
+// is a link stays one.
 func writeFileAtomic(path string, b []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".nearhost-*")
-	if err != nil {
-		return err
-	}
-	_, werr := f.Write(b)
-	cerr := f.Close()
-	if err := errors.Join(werr, cerr, os.Chmod(f.Name(), perm)); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	return nil
+	return config.WriteFileAtomic(path, b, perm)
 }

@@ -68,6 +68,105 @@ func TestInstallChangedReenables(t *testing.T) {
 	}
 }
 
+// A changed unit that systemd fails to take is put back as it was, so the
+// next install sees the change again and retries what failed.
+func TestInstallChangedFailureRestoresTheUnit(t *testing.T) {
+	for _, failing := range []string{"daemon-reload", "reenable nearhost-test.service"} {
+		t.Run(failing, func(t *testing.T) {
+			fail := false
+			f := &fakeRunner{handle: func(call string) ([]byte, error) {
+				if fail && strings.HasSuffix(call, " "+failing) {
+					return []byte("Failed\n"), errors.New("exit status 1")
+				}
+				return nil, nil
+			}}
+			m := New(testNames, t.TempDir(), f.run)
+			d := plain()
+			if _, err := m.Install(context.Background(), d); err != nil {
+				t.Fatal(err)
+			}
+			next := d
+			next.Exe = "/opt/nearhost/bin/nearhost"
+			fail = true
+			if _, err := m.Install(context.Background(), next); err == nil {
+				t.Fatalf("Install succeeded, want the %s failure", failing)
+			}
+			if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
+				t.Errorf("Installed = %+v, %v, %v; want the unit as it was, %+v", got, ok, err, d.For(Unit))
+			}
+			fail = false
+			f.reset()
+			changed, err := m.Install(context.Background(), next)
+			if err != nil || !changed || len(f.calls) != 2 {
+				t.Errorf("retry: Install = %v, %v, commands %q; want true, nil, the reload and reenable", changed, err, f.calls)
+			}
+		})
+	}
+}
+
+// A write that fails once the new unit is in place, as when the folder
+// cannot be synced, puts the unit back too.
+func TestInstallWriteFailureRestoresTheUnit(t *testing.T) {
+	m := New(testNames, t.TempDir(), (&fakeRunner{}).run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	before := writeFile
+	t.Cleanup(func() { writeFile = before })
+	writes := 0
+	writeFile = func(path string, b []byte, perm os.FileMode) error {
+		writes++
+		if err := before(path, b, perm); err != nil {
+			return err
+		}
+		if writes == 1 {
+			return errors.New("sync the folder: input/output error")
+		}
+		return nil
+	}
+	next := d
+	next.Exe = "/opt/nearhost/bin/nearhost"
+	if _, err := m.Install(context.Background(), next); err == nil {
+		t.Fatal("Install succeeded, want the write failure")
+	}
+	if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
+		t.Errorf("Installed = %+v, %v, %v; want the unit as it was, %+v", got, ok, err, d.For(Unit))
+	}
+}
+
+// A unit that cannot be put back is no silent failure: the error says to
+// remove it and install again.
+func TestInstallSaysWhenTheUnitCannotBePutBack(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	before := writeFile
+	t.Cleanup(func() { writeFile = before })
+	writes := 0
+	writeFile = func(path string, b []byte, perm os.FileMode) error {
+		if writes++; writes > 1 {
+			return errors.New("read-only file system")
+		}
+		return before(path, b, perm)
+	}
+	f.handle = func(call string) ([]byte, error) {
+		if strings.HasSuffix(call, "daemon-reload") {
+			return []byte("Failed\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+	next := d
+	next.Exe = "/opt/nearhost/bin/nearhost"
+	_, err := m.Install(context.Background(), next)
+	if err == nil || !strings.Contains(err.Error(), "run nearhost service install again") || !strings.Contains(err.Error(), "read-only file system") {
+		t.Errorf("Install error = %v, want one that says the unit could not be put back", err)
+	}
+}
+
 func TestStartCommands(t *testing.T) {
 	f := &fakeRunner{}
 	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
@@ -125,6 +224,22 @@ func TestActiveParses(t *testing.T) {
 		if err != nil || got != want {
 			t.Errorf("Active(%q) = %v, %v; want %v", out, got, err, want)
 		}
+	}
+}
+
+// A failure that prints no unit state says nothing of whether the core runs.
+func TestActiveFailure(t *testing.T) {
+	for _, out := range []string{"", "Access denied\n"} {
+		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(out), errors.New("exit status 1") }}
+		if _, err := New(testNames, t.TempDir(), f.run).Active(context.Background()); err == nil {
+			t.Errorf("Active(%q) error = nil, want one", out)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeRunner{handle: func(string) ([]byte, error) { return nil, context.Canceled }}
+	if _, err := New(testNames, t.TempDir(), f.run).Active(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Active error = %v, want context.Canceled", err)
 	}
 }
 
@@ -205,6 +320,36 @@ func TestUnitDirFollowsTheManagersXDGConfigHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(ours, "systemd")); !os.IsNotExist(err) {
 		t.Errorf("a unit was written under this process's XDG_CONFIG_HOME: %v", err)
+	}
+}
+
+// A manager that does not answer leaves the unit folder to be asked again:
+// the home folder's stands in only until it does.
+func TestUnitDirAsksAgainAfterNoAnswer(t *testing.T) {
+	home, cfg := t.TempDir(), t.TempDir()
+	asked := 0
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if !strings.HasSuffix(call, "show-environment") {
+			return nil, nil
+		}
+		asked++
+		if asked == 1 {
+			return []byte("Failed to connect to bus: No medium found\n"), errors.New("exit status 1")
+		}
+		return []byte("XDG_CONFIG_HOME=" + cfg + "\n"), nil
+	}}
+	m := New(testNames, home, f.run).(*systemdManager)
+	if got, want := m.unitPath(context.Background()), filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service"); got != want {
+		t.Errorf("with no answer: %q, want %q", got, want)
+	}
+	want := filepath.Join(cfg, "systemd", "user", "nearhost-test.service")
+	for range 2 {
+		if got := m.unitPath(context.Background()); got != want {
+			t.Errorf("once it answers: %q, want %q", got, want)
+		}
+	}
+	if asked != 2 {
+		t.Errorf("show-environment asked %d times, want 2: again after no answer, then not again", asked)
 	}
 }
 

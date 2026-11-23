@@ -39,10 +39,14 @@ func TestServiceExe(t *testing.T) {
 		want, note, err string
 	}{
 		{"npx", "linux", "/home/u/.npm/_npx/ab/node_modules/@nearhost/cli-linux-x64/bin/nearhost", missing,
-			"", "", "fetched by npx for one run"},
+			"", "", "fetched by npx, bunx or pnpm dlx for one run"},
+		{"bunx", "linux", "/tmp/bunx-1000-@nearhost/cli@latest/node_modules/@nearhost/cli-linux-x64/bin/nearhost", missing,
+			"", "", "fetched by npx, bunx or pnpm dlx for one run"},
 		{"go run", "linux", "/home/u/.cache/go-build/ab/exe/nearhost", missing,
 			"", "", "built by go run"},
 		{"go run temp dir", "linux", "/home/u/tmp/go-build123456/b001/exe/nearhost", missing,
+			"", "", "built by go run"},
+		{"go run on windows", "windows", `C:\Users\u\AppData\Local\Temp\go-build123456\b001\exe\nearhost.exe`, missing,
 			"", "", "built by go run"},
 		{"go-builder is not go run", "linux", "/opt/go-builder/bin/nearhost", missing,
 			"/opt/go-builder/bin/nearhost", "", ""},
@@ -79,6 +83,30 @@ func TestServiceExe(t *testing.T) {
 				t.Errorf("note = %q, want one containing %q", note, tc.note)
 			}
 		})
+	}
+}
+
+// nvm keeps Node's versions under $NVM_DIR, which need not be ~/.nvm.
+func TestServiceExeNotesNodeUnderNVMDir(t *testing.T) {
+	getenv := func(n string) string {
+		return map[string]string{"NVM_DIR": "/home/u/.local/share/nvm"}[n]
+	}
+	exe := "/home/u/.local/share/nvm/versions/node/v26.13.0/bin/nearhost"
+	got, note, err := ServiceExe("linux", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
+	if err != nil || got != exe || !strings.Contains(note, "Node v26.13.0's folder") {
+		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
+	}
+}
+
+// Windows paths ignore case, so NVM_DIR need not match the binary's in it.
+func TestServiceExeNotesNodeUnderNVMDirInAnyCase(t *testing.T) {
+	getenv := func(n string) string {
+		return map[string]string{"NVM_DIR": `C:\Users\Ed\AppData\Roaming\NVM`}[n]
+	}
+	exe := `C:\Users\ed\AppData\Roaming\nvm\versions\node\v26.13.0\nearhost.exe`
+	got, note, err := ServiceExe("windows", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
+	if err != nil || got != exe || !strings.Contains(note, "Node v26.13.0's folder") {
+		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
 	}
 }
 
