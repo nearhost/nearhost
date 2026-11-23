@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -372,5 +373,76 @@ func TestTSWriterStampsEachLine(t *testing.T) {
 		if got := stamped.ReplaceAllString(line, ""); got != want[i] || (want[i] != "") != stamped.MatchString(line) {
 			t.Errorf("line %d = %q, want %q stamped (blank lines bare)", i, line, want[i])
 		}
+	}
+}
+
+// logLine is a 100-byte numbered lines, n of them.
+func logLine(i int) string {
+	return fmt.Sprintf("line %04d %s\n", i, strings.Repeat("x", 100-len("line 0000 \n")))
+}
+
+func TestLogRotatesWhileRunning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.log")
+	l, err := newRotatingLog(path, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	const lines = 30
+	for i := 0; i < lines; i++ {
+		if _, err := l.Write([]byte(logLine(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("the log was not set aside: %v", err)
+	}
+	cur, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cur) > 1024+100 {
+		t.Errorf("the log is %d bytes, want at most the limit and one line", len(cur))
+	}
+	// Whatever is kept is the tail of what was written, in order.
+	var want strings.Builder
+	for i := 0; i < lines; i++ {
+		want.WriteString(logLine(i))
+	}
+	got := string(old) + string(cur)
+	if !strings.HasSuffix(want.String(), got) {
+		t.Errorf("the two files are not the tail of the lines written, in order:\n.1: %q\nlog: %q", old, cur)
+	}
+	if len(old) == 0 || len(cur) == 0 {
+		t.Errorf("want lines in both files, got %d and %d bytes", len(old), len(cur))
+	}
+}
+
+func TestLogRotationKeepsOtherHandles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.log")
+	l, err := newRotatingLog(path, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	// Stands in for the core's own stderr, which another handle holds.
+	other, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	for i := 0; i < 15; i++ {
+		l.Write([]byte(logLine(i)))
+	}
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Fatalf("the log was not set aside: %v", err)
+	}
+	if _, err := other.WriteString("panic: after the rotation\n"); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := os.ReadFile(path)
+	if !strings.Contains(string(cur), "panic: after the rotation") {
+		t.Errorf("the other handle's text is not in the log: %q", cur)
 	}
 }

@@ -65,12 +65,25 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return err
 	}
-	logFile, err := openCoreLog(path, coreLogMayRotate())
+	// Set aside at open, if it may be, and from here on while the core runs.
+	f, err := openCoreLog(path, coreLogMayRotate())
+	if err != nil {
+		return fmt.Errorf("open the core log: %w", err)
+	}
+	f.Close()
+	logFile, err := newRotatingLog(path, coreLogLimit)
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
 	// Closed before the process ends, so nothing stays open on Windows.
 	defer logFile.Close()
+	if by == control.StartedService {
+		// The log is the file a service core's panics should land in, and
+		// stays open for the life of the process.
+		if err := redirectStderr(logFile.f); err != nil {
+			fmt.Fprintln(logFile, "could not send the core's standard error to this log:", err)
+		}
+	}
 	log := tsWriter(logFile)
 	// A detached core's own output goes nowhere: what the core says on
 	// stderr (a CA it could not move) and why it stopped go in the log,
@@ -127,6 +140,103 @@ func openCoreLog(path string, rotate bool) (*os.File, error) {
 		_ = os.Rename(path, path+".1")
 	}
 	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+}
+
+// rotatingLog appends to the core log. Once the file passes limit, it copies
+// the file to path+".1", replacing that, and truncates the file to 0, under
+// its lock, so no line of the core's is lost. Copy then truncate, not rename,
+// so a handle someone else holds (the core's own stderr) stays valid on Windows.
+type rotatingLog struct {
+	path  string
+	limit int64
+	f     *os.File
+
+	mu sync.Mutex
+	// size is an estimate of the file's size: it counts what is written
+	// here, and not what another handle (stderr) writes.
+	size int64
+}
+
+func newRotatingLog(path string, limit int64) (*rotatingLog, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	l := &rotatingLog{path: path, limit: limit, f: f}
+	if fi, err := f.Stat(); err == nil {
+		l.size = fi.Size()
+	}
+	return l, nil
+}
+
+func (l *rotatingLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.size > l.limit {
+		l.rotate()
+	}
+	n, err := l.f.Write(p)
+	l.size += int64(n)
+	return n, err
+}
+
+// rotate sets the log aside. The caller holds the lock. A failure leaves the
+// log as it is: it keeps growing, and is tried again at the next write that
+// finds it over the limit.
+func (l *rotatingLog) rotate() {
+	// Stderr writes are not counted, so ask the file before acting.
+	fi, err := l.f.Stat()
+	if err != nil {
+		return
+	}
+	l.size = fi.Size()
+	if l.size <= l.limit {
+		return
+	}
+	if copyAside(l.path, l.path+".1") != nil {
+		return
+	}
+	// A separate handle truncates: on Windows an append-only handle cannot.
+	t, err := os.OpenFile(l.path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return
+	}
+	t.Close()
+	l.size = 0
+}
+
+// copyAside copies src to dst by writing a temporary file beside dst and
+// renaming it over dst, so dst is never half written.
+func copyAside(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp*")
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(tmp, in)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), dst)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+func (l *rotatingLog) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.f.Close()
 }
 
 // stampedWriter is tsWriter's writer.
