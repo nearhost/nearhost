@@ -475,6 +475,7 @@ func (c *coreBackend) Status() control.Status {
 func (c *coreBackend) State() control.State {
 	st := c.coreOps.State()
 	st.Info, st.HTTPPort, st.WebPort, st.NoHosts, st.NoCapture = c.info, c.httpPort, c.webPort, c.noHosts, c.noCapture
+	st.Update = c.updates.latestNewer()
 	return st
 }
 

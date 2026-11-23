@@ -87,4 +87,8 @@ type State struct {
 	GrantsError  string                          `json:"grantsError,omitempty"`
 	Approvals    []Approval                      `json:"approvals"` // pending, oldest first
 	Clients      int                             `json:"clients"`   // attached to the stream, the asker's own included
+	// Update is the newer release the core has found, without "v", or ""
+	// when none is known, as in Status. The core said it on the stream when
+	// it found it, before an interface that opens later follows that.
+	Update string `json:"update,omitempty"`
 }

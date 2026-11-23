@@ -328,6 +328,11 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 			back.bus.Publish(engine.Event{Message: note})
 		}
 	}
+	// The core said the release it found on its stream, which is followed
+	// from now: the log says it here, as the core would have.
+	if st.Update != "" {
+		back.bus.Publish(engine.Event{Message: updateNotice(strings.TrimPrefix(info.Version, "v"), st.Update)})
+	}
 	err = b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)
 		proposals.Attach(p)
