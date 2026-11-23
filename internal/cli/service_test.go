@@ -474,3 +474,13 @@ func TestInstallSaysItInstalledBeforeAFailedStart(t *testing.T) {
 		t.Errorf("want the install, then the failed start, then the stopped core; out %q", out)
 	}
 }
+
+// Input that ends without an answer is no, blanks or not; enter is yes.
+func TestAskYesNoUnansweredIsNo(t *testing.T) {
+	for in, want := range map[string]bool{"": false, "   ": false, "\n": true, " \n": true, "y": true, "n\n": false, "maybe": false} {
+		var out strings.Builder
+		if got := askYesNo(strings.NewReader(in), &out, "? "); got != want {
+			t.Errorf("askYesNo(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
