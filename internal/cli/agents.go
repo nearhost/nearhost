@@ -151,7 +151,8 @@ var defaultConfigPath = config.DefaultPath
 // be used it serves the agents without passthroughs and returns a note too.
 // cfg is the config this run loaded and validated, which the grants are
 // pruned against; a nil cfg prunes nothing.
-func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDir string) (*agents, string) {
+// pageURL is the address of Nearhost's page, or "" while it has none.
+func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDir string, pageURL func() string) (*agents, string) {
 	if b.home == nil || b.id == nil {
 		return nil, ""
 	}
@@ -168,7 +169,7 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 		laptop = b.laptop()
 	}
 	sock := agentSocket(home, id)
-	opts := agentapi.Options{Laptop: laptop, Source: src}
+	opts := agentapi.Options{Laptop: laptop, Source: src, PageURL: pageURL}
 	var store *grants.Store
 	var docs *shower
 	var note, grantsOff string
@@ -276,13 +277,28 @@ type agentEnv struct {
 // validated; the grants of servers it no longer has are pruned against it.
 func serveAgents(b agentsBackend, opts *engine.Options, cfg *config.Config, cfgPath string, httpsPort int, env agentEnv) (*agents, string) {
 	src := &agentSource{cfgPath: cfgPath, httpsPort: httpsPort, env: env}
-	a, note := startAgents(b, src, cfg, opts.RunDir)
+	a, note := startAgents(b, src, cfg, opts.RunDir, src.pageURL)
 	if a != nil {
 		a.src = src
 		opts.Agent = a.forward
 		opts.AgentDone = a.serverGone
 	}
 	return a, note
+}
+
+// pageURL is the address of the attached engine's page, which the agent
+// API links each request to, or "" when it has none: before the engine is
+// attached, or when the page is not served.
+func (s *agentSource) pageURL() string {
+	eng := s.eng.Load()
+	if eng == nil {
+		return ""
+	}
+	u, err := eng.PageURL()
+	if err != nil {
+		return ""
+	}
+	return u
 }
 
 // serverGone is the engine's AgentDone: server's session has gone for good,
@@ -323,8 +339,9 @@ func (a *agents) publishHeld(eng *engine.Engine) {
 }
 
 // review has r review the agents' proposals and requests, and the changes
-// their reloads find: the core's queue while a client follows it. A nil r reviews nothing, so the agent API refuses what
-// needs an answer, as `nearhost up` does.
+// their reloads find: the core's queue, while its page is served or a
+// client follows it. A nil r reviews nothing, so the agent API refuses
+// what needs an answer.
 func (a *agents) review(r agentapi.Reviewer) {
 	if a != nil {
 		a.api.SetReviewer(r)

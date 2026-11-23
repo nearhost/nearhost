@@ -18,7 +18,7 @@ func (m *Model) treeRoot(tr documents.Tree) string { return m.shortRoot(tr.Serve
 // treeText is the line of a served tree: its folder, the agent it was
 // approved for, its newest document and how long ago that was opened.
 func (m *Model) treeText(tr documents.Tree) string {
-	parts := []string{m.treeRoot(tr), requesterName(tr.Requester)}
+	parts := []string{m.treeRoot(tr), RequesterName(tr.Requester)}
 	opened := tr.Opened
 	if len(tr.Docs) > 0 {
 		parts = append(parts, clean(tr.Docs[0].Path))

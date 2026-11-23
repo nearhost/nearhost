@@ -251,14 +251,9 @@ func (o *coreOps) AnswerPassthrough(ctx context.Context, id, answer string) erro
 	if err != nil {
 		return err
 	}
-	asked, _ := o.approvals.find(id)
-	err = o.settle(id, o.agents.answerPassthrough(ctx, id, a))
-	if err == nil && a == tui.AnswerNo && asked.Pass != nil {
-		// The agent API ends the origin's other prompts with this No.
-		origin := asked.Pass.Origin
-		o.approvals.endWhere(func(ap control.Approval) bool { return ap.Pass != nil && ap.Pass.Origin == origin })
-	}
-	return err
+	// A No ends the origin's other prompts in the agent API too, which
+	// takes them off the queue through Ended.
+	return o.settle(id, o.agents.answerPassthrough(ctx, id, a))
 }
 
 // AnswerDocument gives the user's answer to a coding agent's request to
@@ -269,14 +264,7 @@ func (o *coreOps) AnswerDocument(ctx context.Context, id, answer string) error {
 	if err != nil {
 		return err
 	}
-	asked, _ := o.approvals.find(id)
-	err = o.settle(id, o.agents.answerDocument(ctx, id, a))
-	if err == nil && a == tui.AnswerNo && asked.Doc != nil {
-		// The agent API ends the origin's other prompts with this No.
-		origin := asked.Doc.Origin
-		o.approvals.endWhere(func(ap control.Approval) bool { return ap.Doc != nil && ap.Doc.Origin == origin })
-	}
-	return err
+	return o.settle(id, o.agents.answerDocument(ctx, id, a))
 }
 
 // settle takes the request id off the queue once err, the agent API's

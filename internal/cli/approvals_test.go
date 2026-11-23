@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/testutil"
+	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // fakeClock is a clock the test moves on, safe to read from the sweeper.
@@ -237,12 +239,22 @@ func TestRefusedAnswerStaysPending(t *testing.T) {
 }
 
 // agentUp is an up that serves coding agents, with grants, on home's socket.
-func agentUp(t *testing.T) (u *upRun, sock string) {
+// setup, when given, changes the run before it starts.
+func agentUp(t *testing.T, setup ...func(*upRun)) (u *upRun, sock string) {
 	t.Helper()
 	home := agentHome(t)
 	u = newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
 	u.noHosts = true
-	u.adjust = func(b *upBackend) { b.agents = withGrants(fakeAgents(home), home) }
+	for _, f := range setup {
+		f(u)
+	}
+	adjust := u.adjust
+	u.adjust = func(b *upBackend) {
+		b.agents = withGrants(fakeAgents(home), home)
+		if adjust != nil {
+			adjust(b)
+		}
+	}
 	u.start()
 	u.waitFor("Serving until interrupted")
 	return u, agentSocket(home, "k3f9q2")
@@ -260,32 +272,6 @@ func askToShow(t *testing.T, sock string) (int, map[string]any) {
 
 // interfaceOn is what the agent API on sock says of the interface.
 func interfaceOn(t *testing.T, sock string) any { return getJSON(t, sock, "/v1")["interface"] }
-
-// The core reviews the agents' requests while a client follows its stream,
-// and only then.
-func TestReviewerOnlyWhileAttached(t *testing.T) {
-	u, sock := agentUp(t)
-	if got := interfaceOn(t, sock); got != false {
-		t.Fatalf("before any client: interface %v", got)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	_, streamErr, err := u.control().Events(ctx, u.hubSeq(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	testutil.WaitUntil(t, 5*time.Second, func() bool { return interfaceOn(t, sock) == true }, "the agent API to say a client reviews")
-	cancel()
-	if err := streamErr(); err != nil {
-		t.Fatal(err)
-	}
-	testutil.WaitUntil(t, 5*time.Second, func() bool { return interfaceOn(t, sock) == false }, "the agent API to say no client reviews")
-	if status, out := askToShow(t, sock); status != 409 || !strings.Contains(out["error"].(string), "has no page or window to ask you in") {
-		t.Errorf("a request with no client: %d %v", status, out)
-	}
-	if err := u.stop(); err != nil {
-		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
-	}
-}
 
 // A client that attaches finds in the state the requests that came before.
 func TestStateCarriesPending(t *testing.T) {
@@ -331,8 +317,9 @@ func TestStateCarriesPending(t *testing.T) {
 }
 
 // A No to one passthrough ends the origin's other prompts in the agent API,
-// and so in the queue: no client is left showing one that has ended.
-func TestNoEndsTheOriginsOtherRequests(t *testing.T) {
+// which tells the queue of each through Ended: no client is left showing
+// one that has ended.
+func TestNoClearsTheOriginsPrompts(t *testing.T) {
 	home := agentHome(t)
 	opts := engine.Options{RunDir: filepath.Join(home, "run")}
 	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
@@ -359,7 +346,158 @@ func TestNoEndsTheOriginsOtherRequests(t *testing.T) {
 	if err := o.AnswerPassthrough(context.Background(), ids[0], "no"); err != nil {
 		t.Fatal(err)
 	}
-	if got := q.Pending(); len(got) != 0 || !pub.ended(ids[1]) {
+	if got := q.Pending(); len(got) != 0 || !pub.ended(ids[0]) || !pub.ended(ids[1]) {
 		t.Errorf("after the No: pending %+v, published %+v", got, pub.all())
+	}
+	// Each request ends once on the stream.
+	for _, id := range ids {
+		n := 0
+		for _, e := range pub.all() {
+			if e.Kind == control.KindEnded && e.ID == id {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s ended %d times, want once", id, n)
+		}
+	}
+}
+
+// Ended takes a pending request off the queue and ends it on the stream;
+// for one not pending it publishes nothing.
+func TestQueueFollowsEnded(t *testing.T) {
+	clock := newFakeClock()
+	q, pub, _ := newQueue(t, clock)
+	q.ReviewPassthrough(agentapi.PassRequest{ID: "p1", Expires: clock.now().Add(time.Minute)})
+	q.Ended("p1")
+	if got := q.Pending(); len(got) != 0 || !pub.ended("p1") {
+		t.Errorf("after Ended: pending %+v, published %+v", got, pub.all())
+	}
+	before := len(pub.all())
+	q.Ended("p1")
+	q.Ended("nope")
+	if after := pub.all(); len(after) != before {
+		t.Errorf("Ended of a request not pending published %+v", after[before:])
+	}
+}
+
+// A request the agent withdraws leaves the queue at once: a client stops
+// showing it, rather than when it expires.
+func TestWithdrawnPassthroughEndsInTheQueue(t *testing.T) {
+	home := agentHome(t)
+	opts := engine.Options{RunDir: filepath.Join(home, "run")}
+	a, note := serveAgents(withGrants(fakeAgents(home), home), &opts, nil, "", 443, agentEnv{})
+	if a == nil {
+		t.Fatal(note)
+	}
+	defer a.close()
+	f, _ := opts.Agent("mini")
+	q, pub, _ := newQueue(t, newFakeClock())
+	q.now = time.Now // the agent API's requests expire by the real clock
+	a.review(q)
+	status, out := postPass(t, f, "")
+	if status != 202 {
+		t.Fatalf("passthrough request: %d %v", status, out)
+	}
+	id := out["id"].(string)
+	if status := deleteAgent(t, f, "/v1/passthroughs/"+id); status != 204 {
+		t.Fatalf("withdraw: %d", status)
+	}
+	if got := q.Pending(); len(got) != 0 || !pub.ended(id) {
+		t.Errorf("after the withdrawal: pending %+v, published %+v", got, pub.all())
+	}
+}
+
+// deleteAgent sends DELETE path to the agent API where f reaches it, and
+// returns the status.
+func deleteAgent(t *testing.T, f transport.AgentForward, path string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, "http://nearhost"+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := agentClient(f).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// The queue tells onAdd of each request once it is published, and not of
+// the notices, which wait for no answer.
+func TestApprovalsTellOnAdd(t *testing.T) {
+	clock := newFakeClock()
+	q, pub, _ := newQueue(t, clock)
+	var added []string
+	q.onAdd = func(a control.Approval) {
+		if !pub.published(a.ID) {
+			t.Errorf("onAdd of %s before it was published", a.ID)
+		}
+		added = append(added, a.ID)
+	}
+	q.ReviewPassthrough(agentapi.PassRequest{ID: "p1", Expires: clock.now().Add(time.Minute)})
+	q.Review(agentapi.Proposal{ID: "a1", Expires: clock.now().Add(time.Minute)})
+	q.ReviewDocument(agentapi.DocRequest{ID: "d1", Expires: clock.now().Add(time.Minute)})
+	q.Opened(agentapi.Passthrough{ID: "o1"})
+	q.Shown("mini", "claude-code", "plan.md")
+	if want := []string{"p1", "a1", "d1"}; !slices.Equal(added, want) {
+		t.Errorf("onAdd told of %v, want %v", added, want)
+	}
+}
+
+// published reports whether the approval id has been published.
+func (p *published) published(id string) bool {
+	return slices.ContainsFunc(p.all(), func(e control.Envelope) bool {
+		return e.Kind == control.KindApproval && e.Approval != nil && e.Approval.ID == id
+	})
+}
+
+func TestApprovalLine(t *testing.T) {
+	pass := control.Approval{ID: "p1", Pass: &agentapi.PassRequest{Origin: "mini", Requester: "claude-code", Remote: 5173}}
+	doc := control.Approval{ID: "d1", Doc: &agentapi.DocRequest{Origin: "mini", Requester: "codex", Doc: "docs/plan.md"}}
+	prop := control.Approval{ID: "a1", Proposal: &agentapi.Proposal{Origin: "mini", Path: "/srv/app"}}
+	odd := control.Approval{ID: "p2", Pass: &agentapi.PassRequest{Origin: "mi\x1b[2Jni", Requester: "my-tool", Remote: 80}}
+	local := control.Approval{ID: "d2", Doc: &agentapi.DocRequest{Origin: config.LocalServer, Requester: "agent", Doc: "plan.md"}}
+	page := "https://nearhost.localhost:6327"
+	for _, tc := range []struct {
+		a          control.Approval
+		page, want string
+	}{
+		{pass, page, "Claude Code on mini asks to open port 5173. Answer at https://nearhost.localhost:6327/approve/p1"},
+		{doc, page, "Codex on mini asks to show docs/plan.md. Answer at https://nearhost.localhost:6327/approve/d1"},
+		{prop, page, "A coding agent on mini proposes adding /srv/app. Review it with nearhost, or decline it at https://nearhost.localhost:6327/approve/a1"},
+		{pass, "", "Claude Code on mini asks to open port 5173. Open nearhost to answer."},
+		{doc, "", "Codex on mini asks to show docs/plan.md. Open nearhost to answer."},
+		{prop, "", "A coding agent on mini proposes adding /srv/app. Open nearhost to answer."},
+		{local, "", "An agent on this machine asks to show plan.md. Open nearhost to answer."},
+	} {
+		if got := approvalLine(tc.a, tc.page); got != tc.want {
+			t.Errorf("approvalLine(%s, %q)\n got %q\nwant %q", tc.a.ID, tc.page, got, tc.want)
+		}
+	}
+	// What an agent sends cannot act on the terminal.
+	if got := approvalLine(odd, ""); strings.ContainsRune(got, 0x1b) {
+		t.Errorf("approvalLine kept an escape: %q", got)
+	}
+}
+
+// A line that finds the writer's buffer full is dropped, and the output is
+// told once that some were missed.
+func TestLineWriterDropsWhenFull(t *testing.T) {
+	var buf syncBuffer
+	out := &gatedWriter{out: &buf}
+	out.hold()
+	t.Cleanup(out.release)
+	w := newLineWriter(out, 1)
+	w.put("a")
+	testutil.WaitUntil(t, 5*time.Second, func() bool { return len(w.lines) == 0 }, "the writer to take the first line")
+	w.put("b") // waits in the buffer
+	w.put("c") // finds it full
+	out.release()
+	w.close()
+	w.put("d") // after close: dropped, and no panic
+	if got, want := buf.String(), "a\nb\n"+missedLines+"\n"; got != want {
+		t.Errorf("wrote %q, want %q", got, want)
 	}
 }

@@ -3,6 +3,7 @@ package control
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestHubNumbersFromOne(t *testing.T) {
@@ -74,4 +75,46 @@ func (l *attachLog) get() []bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]bool(nil), l.calls...)
+}
+
+// A watch is told that something was published, but is not a stream: the
+// hub does not count it, nor tell the OnAttached hook of it, and Publish
+// never waits for it.
+func TestHubWatchIsNotAClient(t *testing.T) {
+	h := NewHub()
+	var log attachLog
+	h.OnAttached(log.hook)
+	changed, stop := h.Watch()
+	defer stop()
+	if n := h.Clients(); n != 0 {
+		t.Errorf("Clients = %d with a watch open, want 0", n)
+	}
+	published := make(chan struct{})
+	go func() {
+		defer close(published)
+		for range 3 {
+			h.Publish(Envelope{Kind: KindEvent})
+		}
+	}()
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Publish waited for the watch")
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("the watch was not signalled")
+	}
+	if calls := log.get(); len(calls) != 0 {
+		t.Errorf("OnAttached was told %v", calls)
+	}
+	// Once stopped, a watch is signalled no more.
+	stop()
+	h.Publish(Envelope{Kind: KindEvent})
+	select {
+	case <-changed:
+		t.Error("a stopped watch was signalled")
+	default:
+	}
 }

@@ -12,13 +12,19 @@ import (
 // run directory, which the server's session forwards there. A socket needs
 // no token: only this user can open it.
 func (a *agents) listenAgent(server string) (local, token string, err error) {
-	// Named by a hash, so any server name makes a short plain file name.
-	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte(server)))[:len("agent-")+12]
-	local = filepath.Join(a.runDir, name+".sock")
+	local = serverAgentSocket(a.runDir, server)
 	if err := a.api.Listen(server, local); err != nil {
 		return "", "", err
 	}
 	return local, "", nil
+}
+
+// serverAgentSocket is where the agent API listens for server, in the run
+// directory runDir. It is named by a hash, so any server name makes a short
+// plain file name.
+func serverAgentSocket(runDir, server string) string {
+	name := fmt.Sprintf("agent-%x", sha256.Sum256([]byte(server)))[:len("agent-")+12]
+	return filepath.Join(runDir, name+".sock")
 }
 
 // doctorAgentLocal is what the doctor's own agent forward reaches, in its

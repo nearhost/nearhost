@@ -38,7 +38,7 @@ func docWhere(origin string) string {
 }
 
 // who names the requester and its machine: "Claude Code on apollo".
-func (r DocRequest) who() string { return requesterName(r.Requester) + " " + docWhere(r.Origin) }
+func (r DocRequest) who() string { return RequesterName(r.Requester) + " " + docWhere(r.Origin) }
 
 // shownRoot is the folder r would serve as the prompt shows it (see
 // shortRoot).
@@ -209,7 +209,7 @@ func (f *docForm) lines(width int) []string {
 	}
 	lines = append(lines, wrap(serves, width)...)
 	if f.r.NewRoot && f.r.CanAlways {
-		granted := requesterName(f.r.Requester) + " has Always allow " + docWhere(f.r.Origin) +
+		granted := RequesterName(f.r.Requester) + " has Always allow " + docWhere(f.r.Origin) +
 			", but not for this folder. Always allow adds it."
 		lines = append(lines, wrap(granted, width)...)
 	}
@@ -253,7 +253,7 @@ func (m *Model) gotDoc(r DocRequest) tea.Cmd {
 // docShown tells that a document opened without asking: in the status line
 // and the log, with no terminal notification.
 func (m *Model) docShown(msg docShownMsg) tea.Cmd {
-	text := fmt.Sprintf("%s %s opened %s", requesterName(msg.requester), docWhere(msg.origin), clean(msg.doc))
+	text := fmt.Sprintf("%s %s opened %s", RequesterName(msg.requester), docWhere(msg.origin), clean(msg.doc))
 	m.logs.note(text + ".")
 	return m.showToast(text, false)
 }
