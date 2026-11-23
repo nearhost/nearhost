@@ -4,4 +4,6 @@ package service
 
 import "os/exec"
 
-func hideWindow(*exec.Cmd) {}
+// HideWindow stops cmd from opening a console window on Windows. It does
+// nothing elsewhere.
+func HideWindow(*exec.Cmd) {}

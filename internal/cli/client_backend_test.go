@@ -176,6 +176,11 @@ func (f *mirrorCore) PageKeyURL() (string, error) {
 	return "https://nearhost.localhost:6327/?k=secret", nil
 }
 
+func (f *mirrorCore) Environment(context.Context) ([]control.EnvCheck, error) {
+	f.hit("Environment")
+	return nil, nil
+}
+
 var _ control.Backend = (*mirrorCore)(nil)
 
 // mirrorHarness is a mirrorCore served on a control socket, and a client

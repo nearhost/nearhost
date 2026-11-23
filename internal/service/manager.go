@@ -68,7 +68,7 @@ func New(names Names, home string, run Runner) Manager {
 // opens no console window.
 func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	hideWindow(cmd)
+	HideWindow(cmd)
 	return cmd.CombinedOutput()
 }
 

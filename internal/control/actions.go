@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/proxy"
 )
@@ -27,6 +28,14 @@ var ErrNotFound = errors.New("not found")
 // ErrUnimplemented is what an action that this Nearhost cannot do yet gives.
 // The server answers it with 501.
 var ErrUnimplemented = errors.New("this Nearhost cannot do that yet")
+
+// ErrNoRoute is what asking the core for something it has no route for gives:
+// it is running from an older release.
+var ErrNoRoute = errors.New("the running Nearhost does not answer this; it is an older release")
+
+// environmentTimeout is how long the core takes at most to look at what it
+// can reach.
+const environmentTimeout = 10 * time.Second
 
 // Actions are the things the terminal interface asks of the core, one route
 // each. A method that returns an error says why it could not do the action;
@@ -61,6 +70,9 @@ type Actions interface {
 	Replay(ctx context.Context, id string) (int, error)
 	// PageKeyURL is the address of the home page with its key, the /?k= one.
 	PageKeyURL() (string, error)
+	// Environment looks, when asked, at what the core can reach: opening
+	// links, the SSH agent, Docker and ssh.
+	Environment(ctx context.Context) ([]EnvCheck, error)
 }
 
 // UnimplementedActions is an Actions that can do none of them: each action
@@ -105,6 +117,9 @@ func (UnimplementedActions) Replay(context.Context, string) (int, error) {
 	return 0, ErrUnimplemented
 }
 func (UnimplementedActions) PageKeyURL() (string, error) { return "", ErrUnimplemented }
+func (UnimplementedActions) Environment(context.Context) ([]EnvCheck, error) {
+	return nil, ErrUnimplemented
+}
 
 // maxActionBody is the longest request body an action route reads.
 const maxActionBody = 64 << 10
@@ -270,6 +285,19 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		reply(w, http.StatusOK, struct {
 			Status int `json:"status"`
 		}{status})
+	})
+	mux.HandleFunc("GET /v1/environment", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), environmentTimeout)
+		defer cancel()
+		checks, err := b.Environment(ctx)
+		if err != nil {
+			failAction(w, err)
+			return
+		}
+		if checks == nil {
+			checks = []EnvCheck{}
+		}
+		reply(w, http.StatusOK, checks)
 	})
 	mux.HandleFunc("GET /v1/page", func(w http.ResponseWriter, r *http.Request) {
 		u, err := b.PageKeyURL()
@@ -489,4 +517,22 @@ func (c *Client) PageKeyURL(ctx context.Context) (string, error) {
 	}
 	err := c.actMethod(ctx, http.MethodGet, "/v1/page", nil, &out, false)
 	return out.URL, err
+}
+
+// Environment asks the core what it can reach: opening links, the SSH agent,
+// Docker and ssh. It returns ErrNoRoute when the core is an older release
+// that does not answer this.
+func (c *Client) Environment(ctx context.Context) ([]EnvCheck, error) {
+	// The core looks when asked and takes up to environmentTimeout, which is
+	// longer than a call's cap, so the wait is bounded here.
+	ctx, cancel := context.WithTimeout(ctx, environmentTimeout+2*time.Second)
+	defer cancel()
+	var out []EnvCheck
+	err := c.actMethod(ctx, http.MethodGet, "/v1/environment", nil, &out, true)
+	if errors.Is(err, ErrNotFound) {
+		// Only this route maps a 404 to ErrNoRoute: the core never answers
+		// it with one, so a 404 is a core that has no such route.
+		return nil, ErrNoRoute
+	}
+	return out, err
 }
