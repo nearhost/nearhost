@@ -140,7 +140,7 @@ func (b serviceBackend) withManager(m service.Manager, d service.Definition) det
 func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	out := cmd.OutOrStdout()
 	if b.euid() == 0 {
-		msg := "Run nearhost service install as yourself, not as root: the service belongs to your login."
+		msg := "Install the service as yourself, not as root: it runs as the user who installs it."
 		fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		return exitError{code: 1, msg: msg}
 	}

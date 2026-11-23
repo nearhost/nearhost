@@ -120,7 +120,7 @@ func TestInstallRefusesRoot(t *testing.T) {
 	x := newServiceFixture(t)
 	x.b.euid = func() int { return 0 }
 	out, err := x.run(t, "", "service", "install")
-	if err == nil || !strings.Contains(out, "not as root") {
+	if err == nil || !strings.Contains(out, "Install the service as yourself, not as root: it runs as the user who installs it.") {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 	if x.m.log() != "" {
