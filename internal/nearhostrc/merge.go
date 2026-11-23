@@ -226,6 +226,10 @@ func containsFold(list []string, h string) bool {
 	return false
 }
 
+// WhyRealDomain is the Item.Why of a host that is a real domain, one that
+// may resolve to a site on the internet.
+const WhyRealDomain = "a real domain"
+
 // OptionDockerClients is the Item.Option for the docker_clients opt-in.
 const OptionDockerClients = "docker_clients"
 
@@ -289,7 +293,7 @@ func NeedsApproval(old, next config.Project) []Item {
 			if (!pattern && strings.HasSuffix(strings.ToLower(h), ".test")) || had[strings.ToLower(h)] {
 				continue
 			}
-			why := "a real domain"
+			why := WhyRealDomain
 			switch {
 			case pattern:
 				why = "a wildcard"
@@ -310,7 +314,7 @@ func NeedsApproval(old, next config.Project) []Item {
 	// the port of the primary web route it is served at.
 	if alias := next.Alias; alias != "" && !strings.HasSuffix(strings.ToLower(alias), ".test") && !strings.EqualFold(alias, old.Alias) {
 		if web, ok := next.WebRoute(); ok {
-			items = append(items, Item{Port: web.Port, Host: alias, Why: "a real domain"})
+			items = append(items, Item{Port: web.Port, Host: alias, Why: WhyRealDomain})
 		}
 	}
 	// A loopback port binds localhost on this machine, where it can stand in

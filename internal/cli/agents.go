@@ -20,6 +20,7 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -36,6 +37,9 @@ type agentsBackend struct {
 	// grants is the file of Always allow grants (config.GrantsPath). When it
 	// is nil, as in most tests, agents have no passthroughs.
 	grants func() (string, error)
+	// open opens a URL in the browser for the documents agents show; nil is
+	// desktop.OpenURL. Tests record the URLs instead.
+	open func(url string) error
 }
 
 // systemAgents is the production backend. Only NewRoot wires it in.
@@ -192,6 +196,9 @@ func startAgents(b agentsBackend, src agentapi.Source, cfg *config.Config, runDi
 				opts.Passer = passer{eng: &as.eng}
 				opts.Grants = passGrants{store}
 				docs = newShower(&as.eng)
+				if b.open != nil {
+					docs.open = b.open
+				}
 				opts.Shower = docs
 				opts.DocGrants = docGrants{store}
 			}
@@ -607,6 +614,15 @@ func (a *agents) documents(server string) []documents.Tree {
 		return nil
 	}
 	return a.docs.table.List(server)
+}
+
+// pageTrees lists the trees as Nearhost's page lists them, for the page's
+// console; nil when this run serves no documents.
+func (a *agents) pageTrees() func() []proxy.HomeTree {
+	if a == nil || a.docs == nil {
+		return nil
+	}
+	return a.docs.homeTrees
 }
 
 // openDocument opens the newest document of the tree id in the browser.
