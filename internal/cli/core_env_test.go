@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"net"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -15,9 +18,11 @@ type envFake struct {
 	goos      string
 	env       map[string]string
 	onPath    map[string]bool
+	agentKeys int
 	dialErr   error
 	launchctl string
-	dockerOut string
+	dockerOut string // stdout
+	dockerLog string // stderr
 	dockerErr error
 	session   bool
 	sessErr   error
@@ -37,7 +42,7 @@ func (f envFake) probe() envProbe {
 			}
 			return "", errors.New("not found")
 		},
-		dialUnix: func(string) error { return f.dialErr },
+		agentKeys: func(string) (int, error) { return f.agentKeys, f.dialErr },
 		run: func(ctx context.Context, name string, args ...string) (string, error) {
 			if f.calls != nil {
 				*f.calls = append(*f.calls, append([]string{name}, args...))
@@ -50,6 +55,16 @@ func (f envFake) probe() envProbe {
 				return f.launchctl, nil
 			}
 			return f.dockerOut, f.dockerErr
+		},
+		runSplit: func(ctx context.Context, name string, args ...string) (string, string, error) {
+			if f.calls != nil {
+				*f.calls = append(*f.calls, append([]string{name}, args...))
+			}
+			if f.hang {
+				<-ctx.Done()
+				return "", "", ctx.Err()
+			}
+			return f.dockerOut, f.dockerLog, f.dockerErr
 		},
 		session: func() (bool, error) { return f.session, f.sessErr },
 		findSSH: func() (string, error) { return f.sshPath, f.sshErr },
@@ -115,22 +130,35 @@ func TestCoreEnvironment(t *testing.T) {
 			f.env["SSH_AUTH_SOCK"] = "/run/agent.sock"
 			f.env["DISPLAY"] = ":0"
 			f.onPath["xdg-open"] = true
-		}, []control.EnvCheck{ok("browser", "can open links"), ok("ssh agent", "/run/agent.sock"), dockerOK, sshOK}},
-		{"agent dial fails", func(f *envFake) {
+			f.agentKeys = 3
+		}, []control.EnvCheck{ok("browser", "can open links"), ok("ssh agent", "/run/agent.sock (3 keys)"), dockerOK, sshOK}},
+		{"agent holds one key", func(f *envFake) {
 			*f = base("linux")
 			f.env["SSH_AUTH_SOCK"] = "/run/agent.sock"
 			f.env["DISPLAY"] = ":0"
 			f.onPath["xdg-open"] = true
-			f.dialErr = errors.New("connection refused")
+			f.agentKeys = 1
+		}, []control.EnvCheck{ok("browser", "can open links"), ok("ssh agent", "/run/agent.sock (1 key)"), dockerOK, sshOK}},
+		{"not an agent", func(f *envFake) {
+			*f = base("linux")
+			f.env["SSH_AUTH_SOCK"] = "/run/agent.sock"
+			f.env["DISPLAY"] = ":0"
+			f.onPath["xdg-open"] = true
+			f.dialErr = errors.New("agent: failure")
 		}, []control.EnvCheck{ok("browser", "can open links"), {Name: "ssh agent", Level: "warn",
-			Detail: "cannot reach /run/agent.sock: connection refused",
+			Detail: "/run/agent.sock does not answer as an SSH agent: agent: failure",
 			Fix:    "run nearhost service install again from a shell whose agent works, or set IdentityAgent in ~/.ssh/config"},
 			dockerOK, sshOK}},
+		{"docker warning on stderr", func(f *envFake) {
+			*f = base("windows")
+			f.dockerLog = "WARNING: a plugin is out of date\n"
+		}, []control.EnvCheck{ok("browser", "can open links"), dockerOK, sshOK}},
 		{"docker missing", func(f *envFake) { *f = base("windows"); delete(f.onPath, "docker") },
 			[]control.EnvCheck{ok("browser", "can open links"), dockerMissing, sshOK}},
 		{"docker failing", func(f *envFake) {
 			*f = base("windows")
-			f.dockerOut = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\nIs the daemon running?\n"
+			f.dockerOut = "WARNING: a plugin is out of date\n"
+			f.dockerLog = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\nIs the daemon running?\n"
 			f.dockerErr = errors.New("exit status 1")
 		}, []control.EnvCheck{ok("browser", "can open links"), {Name: "docker", Level: "warn",
 			Detail: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
@@ -193,5 +221,27 @@ func TestCoreEnvironmentDockerHangs(t *testing.T) {
 	}
 	if docker.Level != "warn" || docker.Detail != "docker did not answer within 5 seconds" {
 		t.Errorf("docker = %+v, want a warning that it did not answer", docker)
+	}
+}
+
+func TestSystemAgentKeysRejectsNonAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the agent check does not run on Windows")
+	}
+	sock := filepath.Join(t.TempDir(), "a.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skip(err)
+	}
+	defer l.Close()
+	go func() {
+		conn, err := l.Accept()
+		if err == nil {
+			conn.Write([]byte("hello, not an agent\n"))
+			conn.Close()
+		}
+	}()
+	if n, err := systemEnvProbe().agentKeys(sock); err == nil {
+		t.Errorf("agentKeys = %d, nil; want an error from a listener that is no agent", n)
 	}
 }

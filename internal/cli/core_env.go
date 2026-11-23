@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // dockerProbeTimeout is how long the core waits for docker to answer.
@@ -25,11 +27,15 @@ type envProbe struct {
 	goos     string
 	getenv   func(string) string
 	lookPath func(string) (string, error)
-	// dialUnix connects to the socket at path and closes it.
-	dialUnix func(path string) error
+	// agentKeys asks the SSH agent on the socket at path how many keys it
+	// holds. It fails when nothing answers as an agent.
+	agentKeys func(path string) (int, error)
 	// run runs the command and returns its output, stdout and stderr
 	// together.
 	run func(ctx context.Context, name string, args ...string) (string, error)
+	// runSplit is run with stdout and stderr kept apart, for a command whose
+	// stdout is its answer and whose stderr may only hold warnings.
+	runSplit func(ctx context.Context, name string, args ...string) (stdout, stderr string, err error)
 	// session says whether the core runs in a sign-in session that has a
 	// desktop. Only Windows asks.
 	session func() (interactive bool, err error)
@@ -42,26 +48,45 @@ func systemEnvProbe() envProbe {
 		goos:     runtime.GOOS,
 		getenv:   os.Getenv,
 		lookPath: exec.LookPath,
-		dialUnix: func(path string) error {
+		agentKeys: func(path string) (int, error) {
 			conn, err := net.DialTimeout("unix", path, 2*time.Second)
 			if err != nil {
-				return err
+				return 0, err
 			}
-			return conn.Close()
+			defer conn.Close()
+			// A listener that never answers must not hold the check up.
+			if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				return 0, err
+			}
+			keys, err := agent.NewClient(conn).List()
+			return len(keys), err
 		},
 		run: func(ctx context.Context, name string, args ...string) (string, error) {
-			cmd := exec.CommandContext(ctx, name, args...)
-			// A command run by a core that has no console must not open one.
-			service.HideWindow(cmd)
-			// A child that keeps the output pipe open must not keep
-			// CombinedOutput waiting past the context.
-			cmd.WaitDelay = time.Second
+			cmd := envCommand(ctx, name, args)
 			out, err := cmd.CombinedOutput()
 			return string(out), err
+		},
+		runSplit: func(ctx context.Context, name string, args ...string) (string, string, error) {
+			cmd := envCommand(ctx, name, args)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			return stdout.String(), stderr.String(), err
 		},
 		session: interactiveSession,
 		findSSH: transport.FindSSH,
 	}
+}
+
+// envCommand is the command to run for a probe.
+func envCommand(ctx context.Context, name string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	// A command run by a core that has no console must not open one.
+	service.HideWindow(cmd)
+	// A child that keeps an output pipe open must not keep the command
+	// waiting past the context.
+	cmd.WaitDelay = time.Second
+	return cmd
 }
 
 // coreEnvironment looks at what the core can reach from where it runs: a
@@ -124,12 +149,14 @@ func envSSHAgent(p envProbe) control.EnvCheck {
 		return control.EnvCheck{Name: "ssh agent", Level: "info",
 			Detail: "SSH_AUTH_SOCK is not set for the core; ssh uses IdentityAgent from ~/.ssh/config, if set"}
 	}
-	if err := p.dialUnix(sock); err != nil {
+	n, err := p.agentKeys(sock)
+	if err != nil {
 		return control.EnvCheck{Name: "ssh agent", Level: "warn",
-			Detail: fmt.Sprintf("cannot reach %s: %v", sock, err),
+			Detail: fmt.Sprintf("%s does not answer as an SSH agent: %v", sock, err),
 			Fix:    "run nearhost service install again from a shell whose agent works, or set IdentityAgent in ~/.ssh/config"}
 	}
-	return control.EnvCheck{Name: "ssh agent", Level: "ok", Detail: sock}
+	return control.EnvCheck{Name: "ssh agent", Level: "ok",
+		Detail: fmt.Sprintf("%s (%s)", sock, plural(n, "key"))}
 }
 
 func envDocker(ctx context.Context, p envProbe) control.EnvCheck {
@@ -141,9 +168,13 @@ func envDocker(ctx context.Context, p envProbe) control.EnvCheck {
 	}
 	ctx, cancel := context.WithTimeout(ctx, dockerProbeTimeout)
 	defer cancel()
-	out, err := p.run(ctx, docker, "version", "--format", "{{.Server.Version}}")
+	stdout, stderr, err := p.runSplit(ctx, docker, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
-		detail := out
+		// stderr holds the reason; stdout may start with a warning.
+		detail := stderr
+		if cleanDetail(detail) == "" {
+			detail = stdout
+		}
 		if cleanDetail(detail) == "" {
 			detail = err.Error()
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -153,7 +184,7 @@ func envDocker(ctx context.Context, p envProbe) control.EnvCheck {
 		return control.EnvCheck{Name: "docker", Level: "warn", Detail: detail,
 			Fix: "start Docker, or set DOCKER_HOST before nearhost service install"}
 	}
-	return control.EnvCheck{Name: "docker", Level: "ok", Detail: "Docker " + strings.TrimSpace(out)}
+	return control.EnvCheck{Name: "docker", Level: "ok", Detail: "Docker " + cleanDetail(stdout)}
 }
 
 func envSSH(p envProbe) control.EnvCheck {
