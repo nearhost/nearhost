@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ import (
 // older "Failed to connect to bus" and, from systemd 248, "Failed to connect
 // to user scope bus via local transport".
 var noBus = regexp.MustCompile(`Failed to connect to (user scope )?bus`)
+
+// writeFile writes the unit; tests replace it.
+var writeFile = writeFileAtomic
 
 type systemdManager struct {
 	names Names
@@ -93,8 +97,27 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	fresh := !ok && err == nil
 	path := m.unitPath(ctx)
 	prev, prevErr := os.ReadFile(path)
-	if err := writeFileAtomic(path, RenderUnit(d), 0o644); err != nil {
-		return false, err
+	// putBack restores what was there when the install fails, so the next
+	// install sees the change again and retries what failed.
+	putBack := func(err error) error {
+		cur, cerr := os.ReadFile(path)
+		var rerr error
+		switch {
+		case fresh && errors.Is(cerr, fs.ErrNotExist),
+			!fresh && (prevErr != nil || cerr == nil && bytes.Equal(cur, prev)):
+			// Nothing was written, or nothing can be put back.
+		case fresh:
+			rerr = os.Remove(path)
+		default:
+			rerr = writeFile(path, prev, 0o644)
+		}
+		if rerr != nil {
+			return errors.Join(err, fmt.Errorf("%s could not be put back as it was, so remove it, then run nearhost service install again: %w", path, rerr))
+		}
+		return err
+	}
+	if err := writeFile(path, RenderUnit(d), 0o644); err != nil {
+		return false, putBack(err)
 	}
 	enable := "reenable"
 	if fresh {
@@ -102,14 +125,7 @@ func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {enable, m.names.Systemd}} {
 		if _, err := m.systemctl(ctx, args...); err != nil {
-			// Put back what was there, so the next install sees the change
-			// again and retries what failed.
-			if fresh {
-				_ = os.Remove(path)
-			} else if prevErr == nil {
-				_ = writeFileAtomic(path, prev, 0o644)
-			}
-			return false, err
+			return false, putBack(err)
 		}
 	}
 	return true, nil

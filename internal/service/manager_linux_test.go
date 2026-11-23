@@ -104,6 +104,69 @@ func TestInstallChangedFailureRestoresTheUnit(t *testing.T) {
 	}
 }
 
+// A write that fails once the new unit is in place, as when the folder
+// cannot be synced, puts the unit back too.
+func TestInstallWriteFailureRestoresTheUnit(t *testing.T) {
+	m := New(testNames, t.TempDir(), (&fakeRunner{}).run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	before := writeFile
+	t.Cleanup(func() { writeFile = before })
+	writes := 0
+	writeFile = func(path string, b []byte, perm os.FileMode) error {
+		writes++
+		if err := before(path, b, perm); err != nil {
+			return err
+		}
+		if writes == 1 {
+			return errors.New("sync the folder: input/output error")
+		}
+		return nil
+	}
+	next := d
+	next.Exe = "/opt/nearhost/bin/nearhost"
+	if _, err := m.Install(context.Background(), next); err == nil {
+		t.Fatal("Install succeeded, want the write failure")
+	}
+	if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
+		t.Errorf("Installed = %+v, %v, %v; want the unit as it was, %+v", got, ok, err, d.For(Unit))
+	}
+}
+
+// A unit that cannot be put back is no silent failure: the error says to
+// remove it and install again.
+func TestInstallSaysWhenTheUnitCannotBePutBack(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	before := writeFile
+	t.Cleanup(func() { writeFile = before })
+	writes := 0
+	writeFile = func(path string, b []byte, perm os.FileMode) error {
+		if writes++; writes > 1 {
+			return errors.New("read-only file system")
+		}
+		return before(path, b, perm)
+	}
+	f.handle = func(call string) ([]byte, error) {
+		if strings.HasSuffix(call, "daemon-reload") {
+			return []byte("Failed\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+	next := d
+	next.Exe = "/opt/nearhost/bin/nearhost"
+	_, err := m.Install(context.Background(), next)
+	if err == nil || !strings.Contains(err.Error(), "run nearhost service install again") || !strings.Contains(err.Error(), "read-only file system") {
+		t.Errorf("Install error = %v, want one that says the unit could not be put back", err)
+	}
+}
+
 func TestStartCommands(t *testing.T) {
 	f := &fakeRunner{}
 	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
