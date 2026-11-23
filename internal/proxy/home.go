@@ -99,21 +99,38 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 // ServeHTTP implements caddyhttp.MiddlewareHandler. Paths below /d/ go to
 // the documents handler SetDocuments stored, which sets its own headers; a
 // successful answer there at hostname.PageHost also gives the browser the
-// page cookie, as the link proves it was given a document. Otherwise only /
-// exists, and only GET and HEAD read it. /?k=<secret> gives the cookie for
-// the right secret and sends the browser on to /. / lists the documents'
-// trees, rendered per request, only to a browser with the cookie; any other
-// gets the page with no list, which shows nothing of the documents, not even
-// whether any are. The cookie is given and read at hostname.PageHost alone
-// (see setPageCookie): at localhost, /?k= redirects and sets nothing, and /
-// never lists.
+// page cookie, as the link proves it was given a document. Paths of the
+// console SetConsole stored go to it through the gate (see serveConsole);
+// while none is stored they are not found. Otherwise only / exists, and
+// only GET and HEAD read it. /?k=<secret> gives the cookie for the right
+// secret and sends the browser on to /, or to the approval or change named
+// by next. With the cookie, / is the console's when one is stored, and
+// otherwise lists the documents' trees, rendered per request; any other
+// browser gets the page with no list, which shows nothing of the documents,
+// not even whether any are. The cookie is given and read at
+// hostname.PageHost alone (see setPageCookie): at localhost, /?k= redirects
+// and sets nothing, / never lists, and the console's paths are locked.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
 		serveDocument(&cookieOnSuccess{ResponseWriter: w, r: r}, r)
 		return nil
 	}
+	con := currentConsole()
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		ok, post := consoleRoute(r.URL.Path)
+		switch {
+		case !ok || con == nil:
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet || r.Method == http.MethodHead || (post && r.Method == http.MethodPost):
+			serveConsole(con, w, r)
+		default:
+			if post {
+				w.Header().Set("Allow", "GET, HEAD, POST")
+			} else {
+				w.Header().Set("Allow", "GET, HEAD")
+			}
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		}
 		return nil
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -130,8 +147,14 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		// neither sent on as a referrer nor kept in a cache.
 		hdr.Set("Referrer-Policy", "no-referrer")
 		hdr.Set("Cache-Control", "no-store")
-		hdr.Set("Location", "/")
+		hdr.Set("Location", keyRedirect(q.Get(pageNextParam)))
 		w.WriteHeader(http.StatusSeeOther)
+		return nil
+	}
+	// With the cookie, / is the console's when one is set; without, it is
+	// the page as it always was, which shows nothing of the console.
+	if con != nil && hasPageCookie(r) {
+		serveConsole(con, w, r)
 		return nil
 	}
 	page := h.page
