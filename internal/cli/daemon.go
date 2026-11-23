@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -134,8 +135,14 @@ func coreLogMayRotate() bool {
 // service manager opened it as the core's stderr, which would go on writing
 // to core.log.1, and lose its text when that is next replaced. The
 // rotating log copies an oversized one aside at its first write instead.
+// Without mayRotate, another core holds the instance lock and this one is
+// about to be turned away: its log is never set aside, so the running core's
+// log, and its core.log.1, stay as they are.
 func openDaemonLog(path string, by control.StartedBy, mayRotate bool) (*rotatingLog, error) {
-	if mayRotate && by != control.StartedService {
+	if !mayRotate {
+		return newRotatingLog(path, math.MaxInt64)
+	}
+	if by != control.StartedService {
 		f, err := openCoreLog(path, true)
 		if err != nil {
 			return nil, err

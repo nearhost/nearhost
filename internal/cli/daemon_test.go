@@ -519,3 +519,36 @@ func TestServiceLogKeepsItsStderrAtOpen(t *testing.T) {
 		t.Errorf("core.log = %q, want the new line and stderr's", b)
 	}
 }
+
+// A core that starts while another holds the instance lock is about to be
+// turned away, as a service core at login beside a running one: it never sets
+// aside the log the running core writes to, at open or after.
+func TestLogOfACoreTurnedAwayNeverRotates(t *testing.T) {
+	for _, by := range []control.StartedBy{control.StartedService, control.StartedDetached} {
+		t.Run(string(by), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "core.log")
+			big := bytes.Repeat([]byte("x"), coreLogLimit+1)
+			if err := os.WriteFile(path, big, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path+".1", []byte("older\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			l, err := openDaemonLog(path, by, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const line = "Another Nearhost is already running, so this service start does nothing.\n"
+			if _, err := l.Write([]byte(line)); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			if b, _ := os.ReadFile(path); len(b) != len(big)+len(line) {
+				t.Errorf("core.log holds %d bytes, want the old log and the new line", len(b))
+			}
+			if b, _ := os.ReadFile(path + ".1"); string(b) != "older\n" {
+				t.Errorf("core.log.1 was replaced")
+			}
+		})
+	}
+}
