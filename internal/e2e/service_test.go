@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -23,14 +24,9 @@ import (
 // real one's.
 var serviceNames = service.Names{Launchd: "dev.nearhost.e2e", Systemd: "nearhost-e2e.service", Task: "Nearhost e2e"}
 
-// restartWindow is how long a core killed hard may take to be back. Task
-// Scheduler restarts a failed task after a minute (RestartOnFailure PT1M).
-func restartWindow() time.Duration {
-	if runtime.GOOS == "windows" {
-		return 90 * time.Second
-	}
-	return 20 * time.Second
-}
+// restartWindow is how long a core killed hard may take to be back: launchd
+// waits its ThrottleInterval of 10 s before it starts a job again.
+const restartWindow = 30 * time.Second
 
 // waitCore waits for a core to answer in the sandbox, for up to d, and
 // returns what it says. It returns false when none does.
@@ -56,32 +52,47 @@ func TestServiceJourney(t *testing.T) {
 	if os.Getenv("NEARHOST_SERVICE_E2E") != "1" {
 		t.Skip("set NEARHOST_SERVICE_E2E=1 to install a real login service and remove it again")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("a logon task runs with the user's own environment, so its core cannot be kept apart from the user's real config, CA and grants; check Windows by hand")
+	}
 	sb := newSandbox(t, fmt.Sprintf(localShop, t.TempDir(), testutil.Upstream(t, "shop")))
 	home, err := os.UserHomeDir()
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The service's binary stays put for the whole journey: TestMain's folder
+	// goes when the package's tests end, which a failed Uninstall would
+	// outlive. The copy is removed after Uninstall.
+	scratch := filepath.Join(home, ".nht")
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir, err := os.MkdirTemp(scratch, "svc-e2e-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(binDir, filepath.Base(nearhostBin))
+	src, err := os.ReadFile(nearhostBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The Linux manager finds its unit folder through XDG_CONFIG_HOME in this
 	// process, so it is left alone here: the service gets the sandbox's
 	// folders through its own environment instead.
 	def := service.Definition{
-		Exe:  nearhostBin,
+		Exe:  exe,
 		Args: sb.serveArgs(),
 		Env: []service.EnvVar{
 			{Name: "HOME", Value: sb.dir},
 			{Name: "XDG_CONFIG_HOME", Value: sb.dir},
 			{Name: "XDG_DATA_HOME", Value: sb.dir + "/d"},
 			{Name: "PATH", Value: os.Getenv("PATH")},
+			{Name: "NEARHOST_NO_UPDATE_CHECK", Value: "1"},
 		},
 		LogPath: sb.dir + "/service.log",
-	}
-	if runtime.GOOS == "windows" {
-		// A scheduled task carries no environment: it runs with the user's own,
-		// and so does nearhost here, which must find no other core running.
-		sb.env = append(os.Environ(), "NEARHOST_NO_UPDATE_CHECK=1")
-		if _, code := sb.nearhost("status"); code != 3 {
-			t.Skip("a Nearhost core is running; stop it first, as this journey uses the user's own folders on Windows")
-		}
 	}
 
 	ctx := context.Background()
@@ -93,6 +104,7 @@ func TestServiceJourney(t *testing.T) {
 			t.Errorf("uninstall: %v", err)
 		}
 		sb.stopAnyCore()
+		_ = os.RemoveAll(binDir)
 	})
 
 	if changed, err := mgr.Install(ctx, def); err != nil || !changed {
@@ -119,19 +131,32 @@ func TestServiceJourney(t *testing.T) {
 		t.Errorf("active after start: %v, %v", active, err)
 	}
 
-	// 2. A clean stop is not restarted.
+	// 2. A clean stop is not restarted: the manager stops calling the
+	// service active, and goes on not doing so.
 	if out, code := sb.nearhost("stop"); code != 0 || out != "Stopped.\n" {
 		t.Fatalf("nearhost stop: exit %d, printed %q", code, out)
 	}
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
+		active, err := mgr.Active(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the service is still active 10 s after a clean stop; the core log:\n%s", sb.coreLog())
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(500 * time.Millisecond) {
 		if active, err := mgr.Active(ctx); err != nil || active {
-			t.Fatalf("active %v (%v) after a clean stop", active, err)
+			t.Fatalf("active %v (%v) after a clean stop; the core log:\n%s", active, err, sb.coreLog())
 		}
-		if _, code := sb.nearhost("status"); code != 3 {
-			t.Fatalf("a core answers after a clean stop")
+		if out, code := sb.nearhost("status"); code != 3 {
+			t.Fatalf("nearhost status after a clean stop: exit %d, printed:\n%s\nthe core log:\n%s", code, out, sb.coreLog())
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	// 3. A core killed hard is restarted by the manager.
@@ -151,10 +176,9 @@ func TestServiceJourney(t *testing.T) {
 		t.Fatalf("kill the core (pid %d): %v", old, err)
 	}
 	killed := time.Now()
-	window := restartWindow()
-	st, ok = sb.waitCore(window, func(st control.Status) bool { return st.Info.PID != old })
+	st, ok = sb.waitCore(restartWindow, func(st control.Status) bool { return st.Info.PID != old })
 	if !ok {
-		t.Fatalf("no new core answers %s after pid %d was killed; the core log:\n%s", window, old, sb.coreLog())
+		t.Fatalf("no new core answers %s after pid %d was killed; the core log:\n%s", restartWindow, old, sb.coreLog())
 	}
 	t.Logf("a new core (pid %d) answered %s after pid %d was killed", st.Info.PID, time.Since(killed).Round(10*time.Millisecond), old)
 	if st.Info.StartedBy != control.StartedService {
@@ -174,7 +198,7 @@ func TestServiceJourney(t *testing.T) {
 	if active, _ := mgr.Active(ctx); active {
 		t.Errorf("active after uninstall")
 	}
-	if _, code := sb.nearhost("status"); code != 3 {
-		t.Errorf("a core answers after uninstall")
+	if out, code := sb.nearhost("status"); code != 3 {
+		t.Errorf("nearhost status after uninstall: exit %d, printed:\n%s", code, out)
 	}
 }
