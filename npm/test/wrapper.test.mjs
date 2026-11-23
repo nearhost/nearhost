@@ -1,13 +1,13 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const work = mkdtempSync(join(tmpdir(), 'nearhost-wrapper-test-'));
+// Under the repo, not os.tmpdir(): on Windows runners that is an 8.3 short path.
+const work = realpathSync.native(mkdtempSync(join(root, 'npm', 'test', '.tmp-wrapper-')));
 after(() => rmSync(work, { recursive: true, force: true }));
 
 // Runs the wrapper under a faked process.platform with child_process.spawn
