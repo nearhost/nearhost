@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// fileStamp is what Watch checks to notice a change to the config file.
+// fileStamp is what a Watcher checks to notice a change to the config file.
 type fileStamp struct {
 	exists bool
 	mod    time.Time

@@ -11,7 +11,7 @@ import (
 
 const watchInterval = 20 * time.Millisecond
 
-// watchRecorder collects what Watch reports, safely across goroutines.
+// watchRecorder collects what a Watcher reports, safely across goroutines.
 type watchRecorder struct {
 	mu      sync.Mutex
 	applied []*Config
@@ -45,7 +45,7 @@ func (r *watchRecorder) lastApplied() *Config {
 	return r.applied[len(r.applied)-1]
 }
 
-// startWatch runs Watch until the test ends.
+// startWatch runs a Watcher of path until the test ends.
 func startWatch(t *testing.T, path string) (*watchRecorder, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	r := &watchRecorder{}
@@ -270,7 +270,7 @@ func TestWatchStopsWithCtx(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Watch did not return after the context ended")
+		t.Fatal("Run did not return after the context ended")
 	}
 }
 
