@@ -150,12 +150,16 @@ func (m *systemdManager) Uninstall(ctx context.Context) error {
 }
 
 func (m *systemdManager) Start(ctx context.Context) error {
-	for _, args := range [][]string{{"daemon-reload"}, {"start", m.names.Systemd}} {
-		if _, err := m.systemctl(ctx, args...); err != nil {
-			return err
-		}
+	if _, err := m.systemctl(ctx, "daemon-reload"); err != nil {
+		return err
 	}
-	return nil
+	// A unit that failed too often in a row (StartLimitBurst) is refused
+	// until its failure is reset, which the user means to do by starting
+	// it. A reset that fails, as for a unit that has not failed, is no
+	// reason not to start.
+	_, _ = m.systemctl(ctx, "reset-failed", m.names.Systemd)
+	_, err := m.systemctl(ctx, "start", m.names.Systemd)
+	return err
 }
 
 func (m *systemdManager) Active(ctx context.Context) (bool, error) {

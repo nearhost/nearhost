@@ -203,12 +203,20 @@ func TestInstallSaysWhenTheUnitCannotBePutBack(t *testing.T) {
 	}
 }
 
+// A unit that failed too often in a row is not started again until its
+// failure is reset: Start resets it first, and a reset that fails, as for
+// a unit that never failed on an older systemd, does not stop the start.
 func TestStartCommands(t *testing.T) {
-	f := &fakeRunner{}
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "reset-failed") {
+			return []byte("Unit nearhost-test.service not loaded."), errors.New("exit status 1")
+		}
+		return nil, nil
+	}}
 	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl --user daemon-reload", "systemctl --user start nearhost-test.service"}
+	want := []string{"systemctl --user daemon-reload", "systemctl --user reset-failed nearhost-test.service", "systemctl --user start nearhost-test.service"}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("commands = %q, want %q", f.calls, want)
 	}
