@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -124,14 +125,42 @@ func TestActiveParses(t *testing.T) {
 		err  error
 		want bool
 	}{
-		"running": {"\"\\NearhostTest\",\"N/A\",\"Running\"\r\n", nil, true},
-		"ready":   {"\"\\NearhostTest\",\"24/11/2026 09:00:00\",\"Ready\"\r\n", nil, false},
-		"missing": {missing, errors.New("exit status 1"), false},
+		"running":       {"Running\r\n", nil, true},
+		"ready":         {"Ready\r\n", nil, false},
+		"not installed": {"", nil, false},
 	} {
 		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(c.out), c.err }}
 		got, err := New(testNames, t.TempDir(), f.run).Active(context.Background())
 		if err != nil || got != c.want {
 			t.Errorf("%s: Active = %v, %v; want %v", name, got, err, c.want)
 		}
+	}
+}
+
+func TestActiveCommand(t *testing.T) {
+	f := &fakeRunner{}
+	names := Names{Task: "Ed's Task"}
+	if _, err := New(names, t.TempDir(), f.run).Active(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`powershell.exe -NoProfile -NonInteractive -Command (Get-ScheduledTask -TaskName 'Ed''s Task' -ErrorAction SilentlyContinue).State`}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("commands = %q, want %q", f.calls, want)
+	}
+}
+
+func TestNotFoundInAnyLanguage(t *testing.T) {
+	// The system's own text for ERROR_FILE_NOT_FOUND is whatever language Windows runs in.
+	msg := "ERROR: " + syscall.Errno(2).Error() + "\r\n"
+	f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(msg), errors.New("exit status 1") }}
+	m := New(testNames, t.TempDir(), f.run)
+	if _, ok, err := m.Installed(context.Background()); ok || err != nil {
+		t.Errorf("Installed = %v, %v; want false, nil", ok, err)
+	}
+	if err := m.Uninstall(context.Background()); err != nil {
+		t.Errorf("Uninstall = %v", err)
+	}
+	if err := m.Start(context.Background()); !errors.Is(err, errNotInstalled) {
+		t.Errorf("Start = %v, want errNotInstalled", err)
 	}
 }

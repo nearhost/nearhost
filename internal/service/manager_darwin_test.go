@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func plistPath(home string) string {
@@ -130,5 +132,51 @@ func TestManagerEnv(t *testing.T) {
 	env := New(testNames, t.TempDir(), f.run).ManagerEnv(context.Background())
 	if env["SSH_AUTH_SOCK"] != "/private/tmp/com.apple.launchd.x/Listeners" {
 		t.Errorf("env = %v", env)
+	}
+}
+
+func TestStartRetriesBootstrap(t *testing.T) {
+	failures := 3
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "bootstrap") && failures > 0 {
+			failures--
+			return []byte("Bootstrap failed: 5: Input/output error\n"), errors.New("exit status 5")
+		}
+		return nil, nil
+	}}
+	m := New(testNames, t.TempDir(), f.run)
+	var slept []time.Duration
+	m.(*launchdManager).sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(slept) != 3 {
+		t.Errorf("slept %v, want 3 waits", slept)
+	}
+}
+
+func TestStartGivesUpOnBootstrap(t *testing.T) {
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "bootstrap") {
+			return []byte("Bootstrap failed: 37: Operation already in progress\n"), errors.New("exit status 37")
+		}
+		return nil, nil
+	}}
+	m := New(testNames, t.TempDir(), f.run)
+	m.(*launchdManager).sleep = func(context.Context, time.Duration) {}
+	if err := m.Start(context.Background()); err == nil {
+		t.Error("Start succeeded, want an error")
+	}
+	// A different failure is not retried.
+	f2 := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "bootstrap") {
+			return []byte("Bootstrap failed: 119: Service is disabled\n"), errors.New("exit status 119")
+		}
+		return nil, nil
+	}}
+	m = New(testNames, t.TempDir(), f2.run)
+	m.(*launchdManager).sleep = func(context.Context, time.Duration) { t.Error("retried") }
+	if err := m.Start(context.Background()); err == nil {
+		t.Error("Start succeeded, want an error")
 	}
 }

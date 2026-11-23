@@ -9,8 +9,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// noBus matches what systemctl --user says when no user manager answers: the
+// older "Failed to connect to bus" and, from systemd 248, "Failed to connect
+// to user scope bus via local transport".
+var noBus = regexp.MustCompile(`Failed to connect to (user scope )?bus`)
 
 type systemdManager struct {
 	names Names
@@ -19,7 +25,12 @@ type systemdManager struct {
 }
 
 func newManager(names Names, home string, run Runner) Manager {
-	return &systemdManager{names, filepath.Join(home, ".config", "systemd", "user", names.Systemd), run}
+	// systemd reads user units from $XDG_CONFIG_HOME when that is absolute.
+	cfg := filepath.Join(home, ".config")
+	if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+		cfg = x
+	}
+	return &systemdManager{names, filepath.Join(cfg, "systemd", "user", names.Systemd), run}
 }
 
 // systemctl runs systemctl --user. A failure to reach the user manager is
@@ -27,7 +38,7 @@ func newManager(names Names, home string, run Runner) Manager {
 func (m *systemdManager) systemctl(ctx context.Context, args ...string) ([]byte, error) {
 	out, err := m.run(ctx, "systemctl", append([]string{"--user"}, args...)...)
 	if err != nil {
-		if strings.Contains(string(out), "Failed to connect to bus") {
+		if noBus.Match(out) {
 			return out, ErrNoUserManager
 		}
 		return out, fmt.Errorf("systemctl --user %s: %w: %s", strings.Join(args, " "), err, output(out))
@@ -100,7 +111,7 @@ func (m *systemdManager) Start(ctx context.Context) error {
 
 func (m *systemdManager) Active(ctx context.Context) (bool, error) {
 	out, err := m.run(ctx, "systemctl", "--user", "is-active", m.names.Systemd)
-	if strings.Contains(string(out), "Failed to connect to bus") {
+	if noBus.Match(out) {
 		return false, ErrNoUserManager
 	}
 	// is-active exits non-zero for every state but active.

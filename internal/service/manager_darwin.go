@@ -11,16 +11,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type launchdManager struct {
 	names Names
 	path  string // the plist
 	run   Runner
+	sleep func(context.Context, time.Duration) // tests replace it
 }
 
 func newManager(names Names, home string, run Runner) Manager {
-	return &launchdManager{names, filepath.Join(home, "Library", "LaunchAgents", names.Launchd+".plist"), run}
+	return &launchdManager{names, filepath.Join(home, "Library", "LaunchAgents", names.Launchd+".plist"), run, sleepCtx}
 }
 
 // domain is the user's GUI domain, where login-time agents run.
@@ -67,10 +69,29 @@ func (m *launchdManager) Uninstall(ctx context.Context) error {
 
 func (m *launchdManager) Start(ctx context.Context) error {
 	_, _ = m.run(ctx, "launchctl", "bootout", m.target())
-	if out, err := m.run(ctx, "launchctl", "bootstrap", domain(), m.path); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w: %s", err, output(out))
+	// Right after a bootout launchd may still be tearing the service down
+	// and answer with I/O error (5) or operation in progress (37), so try
+	// again for a couple of seconds.
+	var out []byte
+	var err error
+	for range 11 {
+		out, err = m.run(ctx, "launchctl", "bootstrap", domain(), m.path)
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(string(out), "Input/output error") && !strings.Contains(string(out), "Operation already in progress") {
+			break
+		}
+		m.sleep(ctx, 200*time.Millisecond)
 	}
-	return nil
+	return fmt.Errorf("launchctl bootstrap: %w: %s", err, output(out))
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }
 
 func (m *launchdManager) Active(ctx context.Context) (bool, error) {

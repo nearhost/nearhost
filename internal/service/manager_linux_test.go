@@ -128,9 +128,18 @@ func TestActiveParses(t *testing.T) {
 }
 
 func TestNoUserManager(t *testing.T) {
+	for _, msg := range []string{
+		"Failed to connect to bus: No medium found\n",
+		"Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus of other user)\n",
+	} {
+		testNoUserManager(t, msg)
+	}
+}
+
+func testNoUserManager(t *testing.T, msg string) {
 	home := t.TempDir()
 	f := &fakeRunner{handle: func(string) ([]byte, error) {
-		return []byte("Failed to connect to bus: No medium found\n"), errors.New("exit status 1")
+		return []byte(msg), errors.New("exit status 1")
 	}}
 	m := New(testNames, home, f.run)
 	if _, err := m.Install(context.Background(), plain()); !errors.Is(err, ErrNoUserManager) {
@@ -161,5 +170,25 @@ func TestManagerEnvAndGraphical(t *testing.T) {
 	}
 	if !m.Graphical(context.Background()) {
 		t.Error("Graphical = false, want true")
+	}
+}
+
+func TestUnitDirFollowsXDGConfigHome(t *testing.T) {
+	home, cfg := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	f := &fakeRunner{}
+	if _, err := New(testNames, home, f.run).Install(context.Background(), plain()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "systemd", "user", "nearhost-test.service")); err != nil {
+		t.Error(err)
+	}
+	// A relative value is ignored, as systemd ignores it.
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	if _, err := New(testNames, home, f.run).Install(context.Background(), plain()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service")); err != nil {
+		t.Error(err)
 	}
 }
