@@ -256,6 +256,36 @@ func TestUnitDirFollowsTheManagersXDGConfigHome(t *testing.T) {
 	}
 }
 
+// A manager that does not answer leaves the unit folder to be asked again:
+// the home folder's stands in only until it does.
+func TestUnitDirAsksAgainAfterNoAnswer(t *testing.T) {
+	home, cfg := t.TempDir(), t.TempDir()
+	asked := 0
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if !strings.HasSuffix(call, "show-environment") {
+			return nil, nil
+		}
+		asked++
+		if asked == 1 {
+			return []byte("Failed to connect to bus: No medium found\n"), errors.New("exit status 1")
+		}
+		return []byte("XDG_CONFIG_HOME=" + cfg + "\n"), nil
+	}}
+	m := New(testNames, home, f.run).(*systemdManager)
+	if got, want := m.unitPath(context.Background()), filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service"); got != want {
+		t.Errorf("with no answer: %q, want %q", got, want)
+	}
+	want := filepath.Join(cfg, "systemd", "user", "nearhost-test.service")
+	for range 2 {
+		if got := m.unitPath(context.Background()); got != want {
+			t.Errorf("once it answers: %q, want %q", got, want)
+		}
+	}
+	if asked != 2 {
+		t.Errorf("show-environment asked %d times, want 2: again after no answer, then not again", asked)
+	}
+}
+
 // A unit that exists but cannot be parsed, as one edited by hand, is
 // ErrUnreadable, so uninstall can still remove it.
 func TestUnreadableUnit(t *testing.T) {
