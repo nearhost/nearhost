@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -69,13 +70,20 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 }
 
 // resolved is p with its links followed, or p when that fails, as for a
-// path that does not exist.
+// path that does not exist. A link to a path that does not exist, as one to
+// a forwarded agent's socket once that login has ended, is where it leads.
 func resolved(p string) string {
 	if p == "" {
 		return p
 	}
 	if r, err := resolve(p); err == nil {
 		return r
+	}
+	if t, err := os.Readlink(p); err == nil {
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(p), t)
+		}
+		return filepath.Join(resolved(filepath.Dir(t)), filepath.Base(t))
 	}
 	return p
 }

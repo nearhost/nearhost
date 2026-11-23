@@ -134,6 +134,32 @@ func TestServiceEnvFollowsALink(t *testing.T) {
 	}
 }
 
+// A link whose forwarded agent has gone is still judged by where it leads,
+// as it is while that agent lives.
+func TestServiceEnvJudgesADanglingLinkByItsTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Windows service has no environment of its own")
+	}
+	home, forwarded := t.TempDir(), t.TempDir()
+	link := filepath.Join(home, ".ssh", "ssh_auth_sock")
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(forwarded, "gone", "agent.42"), link); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(n string) string {
+		return map[string]string{"PATH": "/bin", "SSH_AUTH_SOCK": link}[n]
+	}
+	env, notes := ServiceEnv(runtime.GOOS, getenv, nil, home, "")
+	if slices.ContainsFunc(env, func(v EnvVar) bool { return v.Name == "SSH_AUTH_SOCK" }) {
+		t.Errorf("env = %v, want no SSH_AUTH_SOCK", env)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "changes at each login") {
+		t.Errorf("notes = %q, want one that says the socket changes at each login", notes)
+	}
+}
+
 // Links are followed only when the service is for this machine: another
 // system's paths mean nothing on this one's disk.
 func TestServiceEnvFollowsLinksOnlyOnThisSystem(t *testing.T) {
