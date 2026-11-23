@@ -50,6 +50,8 @@ func TestTaskXML(t *testing.T) {
 		"<Interval>PT1M</Interval>",
 		"<Count>3</Count>",
 		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+		// Normal priority: Task Scheduler's default, 7, is below normal.
+		"<Priority>5</Priority>",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("task lacks %q:\n%s", want, s)

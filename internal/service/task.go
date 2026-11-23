@@ -86,8 +86,9 @@ func splitCommandLine(s string) []string {
 
 // RenderTask is d as Task Scheduler XML for user, in UTF-16LE with a byte
 // order mark, which is what schtasks /Create /XML reads. Task Scheduler
-// restarts a failed daemon after a minute, three times, and never stops it
-// for running on battery or for running a long time.
+// restarts a failed daemon after a minute, three times, never stops it for
+// running on battery or for running a long time, and runs it at normal
+// priority.
 func RenderTask(d Definition, user string) []byte {
 	args := slices.Concat([]string{"--headless"}, d.command())
 	for i := range args {
@@ -106,6 +107,8 @@ func RenderTask(d Definition, user string) []byte {
 	x.WriteString("    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n")
 	x.WriteString("    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n")
 	x.WriteString("    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n")
+	// Task Scheduler's default priority, 7, is below normal; 5 is normal.
+	x.WriteString("    <Priority>5</Priority>\n")
 	x.WriteString("    <RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>\n")
 	x.WriteString("  </Settings>\n")
 	x.WriteString("  <Actions Context=\"Author\">\n    <Exec>\n")
