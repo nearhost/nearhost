@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // Runner runs a command and returns its combined output. It is the only way
@@ -80,4 +81,12 @@ func output(b []byte) string { return strings.TrimSpace(string(b)) }
 // than bytes, as a format drops fields it cannot carry.
 func unchanged(got Definition, ok bool, d Definition, f Format) bool {
 	return ok && reflect.DeepEqual(got, d.For(f))
+}
+
+// sleepCtx waits d, or until ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }

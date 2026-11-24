@@ -99,13 +99,6 @@ func (m *launchdManager) Start(ctx context.Context) error {
 	return fmt.Errorf("launchctl bootstrap: %w: %s", err, output(out))
 }
 
-func sleepCtx(ctx context.Context, d time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(d):
-	}
-}
-
 func (m *launchdManager) Active(ctx context.Context) (bool, error) {
 	// print fails for a service that is not loaded, which is not running.
 	// Any other failure says nothing either way.

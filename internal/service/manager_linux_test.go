@@ -49,6 +49,42 @@ func TestInstallUnchanged(t *testing.T) {
 	}
 }
 
+// A unit that says the same definition in other words, as one written by
+// an earlier release without the StartLimit lines, is rewritten: only the
+// file as this release renders it is up to date.
+func TestInstallRewritesAUnitOfOtherText(t *testing.T) {
+	home := t.TempDir()
+	f := &fakeRunner{}
+	m := New(testNames, home, f.run)
+	d := plain()
+	if _, err := m.Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".config", "systemd", "user", "nearhost-test.service")
+	older := strings.Replace(string(RenderUnit(d)), "StartLimitIntervalSec=60\nStartLimitBurst=5\n", "", 1)
+	if older == string(RenderUnit(d)) {
+		t.Fatal("the unit has no StartLimit lines to take out")
+	}
+	if err := os.WriteFile(path, []byte(older), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := m.Installed(context.Background()); err != nil || !ok || !reflect.DeepEqual(got, d.For(Unit)) {
+		t.Fatalf("the older unit reads as %+v, %v, %v; want the same definition", got, ok, err)
+	}
+	f.reset()
+	changed, err := m.Install(context.Background(), d)
+	if err != nil || !changed {
+		t.Fatalf("Install = %v, %v; want true, nil", changed, err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != string(RenderUnit(d)) {
+		t.Errorf("unit %q, want %q", b, RenderUnit(d))
+	}
+	want := []string{"systemctl --user daemon-reload", "systemctl --user reenable nearhost-test.service"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("commands = %q, want %q", f.calls, want)
+	}
+}
+
 func TestInstallChangedReenables(t *testing.T) {
 	f := &fakeRunner{}
 	m := New(testNames, t.TempDir(), f.run)
@@ -167,12 +203,20 @@ func TestInstallSaysWhenTheUnitCannotBePutBack(t *testing.T) {
 	}
 }
 
+// A unit that failed too often in a row is not started again until its
+// failure is reset: Start resets it first, and a reset that fails, as for
+// a unit that never failed on an older systemd, does not stop the start.
 func TestStartCommands(t *testing.T) {
-	f := &fakeRunner{}
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "reset-failed") {
+			return []byte("Unit nearhost-test.service not loaded."), errors.New("exit status 1")
+		}
+		return nil, nil
+	}}
 	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl --user daemon-reload", "systemctl --user start nearhost-test.service"}
+	want := []string{"systemctl --user daemon-reload", "systemctl --user reset-failed nearhost-test.service", "systemctl --user start nearhost-test.service"}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("commands = %q, want %q", f.calls, want)
 	}

@@ -11,14 +11,18 @@ import (
 	"os/user"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type taskManager struct {
 	names Names
 	run   Runner
+	sleep func(context.Context, time.Duration) // tests replace it
 }
 
-func newManager(names Names, _ string, run Runner) Manager { return &taskManager{names, run} }
+func newManager(names Names, _ string, run Runner) Manager {
+	return &taskManager{names, run, sleepCtx}
+}
 
 // notFound reports whether schtasks said the task does not exist. schtasks
 // prints the system's message for ERROR_FILE_NOT_FOUND in the user's
@@ -116,6 +120,16 @@ func (m *taskManager) Uninstall(ctx context.Context) error {
 }
 
 func (m *taskManager) Start(ctx context.Context) error {
+	// The old core of a restart frees its lock just before its process
+	// exits, and the task runs until it has: /Run then does nothing, as the
+	// task ignores a new instance. Wait up to 2 s for it to stop. A task
+	// still running after that, as one starting at login, is run anyway,
+	// which leaves it be.
+	running, _ := m.Active(ctx)
+	for i := 0; running && i < 20; i++ {
+		m.sleep(ctx, 100*time.Millisecond)
+		running, _ = m.Active(ctx)
+	}
 	out, err := m.schtasks(ctx, "/Run", "/TN", m.names.Task)
 	if err != nil && notFound(out) {
 		return fmt.Errorf("%w: %v", errNotInstalled, err)

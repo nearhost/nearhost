@@ -852,6 +852,14 @@ func TestCoreRunsTheUpdateWatch(t *testing.T) {
 	if st.Update != "9.9.9" {
 		t.Errorf("Status.Update = %q, want 9.9.9", st.Update)
 	}
+	// The state an interface opens on says it too: the event went before.
+	full, err := u.control().State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Update != "9.9.9" {
+		t.Errorf("State.Update = %q, want 9.9.9", full.Update)
+	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}

@@ -459,6 +459,49 @@ func TestServeFlagsIgnoredNote(t *testing.T) {
 	}
 }
 
+// The interface follows the core's stream from when it opens, after the
+// core said the release it found: the log says it all the same, once.
+func TestInterfaceShowsTheCoresUpdateNotice(t *testing.T) {
+	for _, update := range []string{"9.9.9", ""} {
+		t.Run("update "+update, func(t *testing.T) {
+			f := newSteeredCore(t, configHome(t))
+			f.info.Version = "0.15.0"
+			f.st.Update = update
+			f.serve()
+			var events <-chan engine.Event
+			b := fakeUI(t, true, new(bool))
+			b.detach = f.detach(nil)
+			b.clientMade = func(c *clientBackend) {
+				ch, unsubscribe := c.Events().Subscribe(16)
+				t.Cleanup(unsubscribe)
+				events = ch
+			}
+			// Answered no: the interface opens on the core of 0.15.0.
+			root := uiRoot(b)
+			root.SetIn(strings.NewReader("n\n"))
+			if _, stderr, code := runRootSplit(t, root); code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			var got []string
+			for done := false; !done; {
+				select {
+				case ev := <-events:
+					got = append(got, ev.Message)
+				default:
+					done = true
+				}
+			}
+			want := []string{"A new nearhost is available: 0.15.0 → 9.9.9. Run `nearhost update` to update."}
+			if update == "" {
+				want = nil
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("the log says %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // A core of another release is offered a restart before the interface
 // opens: yes, or just enter, stops it and starts this one's; no opens the
 // interface on the old core. A core that speaks another API is refused.

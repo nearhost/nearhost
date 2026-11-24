@@ -255,7 +255,16 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 	var wait func() error
 	if viaService {
 		viaService = false
-		if m, _ := b.service(ctx); m != nil {
+		if m, d := b.service(ctx); m != nil {
+			// The manager sends the core's output to the service's log
+			// without creating its folder, and fails the unit before it
+			// runs when that has gone. A folder that cannot be made fails
+			// the start, which is said below.
+			if d.LogPath != "" {
+				_ = makeLogFolder(d.LogPath)
+			} else {
+				_ = makeLogFolder(logPath)
+			}
 			if err := m.Start(ctx); err != nil {
 				// Interrupted, the start may have gone through: no core is
 				// spawned beside the one the service may be starting.

@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/service"
+	"github.com/nearhost/nearhost/internal/update"
 )
 
 // statusNotRunning is what `nearhost status` says when no core answers.
@@ -128,8 +129,16 @@ func printStatus(out io.Writer, st control.Status, keyed string) error {
 	info := st.Info
 	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
 		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
-	if st.Update != "" {
+	if this := strings.TrimPrefix(Version, "v"); st.Update != "" && update.IsRelease(this) && !update.Newer(this, st.Update) {
+		// This copy is already that release, as after brew upgrade: the
+		// core is what is out of date.
+		fmt.Fprintf(w, "This copy is %s; restart Nearhost to run it: nearhost stop, then nearhost -d.\n", this)
+		// Said here: Main's notice of the same release is dropped. Main
+		// reads it only once the command has returned.
+		updates = nil
+	} else if st.Update != "" {
 		fmt.Fprintf(w, "Nearhost %s is available. Run nearhost update.\n", printable(st.Update))
+		updates = nil
 	}
 	if !info.Reloads {
 		fmt.Fprintln(w, "It serves the projects it was started with and does not reload the config.")

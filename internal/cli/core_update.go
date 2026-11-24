@@ -89,7 +89,13 @@ func (w *updateWatch) check(ctx context.Context) {
 	if said {
 		return
 	}
-	w.publish(engine.Event{Message: fmt.Sprintf("A new nearhost is available: %s → %s. Run `nearhost update` to update.", w.current, latest)})
+	w.publish(engine.Event{Message: updateNotice(w.current, latest)})
+}
+
+// updateNotice is what the core says, as an event, of the release latest
+// newer than its own, current.
+func updateNotice(current, latest string) string {
+	return fmt.Sprintf("A new nearhost is available: %s → %s. Run `nearhost update` to update.", current, latest)
 }
 
 // latestNewer is the newer release found, which Status reports, or "" when

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 const missing = "ERROR: The system cannot find the file specified.\r\n"
@@ -85,13 +86,57 @@ func TestInstallUnchanged(t *testing.T) {
 	}
 }
 
+const getState = "powershell.exe -NoProfile -NonInteractive -Command (Get-ScheduledTask -TaskName 'NearhostTest' -ErrorAction SilentlyContinue).State"
+
 func TestStartCommands(t *testing.T) {
 	f := &fakeRunner{}
-	if err := New(testNames, t.TempDir(), f.run).Start(context.Background()); err != nil {
+	m := New(testNames, t.TempDir(), f.run)
+	m.(*taskManager).sleep = func(context.Context, time.Duration) { t.Error("waited for a task that is not running") }
+	if err := m.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"schtasks.exe /Run /TN NearhostTest"}; !reflect.DeepEqual(f.calls, want) {
+	if want := []string{getState, "schtasks.exe /Run /TN NearhostTest"}; !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("commands = %q, want %q", f.calls, want)
+	}
+}
+
+// The old core of a restart frees its lock just before its process exits,
+// and the task runs until it has. /Run while it still runs does nothing, as
+// the task ignores a new instance, so Start waits up to 2 s for it to stop.
+func TestStartWaitsForTheOldTask(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running int // how many times Active says Running
+		waits   int
+	}{
+		{"stops within the window", 3, 3},
+		{"still running at 2 s", 1000, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := 0
+			f := &fakeRunner{handle: func(call string) ([]byte, error) {
+				if call == getState {
+					asked++
+					if asked <= tc.running {
+						return []byte("Running\r\n"), nil
+					}
+					return []byte("Ready\r\n"), nil
+				}
+				return nil, nil
+			}}
+			m := New(testNames, t.TempDir(), f.run)
+			var slept []time.Duration
+			m.(*taskManager).sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+			if err := m.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(slept) != tc.waits || slept[0] != 100*time.Millisecond {
+				t.Errorf("slept %v, want %d waits of 100ms", slept, tc.waits)
+			}
+			if last := f.calls[len(f.calls)-1]; last != "schtasks.exe /Run /TN NearhostTest" {
+				t.Errorf("last command %q, want /Run; commands %q", last, f.calls)
+			}
+		})
 	}
 }
 

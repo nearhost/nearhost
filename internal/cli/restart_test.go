@@ -24,6 +24,8 @@ type restartRig struct {
 	t       *testing.T
 	cfgPath string
 	old     *steeredCore
+	// version is what the cores a restart starts say they are; "" is 0.6.0.
+	version string
 
 	mu sync.Mutex
 	// spawned is each core spawned, as the exe and its arguments.
@@ -44,6 +46,9 @@ func newRestartRig(t *testing.T, by control.StartedBy) *restartRig {
 func (r *restartRig) next(by control.StartedBy) {
 	core := newSteeredCore(r.t, r.cfgPath)
 	core.info.Version = "0.6.0"
+	if r.version != "" {
+		core.info.Version = r.version
+	}
 	core.info.PID = 5151
 	core.info.StartedBy = by
 	core.serve()
@@ -503,5 +508,105 @@ func TestUpdateServiceCoreWithAnUnreadableService(t *testing.T) {
 	}
 	if got := rig.spawns(); len(got) != 1 || !slices.Equal(got[0][1:4], []string{"daemon", "--started-by", "detached"}) {
 		t.Errorf("spawned %q, want one core started detached", got)
+	}
+}
+
+// A copy updated outside nearhost update, as by brew upgrade, is the latest,
+// while the core in the background still runs the release before: update
+// restarts it as it would after updating, with the same questions.
+func TestUpdateLatestRestartsAnOlderCore(t *testing.T) {
+	t.Run("restarted", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		f := updateFor(rig, false)
+		out, err := runUpdate(t, f, "0.6.0", "")
+		if err != nil {
+			t.Fatalf("err %v, out %q", err, out)
+		}
+		if want := "nearhost 0.6.0 is the latest.\n" + restartedLine; out != want {
+			t.Errorf("out %q, want %q", out, want)
+		}
+		want := append([]string{"/usr/local/bin/nearhost"}, restartArgs(control.StartedDetached, rig.old.st)...)
+		if got := rig.spawns(); len(got) != 1 || !slices.Equal(got[0], want) {
+			t.Errorf("spawned %q, want %q", got, want)
+		}
+	})
+	t.Run("live, asked", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		liveState(t, &rig.old.st)
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, true), "0.6.0", "n\n")
+		if err != nil {
+			t.Fatalf("err %v, out %q", err, out)
+		}
+		want := "nearhost 0.6.0 is the latest.\n" +
+			"Restart Nearhost now to run 0.6.0? This closes 2 passthroughs and 1 forward for a moment. [Y/n] " +
+			"Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+		if out != want || rig.stopped() {
+			t.Errorf("out %q, want %q; stopped %v", out, want, rig.stopped())
+		}
+	})
+	t.Run("check only", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, false), "0.6.0", "", "--check")
+		if err != nil || out != "nearhost 0.6.0 is the latest.\n" || rig.stopped() {
+			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
+		}
+	})
+	t.Run("a newer core", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.old.info.Version = "0.7.0"
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		out, err := runUpdate(t, updateFor(rig, false), "0.6.0", "")
+		if err != nil || out != "nearhost 0.6.0 is the latest.\n" || rig.stopped() {
+			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
+		}
+	})
+}
+
+// The restart says the release the started core says it runs, which may not
+// be the one expected, as when another copy comes first in the service.
+func TestUpdateRestartSaysTheStartedCoresVersion(t *testing.T) {
+	rig := newRestartRig(t, control.StartedDetached)
+	rig.version = "0.6.1\x1b[2J"
+	rig.old.st.Passthroughs = nil
+	rig.old.serve()
+	out, err := runUpdate(t, updateFor(rig, false), "0.5.0", "", "--yes")
+	if err != nil {
+		t.Fatalf("err %v, out %q", err, out)
+	}
+	if want := "Restarted Nearhost (pid 5151); it now runs 0.6.1[2J.\n"; !strings.HasSuffix(out, want) {
+		t.Errorf("out %q, want it to end with %q", out, want)
+	}
+}
+
+// After brew upgrade the copy that runs is in the new Caskroom folder: the
+// older core is restarted from bin/nearhost once that says it is this
+// release, as after nearhost update, and otherwise from this copy.
+func TestUpdateLatestRestartsFromTheCheckedPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed, want string
+	}{
+		{"bin is this release", "", "/opt/homebrew/bin/nearhost"},
+		{"bin is another", "0.5.0", "/opt/homebrew/Caskroom/nearhost/0.6.0/nearhost"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newRestartRig(t, control.StartedDetached)
+			rig.old.st.Passthroughs = nil
+			rig.old.serve()
+			f := updateFor(rig, false)
+			f.exe = "/opt/homebrew/Caskroom/nearhost/0.6.0/nearhost"
+			f.installed = tc.installed
+			if out, err := runUpdate(t, f, "0.6.0", ""); err != nil {
+				t.Fatalf("err %v, out %q", err, out)
+			}
+			if got := rig.spawns(); len(got) != 1 || got[0][0] != tc.want {
+				t.Errorf("spawned %q, want %s", got, tc.want)
+			}
+		})
 	}
 }

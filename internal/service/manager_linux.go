@@ -90,13 +90,16 @@ func (m *systemdManager) Installed(ctx context.Context) (Definition, bool, error
 
 func (m *systemdManager) Install(ctx context.Context, d Definition) (bool, error) {
 	got, ok, err := m.Installed(ctx)
-	if unchanged(got, ok, d, Unit) {
+	path := m.unitPath(ctx)
+	prev, prevErr := os.ReadFile(path)
+	// The same definition in other text, as a unit an earlier release
+	// wrote without lines this one adds, is rewritten: those lines are
+	// settings the definition does not hold.
+	if unchanged(got, ok, d, Unit) && prevErr == nil && bytes.Equal(prev, RenderUnit(d)) {
 		return false, nil
 	}
 	// A unit we cannot read is replaced, as a changed one is.
 	fresh := !ok && err == nil
-	path := m.unitPath(ctx)
-	prev, prevErr := os.ReadFile(path)
 	// putBack restores what was there when the install fails, so the next
 	// install sees the change again and retries what failed.
 	putBack := func(err error) error {
@@ -147,12 +150,16 @@ func (m *systemdManager) Uninstall(ctx context.Context) error {
 }
 
 func (m *systemdManager) Start(ctx context.Context) error {
-	for _, args := range [][]string{{"daemon-reload"}, {"start", m.names.Systemd}} {
-		if _, err := m.systemctl(ctx, args...); err != nil {
-			return err
-		}
+	if _, err := m.systemctl(ctx, "daemon-reload"); err != nil {
+		return err
 	}
-	return nil
+	// A unit that failed too often in a row (StartLimitBurst) is refused
+	// until its failure is reset, which the user means to do by starting
+	// it. A reset that fails, as for a unit that has not failed, is no
+	// reason not to start.
+	_, _ = m.systemctl(ctx, "reset-failed", m.names.Systemd)
+	_, err := m.systemctl(ctx, "start", m.names.Systemd)
+	return err
 }
 
 func (m *systemdManager) Active(ctx context.Context) (bool, error) {
