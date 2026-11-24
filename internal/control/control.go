@@ -47,6 +47,17 @@ const (
 	StartedForeground StartedBy = "foreground"
 )
 
+// EnvCheck is what the core found about one thing it needs to reach: opening
+// links, the SSH agent, Docker or ssh.
+type EnvCheck struct {
+	// Name is "browser", "ssh agent", "docker" or "ssh".
+	Name string `json:"name"`
+	// Level is "ok", "info", "warn" or "fail".
+	Level  string `json:"level"`
+	Detail string `json:"detail"`
+	Fix    string `json:"fix,omitempty"`
+}
+
 // Info describes a running core.
 type Info struct {
 	API       int       `json:"api"`

@@ -349,6 +349,11 @@ func (o *coreOps) PageKeyURL() (string, error) {
 	return proxy.PageKeyURL(base)
 }
 
+// Environment looks at what the core can reach from where it runs.
+func (o *coreOps) Environment(ctx context.Context) ([]control.EnvCheck, error) {
+	return coreEnvironment(ctx, systemEnvProbe()), nil
+}
+
 // State is what the core serves: the config the engine runs, and the state
 // of each of its projects and servers, the open passthroughs, the documents
 // served, the grants, this machine's included, and the requests that wait

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -339,5 +341,67 @@ func TestUnimplementedActions(t *testing.T) {
 	}
 	if err := c.DeclineProposal(ctx, "p", "no"); err != nil {
 		t.Errorf("DeclineProposal: %v", err)
+	}
+}
+
+func (f *actionFake) Environment(context.Context) ([]EnvCheck, error) {
+	return []EnvCheck{
+		{Name: "browser", Level: "ok", Detail: "can open links"},
+		{Name: "docker", Level: "warn", Detail: "down", Fix: "start Docker"},
+	}, f.record("Environment")
+}
+
+func TestEnvironmentRoute(t *testing.T) {
+	f := newActionFake()
+	c := dial(t, serve(t, f))
+	got, err := c.Environment(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []EnvCheck{
+		{Name: "browser", Level: "ok", Detail: "can open links"},
+		{Name: "docker", Level: "warn", Detail: "down", Fix: "start Docker"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Environment = %+v, want %+v", got, want)
+	}
+	if rec := f.recorded(); len(rec) != 1 || rec[0] != "Environment" {
+		t.Errorf("backend calls = %v, want [Environment]", rec)
+	}
+}
+
+func TestEnvironmentFailureIsNotNoRoute(t *testing.T) {
+	f := newActionFake()
+	f.err = errors.New("probe broke")
+	c := dial(t, serve(t, f))
+	_, err := c.Environment(context.Background())
+	if err == nil || errors.Is(err, ErrNoRoute) {
+		t.Errorf("error = %v, want a failure that is not ErrNoRoute", err)
+	}
+}
+
+// TestEnvironmentOlderCore has Environment ask a core that has no such route,
+// as an older release is: whatever the 404 says, the error is ErrNoRoute.
+func TestEnvironmentOlderCore(t *testing.T) {
+	for name, handler := range map[string]http.HandlerFunc{
+		"plain": http.NotFound,
+		"json": func(w http.ResponseWriter, r *http.Request) {
+			fail(w, http.StatusNotFound, "no such route")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := SocketPath(testutil.TempDir(t, "old"))
+			l, err := net.Listen("unix", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := &http.Server{Handler: handler}
+			go srv.Serve(l)
+			t.Cleanup(func() { srv.Close() })
+			_, err = newClient(path).Environment(context.Background())
+			if !errors.Is(err, ErrNoRoute) {
+				t.Errorf("error = %v, want ErrNoRoute", err)
+			}
+		})
 	}
 }
