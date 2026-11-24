@@ -21,10 +21,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -107,6 +109,12 @@ type doctorBackend struct {
 	// firefoxRootsOff reports whether Firefox is set not to read Windows'
 	// trusted roots, and where that is set. It is nil except on Windows.
 	firefoxRootsOff func() (where string, off bool)
+	// dial reaches the running core, or returns control.ErrNotRunning. nil
+	// skips the core check.
+	dial func() (*control.Client, error)
+	// service returns the manager of the login service, or nil when there
+	// is none to ask. nil skips the service check.
+	service func() service.Manager
 }
 
 // systemDoctor is the production backend. Only NewRoot wires it in, with
@@ -136,6 +144,14 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		findSSH:         transport.FindSSH,
 		getenv:          os.Getenv,
 		firefoxRootsOff: firefoxRootsOff,
+		dial:            systemDetach().dial,
+		service: func() service.Manager {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil
+			}
+			return service.New(service.DefaultNames, home, service.ExecRunner)
+		},
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
 		},
@@ -221,6 +237,19 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 		checks = append(checks, cs...)
 		st.printChecks(cs...)
 	}
+	ctx := cmd.Context()
+	// The core and the service come first: the ports' lines about the
+	// running Nearhost read better after them.
+	var coreInfo control.Info
+	var coreAnswered bool
+	st.slowMany("core", func() []check {
+		var cs []check
+		cs, coreInfo, coreAnswered = checkCore(ctx, b)
+		return cs
+	}, add)
+	if c := st.slow("service", func() check { return checkService(ctx, b, coreAnswered, coreInfo.StartedBy) }); c.name != "" {
+		add(c)
+	}
 	cfg, path, err := loadConfig(cmd)
 	switch {
 	case err != nil && path == "":
@@ -237,7 +266,6 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 		add(checkUnknownKeys(path))
 	}
 
-	ctx := cmd.Context()
 	add(st.slow(fmt.Sprintf("port %d", flags.httpsPort), func() check { return checkPort(ctx, b, flags.httpsPort, "--https-port", true) }))
 	add(st.slow(fmt.Sprintf("port %d", flags.httpPort), func() check { return checkPort(ctx, b, flags.httpPort, "--http-port", false) }))
 	if flags.webPort != 0 {
