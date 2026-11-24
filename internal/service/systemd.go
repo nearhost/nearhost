@@ -20,7 +20,9 @@ func quoteUnit(s string, execStart bool) string {
 // RenderUnit is d as a systemd user unit.
 func RenderUnit(d Definition) []byte {
 	var b bytes.Buffer
-	b.WriteString("[Unit]\nDescription=Nearhost\n")
+	// A core that fails at every start gives up after five tries in a minute
+	// rather than being restarted for ever.
+	b.WriteString("[Unit]\nDescription=Nearhost\nStartLimitIntervalSec=60\nStartLimitBurst=5\n")
 	if d.Graphical {
 		b.WriteString("After=graphical-session.target\n")
 	}

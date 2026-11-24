@@ -86,7 +86,10 @@ func TestStartCommands(t *testing.T) {
 		t.Fatalf("Start must ignore a service that was not loaded: %v", err)
 	}
 	uid := os.Getuid()
+	// Start first asks whether the job runs: one that does not is
+	// reloaded at once.
 	want := []string{
+		fmt.Sprintf("launchctl print gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootout gui/%d/dev.nearhost.test", uid),
 		fmt.Sprintf("launchctl bootstrap gui/%d %s", uid, plistPath(home)),
 	}
@@ -215,5 +218,65 @@ func TestStartGivesUpOnBootstrap(t *testing.T) {
 	m.(*launchdManager).sleep = func(context.Context, time.Duration) { t.Error("retried") }
 	if err := m.Start(context.Background()); err == nil {
 		t.Error("Start succeeded, want an error")
+	}
+}
+
+// launchd says running for a moment after the old core has freed its lock, so
+// a job that is still running after the poll is a core starting at login and
+// is left alone.
+func TestStartLeavesAJobStillStarting(t *testing.T) {
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "print") {
+			return []byte("state = running\n"), nil
+		}
+		return nil, nil
+	}}
+	m := New(testNames, t.TempDir(), f.run)
+	var waited time.Duration
+	m.(*launchdManager).sleep = func(_ context.Context, d time.Duration) { waited += d }
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if strings.Contains(c, "bootout") || strings.Contains(c, "bootstrap") {
+			t.Errorf("ran %q for a job that is starting", c)
+		}
+	}
+	if waited != 2*time.Second {
+		t.Errorf("waited %v, want 2s", waited)
+	}
+}
+
+// The old core of a restart is still exiting; once launchd says it stopped,
+// the job is loaded again as before.
+func TestStartReloadsAJobThatStops(t *testing.T) {
+	prints := 0
+	f := &fakeRunner{handle: func(call string) ([]byte, error) {
+		if strings.Contains(call, "print") {
+			prints++
+			if prints == 1 {
+				return []byte("state = running\n"), nil
+			}
+			return []byte("state = waiting\n"), nil
+		}
+		return nil, nil
+	}}
+	m := New(testNames, t.TempDir(), f.run)
+	var slept []time.Duration
+	m.(*launchdManager).sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(slept) != 1 || slept[0] != 100*time.Millisecond {
+		t.Errorf("slept %v, want one 100ms wait", slept)
+	}
+	var got []string
+	for _, c := range f.calls {
+		if strings.Contains(c, "bootout") || strings.Contains(c, "bootstrap") {
+			got = append(got, strings.Fields(c)[1])
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"bootout", "bootstrap"}) {
+		t.Errorf("launchctl verbs = %v, want bootout then bootstrap", got)
 	}
 }

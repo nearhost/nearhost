@@ -171,7 +171,7 @@ func TestInstalledCommand(t *testing.T) {
 	if _, ok, err := New(names, t.TempDir(), f.run).Installed(context.Background()); ok || err != nil {
 		t.Fatalf("Installed = %v, %v; want false, nil", ok, err)
 	}
-	want := []string{`powershell.exe -NoProfile -NonInteractive -Command [Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName 'Ed''s Task' -ErrorAction SilentlyContinue; exit 0`}
+	want := []string{`powershell.exe -NoProfile -NonInteractive -Command $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName 'Ed''s Task' -ErrorAction SilentlyContinue; exit 0`}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("commands = %q, want %q", f.calls, want)
 	}
@@ -220,5 +220,30 @@ func TestInstallFailureCarriesSchtasksOutput(t *testing.T) {
 	_, err := New(testNames, t.TempDir(), f.run).Install(context.Background(), plain())
 	if err == nil || !strings.Contains(err.Error(), "cannot find the file specified") {
 		t.Errorf("Install = %v, want schtasks' output in the error", err)
+	}
+}
+
+// PowerShell can put a byte order mark or a CLIXML progress record in front
+// of the task's XML; a bare mark is no task.
+func TestInstalledToleratesNoise(t *testing.T) {
+	d := plain()
+	s := newTaskStore(t)
+	if _, err := New(testNames, t.TempDir(), s.fake.run).Install(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	xml := decodeUTF16(t, s.xml)
+	for name, out := range map[string]string{
+		"bom":    "\ufeff" + xml,
+		"clixml": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCustomObject</T></TN></Obj></Objs>\r\n" + xml,
+	} {
+		f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte(out), nil }}
+		got, ok, err := New(testNames, t.TempDir(), f.run).Installed(context.Background())
+		if err != nil || !ok || !reflect.DeepEqual(got, d.For(Task)) {
+			t.Errorf("%s: Installed = %+v, %v, %v; want %+v", name, got, ok, err, d.For(Task))
+		}
+	}
+	f := &fakeRunner{handle: func(string) ([]byte, error) { return []byte("\ufeff"), nil }}
+	if _, ok, err := New(testNames, t.TempDir(), f.run).Installed(context.Background()); ok || err != nil {
+		t.Errorf("a bare BOM: Installed = %v, %v; want false, nil", ok, err)
 	}
 }

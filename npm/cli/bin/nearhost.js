@@ -32,7 +32,23 @@ if (!bin) {
   process.exit(1);
 }
 
-const child = spawn(bin, process.argv.slice(2), { stdio: 'inherit' });
+// Smart App Control and some antivirus programs refuse to run a program that
+// is not signed. Node reports that as UNKNOWN, EPERM or EACCES, from spawn
+// itself or in the error event.
+function fail(err) {
+  console.error(`nearhost: could not run ${bin}: ${err.message}`);
+  if (process.platform === 'win32' && ['UNKNOWN', 'EPERM', 'EACCES'].includes(err.code)) {
+    console.error('Windows may have blocked it: Smart App Control and some antivirus block programs that are not signed.');
+  }
+  process.exit(1);
+}
+
+let child;
+try {
+  child = spawn(bin, process.argv.slice(2), { stdio: 'inherit' });
+} catch (err) {
+  fail(err);
+}
 
 // Ctrl-C and a closing terminal reach nearhost directly, as they reach every
 // process in the foreground group; passing them on as well would count as a
@@ -44,10 +60,7 @@ process.on('SIGTERM', () => child.kill('SIGTERM'));
 // On Windows, Ctrl-Break reaches nearhost.exe directly, as Ctrl-C does.
 if (process.platform === 'win32') process.on('SIGBREAK', () => {});
 
-child.on('error', (err) => {
-  console.error(`nearhost: could not run ${bin}: ${err.message}`);
-  process.exit(1);
-});
+child.on('error', fail);
 
 child.on('exit', (code, signal) => {
   if (signal) {

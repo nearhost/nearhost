@@ -48,10 +48,28 @@ func (m *taskManager) schtasks(ctx context.Context, args ...string) ([]byte, err
 // as Export-ScheduledTask's ignored error would.
 func (m *taskManager) Installed(ctx context.Context) (Definition, bool, error) {
 	name := strings.ReplaceAll(m.names.Task, "'", "''")
-	cmd := "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName '" + name + "' -ErrorAction SilentlyContinue; exit 0"
+	cmd := "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Export-ScheduledTask -TaskName '" + name + "' -ErrorAction SilentlyContinue; exit 0"
 	out, err := m.run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd)
 	if err != nil {
 		return Definition{}, false, fmt.Errorf("powershell Export-ScheduledTask: %w: %s", err, output(out))
+	}
+	// A byte order mark or a CLIXML progress record can come before the XML.
+	// The record's own header holds a <, so cut at the declaration or the
+	// root element, and only otherwise at the first <.
+	out = bytes.TrimPrefix(out, []byte("\xef\xbb\xbf"))
+	cut := -1
+	for _, marker := range []string{"<?xml", "<Task"} {
+		if cut = bytes.Index(out, []byte(marker)); cut >= 0 {
+			break
+		}
+	}
+	if cut < 0 {
+		cut = bytes.IndexByte(out, '<')
+	}
+	if cut < 0 {
+		out = nil
+	} else {
+		out = out[cut:]
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
 		return Definition{}, false, nil

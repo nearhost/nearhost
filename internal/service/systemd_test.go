@@ -49,3 +49,23 @@ func TestUnitGraphical(t *testing.T) {
 		t.Errorf("default unit:\n%s", off)
 	}
 }
+
+// A core that fails at every start stops being retried after five tries in a
+// minute. ParseUnit ignores the limit, so the Definition still round trips.
+func TestUnitStartLimit(t *testing.T) {
+	d := plain()
+	b := RenderUnit(d)
+	unit, _, _ := strings.Cut(string(b), "[Service]")
+	for _, want := range []string{"StartLimitIntervalSec=60\n", "StartLimitBurst=5\n"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("[Unit] lacks %q:\n%s", want, b)
+		}
+	}
+	got, err := ParseUnit(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := d.For(Unit); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
