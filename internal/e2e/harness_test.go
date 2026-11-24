@@ -100,6 +100,9 @@ type terminal struct {
 	emu  *vt.SafeEmulator
 	cmd  *exec.Cmd
 	exit chan error // the program's exit, once
+	// drawn is closed once the emulator has drawn all the program wrote:
+	// its side of the terminal is closed and the queue is empty.
+	drawn chan struct{}
 
 	// mu guards the emulator's screen, whose cells screen reads in place.
 	mu sync.Mutex
@@ -170,7 +173,7 @@ func start(t *testing.T, env []string, dir, path string, args ...string) *termin
 		pty.Close()
 		t.Fatalf("start %s: %v", path, err)
 	}
-	term := &terminal{t: t, pty: pty, emu: vt.NewSafeEmulator(cols, rows), cmd: cmd, exit: make(chan error, 1)}
+	term := &terminal{t: t, pty: pty, emu: vt.NewSafeEmulator(cols, rows), cmd: cmd, exit: make(chan error, 1), drawn: make(chan struct{})}
 	// What the program writes goes to the emulator, which draws it. The
 	// output is read into a queue and drawn from it apart: drawing waits
 	// on the emulator, which a key being sent holds while it waits for the
@@ -195,6 +198,7 @@ func start(t *testing.T, env []string, dir, path string, args ...string) *termin
 		}
 	}()
 	go func() {
+		defer close(term.drawn)
 		for {
 			chunks := queue.take()
 			if chunks == nil {
@@ -277,20 +281,66 @@ func (term *terminal) waitGone(what string, subs ...string) {
 
 func (term *terminal) waitUntil(what string, ok func(screen string) bool) {
 	term.t.Helper()
-	deadline := time.Now().Add(stepWait)
+	s, exited, err := term.await(ok, stepWait)
+	switch {
+	case exited:
+		term.t.Fatalf("the program exited (%v) while waiting for %s; the screen:\n%s", err, what, s)
+	case !ok(s):
+		term.t.Fatalf("no %s after %s; the screen:\n%s", what, stepWait, s)
+	}
+}
+
+// drainWait is how long, once the program has exited, the screen may take
+// to show the last of what it wrote.
+const drainWait = 5 * time.Second
+
+// await polls the screen until ok holds of it, for at most limit, and
+// returns the last screen. exited is set, with the program's exit, when the
+// program exited and the screen never came to hold ok.
+//
+// The exit can be seen before the last of the program's output has been
+// read from the terminal and drawn: the process ends the moment it has
+// written, say, the sequence that leaves the alternate screen, while the
+// reader may not have read it yet. So an exit fails the wait only once the
+// output is drawn to the end, or drainWait has passed (on Windows the
+// pseudo-console's output may stay open past the exit).
+func (term *terminal) await(ok func(screen string) bool, limit time.Duration) (s string, exited bool, err error) {
+	deadline := time.Now().Add(limit)
 	for {
-		s := term.screen()
+		s = term.screen()
 		if ok(s) {
-			return
+			return s, false, nil
 		}
 		select {
-		case err := <-term.exit:
+		case err = <-term.exit:
 			term.exit <- err
-			term.t.Fatalf("the program exited (%v) while waiting for %s; the screen:\n%s", err, what, s)
+			return term.drain(ok, err)
 		default:
 		}
 		if time.Now().After(deadline) {
-			term.t.Fatalf("no %s after %s; the screen:\n%s", what, stepWait, s)
+			return s, false, nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// drain, the program having exited with err, polls the screen until ok
+// holds of it or all the program wrote is drawn, for at most drainWait.
+func (term *terminal) drain(ok func(screen string) bool, err error) (string, bool, error) {
+	deadline := time.Now().Add(drainWait)
+	for {
+		select {
+		case <-term.drawn:
+			s := term.screen()
+			return s, !ok(s), err
+		default:
+		}
+		s := term.screen()
+		if ok(s) {
+			return s, false, nil
+		}
+		if time.Now().After(deadline) {
+			return s, true, err
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -439,4 +489,42 @@ func browserClient(t *testing.T, root *x509.Certificate, port int) *http.Client 
 		t.Fatal(err)
 	}
 	return &http.Client{Transport: tr, Jar: jar}
+}
+
+// An exit seen before the last of the program's output is drawn does not
+// fail a wait the output then meets: the program may leave the alternate
+// screen and exit before the reader has read that it did. Once all the output
+// is drawn, an exit fails the wait at once.
+func TestAnExitWaitsForTheLastOutput(t *testing.T) {
+	late := func() *terminal {
+		term := &terminal{t: t, emu: vt.NewSafeEmulator(cols, rows), exit: make(chan error, 1), drawn: make(chan struct{})}
+		_, _ = term.emu.Write([]byte("\x1b[?1049hrunning"))
+		term.exit <- nil
+		return term
+	}
+	left := func(term *terminal) func(string) bool {
+		return func(string) bool { return !term.emu.IsAltScreen() }
+	}
+
+	term := late()
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		term.mu.Lock()
+		_, _ = term.emu.Write([]byte("\x1b[?1049l"))
+		term.mu.Unlock()
+		close(term.drawn)
+	}()
+	if s, exited, _ := term.await(left(term), stepWait); exited {
+		t.Errorf("the exit failed the wait before the last output was drawn; the screen:\n%s", s)
+	}
+
+	term = late()
+	close(term.drawn)
+	begun := time.Now()
+	if _, exited, _ := term.await(left(term), stepWait); !exited {
+		t.Error("an exit with all the output drawn did not fail the wait")
+	}
+	if took := time.Since(begun); took >= drainWait {
+		t.Errorf("the wait took %s with all the output drawn", took)
+	}
 }
