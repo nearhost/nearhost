@@ -95,6 +95,9 @@ type Status struct {
 	// Page is the address of Nearhost's page, without its key, or "" when
 	// the page is not served.
 	Page string `json:"page"`
+	// Update is the newer release the core has found, without "v", or ""
+	// when none is known.
+	Update string `json:"update,omitempty"`
 }
 
 // ApprovalInfo is one request that waits for an answer, as status lists it.

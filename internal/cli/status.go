@@ -128,6 +128,9 @@ func printStatus(out io.Writer, st control.Status, keyed string) error {
 	info := st.Info
 	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
 		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
+	if st.Update != "" {
+		fmt.Fprintf(w, "Nearhost %s is available. Run nearhost update.\n", printable(st.Update))
+	}
 	if !info.Reloads {
 		fmt.Fprintln(w, "It serves the projects it was started with and does not reload the config.")
 	}

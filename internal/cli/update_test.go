@@ -783,8 +783,21 @@ func TestShouldCheckForUpdate(t *testing.T) {
 		tty      bool
 		want     bool
 	}{
-		{"ui", nil, ok, "0.5.0", false, true, true},
-		{"up", []string{"up"}, ok, "0.5.0", false, true, true},
+		// The core says it for the interface, up and the daemon, through
+		// the events they show.
+		{"ui", nil, ok, "0.5.0", false, true, false},
+		{"ui with flags", []string{"--web-port", "7000"}, ok, "0.5.0", false, true, false},
+		{"detached ui", []string{"-d"}, ok, "0.5.0", false, true, false},
+		{"up", []string{"up"}, ok, "0.5.0", false, true, false},
+		{"up with flags", []string{"up", "--no-hosts"}, ok, "0.5.0", false, true, false},
+		{"daemon", []string{"daemon", "--started-by", "service"}, ok, "0.5.0", false, true, false},
+		{"status after a root flag", []string{"--config", "x", "status"}, ok, "0.5.0", false, true, true},
+		{"status after a root flag with =", []string{"--config=x", "status"}, ok, "0.5.0", false, true, true},
+		{"up after a root flag", []string{"--config", "x", "up"}, ok, "0.5.0", false, true, false},
+		{"ui with only a root flag", []string{"--config", "x"}, ok, "0.5.0", false, true, false},
+		{"update after a root flag", []string{"--config", "x", "update"}, ok, "0.5.0", false, true, false},
+		{"status", []string{"status"}, ok, "0.5.0", false, true, true},
+		{"ls", []string{"ls"}, ok, "0.5.0", false, true, true},
 		{"update itself", []string{"update"}, ok, "0.5.0", false, true, false},
 		{"version", []string{"version"}, ok, "0.5.0", false, true, false},
 		{"help", []string{"--help"}, ok, "0.5.0", false, true, false},
@@ -799,7 +812,7 @@ func TestShouldCheckForUpdate(t *testing.T) {
 			return ""
 		}, "0.5.0", false, true, false},
 	} {
-		if got := shouldCheckForUpdate(tc.args, tc.getenv, tc.version, tc.elevated, tc.tty); got != tc.want {
+		if got := shouldCheckForUpdate(NewRoot(), tc.args, tc.getenv, tc.version, tc.elevated, tc.tty); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}

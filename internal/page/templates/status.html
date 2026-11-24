@@ -1,6 +1,9 @@
 {{define "content"}}
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
   <p>{{if .Started}}Nearhost started {{.Started}}, by {{.StartedBy}}.{{else}}Nearhost was started by {{.StartedBy}}.{{end}} This page answers at nearhost.localhost:{{.WebPort}}.</p>
+  {{- if .Update}}
+  <p>Nearhost {{.Update}} is available. Run nearhost update.</p>
+  {{- end}}
   <nav aria-label="Nearhost links">
     <a href="https://nearhost.dev">Website</a>
     <a href="https://nearhost.dev/docs/">Docs</a>
