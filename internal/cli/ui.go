@@ -458,7 +458,7 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 		detach, m, d = detach.withService(ctx)
 		if m != nil {
 			if !samePath(d.Exe, detach.exe()) {
-				fmt.Fprintf(cmd.OutOrStdout(), "Nearhost's service runs %s, which is %s. To have it run this copy (%s), run nearhost service install from it.\n", printable(d.Exe), printable(info.Version), Version)
+				sayServiceRunsAnother(cmd.OutOrStdout(), d.Exe, info.Version, Version)
 				return c, info, false, nil
 			}
 			viaService = true
@@ -467,24 +467,13 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 	if !askRestart(cmd.InOrStdin(), cmd.OutOrStdout(), info.Version) {
 		return c, info, false, nil
 	}
-	// A core that stops between the dial and this call has done what was
-	// asked.
-	if err := c.Stop(ctx); err != nil && !errors.Is(err, control.ErrNotRunning) {
-		return nil, info, false, err
-	}
-	if b.detach.gone != nil {
-		if err := b.detach.gone(ctx); err != nil {
-			return nil, info, false, err
-		}
-	}
 	by := info.StartedBy
 	if by == "" {
 		// A core that does not say is not taken for the interface's.
 		by = control.StartedDetached
 	}
-	args := restartArgs(by, st)
-	c, info, spawned, err := ensureInterruptible(cmd, b, func() (*control.Client, control.Info, bool, error) {
-		return startCore(cmd, detach, args, by, viaService)
+	c, info, spawned, err := stopAndStart(cmd, detach, c, st, "", by, viaService, func(start func() (*control.Client, control.Info, bool, error)) (*control.Client, control.Info, bool, error) {
+		return ensureInterruptible(cmd, b, start)
 	})
 	// Only a core started for the interface is the interface's: the
 	// service's is not, nor one started as -d's.

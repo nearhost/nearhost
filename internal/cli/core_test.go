@@ -109,6 +109,33 @@ func TestUpAnswersTheControlSocket(t *testing.T) {
 	}
 }
 
+// A core started with --no-capture says so in its state, so that a restart
+// keeps it.
+func TestCoreStateSaysNoCapture(t *testing.T) {
+	for _, noCapture := range []bool{false, true} {
+		t.Run(fmt.Sprint(noCapture), func(t *testing.T) {
+			u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+			u.noHosts = true
+			var extra []string
+			if noCapture {
+				extra = append(extra, "--no-capture")
+			}
+			u.start(extra...)
+			u.waitFor("Serving until interrupted")
+			st, err := u.control().State(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.NoCapture != noCapture || !st.NoHosts {
+				t.Errorf("NoCapture %v, NoHosts %v; want %v and true", st.NoCapture, st.NoHosts, noCapture)
+			}
+			if err := u.stop(); err != nil {
+				t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+			}
+		})
+	}
+}
+
 func TestUpStatusListsProjects(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{
 		localProject("web", testutil.Upstream(t, "web"), true),

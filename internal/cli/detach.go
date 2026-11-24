@@ -229,6 +229,13 @@ func (b detachBackend) withService(ctx context.Context) (detachBackend, service.
 // service's own arguments, and is said to be started by the service. A core
 // spawned here is never said to be the service's: see directArgs.
 func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy control.StartedBy, viaService bool) (c *control.Client, info control.Info, spawned bool, err error) {
+	return startCoreFrom(cmd, b, "", args, startedBy, viaService)
+}
+
+// startCoreFrom is startCore, spawning exe rather than b.exe() when exe is
+// not "": a restart after an update starts the new binary, which may be at
+// another path than this one.
+func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []string, startedBy control.StartedBy, viaService bool) (c *control.Client, info control.Info, spawned bool, err error) {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -267,7 +274,10 @@ func startCore(cmd *cobra.Command, b detachBackend, args []string, startedBy con
 		}
 	}
 	if !viaService {
-		pid, wait, err = b.spawn(b.exe(), directArgs(args))
+		if exe == "" {
+			exe = b.exe()
+		}
+		pid, wait, err = b.spawn(exe, directArgs(args))
 		if err != nil {
 			return nil, control.Info{}, false, fmt.Errorf("start Nearhost in the background: %w", err)
 		}
@@ -505,8 +515,7 @@ func detachArgs(cmd *cobra.Command, startedBy control.StartedBy) ([]string, erro
 
 // restartArgs are the arguments that start a core again as the one that
 // says st of itself was started: by startedBy, on the config file it served
-// on its ports, and with --no-hosts when it had it. --no-capture is not in a
-// core's state, so a core started with it is started again without.
+// on its ports, and with --no-hosts and --no-capture when it had them.
 func restartArgs(startedBy control.StartedBy, st control.State) []string {
 	args := []string{"daemon", "--started-by", string(startedBy)}
 	// The default file is not named: a core given --config refuses a file
@@ -516,6 +525,9 @@ func restartArgs(startedBy control.StartedBy, st control.State) []string {
 	}
 	if st.NoHosts {
 		args = append(args, "--no-hosts")
+	}
+	if st.NoCapture {
+		args = append(args, "--no-capture")
 	}
 	if st.HTTPSPort > 0 {
 		args = append(args, "--https-port", strconv.Itoa(st.HTTPSPort))
