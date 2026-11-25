@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/report"
@@ -278,5 +279,42 @@ func TestJSONStderrMessagesWithoutControlCharacters(t *testing.T) {
 	}
 	if got.Title != "Title a[31mbc31mde" {
 		t.Errorf("title %q", got.Title)
+	}
+}
+
+// add's refusals of a relative path on a server, a path it cannot name a
+// project after and a domain it cannot serve have codes, and steps with the
+// command on its own line, not written into the sentence.
+func TestAddPathNameAndAliasRefusalsAreMessages(t *testing.T) {
+	cfg := &config.Config{Servers: mini}
+	again := func(set ...string) string { return "nearhost add /srv/app " + strings.Join(set, " ") }
+	for _, tc := range []struct {
+		name  string
+		flags addFlags
+		args  []string
+		code  report.Code
+		title string
+		step  report.Step
+	}{
+		{"relative", addFlags{}, []string{"srv/app"}, report.AddRelativePath,
+			"A project on a server needs its absolute path there, or one under ~/.",
+			report.Step{Text: "Add it with its path on the server:", Command: "nearhost add /path/on/server --server mini"}},
+		{"name", addFlags{alias: "app.test"}, []string{"/"}, report.AddBadName,
+			"Nearhost cannot name a project after /.",
+			report.Step{Text: "Pass a name for it:", Command: "nearhost add /srv/app --name <name>"}},
+		{"alias", addFlags{alias: "localhost"}, []string{"/srv/app"}, report.AddBadAlias,
+			`Invalid main name "localhost": must be a lowercase domain name, not a wildcard, localhost or an IP address.`,
+			report.Step{Text: "Pass another domain to serve it at:", Command: "nearhost add /srv/app --alias <domain>"}},
+	} {
+		_, err := newProject(cfg, "config.yaml", mini[0], tc.flags, tc.args, again)
+		m, ok := report.As(err)
+		if !ok || m.Code != tc.code || m.Title != tc.title {
+			t.Errorf("%s: %v, message %+v", tc.name, err, m)
+			continue
+		}
+		wantSteps(t, m, tc.step)
+		if strings.Contains(m.Title, "nearhost") || strings.Contains(m.Title, "--") {
+			t.Errorf("%s: the title names a command: %q", tc.name, m.Title)
+		}
 	}
 }

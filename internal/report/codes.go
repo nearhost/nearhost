@@ -126,6 +126,8 @@ const (
 	AddNeedsApproval           Code = "add.needs-approval"
 	AddHostTaken               Code = "add.host-taken"
 	AddBadConfig               Code = "add.bad-config"
+	AddRelativePath            Code = "add.relative-path"
+	AddBadAlias                Code = "add.bad-alias"
 	PresetRegistryUnreadable   Code = "preset.registry-unreadable"
 	PresetNotUpdated           Code = "preset.not-updated"
 	PresetNotEnabled           Code = "preset.not-enabled"
@@ -362,6 +364,8 @@ var catalogRows = []catalogRow{
 	{AddNeedsApproval, Error, 409, "The project asks for things that need approval, and there is nobody to ask."},
 	{AddHostTaken, Info, 0, "A name the project would be served at is already another project's, so it is left out."},
 	{AddBadConfig, Error, 400, "The config file cannot be read, so nothing is added to it."},
+	{AddRelativePath, Error, 400, "A project on a server was given a relative path, which Nearhost cannot find there."},
+	{AddBadAlias, Error, 400, "The domain the project would be served at is not one Nearhost can serve, so nothing was saved."},
 	{PresetRegistryUnreadable, Warning, 0, "A trusted registry of presets cannot be read, so its presets are left out."},
 	{PresetNotUpdated, Warning, 0, "A preset could not be updated from its registry."},
 	{PresetNotEnabled, Error, 404, "The preset named is not enabled."},

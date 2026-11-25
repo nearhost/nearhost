@@ -504,6 +504,18 @@
       "summary": "The config file cannot be read, so nothing is added to it."
     },
     {
+      "code": "add.relative-path",
+      "level": "error",
+      "status": 400,
+      "summary": "A project on a server was given a relative path, which Nearhost cannot find there."
+    },
+    {
+      "code": "add.bad-alias",
+      "level": "error",
+      "status": 400,
+      "summary": "The domain the project would be served at is not one Nearhost can serve, so nothing was saved."
+    },
+    {
       "code": "preset.registry-unreadable",
       "level": "warning",
       "summary": "A trusted registry of presets cannot be read, so its presets are left out."

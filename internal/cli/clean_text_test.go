@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // osc52 writes AAAA to the clipboard of a terminal that prints it.
@@ -108,7 +109,7 @@ func TestNewProjectCleansANameFromTheDirectory(t *testing.T) {
 	}
 	// A directory named with nothing but control characters gives no name.
 	_, err = newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/\x1b\a\x01"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "cannot name a project after") || !strings.Contains(err.Error(), "pass --name") {
+	if m, ok := report.As(err); !ok || m.Code != report.AddBadName || !strings.Contains(err.Error(), "cannot name a project after") || len(m.Fix) != 1 || !strings.Contains(m.Fix[0].Command, "--name") {
 		t.Errorf("err = %v, want the refusal to name it", err)
 	}
 }
