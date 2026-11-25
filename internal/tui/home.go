@@ -212,6 +212,10 @@ func fixFields(msg *report.Message, hint footerItem, width int) []string {
 		if c == "" && (text == "" || strings.Contains(headline(msg), text)) {
 			continue
 		}
+		// The key hint says to start it again, so the step need not.
+		if c == "" && hint.key != "" && (s.Text == engine.RetryText || s.Text == engine.RetryThenText) {
+			continue
+		}
 		if text != "" {
 			add(text)
 		}

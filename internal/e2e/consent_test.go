@@ -117,7 +117,7 @@ func TestEnterAsksWindowsAgainAfterADeclinedPrompt(t *testing.T) {
 	term.waitFor("the project stopped", "○ shop", "you declined the Windows prompt")
 
 	term.click("○ shop")
-	term.waitFor("the project's page, with what to do", "▌  ○ shop", "Press enter and approve the Windows prompt", "enter start")
+	term.waitFor("the project's page, with what to do", "▌  ○ shop", "enter start it again and approve the Windows prompt")
 	term.press(keyEnter)
 	// The first refusal leaves the screen before the second can be on it.
 	term.waitGone("the project to start", "○ shop")
