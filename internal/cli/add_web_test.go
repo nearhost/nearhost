@@ -86,7 +86,7 @@ func TestAddWithoutATerminalSaysHowToPickTheWebRoute(t *testing.T) {
 		t.Fatalf("add succeeded:\n%s", out)
 	}
 	wantContains(t, out, "  8080  ignore  app (APP_PORT)\n")
-	wantContains(t, err.Error(), "Run it again with --web <port>")
+	wantContains(t, errText(err), "Run it again with --web <port>")
 	if strings.Contains(out, "No web route") {
 		t.Errorf("the error alone says how to choose:\n%s", out)
 	}

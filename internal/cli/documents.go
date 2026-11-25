@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -177,9 +178,15 @@ func (s *shower) Show(ctx context.Context, origin, root, doc, requester string) 
 	tr := s.table.Add(origin, root, requester, doc)
 	url := documents.URLFor(base, tr, doc)
 	if err := s.open(url); err != nil {
-		eng.Events().Publish(engine.Event{Message: fmt.Sprintf("Could not open %s in the browser: %v", url, err)})
+		eng.Events().Publish(browserFailed(url, err))
 	}
 	return url, nil
+}
+
+// browserFailed is the documents.open-failed warning of a document at url
+// that the browser could not be made to open, with err.
+func browserFailed(url string, err error) engine.Event {
+	return reportEvent(report.Warnf(report.DocumentsOpenFailed, "Could not open %s in the browser: %v", url, err).Wrap(err))
 }
 
 // openNewest opens the newest document of the tree id in the laptop's

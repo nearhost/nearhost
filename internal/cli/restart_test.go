@@ -141,7 +141,7 @@ func TestUpdateAsksWhenLive(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err %v, out %q", err, out)
 		}
-		want := "Updated to 0.6.0.\n" + prompt + "Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+		want := "Updated to 0.6.0.\n" + prompt + "Note: Nearhost in the background still runs 0.5.0.\n\nRestart it when you are ready:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"
 		if !strings.HasSuffix(out, want) {
 			t.Errorf("out %q, want it to end with %q", out, want)
 		}
@@ -203,7 +203,7 @@ func TestUpdateNoTerminalLeavesALiveCore(t *testing.T) {
 	if err := restartAfterUpdate(restartCmd(&out), f.backend(), bufio.NewReader(strings.NewReader("")), false, false, "0.6.0", "/usr/local/bin/nearhost"); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"; out.String() != want {
+	if want := "Note: Nearhost in the background still runs 0.5.0.\n\nRestart it when you are ready:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"; out.String() != want {
 		t.Errorf("out %q, want %q", out.String(), want)
 	}
 	if rig.stopped() || len(rig.spawns()) != 0 {
@@ -220,7 +220,7 @@ func TestUpdateLeavesAForegroundCore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %v, out %q", err, out)
 	}
-	if want := "Updated to 0.6.0.\nNearhost running in a terminal (pid 777) is still 0.5.0. Restart it there: Ctrl-C, then start it again.\n"; !strings.HasSuffix(out, want) {
+	if want := "Updated to 0.6.0.\nNote: Nearhost running in a terminal (pid 777) is still 0.5.0.\n\nRestart it there: press Ctrl-C, then start it again.\n"; !strings.HasSuffix(out, want) {
 		t.Errorf("out %q, want it to end with %q", out, want)
 	}
 	if rig.stopped() || len(rig.spawns()) != 0 {
@@ -289,7 +289,7 @@ func TestUpdateServiceOfAnotherExe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %v, out %q", err, out)
 	}
-	if want := "Nearhost's service runs /opt/nearhost/bin/nearhost, which is 0.5.0. To have it run this copy (0.6.0), run nearhost service install from it.\n"; !strings.HasSuffix(out, want) {
+	if want := "Note: Nearhost's service runs /opt/nearhost/bin/nearhost, which is 0.5.0. To have it run this copy (0.6.0), install the service from it: nearhost service install"; !strings.HasSuffix(flat(out), want) {
 		t.Errorf("out %q, want it to end with %q", out, want)
 	}
 	if rig.stopped() || len(rig.spawns()) != 0 {
@@ -367,8 +367,9 @@ func TestUpdateLeavesACoreTheNewBinaryCannotServe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %v, out %q", err, out)
 	}
-	want := "Updated to 0.6.0.\nLet the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep '/usr/local/bin/nearhost'\n\n" +
-		"Nearhost in the background still runs 0.5.0: the new binary cannot serve on port 80 until you run the command above. Run it, then restart Nearhost: nearhost stop, then nearhost -d.\n"
+	want := "Updated to 0.6.0.\n" + setcapWarning + "sudo setcap cap_net_bind_service=+ep '/usr/local/bin/nearhost'\n" +
+		"Note: Nearhost in the background still runs 0.5.0.\n\nThe new binary cannot serve on port 80 until you run the command above.\n\n" +
+		"Restart it when you are ready:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"
 	if !strings.HasSuffix(out, want) {
 		t.Errorf("out %q, want it to end with %q", out, want)
 	}
@@ -441,7 +442,7 @@ func TestLiveWords(t *testing.T) {
 // a #! script would start a shell or node in between, with a console window
 // and another pid, so the core is left for the user to restart.
 func TestUpdatePnpmRestartNeedsABinary(t *testing.T) {
-	const leaveLine = "Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+	const leaveLine = "Note: Nearhost in the background still runs 0.5.0.\n\nRestart it when you are ready:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"
 	darwinStore := "/Users/me/Library/pnpm/global/5/.pnpm/@nearhost+cli-darwin-arm64@0.5.0/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"
 	for _, tc := range []struct {
 		name    string
@@ -542,7 +543,7 @@ func TestUpdateLatestRestartsAnOlderCore(t *testing.T) {
 		}
 		want := "nearhost 0.6.0 is the latest.\n" +
 			"Restart Nearhost now to run 0.6.0? This closes 2 passthroughs and 1 forward for a moment. [Y/n] " +
-			"Nearhost in the background still runs 0.5.0. Restart it when you are ready: nearhost stop, then nearhost -d.\n"
+			"Note: Nearhost in the background still runs 0.5.0.\n\nRestart it when you are ready:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"
 		if out != want || rig.stopped() {
 			t.Errorf("out %q, want %q; stopped %v", out, want, rig.stopped())
 		}

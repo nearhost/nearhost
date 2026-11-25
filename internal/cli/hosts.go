@@ -62,7 +62,9 @@ var newHostsUpdateApplier = func(ctx context.Context, terminal bool) hosts.Appli
 
 // errHostsUpdateNoTerminal is what `hosts update` says when sudo needs a
 // password and there is no terminal to ask in.
-var errHostsUpdateNoTerminal = errors.New("The hosts file needs sudo, and there is no terminal to ask in. Run nearhost hosts update in a terminal.")
+// It is a hosts.needs-update message; errors.Is finds it.
+var errHostsUpdateNoTerminal error = reportmsg.Errorf(reportmsg.HostsNeedsUpdate, "The hosts file needs sudo, and there is no terminal to ask in.").
+	Step("Update it in a terminal:", "nearhost hosts update")
 
 // hostsChangedWait is how long `hosts update` waits for a running core to
 // take the news: the core answers at once and retries its projects itself.
@@ -213,7 +215,10 @@ func tellCore(cmd *cobra.Command) {
 		err = c.HostsChanged(ctx)
 	}
 	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "The hosts file is updated, but the running core could not be told:", err)
+		sinkOf(cmd).Report(reportmsg.Warnf(reportmsg.HostsCoreNotTold, "The hosts file is updated, but the running Nearhost could not be told.").
+			Because("%s", upperFirst(err.Error())).
+			Step("Restart it so it serves the projects the hosts file stopped:", "nearhost stop").
+			Step("Then start it again:", "nearhost -d").Wrap(err))
 	}
 }
 

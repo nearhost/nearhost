@@ -108,19 +108,16 @@ func newServiceCmd(b serviceBackend) *cobra.Command {
 	return cmd
 }
 
-// serviceFailure is err, which a service manager gave, as the error the
-// command returns: the two errors that say what this system lacks are
-// messages with codes of their own; others are what a manager command
-// said, which the renderer makes printable, as it can quote anything.
-func serviceFailure(cmd *cobra.Command, err error) error {
-	msg := strings.TrimSpace(err.Error())
-	switch {
-	case errors.Is(err, service.ErrUnsupported):
-		return report.Errorf(report.ServiceUnsupported, "%s", msg).Wrap(err)
-	case errors.Is(err, service.ErrNoUserManager):
-		return report.Errorf(report.ServiceNoUserManager, "%s", msg).Wrap(err)
+// managerFailed is the service.manager-failed error of a service manager
+// that could not do what, with its own words, err, quoted as they came:
+// they can name a command and its output. The errors that say what this
+// system lacks are messages of their own and are returned as they are.
+func managerFailed(what string, err error) error {
+	if _, ok := report.As(err); ok {
+		return err
 	}
-	return err
+	return report.Errorf(report.ServiceManagerFailed, "The service manager could not %s.", what).
+		Quote(strings.Split(strings.TrimSpace(err.Error()), "\n")...).Wrap(err)
 }
 
 // serviceManager returns the manager, or reports that there is none.
@@ -130,7 +127,7 @@ func (b serviceBackend) serviceManager(cmd *cobra.Command) (service.Manager, err
 		m = b.manager()
 	}
 	if m == nil {
-		return nil, serviceFailure(cmd, service.ErrUnsupported)
+		return nil, service.ErrUnsupported
 	}
 	return m, nil
 }
@@ -150,7 +147,9 @@ func (b serviceBackend) withManager(m service.Manager, d service.Definition) det
 func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	out := cmd.OutOrStdout()
 	if b.euid() == 0 {
-		return report.Errorf(report.ServiceAsRoot, "Install the service as yourself, not as root: it runs as the user who installs it.")
+		return report.Errorf(report.ServiceAsRoot, "Install the service as yourself, not as root.").
+			Because("The service runs as the user who installs it.").
+			Step("Run it again without sudo:", "nearhost service install")
 	}
 	m, err := b.serviceManager(cmd)
 	if err != nil {
@@ -162,7 +161,7 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	}
 	exe, note, err := service.ServiceExe(b.goos, b.exe(), b.getenv, b.lookPath)
 	if err != nil {
-		return report.Errorf(report.ServiceCopy, "%s", err).Wrap(err)
+		return err
 	}
 	// A service whose core cannot bind its ports fails at every login, so
 	// none is installed until the binary may.
@@ -180,19 +179,20 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	// Made here, also when the service is up to date, so installing again
 	// heals a service whose folder has gone.
 	if err := makeLogFolder(logPath); err != nil {
-		return serviceFailure(cmd, err)
+		return err
 	}
 	env, notes := service.ServiceEnv(b.goos, b.getenv, m.ManagerEnv(ctx), b.home, b.getenv("XDG_RUNTIME_DIR"))
 	def := service.Definition{Exe: exe, Env: env, LogPath: logPath, Graphical: m.Graphical(ctx)}
-	if note != "" {
-		notes = append([]string{note}, notes...)
+	if note != nil {
+		notes = append([]*report.Message{note}, notes...)
 	}
+	sink := sinkOf(cmd)
 	for _, n := range notes {
-		fmt.Fprintln(out, printable(n))
+		sink.Report(n)
 	}
 	changed, err := m.Install(ctx, def)
 	if err != nil {
-		return serviceFailure(cmd, err)
+		return managerFailed("install the Nearhost service", err)
 	}
 	if !changed {
 		fmt.Fprintln(out, "The Nearhost service is installed and up to date.")
@@ -298,9 +298,10 @@ func runServiceUninstall(cmd *cobra.Command, b serviceBackend) error {
 	case errors.Is(err, service.ErrUnreadable):
 		// A definition edited by hand is still the service's, and the
 		// managers remove one without reading it.
-		fmt.Fprintf(out, "The Nearhost service cannot be read (%s), so it is removed as it is.\n", printable(strings.TrimSpace(err.Error())))
+		sinkOf(cmd).Report(report.Warnf(report.ServiceUnreadable, "The Nearhost service cannot be read, so it is removed as it is.").
+			Quote(strings.Split(strings.TrimSpace(err.Error()), "\n")...).Wrap(err))
 	case err != nil:
-		return serviceFailure(cmd, err)
+		return managerFailed("read the Nearhost service", err)
 	case !ok:
 		fmt.Fprintln(out, "No Nearhost service is installed.")
 		return nil
@@ -319,7 +320,7 @@ func runServiceUninstall(cmd *cobra.Command, b serviceBackend) error {
 			// Said before the error, as the user may think it still runs.
 			fmt.Fprintln(out, "Stopped Nearhost, which the service ran.")
 		}
-		return serviceFailure(cmd, err)
+		return managerFailed("remove the Nearhost service", err)
 	}
 	msg := "Removed the Nearhost service."
 	if stopped {

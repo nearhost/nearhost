@@ -82,7 +82,7 @@ func TestAddWithoutAgreementToAddTheServerSavesNothing(t *testing.T) {
 			var opened config.Server
 			cfgPath, before, b := serverAsking(t, true, &opened)
 			out, err := executeWithInput(t, input, newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo", "--web", "9000")
-			if err == nil || !strings.Contains(err.Error(), `unknown server "apollo"`) {
+			if err == nil || !strings.Contains(errText(err), `Unknown server "apollo"`) {
 				t.Fatalf("expected the unknown server error, got %v\n%s", err, out)
 			}
 			wantContains(t, out, askServer)
@@ -100,7 +100,7 @@ func TestAddWithoutATerminalDoesNotOfferToAddAServer(t *testing.T) {
 	var opened config.Server
 	cfgPath, before, b := serverAsking(t, false, &opened)
 	out, err := executeWithInput(t, "y\n\n", newAddCmd(b), "--config", cfgPath, "add", "/srv/www/blog", "--server", "apollo", "--web", "9000")
-	if err == nil || !strings.Contains(err.Error(), `unknown server "apollo"`) {
+	if err == nil || !strings.Contains(errText(err), `Unknown server "apollo"`) {
 		t.Fatalf("expected the unknown server error, got %v\n%s", err, out)
 	}
 	if strings.Contains(out, "Add it?") {

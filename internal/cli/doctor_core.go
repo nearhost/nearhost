@@ -93,7 +93,7 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 	case errors.Is(err, service.ErrUnsupported):
 		return check{}
 	case errors.Is(err, service.ErrNoUserManager):
-		return check{"service", levelInfo, err.Error(), ""}
+		return check{"service", levelInfo, messageOf(err).Title, ""}
 	case errors.Is(err, service.ErrUnreadable):
 		return check{"service", levelWarn, "installed, but its definition cannot be read", "nearhost service uninstall, then nearhost service install"}
 	case err != nil:
@@ -110,7 +110,7 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 	active, err := m.Active(ctx)
 	switch {
 	case errors.Is(err, service.ErrNoUserManager):
-		return check{"service", levelInfo, err.Error(), ""}
+		return check{"service", levelInfo, messageOf(err).Title, ""}
 	case err != nil:
 		return check{"service", levelWarn, "not checked: " + err.Error(), "run `nearhost doctor` again"}
 	case active:

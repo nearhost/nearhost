@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -74,7 +75,7 @@ func (o *coreOps) applyLocked(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 	if msg := o.agents.prune(o.path, cfg); msg != "" {
-		o.eng.Events().Publish(engine.Event{Message: msg})
+		o.eng.Events().Publish(reportEvent(report.Notef(report.AgentsGrantsPruned, "%s", msg)))
 	}
 	return nil
 }

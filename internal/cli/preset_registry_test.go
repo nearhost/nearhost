@@ -300,7 +300,7 @@ func TestPresetListSaysWhenARegistryNeedsANewerNearhost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	wantContains(t, out, "\nWarning: registry test (test/presets) needs a newer nearhost than this one; upgrade nearhost to use it.\n")
+	wantContains(t, flat(out), "Warning: registry test (test/presets) needs a newer nearhost than this one; upgrade nearhost to use it.")
 	if strings.Contains(out, "cannot be read") {
 		t.Errorf("the registry was reached:\n%s", out)
 	}
@@ -389,10 +389,10 @@ func TestPresetUpdateRefusals(t *testing.T) {
 	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "bundler"); err == nil || !strings.Contains(err.Error(), "is a local file") {
 		t.Errorf("expected a local-file error, got %v", err)
 	}
-	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "nope"); err == nil || !strings.Contains(err.Error(), `no preset named "nope" is enabled and no registry is trusted as "nope"`) {
+	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "nope"); err == nil || !strings.Contains(err.Error(), `No preset named "nope" is enabled, and no registry is trusted as "nope".`) {
 		t.Errorf("expected a not-enabled error, got %v", err)
 	}
-	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "acme/stack"); err == nil || err.Error() != `preset "acme/stack" is not enabled` {
+	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update", "acme/stack"); err == nil || err.Error() != `Preset "acme/stack" is not enabled.` {
 		t.Errorf("expected a plain not-enabled error for a qualified name, got %v", err)
 	}
 
@@ -404,7 +404,7 @@ func TestPresetUpdateRefusals(t *testing.T) {
 	if err == nil {
 		t.Error("update needs the registry and should fail when it is down, even with a cached index")
 	}
-	wantContains(t, out, "test/stack: not updated: registry test (test/presets) cannot be read: ")
+	wantContains(t, flat(out), "Warning: test/stack: not updated: registry test (test/presets) cannot be read: ")
 }
 
 // Naming a registry updates only its presets and asks only it. A registry
@@ -429,10 +429,10 @@ func TestPresetUpdateByRegistry(t *testing.T) {
 
 	f.down[acmeReg.Repo] = true
 	out, err = execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update")
-	if err == nil || err.Error() != "1 of 2 presets could not be updated" {
+	if err == nil || err.Error() != "1 of 2 presets could not be updated." {
 		t.Errorf("error = %v", err)
 	}
-	wantContains(t, out, "test/stack: up to date\n", "acme/stack: not updated: registry acme (Acme/web-presets) cannot be read: ")
+	wantContains(t, flat(out), "test/stack: up to date", "Warning: acme/stack: not updated: registry acme (Acme/web-presets) cannot be read: ")
 }
 
 func TestPresetListMakesRegistryTitlesSafeToPrint(t *testing.T) {

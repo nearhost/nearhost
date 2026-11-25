@@ -2,12 +2,12 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -89,13 +89,20 @@ func (w *updateWatch) check(ctx context.Context) {
 	if said {
 		return
 	}
-	w.publish(engine.Event{Message: updateNotice(w.current, latest)})
+	w.publish(reportEvent(updateNotice(w.current, latest)))
 }
 
-// updateNotice is what the core says, as an event, of the release latest
-// newer than its own, current.
-func updateNotice(current, latest string) string {
-	return fmt.Sprintf("A new nearhost is available: %s → %s. Run `nearhost update` to update.", current, latest)
+// updateNotice is the update.available notice of the release latest newer
+// than current: what the core says as an event, and a command at its end.
+func updateNotice(current, latest string) *report.Message {
+	return report.Notef(report.UpdateAvailable, "A new nearhost is available: %s → %s.", current, latest).
+		Step("Update it:", "nearhost update")
+}
+
+// reportEvent is the event that carries m, a warning or a notice, to the
+// log: its message is m's title, as an event's is.
+func reportEvent(m *report.Message) engine.Event {
+	return engine.Event{Message: m.Title, Report: m}
 }
 
 // latestNewer is the newer release found, which Status reports, or "" when

@@ -15,6 +15,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/registry"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func newPresetCmd(b presetBackend) *cobra.Command {
@@ -88,7 +89,7 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 			offered := false
 			for _, s := range b.indexes(cmd.Context(), cfg, cfgPath) {
 				if s.err != nil {
-					fmt.Fprintf(out, "\nWarning: %s.\n", registryProblem(s.reg, s.err))
+					sinkOf(cmd).Report(report.Warnf(report.PresetRegistryUnreadable, "%s.", registryProblem(s.reg, s.err)).Wrap(s.err))
 					continue
 				}
 				var entries []registry.Entry
@@ -125,7 +126,8 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 func presetNameArg(verb string) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("name the preset to %s, e.g. nearhost preset %s vite", verb, verb)
+			return report.Errorf(report.CLIUsage, "Name the preset to %s.", verb).
+				Step("For example:", "nearhost preset "+verb+" vite")
 		}
 		return cobra.ExactArgs(1)(cmd, args)
 	}
@@ -175,7 +177,7 @@ func newPresetDisableCmd() *cobra.Command {
 			}
 			err = config.Update(cfgPath, func(cfg *config.Config) error {
 				if !cfg.RemovePreset(name) {
-					return fmt.Errorf("preset %q is not enabled", name)
+					return notEnabled(name)
 				}
 				return nil
 			})
@@ -231,13 +233,13 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 				}
 				if err := problems[alias]; err != nil {
 					failed++
-					fmt.Fprintf(out, "%s: not updated: %s\n", ref.Name, registryProblem(reg, err))
+					sinkOf(cmd).Report(report.Warnf(report.PresetNotUpdated, "%s: not updated: %s.", ref.Name, registryProblem(reg, err)).Wrap(err))
 					continue
 				}
 				line, did, err := b.update(cmd.Context(), cfg, cfgPath, reg, indexes[alias], ref, force)
 				if err != nil {
 					failed++
-					fmt.Fprintf(out, "%s: not updated: %s\n", ref.Name, printable(err.Error()))
+					sinkOf(cmd).Report(report.Warnf(report.PresetNotUpdated, "%s: not updated: %s", ref.Name, err).Wrap(err))
 					continue
 				}
 				if did {
@@ -262,7 +264,7 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 				}
 			}
 			if failed > 0 {
-				return fmt.Errorf("%d of %d presets could not be updated", failed, len(targets))
+				return report.Errorf(report.PresetNotUpdated, "%d of %d presets could not be updated.", failed, len(targets))
 			}
 			return nil
 		},
@@ -295,13 +297,20 @@ func updateTargets(cfg *config.Config, args []string) ([]config.PresetRef, error
 	switch alias, _ := config.SplitPreset(name); {
 	case !ok && strings.Contains(name, "/"):
 		// An alias never holds a slash, so no registry could be meant.
-		return nil, fmt.Errorf("preset %q is not enabled", name)
+		return nil, notEnabled(name)
 	case !ok:
-		return nil, fmt.Errorf("no preset named %q is enabled and no registry is trusted as %q", name, name)
+		return nil, report.Errorf(report.PresetUnknown, "No preset named %q is enabled, and no registry is trusted as %q.", name, name).
+			Step("See the presets and registries there are:", "nearhost preset list")
 	case alias == "":
-		return nil, fmt.Errorf("preset %q is a local file, not one from a registry, so there is nothing to update it from", name)
+		return nil, report.Errorf(report.PresetLocalFile, "Preset %q is a local file, not one from a registry, so there is nothing to update it from.", name)
 	}
 	return []config.PresetRef{ref}, nil
+}
+
+// notEnabled is the preset.not-enabled error of the preset name.
+func notEnabled(name string) error {
+	return report.Errorf(report.PresetNotEnabled, "Preset %q is not enabled.", name).
+		Step("See the presets that are:", "nearhost preset list")
 }
 
 // update moves one registry preset to the version in idx, the index of reg.

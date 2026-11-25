@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func TestServiceExe(t *testing.T) {
@@ -79,7 +81,7 @@ func TestServiceExe(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("path = %q, want %q", got, tc.want)
 			}
-			if tc.note == "" && note != "" || !strings.Contains(note, tc.note) {
+			if tc.note == "" && note != nil || tc.note != "" && (note == nil || !strings.Contains(note.Error(), tc.note)) {
 				t.Errorf("note = %q, want one containing %q", note, tc.note)
 			}
 		})
@@ -93,7 +95,7 @@ func TestServiceExeNotesNodeUnderNVMDir(t *testing.T) {
 	}
 	exe := "/home/u/.local/share/nvm/versions/node/v26.13.0/bin/nearhost"
 	got, note, err := ServiceExe("linux", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
-	if err != nil || got != exe || !strings.Contains(note, "Node v26.13.0's folder") {
+	if err != nil || got != exe || note == nil || !strings.Contains(note.Error(), "Node v26.13.0's folder") {
 		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
 	}
 }
@@ -105,16 +107,30 @@ func TestServiceExeNotesNodeUnderNVMDirInAnyCase(t *testing.T) {
 	}
 	exe := `C:\Users\ed\AppData\Roaming\nvm\versions\node\v26.13.0\nearhost.exe`
 	got, note, err := ServiceExe("windows", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
-	if err != nil || got != exe || !strings.Contains(note, "Node v26.13.0's folder") {
+	if err != nil || got != exe || note == nil || !strings.Contains(note.Error(), "Node v26.13.0's folder") {
 		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
 	}
 }
 
-func TestServiceExeRefusalsSayWhatToDo(t *testing.T) {
+// A refusal is a service.copy message whose step installs a lasting copy.
+func TestServiceExeRefusalIsAMessage(t *testing.T) {
 	_, _, err := ServiceExe("linux", "/home/u/.cache/go-build/ab/exe/nearhost", func(string) string { return "" }, nil)
-	want := "This copy of nearhost was built by go run, so a service could not start it later. " +
-		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy."
-	if err == nil || err.Error() != want {
-		t.Errorf("err = %v, want %q", err, want)
+	m, ok := report.As(err)
+	if !ok || m.Code != report.ServiceCopy {
+		t.Fatalf("err %v (%T), want a service.copy message", err, err)
+	}
+	if m.Title != "A service cannot run this copy of nearhost." || m.Why != "This copy was built by go run, so it will not be there at the next login." {
+		t.Errorf("title %q, why %q", m.Title, m.Why)
+	}
+	if len(m.Fix) != 1 || m.Fix[0].Command != "nearhost service install" {
+		t.Errorf("steps %+v", m.Fix)
+	}
+}
+
+// The note on Node's folder is a notice with a code of its own.
+func TestServiceExeNoteIsANotice(t *testing.T) {
+	_, note, err := ServiceExe("linux", "/home/u/.nvm/versions/node/v26.13.0/bin/nearhost", func(string) string { return "" }, func(string) (string, error) { return "", errors.New("none") })
+	if err != nil || note == nil || note.Code != report.ServiceNodeVersion || note.Level != report.Info {
+		t.Fatalf("note %+v, err %v", note, err)
 	}
 }

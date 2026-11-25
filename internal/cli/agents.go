@@ -21,6 +21,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -245,7 +246,9 @@ func (a *agents) forward(server string) (transport.AgentForward, bool) {
 	local, token, err := a.listenAgent(server)
 	if err != nil {
 		// The session would say nothing: it has no forward to fail.
-		a.notice(engine.Event{Server: server, Message: server + ": agents unavailable: " + err.Error()})
+		ev := reportEvent(report.Warnf(report.AgentsUnavailable, "%s: agents unavailable: %s", server, err).Wrap(err))
+		ev.Server = server
+		a.notice(ev)
 		return transport.AgentForward{}, false
 	}
 	return transport.AgentForward{Name: a.id + ".sock", Local: local, Token: token, Own: a.sock}, true
@@ -260,7 +263,12 @@ func (a *agents) notice(ev engine.Event) {
 		eng.Events().Publish(ev)
 		return
 	}
-	if !slices.Contains(a.unsent, ev) {
+	// The same notice held twice is said once: events are compared by
+	// what they say, as each carries a message of its own.
+	same := func(e engine.Event) bool {
+		return e.Server == ev.Server && e.Project == ev.Project && e.State == ev.State && e.Message == ev.Message
+	}
+	if !slices.ContainsFunc(a.unsent, same) {
 		a.unsent = append(a.unsent, ev)
 	}
 }
@@ -828,8 +836,9 @@ func (s *agentSource) Reload(ctx context.Context, name string) (agentapi.Reloade
 			out.Items[i] = it.Name()
 		}
 		if e := s.eng.Load(); e != nil && s.reviewed.Load() {
-			e.Events().Publish(engine.Event{Project: name,
-				Message: "A coding agent asks you to approve what its .nearhostrc asks for: select " + name + " and press a."})
+			ev := reportEvent(report.Notef(report.AgentsApprovalWaiting, "A coding agent asks you to approve what its .nearhostrc asks for: select %s and press a.", name))
+			ev.Project = name
+			e.Events().Publish(ev)
 		}
 	case r.Pending != nil:
 		// The engine drops a change the user declined, so nothing waits

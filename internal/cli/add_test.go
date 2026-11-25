@@ -107,7 +107,7 @@ func TestAddWebFlagOverridesPick(t *testing.T) {
 func TestAddFailsWhenNoWebPortCanBePicked(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "empty"), "--name", "nothing")
-	if err == nil || !strings.Contains(err.Error(), "--web <port>") || !strings.Contains(err.Error(), "nothing was saved") {
+	if err == nil || !strings.Contains(errText(err), "--web <port>") || !strings.Contains(errText(err), "nothing was saved") {
 		t.Fatalf("expected guidance about --web, got %v\n%s", err, out)
 	}
 	wantContains(t, out, "No ports found")
@@ -222,7 +222,7 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
 		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", "lowercase domain name"}},
 		{"alias is an IP address", []string{"add", dir, "--name", "other", "--alias", "127.0.0.1", "--web", "9000"}, []string{"127.0.0.1", "IP address"}},
-		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`unknown server "nas"`, "servers:"}},
+		{"unknown server", []string{"add", "/srv/x", "--server", "nas", "--name", "x"}, []string{`Unknown server "nas"`, "servers:"}},
 		{"remote without a path", []string{"add", "--server", "mini", "--name", "x"}, []string{"path"}},
 		{"remote with a relative path", []string{"add", "code/x", "--server", "mini", "--name", "x"}, []string{"absolute path"}},
 	}
@@ -234,7 +234,7 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 				t.Fatalf("add succeeded:\n%s", out)
 			}
 			for _, want := range tc.want {
-				if !strings.Contains(err.Error(), want) {
+				if !strings.Contains(errText(err), want) {
 					t.Errorf("error %q lacks %q", err, want)
 				}
 			}
@@ -263,7 +263,7 @@ func TestAddRefusesToTouchAnInvalidConfig(t *testing.T) {
 	saveConfig(t, cfgPath, &config.Config{Projects: []config.Project{{Name: "broken", Server: "gone", Alias: "broken.test"}}})
 	before, _ := os.ReadFile(cfgPath)
 	_, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"), "--name", "myapp")
-	if err == nil || !strings.Contains(err.Error(), cfgPath) || !strings.Contains(err.Error(), `unknown server "gone"`) {
+	if err == nil || !strings.Contains(errText(err), cfgPath) || !strings.Contains(errText(err), `unknown server "gone"`) {
 		t.Fatalf("expected the config's own error, got %v", err)
 	}
 	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
@@ -510,7 +510,7 @@ func TestAddProposesEnvPortsWithoutPresets(t *testing.T) {
 func TestAddReadsComposeOnlyThroughAPreset(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "plain", "--no-presets")
-	if err == nil || !strings.Contains(err.Error(), "--web <port>") {
+	if err == nil || !strings.Contains(errText(err), "--web <port>") {
 		t.Fatalf("expected no routes without a preset, got %v\n%s", err, out)
 	}
 	wantContains(t, out, "No port variables found in the .env files of plain (local:", ").\nIts Compose file is read only when a preset asks for it with compose: ports.\n")
@@ -612,7 +612,7 @@ func TestAddReadsNearhostrcAndAsks(t *testing.T) {
 
 	declined := filepath.Join(t.TempDir(), "config.yaml")
 	out, err = executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", declined, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil || !strings.Contains(err.Error(), "app.local.dd.io") || !strings.Contains(err.Error(), "run nearhost add in a terminal") {
+	if err == nil || !strings.Contains(err.Error(), "app.local.dd.io") || !strings.Contains(errText(err), "Run the add in a terminal") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 	if _, statErr := os.Stat(declined); !os.IsNotExist(statErr) {
@@ -731,8 +731,8 @@ func TestWithoutTakenHostsUnderAPattern(t *testing.T) {
 		`Not serving api.shop.test: it falls under *.shop.test, which project "shop" serves.`,
 		`Not serving *.y.io: it covers app.y.io, which project "shop" serves.`,
 	}
-	if !reflect.DeepEqual(notes, wantNotes) {
-		t.Errorf("notes = %q", notes)
+	if !reflect.DeepEqual(titles(notes), wantNotes) {
+		t.Errorf("notes = %q", titles(notes))
 	}
 }
 
@@ -912,7 +912,7 @@ func TestAddWithoutTerminalNamesDockerClients(t *testing.T) {
 	dir := rcProject(t, rcDockerClients)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out, err := executeWithInput(t, "", newAddCmd(rcBackend(t, false)), "--config", cfgPath, "add", dir, "--name", "rcapp", "--no-presets")
-	if err == nil || err.Error() != "not added: this project asks for things that need your approval (docker_clients); run nearhost add in a terminal, or open nearhost" {
+	if err == nil || err.Error() != "Not added: this project asks for things that need your approval (docker_clients)." {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 }
@@ -1066,7 +1066,7 @@ func TestAddApprovesInferredHosts(t *testing.T) {
 	saveConfig(t, other, &config.Config{})
 	enableHostedPreset(t, other)
 	_, err = execute(t, newAddCmd(rcBackend(t, false)), "--config", other, "add", dir, "--name", "hostapp")
-	if err == nil || err.Error() != "not added: this project asks for things that need your approval (app.local.x.io); run nearhost add in a terminal, or open nearhost" {
+	if err == nil || err.Error() != "Not added: this project asks for things that need your approval (app.local.x.io)." {
 		t.Fatalf("err = %v", err)
 	}
 
@@ -1254,8 +1254,8 @@ func TestWithoutTakenHosts(t *testing.T) {
 		`Not serving App.x.io: project "other" already serves it.`,
 		`Not serving ws.x.io: project "other" already serves it.`,
 	}
-	if !reflect.DeepEqual(notes, wantNotes) {
-		t.Errorf("notes = %q", notes)
+	if !reflect.DeepEqual(titles(notes), wantNotes) {
+		t.Errorf("notes = %q", titles(notes))
 	}
 }
 
@@ -1300,14 +1300,14 @@ func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 		{[]string{dir, "--name", "w", "--web", "abc"}, `--web must be a port number, not "abc"`},
 		{[]string{dir, "--name", "w", "--web", "70000"}, "--web must be a port between 1 and 65535, not 70000"},
 		{[]string{missing}, "no directory at " + missing},
-		{[]string{dir, "--name", "ünï"}, `the name "ünï" holds characters a .test name can't use; pass --name with a-z, 0-9 and -, or --alias for the full domain`},
-		{[]string{dir, "--name", "café"}, `the name "café" holds characters a .test name can't use`},
-		{[]string{dir, "--name", "foo™"}, `the name "foo™" holds characters a .test name can't use`},
-		{[]string{dir, "--name", "foo\u0301"}, `holds characters a .test name can't use`},
-		{[]string{uni}, `the name "ünï" holds characters a .test name can't use; pass --name`},
+		{[]string{dir, "--name", "ünï"}, `The name "ünï" holds characters a .test name cannot use. Pass --name with a-z, 0-9 and -, or --alias with the full domain.`},
+		{[]string{dir, "--name", "café"}, `The name "café" holds characters a .test name cannot use.`},
+		{[]string{dir, "--name", "foo™"}, `The name "foo™" holds characters a .test name cannot use.`},
+		{[]string{dir, "--name", "foo\u0301"}, `holds characters a .test name cannot use`},
+		{[]string{uni}, `The name "ünï" holds characters a .test name cannot use. Pass --name`},
 	} {
 		out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, c.args...)...)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
+		if err == nil || !strings.Contains(errText(err), c.want) {
 			t.Errorf("add %v: err = %v, want %q\n%s", c.args, err, c.want, out)
 		}
 	}
@@ -1552,8 +1552,8 @@ func TestAddOverABrokenConfigPunctuatesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "sail-custom"))
-	want := cfgPath + " is empty. Restore it from a backup, or delete it to start afresh. Fix the config before adding to it."
-	if err == nil || err.Error() != want {
+	want := "Error: " + cfgPath + " is empty. Restore it from a backup, or delete it to start afresh. Fix the config before adding to it."
+	if err == nil || errText(err) != want {
 		t.Fatalf("add = %v, want %q", err, want)
 	}
 }
@@ -1611,7 +1611,7 @@ func TestAddWithACoreThatReloadsSaysToUpdateTheHostsFile(t *testing.T) {
 			if core.changed != 0 {
 				t.Errorf("the core was told after a failed update")
 			}
-			if want := "The running Nearhost serves it once the hosts file is up to date. Run `nearhost hosts update` in a terminal.\n"; !strings.HasSuffix(out, want) {
+			if want := "Update it in a terminal:\n\n  nearhost hosts update\n"; !strings.HasSuffix(out, want) || !strings.Contains(flat(out), "Warning: The running Nearhost serves the project once the hosts file is up to date.") {
 				t.Errorf("add ended:\n%s\nwant %q", out, want)
 			}
 			if strings.Contains(out, "picks it up") {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // officialRepo is the registry `add` offers to trust while none is. It is
@@ -179,7 +180,8 @@ func newRegistryRemoveCmd() *cobra.Command {
 				// reaches a path below.
 				var ok bool
 				if reg, ok = cfg.Trusted(alias); !ok {
-					return fmt.Errorf("no registry is trusted as %q", alias)
+					return report.Errorf(report.PresetRegistryUnknown, "No registry is trusted as %q.", alias).
+						Step("See the registries that are:", "nearhost preset list")
 				}
 				var enabled []string
 				for _, p := range cfg.Presets {
@@ -188,7 +190,15 @@ func newRegistryRemoveCmd() *cobra.Command {
 					}
 				}
 				if len(enabled) > 0 {
-					return fmt.Errorf("presets from registry %s are enabled: %s. Disable them first with `nearhost preset disable <name>`", alias, strings.Join(enabled, ", "))
+					m := report.Errorf(report.PresetRegistryInUse, "Presets from registry %s are enabled: %s.", alias, strings.Join(enabled, ", "))
+					for i, name := range enabled {
+						text := ""
+						if i == 0 {
+							text = "Disable them first:"
+						}
+						m.Step(text, "nearhost preset disable "+name)
+					}
+					return m
 				}
 				cfg.Registries = slices.DeleteFunc(cfg.Registries, func(r config.Registry) bool { return r.Alias == alias })
 				return nil

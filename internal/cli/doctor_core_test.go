@@ -227,7 +227,7 @@ func TestDoctorService(t *testing.T) {
 		{"inactive, no core", &fakeManager{installed: true, def: mine}, "", "warn  service          installed but not running\n", "Start it with nearhost -d"},
 		{"inactive beside a detached core", &fakeManager{installed: true, def: mine}, control.StartedDetached,
 			"info  service          installed; the running Nearhost was started by detached, so the service takes over at your next login\n", ""},
-		{"no user manager", &fakeManager{instErr: service.ErrNoUserManager}, "", "info  service          " + service.ErrNoUserManager.Error() + "\n", ""},
+		{"no user manager", &fakeManager{instErr: service.ErrNoUserManager}, "", "info  service          " + messageOf(service.ErrNoUserManager).Title + "\n", ""},
 		{"unsupported", &fakeManager{instErr: service.ErrUnsupported}, "", "", ""},
 	}
 	for _, tt := range tests {

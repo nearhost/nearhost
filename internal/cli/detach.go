@@ -424,7 +424,7 @@ func (e interruptedStart) Unwrap() error { return e.Report() }
 
 // Report is the interrupted message for the start: what became of the core.
 func (e interruptedStart) Report() *report.Message {
-	return report.Errorf(report.Interrupted, "%s", interruptedMessage(e.fate)).ExitCode(interruptedCode).Wrap(e.err)
+	return interrupted(e.fate).Wrap(e.err)
 }
 
 // stopSpawned stops the core this process spawned for the interface, which

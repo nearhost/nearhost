@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -30,8 +31,11 @@ const redialAfter = 500 * time.Millisecond
 // or a document opened.
 const refreshEvery = time.Second
 
-// missedNote is the log line said when the stream skipped envelopes.
-const missedNote = "Some log lines were missed."
+// missedEvent is the interface.log-missed notice the log says when the
+// stream skipped envelopes.
+func missedEvent() engine.Event {
+	return reportEvent(report.Notef(report.InterfaceLogMissed, "Some log lines were missed."))
+}
 
 // keptExchanges is how many answers about captured exchanges the backend
 // keeps once it has fetched them: the exchanges, and the IDs the core no
@@ -275,7 +279,7 @@ func (b *clientBackend) reset(st control.State) {
 		}
 	}
 	b.give(st.Approvals)
-	b.bus.Publish(engine.Event{Message: missedNote})
+	b.bus.Publish(missedEvent())
 	b.hostsChanged()
 }
 
@@ -423,7 +427,12 @@ func (b *clientBackend) acted(ctx context.Context, err error) error {
 // error from.
 func (b *clientBackend) logged(err error) {
 	if err = b.acted(context.Background(), err); err != nil {
-		b.bus.Publish(engine.Event{Message: err.Error()})
+		m := report.From(err)
+		ev := reportEvent(m)
+		if m.Context != "" {
+			ev.Message = m.Context + ": " + m.Title
+		}
+		b.bus.Publish(ev)
 	}
 }
 

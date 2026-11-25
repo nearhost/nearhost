@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // scriptedWatch runs a watch whose latest answers from answers, one per
@@ -62,8 +63,8 @@ func TestUpdateWatchPublishesOnce(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("events = %v, want one", events)
 	}
-	want := "A new nearhost is available: 0.15.0 → 0.16.0. Run `nearhost update` to update."
-	if events[0].Message != want {
+	want := "A new nearhost is available: 0.15.0 → 0.16.0."
+	if events[0].Message != want || events[0].Report == nil || events[0].Report.Code != report.UpdateAvailable {
 		t.Errorf("message = %q, want %q", events[0].Message, want)
 	}
 	if got := w.latestNewer(); got != "0.16.0" {

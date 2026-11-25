@@ -251,11 +251,7 @@ func (c contextReader) Read(p []byte) (int, error) {
 func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) error {
 	cfg, cfgPath, err := loadConfig(cmd)
 	if err != nil {
-		// Some load errors are whole sentences already.
-		if strings.HasSuffix(err.Error(), ".") {
-			return fmt.Errorf("%w Fix the config before adding to it.", err)
-		}
-		return fmt.Errorf("%w; fix the config before adding to it", err)
+		return badConfigForAdd(err)
 	}
 	// Every question reads its answer from the same input, so that lines
 	// typed ahead reach the questions in the order they are asked.
@@ -269,7 +265,9 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// hold. It is saved with the project, so that a failure on the way, or a
 	// save made for another reason such as enabling a preset, leaves it out.
 	srv, known := cfg.Server(flags.server)
-	unknown := fmt.Errorf("unknown server %q; add it under `servers:` in %s (a name and an ssh_host) and try again", flags.server, cfgPath)
+	unknown := report.Errorf(report.AddUnknownServer, "Unknown server %q.", flags.server).
+		Then(fmt.Sprintf("Add it under `servers:` in %s, with a name and an ssh_host, and try again.", cfgPath)).
+		With("server", flags.server)
 	if !known && (answers == nil || strings.TrimSpace(flags.server) == "") {
 		return unknown
 	}
@@ -303,7 +301,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// a file that can't be read is reported when it is applied.
 	if strings.TrimSpace(flags.alias) == "" && config.LosesInAlias(project.Name) {
 		if f, found, err := nearhostrc.Read(reader); err == nil && (!found || f.Alias == "") {
-			return errors.Join(fmt.Errorf("the name %q holds characters a .test name can't use; pass --name with a-z, 0-9 and -, or --alias for the full domain", project.Name), done())
+			return errors.Join(report.Errorf(report.AddBadName, "The name %q holds characters a .test name cannot use.", project.Name).
+				Then("Pass --name with a-z, 0-9 and -, or --alias with the full domain."), done())
 		}
 	}
 	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader, answers)
@@ -311,11 +310,6 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return errors.Join(err, done())
 	}
 	project.Routes = discoveredRoutes(res)
-	if flags.web == 0 && res.LonePortNote != "" {
-		// With --web the user already said which port is the app. Export
-		// and doctor read the same discovery, and --web advice is no use there.
-		warnings = append(warnings, res.LonePortNote)
-	}
 	// Several routes were found and none says it is the web route: ask,
 	// when someone can answer. Otherwise the error below says how to choose.
 	if _, found := project.WebRoute(); !found && flags.web == 0 && len(project.Routes) > 1 && answers != nil {
@@ -336,7 +330,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		var aliasTaken *aliasTakenError
 		switch err := aliasProblem(cfg, project.Alias); {
 		case errors.As(err, &aliasTaken):
-			return errors.Join(fmt.Errorf("%s asks for alias %s, which is already used by project %q; pass another --alias", nearhostrc.FileName, project.Alias, aliasTaken.other.Name), done())
+			return errors.Join(report.Errorf(report.AddAliasTaken, "%s asks for alias %s, which is already used by project %q.", nearhostrc.FileName, project.Alias, aliasTaken.other.Name).
+				Then("Pass another name with --alias.").Wrap(err), done())
 		case err != nil:
 			return errors.Join(err, done())
 		}
@@ -360,12 +355,18 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		return err
 	}
 	reportWarnings(cmd, warnings)
+	if flags.web == 0 && res.LonePortNote != "" {
+		// With --web the user already said which port is the app. Export
+		// and doctor read the same discovery, and --web advice is no use there.
+		sinkOf(cmd).Report(lonePort(res.LonePortNote))
+	}
 
 	if err := printRoutes(out, project, res.ComposeUnread()); err != nil {
 		return err
 	}
 	if _, ok := project.WebRoute(); !ok {
-		return fmt.Errorf("could not tell which port serves %s; nothing was saved. Run it again with --web <port>", project.Name)
+		return report.Errorf(report.AddNoWebPort, "Nearhost could not tell which port serves %s, so nothing was saved.", project.Name).
+			Then("Run it again with --web <port>, naming the port your app listens on.")
 	}
 	for _, a := range advisories {
 		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, printableLines(a.Message))
@@ -387,7 +388,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		// project was read from.
 		if saved, ok := cfg.Server(srv.Name); newServer && ok {
 			if saved.SSHHost != srv.SSHHost {
-				return fmt.Errorf("server %s was added meanwhile, reached with `ssh %s`, not `ssh %s` as typed; nothing was saved. Run the add again", printable(srv.Name), printable(saved.SSHHost), printable(srv.SSHHost))
+				return report.Errorf(report.AddServerChanged, "Server %s was added meanwhile, reached with `ssh %s`, not `ssh %s` as typed, so nothing was saved.", srv.Name, saved.SSHHost, srv.SSHHost).
+					Then("Run the add again.")
 			}
 			newServer = false
 		} else if newServer {
@@ -424,15 +426,45 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// tells the core.
 	if mode == modeCore && project.Enabled && b.updateHosts != nil {
 		if err := b.updateHosts(cmd); err != nil {
-			if !errors.Is(err, errHostsUpdateNoTerminal) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "The hosts file could not be updated:", err)
-			}
-			_, err = fmt.Fprintln(out, "The running Nearhost serves it once the hosts file is up to date. Run `nearhost hosts update` in a terminal.")
-			return err
+			sinkOf(cmd).Report(hostsNotUpdated(err))
+			return nil
 		}
 	}
 	_, err = fmt.Fprintln(out, runningAdvice(mode, project.Enabled, start))
 	return err
+}
+
+// badConfigForAdd is err, the config failing to load, as the error add
+// returns: the config's own message, or add.bad-config for an error that
+// has none, with a last step to fix the config before adding to it.
+func badConfigForAdd(err error) error {
+	m := messageOf(err)
+	if m.Code == report.Unexpected {
+		m.Code = report.AddBadConfig
+	}
+	return m.Then("Fix the config before adding to it.")
+}
+
+// lonePort is the add.lone-port warning of discovery's note that one port
+// alone was found, which is the web route.
+func lonePort(note string) *report.Message {
+	title, rest, _ := strings.Cut(note, " Pass --web")
+	m := report.Warnf(report.AddLonePort, "%s", title)
+	if rest != "" {
+		m.Then("Pass --web" + rest)
+	}
+	return m
+}
+
+// hostsNotUpdated is the hosts.needs-update warning of an add whose
+// project the running core serves once the hosts file is updated, which
+// add could not do, with err.
+func hostsNotUpdated(err error) *report.Message {
+	m := report.Warnf(report.HostsNeedsUpdate, "The running Nearhost serves the project once the hosts file is up to date.")
+	if !errors.Is(err, errHostsUpdateNoTerminal) {
+		m.Because("The hosts file could not be updated: %s", err).Wrap(err)
+	}
+	return m.Step("Update it in a terminal:", "nearhost hosts update")
 }
 
 // applyNearhostrc applies the project's .nearhostrc, if it has one, and the
@@ -540,8 +572,9 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		}
 		routes, notes := withoutTakenHosts(cfg, *project, inferred)
 		project.Routes = routes
+		sink := sinkOf(cmd)
 		for _, n := range notes {
-			fmt.Fprintln(cmd.ErrOrStderr(), printable(n))
+			sink.Report(n)
 		}
 	}
 
@@ -560,7 +593,8 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 		for i, it := range items {
 			names[i] = it.Name()
 		}
-		return nil, fmt.Errorf("not added: this project asks for things that need your approval (%s); run nearhost add in a terminal, or open nearhost", strings.Join(names, ", "))
+		return nil, report.Errorf(report.AddNeedsApproval, "Not added: this project asks for things that need your approval (%s).", strings.Join(names, ", ")).
+			Step("Run the add in a terminal, where it can ask, or approve them in the interface:", "nearhost")
 	}
 	// The note is about names, so a prompt about only loopback ports and
 	// options goes without it.

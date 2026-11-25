@@ -149,7 +149,7 @@ func TestRegistryRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "registry", "remove", "test")
-	if err == nil || err.Error() != "presets from registry test are enabled: test/stack, test/bundler. Disable them first with `nearhost preset disable <name>`" {
+	if err == nil || errText(err) != "Error: Presets from registry test are enabled: test/stack, test/bundler. Disable them first: nearhost preset disable test/stack nearhost preset disable test/bundler" {
 		t.Fatalf("expected a refusal listing the presets, got %v", err)
 	}
 	if len(loadSaved(t, cfgPath).Registries) != 1 {
@@ -178,7 +178,7 @@ func TestRegistryRemove(t *testing.T) {
 		t.Errorf("preset files are kept: %v", err)
 	}
 
-	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "registry", "remove", "test"); err == nil || err.Error() != `no registry is trusted as "test"` {
+	if _, err := execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "registry", "remove", "test"); err == nil || err.Error() != `No registry is trusted as "test".` {
 		t.Errorf("second remove: %v", err)
 	}
 }

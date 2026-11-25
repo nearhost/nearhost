@@ -134,9 +134,9 @@ func TestACoreInATerminalIsNotRestarted(t *testing.T) {
 	if code != 0 || !ran {
 		t.Fatalf("exit %d, ran %v, stderr %q", code, ran, stderr)
 	}
-	want := "Nearhost running in a terminal is 0.0.1; this is " + Version + ". It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n"
-	if stdout != want {
-		t.Errorf("stdout %q, want %q", stdout, want)
+	want := "Note: Nearhost running in a terminal is 0.0.1; this is " + Version + ". It was started by hand, so restart it there. Stop it with Ctrl-C in its terminal, or: nearhost stop Then start it again."
+	if stdout != "" || flat(stderr) != want {
+		t.Errorf("stdout %q, stderr %q, want %q", stdout, stderr, want)
 	}
 	if slices.Contains(old.asked(), "Stop") {
 		t.Error("the core in a terminal was stopped")
@@ -293,7 +293,7 @@ func TestInterruptedWhileTheCoreStartsSaysWhatHappened(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "Interrupted while Nearhost started in the background. It did not answer in time to be stopped, so it may still be starting: see " + logPath + ", and stop it with nearhost stop.\n"
+		want := "Interrupted while Nearhost started in the background. It did not answer in time to be stopped, so it may still be starting. See how it is going in its log: " + logPath + " Stop it: nearhost stop\n"
 		if code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 		}

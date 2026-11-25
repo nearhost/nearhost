@@ -145,7 +145,7 @@ func TestInstallRefusesRoot(t *testing.T) {
 	x := newServiceFixture(t)
 	x.b.euid = func() int { return 0 }
 	out, err := x.run(t, "", "service", "install")
-	if err == nil || !strings.Contains(flat(out), "Error: Install the service as yourself, not as root: it runs as the user who installs it.") {
+	if err == nil || !strings.Contains(flat(out), "Error: Install the service as yourself, not as root. The service runs as the user who installs it. Run it again without sudo: nearhost service install") {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 	if x.m.log() != "" {
@@ -321,7 +321,7 @@ func TestNoUserManagerMessage(t *testing.T) {
 	x := newServiceFixture(t)
 	x.m.err = service.ErrNoUserManager
 	out, err := x.run(t, "", "service", "install")
-	if exitCode(err, io.Discard) != 1 || !strings.Contains(flat(out), service.ErrNoUserManager.Error()) {
+	if exitCode(err, io.Discard) != 1 || !strings.Contains(flat(out), flat(rendered(service.ErrNoUserManager))) {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 }
@@ -448,7 +448,8 @@ func TestUninstallRemovesAnUnreadableService(t *testing.T) {
 	if x.m.log() != "uninstall" {
 		t.Errorf("calls %q", x.m.log())
 	}
-	want := "The Nearhost service cannot be read (read /home/u/.config/systemd/user/nearhost.service: no ExecStart), so it is removed as it is.\n" +
+	want := "Warning: The Nearhost service cannot be read, so it is removed as it is.\n\n" +
+		"  read /home/u/.config/systemd/user/nearhost.service: no ExecStart\n" +
 		"Removed the Nearhost service. Stopped Nearhost, which it ran.\n"
 	if out != want {
 		t.Errorf("out %q, want %q", out, want)

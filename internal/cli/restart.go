@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/update"
 )
@@ -96,11 +96,23 @@ func liveWords(passthroughs, forwards int) string {
 	return plural(passthroughs, "passthrough") + " and " + plural(forwards, "forward")
 }
 
-// sayServiceRunsAnother says that the service runs exe, which is the release
-// old, and not this copy, of the release this: restarted through the service,
-// the core would be old again.
-func sayServiceRunsAnother(out io.Writer, exe, old, this string) {
-	fmt.Fprintf(out, "Nearhost's service runs %s, which is %s. To have it run this copy (%s), run nearhost service install from it.\n", printable(exe), printable(old), this)
+// serviceRunsAnother is the core.outdated notice that the service runs exe,
+// which is the release old, and not this copy, of the release this:
+// restarted through the service, the core would be old again.
+func serviceRunsAnother(exe, old, this string) *report.Message {
+	return report.Notef(report.CoreOutdated, "Nearhost's service runs %s, which is %s.", exe, old).
+		Step("To have it run this copy ("+this+"), install the service from it:", "nearhost service install")
+}
+
+// restartLater is the core.outdated notice that the core in the background
+// still runs the release old: why, if not "", says what it waits for.
+func restartLater(old, why string) *report.Message {
+	m := report.Notef(report.CoreOutdated, "Nearhost in the background still runs %s.", old)
+	if why != "" {
+		m.Because("%s", why)
+	}
+	return m.Step("Restart it when you are ready:", "nearhost stop").
+		Step("Then start it again:", "nearhost -d")
 }
 
 // restartAfterUpdate restarts the running core on the new binary exe, now
@@ -124,13 +136,15 @@ func restartAfterUpdate(cmd *cobra.Command, b updateBackend, in *bufio.Reader, y
 	if !ok || update.SameVersion(info.Version, latest) {
 		return nil
 	}
-	old := printable(info.Version)
+	old := info.Version
+	sink := sinkOf(cmd)
 	if info.StartedBy == control.StartedForeground {
-		fmt.Fprintf(out, "Nearhost running in a terminal (pid %d) is still %s. Restart it there: Ctrl-C, then start it again.\n", info.PID, old)
+		sink.Report(report.Notef(report.CoreOutdated, "Nearhost running in a terminal (pid %d) is still %s.", info.PID, old).
+			Then("Restart it there: press Ctrl-C, then start it again."))
 		return nil
 	}
 	leave := func() error {
-		fmt.Fprintf(out, "Nearhost in the background still runs %s. Restart it when you are ready: nearhost stop, then nearhost -d.\n", old)
+		sink.Report(restartLater(old, ""))
 		return nil
 	}
 	// With no path for the new binary there is nothing to restart the
@@ -149,13 +163,13 @@ func restartAfterUpdate(cmd *cobra.Command, b updateBackend, in *bufio.Reader, y
 		var d service.Definition
 		var m service.Manager
 		if det, m, d = det.withService(ctx); m != nil && !samePath(d.Exe, exe) {
-			sayServiceRunsAnother(out, d.Exe, info.Version, latest)
+			sink.Report(serviceRunsAnother(d.Exe, info.Version, latest))
 			return nil
 		}
 	}
 	if port, ok := privilegedPort(b, st); noBind && ok {
 		// After the setcap command, apart from it.
-		fmt.Fprintf(out, "\nNearhost in the background still runs %s: the new binary cannot serve on port %d until you run the command above. Run it, then restart Nearhost: nearhost stop, then nearhost -d.\n", old, port)
+		sink.Report(restartLater(old, fmt.Sprintf("The new binary cannot serve on port %d until you run the command above.", port)))
 		return nil
 	}
 	if p, f := live(st); (p > 0 || f > 0) && !yes {
