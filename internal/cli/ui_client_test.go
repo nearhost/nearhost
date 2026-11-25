@@ -824,7 +824,11 @@ func TestCoreGoneEndsTheInterface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 1 || !strings.HasPrefix(stderr, "Error: Nearhost in the background stopped.\n\nThe end of "+logPath+":\n") ||
+	// The explanation wraps where a long log path needs it (macOS and
+	// Windows temp folders), so its words are compared without the breaks.
+	head, _, _ := strings.Cut(strings.TrimPrefix(stderr, "Error: Nearhost in the background stopped.\n\n"), ":\n")
+	if code != 1 || !strings.HasPrefix(stderr, "Error: Nearhost in the background stopped.\n\n") ||
+		strings.Join(strings.Fields(head), " ") != "The end of "+logPath ||
 		!strings.HasSuffix(stderr, " the core's last words\n") || !strings.Contains(stderr, "an earlier line") {
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
