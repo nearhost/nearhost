@@ -38,17 +38,18 @@ func (m *Model) footerItems() []footerItem {
 		return []footerItem{{"↑↓", "route"}, {"space", "loopback/ignore"}, {"w", "web"}, {"y", "copy advice"}, {"tab", "done"}}
 	}
 	if m.passFocus {
-		if kind, name := m.selected(); kind == rowServer {
-			if rows, _ := m.passRows(name); m.passFocus {
-				r := rows[m.passRow]
-				switch {
-				case r.grant != nil:
-					return []footerItem{{"↑↓", "select"}, {"x", "revoke"}, {"tab", "done"}}
-				case r.tree != nil:
-					return []footerItem{{"↑↓", "select"}, {"enter", "open"}, {"x", "remove"}, {"tab", "done"}}
-				}
-				return []footerItem{{"↑↓", "select"}, {"x", "close"}, {"tab", "done"}}
+		if rows, _ := m.panelRows(); m.passFocus {
+			r := rows[m.passRow]
+			switch {
+			case r.grant != nil:
+				return []footerItem{{"↑↓", "select"}, {"x", "revoke"}, {"tab", "done"}}
+			case r.tree != nil:
+				return []footerItem{{"↑↓", "select"}, {"enter", "open"}, {"x", "remove"}, {"tab", "done"}}
 			}
+			if kind, _ := m.selected(); kind == rowPasses {
+				return []footerItem{{"↑↓", "select"}, {"o", "open"}, {"y", "copy"}, {"x", "close"}, {"esc", "done"}}
+			}
+			return []footerItem{{"↑↓", "select"}, {"x", "close"}, {"tab", "done"}}
 		}
 	}
 	if m.filtering {
@@ -75,7 +76,9 @@ func (m *Model) footerItems() []footerItem {
 			}
 		}
 	case rowPasses, rowDocs:
-		// Nothing to do on the panel yet; the global items follow.
+		if rows, _ := m.panelRows(); len(rows) > 0 {
+			items = append(items, footerItem{"tab", "select"})
+		}
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
 		if name != config.LocalServer {
@@ -85,7 +88,7 @@ func (m *Model) footerItems() []footerItem {
 			}
 			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb})
 		}
-		if rows, _ := m.passRows(name); len(rows) > 0 {
+		if rows, _ := m.panelRows(); len(rows) > 0 {
 			items = append(items, footerItem{"tab", agentsTab(rows)})
 		}
 		if name != config.LocalServer {
@@ -353,10 +356,10 @@ func (m *Model) action(s string) tea.Cmd {
 			return m.reviewChange(name)
 		}
 	case "tab":
-		if kind, name := m.selected(); kind == rowProject {
+		if kind, _ := m.selected(); kind == rowProject {
 			m.routeFocus, m.routeRow, m.panelErr = true, 0, ""
-		} else if kind == rowServer {
-			if rows, _ := m.passRows(name); len(rows) > 0 {
+		} else if kind == rowServer || kind == rowPasses || kind == rowDocs {
+			if rows, _ := m.panelRows(); len(rows) > 0 {
 				m.passFocus, m.passRow, m.passSel, m.panelErr = true, 0, rows[0].key(), ""
 			}
 		}

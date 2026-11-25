@@ -28,10 +28,10 @@ func (m *Model) treeText(tr documents.Tree) string {
 }
 
 // openTree opens the tree's newest document in the browser, on the worker,
-// as opening the browser blocks.
-func (m *Model) openTree(server string, tr documents.Tree) tea.Cmd {
+// as opening the browser blocks. Its outcome is shown on the selected row.
+func (m *Model) openTree(tr documents.Tree) tea.Cmd {
 	m.panelErr = ""
-	b, key := m.b, rowKey(rowServer, server)
+	b, key := m.b, m.sel
 	return m.work.do(func(context.Context) tea.Msg {
 		return treeOpenedMsg{key, tr, b.OpenDocument(tr.ID)}
 	})
