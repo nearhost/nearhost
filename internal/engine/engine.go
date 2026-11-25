@@ -242,6 +242,9 @@ type Engine struct {
 	// says. Both are guarded by mu.
 	netOpts  *proxy.NetworkOptions
 	netState NetworkState
+	// dnsTokens are every DNS token the proxy has been given, which
+	// errors and log lines never show. Guarded by mu.
+	dnsTokens map[string]bool
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
 	ctx     context.Context
@@ -365,6 +368,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	}
 	snapshot := cloneConfig(cfg)
 	e.netOpts, e.netState = e.networkFor(snapshot, opts.WebPort)
+	e.rememberTokenLocked(e.netOpts)
 	e.proxy = proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort,
 		Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true, Reports: proxyReports, Network: e.netOpts})
 	e.setNetwork = e.proxy.SetNetwork
@@ -603,7 +607,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.applyMu.Lock()
 	// The network options follow the page: without it the core does not
 	// listen on the network.
-	e.updateNetwork()
+	_, _ = e.updateNetwork()
 	err = e.redactErr(e.proxy.Apply(nil))
 	e.applyMu.Unlock()
 	if err != nil {

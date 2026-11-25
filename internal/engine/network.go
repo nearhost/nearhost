@@ -2,8 +2,10 @@ package engine
 
 import (
 	"errors"
+	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -121,7 +123,7 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 // which it reports. They take effect at the proxy's next apply. The caller
 // holds lifeMu, so the config does not change meanwhile, and applyMu, so
 // no site is applied between the change and the caller's own apply.
-func (e *Engine) updateNetwork() bool {
+func (e *Engine) updateNetwork() (prev *proxy.NetworkOptions, changed bool) {
 	e.mu.Lock()
 	cfg, port := e.cfg, e.webPort
 	e.mu.Unlock()
@@ -130,21 +132,39 @@ func (e *Engine) updateNetwork() bool {
 	defer e.mu.Unlock()
 	e.netState = state
 	if reflect.DeepEqual(opts, e.netOpts) {
-		return false
+		return e.netOpts, false
 	}
-	e.netOpts = opts
+	prev, e.netOpts = e.netOpts, opts
+	e.rememberTokenLocked(opts)
 	e.setNetwork(opts)
-	return true
+	return prev, true
+}
+
+// rememberTokenLocked notes the DNS token of opts, so it is redacted from
+// then on.
+func (e *Engine) rememberTokenLocked(opts *proxy.NetworkOptions) {
+	if opts == nil || opts.DNSToken == "" {
+		return
+	}
+	if e.dnsTokens == nil {
+		e.dnsTokens = map[string]bool{}
+	}
+	e.dnsTokens[opts.DNSToken] = true
 }
 
 // applyNetwork gives the proxy the network options of the engine's config,
 // and applies the sites again when they changed, so turning the network on
 // or off takes effect at once, though no project changed. It does nothing
 // to a proxy that has not started. The caller holds lifeMu.
+//
+// If the proxy cannot load the new options, it gives it back the ones it
+// had, so what is applied next matches what the proxy serves and the next
+// Apply, even of the same config, tries again; NetworkState says why.
 func (e *Engine) applyNetwork() {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
-	if !e.updateNetwork() {
+	prev, changed := e.updateNetwork()
+	if !changed {
 		return
 	}
 	e.mu.Lock()
@@ -154,31 +174,39 @@ func (e *Engine) applyNetwork() {
 	if !started {
 		return
 	}
-	if err := e.redactErr(e.applySites(sites)); err != nil {
-		m := report.Errorf(report.NetworkApplyFailed, "Nearhost could not change how it serves to the network: %s", err).
-			Because("The proxy keeps the configuration it had until a project starts or stops, or the config is saved again.")
-		e.bus.Publish(Event{Message: m.Title, Report: m})
+	raw := e.applySites(sites)
+	if raw == nil {
+		return
 	}
-}
-
-// dnsTokenLocked is the DNS token the proxy has, "" for none.
-func (e *Engine) dnsTokenLocked() string {
+	err := e.redactErr(raw)
+	e.mu.Lock()
+	what := "start"
 	if e.netOpts == nil {
-		return ""
+		what = "stop"
 	}
-	return e.netOpts.DNSToken
+	e.netOpts = prev
+	e.setNetwork(prev)
+	e.netState.Problem = "networked mode couldn't " + what + ": " + err.Error()
+	e.mu.Unlock()
+	why := "Nearhost serves as it did before the change. Save the config again to try again."
+	if errors.Is(raw, proxy.ErrNotServing) {
+		why = "Nearhost serves nothing, here or on the network, until the config is saved again or a project starts or stops."
+	}
+	m := report.Errorf(report.NetworkApplyFailed, "Nearhost could not change how it serves to the network: %s", err).Because("%s", why)
+	e.bus.Publish(Event{Message: m.Title, Report: m})
 }
 
-// redactText is s with the DNS token the proxy has replaced by
-// redactedToken.
+// redactText is s with every DNS token the proxy has been given replaced
+// by redactedToken: one taken back after a failed load may still show in
+// the log of a certificate request under way.
 func (e *Engine) redactText(s string) string {
 	e.mu.Lock()
-	token := e.dnsTokenLocked()
+	tokens := slices.Collect(maps.Keys(e.dnsTokens))
 	e.mu.Unlock()
-	if token == "" {
-		return s
+	for _, token := range tokens {
+		s = strings.ReplaceAll(s, token, redactedToken)
 	}
-	return strings.ReplaceAll(s, token, redactedToken)
+	return s
 }
 
 // redactErr is err, unless its text holds the DNS token the proxy has: the
@@ -199,8 +227,8 @@ func (e *Engine) redactErr(err error) error {
 // generatedHostLocked is the name a project is served at under the
 // network domain when none of its own hosts is there: its network label
 // under the domain. It is "" while the core is not networked, when the
-// project has a host there already, when the name is not a valid host, or
-// when taken (the hosts of every published site, lowercased) has it. It is
+// project has a host there already, when the name is the page's own
+// (nearhost.<domain>) or is not a valid host, or when taken (the hosts of every published site, lowercased) has it. It is
 // never written to the config.
 func (e *Engine) generatedHostLocked(run *projectRun, taken map[string]bool) string {
 	if e.netOpts == nil || len(run.web) == 0 {
@@ -216,7 +244,9 @@ func (e *Engine) generatedHostLocked(run *projectRun, taken map[string]bool) str
 		}
 	}
 	host := config.NetworkLabel(run.name) + "." + domain
-	if hostname.Valid(host) != nil || taken[host] {
+	// nearhost.<domain> is the page's own host: an app served there would
+	// get the page's device cookie.
+	if host == "nearhost."+domain || hostname.Valid(host) != nil || taken[host] {
 		return ""
 	}
 	return host

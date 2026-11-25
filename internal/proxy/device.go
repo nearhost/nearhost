@@ -319,8 +319,9 @@ func localPath(to string) string {
 	return to
 }
 
-// stripSiteCookie removes the site cookie from r's Cookie headers, so the
-// app never sees it, and removes a header left empty.
+// stripSiteCookie removes the site cookie, and the page's device cookie
+// (sent along should a site be served at the page's host), from r's Cookie
+// headers, so the app never sees either, and removes a header left empty.
 func stripSiteCookie(r *http.Request) {
 	lines := r.Header.Values("Cookie")
 	if len(lines) == 0 {
@@ -333,7 +334,7 @@ func stripSiteCookie(r *http.Request) {
 			// Trimmed as net/http trims a cookie's name, so whatever
 			// CookiesNamed read as the site cookie is stripped.
 			name, _, _ := strings.Cut(part, "=")
-			if strings.TrimSpace(part) == "" || textproto.TrimString(name) == siteCookie {
+			if n := textproto.TrimString(name); strings.TrimSpace(part) == "" || n == siteCookie || n == deviceCookie {
 				continue
 			}
 			parts = append(parts, strings.TrimSpace(part))

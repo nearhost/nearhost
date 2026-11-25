@@ -3,7 +3,11 @@ package proxy
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"errors"
+	"fmt"
+	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +95,79 @@ func TestNetworkToggleMovesThePagePort(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Apply %d: running ports %v, want %v", i, got, want)
 		}
+	}
+}
+
+// failNextLoads makes the next n loads of a config fail.
+func failNextLoads(t *testing.T, n int) {
+	t.Helper()
+	orig := loadCaddy
+	left := n
+	loadCaddy = func(cfg []byte, force bool) error {
+		if left > 0 {
+			left--
+			return errors.New("injected load failure")
+		}
+		return orig(cfg, force)
+	}
+	t.Cleanup(func() { loadCaddy = orig })
+}
+
+// A config that fails to load after the proxy stopped to move its ports
+// leaves the previous config serving again, and says so; the next apply
+// tries again. If the previous one fails too, the error says the proxy
+// serves nothing.
+func TestFailedMoveRestoresThePreviousConfig(t *testing.T) {
+	SetSink(&recorder{})
+	t.Cleanup(func() { SetSink(nil) })
+	https, http, web := freePort(t), freePort(t), freePort(t)
+	p := New(Options{StorageRoot: testutil.TempDir(t, "nh-caddy-"), HTTPSPort: https, HTTPPort: http, WebPort: web, HomeWithNoSites: true})
+	if err := p.Apply(nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	t.Cleanup(func() { p.Stop() })
+	loopback := portsFor(p.options())
+	page := net.JoinHostPort("127.0.0.1", fmt.Sprint(web))
+
+	p.SetNetwork(&NetworkOptions{Domain: netDomain, Certificates: "ca", Allow: config.DefaultNetworkAllow, Listen: true})
+	failNextLoads(t, 1)
+	err := p.Apply(nil)
+	if err == nil || errors.Is(err, ErrNotServing) || !strings.Contains(err.Error(), "the previous config serves again") {
+		t.Fatalf("Apply with the load failing = %v", err)
+	}
+	caddyMu.Lock()
+	got, own := runningPorts, owner
+	caddyMu.Unlock()
+	if !reflect.DeepEqual(got, loopback) || own != p {
+		t.Errorf("after the failed move: running ports %v (owner ours: %v), want %v", got, own == p, loopback)
+	}
+	if c, err := net.DialTimeout("tcp", page, time.Second); err != nil {
+		t.Errorf("the page does not answer on loopback after the failed move: %v", err)
+	} else {
+		c.Close()
+	}
+	if err := p.Apply(nil); err != nil {
+		t.Fatalf("Apply again: %v", err)
+	}
+	caddyMu.Lock()
+	got = runningPorts
+	caddyMu.Unlock()
+	if want := portsFor(p.options()); !reflect.DeepEqual(got, want) {
+		t.Errorf("after the retry: running ports %v, want %v", got, want)
+	}
+
+	p.SetNetwork(nil)
+	failNextLoads(t, 2)
+	if err := p.Apply(nil); !errors.Is(err, ErrNotServing) {
+		t.Errorf("Apply with both loads failing = %v, want ErrNotServing", err)
+	}
+	if p.Running() {
+		t.Error("the proxy says it runs a config after both loads failed")
+	}
+	if err := p.Apply(nil); err != nil {
+		t.Fatalf("Apply after nothing served: %v", err)
+	}
+	if !p.Running() {
+		t.Error("the proxy did not start again")
 	}
 }

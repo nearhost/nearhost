@@ -12,6 +12,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -402,5 +403,85 @@ func TestNetworkURL(t *testing.T) {
 		if got := networkURL(testDomain, port); got != want {
 			t.Errorf("networkURL(%d) = %q, want %q", port, got, want)
 		}
+	}
+}
+
+// A project named nearhost is never given nearhost.<domain>, the page's
+// own host on the network, whose device cookie would then reach the app.
+func TestNetworkNeverGeneratesThePageHost(t *testing.T) {
+	p := localProject("nearhost", upstream(t, "nh"))
+	h := newHarness(t, &config.Config{Projects: []config.Project{p}, Network: networkSection("ca")})
+	mustStart(t, h, "nearhost")
+	if got, want := siteHosts(h, "nearhost"), [][]string{{"nearhost.test"}}; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("nearhost hosts = %v, want %v", got, want)
+	}
+}
+
+// A network that fails to come up leaves the proxy's options as they were,
+// says why in NetworkState and in an event whose explanation matches what
+// the proxy serves, and is tried again by the next Apply, even of the same
+// config. (The proxy's own restore of its previous config is
+// TestFailedMoveRestoresThePreviousConfig.)
+func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		why  string
+	}{
+		{"restored", errors.New("load proxy config: listen tcp :6327: address in use; the previous config serves again"), "serves as it did before"},
+		{"not serving", fmt.Errorf("load proxy config: boom: %w", proxy.ErrNotServing), "serves nothing"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+			if err := h.eng.Start(bg); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			ops := watchProxy(h, false)
+			fail := true
+			h.eng.applySites = func([]proxy.Site) error {
+				ops.mu.Lock()
+				ops.ops = append(ops.ops, "apply")
+				ops.mu.Unlock()
+				if fail {
+					return c.err
+				}
+				return nil
+			}
+			events, unsubscribe := h.eng.Events().Subscribe(256)
+			defer unsubscribe()
+			cfg := &config.Config{Network: networkSection("ca")}
+			if err := h.eng.Apply(bg, cfg); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if got, want := ops.list(), []string{"network " + testDomain, "apply", "network nil"}; !slices.Equal(got, want) {
+				t.Errorf("proxy saw %v, want %v", got, want)
+			}
+			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") {
+				t.Errorf("NetworkState = %+v", st)
+			}
+			unsubscribe()
+			said := false
+			for ev := range events {
+				if ev.Report != nil && ev.Report.Code == report.NetworkApplyFailed {
+					said = true
+					if !strings.Contains(ev.Report.Why, c.why) {
+						t.Errorf("the failure says %q, want %q", ev.Report.Why, c.why)
+					}
+				}
+			}
+			if !said {
+				t.Error("no network.apply-failed event")
+			}
+			fail = false
+			if err := h.eng.Apply(bg, cfg); err != nil {
+				t.Fatalf("Apply again: %v", err)
+			}
+			if got, want := ops.list()[3:], []string{"network " + testDomain, "apply"}; !slices.Equal(got, want) {
+				t.Errorf("the retry: proxy saw %v, want %v", got, want)
+			}
+			if st := h.eng.NetworkState(); st.Problem != "" || !st.On {
+				t.Errorf("NetworkState after the retry = %+v", st)
+			}
+		})
 	}
 }
