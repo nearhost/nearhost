@@ -153,7 +153,7 @@ func TestHomePassthroughCount(t *testing.T) {
 		t.Errorf("home lacks the count:\n%s", s)
 	}
 	f.passes = nil
-	if s := screenText(m); strings.Contains(s, "agents") || strings.Contains(s, "passthroughs") {
+	if s := screenText(m); strings.Contains(s, "agents") || strings.Contains(s, "passthroughs ·") {
 		t.Errorf("home shows a count of none:\n%s", s)
 	}
 }

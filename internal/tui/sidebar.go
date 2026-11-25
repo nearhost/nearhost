@@ -18,6 +18,8 @@ const (
 	rowHome rowKind = iota
 	rowServer
 	rowProject
+	rowPasses
+	rowDocs
 )
 
 // row is one line of the sidebar.
@@ -35,6 +37,10 @@ func rowKey(kind rowKind, name string) string {
 		return "server:" + name
 	case rowProject:
 		return "project:" + name
+	case rowPasses:
+		return "passthroughs"
+	case rowDocs:
+		return "documents"
 	}
 	return homeKey
 }
@@ -42,7 +48,8 @@ func rowKey(kind rowKind, name string) string {
 func (r row) key() string { return rowKey(r.kind, r.name) }
 
 // rows lists the sidebar: Home, then Local and each server in config order,
-// each followed by its projects in config order unless it is collapsed.
+// each followed by its projects in config order unless it is collapsed, and
+// the pinned passthroughs and documents rows last.
 // Filtered by query, it lists the projects whose names hold it, under
 // their servers, and nothing else.
 func rows(cfg *config.Config, collapsed map[string]bool, query string) []row {
@@ -61,7 +68,7 @@ func rows(cfg *config.Config, collapsed map[string]bool, query string) []row {
 			}
 		}
 	}
-	return out
+	return append(out, row{kind: rowPasses}, row{kind: rowDocs})
 }
 
 // filteredRows are the projects whose names hold query, under their
@@ -101,8 +108,9 @@ type sideLine struct {
 	draw func(selected bool) string
 }
 
-// sideLines are every line of the sidebar, width wide: Home, on the main
-// panel's first line, a blank line, then each server with its projects.
+// sideLines are every line of the list part of the sidebar, width wide:
+// Home, on the main panel's first line, a blank line, then each server with
+// its projects. The pinned rows are drawn apart, below the list.
 func (m *Model) sideLines(width int) []sideLine {
 	blank := sideLine{draw: func(bool) string { return strings.Repeat(" ", width) }}
 	var lines []sideLine
@@ -112,6 +120,9 @@ func (m *Model) sideLines(width int) []sideLine {
 		}
 	}
 	for _, r := range m.rows() {
+		if r.kind == rowPasses || r.kind == rowDocs {
+			continue
+		}
 		lines = append(lines, sideLine{key: r.key(), draw: func(selected bool) string { return m.rowLine(r, width, selected) }})
 		if r.kind == rowHome {
 			lines = append(lines, blank)
@@ -120,25 +131,51 @@ func (m *Model) sideLines(width int) []sideLine {
 	return lines
 }
 
+// pinned is whether the passthroughs and documents rows are drawn below the
+// list: not while a filter is on, and not when the sidebar is too short to
+// hold them and a project.
+func (m *Model) pinned(height int) bool { return m.query() == "" && height >= 4 }
+
+// listHeight is the lines of the sidebar that hold the list, the rest, a
+// blank line and the two pinned rows, being below it.
+func (m *Model) listHeight(height int) int {
+	if m.pinned(height) {
+		return height - 3
+	}
+	return height
+}
+
 // sidebar draws the sidebar, height lines tall and width wide, and its
 // scrollbar, for the caller to draw on the border.
 func (m *Model) sidebar(width, height int) ([]string, []string) {
 	all := m.sideLines(width)
+	list := m.listHeight(height)
 	out := make([]string, 0, height)
-	top := sidebarTop(all, m.sel, height)
+	top := sidebarTop(all, m.sel, list)
 	for _, l := range all[top:] {
-		if len(out) == height {
+		if len(out) == list {
 			break
 		}
 		out = append(out, l.draw(l.key == m.sel))
 	}
-	for len(out) < height {
+	for len(out) < list {
 		out = append(out, strings.Repeat(" ", width))
 	}
-	return out, scrollbar(top, len(all), height)
+	bar := scrollbar(top, len(all), list)
+	if m.pinned(height) {
+		out = append(out, strings.Repeat(" ", width))
+		for _, k := range []rowKind{rowPasses, rowDocs} {
+			r := row{kind: k}
+			out = append(out, m.rowLine(r, width, r.key() == m.sel))
+		}
+		for range 3 {
+			bar = append(bar, " ")
+		}
+	}
+	return out, bar
 }
 
-// sidebarTop is the first line drawn in a sidebar height lines tall: the
+// sidebarTop is the first line drawn in a list height lines tall: the
 // first, unless the selected row would then be below the last line.
 func sidebarTop(all []sideLine, sel string, height int) int {
 	for i, l := range all {
@@ -152,8 +189,19 @@ func sidebarTop(all []sideLine, sel string, height int) int {
 // sidebarKeyAt is the key of the row drawn on line y of the sidebar, or ""
 // for none.
 func (m *Model) sidebarKeyAt(y int) string {
+	height := m.bodyHeight()
+	list := m.listHeight(height)
+	if m.pinned(height) && y >= list {
+		switch y - list {
+		case 1:
+			return rowKey(rowPasses, "")
+		case 2:
+			return rowKey(rowDocs, "")
+		}
+		return ""
+	}
 	all := m.sideLines(m.sideWidth())
-	if i := sidebarTop(all, m.sel, m.bodyHeight()) + y; y >= 0 && i < len(all) {
+	if i := sidebarTop(all, m.sel, list) + y; y >= 0 && i < len(all) {
 		return all[i].key
 	}
 	return ""
@@ -217,6 +265,22 @@ func (m *Model) rowLine(r row, width int, selected bool) string {
 			word.style = styleText
 		}
 		return renderRow(left, []seg{dot, word}, width, selected)
+	case rowPasses, rowDocs:
+		count, label := len(m.b.Passthroughs("")), "passthroughs"
+		if r.kind == rowDocs {
+			count, label = len(m.b.Documents("")), "documents"
+		}
+		right := []seg{glyph(markRunning), {styleRunning, fmt.Sprintf(" %d", count)}}
+		switch {
+		case m.narrow():
+			right = []seg{{styleRunning, fmt.Sprint(count)}}
+			if count == 0 {
+				right[0].style = styleDim
+			}
+		case count == 0:
+			right = []seg{{styleDim, "none"}}
+		}
+		return renderRow([]seg{{name, label}}, right, width, selected)
 	}
 	p, _ := m.cfg.Project(r.name)
 	status := m.b.Status(r.name)
