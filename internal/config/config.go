@@ -371,6 +371,9 @@ func (c *Config) HostsFileNames() []string {
 		}
 	}
 	for _, p := range c.Projects {
+		if c.UnderNetworkDomain(p.Alias) {
+			continue
+		}
 		if ValidProjectAlias(p.Alias) == nil && (p.Enabled || strings.HasSuffix(p.Alias, ".test")) {
 			add(p.Alias)
 		}
@@ -383,7 +386,7 @@ func (c *Config) HostsFileNames() []string {
 			}
 			for _, h := range r.Hosts {
 				h = strings.ToLower(h)
-				if h != "localhost" && !hostname.IsPattern(h) {
+				if h != "localhost" && !hostname.IsPattern(h) && !c.UnderNetworkDomain(h) {
 					add(h)
 				}
 			}
@@ -434,6 +437,9 @@ type Config struct {
 	// started: true leaves it running in the background, false stops it.
 	// Absent means ask.
 	KeepRunning *bool `yaml:"keep_running,omitempty"`
+	// Network, when present and enabled, has the core serve its page and
+	// projects to paired devices on the local network under a domain.
+	Network *Network `yaml:"network,omitempty"`
 }
 
 // NotificationsOff reports whether the config holds notifications: false.
@@ -833,6 +839,11 @@ func (c *Config) validateChange(before *Config) error {
 
 // Validate checks the invariants the rest of nearhost relies on.
 func (c *Config) Validate() error {
+	if c.Network != nil {
+		if err := c.Network.validate(); err != nil {
+			return err
+		}
+	}
 	serverNames := map[string]bool{LocalServer: true}
 	for _, s := range c.Servers {
 		if s.Name == LocalServer {

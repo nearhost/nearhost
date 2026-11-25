@@ -407,6 +407,16 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	out.RegistryPrompt = cloneBool(cfg.RegistryPrompt)
 	out.Notifications = cloneBool(cfg.Notifications)
 	out.KeepRunning = cloneBool(cfg.KeepRunning)
+	if n := cfg.Network; n != nil {
+		c := *n
+		c.Enabled = cloneBool(n.Enabled)
+		c.Allow = append([]string(nil), n.Allow...)
+		if n.ACME != nil {
+			a := *n.ACME
+			c.ACME = &a
+		}
+		out.Network = &c
+	}
 	return out
 }
 
