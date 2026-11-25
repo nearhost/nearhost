@@ -1837,7 +1837,7 @@ func TestTeardownEndingInTheRecordedStateAnnouncesWhatChangedMeanwhile(t *testin
 		t.Fatalf("status changed during the teardown: %+v", st)
 	}
 	h.eng.mu.Lock()
-	h.eng.setStateLocked(run, started.State, started.Message) // and fails, leaving everything as it was
+	h.eng.setStateLocked(run, started.State, errors.New(started.Message)) // and fails, leaving everything as it was
 	h.eng.mu.Unlock()
 	if st := h.eng.Status("myapp"); st.State != StateDegraded && sess.Status() != transport.StatusConnected {
 		t.Fatalf("status = %+v while the server is %s", st, sess.Status())

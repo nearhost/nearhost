@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // AgentDir is the directory in the server account's home that holds the
@@ -80,6 +82,25 @@ type AgentError struct {
 }
 
 func (e *AgentError) Error() string { return e.Msg }
+
+// Report is the message for the problem: its code, agents.not-ready,
+// agents.refused or agents.path-too-long, with Msg as the title and the
+// step that fixes it.
+func (e *AgentError) Report() *report.Message {
+	switch e.Problem {
+	case AgentNotReady:
+		return report.Errorf(report.AgentsNotReady, "%s", e.Msg).
+			Then("Check that the server account can write ~/.nearhost, then press r on the server to reconnect.")
+	case AgentTooLong:
+		return report.Errorf(report.AgentsPathTooLong, "%s", e.Msg).
+			Then("The server account's home directory is too long for the socket, so agents there cannot reach Nearhost.")
+	}
+	return report.Errorf(report.AgentsRefused, "%s", e.Msg).
+		Then("Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r on the server to reconnect.")
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *AgentError) Unwrap() error { return e.Report() }
 
 // ErrThisMachine is returned by PrepareAgentDir when the server's socket
 // would be this machine's own.

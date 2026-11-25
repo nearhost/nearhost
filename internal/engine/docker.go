@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/dockernet"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // defaultDockerRefresh is how often the Docker networks are asked for again
@@ -101,7 +102,7 @@ func (e *Engine) dockerStart(ctx context.Context, run *projectRun) error {
 			answered = e.docker.answered // another start or the loop may have heard meanwhile
 			e.mu.Unlock()
 			if !answered {
-				e.logProject(run, "Docker did not answer (%v); accepting requests from containers once it does", err)
+				e.reportProject(run, report.Warnf(report.DockerUnreachable, "Docker did not answer (%v); accepting requests from containers once it does", err).Wrap(err))
 				return nil
 			}
 		}
@@ -159,7 +160,7 @@ func (e *Engine) useDockerRanges(ctx context.Context, ranges []string) {
 		e.docker.ranges, e.docker.answered = prev.ranges, prev.answered
 		e.mu.Unlock()
 		for _, run := range served {
-			e.logProject(run, "could not accept requests from the new Docker networks (%s): %v", describeRanges(ranges), err)
+			e.reportProject(run, report.Warnf(report.DockerNetworksFailed, "could not accept requests from the new Docker networks (%s): %v", describeRanges(ranges), err).Wrap(err))
 		}
 		return
 	}

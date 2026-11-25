@@ -21,6 +21,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/safetext"
 )
 
@@ -73,6 +74,17 @@ type VersionError struct{ Version int }
 func (e *VersionError) Error() string {
 	return fmt.Sprintf("%s is version %d; this Nearhost understands version %d, so update Nearhost", FileName, e.Version, Version)
 }
+
+// Report is the message for the file, nearhostrc.version, as doctor
+// reports it.
+func (e *VersionError) Report() *report.Message {
+	return report.Errorf(report.NearhostrcVersion, "%s", e.Error()).
+		Step("Update Nearhost.", "nearhost update").
+		With("version", e.Version)
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *VersionError) Unwrap() error { return e.Report() }
 
 func newerVersion(v int) error { return &VersionError{Version: v} }
 
@@ -304,6 +316,21 @@ func (e *UnsetError) Error() string {
 	return fmt.Sprintf("%s: ${%s} has no value in .env.local or .env, and no default", at(e.Line), e.Var)
 }
 
+// Report is the message for the variable, nearhostrc.unset-variable, as
+// doctor reports it.
+func (e *UnsetError) Report() *report.Message {
+	m := report.Errorf(report.NearhostrcUnsetVariable, "%s", e.Error()).
+		Then(fmt.Sprintf("Set %[1]s in .env.local or .env, or give it a default in .nearhostrc: ${%[1]s:-value}.", e.Var)).
+		With("variable", e.Var)
+	if e.Line > 0 {
+		m.With("line", e.Line)
+	}
+	return m
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *UnsetError) Unwrap() error { return e.Report() }
+
 func unset(name string, line int) error { return &UnsetError{Var: name, Line: line} }
 
 // at is the start of an error message: the file name, and the line when it
@@ -332,7 +359,22 @@ func (e *BareVarError) Error() string {
 	return fmt.Sprintf("%s: %s. Write a variable as ${%s}.", at(e.Line), strings.TrimPrefix(e.Err.Error(), FileName+": "), e.Var)
 }
 
-func (e *BareVarError) Unwrap() error { return e.Err }
+// Report is the message for the value, nearhostrc.invalid, as doctor
+// reports it. Its cause is Err.
+func (e *BareVarError) Report() *report.Message {
+	m := report.Errorf(report.NearhostrcInvalid, "%s", e.Error()).
+		Then("Correct .nearhostrc.").
+		With("variable", e.Var).
+		Wrap(e.Err)
+	if e.Line > 0 {
+		m.With("line", e.Line)
+	}
+	return m
+}
+
+// Unwrap is the report message, whose cause is Err, so both report.As and
+// errors.Is see through it.
+func (e *BareVarError) Unwrap() error { return e.Report() }
 
 // bareHint returns err as a BareVarError when written, the value as it stands
 // in the file with its braced references still in place, holds a bare $NAME,

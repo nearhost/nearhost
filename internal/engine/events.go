@@ -5,6 +5,8 @@ package engine
 import (
 	"sync"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Event is a log line or a state change attributed to a project or server.
@@ -24,6 +26,11 @@ type Event struct {
 	Server  string // empty for local projects and proxy-level events
 	State   State  // the new state; empty unless this is a state change
 	Message string
+	// Report is the warning or error the event carries, with its code and
+	// fix; nil for an event that carries none. Its title is the reason in
+	// Message: the whole of a log line's, the part after "state: <state>: "
+	// of a state change's.
+	Report *report.Message
 }
 
 // Bus fans events out to subscribers. A subscriber whose buffer is full

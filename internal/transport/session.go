@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Status is the connection state of a Session.
@@ -119,9 +121,18 @@ func (s *Session) Preflight() error {
 	if len(path) <= maxSocketPath {
 		return nil
 	}
-	return fmt.Errorf("%s%s%sit is %d bytes and at most %d bytes fit; "+
-		"the run directory %s is too long, set a shorter XDG_CONFIG_HOME", socketPathPrefix, path, socketPathMarker, len(path), maxSocketPath, s.runDir)
+	return report.Errorf(report.SSHSocketPathTooLong, "%s%s%sit is %d bytes and at most %d bytes fit; "+
+		"the run directory %s is too long, set a shorter XDG_CONFIG_HOME", socketPathPrefix, path, socketPathMarker, len(path), maxSocketPath, s.runDir).
+		Then(SocketPathFix).
+		With("path", path)
 }
+
+// SocketPathFix is what to do about a run directory too long for ssh's
+// control socket.
+//
+// XDG_CONFIG_HOME also says where the config is read from, so the folder
+// goes with it. Nearhost reads both as it starts: no retry helps.
+const SocketPathFix = "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then quit Nearhost and start it again."
 
 // socketPathPrefix and socketPathMarker are the parts of Preflight's message
 // that, in that order, no other has.
@@ -282,6 +293,12 @@ type Health struct {
 	AgentPath, AgentErr string
 	// AgentProblem is the kind of problem AgentErr describes.
 	AgentProblem AgentProblem
+	// Problem is why the session is not connected, as a message whose
+	// title is LastError; nil while it is connected or has no error.
+	Problem *report.Message
+	// AgentReport is AgentErr as a message, with its code and fix; nil
+	// when AgentErr is empty.
+	AgentReport *report.Message
 }
 
 // Start launches the supervisor. While a supervisor is running it does
@@ -308,7 +325,8 @@ func (s *Session) Start() {
 	// had connected. Give up here, as the supervisor does on an error that
 	// retrying cannot fix.
 	if err := s.Preflight(); err != nil {
-		s.setStatus(StatusAuthFailed, err.Error())
+		m, _ := report.As(err)
+		s.setStatusWith(StatusAuthFailed, err.Error(), m)
 		return
 	}
 	s.mu.Lock()

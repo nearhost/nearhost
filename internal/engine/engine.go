@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,10 +17,12 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/dockernet"
+	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -104,6 +108,12 @@ type Options struct {
 type ProjectStatus struct {
 	State   State
 	Message string // why the project is in State; empty when there is nothing to say
+	// Problem is Message as a message, with its code, fix and data: the
+	// project's error, why it is degraded, why its start waits or why it
+	// was stopped. Its title is Message. It is nil when the state needs
+	// nothing: running or stopped with no reason, starting with no error,
+	// or degraded only because its server was disconnected on purpose.
+	Problem *report.Message
 	Alias   string
 	// WebLocalPort is the local port the proxy sends the alias to, that of
 	// the primary (first) web route; 0 when the site is not published.
@@ -525,7 +535,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	// holds its forwards, and nothing else ends one for a server since
 	// disabled or removed.
 	for _, err := range transport.EndStaleMasters(ctx, e.opts.RunDir, e.opts.SSHPath, e.opts.SSHEnv) {
-		e.bus.Publish(Event{Message: err.Error()})
+		e.bus.Publish(Event{Message: err.Error(), Report: report.Warnf(report.SSHStaleMaster, "%s", err).Wrap(err)})
 	}
 
 	// A taken page port costs only the page, not the proxy. A Start that
@@ -535,7 +545,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.webPort = e.opts.WebPort
 	e.mu.Unlock()
 	if port := e.opts.WebPort; port != 0 {
-		if err := e.probePort(ctx, "Nearhost's page", port, 0, netbind.PageAddrs); err != nil {
+		if err := e.probePort(ctx, pageWhat, port, 0, netbind.PageAddrs); err != nil {
 			e.proxy.SetWebPort(0)
 			e.mu.Lock()
 			e.webPort = 0
@@ -545,7 +555,13 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 			if errors.As(err, &pe) {
 				reason = pe.reason()
 			}
-			e.bus.Publish(Event{Message: fmt.Sprintf("port %d %s; serving without Nearhost's page (pass --web-port to choose another)", port, reason)})
+			msg := fmt.Sprintf("port %d %s; serving without Nearhost's page (pass --web-port to choose another)", port, reason)
+			warning := portProblem(msg, pageWhat, port, err, "")
+			if pe != nil {
+				warning = portProblem(msg, pageWhat, port, pe.err, strings.TrimPrefix(pe.heldBy, " by "))
+			}
+			warning.Level = report.Warning
+			e.bus.Publish(Event{Message: msg, Report: warning})
 		}
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
@@ -618,8 +634,67 @@ func (e *portError) Error() string {
 	return fmt.Sprintf("%s port %d %s: %v", e.what, e.port, e.reason(), e.err)
 }
 
-// Unwrap returns the error from binding the port.
-func (e *portError) Unwrap() error { return e.err }
+// Report is the message for the port: port.needs-permission or
+// port.in-use, with the port and any holder in its data and what to do.
+// Its title is the error's text, and its cause the error from binding.
+func (e *portError) Report() *report.Message {
+	return portProblem(e.Error(), e.what, e.port, e.err, strings.TrimPrefix(e.heldBy, " by "))
+}
+
+// Unwrap is the report message, whose cause is the error from binding the
+// port, so report.As and errors.Is both see through it.
+func (e *portError) Unwrap() error { return e.Report() }
+
+// pageWhat is the portError.what of Nearhost's page.
+const pageWhat = "Nearhost's page"
+
+// goos is the operating system, which decides how a port below 1024 is
+// allowed; a var so tests can pick one.
+var goos = runtime.GOOS
+
+// executable is the path of the running binary, or "" if unknown, for the
+// setcap command; a var so tests can replace it.
+var executable = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
+}
+
+// portProblem is the message, titled title, for the port called what that
+// could not be bound with the error cause: port.needs-permission when the
+// user may not bind it, and port.in-use otherwise, with holder, the program
+// holding it ("node (pid 4242)"), when known. Caddy can return a bind error
+// as text with the errno lost, so its text says which one too.
+func portProblem(title, what string, port int, cause error, holder string) *report.Message {
+	denied := errors.Is(cause, fs.ErrPermission) || cause != nil && strings.Contains(cause.Error(), "permission denied")
+	const ports = "pass --https-port and --http-port."
+	var m *report.Message
+	switch {
+	case what == pageWhat:
+		code := report.PortInUse
+		if denied {
+			code = report.PortNeedsPermission
+		}
+		m = report.Errorf(code, "%s", title).Then("Pass --web-port to choose another port for Nearhost's page.")
+	case denied && goos == "linux":
+		m = report.Errorf(report.PortNeedsPermission, "%s", title).
+			Step("Give this copy of nearhost permission to use ports below 1024, such as 443 and 80:", doctor.SetcapFix(executable())).
+			Then("Do not run nearhost with sudo.")
+	case denied:
+		m = report.Errorf(report.PortNeedsPermission, "%s", title).
+			Then("Run nearhost as a user that may bind the port, or " + ports)
+	default:
+		m = report.Errorf(report.PortInUse, "%s", title).
+			Then("Quit the program using the port, or " + ports)
+	}
+	m.With("port", port)
+	if holder != "" {
+		m.With("holder", holder)
+	}
+	return m.Wrap(cause)
+}
 
 // BindNotPermitted reports whether err is a port the proxy cannot listen on
 // because the user may not bind it, as opposed to the port being in use.
@@ -789,7 +864,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 
 // lockRunDir takes the run directory's instance lock, unless the
 // engine holds it already or has no run directory. Another engine holding it
-// is an *instanceError. lifeMu must be held.
+// is the alreadyRunning message. lifeMu must be held.
 func (e *Engine) lockRunDir() error {
 	if e.releaseInstance != nil || e.opts.RunDir == "" {
 		return nil
@@ -868,13 +943,13 @@ func (e *Engine) Status(name string) ProjectStatus {
 	if !ok {
 		return ProjectStatus{State: StateStopped}
 	}
-	st, msg := run.announced, run.shownMsg
+	st, msg, problem := run.announced, run.shownMsg, run.shownProblem
 	if st == "" {
 		// Recorded and not announced yet: only inside a start or stop, which
 		// announces before it lets go of the lock.
-		st, msg = e.effectiveLocked(run)
+		st, msg, problem = e.effectiveLocked(run)
 	}
-	status := ProjectStatus{State: st, Message: msg, Alias: run.alias, Pending: run.pending, Notice: run.notice}
+	status := ProjectStatus{State: st, Message: msg, Problem: copyMessage(problem), Alias: run.alias, Pending: run.pending, Notice: run.notice}
 	// Waiting goes with the state shown: while a stop tears the project
 	// down, that is the one announced before it began.
 	waiting := run.shownWaiting
