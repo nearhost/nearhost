@@ -236,3 +236,12 @@ func TestServiceEnvNotesAreMessages(t *testing.T) {
 		t.Errorf("no step in %+v", notes[0])
 	}
 }
+
+// The line to add to the ssh config is a command of its own.
+func TestServiceEnvNotesGiveTheLineToAdd(t *testing.T) {
+	pureResolve(t)
+	_, notes := ServiceEnv("linux", func(string) string { return "" }, nil, "/home/u", "/run/user/1000")
+	if len(notes) != 1 || len(notes[0].Fix) != 1 || notes[0].Fix[0].Command != "IdentityAgent <socket path>" {
+		t.Fatalf("notes %+v", notes)
+	}
+}

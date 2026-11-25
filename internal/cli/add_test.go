@@ -1300,11 +1300,11 @@ func TestAddExplainsABadWebPortNameOrPath(t *testing.T) {
 		{[]string{dir, "--name", "w", "--web", "abc"}, `--web must be a port number, not "abc"`},
 		{[]string{dir, "--name", "w", "--web", "70000"}, "--web must be a port between 1 and 65535, not 70000"},
 		{[]string{missing}, "no directory at " + missing},
-		{[]string{dir, "--name", "ünï"}, `The name "ünï" holds characters a .test name cannot use. Pass --name with a-z, 0-9 and -, or --alias with the full domain.`},
+		{[]string{dir, "--name", "ünï"}, `The name "ünï" holds characters a .test name cannot use. Pass a name with a-z, 0-9 and -: nearhost add`},
 		{[]string{dir, "--name", "café"}, `The name "café" holds characters a .test name cannot use.`},
 		{[]string{dir, "--name", "foo™"}, `The name "foo™" holds characters a .test name cannot use.`},
 		{[]string{dir, "--name", "foo\u0301"}, `holds characters a .test name cannot use`},
-		{[]string{uni}, `The name "ünï" holds characters a .test name cannot use. Pass --name`},
+		{[]string{uni}, `The name "ünï" holds characters a .test name cannot use. Pass a name with a-z, 0-9 and -:`},
 	} {
 		out, err := execute(t, newAddCmd(noRemote(t)), append([]string{"--config", cfgPath, "add"}, c.args...)...)
 		if err == nil || !strings.Contains(errText(err), c.want) {

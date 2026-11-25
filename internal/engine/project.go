@@ -685,17 +685,43 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 	return nil
 }
 
-// hostsProblem is why the hosts of the project called name could not be
+// hostsProblem is HostsProblem, for the engine's own start.
+func hostsProblem(name string, err error) error { return HostsProblem(name, err) }
+
+// HostsProblem is why the hosts of the project called name could not be
 // made to resolve, err being the hosts file's refusal: the message err
-// holds, such as hosts.read-only, or hosts.needs-update.
-func hostsProblem(name string, err error) error {
-	text := fmt.Sprintf("project %q's hosts are not resolvable: the hosts file was not updated (%v); start the project again to retry", name, err)
-	if m, ok := report.As(err); ok {
-		return retitle(m, text, report.Error).Wrap(err)
+// holds, such as hosts.read-only, with its code and fix, or
+// hosts.needs-update. Either way its last steps say how to retry; its
+// title says only what happened. The interface's own hosts fixer uses it
+// too, so a refusal reads the same wherever it happens.
+func HostsProblem(name string, err error) *report.Message {
+	text := fmt.Sprintf("project %q's hosts are not resolvable: the hosts file was not updated (%s)", name, HostsCause(err))
+	var m *report.Message
+	if inner, ok := report.As(err); ok {
+		m = retitle(inner, text, report.Error)
+	} else {
+		m = report.Errorf(report.HostsNeedsUpdate, "%s", text).
+			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", "nearhost --no-hosts")
+		m.Fix = append([]report.Step{{Text: "Start the project again to retry."}}, m.Fix...)
+		return m.Wrap(err)
 	}
-	return report.Errorf(report.HostsNeedsUpdate, "%s", text).
-		Then(fmt.Sprintf("Start the project again to retry, or add its hosts to %s yourself and run nearhost with --no-hosts.", hosts.DefaultPath)).
-		Wrap(err)
+	return m.Then("Then start the project again to retry.").Wrap(err)
+}
+
+// HostsCause is err, the hosts file's refusal, as a clause inside a state
+// text: a message's title, not its explanation, so the text stays one line;
+// a sentence the user is the subject of ("You cancelled the password, …")
+// starts in lower case and loses its full stop. Other text is kept whole,
+// as the interface looks for it in the state.
+func HostsCause(err error) string {
+	text := err.Error()
+	if m, ok := report.As(err); ok {
+		text = m.Title
+	}
+	if rest, ok := strings.CutPrefix(text, "You "); ok {
+		text = "you " + strings.TrimSuffix(rest, ".")
+	}
+	return text
 }
 
 // bindPort finds the port in a bind error as Caddy words it, such as

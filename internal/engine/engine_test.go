@@ -1072,10 +1072,11 @@ func TestHostsFailureLeavesProjectStopped(t *testing.T) {
 	if st.State != StateStopped || st.WebLocalPort != 0 {
 		t.Fatalf("status = %+v, want stopped", st)
 	}
-	for _, want := range []string{`project "myapp"'s hosts are not resolvable`, "start the project again"} {
-		if !strings.Contains(st.Message, want) {
-			t.Fatalf("message %q does not contain %q", st.Message, want)
-		}
+	if !strings.Contains(st.Message, `project "myapp"'s hosts are not resolvable`) || strings.Contains(st.Message, "retry") {
+		t.Fatalf("message %q, want the problem alone", st.Message)
+	}
+	if p := st.Problem; p == nil || len(p.Fix) == 0 || p.Fix[0].Text != "Start the project again to retry." {
+		t.Fatalf("problem %+v, want the retry as its first step", p)
 	}
 	if len(h.eng.Sites()) != 0 || len(h.forwards("mini")) != 0 || strings.Contains(h.log(), "-L ") {
 		t.Fatalf("nothing may be started when the alias cannot resolve; sites %v, log:\n%s", h.eng.Sites(), h.log())

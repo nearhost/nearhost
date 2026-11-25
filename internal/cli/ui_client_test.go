@@ -762,7 +762,7 @@ func TestHostsStartSaysTheRefusal(t *testing.T) {
 	h := newHostsHarness(t, tui.ErrPasswordCancelled)
 	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.root.times() == 1 }, "the first ask")
 	err := h.b.StartProject(context.Background(), "web")
-	want := `project "web"'s hosts are not resolvable: the hosts file was not updated (you cancelled the password, so web.test was not added to ` + h.path + "); start the project again to retry"
+	want := `project "web"'s hosts are not resolvable: the hosts file was not updated (you cancelled the password, so web.test was not added to ` + h.path + ")"
 	if err == nil || err.Error() != want {
 		t.Errorf("StartProject = %v, want %q", err, want)
 	}

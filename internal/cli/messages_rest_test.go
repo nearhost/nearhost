@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,3 +362,63 @@ func titles(ms []*report.Message) []string {
 const setcapWarning = "Warning: The new binary has no permission to bind ports 80 and 443.\n\n" +
 	"An update replaces the binary, and the permission belongs to the file it\nwas given to.\n\n" +
 	"To give it permission, run:\n\n  "
+
+// The interface's hosts fixer words a refusal as the engine does: an inner
+// message keeps its code and fix, the retry is the last step, and the title
+// stays one line with no advice in it.
+func TestHostsNotFixedKeepsTheInnerMessage(t *testing.T) {
+	inner := report.Errorf(report.HostsReadOnly, "/etc/hosts is read-only.").
+		Because("Something marked it so.").Step("Make it writable:", "chattr -i /etc/hosts")
+	m := hostsNotFixed("web", fmt.Errorf("apply: %w", inner))
+	if m.Code != report.HostsReadOnly {
+		t.Errorf("code %q", m.Code)
+	}
+	if want := `project "web"'s hosts are not resolvable: the hosts file was not updated (/etc/hosts is read-only.)`; m.Title != want {
+		t.Errorf("title %q, want %q", m.Title, want)
+	}
+	wantSteps(t, m,
+		report.Step{Text: "Make it writable:", Command: "chattr -i /etc/hosts"},
+		report.Step{Text: "Then start the project again to retry."})
+	if e := engine.HostsProblem("web", inner); e.Title != m.Title || e.Code != m.Code {
+		t.Errorf("the engine words it otherwise: %+v", e)
+	}
+	plain := hostsNotFixed("web", errors.New("sudo: no"))
+	if plain.Code != report.HostsNeedsUpdate || strings.Contains(plain.Title, "retry") || len(plain.Fix) != 2 || plain.Fix[1].Command != "nearhost --no-hosts" {
+		t.Errorf("%+v", plain)
+	}
+}
+
+func TestRegistryNotTrustedIsAMessage(t *testing.T) {
+	err := unreadableRegistry(config.Registry{Alias: "acme", Repo: "Acme/web-presets"}, errors.New("404 Not Found"))
+	m := messageIn(t, err)
+	if m.Code != report.PresetRegistryNotTrusted || m.Level != report.Error ||
+		m.Title != "Registry acme (Acme/web-presets) was not trusted, so nothing was saved." ||
+		m.Why != "Registry acme (Acme/web-presets) cannot be read: 404 Not Found." {
+		t.Errorf("%+v", m)
+	}
+}
+
+// add's steps give the command line to run again, with the flag to change.
+func TestAddStepsRunItAgain(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("A_PORT=1\nB_PORT=2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	_, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--name", "my app")
+	m := messageIn(t, err)
+	want := "nearhost add " + shellQuote(dir) + " --config " + shellQuote(cfgPath) + " --name 'my app' --web <port>"
+	wantSteps(t, m, report.Step{Text: "Run it again, naming the port your app listens on:", Command: want})
+
+	_, err = execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", dir, "--server", "nas")
+	m = messageIn(t, err)
+	if len(m.Fix) != 2 || m.Fix[0].Command != "- {name: nas, ssh_host: <ssh host>}" || !strings.HasPrefix(m.Fix[1].Command, "nearhost add ") {
+		t.Errorf("steps %+v", m.Fix)
+	}
+}
+
+func TestPresetUpdatesFailedIsAnError(t *testing.T) {
+	if e, ok := report.Lookup(report.PresetUpdatesFailed); !ok || e.Level != report.Error {
+		t.Errorf("%+v", e)
+	}
+}

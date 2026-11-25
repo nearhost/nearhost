@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/agentapi"
@@ -266,7 +267,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	// save made for another reason such as enabling a preset, leaves it out.
 	srv, known := cfg.Server(flags.server)
 	unknown := report.Errorf(report.AddUnknownServer, "Unknown server %q.", flags.server).
-		Then(fmt.Sprintf("Add it under `servers:` in %s, with a name and an ssh_host, and try again.", cfgPath)).
+		Step("Add it under servers: in "+cfgPath+", with the host ssh reaches it as:", fmt.Sprintf("- {name: %s, ssh_host: <ssh host>}", yamlScalar(flags.server))).
+		Step("Then add the project again:", addAgain(cmd)).
 		With("server", flags.server)
 	if !known && (answers == nil || strings.TrimSpace(flags.server) == "") {
 		return unknown
@@ -302,7 +304,8 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if strings.TrimSpace(flags.alias) == "" && config.LosesInAlias(project.Name) {
 		if f, found, err := nearhostrc.Read(reader); err == nil && (!found || f.Alias == "") {
 			return errors.Join(report.Errorf(report.AddBadName, "The name %q holds characters a .test name cannot use.", project.Name).
-				Then("Pass --name with a-z, 0-9 and -, or --alias with the full domain."), done())
+				Step("Pass a name with a-z, 0-9 and -:", addAgain(cmd, "--name", "<name>")).
+				Step("Or pass the full domain to serve it at:", addAgain(cmd, "--alias", "<domain>")), done())
 		}
 	}
 	res, warnings, err := discoverWithPresets(cmd, b, flags, cfg, cfgPath, reader, answers)
@@ -331,7 +334,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		switch err := aliasProblem(cfg, project.Alias); {
 		case errors.As(err, &aliasTaken):
 			return errors.Join(report.Errorf(report.AddAliasTaken, "%s asks for alias %s, which is already used by project %q.", nearhostrc.FileName, project.Alias, aliasTaken.other.Name).
-				Then("Pass another name with --alias.").Wrap(err), done())
+				Step("Pass another domain to serve it at:", addAgain(cmd, "--alias", "<domain>")).Wrap(err), done())
 		case err != nil:
 			return errors.Join(err, done())
 		}
@@ -366,7 +369,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	if _, ok := project.WebRoute(); !ok {
 		return report.Errorf(report.AddNoWebPort, "Nearhost could not tell which port serves %s, so nothing was saved.", project.Name).
-			Then("Run it again with --web <port>, naming the port your app listens on.")
+			Step("Run it again, naming the port your app listens on:", addAgain(cmd, "--web", "<port>"))
 	}
 	for _, a := range advisories {
 		fmt.Fprintf(out, "\nAdvisory (%s): %s\n", a.Code, printableLines(a.Message))
@@ -389,7 +392,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 		if saved, ok := cfg.Server(srv.Name); newServer && ok {
 			if saved.SSHHost != srv.SSHHost {
 				return report.Errorf(report.AddServerChanged, "Server %s was added meanwhile, reached with `ssh %s`, not `ssh %s` as typed, so nothing was saved.", srv.Name, saved.SSHHost, srv.SSHHost).
-					Then("Run the add again.")
+					Step("Run the add again:", addAgain(cmd))
 			}
 			newServer = false
 		} else if newServer {
@@ -432,6 +435,60 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	}
 	_, err = fmt.Fprintln(out, runningAdvice(mode, project.Enabled, start))
 	return err
+}
+
+// addAgain is the command line that runs cmd, nearhost add, again as it
+// was given, with each flag in set (name, value pairs, such as "--web",
+// "<port>") put in place of the one given. Each word is quoted for a shell
+// where it needs to be; a placeholder in angle brackets is left as it is,
+// for the user to replace.
+func addAgain(cmd *cobra.Command, set ...string) string {
+	replace := map[string]string{}
+	var order []string
+	for i := 0; i+1 < len(set); i += 2 {
+		name := strings.TrimPrefix(set[i], "--")
+		replace[name] = set[i+1]
+		order = append(order, name)
+	}
+	quote := func(s string) string {
+		if strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">") {
+			return s
+		}
+		return shellQuote(s)
+	}
+	words := []string{"nearhost", "add"}
+	for _, a := range cmd.Flags().Args() {
+		words = append(words, quote(a))
+	}
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if _, ok := replace[f.Name]; ok {
+			return
+		}
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			for _, v := range sv.GetSlice() {
+				words = append(words, "--"+f.Name, quote(v))
+			}
+			return
+		}
+		if f.Value.Type() == "bool" {
+			words = append(words, "--"+f.Name)
+			return
+		}
+		words = append(words, "--"+f.Name, quote(f.Value.String()))
+	})
+	for _, name := range order {
+		words = append(words, "--"+name, quote(replace[name]))
+	}
+	return strings.Join(words, " ")
+}
+
+// yamlScalar is s as a YAML scalar in a flow mapping: quoted when it holds
+// anything but letters, digits, dots and hyphens.
+func yamlScalar(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_") == "" {
+		return s
+	}
+	return strconv.Quote(s)
 }
 
 // badConfigForAdd is err, the config failing to load, as the error add
@@ -594,7 +651,8 @@ func applyNearhostrc(cmd *cobra.Command, b addBackend, cfg *config.Config, reade
 			names[i] = it.Name()
 		}
 		return nil, report.Errorf(report.AddNeedsApproval, "Not added: this project asks for things that need your approval (%s).", strings.Join(names, ", ")).
-			Step("Run the add in a terminal, where it can ask, or approve them in the interface:", "nearhost")
+			Step("Run the add in a terminal, where it can ask:", addAgain(cmd)).
+			Step("Or approve them in the interface:", "nearhost")
 	}
 	// The note is about names, so a prompt about only loopback ports and
 	// options goes without it.

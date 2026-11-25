@@ -117,6 +117,8 @@ const (
 	PresetUnknown              Code = "preset.unknown"
 	PresetLocalFile            Code = "preset.local-file"
 	PresetRegistryUnknown      Code = "preset.registry-unknown"
+	PresetRegistryNotTrusted   Code = "preset.registry-not-trusted"
+	PresetUpdatesFailed        Code = "preset.updates-failed"
 	PresetRegistryInUse        Code = "preset.registry-in-use"
 	ExportExists               Code = "export.exists"
 	ExportChanged              Code = "export.changed"
@@ -240,6 +242,8 @@ var catalog = []Entry{
 	{PresetUnknown, Error, 404, "No preset or registry has the name given."},
 	{PresetLocalFile, Error, 409, "The preset is a local file, so there is no registry to update it from."},
 	{PresetRegistryUnknown, Error, 404, "No registry is trusted under the name given."},
+	{PresetRegistryNotTrusted, Error, 502, "A registry's index could not be fetched or checked, so it was not trusted and nothing was saved."},
+	{PresetUpdatesFailed, Error, 502, "Some of the presets asked for could not be updated from their registries."},
 	{PresetRegistryInUse, Error, 409, "Presets from the registry are enabled, so it cannot be removed."},
 	{ExportExists, Error, 409, "The project already has a .nearhostrc, and export does not replace one unasked."},
 	{ExportChanged, Error, 409, "The project changed while it was exported, so the file written is not approved."},

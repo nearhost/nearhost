@@ -217,8 +217,7 @@ func tellCore(cmd *cobra.Command) {
 	if err != nil {
 		sinkOf(cmd).Report(reportmsg.Warnf(reportmsg.HostsCoreNotTold, "The hosts file is updated, but the running Nearhost could not be told.").
 			Because("%s", upperFirst(err.Error())).
-			Step("Restart it so it serves the projects the hosts file stopped:", "nearhost stop").
-			Step("Then start it again:", "nearhost -d").Wrap(err))
+			Because("The projects it stopped for the hosts file start again when you start them.").Wrap(err))
 	}
 }
 

@@ -239,7 +239,7 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 				line, did, err := b.update(cmd.Context(), cfg, cfgPath, reg, indexes[alias], ref, force)
 				if err != nil {
 					failed++
-					sinkOf(cmd).Report(report.Warnf(report.PresetNotUpdated, "%s: not updated: %s", ref.Name, err).Wrap(err))
+					sinkOf(cmd).Report(report.Warnf(report.PresetNotUpdated, "%s: not updated: %s.", ref.Name, strings.TrimSuffix(messageOf(err).Title, ".")).Wrap(err))
 					continue
 				}
 				if did {
@@ -264,7 +264,8 @@ func newPresetUpdateCmd(b presetBackend) *cobra.Command {
 				}
 			}
 			if failed > 0 {
-				return report.Errorf(report.PresetNotUpdated, "%d of %d presets could not be updated.", failed, len(targets))
+				return report.Errorf(report.PresetUpdatesFailed, "%d of %d presets could not be updated.", failed, len(targets)).
+					Because("The warnings above say why.")
 			}
 			return nil
 		},

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/registry"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -429,7 +430,7 @@ func TestPresetUpdateByRegistry(t *testing.T) {
 
 	f.down[acmeReg.Repo] = true
 	out, err = execute(t, newPresetCmd(b), "--config", cfgPath, "preset", "update")
-	if err == nil || err.Error() != "1 of 2 presets could not be updated." {
+	if m, ok := report.As(err); !ok || m.Code != report.PresetUpdatesFailed || m.Title != "1 of 2 presets could not be updated." {
 		t.Errorf("error = %v", err)
 	}
 	wantContains(t, flat(out), "test/stack: up to date", "Warning: acme/stack: not updated: registry acme (Acme/web-presets) cannot be read: ")

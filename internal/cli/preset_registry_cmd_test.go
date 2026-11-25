@@ -75,7 +75,7 @@ func TestRegistryAddRefusesWhatItCannotTrust(t *testing.T) {
 			f.files["/acme/bad/HEAD/index.yaml"] = "schema: 1\nref: not a commit\n"
 			f.files["/acme/newer/HEAD/index.yaml"] = "schema: 2\nref: " + refOne + "\n"
 			_, err := execute(t, newPresetCmd(b), append([]string{"--config", cfgPath, "preset", "registry", "add"}, tc.args...)...)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.want)) {
 				t.Fatalf("expected an error with %q, got %v", tc.want, err)
 			}
 			if tc.request && !strings.Contains(err.Error(), "nothing was saved") {

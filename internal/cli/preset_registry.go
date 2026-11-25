@@ -70,9 +70,23 @@ func newRegistryAddCmd(b presetBackend) *cobra.Command {
 // unreadableRegistryError is a registry whose index could not be fetched or
 // checked. Problem is the bare description, for callers that word the
 // consequence themselves.
-type unreadableRegistryError struct{ problem string }
+// It reads as its preset.registry-not-trusted message, which Unwrap gives.
+type unreadableRegistryError struct {
+	problem string
+	m       *report.Message
+}
 
-func (e *unreadableRegistryError) Error() string { return e.problem + "; nothing was saved" }
+// unreadableRegistry is the error of the registry reg, whose index could
+// not be fetched or checked with err.
+func unreadableRegistry(reg config.Registry, err error) *unreadableRegistryError {
+	problem := registryProblem(reg, err)
+	m := report.Errorf(report.PresetRegistryNotTrusted, "Registry %s (%s) was not trusted, so nothing was saved.", reg.Alias, reg.Repo).
+		Because("%s.", upperFirst(problem)).With("repo", reg.Repo).Wrap(err)
+	return &unreadableRegistryError{problem: problem, m: m}
+}
+
+func (e *unreadableRegistryError) Error() string { return e.m.Error() }
+func (e *unreadableRegistryError) Unwrap() error { return e.m }
 
 // trust is `registry add`: it fetches and checks the index of the registry
 // in repo and, if it is valid, saves the registry in the config under alias,
@@ -85,7 +99,7 @@ func (b presetBackend) trust(ctx context.Context, out io.Writer, cfg *config.Con
 	}
 	idx, err := b.client(cfgPath, reg).Refresh(ctx)
 	if err != nil {
-		return config.Registry{}, &unreadableRegistryError{problem: registryProblem(reg, err)}
+		return config.Registry{}, unreadableRegistry(reg, err)
 	}
 	// The fetch took a while, so the registry is checked again against the
 	// file as it is now.
