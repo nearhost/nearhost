@@ -239,6 +239,10 @@ func TestStorageWarningAdvisesByKind(t *testing.T) {
 		{pathErr(failedOther, "set the owner of", "The system cannot find the file specified."),
 			"Nearhost could not make its CA folder " + root + " private.", "The system cannot find the file specified.", "", ""},
 		{errors.New("plain"), "Nearhost could not make its CA folder " + root + " private.", "Plain.", "", ""},
+		// A localised Windows message starts with a letter of more than one
+		// byte.
+		{pathErr(failedOther, "set the owner of", "отказано в доступе."),
+			"Nearhost could not make its CA folder " + root + " private.", "Отказано в доступе.", "", ""},
 	} {
 		m := storageWarning(root, c.err)
 		if m.Code != report.CANotPrivate || m.Level != report.Warning || m.Title != c.title || m.Why != c.why {

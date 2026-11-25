@@ -93,13 +93,7 @@
       "code": "hosts.needs-update",
       "level": "warning",
       "status": 409,
-      "summary": "The hosts file does not yet list the names Nearhost serves.",
-      "steps": [
-        {
-          "text": "Update it in a terminal:",
-          "command": "nearhost hosts update"
-        }
-      ]
+      "summary": "The hosts file does not yet list the names Nearhost serves."
     },
     {
       "code": "hosts.read-only",
@@ -239,7 +233,7 @@
       "summary": "A newer release of Nearhost is available.",
       "steps": [
         {
-          "text": "To update, run:",
+          "text": "Update it:",
           "command": "nearhost update"
         }
       ]
@@ -275,17 +269,7 @@
     {
       "code": "core.outdated",
       "level": "info",
-      "summary": "The running Nearhost is an older release than this copy, and runs it once restarted.",
-      "steps": [
-        {
-          "text": "Stop it:",
-          "command": "nearhost stop"
-        },
-        {
-          "text": "Then start it again:",
-          "command": "nearhost -d"
-        }
-      ]
+      "summary": "The running Nearhost is an older release than this copy, and runs it once restarted."
     },
     {
       "code": "core.no-reload",

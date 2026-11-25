@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/nearhost/nearhost/internal/report"
@@ -171,12 +173,14 @@ func storageWarning(root string, err error) *report.Message {
 	return m.Wrap(cause)
 }
 
-// upperFirst returns s with its first letter in upper case.
+// upperFirst returns s with its first letter in upper case, whatever its
+// script: Windows words its messages in the system's language.
 func upperFirst(s string) string {
 	if s == "" {
 		return s
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	r, n := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[n:]
 }
 
 // trustInstall and trustUninstall are the trust store library's calls. Tests

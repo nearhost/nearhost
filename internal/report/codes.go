@@ -489,15 +489,8 @@ var fixedSteps = map[Code][]Step{
 		{Text: "Start it in the background:", Command: "nearhost -d"},
 		{Text: "Or open its interface:", Command: "nearhost"},
 	},
-	CoreOutdated: {
-		{Text: "Stop it:", Command: "nearhost stop"},
-		{Text: "Then start it again:", Command: "nearhost -d"},
-	},
 	UpdateAvailable: {
-		{Text: "To update, run:", Command: "nearhost update"},
-	},
-	HostsNeedsUpdate: {
-		{Text: "Update it in a terminal:", Command: "nearhost hosts update"},
+		{Text: "Update it:", Command: "nearhost update"},
 	},
 	InterfaceNoTerminal: {
 		{Text: "Run it in the background:", Command: "nearhost -d"},

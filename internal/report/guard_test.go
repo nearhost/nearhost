@@ -26,7 +26,7 @@ const (
 	ruleStderr     guardRule = "stderr"      // os.Stderr, ErrOrStderr(), fmt.Fprint* to errOut or stderr
 	ruleHTTPError  guardRule = "http-error"  // http.Error(…)
 	ruleErrorBody  guardRule = "error-body"  // an "error" map key, or a field tagged json:"error"
-	ruleLabel      guardRule = "label"       // a string literal that starts "nearhost: "
+	ruleLabel      guardRule = "label"       // a string literal that starts "nearhost: ", "Error: " or "Warning: "
 	ruleAdviceText guardRule = "advice-text" // a struct field advice, fix or hint of type string
 )
 
@@ -72,6 +72,10 @@ var guardAllowed = map[string]string{
 	allowKey("internal/control/actions.go", ruleErrorBody, "decodeProblem"):   "reads the error key of a core from before problem details",
 	allowKey("internal/control/control.go", ruleAdviceText, "EnvCheck"):       "the control API's released fix of an environment check; problem carries the message",
 }
+
+// oldLabels are the labels message text never starts with: renderers add
+// the level's.
+var oldLabels = []string{"nearhost: ", "Error: ", "Warning: "}
 
 // allowKey is the guardAllowed key of a hit.
 func allowKey(file string, rule guardRule, in string) string {
@@ -226,8 +230,12 @@ func guardHits(name string, src []byte) ([]guardHit, error) {
 			}
 		case *ast.BasicLit:
 			if x.Kind == token.STRING {
-				if s, err := strconv.Unquote(x.Value); err == nil && strings.HasPrefix(s, "nearhost: ") {
-					add(x, ruleLabel, `starts a string with "nearhost: "`)
+				if s, err := strconv.Unquote(x.Value); err == nil {
+					for _, label := range oldLabels {
+						if strings.HasPrefix(s, label) {
+							add(x, ruleLabel, fmt.Sprintf("starts a string with %q", label))
+						}
+					}
 				}
 			}
 		case *ast.StructType:
@@ -315,6 +323,8 @@ func f(cmd *cobra.Command, w http.ResponseWriter, errOut *os.File) {
 	http.Error(w, "x", 500)
 	_ = map[string]any{"error": "x"}
 	_ = fmt.Errorf("nearhost: x")
+	_ = fmt.Sprintf("Error: x")
+	_ = "Warning: x"
 }
 `
 	hits, err := guardHits("x/bad.go", []byte(bad))
@@ -327,6 +337,7 @@ func f(cmd *cobra.Command, w http.ResponseWriter, errOut *os.File) {
 	}{
 		{12, ruleErrorBody}, {16, ruleAdviceText}, {17, ruleAdviceText},
 		{21, ruleStderr}, {22, ruleStderr}, {23, ruleStderr}, {24, ruleHTTPError}, {25, ruleErrorBody}, {26, ruleLabel},
+		{27, ruleLabel}, {28, ruleLabel},
 	}
 	var got []string
 	for _, h := range hits {
