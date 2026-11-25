@@ -478,6 +478,10 @@ func childStopped(w io.Writer, logPath string, tail []string, werr error) error 
 	} else {
 		msg = "Nearhost stopped while starting. The end of " + logPath + ":\n" + printableLines(strings.Join(tail, "\n"))
 	}
+	// Unless the core's own advice already names it.
+	if !strings.Contains(msg, "nearhost doctor") {
+		msg += "\n\nRun `nearhost doctor` to see what is wrong and how to fix it."
+	}
 	fmt.Fprintln(w, msg)
 	return exitError{code: 1, msg: msg}
 }

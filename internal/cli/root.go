@@ -267,10 +267,15 @@ func Main(args []string) int {
 type exitError struct {
 	code int
 	msg  string
+	// cause is the error the message reports, if any.
+	cause error
 }
 
 // Error returns the message the command printed.
 func (e exitError) Error() string { return e.msg }
+
+// Unwrap returns the error the message reports, or nil.
+func (e exitError) Unwrap() error { return e.cause }
 
 // exitCode is the exit code for the error a command returned, which is 0 for
 // nil. It writes "nearhost: <err>" to stderr unless the command printed the

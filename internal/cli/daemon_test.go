@@ -590,3 +590,35 @@ func TestLogOpenRemovesStaleCopies(t *testing.T) {
 		})
 	}
 }
+
+// A core started in the background writes why it stopped to the log, which
+// is also its standard error: Main must not print the error there again. One
+// in a terminal still has Main print it there.
+func TestBackgroundDaemonErrorIsLoggedOnce(t *testing.T) {
+	u := newUpRun(t, &config.Config{})
+	u.noHosts = true
+	u.startDaemon()
+	u.waitForLog("Nothing is being served.\n")
+
+	https, http := testutil.ProxyPorts(t)
+	for _, tc := range []struct {
+		by      string
+		printed bool
+	}{{"detached", false}, {"tui", false}, {"foreground", true}} {
+		var out syncBuffer
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := executeInto(ctx, &out, newDaemonCmd(u.backend()), "daemon", "--no-hosts", "--started-by", tc.by,
+			"--https-port", strconv.Itoa(https), "--http-port", strconv.Itoa(http), "--web-port", "0")
+		cancel()
+		if !errors.Is(err, engine.ErrAlreadyRunning) {
+			t.Fatalf("%s: the second daemon returned %v", tc.by, err)
+		}
+		var stderr bytes.Buffer
+		if code := exitCode(err, &stderr); code != 1 || (stderr.Len() > 0) != tc.printed {
+			t.Errorf("%s: exit code %d, Main printed %q", tc.by, code, stderr.String())
+		}
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}

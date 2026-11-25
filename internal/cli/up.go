@@ -450,13 +450,24 @@ func (e bindEnv) advise(err error) error {
 	if e.exe != nil {
 		exe = e.exe()
 	}
-	var advice string
-	if exe != "" && e.isFile != nil && e.isFile(exe) {
-		advice = doctor.SetcapFix(exe)
+	isFile := exe != "" && e.isFile != nil && e.isFile(exe)
+	return &bindAdvice{err: err, advice: setcapAdvice(exe, isFile, "start Nearhost again")}
+}
+
+// setcapAdvice says in plain words why the binary at exe may not bind ports
+// below 1024 on Linux, the command that lets it, and then, what to do after
+// running it. With isFile false, exe may be a launcher script, which a
+// capability does nothing for, so it says to check which file is the binary.
+func setcapAdvice(exe string, isFile bool, then string) string {
+	const why = "On Linux, a program may use ports below 1024, such as 443 for HTTPS and 80 for HTTP, " +
+		"only when it has been given permission. The install script gives it; a nearhost you build " +
+		"or copy yourself does not have it."
+	var fix string
+	if isFile {
+		fix = "To give " + printable(exe) + " permission, run:\n\n  " + doctor.SetcapFix(exe)
 	} else {
-		// Same words as the update's advice: a path that is no regular
-		// file may be a launcher script, which a capability does nothing for.
-		advice = "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:\n\n" + doctor.SetcapFix("")
+		// Same words as the update's advice.
+		fix = "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:\n\n  " + doctor.SetcapFix("")
 	}
-	return &bindAdvice{err: err, advice: advice + "\nDo not run nearhost with sudo."}
+	return why + "\n\n" + fix + "\n\nThen " + then + ". Do not run nearhost with sudo. `nearhost doctor` checks this and the rest of what Nearhost needs."
 }
