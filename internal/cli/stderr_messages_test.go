@@ -206,6 +206,14 @@ func TestHostsNeedTerminalHasACommandStep(t *testing.T) {
 	if !b.waitsOnHosts("web") || b.waitsOnHosts("other") {
 		t.Errorf("waits on hosts: web %v, other %v; want true, false", b.waitsOnHosts("web"), b.waitsOnHosts("other"))
 	}
+	// A core from before messages sends no problem: its message says why.
+	old := engine.ProjectStatus{State: engine.StateStopped, Message: `project "web"'s hosts are not resolvable: the hosts file was not updated (the hosts file needs updating, and Nearhost in the background never asks for sudo. Run ` + "`nearhost hosts update`" + ` in a terminal.)`}
+	if !waitsForTerminal(old) {
+		t.Error("an older core's refusal, without a problem, is not recognised")
+	}
+	if waitsForTerminal(engine.ProjectStatus{State: engine.StateStopped, Message: "hosts update declined"}) {
+		t.Error("another refusal without a problem is taken for the core's")
+	}
 }
 
 // add's refusals of a taken name and a missing directory have codes and

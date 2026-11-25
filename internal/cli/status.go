@@ -238,6 +238,8 @@ func writeTable(w io.Writer, rows [][]string) error {
 // hostsWait is a warning naming the projects the core left stopped until
 // the hosts file is updated, with the command that updates it, which the
 // table's messages leave out; nil when no project waits.
+// An older core, which sends no problem, says the command in its message,
+// so it gets no warning: hostsWait leaves the message out.
 func hostsWait(projects []control.ProjectInfo) *report.Message {
 	var names []string
 	for _, p := range projects {

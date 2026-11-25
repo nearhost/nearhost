@@ -84,9 +84,17 @@ func (b *clientBackend) waitsOnHosts(name string) bool {
 // waitsForTerminal reports whether st is a project the core left stopped
 // with errHostsNeedTerminal: its problem is hosts.needs-update with a step
 // that runs `nearhost hosts update`, which only that refusal has.
+// A core from before messages (0.15) sends no problem: its message, which
+// says the same, is matched instead.
 func waitsForTerminal(st engine.ProjectStatus) bool {
+	if st.State != engine.StateStopped {
+		return false
+	}
 	p := st.Problem
-	return st.State == engine.StateStopped && p != nil && p.Code == report.HostsNeedsUpdate &&
+	if p == nil {
+		return strings.Contains(st.Message, "never asks for sudo")
+	}
+	return p.Code == report.HostsNeedsUpdate &&
 		slices.ContainsFunc(p.Fix, func(s report.Step) bool { return s.Command == engine.HostsUpdateCommand })
 }
 
