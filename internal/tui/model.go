@@ -78,9 +78,10 @@ type Model struct {
 
 	routeFocus bool // the project panel's routes have the keys
 	routeRow   int  // the route selected there
-	// passFocus is set while the server panel's passthroughs and grants have
-	// the keys, and passRow is the row selected there. passSel is the key of
-	// that row, by which passRows finds it again in rows read afresh.
+	// passFocus is set while a panel's rows have the keys: a server's
+	// always allowed grants, or a pinned row's passthroughs or documents.
+	// passRow is the row selected there, and passSel the key of that row,
+	// by which panelRows finds it again in rows read afresh.
 	passFocus bool
 	passRow   int
 	passSel   string
