@@ -273,7 +273,7 @@ func (p *upPrinter) readOnlySteps(fix []report.Step) []report.Step {
 			} else {
 				s = report.Step{Text: "Then start it again:", Command: "nearhost up"}
 			}
-		case s.Command == "nearhost --no-hosts":
+		case s.Command == hosts.NoHostsCommand:
 			if p.keepRunning {
 				continue
 			}
@@ -345,14 +345,14 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.
-		// The elevated helper's reason for a read-only hosts file says how
-		// to clear it already, and approving again would fail the same way.
 		// Without a terminal no prompt can appear, and up has already said
-		// what to do instead. A core in the background asks for no prompt:
-		// `hosts update` updates the file in a terminal and has the core
-		// try again.
+		// what to do instead. A read-only hosts file, found by Nearhost or
+		// by the elevated helper, has its own steps, as approving again
+		// would fail the same way. A core in the background asks for no
+		// prompt: `hosts update` updates the file in a terminal and has
+		// the core try again.
 		switch {
-		case reason == "" || strings.Contains(reason, "attrib -r ") ||
+		case reason == "" ||
 			problem != nil && (errors.Is(problem, errNoTerminal) || errors.Is(problem, errHostsNeedTerminal)):
 		case code == report.HostsReadOnly:
 			return p.readOnlySteps(problem.Fix)

@@ -70,10 +70,9 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 }
 
 // A stopped project refused for a read-only hosts file shows the message's
-// own steps, the retry worded for up, when Nearhost wrote the file itself
-// and the reason is the title alone. The elevated helper's reason is the
-// old text, which says how to clear the file already: it gets no fix line,
-// and approving again would fail the same.
+// own steps, the retry worded for up, whether Nearhost or the elevated
+// helper found the file read-only (hosts.ElevatedApplier makes the
+// helper's failure the same message); approving again would fail the same.
 func TestUpPrintsAReadOnlyHostsFilesSteps(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	readOnly := report.Errorf(report.HostsReadOnly, `C:\hosts is read-only.`).
@@ -100,12 +99,6 @@ func TestUpPrintsAReadOnlyHostsFilesSteps(t *testing.T) {
 
 	var out bytes.Buffer
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
-	said := `hosts apply as administrator: C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`
-	helper := engine.HostsProblem("api", errors.New(said))
-	fixFor(p, "api", engine.StateStopped, helper.Title, helper)
-	if out.Len() != 0 {
-		t.Fatalf("output = %q, want none", out.String())
-	}
 	fixFor(p, "api", engine.StateStopped, "hosts update declined", nil)
 	if out.Len() == 0 {
 		t.Fatal("another reason lost its fix line")

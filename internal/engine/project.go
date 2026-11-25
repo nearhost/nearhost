@@ -704,7 +704,7 @@ func HostsProblem(name string, err error) *report.Message {
 		m = retitle(inner, text, report.Error)
 	} else {
 		m = report.Errorf(report.HostsNeedsUpdate, "%s", text).
-			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", "nearhost --no-hosts")
+			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", hosts.NoHostsCommand)
 		m.Fix = append([]report.Step{{Text: RetryText}}, m.Fix...)
 		return m.Wrap(err)
 	}

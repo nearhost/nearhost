@@ -36,8 +36,13 @@ var ErrReadOnly = errors.New("hosts file is read-only")
 // readOnlyError is the error for a hosts file that is read-only. Its message
 // says how to clear the attribute; Nearhost does not clear it, because a
 // read-only hosts file is often deliberate. It unwraps to its report
-// message, hosts.read-only.
-type readOnlyError struct{ path string }
+// message, hosts.read-only, which wraps cause.
+type readOnlyError struct {
+	path string
+	// cause is what the elevated helper's run failed with, when it was the
+	// helper that found the file read-only; nil otherwise.
+	cause error
+}
 
 // Error returns the text the error has always had, which callers match:
 // the report's title, then how to clear the attribute, in one line.
@@ -51,9 +56,13 @@ func (e *readOnlyError) Error() string {
 func (e *readOnlyError) Report() *report.Message {
 	return report.Errorf(report.HostsReadOnly, "%s is read-only.", e.path).
 		Step("Clear the read-only attribute in an administrator terminal:", fmt.Sprintf("attrib -r \"%s\"", e.path)).
-		Step("Or serve without updating it:", "nearhost --no-hosts").
-		With("path", e.path)
+		Step("Or serve without updating it:", NoHostsCommand).
+		With("path", e.path).Wrap(e.cause)
 }
+
+// NoHostsCommand serves without updating the hosts file: a read-only
+// file's alternative.
+const NoHostsCommand = "nearhost --no-hosts"
 
 // Unwrap is the report message, so report.As finds it.
 func (e *readOnlyError) Unwrap() error { return e.Report() }
@@ -493,7 +502,15 @@ func ElevatedApplier(ctx context.Context, e elevate.Elevator, executable, path, 
 			Interactive: interactive,
 		})
 		if err != nil {
-			return fmt.Errorf(elevatedApplyPrefix+"%w", err)
+			err = fmt.Errorf(elevatedApplyPrefix+"%w", err)
+			// The helper's own words are only its report; a file that is
+			// read-only is said as when Nearhost writes it itself, with
+			// how to clear it. A declined prompt or a stop is not the
+			// file's doing.
+			if ctx.Err() == nil && !errors.Is(err, elevate.ErrDeclined) && isReadOnly(path) {
+				return &readOnlyError{path: path, cause: err}
+			}
+			return err
 		}
 		return nil
 	}
