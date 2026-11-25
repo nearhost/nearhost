@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/caddy-dns/cloudflare" // register the Cloudflare DNS provider for a networked core's ACME challenge
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
 	"github.com/nearhost/nearhost/internal/netbind"
@@ -32,6 +33,8 @@ var (
 // Proxy can own it at a time: Apply on a second Proxy takes ownership, after
 // which the first one is no longer Running and its Stop does nothing.
 type Proxy struct {
+	// mu guards opts, which SetNetwork changes while the proxy runs.
+	mu   sync.Mutex
 	opts Options
 }
 
@@ -42,10 +45,26 @@ func New(opts Options) *Proxy {
 
 // SetWebPort sets the port the proxy serves Nearhost's page on, 0 for none:
 // a caller that found the port taken drops it, and restores it before trying
-// again. It must be called while the proxy is not running, as the options are
-// read without a lock.
+// again. It is meant for a proxy that is not running.
 func (p *Proxy) SetWebPort(port int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.opts.WebPort = port
+}
+
+// SetNetwork makes the core networked (see NetworkOptions), or not with
+// nil. It takes effect at the next Apply.
+func (p *Proxy) SetNetwork(n *NetworkOptions) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.opts.Network = n
+}
+
+// options are the proxy's options as they are now.
+func (p *Proxy) options() Options {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.opts
 }
 
 // Apply loads a configuration serving exactly the given sites. Existing
@@ -70,7 +89,8 @@ func (p *Proxy) ApplyIfRunning(sites []Site) (bool, error) {
 }
 
 func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
-	cfg, err := BuildConfig(sites, p.opts)
+	opts := p.options()
+	cfg, err := BuildConfig(sites, opts)
 	if err != nil {
 		return false, err
 	}
@@ -79,12 +99,12 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	if onlyIfOwner && owner != p {
 		return false, nil
 	}
-	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
+	if err := os.MkdirAll(opts.StorageRoot, 0o700); err != nil {
 		return false, fmt.Errorf("create proxy storage: %w", err)
 	}
-	if m := privateStorage(p.opts.StorageRoot); m != nil {
-		if p.opts.Reports != nil {
-			p.opts.Reports.Report(m)
+	if m := privateStorage(opts.StorageRoot); m != nil {
+		if opts.Reports != nil {
+			opts.Reports.Report(m)
 		} else {
 			emit("", report.LogText(m))
 		}
@@ -94,7 +114,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// and its cache of them is gone: this load starts it. The caller
 		// holds the run directory's instance lock, so no other Nearhost
 		// writes to the storage either.
-		pruneExpiredCertificates(p.opts.StorageRoot, time.Now())
+		pruneExpiredCertificates(opts.StorageRoot, time.Now())
 	}
 	if owner != p {
 		// Caddy starts, or changes hands to a proxy with a storage and a
@@ -104,7 +124,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	quietCaddy()
 	// A replaced intermediate is read only when Caddy loads the config,
 	// which it skips for one it already runs.
-	force := freshenIntermediate(p.opts.StorageRoot)
+	force := freshenIntermediate(opts.StorageRoot)
 	before := retiring.snapshot()
 	// The servers this load starts are given connections only once Caddy
 	// has started all of it (see Handoff).
@@ -129,7 +149,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// site away opens none and closes the old ones, and with them the
 	// sockets.
 	was := listening
-	listening = listens(sites, p.opts)
+	listening = listens(sites, opts)
 	if len(retiring.since(before)) > 0 || was && !listening {
 		retiring.settle(before, "a reload")
 	}
@@ -141,7 +161,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// applied either way; a port someone else took meanwhile is theirs.
 		_ = releasePorts(p.ports(), releaseWait)
 	}
-	p.awaitCertificates(sites)
+	p.awaitCertificates(sites, opts)
 	return true, nil
 }
 
@@ -227,18 +247,20 @@ type listenPort struct {
 }
 
 // ports are the TCP ports the proxy listens on: the https and http ports on
-// netbind.ServeAddrs, and the page's on netbind.PageAddrs.
+// netbind.ServeAddrs, and the page's on netbind.PageAddrs, or all three on
+// netbind.NetworkAddrs on a networked core that listens.
 func (p *Proxy) ports() []listenPort {
-	https, http := p.opts.HTTPSPort, p.opts.HTTPPort
+	opts := p.options()
+	https, http := opts.HTTPSPort, opts.HTTPPort
 	if https == 0 {
 		https = 443
 	}
 	if http == 0 {
 		http = 80
 	}
-	out := []listenPort{{https, netbind.ServeAddrs(https)}, {http, netbind.ServeAddrs(http)}}
-	if p.opts.WebPort != 0 {
-		out = append(out, listenPort{p.opts.WebPort, pageAddrs(p.opts.WebPort)})
+	out := []listenPort{{https, opts.serveAddrs(https)}, {http, opts.serveAddrs(http)}}
+	if opts.WebPort != 0 {
+		out = append(out, listenPort{opts.WebPort, webAddrs(opts)})
 	}
 	return out
 }

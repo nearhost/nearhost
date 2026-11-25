@@ -46,24 +46,30 @@ var certAsked func(hosts []string)
 // for them. A host still unanswered after the wait is said in the log, once,
 // and the load succeeds: the certificate may yet come.
 //
-// Call it with caddyMu held, after a load that succeeded.
-func (p *Proxy) awaitCertificates(sites []Site) {
+// A host under a networked core's domain whose certificates come from ACME
+// is not the local CA's, and its certificate can take minutes, so it is not
+// waited for.
+//
+// Call it with caddyMu held, after a load that succeeded, with the options
+// of that load.
+func (p *Proxy) awaitCertificates(sites []Site, opts Options) {
 	want := map[string]struct{}{} // "port host"
-	if listens(sites, p.opts) {
-		https := p.opts.HTTPSPort
+	acme := acmeNetwork(opts)
+	if listens(sites, opts) {
+		https := opts.HTTPSPort
 		if https == 0 {
 			https = 443
 		}
 		for _, s := range sites {
 			for _, h := range s.Hosts {
-				if !hostname.IsPattern(h) {
+				if !hostname.IsPattern(h) && (acme == nil || !underDomain(h, acme.Domain)) {
 					want[certKey(https, h)] = struct{}{}
 				}
 			}
 		}
-		if p.opts.WebPort != 0 {
+		if opts.WebPort != 0 {
 			for _, h := range pageHosts() {
-				want[certKey(p.opts.WebPort, h)] = struct{}{}
+				want[certKey(opts.WebPort, h)] = struct{}{}
 			}
 		}
 	}
@@ -94,10 +100,10 @@ func (p *Proxy) awaitCertificates(sites []Site) {
 	deadline := time.Now().Add(certWait)
 	// The CA an answer is checked against is made by Caddy's load, or was
 	// by the caller; it is waited for like the rest, should it be late.
-	root, err := RootCert(p.opts.StorageRoot)
+	root, err := RootCert(opts.StorageRoot)
 	for err != nil && time.Now().Before(deadline) {
 		time.Sleep(min(certPoll, time.Until(deadline)))
-		root, err = RootCert(p.opts.StorageRoot)
+		root, err = RootCert(opts.StorageRoot)
 	}
 	pool := x509.NewCertPool()
 	if err == nil {

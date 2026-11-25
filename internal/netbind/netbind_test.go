@@ -50,3 +50,10 @@ func TestListenPacketRefusesATakenPort(t *testing.T) {
 	}
 	pc.Close()
 }
+
+// A networked core listens on the wildcard address, on every system.
+func TestNetworkAddrsAreTheWildcard(t *testing.T) {
+	if got := netbind.NetworkAddrs(7443); len(got) != 1 || got[0] != ":7443" {
+		t.Errorf("NetworkAddrs(7443) = %v, want [:7443]", got)
+	}
+}
