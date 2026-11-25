@@ -48,12 +48,70 @@ func (l level) String() string {
 	return [...]string{"ok", "warn", "FAIL", "info"}[l]
 }
 
-// check is one line of the report.
+// check is one line of the report, and the message it stands for.
 type check struct {
 	name   string
 	level  level
 	detail string
-	fix    string // what to do; empty when the check passed
+	fix    string // what to do, on one line; empty when the check passed
+	// code is the problem's code, the same as that of the error the check
+	// predicts, so "run nearhost doctor" leads to the matching row; "" for
+	// a check that passed.
+	code report.Code
+	// steps are what to do when they say more than fix: a command on its
+	// own line, or several steps. nil means fix is the one step.
+	steps []report.Step
+}
+
+// problem is a check that did not pass, with its code and one line of fix.
+func problem(name string, lv level, code report.Code, detail, fix string) check {
+	return check{name: name, level: lv, detail: detail, fix: fix, code: code}
+}
+
+// fixSteps is what to do about c: its steps, or else its fix as one step.
+func (c check) fixSteps() []report.Step {
+	if len(c.steps) > 0 {
+		return c.steps
+	}
+	if c.fix == "" {
+		return nil
+	}
+	return []report.Step{{Text: upperFirst(c.fix)}}
+}
+
+// message is c as a message: nil for a check that passed. The detail is its
+// title.
+func (c check) message() *report.Message {
+	lv := report.Info
+	switch c.level {
+	case levelOK:
+		return nil
+	case levelFail:
+		lv = report.Error
+	case levelWarn:
+		lv = report.Warning
+	}
+	return &report.Message{Level: lv, Code: c.code, Title: c.detail, Fix: c.fixSteps()}
+}
+
+// stepLine is a step as a row's fix says it: its text, then its command in
+// backticks.
+func stepLine(s report.Step) string {
+	switch {
+	case s.Command == "":
+		return s.Text
+	case s.Text == "":
+		return "`" + s.Command + "`"
+	}
+	return s.Text + " `" + s.Command + "`"
+}
+
+// codeOf is the code of the message in err's chain, or else fallback.
+func codeOf(err error, fallback report.Code) report.Code {
+	if m, ok := report.As(err); ok && m.Code != "" && m.Code != report.Unexpected {
+		return m.Code
+	}
+	return fallback
 }
 
 // doctorBackend is the seam between the checks and the machine: tests
@@ -254,14 +312,14 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 	cfg, path, err := loadConfig(cmd)
 	switch {
 	case err != nil && path == "":
-		add(check{"config", levelFail, err.Error(), "set HOME or XDG_CONFIG_HOME, or pass --config"})
+		add(problem("config", levelFail, report.ConfigNoHome, err.Error(), "set HOME or XDG_CONFIG_HOME, or pass --config"))
 	case err != nil:
-		add(check{"config", levelFail, err.Error(), "edit " + path})
+		add(problem("config", levelFail, codeOf(err, report.ConfigInvalid), err.Error(), "edit "+path))
 	default:
 		if msg := missingConfigMessage(cmd); msg != "" {
 			// The file named with --config is not there: say so, as ls
 			// and up do, rather than call a file that is not there ok.
-			add(check{"config", levelWarn, msg, "check the path; `nearhost add` with the same --config creates the file"})
+			add(problem("config", levelWarn, report.ConfigMissing, msg, "check the path; `nearhost add` with the same --config creates the file"))
 			break
 		}
 		add(checkUnknownKeys(path))
@@ -282,6 +340,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 			c.level = levelWarn
 			if c.detail != "permission denied" {
 				c.fix = "Nearhost serves without its page while this port is taken (expected while Nearhost is running); pass --web-port to choose another"
+				c.steps = nil
 			}
 		}
 		add(c)
@@ -290,7 +349,9 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 		lv, detail := b.lowPorts(low)
 		c := check{name: "privileged ports", level: lv, detail: detail}
 		if lv != levelOK {
-			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
+			// up's port.needs-permission error, and its step.
+			c.code, c.fix = report.PortNeedsPermission, "`"+doctor.SetcapFix(b.exe)+"`"
+			c.steps = []report.Step{setcapStep(b.exe, b.exe != "")}
 		}
 		add(c)
 	}
@@ -322,7 +383,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 		// The checks above do not need the config. These do, and comparing
 		// with an empty one would report what is there as wrong.
 		unread := func(name string) check {
-			return check{name, levelWarn, "not checked: the config could not be read", "correct the config (see above), then run `nearhost doctor` again"}
+			return problem(name, levelWarn, report.DoctorNotChecked, "not checked: the config could not be read", "correct the config (see above), then run `nearhost doctor` again")
 		}
 		if !flags.noHosts {
 			add(unread("hosts block"))
@@ -352,6 +413,7 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 			if alias, ok := jumpAlias(ctx, b, srv); ok {
 				c.fix = "ProxyJump names the alias " + alias.name + ", which ssh 9.5 for Windows does not resolve: in ~/.ssh/config, give ProxyJump " +
 					alias.name + "'s address (" + alias.address + ") or use a ProxyCommand, then run `nearhost doctor` again"
+				c.steps = nil
 			}
 		}
 		add(c)
@@ -369,8 +431,11 @@ func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check 
 	name := "agents on " + srv.Name
 	if err := b.checkAgents(ctx, srv); err != nil {
 		fix := "set AllowStreamLocalForwarding yes in the sshd_config of " + srv.SSHHost + ", or leave it: only coding agents there need it"
+		// The code of the error a connection to the server reports.
+		code := report.AgentsRefused
 		var agentErr *transport.AgentError
 		if errors.As(err, &agentErr) {
+			code = agentErr.Report().Code
 			switch agentErr.Problem {
 			case transport.AgentNotReady:
 				fix = "check that the account " + srv.SSHHost + " logs in as can write ~/.nearhost, then run `nearhost doctor` again"
@@ -378,7 +443,7 @@ func checkAgents(ctx context.Context, b doctorBackend, srv config.Server) check 
 				fix = "use an account with a shorter home directory on " + srv.SSHHost + ", or leave it: only coding agents there need it"
 			}
 		}
-		return check{name, levelWarn, err.Error(), fix}
+		return problem(name, levelWarn, code, err.Error(), fix)
 	}
 	return check{name: name, detail: "can reach Nearhost through ~/" + transport.AgentDir}
 }
@@ -417,17 +482,45 @@ func failure(failed int) error {
 	return alreadySaid{report.Errorf(report.DoctorChecksFailed, "%s failed", plural(failed, "check"))}
 }
 
-// printCheck prints one check: its line, and its fix under it.
-func printCheck(out io.Writer, c check) {
+// printCheck prints one check: its line, and its fix under it. A check
+// whose fix takes several steps prints them in its place, each command on
+// a line of its own under its step's text, so that it can be copied. With
+// verbose, as --verbose asks, a check that did not pass ends with its code.
+func printCheck(out io.Writer, c check, verbose bool) {
+	defer func() {
+		if m := c.message(); verbose && m != nil && m.Code != "" {
+			printCode(out, m.Code)
+		}
+	}()
 	// A detail of several lines (ssh can print more than one) keeps its
 	// lines, aligned under the first. What ssh printed comes from the
 	// server too, and a check's name can hold a server's, so neither
 	// keeps its control characters.
 	detail := strings.ReplaceAll(strings.TrimRight(printableLines(c.detail), "\n"), "\n", "\n"+strings.Repeat(" ", 23))
 	fmt.Fprintf(out, "%-4s  %-16s %s\n", c.level, printable(c.name), detail)
+	if len(c.steps) > 1 {
+		lead := "      fix: "
+		for _, s := range c.steps {
+			text, command := upperFirst(printable(s.Text)), printable(s.Command)
+			if text == "" {
+				text, command = command, ""
+			}
+			fmt.Fprintf(out, "%s%s\n", lead, text)
+			if command != "" {
+				fmt.Fprintf(out, "             %s\n", command)
+			}
+			lead = "           "
+		}
+		return
+	}
 	if c.fix != "" {
 		fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
 	}
+}
+
+// printCode prints a row's code under it, for --verbose.
+func printCode(out io.Writer, code report.Code) {
+	fmt.Fprintf(out, "      code: %s\n", printable(string(code)))
 }
 
 // printSummary prints the blank line and the closing sentence, and returns
@@ -524,10 +617,11 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 	}
 	switch {
 	case denied:
-		c.level, c.detail = levelFail, "permission denied"
+		c.level, c.detail, c.code = levelFail, "permission denied", report.PortNeedsPermission
 		c.fix = "run nearhost as a user that may bind this port, or pass another " + flag
 		if b.goos == "linux" {
 			c.fix = "`" + doctor.SetcapFix(b.exe) + "`"
+			c.steps = []report.Step{setcapStep(b.exe, b.exe != "")}
 		}
 	case len(problems) == 0 && mine:
 		c.detail = "in use by the running Nearhost"
@@ -535,10 +629,10 @@ func checkPort(ctx context.Context, b doctorBackend, port int, flag string, udp 
 		// A taken port while Nearhost runs is most likely Nearhost's own,
 		// but with no holder named that is not proven. A warning keeps the
 		// exit status zero and still shows the line.
-		c.level, c.detail = levelWarn, "Nearhost is running, but the holder of this port could not be named; probably Nearhost"
+		c.level, c.detail, c.code = levelWarn, "Nearhost is running, but the holder of this port could not be named; probably Nearhost", report.PortInUse
 		c.fix = "check with `" + holderCommand(b.goos, port) + "` that the holder is nearhost"
 	case len(problems) > 0:
-		c.level, c.detail = levelFail, strings.Join(problems, "; ")
+		c.level, c.detail, c.code = levelFail, strings.Join(problems, "; "), report.PortInUse
 		c.fix = fmt.Sprintf("stop %s (expected while `nearhost up` is running), or give `nearhost up` another %s", who, flag)
 		if httpSys {
 			c.fix = fmt.Sprintf("run `netsh http show servicestate` in an elevated terminal to see which service registered port %d, and stop it (often IIS: `net stop w3svc`), or give `nearhost up` another %s", port, flag)
@@ -586,13 +680,13 @@ func checkSSHAgentService(b doctorBackend) check {
 	state, err := b.sshAgentService()
 	switch {
 	case err != nil:
-		c.level, c.detail = levelInfo, "could not query the service: "+err.Error()
+		c.level, c.detail, c.code = levelInfo, "could not query the service: "+err.Error(), report.DoctorNotChecked
 	case state == "missing":
-		c.level, c.detail = levelInfo, "the OpenSSH Authentication Agent is not installed"
+		c.level, c.detail, c.code = levelInfo, "the OpenSSH Authentication Agent is not installed", report.SSHAgentMissing
 	case state == "running":
 		c.detail = state
 	default:
-		c.level, c.detail = levelInfo, state
+		c.level, c.detail, c.code = levelInfo, state, report.SSHAgentStopped
 		c.fix = "only needed for keys with a passphrase: in an elevated PowerShell, `Get-Service ssh-agent | Set-Service -StartupType Automatic; Start-Service ssh-agent`, then `ssh-add`"
 	}
 	return c
@@ -604,13 +698,13 @@ func checkCA(b trustBackend) []check {
 	const name, fix = "local CA", "run `nearhost trust`"
 	dir, err := config.CaddyDir()
 	if err != nil {
-		return []check{{name, levelFail, err.Error(), "set HOME"}}
+		return []check{problem(name, levelFail, report.ConfigNoHome, err.Error(), "set HOME")}
 	}
 	checks := checkCAAt(b, dir)
 	if old, ok := config.LeftoverCaddyDir(); ok {
-		checks = append(checks, check{"old CA copy", levelWarn,
-			old + " still holds a copy of the local CA's private key; Nearhost now keeps it in " + dir,
-			"delete " + old})
+		checks = append(checks, problem("old CA copy", levelWarn, report.CAOldCopy,
+			old+" still holds a copy of the local CA's private key; Nearhost now keeps it in "+dir,
+			"delete "+old))
 	}
 	return checks
 }
@@ -621,13 +715,13 @@ func checkCAAt(b trustBackend, dir string) []check {
 	cert, err := b.rootCert(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return []check{{name, levelFail, "not created yet", fix}}
+		return []check{problem(name, levelFail, report.CANotCreated, "not created yet", fix)}
 	case err != nil:
-		return []check{{name, levelFail, err.Error(), "remove " + proxy.RootCertPath(dir) + " if it is damaged, then " + fix}}
+		return []check{problem(name, levelFail, report.CAUnreadable, err.Error(), "remove "+proxy.RootCertPath(dir)+" if it is damaged, then "+fix)}
 	}
 	ca := check{name: name, detail: "trusted by " + trustStore}
 	if !b.isTrusted(cert) {
-		ca = check{name, levelFail, "exists, but " + trustStore + " does not trust it", fix}
+		ca = problem(name, levelFail, report.CANotTrusted, "exists, but "+trustStore+" does not trust it", fix)
 	}
 	if !cert.NotAfter.IsZero() {
 		ca.detail += "; expires " + cert.NotAfter.Format("2006-01-02")
@@ -640,8 +734,9 @@ func checkCAAt(b trustBackend, dir string) []check {
 		nss.detail = "not needed: " + st.Detail
 	case proxy.NSSMissing:
 		nss.level, nss.detail, nss.fix = levelWarn, "the NSS stores (Firefox, and on Linux the shared database Chromium-family browsers use) do not trust the CA", fix
+		nss.code = report.CABrowsersNotTrusted
 	default:
-		nss.level, nss.detail = levelWarn, "not checked: "+st.Detail
+		nss.level, nss.detail, nss.code = levelWarn, "not checked: "+st.Detail, report.DoctorNotChecked
 		nss.fix = "only Firefox (and on Linux Chromium-family browsers) need this; set them up, then " + fix
 	}
 	return []check{ca, nss}
@@ -653,7 +748,7 @@ func checkCAAt(b trustBackend, dir string) []check {
 func checkUnknownKeys(path string) check {
 	unknown, err := config.UnknownKeys(path)
 	if err != nil {
-		return check{"config", levelWarn, "could not look for keys Nearhost does not know: " + err.Error(), "edit " + path}
+		return problem("config", levelWarn, report.DoctorNotChecked, "could not look for keys Nearhost does not know: "+err.Error(), "edit "+path)
 	}
 	if len(unknown) == 0 {
 		return check{name: "config", detail: path}
@@ -666,7 +761,7 @@ func checkUnknownKeys(path string) check {
 	if len(unknown) > 1 {
 		fix = "fix or remove them; saving now would delete them, so Nearhost refuses to save until then"
 	}
-	return check{"config", levelWarn, strings.Join(lines, "\n"), fix}
+	return problem("config", levelWarn, report.ConfigUnknownKeys, strings.Join(lines, "\n"), fix)
 }
 
 // checkAliases reports the projects whose main name is not a valid domain,
@@ -682,8 +777,8 @@ func checkAliases(cfg *config.Config, path string) []check {
 	if len(invalid) == 0 {
 		return nil
 	}
-	return []check{{"aliases", levelFail, strings.Join(invalid, "\n"),
-		"correct the alias in " + path + "; `nearhost up` does not start a project with such an alias"}}
+	return []check{problem("aliases", levelFail, report.ConfigBadAlias, strings.Join(invalid, "\n"),
+		"correct the alias in "+path+"; `nearhost up` does not start a project with such an alias")}
 }
 
 // checkPatternConflicts warns about each exact host of an enabled project
@@ -700,8 +795,8 @@ func checkPatternConflicts(cfg *config.Config, path string) []check {
 	if len(lines) == 0 {
 		return nil
 	}
-	return []check{{"host patterns", levelWarn, strings.Join(lines, "\n"),
-		"to end the overlap, remove the exact host from the project that gets its requests, or move it to the pattern's project, in " + path}}
+	return []check{problem("host patterns", levelWarn, report.ConfigPatternConflict, strings.Join(lines, "\n"),
+		"to end the overlap, remove the exact host from the project that gets its requests, or move it to the pattern's project, in "+path)}
 }
 
 // checkOwnLoopbacks reports each enabled project with a loopback route on a
@@ -721,8 +816,8 @@ func checkOwnLoopbacks(cfg *config.Config, path string, flags serveFlags) []chec
 	if len(lines) == 0 {
 		return nil
 	}
-	return []check{{"loopback ports", levelFail, strings.Join(lines, "\n"),
-		"give the route another port or role in " + path + ", or start Nearhost with other ports; `nearhost up` does not forward a loopback route on its own port"}}
+	return []check{problem("loopback ports", levelFail, report.ConfigLoopbackOwnPort, strings.Join(lines, "\n"),
+		"give the route another port or role in "+path+", or start Nearhost with other ports; `nearhost up` does not forward a loopback route on its own port")}
 }
 
 // checkHosts compares the managed block with the names `nearhost up` would
@@ -734,10 +829,11 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check
 	want := hosts.Wanted(ctx, cfg.HostsFileNames(), b.env.lookup)
 	existing, err := b.env.readHosts()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return check{name, levelFail, err.Error(), "make " + hosts.DefaultPath + " readable"}, nil
+		return problem(name, levelFail, codeOf(err, report.HostsUnreadable), err.Error(), "make "+hosts.DefaultPath+" readable"), nil
 	}
+	// A block out of date is what up's hosts.needs-update says.
 	if _, err := hosts.Rewrite(existing, want); err != nil {
-		return check{name, levelFail, err.Error(), fix}, nil
+		return problem(name, levelFail, report.HostsNeedsUpdate, err.Error(), fix), nil
 	}
 	if hosts.UpToDate(existing, want) {
 		if len(want) == 0 {
@@ -749,7 +845,7 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check
 		return check{name: name, detail: fmt.Sprintf("%d names", len(want))}, nil
 	}
 	if len(want) > 0 && hosts.IsIPv4Only(existing, want) {
-		return check{name, levelWarn, "the block was written by an older Nearhost and has no IPv6 (::1) entries", fix}, nil
+		return problem(name, levelWarn, report.HostsNeedsUpdate, "the block was written by an older Nearhost and has no IPv6 (::1) entries", fix), nil
 	}
 	missing, stale := diff(want, hosts.Aliases(existing))
 	var parts []string
@@ -762,7 +858,7 @@ func checkHosts(ctx context.Context, b doctorBackend, cfg *config.Config) (check
 	if len(parts) == 0 {
 		parts = []string{"the block is not in the form nearhost writes"}
 	}
-	return check{name, levelFail, strings.Join(parts, "; "), fix}, missing
+	return problem(name, levelFail, report.HostsNeedsUpdate, strings.Join(parts, "; "), fix), missing
 }
 
 // diff returns what is only in want and what is only in have, each sorted.
@@ -801,7 +897,10 @@ func checkServer(ctx context.Context, b doctorBackend, srv config.Server) check 
 	if errors.As(err, &refused) {
 		detail = refused.Stderr // what OpenSSH printed, as it printed it
 	}
-	return check{name, levelFail, detail, sshHint(srv.SSHHost, "run `nearhost doctor` again")}
+	// The code and steps of up's error for a server ssh does not reach.
+	c := problem(name, levelFail, report.SSHUnreachable, detail, sshHint(srv.SSHHost, "run `nearhost doctor` again"))
+	c.steps = []report.Step{sshStep(srv.SSHHost), {Text: "Then run `nearhost doctor` again."}}
+	return c
 }
 
 // sshVersion is the version of the ssh on PATH, parsed from `ssh -V`.
@@ -830,7 +929,7 @@ func checkSSHVersion(ctx context.Context, b doctorBackend) (check, sshVersion) {
 	c := check{name: "ssh"}
 	line, err := b.sshVersion(ctx)
 	if err != nil {
-		c.level, c.detail = levelFail, "could not run ssh: "+err.Error()
+		c.level, c.detail, c.code = levelFail, "could not run ssh: "+err.Error(), report.SSHNotFound
 		c.fix = "install the OpenSSH Client in Settings > System > Optional features"
 		return c, sshVersion{}
 	}
@@ -838,9 +937,9 @@ func checkSSHVersion(ctx context.Context, b doctorBackend) (check, sshVersion) {
 	v := parseSSHVersion(line)
 	switch {
 	case !v.known:
-		c.level = levelInfo
+		c.level, c.code = levelInfo, report.SSHVersionUnknown
 	case v.major < 9 || (v.major == 9 && v.minor < 5):
-		c.level = levelWarn
+		c.level, c.code = levelWarn, report.SSHTooOld
 		c.detail = line + ": Windows 11's ssh (9.5 or later) is needed"
 		c.fix = "update Windows, or install the current OpenSSH for Windows and put it first on PATH"
 	}
@@ -855,7 +954,7 @@ func firefoxRootsCheck(where string) check {
 	if where != "policy" {
 		fix = "set security.enterprise_roots.enabled to true in about:config"
 	}
-	return check{"firefox", levelWarn, "Firefox does not read Windows' trusted roots (" + where + ")", fix}
+	return problem("firefox", levelWarn, report.CAFirefoxRootsOff, "Firefox does not read Windows' trusted roots ("+where+")", fix)
 }
 
 // jumpTarget is a ProxyJump hop that names an alias of ssh's configuration.

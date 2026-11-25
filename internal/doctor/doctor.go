@@ -5,12 +5,14 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Severity says how much a finding matters.
@@ -47,6 +49,11 @@ type Fix struct {
 
 // Finding is one thing a check found. Its ID is stable API: agents and
 // skills match on it.
+//
+// A finding is a message too (see Report): its ID is its code, and it
+// carries the message's title, explanation and steps beside the fields it
+// has always had. A finding that leaves them unset gets them from its own
+// fields (see Complete) when it is encoded or made a message.
 type Finding struct {
 	ID       string   `json:"id"`
 	Severity Severity `json:"severity"`
@@ -56,10 +63,89 @@ type Finding struct {
 	Line     int      `json:"line,omitempty"`
 	Fix      Fix      `json:"fix"`
 
+	// Code is ID as a code of the report catalog.
+	Code report.Code `json:"code"`
+	// Title is Message as one sentence.
+	Title string `json:"title"`
+	// Detail explains the finding; it may be "".
+	Detail string `json:"detail,omitempty"`
+	// Steps are what to do, in order: Fix's text, unless set.
+	Steps []report.Step `json:"steps"`
+
 	// Host is the name a hosts.unresolved finding is about, so that
 	// nearhost doctor can leave out one its hosts block check already
 	// names. It stays out of the JSON, whose Message names it.
 	Host string `json:"-"`
+}
+
+// Complete returns f with the message's fields it leaves unset taken from
+// its own: the code from its ID, the title from the first line of its
+// message, ending as a sentence, the explanation from the lines after it,
+// and one step from its fix's text. An ID that is not a finding's code
+// leaves Code empty.
+func (f Finding) Complete() Finding {
+	if f.Code == "" {
+		f.Code, _ = report.FindingCode(f.ID)
+	}
+	if f.Title == "" {
+		first, rest, _ := strings.Cut(strings.TrimSpace(f.Message), "\n")
+		f.Title = sentence(strings.TrimSpace(first))
+		if f.Detail == "" {
+			f.Detail = strings.TrimSpace(rest)
+		}
+	}
+	if f.Steps == nil && f.Fix.Text != "" {
+		f.Steps = []report.Step{{Text: f.Fix.Text}}
+	}
+	return f
+}
+
+// sentence is s ending with a full stop, unless it ends with one already, or
+// with a question or exclamation mark, or is empty.
+func sentence(s string) string {
+	if s == "" || strings.HasSuffix(s, ".") || strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!") {
+		return s
+	}
+	return s + "."
+}
+
+// MarshalJSON writes the finding completed (see Complete): the keys it has
+// always had, in their order, then code, title, detail and steps. Steps is
+// an array, empty when there is nothing to do.
+func (f Finding) MarshalJSON() ([]byte, error) {
+	type plain Finding
+	c := f.Complete()
+	if c.Steps == nil {
+		c.Steps = []report.Step{}
+	}
+	return json.Marshal(plain(c))
+}
+
+// Report returns the finding as a message: its level from its severity, and
+// its code, title, explanation and steps (see Complete). A snippet is quoted
+// as it is, and the project, file and line are the message's data.
+func (f Finding) Report() *report.Message {
+	c := f.Complete()
+	m := &report.Message{Level: report.Info, Code: c.Code, Title: c.Title, Why: c.Detail, Fix: c.Steps}
+	switch c.Severity {
+	case SeverityError:
+		m.Level = report.Error
+	case SeverityWarning:
+		m.Level = report.Warning
+	}
+	if c.Fix.Snippet != "" {
+		m.Quote(strings.Split(strings.TrimRight(c.Fix.Snippet, "\n"), "\n")...)
+	}
+	if c.Project != "" {
+		m.With("project", c.Project)
+	}
+	if c.File != "" {
+		m.With("file", c.File)
+	}
+	if c.Line != 0 {
+		m.With("line", c.Line)
+	}
+	return m
 }
 
 // Input is everything the checks of one project look at.

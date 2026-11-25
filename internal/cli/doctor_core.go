@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 )
 
@@ -34,18 +35,17 @@ func checkCore(ctx context.Context, b doctorBackend) (checks []check, info contr
 	}
 	switch {
 	case errors.Is(err, control.ErrNotRunning):
-		return []check{{"core", levelInfo, "not running", "start it with nearhost -d, or open nearhost"}}, control.Info{}, false
+		return []check{problem("core", levelInfo, report.CoreNotRunning, "not running", "start it with nearhost -d, or open nearhost")}, control.Info{}, false
 	case err != nil:
-		return []check{{"core", levelInfo, "not checked: " + err.Error(), ""}}, control.Info{}, false
+		return []check{problem("core", levelInfo, report.DoctorNotChecked, "not checked: "+err.Error(), "")}, control.Info{}, false
 	}
 	switch {
 	case knownAPI(info) != nil:
-		// The interface refuses such a core with core.api-mismatch; this
-		// row is that code's, and says it as a row until checks carry
-		// messages.
-		return []check{{"core", levelWarn, "speaks a different version of its API", restartCoreFix}}, info, true
+		// The interface refuses such a core with core.api-mismatch, the
+		// code of this row.
+		return []check{problem("core", levelWarn, report.CoreAPIMismatch, "speaks a different version of its API", restartCoreFix)}, info, true
 	case info.Version != Version:
-		checks = append(checks, check{"core", levelWarn, fmt.Sprintf("%s is running; this is %s", printable(info.Version), Version), restartCoreFix})
+		checks = append(checks, problem("core", levelWarn, report.CoreOtherVersion, fmt.Sprintf("%s is running; this is %s", printable(info.Version), Version), restartCoreFix))
 	default:
 		checks = append(checks, check{name: "core", detail: fmt.Sprintf("%s, started by %s (pid %d)", printable(info.Version), printable(string(info.StartedBy)), info.PID)})
 	}
@@ -53,12 +53,26 @@ func checkCore(ctx context.Context, b doctorBackend) (checks []check, info contr
 	if err != nil {
 		// An older release has no such route, and a core that cannot look
 		// is not a reason to fail: say what was not checked.
-		return append(checks, check{"core: environment", levelInfo, "not checked: " + err.Error(), ""}), info, true
+		return append(checks, problem("core: environment", levelInfo, report.DoctorNotChecked, "not checked: "+err.Error(), "")), info, true
 	}
 	for _, e := range env {
-		checks = append(checks, check{"core: " + e.Name, envLevel(e.Level), e.Detail, e.Fix})
+		checks = append(checks, envRow(e))
 	}
 	return checks, info, true
+}
+
+// envRow is the row of a check the core makes of its own environment, with
+// the code and steps of its problem. A core older than problems sends none.
+func envRow(e control.EnvCheck) check {
+	c := check{name: "core: " + e.Name, level: envLevel(e.Level), detail: e.Detail, fix: e.Fix}
+	if c.level == levelOK || e.Problem == nil {
+		return c
+	}
+	c.code, c.steps = e.Problem.Code, e.Problem.Fix
+	if c.fix == "" && len(c.steps) > 0 {
+		c.fix = stepLine(c.steps[0])
+	}
+	return c
 }
 
 // envLevel is doctor's level of the same name as one the core reports.
@@ -96,30 +110,42 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 	case errors.Is(err, service.ErrUnsupported):
 		return check{}
 	case errors.Is(err, service.ErrNoUserManager):
-		return check{"service", levelInfo, messageOf(err).Title, ""}
+		return noUserManagerRow(err)
 	case errors.Is(err, service.ErrUnreadable):
-		return check{"service", levelWarn, "installed, but its definition cannot be read", "nearhost service uninstall, then nearhost service install"}
+		return problem("service", levelWarn, report.ServiceUnreadable, "installed, but its definition cannot be read", "nearhost service uninstall, then nearhost service install")
 	case err != nil:
-		return check{"service", levelWarn, "not checked: " + err.Error(), "run `nearhost doctor` again"}
+		return problem("service", levelWarn, report.DoctorNotChecked, "not checked: "+err.Error(), "run `nearhost doctor` again")
 	case !ok:
-		return check{"service", levelInfo, "not installed", "nearhost service install starts Nearhost at login (optional)"}
+		return problem("service", levelInfo, report.ServiceNotInstalled, "not installed", "nearhost service install starts Nearhost at login (optional)")
 	case b.exe != "" && !samePath(d.Exe, b.exe):
-		return check{"service", levelWarn, fmt.Sprintf("runs %s, not this copy (%s)", d.Exe, b.exe), "run nearhost service install from the copy you use"}
+		return problem("service", levelWarn, report.ServiceOtherCopy, fmt.Sprintf("runs %s, not this copy (%s)", d.Exe, b.exe), "run nearhost service install from the copy you use")
 	case d.LogPath != "" && folderMissing(filepath.Dir(d.LogPath)):
 		// The manager fails the unit before it runs when the folder of the
 		// log it sends the core's output to is missing.
-		return check{"service", levelWarn, fmt.Sprintf("its log folder %s is missing, so the service cannot start again", printable(filepath.Dir(d.LogPath))), "run nearhost service install"}
+		return problem("service", levelWarn, report.ServiceLogFolderMissing, fmt.Sprintf("its log folder %s is missing, so the service cannot start again", printable(filepath.Dir(d.LogPath))), "run nearhost service install")
 	}
 	active, err := m.Active(ctx)
 	switch {
 	case errors.Is(err, service.ErrNoUserManager):
-		return check{"service", levelInfo, messageOf(err).Title, ""}
+		return noUserManagerRow(err)
 	case err != nil:
-		return check{"service", levelWarn, "not checked: " + err.Error(), "run `nearhost doctor` again"}
+		return problem("service", levelWarn, report.DoctorNotChecked, "not checked: "+err.Error(), "run `nearhost doctor` again")
 	case active:
 		return check{name: "service", detail: "installed and running"}
 	case !coreRunning:
-		return check{"service", levelWarn, "installed but not running", "start it with nearhost -d"}
+		return problem("service", levelWarn, report.ServiceNotRunning, "installed but not running", "start it with nearhost -d")
 	}
-	return check{"service", levelInfo, fmt.Sprintf("installed; the running Nearhost was started by %s, so the service takes over at your next login", printable(string(startedBy))), ""}
+	return problem("service", levelInfo, report.ServiceTakesOver, fmt.Sprintf("installed; the running Nearhost was started by %s, so the service takes over at your next login", printable(string(startedBy))), "")
+}
+
+// noUserManagerRow is the service row of a system with no user service
+// manager: the message's title, and its steps, as other rows show theirs.
+func noUserManagerRow(err error) check {
+	m := messageOf(err)
+	c := problem("service", levelInfo, m.Code, m.Title, "")
+	c.steps = m.Fix
+	if len(c.steps) > 0 {
+		c.fix = stepLine(c.steps[0])
+	}
+	return c
 }

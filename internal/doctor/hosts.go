@@ -12,6 +12,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // answer is what a lookup gave for one name.
@@ -161,7 +162,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 	var out []Finding
 	if unchecked(got) {
 		out = append(out, Finding{
-			ID:       "hosts.dns-unchecked",
+			ID:       string(report.HostsDNSUnchecked),
 			Severity: SeverityInfo,
 			Message:  "Nearhost could not ask DNS directly, so it did not check whether your real-domain names resolve elsewhere.",
 			Fix:      Fix{Kind: FixManual, Text: dnsUncheckedFix},
@@ -174,7 +175,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 		}
 		if needsEntry(n) && !a.loopback() {
 			out = append(out, Finding{
-				ID:       "hosts.unresolved",
+				ID:       string(report.HostsUnresolved),
 				Severity: SeverityError,
 				Message:  n + " does not resolve to this machine, and is not in the hosts file",
 				Fix:      Fix{Kind: FixNearhost, Text: "Start the project in Nearhost; it adds " + n + " to " + hosts.DefaultPath + "."},
@@ -183,7 +184,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 		}
 		if ad, ok := a.publicAddr(); ok && !strings.HasSuffix(n, ".test") {
 			out = append(out, Finding{
-				ID:       "hosts.public",
+				ID:       string(report.HostsPublic),
 				Severity: SeverityWarning,
 				Message: fmt.Sprintf("%s is a real name that resolves to %s; while the project is enabled, the real site is out of reach on this machine",
 					n, ad),
@@ -197,7 +198,7 @@ func dnsFindings(ctx context.Context, in Input) []Finding {
 			continue
 		}
 		out = append(out, Finding{
-			ID:       "hosts.unresolved-pattern",
+			ID:       string(report.HostsUnresolvedPattern),
 			Severity: SeverityError,
 			Message:  pat + " does not resolve to this machine",
 			Fix: Fix{Kind: FixManual, Text: "Add a DNS record for " + pat + " pointing at 127.0.0.1 (the hosts file can't hold wildcards), " +
@@ -244,7 +245,7 @@ func overlapFindings(in Input) []Finding {
 					winner, owner = theirs, o.Name
 				}
 				out = append(out, Finding{
-					ID:       "hosts.overlap",
+					ID:       string(report.HostsOverlap),
 					Severity: SeverityWarning,
 					Message: fmt.Sprintf("%s overlaps %s of %s; a name both match goes to the more specific, %s of %s",
 						mine, theirs, o.Name, winner, owner),
@@ -283,7 +284,7 @@ func listeningFindings(ctx context.Context, in Input) []Finding {
 			msg += ", which serves " + p.Alias
 		}
 		out = append(out, Finding{
-			ID:       "routes.not-listening",
+			ID:       string(report.RoutesNotListening),
 			Severity: sev,
 			Message:  msg,
 			Fix:      Fix{Kind: FixManual, Text: fmt.Sprintf("Start the project's dev server on port %d, or correct the port.", w.Port)},

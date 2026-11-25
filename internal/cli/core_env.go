@@ -223,7 +223,8 @@ func envSSH(p envProbe) control.EnvCheck {
 		return control.EnvCheck{Name: "ssh", Level: "fail",
 			Detail: "ssh not found on the core's PATH",
 			Fix:    "install OpenSSH, then nearhost service install again",
-			Problem: report.Errorf(report.CoreSSHMissing, "ssh is not on the PATH of Nearhost in the background.").
+			Problem: report.Errorf(report.SSHNotFound, "ssh is not on the PATH of Nearhost in the background.").
+				With("scope", "background").
 				Because("Nearhost needs it to reach servers.").
 				Then("Install OpenSSH.").
 				Step("Then install the service again:", "nearhost service install").

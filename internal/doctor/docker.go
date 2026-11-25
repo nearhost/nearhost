@@ -13,6 +13,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // hostToken matches a dotted name inside a value such as a URL.
@@ -168,7 +169,7 @@ func isASCIILetter(c byte) bool {
 // or repeat more, than doctor follows.
 func composeDepthFinding(file string) Finding {
 	return Finding{
-		ID:       "docker.compose-depth",
+		ID:       string(report.DockerComposeDepth),
 		Severity: SeverityWarning,
 		Message:  file + " nests or repeats << merges too much to check, so Nearhost did not check its services",
 		File:     file,
@@ -189,7 +190,7 @@ func hostGatewayFinding(s service, missing []string) Finding {
 		fmt.Fprintf(&b, "\n      - \"%s:host-gateway\"", n)
 	}
 	return Finding{
-		ID:       "docker.host-gateway",
+		ID:       string(report.DockerHostGateway),
 		Severity: SeverityWarning,
 		Message: fmt.Sprintf("%s uses %s, which a container resolves to itself or to the public internet, not to Nearhost",
 			s.Name, strings.Join(missing, ", ")),
@@ -215,7 +216,7 @@ func projectSetsComposeFile(r discovery.FileReader) bool {
 // it can quote the file.
 func composeParseFinding(file string) Finding {
 	return Finding{
-		ID:       "docker.compose-parse",
+		ID:       string(report.DockerComposeParse),
 		Severity: SeverityWarning,
 		Message:  file + " is not valid YAML, so Nearhost did not check the project's Compose services",
 		File:     file,
@@ -239,7 +240,7 @@ func composeFileFinding(read []discovery.ComposeFile) Finding {
 		what = "read " + strings.Join(names, " and ")
 	}
 	return Finding{
-		ID:       "docker.compose-file",
+		ID:       string(report.DockerComposeFile),
 		Severity: SeverityInfo,
 		Message:  "COMPOSE_FILE is set, and Nearhost checks only the Compose files Compose reads by default, not the ones COMPOSE_FILE names: it " + what,
 		Fix: Fix{
@@ -261,7 +262,7 @@ func dockerClientsFinding(goos string) Finding {
 		text += " Docker Desktop on Windows already delivers container requests from 127.0.0.1, so this matters on Linux."
 	}
 	return Finding{
-		ID:       "docker.clients",
+		ID:       string(report.DockerClients),
 		Severity: sev,
 		Message:  "a container calls a name Nearhost serves, and Nearhost does not accept requests from Docker's network",
 		Fix:      Fix{Kind: FixProject, Text: text, Snippet: "docker_clients: true"},
@@ -299,7 +300,7 @@ func caFinding(caCert string, s service) (Finding, bool) {
 	snippet := fmt.Sprintf("services:\n  %s:\n    environment:\n      NODE_EXTRA_CA_CERTS: %s\n    volumes:\n      - \"${NEARHOST_CA_CERT:?set NEARHOST_CA_CERT to Nearhost's root certificate}:%s:ro\"",
 		s.Name, caMountPath, caMountPath)
 	return Finding{
-		ID:       "docker.ca",
+		ID:       string(report.DockerCA),
 		Severity: SeverityWarning,
 		Message:  s.Name + " calls a name Nearhost serves, and does not trust Nearhost's root certificate",
 		File:     s.File,

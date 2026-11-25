@@ -24,6 +24,7 @@ import (
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // memFiles is a server's files held in memory: dirs maps a directory to the
@@ -233,10 +234,12 @@ func runSplit(t *testing.T, b doctorBackend, args ...string) (string, string, er
 
 type jsonDoctor struct {
 	Checks []struct {
-		Name   string `json:"name"`
-		Level  string `json:"level"`
-		Detail string `json:"detail"`
-		Fix    string `json:"fix"`
+		Name   string        `json:"name"`
+		Level  string        `json:"level"`
+		Detail string        `json:"detail"`
+		Fix    string        `json:"fix"`
+		Code   string        `json:"code"`
+		Steps  []report.Step `json:"steps"`
 	} `json:"checks"`
 	Findings []doctor.Finding `json:"findings"`
 }
@@ -287,7 +290,10 @@ func TestDoctorJSON(t *testing.T) {
 		ID: "nearhostrc.invalid", Severity: doctor.SeverityError, Project: "shop",
 		Message: `.nearhostrc: line 3: key "extra" is not understood by this version of Nearhost; update Nearhost, or remove it`,
 		File:    ".nearhostrc", Line: 3,
-		Fix: doctor.Fix{Kind: doctor.FixProject, Text: "Correct .nearhostrc."},
+		Fix:   doctor.Fix{Kind: doctor.FixProject, Text: "Correct .nearhostrc."},
+		Code:  report.NearhostrcInvalid,
+		Title: `.nearhostrc: line 3: key "extra" is not understood by this version of Nearhost; update Nearhost, or remove it.`,
+		Steps: []report.Step{{Text: "Correct .nearhostrc."}},
 	}}
 	if !reflect.DeepEqual(got.Findings, want) {
 		t.Errorf("findings %+v\nwant %+v", got.Findings, want)
@@ -339,7 +345,10 @@ func TestDoctorReportsProjectsOfAnUnreachableServerUnchecked(t *testing.T) {
 	got := decodeOne(t, stdout)
 	want := doctor.Finding{ID: "projects.unchecked", Severity: doctor.SeverityInfo, Project: "shop",
 		Message: "not checked: server box can't be reached",
-		Fix:     doctor.Fix{Kind: doctor.FixManual, Text: "Make ssh to the server work (see the server check above), then run `nearhost doctor` again."}}
+		Fix:     doctor.Fix{Kind: doctor.FixManual, Text: "Make ssh to the server work (see the server check above), then run `nearhost doctor` again."},
+		Code:    report.ProjectsUnchecked,
+		Title:   "not checked: server box can't be reached.",
+		Steps:   []report.Step{{Text: "Make ssh to the server work (see the server check above), then run `nearhost doctor` again."}}}
 	if len(got.Findings) != 2 || !reflect.DeepEqual(got.Findings[0], want) || got.Findings[1].Project != "cart" {
 		t.Errorf("findings %+v", got.Findings)
 	}

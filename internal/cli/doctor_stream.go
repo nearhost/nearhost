@@ -31,10 +31,12 @@ type doctorStream struct {
 	after time.Duration
 	// projects is set once the project section's heading is printed.
 	projects bool
+	// verbose shows each row's code, as --verbose asks.
+	verbose bool
 }
 
 func newDoctorStream(cmd *cobra.Command, b doctorBackend, quiet bool) *doctorStream {
-	s := &doctorStream{out: cmd.OutOrStdout(), errw: cmd.ErrOrStderr(), quiet: quiet, after: b.slowAfter}
+	s := &doctorStream{out: cmd.OutOrStdout(), errw: cmd.ErrOrStderr(), quiet: quiet, after: b.slowAfter, verbose: verboseFlag(cmd)}
 	if s.after <= 0 {
 		s.after = slowCheckAfter
 	}
@@ -50,7 +52,7 @@ func (s *doctorStream) printChecks(cs ...check) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range cs {
-		printCheck(s.out, c)
+		printCheck(s.out, c, s.verbose)
 	}
 }
 
@@ -119,7 +121,7 @@ func (s *doctorStream) projectHooks(hostsMissing []string) projectHooks {
 				s.projects = true
 				printProjectsHeading(s.out)
 			}
-			printProject(s.out, r)
+			printProject(s.out, r, s.verbose)
 		},
 	}
 }

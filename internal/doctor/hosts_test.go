@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -247,7 +248,7 @@ func TestDNSUncheckedWithoutUpstream(t *testing.T) {
 		Message:  "Nearhost could not ask DNS directly, so it did not check whether your real-domain names resolve elsewhere.",
 		Fix:      Fix{Kind: FixManual, Text: dnsUncheckedFix},
 	}
-	if len(got) != 1 || got[0] != want {
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("findings = %+v, want only %+v", got, want)
 	}
 }

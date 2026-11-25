@@ -264,7 +264,7 @@ func TestCoreEnvironmentProblems(t *testing.T) {
 		"browser":   report.CoreNoDesktop,
 		"ssh agent": report.CoreSSHAgentUnreachable,
 		"docker":    report.CoreDockerMissing,
-		"ssh":       report.CoreSSHMissing,
+		"ssh":       report.SSHNotFound,
 	}
 	for _, c := range coreEnvironment(context.Background(), f.probe()) {
 		if c.Problem == nil || c.Problem.Code != want[c.Name] {
