@@ -339,6 +339,27 @@ func TestScriptAsksWhichLaptopWhenSeveralAnswer(t *testing.T) {
 	})
 }
 
+// Run by --on, the script cannot be given NEARHOST_SOCKET, which does not
+// cross SSH, so with several laptops answering it says the agent must ask
+// the user which one, and still exits 4.
+func TestScriptOnSaysItCannotChooseALaptop(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "aaaaaa", "mini", true)
+		scriptServer(t, home, "bbbbbb", "mini", true)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
+		if r.code != 4 || !strings.Contains(r.stderr, "--on cannot choose between them") || !strings.Contains(r.stderr, "Ask the user which laptop") ||
+			!strings.Contains(r.stderr, "dev@aaaaaa") || !strings.Contains(r.stderr, "dev@bbbbbb") || strings.Contains(r.stderr, "NEARHOST_SOCKET") {
+			t.Fatalf("%+v", r)
+		}
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker written for a passthrough that was not asked for: %v", err)
+		}
+	})
+}
+
 func TestScriptSkipsSocketsNothingAnswersOn(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)

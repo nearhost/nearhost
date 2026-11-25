@@ -166,6 +166,7 @@ find_socket() {
 	else
 		found=0
 		list=""
+		names=""
 		# denied holds the answer of a socket that wants a token this
 		# machine lacks. It is the one to report only when no other
 		# socket answers.
@@ -182,6 +183,8 @@ find_socket() {
 			found=$((found + 1))
 			list="$list  NEARHOST_SOCKET=$s  ($(field laptop "$BODY"))
 "
+			names="$names  $(field laptop "$BODY")
+"
 			SOCK=$s
 			HELLO=$BODY
 		done
@@ -195,7 +198,14 @@ find_socket() {
 			;;
 		1) ;;
 		*)
-			printf 'Nearhost answers here from %s laptops. Ask which one, then set NEARHOST_SOCKET:\n%s' "$found" "$list" >&2
+			if [ -n "${REMOTE:-}" ]; then
+				# NEARHOST_SOCKET set on the agent's machine does not cross SSH.
+				here=$(hostname 2>/dev/null | cut -d. -f1)
+				printf 'Nearhost answers on %s from %s laptops, and --on cannot choose between them. Ask the user which laptop to use, and to drop %s in Nearhost on the others:\n%s' \
+					"${here:-this server}" "$found" "${here:-this server}" "$names" >&2
+			else
+				printf 'Nearhost answers here from %s laptops. Ask which one, then set NEARHOST_SOCKET:\n%s' "$found" "$list" >&2
+			fi
 			[ -n "${SOFT:-}" ] && exit 0
 			exit 4
 			;;
