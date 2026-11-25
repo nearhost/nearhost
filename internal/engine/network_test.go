@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -483,5 +484,56 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 				t.Errorf("NetworkState after the retry = %+v", st)
 			}
 		})
+	}
+}
+
+// When the firewall rule appears, RecheckNetwork applies the network again
+// though the config did not change, and the core listens.
+func TestRecheckNetworkTurnsListenOn(t *testing.T) {
+	var ready atomic.Bool
+	h := buildHarness(t, &config.Config{}, func(o *Options) {
+		o.WebPort = testutil.ProxyPort(t)
+		o.Firewall = ready.Load
+	})
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	ops := watchProxy(h, false)
+	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if n := ops.network(); n == nil || n.Listen {
+		t.Fatalf("network options = %+v, want not listening", n)
+	}
+	// Nothing changed: a recheck applies nothing.
+	if err := h.eng.RecheckNetwork(bg); err != nil {
+		t.Fatalf("RecheckNetwork: %v", err)
+	}
+	if got := ops.list(); len(got) != 2 {
+		t.Errorf("an unchanged network was applied again: %v", got)
+	}
+	ready.Store(true)
+	if err := h.eng.RecheckNetwork(bg); err != nil {
+		t.Fatalf("RecheckNetwork: %v", err)
+	}
+	if n := ops.network(); n == nil || !n.Listen {
+		t.Errorf("network options = %+v, want listening", n)
+	}
+	if got, want := ops.list(), []string{"network " + testDomain, "apply", "network " + testDomain, "apply"}; !slices.Equal(got, want) {
+		t.Errorf("proxy saw %v, want %v", got, want)
+	}
+	if st := h.eng.NetworkState(); st.Problem != "" {
+		t.Errorf("NetworkState = %+v", st)
+	}
+}
+
+// A shut engine rechecks nothing.
+func TestRecheckNetworkAfterShutdown(t *testing.T) {
+	h := newHarness(t, &config.Config{})
+	if err := h.eng.Shutdown(bg); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := h.eng.RecheckNetwork(bg); err == nil {
+		t.Error("RecheckNetwork after Shutdown succeeded")
 	}
 }

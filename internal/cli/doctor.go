@@ -26,6 +26,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/firewall"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
@@ -230,7 +231,7 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		selfAddrs:     selfAddrs,
 		tokenPresent:  dnsTokenPresent,
 		servedCert:    servedCert,
-		firewallReady: func() bool { return true }, // Task 8 checks the real rule
+		firewallReady: firewall.Ready,
 	}
 }
 

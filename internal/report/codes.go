@@ -187,6 +187,7 @@ const (
 	NetworkNoToken             Code = "network.no-token"
 	NetworkDNS                 Code = "network.dns"
 	NetworkFirewall            Code = "network.firewall"
+	NetworkFirewallRefused     Code = "network.firewall-refused"
 	NetworkCert                Code = "network.cert"
 	DeviceUnknown              Code = "devices.unknown"
 	DocumentsMissing           Code = "documents.missing"
@@ -438,6 +439,7 @@ var catalogRows = []catalogRow{
 	{NetworkNoToken, Error, 503, "Networked mode gets its certificate with a DNS token, and none is set."},
 	{NetworkDNS, Warning, 0, "The name of Nearhost's page on the network does not point at this machine."},
 	{NetworkFirewall, Error, 503, "The firewall does not let other devices reach Nearhost."},
+	{NetworkFirewallRefused, Error, 400, "The elevated firewall helper refused a program other than the one running, or its input or report file."},
 	{NetworkCert, Error, 503, "The certificate for Nearhost's page on the network is missing or not the one the config asks for."},
 	{DeviceUnknown, Error, 404, "No paired device has the name asked for."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},

@@ -103,6 +103,13 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if mode.hosts != nil && opts.EnsureHosts != nil {
 		opts.EnsureHosts = mode.hosts
 	}
+	// On Windows a networked core listens on the network only once the
+	// firewall rule is there: the engine asks the watch, which looks for
+	// the rule outside the engine's locks.
+	fw := newFirewallWatch(cfg.NetworkOn())
+	if fw != nil {
+		opts.Firewall = fw.Ready
+	}
 	// Each start re-reads the project's .nearhostrc. A change that needs no
 	// approval is saved to the config and served at once; one that does
 	// waits for the interface.
@@ -183,6 +190,19 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		go func() {
 			defer updated.Done()
 			core.updates.run(updateCtx)
+		}()
+	}
+	// A networked core that waits for the firewall rule looks for it every
+	// firewallRecheck, and listens on the network once it is there. It
+	// ends with the update check, when the shutdown begins.
+	if fw != nil && !fw.Ready() {
+		fw.publish = eng.Events().Publish
+		ticker := time.NewTicker(firewallRecheck)
+		updated.Add(1)
+		go func() {
+			defer updated.Done()
+			defer ticker.Stop()
+			fw.run(updateCtx, eng, ticker.C)
 		}()
 	}
 

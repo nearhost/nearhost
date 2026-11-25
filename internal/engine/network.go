@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"reflect"
@@ -194,6 +195,28 @@ func (e *Engine) applyNetwork() {
 	}
 	m := report.Errorf(report.NetworkApplyFailed, "Nearhost could not change how it serves to the network: %s", err).Because("%s", why)
 	e.bus.Publish(Event{Message: m.Title, Report: m})
+}
+
+// RecheckNetwork works out the network options again and applies them when
+// they changed, as Apply does when the config's network: section changes,
+// though the config has not: the DNS token or the firewall rule, which the
+// options depend on, may have come since. It holds lifeMu, so it never
+// overlaps Start, Shutdown or Apply, and fails on an engine that has shut
+// down or when ctx has ended before it begins.
+func (e *Engine) RecheckNetwork(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.lifeMu.Lock()
+	defer e.lifeMu.Unlock()
+	e.mu.Lock()
+	closed := e.closed
+	e.mu.Unlock()
+	if closed {
+		return errShutDown
+	}
+	e.applyNetwork()
+	return nil
 }
 
 // redactText is s with every DNS token the proxy has been given replaced
