@@ -516,8 +516,14 @@ save_session() {
 # close_socket SOCK SESSION closes SESSION's passthroughs on the Nearhost at
 # SOCK, and fails unless that Nearhost confirms it. A socket that is gone
 # succeeds: that Nearhost is not running, and its passthroughs ended with it.
+# One from a drive letter, as nearhost.ps1 writes it on Windows, is only
+# looked for: Git Bash, which runs the hook there, may not see a Windows
+# socket as one.
 close_socket() {
-	[ -S "$1" ] || return 0
+	case $1 in
+	[A-Za-z]:[\\/]*) [ -e "$1" ] || return 0 ;;
+	*) [ -S "$1" ] || return 0 ;;
+	esac
 	command -v curl >/dev/null 2>&1 || return 1
 	call "$1" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$2" && [ "$STATUS" = 204 ]
 }
@@ -546,7 +552,7 @@ close_session() {
 	while IFS= read -r line || [ -n "$line" ]; do
 		job=-
 		case $line in
-		/*)
+		/* | [A-Za-z]:[\\/]*)
 			(close_socket "$line" "$1") </dev/null >/dev/null 2>&1 &
 			job=$!
 			;;

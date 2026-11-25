@@ -1859,7 +1859,12 @@ func writeMarker(t *testing.T, home, sid, sock string) string {
 // returns the socket's path and a count of the DELETE requests served.
 func answerDelete(t *testing.T, home string, status int) (string, *atomic.Int32) {
 	t.Helper()
-	sock := filepath.Join(home, "d.sock")
+	return answerDeleteAt(t, filepath.Join(home, "d.sock"), status)
+}
+
+// answerDeleteAt is answerDelete on the socket sock.
+func answerDeleteAt(t *testing.T, sock string, status int) (string, *atomic.Int32) {
+	t.Helper()
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -1929,6 +1934,57 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 			t.Fatalf("marker stayed after a close: %v", err)
 		}
 	})
+}
+
+// On Windows the SessionEnd hook runs nearhost.sh in Git Bash, and the
+// marker names the laptop's socket as nearhost.ps1 writes it, from a drive
+// letter: the close must reach that Nearhost, not drop the line.
+func TestScriptCloseSessionClosesADriveLetterSocket(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	shell := shScript
+	home := shortDir(t)
+	var line string
+	if runtime.GOOS == "windows" {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			t.Skip("no sh (Git for Windows) here, which runs the SessionEnd hook")
+		}
+		shell = scriptShell{"git-sh", []string{sh}, script}
+		sock, deletes := answerDelete(t, home, http.StatusNoContent)
+		line = sock
+		if !regexp.MustCompile(`^[A-Za-z]:\\`).MatchString(line) {
+			t.Fatalf("socket %q is not a drive-letter path", line)
+		}
+		checkDriveClose(t, shell, home, line, deletes)
+		return
+	}
+	// Elsewhere no path starts with a drive letter, but a relative one can
+	// look like it: C:/d.sock, from home, where the script runs.
+	dir := filepath.Join(home, "C:")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, deletes := answerDeleteAt(t, filepath.Join(dir, "d.sock"), http.StatusNoContent)
+	checkDriveClose(t, shell, home, "C:/d.sock", deletes)
+}
+
+// checkDriveClose writes line as session s1's marker, runs shell's close,
+// and checks the Nearhost on line was asked once and the marker went.
+func checkDriveClose(t *testing.T, shell scriptShell, home, line string, deletes *atomic.Int32) {
+	t.Helper()
+	marker := writeMarker(t, home, "s1", line)
+	r := shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 || r.stdout != "" || r.stderr != "" {
+		t.Fatalf("close: %+v", r)
+	}
+	if n := deletes.Load(); n != 1 {
+		t.Fatalf("%d DELETE requests for %s, want 1", n, line)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed after the close: %v", err)
+	}
 }
 
 func TestScriptDecodesHTMLEscapes(t *testing.T) {
