@@ -231,9 +231,14 @@ func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) eng
 	h.mu.Unlock()
 	switch {
 	case fixing:
-		st.State, st.Message = engine.StateStarting, ""
+		st.State, st.Message, st.Problem = engine.StateStarting, "", nil
 	case refused:
 		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Error(), engine.HostsCause(r.err), 1)
+		// The core's message says to run a command; the refusal says why
+		// the project waits, with its own fix.
+		problem := hostsNotFixed(project, r.err)
+		problem.Title = st.Message
+		st.Problem = problem
 	}
 	return st
 }

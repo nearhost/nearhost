@@ -246,7 +246,7 @@ func TestACoreStartedForAnInterfaceThatFailsIsStopped(t *testing.T) {
 	f.info.StartedBy = control.StartedTUI
 	b := fakeUI(t, true, new(bool))
 	b.detach = f.detach(func([]string) { f.serve() })
-	b.run = func(*tui.Model, func(*tea.Program)) error { return errors.New("no terminal after all") }
+	b.run = func(tea.Model, func(*tea.Program)) error { return errors.New("no terminal after all") }
 	if _, stderr, code := runRootSplit(t, uiRoot(b)); code == 0 {
 		t.Fatalf("exit 0, stderr %q", stderr)
 	}

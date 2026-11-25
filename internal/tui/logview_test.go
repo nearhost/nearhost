@@ -439,7 +439,7 @@ func TestLogViewCleansAReplayError(t *testing.T) {
 	if s := m.View().Content; strings.Contains(s, "\x1b[2J") {
 		t.Errorf("the error's escape sequence reached the screen: %q", s)
 	}
-	wantScreen(t, m, "Could not send POST /api/projects again: dial tcp: bad host.") // the method of the log line
+	wantText(t, m, "Could not send POST /api/projects again: dial tcp: bad host") // the method of the log line
 }
 
 // An opened request's bodies are decoded once, not on every frame.

@@ -1,11 +1,8 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -14,6 +11,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -36,7 +34,7 @@ func problemModel(t *testing.T) (*Model, *fakeBackend) {
 func TestHomeShowsProblems(t *testing.T) {
 	m, _ := problemModel(t)
 	wantScreen(t, m, "problems ───", "✕ vps  auth failed", "why       Permission denied (publickey)",
-		"fix       Run ssh deploy@vps.example once in a terminal to fix", "blocks    clientsite",
+		"fix       To fix access, run ssh once in a terminal:", "ssh deploy@vps.example", "Then reconnect the server.", "blocks    clientsite",
 		"✕ website  error", "why       port 8080 is not answering", "r retry now · y copy command",
 		"· 2 problems", " r retry · l log · / filter")
 }
@@ -46,8 +44,11 @@ func TestHomeShowsProblems(t *testing.T) {
 func TestHomeOffersNoRetryForARunDirectoryTooLong(t *testing.T) {
 	m, f := problemModel(t)
 	f.srvErrs["vps"] = socketPathReason
+	f.health["vps"] = engine.ServerHealth{Health: transport.Health{
+		Problem: report.Errorf(report.SSHSocketPathTooLong, "%s", socketPathReason).Then(transport.SocketPathFix)}}
 	f.setState("website", engine.ProjectStatus{State: engine.StateRunning})
-	wantScreen(t, m, "✕ vps  auth failed", "Set XDG_CONFIG_HOME to a shorter path", "blocks    clientsite")
+	wantScreen(t, m, "✕ vps  auth failed", "blocks    clientsite")
+	wantMain(t, m, "Set XDG_CONFIG_HOME to a shorter path")
 	for _, not := range []string{"r retry", "copy command", "ssh deploy@vps.example"} {
 		if strings.Contains(screen(m), not) {
 			t.Errorf("Home shows %q:\n%s", not, screen(m))
@@ -108,10 +109,11 @@ func TestServerAttemptsAndNextTry(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }
 	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3}}
-	wantScreen(t, m, "✕ vps  auth failed · tried 3 times", "then press r.")
+	wantScreen(t, m, "✕ vps  auth failed · tried 3 times", "Then reconnect the server.")
 	f.servers["vps"] = transport.StatusReconnecting
 	f.health["vps"] = engine.ServerHealth{Health: transport.Health{Failures: 3, NextAttempt: now.Add(15500 * time.Millisecond)}}
-	wantScreen(t, m, "◐ vps  reconnecting · attempt 4 · next in 16s", "Nearhost tries again by itself.")
+	wantScreen(t, m, "◐ vps  reconnecting · attempt 4 · next in 16s")
+	wantMain(t, m, "Nearhost tries again by itself.")
 	now = now.Add(20 * time.Second)
 	wantScreen(t, m, "reconnecting · attempt 4 · trying now")
 	m.sel = rowKey(rowServer, "vps")
@@ -128,35 +130,107 @@ func TestConnectedServerHidesItsOldError(t *testing.T) {
 	}
 }
 
-// The fix for a proxy that is down matches why it is down.
-func TestProxyFix(t *testing.T) {
-	denied := fmt.Errorf("start proxy: listen tcp :443: bind: %w", syscall.EACCES)
-	text := errors.New("start proxy: listen tcp :443: bind: permission denied")
-	busy := fmt.Errorf("start proxy: listen tcp :443: bind: %w", syscall.EADDRINUSE)
-	const ports = "pass --https-port and --http-port."
+// Each problem Home lists shows the fix steps of its message: the code
+// that found the problem wrote them, and the interface adds only its keys.
+func TestProblemsComeFromMessages(t *testing.T) {
+	bind := report.Errorf(report.PortNeedsPermission, "HTTPS port 443 needs permission to bind.").
+		Step("Give this copy of nearhost permission to use ports below 1024, such as 443 and 80:", doctor.SetcapFix("/usr/bin/nearhost")).
+		Then("Do not run nearhost with sudo.")
+	refused := (&transport.AgentError{Problem: transport.AgentRefused, Msg: "the server refused the agent socket"}).Report()
+	notReady := (&transport.AgentError{Problem: transport.AgentNotReady, Msg: "~/.nearhost could not be made"}).Report()
+	auth := transport.ConnectionProblem(transport.StatusAuthFailed, "Permission denied (publickey)", "vps", "deploy@vps.example")
+	socket := report.Errorf(report.SSHSocketPathTooLong, "%s", socketPathReason).Then(transport.SocketPathFix)
+	inUse := report.Errorf(report.PortInUse, "loopback port 5173 is not forwarded").
+		Then("Quit the program using port 5173 on this machine, then start the project again.")
 	cases := []struct {
-		name string
-		err  error
-		goos string
-		want string
+		name  string
+		setup func(m *Model, f *fakeBackend)
+		want  []string // on Home, as text
+		not   []string
+		sel   string   // a row whose panel shows the problem too
+		panel []string // that panel, as text
 	}{
-		{"denied on linux", denied, "linux", doctor.SetcapFix("/usr/bin/nearhost")},
-		{"denied as text on linux", text, "linux", doctor.SetcapFix("/usr/bin/nearhost")},
-		{"denied on darwin", denied, "darwin", "Run nearhost as a user that may bind the port, or " + ports},
-		{"in use", busy, "linux", "Quit the program using the port, or " + ports},
-		{"run directory not a directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.ENOTDIR}), "linux", "Fix /run/nearhost: " + syscall.ENOTDIR.Error() + "."},
-		{"run directory", fmt.Errorf("create run directory: %w", &fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.EACCES}), "linux", "Check that this user can create /run/nearhost."},
-	}
-	// Another Nearhost holding the run directory: the message says what to
-	// do, and no port advice follows it.
-	if got := proxyFix(fmt.Errorf("start: %w", engine.ErrAlreadyRunning), "linux", "/usr/bin/nearhost"); got != "" {
-		t.Errorf("already running: proxyFix = %q, want no fix", got)
+		{name: "proxy cannot bind", setup: func(m *Model, f *fakeBackend) {
+			m.Update(startedMsg{fmt.Errorf("start proxy: %w", bind)})
+		}, want: []string{"✕ proxy down", "HTTPS port 443 needs permission to bind.",
+			"Give this copy of nearhost permission to use ports below 1024, such as 443 and 80:",
+			doctor.SetcapFix("/usr/bin/nearhost"), "Do not run nearhost with sudo.", "r tries again"}},
+		{name: "agents refused", setup: func(m *Model, f *fakeBackend) {
+			f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: refused.Title, AgentReport: refused}}
+		}, want: []string{"mini agents unavailable", "the server refused the agent socket",
+			"Set AllowStreamLocalForwarding yes in the server's sshd_config, then reconnect the server."},
+			sel: rowKey(rowServer, "mini"), panel: []string{"Set AllowStreamLocalForwarding yes", "r reconnect"}},
+		{name: "agents not ready", setup: func(m *Model, f *fakeBackend) {
+			f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: notReady.Title, AgentReport: notReady}}
+		}, want: []string{"Check that the server account can write ~/.nearhost, then reconnect the server."}},
+		{name: "server cannot log in", setup: func(m *Model, f *fakeBackend) {
+			f.health["vps"] = engine.ServerHealth{Health: transport.Health{Problem: auth}}
+		}, want: []string{"✕ vps auth failed", "Permission denied (publickey)", "To fix access, run ssh once in a terminal:",
+			"ssh deploy@vps.example", "Then reconnect the server.", "blocks clientsite", "r retry now · y copy command"},
+			sel: rowKey(rowServer, "vps"), panel: []string{"To fix access, run ssh once in a terminal:", "ssh deploy@vps.example", "r reconnect"}},
+		{name: "run directory too long", setup: func(m *Model, f *fakeBackend) {
+			f.srvErrs["vps"] = socketPathReason
+			f.health["vps"] = engine.ServerHealth{Health: transport.Health{Problem: socket}}
+		}, want: []string{"✕ vps auth failed", transport.SocketPathFix}, not: []string{"r retry", "copy command"},
+			sel: rowKey(rowServer, "vps"), panel: []string{transport.SocketPathFix}},
+		{name: "project in error", setup: func(m *Model, f *fakeBackend) {
+			f.setState("myapp", engine.ProjectStatus{State: engine.StateError, Message: inUse.Title, Problem: inUse})
+		}, want: []string{"✕ myapp error", "loopback port 5173 is not forwarded",
+			"Quit the program using port 5173 on this machine, then start the project again."},
+			sel: rowKey(rowProject, "myapp"), panel: []string{"Quit the program using port 5173", "enter start it again"}},
+		{name: "project in error without a message", setup: func(m *Model, f *fakeBackend) {
+			f.setState("myapp", engine.ProjectStatus{State: engine.StateError, Message: "port 8080 is not answering"})
+		}, want: []string{"✕ myapp error", "port 8080 is not answering"},
+			sel: rowKey(rowProject, "myapp"), panel: []string{"port 8080 is not answering", "enter start it again"}},
 	}
 	for _, c := range cases {
-		got := proxyFix(c.err, c.goos, "/usr/bin/nearhost")
-		if !strings.Contains(got, c.want) {
-			t.Errorf("%s: proxyFix = %q, want it to contain %q", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			cfg := sampleConfig()
+			cfg.Servers = append(cfg.Servers, config.Server{Name: "vps", SSHHost: "deploy@vps.example"})
+			cfg.Projects = append(cfg.Projects, config.Project{Name: "clientsite", Server: "vps", Path: "/srv/c", Alias: "c.test", Enabled: true,
+				Routes: []config.Route{{Port: 80, Role: config.RoleWeb}}})
+			f := newFake(t, cfg)
+			f.servers["mini"] = transport.StatusConnected
+			f.servers["vps"] = transport.StatusConnected
+			m := sized(f)
+			m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+			if c.name == "server cannot log in" || c.name == "run directory too long" {
+				f.servers["vps"] = transport.StatusAuthFailed
+				f.srvErrs["vps"] = "Permission denied (publickey)"
+				if c.name == "run directory too long" {
+					f.srvErrs["vps"] = socketPathReason
+				}
+			}
+			c.setup(m, f)
+			wantMain(t, m, c.want...)
+			text := mainText(m)
+			for _, not := range c.not {
+				if strings.Contains(text, not) {
+					t.Errorf("Home shows %q:\n%s", not, screen(m))
+				}
+			}
+			if c.sel != "" {
+				m.sel = c.sel
+				wantMain(t, m, c.panel...)
+			}
+		})
+	}
+}
+
+// A message whose title already holds its advice, as an older text did,
+// shows the advice once.
+func TestProblemAdviceShowsOnce(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	const advice = "Clear it with: attrib -r \"C:\\hosts\" (in an administrator terminal), or run with --no-hosts."
+	problem := report.Errorf(report.HostsReadOnly, "project \"website\"'s hosts are not resolvable: C:\\hosts is read-only. %s", advice).
+		Then(advice)
+	f.setState("website", engine.ProjectStatus{State: engine.StateStopped, Message: problem.Title, Problem: problem})
+	m := sized(f)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	m.sel = rowKey(rowProject, "website")
+	wantMain(t, m, "hosts are not resolvable", "Clear it with: attrib -r")
+	if n := strings.Count(mainText(m), "Clear it with"); n != 1 {
+		t.Errorf("the advice shows %d times:\n%s", n, screen(m))
 	}
 }
 
@@ -168,5 +242,30 @@ func TestHomeNamesROnce(t *testing.T) {
 	wantScreen(t, m, "✕ proxy  down", "r retry now · y copy command")
 	if n := strings.Count(screen(m), "r tries again") + strings.Count(screen(m), "r retry now"); n != 1 {
 		t.Errorf("the r hint shows %d times:\n%s", n, screen(m))
+	}
+}
+
+// mainText is the screen right of the sidebar as text: each line's part
+// after the sidebar's edge, joined with single spaces, wherever the lines
+// wrap it.
+func mainText(m *Model) string {
+	var parts []string
+	for _, l := range strings.Split(screen(m), "\n") {
+		if i := strings.Index(l, "│"); i >= 0 {
+			l = l[i+len("│"):]
+		}
+		parts = append(parts, l)
+	}
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+// wantMain fails unless the main panel holds every one of subs as text.
+func wantMain(t *testing.T, m *Model, subs ...string) {
+	t.Helper()
+	text := mainText(m)
+	for _, sub := range subs {
+		if !strings.Contains(text, sub) {
+			t.Errorf("the main panel lacks %q:\n%s", sub, screen(m))
+		}
 	}
 }

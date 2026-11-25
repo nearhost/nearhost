@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -33,13 +34,16 @@ func (m *Model) editConfig(key, note string, fn func(cfg *config.Config) error) 
 }
 
 // refused shows why a change made from the row with key was refused: in the
-// panel when that row is still selected, otherwise in its log.
+// panel when that row is still selected, otherwise in the alert, and in
+// the row's log.
 func (m *Model) refused(key string, err error) {
 	if key == m.sel {
 		m.panelErr = err.Error()
 		return
 	}
-	m.logs.noteOn(key, sentence(err.Error()))
+	problem := report.From(err)
+	problem.Title = sentence(problem.Title)
+	m.showAlert(key, problem)
 }
 
 // routesKey handles a key while the project panel's routes have the focus,

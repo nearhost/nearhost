@@ -98,6 +98,9 @@ func TestActionErrorRoundTrips(t *testing.T) {
 		!reflect.DeepEqual(m.Fix, want.Fix) || fmt.Sprint(m.Data["port"]) != "8080" {
 		t.Errorf("message = %+v, want %+v", m, want)
 	}
+	if m.Context != "start web" {
+		t.Errorf("context = %q, want the core's wrapper, start web", m.Context)
+	}
 	if errors.Is(err, ErrRequestEnded) || errors.Is(err, ErrNotFound) {
 		t.Errorf("a port error is marked as ended or not found: %v", err)
 	}

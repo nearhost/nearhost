@@ -207,7 +207,7 @@ func TestPassPromptErrorNotEndedSaysNothingOfEnding(t *testing.T) {
 func TestPassAnsweredErrorAfterTheBoxHasGoneLogs(t *testing.T) {
 	m, _, _ := projectFormModel(t)
 	m.Update(passAnsweredMsg{seq: 1, r: passReq(m), answer: AnswerYes, err: errors.New("the server isn't connected")})
-	if !strings.Contains(logText(m, homeKey), "Could not open port 41873 for Claude Code on apollo: the server isn't connected.") {
+	if !strings.Contains(logText(m, homeKey), "Could not open port 41873 for Claude Code on apollo: the server isn't connected") || m.alertBox == nil {
 		t.Fatalf("log:\n%s", logText(m, homeKey))
 	}
 }

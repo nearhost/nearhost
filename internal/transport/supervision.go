@@ -188,17 +188,20 @@ func (v *supervision) Health() Health {
 // ConnectionProblem is the message for a connection to host, the server
 // called server, that is in state st with lastErr its last error:
 // ssh.auth-failed once it has given up, ssh.unreachable otherwise. Its
-// title is lastErr, and its step says how to fix access.
+// title is lastErr, and its steps say how to fix access: ssh run by hand,
+// then, for a connection that is not trying again by itself, a reconnect.
+// They name no key or command of an interface: each shows its own.
 func ConnectionProblem(st Status, lastErr, server, host string) *report.Message {
 	code := report.SSHUnreachable
 	if st == StatusAuthFailed {
 		code = report.SSHAuthFailed
 	}
 	m := report.Errorf(code, "%s", lastErr).With("server", server).With("host", host)
+	m.Step("To fix access, run ssh once in a terminal:", "ssh "+host)
 	if st == StatusReconnecting {
-		m.Because("Nearhost tries again by itself.")
+		return m.Because("Nearhost tries again by itself.")
 	}
-	return m.Then("Run `ssh " + host + "` once in a terminal to fix access, then press r.")
+	return m.Then("Then reconnect the server.")
 }
 
 // copyMessage is a copy of m that a caller may change without changing m.

@@ -154,7 +154,7 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 	term.waitFor("the project stopped", "○ shop", "you cancelled")
 
 	term.click("○ shop")
-	term.waitFor("the project's page, with what to do", "▌  ○ shop", "Press enter and approve the password prompt", "enter start")
+	term.waitFor("the project's page, with what to do", "▌  ○ shop", "enter start it again and approve the password prompt")
 	term.press(keyEnter)
 	term.waitFor("the password box again", "Password needed", "add shop.test to")
 	for i, wrong := range []string{"one", "two", "three"} {
@@ -170,7 +170,11 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 		}
 	}
 	term.waitGone("the password box to close", "Password needed")
-	term.waitFor("the project stopped again", "○ shop", "three wrong passwords", "enter start")
+	// The start the user asked for was refused: the alert says why.
+	term.waitFor("the refusal in the alert", "Something went wrong", "three wrong")
+	term.press(keyEscape)
+	term.waitGone("the alert to close", "Something went wrong")
+	term.waitFor("the project stopped again", "○ shop", "three wrong", "enter start")
 	if got := sb.hostsFile(); got != untouched {
 		t.Errorf("the hosts file changed:\n%s", got)
 	}

@@ -15,7 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
-	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -112,7 +112,7 @@ func TestProjectPanel(t *testing.T) {
 	m := sized(f)
 	m.sel = rowKey(rowProject, "myapp")
 	wantScreen(t, m, "myapp  https://myapp.test", "✕ error", "server mini    path /srv/myapp",
-		"why       loopback port 5173 is in use", "fix       Resolve what is named above, then press enter to start it", "again.",
+		"why       loopback port 5173 is in use", "fix       enter start it again",
 		" port    role        label", "80      web         web", "52114     ○", "5173    loopback    vite (VITE_PORT)", "5173      ○",
 		"1 ignored: 3306  ·  i show",
 		"enter start · o open · tab routes · e edit · d remove · l log · / filter · ? more", "myapp 2/3")
@@ -145,65 +145,6 @@ func TestProjectPanel(t *testing.T) {
 // a control socket.
 const socketPathReason = "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
 
-// ssh by hand works when the run directory is too long, and fixes nothing.
-func TestServerFixForARunDirectoryTooLong(t *testing.T) {
-	if !transport.IsSocketPathMessage(socketPathReason) {
-		t.Fatal("socketPathReason is not transport's message")
-	}
-	for _, st := range []transport.Status{transport.StatusAuthFailed, transport.StatusReconnecting} {
-		if got := serverFix(st, socketPathReason, "mini.lan"); got != socketPathFix || strings.Contains(got, "ssh mini.lan") {
-			t.Errorf("serverFix(%s) = %q", st, got)
-		}
-	}
-	if got := serverFix(transport.StatusAuthFailed, "Permission denied (publickey).", "mini.lan"); !strings.Contains(got, "Run ssh mini.lan once") {
-		t.Errorf("another reason lost the ssh advice: %q", got)
-	}
-}
-
-func TestFixFor(t *testing.T) {
-	withGOOS(t, "linux")
-	for _, c := range []struct {
-		st       engine.State
-		reason   string
-		serverUp bool
-		want     string
-	}{
-		{engine.StateRunning, "", true, ""},
-		{engine.StateStopped, "", true, ""},
-		{engine.StateStopped, "hosts not resolvable", true, "Press enter and approve the password prompt, or add the project's hosts to " + hosts.DefaultPath + " yourself"},
-		{engine.StateDegraded, "", false, "run `ssh mini.lan` once"},
-		{engine.StateError, "auth", false, "Run `ssh mini.lan` once in a terminal to fix access, then press enter."},
-		{engine.StateError, "port", true, "Resolve what is named above"},
-		{engine.StateError, socketPathReason, false, socketPathFix},
-	} {
-		if got := fixFor(c.st, c.reason, c.serverUp, "mini.lan"); !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
-			t.Errorf("fixFor(%s, %q, %v) = %q, want %q", c.st, c.reason, c.serverUp, got, c.want)
-		}
-	}
-}
-
-// A read-only hosts file is not cleared by approving a prompt again: the
-// fix says to clear the attribute the reason names.
-func TestFixForAReadOnlyHostsFile(t *testing.T) {
-	withGOOS(t, "windows")
-	reason := `C:\Windows\System32\drivers\etc\hosts is read-only. Clear it with: attrib -r "C:\Windows\System32\drivers\etc\hosts" (in an administrator terminal), or run with --no-hosts.`
-	if !hosts.IsReadOnlyMessage(reason) {
-		t.Fatalf("the test's reason is not the read-only message: %q", reason)
-	}
-	got := fixFor(engine.StateStopped, reason, true, "mini.lan")
-	if strings.Contains(got, "approve") || !strings.Contains(got, "read-only attribute") {
-		t.Errorf("fixFor = %q", got)
-	}
-}
-
-func TestFixForAHostsRefusalOnWindows(t *testing.T) {
-	withGOOS(t, "windows")
-	got := fixFor(engine.StateStopped, "hosts not resolvable", true, "mini.lan")
-	if !strings.HasPrefix(got, "Press enter and approve the Windows prompt, or add the project's hosts to ") || strings.Contains(got, "password") {
-		t.Errorf("fixFor = %q", got)
-	}
-}
-
 func TestServerPanelShowsTheErrorAndFix(t *testing.T) {
 	f := newFake(t, sampleConfig())
 	f.servers["mini"] = transport.StatusAuthFailed
@@ -211,7 +152,8 @@ func TestServerPanelShowsTheErrorAndFix(t *testing.T) {
 	m := sized(f)
 	m.sel = rowKey(rowServer, "mini")
 	wantScreen(t, m, "mini", "✕ auth failed", "ssh host  mini.lan", "why       user@mini.lan: Permission denied (publickey).",
-		"fix       Run ssh mini.lan once in a terminal to fix access, then", "press r.", "projects  myapp, old", "enter collapse")
+		"fix       To fix access, run ssh once in a terminal:", "            ssh mini.lan", "Then reconnect the server.", "r reconnect",
+		"projects  myapp, old", "enter collapse")
 }
 
 func TestTooSmall(t *testing.T) {
@@ -264,7 +206,7 @@ func TestOpen(t *testing.T) {
 		t.Errorf("opened %v", f.opened)
 	}
 	m.sel = homeKey
-	wantScreen(t, m, "Open https://myapp.test in your browser.")
+	wantScreen(t, m, "Could not open https://myapp.test.")
 }
 
 func TestEventsFillTheLogs(t *testing.T) {
@@ -475,6 +417,8 @@ func TestRefusedStartIsShown(t *testing.T) {
 	m := sized(f)
 	m.sel = rowKey(rowProject, "website")
 	run(m, press(m, "enter"))
+	wantText(t, m, "engine is not started")
+	press(m, "enter") // the alert closes
 	wantScreen(t, m, "website   engine is not started")
 	m.sel = homeKey
 	wantScreen(t, m, "website   engine is not started")
@@ -505,7 +449,10 @@ func TestProxyDownSaysHowToFixIt(t *testing.T) {
 	for _, cfg := range []*config.Config{sampleConfig(), {}} {
 		f := newFake(t, cfg)
 		m := sized(f)
-		run(m, func() tea.Msg { return startedMsg{errors.New("HTTPS port 443 is in use by nginx (pid 12)")} })
+		run(m, func() tea.Msg {
+			return startedMsg{report.Errorf(report.PortInUse, "HTTPS port 443 is in use by nginx (pid 12)").
+				Then("Quit the program using the port, or pass --https-port and --http-port.")}
+		})
 		wantScreen(t, m, "✕ proxy  down", "why       HTTPS port 443 is in use by nginx (pid 12)",
 			"fix       Quit the program using the port, or pass", "http-port.")
 	}
@@ -744,5 +691,52 @@ func TestRDoesNothingWhileTheWindowIsTooSmall(t *testing.T) {
 	}
 	if f.startCalls != 0 {
 		t.Errorf("Start called %d times", f.startCalls)
+	}
+}
+
+// An error from the user's own action opens the alert, with the message's
+// fix, and the log keeps it too.
+func TestOwnActionErrorOpensAlert(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	f.startErr2 = fmt.Errorf("start website: %w", report.Errorf(report.PortInUse, "Port 8080 is in use.").
+		Step("See what listens on it:", "lsof -i :8080"))
+	m := sized(f)
+	m.sel = rowKey(rowProject, "website")
+	run(m, press(m, "enter"))
+	if m.alertBox == nil {
+		t.Fatalf("a refused start opened no alert:\n%s", screen(m))
+	}
+	wantText(t, m, "start website: Port 8080 is in use.", "See what listens on it:")
+	wantScreen(t, m, "  lsof -i :8080")
+	if log := logText(m, rowKey(rowProject, "website")); !strings.Contains(log, "Port 8080 is in use.") {
+		t.Errorf("the log lacks the refusal:\n%s", log)
+	}
+}
+
+// A problem that arrives on its own, such as a project failing in the
+// background, never opens the alert: it toasts once, as it begins, and
+// shows in the problems panel with its fix.
+func TestBackgroundProblemDoesNotOpenAlert(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	problem := report.Errorf(report.PortInUse, "port 8080 is in use").
+		Then("Quit the program using port 8080 on this machine, then start the project again.")
+	f.setState("website", engine.ProjectStatus{State: engine.StateError, Message: problem.Title, Problem: problem})
+	m.Update(eventMsg(engine.Event{Time: time.Now(), Project: "website", State: engine.StateError,
+		Message: "state: error: " + problem.Title, Report: problem}))
+	if m.alertBox != nil {
+		t.Fatal("a background problem opened the alert")
+	}
+	if !m.toast.problem || !strings.Contains(m.toast.text, "port 8080 is in use") {
+		t.Errorf("toast = %+v, want the problem", m.toast)
+	}
+	wantMain(t, m, "✕ website error", "port 8080 is in use",
+		"Quit the program using port 8080 on this machine, then start the project again.")
+	// The same problem again is no news: no new toast.
+	m.toast.text = ""
+	m.Update(eventMsg(engine.Event{Time: time.Now(), Project: "website", State: engine.StateError,
+		Message: "state: error: " + problem.Title, Report: problem}))
+	if m.toast.text != "" {
+		t.Errorf("the same problem toasted again: %q", m.toast.text)
 	}
 }

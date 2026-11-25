@@ -17,6 +17,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // logKind is which entries the full-screen log shows.
@@ -285,7 +286,7 @@ func (m *Model) logViewKey(k tea.KeyPressMsg) tea.Cmd {
 				command, err = curlFor(*a)
 			}
 			if err != nil {
-				return m.alertProblem(v.key, "This request cannot be copied as curl.")
+				return m.warn(v.key, report.Warnf(report.InterfaceNothingToCopy, "This request cannot be copied as curl.").Wrap(err))
 			}
 			return tea.Batch(copyText(v.key, command), m.alert(v.key, line))
 		}
@@ -924,11 +925,15 @@ func (m *Model) replay(e logEntry) tea.Cmd {
 	})
 }
 
-// replayed says how sending a request again went.
+// replayed says how sending a request again went. A request that could not
+// be sent again opens the alert: the user asked for it.
 func (m *Model) replayed(msg replayedMsg) {
 	text := fmt.Sprintf("Sent %s %s again: %d.", clean(msg.method), clean(msg.uri), msg.status)
 	if msg.err != nil {
-		text = fmt.Sprintf("Could not send %s %s again: %s.", clean(msg.method), clean(msg.uri), strings.TrimRight(clean(msg.err.Error()), "."))
+		problem := report.From(msg.err)
+		problem.Context = withContext(fmt.Sprintf("Could not send %s %s again", clean(msg.method), clean(msg.uri)), problem.Context)
+		m.alertBox = &alertBox{msg: problem}
+		text = messageLine(problem)
 	}
 	if m.logView != nil {
 		m.logView.said = text

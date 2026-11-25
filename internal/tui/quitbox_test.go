@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -121,8 +122,11 @@ func TestQuitBoxRememberFailureStillQuits(t *testing.T) {
 	if len(f.shutdown) != 1 {
 		t.Fatalf("shutdown %d", len(f.shutdown))
 	}
-	if log := logText(m, homeKey); !strings.Contains(log, "Could not save the answer to "+f.path+": boom. The quit box asks again next time; to stop it asking, set keep_running in that file.") {
+	if log := logText(m, homeKey); !strings.Contains(log, "Could not save the answer to "+f.path+": boom. To stop it asking, set keep_running in that file.") {
 		t.Errorf("log:\n%s", log)
+	}
+	if w := m.Warnings(); len(w) != 1 || w[0].Why != "The quit box asks again next time." {
+		t.Errorf("warnings %v, want the answer not saved, to say after the program", w)
 	}
 }
 
@@ -224,7 +228,7 @@ func TestLostQuits(t *testing.T) {
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("the lost core did not end the program")
 	}
-	if m.Err() != errBoom {
+	if !m.Lost() || !errors.Is(m.Err(), errBoom) {
 		t.Errorf("the program ended with %v", m.Err())
 	}
 	if len(f.shutdown) != 0 || len(f.left) != 0 {

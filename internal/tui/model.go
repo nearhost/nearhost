@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 const (
@@ -66,6 +67,9 @@ type Model struct {
 	password *passwordBox
 	// quitBox asks whether quitting stops Nearhost; nil when it is not open.
 	quitBox *quitBox
+	// alertBox shows an error from the user's own action; nil when none is
+	// open.
+	alertBox *alertBox
 	// waiting are the agents' requests to be reviewed, oldest first;
 	// proposing is the proposal whose form is open, nil when none is.
 	waiting   []asked
@@ -108,7 +112,14 @@ type Model struct {
 	cutShort      context.CancelFunc // ends the shutdown's context
 	// lostErr is why the core could no longer be reached, which ended the
 	// program; see Err.
-	lostErr error
+	lostErr *report.Message
+	// endErr is why the quit failed to stop Nearhost or leave it running,
+	// and warnings what else the quit has to say; see Err and Warnings.
+	endErr   error
+	warnings []*report.Message
+	// toasted is the code of the problem each row's toast last said, by
+	// row key, so a problem toasts once, as it begins.
+	toasted map[string]report.Code
 	// leftEmpty is set once a server is connected from the first-run
 	// screen: the main screen stays up for this run, with nothing to serve.
 	leftEmpty bool
@@ -167,6 +178,7 @@ func New(b Backend, dir string) *Model {
 		sel:       homeKey,
 		collapsed: map[string]bool{},
 		advice:    map[string]advice{},
+		toasted:   map[string]report.Code{},
 		since:     map[string]time.Time{},
 		now:       time.Now,
 		getenv:    os.Getenv,
@@ -372,7 +384,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.logs.event(engine.Event(msg), m.cfg)
 		m.trackUptime()
-		return m, m.listen()
+		return m, tea.Batch(m.listen(), m.problemBegins(engine.Event(msg)))
 	case tickMsg:
 		m.trackUptime()
 		// The config the backend runs changes when its file does: the core
@@ -400,9 +412,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.readMachine()
 	case projectDoneMsg:
 		// A start or stop the engine refused outright changed no state, so
-		// the refusal is the only sign of it.
+		// the refusal is the only sign of it. It answers the user's own
+		// action, so it opens the alert, and the project's log keeps it.
 		if msg.err != nil {
-			m.logs.project(msg.name, time.Now(), msg.err.Error())
+			problem := report.From(msg.err)
+			m.logs.project(msg.name, time.Now(), messageLine(problem))
+			m.alertBox = &alertBox{msg: problem}
 		}
 	case appliedMsg:
 		m.applying, m.endApply = false, nil
@@ -420,12 +435,14 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.editing = false
 		if msg.err != nil {
-			m.logs.note("Ignored a change to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.err.Error(), ".") + ". Save the file again to apply it.")
+			return m, m.warn(homeKey, report.Warnf(report.InterfaceChangeIgnored, "Ignored a change to %s: %s.", m.b.ConfigPath(), strings.TrimRight(msg.err.Error(), ".")).
+				Then("Save the file again to apply it.").Wrap(msg.err))
 		}
 		m.setConfig(m.b.Config())
 	case openedMsg:
 		if msg.err != nil {
-			return m, m.alertProblem(msg.key, "Open "+msg.url+" in your browser.")
+			return m, m.warn(msg.key, report.Warnf(report.InterfaceOpenFailed, "Could not open %s.", msg.url).
+				Then("Open it in your browser.").Wrap(msg.err))
 		}
 	case suspendMsg:
 		if m.quitting {
@@ -435,18 +452,28 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		done := msg.done
 		return m, tea.Exec(&funcCommand{fn: msg.fn}, func(err error) tea.Msg {
 			done <- err
+			if c, ok := report.As(err); ok && c.Code == report.Crash {
+				return crashedMsg{c}
+			}
 			return resumedMsg{}
 		})
 	case shutdownMsg:
+		// The program ends here, so what went wrong is said once the
+		// terminal is the shell's again: see Err and Warnings.
 		if msg.unsaved != nil {
-			m.logs.note("Could not save the answer to " + m.b.ConfigPath() + ": " + strings.TrimRight(msg.unsaved.Error(), ".") + ". The quit box asks again next time; to stop it asking, set keep_running in that file.")
+			w := report.Warnf(report.InterfaceAnswerNotSaved, "Could not save the answer to %s: %s.", m.b.ConfigPath(), strings.TrimRight(msg.unsaved.Error(), ".")).
+				Because("The quit box asks again next time.").
+				Then("To stop it asking, set keep_running in that file.").Wrap(msg.unsaved)
+			m.logs.note(messageLine(w))
+			m.warnings = append(m.warnings, w)
 		}
 		if msg.err != nil {
-			verb := "Stopping: "
+			verb := "stop Nearhost"
 			if m.leaving {
-				verb = "Leaving: "
+				verb = "leave Nearhost running"
 			}
-			m.logs.note(verb + msg.err.Error())
+			m.endErr = fmt.Errorf("%s: %w", verb, msg.err)
+			m.logs.note(messageLine(report.From(m.endErr)))
 		}
 		m.unsubscribe()
 		return m, tea.Quit
@@ -552,7 +579,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.password != nil {
 			return m, m.password.update(msg)
 		}
-		if m.quitBox != nil {
+		if m.quitBox != nil || m.alertBox != nil {
 			return m, nil // it has nothing to type into
 		}
 		if m.form != nil {
@@ -581,13 +608,14 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.mouseUp(msg.Mouse())
 	case openFailedMsg:
-		return m, m.alertProblem(msg.key, "Could not open "+msg.url+": "+msg.err.Error())
+		return m, m.warn(msg.key, report.Warnf(report.InterfaceOpenFailed, "Could not open %s: %s", msg.url, msg.err).Wrap(msg.err))
 	case askGuardEndedMsg:
 		return m, nil // the redraw shows the box's keys
 	case toastDoneMsg:
 		m.toastDone(msg)
 	case copyFailedMsg:
-		return m, m.alertProblem(msg.key, "Could not copy to the clipboard: "+msg.err.Error()+". The terminal may still have copied it.")
+		return m, m.warn(msg.key, report.Warnf(report.InterfaceCopyFailed, "Could not copy to the clipboard: %s.", strings.TrimRight(msg.err.Error(), ".")).
+			Because("The terminal may still have copied it.").Wrap(msg.err))
 	case tea.MouseWheelMsg:
 		if m.small() {
 			return m, nil
@@ -685,6 +713,9 @@ func (m *Model) content() string {
 		}
 		if m.quitBox != nil {
 			content = m.formBox(content, m.quitBox)
+		}
+		if m.alertBox != nil {
+			content = m.formBox(content, m.alertBox)
 		}
 		if m.password != nil {
 			content = m.formBox(content, m.password)

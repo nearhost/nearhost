@@ -342,7 +342,7 @@ func TestOpenFailureGoesToTheRowThatAsked(t *testing.T) {
 	for _, e := range m.logs.entries(key, "") {
 		got = append(got, e.text)
 	}
-	if want := "Open https://website.test in your browser.|Could not open https://x.test: boom"; strings.Join(got, "|") != want {
+	if want := "Could not open https://website.test. Open it in your browser.|Could not open https://x.test: boom"; strings.Join(got, "|") != want {
 		t.Errorf("website's log %q, want %q", got, want)
 	}
 }

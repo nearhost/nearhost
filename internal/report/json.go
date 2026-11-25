@@ -15,6 +15,7 @@ type wire struct {
 	Code     Code           `json:"code,omitempty"`
 	Level    Level          `json:"level"`
 	Title    string         `json:"title,omitempty"`
+	Context  string         `json:"context,omitempty"`
 	Detail   string         `json:"detail,omitempty"`
 	Verbatim []string       `json:"verbatim,omitempty"`
 	Fix      []Step         `json:"fix,omitempty"`
@@ -23,12 +24,13 @@ type wire struct {
 }
 
 // MarshalJSON writes the message as
-// {"code","level","title","detail","verbatim":[…],"fix":[{"text","command"}],"doctor","data"},
-// leaving out empty fields. The cause, the exit status and the context are
-// not sent. JSON escaping keeps any text in it inert.
+// {"code","level","title","context","detail","verbatim":[…],"fix":[{"text","command"}],"doctor","data"},
+// leaving out empty fields. The context is what wrappers added ("start
+// web"), so a client can show it as the core would. The cause and the exit
+// status are not sent. JSON escaping keeps any text in it inert.
 func (m *Message) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire{
-		Code: m.Code, Level: m.Level, Title: m.Title, Detail: m.Why, Verbatim: m.Verbatim,
+		Code: m.Code, Level: m.Level, Title: m.Title, Context: m.Context, Detail: m.Why, Verbatim: m.Verbatim,
 		Fix: m.Fix, Doctor: m.Doctor, Data: m.Data,
 	})
 }
@@ -41,7 +43,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*m = Message{
-		Level: w.Level, Code: w.Code, Title: w.Title, Why: w.Detail, Verbatim: w.Verbatim,
+		Level: w.Level, Code: w.Code, Title: w.Title, Context: w.Context, Why: w.Detail, Verbatim: w.Verbatim,
 		Fix: w.Fix, Doctor: w.Doctor, Data: w.Data,
 	}
 	return nil
@@ -49,7 +51,8 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 
 // Problem returns an error as RFC 9457 problem details: the message's
 // fields, plus `type` (typeBase + "#" + code), `status`, and `error`, which
-// holds the title for clients that read only that.
+// holds the title for clients that read only that. `context`, when there is
+// one, is what wrappers added in front of the title.
 func Problem(m *Message, status int, typeBase string) map[string]any {
 	p := map[string]any{
 		"type":   typeBase + "#" + string(m.Code),
@@ -58,6 +61,9 @@ func Problem(m *Message, status int, typeBase string) map[string]any {
 		"code":   m.Code,
 		"level":  m.Level.String(),
 		"error":  m.Title,
+	}
+	if m.Context != "" {
+		p["context"] = m.Context
 	}
 	if m.Why != "" {
 		p["detail"] = m.Why
@@ -80,7 +86,7 @@ func Problem(m *Message, status int, typeBase string) map[string]any {
 // problemOrder is the order of a problem body's keys. `error` comes first,
 // as the agent skill takes the first "error" in a body; keys a body lacks
 // are skipped.
-var problemOrder = []string{"error", "type", "title", "status", "detail", "verbatim", "code", "level", "fix", "doctor", "data"}
+var problemOrder = []string{"error", "type", "title", "status", "context", "detail", "verbatim", "code", "level", "fix", "doctor", "data"}
 
 // WriteProblem answers a request with m as problem details
 // (application/problem+json), with the HTTP status from m's catalog entry

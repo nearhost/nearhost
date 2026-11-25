@@ -13,6 +13,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/documents"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // realHome is this machine's home folder with its symlinks resolved, as the
@@ -284,7 +285,10 @@ func (m *Model) docAnswered(msg docAnsweredMsg) tea.Cmd {
 			if msg.answer == AnswerNo {
 				verb = "decline"
 			}
-			m.logs.note(fmt.Sprintf("Could not %s %s for %s: %s.", verb, doc, who, strings.TrimSuffix(clean(msg.err.Error()), ".")))
+			// The user answered, and the box has gone: the alert says it.
+			problem := report.From(msg.err)
+			problem.Context = withContext(fmt.Sprintf("Could not %s %s for %s", verb, doc, who), problem.Context)
+			return m.showAlert(homeKey, problem)
 		}
 		return nil
 	}
