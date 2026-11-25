@@ -59,6 +59,12 @@ type Home struct {
 	// nearhost.<domain>, while the core is networked. Empty means it
 	// is not.
 	NetworkHost string `json:"network_host,omitempty"`
+	// Certificates is where a networked core's certificates come from,
+	// "acme" or "ca". With "ca", /profile.mobileconfig serves the local
+	// CA's root for a device to trust.
+	Certificates string `json:"certificates,omitempty"`
+	// StorageRoot is Caddy's storage directory, which holds the local CA.
+	StorageRoot string `json:"storage_root,omitempty"`
 
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte
@@ -76,6 +82,7 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 // depends only on the version and the web port, so it is rendered once per
 // config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
+	setNetworkHost(h.NetworkHost)
 	page, err := h.render(nil)
 	if err != nil {
 		return err
@@ -105,7 +112,8 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 // the documents handler SetDocuments stored, which sets its own headers; a
 // successful answer there at hostname.PageHost also gives the browser the
 // page cookie, as the link proves it was given a document. Paths of the
-// console SetConsole stored go to it through the gate (see serveConsole);
+// console SetConsole stored go to it through the gate (see serveConsole),
+// after pairing's paths (see servePairing);
 // while none is stored they are not found. Otherwise only / exists, and
 // only GET and HEAD read it. /?k=<secret> gives the cookie for the right
 // secret and sends the browser on to /, or to the approval or change named
@@ -118,6 +126,9 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
 		serveDocument(&cookieOnSuccess{ResponseWriter: w, r: r}, r)
+		return nil
+	}
+	if h.servePairing(w, r) {
 		return nil
 	}
 	con := currentConsole()
@@ -159,12 +170,12 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	}
 	// With the cookie, / is the console's when one is set; without, it is
 	// the page as it always was, which shows nothing of the console.
-	if con != nil && hasPageCookie(r) {
+	if con != nil && pageAuthorized(r) {
 		serveConsole(con, w, r)
 		return nil
 	}
 	page := h.page
-	if hasPageCookie(r) {
+	if pageAuthorized(r) {
 		if trees := homeTrees(); len(trees) > 0 {
 			var err error
 			if page, err = h.render(trees); err != nil {

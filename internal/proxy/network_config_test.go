@@ -162,6 +162,12 @@ func TestNetworkPageServesNetworkHostToAllowedClients(t *testing.T) {
 	if got := dig(t, web, "routes", 0, "handle", 0, "network_host"); got != "nearhost."+netDomain {
 		t.Errorf("home network_host = %v", got)
 	}
+	if got := dig(t, web, "routes", 0, "handle", 0, "certificates"); got != "ca" {
+		t.Errorf("home certificates = %v", got)
+	}
+	if got, _ := dig(t, web, "routes", 0, "handle", 0, "storage_root").(string); got == "" {
+		t.Error("home has no storage_root")
+	}
 	if got := networkPageHost(netOptions(t).Network); got != "nearhost."+netDomain {
 		t.Errorf("networkPageHost = %q", got)
 	}

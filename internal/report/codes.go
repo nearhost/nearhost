@@ -175,6 +175,12 @@ const (
 	ProxyNotFound              Code = "proxy.not-found"
 	ProxyMethodNotAllowed      Code = "proxy.method-not-allowed"
 	ProxyForbidden             Code = "proxy.forbidden"
+	PairCodeInvalid            Code = "pair.code-invalid"
+	PairLinkUsed               Code = "pair.link-used"
+	PairBadTarget              Code = "pair.bad-target"
+	PairTooManyTries           Code = "pair.too-many-tries"
+	PairNeeded                 Code = "pair.needed"
+	PairUnavailable            Code = "pair.unavailable"
 	DocumentsMissing           Code = "documents.missing"
 	DocumentsChanging          Code = "documents.changing"
 	DocumentsNotConnected      Code = "documents.not-connected"
@@ -412,6 +418,12 @@ var catalogRows = []catalogRow{
 	{ProxyNotFound, Error, 404, "Nearhost's page at a project's domain has nothing at the path asked for."},
 	{ProxyMethodNotAllowed, Error, 405, "A path of Nearhost's page was asked with a method it does not take."},
 	{ProxyForbidden, Error, 403, "A request to Nearhost's page was refused."},
+	{PairCodeInvalid, Error, 400, "The pairing code typed on a device is wrong, has been used or has expired."},
+	{PairLinkUsed, Error, 403, "The link that signs a paired device in to a site has been used or has expired."},
+	{PairBadTarget, Error, 400, "A device asked to be signed in to an address outside the network domain."},
+	{PairTooManyTries, Error, 429, "A device made too many wrong attempts to pair or sign in, so it must wait."},
+	{PairNeeded, Error, 401, "A site on the network domain was asked for by a device that is not paired."},
+	{PairUnavailable, Error, 503, "A site on the network domain needs a paired device, and Nearhost's page, where devices pair, is not served."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
 	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},
 	{DocumentsNotConnected, Error, 503, "Nearhost is not connected to the server that holds the document."},
@@ -499,6 +511,9 @@ var catalogRows = []catalogRow{
 // fixedSteps are the steps of the codes whose fix never varies, which the
 // catalog's entries carry.
 var fixedSteps = map[Code][]Step{
+	PairCodeInvalid: {
+		{Text: "Get a new code on the machine Nearhost runs on:", Command: "nearhost pair"},
+	},
 	CoreNotRunning: {
 		{Text: "Start it in the background:", Command: "nearhost -d"},
 		{Text: "Or open its interface:", Command: "nearhost"},
