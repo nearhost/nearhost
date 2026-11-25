@@ -80,7 +80,7 @@ func TestServerPanelCountsWhatIsOpen(t *testing.T) {
 
 func TestServerPassFocus(t *testing.T) {
 	m, f := passModel(t)
-	if got := footer(m); !strings.Contains(got, "tab grants") {
+	if got := footer(m); !strings.Contains(got, "tab always allowed") {
 		t.Fatalf("footer %q", got)
 	}
 	press(m, "tab")
@@ -106,6 +106,24 @@ func TestServerPassFocus(t *testing.T) {
 	press(m, "tab")
 	if m.passFocus {
 		t.Error("tab did not give the focus back")
+	}
+}
+
+// A narrow footer leaves out tab on a server's panel and on a pinned row,
+// as it does tab routes on a project's.
+func TestNarrowFooterLeavesOutTab(t *testing.T) {
+	m, _ := passModel(t)
+	for _, sel := range []string{rowKey(rowServer, "apollo"), rowKey(rowPasses, "")} {
+		m.selectRow(sel)
+		full := footer(m)
+		if !strings.Contains(full, "tab ") {
+			t.Fatalf("%s: footer %q has no tab", sel, full)
+		}
+		for _, it := range m.shownFooterItems(30) {
+			if it.key == "tab" {
+				t.Errorf("%s: a narrow footer keeps tab %s", sel, it.label)
+			}
+		}
 	}
 }
 

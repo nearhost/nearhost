@@ -92,7 +92,7 @@ func (m *Model) footerItems() []footerItem {
 			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb})
 		}
 		if rows, _ := m.panelRows(); len(rows) > 0 {
-			items = append(items, footerItem{"tab", "grants"})
+			items = append(items, footerItem{"tab", "always allowed"})
 		}
 		if name != config.LocalServer {
 			items = append(items, footerItem{"e", "edit"}, footerItem{"d", "remove"})
@@ -106,7 +106,7 @@ func (m *Model) footerItems() []footerItem {
 // first first; ? lists them all.
 var minorKeys = []footerItem{
 	{"q", "quit"}, {"n", "add"}, {"s", "server"}, {"enter", "collapse"},
-	{"tab", "routes"}, {"tab", "passthroughs"}, {"tab", "documents"}, {"d", "remove"}, {"e", "edit"},
+	{"tab", "routes"}, {"tab", "always allowed"}, {"tab", "select"}, {"d", "remove"}, {"e", "edit"},
 }
 
 // shownFooterItems are the footer items that fit in width cells: on the
