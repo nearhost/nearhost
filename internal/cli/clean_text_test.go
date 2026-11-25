@@ -127,8 +127,8 @@ func TestDoctorJSONWithoutControlCharacters(t *testing.T) {
 	cmd.SetOut(&out)
 	_ = reportJSON(cmd, checks, projects)
 	var got struct {
-		Checks   []map[string]string `json:"checks"`
-		Findings []doctor.Finding    `json:"findings"`
+		Checks   []map[string]any `json:"checks"`
+		Findings []doctor.Finding `json:"findings"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
@@ -137,7 +137,7 @@ func TestDoctorJSONWithoutControlCharacters(t *testing.T) {
 	if strings.ContainsAny(decoded, "\x7f\u009b\u009d\u009c‮") {
 		t.Errorf("decoded JSON carries control characters: %q", decoded)
 	}
-	if !strings.Contains(got.Checks[0]["detail"], "ssh said\n") {
+	if d, _ := got.Checks[0]["detail"].(string); !strings.Contains(d, "ssh said\n") {
 		t.Errorf("the detail lost its lines: %q", got.Checks[0]["detail"])
 	}
 }

@@ -1,6 +1,10 @@
 package cli
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/nearhost/nearhost/internal/report"
+)
 
 // defaultSystemRoot is where Windows lives when %SystemRoot% is not set.
 const defaultSystemRoot = `C:\Windows`
@@ -31,7 +35,7 @@ func checkSSHVendor(sshPath, systemRoot, programFiles string) check {
 			return c
 		}
 	}
-	c.level = levelWarn
+	c.level, c.code = levelWarn, report.SSHOtherVendor
 	c.detail = "ssh is " + sshPath + ", not Microsoft's OpenSSH."
 	c.fix = "Nearhost is tested with Microsoft's; put " + system + " first on PATH."
 	return c

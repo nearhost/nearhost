@@ -23,6 +23,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // doctorEnv is what the project checks need of the machine.
@@ -206,7 +207,7 @@ type projectReport struct {
 // unchecked is the finding of a project whose checks could not run.
 func unchecked(project, message, fix string) doctor.Finding {
 	return doctor.Finding{
-		ID: "projects.unchecked", Severity: doctor.SeverityInfo, Project: project,
+		ID: string(report.ProjectsUnchecked), Severity: doctor.SeverityInfo, Project: project,
 		Message: message, Fix: doctor.Fix{Kind: doctor.FixManual, Text: fix},
 	}
 }
@@ -384,11 +385,28 @@ func severityLabel(s doctor.Severity) string {
 	return "info"
 }
 
+// jsonCheck is a check as --json writes it: the keys it has always had,
+// then the message's code and steps. A check that passed has no code, and
+// no steps.
 type jsonCheck struct {
-	Name   string `json:"name"`
-	Level  string `json:"level"`
-	Detail string `json:"detail"`
-	Fix    string `json:"fix"`
+	Name   string        `json:"name"`
+	Level  string        `json:"level"`
+	Detail string        `json:"detail"`
+	Fix    string        `json:"fix"`
+	Code   report.Code   `json:"code,omitempty"`
+	Steps  []report.Step `json:"steps,omitempty"`
+}
+
+// printableSteps is steps with their text and commands made printable.
+func printableSteps(steps []report.Step) []report.Step {
+	if steps == nil {
+		return nil
+	}
+	out := make([]report.Step, len(steps))
+	for i, s := range steps {
+		out[i] = report.Step{Text: printable(s.Text), Command: printable(s.Command)}
+	}
+	return out
 }
 
 type jsonReport struct {
@@ -405,12 +423,15 @@ func reportJSON(cmd *cobra.Command, checks []check, projects []projectReport) er
 	// text the plain report prints: ssh's output, names from a server and
 	// messages that quote a project's files.
 	for _, c := range checks {
-		r.Checks = append(r.Checks, jsonCheck{Name: printable(c.name), Level: strings.ToLower(c.level.String()), Detail: printableLines(c.detail), Fix: upperFirst(printable(c.fix))})
+		r.Checks = append(r.Checks, jsonCheck{Name: printable(c.name), Level: strings.ToLower(c.level.String()), Detail: printableLines(c.detail), Fix: upperFirst(printable(c.fix)),
+			Code: c.code, Steps: printableSteps(c.fixSteps())})
 	}
 	for _, p := range projects {
 		for _, f := range p.findings {
+			f = f.Complete()
 			f.Project, f.Message, f.File = printable(f.Project), printableLines(f.Message), printable(f.File)
 			f.Fix.Text, f.Fix.Snippet = printable(f.Fix.Text), printableLines(f.Fix.Snippet)
+			f.Title, f.Detail, f.Steps = printable(f.Title), printableLines(f.Detail), printableSteps(f.Steps)
 			r.Findings = append(r.Findings, f)
 		}
 	}

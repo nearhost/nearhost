@@ -199,6 +199,35 @@ const (
 	AgentNoPage                Code = "agent.no-page"
 )
 
+// Codes of nearhost doctor's checks that predict no error of their own.
+const (
+	DoctorNotChecked        Code = "doctor.not-checked"
+	CoreOtherVersion        Code = "core.other-version"
+	ServiceNotInstalled     Code = "service.not-installed"
+	ServiceOtherCopy        Code = "service.other-copy"
+	ServiceLogFolderMissing Code = "service.log-folder-missing"
+	ServiceNotRunning       Code = "service.not-running"
+	ServiceTakesOver        Code = "service.takes-over"
+	ConfigNoHome            Code = "config.no-home"
+	ConfigMissing           Code = "config.missing"
+	ConfigBadAlias          Code = "config.bad-alias"
+	ConfigPatternConflict   Code = "config.pattern-conflict"
+	ConfigLoopbackOwnPort   Code = "config.loopback-own-port"
+	CANotCreated            Code = "ca.not-created"
+	CAUnreadable            Code = "ca.unreadable"
+	CANotTrusted            Code = "ca.not-trusted"
+	CAOldCopy               Code = "ca.old-copy"
+	CABrowsersNotTrusted    Code = "ca.browsers-not-trusted"
+	CAFirefoxRootsOff       Code = "ca.firefox-roots-off"
+	HostsUnreadable         Code = "hosts.unreadable"
+	SSHAgentMissing         Code = "ssh.agent-missing"
+	SSHAgentStopped         Code = "ssh.agent-stopped"
+	SSHNotFound             Code = "ssh.not-found"
+	SSHTooOld               Code = "ssh.too-old"
+	SSHVersionUnknown       Code = "ssh.version-unknown"
+	SSHOtherVendor          Code = "ssh.other-vendor"
+)
+
 // Nearhost doctor's finding IDs, as released.
 const (
 	NearhostrcPending       Code = "nearhostrc.pending"
@@ -391,6 +420,32 @@ var catalog = []Entry{
 	{AgentDocumentFailed, Error, 502, "Nearhost could not read or show the document an agent asked to show."},
 	{AgentNoPage, Error, 409, "Nearhost's page is not served, so it cannot show an agent's document."},
 
+	{DoctorNotChecked, Info, 0, "nearhost doctor could not run a check, and says what it did not check."},
+	{CoreOtherVersion, Warning, 0, "The running Nearhost is another release than this copy."},
+	{ServiceNotInstalled, Info, 0, "The Nearhost service is not installed, so Nearhost does not start at login."},
+	{ServiceOtherCopy, Warning, 0, "The installed service runs another copy of nearhost than this one."},
+	{ServiceLogFolderMissing, Warning, 0, "The folder of the service's log is missing, so the service cannot start again."},
+	{ServiceNotRunning, Warning, 0, "The Nearhost service is installed but not running."},
+	{ServiceTakesOver, Info, 0, "Nearhost runs, started another way, and the installed service takes over at the next login."},
+	{ConfigNoHome, Error, 500, "Nearhost cannot tell where its files are, as HOME (or XDG_CONFIG_HOME) is not set."},
+	{ConfigMissing, Warning, 0, "The config file named with --config does not exist yet."},
+	{ConfigBadAlias, Error, 400, "A project's main name is not a valid domain, so nearhost up does not start it."},
+	{ConfigPatternConflict, Warning, 0, "A project serves a host under another project's pattern, and gets its requests."},
+	{ConfigLoopbackOwnPort, Error, 409, "A project's loopback route is on a port Nearhost itself listens on, so it is not forwarded."},
+	{CANotCreated, Error, 409, "The local CA has not been created yet."},
+	{CAUnreadable, Error, 500, "The local CA's certificate cannot be read."},
+	{CANotTrusted, Error, 409, "The system trust store does not trust the local CA."},
+	{CAOldCopy, Warning, 0, "An old folder still holds a copy of the local CA's private key."},
+	{CABrowsersNotTrusted, Warning, 0, "The browser trust stores (NSS) do not trust the local CA."},
+	{CAFirefoxRootsOff, Warning, 0, "Firefox is set not to read Windows' trusted roots, where the local CA is trusted."},
+	{HostsUnreadable, Error, 500, "The hosts file cannot be read."},
+	{SSHAgentMissing, Info, 0, "The OpenSSH Authentication Agent is not installed on Windows."},
+	{SSHAgentStopped, Info, 0, "The OpenSSH Authentication Agent service on Windows is not running."},
+	{SSHNotFound, Error, 503, "ssh cannot be run, so Nearhost cannot reach servers."},
+	{SSHTooOld, Warning, 0, "The ssh on PATH is older than the one Nearhost needs."},
+	{SSHVersionUnknown, Info, 0, "Nearhost could not read the version of the ssh on PATH."},
+	{SSHOtherVendor, Warning, 0, "The ssh Nearhost runs on Windows is not Microsoft's OpenSSH."},
+
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},
 	{NearhostrcGone, Warning, 0, "The project's .nearhostrc is gone or cannot be read, and Nearhost still serves what it last said."},
@@ -443,3 +498,30 @@ func Lookup(c Code) (Entry, bool) {
 // AdviceCode returns the code of a preset's advice with the given ID, as
 // nearhost doctor reports it: "advice.<id>".
 func AdviceCode(id string) Code { return Code(adviceFamily + id) }
+
+// FindingCode returns the code of a nearhost doctor finding whose ID is id:
+// the ID itself, as a code of the catalog or of the advice family. ok is
+// false for an ID that is neither, or for a code of the catalog that is not
+// a finding's.
+func FindingCode(id string) (Code, bool) {
+	c := Code(id)
+	if _, ok := findingCodes[c]; ok {
+		return c, true
+	}
+	if rest, ok := strings.CutPrefix(id, adviceFamily); ok && rest != "" {
+		return c, true
+	}
+	return "", false
+}
+
+// findingCodes are the codes that are nearhost doctor's finding IDs.
+var findingCodes = map[Code]struct{}{
+	NearhostrcPending: {}, NearhostrcNotApplied: {}, NearhostrcGone: {}, NearhostrcVersion: {},
+	NearhostrcUnsetVariable: {}, NearhostrcInvalid: {},
+	RoutesUnservedPort: {}, RoutesStalePort: {}, RoutesUnservedHost: {}, RoutesNotListening: {},
+	PresetsNote:       {},
+	HostsDNSUnchecked: {}, HostsUnresolved: {}, HostsPublic: {}, HostsUnresolvedPattern: {}, HostsOverlap: {},
+	DockerComposeDepth: {}, DockerHostGateway: {}, DockerComposeParse: {}, DockerComposeFile: {},
+	DockerClients: {}, DockerCA: {},
+	ProjectsUnchecked: {},
+}

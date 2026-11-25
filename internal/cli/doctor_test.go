@@ -363,7 +363,9 @@ func TestDoctorShowsTheSSHErrorVerbatimWithTheHint(t *testing.T) {
 	wantContains(t, out, ""+
 		"FAIL  server mini      Host key verification failed.\n"+
 		"                       ssh: second line\n"+
-		"      fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost doctor` again\n")
+		"      fix: Fix access by running ssh once in a terminal:\n"+
+		"             ssh mini.lan\n"+
+		"           Then run `nearhost doctor` again.\n")
 	if len(f.serverCalls) != 1 || f.serverCalls[0] != "mini.lan" {
 		t.Errorf("servers checked: %v", f.serverCalls)
 	}
@@ -830,7 +832,7 @@ func TestProxyJumpAliasAdvisesWhenTheServerFailsOnNinePointFive(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "proxyjump app") || strings.Contains(out, "Run `ssh app` once") {
+	if strings.Contains(out, "proxyjump app") || strings.Contains(out, "ssh once in a terminal") || strings.Contains(out, "\n             ssh app\n") {
 		t.Errorf("unexpected advice in\n%s", out)
 	}
 }
@@ -863,7 +865,7 @@ func TestProxyJumpAliasKeepsTheUsualFixOnOtherVersions(t *testing.T) {
 	b.sshConfig = jumpConfig("bastion")
 	saveConfig(t, path, &config.Config{Servers: []config.Server{{Name: "app", SSHHost: "app"}}})
 	out, _ := execute(t, newDoctorCmd(b), "doctor", "--no-hosts")
-	if strings.Contains(out, "ProxyJump") || !strings.Contains(out, "Run `ssh app` once") {
+	if strings.Contains(out, "ProxyJump") || !strings.Contains(out, "fix: Fix access by running ssh once in a terminal:\n             ssh app\n") {
 		t.Errorf("fix in\n%s", out)
 	}
 }

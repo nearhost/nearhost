@@ -9,6 +9,7 @@ import (
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // rcFindings reports what is wrong with the project's .nearhostrc, or how it
@@ -39,7 +40,7 @@ func rcFindings(in Input) (findings []Finding, found bool) {
 			names[i] = it.Name()
 		}
 		findings = append(findings, Finding{
-			ID:       "nearhostrc.pending",
+			ID:       string(report.NearhostrcPending),
 			Severity: SeverityWarning,
 			Message:  ".nearhostrc asks for changes that wait for approval: " + strings.Join(names, ", "),
 			File:     nearhostrc.FileName,
@@ -47,7 +48,7 @@ func rcFindings(in Input) (findings []Finding, found bool) {
 		})
 	case c.Kind == nearhostrc.Updated:
 		findings = append(findings, Finding{
-			ID:       "nearhostrc.not-applied",
+			ID:       string(report.NearhostrcNotApplied),
 			Severity: SeverityWarning,
 			Message:  ".nearhostrc has changed since Nearhost last read it",
 			File:     nearhostrc.FileName,
@@ -55,7 +56,7 @@ func rcFindings(in Input) (findings []Finding, found bool) {
 		})
 	case c.Kind == nearhostrc.Problem && !found:
 		findings = append(findings, Finding{
-			ID:       "nearhostrc.gone",
+			ID:       string(report.NearhostrcGone),
 			Severity: SeverityWarning,
 			Message:  c.Problem,
 			File:     nearhostrc.FileName,
@@ -82,14 +83,14 @@ func rcErrorFinding(data []byte, err error) Finding {
 	var ve *nearhostrc.VersionError
 	switch {
 	case errors.As(err, &ve):
-		fd.ID = "nearhostrc.version"
+		fd.ID = string(report.NearhostrcVersion)
 		fd.Fix = Fix{Kind: FixManual, Text: "Update Nearhost: run `nearhost update`."}
 	case errors.As(err, &ue):
-		fd.ID = "nearhostrc.unset-variable"
+		fd.ID = string(report.NearhostrcUnsetVariable)
 		fd.Fix = Fix{Kind: FixProject, Text: fmt.Sprintf(
 			"Set %[1]s in .env.local or .env, or give it a default in .nearhostrc: ${%[1]s:-value}.", ue.Var)}
 	default:
-		fd.ID = "nearhostrc.invalid"
+		fd.ID = string(report.NearhostrcInvalid)
 		fd.Fix = Fix{Kind: FixProject, Text: "Correct .nearhostrc."}
 	}
 	return fd
@@ -123,7 +124,7 @@ func driftFindings(in Input, rcFound bool) []Finding {
 		}
 		reported[c.Port] = true
 		out = append(out, Finding{
-			ID:       "routes.unserved-port",
+			ID:       string(report.RoutesUnservedPort),
 			Severity: SeverityWarning,
 			Message:  fmt.Sprintf("Port %d looks like a web server, but the project has no route for it", c.Port),
 			Fix: Fix{Kind: FixNearhost, Text: fmt.Sprintf(
@@ -141,7 +142,7 @@ func driftFindings(in Input, rcFound bool) []Finding {
 			continue
 		}
 		out = append(out, Finding{
-			ID:       "routes.stale-port",
+			ID:       string(report.RoutesStalePort),
 			Severity: SeverityInfo,
 			Message:  fmt.Sprintf("The web route on port %d matches nothing in the project's files any more", r.Port),
 			Fix: Fix{Kind: FixNearhost, Text: fmt.Sprintf(
@@ -193,7 +194,7 @@ func unservedHostFindings(p config.Project, web []discovery.Candidate) []Finding
 				fix = fmt.Sprintf("Edit the project in Nearhost: select it and press e, make port %d a web route, and add %s.", c.Port, h)
 			}
 			out = append(out, Finding{
-				ID:       "routes.unserved-host",
+				ID:       string(report.RoutesUnservedHost),
 				Severity: SeverityWarning,
 				Message:  fmt.Sprintf("%s is named by the project's settings for port %d, but Nearhost doesn't serve it", h, c.Port),
 				Fix:      Fix{Kind: FixNearhost, Text: fix},
@@ -208,7 +209,7 @@ func adviceFindings(in Input) []Finding {
 	var out []Finding
 	for _, a := range in.Advisories {
 		out = append(out, Finding{
-			ID:       "advice." + a.Code,
+			ID:       string(report.AdviceCode(a.Code)),
 			Severity: SeverityWarning,
 			Message:  a.Message,
 			Fix:      Fix{Kind: FixProject, Text: "Change the project's settings as shown.", Snippet: a.Snippet},
@@ -216,7 +217,7 @@ func adviceFindings(in Input) []Finding {
 	}
 	for _, n := range in.Notes {
 		out = append(out, Finding{
-			ID:       "presets.note",
+			ID:       string(report.PresetsNote),
 			Severity: SeverityInfo,
 			Message:  n,
 			Fix:      Fix{Kind: FixManual, Text: "Nothing to change in the project; some checks may be incomplete."},
