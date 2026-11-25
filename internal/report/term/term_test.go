@@ -135,8 +135,7 @@ func TestVerboseShowsCodeAndCauses(t *testing.T) {
 	want := "Error: HTTPS port 443 needs permission to bind.\n" +
 		"(port.needs-permission)\n" +
 		"\n" +
-		"Cause: listen tcp :443: permission denied\n" +
-		"Cause: permission denied\n"
+		"Cause: listen tcp :443: permission denied\n"
 	if got := render(m, Options{Width: 80, Verbose: true}); got != want {
 		t.Fatalf("verbose =\n%s\nwant\n%s", got, want)
 	}
