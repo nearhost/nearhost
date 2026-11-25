@@ -27,9 +27,10 @@ func TestTrustSaysPlainlyWhenTheWarningWasDeclinedOnWindows(t *testing.T) {
 	// untrust only reaches the uninstall for a root the system holds.
 	f.trusted = true
 	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
-	const wantUntrust = "Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."
-	if err == nil || err.Error() != wantUntrust {
-		t.Fatalf("untrust err = %v, want %q", err, wantUntrust)
+	const wantUntrust = "Error: Nearhost Local CA was not removed: the Windows security warning was declined. " +
+		"Be ready to choose Yes in the security warning. Then run `nearhost untrust` again."
+	if said := flat(rendered(err)); err == nil || said != wantUntrust {
+		t.Fatalf("untrust said %q, want %q", said, wantUntrust)
 	}
 }
 
@@ -49,9 +50,10 @@ func TestTrustSaysPlainlyWhenTheErrnoSaysCancelledOnWindows(t *testing.T) {
 	// untrust only reaches the uninstall for a root the system holds.
 	f.trusted = true
 	_, err = run(t, newUntrustCmd(f.backend()), "untrust")
-	const wantUntrust = "Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."
-	if err == nil || err.Error() != wantUntrust {
-		t.Fatalf("untrust err = %v, want %q", err, wantUntrust)
+	const wantUntrust = "Error: Nearhost Local CA was not removed: the Windows security warning was declined. " +
+		"Be ready to choose Yes in the security warning. Then run `nearhost untrust` again."
+	if said := flat(rendered(err)); err == nil || said != wantUntrust {
+		t.Fatalf("untrust said %q, want %q", said, wantUntrust)
 	}
 }
 
@@ -63,7 +65,8 @@ func TestUntrustDeleteKeyDeletesNothingWhenTheWarningWasDeclined(t *testing.T) {
 	f.trusted = true
 	f.uninstErr = fmt.Errorf("delete cert failed: %w", windows.ERROR_CANCELLED)
 	_, err := runIn(t, newUntrustCmd(f.backend()), "", "untrust", "--delete-key", "--yes")
-	if err == nil || !strings.HasPrefix(err.Error(), "Nothing was deleted. ") || !strings.Contains(err.Error(), "security warning") {
+	if said := flat(rendered(err)); err == nil || !strings.HasPrefix(said, "Error: Nothing was deleted. ") || !strings.Contains(said, "security warning") ||
+		!strings.Contains(said, "Then run `nearhost untrust --delete-key` again.") {
 		t.Fatalf("err = %v", err)
 	}
 	if !present(filepath.Join(ca, "root.key")) {

@@ -19,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 )
 
@@ -193,7 +194,7 @@ func ensureCore(cmd *cobra.Command, b detachBackend, flags serveFlags, startedBy
 	}
 	viaService := m != nil && slices.Equal(args, []string{"daemon", "--started-by", string(startedBy)})
 	if m != nil && !viaService {
-		fmt.Fprintln(cmd.ErrOrStderr(), "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.")
+		sinkOf(cmd).Report(report.Notef(report.ServiceOwnSettings, "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours."))
 	}
 	return startCore(cmd, b, args, startedBy, viaService)
 }
@@ -240,7 +241,6 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	errOut := cmd.ErrOrStderr()
 	if c, info, ok := detachInfo(ctx, b); ok {
 		return c, info, false, nil
 	}
@@ -272,7 +272,7 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 					return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fateLeft}
 				}
 				first, _, _ := strings.Cut(err.Error(), "\n")
-				fmt.Fprintf(errOut, "Starting Nearhost through its service failed (%s), so it was started directly.\n", printable(first))
+				sinkOf(cmd).Report(report.Warnf(report.ServiceStartFailed, "Starting Nearhost through its service failed (%s), so it was started directly.", first).Wrap(err))
 			} else {
 				viaService = true
 				// Stops asking the service once this returns.
@@ -320,16 +320,15 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 			select {
 			case werr := <-exited:
 				if b.held == nil || !b.held() {
-					return nil, control.Info{}, false, childStopped(errOut, logPath, b.logTail(logFrom, detachTailLines), werr)
+					return nil, control.Info{}, false, childStopped(logPath, b.logTail(logFrom, detachTailLines), werr)
 				}
 				lost = true
 			default:
 			}
 		}
 		if !time.Now().Before(deadline) {
-			msg := "Nearhost is still starting. See " + logPath + " for how it is going."
-			fmt.Fprintln(errOut, msg)
-			return nil, control.Info{}, false, exitError{code: 1, msg: msg}
+			return nil, control.Info{}, false, report.Errorf(report.CoreStillStarting, "Nearhost is still starting.").
+				Then("See "+logPath+" for how it is going.").With("log", logPath)
 		}
 		select {
 		case <-tick.C:
@@ -410,14 +409,23 @@ const (
 )
 
 // interruptedStart is the error of a start whose context ended: the
-// context's error, and what became of the core started.
+// context's error, and what became of the core started. It reads as the
+// interrupted message that says so, which exits 130.
 type interruptedStart struct {
 	err  error
 	fate spawnedFate
 }
 
 func (e interruptedStart) Error() string { return e.err.Error() }
-func (e interruptedStart) Unwrap() error { return e.err }
+
+// Unwrap is the interrupted message, whose cause is the context's error,
+// so report.As and errors.Is both see through it.
+func (e interruptedStart) Unwrap() error { return e.Report() }
+
+// Report is the interrupted message for the start: what became of the core.
+func (e interruptedStart) Report() *report.Message {
+	return report.Errorf(report.Interrupted, "%s", interruptedMessage(e.fate)).ExitCode(interruptedCode).Wrap(e.err)
+}
 
 // stopSpawned stops the core this process spawned for the interface, which
 // was interrupted while the core started: with no interface, nobody would
@@ -465,25 +473,26 @@ func detachInfo(ctx context.Context, b detachBackend) (*control.Client, control.
 	return c, info, err == nil
 }
 
-// childStopped prints that the core stopped while starting, with the end of
-// its log, where it said why, and returns the exit status 1 for Main.
-func childStopped(w io.Writer, logPath string, tail []string, werr error) error {
-	var msg string
+// childStopped is the core.stopped-while-starting error of a core that
+// stopped while starting: the end of its log, where it said why, or what
+// its wait gave, werr, when it wrote nothing there. It suggests `nearhost
+// doctor`, unless the core's own advice in the log already names it.
+func childStopped(logPath string, tail []string, werr error) error {
+	m := report.Errorf(report.CoreStoppedWhileStarting, "Nearhost stopped while starting.").With("log", logPath)
 	if len(tail) == 0 {
-		why := ""
 		if werr != nil {
-			why = " (" + werr.Error() + ")"
+			m.Because("It stopped (%s) before it wrote to %s.", werr, logPath)
+		} else {
+			m.Because("It stopped before it wrote to %s.", logPath)
 		}
-		msg = "Nearhost stopped while starting" + why + ", before it wrote to " + logPath + "."
 	} else {
-		msg = "Nearhost stopped while starting. The end of " + logPath + ":\n" + printableLines(strings.Join(tail, "\n"))
+		log := strings.Join(tail, "\n")
+		m.Because("The end of %s:\n%s", logPath, log)
+		if strings.Contains(log, "nearhost doctor") {
+			return m.Wrap(werr)
+		}
 	}
-	// Unless the core's own advice already names it.
-	if !strings.Contains(msg, "nearhost doctor") {
-		msg += "\n\nRun `nearhost doctor` to see what is wrong and how to fix it."
-	}
-	fmt.Fprintln(w, msg)
-	return exitError{code: 1, msg: msg}
+	return m.SuggestDoctor().Wrap(werr)
 }
 
 // detachServeFlags are the flags of bare `nearhost` that the core takes too.

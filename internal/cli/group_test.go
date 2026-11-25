@@ -38,18 +38,19 @@ func TestGroupCommandRejectsUnknownSubcommand(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("exit code = %d, want 1; stderr %q", code, errText)
 			}
-			want := "nearhost: unknown command " + `"` + c.args[len(c.args)-1] + `" for "` + c.path + `"`
+			want := "Error: Unknown command " + `"` + c.args[len(c.args)-1] + `" for "` + c.path + `".`
 			if !strings.HasPrefix(errText, want) {
 				t.Fatalf("stderr = %q, want prefix %q", errText, want)
 			}
+			noNearhostPrefix(t, errText)
 			if c.suggest != "" {
-				if want := "\n\nDid you mean this?\n\t" + c.suggest + "\n"; !strings.Contains(errText, want) {
+				if want := "\n\nDid you mean this?\n\n  " + c.suggest + "\n"; !strings.Contains(errText, want) {
 					t.Fatalf("stderr = %q, want suggestion %q", errText, want)
 				}
 			} else if strings.Contains(errText, "Did you mean") {
 				t.Fatalf("stderr = %q, want no suggestion", errText)
 			}
-			if strings.Count(errText, "unknown command") != 1 {
+			if strings.Count(errText, "Unknown command") != 1 {
 				t.Fatalf("error printed more than once: %q", errText)
 			}
 		})
@@ -134,7 +135,7 @@ func TestEveryGroupCommandHandlesUnknownSubcommands(t *testing.T) {
 	}
 	for _, path := range groups {
 		_, errText, code := runTree(t, append(append([]string{}, path...), "zzzzqq")...)
-		if want := `unknown command "zzzzqq" for "nearhost ` + strings.Join(path, " ") + `"`; code != 1 || !strings.Contains(errText, want) {
+		if want := `Error: Unknown command "zzzzqq" for "nearhost ` + strings.Join(path, " ") + `"`; code != 1 || !strings.Contains(errText, want) {
 			t.Errorf("%v zzzzqq: code %d, stderr %q, want %q", path, code, errText, want)
 		}
 	}

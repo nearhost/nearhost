@@ -411,7 +411,7 @@ func TestOtherConfigRefused(t *testing.T) {
 	}
 	stdout, stderr, code := runRootSplit(t, uiRoot(b), "--config", "other.yaml")
 	want := "Nearhost in the background serves " + cfgPath + ". Stop it with nearhost stop to use " + other + ", or open nearhost without --config.\n"
-	if code != 1 || ran || stdout != "" || stderr != want {
+	if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, ran %v, stdout %q, stderr %q, want %q", code, ran, stdout, stderr, want)
 	}
 
@@ -561,7 +561,7 @@ func TestVersionSkewAsks(t *testing.T) {
 		b.detach = old.detach(nil)
 		stdout, stderr, code := runRootSplit(t, uiRoot(b))
 		want := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost.\n"
-		if code != 1 || ran || stdout != "" || stderr != want {
+		if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stdout %q, stderr %q, want %q", code, ran, stdout, stderr, want)
 		}
 	})
@@ -824,7 +824,7 @@ func TestCoreGoneEndsTheInterface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 1 || !strings.HasPrefix(stderr, "Nearhost in the background stopped. The end of "+logPath+":\n") ||
+	if code != 1 || !strings.HasPrefix(stderr, "Error: Nearhost in the background stopped.\n\nThe end of "+logPath+":\n") ||
 		!strings.HasSuffix(stderr, " the core's last words\n") || !strings.Contains(stderr, "an earlier line") {
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
@@ -839,7 +839,7 @@ func TestCoreStoppedEndsTheInterfaceWithNoLog(t *testing.T) {
 			t.Errorf("nearhost stop: %v, printed %q", err, out.String())
 		}
 	})
-	if want := "Nearhost in the background stopped.\n"; code != 1 || stderr != want {
+	if want := "Nearhost in the background stopped.\n"; code != 1 || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, stderr %q, want %q", code, stderr, want)
 	}
 }
@@ -921,7 +921,7 @@ func TestOtherConfigRefusedBeforeARestart(t *testing.T) {
 	root := uiRoot(b)
 	root.SetIn(strings.NewReader("y\n"))
 	stdout, stderr, code := runRootSplit(t, root, "--config", "other.yaml")
-	if code != 1 || ran || stdout != "" || !strings.HasPrefix(stderr, "Nearhost in the background serves ") {
+	if code != 1 || ran || stdout != "" || !strings.HasPrefix(flat(stderr), "Error: Nearhost in the background serves ") {
 		t.Errorf("exit %d, ran %v, stdout %q, stderr %q", code, ran, stdout, stderr)
 	}
 	if slices.Contains(old.asked(), "Stop") {
@@ -951,7 +951,7 @@ func TestInterruptedWhileTheCoreStartsStopsIt(t *testing.T) {
 		sigs <- os.Interrupt
 	}()
 	_, stderr, code := runRootSplit(t, uiRoot(b))
-	if want := "Interrupted while Nearhost started in the background, so it was stopped.\n"; code != 130 || ran || stderr != want {
+	if want := "Interrupted while Nearhost started in the background, so it was stopped.\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 	}
 	if !slices.Contains(core.asked(), "Stop") {
@@ -1048,7 +1048,7 @@ func TestTUILeavesAServiceCore(t *testing.T) {
 		b.detach = core.detach(nil)
 		b.detach.service = svc.lookup()
 		_, stderr, code := runRootSplit(t, uiRoot(b))
-		if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || stderr != want {
+		if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 		}
 		if starts, _ := svc.counts(); starts != 1 {
@@ -1157,7 +1157,7 @@ func TestServiceStartInterrupted(t *testing.T) {
 				// Nothing was started yet, and nothing is.
 				want = "Interrupted before Nearhost was started in the background, so it is not running.\n"
 			}
-			if code != 130 || ran || stderr != want {
+			if code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 				t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 			}
 			wantStarts := 1

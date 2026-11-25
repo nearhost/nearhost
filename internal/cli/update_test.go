@@ -205,6 +205,10 @@ func runUpdate(t *testing.T, f *fakeUpdate, version, stdin string, args ...strin
 	cmd.SetIn(strings.NewReader(stdin))
 	cmd.SetArgs(args)
 	err := cmd.Execute()
+	// What the user sees: the output, then the failure as Main renders it.
+	if err != nil {
+		out.WriteString(rendered(err))
+	}
 	return out.String(), err
 }
 
@@ -1003,7 +1007,7 @@ func TestUpdateEnv(t *testing.T) {
 func TestUpdateSaysWhenTheBinaryIsUnchanged(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true, installed: "0.5.0"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	want := "The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " is still 0.5.0. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
+	want := "Error: The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " is still 0.5.0.\n\nRun it again, or install by hand:\n\n  curl -fsSL https://nearhost.dev/install.sh | sh\n"
 	if !strings.HasSuffix(out, want) || strings.Contains(out, "Updated") {
 		t.Fatalf("out %q, want it to end %q", out, want)
 	}
@@ -1038,8 +1042,8 @@ func TestUpdateMatchingVersionSaysUpdated(t *testing.T) {
 func TestUpdateSaysWhenTheNewBinaryDoesNotStart(t *testing.T) {
 	f := &fakeUpdate{latest: "0.6.0", exe: "/usr/local/bin/nearhost", goos: "linux", writable: true, probeErr: errors.New("exec format error")}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	want := "The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " did not start: exec format error. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh.\n"
-	if !strings.HasSuffix(out, want) || strings.Contains(out, "still") || strings.Contains(out, "Updated") || exitCode(err, io.Discard) != 1 {
+	want := "Error: The update ran, but " + filepath.FromSlash("/usr/local/bin/nearhost") + " did not start: exec format error. Run it again, or install by hand: curl -fsSL https://nearhost.dev/install.sh | sh"
+	if !strings.HasSuffix(flat(out), want) || !strings.Contains(out, "\n  curl -fsSL https://nearhost.dev/install.sh | sh\n") || strings.Contains(out, "still") || strings.Contains(out, "Updated") || exitCode(err, io.Discard) != 1 {
 		t.Fatalf("out %q, err %v; want it to end %q", out, err, want)
 	}
 }
@@ -1059,7 +1063,7 @@ func TestUpdateHomebrewChecksTheLinkedBinary(t *testing.T) {
 	}
 	f := &fakeUpdate{latest: "0.6.0", exe: "/opt/homebrew/Caskroom/nearhost/0.5.0/nearhost", goos: "darwin", installed: "0.5.0"}
 	out, _ := runUpdate(t, f, "0.5.0", "", "--yes")
-	if !strings.Contains(out, "The update ran, but "+filepath.FromSlash("/opt/homebrew/bin/nearhost")+" is still 0.5.0. Run it again, or install by hand: brew upgrade --cask nearhost/tap/nearhost.") {
+	if !strings.Contains(out, "The update ran, but "+filepath.FromSlash("/opt/homebrew/bin/nearhost")+" is still 0.5.0.\n\nRun it again, or install by hand:\n\n  brew upgrade --cask nearhost/tap/nearhost\n") {
 		t.Fatalf("out %q", out)
 	}
 }
@@ -1082,7 +1086,7 @@ func TestUpdatePnpmChecksTheShimOnPath(t *testing.T) {
 	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/usr/local/bin/nearhost", installed: "0.4.0",
 		env: map[string]string{"PNPM_HOME": "/Users/me/Library/pnpm"}}
 	out, _ := runUpdate(t, f, "0.5.0", "", "--yes")
-	if !strings.Contains(out, "The update ran, but "+filepath.FromSlash("/usr/local/bin/nearhost")+" is still 0.4.0. Run it again, or install by hand: pnpm add -g @nearhost/cli@latest. Another nearhost comes before pnpm's on PATH.") {
+	if !strings.Contains(flat(out), "The update ran, but "+filepath.FromSlash("/usr/local/bin/nearhost")+" is still 0.4.0. Another nearhost comes before pnpm's on PATH. Run it again, or install by hand: pnpm add -g @nearhost/cli@latest") {
 		t.Fatalf("out %q", out)
 	}
 	f = &fakeUpdate{latest: "0.6.0", exe: exe, goos: "darwin", onPath: "/Users/me/Library/pnpm/nearhost", installed: "0.5.0",
@@ -1164,7 +1168,7 @@ func TestUpdateOnWindowsChecksTheReplacedExe(t *testing.T) {
 	exe := `C:\Tools\nearhost.exe`
 	f := &fakeUpdate{latest: "0.6.0", exe: exe, goos: "windows", writable: true, installed: "0.5.0"}
 	out, err := runUpdate(t, f, "0.5.0", "", "--yes")
-	want := "The update ran, but " + exe + " is still 0.5.0. Run it again, or install by hand: irm https://nearhost.dev/install.ps1 | iex.\n"
+	want := "Error: The update ran, but " + exe + " is still 0.5.0.\n\nRun it again, or install by hand:\n\n  irm https://nearhost.dev/install.ps1 | iex\n"
 	if !strings.HasSuffix(out, want) || exitCode(err, io.Discard) != 1 || !slices.Equal(f.probed, []string{exe}) {
 		t.Fatalf("out %q, err %v, probed %v; want it to end %q", out, err, f.probed, want)
 	}
@@ -1245,8 +1249,8 @@ func TestUpdateCheckExitCodes(t *testing.T) {
 		if code != 2 {
 			t.Fatalf("code %d, want 2", code)
 		}
-		// The command prints the failure; Main adds nothing.
-		if stderr != "" || strings.Count(out, "offline") != 1 {
+		// Main renders the failure, once.
+		if stderr != "Error: offline\n" || strings.Count(out, "offline") != 1 {
 			t.Fatalf("out %q, stderr %q", out, stderr)
 		}
 	})

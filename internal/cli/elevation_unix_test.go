@@ -3,9 +3,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"github.com/nearhost/nearhost/internal/report"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/elevate"
@@ -66,7 +66,7 @@ func TestUpHostsApplierPromptsOnlyOnATerminal(t *testing.T) {
 // fails, and up says why once.
 func TestUpHostsWithoutATerminalSaysSoOnce(t *testing.T) {
 	e := &upElevator{err: errors.New("sudo: a password is required")}
-	var out bytes.Buffer
+	var out report.Collector
 	ensure := warnNoTerminal(&out, func(ctx context.Context, aliases []string) error {
 		return upHostsApplier(ctx, e, "/usr/local/bin/nearhost", false)(aliases)
 	})
@@ -75,7 +75,7 @@ func TestUpHostsWithoutATerminalSaysSoOnce(t *testing.T) {
 			t.Fatalf("ensure returned %v", err)
 		}
 	}
-	if got := out.String(); got != hostsNoTerminal+"\n" {
-		t.Errorf("printed %q, want the message once", got)
+	if got := out.Messages(); len(got) != 1 || got[0].Code != report.HostsNeedsUpdate || got[0].Title != hostsNoTerminal().Title {
+		t.Errorf("reported %v, want the warning once", got)
 	}
 }

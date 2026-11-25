@@ -624,3 +624,93 @@ func TestBackgroundDaemonErrorIsLoggedOnce(t *testing.T) {
 		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
 	}
 }
+
+// A core turned away by another logs why once, as a message block with its
+// code and the step that stops the other. A core in the background has the
+// log for its standard error, so Main prints nothing more; one in a
+// terminal has Main say it there too.
+func TestDaemonLogsAMessageBlockOnce(t *testing.T) {
+	u := newUpRun(t, &config.Config{})
+	u.noHosts = true
+	u.startDaemon()
+	u.waitForLog("Nothing is being served.\n")
+
+	https, http := testutil.ProxyPorts(t)
+	for _, by := range []string{"detached", "foreground"} {
+		before := strings.Count(u.coreLog(), "error [core.already-running] ")
+		var out syncBuffer
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := executeInto(ctx, &out, newDaemonCmd(u.backend()), "daemon", "--no-hosts", "--started-by", by,
+			"--https-port", strconv.Itoa(https), "--http-port", strconv.Itoa(http), "--web-port", "0")
+		cancel()
+		log := u.coreLog()
+		if n := strings.Count(log, "error [core.already-running] ") - before; n != 1 {
+			t.Errorf("%s: the log has %d blocks for the refusal:\n%s", by, n, log)
+		}
+		// The block's step, indented under its stamped first line.
+		if !regexp.MustCompile(`(?m)^\S+ error \[core\.already-running\] Another Nearhost is already running \(pid \d+\)\.\n\S+   Stop it with ` + "`nearhost stop`").MatchString(log) {
+			t.Errorf("%s: the block is not as expected:\n%s", by, log)
+		}
+		if strings.Contains(log, "nearhost: ") {
+			t.Errorf("%s: the log has the old label:\n%s", by, log)
+		}
+		var stderr bytes.Buffer
+		code := exitCode(err, &stderr)
+		switch by {
+		case "detached":
+			if code != 1 || stderr.Len() != 0 {
+				t.Errorf("detached: exit %d, Main printed %q", code, stderr.String())
+			}
+		default:
+			if code != 1 || !regexp.MustCompile(`^Error: Another Nearhost is already running \(pid \d+\)\.\n\nStop it with`).MatchString(stderr.String()) {
+				t.Errorf("foreground: exit %d, Main printed %q", code, stderr.String())
+			}
+		}
+		noNearhostPrefix(t, stderr.String())
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}
+
+// A panic in the core's own goroutine is logged as a crash, with the stack
+// in a crash file beside the log, not on screen: Main prints nothing more
+// for a core in the background.
+func TestDaemonPanicIsLoggedAsCrash(t *testing.T) {
+	u := newUpRun(t, &config.Config{})
+	u.noHosts = true
+	b := u.backend()
+	b.start = func(*engine.Engine, context.Context) error { panic("the start hook broke") }
+	args := u.args()
+	args[0] = "daemon"
+	var out syncBuffer
+	err := executeInto(context.Background(), &out, newDaemonCmd(b), append(args, "--started-by", "detached")...)
+	m, ok := report.As(err)
+	if !ok || m.Code != report.Crash {
+		t.Fatalf("daemon returned %v", err)
+	}
+	log := u.coreLog()
+	if !regexp.MustCompile(`(?m)^\S+ error \[crash\] Nearhost stopped unexpectedly\.$`).MatchString(log) {
+		t.Errorf("the log has no crash block:\n%s", log)
+	}
+	crashes, _ := filepath.Glob(filepath.Join(filepath.Dir(u.logPath()), "crash-*.log"))
+	if len(crashes) != 1 || !strings.Contains(log, crashes[0]) {
+		t.Fatalf("crash files %v; log:\n%s", crashes, log)
+	}
+	body, err2 := os.ReadFile(crashes[0])
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	for _, want := range []string{"Version: ", "OS: ", "the start hook broke", "goroutine "} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the crash file lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(log, "goroutine ") {
+		t.Errorf("the stack is in the log:\n%s", log)
+	}
+	var stderr bytes.Buffer
+	if code := exitCode(err, &stderr); code != 1 || stderr.Len() != 0 || out.String() != "" {
+		t.Errorf("exit %d, Main printed %q, the command printed %q", code, stderr.String(), out.String())
+	}
+}

@@ -147,7 +147,7 @@ func TestACoreInATerminalIsNotRestarted(t *testing.T) {
 // was its log.
 func TestCoreInATerminalGoneHasNoLogTail(t *testing.T) {
 	stderr, code := coreGoneFrom(t, func(f *steeredCore) { f.info.StartedBy = control.StartedForeground }, func(f *steeredCore) { f.close() })
-	if want := "Nearhost stopped. It ran in a terminal, which shows why.\n"; code != 1 || stderr != want {
+	if want := "Nearhost stopped. It ran in a terminal, which shows why.\n"; code != 1 || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, stderr %q, want %q", code, stderr, want)
 	}
 }
@@ -275,7 +275,7 @@ func TestInterruptedWhileTheCoreStartsSaysWhatHappened(t *testing.T) {
 		b.detach = d
 		_, stderr, code := runRootSplit(t, uiRoot(b))
 		want := "Interrupted while Nearhost started in the background. Another nearhost started the Nearhost that runs, so it was left running.\n"
-		if code != 130 || ran || stderr != want {
+		if code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 		}
 	})
@@ -294,7 +294,7 @@ func TestInterruptedWhileTheCoreStartsSaysWhatHappened(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := "Interrupted while Nearhost started in the background. It did not answer in time to be stopped, so it may still be starting: see " + logPath + ", and stop it with nearhost stop.\n"
-		if code != 130 || ran || stderr != want {
+		if code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 		}
 		if slices.Contains(core.asked(), "Stop") {

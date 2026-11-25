@@ -29,6 +29,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // addBackend is the seam between `add` and what lies outside the process:
@@ -211,9 +212,7 @@ func runAddInterruptible(cmd *cobra.Command, b addBackend, flags addFlags, args 
 	if err != nil && ctx.Err() != nil {
 		// What failed, failed because of the interrupt: an ssh or a read cut
 		// short says nothing the user needs.
-		msg := "Interrupted, so the project was not added."
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return exitError{code: interruptedCode, msg: msg}
+		return report.Errorf(report.Interrupted, "Interrupted, so the project was not added.").ExitCode(interruptedCode).Wrap(err)
 	}
 	return err
 }
@@ -360,7 +359,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if err := done(); err != nil {
 		return err
 	}
-	printWarnings(cmd.ErrOrStderr(), warnings)
+	reportWarnings(cmd, warnings)
 
 	if err := printRoutes(out, project, res.ComposeUnread()); err != nil {
 		return err
@@ -374,7 +373,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(snippet, "\n", "\n  "))
 		}
 	}
-	printWarnings(cmd.ErrOrStderr(), advisoryWarnings)
+	reportWarnings(cmd, advisoryWarnings)
 
 	// An interrupt before this point saves nothing, even when a question it
 	// cut short let the add go on. One during the save leaves the config as

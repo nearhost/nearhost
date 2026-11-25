@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/nearhost/nearhost/internal/report"
 	"reflect"
 	"strings"
 	"testing"
@@ -96,13 +97,15 @@ func TestStatusSaysWhenItDoesNotReload(t *testing.T) {
 	st.Info.StartedBy = control.StartedForeground
 	st.Projects = nil
 	serveStatus(t, st)
-	out, err := execute(t, newStatusCmd(nil), "status")
-	if err != nil {
-		t.Fatal(err)
+	out, stderr, code := runRootSplit(t, statusRoot(), "status")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	wantContains(t, out, "started by foreground",
-		"\nIt serves the projects it was started with and does not reload the config.\n",
-		"\nNo projects are being served.")
+	wantContains(t, out, "started by foreground", "\nNo projects are being served.")
+	// A note, not the output.
+	if want := "Note: Nearhost serves the projects it was started with and does not reload the config."; flat(stderr) != want || strings.Contains(out, "reload") {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
 }
 
 func TestStatusJSON(t *testing.T) {
@@ -128,13 +131,9 @@ func TestStatusNotRunning(t *testing.T) {
 	configHome(t)
 	for _, args := range [][]string{{"status"}, {"status", "--json"}} {
 		stdout, stderr, code := runRootSplit(t, statusRoot(), args...)
-		want := "Nearhost is not running. Start it with nearhost -d, or open nearhost.\n"
-		// JSON output is JSON or nothing; the message goes to stderr.
-		gotMsg, gotOther := stdout, stderr
-		if len(args) > 1 {
-			gotMsg, gotOther = stderr, stdout
-		}
-		if code != 3 || gotMsg != want || gotOther != "" {
+		// Said on stderr, so output with --json is JSON or nothing.
+		want := "Error: Nearhost is not running.\n\nStart it with nearhost -d, or open nearhost.\n"
+		if code != 3 || stderr != want || stdout != "" {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
 		}
 	}
@@ -288,7 +287,7 @@ func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
 		{"approvals", waitingStatus(), "Waiting"},
 		{"page", waitingStatus(), "Page:"},
 	} {
-		if err := printStatus(failingWriter{c.bad}, c.st, ""); !errors.Is(err, errClosedPipe) {
+		if err := printStatus(failingWriter{c.bad}, c.st, "", &report.Collector{}); !errors.Is(err, errClosedPipe) {
 			t.Errorf("%s: printStatus = %v", c.name, err)
 		}
 	}
@@ -299,17 +298,13 @@ func TestStatusShowsUpdate(t *testing.T) {
 	st := testStatus
 	st.Update = "0.16.0"
 	serveStatus(t, st)
-	out, err := execute(t, newStatusCmd(nil), "status")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(out, "\n")
-	if len(lines) < 2 || !strings.Contains(lines[0], "is running") || lines[1] != "Nearhost 0.16.0 is available. Run nearhost update." {
-		t.Errorf("the line after the core line is not the update line:\n%s", out)
+	out, stderr, _ := runRootSplit(t, statusRoot(), "status")
+	if !strings.Contains(out, "is running") || flat(stderr) != "Note: Nearhost 0.16.0 is available. Run nearhost update." {
+		t.Errorf("the update is not a note:\n%s\nstderr %q", out, stderr)
 	}
 
 	serveStatus(t, testStatus)
-	out, err = execute(t, newStatusCmd(nil), "status")
+	out, err := execute(t, newStatusCmd(nil), "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,12 +328,9 @@ func TestStatusUpdateThisCopyHas(t *testing.T) {
 	} {
 		Version = v
 		serveStatus(t, st)
-		out, err := execute(t, newStatusCmd(nil), "status")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if lines := strings.Split(out, "\n"); len(lines) < 2 || lines[1] != want {
-			t.Errorf("this copy %s: the line after the core line is not %q:\n%s", v, want, out)
+		out, stderr, _ := runRootSplit(t, statusRoot(), "status")
+		if flat(stderr) != "Note: "+want {
+			t.Errorf("this copy %s: the note is not %q:\n%s\nstderr %q", v, want, out, stderr)
 		}
 	}
 }

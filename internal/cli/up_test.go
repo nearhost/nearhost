@@ -421,11 +421,9 @@ func TestUpWithoutATerminalForSudoSaysSoOnce(t *testing.T) {
 	u.start()
 	err := u.exited()
 	out := u.out.String()
-	if n := strings.Count(out, hostsNoTerminal); n != 1 {
-		t.Errorf("the no-terminal message was printed %d times:\n%s", n, out)
-	}
-	if hostsNoTerminal != "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost up in a terminal once, or pass --no-hosts." {
-		t.Errorf("the message reads %q", hostsNoTerminal)
+	const warning = "Warning: The hosts file needs sudo, and there is no terminal to ask in.\n\nRun nearhost up in a terminal once, or pass --no-hosts.\n"
+	if n := strings.Count(out, warning); n != 1 {
+		t.Errorf("the no-terminal warning was printed %d times:\n%s", n, out)
 	}
 	// No prompt can appear, so no project is told to approve one.
 	if strings.Contains(out, hostsApprove) {

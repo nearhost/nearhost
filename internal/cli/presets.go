@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/spf13/cobra"
+
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/preset"
 	"github.com/nearhost/nearhost/internal/registry"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/safetext"
 )
 
@@ -77,9 +79,12 @@ func loadEnabled(cfg *config.Config, cfgPath string) ([]*preset.Preset, []string
 	return presets, warnings
 }
 
-func printWarnings(w io.Writer, warnings []string) {
-	for _, warning := range warnings {
-		fmt.Fprintf(w, "Warning: %s\n", printable(warning))
+// reportWarnings reports each of warnings, which discovery and the presets
+// give as text, to cmd's sink as a discovery.incomplete warning.
+func reportWarnings(cmd *cobra.Command, warnings []string) {
+	sink := sinkOf(cmd)
+	for _, w := range warnings {
+		sink.Report(report.Warnf(report.DiscoveryIncomplete, "%s", w))
 	}
 }
 

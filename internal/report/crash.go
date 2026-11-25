@@ -42,8 +42,12 @@ func Go(ctx context.Context, f func()) {
 // Crashed writes a crash file for a panic with value v and stack, in
 // CrashDir, and returns the Crash message that names it. Use it where a
 // panic is caught other than by Go.
-func Crashed(v any, stack []byte) *Message {
-	dir := CrashDir
+func Crashed(v any, stack []byte) *Message { return CrashedIn(CrashDir, v, stack) }
+
+// CrashedIn is Crashed writing the crash file to dir, or to the system's
+// temporary folder when dir is "": for a caller that knows the core log's
+// folder without setting CrashDir, which other goroutines may read.
+func CrashedIn(dir string, v any, stack []byte) *Message {
 	if dir == "" {
 		dir = os.TempDir()
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
+	reportmsg "github.com/nearhost/nearhost/internal/report"
 )
 
 // hostsPrompt is the password prompt of the commands that update the hosts file.
@@ -96,8 +97,7 @@ func newHostsCmd(lookup hosts.Lookup) *cobra.Command {
 				if err := checkElevatedIO(&dirs, input, report); err != nil {
 					// Its own exit code tells the elevator why no report
 					// came back.
-					fmt.Fprintln(cmd.ErrOrStderr(), "nearhost:", err)
-					return exitError{code: elevate.HelperRefusedCode, msg: err.Error()}
+					return reportmsg.Errorf(reportmsg.HostsHelperRefused, "%s", err).ExitCode(elevate.HelperRefusedCode).Wrap(err)
 				}
 			}
 			err := checkElevatedFile(file)

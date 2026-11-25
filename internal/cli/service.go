@@ -17,6 +17,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 )
 
@@ -107,17 +108,19 @@ func newServiceCmd(b serviceBackend) *cobra.Command {
 	return cmd
 }
 
-// serviceFailure reports err, which a service manager gave, and returns the
-// exit status 1 for Main. The two errors that say what this system lacks
-// print as they are; others are what a manager command said, which is
-// trimmed and made printable, as it can quote anything.
+// serviceFailure is err, which a service manager gave, as the error the
+// command returns: the two errors that say what this system lacks are
+// messages with codes of their own; others are what a manager command
+// said, which the renderer makes printable, as it can quote anything.
 func serviceFailure(cmd *cobra.Command, err error) error {
 	msg := strings.TrimSpace(err.Error())
-	if !errors.Is(err, service.ErrUnsupported) && !errors.Is(err, service.ErrNoUserManager) {
-		msg = printableLines(msg)
+	switch {
+	case errors.Is(err, service.ErrUnsupported):
+		return report.Errorf(report.ServiceUnsupported, "%s", msg).Wrap(err)
+	case errors.Is(err, service.ErrNoUserManager):
+		return report.Errorf(report.ServiceNoUserManager, "%s", msg).Wrap(err)
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), msg)
-	return exitError{code: 1, msg: msg}
+	return err
 }
 
 // serviceManager returns the manager, or reports that there is none.
@@ -147,9 +150,7 @@ func (b serviceBackend) withManager(m service.Manager, d service.Definition) det
 func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	out := cmd.OutOrStdout()
 	if b.euid() == 0 {
-		msg := "Install the service as yourself, not as root: it runs as the user who installs it."
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return exitError{code: 1, msg: msg}
+		return report.Errorf(report.ServiceAsRoot, "Install the service as yourself, not as root: it runs as the user who installs it.")
 	}
 	m, err := b.serviceManager(cmd)
 	if err != nil {
@@ -161,16 +162,14 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	}
 	exe, note, err := service.ServiceExe(b.goos, b.exe(), b.getenv, b.lookPath)
 	if err != nil {
-		msg := printableLines(err.Error())
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return exitError{code: 1, msg: msg}
+		return report.Errorf(report.ServiceCopy, "%s", err).Wrap(err)
 	}
 	// A service whose core cannot bind its ports fails at every login, so
 	// none is installed until the binary may.
 	if b.mayNotBind != nil && b.mayNotBind(exe) {
-		msg := "The service cannot run Nearhost from this copy yet.\n\n" + setcapAdvice(exe, true, "run nearhost service install again")
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return exitError{code: 1, msg: msg}
+		m := report.Errorf(report.ServiceCannotBind, "The service cannot run Nearhost from this copy yet.").Because(setcapWhy)
+		m.Fix = []report.Step{setcapStep(exe, true)}
+		return m.Then("Then run nearhost service install again.").SuggestDoctor().With("path", exe)
 	}
 	logPath, err := config.LogPath()
 	if err != nil {

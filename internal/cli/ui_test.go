@@ -90,7 +90,7 @@ func TestBareNearhostWithoutATerminalSaysToUseDetachOrUp(t *testing.T) {
 			setHostOS(t, tc.goos)
 			ran := false
 			stdout, stderr, code := runRootSplit(t, uiRoot(fakeUI(t, false, &ran)))
-			if code != 1 || ran || stdout != "" || stderr != tc.want {
+			if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+tc.want) {
 				t.Fatalf("code %d, ran %v, stdout %q, stderr %q, want stderr %q", code, ran, stdout, stderr, tc.want)
 			}
 		})

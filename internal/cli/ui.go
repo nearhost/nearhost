@@ -23,6 +23,7 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -188,16 +189,15 @@ func bindUI(root *cobra.Command, b uiBackend) {
 	}
 }
 
-// noTerminal prints that the interface needs a terminal, which is standard
-// input and output both being one, and returns the exit status 1 for Main.
-// The message is printed here so that Main adds no "nearhost: " prefix.
+// noTerminal is the interface.no-terminal error: the interface needs a
+// terminal, which is standard input and output both being one. stderr is
+// no longer written to: Main renders the error.
 func noTerminal(stderr io.Writer) error {
 	msg := "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one."
 	if hostOS == "windows" {
 		msg += " In Git Bash, run it through winpty or use Windows Terminal."
 	}
-	fmt.Fprintln(stderr, msg)
-	return exitError{code: 1, msg: msg}
+	return report.Errorf(report.InterfaceNoTerminal, "%s", msg)
 }
 
 // rootArgs is cobra.NoArgs, except that a single argument that looks like a
@@ -205,7 +205,7 @@ func noTerminal(stderr io.Writer) error {
 func rootArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-			return fmt.Errorf("unknown command %q for %q\n\nDid you mean this?\n\t%s", args[0], cmd.CommandPath(), strings.Join(s, "\n\t"))
+			return unknownCommand(cmd, args[0], s)
 		}
 	}
 	return cobra.NoArgs(cmd, args)
@@ -390,9 +390,7 @@ func ensureInterruptible(cmd *cobra.Command, b uiBackend, start func() (*control
 		if ie := (interruptedStart{}); errors.As(err, &ie) {
 			fate = ie.fate
 		}
-		msg := interruptedMessage(fate)
-		fmt.Fprintln(cmd.ErrOrStderr(), msg)
-		return nil, control.Info{}, false, exitError{code: interruptedCode, msg: msg}
+		return nil, control.Info{}, false, report.Errorf(report.Interrupted, "%s", interruptedMessage(fate)).ExitCode(interruptedCode).Wrap(err)
 	}
 	return c, info, spawned, err
 }
@@ -425,9 +423,7 @@ func knownAPI(cmd *cobra.Command, info control.Info) error {
 	if info.API == control.APIVersion {
 		return nil
 	}
-	msg := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost."
-	fmt.Fprintln(cmd.ErrOrStderr(), msg)
-	return exitError{code: 1, msg: msg}
+	return report.Errorf(report.CoreAPIMismatch, "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost.")
 }
 
 // offerRestart offers, at the terminal, to restart the core c, which says
@@ -509,9 +505,7 @@ func sameConfig(cmd *cobra.Command, served string) error {
 	if samePath(given, served) {
 		return nil
 	}
-	msg := fmt.Sprintf("Nearhost in the background serves %s. Stop it with nearhost stop to use %s, or open nearhost without --config.", printable(served), printable(given))
-	fmt.Fprintln(cmd.ErrOrStderr(), msg)
-	return exitError{code: 1, msg: msg}
+	return report.Errorf(report.CoreOtherConfig, "Nearhost in the background serves %s. Stop it with nearhost stop to use %s, or open nearhost without --config.", served, given)
 }
 
 // samePath reports whether a and b name the same file: the same path, or
@@ -551,27 +545,24 @@ func ignoredFlags(cmd *cobra.Command, st control.State) string {
 	return list + " apply only when Nearhost starts; the running Nearhost keeps its settings."
 }
 
-// coreLost prints that the core went while the interface ran, with the end
-// of its log, where it said why, unless what it wrote since from says it was
-// asked to stop. A core that ran in a terminal, which by says, had the
-// terminal for its log, so none is shown. It returns the exit status 1 for
-// Main.
+// coreLost is the core.lost error of a core that went while the interface
+// ran, with the end of its log, where it said why, unless what it wrote
+// since from says it was asked to stop. A core that ran in a terminal, which
+// by says, had the terminal for its log, so none is shown. Main renders it;
+// w is no longer written to.
 func coreLost(w io.Writer, d detachBackend, from int64, by control.StartedBy) error {
 	if by == control.StartedForeground {
 		// Its terminal was its log.
-		msg := "Nearhost stopped. It ran in a terminal, which shows why."
-		fmt.Fprintln(w, msg)
-		return exitError{code: 1, msg: msg}
+		return report.Errorf(report.CoreLost, "Nearhost stopped. It ran in a terminal, which shows why.")
 	}
-	msg := "Nearhost in the background stopped."
+	m := report.Errorf(report.CoreLost, "Nearhost in the background stopped.")
 	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
 		if tail := d.logTail(0, detachTailLines); len(tail) > 0 {
 			path, _ := config.LogPath()
-			msg += " The end of " + path + ":\n" + printableLines(strings.Join(tail, "\n"))
+			m.Because("The end of %s:\n%s", path, strings.Join(tail, "\n"))
 		}
 	}
-	fmt.Fprintln(w, msg)
-	return exitError{code: 1, msg: msg}
+	return m
 }
 
 // lostLogLines is how many of the lines a lost core wrote are looked at for

@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -19,14 +20,12 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // coreLogLimit is the size past which the core log is set aside, as
 // core.log.1, when the core next opens it.
 const coreLogLimit = 5 << 20
-
-// errHostsNeedTerminal is the hosts error of a core with no terminal.
-var errHostsNeedTerminal = errors.New("the hosts file needs updating, and Nearhost in the background never asks for sudo. Run `nearhost hosts update` in a terminal.")
 
 func newDaemonCmd(b upBackend) *cobra.Command {
 	var flags serveFlags
@@ -56,7 +55,14 @@ func newDaemonCmd(b upBackend) *cobra.Command {
 // runDaemon is `nearhost daemon`: the core with no terminal, which logs to
 // the core log, keeps running with nothing to serve, applies the config as it
 // is saved, and never elevates.
-func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy string) error {
+//
+// Everything it reports goes to the log as a message block (see logSink),
+// and so does the error it stops with, once. A core in the background has
+// the log for its standard error too, so Main does not print that error
+// again; a core run in a terminal has Main print it there as well. A panic
+// in the core's own goroutine is logged as a crash, with the details in a
+// crash file beside the log.
+func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy string) (err error) {
 	by := control.StartedBy(startedBy)
 	switch by {
 	case control.StartedForeground, control.StartedDetached, control.StartedService, control.StartedTUI:
@@ -71,13 +77,15 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	if err != nil {
 		return fmt.Errorf("open the core log: %w", err)
 	}
+	log := tsWriter(logFile)
+	sink := logSink(log)
 	redirected := false
 	if by == control.StartedService && b.redirectStderr != nil {
 		// The log is the file a service core's panics should land in. Windows
 		// stderr then points at this handle, so it is not closed on return:
 		// a panic during exit must still find it valid. The process ends next.
 		if err := b.redirectStderr(logFile.f); err != nil {
-			fmt.Fprintln(logFile, "could not send the core's standard error to this log:", err)
+			sink.Report(report.Warnf(report.CoreLogUnavailable, "The core could not send its standard error to this log.").Wrap(err))
 		} else {
 			redirected = true
 		}
@@ -86,12 +94,29 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 		// Closed before the process ends, so nothing stays open on Windows.
 		defer logFile.Close()
 	}
-	log := tsWriter(logFile)
 	// A detached core's own output goes nowhere: what the core says on
-	// stderr (a CA it could not move) and why it stopped go in the log,
-	// where whoever started it looks.
+	// stderr and reports (a CA it could not move) and why it stopped go in
+	// the log, where whoever started it looks.
 	cmd.SetErr(log)
+	setSink(cmd, sink)
+	held := &sinkHolder{sink}
+	coreFallback.Store(held)
+	defer coreFallback.CompareAndSwap(held, nil)
 	fmt.Fprintf(log, "nearhost %s starting (pid %d, started by %s)\n", Version, os.Getpid(), by)
+	defer func() {
+		v := recover()
+		if v == nil {
+			return
+		}
+		// The crash file goes beside the log, whatever this process's
+		// report.CrashDir says.
+		m := report.CrashedIn(filepath.Dir(path), v, debug.Stack())
+		sink.Report(m)
+		err = m
+		if by != control.StartedForeground {
+			err = alreadySaid{m}
+		}
+	}()
 	err = runCore(cmd, b, flags, nil, coreMode{
 		out:         log,
 		startedBy:   by,
@@ -109,20 +134,39 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 		// The service starts a core at login whether or not one runs. That
 		// one serves, so this start has nothing to do, and is no failure
 		// for the service manager to report or retry.
-		fmt.Fprintln(log, "Another Nearhost is already running, so this service start does nothing.")
+		sink.Report(report.Notef(report.CoreAlreadyRunning, "Another Nearhost is already running, so this service start does nothing."))
 		return nil
 	}
-	if err != nil {
-		fmt.Fprintln(log, "nearhost:", printableLines(err.Error()))
-		var ee exitError
-		if by != control.StartedForeground && !errors.As(err, &ee) {
-			// The standard error of a core started any other way is the
-			// log too, where Main would print the same error again.
-			return exitError{code: 1, msg: err.Error(), cause: err}
-		}
+	if err == nil {
+		return nil
+	}
+	var said alreadySaid
+	if errors.As(err, &said) {
+		return err
+	}
+	sink.Report(messageOf(err))
+	if by != control.StartedForeground {
+		// The standard error of a core started any other way is the log
+		// too, where Main would print the same error again.
+		return alreadySaid{err}
 	}
 	return err
 }
+
+// logSink writes each message reported to it to the core log w as a block
+// (see report.LogText), in one Write, so the log stamps each of its lines
+// and nothing else goes between them.
+func logSink(w io.Writer) report.Sink {
+	return report.SinkFunc(func(m *report.Message) {
+		io.WriteString(w, report.LogText(m)+"\n")
+	})
+}
+
+// errHostsNeedTerminal is the hosts refusal of a core with no terminal: a
+// hosts.needs-update message, whose title is the text it has always had,
+// which the interface matches.
+var errHostsNeedTerminal = report.Errorf(report.HostsNeedsUpdate,
+	"the hosts file needs updating, and Nearhost in the background never asks for sudo. Run `nearhost hosts update` in a terminal.")
 
 // coreLogMayRotate reports whether the core log may be set aside: not while
 // a core runs, which keeps writing to the log it has open. A core that its

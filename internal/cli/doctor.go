@@ -26,6 +26,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -408,12 +409,12 @@ func tally(checks []check, projects []projectReport) (failed, warned int) {
 }
 
 // failure is the error doctor exits with when failed checks failed, and
-// nil when none did. The report says it, so Main does not (see exitError).
+// nil when none did. The report says it, so Main does not (see alreadySaid).
 func failure(failed int) error {
 	if failed == 0 {
 		return nil
 	}
-	return exitError{code: 1, msg: plural(failed, "check") + " failed"}
+	return alreadySaid{report.Errorf(report.DoctorChecksFailed, "%s failed", plural(failed, "check"))}
 }
 
 // printCheck prints one check: its line, and its fix under it.

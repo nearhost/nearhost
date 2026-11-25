@@ -201,7 +201,7 @@ func TestTheCoreRunsInTheBackground(t *testing.T) {
 	}
 	// Stop returns once the core has let go of everything.
 	out, code = sb.nearhost("status")
-	if code != 3 || !strings.HasPrefix(out, "Nearhost is not running.") {
+	if code != 3 || !strings.HasPrefix(out, "Error: Nearhost is not running.") {
 		t.Errorf("nearhost status after stop: exit %d, printed %q", code, out)
 	}
 	if _, err := sb.get("shop.test", "/"); err == nil {

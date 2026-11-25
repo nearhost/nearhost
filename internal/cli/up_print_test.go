@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"github.com/nearhost/nearhost/internal/report"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
-	"github.com/nearhost/nearhost/internal/transport"
 )
 
 // The engine announces a state again when its reason changes. Each distinct
@@ -51,21 +51,19 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 }
 
 // A run directory too long for a control socket is not fixed by ssh in a
-// terminal, which works: the fix names the setting.
+// terminal, which works: the fix, chosen by the problem's code and not its
+// text, names the setting.
 func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	reason := "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
-	if !transport.IsSocketPathMessage(reason) {
-		t.Fatal("the reason is not transport's message")
-	}
-	p.fix("api", engine.StateError, reason)
+	fixFor(p, "api", engine.StateError, reason, report.Errorf(report.SSHSocketPathTooLong, "%s", reason))
 	if got := out.String(); !strings.Contains(got, "XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then run `nearhost up` again") || strings.Contains(got, "`ssh") {
 		t.Fatalf("printed %q", got)
 	}
 	out.Reset()
-	p.fix("api", engine.StateError, "ssh mini: Permission denied (publickey).")
+	fixFor(p, "api", engine.StateError, "ssh mini: Permission denied (publickey).", nil)
 	if got := out.String(); !strings.Contains(got, "`ssh mini.lan` once") {
 		t.Fatalf("another reason lost the ssh advice: %q", got)
 	}
@@ -77,11 +75,12 @@ func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
 	var out bytes.Buffer
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
-	p.fix("api", engine.StateStopped, `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`)
+	readOnly := `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`
+	fixFor(p, "api", engine.StateStopped, readOnly, report.Errorf(report.HostsReadOnly, "%s", readOnly))
 	if out.Len() != 0 {
 		t.Fatalf("output = %q, want none", out.String())
 	}
-	p.fix("api", engine.StateStopped, "hosts update declined")
+	fixFor(p, "api", engine.StateStopped, "hosts update declined", nil)
 	if out.Len() == 0 {
 		t.Fatal("another reason lost its fix line")
 	}
@@ -99,17 +98,17 @@ func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
 		print      func(p *upPrinter)
 		want       string
 	}{
-		{"ssh", false, func(p *upPrinter) { p.fix("api", engine.StateError, "server mini is unreachable") },
+		{"ssh", false, func(p *upPrinter) { fixFor(p, "api", engine.StateError, "server mini is unreachable", nil) },
 			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"},
-		{"ssh", true, func(p *upPrinter) { p.fix("api", engine.StateError, "server mini is unreachable") },
+		{"ssh", true, func(p *upPrinter) { fixFor(p, "api", engine.StateError, "server mini is unreachable", nil) },
 			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost stop` and `nearhost -d`\n"},
-		{"port", false, func(p *upPrinter) { p.fix("web", engine.StateError, "port 5173 is in use") },
+		{"port", false, func(p *upPrinter) { fixFor(p, "web", engine.StateError, "port 5173 is in use", nil) },
 			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again\n"},
-		{"port", true, func(p *upPrinter) { p.fix("web", engine.StateError, "port 5173 is in use") },
+		{"port", true, func(p *upPrinter) { fixFor(p, "web", engine.StateError, "port 5173 is in use", nil) },
 			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost stop` and `nearhost -d`\n"},
-		{"hosts", false, func(p *upPrinter) { p.fix("web", engine.StateStopped, "hosts update failed") },
+		{"hosts", false, func(p *upPrinter) { fixFor(p, "web", engine.StateStopped, "hosts update failed", nil) },
 			"  fix: Run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts\n"},
-		{"hosts", true, func(p *upPrinter) { p.fix("web", engine.StateStopped, "hosts update failed") },
+		{"hosts", true, func(p *upPrinter) { fixFor(p, "web", engine.StateStopped, "hosts update failed", nil) },
 			"  fix: Run `nearhost hosts update` in a terminal, and Nearhost starts the project\n"},
 		{"pending", false, func(p *upPrinter) {
 			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
@@ -164,4 +163,10 @@ func TestUpPrintsEachBlockInOneWrite(t *testing.T) {
 	if len(out.writes) != 2 {
 		t.Errorf("a plain event and an empty summary took %d writes: %q", len(out.writes), out.writes)
 	}
+}
+
+// fixFor writes what p says to do about the project called name in the
+// state st, for reason, whose problem is problem.
+func fixFor(p *upPrinter, name string, st engine.State, reason string, problem *report.Message) {
+	p.writeSteps(p.steps(name, st, reason, problem))
 }

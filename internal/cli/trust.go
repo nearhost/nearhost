@@ -26,6 +26,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/sudo"
 )
 
@@ -71,9 +72,13 @@ type trustBackend struct {
 	removeCA func(storageRoot string) error
 }
 
-// noSudo says what to do about a missing sudo, for the command name.
-func noSudo(err error, name string) error {
-	return fmt.Errorf("%w; install sudo in one of those, or run `nearhost %s` as root", err, name)
+// noSudo is the trust.no-sudo error for a missing sudo, err, for the
+// command name. No password prompt appeared, and another try finds no
+// sudo either, so it says nothing of approving one.
+func noSudo(err error, name string) *report.Message {
+	return report.Errorf(report.TrustNoSudo, "%s.", upperFirst(strings.TrimSuffix(err.Error(), "."))).
+		Then(fmt.Sprintf("Install sudo in one of those, or run `nearhost %s` as root.", name)).
+		Wrap(err)
 }
 
 // sudoProblem is the backend's findSudo for the command name, worded by
@@ -119,23 +124,23 @@ func systemTrust() trustBackend {
 // the data directory, unless another Nearhost is running and may be using it.
 // Only the commands that own the CA call it: `nearhost`, `nearhost up`,
 // `trust` and `untrust`. A failure leaves a CA where config.CaddyDir finds
-// it, so it is a warning on w and the command carries on.
-func migrateCA(w io.Writer) {
-	if msg := migrateCANote(); msg != "" {
-		fmt.Fprintln(w, msg)
+// it, so it is a warning reported to sink and the command carries on.
+func migrateCA(sink report.Sink) {
+	for _, m := range migrateCANotes() {
+		sink.Report(m)
 	}
 }
 
-// migrateCANote is migrateCA's work: it returns the warnings, "" for none,
-// which migrateCA prints.
+// migrateCANotes is migrateCA's work: it returns the warnings, none when
+// all went well, which migrateCA reports.
 //
 // It also makes private the CA's folder, once it is where it stays, and
 // the copy older versions left in the config directory, which still holds
 // the private key; a move across filesystems makes its new folder private
 // before copying into it. On Windows a folder otherwise takes its parent's
 // access list. A folder that cannot be made private is a warning too.
-func migrateCANote() string {
-	notes := []string{migrateWarning(config.MigrateCaddyDir(nearhostRunning, func(dir string) {
+func migrateCANotes() []*report.Message {
+	notes := []*report.Message{migrateWarning(config.MigrateCaddyDir(nearhostRunning, func(dir string) {
 		// The temporary folder's warning is dropped: the final folder is
 		// restricted, and warned about, just below.
 		makeStoragePrivate(dir)
@@ -150,30 +155,33 @@ func migrateCANote() string {
 		dirs = append(dirs, old)
 	}
 	for _, dir := range dirs {
-		notes = append(notes, makeStoragePrivate(dir))
+		notes = append(notes, notPrivate(makeStoragePrivate(dir)))
 	}
-	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "\n")
+	return slices.DeleteFunc(notes, func(n *report.Message) bool { return n == nil })
 }
 
 // makeStoragePrivate is proxy.MakeStoragePrivate. Tests replace it.
 var makeStoragePrivate = proxy.MakeStoragePrivate
 
-// migrateWarning words a config.MigrateCaddyDir error for the user, "" for
-// none.
-func migrateWarning(err error) string {
-	var me *config.MigrateError
-	switch {
-	case err == nil:
-		return ""
-	case errors.As(err, &me) && me.Moved:
-		return fmt.Sprintf("Warning: Nearhost moved its local CA to %s but could not delete %s (%v). "+
-			"That directory still holds a copy of the CA's private key; delete it.", me.New, me.Old, me.Err)
-	case errors.As(err, &me):
-		return fmt.Sprintf("Warning: Nearhost could not move its local CA from %s to %s (%v), so it keeps using %s.",
-			me.Old, me.New, me.Err, me.Old)
-	default:
-		return fmt.Sprintf("Warning: Nearhost could not move its local CA to its data directory: %v.", err)
+// notPrivate is the ca.not-private warning for makeStoragePrivate's
+// warning text, nil for none.
+func notPrivate(warning string) *report.Message {
+	if warning == "" {
+		return nil
 	}
+	return report.Warnf(report.CANotPrivate, "%s", strings.TrimPrefix(warning, "Warning: "))
+}
+
+// migrateWarning is the ca.move-failed warning for a
+// config.MigrateCaddyDir error, nil for none.
+func migrateWarning(err error) *report.Message {
+	if err == nil {
+		return nil
+	}
+	if m, ok := report.As(err); ok && m.Code == report.CAMoveFailed {
+		return m
+	}
+	return report.Warnf(report.CAMoveFailed, "Nearhost could not move its local CA to its data directory: %v.", err).Wrap(err)
 }
 
 func newTrustCmd(b trustBackend) *cobra.Command {
@@ -183,7 +191,7 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 		Long:  "Install the Nearhost Local CA into " + trustStore + ".\n\n" + elevationNote,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			migrateCA(cmd.ErrOrStderr())
+			migrateCA(sinkOf(cmd))
 			dir, err := config.CaddyDir()
 			if err != nil {
 				return err
@@ -345,7 +353,7 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 				if yes {
 					return errors.New("--yes answers the question --delete-key asks, so it needs --delete-key")
 				}
-				migrateCA(cmd.ErrOrStderr())
+				migrateCA(sinkOf(cmd))
 				dir, err := config.CaddyDir()
 				if err != nil {
 					return err
@@ -364,44 +372,69 @@ func newUntrustCmd(b trustBackend) *cobra.Command {
 	return cmd
 }
 
-// retryableError is an untrust failure that a second run gets past once the
-// user does what fix says: a declined prompt, sudo missing, a browser holding
-// its NSS store open, certutil missing. Its message is plain untrust's; fix
-// says what to do without telling the user to run plain untrust again.
-type retryableError struct {
-	err error
-	fix string
+// notRemoved is an untrust failure that a second run gets past once the
+// user does what do says: a declined prompt, a browser holding its NSS
+// store open, certutil missing. It is trust.not-removed, titled title, and
+// its last step is to run untrust again, which `untrust --delete-key` says
+// of itself instead (see retryDeleteKey). A missing sudo (noSudo) is one
+// too.
+func notRemoved(title, why, do string, cause error) *report.Message {
+	m := report.Errorf(report.TrustNotRemoved, "%s", title)
+	if why != "" {
+		m.Because("%s", why)
+	}
+	return m.Then(do).Then("Then run `nearhost untrust` again.").Wrap(cause)
 }
 
-func (e *retryableError) Error() string { return e.err.Error() }
-func (e *retryableError) Unwrap() error { return e.err }
+// retryable reports whether err is an untrust failure that a second run
+// gets past (see notRemoved).
+func retryable(err error) (*report.Message, bool) {
+	m, ok := report.As(err)
+	return m, ok && (m.Code == report.TrustNotRemoved || m.Code == report.TrustNoSudo)
+}
 
-// trustRemainsError is an untrust failure that leaves trust Nearhost cannot
-// remove: another store or a file Nearhost did not install still trusts the
-// root, a browser store still trusts it after cleaning, or the root could not
-// be read. Only these, and a clean untrust, let `untrust --delete-key` delete
-// the key; every other failure deletes nothing.
-type trustRemainsError struct{ err error }
+// retryDeleteKey is m, a retryable untrust failure, as the failure of
+// `untrust --delete-key`, which deleted nothing: its steps name that
+// command where they name plain untrust.
+func retryDeleteKey(m *report.Message) *report.Message {
+	r := report.Errorf(m.Code, "Nothing was deleted.").Because("%s", m.Title)
+	if m.Why != "" {
+		r.Because("%s", m.Why)
+	}
+	for _, step := range m.Fix {
+		r.Step(strings.ReplaceAll(step.Text, "`nearhost untrust`", "`nearhost untrust --delete-key`"), step.Command)
+	}
+	return r.Wrap(m)
+}
 
-func (e *trustRemainsError) Error() string { return e.err.Error() }
-func (e *trustRemainsError) Unwrap() error { return e.err }
+// trustRemains marks err as trust Nearhost cannot remove: another store or
+// a file Nearhost did not install still trusts the root, a browser store
+// still trusts it after cleaning, or the root could not be read. Only
+// these, and a clean untrust, let `untrust --delete-key` delete the key;
+// every other failure deletes nothing. It is trust.remains, titled with
+// err's text.
+func trustRemains(err error) error {
+	return report.Errorf(report.TrustRemains, "%s", err).Wrap(err)
+}
 
-// trustRemains marks err as trust Nearhost cannot remove.
-func trustRemains(err error) error { return &trustRemainsError{err: err} }
+// remains reports whether err is trust Nearhost cannot remove (see
+// trustRemains).
+func remains(err error) bool {
+	m, ok := report.As(err)
+	return ok && m.Code == report.TrustRemains
+}
 
 // untrustStep is untrustRoot; tests replace it.
 var untrustStep = untrustRoot
 
 // noSudoRetry is untrust's error for a missing sudo.
-func noSudoRetry(err error) error {
-	return &retryableError{err: noSudo(err, "untrust"), fix: fmt.Sprintf("%v; install sudo in one of those", err)}
-}
+func noSudoRetry(err error) error { return noSudo(err, "untrust") }
 
 // untrustAndDelete is `nearhost untrust --delete-key`: it untrusts the root,
 // then asks, unless yes, and deletes the local CA.
 //
 // The key goes only after a clean untrust or one that left trust Nearhost
-// cannot remove (a trustRemainsError). Any other failure asks and deletes
+// cannot remove (see trustRemains). Any other failure asks and deletes
 // nothing: a second run, once the user fixes what the error names, can still
 // find the root to untrust. When trust remains, the key goes anyway. A root something still trusts is worse
 // with its key on disk, where anyone who reads it can sign certificates that
@@ -423,7 +456,7 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 			return err
 		}
 	}
-	migrateCA(cmd.ErrOrStderr())
+	migrateCA(sinkOf(cmd))
 	dir, err := config.CaddyDir()
 	if err != nil {
 		return err
@@ -444,15 +477,16 @@ func untrustAndDelete(cmd *cobra.Command, b trustBackend, yes bool) error {
 		cert = nil
 		untrustErr = trustRemains(fmt.Errorf("Nearhost could not read the local CA's root certificate (%w), so it could not check what trusts it.", err))
 	}
-	var remains *trustRemainsError
-	if untrustErr != nil && !errors.As(untrustErr, &remains) {
+	if untrustErr != nil && !remains(untrustErr) {
 		// A second run can finish the untrust, and could not find the root
 		// to untrust once the CA is gone.
-		var retry *retryableError
-		if errors.As(untrustErr, &retry) {
-			return fmt.Errorf("Nothing was deleted. %s, then run `nearhost untrust --delete-key` again.", retry.fix)
+		if m, ok := retryable(untrustErr); ok {
+			return retryDeleteKey(m)
 		}
-		return fmt.Errorf("Nothing was deleted. %v Fix that, then run `nearhost untrust --delete-key` again.", strings.TrimSuffix(untrustErr.Error(), ".")+".")
+		return report.Errorf(report.TrustNotRemoved, "Nothing was deleted.").
+			Because("%s", strings.TrimSuffix(untrustErr.Error(), ".")+".").
+			Then("Fix that, then run `nearhost untrust --delete-key` again.").
+			Wrap(untrustErr)
 	}
 	if !yes {
 		also := ""
@@ -741,15 +775,11 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 			case errors.Is(err, sudo.ErrNotFound):
 				return noSudoRetry(err)
 			case trustRefused(err):
-				return &retryableError{
-					err: errors.New("Nearhost Local CA was not removed: the Windows security warning was declined. Run `nearhost untrust` again and choose Yes."),
-					fix: "Nearhost Local CA was not removed because the Windows security warning was declined. Be ready to choose Yes in it",
-				}
+				return notRemoved("Nearhost Local CA was not removed: the Windows security warning was declined.", "",
+					"Be ready to choose Yes in the security warning.", err)
 			default:
-				return &retryableError{
-					err: fmt.Errorf("%w ("+trustDeclined+", run `nearhost untrust` again and approve it)", err),
-					fix: fmt.Sprintf("Nearhost Local CA was not removed (%v). If you declined the prompt, be ready to approve it", err),
-				}
+				return notRemoved(fmt.Sprintf("Nearhost Local CA was not removed (%v).", err), "",
+					upperFirst(trustDeclined)+", be ready to approve it.", err)
 			}
 		}
 		// A root another store still trusts is not removed, and the
@@ -774,8 +804,8 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 				if b.nss != nil {
 					where = nssStoreList(b.nss(cert))
 				}
-				held := fmt.Sprintf("Nearhost could not remove the Nearhost Local CA from the NSS stores (%s). A browser may be holding its database open: quit Firefox", where)
-				return &retryableError{err: errors.New(held + " and run `nearhost untrust` again."), fix: held}
+				return notRemoved(fmt.Sprintf("Nearhost could not remove the Nearhost Local CA from the NSS stores (%s).", where),
+					"A browser may be holding its database open.", "Quit Firefox.", err)
 			}
 		}
 	}
@@ -788,8 +818,8 @@ func untrustRoot(out io.Writer, b trustBackend, cert *x509.Certificate) error {
 		if line := nssLeftLine(st); line != "" {
 			if certutilMissing(st) {
 				// Installing certutil and running again finishes the job.
-				return &retryableError{err: errors.New(line), fix: "Nearhost could not clean the " + nssStores + " (" + nssStoreList(st) +
-					"), which may still trust the Nearhost Local CA: " + st.Detail + ". Install it"}
+				return notRemoved("Nearhost could not clean the "+nssStores+" ("+nssStoreList(st)+
+					"), which may still trust the Nearhost Local CA: "+st.Detail+".", strings.TrimSpace(nssCoverage), "Install it.", nil)
 			}
 			return trustRemains(errors.New(line))
 		}

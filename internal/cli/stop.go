@@ -11,6 +11,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 var (
@@ -89,11 +90,11 @@ func waitStopped(ctx context.Context, runDir string) error {
 			}
 		}
 		if !time.Now().Before(deadline) {
-			msg := fmt.Sprintf("Nearhost has not stopped after %s.", stopWait)
+			m := report.Errorf(report.CoreStopTimeout, "Nearhost has not stopped after %s.", stopWait)
 			if path, err := config.LogPath(); err == nil {
-				msg += " See " + path + " for why."
+				m.Then("See "+path+" for why.").With("log", path)
 			}
-			return errors.New(msg)
+			return m
 		}
 		select {
 		case <-tick.C:
