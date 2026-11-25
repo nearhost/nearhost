@@ -17,6 +17,7 @@ func (m *Model) serverPanel(name string, width, height int) []string {
 			"",
 			"Projects on this machine. There is nothing to connect to.",
 		}
+		lines = append(lines, m.openField(name, width)...)
 		if m.panelErr != "" {
 			lines = append(lines, "")
 			lines = append(lines, errorLines(m.panelErr, width)...)
@@ -75,8 +76,9 @@ func (m *Model) serverPanel(name string, width, height int) []string {
 		projects = strings.Join(on, ", ")
 	}
 	lines = append(lines, field("projects", projects, width)...)
-	// The error comes before the passthroughs, so a long list of them
-	// cannot push it out of the panel.
+	lines = append(lines, m.openField(name, width)...)
+	// The error comes before the grants, so a long list of them cannot push
+	// it out of the panel.
 	if m.panelErr != "" {
 		lines = append(lines, "")
 		lines = append(lines, errorLines(m.panelErr, width)...)
@@ -85,4 +87,13 @@ func (m *Model) serverPanel(name string, width, height int) []string {
 		lines = append(append(lines, ""), rows...)
 	}
 	return lines
+}
+
+// openField is the open field of the server's panel, or nothing while no
+// agent has anything open on it.
+func (m *Model) openField(name string, width int) []string {
+	if s := m.openCounts(name); s != "" {
+		return field("open", s, width)
+	}
+	return nil
 }

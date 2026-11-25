@@ -30,50 +30,13 @@ func docsModel(t *testing.T) (*Model, *fakeBackend) {
 	return m, f
 }
 
-func TestServerListsDocuments(t *testing.T) {
-	m, _ := docsModel(t)
-	wantRow(t, m, "documents")
-	wantRow(t, m, "/home/dev/code/app · Claude Code · plans/x.md · 12m")
-	wantRow(t, m, "/srv/site · Codex · index.html · 3h")
-	s := screen(m)
-	if strings.Contains(s, "spec.md") || strings.Contains(s, "plans/y.md") {
-		t.Errorf("panel shows an older document or another server's tree:\n%s", s)
-	}
-	if strings.Index(s, "/home/dev/code/app") > strings.Index(s, "/srv/site") {
-		t.Errorf("trees are not newest first:\n%s", s)
-	}
-	if strings.Index(s, "/srv/site") > strings.Index(s, "always allowed") {
-		t.Errorf("documents are not listed before the grants:\n%s", s)
-	}
-}
-
-func TestLaptopListsDocuments(t *testing.T) {
-	m, f := docsModel(t)
-	m.selectRow(rowKey(rowServer, config.LocalServer))
-	wantRow(t, m, "documents")
-	wantRow(t, m, "~/code/app · Claude Code · plans/y.md · 5m")
-	if s := screen(m); strings.Contains(s, "/srv/site") {
-		t.Errorf("the laptop shows apollo's trees:\n%s", s)
-	}
-	if got := footer(m); !strings.Contains(got, "tab documents") {
-		t.Fatalf("footer %q", got)
-	}
-	press(m, "tab")
-	if got := footer(m); got != "↑↓ select · enter open · x remove · tab done" {
-		t.Fatalf("footer %q", got)
-	}
-	run(m, press(m, "enter"))
-	if got := f.documentTreeCalls(); !slices.Equal(got, []string{"open t3"}) {
-		t.Fatalf("calls %v", got)
-	}
-}
-
 func TestEnterOpensDocument(t *testing.T) {
 	m, f := docsModel(t)
+	m.selectRow("documents")
 	press(m, "tab")
-	press(m, "down") // the second tree
+	press(m, "down") // this machine's tree comes first
 	run(m, press(m, "enter"))
-	if got := f.documentTreeCalls(); !slices.Equal(got, []string{"open t2"}) {
+	if got := f.documentTreeCalls(); !slices.Equal(got, []string{"open t1"}) {
 		t.Fatalf("calls %v", got)
 	}
 	if !m.passFocus {
@@ -86,7 +49,7 @@ func TestEnterOpensDocument(t *testing.T) {
 
 func TestRemoveDocumentsConfirms(t *testing.T) {
 	m, f := docsModel(t)
-	m.selectRow(rowKey(rowServer, config.LocalServer))
+	m.selectRow("documents")
 	press(m, "tab")
 	press(m, "x")
 	wantText(t, m, "Stop serving ~/code/app?")
@@ -112,6 +75,7 @@ func TestRemoveDocumentsConfirms(t *testing.T) {
 
 func TestRemoveDocumentsFailureShown(t *testing.T) {
 	m, f := docsModel(t)
+	m.selectRow("documents")
 	f.treeErr = errBoom
 	press(m, "tab")
 	press(m, "x")
@@ -120,14 +84,6 @@ func TestRemoveDocumentsFailureShown(t *testing.T) {
 		t.Fatalf("form %T", m.form)
 	}
 	wantScreen(t, m, "Boom")
-}
-
-func TestHomeCountsDocuments(t *testing.T) {
-	m, f := docsModel(t)
-	m.selectRow(homeKey)
-	wantText(t, m, "agents apollo 2 documents · local 1 document")
-	f.passes = append(f.passes, passModelPass(m))
-	wantText(t, m, "agents apollo 1 passthrough, 2 documents · local 1 document")
 }
 
 // passModelPass is an open passthrough on apollo.

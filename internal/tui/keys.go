@@ -8,7 +8,6 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
-	"github.com/nearhost/nearhost/internal/grants"
 )
 
 // footerItem is one action shown in the footer: the key and what it does.
@@ -93,7 +92,7 @@ func (m *Model) footerItems() []footerItem {
 			items = append(items, footerItem{"r", "reconnect"}, footerItem{"c", verb})
 		}
 		if rows, _ := m.panelRows(); len(rows) > 0 {
-			items = append(items, footerItem{"tab", agentsTab(rows)})
+			items = append(items, footerItem{"tab", "grants"})
 		}
 		if name != config.LocalServer {
 			items = append(items, footerItem{"e", "edit"}, footerItem{"d", "remove"})
@@ -108,18 +107,6 @@ func (m *Model) footerItems() []footerItem {
 var minorKeys = []footerItem{
 	{"q", "quit"}, {"n", "add"}, {"s", "server"}, {"enter", "collapse"},
 	{"tab", "routes"}, {"tab", "passthroughs"}, {"tab", "documents"}, {"d", "remove"}, {"e", "edit"},
-}
-
-// agentsTab is what tab on a server's panel selects among its rows: its
-// passthroughs, while it has any or a passthrough grant, and otherwise its
-// documents.
-func agentsTab(rows []passRow) string {
-	for _, r := range rows {
-		if r.pass != nil || (r.grant != nil && r.grant.Kind == grants.KindPassthrough) {
-			return "passthroughs"
-		}
-	}
-	return "documents"
 }
 
 // shownFooterItems are the footer items that fit in width cells: on the

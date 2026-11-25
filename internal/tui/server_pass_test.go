@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/transport"
@@ -46,14 +47,19 @@ func footer(m *Model) string {
 	return strings.Join(parts, " · ")
 }
 
-func TestServerPanelListsPassthroughs(t *testing.T) {
-	m, _ := passModel(t)
+func TestServerPanelCountsWhatIsOpen(t *testing.T) {
+	m, f := passModel(t)
+	f.passes = f.passes[:1]
+	f.trees = []documents.Tree{
+		{ID: "t1", Server: "apollo", Root: "/home/dev/code/app", Requester: "claude-code", Opened: m.now(),
+			Docs: []documents.Doc{{Path: "plans/x.md", Opened: m.now()}}},
+		{ID: "t2", Server: "apollo", Root: "/srv/site", Requester: "codex", Opened: m.now(),
+			Docs: []documents.Doc{{Path: "index.html", Opened: m.now()}}},
+	}
 	m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
 	s := screenText(m)
 	for _, want := range []string{
-		"passthroughs",
-		"5173 → localhost:5173 · Codex · 2h",
-		"41873 → localhost:41873 · Claude Code · browser preview · 1a2b3c4d · 12m",
+		"open 1 passthrough, 2 documents",
 		"always allowed",
 		"Claude Code · passthrough · since 27 Oct",
 	} {
@@ -61,29 +67,26 @@ func TestServerPanelListsPassthroughs(t *testing.T) {
 			t.Errorf("panel lacks %q:\n%s", want, s)
 		}
 	}
-	if strings.Index(s, "5173 → localhost:5173") > strings.Index(s, "41873 → localhost:41873") {
-		t.Errorf("passthroughs are not sorted by port:\n%s", s)
+	for _, not := range []string{"5173 → localhost", "/srv/site", "plans/x.md"} {
+		if strings.Contains(s, not) {
+			t.Errorf("panel lists %q:\n%s", not, s)
+		}
+	}
+	f.passes, f.trees = nil, nil
+	if s := screenText(m); strings.Contains(s, "open 1") {
+		t.Errorf("panel has an open field with nothing open:\n%s", s)
 	}
 }
 
 func TestServerPassFocus(t *testing.T) {
 	m, f := passModel(t)
-	if got := footer(m); !strings.Contains(got, "tab passthroughs") {
+	if got := footer(m); !strings.Contains(got, "tab grants") {
 		t.Fatalf("footer %q", got)
 	}
 	press(m, "tab")
 	if !m.passFocus {
-		t.Fatal("tab did not focus the passthroughs")
+		t.Fatal("tab did not focus the grants")
 	}
-	if got := footer(m); got != "↑↓ select · x close · tab done" {
-		t.Fatalf("footer %q", got)
-	}
-	press(m, "down")
-	run(m, press(m, "x")) // 41873, the second passthrough
-	if got := f.passthroughCalls(); !slices.Equal(got, []string{"close id-not-shown"}) {
-		t.Fatalf("calls %v", got)
-	}
-	press(m, "down") // the grant
 	if got := footer(m); got != "↑↓ select · x revoke · tab done" {
 		t.Fatalf("footer %q", got)
 	}
@@ -93,7 +96,7 @@ func TestServerPassFocus(t *testing.T) {
 		t.Fatalf("footer %q", got)
 	}
 	settle(m, press(m, "y"))
-	want := []string{"close id-not-shown", "revoke apollo claude-code passthrough"}
+	want := []string{"revoke apollo claude-code passthrough"}
 	if got := f.passthroughCalls(); !slices.Equal(got, want) {
 		t.Fatalf("calls %v", got)
 	}
@@ -109,21 +112,11 @@ func TestServerPassFocus(t *testing.T) {
 func TestServerPassKeepGrant(t *testing.T) {
 	m, f := passModel(t)
 	press(m, "tab")
-	press(m, "down")
-	press(m, "down")
 	press(m, "x")
 	settle(m, press(m, "n"))
 	if m.form != nil || len(f.passthroughCalls()) != 0 {
 		t.Fatalf("form %v, calls %v", m.form, f.passthroughCalls())
 	}
-}
-
-func TestServerPassFailureShown(t *testing.T) {
-	m, f := passModel(t)
-	f.passErr = errBoom
-	press(m, "tab")
-	settle(m, press(m, "x"))
-	wantScreen(t, m, "Boom")
 }
 
 func TestServerPassFocusEmpty(t *testing.T) {
@@ -143,45 +136,45 @@ func TestServerPassFocusEmpty(t *testing.T) {
 	if m.passFocus {
 		t.Fatal("tab focused another server's passthroughs")
 	}
+	m.selectRow(rowKey(rowServer, "apollo"))
+	if got := footer(m); strings.Contains(got, "tab") {
+		t.Fatalf("a server with passthroughs and no grants offers tab: %q", got)
+	}
+	press(m, "tab")
+	if m.passFocus {
+		t.Fatal("tab focused passthroughs on the server's panel")
+	}
 }
 
-func TestHomePassthroughCount(t *testing.T) {
+func TestHomeHasNoAgentsLine(t *testing.T) {
 	m, f := passModel(t)
 	f.passes = append(f.passes, engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: "m1", Server: "mini", Requester: "codex", Remote: 3000}})
 	m.selectRow(homeKey)
-	if s := screenText(m); !strings.Contains(s, "agents apollo 2 passthroughs · mini 1 passthrough") {
-		t.Errorf("home lacks the count:\n%s", s)
-	}
-	f.passes = nil
-	if s := screenText(m); strings.Contains(s, "agents") || strings.Contains(s, "passthroughs ·") {
-		t.Errorf("home shows a count of none:\n%s", s)
+	if s := screenText(m); strings.Contains(s, "agents") || strings.Contains(s, "mini 1 passthrough") {
+		t.Errorf("home counts what agents opened:\n%s", s)
 	}
 }
 
 func TestPassFocusRowGone(t *testing.T) {
 	m, f := passModel(t)
 	press(m, "tab")
-	press(m, "down")
-	press(m, "down") // the grant
-	f.passes = f.passes[:1]
-	press(m, "up")
 	if m.passRow != 0 || !m.passFocus {
 		t.Fatalf("row %d, focus %v", m.passRow, m.passFocus)
 	}
-	f.passes = nil
-	f.grantList = nil // the last rows go
+	f.grantList = nil // the last row goes
 	m.Update(grantsMsg{server: "apollo"})
 	screen(m)
 	if m.passFocus {
 		t.Error("the focus stays with no rows")
 	}
-	if got := footer(m); strings.Contains(got, "close") {
+	if got := footer(m); strings.Contains(got, "revoke") {
 		t.Errorf("footer %q", got)
 	}
 }
 
 func TestPassSelectionFollowsItsPassthrough(t *testing.T) {
 	m, f := passModel(t)
+	m.selectRow("passthroughs")
 	pass := func(id string, remote int) engine.Passthrough {
 		return engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: id, Server: "apollo", Requester: "codex", Remote: remote}, Local: remote}
 	}
@@ -199,6 +192,7 @@ func TestPassSelectionFollowsItsPassthrough(t *testing.T) {
 
 func TestPassCloseIgnoredWhenSelectionGone(t *testing.T) {
 	m, f := passModel(t)
+	m.selectRow("passthroughs")
 	pass := func(id string, remote int) engine.Passthrough {
 		return engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{ID: id, Server: "apollo", Requester: "codex", Remote: remote}, Local: remote}
 	}
@@ -233,40 +227,42 @@ func TestServerPanelSilentWithoutAgents(t *testing.T) {
 	}
 }
 
-// manyPasses gives apollo n passthroughs, on ports 3001 to 3000+n, and no
-// grants, in a window low enough that only a few rows fit.
+// manyPasses gives apollo n grants, for agent01 to agent<n>, and nothing
+// open, in a window low enough that only a few rows fit. The rows' "ports"
+// are 3000 plus the agent's number.
 func manyPasses(t *testing.T, n int) (*Model, *fakeBackend) {
 	t.Helper()
 	m, f := passModel(t)
 	f.mu.Lock()
 	f.passes, f.grantList = nil, nil
 	for i := 1; i <= n; i++ {
-		f.passes = append(f.passes, engine.Passthrough{PassthroughSpec: engine.PassthroughSpec{
-			ID: fmt.Sprintf("p%d", 3000+i), Server: "apollo", Requester: "codex", Remote: 3000 + i}, Local: 3000 + i})
+		f.grantList = append(f.grantList, grants.Grant{Server: "apollo", Requester: fmt.Sprintf("agent%02d", i), Kind: grants.KindPassthrough,
+			Created: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)})
 	}
+	list := slices.Clone(f.grantList)
 	f.mu.Unlock()
-	m.Update(grantsMsg{server: "apollo"})
+	m.Update(grantsMsg{server: "apollo", list: list})
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 22})
 	return m, f
 }
 
-// shownPorts are the ports of the passthrough rows on the screen, in order,
-// and the screen's lines, with the index of each port's line.
+// shownPorts are the "ports" of the grant rows on the screen, in order, and
+// the screen's lines, with the index of each port's line.
 func shownPorts(m *Model) ([]int, []string, map[int]int) {
 	lines := strings.Split(screen(m), "\n")
 	var ports []int
 	at := map[int]int{}
 	for i, l := range lines {
-		var p, q int
-		j := strings.Index(l, " → localhost:")
-		if j < 0 {
+		j := strings.Index(l, "agent")
+		if j < 0 || !strings.Contains(l, " · passthrough · since") {
 			continue
 		}
-		k := strings.LastIndex(l[:j], " ")
-		if _, err := fmt.Sscanf(l[k+1:j]+" "+l[j+len(" → localhost:"):], "%d %d", &p, &q); err == nil {
-			ports = append(ports, p)
-			at[p] = i
+		n, err := strconv.Atoi(l[j+len("agent") : j+len("agent")+2])
+		if err != nil {
+			continue
 		}
+		ports = append(ports, 3000+n)
+		at[3000+n] = i
 	}
 	return ports, lines, at
 }
@@ -309,8 +305,8 @@ func TestPassRowsScroll(t *testing.T) {
 	if want := fmt.Sprintf("+%d more", first-3001); !lineEnds(lines, at[first]-2, want) && !lineEnds(lines, at[first]-1, want) {
 		t.Fatalf("no %q above the rows:\n%s", want, screen(m))
 	}
-	m.panelErr = "the forward could not be closed"
-	wantScreen(t, m, "The forward could not be closed")
+	m.panelErr = "the grant could not be revoked"
+	wantScreen(t, m, "The grant could not be revoked")
 	if ports, _, _ := shownPorts(m); !slices.Contains(ports, 3009) {
 		t.Fatalf("shown %v with the error, want 3009:\n%s", ports, screen(m))
 	}
@@ -326,10 +322,12 @@ func TestPassWindowKeepsSelectionAfterRemoval(t *testing.T) {
 		t.Fatalf("shown %v, want 3012:\n%s", ports, screen(m))
 	}
 	f.mu.Lock()
-	f.passes = append(f.passes[:4:4], f.passes[8:]...) // 3005 to 3008 close
+	f.grantList = append(f.grantList[:4:4], f.grantList[8:]...) // 3005 to 3008 close
+	list := slices.Clone(f.grantList)
 	f.mu.Unlock()
+	m.Update(grantsMsg{server: "apollo", list: list})
 	ports, _, _ := shownPorts(m)
-	if !slices.Contains(ports, 3012) || m.passSel != "pass p3012" {
+	if !slices.Contains(ports, 3012) || m.passSel != "grant passthrough agent12" {
 		t.Fatalf("shown %v, selected %q, want 3012:\n%s", ports, m.passSel, screen(m))
 	}
 	if len(ports) < 3 {
@@ -361,6 +359,7 @@ func TestRevokeBeatsStaleGrantsRead(t *testing.T) {
 
 func TestCloseInFlightIgnoresSecondX(t *testing.T) {
 	m, f := passModel(t)
+	m.selectRow("passthroughs")
 	press(m, "tab")
 	first := press(m, "x")
 	second := press(m, "x")
@@ -392,7 +391,7 @@ func TestPassWindowOnAShortPanel(t *testing.T) {
 				press(m, "down")
 			}
 			// An error above the rows takes the room they would have.
-			m.panelErr = strings.Repeat("the forward could not be closed ", words)
+			m.panelErr = strings.Repeat("the grant could not be revoked ", words)
 			if ports, _, _ := shownPorts(m); !slices.Contains(ports, 3007) {
 				t.Fatalf("shown %v, want the selected 3007:\n%s", ports, screen(m))
 			}
@@ -415,13 +414,13 @@ func TestPassLinesCountBottomMarker(t *testing.T) {
 		if len(lines) > room {
 			t.Errorf("room %d: %d lines:\n%s", room, len(lines), text)
 		}
-		if !strings.Contains(text, "localhost:3007") {
+		if !strings.Contains(text, "agent07") {
 			t.Errorf("room %d: the selected row is not shown:\n%s", room, text)
 		}
 		// Once the last row is shown, nothing is hidden below it; and a
 		// room of three holds the label and the selected row, and the
 		// marker below them only if the one above is left out.
-		if last := lines[len(lines)-1]; !strings.Contains(text, "localhost:3012") && !strings.Contains(last, " more") {
+		if last := lines[len(lines)-1]; !strings.Contains(text, "agent12") && !strings.Contains(last, " more") {
 			t.Errorf("room %d: no marker below the rows:\n%s", room, text)
 		}
 	}
