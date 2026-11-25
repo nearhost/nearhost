@@ -444,12 +444,12 @@ func (o *messageOut) Report(m *report.Message) {
 }
 
 // terminalSafe is a copy of m with its text cleaned as doctor's JSON is,
-// for a JSON line written to what is usually a terminal: the title,
-// context, steps and code on one line, the explanation and each verbatim
-// line keeping their line breaks.
+// for a JSON line written to what is usually a terminal: the title, the
+// context and each step's command on one line; the explanation, each
+// verbatim line and each step's text keeping their line breaks. The code
+// is the catalog's own.
 func terminalSafe(m *report.Message) *report.Message {
 	c := *m
-	c.Code = report.Code(safetext.Line(string(m.Code)))
 	c.Title = safetext.Line(m.Title)
 	c.Context = safetext.Line(m.Context)
 	c.Why = safetext.Lines(m.Why)
