@@ -9,8 +9,8 @@
 #   nearhost.sh wait <id>                               wait up to 50s for the answer
 #   nearhost.sh doctor [path]                           check how the project is served
 #   nearhost.sh reload [path]                           make Nearhost re-read .nearhostrc
-#   nearhost.sh passthrough <port> [--label X]          open a server's port on the laptop
-#   nearhost.sh passthrough-wait <id>                   wait up to 50s for the answer
+#   nearhost.sh passthrough <port> [--label X] [--on H] open a server's port on the laptop
+#   nearhost.sh passthrough-wait <id> [--on H]          wait up to 50s for the answer
 #   nearhost.sh passthrough-close --session <id> | <id> close a session's passthroughs, or one
 #   nearhost.sh open <path> [--label X]                 open a document in the user's browser
 #   nearhost.sh open-wait <id>                          wait up to 50s for the answer
@@ -20,6 +20,10 @@
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
 # by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
+#
+# --on H runs the command on H, an SSH host this machine reaches, where the
+# dev server runs: the script sends itself there and Nearhost lists the
+# passthrough under that server. When SSH cannot reach H, it exits 2.
 
 set -u
 
@@ -303,13 +307,78 @@ said_no() {
 }
 
 # requester prints who is asking: claude-code inside Claude Code, otherwise
-# agent. Codex documents no variable to tell it by, so it sends agent.
+# agent. Codex documents no variable to tell it by, so it sends agent. Run
+# by --on, it is the requester the agent's machine sent.
 requester() {
-	if [ "${CLAUDECODE:-}" = 1 ]; then
+	if [ -n "${REMOTE:-}" ]; then
+		printf '%s' "$REMOTE_REQUESTER"
+	elif [ "${CLAUDECODE:-}" = 1 ]; then
 		printf 'claude-code'
 	else
 		printf 'agent'
 	fi
+}
+
+# session prints the agent's session ID: Claude Code's, or, run by --on, the
+# one the agent's machine sent.
+session() {
+	if [ -n "${REMOTE:-}" ]; then
+		printf '%s' "$REMOTE_SESSION"
+	else
+		printf '%s' "${CLAUDE_CODE_SESSION_ID:-}"
+	fi
+}
+
+# sq STRING prints STRING single-quoted for a POSIX shell, each ' in it
+# written as '\'', so the shell on the other end of ssh reads it byte for byte.
+sq() {
+	rest=$1
+	done_=""
+	while :; do
+		case $rest in
+		*\'*)
+			done_="$done_${rest%%\'*}'\\''"
+			rest=${rest#*\'}
+			;;
+		*) break ;;
+		esac
+	done
+	printf "'%s%s'" "$done_" "$rest"
+}
+
+# check_host HOST exits 1 unless HOST is an SSH host name that ssh cannot
+# read as an option: letters, digits, dot, underscore, @ and dash, not
+# starting with a dash.
+check_host() {
+	case $1 in
+	'' | -* | *[!A-Za-z0-9._@-]*) die 1 "--on needs the SSH host the dev server runs on, such as: --on apollo" ;;
+	esac
+	[ -z "${REMOTE:-}" ] || die 1 "--on cannot be used on a host reached with --on"
+}
+
+# run_on HOST CMD ARGS... runs this script's CMD ARGS on HOST over SSH, with
+# the requester and session from here, and exits with its status. Its
+# output passes through, but for an SSH failure, which exits 2.
+run_on() {
+	host=$1
+	shift
+	check_host "$host"
+	[ -f "$0" ] && [ -r "$0" ] || die 1 "--on needs this script as a file to send, not $0"
+	command -v ssh >/dev/null 2>&1 || die 2 "ssh is needed for --on and is not installed here."
+	rcmd="sh -s -- --remote $(sq "$(requester)") $(sq "$(session)")"
+	for arg in "$@"; do
+		rcmd="$rcmd $(sq "$arg")"
+	done
+	# The script goes on stdin for sh -s. ssh's stderr is caught to tell
+	# its own failure apart; stdout passes straight through.
+	rc=0
+	{ err=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -- "$host" "$rcmd" <"$0" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+	if [ "$rc" -eq 255 ]; then
+		first=$(printf '%s\n' "$err" | sed -n '1p')
+		die 2 "SSH could not reach $host: ${first:-ssh exited with status 255}"
+	fi
+	[ -n "$err" ] && printf '%s\n' "$err" >&2
+	exit "$rc"
 }
 
 # state_dir prints where the skill keeps tokens and session markers.
@@ -383,6 +452,8 @@ show_body() {
 # save_session notes that this session has an open passthrough, and on which
 # socket, so that passthrough-close --session can find it without looking.
 save_session() {
+	# Run by --on, the session ends on the agent's machine, not here.
+	[ -z "${REMOTE:-}" ] || return 0
 	plain_word "${SESSION:-}" || return 0
 	private_dir "$(state_dir)" "$(state_dir)/sessions" || return 0
 	private_file "$(state_dir)/sessions/$SESSION" "$SOCK"
@@ -402,7 +473,7 @@ pass_find() {
 		;;
 	esac
 	REQUESTER=$(requester)
-	SESSION=${CLAUDE_CODE_SESSION_ID:-}
+	SESSION=$(session)
 }
 
 # pass_post POSTS the request, with the stored token. A token Nearhost no
@@ -449,7 +520,7 @@ doc_find() {
 	find_socket
 	need documents
 	REQUESTER=$(requester)
-	SESSION=${CLAUDE_CODE_SESSION_ID:-}
+	SESSION=$(session)
 }
 
 # doc_post POSTS the request for DOC under ROOT, with the stored documents
@@ -483,6 +554,24 @@ EOF
 		break
 	done
 }
+
+# --remote REQUESTER SESSION comes first when run_on runs the script on
+# another host: sh -s reads it from stdin, over SSH. Nothing else may use it.
+REMOTE=""
+if [ "${1:-}" = --remote ]; then
+	if [ -t 0 ] || [ -z "${SSH_CONNECTION:-}" ]; then
+		die 1 "--remote is only for the script that --on runs over SSH."
+	fi
+	[ $# -ge 3 ] || die 1 "--remote needs the requester and the session"
+	case $2 in
+	claude-code | agent) ;;
+	*) die 1 "--remote needs the requester claude-code or agent, not $2" ;;
+	esac
+	REMOTE=1
+	REMOTE_REQUESTER=$2
+	REMOTE_SESSION=$3
+	shift 3
+fi
 
 cmd=${1:-}
 [ $# -gt 0 ] && shift
@@ -582,11 +671,18 @@ reload)
 passthrough)
 	PORT=""
 	LABEL=""
+	on=""
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--label)
 			[ $# -ge 2 ] || die 1 "--label needs a name"
 			LABEL=$2
+			shift 2
+			;;
+		--on)
+			[ $# -ge 2 ] || die 1 "--on needs the SSH host the dev server runs on"
+			check_host "$2"
+			on=$2
 			shift 2
 			;;
 		*)
@@ -600,6 +696,12 @@ passthrough)
 	'' | *[!0-9]* | 0*) die 1 "passthrough needs the server's port, such as: passthrough 3000" ;;
 	esac
 	[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die 1 "port must be between 1 and 65535, not $PORT"
+	if [ -n "$on" ]; then
+		if [ -n "$LABEL" ]; then
+			run_on "$on" passthrough "$PORT" --label "$LABEL"
+		fi
+		run_on "$on" passthrough "$PORT"
+	fi
 	PASSPORT=$PORT
 	pass_find
 	pass_post
@@ -637,10 +739,27 @@ passthrough)
 	esac
 	;;
 passthrough-wait)
-	id=${1:-}
+	id=""
+	on=""
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--on)
+			[ $# -ge 2 ] || die 1 "--on needs the SSH host the dev server runs on"
+			check_host "$2"
+			on=$2
+			shift 2
+			;;
+		*)
+			[ -z "$id" ] || die 1 "passthrough-wait takes one id"
+			id=$1
+			shift
+			;;
+		esac
+	done
 	case $id in
 	'' | *[!0-9a-f]*) die 1 "passthrough-wait needs the id passthrough printed" ;;
 	esac
+	[ -z "$on" ] || run_on "$on" passthrough-wait "$id"
 	PORT=""
 	pass_find
 	call "$SOCK" 60 "http://nearhost/v1/passthroughs/$id?wait=50" || die 2 "Nearhost stopped answering: it may have quit."
@@ -783,6 +902,6 @@ open-wait)
 	esac
 	;;
 *)
-	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] | passthrough-wait <id> | passthrough-close --session <id> | <id> | open <path> [--label X] | open-wait <id>"
+	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] [--on host] | passthrough-wait <id> [--on host] | passthrough-close --session <id> | <id> | open <path> [--label X] | open-wait <id>"
 	;;
 esac

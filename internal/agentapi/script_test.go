@@ -1306,6 +1306,164 @@ func TestScriptPassthroughBadPort(t *testing.T) {
 	})
 }
 
+// shShells are scriptShells that run nearhost.sh: the cases for --on, which
+// nearhost.ps1 does not take yet. On Windows there are none, so they skip.
+func shShells(t *testing.T) []scriptShell {
+	t.Helper()
+	var shells []scriptShell
+	for _, shell := range scriptShells(t) {
+		if !shell.powerShell() {
+			shells = append(shells, shell)
+		}
+	}
+	if len(shells) == 0 {
+		t.Skip("--on is in nearhost.sh only for now")
+	}
+	return shells
+}
+
+// eachShShell runs f as a subtest in each of shShells.
+func eachShShell(t *testing.T, f func(t *testing.T, shell scriptShell)) {
+	t.Helper()
+	for _, shell := range shShells(t) {
+		t.Run(shell.name, func(t *testing.T) { f(t, shell) })
+	}
+}
+
+// fakeSSH puts an ssh in home/bin, which drops its options, -- and the host,
+// then runs the rest with sh -c under SSH_CONNECTION=fake, stdin passed
+// through, as ssh runs a command on a server. It leaves home/ssh-ran when it
+// runs. It returns the PATH to run the script with.
+func fakeSSH(t *testing.T, home string) string {
+	t.Helper()
+	return fakeSSHWith(t, home, `while [ $# -gt 0 ]; do
+	case $1 in
+	-o) shift 2 ;;
+	--) shift; break ;;
+	-*) shift ;;
+	*) break ;;
+	esac
+done
+shift
+SSH_CONNECTION=fake exec sh -c "$*"
+`)
+}
+
+// fakeSSHWith is fakeSSH with body as what the ssh does after noting it ran.
+func fakeSSHWith(t *testing.T, home, body string) string {
+	t.Helper()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ran := filepath.Join(home, "ssh-ran")
+	src := "#!/bin/sh\n: >'" + ran + "'\n" + body
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return "PATH=" + bin + ":/usr/bin:/bin"
+}
+
+func TestScriptPassthroughOnAnotherHost(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		label := `it's "x" $(id) ` + "`id` \\ ;"
+		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo", "--label", label)
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+			t.Fatalf("passthrough --on: %+v", r)
+		}
+		opens := p.opened()
+		if len(opens) != 1 || opens[0].Requester != "claude-code" || opens[0].Session != "s1" || opens[0].Remote != 3000 || opens[0].Label != label {
+			t.Fatalf("opened %+v", opens)
+		}
+	})
+}
+
+func TestScriptPassthroughWaitOnAnotherHost(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		s, _, _, rv := passScript(t, home, "mini", true)
+		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("passthrough --on: %+v", r)
+		}
+		if got := rv.prompts(); len(got) != 1 || got[0].Requester != "claude-code" {
+			t.Fatalf("prompts %+v", got)
+		}
+		if err := s.AnswerPassthrough(context.Background(), m[1], AnswerYes); err != nil {
+			t.Fatal(err)
+		}
+		r = shell.run(t, home, env, "passthrough-wait", m[1], "--on", "apollo")
+		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || !json.Valid([]byte(r.stdout)) {
+			t.Fatalf("passthrough-wait --on: %+v", r)
+		}
+	})
+}
+
+func TestScriptOnRefusesAnOptionLikeHost(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		passScript(t, home, "mini", false)
+		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		for _, host := range []string{"-oProxyCommand=x", "a b", "", "a;b", "a'b"} {
+			for _, args := range [][]string{{"passthrough", "3000", "--on", host}, {"passthrough-wait", "abc123", "--on", host}} {
+				r := shell.run(t, home, env, args...)
+				if r.code != 1 || r.stdout != "" {
+					t.Errorf("%q: %+v", args, r)
+				}
+				if _, err := os.Stat(filepath.Join(home, "ssh-ran")); !os.IsNotExist(err) {
+					t.Fatalf("%q ran ssh: %v", args, err)
+				}
+			}
+		}
+	})
+}
+
+func TestScriptOnSaysWhenSSHFails(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		path := fakeSSHWith(t, home, "echo 'ssh: Could not resolve hostname apollo' >&2\necho 'second line' >&2\nexit 255\n")
+		r := shell.run(t, home, append([]string{path}, claudeEnv...), "passthrough", "3000", "--on", "apollo")
+		want := "SSH could not reach apollo: ssh: Could not resolve hostname apollo\n"
+		if r.code != 2 || r.stderr != want || r.stdout != "" {
+			t.Fatalf("%+v, want %q", r, want)
+		}
+	})
+}
+
+func TestScriptOnPassesTheRemoteAnswerThrough(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		path := fakeSSHWith(t, home, "echo '{\"error\":\"x\"}'\necho 'No Nearhost reaches this server.' >&2\nexit 2\n")
+		r := shell.run(t, home, append([]string{path}, claudeEnv...), "passthrough", "3000", "--on", "apollo")
+		if r.code != 2 || r.stdout != "{\"error\":\"x\"}\n" || r.stderr != "No Nearhost reaches this server.\n" {
+			t.Fatalf("%+v", r)
+		}
+	})
+}
+
+func TestScriptRefusesRemoteFromATerminal(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		passScript(t, home, "mini", false)
+		r := shell.run(t, home, nil, "--remote", "x", "y", "status")
+		if r.code != 1 || r.stdout != "" {
+			t.Fatalf("--remote without SSH_CONNECTION: %+v", r)
+		}
+		// Over SSH, it still takes only the requesters the script sends.
+		r = shell.run(t, home, []string{"SSH_CONNECTION=fake"}, "--remote", "../x", "s1", "passthrough", "3000")
+		if r.code != 1 || r.stdout != "" {
+			t.Fatalf("--remote with a bad requester: %+v", r)
+		}
+	})
+}
+
 // writeMarker writes a session marker for session sid naming sock, the way
 // the skill does, and returns its path.
 func writeMarker(t *testing.T, home, sid, sock string) string {
