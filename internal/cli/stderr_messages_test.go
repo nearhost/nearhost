@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/report"
 )
@@ -190,7 +191,19 @@ func TestHostsNeedTerminalHasACommandStep(t *testing.T) {
 	m := engine.HostsProblem("web", errHostsNeedTerminal)
 	wantSteps(t, m, report.Step{Text: "Update it from a terminal:", Command: "nearhost hosts update"})
 	if !strings.Contains(m.Title, errHostsNeedTerminal.Title) {
-		t.Errorf("title %q lost the refusal %q, which the interface matches", m.Title, errHostsNeedTerminal.Title)
+		t.Errorf("title %q lost the refusal %q, which the interface replaces", m.Title, errHostsNeedTerminal.Title)
+	}
+	// The command is the step's alone, not written in the title too.
+	if want := "the hosts file needs updating, and Nearhost in the background never asks for sudo."; errHostsNeedTerminal.Title != want {
+		t.Errorf("title %q, want %q", errHostsNeedTerminal.Title, want)
+	}
+	// The interface knows the refusal by its code and step, not its text.
+	b := &clientBackend{mirror: newMirror(control.State{Projects: map[string]engine.ProjectStatus{
+		"web":   {State: engine.StateStopped, Message: "reworded", Problem: m},
+		"other": {State: engine.StateStopped, Message: m.Title, Problem: engine.HostsProblem("other", errors.New("sudo: no"))},
+	}})}
+	if !b.waitsOnHosts("web") || b.waitsOnHosts("other") {
+		t.Errorf("waits on hosts: web %v, other %v; want true, false", b.waitsOnHosts("web"), b.waitsOnHosts("other"))
 	}
 }
 

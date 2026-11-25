@@ -14,7 +14,7 @@ import (
 )
 
 // A core never asks for the password: it leaves a project whose names the
-// hosts file lacks stopped, with errHostsNeedTerminal in its message. The
+// hosts file lacks stopped, with errHostsNeedTerminal as its problem. The
 // interface has a terminal, so it brings the hosts block up to date itself,
 // asking for the password in its box as it always has, then tells the core,
 // which starts the projects again.
@@ -78,8 +78,16 @@ func (b *clientBackend) hostsFixer() {
 // waitsOnHosts reports whether the core left the project stopped because the
 // hosts file lacks its names.
 func (b *clientBackend) waitsOnHosts(name string) bool {
-	st := b.mirror.status(name)
-	return st.State == engine.StateStopped && strings.Contains(st.Message, errHostsNeedTerminal.Title)
+	return waitsForTerminal(b.mirror.status(name))
+}
+
+// waitsForTerminal reports whether st is a project the core left stopped
+// with errHostsNeedTerminal: its problem is hosts.needs-update with a step
+// that runs `nearhost hosts update`, which only that refusal has.
+func waitsForTerminal(st engine.ProjectStatus) bool {
+	p := st.Problem
+	return st.State == engine.StateStopped && p != nil && p.Code == report.HostsNeedsUpdate &&
+		slices.ContainsFunc(p.Fix, func(s report.Step) bool { return s.Command == engine.HostsUpdateCommand })
 }
 
 // fixHosts brings the hosts block up to date for the projects the core says
@@ -221,7 +229,7 @@ func servedConfig(cfg *config.Config, started string, running func(string) bool)
 // it, as it was while the interface's own engine asked, and says why it waits
 // once that was refused, in place of the core's advice to run a command.
 func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) engine.ProjectStatus {
-	if st.State != engine.StateStopped || !strings.Contains(st.Message, errHostsNeedTerminal.Title) {
+	if !waitsForTerminal(st) {
 		return st
 	}
 	h := b.hosts

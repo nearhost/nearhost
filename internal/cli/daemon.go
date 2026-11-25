@@ -163,12 +163,13 @@ func logSink(w io.Writer) report.Sink {
 }
 
 // errHostsNeedTerminal is the hosts refusal of a core with no terminal: a
-// hosts.needs-update message, whose title is the text it has always had,
-// which the interface matches, and whose step updates the file. The core
+// hosts.needs-update message whose step updates the file, which the
+// interface knows it by (see waitsForTerminal); its title says why, as a
+// clause that engine.HostsProblem puts in the project's. The core
 // starts the project by itself once that is done, so engine.HostsProblem
 // adds no step to start it again.
 var errHostsNeedTerminal = report.Errorf(report.HostsNeedsUpdate,
-	"the hosts file needs updating, and Nearhost in the background never asks for sudo. Run `nearhost hosts update` in a terminal.").
+	"the hosts file needs updating, and Nearhost in the background never asks for sudo.").
 	Step("Update it from a terminal:", engine.HostsUpdateCommand)
 
 // coreLogMayRotate reports whether the core log may be set aside: not while
