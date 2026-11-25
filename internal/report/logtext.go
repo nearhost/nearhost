@@ -101,7 +101,10 @@ func textLines(s string) []string {
 // new. A cause is skipped when its text, compared without case or a
 // closing full stop, is already part of the title, the explanation or the
 // line before it, as the text of an error a message wraps often is. An
-// error that joins several (errors.Join) has each of its errors listed.
+// error that joins several (errors.Join) is one line holding all their
+// texts; each joined error, and the chain under it, is then walked the
+// same way, so one whose text that line already holds is skipped and only
+// a cause that adds something is listed.
 func Causes(m *Message) []string {
 	if m == nil {
 		return nil
