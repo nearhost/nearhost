@@ -58,7 +58,7 @@ type pairForm struct {
 func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.EscapedPath()
 	if path == "/profile.mobileconfig" {
-		if h.NetworkHost == "" || h.Certificates != "ca" || !atPairingHost(r) {
+		if h.NetworkHost == "" || h.Certificates != "ca" || !h.atPairingHost(r) {
 			return false
 		}
 		if allowMethods(w, r, false) {
@@ -71,7 +71,7 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	d := currentDevices()
-	if d == nil || !atPairingHost(r) {
+	if d == nil || !h.atPairingHost(r) {
 		return false
 	}
 	switch {
@@ -95,7 +95,7 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 			w.Write(pairJS)
 		}
 	default:
-		serveAuth(w, r, d)
+		h.serveAuth(w, r, d)
 	}
 	return true
 }
@@ -205,18 +205,18 @@ func deviceName(name string) string {
 // https address under the network domain, and the device is sent there
 // with a one-time token for that host, at /.nearhost/auth. A browser with
 // no paired device is sent to /pair.
-func serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
+func (h *Home) serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	hdr := w.Header()
 	hdr.Set("Cache-Control", "no-store")
 	hdr.Set("Referrer-Policy", "no-referrer")
-	dev, ok := pairedDevice(r)
+	dev, ok := h.pairedDevice(r)
 	if !ok {
 		hdr.Set("Location", "/pair")
 		w.WriteHeader(http.StatusFound)
 		return
 	}
 	to, err := url.Parse(r.URL.Query().Get("to"))
-	if err != nil || to.Scheme != "https" || to.User != nil || to.Opaque != "" || !underNetworkDomain(to.Hostname()) {
+	if err != nil || to.Scheme != "https" || to.User != nil || to.Opaque != "" || !h.underNetworkDomain(to.Hostname()) {
 		htmlview.Write(w, r, report.Errorf(report.PairBadTarget, "Nearhost signs devices in to sites under its own domain only").
 			Because("The address asked for is not one of Nearhost's sites. Open the site from its own address instead."), http.StatusBadRequest, "Nearhost")
 		return
@@ -226,11 +226,11 @@ func serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	w.WriteHeader(http.StatusFound)
 }
 
-// underNetworkDomain reports whether host is the network domain, the page's
-// network host without its "nearhost.", or a name beneath it, ignoring
-// case. It is false while the core is not networked.
-func underNetworkDomain(host string) bool {
-	domain, ok := strings.CutPrefix(currentNetworkHost(), "nearhost.")
+// underNetworkDomain reports whether host is the network domain, this
+// page's network host without its "nearhost.", or a name beneath it,
+// ignoring case. It is false while the core is not networked.
+func (h *Home) underNetworkDomain(host string) bool {
+	domain, ok := strings.CutPrefix(strings.ToLower(h.NetworkHost), "nearhost.")
 	if !ok || domain == "" {
 		return false
 	}

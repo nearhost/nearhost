@@ -162,11 +162,12 @@ func tokenMatches(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // serveConsole sends r, a request for one of the console's paths with a
-// method it takes, through the gate to h. It needs the page cookie, at
-// hostname.PageHost; a POST needs the page's own origin and the form token
-// too. What passes gets the console's headers, which h may add to.
-func serveConsole(h http.Handler, w http.ResponseWriter, r *http.Request) {
-	if !pageAuthorized(r) {
+// method it takes, through the gate to con. It needs the page cookie, at
+// hostname.PageHost, or a paired device's cookie at a page host; a POST
+// needs the page's own origin and the form token too. What passes gets the
+// console's headers, which con may add to.
+func (h *Home) serveConsole(con http.Handler, w http.ResponseWriter, r *http.Request) {
+	if !h.pageAuthorized(r) {
 		serveLocked(w, r)
 		return
 	}
@@ -180,7 +181,7 @@ func serveConsole(h http.Handler, w http.ResponseWriter, r *http.Request) {
 	hdr.Set("Cache-Control", "no-store")
 	hdr.Set("Referrer-Policy", "no-referrer")
 	hdr.Set("Vary", "Cookie")
-	h.ServeHTTP(w, r)
+	con.ServeHTTP(w, r)
 }
 
 // keyRedirect is where /?k= sends the browser on to: next when it is an

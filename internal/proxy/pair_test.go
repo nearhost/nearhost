@@ -33,7 +33,6 @@ func netHome() *Home {
 // serveNet provisions h and sends it r.
 func serveNet(t *testing.T, h *Home, r *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
-	t.Cleanup(func() { setNetworkHost("") })
 	if err := h.Provision(caddy.Context{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -455,5 +454,57 @@ func TestPageHostRefusesClientsOffLoopback(t *testing.T) {
 	}
 	if len(fake.called()) != 0 {
 		t.Errorf("console calls %v", fake.called())
+	}
+}
+
+// Each page decides by its own network host, not the one provisioned last:
+// a config that failed to load leaves the old page serving while a newer
+// Home was provisioned for another domain.
+func TestHomeDecidesByItsOwnNetworkHost(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("doc"))
+	}), nil)
+	old := &Home{Version: "1.2.3", WebPort: 7443, NetworkHost: "nearhost.old.example.dev"}
+	newer := &Home{Version: "1.2.3", WebPort: 7443, NetworkHost: "nearhost.new.example.dev"}
+	for _, h := range []*Home{old, newer} {
+		if err := h.Provision(caddy.Context{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serve := func(h *Home, r *http.Request) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		if err := h.ServeHTTP(w, r, nil); err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	at := func(host, method, target string) *http.Request {
+		r := httptest.NewRequest(method, target, nil)
+		r.Host = host + ":7443"
+		r.RemoteAddr = "127.0.0.1:1"
+		return r
+	}
+	for _, c := range []struct {
+		h    *Home
+		host string
+	}{{old, "nearhost.old.example.dev"}, {newer, "nearhost.new.example.dev"}} {
+		// A document at the page's network host needs a device, even from
+		// this machine.
+		if w := serve(c.h, at(c.host, "GET", "/d/abc123/x")); w.Code == http.StatusOK {
+			t.Errorf("%s: a document without a device: %d", c.host, w.Code)
+		}
+		// Pairing answers at its own network host.
+		if w := serve(c.h, at(c.host, "GET", "/pair")); w.Code != http.StatusOK {
+			t.Errorf("%s: /pair %d, want 200", c.host, w.Code)
+		}
+		// /auth signs in to sites under its own domain.
+		domain := strings.TrimPrefix(c.host, "nearhost.")
+		r := withDevice(at(c.host, "GET", "/auth?"+url.Values{"to": {"https://app." + domain + "/"}}.Encode()), "good-token")
+		if w := serve(c.h, r); w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "https://app."+domain+"/.nearhost/auth?t=") {
+			t.Errorf("%s: /auth %d %q", c.host, w.Code, w.Header().Get("Location"))
+		}
 	}
 }

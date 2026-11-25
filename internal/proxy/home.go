@@ -82,7 +82,6 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 // depends only on the version and the web port, so it is rendered once per
 // config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
-	setNetworkHost(h.NetworkHost)
 	page, err := h.render(nil)
 	if err != nil {
 		return err
@@ -128,8 +127,8 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		// From the network, a document link alone is not enough: the
 		// browser must be a paired device's. Nor from a client off
 		// loopback at the local hosts, where no device cookie counts.
-		if atNetworkHost(r) || !loopbackClient(r) {
-			if _, ok := pairedDevice(r); !ok {
+		if h.atNetworkHost(r) || !loopbackClient(r) {
+			if _, ok := h.pairedDevice(r); !ok {
 				serveLocked(w, r)
 				return nil
 			}
@@ -148,7 +147,7 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		case !ok || con == nil:
 			refuse(w, r, report.ProxyNotFound, http.StatusNotFound)
 		case r.Method == http.MethodGet || r.Method == http.MethodHead || (post && r.Method == http.MethodPost):
-			serveConsole(con, w, r)
+			h.serveConsole(con, w, r)
 		default:
 			if post {
 				w.Header().Set("Allow", "GET, HEAD, POST")
@@ -179,12 +178,12 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	}
 	// With the cookie, / is the console's when one is set; without, it is
 	// the page as it always was, which shows nothing of the console.
-	if con != nil && pageAuthorized(r) {
-		serveConsole(con, w, r)
+	if con != nil && h.pageAuthorized(r) {
+		h.serveConsole(con, w, r)
 		return nil
 	}
 	page := h.page
-	if pageAuthorized(r) {
+	if h.pageAuthorized(r) {
 		if trees := homeTrees(); len(trees) > 0 {
 			var err error
 			if page, err = h.render(trees); err != nil {
