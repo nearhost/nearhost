@@ -13,6 +13,8 @@ import (
 	"path"
 	"strings"
 	"syscall"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // The Content-Security-Policy values for tree responses. Neither allows
@@ -65,8 +67,8 @@ func isHead(w http.ResponseWriter) bool {
 }
 
 // notFound sends a plain 404 that names nothing.
-func notFound(w http.ResponseWriter) {
-	http.Error(w, "404 page not found", http.StatusNotFound)
+func notFound(w http.ResponseWriter, r *http.Request) {
+	refuse(w, r, report.DocumentsNotFound, "404 page not found", http.StatusNotFound)
 }
 
 // ServeHTTP serves one tree file.
@@ -83,18 +85,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w = headWriter{w}
 	default:
 		hd.Set("Allow", "GET, HEAD")
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
+		refuse(w, r, report.DocumentsMethodNotAllowed, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	id, segs, slash, ok := splitPath(r.URL.EscapedPath())
 	if !ok {
-		notFound(w)
+		notFound(w, r)
 		return
 	}
 	tr, ok := h.table.Get(id)
 	if !ok {
-		notFound(w)
+		notFound(w, r)
 		return
 	}
 	if segs == nil && !slash {
@@ -107,15 +109,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 	case errors.Is(err, ErrNotConnected):
-		notConnectedPage(w, tr.Server)
+		notConnectedPage(w, r, tr.Server)
 	case errors.Is(err, fs.ErrNotExist):
-		missingPage(w, tr.Server, shown)
+		missingPage(w, r, tr.Server, shown)
 	case errors.Is(err, ErrChanging):
-		changingPage(w, tr.Server, shown)
+		changingPage(w, r, tr.Server, shown)
 	case errors.Is(err, errRefused):
-		notFound(w)
+		notFound(w, r)
 	default:
-		http.Error(w, "Nearhost couldn't read this file", http.StatusBadGateway)
+		refuse(w, r, report.DocumentsUnreadable, "Nearhost couldn't read this file", http.StatusBadGateway)
 	}
 }
 

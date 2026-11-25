@@ -259,7 +259,7 @@ func TestSwappedRootOverSFTPServesNothing(t *testing.T) {
 	// relative target reads back the same on every system.
 	swapRoot(t, f, filepath.Base(target))
 	for _, p := range []string{"id_ed25519", "id_ed25519?raw", "notes/a.md"} {
-		if rec := do(p); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+		if rec := do(p); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") || strings.Contains(rec.Body.String(), "SECRET") {
 			t.Errorf("%s over SFTP after the swap: %d %q", p, rec.Code, rec.Body.String())
 		}
 	}

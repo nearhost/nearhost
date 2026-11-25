@@ -18,6 +18,8 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
+	"github.com/nearhost/nearhost/internal/report/htmlview"
 	"github.com/nearhost/nearhost/internal/safetext"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -68,7 +70,11 @@ var views = map[string]*template.Template{}
 func init() {
 	layout := template.Must(template.New("").ParseFS(templateFiles, "templates/layout.html"))
 	for _, name := range []string{"status", "approve", "change"} {
-		views[name] = template.Must(template.Must(layout.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
+		v := template.Must(template.Must(layout.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
+		for _, part := range htmlview.Template().Templates() {
+			template.Must(v.AddParseTree(part.Name(), part.Tree))
+		}
+		views[name] = v
 	}
 }
 
@@ -128,7 +134,7 @@ func render(w http.ResponseWriter, r *http.Request, view string, status int, dat
 	}
 	var buf bytes.Buffer
 	if err := views[view].ExecuteTemplate(&buf, name, data); err != nil {
-		http.Error(w, "Nearhost's page could not be shown: "+err.Error(), http.StatusInternalServerError)
+		htmlview.Write(w, r, report.Errorf(report.PageRenderFailed, "Nearhost's page could not be shown").Because("%s", err), http.StatusInternalServerError, pageName)
 		return
 	}
 	h := w.Header()
@@ -172,9 +178,17 @@ type statusView struct {
 	Trees        []proxy.HomeTree
 }
 
-type serverRow struct{ Name, Health, Message string }
+type serverRow struct {
+	Name, Health, Message string
+	// Problem is Message as a message, with its fix steps; nil when the
+	// core sent none.
+	Problem *htmlview.Data
+}
 
-type projectRow struct{ Name, State, URL, Message string }
+type projectRow struct {
+	Name, State, URL, Message string
+	Problem                   *htmlview.Data
+}
 
 type passRow struct {
 	Who, Label, Opened string
@@ -197,13 +211,14 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, s := range st.Servers {
 		row := serverRow{Name: serverName(s.Name), Health: s.State, Message: safetext.Line(s.Message)}
+		row.Problem = problemData(s.Problem)
 		if h, ok := state.Servers[s.Name]; ok {
 			row.Health = health(h)
 		}
 		v.Servers = append(v.Servers, row)
 	}
 	for _, pr := range st.Projects {
-		v.Projects = append(v.Projects, projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: pr.URL, Message: safetext.Line(pr.Message)})
+		v.Projects = append(v.Projects, projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: pr.URL, Message: safetext.Line(pr.Message), Problem: problemData(pr.Problem)})
 	}
 	for _, pt := range state.Passthroughs {
 		v.Passthroughs = append(v.Passthroughs, passRow{
@@ -228,6 +243,15 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		v.Trees = p.o.Trees()
 	}
 	render(w, r, "status", http.StatusOK, v)
+}
+
+// problemData is m ready for the page; nil for no message.
+func problemData(m *report.Message) *htmlview.Data {
+	if m == nil {
+		return nil
+	}
+	d := htmlview.Prepare(m)
+	return &d
 }
 
 // health says how a server's connection is, as the interface does.

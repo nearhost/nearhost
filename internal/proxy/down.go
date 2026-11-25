@@ -1,10 +1,7 @@
 package proxy
 
 import (
-	"bytes"
-	_ "embed"
 	"errors"
-	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +10,9 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/nearhost/nearhost/internal/report"
+	"github.com/nearhost/nearhost/internal/report/htmlview"
 )
 
 // downModule is the Caddy handler module name registered below.
@@ -21,14 +21,6 @@ const downModule = "nearhost_down"
 // thisMachine names the machine Nearhost runs on, for a project with no
 // server of its own.
 const thisMachine = "this machine"
-
-//go:embed home/down.html
-var downHTML string
-
-// downPage is parsed once, at start-up, so a broken page fails every test
-// rather than a request. html/template escapes the names for the HTML text
-// they land in.
-var downPage = template.Must(template.New("down").Parse(downHTML))
 
 func init() {
 	caddy.RegisterModule(Down{})
@@ -89,14 +81,17 @@ func renderDownPage(project string, port int, server string, reconnecting bool) 
 	if server == "" {
 		server = thisMachine
 	}
-	var buf bytes.Buffer
-	err := downPage.Execute(&buf, struct {
-		Project      string
-		Port         int
-		Server       string
-		Reconnecting bool
-	}{project, port, server, reconnecting})
-	return buf.Bytes(), err
+	var m *report.Message
+	if reconnecting {
+		m = report.Errorf(report.ProxyForwardReconnecting, "%s is not answering", project).
+			Because("Nearhost is reconnecting to %s.", server).
+			Then("Reload once it is back.")
+	} else {
+		m = report.Errorf(report.ProxyAppNotAnswering, "%s is not answering", project).
+			Because("Nearhost is running. Nothing answered on port %d on %s.", port, server).
+			Then("Start the app, then reload.")
+	}
+	return htmlview.Render(m, ""), nil
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler. It logs the error at
@@ -174,3 +169,14 @@ var (
 	_ caddy.Provisioner           = (*Down)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Down)(nil)
 )
+
+// refuse answers r with the plain refusal of status, its text what net/http
+// would say ("404 page not found", "Method Not Allowed", "Forbidden"), as
+// a message: a page for a browser, text for anything else.
+func refuse(w http.ResponseWriter, r *http.Request, code report.Code, status int) {
+	title := http.StatusText(status)
+	if status == http.StatusNotFound {
+		title = "404 page not found"
+	}
+	htmlview.Write(w, r, report.Errorf(code, "%s", title), status, "Nearhost")
+}

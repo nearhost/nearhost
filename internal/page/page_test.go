@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -351,5 +352,36 @@ func TestStatusUpdateLine(t *testing.T) {
 	body = bodyOf(t, do(newPage(newCore()), "GET", "/", nil))
 	if strings.Contains(body, "is available") {
 		t.Errorf("the status page says an update is out with none known:\n%s", body)
+	}
+}
+
+// A server or project whose core sends a problem shows it as a message,
+// with its fix steps and the command on its own, escaped.
+func TestStatusPageShowsProblemSteps(t *testing.T) {
+	c := newCore()
+	c.status.Servers = []control.ServerInfo{{
+		Name: "leto", State: "reconnecting", Message: "ssh: refused",
+		Problem: report.Errorf(report.SSHUnreachable, "leto cannot be reached over SSH").
+			Because("Nothing <answered> on port 22.").
+			Step("Check that it is on.", "ssh leto"),
+	}}
+	c.status.Projects = []control.ProjectInfo{{
+		Name: "api", State: "stopped", URL: "https://api.test", Message: "hosts",
+		Problem: report.Warnf(report.HostsNeedsUpdate, "The hosts file is out of date").
+			Step("Update it.", "nearhost hosts"),
+	}}
+	body := bodyOf(t, do(newPage(c), "GET", "/", nil))
+	for _, want := range []string{
+		`class="message message--error"`, `data-code="ssh.unreachable"`,
+		"leto cannot be reached over SSH", "Nothing &lt;answered&gt; on port 22.",
+		"<p>Check that it is on.</p>", "<code>ssh leto</code>",
+		`class="message message--warning"`, "<code>nearhost hosts</code>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the status page lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<answered>") {
+		t.Errorf("the problem's text is not escaped:\n%s", body)
 	}
 }

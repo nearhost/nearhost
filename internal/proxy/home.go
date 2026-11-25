@@ -11,6 +11,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // homeModule is the Caddy handler module name registered below.
@@ -121,7 +122,7 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		ok, post := consoleRoute(r.URL.EscapedPath())
 		switch {
 		case !ok || con == nil:
-			http.NotFound(w, r)
+			refuse(w, r, report.ProxyNotFound, http.StatusNotFound)
 		case r.Method == http.MethodGet || r.Method == http.MethodHead || (post && r.Method == http.MethodPost):
 			serveConsole(con, w, r)
 		default:
@@ -130,13 +131,13 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 			} else {
 				w.Header().Set("Allow", "GET, HEAD")
 			}
-			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			refuse(w, r, report.ProxyMethodNotAllowed, http.StatusMethodNotAllowed)
 		}
 		return nil
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		refuse(w, r, report.ProxyMethodNotAllowed, http.StatusMethodNotAllowed)
 		return nil
 	}
 	hdr := w.Header()

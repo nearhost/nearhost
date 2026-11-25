@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // documentsPrefix is the path the documents of agents are served below on
@@ -55,7 +57,7 @@ func SetDocuments(h http.Handler, list func() []HomeTree) {
 func serveDocument(w http.ResponseWriter, r *http.Request) {
 	d := documents.Load()
 	if d == nil || d.handler == nil {
-		http.NotFound(w, r)
+		refuse(w, r, report.ProxyNotFound, http.StatusNotFound)
 		return
 	}
 	d.handler.ServeHTTP(w, r)

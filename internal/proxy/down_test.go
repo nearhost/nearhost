@@ -433,3 +433,16 @@ func (r *recorder) countFor(alias, sub string) int {
 	}
 	return n
 }
+
+// The down page keeps each status and its heading, and now carries the
+// message's code.
+func TestDownPageKeepsStatusAndCopy(t *testing.T) {
+	for _, status := range []int{502, 503, 504} {
+		w, _ := serveDown(t, &Down{Project: "shop", Port: 3000, Server: "mini"}, navigation("GET"), status)
+		body := w.Body.String()
+		if w.Code != status || !strings.Contains(body, "<h1>shop is not answering</h1>") ||
+			!strings.Contains(body, `data-code="proxy.app-not-answering"`) || !strings.Contains(body, "message--error") {
+			t.Errorf("status %d: %d\n%s", status, w.Code, body)
+		}
+	}
+}

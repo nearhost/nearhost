@@ -46,7 +46,7 @@ func TestSwapBetweenCheckAndOpenIsMissing(t *testing.T) {
 	f.write(t, "notes/a.md", "# A")
 	swapBeforeOpen(t, f)
 	rec := f.do(t, "GET", "notes/a.md?raw")
-	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Errorf("swapped before the open: %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -59,7 +59,7 @@ func TestSwapBetweenCheckAndOpenOverSFTPIsMissing(t *testing.T) {
 	swapBeforeOpen(t, f)
 	rec := httptest.NewRecorder()
 	remote.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/"+f.tree.ID+"/notes/a.md?raw", nil))
-	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Errorf("swapped before the open over SFTP: %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -427,7 +427,7 @@ func TestFolderAboveRootSwappedServesNothing(t *testing.T) {
 	}
 	t.Cleanup(func() { beforeOpen = nil })
 	rec := f.do(t, "GET", "notes/x.md?raw")
-	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "SECRET") || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Errorf("folder above the root swapped: %d %q", rec.Code, rec.Body.String())
 	}
 }

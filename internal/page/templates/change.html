@@ -3,7 +3,7 @@
   {{- if .Answered}}
   <p>Answered: {{.Answered}}.</p>
   {{- else if .Gone}}
-  <p>This request has been answered or has ended.</p>
+  {{template "message" .Problem}}
   {{- else}}
   {{- if .Items}}
   <div class="asks">
@@ -28,8 +28,8 @@
     </ul>
   </section>
   {{- end}}
-  {{- if .Error}}
-  <p class="error" role="alert" data-stay>{{.Error}}</p>
+  {{- if .Problem}}
+  {{template "message" .Problem}}
   {{- end}}
   {{- if .Buttons}}{{template "buttons" .Buttons}}{{end}}
   {{- end}}
