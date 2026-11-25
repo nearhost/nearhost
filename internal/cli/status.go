@@ -26,13 +26,12 @@ import (
 // core.not-running, exit 3, and how to start one, named when a service is
 // installed.
 func statusNotRunning(serviceInstalled bool) *report.Message {
-	m := report.Errorf(report.CoreNotRunning, "Nearhost is not running.").
-		Then("Start it with nearhost -d, or open nearhost.").
-		ExitCode(statusNotRunningCode)
+	m := report.Errorf(report.CoreNotRunning, "Nearhost is not running.").ExitCode(statusNotRunningCode)
 	if serviceInstalled {
-		m.Then("A service is installed: start it with nearhost -d.")
+		m.Because("A service is installed, and nearhost -d starts it.")
 	}
-	return m
+	return m.Step("Start it in the background:", "nearhost -d").
+		Step("Or open its interface:", "nearhost")
 }
 
 // statusNotRunningCode is status's exit code when no core answers, as a
@@ -137,12 +136,13 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 	if this := strings.TrimPrefix(Version, "v"); st.Update != "" && update.IsRelease(this) && !update.Newer(this, st.Update) {
 		// This copy is already that release, as after brew upgrade: the
 		// core is what is out of date.
-		notes.Report(report.Notef(report.CoreOutdated, "This copy is %s; restart Nearhost to run it: nearhost stop, then nearhost -d.", this))
+		notes.Report(report.Notef(report.CoreOutdated, "This copy is %s; restart Nearhost to run it.", this).
+			Step("Stop it:", "nearhost stop").Step("Then start it again:", "nearhost -d"))
 		// Said here: Main's notice of the same release is dropped. Main
 		// reads it only once the command has returned.
 		updates = nil
 	} else if st.Update != "" {
-		notes.Report(report.Notef(report.UpdateAvailable, "Nearhost %s is available. Run nearhost update.", st.Update))
+		notes.Report(report.Notef(report.UpdateAvailable, "Nearhost %s is available.", st.Update).Step("To update, run:", "nearhost update"))
 		updates = nil
 	}
 	if !info.Reloads {

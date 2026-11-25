@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nearhost/nearhost/internal/report"
 	"io"
 	"net"
 	"net/http"
@@ -909,5 +910,22 @@ func TestCoreWithBusySocketDoesNotWaitForTheUpdateWatch(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("up waits for the update watch after the control socket failed")
+	}
+}
+
+// A config the core cannot use is a warning titled on one line with the
+// file, which keeps the problem's explanation and fix and its cause.
+func TestBadConfigWarning(t *testing.T) {
+	cause := report.Errorf(report.ConfigUnknownKeys, "/c/config.yaml has a key Nearhost does not know: \"x\" on line 3.").
+		Because("Saving now would delete it.").Then("Fix or remove it.")
+	w := badConfig("/c/config.yaml", fmt.Errorf("load: %w", cause))
+	if w.Level != report.Warning || w.Code != report.ConfigUnknownKeys || strings.Contains(w.Title, "\n") ||
+		w.Title != "/c/config.yaml has a key Nearhost does not know: \"x\" on line 3; still serving the last good config" ||
+		w.Why != "Saving now would delete it." || len(w.Fix) != 1 || !errors.Is(w, cause) {
+		t.Errorf("warning %+v", w)
+	}
+	w = badConfig("/c/config.yaml", errors.New("boom"))
+	if w.Code != report.ConfigInvalid || w.Title != "/c/config.yaml: boom; still serving the last good config" {
+		t.Errorf("plain error %+v", w)
 	}
 }

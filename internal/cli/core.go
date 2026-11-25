@@ -365,19 +365,8 @@ func watchConfig(ctx context.Context, ops *coreOps, w *config.Watcher) {
 		if ctx.Err() != nil {
 			return // cut short by the shutdown: the file is not at fault
 		}
-		msg := err.Error()
-		// A file that does not parse is named by the error already.
-		if !strings.Contains(msg, path) {
-			msg = path + ": " + msg
-		}
-		msg += "; still serving the last good config"
-		// The file's problem, said as a warning: the core goes on.
-		w := messageOf(err)
-		if w.Code == report.Unexpected {
-			w.Code = report.ConfigInvalid
-		}
-		w.Level, w.Title, w.Why, w.Context = report.Warning, msg, "", ""
-		ops.eng.Events().Publish(engine.Event{Message: msg, Report: w.Wrap(err)})
+		warning := badConfig(path, err)
+		ops.eng.Events().Publish(engine.Event{Message: warning.Title, Report: warning})
 	}
 	// What the watcher read and validated is applied: it refuses a file caught
 	// empty or half saved. A client's Reload reads in Apply's turn, so it
@@ -388,6 +377,24 @@ func watchConfig(ctx context.Context, ops *coreOps, w *config.Watcher) {
 			bad(err)
 		}
 	}, bad)
+}
+
+// badConfig is the warning for the config file at path that could not be
+// loaded or applied with err: the core goes on serving the last good one.
+// Its title is the problem's own, naming the file, which a file that does
+// not parse names already; its explanation and fix stay the problem's.
+func badConfig(path string, err error) *report.Message {
+	w := messageOf(err)
+	title := w.Title
+	if !strings.Contains(title, path) {
+		title = path + ": " + title
+	}
+	if w.Code == report.Unexpected {
+		w.Code = report.ConfigInvalid
+	}
+	w.Level, w.Context = report.Warning, ""
+	w.Title = strings.TrimSuffix(title, ".") + "; still serving the last good config"
+	return w.Wrap(err)
 }
 
 // coreBackend is the engine, as the control API sees it.

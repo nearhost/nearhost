@@ -54,3 +54,28 @@ func TestLogBlockScrubsControlCharacters(t *testing.T) {
 		t.Fatalf("LogText =\n%q\nwant\n%q", got, want)
 	}
 }
+
+// Verbatim lines go under the explanation, indented once more, untrimmed,
+// and travel through JSON.
+func TestVerbatimInLogAndJSON(t *testing.T) {
+	m := Errorf(CoreLost, "Nearhost in the background stopped.").Because("The end of the log:").
+		Quote("  indented line", "plain\x1b[2Jline").Then("Start it again.")
+	want := "error [core.lost] Nearhost in the background stopped.\n  The end of the log:\n      indented line\n    plain[2Jline\n  Start it again."
+	if got := LogText(m); got != want {
+		t.Errorf("LogText:\n%q\nwant\n%q", got, want)
+	}
+	b, err := m.MarshalJSON()
+	if err != nil || !strings.Contains(string(b), `"verbatim":["  indented line","plain\u001b[2Jline"]`) {
+		t.Fatalf("JSON %s, %v", b, err)
+	}
+	var back Message
+	if err := back.UnmarshalJSON(b); err != nil || len(back.Verbatim) != 2 || back.Verbatim[0] != "  indented line" {
+		t.Errorf("round trip %+v, %v", back, err)
+	}
+	if p := Problem(m, 503, DocsBase); len(p["verbatim"].([]string)) != 2 {
+		t.Errorf("problem %v", p)
+	}
+	if c := From(m); &c.Verbatim[0] == &m.Verbatim[0] {
+		t.Error("From shares the verbatim lines")
+	}
+}

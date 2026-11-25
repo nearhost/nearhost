@@ -92,7 +92,7 @@ func waitStopped(ctx context.Context, runDir string) error {
 		if !time.Now().Before(deadline) {
 			m := report.Errorf(report.CoreStopTimeout, "Nearhost has not stopped after %s.", stopWait)
 			if path, err := config.LogPath(); err == nil {
-				m.Then("See "+path+" for why.").With("log", path)
+				m.Step("See why in its log:", path).With("log", path)
 			}
 			return m
 		}

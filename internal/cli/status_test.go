@@ -132,7 +132,7 @@ func TestStatusNotRunning(t *testing.T) {
 	for _, args := range [][]string{{"status"}, {"status", "--json"}} {
 		stdout, stderr, code := runRootSplit(t, statusRoot(), args...)
 		// Said on stderr, so output with --json is JSON or nothing.
-		want := "Error: Nearhost is not running.\n\nStart it with nearhost -d, or open nearhost.\n"
+		want := "Error: Nearhost is not running.\n\nStart it in the background:\n\n  nearhost -d\n\nOr open its interface:\n\n  nearhost\n"
 		if code != 3 || stderr != want || stdout != "" {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
 		}
@@ -299,7 +299,7 @@ func TestStatusShowsUpdate(t *testing.T) {
 	st.Update = "0.16.0"
 	serveStatus(t, st)
 	out, stderr, _ := runRootSplit(t, statusRoot(), "status")
-	if !strings.Contains(out, "is running") || flat(stderr) != "Note: Nearhost 0.16.0 is available. Run nearhost update." {
+	if !strings.Contains(out, "is running") || stderr != "Note: Nearhost 0.16.0 is available.\n\nTo update, run:\n\n  nearhost update\n" {
 		t.Errorf("the update is not a note:\n%s\nstderr %q", out, stderr)
 	}
 
@@ -321,10 +321,10 @@ func TestStatusUpdateThisCopyHas(t *testing.T) {
 	st := testStatus
 	st.Update = "0.16.0"
 	for v, want := range map[string]string{
-		"0.16.0":  "This copy is 0.16.0; restart Nearhost to run it: nearhost stop, then nearhost -d.",
-		"v0.17.0": "This copy is 0.17.0; restart Nearhost to run it: nearhost stop, then nearhost -d.",
-		"0.15.0":  "Nearhost 0.16.0 is available. Run nearhost update.",
-		"dev":     "Nearhost 0.16.0 is available. Run nearhost update.",
+		"0.16.0":  "This copy is 0.16.0; restart Nearhost to run it. Stop it: nearhost stop Then start it again: nearhost -d",
+		"v0.17.0": "This copy is 0.17.0; restart Nearhost to run it. Stop it: nearhost stop Then start it again: nearhost -d",
+		"0.15.0":  "Nearhost 0.16.0 is available. To update, run: nearhost update",
+		"dev":     "Nearhost 0.16.0 is available. To update, run: nearhost update",
 	} {
 		Version = v
 		serveStatus(t, st)

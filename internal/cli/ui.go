@@ -559,7 +559,7 @@ func coreLost(w io.Writer, d detachBackend, from int64, by control.StartedBy) er
 	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
 		if tail := d.logTail(0, detachTailLines); len(tail) > 0 {
 			path, _ := config.LogPath()
-			m.Because("The end of %s:\n%s", path, strings.Join(tail, "\n"))
+			m.Because("The end of %s:", path).Quote(tail...)
 		}
 	}
 	return m

@@ -92,6 +92,11 @@ type Message struct {
 	// Why explains it in plain words; it may be "". Paragraphs are
 	// separated by a blank line.
 	Why string
+	// Verbatim is text quoted line by line as it came, such as the end of a
+	// log: renderers show it after Why, made printable but never wrapped or
+	// trimmed, so a command in it stays whole and can be copied. It may be
+	// empty.
+	Verbatim []string
 	// Fix is what to do, in order; it may be empty.
 	Fix []Step
 	// Doctor suggests running `nearhost doctor`.
@@ -140,6 +145,12 @@ func (m *Message) Because(format string, a ...any) *Message {
 		why = m.Why + "\n\n" + why
 	}
 	m.Why = why
+	return m
+}
+
+// Quote adds lines to the text quoted verbatim (see Message.Verbatim).
+func (m *Message) Quote(lines ...string) *Message {
+	m.Verbatim = append(m.Verbatim, lines...)
 	return m
 }
 
@@ -204,6 +215,7 @@ func From(err error) *Message {
 	}
 	c := *m
 	c.Fix = slices.Clone(m.Fix)
+	c.Verbatim = slices.Clone(m.Verbatim)
 	c.Data = maps.Clone(m.Data)
 	if added := wrapperText(err.Error(), m.Error()); added != "" {
 		if c.Context != "" {

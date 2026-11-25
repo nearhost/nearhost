@@ -117,6 +117,13 @@ func Render(w io.Writer, m *report.Message, o Options) {
 	paras := []string{first}
 
 	paras = append(paras, prose(m.Why, width)...)
+	if lines := report.VerbatimLines(m); len(lines) > 0 {
+		// Quoted as it came, never wrapped, so a command in it can be copied.
+		for i, l := range lines {
+			lines[i] = "  " + l
+		}
+		paras = append(paras, strings.Join(lines, "\n"))
+	}
 	for _, s := range m.Fix {
 		paras = append(paras, prose(s.Text, width)...)
 		if c := safetext.Line(s.Command); c != "" {

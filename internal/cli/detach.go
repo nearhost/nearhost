@@ -328,7 +328,7 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 		}
 		if !time.Now().Before(deadline) {
 			return nil, control.Info{}, false, report.Errorf(report.CoreStillStarting, "Nearhost is still starting.").
-				Then("See "+logPath+" for how it is going.").With("log", logPath)
+				Step("See how it is going in its log:", logPath).With("log", logPath)
 		}
 		select {
 		case <-tick.C:
@@ -486,9 +486,9 @@ func childStopped(logPath string, tail []string, werr error) error {
 			m.Because("It stopped before it wrote to %s.", logPath)
 		}
 	} else {
-		log := strings.Join(tail, "\n")
-		m.Because("The end of %s:\n%s", logPath, log)
-		if strings.Contains(log, "nearhost doctor") {
+		// Quoted as it is: a command the core logged stays whole.
+		m.Because("The end of %s:", logPath).Quote(tail...)
+		if strings.Contains(strings.Join(tail, "\n"), "nearhost doctor") {
 			return m.Wrap(werr)
 		}
 	}

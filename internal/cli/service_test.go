@@ -355,7 +355,7 @@ func TestStatusMentionsService(t *testing.T) {
 			if exitCode(err, io.Discard) != statusNotRunningCode {
 				t.Fatalf("err %v", err)
 			}
-			if got := strings.Contains(out+rendered(err), "A service is installed: start it with nearhost -d."); got != tc.want {
+			if got := strings.Contains(out+rendered(err), "A service is installed, and nearhost -d starts it."); got != tc.want {
 				t.Errorf("out %q", out)
 			}
 		})

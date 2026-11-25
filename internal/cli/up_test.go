@@ -421,7 +421,9 @@ func TestUpWithoutATerminalForSudoSaysSoOnce(t *testing.T) {
 	u.start()
 	err := u.exited()
 	out := u.out.String()
-	const warning = "Warning: The hosts file needs sudo, and there is no terminal to ask in.\n\nRun nearhost up in a terminal once, or pass --no-hosts.\n"
+	const warning = "Warning: The hosts file needs sudo, and there is no terminal to ask in.\n\n" +
+		"Run it once in a terminal, where sudo can ask for your password:\n\n  nearhost up\n\n" +
+		"Or serve without updating the hosts file:\n\n  nearhost up --no-hosts\n"
 	if n := strings.Count(out, warning); n != 1 {
 		t.Errorf("the no-terminal warning was printed %d times:\n%s", n, out)
 	}

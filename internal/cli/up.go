@@ -359,7 +359,8 @@ var errNoTerminal = errors.New("sudo needs a password, and there is no terminal 
 // errNoTerminal.
 func hostsNoTerminal() *report.Message {
 	return report.Warnf(report.HostsNeedsUpdate, "The hosts file needs sudo, and there is no terminal to ask in.").
-		Then("Run nearhost up in a terminal once, or pass --no-hosts.")
+		Step("Run it once in a terminal, where sudo can ask for your password:", "nearhost up").
+		Step("Or serve without updating the hosts file:", "nearhost up --no-hosts")
 }
 
 // warnNoTerminal wraps a hosts function so that the first update that fails

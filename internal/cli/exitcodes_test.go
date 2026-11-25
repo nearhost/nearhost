@@ -87,9 +87,9 @@ func TestStatusNotRunningIsAMessage(t *testing.T) {
 		}
 		var stderr strings.Builder
 		exitCodeVerbose(err, &stderr, len(args) == 2 && args[1] == "--verbose")
-		want := "Error: Nearhost is not running.\n\nStart it with nearhost -d, or open nearhost.\n"
+		want := "Error: Nearhost is not running.\n\nStart it in the background:\n\n  nearhost -d\n\nOr open its interface:\n\n  nearhost\n"
 		if args[len(args)-1] == "--verbose" {
-			want = "Error: Nearhost is not running.\n(core.not-running)\n\nStart it with nearhost -d, or open nearhost.\n"
+			want = "Error: Nearhost is not running.\n(core.not-running)\n\nStart it in the background:\n\n  nearhost -d\n\nOr open its interface:\n\n  nearhost\n"
 		}
 		if !strings.HasPrefix(stderr.String(), want) {
 			t.Errorf("%v: stderr %q, want %q", args, stderr.String(), want)

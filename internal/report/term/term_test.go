@@ -169,3 +169,21 @@ func TestScrubsANSIInText(t *testing.T) {
 		}
 	}
 }
+
+// Verbatim lines, such as a log's end, come out whole and keep their
+// indentation, however long and however narrow the terminal; their control
+// characters go.
+func TestVerbatimLinesNeverWrap(t *testing.T) {
+	long := "2026-11-25T08:49:24Z   Fix: sudo setcap cap_net_bind_service=+ep '/home/someone/.local/share/nearhost/bin/nearhost'"
+	m := report.Errorf(report.CoreStoppedWhileStarting, "Nearhost stopped while starting.").
+		Because("The end of /logs/core.log:").Quote("2026-11-25T08:49:24Z error [port.needs-permission] HTTPS port 443 needs permission.", long, "\x1b[31mred\x1b[0m")
+	got := render(m, Options{Width: 40})
+	for _, want := range []string{"\n  " + long + "\n", "\n  2026-11-25T08:49:24Z error [port.needs-permission] HTTPS port 443 needs permission.\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered:\n%s\nwant a whole line %q", got, want)
+		}
+	}
+	if strings.Contains(got, "\x1b") || !strings.Contains(got, "[31mred[0m") && !strings.Contains(got, "red") {
+		t.Errorf("control characters kept:\n%q", got)
+	}
+}
