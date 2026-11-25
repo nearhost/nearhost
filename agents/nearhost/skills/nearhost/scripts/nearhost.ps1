@@ -544,22 +544,46 @@ function Save-Session([string]$Target = '') {
 		return
 	}
 	$marker = Get-SessionMarker $script:Session
-	if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-		Write-PrivateFile $marker $Target
+	# The marker is opened, or made, for this save alone, read and appended
+	# to, the first target too, so two saves at once both stay. One that
+	# finds it held by another tries again shortly.
+	for ($try = 0; $try -lt 20; $try++) {
+		try {
+			$fs = [IO.File]::Open($marker, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+		} catch {
+			Start-Sleep -Milliseconds 25
+			continue
+		}
+		try {
+			if ($fs.Length -eq 0 -and -not $OnWindows) {
+				& chmod 600 $marker
+				if ($LASTEXITCODE -ne 0) {
+					return
+				}
+			}
+			$reader = New-Object IO.StreamReader($fs, (New-Object Text.UTF8Encoding($false)), $false, 1024, $true)
+			$text = $reader.ReadToEnd()
+			$reader.Dispose()
+			$lines = $text
+			if ($lines.EndsWith("`n")) {
+				$lines = $lines.Substring(0, $lines.Length - 1)
+			}
+			if ($lines -ne '' -and $lines.Split([char]10) -ccontains $Target) {
+				return
+			}
+			$add = "$Target`n"
+			if ($text -and -not $text.EndsWith("`n")) {
+				$add = "`n$add"
+			}
+			$bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($add)
+			$null = $fs.Seek(0, [IO.SeekOrigin]::End)
+			$fs.Write($bytes, 0, $bytes.Length)
+		} catch {
+			$null = $_
+		} finally {
+			$fs.Dispose()
+		}
 		return
-	}
-	try {
-		$text = [IO.File]::ReadAllText($marker)
-		if ((Read-Marker $marker) -ccontains $Target) {
-			return
-		}
-		$add = "$Target`n"
-		if ($text -and -not $text.EndsWith("`n")) {
-			$add = "`n$add"
-		}
-		[IO.File]::AppendAllText($marker, $add)
-	} catch {
-		$null = $_
 	}
 }
 

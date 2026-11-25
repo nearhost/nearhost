@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1653,6 +1654,87 @@ func TestScriptSessionMarkerKeepsEveryTarget(t *testing.T) {
 			t.Fatalf("marker after repeats %q, want %q: %v", data, want, err)
 		}
 	})
+}
+
+// Two passthroughs a session asks for at once, with no marker yet, both
+// land in it: the first save of one must not write over the other's.
+func TestScriptSessionMarkerKeepsParallelFirstSaves(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		real := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+		fronts := []string{filepath.Join(home, "a.sock"), filepath.Join(home, "b.sock")}
+		for _, f := range fronts {
+			unixRelay(t, f, real)
+		}
+		// Nearhost opens at most 16 passthroughs for a server.
+		rounds := 7
+		if shell.powerShell() {
+			rounds = 3
+		}
+		for i := range rounds {
+			sid := fmt.Sprintf("p%d", i)
+			var wg sync.WaitGroup
+			results := make([]scriptResult, len(fronts))
+			for j, f := range fronts {
+				wg.Go(func() {
+					env := []string{"NEARHOST_SOCKET=" + f, "CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=" + sid}
+					results[j] = shell.run(t, home, env, "passthrough", strconv.Itoa(3000+2*i+j))
+				})
+			}
+			wg.Wait()
+			for _, r := range results {
+				if r.code != 0 {
+					t.Fatalf("round %d: %+v", i, r)
+				}
+			}
+			marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", sid)
+			data, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+			slices.Sort(lines)
+			if !slices.Equal(lines, fronts) {
+				t.Fatalf("round %d: marker %q, want both of %q", i, data, fronts)
+			}
+			testutil.WantPerm(t, marker, 0o600)
+		}
+	})
+}
+
+// unixRelay passes each connection to the socket path on to the socket
+// real, as another socket for the same Nearhost.
+func unixRelay(t *testing.T, path, real string) {
+	t.Helper()
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			in, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer in.Close()
+				out, err := net.Dial("unix", real)
+				if err != nil {
+					return
+				}
+				defer out.Close()
+				go func() {
+					io.Copy(out, in)
+					out.(*net.UnixConn).CloseWrite()
+				}()
+				io.Copy(in, out)
+			}()
+		}
+	}()
 }
 
 func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {

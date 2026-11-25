@@ -514,7 +514,8 @@ show_body() {
 # asked for, at TARGET, so that passthrough-close --session can find it
 # without looking. The marker has a line per target: the socket of a
 # Nearhost here, SOCK by default, or "ssh <ssh> <host>" for one opened on
-# host with --on. A target already in it is not added again.
+# host with --on. A target already in it is not added again. Each target
+# is appended, the first too, so two saves at once both stay.
 save_session() {
 	# Run by --on, the session ends on the agent's machine, not here.
 	[ -z "${REMOTE:-}" ] || return 0
@@ -522,12 +523,10 @@ save_session() {
 	target=${1:-$SOCK}
 	private_dir "$(state_dir)" "$(state_dir)/sessions" || return 0
 	sm="$(state_dir)/sessions/$SESSION"
-	if [ -f "$sm" ]; then
-		grep -Fqx -- "$target" "$sm" 2>/dev/null && return 0
-		printf '%s\n' "$target" >>"$sm"
-	else
-		private_file "$sm" "$target"
+	if [ -f "$sm" ] && grep -Fqx -- "$target" "$sm" 2>/dev/null; then
+		return 0
 	fi
+	(umask 077 && printf '%s\n' "$target" >>"$sm")
 }
 
 # close_socket SOCK SESSION closes SESSION's passthroughs on the Nearhost at
