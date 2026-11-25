@@ -16,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -72,9 +73,44 @@ func (c sshClient) config(ctx context.Context, host string) (string, error) {
 }
 
 // sshHint says how to repair access to host; then is what to do afterwards.
+// It is a doctor row's fix and up's; elsewhere sshFailure's steps say it.
 func sshHint(host, then string) string {
 	return fmt.Sprintf("run `ssh %s` once in a terminal to fix access, then %s", host, then)
 }
+
+// sshStep is the step that repairs access to host: ssh run once in a
+// terminal, where it can ask what it needs.
+func sshStep(host string) report.Step {
+	return report.Step{Text: "Fix access by running ssh once in a terminal:", Command: "ssh " + host}
+}
+
+// sshFailure is the ssh.unreachable error of ssh refusing to reach host
+// with err, whose words, ssh's own, are quoted as they came. then is what
+// to do once access is fixed. Its text stays what it was before messages,
+// which the interface and the agent API show as it is: the message is what
+// it wraps, which the terminal renders.
+func sshFailure(host, then string, err error) error {
+	m := report.Errorf(report.SSHUnreachable, "ssh %s failed.", host)
+	text := err.Error()
+	var refused *transport.CheckError
+	if errors.As(err, &refused) {
+		text = refused.Stderr
+	}
+	m.Quote(strings.Split(strings.TrimSpace(text), "\n")...)
+	m.Fix = append(m.Fix, sshStep(host))
+	m.Then("Then "+then+".").With("host", host).Wrap(err)
+	return sshRefused{m: m, text: fmt.Sprintf("%v; %s", err, sshHint(host, then))}
+}
+
+// sshRefused is a message whose error text is the one it had before
+// messages, for the readers that show the text alone.
+type sshRefused struct {
+	m    *report.Message
+	text string
+}
+
+func (e sshRefused) Error() string { return e.text }
+func (e sshRefused) Unwrap() error { return e.m }
 
 // shortTempDir is where a private run directory goes. A Unix socket path
 // holds 104 bytes on macOS, of which OpenSSH needs 17 beyond the control
@@ -259,7 +295,7 @@ func (c sshClient) openServer(ctx context.Context, srv config.Server, then strin
 	if err := connectOnce(ctx, sess); err != nil {
 		var refused *transport.CheckError
 		if errors.As(err, &refused) {
-			return fail(fmt.Errorf("%w; %s", err, sshHint(srv.SSHHost, then)))
+			return fail(sshFailure(srv.SSHHost, then, err))
 		}
 		return fail(fmt.Errorf("connect to %s: %w", srv.SSHHost, err))
 	}

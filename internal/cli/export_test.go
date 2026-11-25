@@ -133,7 +133,7 @@ func TestExportOutsideAnyProjectFails(t *testing.T) {
 	t.Chdir(elsewhere)
 
 	_, err = execute(t, newExportCmd(exportBackend{}), "--config", cfgPath, "export")
-	if want := "no Nearhost project contains " + elsewhere + "; add it with nearhost add"; err == nil || err.Error() != want {
+	if want := "Error: No Nearhost project contains " + elsewhere + ". Add it first: nearhost add"; err == nil || errText(err) != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 	if !bytes.Equal(readFile(t, cfgPath), before) {
@@ -144,7 +144,7 @@ func TestExportOutsideAnyProjectFails(t *testing.T) {
 func TestExportUnknownProjectFails(t *testing.T) {
 	cfgPath, _ := exportConfig(t, &config.Config{})
 	_, err := execute(t, newExportCmd(exportBackend{}), "--config", cfgPath, "export", "nope")
-	if want := `project "nope" is not in ` + cfgPath; err == nil || err.Error() != want {
+	if want := `Error: Project "nope" is not in ` + cfgPath + `. See the projects there are: nearhost ls`; err == nil || errText(err) != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 }
@@ -159,7 +159,7 @@ func TestExportRefusesExistingFileWithoutForce(t *testing.T) {
 	}
 
 	_, err := execute(t, newExportCmd(exportBackend{}), "--config", cfgPath, "export", "shop")
-	if want := ".nearhostrc already exists in " + dir + "; run with --force to replace it, or --dry-run to see what would be written"; err == nil || err.Error() != want {
+	if want := "Error: .nearhostrc already exists in " + dir + ". Replace it: nearhost export shop --force Or see what would be written: nearhost export shop --dry-run"; err == nil || errText(err) != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 	if !bytes.Equal(readFile(t, file), hand) || !bytes.Equal(readFile(t, cfgPath), before) {
@@ -306,7 +306,7 @@ func TestExportReplacesPendingChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v\n%s", err, out)
 	}
-	wantContains(t, out, "replaced the .nearhostrc change that was waiting for approval with what is served now\n", "Wrote "+filepath.Join(dir, ".nearhostrc")+". "+exportSuccess)
+	wantContains(t, out, "Note: The .nearhostrc change that was waiting for approval was replaced\nwith what is served now.\n", "Wrote "+filepath.Join(dir, ".nearhostrc")+". "+exportSuccess)
 	wantSnapshotOf(t, cfgPath, "shop", dir)
 
 	// With the file now matching its snapshot, nothing is waiting.
@@ -341,7 +341,7 @@ func TestExportThenStartAsksNothing(t *testing.T) {
 // a change waiting for approval only when the review would have held that
 // change for approval, with an approved snapshot or without one.
 func TestExportReportsPendingAsTheReviewDoes(t *testing.T) {
-	const pendingLine = "replaced the .nearhostrc change that was waiting for approval"
+	const pendingLine = "Note: The .nearhostrc change that was waiting for approval"
 	approved, err := nearhostrc.Parse([]byte("version: 1\nroutes:\n  - port: 3000\n"), nil)
 	if err != nil {
 		t.Fatal(err)

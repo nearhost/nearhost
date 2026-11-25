@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // A core never asks for the password: it leaves a project whose names the
@@ -174,7 +174,8 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time, star
 			// fixer's is logged here, as the engine's start logged it.
 			if asked.IsZero() {
 				for _, p := range ask {
-					b.bus.Publish(engine.Event{Time: at, Project: p.Name, State: engine.StateStopped, Message: hostsNotFixed(p.Name, err).Error()})
+					m := hostsNotFixed(p.Name, err)
+					b.bus.Publish(engine.Event{Time: at, Project: p.Name, State: engine.StateStopped, Message: m.Title, Report: m})
 				}
 			}
 		}
@@ -232,13 +233,13 @@ func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) eng
 	case fixing:
 		st.State, st.Message = engine.StateStarting, ""
 	case refused:
-		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Error(), r.err.Error(), 1)
+		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Error(), engine.HostsCause(r.err), 1)
 	}
 	return st
 }
 
 // hostsNotFixed is the error of a start that waits on a hosts file that was
-// not fixed, worded as the engine words it.
-func hostsNotFixed(project string, err error) error {
-	return fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", project, err)
+// not fixed, as the engine words it: engine.HostsProblem.
+func hostsNotFixed(project string, err error) *report.Message {
+	return engine.HostsProblem(project, err)
 }

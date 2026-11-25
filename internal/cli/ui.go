@@ -21,7 +21,6 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/desktop"
 	"github.com/nearhost/nearhost/internal/elevate"
-	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
@@ -183,21 +182,21 @@ func bindUI(root *cobra.Command, b uiBackend) {
 			return runDetach(cmd, b.detach, flags)
 		}
 		if b.interactive == nil || !b.interactive() {
-			return noTerminal(cmd.ErrOrStderr())
+			return noTerminal()
 		}
 		return runUI(cmd, b, flags)
 	}
 }
 
 // noTerminal is the interface.no-terminal error: the interface needs a
-// terminal, which is standard input and output both being one. stderr is
-// no longer written to: Main renders the error.
-func noTerminal(stderr io.Writer) error {
-	msg := "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one."
+// terminal, which is standard input and output both being one.
+func noTerminal() error {
+	m := report.Errorf(report.InterfaceNoTerminal, "The interface needs a terminal, and there is none here.")
 	if hostOS == "windows" {
-		msg += " In Git Bash, run it through winpty or use Windows Terminal."
+		m.Because("In Git Bash, run it through winpty or use Windows Terminal.")
 	}
-	return report.Errorf(report.InterfaceNoTerminal, "%s", msg)
+	return m.Step("Run it in the background:", "nearhost -d").
+		Step("Or serve without the interface:", "nearhost up")
 }
 
 // rootArgs is cobra.NoArgs, except that a single argument that looks like a
@@ -223,7 +222,6 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	errOut := cmd.ErrOrStderr()
 	// A config that does not load is refused here, before a core is
 	// started on it only to stop.
 	if _, _, ok := detachInfo(ctx, b.detach); !ok {
@@ -244,7 +242,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if !spawned {
 		// The core is checked before it is offered a restart: a restart
 		// must not replace a core serving another file.
-		if err := knownAPI(cmd, info); err != nil {
+		if err := knownAPI(info); err != nil {
 			return err
 		}
 		st, err := c.State(ctx)
@@ -324,14 +322,14 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	// its log, before anything from the core, which it follows once it
 	// starts.
 	if !spawned {
-		if note := ignoredFlags(cmd, st); note != "" {
-			back.bus.Publish(engine.Event{Message: note})
+		if note := ignoredFlags(cmd, st); note != nil {
+			back.bus.Publish(reportEvent(note))
 		}
 	}
 	// The core said the release it found on its stream, which is followed
 	// from now: the log says it here, as the core would have.
 	if st.Update != "" {
-		back.bus.Publish(engine.Event{Message: updateNotice(strings.TrimPrefix(info.Version, "v"), st.Update)})
+		back.bus.Publish(reportEvent(updateNotice(strings.TrimPrefix(info.Version, "v"), st.Update)))
 	}
 	err = b.run(m, func(p *tea.Program) {
 		suspender.Attach(p)
@@ -342,7 +340,7 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	})
 	back.Close()
 	if m.Err() != nil {
-		return coreLost(errOut, b.detach, logFrom, info.StartedBy)
+		return coreLost(b.detach, logFrom, info.StartedBy)
 	}
 	if err != nil && !back.quit() {
 		abandon()
@@ -390,40 +388,46 @@ func ensureInterruptible(cmd *cobra.Command, b uiBackend, start func() (*control
 		if ie := (interruptedStart{}); errors.As(err, &ie) {
 			fate = ie.fate
 		}
-		return nil, control.Info{}, false, report.Errorf(report.Interrupted, "%s", interruptedMessage(fate)).ExitCode(interruptedCode).Wrap(err)
+		return nil, control.Info{}, false, interrupted(fate).Wrap(err)
 	}
 	return c, info, spawned, err
 }
 
-// interruptedMessage says that the start was interrupted, and what became of
-// the core: fate.
-func interruptedMessage(fate spawnedFate) string {
-	const interrupted = "Interrupted while Nearhost started in the background"
+// interrupted is the interrupted error of a start that was interrupted,
+// which exits 130, saying what became of the core: fate.
+func interrupted(fate spawnedFate) *report.Message {
+	if fate == fateNone {
+		return report.Errorf(report.Interrupted, "Interrupted before Nearhost was started in the background, so it is not running.").ExitCode(interruptedCode)
+	}
+	m := report.Errorf(report.Interrupted, "Interrupted while Nearhost started in the background.").ExitCode(interruptedCode)
 	switch fate {
 	case fateStopped:
-		return interrupted + ", so it was stopped."
+		return m.Because("It was stopped.")
 	case fateExited:
-		return interrupted + ". It stopped before it answered."
+		return m.Because("It stopped before it answered.")
 	case fateOther:
-		return interrupted + ". Another nearhost started the Nearhost that runs, so it was left running."
-	case fateNone:
-		return "Interrupted before Nearhost was started in the background, so it is not running."
+		return m.Because("Another nearhost started the Nearhost that runs, so it was left running.")
 	case fateStopping:
-		return interrupted + ". It was asked to stop and has yet to finish; nearhost stop waits until it has."
+		return m.Because("It was asked to stop and has yet to finish.").
+			Step("Wait until it has stopped:", "nearhost stop")
 	case fateNoAnswer:
 		path, _ := config.LogPath()
-		return interrupted + ". It did not answer in time to be stopped, so it may still be starting: see " + path + ", and stop it with nearhost stop."
+		return m.Because("It did not answer in time to be stopped, so it may still be starting.").
+			Step("See how it is going in its log:", path).
+			Step("Stop it:", "nearhost stop")
 	}
-	return interrupted + ". It goes on starting; stop it with nearhost stop."
+	return m.Because("It goes on starting.").Step("Stop it:", "nearhost stop")
 }
 
 // knownAPI refuses a core that speaks another version of the API, which
 // this nearhost cannot drive.
-func knownAPI(cmd *cobra.Command, info control.Info) error {
+func knownAPI(info control.Info) error {
 	if info.API == control.APIVersion {
 		return nil
 	}
-	return report.Errorf(report.CoreAPIMismatch, "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost.")
+	return report.Errorf(report.CoreAPIMismatch, "Nearhost in the background speaks a different version of its API.").
+		Step("Stop it:", "nearhost stop").
+		Step("Then open the interface again:", "nearhost")
 }
 
 // offerRestart offers, at the terminal, to restart the core c, which says
@@ -444,7 +448,10 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 		return c, info, false, nil
 	}
 	if info.StartedBy == control.StartedForeground {
-		fmt.Fprintf(cmd.OutOrStdout(), "Nearhost running in a terminal is %s; this is %s. It was started by hand, so restart it there: stop it with Ctrl-C or nearhost stop, then start it again.\n", printable(info.Version), Version)
+		sinkOf(cmd).Report(report.Notef(report.CoreOutdated, "Nearhost running in a terminal is %s; this is %s.", info.Version, Version).
+			Because("It was started by hand, so restart it there.").
+			Step("Stop it with Ctrl-C in its terminal, or:", "nearhost stop").
+			Then("Then start it again."))
 		return c, info, false, nil
 	}
 	ctx := cmd.Context()
@@ -459,7 +466,7 @@ func offerRestart(cmd *cobra.Command, b uiBackend, c *control.Client, info contr
 		detach, m, d = detach.withService(ctx)
 		if m != nil {
 			if !samePath(d.Exe, detach.exe()) {
-				sayServiceRunsAnother(cmd.OutOrStdout(), d.Exe, info.Version, Version)
+				sinkOf(cmd).Report(serviceRunsAnother(d.Exe, info.Version, Version))
 				return c, info, false, nil
 			}
 			viaService = true
@@ -505,7 +512,9 @@ func sameConfig(cmd *cobra.Command, served string) error {
 	if samePath(given, served) {
 		return nil
 	}
-	return report.Errorf(report.CoreOtherConfig, "Nearhost in the background serves %s. Stop it with nearhost stop to use %s, or open nearhost without --config.", served, given)
+	return report.Errorf(report.CoreOtherConfig, "Nearhost in the background serves %s.", served).
+		Step("To use "+given+", stop it first:", "nearhost stop").
+		Step("Or open the interface on the file it serves:", "nearhost")
 }
 
 // samePath reports whether a and b name the same file: the same path, or
@@ -519,10 +528,11 @@ func samePath(a, b string) bool {
 	return aerr == nil && berr == nil && os.SameFile(ai, bi)
 }
 
-// ignoredFlags is the note that the serve flags given on cmd do nothing to
-// the core already running, which serves as st says; "" when none was
-// given, or each port given is the one the core has.
-func ignoredFlags(cmd *cobra.Command, st control.State) string {
+// ignoredFlags is the interface.flags-ignored notice that the serve flags
+// given on cmd do nothing to the core already running, which serves as st
+// says; nil when none was given, or each port given is the one the core
+// has.
+func ignoredFlags(cmd *cobra.Command, st control.State) *report.Message {
 	ports := map[string]int{"https-port": st.HTTPSPort, "http-port": st.HTTPPort, "web-port": st.WebPort}
 	var names []string
 	for _, name := range detachServeFlags {
@@ -537,23 +547,22 @@ func ignoredFlags(cmd *cobra.Command, st control.State) string {
 	}
 	switch len(names) {
 	case 0:
-		return ""
+		return nil
 	case 1:
-		return names[0] + " applies only when Nearhost starts; the running Nearhost keeps its settings."
+		return report.Notef(report.InterfaceFlagsIgnored, "%s applies only when Nearhost starts; the running Nearhost keeps its settings.", names[0])
 	}
 	list := strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
-	return list + " apply only when Nearhost starts; the running Nearhost keeps its settings."
+	return report.Notef(report.InterfaceFlagsIgnored, "%s apply only when Nearhost starts; the running Nearhost keeps its settings.", list)
 }
 
 // coreLost is the core.lost error of a core that went while the interface
 // ran, with the end of its log, where it said why, unless what it wrote
 // since from says it was asked to stop. A core that ran in a terminal, which
-// by says, had the terminal for its log, so none is shown. Main renders it;
-// w is no longer written to.
-func coreLost(w io.Writer, d detachBackend, from int64, by control.StartedBy) error {
+// by says, had the terminal for its log, so none is shown. Main renders it.
+func coreLost(d detachBackend, from int64, by control.StartedBy) error {
 	if by == control.StartedForeground {
 		// Its terminal was its log.
-		return report.Errorf(report.CoreLost, "Nearhost stopped. It ran in a terminal, which shows why.")
+		return report.Errorf(report.CoreLost, "Nearhost stopped.").Because("It ran in a terminal, which shows why.")
 	}
 	m := report.Errorf(report.CoreLost, "Nearhost in the background stopped.")
 	if !stoppedOnRequest(d.logTail(from, lostLogLines)) {
@@ -610,10 +619,10 @@ func hostsThrough(root asRoot, path string, applier func(ctx context.Context, pr
 				verb = "was"
 			}
 			if errors.Is(err, tui.ErrPasswordCancelled) {
-				return fmt.Errorf("you cancelled the password, so %s %s not added to %s", names, verb, path)
+				return report.Errorf(report.InterfacePasswordCancelled, "You cancelled the password, so %s %s not added to %s.", names, verb, path).Wrap(err)
 			}
 			if errors.Is(err, elevate.ErrDeclined) {
-				return fmt.Errorf("you declined the Windows prompt, so %s %s not added to %s", names, verb, path)
+				return report.Errorf(report.InterfacePromptDeclined, "You declined the Windows prompt, so %s %s not added to %s.", names, verb, path).Wrap(err)
 			}
 			return err
 		})

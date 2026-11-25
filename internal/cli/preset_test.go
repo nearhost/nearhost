@@ -59,7 +59,7 @@ func TestPresetEnableAndDisableALocalFile(t *testing.T) {
 		t.Errorf("disable removed the file: %v", err)
 	}
 
-	if _, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "disable", "stack"); err == nil || !strings.Contains(err.Error(), `preset "stack" is not enabled`) {
+	if _, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", "disable", "stack"); err == nil || !strings.Contains(err.Error(), `Preset "stack" is not enabled.`) {
 		t.Errorf("second disable: %v", err)
 	}
 }
@@ -167,8 +167,8 @@ func TestPresetEnableAndDisableNeedAName(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	for _, verb := range []string{"enable", "disable"} {
 		_, err := execute(t, newPresetCmd(presetBackend{}), "--config", cfgPath, "preset", verb)
-		want := "name the preset to " + verb + ", e.g. nearhost preset " + verb + " vite"
-		if err == nil || err.Error() != want {
+		want := "Error: Name the preset to " + verb + ". For example: nearhost preset " + verb + " vite"
+		if err == nil || errText(err) != want {
 			t.Errorf("preset %s: err = %v, want %q", verb, err, want)
 		}
 	}

@@ -5,8 +5,9 @@
 package service
 
 import (
-	"errors"
 	"slices"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // EnvVar is one environment variable of a service.
@@ -30,7 +31,9 @@ type Names struct{ Launchd, Systemd, Task string }
 var DefaultNames = Names{"dev.nearhost.core", "nearhost.service", "Nearhost"}
 
 // ErrUnsupported is returned where there is no service manager to use.
-var ErrUnsupported = errors.New("services are supported on macOS, on Linux with systemd, and on Windows 11")
+// It is a service.unsupported message; errors.Is finds it.
+var ErrUnsupported error = report.Errorf(report.ServiceUnsupported, "Nearhost cannot be a service on this system.").
+	Because("Services are supported on macOS, on Linux with systemd, and on Windows 11.")
 
 // Format is a service manager's file format.
 type Format int

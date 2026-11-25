@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // pureResolve makes ServiceEnv judge the paths as given, whatever is on
@@ -77,7 +79,7 @@ func TestServiceEnv(t *testing.T) {
 			switch {
 			case tc.note == "" && len(notes) != 0:
 				t.Errorf("notes = %q, want none", notes)
-			case tc.note != "" && (len(notes) != 1 || !strings.Contains(notes[0], tc.note)):
+			case tc.note != "" && (len(notes) != 1 || !strings.Contains(notes[0].Error(), tc.note)):
 				t.Errorf("notes = %q, want one containing %q", notes, tc.note)
 			}
 		})
@@ -110,7 +112,7 @@ func TestServiceEnvFollowsALink(t *testing.T) {
 	if slices.ContainsFunc(env, func(v EnvVar) bool { return v.Name == "SSH_AUTH_SOCK" }) {
 		t.Errorf("env = %v, want no SSH_AUTH_SOCK", env)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "changes at each login") || !strings.Contains(notes[0], link) {
+	if len(notes) != 1 || !strings.Contains(notes[0].Error(), "changes at each login") || !strings.Contains(notes[0].Error(), link) {
 		t.Errorf("notes = %q, want one that says the socket changes at each login", notes)
 	}
 
@@ -179,7 +181,7 @@ func judge(t *testing.T, link, home string) {
 	if slices.ContainsFunc(env, func(v EnvVar) bool { return v.Name == "SSH_AUTH_SOCK" }) {
 		t.Errorf("env = %v, want no SSH_AUTH_SOCK", env)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "changes at each login") {
+	if len(notes) != 1 || !strings.Contains(notes[0].Error(), "changes at each login") {
 		t.Errorf("notes = %q, want one that says the socket changes at each login", notes)
 	}
 }
@@ -212,7 +214,34 @@ func TestServiceEnvFollowsLinksOnlyOnThisSystem(t *testing.T) {
 		return
 	}
 	_, notes = ServiceEnv(runtime.GOOS, getenv, nil, "/Users/e", "")
-	if !called || len(notes) != 1 || !strings.Contains(notes[0], "/tmp/ssh-AbC/agent.42") {
+	if !called || len(notes) != 1 || !strings.Contains(notes[0].Error(), "/tmp/ssh-AbC/agent.42") {
 		t.Errorf("for this system: resolved %v, notes %q; want a note naming where the link leads", called, notes)
+	}
+}
+
+// Each note is a message with a code of its own: a missing socket is a
+// notice, one that changes at each login a warning.
+func TestServiceEnvNotesAreMessages(t *testing.T) {
+	pureResolve(t)
+	_, notes := ServiceEnv("linux", func(string) string { return "" }, nil, "/home/u", "/run/user/1000")
+	if len(notes) != 1 || notes[0].Code != report.ServiceAgentUnset || notes[0].Level != report.Info {
+		t.Fatalf("notes %+v", notes)
+	}
+	getenv := func(n string) string { return map[string]string{"SSH_AUTH_SOCK": "/tmp/ssh-x/agent.1"}[n] }
+	_, notes = ServiceEnv("linux", getenv, nil, "/home/u", "/run/user/1000")
+	if len(notes) != 1 || notes[0].Code != report.ServiceAgentChanges || notes[0].Level != report.Warning {
+		t.Fatalf("notes %+v", notes)
+	}
+	if len(notes[0].Fix) == 0 {
+		t.Errorf("no step in %+v", notes[0])
+	}
+}
+
+// The line to add to the ssh config is a command of its own.
+func TestServiceEnvNotesGiveTheLineToAdd(t *testing.T) {
+	pureResolve(t)
+	_, notes := ServiceEnv("linux", func(string) string { return "" }, nil, "/home/u", "/run/user/1000")
+	if len(notes) != 1 || len(notes[0].Fix) != 1 || notes[0].Fix[0].Command != "IdentityAgent <socket path>" {
+		t.Fatalf("notes %+v", notes)
 	}
 }

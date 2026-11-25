@@ -410,7 +410,7 @@ func TestOtherConfigRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout, stderr, code := runRootSplit(t, uiRoot(b), "--config", "other.yaml")
-	want := "Nearhost in the background serves " + cfgPath + ". Stop it with nearhost stop to use " + other + ", or open nearhost without --config.\n"
+	want := "Nearhost in the background serves " + cfgPath + ". To use " + other + ", stop it first: nearhost stop Or open the interface on the file it serves: nearhost\n"
 	if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, ran %v, stdout %q, stderr %q, want %q", code, ran, stdout, stderr, want)
 	}
@@ -491,7 +491,7 @@ func TestInterfaceShowsTheCoresUpdateNotice(t *testing.T) {
 					done = true
 				}
 			}
-			want := []string{"A new nearhost is available: 0.15.0 → 9.9.9. Run `nearhost update` to update."}
+			want := []string{"A new nearhost is available: 0.15.0 → 9.9.9."}
 			if update == "" {
 				want = nil
 			}
@@ -560,7 +560,7 @@ func TestVersionSkewAsks(t *testing.T) {
 		b := fakeUI(t, true, &ran)
 		b.detach = old.detach(nil)
 		stdout, stderr, code := runRootSplit(t, uiRoot(b))
-		want := "Nearhost in the background speaks a different version of its API. Run nearhost stop, then nearhost.\n"
+		want := "Nearhost in the background speaks a different version of its API. Stop it: nearhost stop Then open the interface again: nearhost\n"
 		if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stdout %q, stderr %q, want %q", code, ran, stdout, stderr, want)
 		}
@@ -762,7 +762,7 @@ func TestHostsStartSaysTheRefusal(t *testing.T) {
 	h := newHostsHarness(t, tui.ErrPasswordCancelled)
 	testutil.WaitUntil(t, 10*time.Second, func() bool { return h.root.times() == 1 }, "the first ask")
 	err := h.b.StartProject(context.Background(), "web")
-	want := `project "web"'s hosts are not resolvable: the hosts file was not updated (you cancelled the password, so web.test was not added to ` + h.path + "); start the project again to retry"
+	want := `project "web"'s hosts are not resolvable: the hosts file was not updated (you cancelled the password, so web.test was not added to ` + h.path + ")"
 	if err == nil || err.Error() != want {
 		t.Errorf("StartProject = %v, want %q", err, want)
 	}
@@ -955,7 +955,7 @@ func TestInterruptedWhileTheCoreStartsStopsIt(t *testing.T) {
 		sigs <- os.Interrupt
 	}()
 	_, stderr, code := runRootSplit(t, uiRoot(b))
-	if want := "Interrupted while Nearhost started in the background, so it was stopped.\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
+	if want := "Interrupted while Nearhost started in the background. It was stopped.\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 		t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 	}
 	if !slices.Contains(core.asked(), "Stop") {
@@ -1052,7 +1052,7 @@ func TestTUILeavesAServiceCore(t *testing.T) {
 		b.detach = core.detach(nil)
 		b.detach.service = svc.lookup()
 		_, stderr, code := runRootSplit(t, uiRoot(b))
-		if want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
+		if want := "Interrupted while Nearhost started in the background. It goes on starting. Stop it: nearhost stop\n"; code != 130 || ran || flat(stderr) != flat("Error: "+want) {
 			t.Errorf("exit %d, ran %v, stderr %q, want %q", code, ran, stderr, want)
 		}
 		if starts, _ := svc.counts(); starts != 1 {
@@ -1121,8 +1121,8 @@ func TestNoRestartForAnotherExe(t *testing.T) {
 	if code != 0 || !ran {
 		t.Fatalf("exit %d, ran %v, stderr %q", code, ran, stderr)
 	}
-	if want := "Nearhost's service runs /opt/nearhost/bin/nearhost, which is 0.0.1. To have it run this copy (" + Version + "), run nearhost service install from it.\n"; stdout != want {
-		t.Errorf("stdout %q, want %q", stdout, want)
+	if want := "Note: Nearhost's service runs /opt/nearhost/bin/nearhost, which is 0.0.1. To have it run this copy (" + Version + "), install the service from it: nearhost service install"; stdout != "" || flat(stderr) != want {
+		t.Errorf("stdout %q, stderr %q, want %q", stdout, stderr, want)
 	}
 	if slices.Contains(old.asked(), "Stop") {
 		t.Error("the service's core was stopped")
@@ -1156,7 +1156,7 @@ func TestServiceStartInterrupted(t *testing.T) {
 			b.detach = core.detach(nil) // a spawn is an error
 			b.detach.service = svc.lookup()
 			_, stderr, code := runRootSplit(t, uiRoot(b))
-			want := "Interrupted while Nearhost started in the background. It goes on starting; stop it with nearhost stop.\n"
+			want := "Interrupted while Nearhost started in the background. It goes on starting. Stop it: nearhost stop\n"
 			if during == "lookup" {
 				// Nothing was started yet, and nothing is.
 				want = "Interrupted before Nearhost was started in the background, so it is not running.\n"

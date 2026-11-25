@@ -265,6 +265,13 @@ var (
 	errDownloadInterrupted = errors.New("the update was cancelled")
 )
 
+// checkFailed is the update.check-failed error of a check for a newer
+// release that failed with err, which says why.
+func checkFailed(err error) *report.Message {
+	return report.Errorf(report.UpdateCheckFailed, "Nearhost could not find out whether a newer release is out.").
+		Because("%s", err).Wrap(err)
+}
+
 // updateCheckFailedCode is the exit code of `nearhost update --check` when
 // the check itself failed. 0 is up to date and 1 is a newer release; 3 is
 // the elevated hosts helper's (elevate.HelperRefusedCode).
@@ -303,9 +310,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		if check {
 			// A script tells "could not check" (2) from "a newer release is
 			// out" (1).
-			return report.Errorf(report.UpdateCheckFailed, "%s", err).ExitCode(updateCheckFailedCode).Wrap(err)
+			return checkFailed(err).ExitCode(updateCheckFailedCode)
 		}
-		return err
+		return checkFailed(err)
 	}
 	current := strings.TrimPrefix(Version, "v")
 	if !update.Newer(current, latest) {
@@ -331,7 +338,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		m = m.Pinned(latest)
 	}
 	if check {
-		return fmt.Errorf("%s is available (this is %s, installed with %s). Run `nearhost update` to update", latest, current, m.Kind)
+		// An error, so a script sees a newer release as exit status 1.
+		return report.Errorf(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind).
+			Step("Update it:", "nearhost update")
 	}
 	fmt.Fprintf(out, "nearhost %s → %s is available. This copy was installed with %s.\n", current, latest, m.Kind)
 
@@ -413,7 +422,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	fmt.Fprintf(out, "Updated to %s.\n", latest)
 	noBind := false
 	if b.goos == "linux" {
-		noBind = printSetcapAdvice(out, b, m, exe)
+		noBind = reportSetcap(sinkOf(cmd), b, m, exe)
 	}
 	return restartAfterUpdate(cmd, b, in, yes, noBind, latest, restartExe(b, m, exe, path))
 }
@@ -439,7 +448,7 @@ func restartOlderCore(cmd *cobra.Command, b updateBackend, yes bool, current str
 	noBind := false
 	if b.goos == "linux" {
 		// The copy was replaced, which drops a capability as an update does.
-		noBind = printSetcapAdvice(cmd.OutOrStdout(), b, m, exe)
+		noBind = reportSetcap(sinkOf(cmd), b, m, exe)
 	}
 	// The path the next run starts, as after an update, once it says it is
 	// this release; otherwise this copy, which is.
@@ -482,12 +491,13 @@ func restartExe(b updateBackend, m update.Method, exe, path string) string {
 	return path
 }
 
-// printSetcapAdvice tells the user how to let the new binary bind ports 80
-// and 443 again, when it cannot. A file capability belongs to the file, so
-// every update that replaces the binary drops it. Nothing is printed when
-// the new binary has the capability; when that cannot be checked, the
-// command is printed anyway. It reports whether it printed it.
-func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe string) bool {
+// reportSetcap reports to sink the port.needs-permission warning that the
+// new binary cannot bind ports 80 and 443, with the command that lets it,
+// when it cannot. A file capability belongs to the file, so every update
+// that replaces the binary drops it. Nothing is said when the new binary
+// has the capability; when that cannot be checked, it is said anyway. It
+// reports whether it said it.
+func reportSetcap(sink report.Sink, b updateBackend, m update.Method, exe string) bool {
 	if first, ok := b.unprivilegedPortStart(); ok && first <= 80 {
 		return false // this system lets any program bind ports 80 and 443
 	}
@@ -497,15 +507,17 @@ func printSetcapAdvice(out io.Writer, b updateBackend, m update.Method, exe stri
 			return false
 		}
 	}
-	const lead = "Let the new binary bind ports 80 and 443 again"
+	w := report.Warnf(report.PortNeedsPermission, "The new binary has no permission to bind ports 80 and 443.").
+		Because("An update replaces the binary, and the permission belongs to the file it was given to.")
 	if found {
-		fmt.Fprintf(out, "%s:\n\n  %s\n", lead, doctor.SetcapFix(bin))
+		w.Fix = []report.Step{setcapStep(bin, true)}
+		sink.Report(w.With("path", bin))
 		return true
 	}
 	// The path the user runs may be a launcher script, which a capability
-	// does nothing for, so say so rather than print it as the binary.
+	// does nothing for, so say so rather than give it as the binary.
 	run := probePath(b, m, exe)
-	fmt.Fprintf(out, "%s. Nearhost could not tell which file is the binary, so check that %s is the binary and not a launcher script before running:\n\n  %s\n", lead, printable(run), doctor.SetcapFix(run))
+	sink.Report(w.Step("Nearhost could not tell which file is the binary, so check that "+run+" is the binary and not a launcher script before running:", doctor.SetcapFix(run)).With("path", run))
 	return true
 }
 
@@ -811,9 +823,9 @@ func backgroundHTTP() *http.Client { return &http.Client{Timeout: 1500 * time.Mi
 // or the check has not finished within grace. A command that ends quickly
 // gives the check a moment, so it can finish and fill the cache; the cached
 // answer is then ready at once on later runs.
-func (c *backgroundCheck) notice(grace time.Duration) string {
+func (c *backgroundCheck) notice(grace time.Duration) *report.Message {
 	if c == nil {
-		return ""
+		return nil
 	}
 	select {
 	case <-c.done:
@@ -821,13 +833,13 @@ func (c *backgroundCheck) notice(grace time.Duration) string {
 		select {
 		case <-c.done:
 		case <-time.After(grace):
-			return ""
+			return nil
 		}
 	}
 	if !update.Newer(c.current, c.latest) {
-		return ""
+		return nil
 	}
-	return fmt.Sprintf("A new nearhost is available: %s → %s. Run `nearhost update` to update.", c.current, c.latest)
+	return updateNotice(c.current, c.latest)
 }
 
 // cachedLatest is the background check's source: GitHub, asked at most once

@@ -126,7 +126,7 @@ func (r asRoot) run(ctx context.Context, why, done string, step func(ctx context
 		}
 		lipgloss.Fprint(out, tui.Asking(why, r.width()))
 		err := step(ctx, out)
-		lipgloss.Fprint(out, tui.Told(err, done))
+		lipgloss.Fprint(out, tui.Told(err, done, r.width()))
 		return err
 	})
 }

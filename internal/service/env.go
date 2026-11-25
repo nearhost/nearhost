@@ -6,18 +6,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // resolve follows symbolic links; tests replace it.
 var resolve = filepath.EvalSymlinks
 
-// ServiceEnv returns the environment to write into the service, and notes.
+// ServiceEnv returns the environment to write into the service, and notes
+// for the user: a notice or a warning about the SSH agent the service uses.
 // managerEnv is what the manager already gives its services (systemd's
 // show-environment; launchd's SSH_AUTH_SOCK); home and runtimeDir are $HOME
 // and $XDG_RUNTIME_DIR. A Windows logon task has the user's environment, so
 // it needs none. For a service of this system, SSH_AUTH_SOCK is judged by
 // where its links lead.
-func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]string, home, runtimeDir string) ([]EnvVar, []string) {
+func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]string, home, runtimeDir string) ([]EnvVar, []*report.Message) {
 	if goos == "windows" {
 		return nil, nil
 	}
@@ -40,7 +43,7 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 			}
 		}
 	}
-	var notes []string
+	var notes []*report.Message
 	sock := getenv("SSH_AUTH_SOCK")
 	// A socket is judged by where it leads: ~/.ssh/ssh_auth_sock, a link a
 	// login points at its forwarded agent, goes when that login ends. Only
@@ -51,8 +54,8 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 	}
 	switch {
 	case sock == "":
-		notes = append(notes, "SSH_AUTH_SOCK is not set here, so the service uses the agent your login session provides. "+
-			"If servers do not connect, set IdentityAgent in ~/.ssh/config.")
+		notes = append(notes, report.Notef(report.ServiceAgentUnset, "SSH_AUTH_SOCK is not set here, so the service uses the agent your login session provides.").
+			Step("If servers do not connect, add this line to ~/.ssh/config, with your agent's socket:", "IdentityAgent <socket path>"))
 	case sock == managerEnv["SSH_AUTH_SOCK"],
 		goos == "darwin" && strings.HasPrefix(real, "/private/tmp/com.apple.launchd."):
 		// The manager already provides it.
@@ -63,8 +66,8 @@ func ServiceEnv(goos string, getenv func(string) string, managerEnv map[string]s
 		if real != sock {
 			where += ", a link to " + real
 		}
-		notes = append(notes, "SSH_AUTH_SOCK here ("+where+") changes at each login, so the service cannot use it. "+
-			"Set IdentityAgent in ~/.ssh/config to a lasting agent socket.")
+		notes = append(notes, report.Warnf(report.ServiceAgentChanges, "SSH_AUTH_SOCK here (%s) changes at each login, so the service cannot use it.", where).
+			Step("Add this line to ~/.ssh/config, with an agent socket that lasts:", "IdentityAgent <socket path>"))
 	}
 	return env, notes
 }

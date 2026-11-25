@@ -178,8 +178,9 @@ func migrateWarning(err error) *report.Message {
 	if err == nil {
 		return nil
 	}
-	if m, ok := report.As(err); ok && m.Code == report.CAMoveFailed {
-		return m
+	var moved *config.MigrateError
+	if errors.As(err, &moved) {
+		return moved.Report()
 	}
 	return report.Warnf(report.CAMoveFailed, "Nearhost could not move its local CA to its data directory: %v.", err).Wrap(err)
 }

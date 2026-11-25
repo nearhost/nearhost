@@ -359,7 +359,7 @@ func TestStatusSaysOneUpdateNotice(t *testing.T) {
 		if n := strings.Count(out, "1.3.0"); n != 1 {
 			t.Errorf("status names the release %d times, want once:\n%s", n, out)
 		}
-		if n := updates.notice(0); n != "" {
+		if n := updates.notice(0); n != nil {
 			t.Errorf("Main's notice is still given: %q", n)
 		}
 	})
@@ -377,7 +377,7 @@ func TestStatusSaysOneUpdateNotice(t *testing.T) {
 		c := check(t)
 		configHome(t)
 		_, _ = execute(t, newStatusCmd(nil), "status")
-		if updates != c || !strings.Contains(updates.notice(0), "1.3.0") {
+		if updates != c || !strings.Contains(noticeText(updates.notice(0)), "1.3.0") {
 			t.Error("Main's notice was dropped with no core running")
 		}
 	})

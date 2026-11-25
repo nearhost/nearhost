@@ -26,7 +26,7 @@ func TestHostsUpdateNeedsATerminalForSudo(t *testing.T) {
 	if err == nil || !errors.Is(err, errHostsUpdateNoTerminal) {
 		t.Fatalf("hosts update returned %v, want %q (output %q)", err, errHostsUpdateNoTerminal, out)
 	}
-	if errHostsUpdateNoTerminal.Error() != "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost hosts update in a terminal." {
-		t.Errorf("the message reads %q", errHostsUpdateNoTerminal)
+	if m := messageIn(t, errHostsUpdateNoTerminal); m.Title != "The hosts file needs sudo, and there is no terminal to ask in." || len(m.Fix) != 1 || m.Fix[0].Command != "nearhost hosts update" {
+		t.Errorf("the message reads %+v", m)
 	}
 }

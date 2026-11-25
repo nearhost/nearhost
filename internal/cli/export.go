@@ -16,6 +16,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -90,7 +91,7 @@ func runExport(cmd *cobra.Command, b exportBackend, flags exportFlags, args []st
 		return fmt.Errorf("wrote %s, but saving the config failed: %w", fileIn(p, dir), err)
 	}
 	if pending {
-		fmt.Fprintln(out, "replaced the .nearhostrc change that was waiting for approval with what is served now")
+		sinkOf(cmd).Report(report.Notef(report.ExportReplacedPending, "The %s change that was waiting for approval was replaced with what is served now.", nearhostrc.FileName))
 	}
 	where := ""
 	if p.Server != config.LocalServer {
@@ -108,7 +109,8 @@ func exportTarget(cfg *config.Config, cfgPath string, args []string) (config.Pro
 	if len(args) == 1 {
 		p, ok := cfg.Project(args[0])
 		if !ok {
-			return config.Project{}, fmt.Errorf("project %q is not in %s", args[0], cfgPath)
+			return config.Project{}, report.Errorf(report.ExportNoProject, "Project %q is not in %s.", args[0], cfgPath).
+				Step("See the projects there are:", "nearhost ls")
 		}
 		return *p, nil
 	}
@@ -127,7 +129,8 @@ func exportTarget(cfg *config.Config, cfgPath string, args []string) (config.Pro
 		}
 	}
 	if best == nil {
-		return config.Project{}, fmt.Errorf("no Nearhost project contains %s; add it with nearhost add", wd)
+		return config.Project{}, report.Errorf(report.ExportNoProject, "No Nearhost project contains %s.", wd).
+			Step("Add it first:", "nearhost add")
 	}
 	return *best, nil
 }
@@ -178,7 +181,9 @@ func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p conf
 		return nil, nil, false, err
 	}
 	if found && !flags.force && !flags.dryRun {
-		return nil, nil, false, fmt.Errorf("%s already exists in %s; run with --force to replace it, or --dry-run to see what would be written", nearhostrc.FileName, dir)
+		return nil, nil, false, report.Errorf(report.ExportExists, "%s already exists in %s.", nearhostrc.FileName, dir).
+			Step("Replace it:", "nearhost export "+shellQuote(p.Name)+" --force").
+			Step("Or see what would be written:", "nearhost export "+shellQuote(p.Name)+" --dry-run")
 	}
 	// Only a change the review would hold for approval was waiting: one
 	// that only moves ports, or a file that does not parse, waits for no
@@ -250,7 +255,8 @@ func saveSnapshot(cfgPath string, from config.Project, snap *config.RcSnapshot) 
 		now := *p
 		now.Nearhostrc, from.Nearhostrc = nil, nil
 		if !sameProject(now, from) {
-			return fmt.Errorf("project %q changed while it was exported, so the file is not approved; run `nearhost export` again", from.Name)
+			return report.Errorf(report.ExportChanged, "Project %q changed while it was exported, so the file is not approved.", from.Name).
+				Step("Export it again:", "nearhost export "+shellQuote(from.Name))
 		}
 		p.Nearhostrc = snap
 		return nil

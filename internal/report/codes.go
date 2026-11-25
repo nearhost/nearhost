@@ -42,57 +42,93 @@ const (
 
 // Codes of commands, the core and the platform.
 const (
-	CLIUsage                 Code = "cli.usage"
-	PortNeedsPermission      Code = "port.needs-permission"
-	PortInUse                Code = "port.in-use"
-	CoreAlreadyRunning       Code = "core.already-running"
-	CoreNotRunning           Code = "core.not-running"
-	CoreStoppedWhileStarting Code = "core.stopped-while-starting"
-	CoreStillStarting        Code = "core.still-starting"
-	CoreLost                 Code = "core.lost"
-	CoreAPIMismatch          Code = "core.api-mismatch"
-	CoreOtherConfig          Code = "core.other-config"
-	HostsNeedsUpdate         Code = "hosts.needs-update"
-	HostsReadOnly            Code = "hosts.read-only"
-	SSHUnreachable           Code = "ssh.unreachable"
-	SSHAuthFailed            Code = "ssh.auth-failed"
-	SSHSocketPathTooLong     Code = "ssh.socket-path-too-long"
-	SSHConfigConflict        Code = "ssh.config-conflict"
-	SSHStaleMaster           Code = "ssh.stale-master"
-	ForwardFailed            Code = "forward.failed"
-	ForwardReconnecting      Code = "forward.reconnecting"
-	DockerUnreachable        Code = "docker.unreachable"
-	DockerNetworksFailed     Code = "docker.networks-failed"
-	PassthroughClosed        Code = "passthrough.closed"
-	AgentsNotReady           Code = "agents.not-ready"
-	AgentsRefused            Code = "agents.refused"
-	AgentsPathTooLong        Code = "agents.path-too-long"
-	ConfigInvalid            Code = "config.invalid"
-	ConfigUnknownKeys        Code = "config.unknown-keys"
-	CAMoveFailed             Code = "ca.move-failed"
-	ServiceUnsupported       Code = "service.unsupported"
-	ServiceNoUserManager     Code = "service.no-user-manager"
-	ServiceCopy              Code = "service.copy"
-	ServiceAsRoot            Code = "service.as-root"
-	ServiceCannotBind        Code = "service.cannot-bind"
-	UpdateCheckFailed        Code = "update.check-failed"
-	UpdateAvailable          Code = "update.available"
-	InterfaceNoTerminal      Code = "interface.no-terminal"
-	CoreNothingToServe       Code = "core.nothing-to-serve"
-	CoreStopTimeout          Code = "core.stop-timeout"
-	CoreOutdated             Code = "core.outdated"
-	CoreNoReload             Code = "core.no-reload"
-	CoreLogUnavailable       Code = "core.log-unavailable"
-	CANotPrivate             Code = "ca.not-private"
-	TrustNoSudo              Code = "trust.no-sudo"
-	TrustNotRemoved          Code = "trust.not-removed"
-	TrustRemains             Code = "trust.remains"
-	ServiceStartFailed       Code = "service.start-failed"
-	ServiceOwnSettings       Code = "service.own-settings"
-	HostsHelperRefused       Code = "hosts.helper-refused"
-	UpdateFailed             Code = "update.failed"
-	DiscoveryIncomplete      Code = "discovery.incomplete"
-	DoctorChecksFailed       Code = "doctor.checks-failed"
+	CLIUsage                   Code = "cli.usage"
+	PortNeedsPermission        Code = "port.needs-permission"
+	PortInUse                  Code = "port.in-use"
+	CoreAlreadyRunning         Code = "core.already-running"
+	CoreNotRunning             Code = "core.not-running"
+	CoreStoppedWhileStarting   Code = "core.stopped-while-starting"
+	CoreStillStarting          Code = "core.still-starting"
+	CoreLost                   Code = "core.lost"
+	CoreAPIMismatch            Code = "core.api-mismatch"
+	CoreOtherConfig            Code = "core.other-config"
+	HostsNeedsUpdate           Code = "hosts.needs-update"
+	HostsReadOnly              Code = "hosts.read-only"
+	SSHUnreachable             Code = "ssh.unreachable"
+	SSHAuthFailed              Code = "ssh.auth-failed"
+	SSHSocketPathTooLong       Code = "ssh.socket-path-too-long"
+	SSHConfigConflict          Code = "ssh.config-conflict"
+	SSHStaleMaster             Code = "ssh.stale-master"
+	ForwardFailed              Code = "forward.failed"
+	ForwardReconnecting        Code = "forward.reconnecting"
+	DockerUnreachable          Code = "docker.unreachable"
+	DockerNetworksFailed       Code = "docker.networks-failed"
+	PassthroughClosed          Code = "passthrough.closed"
+	AgentsNotReady             Code = "agents.not-ready"
+	AgentsRefused              Code = "agents.refused"
+	AgentsPathTooLong          Code = "agents.path-too-long"
+	ConfigInvalid              Code = "config.invalid"
+	ConfigUnknownKeys          Code = "config.unknown-keys"
+	CAMoveFailed               Code = "ca.move-failed"
+	ServiceUnsupported         Code = "service.unsupported"
+	ServiceNoUserManager       Code = "service.no-user-manager"
+	ServiceCopy                Code = "service.copy"
+	ServiceAsRoot              Code = "service.as-root"
+	ServiceCannotBind          Code = "service.cannot-bind"
+	UpdateCheckFailed          Code = "update.check-failed"
+	UpdateAvailable            Code = "update.available"
+	InterfaceNoTerminal        Code = "interface.no-terminal"
+	CoreNothingToServe         Code = "core.nothing-to-serve"
+	CoreStopTimeout            Code = "core.stop-timeout"
+	CoreOutdated               Code = "core.outdated"
+	CoreNoReload               Code = "core.no-reload"
+	CoreLogUnavailable         Code = "core.log-unavailable"
+	CANotPrivate               Code = "ca.not-private"
+	TrustNoSudo                Code = "trust.no-sudo"
+	TrustNotRemoved            Code = "trust.not-removed"
+	TrustRemains               Code = "trust.remains"
+	ServiceStartFailed         Code = "service.start-failed"
+	ServiceOwnSettings         Code = "service.own-settings"
+	HostsHelperRefused         Code = "hosts.helper-refused"
+	UpdateFailed               Code = "update.failed"
+	DiscoveryIncomplete        Code = "discovery.incomplete"
+	DoctorChecksFailed         Code = "doctor.checks-failed"
+	InterfaceFlagsIgnored      Code = "interface.flags-ignored"
+	InterfacePasswordCancelled Code = "interface.password-cancelled"
+	InterfacePromptDeclined    Code = "interface.prompt-declined"
+	InterfaceLogMissed         Code = "interface.log-missed"
+	ServiceUnreadable          Code = "service.unreadable"
+	ServiceManagerFailed       Code = "service.manager-failed"
+	ServiceNodeVersion         Code = "service.node-version"
+	ServiceAgentUnset          Code = "service.ssh-agent-unset"
+	ServiceAgentChanges        Code = "service.ssh-agent-changes"
+	AddLonePort                Code = "add.lone-port"
+	AddNoWebPort               Code = "add.no-web-port"
+	AddBadName                 Code = "add.bad-name"
+	AddAliasTaken              Code = "add.alias-taken"
+	AddServerChanged           Code = "add.server-changed"
+	AddUnknownServer           Code = "add.unknown-server"
+	AddNeedsApproval           Code = "add.needs-approval"
+	AddHostTaken               Code = "add.host-taken"
+	AddBadConfig               Code = "add.bad-config"
+	PresetRegistryUnreadable   Code = "preset.registry-unreadable"
+	PresetNotUpdated           Code = "preset.not-updated"
+	PresetNotEnabled           Code = "preset.not-enabled"
+	PresetUnknown              Code = "preset.unknown"
+	PresetLocalFile            Code = "preset.local-file"
+	PresetRegistryUnknown      Code = "preset.registry-unknown"
+	PresetRegistryNotTrusted   Code = "preset.registry-not-trusted"
+	PresetUpdatesFailed        Code = "preset.updates-failed"
+	PresetRegistryInUse        Code = "preset.registry-in-use"
+	ExportExists               Code = "export.exists"
+	ExportChanged              Code = "export.changed"
+	ExportNoProject            Code = "export.no-project"
+	ExportReplacedPending      Code = "export.replaced-pending"
+	HostsCoreNotTold           Code = "hosts.core-not-told"
+	DocumentsOpenFailed        Code = "documents.open-failed"
+	AgentsUnavailable          Code = "agents.unavailable"
+	AgentsApprovalWaiting      Code = "agents.approval-waiting"
+	AgentsGrantsPruned         Code = "agents.grants-pruned"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -182,6 +218,42 @@ var catalog = []Entry{
 	{UpdateFailed, Error, 500, "The update ran, but the installed nearhost is not the new release."},
 	{DiscoveryIncomplete, Warning, 0, "Something discovery reads, such as a preset or a project file, could not be read, so it went on without it."},
 	{DoctorChecksFailed, Error, 409, "One or more of nearhost doctor's checks failed."},
+	{InterfaceFlagsIgnored, Info, 0, "Serve flags given to the interface do nothing to the Nearhost already running, which keeps its settings."},
+	{InterfacePasswordCancelled, Error, 403, "The password was cancelled, so what needed it was not done."},
+	{InterfacePromptDeclined, Error, 403, "The Windows prompt was declined, so what needed it was not done."},
+	{InterfaceLogMissed, Info, 0, "The interface fell behind the running Nearhost, so some log lines were missed."},
+	{ServiceUnreadable, Warning, 0, "The installed service's definition cannot be read, as one edited by hand, so it is removed as it is."},
+	{ServiceManagerFailed, Error, 502, "The system's service manager refused to install, start or remove the Nearhost service."},
+	{ServiceNodeVersion, Info, 0, "The service runs nearhost from a Node version's folder, so changing the default Node version needs a new install."},
+	{ServiceAgentUnset, Info, 0, "SSH_AUTH_SOCK is not set, so the service uses the agent the login session provides."},
+	{ServiceAgentChanges, Warning, 0, "SSH_AUTH_SOCK points at an agent socket that changes at each login, so the service cannot use it."},
+	{AddLonePort, Warning, 0, "Discovery found one port only, so nearhost add made it the web route."},
+	{AddNoWebPort, Error, 400, "nearhost add could not tell which port serves the project, so nothing was saved."},
+	{AddBadName, Error, 400, "The project's name holds characters a .test name cannot use."},
+	{AddAliasTaken, Error, 409, "The name the project asks to be served at is already another project's."},
+	{AddServerChanged, Error, 409, "The server was added meanwhile and is reached another way, so nothing was saved."},
+	{AddUnknownServer, Error, 404, "The server named is not in the config."},
+	{AddNeedsApproval, Error, 409, "The project asks for things that need approval, and there is nobody to ask."},
+	{AddHostTaken, Info, 0, "A name the project would be served at is already another project's, so it is left out."},
+	{AddBadConfig, Error, 400, "The config file cannot be read, so nothing is added to it."},
+	{PresetRegistryUnreadable, Warning, 0, "A trusted registry of presets cannot be read, so its presets are left out."},
+	{PresetNotUpdated, Warning, 0, "A preset could not be updated from its registry."},
+	{PresetNotEnabled, Error, 404, "The preset named is not enabled."},
+	{PresetUnknown, Error, 404, "No preset or registry has the name given."},
+	{PresetLocalFile, Error, 409, "The preset is a local file, so there is no registry to update it from."},
+	{PresetRegistryUnknown, Error, 404, "No registry is trusted under the name given."},
+	{PresetRegistryNotTrusted, Error, 502, "A registry's index could not be fetched or checked, so it was not trusted and nothing was saved."},
+	{PresetUpdatesFailed, Error, 502, "Some of the presets asked for could not be updated from their registries."},
+	{PresetRegistryInUse, Error, 409, "Presets from the registry are enabled, so it cannot be removed."},
+	{ExportExists, Error, 409, "The project already has a .nearhostrc, and export does not replace one unasked."},
+	{ExportChanged, Error, 409, "The project changed while it was exported, so the file written is not approved."},
+	{ExportNoProject, Error, 404, "No Nearhost project contains the folder, or none has the name given."},
+	{ExportReplacedPending, Info, 0, "The .nearhostrc change that waited for approval was replaced with what is served now."},
+	{HostsCoreNotTold, Warning, 0, "The hosts file is updated, but the running Nearhost could not be told."},
+	{DocumentsOpenFailed, Warning, 0, "A document could not be opened in the browser; its address still works."},
+	{AgentsUnavailable, Warning, 0, "Coding agents on a server cannot reach Nearhost."},
+	{AgentsApprovalWaiting, Info, 0, "A coding agent asks for something that waits for approval in the interface."},
+	{AgentsGrantsPruned, Info, 0, "Grants of projects that are gone were removed."},
 
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},

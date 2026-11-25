@@ -19,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/tui"
 )
 
@@ -82,15 +83,15 @@ func runRootSplit(t *testing.T, root *cobra.Command, args ...string) (stdout, st
 
 func TestBareNearhostWithoutATerminalSaysToUseDetachOrUp(t *testing.T) {
 	for _, tc := range []struct{ goos, want string }{
-		{"linux", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one.\n"},
-		{"darwin", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one.\n"},
-		{"windows", "nearhost needs a terminal for its interface. Use nearhost -d to serve in the background, or nearhost up to serve without one. In Git Bash, run it through winpty or use Windows Terminal.\n"},
+		{"linux", "The interface needs a terminal, and there is none here.\n\nRun it in the background:\n\n  nearhost -d\n\nOr serve without the interface:\n\n  nearhost up\n"},
+		{"darwin", "The interface needs a terminal, and there is none here.\n\nRun it in the background:\n\n  nearhost -d\n\nOr serve without the interface:\n\n  nearhost up\n"},
+		{"windows", "The interface needs a terminal, and there is none here.\n\nIn Git Bash, run it through winpty or use Windows Terminal.\n\nRun it in the background:\n\n  nearhost -d\n\nOr serve without the interface:\n\n  nearhost up\n"},
 	} {
 		t.Run(tc.goos, func(t *testing.T) {
 			setHostOS(t, tc.goos)
 			ran := false
 			stdout, stderr, code := runRootSplit(t, uiRoot(fakeUI(t, false, &ran)))
-			if code != 1 || ran || stdout != "" || flat(stderr) != flat("Error: "+tc.want) {
+			if code != 1 || ran || stdout != "" || stderr != "Error: "+tc.want {
 				t.Fatalf("code %d, ran %v, stdout %q, stderr %q, want stderr %q", code, ran, stdout, stderr, tc.want)
 			}
 		})
@@ -164,7 +165,7 @@ func TestHostsThroughAsksOnlyWhenTheBlockChanges(t *testing.T) {
 	}
 	// A password cancelled says what was not done.
 	cancelled := hostsThrough((&fakeRoot{needed: true, askErr: tui.ErrPasswordCancelled}).root(), path, applier)
-	if err := cancelled(context.Background(), []string{"c.test"}, []string{"c.test"}); err == nil || err.Error() != "you cancelled the password, so c.test was not added to "+path {
+	if err := cancelled(context.Background(), []string{"c.test"}, []string{"c.test"}); err == nil || err.Error() != "You cancelled the password, so c.test was not added to "+path+"." {
 		t.Errorf("cancelled = %v", err)
 	}
 }
@@ -210,8 +211,8 @@ func TestHostsThroughSaysTheUserDeclined(t *testing.T) {
 	}
 	ensure := hostsThrough(f.root(), path, applier)
 	err := ensure(context.Background(), []string{"a.test"}, []string{"a.test"})
-	want := "you declined the Windows prompt, so a.test was not added to " + path
-	if err == nil || err.Error() != want {
+	want := "You declined the Windows prompt, so a.test was not added to " + path + "."
+	if m, ok := report.As(err); !ok || m.Code != report.InterfacePromptDeclined || err.Error() != want {
 		t.Fatalf("err %v, want %q", err, want)
 	}
 }

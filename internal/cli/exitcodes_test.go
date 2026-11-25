@@ -51,7 +51,7 @@ func TestExitCodesUnchanged(t *testing.T) {
 		{"update --check failure", func(t *testing.T) error {
 			_, err := runUpdate(t, &fakeUpdate{err: errors.New("offline")}, "0.5.0", "", "--check")
 			return err
-		}, updateCheckFailedCode, "Error: offline\n"},
+		}, updateCheckFailedCode, "Error: Nearhost could not find out whether a newer release is out.\n\noffline\n"},
 		{"a plain error", func(*testing.T) error { return errors.New("boom") }, 1, "Error: boom\n"},
 		{"already said", func(*testing.T) error { return alreadySaid{errors.New("boom")} }, 1, ""},
 	} {

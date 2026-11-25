@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Runner runs a command and returns its combined output. It is the only way
@@ -38,7 +40,10 @@ type Manager interface {
 
 // ErrNoUserManager is returned on Linux when systemctl --user cannot reach a
 // user manager, as in a container or a session without one.
-var ErrNoUserManager = errors.New("this system has no systemd user manager (systemctl --user does not answer), so Nearhost cannot be a service here. Run nearhost -d from your shell's startup instead.")
+// It is a service.no-user-manager message; errors.Is finds it.
+var ErrNoUserManager error = report.Errorf(report.ServiceNoUserManager, "This system has no systemd user manager, so Nearhost cannot be a service here.").
+	Because("systemctl --user does not answer, as in a container or a session without one.").
+	Step("Start Nearhost from your shell's startup instead:", "nearhost -d")
 
 // ErrUnreadable is what Installed's error wraps when a service is installed
 // but its definition cannot be parsed, as one edited by hand. Such a service

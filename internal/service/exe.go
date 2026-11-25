@@ -1,43 +1,47 @@
 package service
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
+// copyError is the service.copy error of a copy of nearhost that was made
+// how, which will not be there at the next login.
 func copyError(how string) error {
-	return errors.New("This copy of nearhost was " + how + ", so a service could not start it later. " +
-		"Install nearhost (https://nearhost.dev/docs/install/), then run nearhost service install from that copy.")
+	return report.Errorf(report.ServiceCopy, "A service cannot run this copy of nearhost.").
+		Because("This copy was %s, so it will not be there at the next login.", how).
+		Step("Install nearhost as https://nearhost.dev/docs/install/ says, then from that copy run:", "nearhost service install")
 }
 
 // ServiceExe returns the path the service should run for the running
-// binary exe, and a note for the user ("" for none). It refuses a copy that
-// will not be there at the next login.
-func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(string) (string, error)) (path, note string, err error) {
+// binary exe, and a notice for the user (nil for none). It refuses a copy
+// that will not be there at the next login with a service.copy message.
+func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(string) (string, error)) (path string, note *report.Message, err error) {
 	slashed := strings.ReplaceAll(exe, `\`, "/")
 	kind := update.DetectOn(goos, exe, getenv).Kind
 	if kind == update.Ephemeral {
-		return "", "", copyError("fetched by npx, bunx or pnpm dlx for one run")
+		return "", nil, copyError("fetched by npx, bunx or pnpm dlx for one run")
 	}
 	if inGoBuild(slashed) {
-		return "", "", copyError("built by go run")
+		return "", nil, copyError("built by go run")
 	}
 	if kind == update.Homebrew {
 		if p, e := lookPath("nearhost"); e == nil && sameFile(p, exe) {
-			return p, "", nil
+			return p, nil, nil
 		}
-		return "", "", errors.New("This copy is inside Homebrew's versioned folder, which the next upgrade removes. " +
-			"Run nearhost service install as plain nearhost from Homebrew's bin folder.")
+		return "", nil, report.Errorf(report.ServiceCopy, "A service cannot run this copy of nearhost.").
+			Because("This copy is inside Homebrew's versioned folder, which the next upgrade removes.").
+			Step("Run it as plain nearhost from Homebrew's bin folder:", "nearhost service install")
 	}
 	if after, ok := cutPath(goos, slashed, nodeVersions(getenv)); ok {
 		v, _, _ := strings.Cut(after, "/")
-		return exe, "The service runs nearhost from Node " + v + "'s folder. " +
-			"If you change your default Node version, run nearhost service install again.", nil
+		return exe, report.Notef(report.ServiceNodeVersion, "The service runs nearhost from Node %s's folder.", v).
+			Step("If you change your default Node version, install the service again:", "nearhost service install"), nil
 	}
-	return exe, "", nil
+	return exe, nil, nil
 }
 
 // nodeVersions is the slash-separated part of a path that nvm keeps Node's

@@ -18,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/preset"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -299,8 +300,8 @@ func withoutHosts(routes []config.Route) []config.Route {
 // holds the hosts discovery gave, lower-cased; a host typed or from the
 // .nearhostrc is not in it, so a clash there stays an error on save. A route
 // other than the primary left without hosts is ignored.
-func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string]bool) ([]config.Route, []string) {
-	var notes []string
+func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string]bool) ([]config.Route, []*report.Message) {
+	var notes []*report.Message
 	out := make([]config.Route, len(p.Routes))
 	primary := true
 	for i, r := range p.Routes {
@@ -319,11 +320,11 @@ func withoutTakenHosts(cfg *config.Config, p config.Project, inferred map[string
 			if other, otherHost, ok := cfg.ClaimedBy(p.Name, h); ok {
 				switch {
 				case strings.EqualFold(h, otherHost):
-					notes = append(notes, fmt.Sprintf("Not serving %s: project %q already serves it.", h, other))
+					notes = append(notes, report.Notef(report.AddHostTaken, "Not serving %s: project %q already serves it.", h, other))
 				case hostname.IsPattern(h):
-					notes = append(notes, fmt.Sprintf("Not serving %s: it covers %s, which project %q serves.", h, otherHost, other))
+					notes = append(notes, report.Notef(report.AddHostTaken, "Not serving %s: it covers %s, which project %q serves.", h, otherHost, other))
 				default:
-					notes = append(notes, fmt.Sprintf("Not serving %s: it falls under %s, which project %q serves.", h, otherHost, other))
+					notes = append(notes, report.Notef(report.AddHostTaken, "Not serving %s: it falls under %s, which project %q serves.", h, otherHost, other))
 				}
 				continue
 			}

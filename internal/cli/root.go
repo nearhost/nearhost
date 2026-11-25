@@ -266,8 +266,8 @@ func Main(args []string) int {
 	root.SetArgs(args)
 	verbose := func() bool { v, _ := root.PersistentFlags().GetBool("verbose"); return v }
 	code := exitCodeVerbose(root.Execute(), os.Stderr, verbose())
-	if n := updates.notice(updateGrace); n != "" {
-		rterm.Render(os.Stderr, report.Notef(report.UpdateAvailable, "%s", n), rterm.For(os.Stderr, verbose()))
+	if n := updates.notice(updateGrace); n != nil {
+		rterm.Render(os.Stderr, n, rterm.For(os.Stderr, verbose()))
 	}
 	return code
 }

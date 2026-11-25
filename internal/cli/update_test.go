@@ -655,7 +655,7 @@ func TestUpdateRunFailure(t *testing.T) {
 func TestUpdateLinuxRemindsSetcap(t *testing.T) {
 	nodeArch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
 	const pnpmStore = "/home/me/.local/share/pnpm/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost"
-	const setcap = "Let the new binary bind ports 80 and 443 again:\n\n  sudo setcap cap_net_bind_service=+ep "
+	const setcap = setcapWarning + "sudo setcap cap_net_bind_service=+ep "
 	shellShim := "#!/bin/sh\nexec node \"$basedir/global/5/.pnpm/@nearhost+cli@0.6.0/node_modules/@nearhost/cli/bin/nearhost.js\" \"$@\"\n"
 	for _, tc := range []struct {
 		name string
@@ -835,22 +835,22 @@ func TestShouldCheckForUpdate(t *testing.T) {
 func TestBackgroundCheckNotice(t *testing.T) {
 	c := startBackgroundCheck("0.5.0", func(context.Context) (string, error) { return "0.6.0", nil })
 	<-c.done
-	if got := c.notice(0); !strings.Contains(got, "0.5.0 → 0.6.0") || !strings.Contains(got, "nearhost update") {
+	if got := noticeText(c.notice(0)); !strings.Contains(got, "0.5.0 → 0.6.0") || !strings.Contains(got, "nearhost update") {
 		t.Fatalf("notice %q", got)
 	}
 	c = startBackgroundCheck("0.6.0", func(context.Context) (string, error) { return "0.6.0", nil })
 	<-c.done
-	if got := c.notice(0); got != "" {
+	if got := c.notice(0); got != nil {
 		t.Fatalf("up to date, but notice %q", got)
 	}
 	block := make(chan struct{})
 	defer close(block)
 	c = startBackgroundCheck("0.5.0", func(context.Context) (string, error) { <-block; return "0.6.0", nil })
-	if got := c.notice(0); got != "" {
+	if got := c.notice(0); got != nil {
 		t.Fatalf("an unfinished check gave notice %q", got)
 	}
 	var nilCheck *backgroundCheck
-	if nilCheck.notice(0) != "" {
+	if nilCheck.notice(0) != nil {
 		t.Fatal("nil check gave a notice")
 	}
 }
@@ -866,7 +866,7 @@ func TestColdCheckFinishesWithinTheGrace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update.json")
 	checker := update.Checker{URL: srv.URL, CachePath: path, HTTP: backgroundHTTP(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	c := startBackgroundCheck("0.5.0", checker.Cached)
-	if got := c.notice(updateGrace); got == "" {
+	if got := c.notice(updateGrace); got == nil {
 		t.Fatal("a check finishing within the grace gave no notice")
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -931,7 +931,7 @@ func TestBackgroundNoticeAlongThePrereleaseLine(t *testing.T) {
 	} {
 		tc := tc
 		c := startBackgroundCheck(tc.current, func(context.Context) (string, error) { return tc.latest, nil })
-		got := c.notice(time.Second) != ""
+		got := c.notice(time.Second) != nil
 		if got != tc.want {
 			t.Errorf("notice for %s -> %s = %v, want %v", tc.current, tc.latest, got, tc.want)
 		}
@@ -968,7 +968,7 @@ func TestWindowsPrereleaseBuildIsNotOfferedAReleaseWithoutAWindowsBuild(t *testi
 	}
 
 	c := startBackgroundCheck("0.13.0-rc.1", checker.Latest)
-	if got, want := c.notice(time.Second), "A new nearhost is available: 0.13.0-rc.1 → 0.13.0-rc.2. Run `nearhost update` to update."; got != want {
+	if got, want := noticeText(c.notice(time.Second)), "Note: A new nearhost is available: 0.13.0-rc.1 → 0.13.0-rc.2. Update it: nearhost update"; got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}
 }
@@ -1250,7 +1250,7 @@ func TestUpdateCheckExitCodes(t *testing.T) {
 			t.Fatalf("code %d, want 2", code)
 		}
 		// Main renders the failure, once.
-		if stderr != "Error: offline\n" || strings.Count(out, "offline") != 1 {
+		if stderr != "Error: Nearhost could not find out whether a newer release is out.\n\noffline\n" || strings.Count(out, "offline") != 1 {
 			t.Fatalf("out %q, stderr %q", out, stderr)
 		}
 	})
