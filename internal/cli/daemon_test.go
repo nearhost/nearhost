@@ -249,8 +249,9 @@ func TestDaemonRefusesASecondCore(t *testing.T) {
 		t.Fatalf("the second daemon returned %v", err)
 	}
 	// It says how to stop the other, which runs in the background.
-	if m, ok := report.As(err); !ok || m.Code != report.CoreAlreadyRunning || len(m.Fix) != 1 ||
-		m.Fix[0].Text != "Stop it with `nearhost stop`, or see it with `nearhost status`." || strings.Contains(err.Error(), "Stop it first") {
+	if m, ok := report.As(err); !ok || m.Code != report.CoreAlreadyRunning || len(m.Fix) != 2 ||
+		m.Fix[0] != (report.Step{Text: "Stop it:", Command: "nearhost stop"}) ||
+		m.Fix[1] != (report.Step{Text: "Or see what it serves:", Command: "nearhost status"}) || strings.Contains(err.Error(), "Stop it first") {
 		t.Errorf("the refusal reads %q, with the message %+v", err, m)
 	}
 	if code := exitCode(err, io.Discard); code != 1 {
@@ -649,7 +650,7 @@ func TestDaemonLogsAMessageBlockOnce(t *testing.T) {
 			t.Errorf("%s: the log has %d blocks for the refusal:\n%s", by, n, log)
 		}
 		// The block's step, indented under its stamped first line.
-		if !regexp.MustCompile(`(?m)^\S+ error \[core\.already-running\] Another Nearhost is already running \(pid \d+\)\.\n\S+   Stop it with ` + "`nearhost stop`").MatchString(log) {
+		if !regexp.MustCompile(`(?m)^\S+ error \[core\.already-running\] Another Nearhost is already running \(pid \d+\)\.\n\S+   Fix: nearhost stop\n\S+   Fix: nearhost status\n`).MatchString(log) {
 			t.Errorf("%s: the block is not as expected:\n%s", by, log)
 		}
 		if strings.Contains(log, "nearhost: ") {
@@ -663,7 +664,7 @@ func TestDaemonLogsAMessageBlockOnce(t *testing.T) {
 				t.Errorf("detached: exit %d, Main printed %q", code, stderr.String())
 			}
 		default:
-			if code != 1 || !regexp.MustCompile(`^Error: Another Nearhost is already running \(pid \d+\)\.\n\nStop it with`).MatchString(stderr.String()) {
+			if code != 1 || !regexp.MustCompile(`^Error: Another Nearhost is already running \(pid \d+\)\.\n\nStop it:\n`).MatchString(stderr.String()) {
 				t.Errorf("foreground: exit %d, Main printed %q", code, stderr.String())
 			}
 		}

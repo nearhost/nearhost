@@ -142,9 +142,9 @@ func TestInstanceErrorIsAMessage(t *testing.T) {
 	if want := fmt.Sprintf("Another Nearhost is already running (pid %d).", os.Getpid()); m.Title != want {
 		t.Errorf("title = %q, want %q", m.Title, want)
 	}
-	step := "Stop it with `nearhost stop`, or see it with `nearhost status`."
-	if len(m.Fix) != 1 || m.Fix[0].Text != step {
-		t.Errorf("fix = %+v, want the step %q", m.Fix, step)
+	want := []report.Step{{Text: "Stop it:", Command: "nearhost stop"}, {Text: "Or see what it serves:", Command: "nearhost status"}}
+	if !slices.Equal(m.Fix, want) {
+		t.Errorf("fix = %+v, want %+v", m.Fix, want)
 	}
 	if m.Data["pid"] != os.Getpid() {
 		t.Errorf(`Data["pid"] = %v, want %d`, m.Data["pid"], os.Getpid())
