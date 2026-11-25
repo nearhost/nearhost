@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	networkDocs   = "nearhost.dev/docs/other-devices/"
-	certTimeout   = 3 * time.Second
+	networkDocs = "nearhost.dev/docs/other-devices/"
+	certTimeout = 3 * time.Second
 )
 
 // checkNetwork reports what networked mode needs: the DNS token (acme only),
