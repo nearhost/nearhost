@@ -19,7 +19,8 @@ import (
 type Crashes struct {
 	mu    sync.Mutex
 	first *report.Message
-	p     atomic.Pointer[tea.Program]
+	// send gives a message to the attached program; nil until Attach.
+	send atomic.Pointer[func(tea.Msg)]
 }
 
 // crashedMsg ends the program after a crash.
@@ -31,8 +32,8 @@ func (c *Crashes) Report(m *report.Message) {
 	if m == nil || m.Code != report.Crash || !c.keep(m) {
 		return
 	}
-	if p := c.p.Load(); p != nil {
-		go p.Send(crashedMsg{m}) // Send returns at once once the program has ended
+	if send := c.send.Load(); send != nil {
+		go (*send)(crashedMsg{m}) // Send returns at once once the program has ended
 	}
 }
 
@@ -48,10 +49,14 @@ func (c *Crashes) keep(m *report.Message) bool {
 }
 
 // Attach makes a crash end p, one that came before it included.
-func (c *Crashes) Attach(p *tea.Program) {
-	c.p.Store(p)
-	if c.Crash() != nil {
-		go p.Send(crashedMsg{c.Crash()})
+func (c *Crashes) Attach(p *tea.Program) { c.attach(p.Send) }
+
+// attach makes a crash go to send, as a crashedMsg, one that came before
+// it included.
+func (c *Crashes) attach(send func(tea.Msg)) {
+	c.send.Store(&send)
+	if m := c.Crash(); m != nil {
+		go send(crashedMsg{m})
 	}
 }
 
