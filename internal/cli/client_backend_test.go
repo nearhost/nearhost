@@ -23,6 +23,8 @@ import (
 // the test sets, records each action it is asked for, and can hold the
 // state back until the test lets it go.
 type mirrorCore struct {
+	// The pairing actions are not mirrored.
+	control.UnimplementedActions
 	mu      sync.Mutex
 	st      control.State
 	hold    chan struct{} // State waits for it to close while it is set

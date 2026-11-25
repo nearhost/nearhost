@@ -11,6 +11,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/devices"
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
@@ -33,6 +34,8 @@ type coreOps struct {
 	// path is the config file.
 	path      string
 	httpsPort int
+	// devices holds the paired devices; nil while the page is not served.
+	devices *devices.Store
 	// reload lets one Apply run at a time, the watcher's included.
 	reload sync.Mutex
 	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it

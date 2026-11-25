@@ -165,9 +165,21 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 	if len(st.Projects) == 0 {
 		fmt.Fprintln(w, "No projects are being served. Enable one in the config, or add one with `nearhost add <path>`.")
 	} else {
-		rows := [][]string{{"PROJECT", "STATE", "URL", "MESSAGE"}}
+		// The network address has a column only when a project has one.
+		networked := false
 		for _, p := range st.Projects {
-			rows = append(rows, []string{printable(p.Name), printable(p.State), printable(p.URL), printable(p.Message)})
+			networked = networked || p.NetworkURL != ""
+		}
+		rows := [][]string{{"PROJECT", "STATE", "URL", "MESSAGE"}}
+		if networked {
+			rows = [][]string{{"PROJECT", "STATE", "URL", "NETWORK", "MESSAGE"}}
+		}
+		for _, p := range st.Projects {
+			row := []string{printable(p.Name), printable(p.State), printable(p.URL), printable(p.Message)}
+			if networked {
+				row = []string{printable(p.Name), printable(p.State), printable(p.URL), printable(p.NetworkURL), printable(p.Message)}
+			}
+			rows = append(rows, row)
 		}
 		if err := writeTable(w, rows); err != nil {
 			return err
@@ -193,7 +205,32 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 		}
 		fmt.Fprintf(w, "\nPage: %s\n", printable(page))
 	}
+	if n := st.Network; n != nil {
+		fmt.Fprintf(w, "%s\n", networkLine(n))
+	}
 	return w.err
+}
+
+// networkLine is the line that says how the core serves to the network. A
+// problem is the core's own word for why it serves less than the config
+// asks, and it is shown whatever else is known, as it is the newer.
+func networkLine(n *control.NetworkInfo) string {
+	if n.URL == "" && n.Certificates == "" {
+		return "Network: off (" + printable(n.Problem) + ")"
+	}
+	where := printable(n.URL)
+	if where == "" {
+		where = "not served"
+	}
+	cert := map[string]string{"acme": "Let's Encrypt", "ca": "local CA"}[n.Certificates]
+	if cert == "" {
+		cert = printable(n.Certificates)
+	}
+	line := "Network: " + where + " (" + cert + ")"
+	if n.Problem != "" {
+		line += " (warning: " + printable(n.Problem) + ")"
+	}
+	return line
 }
 
 // stickyWriter writes to w until a write fails, then keeps that error and

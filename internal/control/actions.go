@@ -30,6 +30,37 @@ var ErrNotFound = errors.New("not found")
 // The server answers it with 501.
 var ErrUnimplemented = errors.New("this Nearhost cannot do that yet")
 
+// ErrNetworkOff is what asking to pair gives on a core that is not serving to
+// the network.
+var ErrNetworkOff = errors.New("Networked mode is off, so no device can pair.")
+
+// ErrDeviceUnknown is what revoking a device that is not paired gives.
+var ErrDeviceUnknown = errors.New("No paired device has that name.")
+
+// PairInfo is a pairing code the core gave, with the address a device opens
+// to use it.
+type PairInfo struct {
+	Code    string    `json:"code"`
+	URL     string    `json:"url"`
+	Expires time.Time `json:"expires"`
+}
+
+// PairState is what became of a pairing code.
+type PairState struct {
+	// Device is the name of the device that paired with it.
+	Device  string `json:"device"`
+	Paired  bool   `json:"paired"`
+	Expired bool   `json:"expired"`
+}
+
+// DeviceInfo is one paired device.
+type DeviceInfo struct {
+	Name     string    `json:"name"`
+	Paired   time.Time `json:"paired"`
+	LastSeen time.Time `json:"last_seen"`
+	LastAddr string    `json:"last_addr"`
+}
+
 // ErrNoRoute is what asking the core for something it has no route for gives:
 // it is running from an older release.
 var ErrNoRoute = errors.New("the running Nearhost does not answer this; it is an older release")
@@ -74,6 +105,15 @@ type Actions interface {
 	// Environment looks, when asked, at what the core can reach: opening
 	// links, the SSH agent, Docker and ssh.
 	Environment(ctx context.Context) ([]EnvCheck, error)
+	// Pair gives a new pairing code. It returns ErrNetworkOff when the core
+	// does not serve to the network.
+	Pair() (PairInfo, error)
+	// PairStatus says what became of a pairing code.
+	PairStatus(code string) (PairState, error)
+	// Devices lists the paired devices.
+	Devices() ([]DeviceInfo, error)
+	// RevokeDevice unpairs a device, or returns ErrDeviceUnknown.
+	RevokeDevice(name string) error
 }
 
 // UnimplementedActions is an Actions that can do none of them: each action
@@ -121,6 +161,13 @@ func (UnimplementedActions) PageKeyURL() (string, error) { return "", ErrUnimple
 func (UnimplementedActions) Environment(context.Context) ([]EnvCheck, error) {
 	return nil, ErrUnimplemented
 }
+
+func (UnimplementedActions) Pair() (PairInfo, error) { return PairInfo{}, ErrUnimplemented }
+func (UnimplementedActions) PairStatus(string) (PairState, error) {
+	return PairState{}, ErrUnimplemented
+}
+func (UnimplementedActions) Devices() ([]DeviceInfo, error) { return nil, ErrUnimplemented }
+func (UnimplementedActions) RevokeDevice(string) error      { return ErrUnimplemented }
 
 // maxActionBody is the longest request body an action route reads.
 const maxActionBody = 64 << 10
@@ -301,6 +348,36 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		reply(w, http.StatusOK, checks)
 	})
+	post("/v1/pair", func(w http.ResponseWriter, r *http.Request) {
+		info, err := b.Pair()
+		if err != nil {
+			failAction(w, err)
+			return
+		}
+		reply(w, http.StatusCreated, info)
+	})
+	mux.HandleFunc("GET /v1/pair/{code}", func(w http.ResponseWriter, r *http.Request) {
+		st, err := b.PairStatus(r.PathValue("code"))
+		if err != nil {
+			failAction(w, err)
+			return
+		}
+		reply(w, http.StatusOK, st)
+	})
+	mux.HandleFunc("GET /v1/devices", func(w http.ResponseWriter, r *http.Request) {
+		list, err := b.Devices()
+		if err != nil {
+			failAction(w, err)
+			return
+		}
+		if list == nil {
+			list = []DeviceInfo{}
+		}
+		reply(w, http.StatusOK, list)
+	})
+	mux.HandleFunc("DELETE /v1/devices/{name}", noContent(func(r *http.Request) error {
+		return b.RevokeDevice(r.PathValue("name"))
+	}))
 	mux.HandleFunc("GET /v1/page", func(w http.ResponseWriter, r *http.Request) {
 		u, err := b.PageKeyURL()
 		if err != nil {
@@ -340,6 +417,16 @@ func failAction(w http.ResponseWriter, err error) {
 		status, ext["ended"] = http.StatusConflict, true
 		if plain {
 			m.Code = report.ControlRequestEnded
+		}
+	case errors.Is(err, ErrNetworkOff):
+		status = http.StatusConflict
+		if plain {
+			m.Code = report.NetworkOff
+		}
+	case errors.Is(err, ErrDeviceUnknown):
+		status = http.StatusNotFound
+		if plain {
+			m.Code = report.DeviceUnknown
 		}
 	case errors.Is(err, ErrNotFound):
 		// The client tells the core's not found by this code.
@@ -611,4 +698,31 @@ func (c *Client) Environment(ctx context.Context) ([]EnvCheck, error) {
 		return nil, ErrNoRoute
 	}
 	return out, err
+}
+
+// Pair asks the core for a pairing code. It returns an error with the code
+// network.off when the core does not serve to the network.
+func (c *Client) Pair(ctx context.Context) (PairInfo, error) {
+	var out PairInfo
+	err := c.act(ctx, "/v1/pair", nil, &out, false)
+	return out, err
+}
+
+// PairStatus asks what became of a pairing code.
+func (c *Client) PairStatus(ctx context.Context, code string) (PairState, error) {
+	var out PairState
+	err := c.actMethod(ctx, http.MethodGet, "/v1/pair/"+esc(code), nil, &out, false)
+	return out, err
+}
+
+// Devices lists the paired devices.
+func (c *Client) Devices(ctx context.Context) ([]DeviceInfo, error) {
+	var out []DeviceInfo
+	err := c.actMethod(ctx, http.MethodGet, "/v1/devices", nil, &out, false)
+	return out, err
+}
+
+// RevokeDevice unpairs a device.
+func (c *Client) RevokeDevice(ctx context.Context, name string) error {
+	return c.actMethod(ctx, http.MethodDelete, "/v1/devices/"+esc(name), nil, nil, false)
 }
