@@ -16,6 +16,14 @@ import (
 // device types it.
 func (o *coreOps) Pair() (control.PairInfo, error) {
 	ns := o.eng.NetworkState()
+	// A core that does not listen on the network gives no code a device
+	// could never use. A DNS token problem leaves it listening, with the
+	// local CA's certificates, so pairing goes on.
+	switch ns.ProblemKind {
+	case engine.NetworkNoFirewall, engine.NetworkApplyFailed:
+		return control.PairInfo{}, report.Errorf(report.NetworkNotListening, "Nearhost isn't serving to the network: %s.", ns.Problem).
+			Step("See what networked mode needs:", "nearhost doctor")
+	}
 	if !ns.On {
 		return control.PairInfo{}, control.ErrNetworkOff
 	}
@@ -37,14 +45,25 @@ func (o *coreOps) PairStatus(code string) (control.PairState, error) {
 
 // Devices lists the paired devices.
 func (o *coreOps) Devices() ([]control.DeviceInfo, error) {
-	if o.devices == nil {
-		return nil, nil
+	store, err := o.deviceStore()
+	if err != nil {
+		return nil, err
 	}
-	list, err := o.devices.List()
+	list, err := store.List()
 	if err != nil {
 		return nil, err
 	}
 	return deviceInfos(list), nil
+}
+
+// deviceStore is the core's open store, or, when it has none (its page is
+// not served, or the store couldn't be opened), devices.json read as the
+// CLI does with no core running.
+func (o *coreOps) deviceStore() (*devices.Store, error) {
+	if o.devices != nil {
+		return o.devices, nil
+	}
+	return offlineDevices()
 }
 
 // deviceInfos is list as the control API gives it.
@@ -58,10 +77,11 @@ func deviceInfos(list []devices.Device) []control.DeviceInfo {
 
 // RevokeDevice unpairs a device.
 func (o *coreOps) RevokeDevice(name string) error {
-	if o.devices == nil {
-		return control.ErrDeviceUnknown
+	store, err := o.deviceStore()
+	if err != nil {
+		return err
 	}
-	err := o.devices.Revoke(name)
+	err = store.Revoke(name)
 	if errors.Is(err, devices.ErrNoDevice) {
 		return control.ErrDeviceUnknown
 	}
