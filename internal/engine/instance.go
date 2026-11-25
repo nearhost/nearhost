@@ -35,13 +35,21 @@ func alreadyRunning(pid int) *report.Message {
 	if pid > 0 {
 		running += fmt.Sprintf(" (pid %d)", pid)
 	}
-	m := report.Errorf(report.CoreAlreadyRunning, "%s.", running).
-		Then("Stop it with `nearhost stop`, or see it with `nearhost status`.").
-		Wrap(ErrAlreadyRunning)
+	m := report.Errorf(report.CoreAlreadyRunning, "%s.", running).Wrap(ErrAlreadyRunning)
+	m.Fix = AlreadyRunningSteps()
 	if pid > 0 {
 		m.With("pid", pid)
 	}
 	return m
+}
+
+// AlreadyRunningSteps are what to do about the Nearhost in the way: stop
+// it, or see what it serves.
+func AlreadyRunningSteps() []report.Step {
+	return []report.Step{
+		{Text: "Stop it:", Command: "nearhost stop"},
+		{Text: "Or see what it serves:", Command: "nearhost status"},
+	}
 }
 
 // ErrAlreadyRunning is what Start's refusal matches, with errors.Is, when

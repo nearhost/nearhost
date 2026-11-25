@@ -365,7 +365,8 @@ func TestDoctorShowsTheSSHErrorVerbatimWithTheHint(t *testing.T) {
 		"                       ssh: second line\n"+
 		"      fix: Fix access by running ssh once in a terminal:\n"+
 		"             ssh mini.lan\n"+
-		"           Then run `nearhost doctor` again.\n")
+		"           Then run doctor again:\n"+
+		"             nearhost doctor\n")
 	if len(f.serverCalls) != 1 || f.serverCalls[0] != "mini.lan" {
 		t.Errorf("servers checked: %v", f.serverCalls)
 	}

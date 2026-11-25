@@ -240,8 +240,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
 		if errors.Is(err, control.ErrInUse) {
-			err = report.Errorf(report.CoreAlreadyRunning, "Another Nearhost answers on %s.", control.SocketPath(opts.RunDir)).
-				Then(stopAdvice).Wrap(err)
+			m := report.Errorf(report.CoreAlreadyRunning, "Another Nearhost answers on %s.", control.SocketPath(opts.RunDir)).Wrap(err)
+			m.Fix = engine.AlreadyRunningSteps()
+			err = m
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
@@ -348,9 +349,6 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	return nil
 }
-
-// stopAdvice is how to stop the Nearhost that is in the way, and see it.
-const stopAdvice = "Stop it with `nearhost stop`, or see it with `nearhost status`."
 
 // watchConfig applies the config file, which w watches, to the engine
 // through ops each time a change to it has settled, until ctx ends: one

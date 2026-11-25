@@ -691,9 +691,10 @@ func hostsProblem(name string, err error) error { return HostsProblem(name, err)
 // HostsProblem is why the hosts of the project called name could not be
 // made to resolve, err being the hosts file's refusal: the message err
 // holds, such as hosts.read-only, with its code and fix, or
-// hosts.needs-update. Either way its last steps say how to retry, unless
-// a step of err's runs HostsUpdateCommand, after which Nearhost starts the
-// project by itself; its title says only what happened. The interface's
+// hosts.needs-update. Either way a step says how to retry, after the fix
+// and before any alternative to it, unless a step of err's runs
+// HostsUpdateCommand, after which Nearhost starts the project by itself;
+// its title says only what happened. The interface's
 // own hosts fixer uses it too, so a refusal reads the same wherever it
 // happens.
 func HostsProblem(name string, err error) *report.Message {
@@ -703,14 +704,20 @@ func HostsProblem(name string, err error) *report.Message {
 		m = retitle(inner, text, report.Error)
 	} else {
 		m = report.Errorf(report.HostsNeedsUpdate, "%s", text).
-			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", "nearhost --no-hosts")
+			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", hosts.NoHostsCommand)
 		m.Fix = append([]report.Step{{Text: RetryText}}, m.Fix...)
 		return m.Wrap(err)
 	}
 	switch {
 	case slices.ContainsFunc(m.Fix, func(s report.Step) bool { return s.Command == HostsUpdateCommand }):
 	case len(m.Fix) > 0:
-		m.Then(RetryThenText)
+		// The retry follows what fixes the file, before an alternative
+		// ("Or serve without updating it"), which needs no retry.
+		at := slices.IndexFunc(m.Fix, func(s report.Step) bool { return strings.HasPrefix(s.Text, "Or ") })
+		if at <= 0 {
+			at = len(m.Fix)
+		}
+		m.Fix = slices.Insert(m.Fix, at, report.Step{Text: RetryThenText})
 	default:
 		m.Then(RetryText)
 	}

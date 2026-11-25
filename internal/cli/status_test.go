@@ -382,3 +382,30 @@ func TestStatusSaysOneUpdateNotice(t *testing.T) {
 		}
 	})
 }
+
+// Projects the core left stopped until the hosts file is updated have a
+// warning with the command that updates it, as a step: the table's message
+// says why, without the command.
+func TestStatusSaysHowToUpdateTheHostsFile(t *testing.T) {
+	waiting := hostsNotFixed("web", errHostsNeedTerminal)
+	st := control.Status{Projects: []control.ProjectInfo{
+		{Name: "web", State: "stopped", Message: waiting.Title, Problem: waiting},
+		{Name: "api", State: "running"},
+		{Name: "blog", State: "stopped", Message: waiting.Title, Problem: hostsNotFixed("blog", errHostsNeedTerminal)},
+	}}
+	var notes report.Collector
+	var out strings.Builder
+	if err := printStatus(&out, st, "", &notes); err != nil {
+		t.Fatal(err)
+	}
+	var got *report.Message
+	for _, m := range notes.Messages() {
+		if m.Code == report.HostsNeedsUpdate {
+			got = m
+		}
+	}
+	if got == nil || got.Level != report.Warning || got.Title != "web and blog wait for the hosts file to be updated." {
+		t.Fatalf("notes %+v", notes.Messages())
+	}
+	wantSteps(t, got, report.Step{Text: "Update it from a terminal, and Nearhost starts them:", Command: "nearhost hosts update"})
+}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/update"
@@ -171,6 +172,9 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 		if err := writeTable(w, rows); err != nil {
 			return err
 		}
+		if m := hostsWait(st.Projects); m != nil {
+			notes.Report(m)
+		}
 	}
 	if len(st.Approvals) > 0 {
 		fmt.Fprintf(w, "\nWaiting for your answer:\n")
@@ -229,4 +233,28 @@ func writeTable(w io.Writer, rows [][]string) error {
 		}
 	}
 	return nil
+}
+
+// hostsWait is a warning naming the projects the core left stopped until
+// the hosts file is updated, with the command that updates it, which the
+// table's messages leave out; nil when no project waits.
+// An older core, which sends no problem, says the command in its message,
+// so it gets no warning: hostsWait leaves the message out.
+func hostsWait(projects []control.ProjectInfo) *report.Message {
+	var names []string
+	for _, p := range projects {
+		if waitsForTerminal(engine.ProjectStatus{State: engine.State(p.State), Problem: p.Problem}) {
+			names = append(names, p.Name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return nil
+	case 1:
+		return report.Warnf(report.HostsNeedsUpdate, "%s waits for the hosts file to be updated.", names[0]).
+			Step("Update it from a terminal, and Nearhost starts it:", engine.HostsUpdateCommand)
+	}
+	list := strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	return report.Warnf(report.HostsNeedsUpdate, "%s wait for the hosts file to be updated.", list).
+		Step("Update it from a terminal, and Nearhost starts them:", engine.HostsUpdateCommand)
 }

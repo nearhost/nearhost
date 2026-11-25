@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -246,7 +248,7 @@ func TestTheCoreInTheBackgroundReloadsItsConfig(t *testing.T) {
 }
 
 // A core in the background never asks for a password: a project whose name
-// the hosts file lacks waits, saying to run `nearhost hosts update`. That
+// the hosts file lacks waits, with a step that runs `nearhost hosts update`. That
 // command, in a terminal, asks for the password, updates the file and tells
 // the core, which then serves the project.
 func TestHostsUpdateLetsTheCoreInTheBackgroundServe(t *testing.T) {
@@ -263,8 +265,8 @@ func TestHostsUpdateLetsTheCoreInTheBackgroundServe(t *testing.T) {
 	sb.startCore()
 
 	shop := sb.waitProject("shop", "stopped")
-	if !strings.Contains(shop.Message, "nearhost hosts update") {
-		t.Errorf("the stopped project says %q, want the command that fixes it", shop.Message)
+	if p := shop.Problem; p == nil || !slices.ContainsFunc(p.Fix, func(s report.Step) bool { return s.Command == "nearhost hosts update" }) {
+		t.Errorf("the stopped project's problem is %+v, want a step with the command that fixes it", p)
 	}
 	if got := sb.hostsFile(); got != untouched {
 		t.Errorf("the core changed the hosts file:\n%s", got)

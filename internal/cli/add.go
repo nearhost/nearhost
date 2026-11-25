@@ -1044,7 +1044,9 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 		}
 	} else {
 		if !path.IsAbs(projectPath) && projectPath != "~" && !strings.HasPrefix(projectPath, "~/") {
-			return fail("a project on a server needs its absolute path there, or one under ~/: nearhost add /path/on/server --server %s", srv.Name)
+			return config.Project{}, report.Errorf(report.AddRelativePath, "A project on a server needs its absolute path there, or one under ~/.").
+				Step("Add it with its path on the server:", "nearhost add /path/on/server --server "+shellQuote(srv.Name)).
+				With("path", projectPath)
 		}
 		projectPath = path.Clean(projectPath)
 		if name == "" {
@@ -1058,8 +1060,16 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			Because("It is %s on %s, in %s.", taken.other.Path, taken.other.Server, cfgPath).
 			Step("Add this one under another name:", again("--name", "<name>")).
 			With("project", name).Wrap(err)
+	case err != nil && flags.name != "":
+		return config.Project{}, report.Errorf(report.AddBadName, "The name %q is not one a project can have.", name).
+			Because("%s.", upperFirst(err.Error())).
+			Step("Pass another name:", again("--name", "<name>")).
+			With("name", name).Wrap(err)
 	case err != nil:
-		return fail("cannot name a project after %s; pass --name", projectPath)
+		return config.Project{}, report.Errorf(report.AddBadName, "Nearhost cannot name a project after %s.", projectPath).
+			Because("%s.", upperFirst(err.Error())).
+			Step("Pass a name for it:", again("--name", "<name>")).
+			With("path", projectPath).Wrap(err)
 	}
 	// The hosts file gets the alias without blanks around it; the config
 	// must hold the same, as the proxy serves the alias as configured.
@@ -1074,7 +1084,9 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			Step("Pass another domain to serve it at:", again("--alias", "<domain>")).
 			With("alias", alias).Wrap(err)
 	case err != nil:
-		return fail("%w; pass another --alias", err)
+		return config.Project{}, report.Errorf(report.AddBadAlias, "%s.", upperFirst(err.Error())).
+			Step("Pass another domain to serve it at:", again("--alias", "<domain>")).
+			With("alias", alias).Wrap(err)
 	}
 	return config.Project{Name: name, Server: srv.Name, Path: projectPath, Alias: alias, Enabled: !flags.disabled}, nil
 }

@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/control"
-	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
@@ -138,7 +137,7 @@ func TestPanicInBackendGoroutineReports(t *testing.T) {
 	t.Cleanup(func() { hosts.DefaultPath = was })
 	stderr, code, dir := crashRun(t, func(f *steeredCore, b *uiBackend) {
 		f.set(func(st *control.State) {
-			st.Projects["web"] = engine.ProjectStatus{State: engine.StateStopped, Message: hostsNotFixed("web", errHostsNeedTerminal).Error()}
+			st.Projects["web"] = hostsWaitStatus()
 		})
 		b.root.needed = func() bool { panic("boom in the hosts fixer") }
 	}, nil)

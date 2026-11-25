@@ -22,6 +22,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -446,8 +447,8 @@ func TestAddAliasFlagApprovesRealDomain(t *testing.T) {
 func TestAddRefusesWildcardAlias(t *testing.T) {
 	cfgPath, _ := existing(t)
 	out, err := execute(t, newAddCmd(noRemote(t)), "--config", cfgPath, "add", fixture(t, "compose-literal"), "--name", "wild", "--alias", "*.x.io", "--web", "8080")
-	want := `invalid main name "*.x.io": must be a lowercase domain name, not a wildcard, localhost or an IP address`
-	if err == nil || !strings.Contains(err.Error(), want) {
+	want := `Invalid main name "*.x.io": must be a lowercase domain name, not a wildcard, localhost or an IP address.`
+	if m, ok := report.As(err); !ok || m.Code != report.AddBadAlias || m.Title != want {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
 }
@@ -545,7 +546,7 @@ func TestAddRemoteNamesAProjectUnderTheServerHome(t *testing.T) {
 
 	// The home directory itself has no name to give the project.
 	_, err = execute(t, newAddCmd(b), "--config", cfgPath, "add", "~", "--server", "mini")
-	if err == nil || !strings.Contains(err.Error(), "pass --name") {
+	if m, ok := report.As(err); !ok || m.Code != report.AddBadName || len(m.Fix) != 1 || !strings.Contains(m.Fix[0].Command, "--name <name>") {
 		t.Fatalf("expected to be asked for a name, got %v", err)
 	}
 	// Other relative paths are still refused.

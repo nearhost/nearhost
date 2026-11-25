@@ -246,15 +246,42 @@ func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
 // approveSteps say how to approve changes that wait for approval.
 // Approving takes the interface, which shows each change and why it needs
 // approval; up only says where to go. The interface cannot start while a
-// core in the background runs.
+// core in the background runs. Why is a step of its own, as the core's log
+// shows a step with a command as the command alone.
 func (p *upPrinter) approveSteps() []report.Step {
 	if p.keepRunning {
 		return []report.Step{
-			{Text: "Nearhost in the background cannot approve them. Stop it:", Command: "nearhost stop"},
+			{Text: "Nearhost in the background cannot approve them."},
+			{Text: "Stop it:", Command: "nearhost stop"},
 			{Text: "Then open the interface to approve them:", Command: "nearhost"},
 		}
 	}
 	return []report.Step{{Text: "Open the interface to approve them; nearhost up cannot:", Command: "nearhost"}}
+}
+
+// readOnlySteps are the steps of a read-only hosts file's message, worded
+// for up: once the file is writable, up starts the project again, and a
+// core in the background is told by `hosts update`, which leaves no
+// alternative worth restarting it for.
+func (p *upPrinter) readOnlySteps(fix []report.Step) []report.Step {
+	var out []report.Step
+	for _, s := range fix {
+		switch {
+		case s.Command == "" && (s.Text == engine.RetryText || s.Text == engine.RetryThenText):
+			if p.keepRunning {
+				s = report.Step{Text: "Then update the hosts file from a terminal, and Nearhost starts the project:", Command: engine.HostsUpdateCommand}
+			} else {
+				s = report.Step{Text: "Then start it again:", Command: "nearhost up"}
+			}
+		case s.Command == hosts.NoHostsCommand:
+			if p.keepRunning {
+				continue
+			}
+			s.Command = "nearhost up --no-hosts"
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // restartSteps say how to start Nearhost again: a core in the background
@@ -318,14 +345,17 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.
-		// A read-only hosts file's reason already says how to clear it, and
-		// approving again would fail the same way. Without a terminal no
-		// prompt can appear, and up has already said what to do instead. A
-		// core in the background asks for no prompt: `hosts update`
-		// updates the file in a terminal and has the core try again.
+		// Without a terminal no prompt can appear, and up has already said
+		// what to do instead. A read-only hosts file, found by Nearhost or
+		// by the elevated helper, has its own steps, as approving again
+		// would fail the same way. A core in the background asks for no
+		// prompt: `hosts update` updates the file in a terminal and has
+		// the core try again.
 		switch {
-		case reason == "" || code == report.HostsReadOnly ||
+		case reason == "" ||
 			problem != nil && (errors.Is(problem, errNoTerminal) || errors.Is(problem, errHostsNeedTerminal)):
+		case code == report.HostsReadOnly:
+			return p.readOnlySteps(problem.Fix)
 		case p.keepRunning:
 			return []report.Step{{Text: "Update the hosts file from a terminal, and Nearhost starts the project:", Command: engine.HostsUpdateCommand}}
 		default:

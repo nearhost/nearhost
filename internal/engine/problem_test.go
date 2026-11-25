@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -141,9 +142,9 @@ func TestInstanceErrorIsAMessage(t *testing.T) {
 	if want := fmt.Sprintf("Another Nearhost is already running (pid %d).", os.Getpid()); m.Title != want {
 		t.Errorf("title = %q, want %q", m.Title, want)
 	}
-	step := "Stop it with `nearhost stop`, or see it with `nearhost status`."
-	if len(m.Fix) != 1 || m.Fix[0].Text != step {
-		t.Errorf("fix = %+v, want the step %q", m.Fix, step)
+	want := []report.Step{{Text: "Stop it:", Command: "nearhost stop"}, {Text: "Or see what it serves:", Command: "nearhost status"}}
+	if !slices.Equal(m.Fix, want) {
+		t.Errorf("fix = %+v, want %+v", m.Fix, want)
 	}
 	if m.Data["pid"] != os.Getpid() {
 		t.Errorf(`Data["pid"] = %v, want %d`, m.Data["pid"], os.Getpid())
@@ -236,5 +237,22 @@ func TestHostsProblemNoRetryAfterHostsUpdate(t *testing.T) {
 	other := report.Errorf(report.HostsReadOnly, "read-only.").Step("Clear it:", "attrib -r hosts")
 	if m := HostsProblem("web", other); m.Fix[len(m.Fix)-1].Text != RetryThenText {
 		t.Errorf("steps %+v, want the retry last", m.Fix)
+	}
+}
+
+// A read-only hosts file's retry follows the step that clears it, not the
+// alternative of serving without the hosts file.
+func TestHostsProblemRetryBeforeTheAlternative(t *testing.T) {
+	readOnly := report.Errorf(report.HostsReadOnly, `C:\hosts is read-only.`).
+		Step("Clear the read-only attribute in an administrator terminal:", `attrib -r "C:\hosts"`).
+		Step("Or serve without updating it:", "nearhost --no-hosts")
+	m := HostsProblem("web", readOnly)
+	want := []report.Step{
+		{Text: "Clear the read-only attribute in an administrator terminal:", Command: `attrib -r "C:\hosts"`},
+		{Text: RetryThenText},
+		{Text: "Or serve without updating it:", Command: "nearhost --no-hosts"},
+	}
+	if !slices.Equal(m.Fix, want) {
+		t.Errorf("steps %+v, want %+v", m.Fix, want)
 	}
 }

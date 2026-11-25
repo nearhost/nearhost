@@ -58,7 +58,7 @@ test('version prints the binary version and exits 0', () => {
 test('the exit code of a failing command comes through', () => {
   const r = launch(install('fail', { deps: mine }), 'no-such-command');
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /unknown command/);
+  assert.match(r.stderr, /unknown command/i);
 });
 
 test('a missing platform package is named, with the flag to avoid', () => {

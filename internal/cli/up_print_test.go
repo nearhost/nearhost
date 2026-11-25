@@ -69,17 +69,36 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	}
 }
 
-// A stopped project refused for a read-only hosts file gets no fix line: its
-// reason says how to clear the file, and approving again would fail the same.
-func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
+// A stopped project refused for a read-only hosts file shows the message's
+// own steps, the retry worded for up, whether Nearhost or the elevated
+// helper found the file read-only (hosts.ElevatedApplier makes the
+// helper's failure the same message); approving again would fail the same.
+func TestUpPrintsAReadOnlyHostsFilesSteps(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
+	readOnly := report.Errorf(report.HostsReadOnly, `C:\hosts is read-only.`).
+		Step("Clear the read-only attribute in an administrator terminal:", `attrib -r "C:\hosts"`).
+		Step("Or serve without updating it:", "nearhost --no-hosts")
+	direct := engine.HostsProblem("api", readOnly)
+	for _, tc := range []struct {
+		background bool
+		want       string
+	}{
+		{false, "  fix: Clear the read-only attribute in an administrator terminal:\n        attrib -r \"C:\\hosts\"\n" +
+			"  fix: Then start it again:\n        nearhost up\n" +
+			"  fix: Or serve without updating it:\n        nearhost up --no-hosts\n"},
+		{true, "  fix: Clear the read-only attribute in an administrator terminal:\n        attrib -r \"C:\\hosts\"\n" +
+			"  fix: Then update the hosts file from a terminal, and Nearhost starts the project:\n        nearhost hosts update\n"},
+	} {
+		var out bytes.Buffer
+		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
+		fixFor(p, "api", engine.StateStopped, direct.Title, direct)
+		if out.String() != tc.want {
+			t.Errorf("background %v:\n%s\nwant:\n%s", tc.background, out.String(), tc.want)
+		}
+	}
+
 	var out bytes.Buffer
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
-	readOnly := `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`
-	fixFor(p, "api", engine.StateStopped, readOnly, report.Errorf(report.HostsReadOnly, "%s", readOnly))
-	if out.Len() != 0 {
-		t.Fatalf("output = %q, want none", out.String())
-	}
 	fixFor(p, "api", engine.StateStopped, "hosts update declined", nil)
 	if out.Len() == 0 {
 		t.Fatal("another reason lost its fix line")
@@ -115,7 +134,7 @@ func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
 		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Open the interface to approve them; nearhost up cannot:\n        nearhost\n"},
 		{"pending", true, func(p *upPrinter) {
 			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
-		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Nearhost in the background cannot approve them. Stop it:\n        nearhost stop\n  fix: Then open the interface to approve them:\n        nearhost\n"},
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Nearhost in the background cannot approve them.\n  fix: Stop it:\n        nearhost stop\n  fix: Then open the interface to approve them:\n        nearhost\n"},
 	} {
 		var out bytes.Buffer
 		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
@@ -169,4 +188,22 @@ func TestUpPrintsEachBlockInOneWrite(t *testing.T) {
 // state st, for reason, whose problem is problem.
 func fixFor(p *upPrinter, name string, st engine.State, reason string, problem *report.Message) {
 	p.writeSteps(p.steps(name, st, reason, problem))
+}
+
+// In the core's log, a change that waits for approval says why the core
+// cannot approve it before the commands that do: the log shows a step's
+// command alone, so the reason is a step of its own.
+func TestCoreLogPendingSaysWhy(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("web")}}
+	var out bytes.Buffer
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: true, stamped: true}
+	msg := engine.PendingPrefix + "routes"
+	p.event(engine.Event{Time: time.Now(), Project: "web", Message: msg, Report: report.Warnf(report.NearhostrcPending, "%s", msg)})
+	want := "warning [nearhostrc.pending] web: " + msg + "\n" +
+		"  Nearhost in the background cannot approve them.\n" +
+		"  Fix: nearhost stop\n" +
+		"  Fix: nearhost\n"
+	if out.String() != want {
+		t.Errorf("log:\n%s\nwant:\n%s", out.String(), want)
+	}
 }

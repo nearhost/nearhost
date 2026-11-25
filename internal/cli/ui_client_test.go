@@ -637,7 +637,7 @@ func newHostsHarnessOf(t *testing.T, askErr error, cfg string) *hostsHarness {
 		if cfg != "" {
 			st.Config = cfg
 		}
-		st.Projects["web"] = engine.ProjectStatus{State: engine.StateStopped, Message: hostsNotFixed("web", errHostsNeedTerminal).Error()}
+		st.Projects["web"] = hostsWaitStatus()
 	})
 	h.core.onHosts = func(st *control.State) {
 		st.Projects["web"] = engine.ProjectStatus{State: engine.StateRunning}
@@ -1268,4 +1268,11 @@ func TestUpdateNoticeReachesTheInterfaceLog(t *testing.T) {
 	if _, stderr, code := runRootSplit(t, uiRoot(b)); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
+}
+
+// hostsWaitStatus is the state the core gives a project it left stopped
+// because the hosts file lacks its names.
+func hostsWaitStatus() engine.ProjectStatus {
+	p := hostsNotFixed("web", errHostsNeedTerminal)
+	return engine.ProjectStatus{State: engine.StateStopped, Message: p.Title, Problem: p}
 }

@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/report"
 )
@@ -190,7 +192,27 @@ func TestHostsNeedTerminalHasACommandStep(t *testing.T) {
 	m := engine.HostsProblem("web", errHostsNeedTerminal)
 	wantSteps(t, m, report.Step{Text: "Update it from a terminal:", Command: "nearhost hosts update"})
 	if !strings.Contains(m.Title, errHostsNeedTerminal.Title) {
-		t.Errorf("title %q lost the refusal %q, which the interface matches", m.Title, errHostsNeedTerminal.Title)
+		t.Errorf("title %q lost the refusal %q, which the interface replaces", m.Title, errHostsNeedTerminal.Title)
+	}
+	// The command is the step's alone, not written in the title too.
+	if want := "the hosts file needs updating, and Nearhost in the background never asks for sudo."; errHostsNeedTerminal.Title != want {
+		t.Errorf("title %q, want %q", errHostsNeedTerminal.Title, want)
+	}
+	// The interface knows the refusal by its code and step, not its text.
+	b := &clientBackend{mirror: newMirror(control.State{Projects: map[string]engine.ProjectStatus{
+		"web":   {State: engine.StateStopped, Message: "reworded", Problem: m},
+		"other": {State: engine.StateStopped, Message: m.Title, Problem: engine.HostsProblem("other", errors.New("sudo: no"))},
+	}})}
+	if !b.waitsOnHosts("web") || b.waitsOnHosts("other") {
+		t.Errorf("waits on hosts: web %v, other %v; want true, false", b.waitsOnHosts("web"), b.waitsOnHosts("other"))
+	}
+	// A core from before messages sends no problem: its message says why.
+	old := engine.ProjectStatus{State: engine.StateStopped, Message: `project "web"'s hosts are not resolvable: the hosts file was not updated (the hosts file needs updating, and Nearhost in the background never asks for sudo. Run ` + "`nearhost hosts update`" + ` in a terminal.)`}
+	if !waitsForTerminal(old) {
+		t.Error("an older core's refusal, without a problem, is not recognised")
+	}
+	if waitsForTerminal(engine.ProjectStatus{State: engine.StateStopped, Message: "hosts update declined"}) {
+		t.Error("another refusal without a problem is taken for the core's")
 	}
 }
 
@@ -232,4 +254,88 @@ func TestAddTakenAndMissingAreMessages(t *testing.T) {
 	if m := messageIn(t, err); m.Code != report.AddNoDirectory || m.Title != file+" is not a directory." {
 		t.Errorf("code %q, title %q", m.Code, m.Title)
 	}
+}
+
+// With --json, a message on standard error, which is usually a terminal,
+// carries no escape sequence, C1 control, DEL or bidi override, raw or
+// decoded, in any of its text, and keeps the lines of its explanation.
+func TestJSONStderrMessagesWithoutControlCharacters(t *testing.T) {
+	const hostile = "a\x1b[31mb\x7fc\u009b31md‮e"
+	m := report.Errorf(report.Unexpected, "Title %s", hostile)
+	m.Context = "start " + hostile
+	m.Why = "first\n" + hostile
+	m.Verbatim = []string{"log " + hostile}
+	m.Fix = []report.Step{report.Step{Text: "Do " + hostile, Command: "nearhost " + hostile}}
+	m.Data = map[string]any{"name": hostile, "list": []any{hostile}}
+	var b bytes.Buffer
+	o := &messageOut{writer: func() io.Writer { return &b }, json: true}
+	o.Report(m)
+	raw := b.String()
+	if strings.ContainsAny(raw, "\x1b\x7f\u009b‮") {
+		t.Errorf("the JSON line carries control characters: %q", raw)
+	}
+	var got report.Message
+	if err := json.Unmarshal(b.Bytes(), &got); err != nil {
+		t.Fatalf("%v: %q", err, raw)
+	}
+	decoded := got.Title + got.Context + got.Why + strings.Join(got.Verbatim, "") + got.Fix[0].Text + got.Fix[0].Command
+	if strings.ContainsAny(decoded, "\x1b\x7f\u009b‮") {
+		t.Errorf("the decoded message carries control characters: %q", decoded)
+	}
+	if !strings.HasPrefix(got.Why, "first\n") {
+		t.Errorf("the explanation lost its lines: %q", got.Why)
+	}
+	if got.Title != "Title a[31mbc31mde" {
+		t.Errorf("title %q", got.Title)
+	}
+}
+
+// add's refusals of a relative path on a server, a path it cannot name a
+// project after and a domain it cannot serve have codes, and steps with the
+// command on its own line, not written into the sentence.
+func TestAddPathNameAndAliasRefusalsAreMessages(t *testing.T) {
+	cfg := &config.Config{Servers: mini}
+	again := func(set ...string) string { return "nearhost add /srv/app " + strings.Join(set, " ") }
+	for _, tc := range []struct {
+		name  string
+		flags addFlags
+		args  []string
+		code  report.Code
+		title string
+		step  report.Step
+	}{
+		{"relative", addFlags{}, []string{"srv/app"}, report.AddRelativePath,
+			"A project on a server needs its absolute path there, or one under ~/.",
+			report.Step{Text: "Add it with its path on the server:", Command: "nearhost add /path/on/server --server mini"}},
+		{"name", addFlags{alias: "app.test"}, []string{"/"}, report.AddBadName,
+			"Nearhost cannot name a project after /.",
+			report.Step{Text: "Pass a name for it:", Command: "nearhost add /srv/app --name <name>"}},
+		{"alias", addFlags{alias: "localhost"}, []string{"/srv/app"}, report.AddBadAlias,
+			`Invalid main name "localhost": must be a lowercase domain name, not a wildcard, localhost or an IP address.`,
+			report.Step{Text: "Pass another domain to serve it at:", Command: "nearhost add /srv/app --alias <domain>"}},
+	} {
+		_, err := newProject(cfg, "config.yaml", mini[0], tc.flags, tc.args, again)
+		m, ok := report.As(err)
+		if !ok || m.Code != tc.code || m.Title != tc.title {
+			t.Errorf("%s: %v, message %+v", tc.name, err, m)
+			continue
+		}
+		wantSteps(t, m, tc.step)
+		if strings.Contains(m.Title, "nearhost") || strings.Contains(m.Title, "--") {
+			t.Errorf("%s: the title names a command: %q", tc.name, m.Title)
+		}
+	}
+}
+
+// A name given with --name that no project can have is blamed, not the
+// path, which was never asked to name the project.
+func TestAddBadNameFromTheFlagNamesTheName(t *testing.T) {
+	cfg := &config.Config{Servers: mini}
+	again := func(set ...string) string { return "nearhost add /srv/app " + strings.Join(set, " ") }
+	_, err := newProject(cfg, "config.yaml", mini[0], addFlags{name: "a/b", alias: "app.test"}, []string{"/srv/app"}, again)
+	m, ok := report.As(err)
+	if !ok || m.Code != report.AddBadName || m.Title != `The name "a/b" is not one a project can have.` || m.Data["name"] != "a/b" {
+		t.Fatalf("%v, message %+v", err, m)
+	}
+	wantSteps(t, m, report.Step{Text: "Pass another name:", Command: "nearhost add /srv/app --name <name>"})
 }
