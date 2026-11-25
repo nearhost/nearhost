@@ -16,12 +16,12 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
 const (
 	networkDocs   = "nearhost.dev/docs/other-devices/"
-	localCAIssuer = "Caddy Local Authority"
 	certTimeout   = 3 * time.Second
 )
 
@@ -101,7 +101,7 @@ func checkNetworkCert(ctx context.Context, b doctorBackend, n *config.Network, p
 	if info != nil {
 		port = urlPort(info.URL)
 	}
-	if port == 0 || b.servedCert == nil {
+	if info == nil || port == 0 || b.servedCert == nil {
 		return problem(name, levelInfo, report.DoctorNotChecked, "not checked: needs a running core that serves the page", ""), true
 	}
 	leaf, err := b.servedCert(ctx, net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), page)
@@ -118,7 +118,7 @@ func checkNetworkCert(ctx context.Context, b doctorBackend, n *config.Network, p
 			"the page is served with the local CA's certificate, not one from Let's Encrypt", certFix(mode)), true
 	}
 	issuer := "Let's Encrypt"
-	if !strings.Contains(leaf.Issuer.String(), "Let's Encrypt") {
+	if !slices.Contains(leaf.Issuer.Organization, "Let's Encrypt") {
 		issuer = printable(issuerName(leaf))
 	}
 	return check{name: name, detail: issuer + ", expires " + leaf.NotAfter.Format("2006-01-02")}, true
@@ -139,8 +139,8 @@ func issuerName(c *x509.Certificate) string {
 }
 
 func isLocalCA(c *x509.Certificate) bool {
-	return strings.Contains(c.Issuer.CommonName, localCAIssuer) || slices.ContainsFunc(c.Issuer.Organization, func(o string) bool {
-		return strings.Contains(o, localCAIssuer)
+	return strings.HasPrefix(c.Issuer.CommonName, proxy.CAName) || slices.ContainsFunc(c.Issuer.Organization, func(o string) bool {
+		return strings.HasPrefix(o, proxy.CAName)
 	})
 }
 

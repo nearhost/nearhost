@@ -12,6 +12,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
@@ -105,7 +106,11 @@ func TestNetworkCertificate(t *testing.T) {
 	if c := run(netCfg("acme"), ni("acme", ""), b); c.level != levelOK || !strings.Contains(c.detail, "expires 2027-02-23") {
 		t.Errorf("acme: %+v", c)
 	}
-	b.servedCert = leaf("Caddy Local Authority - ECC Intermediate")
+	b.servedCert = leaf("Some Other CA")
+	if c := run(netCfg("acme"), ni("acme", ""), b); c.level != levelOK || !strings.Contains(c.detail, "Some Other CA") || !strings.Contains(c.detail, "expires 2027-02-23") {
+		t.Errorf("other issuer: %+v", c)
+	}
+	b.servedCert = leaf(proxy.CAName + " - ECC Intermediate")
 	if c := run(netCfg("acme"), ni("acme", ""), b); c.level != levelFail || c.code != report.NetworkCert {
 		t.Errorf("acme with local CA: %+v", c)
 	}
