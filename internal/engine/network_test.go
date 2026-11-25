@@ -163,6 +163,9 @@ func TestNetworkGeneratedAliasNeverClashes(t *testing.T) {
 // Turning the network on in the config gives the proxy its network
 // options, then applies the sites, though no project changed.
 func TestApplyNetworkOnReappliesSites(t *testing.T) {
+	old := machineName
+	machineName = func() (string, error) { return "leto", nil }
+	t.Cleanup(func() { machineName = old })
 	h := newHarness(t, &config.Config{})
 	ops := watchProxy(h, false)
 	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
@@ -171,8 +174,8 @@ func TestApplyNetworkOnReappliesSites(t *testing.T) {
 	if got, want := ops.list(), []string{"network " + testDomain, "apply"}; !slices.Equal(got, want) {
 		t.Errorf("proxy saw %v, want %v", got, want)
 	}
-	if n := ops.network(); n == nil || n.Domain != testDomain || n.Certificates != "ca" {
-		t.Errorf("network options = %+v", n)
+	if n := ops.network(); n == nil || n.Domain != testDomain || n.Certificates != "ca" || n.Machine != "leto" {
+		t.Errorf("network options = %+v, want ca on machine leto", n)
 	}
 	if st := h.eng.NetworkState(); !st.On || st.Problem != "the page isn't served" {
 		t.Errorf("NetworkState = %+v", st)

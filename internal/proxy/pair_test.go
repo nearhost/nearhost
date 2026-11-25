@@ -522,3 +522,25 @@ func TestPairingNeedsANetworkHost(t *testing.T) {
 		}
 	}
 }
+
+// The pair page says what is being paired, Nearhost on the machine named,
+// and fills in the design's default device name.
+func TestPairFormNamesTheMachine(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	h := netHome()
+	h.Machine = "leto<b>"
+	for _, path := range []string{"/pair", "/pair/ABCD2345"} {
+		body := serveNet(t, h, netRequest("GET", path, nil)).Body.String()
+		for _, want := range []string{"Nearhost on <strong>leto&lt;b&gt;</strong>", `name="name" maxlength="64" value="iPad"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s lacks %q", path, want)
+			}
+		}
+	}
+	// A bad code's form says it too.
+	body := serveNet(t, h, pairPost(url.Values{"code": {"WRONG234"}, "name": {"iPad"}})).Body.String()
+	if !strings.Contains(body, "Nearhost on <strong>leto&lt;b&gt;</strong>") {
+		t.Errorf("the bad code's form does not name the machine:\n%s", body)
+	}
+}

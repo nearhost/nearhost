@@ -49,6 +49,9 @@ type pairForm struct {
 	Code string
 	// Error is the error the form shows, nil for none.
 	Error *htmlview.Data
+	// Machine is the name of the machine Nearhost runs on, "" when it is
+	// not known.
+	Machine string
 }
 
 // servePairing answers pairing's paths at the page's host while the core is
@@ -81,14 +84,14 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 	}
 	switch {
 	case path == "/pair" && r.Method == http.MethodPost:
-		servePairPost(w, r, d)
+		h.servePairPost(w, r, d)
 	case !allowMethods(w, r, path == "/pair"):
 	case isPair:
 		code := ""
 		if path != "/pair" {
 			code = strings.TrimPrefix(r.URL.Path, "/pair/")
 		}
-		servePairForm(w, r, pairForm{Code: code}, http.StatusOK)
+		servePairForm(w, r, pairForm{Code: code, Machine: h.Machine}, http.StatusOK)
 	case path == "/pair.js":
 		hdr := w.Header()
 		hdr.Set("Content-Type", "text/javascript; charset=utf-8")
@@ -144,7 +147,7 @@ func servePairForm(w http.ResponseWriter, r *http.Request, f pairForm, status in
 // servePairPost pairs the device that sent the form: from the page's own
 // origin, by a client Allow admits, with a good code. It gets the device
 // cookie and is sent to /. A bad code gets the form again, saying so.
-func servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
+func (h *Home) servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	if !sameOrigin(r) {
 		forbid(w, r)
 		return
@@ -168,7 +171,7 @@ func servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	token, err := d.Pair(r.PostForm.Get("code"), deviceName(r.PostForm.Get("name")), client)
 	switch {
 	case errors.Is(err, devices.ErrCodeInvalid):
-		servePairForm(w, r, pairForm{Error: pairCodeInvalid()}, http.StatusOK)
+		servePairForm(w, r, pairForm{Error: pairCodeInvalid(), Machine: h.Machine}, http.StatusOK)
 		return
 	case err != nil:
 		emit("", "A device could not be paired: "+err.Error())

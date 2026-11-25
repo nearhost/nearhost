@@ -157,6 +157,9 @@ type NetworkOptions struct {
 	// address and admit Allow. Without it only the page host and the
 	// certificates change, as on Windows until the firewall rule exists.
 	Listen bool
+	// Machine is this machine's name, which the pair page shows so the
+	// person pairing knows which Nearhost it is.
+	Machine string
 }
 
 // networkPageHost is the page's host on the network: nearhost.<domain>.
@@ -424,6 +427,9 @@ func pageRoutes(opts Options) []any {
 			h["network_host"] = networkPageHost(n)
 			h["certificates"] = n.Certificates
 			h["storage_root"] = opts.StorageRoot
+			if n.Machine != "" {
+				h["machine"] = n.Machine
+			}
 		}
 		return h
 	}

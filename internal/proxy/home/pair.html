@@ -54,6 +54,7 @@ h1 {
   letter-spacing: -0.03em;
 }
 p { margin: 16px 0 0; color: var(--muted); text-wrap: pretty; }
+strong { color: var(--text); font-weight: 600; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 .error { margin-top: 24px; border-left: 3px solid #F2836B; padding-left: 12px; }
 .error p { margin: 4px 0 0; color: var(--text); }
@@ -94,6 +95,7 @@ button {
     <span class="wordmark">nearhost</span>
   </div>
   <h1>Pair this device</h1>
+  <p id="what">{{if .Machine}}With Nearhost on <strong>{{.Machine}}</strong>.{{else}}With Nearhost on this machine.{{end}}</p>
   <p id="in-tab">Pair here, then add Nearhost to your Home Screen. It stays paired.</p>
   {{- if not .Code}}
   <p id="standalone" hidden>Type the code <code>nearhost pair</code> printed.</p>
@@ -115,7 +117,7 @@ button {
     </label>
     {{- end}}
     <label>Name for this device
-      <input type="text" name="name" maxlength="64" placeholder="iPad" autocomplete="off">
+      <input type="text" name="name" maxlength="64" value="iPad" autocomplete="off">
     </label>
     <button type="submit">Pair</button>
   </form>

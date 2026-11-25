@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -55,6 +56,9 @@ const (
 	NetworkApplyFailed NetworkProblem = "apply-failed"
 )
 
+// machineName is os.Hostname; tests stand in a name.
+var machineName = os.Hostname
+
 // The problems of NetworkState.
 const (
 	problemNoPage     = "the page isn't served"
@@ -104,6 +108,9 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 		Certificates: n.CertSource(),
 		Allow:        append([]string(nil), n.AllowRanges()...),
 		Listen:       true,
+	}
+	if name, err := machineName(); err == nil {
+		opts.Machine = name
 	}
 	type problem struct {
 		text string

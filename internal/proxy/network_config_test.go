@@ -38,6 +38,7 @@ func netOptions(t *testing.T) Options {
 			Certificates: "ca",
 			Allow:        config.DefaultNetworkAllow,
 			Listen:       true,
+			Machine:      "leto",
 		},
 	}
 }
@@ -168,6 +169,9 @@ func TestNetworkPageServesNetworkHostToAllowedClients(t *testing.T) {
 		t.Errorf("page TLS ranges = %v, want %v", got, ranges)
 	}
 	for i := range 2 {
+		if got := dig(t, web, "routes", i, "handle", 0, "machine"); got != "leto" {
+			t.Errorf("route %d home machine = %v, want leto", i, got)
+		}
 		if got := dig(t, web, "routes", i, "handle", 0, "network_host"); got != "nearhost."+netDomain {
 			t.Errorf("route %d home network_host = %v", i, got)
 		}

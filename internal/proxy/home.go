@@ -65,6 +65,8 @@ type Home struct {
 	Certificates string `json:"certificates,omitempty"`
 	// StorageRoot is Caddy's storage directory, which holds the local CA.
 	StorageRoot string `json:"storage_root,omitempty"`
+	// Machine is this machine's name, shown on the pair page.
+	Machine string `json:"machine,omitempty"`
 
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte
