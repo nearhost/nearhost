@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -22,6 +25,8 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
+	rterm "github.com/nearhost/nearhost/internal/report/term"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -133,6 +138,10 @@ needs one and exits 1; use nearhost -d or nearhost up there.`,
 	})
 	root.SetVersionTemplate("nearhost {{.Version}}\n")
 	root.PersistentFlags().String("config", "", configFlagUsage)
+	root.PersistentFlags().Bool("verbose", false, "with an error, warning or note, also show its code and what caused it")
+	// Every command's warnings and notes, and what code deep down reports,
+	// go to its standard error through the context.
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) { setSink(cmd, commandSink(cmd)) }
 	return root
 }
 
@@ -246,6 +255,7 @@ func loadConfig(cmd *cobra.Command) (*config.Config, string, error) {
 
 // Main runs the CLI with the given arguments and returns the process exit code.
 func Main(args []string) int {
+	startReporting()
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
 	elevated := elevate.Elevated()
 	clearOldCopies(elevated)
@@ -254,44 +264,145 @@ func Main(args []string) int {
 		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root.SetArgs(args)
-	code := exitCode(root.Execute(), os.Stderr)
+	verbose := func() bool { v, _ := root.PersistentFlags().GetBool("verbose"); return v }
+	code := exitCodeVerbose(root.Execute(), os.Stderr, verbose())
 	if n := updates.notice(updateGrace); n != "" {
-		fmt.Fprintln(os.Stderr, n)
+		rterm.Render(os.Stderr, report.Notef(report.UpdateAvailable, "%s", n), rterm.For(os.Stderr, verbose()))
 	}
 	return code
 }
 
-// exitError is an error whose message the command has already printed, as
-// the summary of its own output. Main exits with its code and prints nothing
-// more.
-type exitError struct {
-	code int
-	msg  string
-	// cause is the error the message reports, if any.
-	cause error
+// startedReporting makes startReporting's work happen once a process.
+var startedReporting sync.Once
+
+// startReporting sets what the report package needs from the process: the
+// version and the folder crash files go to, which is the core log's, and a
+// fallback for messages reported where no sink is set, which goes to the
+// core log once a core in the background has opened it (see coreFallback)
+// and to standard error until then. It runs before any goroutine starts.
+func startReporting() {
+	startedReporting.Do(func() {
+		report.Version = Version
+		if path, err := config.LogPath(); err == nil {
+			report.CrashDir = filepath.Dir(path)
+		}
+		stderr := report.Fallback
+		report.Fallback = report.SinkFunc(func(m *report.Message) {
+			if h := coreFallback.Load(); h != nil {
+				h.Report(m)
+				return
+			}
+			if stderr != nil {
+				stderr.Report(m)
+			}
+		})
+	})
 }
 
-// Error returns the message the command printed.
-func (e exitError) Error() string { return e.msg }
+// sinkHolder holds a sink, for an atomic pointer.
+type sinkHolder struct{ report.Sink }
 
-// Unwrap returns the error the message reports, or nil.
-func (e exitError) Unwrap() error { return e.cause }
+// coreFallback is the core log's sink while a core in the background runs
+// in this process, and nil otherwise.
+var coreFallback atomic.Pointer[sinkHolder]
 
-// exitCode is the exit code for the error a command returned, which is 0 for
-// nil. It writes "nearhost: <err>" to stderr unless the command printed the
-// error itself (see exitError). An error can quote a project's file, a
-// server or ssh, so its text loses its control characters and keeps its
-// lines.
-func exitCode(err error, stderr io.Writer) int {
+// sinkKey is the context key of the sink a command reports to.
+type sinkKey struct{}
+
+// setSink makes cmd's context carry s, for report.To and sinkOf.
+func setSink(cmd *cobra.Command, s report.Sink) {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(report.WithSink(ctx, s), sinkKey{}, s))
+}
+
+// sinkOf is the sink cmd reports to: its context's, or for a command run
+// without the root's PersistentPreRun, as some tests run them, its
+// commandSink.
+func sinkOf(cmd *cobra.Command) report.Sink {
+	if ctx := cmd.Context(); ctx != nil {
+		if s, ok := ctx.Value(sinkKey{}).(report.Sink); ok {
+			return s
+		}
+	}
+	return commandSink(cmd)
+}
+
+// commandSink renders what it is given for a terminal on cmd's standard
+// error, as it is when the message is reported: a core in the background
+// points that at its log. --verbose adds codes and causes.
+func commandSink(cmd *cobra.Command) report.Sink {
+	return report.SinkFunc(func(m *report.Message) {
+		w := cmd.ErrOrStderr()
+		rterm.Render(w, m, termOptions(w, verboseFlag(cmd)))
+	})
+}
+
+// verboseFlag reports whether --verbose was given to cmd.
+func verboseFlag(cmd *cobra.Command) bool {
+	f := cmd.Flag("verbose")
+	if f == nil {
+		return false
+	}
+	v, _ := strconv.ParseBool(f.Value.String())
+	return v
+}
+
+// termOptions are the options for rendering to w: a terminal's width and
+// colour when w is one.
+func termOptions(w io.Writer, verbose bool) rterm.Options {
+	if f, ok := w.(*os.File); ok {
+		return rterm.For(f, verbose)
+	}
+	return rterm.Options{Verbose: verbose}
+}
+
+// alreadySaid is an error that has already been said in full where its
+// reader looks: the end of doctor's report, up's summary, or the log of a
+// core in the background, which is also its standard error. Main exits
+// with its message's status and prints nothing more.
+type alreadySaid struct{ err error }
+
+func (e alreadySaid) Error() string { return e.err.Error() }
+func (e alreadySaid) Unwrap() error { return e.err }
+
+// exitCode is exitCodeVerbose without --verbose.
+func exitCode(err error, stderr io.Writer) int { return exitCodeVerbose(err, stderr, false) }
+
+// exitCodeVerbose is the exit code for the error a command returned, which
+// is 0 for nil: the status its message sets, or 1. It renders the error
+// for a terminal on stderr, with its code and causes when verbose, unless
+// it was already said (see alreadySaid). Every text in it is made printable
+// by the renderer: an error can quote a project's file, a server or ssh.
+func exitCodeVerbose(err error, stderr io.Writer, verbose bool) int {
 	if err == nil {
 		return 0
 	}
-	var ee exitError
-	if errors.As(err, &ee) {
-		return ee.code
+	m := messageOf(err)
+	var said alreadySaid
+	if !errors.As(err, &said) {
+		rterm.Render(stderr, m, termOptions(stderr, verbose))
 	}
-	fmt.Fprintln(stderr, "nearhost:", printableLines(err.Error()))
+	if m.Exit != 0 {
+		return m.Exit
+	}
 	return 1
+}
+
+// messageOf is report.From, except that an error with no message whose
+// text runs over several lines, as a usage error or a list of problems
+// does, keeps its first line as the title and the rest as the explanation,
+// rather than one line run together.
+func messageOf(err error) *report.Message {
+	m := report.From(err)
+	if m.Code == report.Unexpected {
+		if title, rest, ok := strings.Cut(strings.TrimSpace(m.Title), "\n"); ok {
+			m.Title, m.Why = title, strings.TrimSpace(rest)
+		}
+	}
+	return m
 }
 
 // cleanOld deletes the copies earlier updates moved aside. Tests of Main
@@ -339,13 +450,23 @@ func groupRun(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.Help()
 	}
-	msg := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
 	// Only the root sets how near a name must be; a group asks it.
 	if cmd.SuggestionsMinimumDistance <= 0 {
 		cmd.SuggestionsMinimumDistance = cmd.Root().SuggestionsMinimumDistance
 	}
-	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-		msg += "\n\nDid you mean this?\n\t" + strings.Join(s, "\n\t")
+	return unknownCommand(cmd, args[0], cmd.SuggestionsFor(args[0]))
+}
+
+// unknownCommand is the cli.usage error for arg, which is no command of
+// cmd's, with the commands it may have meant.
+func unknownCommand(cmd *cobra.Command, arg string, suggestions []string) error {
+	m := report.Errorf(report.CLIUsage, "Unknown command %q for %q.", arg, cmd.CommandPath())
+	for i, s := range suggestions {
+		text := ""
+		if i == 0 {
+			text = "Did you mean this?"
+		}
+		m.Step(text, s)
 	}
-	return errors.New(msg)
+	return m
 }

@@ -333,12 +333,13 @@ func TestUntrustDeleteKeyDeletesNothingWhenARetryWouldFinish(t *testing.T) {
 			set(f)
 			f.interactive = true
 			out, err := runIn(t, newUntrustCmd(f.backend()), "y\n", "untrust", "--delete-key")
-			if err == nil || !strings.HasPrefix(err.Error(), "Nothing was deleted. ") ||
-				!strings.HasSuffix(err.Error(), ", then run `nearhost untrust --delete-key` again.") {
-				t.Fatalf("err = %v", err)
+			said := flat(rendered(err))
+			if err == nil || !strings.HasPrefix(said, "Error: Nothing was deleted. ") ||
+				!strings.Contains(said, "`nearhost untrust --delete-key`") {
+				t.Fatalf("err = %v, said %q", err, said)
 			}
-			if strings.Contains(err.Error(), "`nearhost untrust` again") {
-				t.Fatalf("err names the plain command: %v", err)
+			if strings.Contains(said, "`nearhost untrust` ") {
+				t.Fatalf("err names the plain command: %q", said)
 			}
 			if strings.Contains(out, "[y/N]") || strings.Contains(out, deletedLine) || !present(filepath.Join(ca, "root.key")) || present(keptRoot(t)) {
 				t.Fatalf("asked or deleted: %q", out)
@@ -565,7 +566,8 @@ func TestUntrustDeleteKeyDeletesNothingOnAnUnclassifiedError(t *testing.T) {
 	f := deleteFake(t)
 	f.interactive = true
 	out, err := runIn(t, newUntrustCmd(f.backend()), "y\n", "untrust", "--delete-key")
-	if err == nil || !strings.HasPrefix(err.Error(), "Nothing was deleted. ") || !strings.Contains(err.Error(), "something new went wrong") {
+	if said := flat(rendered(err)); err == nil || !strings.HasPrefix(said, "Error: Nothing was deleted. ") || !strings.Contains(said, "something new went wrong") ||
+		!strings.Contains(said, "Fix that, then run `nearhost untrust --delete-key` again.") {
 		t.Fatalf("err = %v", err)
 	}
 	if strings.Contains(out, "[y/N]") || !present(filepath.Join(ca, "root.key")) {

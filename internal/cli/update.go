@@ -25,6 +25,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -236,22 +237,21 @@ func verifyUpdate(ctx context.Context, cmd *cobra.Command, b updateBackend, m up
 	}
 	shown := printable(filepath.Clean(path))
 	installed, err := b.probe(ctx, path)
-	var msg string
+	var failed *report.Message
 	switch {
 	case err != nil:
-		msg = fmt.Sprintf("The update ran, but %s did not start: %s. Run it again, or install by hand: %s.", shown, printable(err.Error()), byHand)
+		failed = report.Errorf(report.UpdateFailed, "The update ran, but %s did not start: %s.", shown, err).Wrap(err)
 	case installed == "":
-		msg = fmt.Sprintf("The update ran, but %s printed no version. Run it again, or install by hand: %s.", shown, byHand)
+		failed = report.Errorf(report.UpdateFailed, "The update ran, but %s printed no version.", shown)
 	case !update.SameVersion(installed, latest):
-		msg = fmt.Sprintf("The update ran, but %s is still %s. Run it again, or install by hand: %s.", shown, printable(installed), byHand)
+		failed = report.Errorf(report.UpdateFailed, "The update ran, but %s is still %s.", shown, installed)
 		if m.Kind == update.PNPM && shadowsPnpm(b, path) {
-			msg += " Another nearhost comes before pnpm's on PATH."
+			failed.Because("Another nearhost comes before pnpm's on PATH.")
 		}
 	default:
 		return path, nil
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), msg)
-	return "", exitError{code: 1, msg: msg}
+	return "", failed.Step("Run it again, or install by hand:", byHand).With("path", path)
 }
 
 // downloadTimeLimit is the longest the Windows download may take. The
@@ -302,10 +302,8 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	if err != nil {
 		if check {
 			// A script tells "could not check" (2) from "a newer release is
-			// out" (1). The command prints the failure, so Main does not.
-			msg := "nearhost: " + printableLines(err.Error())
-			fmt.Fprintln(cmd.ErrOrStderr(), msg)
-			return exitError{code: updateCheckFailedCode, msg: msg}
+			// out" (1).
+			return report.Errorf(report.UpdateCheckFailed, "%s", err).ExitCode(updateCheckFailedCode).Wrap(err)
 		}
 		return err
 	}

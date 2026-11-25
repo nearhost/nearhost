@@ -16,7 +16,8 @@ import (
 //	  Run `nearhost doctor` to check this and the rest of what Nearhost needs.
 //
 // The first line has the level, the code and the context, if any, before
-// the title. Under it, indented: the explanation, line by line; each fix
+// the title. Under it, indented: the explanation, line by line; the
+// verbatim lines, indented once more and never trimmed; each fix
 // step, as "Fix: <command>" for a step with a command and as its text for
 // one without; the doctor line; and the cause, when it adds to the title.
 // Text is made printable. The block has no trailing newline.
@@ -33,6 +34,9 @@ func LogText(m *Message) string {
 	}
 	for _, l := range textLines(m.Why) {
 		more(l)
+	}
+	for _, l := range m.Verbatim {
+		more("  " + verbatimLine(l))
 	}
 	for _, s := range m.Fix {
 		if c := safetext.Line(s.Command); c != "" {
@@ -59,6 +63,23 @@ func headline(m *Message) string {
 		return c + ": " + title
 	}
 	return title
+}
+
+// verbatimLine is a line of Message.Verbatim made printable, keeping its
+// indentation: it loses its control characters, line breaks among them,
+// and the space at its end.
+func verbatimLine(l string) string {
+	return strings.TrimRight(strings.ReplaceAll(safetext.Lines(l), "\n", " "), " \t")
+}
+
+// VerbatimLines returns m's verbatim lines made printable, keeping each
+// line's indentation, for a renderer.
+func VerbatimLines(m *Message) []string {
+	out := make([]string, len(m.Verbatim))
+	for i, l := range m.Verbatim {
+		out[i] = verbatimLine(l)
+	}
+	return out
 }
 
 // textLines returns s made printable, as its lines without the blank ones,

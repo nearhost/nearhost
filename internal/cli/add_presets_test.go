@@ -180,7 +180,7 @@ func TestAddSaysWhenARegistryNeedsANewerNearhost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a newer registry must not stop add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "Warning: registry test (test/presets) needs a newer nearhost than this one; upgrade nearhost to use it.\n", "Added myapp on local")
+	wantContains(t, flat(out), "Warning: registry test (test/presets) needs a newer nearhost than this one; upgrade nearhost to use it. ", "Added myapp on local")
 	if strings.Contains(out, "cannot be read") {
 		t.Errorf("the registry was reached:\n%s", out)
 	}
@@ -251,7 +251,8 @@ func TestAddCarriesOnWhenAnAcceptedPresetCannotBeInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	wantContains(t, out, "Warning: the test/stack preset was not enabled:", "does not match the registry index", "  8080  web     app (APP_PORT)\n", "Added myapp on local")
+	wantContains(t, flat(out), "Warning: the test/stack preset was not enabled:", "does not match the registry index", "Added myapp on local")
+	wantContains(t, out, "  8080  web     app (APP_PORT)\n")
 	if strings.Count(out, askStack) != 1 {
 		t.Errorf("a preset that failed to install must not be offered again:\n%s", out)
 	}

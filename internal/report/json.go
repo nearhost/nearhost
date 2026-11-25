@@ -10,22 +10,23 @@ import (
 // event or the state) has no `error` key: only a top-level error body
 // (WriteProblem) has one.
 type wire struct {
-	Code   Code           `json:"code,omitempty"`
-	Level  Level          `json:"level"`
-	Title  string         `json:"title,omitempty"`
-	Detail string         `json:"detail,omitempty"`
-	Fix    []Step         `json:"fix,omitempty"`
-	Doctor bool           `json:"doctor,omitempty"`
-	Data   map[string]any `json:"data,omitempty"`
+	Code     Code           `json:"code,omitempty"`
+	Level    Level          `json:"level"`
+	Title    string         `json:"title,omitempty"`
+	Detail   string         `json:"detail,omitempty"`
+	Verbatim []string       `json:"verbatim,omitempty"`
+	Fix      []Step         `json:"fix,omitempty"`
+	Doctor   bool           `json:"doctor,omitempty"`
+	Data     map[string]any `json:"data,omitempty"`
 }
 
 // MarshalJSON writes the message as
-// {"code","level","title","detail","fix":[{"text","command"}],"doctor","data"},
+// {"code","level","title","detail","verbatim":[…],"fix":[{"text","command"}],"doctor","data"},
 // leaving out empty fields. The cause, the exit status and the context are
 // not sent. JSON escaping keeps any text in it inert.
 func (m *Message) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wire{
-		Code: m.Code, Level: m.Level, Title: m.Title, Detail: m.Why,
+		Code: m.Code, Level: m.Level, Title: m.Title, Detail: m.Why, Verbatim: m.Verbatim,
 		Fix: m.Fix, Doctor: m.Doctor, Data: m.Data,
 	})
 }
@@ -38,7 +39,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*m = Message{
-		Level: w.Level, Code: w.Code, Title: w.Title, Why: w.Detail,
+		Level: w.Level, Code: w.Code, Title: w.Title, Why: w.Detail, Verbatim: w.Verbatim,
 		Fix: w.Fix, Doctor: w.Doctor, Data: w.Data,
 	}
 	return nil
@@ -59,6 +60,9 @@ func Problem(m *Message, status int, typeBase string) map[string]any {
 	if m.Why != "" {
 		p["detail"] = m.Why
 	}
+	if len(m.Verbatim) > 0 {
+		p["verbatim"] = m.Verbatim
+	}
 	if len(m.Fix) > 0 {
 		p["fix"] = m.Fix
 	}
@@ -74,7 +78,7 @@ func Problem(m *Message, status int, typeBase string) map[string]any {
 // problemOrder is the order of a problem body's keys. `error` comes first,
 // as the agent skill takes the first "error" in a body; keys a body lacks
 // are skipped.
-var problemOrder = []string{"error", "type", "title", "status", "detail", "code", "level", "fix", "doctor", "data"}
+var problemOrder = []string{"error", "type", "title", "status", "detail", "verbatim", "code", "level", "fix", "doctor", "data"}
 
 // WriteProblem answers a request with m as problem details
 // (application/problem+json), with the HTTP status from m's catalog entry

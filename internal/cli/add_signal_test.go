@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -94,11 +93,10 @@ func TestAddInterruptedDuringAnSFTPReadLeavesNothingBehind(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("add did not return within 15 seconds of the interrupt")
 	}
-	var ee exitError
-	if !errors.As(err, &ee) || ee.code != interruptedCode {
+	if exitCode(err, io.Discard) != interruptedCode {
 		t.Fatalf("add returned %v, want an exit with status %d\n%s", err, interruptedCode, out.String())
 	}
-	if got := out.String(); !strings.Contains(got, "Interrupted, so the project was not added.") || strings.Contains(got, "signal") {
+	if got := out.String() + rendered(err); !strings.Contains(got, "Error: Interrupted, so the project was not added.") || strings.Contains(got, "signal") {
 		t.Errorf("add printed:\n%s", got)
 	}
 	emptyDir(t, parent)
@@ -210,8 +208,7 @@ func TestAddInterruptedAtAQuestion(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("add did not return within 10 seconds of the interrupt")
 	}
-	var ee exitError
-	if !errors.As(err, &ee) || ee.code != interruptedCode {
+	if exitCode(err, io.Discard) != interruptedCode {
 		t.Fatalf("add returned %v, want an exit with status %d\n%s", err, interruptedCode, out.String())
 	}
 	after, _ := os.ReadFile(cfgPath)

@@ -178,8 +178,8 @@ func TestUnknownCommandSuggests(t *testing.T) {
 		root.SetErr(&bytes.Buffer{})
 		root.SetArgs(args)
 		err := root.Execute()
-		if err == nil || !strings.Contains(err.Error(), "Did you mean this?") || !strings.Contains(err.Error(), "\tls") {
-			t.Errorf("%v: err = %v", args, err)
+		if got := rendered(err); err == nil || !strings.Contains(got, "Did you mean this?\n\n  ls\n") {
+			t.Errorf("%v: err = %v, rendered %q", args, err, got)
 		}
 	}
 }
@@ -209,5 +209,41 @@ func TestHostsApplyHidden(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "apply") || !strings.Contains(out.String(), "clean") {
 		t.Fatalf("help:\n%s", out.String())
+	}
+}
+
+// noNearhostPrefix fails the test when a line of out starts with
+// "nearhost: ", the label errors had before they were messages: renderers
+// now add "Error:", "Warning:" or "Note:".
+func noNearhostPrefix(t *testing.T, out string) {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "nearhost: ") {
+			t.Errorf("a line starts with %q:\n%s", "nearhost: ", out)
+			return
+		}
+	}
+}
+
+// No command says an error with the old "nearhost: " label: Main renders
+// each as a message.
+func TestNoNearhostPrefix(t *testing.T) {
+	configHome(t)
+	for _, args := range [][]string{
+		{"definitely-not-a-command"},
+		{"hosts", "clear"},
+		{"status"},
+		{"stop", "extra"},
+		{"up", "--https-port", "0"},
+		{"ls", "--nope"},
+	} {
+		out, errText, code := runTree(t, args...)
+		if code == 0 {
+			t.Errorf("%v: exit 0", args)
+		}
+		if !strings.HasPrefix(errText, "Error: ") {
+			t.Errorf("%v: stderr %q, want it to start with Error:", args, errText)
+		}
+		noNearhostPrefix(t, out+errText)
 	}
 }

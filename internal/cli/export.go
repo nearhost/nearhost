@@ -191,7 +191,7 @@ func renderExport(cmd *cobra.Command, cfg *config.Config, cfgPath string, p conf
 	}
 	// Warnings go to standard error, so a dry run's output is the file and
 	// nothing else.
-	printWarnings(cmd.ErrOrStderr(), warnings)
+	reportWarnings(cmd, warnings)
 	vars := nearhostrc.PortVars{}
 	for _, c := range res.Routes {
 		if c.Var != "" {

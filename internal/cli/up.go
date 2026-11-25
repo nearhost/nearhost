@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -22,6 +22,7 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 const (
@@ -354,15 +355,19 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 // it (see upHostsApplier).
 var errNoTerminal = errors.New("sudo needs a password, and there is no terminal to ask for it")
 
-// hostsNoTerminal is what up prints when a hosts update fails with
+// hostsNoTerminal is the warning up reports when a hosts update fails with
 // errNoTerminal.
-const hostsNoTerminal = "The hosts file needs sudo, and there is no terminal to ask in. Run nearhost up in a terminal once, or pass --no-hosts."
+func hostsNoTerminal() *report.Message {
+	return report.Warnf(report.HostsNeedsUpdate, "The hosts file needs sudo, and there is no terminal to ask in.").
+		Step("Run it once in a terminal, where sudo can ask for your password:", "nearhost up").
+		Step("Or serve without updating the hosts file:", "nearhost up --no-hosts")
+}
 
 // warnNoTerminal wraps a hosts function so that the first update that fails
-// with errNoTerminal prints hostsNoTerminal to w. Later ones print nothing:
-// the message is said once a run, however many projects or updates there
-// are. A nil ensure stays nil.
-func warnNoTerminal(w io.Writer, ensure func(context.Context, []string) error) func(context.Context, []string) error {
+// with errNoTerminal reports hostsNoTerminal to sink. Later ones report
+// nothing: the warning is said once a run, however many projects or
+// updates there are. A nil ensure stays nil.
+func warnNoTerminal(sink report.Sink, ensure func(context.Context, []string) error) func(context.Context, []string) error {
 	if ensure == nil {
 		return nil
 	}
@@ -370,7 +375,7 @@ func warnNoTerminal(w io.Writer, ensure func(context.Context, []string) error) f
 	return func(ctx context.Context, aliases []string) error {
 		err := ensure(ctx, aliases)
 		if errors.Is(err, errNoTerminal) {
-			once.Do(func() { fmt.Fprintln(w, hostsNoTerminal) })
+			once.Do(func() { sink.Report(hostsNoTerminal()) })
 		}
 		return err
 	}
@@ -417,23 +422,12 @@ func askedNow(ctx context.Context) context.Context {
 // replace it.
 var askClock = time.Now
 
-// bindAdvice is an error from a proxy port the user may not bind, with the
-// command that lets nearhost bind it.
-type bindAdvice struct {
-	err    error
-	advice string
-}
-
-// Error is the original error, a blank line, then the advice.
-func (e *bindAdvice) Error() string { return e.err.Error() + "\n\n" + e.advice }
-
-// Unwrap returns the error from the engine.
-func (e *bindAdvice) Unwrap() error { return e.err }
-
-// advise adds to err the command that lets the binary bind the proxy's ports,
-// when err is a port the user may not bind on Linux. Elsewhere, for root, on
-// a system that lets any program bind from port 80, and for every other
-// error, it returns err as it is.
+// advise turns err, from Start, into the port.needs-permission message
+// that says why the binary may not bind the proxy's ports and gives the
+// command that lets it, when err is a port the user may not bind on Linux.
+// The message keeps the port's data and has err as its cause. Elsewhere,
+// for root, on a system that lets any program bind from port 80, and for
+// every other error, it returns err as it is.
 func (e bindEnv) advise(err error) error {
 	if e.goos != "linux" || e.notPermitted == nil || !e.notPermitted(err) {
 		return err
@@ -451,23 +445,52 @@ func (e bindEnv) advise(err error) error {
 		exe = e.exe()
 	}
 	isFile := exe != "" && e.isFile != nil && e.isFile(exe)
-	return &bindAdvice{err: err, advice: setcapAdvice(exe, isFile, "start Nearhost again")}
+	from := messageOf(err)
+	m := report.Errorf(report.PortNeedsPermission, "%s", withoutCause(from.Title, err)).
+		Because(setcapWhy)
+	m.Fix = []report.Step{setcapStep(exe, isFile)}
+	m.Then("Then start Nearhost again. Do not run nearhost with sudo.").SuggestDoctor()
+	for k, v := range from.Data {
+		m.With(k, v)
+	}
+	return m.Wrap(err)
 }
 
-// setcapAdvice says in plain words why the binary at exe may not bind ports
-// below 1024 on Linux, the command that lets it, and then, what to do after
-// running it. With isFile false, exe may be a launcher script, which a
-// capability does nothing for, so it says to check which file is the binary.
-func setcapAdvice(exe string, isFile bool, then string) string {
-	const why = "On Linux, a program may use ports below 1024, such as 443 for HTTPS and 80 for HTTP, " +
-		"only when it has been given permission. The install script gives it; a nearhost you build " +
-		"or copy yourself does not have it."
-	var fix string
+// setcapWhy says in plain words why a binary may not bind ports below 1024
+// on Linux.
+const setcapWhy = "On Linux, a program may use ports below 1024, such as 443 for HTTPS and 80 for HTTP, " +
+	"only when it has been given permission. The install script gives it; a nearhost you build " +
+	"or copy yourself does not have it."
+
+// setcapStep is the step that gives the binary at exe permission to bind
+// ports below 1024 on Linux. With isFile false, exe may be a launcher
+// script, which a capability does nothing for, so it says to check which
+// file is the binary, and the command finds it on PATH.
+func setcapStep(exe string, isFile bool) report.Step {
 	if isFile {
-		fix = "To give " + printable(exe) + " permission, run:\n\n  " + doctor.SetcapFix(exe)
-	} else {
-		// Same words as the update's advice.
-		fix = "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:\n\n  " + doctor.SetcapFix("")
+		return report.Step{Text: "To give it permission, run:", Command: doctor.SetcapFix(exe)}
 	}
-	return why + "\n\n" + fix + "\n\nThen " + then + ". Do not run nearhost with sudo. `nearhost doctor` checks this and the rest of what Nearhost needs."
+	// Same words as the update's advice.
+	return report.Step{
+		Text:    "Nearhost could not tell which file is the binary, so check that it is the binary and not a launcher script before running:",
+		Command: doctor.SetcapFix(""),
+	}
+}
+
+// withoutCause is title, a message's title that ends with the text of an
+// error in err's chain (as "HTTPS port 443 needs permission to bind: listen
+// tcp :443: bind: permission denied" does), without that text, and ending
+// with a full stop. The cause is still the message's, which --verbose
+// shows. A title that ends with no such text is returned as it is.
+func withoutCause(title string, err error) string {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		text := e.Error()
+		if text == "" || text == title {
+			continue
+		}
+		if t, ok := strings.CutSuffix(title, ": "+text); ok && t != "" {
+			return strings.TrimSuffix(t, ".") + "."
+		}
+	}
+	return title
 }

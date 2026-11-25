@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"github.com/nearhost/nearhost/internal/report"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -261,7 +262,7 @@ func TestUntrustSurfacesErrorWithHint(t *testing.T) {
 	f.trusted = true
 	f.uninstErr = errors.New("uninstall CA: refused")
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "run `nearhost untrust` again") {
+	if said := flat(rendered(err)); err == nil || !strings.Contains(said, "refused") || !strings.Contains(said, "run `nearhost untrust` again") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -280,7 +281,7 @@ func TestTrustCommandsWithoutSudoGiveNoPromptHint(t *testing.T) {
 			cmd = newUntrustCmd(f.backend())
 		}
 		_, err := run(t, cmd, name)
-		if !errors.Is(err, sudo.ErrNotFound) || strings.Contains(err.Error(), "again") || !strings.Contains(err.Error(), "as root") {
+		if said := rendered(err); !errors.Is(err, sudo.ErrNotFound) || strings.Contains(said, "again") || !strings.Contains(said, "as root") {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
@@ -300,8 +301,8 @@ func TestTrustCommandsCheckForSudoFirst(t *testing.T) {
 			cmd = newUntrustCmd(b)
 		}
 		out, err := run(t, cmd, name)
-		want := "install sudo in one of those, or run `nearhost " + name + "` as root"
-		if !errors.Is(err, sudo.ErrNotFound) || !strings.Contains(err.Error(), want) {
+		want := "Install sudo in one of those, or run `nearhost " + name + "` as root."
+		if !errors.Is(err, sudo.ErrNotFound) || !strings.Contains(flat(rendered(err)), want) {
 			t.Errorf("%s: err = %v, want %q", name, err, want)
 		}
 		if strings.Contains(out, "password") || f.installs != 0 || f.uninstall != 0 {
@@ -372,17 +373,18 @@ func TestTrustMovesTheCAToTheDataDir(t *testing.T) {
 }
 
 func TestMigrateWarningNamesBothDirectories(t *testing.T) {
-	if got := migrateWarning(nil); got != "" {
-		t.Fatalf("no error: %q", got)
+	if got := migrateWarning(nil); got != nil {
+		t.Fatalf("no error: %v", got)
 	}
-	failed := migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Err: errors.New("disk full")})
+	failed := flat(rendered(migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Err: errors.New("disk full")})))
 	if !strings.Contains(failed, "/old/caddy") || !strings.Contains(failed, "/new/caddy") ||
 		!strings.Contains(failed, "disk full") || !strings.Contains(failed, "keeps using /old/caddy") {
 		t.Fatalf("failed move: %q", failed)
 	}
-	left := migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Moved: true, Err: errors.New("busy")})
-	if !strings.Contains(left, "/new/caddy") || !strings.Contains(left, "could not delete /old/caddy") ||
-		!strings.Contains(left, "delete it") {
+	left := rendered(migrateWarning(&config.MigrateError{Old: "/old/caddy", New: "/new/caddy", Moved: true, Err: errors.New("busy")}))
+	left = flat(left)
+	if !strings.Contains(left, "Warning: ") || !strings.Contains(left, "/new/caddy") || !strings.Contains(left, "could not delete /old/caddy") ||
+		!strings.Contains(left, "Delete /old/caddy.") {
 		t.Fatalf("old left behind: %q", left)
 	}
 }
@@ -504,7 +506,7 @@ func TestUntrustNSSCleanFailureFails(t *testing.T) {
 	f := newFake()
 	f.nssUninstErr = errors.New("certutil -D failed")
 	_, err := run(t, newUntrustCmd(f.backend()), "untrust")
-	if err == nil || strings.Contains(err.Error(), "certutil -D failed") || !strings.Contains(err.Error(), "quit Firefox") {
+	if said := rendered(err); err == nil || strings.Contains(said, "certutil -D failed") || !strings.Contains(said, "Quit Firefox.") {
 		t.Fatalf("err = %v, want the cause without the raw error", err)
 	}
 }
@@ -635,8 +637,8 @@ func TestMigrateCAMakesTheMovedFolderPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirs := recordPrivate(t)
-	if note := migrateCANote(); note != "" {
-		t.Fatalf("note = %q, want none", note)
+	if notes := migrateCANotes(); len(notes) != 0 {
+		t.Fatalf("notes = %v, want none", notes)
 	}
 	data, err := config.DataDir()
 	if err != nil {
@@ -665,11 +667,11 @@ func TestMigrateCAMakesTheLeftoverCopyPrivate(t *testing.T) {
 		}
 	}
 	dirs := recordPrivate(t, old)
-	note := migrateCANote()
+	notes := migrateCANotes()
 	if want := []string{current, old}; !slices.Equal(*dirs, want) {
 		t.Fatalf("made private %q, want %q", *dirs, want)
 	}
-	if want := "Warning: could not make " + old + " private."; note != want {
-		t.Fatalf("note = %q, want %q", note, want)
+	if want := "could not make " + old + " private."; len(notes) != 1 || notes[0].Code != report.CANotPrivate || notes[0].Title != want {
+		t.Fatalf("notes = %v, want %q", notes, want)
 	}
 }

@@ -17,12 +17,22 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
-// statusNotRunning is what `nearhost status` says when no core answers.
-const statusNotRunning = "Nearhost is not running. Start it with nearhost -d, or open nearhost."
+// statusNotRunning is the error of `nearhost status` when no core answers:
+// core.not-running, exit 3, and how to start one, named when a service is
+// installed.
+func statusNotRunning(serviceInstalled bool) *report.Message {
+	m := report.Errorf(report.CoreNotRunning, "Nearhost is not running.").ExitCode(statusNotRunningCode)
+	if serviceInstalled {
+		m.Because("A service is installed, and nearhost -d starts it.")
+	}
+	return m.Step("Start it in the background:", "nearhost -d").
+		Step("Or open its interface:", "nearhost")
+}
 
 // statusNotRunningCode is status's exit code when no core answers, as a
 // service manager's status command gives for a service that is not running.
@@ -63,16 +73,8 @@ func runStatus(cmd *cobra.Command, asJSON bool, manager func() service.Manager) 
 		st, err = c.Status(ctx)
 	}
 	if errors.Is(err, control.ErrNotRunning) {
-		// JSON output stays JSON, or nothing: the message goes to stderr.
-		w := cmd.OutOrStdout()
-		if asJSON {
-			w = cmd.ErrOrStderr()
-		}
-		fmt.Fprintln(w, statusNotRunning)
-		if serviceInstalled(ctx, manager) {
-			fmt.Fprintln(w, "A service is installed: start it with nearhost -d.")
-		}
-		return exitError{code: statusNotRunningCode, msg: statusNotRunning}
+		// Said on stderr, so the output stays JSON, or nothing.
+		return statusNotRunning(serviceInstalled(ctx, manager)).Wrap(err)
 	}
 	if err != nil {
 		return err
@@ -94,7 +96,7 @@ func runStatus(cmd *cobra.Command, asJSON bool, manager func() service.Manager) 
 			page = keyed
 		}
 	}
-	return printStatus(out, st, page)
+	return printStatus(out, st, page, sinkOf(cmd))
 }
 
 // serviceInstalled reports whether a service is installed. A manager that
@@ -122,8 +124,10 @@ var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd()))
 // printStatus writes st as a line about the core, then a table of its
 // servers and one of its projects, aligned as `ls` aligns its own, then what
 // waits for an answer and the page's address: keyed, the address with the
-// page's key, when it is set, and otherwise the address without it.
-func printStatus(out io.Writer, st control.Status, keyed string) error {
+// page's key, when it is set, and otherwise the address without it. What is
+// worth knowing about the core (a newer release, a config it does not
+// reload) is a note to notes, not part of the output.
+func printStatus(out io.Writer, st control.Status, keyed string, notes report.Sink) error {
 	// The first write that fails is the error, as for a closed pipe.
 	w := &stickyWriter{w: out}
 	info := st.Info
@@ -132,16 +136,17 @@ func printStatus(out io.Writer, st control.Status, keyed string) error {
 	if this := strings.TrimPrefix(Version, "v"); st.Update != "" && update.IsRelease(this) && !update.Newer(this, st.Update) {
 		// This copy is already that release, as after brew upgrade: the
 		// core is what is out of date.
-		fmt.Fprintf(w, "This copy is %s; restart Nearhost to run it: nearhost stop, then nearhost -d.\n", this)
+		notes.Report(report.Notef(report.CoreOutdated, "This copy is %s; restart Nearhost to run it.", this).
+			Step("Stop it:", "nearhost stop").Step("Then start it again:", "nearhost -d"))
 		// Said here: Main's notice of the same release is dropped. Main
 		// reads it only once the command has returned.
 		updates = nil
 	} else if st.Update != "" {
-		fmt.Fprintf(w, "Nearhost %s is available. Run nearhost update.\n", printable(st.Update))
+		notes.Report(report.Notef(report.UpdateAvailable, "Nearhost %s is available.", st.Update).Step("To update, run:", "nearhost update"))
 		updates = nil
 	}
 	if !info.Reloads {
-		fmt.Fprintln(w, "It serves the projects it was started with and does not reload the config.")
+		notes.Report(report.Notef(report.CoreNoReload, "Nearhost serves the projects it was started with and does not reload the config."))
 	}
 	// What a server or project says can come from ssh or a remote
 	// directory: it may not act on the terminal or start a line.

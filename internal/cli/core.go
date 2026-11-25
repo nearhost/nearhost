@@ -20,6 +20,7 @@ import (
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/page"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // coreWatchInterval is how often the core looks at the config file, as the
@@ -53,9 +54,12 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	if err := flags.validate(); err != nil {
 		return err
 	}
+	// What the core reports goes to the terminal for up, and to the log
+	// for a core in the background.
+	sink := sinkOf(cmd)
 	// Before anything reads the CA's directory, so this run serves from
 	// where it lands.
-	migrateCA(cmd.ErrOrStderr())
+	migrateCA(sink)
 	// The watcher looks at the file before it is read, so a change saved
 	// from here on is applied once the watcher runs, after the engine
 	// starts.
@@ -91,7 +95,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		}
 		names = nil
 	}
-	opts, err := engineOptions(b.ssh, flags, warnNoTerminal(cmd.ErrOrStderr(), b.ensureHosts), b.lookup)
+	opts, err := engineOptions(b.ssh, flags, warnNoTerminal(sink, b.ensureHosts), b.lookup)
 	if err != nil {
 		return err
 	}
@@ -236,7 +240,8 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		// The engine's instance lock has already refused any other core
 		// with this run directory, so this is one that got past it.
 		if errors.Is(err, control.ErrInUse) {
-			err = errors.New("Another Nearhost answers on " + control.SocketPath(opts.RunDir) + ". " + stopAdvice)
+			err = report.Errorf(report.CoreAlreadyRunning, "Another Nearhost answers on %s.", control.SocketPath(opts.RunDir)).
+				Then(stopAdvice).Wrap(err)
 		} else {
 			err = fmt.Errorf("serve the control socket: %w", err)
 		}
@@ -339,7 +344,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	fmt.Fprintln(p.out, "stopped")
 	if nothing {
 		// The summary has said why; Main adds nothing.
-		return exitError{code: 1, msg: "nothing can be served"}
+		return alreadySaid{report.Errorf(report.CoreNothingToServe, "Nothing can be served.")}
 	}
 	return nil
 }
@@ -360,12 +365,8 @@ func watchConfig(ctx context.Context, ops *coreOps, w *config.Watcher) {
 		if ctx.Err() != nil {
 			return // cut short by the shutdown: the file is not at fault
 		}
-		msg := err.Error()
-		// A file that does not parse is named by the error already.
-		if !strings.Contains(msg, path) {
-			msg = path + ": " + msg
-		}
-		ops.eng.Events().Publish(engine.Event{Message: msg + "; still serving the last good config"})
+		warning := badConfig(path, err)
+		ops.eng.Events().Publish(engine.Event{Message: warning.Title, Report: warning})
 	}
 	// What the watcher read and validated is applied: it refuses a file caught
 	// empty or half saved. A client's Reload reads in Apply's turn, so it
@@ -376,6 +377,24 @@ func watchConfig(ctx context.Context, ops *coreOps, w *config.Watcher) {
 			bad(err)
 		}
 	}, bad)
+}
+
+// badConfig is the warning for the config file at path that could not be
+// loaded or applied with err: the core goes on serving the last good one.
+// Its title is the problem's own, naming the file, which a file that does
+// not parse names already; its explanation and fix stay the problem's.
+func badConfig(path string, err error) *report.Message {
+	w := messageOf(err)
+	title := w.Title
+	if !strings.Contains(title, path) {
+		title = path + ": " + title
+	}
+	if w.Code == report.Unexpected {
+		w.Code = report.ConfigInvalid
+	}
+	w.Level, w.Context = report.Warning, ""
+	w.Title = strings.TrimSuffix(title, ".") + "; still serving the last good config"
+	return w.Wrap(err)
 }
 
 // coreBackend is the engine, as the control API sees it.
@@ -487,7 +506,7 @@ func (c *coreBackend) Stop() { c.stop() }
 
 // HostsChanged starts again, side by side, every enabled project that a start
 // left in error, or stopped with a reason, which only a refused hosts file
-// gives (see upPrinter.fix). It returns without waiting for them: the client
+// gives (see upPrinter.steps). It returns without waiting for them: the client
 // does not wait long, and a start can take a while.
 func (c *coreBackend) HostsChanged(context.Context) {
 	c.mu.Lock()

@@ -78,6 +78,21 @@ const (
 	UpdateCheckFailed        Code = "update.check-failed"
 	UpdateAvailable          Code = "update.available"
 	InterfaceNoTerminal      Code = "interface.no-terminal"
+	CoreNothingToServe       Code = "core.nothing-to-serve"
+	CoreStopTimeout          Code = "core.stop-timeout"
+	CoreOutdated             Code = "core.outdated"
+	CoreNoReload             Code = "core.no-reload"
+	CoreLogUnavailable       Code = "core.log-unavailable"
+	CANotPrivate             Code = "ca.not-private"
+	TrustNoSudo              Code = "trust.no-sudo"
+	TrustNotRemoved          Code = "trust.not-removed"
+	TrustRemains             Code = "trust.remains"
+	ServiceStartFailed       Code = "service.start-failed"
+	ServiceOwnSettings       Code = "service.own-settings"
+	HostsHelperRefused       Code = "hosts.helper-refused"
+	UpdateFailed             Code = "update.failed"
+	DiscoveryIncomplete      Code = "discovery.incomplete"
+	DoctorChecksFailed       Code = "doctor.checks-failed"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -152,6 +167,21 @@ var catalog = []Entry{
 	{UpdateCheckFailed, Error, 503, "Nearhost could not find out whether a newer release exists."},
 	{UpdateAvailable, Info, 0, "A newer release of Nearhost is available."},
 	{InterfaceNoTerminal, Error, 400, "The interface needs a terminal, and there is none."},
+	{CoreNothingToServe, Error, 409, "nearhost up found no project it can serve, and none still starting, so it stopped."},
+	{CoreStopTimeout, Error, 504, "Nearhost was asked to stop and had not stopped in time."},
+	{CoreOutdated, Info, 0, "The running Nearhost is an older release than this copy, and runs it once restarted."},
+	{CoreNoReload, Info, 0, "The running Nearhost serves the projects it was started with and does not reload the config."},
+	{CoreLogUnavailable, Warning, 0, "The core could not send its standard error to its log, so a crash may not be logged."},
+	{CANotPrivate, Warning, 0, "Nearhost could not make the folder that holds its local CA private to the user."},
+	{TrustNoSudo, Error, 500, "sudo, which trusting or untrusting the local CA needs, is not installed."},
+	{TrustNotRemoved, Error, 409, "The local CA was not removed from a trust store, and running untrust again can finish it."},
+	{TrustRemains, Error, 409, "Something Nearhost cannot change still trusts the local CA."},
+	{ServiceStartFailed, Warning, 0, "Starting Nearhost through its service failed, so it was started directly."},
+	{ServiceOwnSettings, Info, 0, "A service is installed, but it runs with its own settings, so Nearhost was started directly with the ones given."},
+	{HostsHelperRefused, Error, 400, "The elevated hosts helper refused its input or report file."},
+	{UpdateFailed, Error, 500, "The update ran, but the installed nearhost is not the new release."},
+	{DiscoveryIncomplete, Warning, 0, "Something discovery reads, such as a preset or a project file, could not be read, so it went on without it."},
+	{DoctorChecksFailed, Error, 409, "One or more of nearhost doctor's checks failed."},
 
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},

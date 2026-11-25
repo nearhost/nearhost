@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,16 +130,22 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	}}
 }
 
+// run runs the service command with args and returns what it printed and,
+// once it fails, how Main renders its error, as the user sees them.
 func (x *serviceFixture) run(t *testing.T, input string, args ...string) (string, error) {
 	t.Helper()
-	return executeWithInput(t, input, newServiceCmd(x.b), args...)
+	out, err := executeWithInput(t, input, newServiceCmd(x.b), args...)
+	if err != nil {
+		out += rendered(err)
+	}
+	return out, err
 }
 
 func TestInstallRefusesRoot(t *testing.T) {
 	x := newServiceFixture(t)
 	x.b.euid = func() int { return 0 }
 	out, err := x.run(t, "", "service", "install")
-	if err == nil || !strings.Contains(out, "Install the service as yourself, not as root: it runs as the user who installs it.") {
+	if err == nil || !strings.Contains(flat(out), "Error: Install the service as yourself, not as root: it runs as the user who installs it.") {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 	if x.m.log() != "" {
@@ -314,8 +321,7 @@ func TestNoUserManagerMessage(t *testing.T) {
 	x := newServiceFixture(t)
 	x.m.err = service.ErrNoUserManager
 	out, err := x.run(t, "", "service", "install")
-	var ee exitError
-	if !errors.As(err, &ee) || ee.code != 1 || !strings.Contains(out, service.ErrNoUserManager.Error()) {
+	if exitCode(err, io.Discard) != 1 || !strings.Contains(flat(out), service.ErrNoUserManager.Error()) {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 }
@@ -346,11 +352,10 @@ func TestStatusMentionsService(t *testing.T) {
 			configHome(t)
 			m := &recordingService{installed: tc.installed, instErr: tc.err}
 			out, err := execute(t, newStatusCmd(func() service.Manager { return m }), "status")
-			var ee exitError
-			if !errors.As(err, &ee) || ee.code != statusNotRunningCode {
+			if exitCode(err, io.Discard) != statusNotRunningCode {
 				t.Fatalf("err %v", err)
 			}
-			if got := strings.Contains(out, "A service is installed: start it with nearhost -d."); got != tc.want {
+			if got := strings.Contains(out+rendered(err), "A service is installed, and nearhost -d starts it."); got != tc.want {
 				t.Errorf("out %q", out)
 			}
 		})
@@ -472,8 +477,7 @@ func TestInstallSaysItInstalledBeforeAFailedStart(t *testing.T) {
 		return 0, func() error { return errors.New("exit status 2") }, nil
 	}
 	out, err := x.run(t, "", "service", "install")
-	var ee exitError
-	if !errors.As(err, &ee) || ee.code != 1 {
+	if exitCode(err, io.Discard) != 1 {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 	installed := strings.Index(out, "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost.\n")
@@ -532,8 +536,7 @@ func TestServiceInstallLogFolderFailure(t *testing.T) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", file)
 	out, err := x.run(t, "", "service", "install")
-	var ee exitError
-	if !errors.As(err, &ee) || ee.code != 1 || !strings.Contains(out, "log folder") {
+	if exitCode(err, io.Discard) != 1 || !strings.Contains(out, "log folder") {
 		t.Fatalf("err %v, out %q", err, out)
 	}
 	if x.m.log() != "" {
@@ -560,6 +563,18 @@ func TestInstallRefusesABinaryThatMayNotBind(t *testing.T) {
 	out, err := x.run(t, "", "service", "install")
 	if err == nil {
 		t.Fatal("install succeeded")
+	}
+	// The spec's example, word for word.
+	const example = "Error: The service cannot run Nearhost from this copy yet.\n\n" +
+		"On Linux, a program may use ports below 1024, such as 443 for HTTPS and\n" +
+		"80 for HTTP, only when it has been given permission. The install script\n" +
+		"gives it; a nearhost you build or copy yourself does not have it.\n\n" +
+		"To give it permission, run:\n\n" +
+		"  sudo setcap cap_net_bind_service=+ep '/usr/bin/nearhost'\n\n" +
+		"Then run nearhost service install again.\n\n" +
+		"Run `nearhost doctor` to check this and the rest of what Nearhost needs.\n"
+	if !strings.HasSuffix(out, example) {
+		t.Errorf("out %q, want it to end with the spec's example %q", out, example)
 	}
 	for _, want := range []string{
 		"The service cannot run Nearhost from this copy yet.",

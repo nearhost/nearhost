@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -48,21 +51,46 @@ func TestUpPrintsTheSetcapCommandForAPortItMayNotBind(t *testing.T) {
 	if err == nil {
 		t.Fatal("up succeeded")
 	}
-	for _, want := range []string{
-		perm.Error() + "\n\nOn Linux, a program may use ports below 1024",
-		"\n\n  sudo setcap cap_net_bind_service=+ep '" + exe + "'\n\nThen start Nearhost again. Do not run nearhost with sudo.",
-		"`nearhost doctor`",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q, want it to contain %q", err, want)
-		}
+	// The spec's example, for up: what happened, why in plain words, the
+	// command on a line of its own, then what to do after it.
+	const want = "Error: HTTPS port 443 needs permission to bind.\n" +
+		"\n" +
+		"On Linux, a program may use ports below 1024, such as 443 for HTTPS and\n" +
+		"80 for HTTP, only when it has been given permission. The install script\n" +
+		"gives it; a nearhost you build or copy yourself does not have it.\n" +
+		"\n" +
+		"To give it permission, run:\n" +
+		"\n" +
+		"  sudo setcap cap_net_bind_service=+ep '" + exe + "'\n" +
+		"\n" +
+		"Then start Nearhost again. Do not run nearhost with sudo.\n" +
+		"\n" +
+		"Run `nearhost doctor` to check this and the rest of what Nearhost needs.\n"
+	if got := rendered(err); got != want {
+		t.Errorf("rendered:\n%s\nwant:\n%s", got, want)
+	}
+	if m, ok := report.As(err); !ok || m.Code != report.PortNeedsPermission {
+		t.Errorf("message %+v, want %s", m, report.PortNeedsPermission)
 	}
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Error("the advice hides the cause")
 	}
-	var ee exitError
-	if errors.As(err, &ee) {
-		t.Error("the error is an exitError, so Main would print nothing")
+	if code := exitCode(err, io.Discard); code != 1 {
+		t.Errorf("exit code %d, want 1", code)
+	}
+}
+
+// The engine's own port error keeps its port in the message's data, and
+// its cause, which --verbose shows, out of the title.
+func TestUpSetcapAdviceKeepsTheEnginesPort(t *testing.T) {
+	m := bindEnv{
+		goos: "linux", notPermitted: func(error) bool { return true }, elevated: func() bool { return false },
+		exe: func() string { return "/usr/local/bin/nearhost" }, isFile: func(string) bool { return true },
+	}.advise(fmt.Errorf("start: %w", report.Errorf(report.PortNeedsPermission, "HTTP port 80 needs permission to bind: listen tcp :80: bind: permission denied").
+		With("port", 80).Wrap(errors.New("listen tcp :80: bind: permission denied"))))
+	got, ok := report.As(m)
+	if !ok || got.Title != "HTTP port 80 needs permission to bind." || got.Data["port"] != 80 || len(got.Fix) != 2 || !got.Doctor {
+		t.Errorf("message %+v", got)
 	}
 }
 
@@ -70,8 +98,8 @@ func TestUpSaysWhenItCannotTellWhichFileIsTheBinary(t *testing.T) {
 	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
 	perm := deniedPortErr("HTTP port 80 needs permission to bind", permissionError())
 	_, err := execute(t, newUpCmd(setcapBackend(u, perm, "")), u.args()...)
-	if err == nil || !strings.Contains(err.Error(), "could not tell which file is the binary") ||
-		!strings.Contains(err.Error(), `sudo setcap cap_net_bind_service=+ep "$(command -v nearhost)"`) {
+	if got := rendered(err); err == nil || !strings.Contains(got, "could not tell which file is the binary") ||
+		!strings.Contains(got, "\n  sudo setcap cap_net_bind_service=+ep \"$(command -v nearhost)\"\n") {
 		t.Errorf("error %v", err)
 	}
 }
@@ -117,7 +145,7 @@ func TestUpAdvisesOnAnUnreadableUnprivilegedPortStart(t *testing.T) {
 	b := setcapBackend(u, deniedPortErr("HTTPS port 443 needs permission to bind", permissionError()), "/usr/local/bin/nearhost")
 	b.bind.unprivilegedPortStart = func() (int, bool) { return 0, false }
 	_, err := execute(t, newUpCmd(b), u.args()...)
-	if err == nil || !strings.Contains(err.Error(), "sudo setcap") {
+	if err == nil || !strings.Contains(rendered(err), "sudo setcap") {
 		t.Errorf("error %v", err)
 	}
 }
@@ -142,3 +170,27 @@ type wrapped struct {
 
 func (w *wrapped) Error() string { return w.msg }
 func (w *wrapped) Unwrap() error { return w.err }
+
+// A message the engine wraps on its way out reaches `nearhost up`'s error
+// with its code and fix steps, the wrapping said before its title.
+func TestUpRendersAWrappedEngineMessage(t *testing.T) {
+	u := newUpRun(t, &config.Config{Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	inUse := report.Errorf(report.PortInUse, "HTTPS port 443 is in use by node (pid 42).").
+		Then("Quit the program using the port, or pass --https-port and --http-port.").
+		With("port", 443).Wrap(errors.New("address already in use"))
+	b := setcapBackend(u, fmt.Errorf("start proxy: %w", inUse), "/usr/local/bin/nearhost")
+	_, err := execute(t, newUpCmd(b), u.args()...)
+	if m, ok := report.As(err); !ok || m.Code != report.PortInUse || m.Data["port"] != 443 {
+		t.Fatalf("err %v, message %+v", err, m)
+	}
+	var stderr strings.Builder
+	if code := exitCodeVerbose(err, &stderr, true); code != 1 {
+		t.Errorf("exit %d", code)
+	}
+	const want = "Error: start proxy: HTTPS port 443 is in use by node (pid 42).\n(port.in-use)\n\n" +
+		"Quit the program using the port, or pass --https-port and --http-port.\n\n" +
+		"Cause: address already in use\n"
+	if got := stderr.String(); got != want {
+		t.Errorf("rendered:\n%s\nwant:\n%s", got, want)
+	}
+}

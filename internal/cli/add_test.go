@@ -1367,7 +1367,7 @@ func TestAddNotesALonePortVariable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add: %v\n%s", err, out)
 		}
-		if got := strings.Contains(out, note); got != c.want {
+		if got := strings.Contains(flat(out), flat(note)); got != c.want {
 			t.Errorf("%q %v: note printed = %v, want %v\n%s", c.env, c.args, got, c.want, out)
 		}
 	}

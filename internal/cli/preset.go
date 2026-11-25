@@ -114,7 +114,7 @@ func newPresetListCmd(b presetBackend) *cobra.Command {
 			if offered {
 				fmt.Fprintln(out, "\nEnable one with `nearhost preset enable <registry>/<name>`.")
 			}
-			printWarnings(cmd.ErrOrStderr(), warnings)
+			reportWarnings(cmd, warnings)
 			return nil
 		},
 	}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/nearhost/nearhost/internal/report"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -232,11 +234,11 @@ func TestDetachChildFailsShowsOnlyItsOwnLog(t *testing.T) {
 			ui := fakeUI(t, true, new(bool))
 			ui.detach = b
 			_, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
-			want := "Nearhost stopped while starting (exit status 1), before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
+			want := "Error: Nearhost stopped while starting.\n\nIt stopped (exit status 1) before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to check this and the rest of what Nearhost needs.\n"
 			if wrote != "" {
-				want = "Nearhost stopped while starting. The end of " + logPath + ":\nthis run's line" + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
+				want = "Error: Nearhost stopped while starting.\n\nThe end of " + logPath + ":\nthis run's line" + "\n\nRun `nearhost doctor` to check this and the rest of what Nearhost needs.\n"
 			}
-			if code != 1 || stderr != want {
+			if code != 1 || flat(stderr) != flat(want) {
 				t.Errorf("code %d, stderr %q, want %q", code, stderr, want)
 			}
 		})
@@ -266,8 +268,8 @@ func TestDetachChildFails(t *testing.T) {
 	if code != 1 || stdout != "" {
 		t.Fatalf("code %d, stdout %q", code, stdout)
 	}
-	want := "Nearhost stopped while starting. The end of " + logPath + ":\n" + strings.Join(lines[5:], "\n") + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
-	if asked != 20 || stderr != want {
+	want := "Error: Nearhost stopped while starting.\n\nThe end of " + logPath + ":\n" + strings.Join(lines[5:], "\n") + "\n\nRun `nearhost doctor` to check this and the rest of what Nearhost needs.\n"
+	if asked != 20 || flat(stderr) != flat(want) || !strings.Contains(stderr, "\n  line 6\n  line 7\n") {
 		t.Errorf("asked for %d lines; stderr %q, want %q", asked, stderr, want)
 	}
 }
@@ -282,7 +284,7 @@ func TestDetachChildFailsWithNothingLogged(t *testing.T) {
 	ui := fakeUI(t, true, new(bool))
 	ui.detach = b
 	_, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
-	if want := "Nearhost stopped while starting (exit status 2), before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"; code != 1 || stderr != want {
+	if want := "Error: Nearhost stopped while starting.\n\nIt stopped (exit status 2) before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to check this and the rest of what Nearhost needs.\n"; code != 1 || flat(stderr) != flat(want) {
 		t.Errorf("code %d, stderr %q, want %q", code, stderr, want)
 	}
 }
@@ -317,7 +319,7 @@ func TestDetachTimesOut(t *testing.T) {
 	if code != 1 || stdout != "" {
 		t.Fatalf("code %d, stdout %q", code, stdout)
 	}
-	if want := "Nearhost is still starting. See " + logPath + " for how it is going.\n"; stderr != want {
+	if want := "Error: Nearhost is still starting.\n\nSee how it is going in its log:\n\n  " + logPath + "\n"; stderr != want {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if d := time.Since(start); d > 5*time.Second {
@@ -619,7 +621,7 @@ func TestDetachWithFlagsSpawns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.\n"; stderr != want {
+	if want := "Note: A service is installed, but it runs with its own settings, so Nearhost was started directly with yours.\n"; flat(stderr) != flat(want) {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if want := "Nearhost is running in the background (pid 7). Stop it with nearhost stop.\n"; stdout != want {
@@ -650,7 +652,7 @@ func TestServiceStartFailsFallsBack(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "Starting Nearhost through its service failed (launchctl kickstart: exit status 113), so it was started directly.\n"; stderr != want {
+	if want := "Warning: Starting Nearhost through its service failed (launchctl kickstart: exit status 113), so it was started directly.\n"; flat(stderr) != flat(want) {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if want := "Nearhost is running in the background (pid 8). Stop it with nearhost stop.\n"; stdout != want {
@@ -684,10 +686,53 @@ func TestServiceStartStops(t *testing.T) {
 	if code != 1 || stdout != "" {
 		t.Fatalf("code %d, stdout %q", code, stdout)
 	}
-	if want := "Nearhost stopped while starting. The end of " + logPath + ":\nthe service's last line" + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"; stderr != want {
+	if want := "Error: Nearhost stopped while starting.\n\nThe end of " + logPath + ":\nthe service's last line" + "\n\nRun `nearhost doctor` to check this and the rest of what Nearhost needs.\n"; flat(stderr) != flat(want) {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if took < serviceGrace || took > 8*time.Second {
 		t.Errorf("took %s, want the grace of %s and a little more", took, serviceGrace)
+	}
+}
+
+// A core that stopped while starting is core.stopped-while-starting, with
+// the end of its log as why, and suggests doctor unless the log already
+// names it.
+func TestChildStoppedIsAMessage(t *testing.T) {
+	err := childStopped("/logs/core.log", []string{"line one", "line two"}, errors.New("exit status 1"))
+	m, ok := report.As(err)
+	if !ok || m.Code != report.CoreStoppedWhileStarting || m.Title != "Nearhost stopped while starting." ||
+		m.Why != "The end of /logs/core.log:" || !slices.Equal(m.Verbatim, []string{"line one", "line two"}) || !m.Doctor || m.Data["log"] != "/logs/core.log" {
+		t.Fatalf("message %+v", m)
+	}
+	m, _ = report.As(childStopped("/logs/core.log", []string{"  Run `nearhost doctor` to check this and the rest of what Nearhost needs."}, nil))
+	if m.Doctor {
+		t.Errorf("doctor suggested twice: %+v", m)
+	}
+	m, _ = report.As(childStopped("/logs/core.log", nil, errors.New("exit status 2")))
+	if m.Why != "It stopped (exit status 2) before it wrote to /logs/core.log." || !m.Doctor {
+		t.Errorf("with nothing logged: %+v", m)
+	}
+}
+
+// A command the core logged comes out of `nearhost -d`'s error whole, as it
+// was in the log, so it can be copied: a detached core that cannot bind
+// logs the setcap command on a stamped line of a hundred columns.
+func TestChildStoppedKeepsALoggedCommandWhole(t *testing.T) {
+	fix := "2026-11-25T08:49:24Z   Fix: sudo setcap cap_net_bind_service=+ep '/home/someone/.local/bin/nearhost'"
+	if len(fix) < 100 {
+		t.Fatalf("the line is %d columns", len(fix))
+	}
+	tail := []string{
+		"2026-11-25T08:49:24Z error [port.needs-permission] HTTPS port 443 needs permission to bind.",
+		fix,
+		"2026-11-25T08:49:24Z   Run `nearhost doctor` to check this and the rest of what Nearhost needs.",
+	}
+	got := rendered(childStopped("/home/someone/.config/nearhost/core.log", tail, errors.New("exit status 1")))
+	if !strings.Contains(got, "\n  "+fix+"\n") {
+		t.Errorf("the command is not whole:\n%s", got)
+	}
+	// The log's own doctor line is enough.
+	if strings.Count(got, "nearhost doctor") != 1 {
+		t.Errorf("doctor suggested twice:\n%s", got)
 	}
 }

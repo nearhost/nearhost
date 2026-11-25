@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -33,7 +36,9 @@ type upPrinter struct {
 	// up` again (see restart).
 	keepRunning bool
 	// stamped leaves the time out of event lines: out puts a full one
-	// before every line.
+	// before every line. It is set for the core log, which also says each
+	// problem's level and code, and writes a warning or an error as a
+	// message block (see report.LogText).
 	stamped bool
 }
 
@@ -82,28 +87,67 @@ func (p *upPrinter) writeEvent(ev engine.Event) {
 		}
 		p.shown[ev.Project] = msg
 	}
+	pending := ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix)
+	// Approving takes the interface, which shows each change and why it
+	// needs approval; up only says where to go. The interface cannot
+	// start while a core in the background runs.
+	approve := "open nearhost to approve them; nearhost up cannot"
+	if p.keepRunning {
+		approve = "run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot"
+	}
+	if p.stamped && ev.State == "" && ev.Report != nil {
+		// A warning or an error said as it happens, as a block with its
+		// level, code and what to do.
+		m := *ev.Report
+		m.Context, m.Fix = source, slices.Clone(m.Fix)
+		if pending {
+			m.Then(upperFirst(approve) + ".")
+		}
+		fmt.Fprintln(p.out, report.LogText(&m))
+		return
+	}
 	// The message can carry text from ssh or the server, and the source a
 	// project's name from a remote directory: neither may act on the
 	// terminal or start a line of its own.
-	line := fmt.Sprintf("[%s] %s", printable(source), printable(msg))
+	line := fmt.Sprintf("%s[%s] %s", p.codePrefix(ev.Report), printable(source), printable(msg))
 	if !p.stamped {
 		line = ev.Time.Format("15:04:05") + " " + line
 	}
 	fmt.Fprintln(p.out, line)
-	if ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix) {
-		// Approving takes the interface, which shows each change and why it
-		// needs approval; up only says where to go. The interface cannot
-		// start while a core in the background runs.
-		if p.keepRunning {
-			fmt.Fprintln(p.out, "  run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot")
-		} else {
-			fmt.Fprintln(p.out, "  open nearhost to approve them; nearhost up cannot")
-		}
+	if pending {
+		fmt.Fprintln(p.out, "  "+approve)
+	} else if ev.State == "" && ev.Report != nil {
+		// In a terminal, a warning or an error is an event line like any
+		// other, which keeps its time, with what to do under it.
+		p.writeSteps(ev.Report.Fix)
 	}
 	if ev.State != "" && p.advise {
 		// A state change reads "state: <state>" or "state: <state>: <reason>".
 		reason := strings.TrimPrefix(strings.TrimPrefix(msg, "state: "+string(ev.State)), ": ")
-		p.fix(ev.Project, ev.State, reason)
+		p.writeSteps(p.steps(ev.Project, ev.State, reason, ev.Report))
+	}
+}
+
+// codePrefix is what goes before a line about problem in the log: its level
+// and code, as a message block starts. A line in a terminal, or one about no
+// problem, has none.
+func (p *upPrinter) codePrefix(problem *report.Message) string {
+	if !p.stamped || problem == nil || problem.Code == "" {
+		return ""
+	}
+	return problem.Level.String() + " [" + printable(string(problem.Code)) + "] "
+}
+
+// writeSteps writes each step under the line it fixes: "  fix: <text>",
+// and its command, if any, on a line of its own, so it can be copied.
+func (p *upPrinter) writeSteps(steps []report.Step) {
+	for _, s := range steps {
+		if text := printableLines(s.Text); text != "" {
+			fmt.Fprintln(p.out, "  fix: "+strings.ReplaceAll(text, "\n", "\n       "))
+		}
+		if c := printable(s.Command); c != "" {
+			fmt.Fprintln(p.out, "        "+c)
+		}
 	}
 }
 
@@ -137,16 +181,19 @@ func (p *upPrinter) writeSummary(names []string, startErrs []error) (nothing boo
 			fmt.Fprintf(p.out, "%s: running at https://%s\n", printable(name), printable(st.Alias))
 			continue
 		}
-		reason := st.Message
+		reason, problem := st.Message, st.Problem
 		if reason == "" && startErrs[i] != nil {
 			reason = startErrs[i].Error()
 		}
-		line := fmt.Sprintf("%s: %s", printable(name), st.State)
+		if problem == nil && startErrs[i] != nil {
+			problem, _ = report.As(startErrs[i])
+		}
+		line := fmt.Sprintf("%s%s: %s", p.codePrefix(problem), printable(name), st.State)
 		if reason != "" {
 			line += ": " + printable(reason)
 		}
 		fmt.Fprintln(p.out, line)
-		p.fix(name, st.State, reason)
+		p.writeSteps(p.steps(name, st.State, reason, problem))
 	}
 	if !p.keepRunning && p.nothingToServe(names) {
 		fmt.Fprintln(p.out, "\nNothing can be served, so nearhost up is stopping.")
@@ -212,18 +259,27 @@ func (p *upPrinter) restart() string {
 	return "run `nearhost up` again"
 }
 
-// fix prints what to do about a project in the given state, if anything.
-func (p *upPrinter) fix(name string, st engine.State, reason string) {
+// steps is what to do about the project called name in the state st, for
+// the reason given, whose problem is problem (nil when none is known), or
+// nil when there is nothing to do. Most problems carry their own steps.
+// Those about a server's access, the hosts file and the run directory are
+// worded here for up and a core in the background, which start again
+// differently from the interface the engine words them for.
+func (p *upPrinter) steps(name string, st engine.State, reason string, problem *report.Message) []report.Step {
 	cfg := p.eng.Config()
 	proj, ok := cfg.Project(name)
 	if !ok {
-		return
+		return nil
 	}
 	host := ""
 	if srv, ok := cfg.Server(proj.Server); ok {
 		host = srv.SSHHost
 	}
-	var fix string
+	var code report.Code
+	if problem != nil {
+		code = problem.Code
+	}
+	fix := ""
 	switch st {
 	case engine.StateDegraded:
 		fix = fmt.Sprintf("none needed while nearhost reconnects; if the project stays degraded, run `ssh %s` once in a terminal to fix access", host)
@@ -243,21 +299,23 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 		// core in the background asks for no prompt: `hosts update`
 		// updates the file in a terminal and has the core try again.
 		switch {
-		case reason == "" || hosts.IsReadOnlyMessage(reason) || strings.Contains(reason, errNoTerminal.Error()) || strings.Contains(reason, errHostsNeedTerminal.Error()):
+		case reason == "" || code == report.HostsReadOnly ||
+			problem != nil && (errors.Is(problem, errNoTerminal) || errors.Is(problem, errHostsNeedTerminal)):
 		case p.keepRunning:
 			fix = "run `nearhost hosts update` in a terminal, and Nearhost starts the project"
 		default:
 			fix = "run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts"
 		}
 	case engine.StateError:
-		fix = "resolve what is named above (a port in use: stop the process holding it), then " + p.restart()
-		if transport.IsSocketPathMessage(reason) {
+		status, _ := p.eng.ServerStatus(proj.Server)
+		switch {
+		case code == report.SSHSocketPathTooLong:
 			// Nothing reached the server, and nothing will until the run
 			// directory is shorter: ssh by hand would work and fix nothing.
 			// XDG_CONFIG_HOME also says where the config is read from, so
 			// the folder goes with it.
 			fix = "set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then " + p.restart()
-		} else if status, _ := p.eng.ServerStatus(proj.Server); status != transport.StatusConnected {
+		case status != transport.StatusConnected:
 			fix = sshHint(host, p.restart())
 			// A session with a next attempt tries by itself, and the
 			// project waits for it and starts once it connects. One that
@@ -265,9 +323,14 @@ func (p *upPrinter) fix(name string, st engine.State, reason string) {
 			if !p.eng.ServerHealth(proj.Server).NextAttempt.IsZero() {
 				fix = fmt.Sprintf("run `ssh %s` once in a terminal to fix access; nearhost tries again by itself", host)
 			}
+		case problem != nil && code != report.Unexpected && len(problem.Fix) > 0:
+			return problem.Fix
+		default:
+			fix = "resolve what is named above (a port in use: stop the process holding it), then " + p.restart()
 		}
 	}
-	if fix != "" {
-		fmt.Fprintln(p.out, "  fix: "+upperFirst(printable(fix)))
+	if fix == "" {
+		return nil
 	}
+	return []report.Step{{Text: upperFirst(fix)}}
 }
