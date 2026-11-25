@@ -719,6 +719,9 @@ func (m *Model) content() string {
 		if m.logView != nil {
 			content = m.logScreen()
 		} else if m.empty() {
+			// The rows the focus was on are not drawn, and may be others
+			// when the sidebar returns.
+			m.passFocus, m.routeFocus = false, false
 			content = m.emptyScreen()
 		} else {
 			content = m.frame(m.columns(), m.footer())

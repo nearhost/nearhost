@@ -230,3 +230,33 @@ func TestDocsPanelKeys(t *testing.T) {
 		t.Errorf("x opened %#v", m.form)
 	}
 }
+
+func TestPassPanelCloseFailureShown(t *testing.T) {
+	m, f := panelModel(t)
+	f.passErr = errBoom
+	press(m, "tab")
+	settle(m, press(m, "x"))
+	wantScreen(t, m, "Boom")
+}
+
+// The first-run screen returns when the last passthrough closes with the
+// rows focused; the focus must not wait for the next one to open.
+func TestFirstRunDropsTheRowFocus(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	m := sized(f)
+	f.passes = []engine.Passthrough{{PassthroughSpec: engine.PassthroughSpec{ID: "p1", Server: config.LocalServer, Requester: "codex", Remote: 5173},
+		Local: 5173, Opened: m.now()}}
+	m.selectRow("passthroughs")
+	press(m, "tab")
+	if !m.passFocus {
+		t.Fatal("tab did not focus the row")
+	}
+	f.passes = nil // closed elsewhere
+	screen(m)
+	f.passes = []engine.Passthrough{{PassthroughSpec: engine.PassthroughSpec{ID: "p2", Server: config.LocalServer, Requester: "codex", Remote: 6000},
+		Local: 6000, Opened: m.now()}}
+	screen(m)
+	if m.passFocus {
+		t.Error("the focus came back on a row the user has not seen selected")
+	}
+}
