@@ -201,11 +201,14 @@ func (o Options) serveAddrs(port int) []string {
 	return netbind.ServeAddrs(port)
 }
 
-// underDomain reports whether host is domain or a name beneath it,
-// ignoring case.
-func underDomain(host, domain string) bool {
+// wildcardCovers reports whether a networked core's ACME certificates cover
+// host, ignoring case: it is domain or exactly one label beneath it, as
+// *.<domain> covers no name deeper. A pattern counts by its own labels, so
+// *.<domain> is covered and *.app.<domain> is not.
+func wildcardCovers(host, domain string) bool {
 	h, d := strings.ToLower(host), strings.ToLower(domain)
-	return h == d || strings.HasSuffix(h, "."+d)
+	label, ok := strings.CutSuffix(h, "."+d)
+	return h == d || ok && !strings.Contains(label, ".")
 }
 
 // acmeNetwork is opts' network when its certificates come from ACME, and
@@ -744,14 +747,15 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	// On a networked core whose certificates come from ACME, the network
 	// domain and every name one label beneath it are the ACME policy's (see
 	// acmePolicy), so the local CA issues for none of them, exactly or on
-	// demand. With the local CA, any name one label beneath the domain gets
+	// demand. A name deeper than that, which the wildcard does not cover,
+	// stays on the local CA. With the local CA, any name one label beneath the domain gets
 	// a certificate on demand, so a device can reach a project there before
 	// it is a subject. The https server still skips every site pattern.
 	onDemand := patterns
 	acme := acmeNetwork(opts)
 	if acme != nil {
-		subjects = slices.DeleteFunc(subjects, func(h string) bool { return underDomain(h, acme.Domain) })
-		onDemand = slices.DeleteFunc(slices.Clone(patterns), func(h string) bool { return underDomain(h, acme.Domain) })
+		subjects = slices.DeleteFunc(subjects, func(h string) bool { return wildcardCovers(h, acme.Domain) })
+		onDemand = slices.DeleteFunc(slices.Clone(patterns), func(h string) bool { return wildcardCovers(h, acme.Domain) })
 	} else if n := opts.network(); n != nil {
 		wild := "*." + strings.ToLower(n.Domain)
 		if !slices.Contains(onDemand, wild) {

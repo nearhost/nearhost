@@ -46,9 +46,9 @@ var certAsked func(hosts []string)
 // for them. A host still unanswered after the wait is said in the log, once,
 // and the load succeeds: the certificate may yet come.
 //
-// A host under a networked core's domain whose certificates come from ACME
-// is not the local CA's, and its certificate can take minutes, so it is not
-// waited for.
+// A host a networked core's ACME wildcard covers (see wildcardCovers) is
+// not the local CA's, and its certificate can take minutes, so it is not
+// waited for. A deeper name under the domain stays the local CA's and is.
 //
 // Call it with caddyMu held, after a load that succeeded, with the options
 // of that load.
@@ -62,7 +62,7 @@ func (p *Proxy) awaitCertificates(sites []Site, opts Options) {
 		}
 		for _, s := range sites {
 			for _, h := range s.Hosts {
-				if !hostname.IsPattern(h) && (acme == nil || !underDomain(h, acme.Domain)) {
+				if !hostname.IsPattern(h) && (acme == nil || !wildcardCovers(h, acme.Domain)) {
 					want[certKey(https, h)] = struct{}{}
 				}
 			}

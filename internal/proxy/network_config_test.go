@@ -107,8 +107,11 @@ func handlerNames(t *testing.T, route map[string]any) []string {
 	return out
 }
 
+// underNet reports whether h is the network domain or one label beneath
+// it: a name the ACME wildcard covers.
 func underNet(h string) bool {
-	return h == netDomain || strings.HasSuffix(h, "."+netDomain)
+	label, ok := strings.CutSuffix(h, "."+netDomain)
+	return h == netDomain || ok && !strings.Contains(label, ".")
 }
 
 // With networked mode off, or with no domain, the config is byte for byte
@@ -223,7 +226,8 @@ func TestNetworkHTTPRedirectsAllowedClients(t *testing.T) {
 }
 
 // With ACME, the domain and its wildcard come from Let's Encrypt over the
-// Cloudflare DNS challenge, and the local CA issues nothing under it.
+// Cloudflare DNS challenge, and the local CA issues for no name the
+// wildcard covers.
 func TestNetworkACMEPolicy(t *testing.T) {
 	opts := netOptions(t)
 	opts.Network.Certificates = "acme"
@@ -247,14 +251,14 @@ func TestNetworkACMEPolicy(t *testing.T) {
 		if subj, ok := p.(map[string]any)["subjects"]; ok {
 			for _, s := range strs(subj) {
 				if underNet(s) {
-					t.Errorf("internal policy has subject %s under the network domain", s)
+					t.Errorf("internal policy has subject %s, which the wildcard covers", s)
 				}
 			}
 		}
 	}
 	for _, p := range strs(dig(t, auto, "on_demand", "permission", "patterns")) {
 		if underNet(p) {
-			t.Errorf("on-demand pattern %s is under the network domain", p)
+			t.Errorf("on-demand pattern %s is one the wildcard covers", p)
 		}
 	}
 	if got, want := strs(dig(t, cfg, "apps", "tls", "certificates", "automate")), []string{"*." + netDomain}; !reflect.DeepEqual(got, want) {
@@ -367,5 +371,30 @@ func TestNetworkConfigValidates(t *testing.T) {
 		if err := caddy.Validate(&cfg); err != nil {
 			t.Errorf("%s: Caddy refuses the networked config: %v", certs, err)
 		}
+	}
+}
+
+// With ACME, a name two or more labels beneath the domain, which the
+// wildcard does not cover, stays on the local CA: as a subject, or on
+// demand for a pattern.
+func TestNetworkACMEKeepsDeepNamesOnLocalCA(t *testing.T) {
+	opts := netOptions(t)
+	opts.Network.Certificates = "acme"
+	opts.Network.DNSToken = "tok"
+	sites := []Site{{Alias: "app." + netDomain, Hosts: []string{"app." + netDomain, "x.app." + netDomain, "*.pr." + netDomain, "*." + netDomain}, Upstream: "127.0.0.1:3"}}
+	cfg := netJSON(t, sites, opts)
+	auto := dig(t, cfg, "apps", "tls", "automation")
+	subjects := strs(dig(t, auto, "policies", 1, "subjects"))
+	if dig(t, auto, "policies", 1, "issuers", 0, "module") != "internal" {
+		t.Fatalf("second policy is not the local CA's")
+	}
+	if slices.Contains(subjects, "app."+netDomain) {
+		t.Errorf("internal subjects %v have app.%s, which the wildcard covers", subjects, netDomain)
+	}
+	if !slices.Contains(subjects, "x.app."+netDomain) {
+		t.Errorf("internal subjects %v lack x.app.%s", subjects, netDomain)
+	}
+	if got, want := strs(dig(t, auto, "on_demand", "permission", "patterns")), []string{"*.pr." + netDomain}; !reflect.DeepEqual(got, want) {
+		t.Errorf("on-demand patterns = %v, want %v", got, want)
 	}
 }
