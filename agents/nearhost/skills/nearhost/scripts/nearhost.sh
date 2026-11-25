@@ -576,9 +576,13 @@ close_session() {
 	if [ -n "$running" ]; then
 		# The hook has 3 seconds. A sleep that takes no fraction fails at
 		# once, and the cut-off falls back to 2 seconds.
+		# Sent TERM, it ends the sleep it waits on: the one $! names once it
+		# differs from the $! it started with. TERM before the trap is set
+		# ends it before any sleep starts. KILL, as a sleep just forked may
+		# still catch TERM with this shell's trap, and lose it as it starts.
 		(
-			wd=""
-			trap 'if [ -n "$wd" ]; then kill "$wd" 2>/dev/null; fi; exit 0' TERM
+			was=$!
+			trap 'if [ "$!" != "$was" ]; then kill -s KILL "$!" 2>/dev/null; fi; exit 0' TERM
 			sleep 2.5 2>/dev/null &
 			wd=$!
 			if ! wait "$wd"; then
@@ -605,7 +609,8 @@ close_session() {
 	done <"$marker"
 	if [ -n "$running" ]; then
 		kill "$watchdog" 2>/dev/null
-		wait "$watchdog"
+		# dash reports a watchdog ended before its trap was set.
+		wait "$watchdog" 2>/dev/null
 	fi
 	if [ -n "$keep" ]; then
 		private_file "$marker" "${keep%?}"
