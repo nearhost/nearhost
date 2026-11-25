@@ -68,9 +68,10 @@ func TestDegradedServerProblemIsSSHCode(t *testing.T) {
 	if st.Message != st.Problem.Title {
 		t.Errorf("Message %q differs from the problem's title %q", st.Message, st.Problem.Title)
 	}
-	want := "Run `ssh mini.example` once in a terminal to fix access, then press r."
-	if len(st.Problem.Fix) == 0 || st.Problem.Fix[len(st.Problem.Fix)-1].Text != want {
-		t.Errorf("fix = %+v, want the step %q", st.Problem.Fix, want)
+	// The step names no key of an interface: each adds its own.
+	want := report.Step{Text: "To fix access, run ssh once in a terminal:", Command: "ssh mini.example"}
+	if len(st.Problem.Fix) == 0 || st.Problem.Fix[0] != want {
+		t.Errorf("fix = %+v, want the step %+v", st.Problem.Fix, want)
 	}
 
 	// Once it gives up for good, the problem says the login was refused.

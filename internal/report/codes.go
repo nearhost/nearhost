@@ -97,6 +97,12 @@ const (
 	InterfacePasswordCancelled Code = "interface.password-cancelled"
 	InterfacePromptDeclined    Code = "interface.prompt-declined"
 	InterfaceLogMissed         Code = "interface.log-missed"
+	InterfaceOpenFailed        Code = "interface.open-failed"
+	InterfaceCopyFailed        Code = "interface.copy-failed"
+	InterfaceNothingToCopy     Code = "interface.nothing-to-copy"
+	InterfaceAddressTooLong    Code = "interface.address-too-long"
+	InterfaceAnswerNotSaved    Code = "interface.answer-not-saved"
+	InterfaceChangeIgnored     Code = "interface.change-ignored"
 	ServiceUnreadable          Code = "service.unreadable"
 	ServiceManagerFailed       Code = "service.manager-failed"
 	ServiceNodeVersion         Code = "service.node-version"
@@ -144,6 +150,7 @@ const (
 	CoreDockerMissing          Code = "core.docker-missing"
 	CoreDockerUnreachable      Code = "core.docker-unreachable"
 	CoreSSHMissing             Code = "core.ssh-missing"
+	CoreRunDirFailed           Code = "core.run-dir-failed"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -237,6 +244,13 @@ var catalog = []Entry{
 	{InterfacePasswordCancelled, Error, 403, "The password was cancelled, so what needed it was not done."},
 	{InterfacePromptDeclined, Error, 403, "The Windows prompt was declined, so what needed it was not done."},
 	{InterfaceLogMissed, Info, 0, "The interface fell behind the running Nearhost, so some log lines were missed."},
+	{CoreRunDirFailed, Error, 500, "Nearhost could not create its run directory, which holds its sockets and its lock."},
+	{InterfaceOpenFailed, Warning, 0, "The interface could not open a link in the browser."},
+	{InterfaceCopyFailed, Warning, 0, "The system's clipboard tool failed on a copy; the terminal may still have copied it."},
+	{InterfaceNothingToCopy, Warning, 0, "What the interface was asked to copy has nothing it can copy."},
+	{InterfaceAddressTooLong, Warning, 0, "An address in the log is too long to show, so a click does not open it."},
+	{InterfaceAnswerNotSaved, Warning, 0, "The quit box's answer could not be saved, so it asks again next time."},
+	{InterfaceChangeIgnored, Warning, 0, "A change to the config file could not be applied and was ignored."},
 	{ServiceUnreadable, Warning, 0, "The installed service's definition cannot be read, as one edited by hand, so it is removed as it is."},
 	{ServiceManagerFailed, Error, 502, "The system's service manager refused to install, start or remove the Nearhost service."},
 	{ServiceNodeVersion, Info, 0, "The service runs nearhost from a Node version's folder, so changing the default Node version needs a new install."},

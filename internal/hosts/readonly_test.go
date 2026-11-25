@@ -52,13 +52,3 @@ func TestApplyReadOnlyFileWithCurrentBlockIsNoError(t *testing.T) {
 		t.Fatalf("err = %v, want none", err)
 	}
 }
-
-// IsReadOnlyMessage recognises the message by its fixed part.
-func TestIsReadOnlyMessage(t *testing.T) {
-	if !IsReadOnlyMessage((&readOnlyError{path: `C:\x\hosts`}).Error()) {
-		t.Error("the read-only message was not recognised")
-	}
-	if IsReadOnlyMessage("replace /etc/hosts: permission denied") {
-		t.Error("another message was recognised")
-	}
-}

@@ -33,9 +33,14 @@ type uiBackend struct {
 	up upBackend
 	// interactive reports whether standard input and output are terminals.
 	interactive func() bool
-	// run runs the interface until it quits, calling attach with the
-	// program that runs m before it starts.
-	run func(m *tui.Model, attach func(*tea.Program)) error
+	// run runs the interface m until it quits, calling attach with the
+	// program that runs m before it starts. The program is made with
+	// uiProgram, so that Nearhost, not bubbletea, reports a panic.
+	run func(m tea.Model, attach func(*tea.Program)) error
+	// wrapModel, when set, is given the interface's model before it is
+	// guarded against panics, and returns the model to run. Tests use it to
+	// make the interface panic; it is nil otherwise.
+	wrapModel func(tea.Model) tea.Model
 	// applier is the privileged hosts write, given the context of the start
 	// that needs it; prompt says whether sudo may prompt (only in the
 	// terminal).
@@ -81,10 +86,8 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 		interactive: func() bool {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
-		run: func(m *tui.Model, attach func(*tea.Program)) error {
-			// runUI handles the stop signals, through the model's own
-			// quit, so the program must not end on them by itself.
-			p := tea.NewProgram(m, tea.WithoutSignalHandler())
+		run: func(m tea.Model, attach func(*tea.Program)) error {
+			p := uiProgram(m)
 			attach(p)
 			_, err := p.Run()
 			return err
@@ -111,6 +114,15 @@ func systemUI(lookup hosts.Lookup) uiBackend {
 		stops:    notifyUIStop,
 		detach:   systemDetach(),
 	}
+}
+
+// uiProgram is the program that runs the interface m, with opts. runUI
+// handles the stop signals, through the model's own quit, so the program
+// does not end on them by itself; and it catches no panic, so bubbletea
+// prints no stack: tui.Crashes catches them, the program ends, which
+// restores the terminal, and runUI reports the crash.
+func uiProgram(m tea.Model, opts ...tea.ProgramOption) *tea.Program {
+	return tea.NewProgram(m, append([]tea.ProgramOption{tea.WithoutSignalHandler(), tea.WithoutCatchPanics()}, opts...)...)
 }
 
 // notifyUIStop is the stops of the production backend. The ssh masters
@@ -303,6 +315,10 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	local := &localOps{b: b, path: st.ConfigPath, flags: localFlags, storage: storage, root: root}
 	back := newClientBackend(c, st, local, &proposals, owned)
 	back.gone = b.detach.gone
+	// A panic in the backend's own goroutines ends the interface as one in
+	// the interface does.
+	var crashes tui.Crashes
+	back.crashes = &crashes
 	defer back.Close()
 	if b.clientMade != nil {
 		b.clientMade(back)
@@ -331,7 +347,12 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 	if st.Update != "" {
 		back.bus.Publish(reportEvent(updateNotice(strings.TrimPrefix(info.Version, "v"), st.Update)))
 	}
-	err = b.run(m, func(p *tea.Program) {
+	var model tea.Model = m
+	if b.wrapModel != nil {
+		model = b.wrapModel(model)
+	}
+	err = b.run(crashes.Guard(model), func(p *tea.Program) {
+		crashes.Attach(p)
 		suspender.Attach(p)
 		proposals.Attach(p)
 		if sigs != nil {
@@ -339,8 +360,21 @@ func runUI(cmd *cobra.Command, b uiBackend, flags serveFlags) error {
 		}
 	})
 	back.Close()
-	if m.Err() != nil {
+	// What ended the program is said now the terminal is the shell's again.
+	if crash := crashes.Crash(); crash != nil {
+		if !back.quit() {
+			abandon()
+		}
+		return crash
+	}
+	if m.Lost() {
 		return coreLost(b.detach, logFrom, info.StartedBy)
+	}
+	for _, w := range m.Warnings() {
+		report.To(ctx, w)
+	}
+	if err == nil {
+		err = m.Err() // a quit that could not stop Nearhost or leave it
 	}
 	if err != nil && !back.quit() {
 		abandon()

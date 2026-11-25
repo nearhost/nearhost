@@ -134,20 +134,12 @@ func (s *Session) Preflight() error {
 // goes with it. Nearhost reads both as it starts: no retry helps.
 const SocketPathFix = "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then quit Nearhost and start it again."
 
-// socketPathPrefix and socketPathMarker are the parts of Preflight's message
-// that, in that order, no other has.
+// socketPathPrefix and socketPathMarker are the fixed parts of Preflight's
+// message.
 const (
 	socketPathPrefix = "control socket path "
 	socketPathMarker = " is too long for ssh: "
 )
-
-// IsSocketPathMessage reports whether s is Preflight's message, for code
-// that only has an error's text, such as a project's status reason. ssh
-// itself is not the trouble then, so running it by hand fixes nothing.
-func IsSocketPathMessage(s string) bool {
-	_, rest, ok := strings.Cut(s, socketPathPrefix)
-	return ok && strings.Contains(rest, socketPathMarker)
-}
 
 // socketName returns name when it is a plain file name ssh takes literally.
 // Anything else (path separators, "%" tokens, an empty name) is replaced by a

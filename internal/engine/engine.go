@@ -510,7 +510,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	}
 	if e.opts.RunDir != "" {
 		if err := os.MkdirAll(e.opts.RunDir, 0o700); err != nil {
-			return fmt.Errorf("create run directory: %w", err)
+			return RunDirProblem(err)
 		}
 	}
 	// Name the program in the way, which Caddy's own error does not.
@@ -984,4 +984,21 @@ func (e *Engine) Replay(ctx context.Context, id string) (int, error) {
 		return 0, errors.New("that request is no longer kept")
 	}
 	return proxy.Replay(ctx, ex, e.opts.StorageRoot, e.opts.HTTPSPort)
+}
+
+// RunDirProblem is the core.run-dir-failed error of a run directory that
+// could not be made, err being why. Its title is the text this error has
+// always had; its step says what to check: that this user can create the
+// folder when permission was refused, or the folder and what is wrong with
+// it otherwise.
+func RunDirProblem(err error) *report.Message {
+	m := report.Errorf(report.CoreRunDirFailed, "create run directory: %s", err)
+	var pe *fs.PathError
+	switch {
+	case errors.As(err, &pe) && errors.Is(pe.Err, fs.ErrPermission):
+		m.Then("Check that this user can create " + pe.Path + ".")
+	case errors.As(err, &pe):
+		m.Then("Fix " + pe.Path + ": " + pe.Err.Error() + ".")
+	}
+	return m.Wrap(err)
 }

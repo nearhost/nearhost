@@ -251,7 +251,7 @@ type asked struct {
 // open over the screen and the filter is not being typed. One whose agent
 // stopped waiting is dropped.
 func (m *Model) nextAsked() tea.Cmd {
-	if m.quitting || m.form != nil || m.password != nil || m.quitBox != nil || m.logView != nil || m.filtering || m.proposing != nil {
+	if m.quitting || m.form != nil || m.password != nil || m.quitBox != nil || m.alertBox != nil || m.logView != nil || m.filtering || m.proposing != nil {
 		return nil
 	}
 	for len(m.waiting) > 0 {

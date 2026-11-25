@@ -55,10 +55,10 @@ func CrashedIn(dir string, v any, stack []byte) *Message {
 	path, err := CrashFile(dir, v, stack)
 	if err != nil {
 		return m.Because("Nearhost could not save the details (%v). The problem was: %v", err, v).
-			Then("Please report this at " + IssuesURL + ", with what you were doing.")
+			Then("Report it at " + IssuesURL + ", with what you were doing.")
 	}
 	return m.Because("The details are in %s.", path).
-		Then("Please report this at "+IssuesURL+", and attach that file.").
+		Then("Report it at "+IssuesURL+" with that file attached.").
 		With("file", path)
 }
 

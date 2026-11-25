@@ -189,7 +189,19 @@ func retitle(m *report.Message, title string, l report.Level) *report.Message {
 	if c.Why != "" && strings.Contains(title, c.Why) {
 		c.Why = ""
 	}
+	dropSaidSteps(c)
 	return c
+}
+
+// dropSaidSteps drops the steps of m without a command whose text its
+// title already says, as the text of an error that reads its advice after
+// its title does: the title keeps its meaning for clients that read only
+// the text, and a renderer that shows the title and the steps says the
+// advice once.
+func dropSaidSteps(m *report.Message) {
+	m.Fix = slices.DeleteFunc(m.Fix, func(s report.Step) bool {
+		return s.Command == "" && s.Text != "" && strings.Contains(m.Title, s.Text)
+	})
 }
 
 // copyMessage is a copy of m that a caller may change without changing m;
@@ -216,6 +228,7 @@ func problemOf(err error) *report.Message {
 	if m.Why != "" && strings.Contains(m.Title, m.Why) {
 		m.Why = ""
 	}
+	dropSaidSteps(m)
 	if m.Cause == nil {
 		m.Cause = err
 	}

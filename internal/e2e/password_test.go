@@ -154,7 +154,7 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 	term.waitFor("the project stopped", "○ shop", "you cancelled")
 
 	term.click("○ shop")
-	term.waitFor("the project's page, with what to do", "▌  ○ shop", "Press enter and approve the password prompt", "enter start")
+	term.waitFor("the project's page, with what to do", "▌  ○ shop", "enter start it again and approve the password prompt")
 	term.press(keyEnter)
 	term.waitFor("the password box again", "Password needed", "add shop.test to")
 	for i, wrong := range []string{"one", "two", "three"} {
@@ -170,7 +170,11 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 		}
 	}
 	term.waitGone("the password box to close", "Password needed")
-	term.waitFor("the project stopped again", "○ shop", "three wrong passwords", "enter start")
+	// The box said it already: no alert repeats it.
+	term.waitFor("the project stopped again", "○ shop", "three wrong", "enter start")
+	if strings.Contains(term.screen(), "Something went wrong") {
+		t.Errorf("an alert repeats the refused password:\n%s", term.screen())
+	}
 	if got := sb.hostsFile(); got != untouched {
 		t.Errorf("the hosts file changed:\n%s", got)
 	}

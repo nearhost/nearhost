@@ -39,9 +39,6 @@ var ErrReadOnly = errors.New("hosts file is read-only")
 // message, hosts.read-only.
 type readOnlyError struct{ path string }
 
-// readOnlyMarker is the fixed part of the read-only message.
-const readOnlyMarker = " is read-only. Clear it with: attrib -r "
-
 // Error returns the message shown to the user: the report's title, then its
 // step.
 func (e *readOnlyError) Error() string {
@@ -59,10 +56,6 @@ func (e *readOnlyError) Report() *report.Message {
 
 // Unwrap is the report message, so report.As finds it.
 func (e *readOnlyError) Unwrap() error { return e.Report() }
-
-// IsReadOnlyMessage reports whether s is the read-only message, for code that
-// only has an error's text, such as a project's status reason.
-func IsReadOnlyMessage(s string) bool { return strings.Contains(s, readOnlyMarker) }
 
 // Is reports a match with ErrReadOnly.
 func (e *readOnlyError) Is(target error) bool { return target == ErrReadOnly }

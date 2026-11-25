@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // RequesterName is how a requester is named in a sentence. The tools Nearhost
@@ -225,7 +226,10 @@ func (m *Model) passAnswered(msg passAnsweredMsg) tea.Cmd {
 			if msg.answer == AnswerNo {
 				verb = "decline"
 			}
-			m.logs.note(fmt.Sprintf("Could not %s port %d for %s: %s.", verb, msg.r.Remote, msg.r.who(), strings.TrimSuffix(clean(msg.err.Error()), ".")))
+			// The user answered, and the box has gone: the alert says it.
+			problem := report.From(msg.err)
+			problem.Context = withContext(fmt.Sprintf("Could not %s port %d for %s", verb, msg.r.Remote, msg.r.who()), problem.Context)
+			return m.showAlert(homeKey, problem)
 		}
 		return nil
 	}

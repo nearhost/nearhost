@@ -13,6 +13,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/nearhost/nearhost/internal/desktop"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // The TUI takes the mouse, for clicks on rows and keys and the wheel on the
@@ -134,6 +135,11 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		return m.copySelection()
 	}
 	lines := m.screenLines()
+	if m.alertBox != nil && m.password == nil && !m.quitting {
+		// The alert waits for enter or esc; a click does nothing.
+		ms.lastAt = time.Time{}
+		return nil
+	}
 	if m.quitBox != nil && m.password == nil && !m.quitting {
 		// The quit box takes clicks on its buttons and check box, and
 		// nothing else: it waits for an answer.
@@ -163,7 +169,7 @@ func (m *Model) mouseUp(mouse tea.Mouse) tea.Cmd {
 		}
 		toast, ok := m.addressToast(url)
 		if !ok {
-			return m.showToast(toast, true)
+			return m.toastFor(report.Warnf(report.InterfaceAddressTooLong, "%s", toast))
 		}
 		ms.pending, ms.pendingRow, ms.pendingY, ms.pendingLo, ms.pendingHi, ms.pendingAt = url, row, ms.to.y, lo, hi, at
 		return m.showToast(toast, false)

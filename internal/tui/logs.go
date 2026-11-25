@@ -10,6 +10,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 const (
@@ -126,6 +127,14 @@ func (l *logs) event(ev engine.Event, cfg *config.Config) {
 		} else {
 			e.text, e.err = clean(proxy.PlainLog(ev.Message)), proxy.Level(ev.Message) == "error"
 		}
+	}
+	// The steps of a message the event carries follow its text, compactly,
+	// so advice such as a command to run is not lost.
+	if ev.Report != nil && e.req == nil {
+		if steps := stepsLine(ev.Report, ev.Message); len(steps) > 0 {
+			e.text = clean(strings.TrimSpace(e.text + " " + strings.Join(steps, " ")))
+		}
+		e.err = e.err || ev.Report.Level == report.Error
 	}
 	var keys []string
 	switch {

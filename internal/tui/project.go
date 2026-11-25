@@ -9,8 +9,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hostname"
-	"github.com/nearhost/nearhost/internal/hosts"
-	"github.com/nearhost/nearhost/internal/transport"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // projectPanel is the panel of the project called name.
@@ -20,11 +19,9 @@ func (m *Model) projectPanel(name string, width int) []string {
 		return nil
 	}
 	st := m.b.Status(name)
-	host := ""
 	server := "this machine"
 	if p.Server != config.LocalServer {
-		srv, _ := m.cfg.Server(p.Server)
-		host, server = srv.SSHHost, clean(p.Server)
+		server = clean(p.Server)
 	}
 	url := "https://" + clean(p.Alias)
 	title := styleTitle.Render(clean(p.Name)) + "  " + styleBeacon.Underline(true).Hyperlink(url).Render(url)
@@ -50,17 +47,7 @@ func (m *Model) projectPanel(name string, width int) []string {
 	if urls := otherURLs(*p, width); urls != "" {
 		lines = append(lines, urls)
 	}
-	if st.Message != "" {
-		lines = append(lines, field("why", clean(st.Message), width)...)
-	}
-	serverUp := true
-	if p.Server != config.LocalServer {
-		status, _ := m.b.ServerStatus(p.Server)
-		serverUp = status == transport.StatusConnected
-	}
-	if fix := fixFor(st.State, st.Message, serverUp, host); fix != "" {
-		lines = append(lines, field("fix", fix, width)...)
-	}
+	lines = append(lines, problemFields(projectProblem(st), projectHint(st), width)...)
 	if more := pendingLines(st, width); len(more) > 0 {
 		lines = append(append(lines, m.gap()...), more...)
 	}
@@ -242,33 +229,23 @@ func localPort(p config.Project, r config.Route, st engine.ProjectStatus) string
 	return ""
 }
 
-// fixFor says what to do about a project in state st with reason, as up
-// says it, for someone at the interface. serverUp reports whether the
-// project's server is connected; host is its ssh_host.
-func fixFor(st engine.State, reason string, serverUp bool, host string) string {
-	switch st {
-	case engine.StateDegraded:
-		return "None needed while Nearhost reconnects. If it stays degraded, run `ssh " + clean(host) + "` once in a terminal to fix access."
-	case engine.StateStopped:
-		// A stopped project with a reason was refused its hosts entry. A
-		// read-only hosts file's reason already says how to clear it, and
-		// approving again would fail the same way.
-		if hosts.IsReadOnlyMessage(reason) {
-			return "Clear the read-only attribute as named above, then press enter to start it again."
-		}
-		if reason != "" {
-			return "Press enter and " + approvePrompt() + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and run nearhost with --no-hosts."
-		}
-	case engine.StateError:
-		// The run directory is read as Nearhost starts, and ssh by hand
-		// would work and fix nothing.
-		if transport.IsSocketPathMessage(reason) {
-			return socketPathFix
-		}
-		if !serverUp {
-			return "Run `ssh " + clean(host) + "` once in a terminal to fix access, then press enter."
-		}
-		return "Resolve what is named above, then press enter to start it again."
+// projectHint is the key that acts on a project's problem in its panel:
+// enter starts a project in error, or one refused its hosts, again. A run
+// directory too long for ssh needs Nearhost started again, which no key
+// here does, and a degraded project waits for its server by itself.
+func projectHint(st engine.ProjectStatus) footerItem {
+	p := projectProblem(st)
+	if p == nil || !reconnectHelps(p) {
+		return footerItem{}
 	}
-	return ""
+	switch st.State {
+	case engine.StateError:
+		return footerItem{"enter", "start it again"}
+	case engine.StateStopped:
+		if p.Code == report.HostsReadOnly {
+			return footerItem{"enter", "start it again"}
+		}
+		return footerItem{"enter", "start it again and " + approvePrompt()}
+	}
+	return footerItem{}
 }

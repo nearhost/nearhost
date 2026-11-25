@@ -175,13 +175,13 @@ func TestAServerThatRefusesTheLoginRecoversWithR(t *testing.T) {
 	sb := newSandbox(t, onMini, "FAKE_SSH_AUTH_FAIL_FILE="+refuse)
 	term := sb.start()
 	skipWelcome(term)
-	term.waitFor("the problem and its fix", "✕ mini  auth failed", "Run ssh mini.lan once in a terminal to fix", "blocks    api", "r retry now")
+	term.waitFor("the problem and its fix", "✕ mini  auth failed", "To fix access, run ssh once in a terminal:", "ssh mini.lan", "blocks    api", "r retry now")
 
 	if err := os.Remove(refuse); err != nil {
 		t.Fatal(err)
 	}
 	term.press('r')
 	term.waitFor("the server connected and its project running", "● connected", "● api")
-	term.waitGone("the problem to clear", "✕ mini  auth failed", "Run ssh mini.lan once")
+	term.waitGone("the problem to clear", "✕ mini  auth failed", "To fix access, run ssh once")
 	quit(term)
 }

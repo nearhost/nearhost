@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // advice is what is known of a project's advice.
@@ -140,7 +141,7 @@ func (m *Model) copyAdvice(name string) tea.Cmd {
 	}
 	key := rowKey(rowProject, name)
 	if len(snippets) == 0 {
-		return m.alertProblem(key, name+" has no advice to copy.")
+		return m.warn(key, report.Warnf(report.InterfaceNothingToCopy, "%s has no advice to copy.", name))
 	}
 	return tea.Batch(copyText(key, strings.Join(snippets, "\n\n")), m.alert(key, "Copied the advice for "+name+"."))
 }

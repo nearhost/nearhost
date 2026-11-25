@@ -46,7 +46,7 @@ func fakeUI(t *testing.T, terminal bool, ran *bool) uiBackend {
 	t.Helper()
 	return uiBackend{
 		interactive: func() bool { return terminal },
-		run: func(m *tui.Model, attach func(*tea.Program)) error {
+		run: func(m tea.Model, attach func(*tea.Program)) error {
 			*ran = true
 			return nil
 		},

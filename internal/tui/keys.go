@@ -19,6 +19,9 @@ func (m *Model) footerItems() []footerItem {
 	if m.quitting {
 		return nil
 	}
+	if m.alertBox != nil {
+		return m.alertBox.keys()
+	}
 	if m.quitBox != nil {
 		return m.quitBox.keys()
 	}
@@ -163,7 +166,7 @@ func (m *Model) footer() string {
 	if m.showHelp {
 		return m.fullHelp()
 	}
-	if m.form != nil || m.quitBox != nil {
+	if m.form != nil || m.quitBox != nil || m.alertBox != nil {
 		return m.bar("", "") // the form's box has its keys
 	}
 	right := styleDim.Render(m.footerContext())
@@ -179,7 +182,7 @@ func (m *Model) footerRoom() int {
 // footerContext says where the selection is: the project and its place
 // among the projects, the server, or home.
 func (m *Model) footerContext() string {
-	if m.form != nil || m.quitBox != nil || m.empty() {
+	if m.form != nil || m.quitBox != nil || m.alertBox != nil || m.empty() {
 		return ""
 	}
 	kind, name := m.selected()
@@ -246,6 +249,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.password != nil {
 		return m.password.update(k)
+	}
+	if m.alertBox != nil {
+		return m.alertKey(s)
 	}
 	if m.quitBox != nil {
 		return m.quitBoxKey(s)
@@ -473,7 +479,7 @@ func (m *Model) enter() tea.Cmd {
 // clickable reports whether a click at mouse does something: on a footer
 // key, or a sidebar row, while no box covers them.
 func (m *Model) clickable(mouse tea.Mouse) bool {
-	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.quitBox != nil ||
+	if mouse.Button != tea.MouseLeft || m.quitting || m.form != nil || m.password != nil || m.quitBox != nil || m.alertBox != nil ||
 		m.logView != nil || m.small() {
 		return false
 	}
@@ -526,7 +532,7 @@ func (m *Model) click(mouse tea.Mouse) tea.Cmd {
 
 // wheel scrolls the log when the pointer is over the main panel.
 func (m *Model) wheel(mouse tea.Mouse) {
-	if m.password != nil || m.quitBox != nil {
+	if m.password != nil || m.quitBox != nil || m.alertBox != nil {
 		return
 	}
 	if m.logView != nil && m.form == nil {

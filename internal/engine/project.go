@@ -702,11 +702,24 @@ func HostsProblem(name string, err error) *report.Message {
 	} else {
 		m = report.Errorf(report.HostsNeedsUpdate, "%s", text).
 			Step("Or add its hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:", "nearhost --no-hosts")
-		m.Fix = append([]report.Step{{Text: "Start the project again to retry."}}, m.Fix...)
+		m.Fix = append([]report.Step{{Text: RetryText}}, m.Fix...)
 		return m.Wrap(err)
 	}
-	return m.Then("Then start the project again to retry.").Wrap(err)
+	if len(m.Fix) > 0 {
+		m.Then(RetryThenText)
+	} else {
+		m.Then(RetryText)
+	}
+	return m.Wrap(err)
 }
+
+// RetryText and RetryThenText are the step that says to start the project
+// again: the first step of a fix, or one that follows another. An interface
+// whose key does it says so itself and leaves the step out.
+const (
+	RetryText     = "Start the project again to retry."
+	RetryThenText = "Then start the project again to retry."
+)
 
 // HostsCause is err, the hosts file's refusal, as a clause inside a state
 // text: a message's title, not its explanation, so the text stays one line;

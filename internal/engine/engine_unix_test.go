@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -404,10 +405,10 @@ func TestRunDirectoryTooLongForAControlSocketFailsTheStartAtOnce(t *testing.T) {
 	if st := h.eng.Status("myapp"); st.State != StateError || !strings.Contains(st.Message, "too long") {
 		t.Fatalf("status = %+v", st)
 	}
-	// The interfaces tell this reason from one that ssh by hand would fix.
-	if st := h.eng.Status("myapp"); !transport.IsSocketPathMessage(st.Message) || transport.IsSocketPathMessage("Permission denied (publickey).") ||
-		transport.IsSocketPathMessage("ssh: the host name is too long for ssh: 300 bytes") {
-		t.Fatalf("IsSocketPathMessage is wrong for %q", st.Message)
+	// The interfaces tell this reason from one that ssh by hand would fix
+	// by its code.
+	if st := h.eng.Status("myapp"); st.Problem == nil || st.Problem.Code != report.SSHSocketPathTooLong {
+		t.Fatalf("problem = %+v, want %s", st.Problem, report.SSHSocketPathTooLong)
 	}
 	if log := h.log(); log != "" {
 		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)

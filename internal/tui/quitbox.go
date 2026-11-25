@@ -8,6 +8,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // The quit box's words. The buttons are drawn in brackets, so a click can
@@ -181,7 +182,7 @@ func (m *Model) quitAnswered(a quitAnswer) tea.Cmd {
 // first, so quitting does not ask again; a failure to save it is noted and
 // the quit goes ahead.
 func (m *Model) end(how QuitChoice, remember bool) tea.Cmd {
-	m.quitBox = nil
+	m.quitBox, m.alertBox = nil, nil
 	m.quitting, m.leaving = true, how == QuitLeave
 	if m.password != nil {
 		m.password.answer(ErrPasswordCancelled)
@@ -249,7 +250,7 @@ func (m *Model) lose(err error) tea.Cmd {
 	if m.quitting {
 		return nil
 	}
-	m.quitting, m.lostErr, m.quitBox = true, err, nil
+	m.quitting, m.lostErr, m.quitBox, m.alertBox = true, report.From(err), nil, nil
 	if m.password != nil {
 		m.password.answer(ErrPasswordCancelled)
 		m.password = nil
@@ -265,6 +266,22 @@ func (m *Model) lose(err error) tea.Cmd {
 	return tea.Quit
 }
 
-// Err is why the program ended other than by quitting: the error that
-// said the core was lost. It is nil after a quit.
-func (m *Model) Err() error { return m.lostErr }
+// Err is why the program ended other than by a quit that went well: the
+// message that said the core was lost (see Lost), or why the quit failed to
+// stop Nearhost or leave it running. It is nil after a quit that went well.
+// The caller renders it once the terminal is restored.
+func (m *Model) Err() error {
+	if m.lostErr != nil {
+		return m.lostErr
+	}
+	return m.endErr
+}
+
+// Lost reports whether the program ended because the core could no longer
+// be reached.
+func (m *Model) Lost() bool { return m.lostErr != nil }
+
+// Warnings are what the quit had to say beside its error, such as an
+// answer to the quit box that could not be saved, for the caller to render
+// once the terminal is restored.
+func (m *Model) Warnings() []*report.Message { return m.warnings }

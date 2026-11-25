@@ -15,8 +15,8 @@ func TestAgentErrorCodes(t *testing.T) {
 		code    report.Code
 		step    string
 	}{
-		{AgentNotReady, report.AgentsNotReady, "Check that the server account can write ~/.nearhost, then press r on the server to reconnect."},
-		{AgentRefused, report.AgentsRefused, "Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r on the server to reconnect."},
+		{AgentNotReady, report.AgentsNotReady, "Check that the server account can write ~/.nearhost, then reconnect the server."},
+		{AgentRefused, report.AgentsRefused, "Set AllowStreamLocalForwarding yes in the server's sshd_config, then reconnect the server."},
 		{AgentTooLong, report.AgentsPathTooLong, "The server account's home directory is too long for the socket, so agents there cannot reach Nearhost."},
 	} {
 		err := &AgentError{Problem: tc.problem, Msg: "it failed"}
@@ -118,7 +118,7 @@ func TestSocketPathMessage(t *testing.T) {
 	if !ok || m.Code != report.SSHSocketPathTooLong {
 		t.Fatalf("Preflight = %v, want %q", err, report.SSHSocketPathTooLong)
 	}
-	if m.Title != err.Error() || !IsSocketPathMessage(err.Error()) {
+	if m.Title != err.Error() || !strings.Contains(m.Title, "is too long for ssh") {
 		t.Errorf("title %q, text %q", m.Title, err.Error())
 	}
 	step := "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then quit Nearhost and start it again."

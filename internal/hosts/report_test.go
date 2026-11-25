@@ -22,7 +22,7 @@ func TestReadOnlyIsAMessage(t *testing.T) {
 	if len(m.Fix) != 1 || m.Fix[0].Text != step {
 		t.Errorf("fix = %+v, want %q", m.Fix, step)
 	}
-	if err.Error() != m.Title+" "+step || !IsReadOnlyMessage(err.Error()) {
+	if err.Error() != m.Title+" "+step {
 		t.Errorf("Error() = %q", err.Error())
 	}
 	if !errors.Is(err, ErrReadOnly) {

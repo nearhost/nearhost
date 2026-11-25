@@ -108,7 +108,7 @@ func (r *clientRun) calls() [][]string {
 
 // ui is a backend for bare `nearhost` that reaches the daemon, and runs the
 // interface with run.
-func (r *clientRun) ui(run func(m *tui.Model, attach func(*tea.Program)) error) uiBackend {
+func (r *clientRun) ui(run func(m tea.Model, attach func(*tea.Program)) error) uiBackend {
 	b := fakeUI(r.t, true, new(bool))
 	b.detach = r.detach()
 	b.run = run
@@ -117,9 +117,9 @@ func (r *clientRun) ui(run func(m *tui.Model, attach func(*tea.Program)) error) 
 
 // runProgram runs the interface in a real program, with no terminal, and
 // gives the program to started once it is made.
-func runProgram(started func(p *tea.Program)) func(m *tui.Model, attach func(*tea.Program)) error {
-	return func(m *tui.Model, attach func(*tea.Program)) error {
-		p := tea.NewProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30), tea.WithoutSignalHandler())
+func runProgram(started func(p *tea.Program)) func(m tea.Model, attach func(*tea.Program)) error {
+	return func(m tea.Model, attach func(*tea.Program)) error {
+		p := uiProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30))
 		attach(p)
 		go started(p)
 		_, err := p.Run()
@@ -129,8 +129,8 @@ func runProgram(started func(p *tea.Program)) func(m *tui.Model, attach func(*te
 
 // drawn is what the model draws in a window 100 by 30, before its program
 // runs.
-func drawn(m *tui.Model) string {
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+func drawn(m tea.Model) string {
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return m.View().Content
 }
 
@@ -143,7 +143,7 @@ var keyQ = tea.KeyPressMsg{Code: 'q', Text: "q"}
 func TestNearhostStartsTheCore(t *testing.T) {
 	r := newClientRun(t, &config.Config{Projects: []config.Project{localProject("shop", testutil.Upstream(t, "shop"), true)}})
 	var screen string
-	b := r.ui(func(m *tui.Model, _ func(*tea.Program)) error {
+	b := r.ui(func(m tea.Model, _ func(*tea.Program)) error {
 		screen = drawn(m)
 		return nil
 	})
@@ -171,7 +171,7 @@ func TestNearhostStartsTheCore(t *testing.T) {
 func TestNearhostOpensWithNoConfigFile(t *testing.T) {
 	r := newClientRun(t, &config.Config{})
 	ran := false
-	b := r.ui(func(*tui.Model, func(*tea.Program)) error {
+	b := r.ui(func(tea.Model, func(*tea.Program)) error {
 		ran = true
 		return nil
 	})
@@ -1246,7 +1246,7 @@ func TestUpdateNoticeReachesTheInterfaceLog(t *testing.T) {
 			}
 		}()
 	}
-	b.run = func(*tui.Model, func(*tea.Program)) error {
+	b.run = func(tea.Model, func(*tea.Program)) error {
 		// The interface's model starts the backend as it opens.
 		back.Start(context.Background())
 		// The core publishes once the interface follows its stream; try

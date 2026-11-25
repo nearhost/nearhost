@@ -103,6 +103,10 @@ type clientBackend struct {
 	// on it (see client_hosts.go).
 	hosts *clientHosts
 
+	// crashes, when set, is told of a panic in the backend's goroutines,
+	// which ends the interface; nil leaves it to report.Fallback.
+	crashes report.Sink
+
 	// quitWith is set by the quit: quitLeft by Leave, quitStopped by
 	// Shutdown.
 	quitWith atomic.Int32
@@ -171,9 +175,15 @@ func (b *clientBackend) Start(context.Context) error {
 	}
 	b.running = true
 	b.work.Add(3)
-	go func() { defer b.work.Done(); b.follow(b.from) }()
-	go func() { defer b.work.Done(); b.refresher() }()
-	go func() { defer b.work.Done(); b.hostsFixer() }()
+	// Through report.Go, so a panic in one is a crash the interface
+	// reports, not a stack trace over it.
+	ctx := b.ctx
+	if b.crashes != nil {
+		ctx = report.WithSink(ctx, b.crashes)
+	}
+	report.Go(ctx, func() { defer b.work.Done(); b.follow(b.from) })
+	report.Go(ctx, func() { defer b.work.Done(); b.refresher() })
+	report.Go(ctx, func() { defer b.work.Done(); b.hostsFixer() })
 	b.hostsChanged()
 	return nil
 }

@@ -90,13 +90,13 @@ func (e *AgentError) Report() *report.Message {
 	switch e.Problem {
 	case AgentNotReady:
 		return report.Errorf(report.AgentsNotReady, "%s", e.Msg).
-			Then("Check that the server account can write ~/.nearhost, then press r on the server to reconnect.")
+			Then("Check that the server account can write ~/.nearhost, then reconnect the server.")
 	case AgentTooLong:
 		return report.Errorf(report.AgentsPathTooLong, "%s", e.Msg).
 			Then("The server account's home directory is too long for the socket, so agents there cannot reach Nearhost.")
 	}
 	return report.Errorf(report.AgentsRefused, "%s", e.Msg).
-		Then("Set AllowStreamLocalForwarding yes in the server's sshd_config, then press r on the server to reconnect.")
+		Then("Set AllowStreamLocalForwarding yes in the server's sshd_config, then reconnect the server.")
 }
 
 // Unwrap is the report message, so report.As finds it.

@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -210,5 +211,35 @@ func TestWriteProblemExt(t *testing.T) {
 	}
 	if i, j, k := strings.Index(body, `"level"`), strings.Index(body, `"allowNotSaved"`), strings.Index(body, `"warnings"`); !(i < j && j < k) {
 		t.Errorf("body = %s, want the extensions after the problem and before the warnings", body)
+	}
+}
+
+// The context the wrappers added crosses the wire, in both shapes, as a
+// member of its own; it is left out when empty.
+func TestContextCrossesTheWire(t *testing.T) {
+	m := From(fmt.Errorf("start web: %w", setcap()))
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Message
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Context != "start web" || !strings.Contains(string(b), `"context":"start web"`) {
+		t.Errorf("nested %s gave context %q", b, back.Context)
+	}
+	rec := httptest.NewRecorder()
+	WriteProblem(rec, m, nil)
+	var p Message
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Context != "start web" || !strings.HasPrefix(rec.Body.String(), `{"error":`) {
+		t.Errorf("problem %s gave context %q", rec.Body.String(), p.Context)
+	}
+	b, _ = json.Marshal(setcap())
+	if strings.Contains(string(b), "context") {
+		t.Errorf("an empty context is sent: %s", b)
 	}
 }

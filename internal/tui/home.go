@@ -2,11 +2,8 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"math"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -14,9 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/nearhost/nearhost/internal/config"
-	"github.com/nearhost/nearhost/internal/doctor"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -86,70 +83,32 @@ func (m *Model) webLines(width int) []string {
 // goos is the operating system, a var so tests can pick one.
 var goos = runtime.GOOS
 
-// executable is the path of the running binary, or "" if unknown; a var so
-// tests can replace it.
-var executable = func() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return exe
-}
-
-// proxyFix is what to do about the proxy being down, for the reason it is
-// down: setcap on Linux when the port needs a privilege, the program using
-// the port when it is taken. Caddy can return the error as text with the
-// errno lost, so the message is the fallback. A file Nearhost could not
-// create, such as its run directory, is no port problem. Another Nearhost
-// holding the run directory gets no fix line: its message says what to do.
-func proxyFix(err error, goos, exe string) string {
-	const ports = "pass --https-port and --http-port."
-	if engine.IsAlreadyRunning(err) {
-		return ""
-	}
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
-		if errors.Is(pe.Err, fs.ErrPermission) {
-			return "Check that this user can create " + pe.Path + "."
-		}
-		return "Fix " + pe.Path + ": " + pe.Err.Error() + "."
-	}
-	denied := errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "permission denied")
-	if denied && goos == "linux" {
-		return doctor.SetcapFix(exe)
-	}
-	if denied {
-		return "Run nearhost as a user that may bind the port, or " + ports
-	}
-	return "Quit the program using the port, or " + ports
-}
-
-// problem is something that needs the user: what it is, why, what to do,
-// and what it stops.
+// problem is something that needs the user: what it is, the message that
+// says why and how to fix it, and what it stops.
 type problem struct {
 	dot          seg
 	title, what  string
-	why, fix     string
+	msg          *report.Message
 	blocks       []string
 	server, host string // the server it is about, which r and y act on
 	retry        bool   // r on Home starts the proxy again
 }
 
 // problems are what needs the user: the proxy being down, servers that
-// cannot connect, and projects in error.
+// cannot connect or whose agents cannot reach Nearhost, and projects in
+// error. Each comes with its message, from the state: the code that found
+// the problem wrote its fix.
 func (m *Model) problems() []problem {
 	var out []problem
 	if m.proxyErr != nil {
-		out = append(out, problem{dot: glyph(markError), title: "proxy", what: "down", why: m.proxyErr.Error(),
-			fix: proxyFix(m.proxyErr, goos, executable()), retry: true})
+		out = append(out, problem{dot: glyph(markError), title: "proxy", what: "down", msg: proxyProblem(m.proxyErr), retry: true})
 	}
 	for _, srv := range m.cfg.Servers {
 		h := m.b.ServerHealth(srv.Name)
 		if h.Status == transport.StatusConnected && h.AgentErr != "" {
 			// Not one for r on Home to retry: the server's projects serve,
 			// and reconnecting would drop them for nothing.
-			out = append(out, problem{dot: glyph(markAttention), title: srv.Name, what: "agents unavailable",
-				why: h.AgentErr, fix: agentFix(h.AgentProblem)})
+			out = append(out, problem{dot: glyph(markAttention), title: srv.Name, what: "agents unavailable", msg: agentProblem(h)})
 		}
 		if h.Status == transport.StatusConnected || h.Held || h.LastError == "" {
 			continue // a server dropped on purpose is no problem
@@ -160,12 +119,12 @@ func (m *Model) problems() []problem {
 				on = append(on, clean(p.Name))
 			}
 		}
-		pr := problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), why: h.LastError,
-			fix:    serverFix(h.Status, h.LastError, srv.SSHHost),
+		msg := serverProblem(h, srv)
+		pr := problem{dot: serverMark(h.Status), title: srv.Name, what: m.connectionText(h), msg: msg,
 			blocks: on, server: srv.Name, host: srv.SSHHost}
 		// Neither r nor the ssh command that y copies helps a run
 		// directory that is too long, so Home offers neither for it.
-		if transport.IsSocketPathMessage(h.LastError) {
+		if !reconnectHelps(msg) {
 			pr.server, pr.host = "", ""
 		}
 		out = append(out, pr)
@@ -175,16 +134,107 @@ func (m *Model) problems() []problem {
 		if st.State != engine.StateError {
 			continue
 		}
-		serverUp, host := true, ""
-		if p.Server != config.LocalServer {
-			srv, _ := m.cfg.Server(p.Server)
-			status, _ := m.b.ServerStatus(p.Server)
-			serverUp, host = status == transport.StatusConnected, srv.SSHHost
-		}
-		out = append(out, problem{dot: glyph(markError), title: p.Name, what: "error", why: st.Message,
-			fix: fixFor(st.State, st.Message, serverUp, host)})
+		out = append(out, problem{dot: glyph(markError), title: p.Name, what: "error", msg: projectProblem(st)})
 	}
 	return out
+}
+
+// proxyProblem is the message of the proxy being down for err.
+func proxyProblem(err error) *report.Message {
+	msg := report.From(err)
+	msg.Context = "" // "start proxy" is what the panel's heading says
+	return msg
+}
+
+// agentProblem is the message of agents on a server that cannot reach
+// Nearhost: the one the server's health carries, or one made from its text.
+func agentProblem(h engine.ServerHealth) *report.Message {
+	if h.AgentReport != nil {
+		return h.AgentReport
+	}
+	return (&transport.AgentError{Problem: h.AgentProblem, Msg: h.AgentErr}).Report()
+}
+
+// serverProblem is the message of a server that cannot connect: the one
+// its health carries, or one made from its last error.
+func serverProblem(h engine.ServerHealth, srv config.Server) *report.Message {
+	if h.Problem != nil {
+		return h.Problem
+	}
+	return transport.ConnectionProblem(h.Status, h.LastError, srv.Name, srv.SSHHost)
+}
+
+// projectProblem is the message of a project's state: the one its status
+// carries, or one made from its text; nil when it has neither.
+func projectProblem(st engine.ProjectStatus) *report.Message {
+	if st.Problem != nil {
+		return st.Problem
+	}
+	if st.Message == "" {
+		return nil
+	}
+	return report.Errorf(report.Unexpected, "%s", st.Message)
+}
+
+// reconnectHelps reports whether reconnecting can fix a server's problem:
+// not one of a run directory too long for ssh's control socket, which
+// Nearhost reads as it starts.
+func reconnectHelps(msg *report.Message) bool {
+	return msg == nil || msg.Code != report.SSHSocketPathTooLong
+}
+
+// problemFields draws msg as the fields of a panel, width wide: why, which
+// is its headline and its explanation, then the fix, each step's text and
+// its command on a line of its own that is never wrapped, and the doctor
+// line. A step its headline already says is left out. hint, when not "",
+// ends the fix with the key that acts on it here, such as "r reconnect".
+func problemFields(msg *report.Message, hint footerItem, width int) []string {
+	if msg == nil {
+		return nil
+	}
+	why := headline(msg)
+	if msg.Why != "" {
+		why += " " + prose(msg.Why)
+	}
+	return append(field("why", why, width), fixFields(msg, hint, width)...)
+}
+
+// fixFields draws the fix of msg as problemFields does, without the why.
+func fixFields(msg *report.Message, hint footerItem, width int) []string {
+	var lines []string
+	label := "fix"
+	add := func(value string) {
+		lines = append(lines, field(label, value, width)...)
+		label = ""
+	}
+	for _, s := range msg.Fix {
+		text, c := prose(s.Text), oneLine(s.Command)
+		if c == "" && (text == "" || strings.Contains(headline(msg), text)) {
+			continue
+		}
+		// The key hint says to start it again, so the step need not.
+		if c == "" && hint.key != "" && (s.Text == engine.RetryText || s.Text == engine.RetryThenText) {
+			continue
+		}
+		if text != "" {
+			add(text)
+		}
+		if c != "" {
+			lead := styleLabel.Render(label)
+			if label == "" {
+				lead = strings.Repeat(" ", labelWidth)
+			}
+			lines = append(lines, lead+"  "+styleBeacon.Render(c))
+			label = ""
+		}
+	}
+	if msg.Doctor {
+		add(report.DoctorLine)
+	}
+	if hint.key != "" {
+		add(styleBeacon.Render(hint.key) + styleDim.Render(" "+hint.label))
+	}
+	return lines
 }
 
 // problemLines draw the problems under a heading, with the keys that act on
@@ -199,19 +249,14 @@ func (m *Model) problemLines(width int) []string {
 	for _, p := range problems {
 		retry = retry || p.retry
 		lines = append(lines, "", p.dot.String()+" "+styleTitle.Render(clean(p.title))+"  "+p.dot.style.Render(p.what))
-		indent := func(label, value string) {
-			for _, l := range field(label, value, width-2) {
+		indent := func(fields []string) {
+			for _, l := range fields {
 				lines = append(lines, "  "+l)
 			}
 		}
-		if p.why != "" {
-			indent("why", clean(p.why))
-		}
-		if p.fix != "" {
-			indent("fix", p.fix)
-		}
+		indent(problemFields(p.msg, footerItem{}, width-2))
 		if len(p.blocks) > 0 {
-			indent("blocks", strings.Join(p.blocks, ", "))
+			indent(field("blocks", strings.Join(p.blocks, ", "), width-2))
 		}
 		servers = servers || p.server != ""
 	}
@@ -317,24 +362,4 @@ func (m *Model) connectionText(h engine.ServerHealth) string {
 		}
 	}
 	return text
-}
-
-// socketPathFix is what to do about a run directory too long for ssh's
-// control socket.
-//
-// XDG_CONFIG_HOME also says where the config is read from, so the folder
-// goes with it. Nearhost reads both as it starts: no retry here helps.
-const socketPathFix = "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then quit Nearhost and start it again."
-
-// serverFix says what to do about a server in state st whose last error is
-// reason. A server that gave up waits for r; one that is reconnecting tries
-// again by itself.
-func serverFix(st transport.Status, reason, host string) string {
-	if transport.IsSocketPathMessage(reason) {
-		return socketPathFix
-	}
-	if st == transport.StatusReconnecting {
-		return "Nearhost tries again by itself. If it keeps failing, run ssh " + clean(host) + " once in a terminal to check access."
-	}
-	return "Run ssh " + clean(host) + " once in a terminal to fix access, then press r."
 }

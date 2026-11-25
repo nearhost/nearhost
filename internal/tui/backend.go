@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -363,7 +365,18 @@ type funcCommand struct {
 	out, err io.Writer
 }
 
-func (c *funcCommand) Run() error            { return c.fn(c.in, c.out) }
+// Run runs the function. A panic in it, which would otherwise end the
+// process with the terminal still lent, is returned as a crash, which ends
+// the program (see Crashes).
+func (c *funcCommand) Run() (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = report.Crashed(v, debug.Stack())
+		}
+	}()
+	return c.fn(c.in, c.out)
+}
+
 func (c *funcCommand) SetStdin(r io.Reader)  { c.in = r }
 func (c *funcCommand) SetStdout(w io.Writer) { c.out = w }
 func (c *funcCommand) SetStderr(w io.Writer) { c.err = w }

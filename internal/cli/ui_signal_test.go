@@ -57,8 +57,8 @@ func startSignalRun(t *testing.T) (*signalRun, *tea.Program) {
 	b.detach = r.core.detach(func([]string) { r.core.serve() })
 	b.rootMade = func(root asRoot) { r.root = root }
 	var opened sync.Once
-	b.run = func(m *tui.Model, attach func(*tea.Program)) error {
-		p := tea.NewProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30), tea.WithoutSignalHandler(),
+	b.run = func(m tea.Model, attach func(*tea.Program)) error {
+		p := uiProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithWindowSize(100, 30),
 			tea.WithFilter(func(_ tea.Model, msg tea.Msg) tea.Msg {
 				if msg != nil && reflect.TypeOf(msg).String() == "tui.passwordMsg" {
 					opened.Do(func() { close(r.passwordOpened) })
