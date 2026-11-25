@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Backend is the core, as the control API sees it.
@@ -155,10 +157,10 @@ func (s *Server) routes() http.Handler {
 		if probe.code == http.StatusMethodNotAllowed {
 			allow := probe.header.Get("Allow")
 			w.Header().Set("Allow", allow)
-			fail(w, http.StatusMethodNotAllowed, fmt.Sprintf("%s does not take %s; it takes %s", r.URL.Path, r.Method, allow))
+			fail(w, http.StatusMethodNotAllowed, report.Errorf(report.ControlMethodNotAllowed, "%s does not take %s; it takes %s", r.URL.Path, r.Method, allow))
 			return
 		}
-		fail(w, http.StatusNotFound, "no such route: "+r.URL.Path)
+		fail(w, http.StatusNotFound, report.Errorf(report.ControlNoRoute, "no such route: %s", r.URL.Path))
 	})
 }
 
@@ -184,7 +186,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("after"); q != "" {
 		n, err := strconv.ParseUint(q, 10, 64)
 		if err != nil {
-			fail(w, http.StatusBadRequest, "after must be an envelope number, not "+strconv.Quote(q))
+			fail(w, http.StatusBadRequest, report.Errorf(report.ControlBadRequest, "after must be an envelope number, not %q", q))
 			return
 		}
 		after = n
@@ -252,14 +254,24 @@ func writeEnvelopes(w io.Writer, es []Envelope, deadline func() error) error {
 	return nil
 }
 
-// reply answers with v as JSON.
+// reply answers with v as JSON. A v that does not marshal, as a message
+// whose data holds a value JSON cannot, answers 500 with why, rather than
+// a 200 with no body.
 func reply(w http.ResponseWriter, code int, v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		report.WriteProblemStatus(w, report.Errorf(report.Unexpected, "The core's answer could not be written as JSON.").Wrap(err).
+			Because("%s", err), http.StatusInternalServerError, nil)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	w.Write(append(data, '\n'))
 }
 
-// fail answers with a JSON body {"error": msg}.
-func fail(w http.ResponseWriter, code int, msg string) {
-	reply(w, code, errorBody{Error: msg})
+// fail answers with m as problem details, with the status code code, which
+// a client of API version 1 has always been answered with. Its `error` is
+// m's title, as before problem details.
+func fail(w http.ResponseWriter, code int, m *report.Message) {
+	report.WriteProblemStatus(w, m, code, nil)
 }

@@ -439,8 +439,8 @@ func (c *coreBackend) Status() control.Status {
 	st.Page, _ = c.eng.PageURL() // "" when the page is not served
 	st.Update = c.updates.latestNewer()
 	for _, name := range serverNames(cfg) {
-		status, msg := c.eng.ServerStatus(name)
-		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(status), Message: msg})
+		h := c.eng.ServerHealth(name)
+		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(h.Status), Message: h.LastError, Problem: h.Problem})
 	}
 	for _, p := range cfg.Projects {
 		ps := c.eng.Status(p.Name)
@@ -449,6 +449,7 @@ func (c *coreBackend) Status() control.Status {
 		}
 		st.Projects = append(st.Projects, control.ProjectInfo{
 			Name: p.Name, State: string(ps.State), Message: ps.Message, URL: siteURL(p.Alias, c.httpsPort),
+			Problem: ps.Problem,
 		})
 	}
 	for _, a := range c.approvals.Pending() {

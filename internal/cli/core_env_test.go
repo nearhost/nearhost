@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // envFake is an envProbe over a made-up machine.
@@ -173,6 +175,13 @@ func TestCoreEnvironment(t *testing.T) {
 			var f envFake
 			tc.mod(&f)
 			got := coreEnvironment(context.Background(), f.probe())
+			for i := range got {
+				// Each check that is not ok says so as a message too.
+				if (got[i].Level == "ok") != (got[i].Problem == nil) {
+					t.Errorf("%s: level %s with problem %+v", got[i].Name, got[i].Level, got[i].Problem)
+				}
+				got[i].Problem = nil
+			}
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("checks =\n%+v\nwant\n%+v", got, tc.want)
 			}
@@ -243,5 +252,32 @@ func TestSystemAgentKeysRejectsNonAgent(t *testing.T) {
 	}()
 	if n, err := systemEnvProbe().agentKeys(sock); err == nil {
 		t.Errorf("agentKeys = %d, nil; want an error from a listener that is no agent", n)
+	}
+}
+
+// The core's checks that are not ok carry their codes and fix steps, each
+// command on its own.
+func TestCoreEnvironmentProblems(t *testing.T) {
+	f := envFake{goos: "linux", env: map[string]string{"SSH_AUTH_SOCK": "/run/agent.sock"}, onPath: map[string]bool{},
+		dialErr: errors.New("agent: failure"), sshErr: errors.New("not found")}
+	want := map[string]report.Code{
+		"browser":   report.CoreNoDesktop,
+		"ssh agent": report.CoreSSHAgentUnreachable,
+		"docker":    report.CoreDockerMissing,
+		"ssh":       report.CoreSSHMissing,
+	}
+	for _, c := range coreEnvironment(context.Background(), f.probe()) {
+		if c.Problem == nil || c.Problem.Code != want[c.Name] {
+			t.Errorf("%s: problem %+v, want %s", c.Name, c.Problem, want[c.Name])
+			continue
+		}
+		if len(c.Problem.Fix) == 0 {
+			t.Errorf("%s: no fix steps", c.Name)
+		}
+		for _, s := range c.Problem.Fix {
+			if strings.Contains(s.Text, "nearhost ") {
+				t.Errorf("%s: step %q holds a command in its text", c.Name, s.Text)
+			}
+		}
 	}
 }

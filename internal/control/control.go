@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // APIVersion is the version of the API, the /v1 in its paths. Info reports it,
@@ -56,6 +58,9 @@ type EnvCheck struct {
 	Level  string `json:"level"`
 	Detail string `json:"detail"`
 	Fix    string `json:"fix,omitempty"`
+	// Problem is the check as a message, with its code and fix steps; nil
+	// when Level is "ok".
+	Problem *report.Message `json:"problem,omitempty"`
 }
 
 // Info describes a running core.
@@ -74,6 +79,9 @@ type ServerInfo struct {
 	Name    string `json:"name"`
 	State   string `json:"state"`
 	Message string `json:"message"`
+	// Problem is why the server is not connected, as a message whose
+	// title is Message; nil when there is none.
+	Problem *report.Message `json:"problem,omitempty"`
 }
 
 // ProjectInfo is the state of one project, as the core last saw it.
@@ -82,6 +90,9 @@ type ProjectInfo struct {
 	State   string `json:"state"`
 	Message string `json:"message"`
 	URL     string `json:"url"`
+	// Problem is Message as a message, with its code and fix; nil when the
+	// state needs nothing.
+	Problem *report.Message `json:"problem,omitempty"`
 }
 
 // Status is what GET /v1/status answers: the core and everything it serves.
@@ -109,7 +120,8 @@ type ApprovalInfo struct {
 	URL string `json:"url"`
 }
 
-// errorBody is the JSON body of a failed request.
+// errorBody is the part of a failed request's body that clients before
+// problem details read: the error's title.
 type errorBody struct {
 	Error string `json:"error"`
 }

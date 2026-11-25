@@ -9,6 +9,7 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -82,6 +83,16 @@ func TestMirrorGrantsError(t *testing.T) {
 	m := newMirror(control.State{GrantsError: "grants are off: the file is broken"})
 	if _, err := m.grants("mini"); err == nil || err.Error() != "grants are off: the file is broken" {
 		t.Errorf("Grants = %v", err)
+	}
+}
+
+// Grants say why they cannot be read with the core's message, code and all.
+func TestMirrorGrantsProblem(t *testing.T) {
+	p := report.Errorf(report.AgentsGrantsOff, "Grants are off.").Because("The file is broken.")
+	m := newMirror(control.State{GrantsError: p.Title, GrantsProblem: p})
+	_, err := m.grants("mini")
+	if got, ok := report.As(err); !ok || got.Code != report.AgentsGrantsOff || got.Why != p.Why {
+		t.Errorf("Grants = %#v, want the core's message", err)
 	}
 }
 

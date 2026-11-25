@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -386,7 +387,12 @@ func TestEnvironmentOlderCore(t *testing.T) {
 	for name, handler := range map[string]http.HandlerFunc{
 		"plain": http.NotFound,
 		"json": func(w http.ResponseWriter, r *http.Request) {
-			fail(w, http.StatusNotFound, "no such route")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"no such route: /v1/environment"}` + "\n"))
+		},
+		"problem": func(w http.ResponseWriter, r *http.Request) {
+			fail(w, http.StatusNotFound, report.Errorf(report.ControlNoRoute, "no such route: /v1/environment"))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

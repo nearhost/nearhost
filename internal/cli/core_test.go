@@ -421,6 +421,9 @@ func TestCoreStateListsEverything(t *testing.T) {
 	if st.Grants == nil || len(st.Grants) != 0 || st.GrantsError == "" {
 		t.Errorf("Grants = %v, GrantsError = %q", st.Grants, st.GrantsError)
 	}
+	if p := st.GrantsProblem; p == nil || p.Code != report.AgentsGrantsOff || p.Title != st.GrantsError {
+		t.Errorf("GrantsProblem = %+v, want agents.grants-off titled as GrantsError", p)
+	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}

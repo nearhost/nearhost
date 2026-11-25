@@ -39,7 +39,10 @@ func checkCore(ctx context.Context, b doctorBackend) (checks []check, info contr
 		return []check{{"core", levelInfo, "not checked: " + err.Error(), ""}}, control.Info{}, false
 	}
 	switch {
-	case info.API != control.APIVersion:
+	case knownAPI(info) != nil:
+		// The interface refuses such a core with core.api-mismatch; this
+		// row is that code's, and says it as a row until checks carry
+		// messages.
 		return []check{{"core", levelWarn, "speaks a different version of its API", restartCoreFix}}, info, true
 	case info.Version != Version:
 		checks = append(checks, check{"core", levelWarn, fmt.Sprintf("%s is running; this is %s", printable(info.Version), Version), restartCoreFix})

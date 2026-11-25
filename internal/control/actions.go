@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // ErrRequestEnded is what answering a request that has already ended gives:
@@ -124,9 +125,10 @@ func (UnimplementedActions) Environment(context.Context) ([]EnvCheck, error) {
 // maxActionBody is the longest request body an action route reads.
 const maxActionBody = 64 << 10
 
-// actionErrorBody is the JSON body of an action that failed. Ended is set when
-// the request to answer had ended, and AllowNotSaved when the answer's Always
-// allow could not be saved; both may be.
+// actionErrorBody is the part of a failed action's body that clients before
+// problem details read. Ended is set when the request to answer had ended,
+// and AllowNotSaved when the answer's Always allow could not be saved; both
+// may be. Both stay in the problem body as extension members.
 type actionErrorBody struct {
 	Error         string `json:"error"`
 	Ended         bool   `json:"ended,omitempty"`
@@ -151,7 +153,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 	// reports false when it cannot.
 	body := func(w http.ResponseWriter, r *http.Request, v any) bool {
 		if err := json.NewDecoder(io.LimitReader(r.Body, maxActionBody)).Decode(v); err != nil {
-			fail(w, http.StatusBadRequest, "the body is not the JSON this route takes: "+err.Error())
+			fail(w, http.StatusBadRequest, report.Errorf(report.ControlBadRequest, "the body is not the JSON this route takes: %s", err).Wrap(err))
 			return false
 		}
 		return true
@@ -232,7 +234,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 				return
 			}
 			if !validAnswers[in.Answer] {
-				fail(w, http.StatusBadRequest, fmt.Sprintf("the answer must be yes, no, always or close, not %q", in.Answer))
+				fail(w, http.StatusBadRequest, report.Errorf(report.ControlBadRequest, "the answer must be yes, no, always or close, not %q", in.Answer))
 				return
 			}
 			if err := f(r.Context(), r.PathValue("id"), in.Answer); err != nil {
@@ -271,7 +273,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/captured/{id}", func(w http.ResponseWriter, r *http.Request) {
 		ex, ok := b.Captured(r.PathValue("id"))
 		if !ok {
-			fail(w, http.StatusNotFound, "that request is no longer kept")
+			fail(w, http.StatusNotFound, report.Errorf(report.ControlNotFound, "that request is no longer kept"))
 			return
 		}
 		reply(w, http.StatusOK, ex)
@@ -311,23 +313,50 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 	})
 }
 
-// failAction answers with the status that says why an action failed.
+// failAction answers with err as problem details. The core's own marks keep
+// the statuses they have always had: 501 for ErrUnimplemented, 409 and
+// "ended" for ErrRequestEnded, 404 for ErrNotFound, and "allowNotSaved" for
+// ErrAllowNotSaved. Any other error answers with its code's status, 500
+// for one without. An error that is not a message is sent as one, its text
+// the title, with the code of its mark when it has one.
 func failAction(w http.ResponseWriter, err error) {
-	body := actionErrorBody{Error: err.Error(), AllowNotSaved: errors.Is(err, ErrAllowNotSaved)}
-	code := http.StatusInternalServerError
+	m := report.From(err)
+	plain := m.Code == report.Unexpected
+	ext := map[string]any{}
+	if errors.Is(err, ErrAllowNotSaved) {
+		ext["allowNotSaved"] = true
+		if plain {
+			m.Code = report.AgentsAllowNotSaved
+		}
+	}
+	status := 0
 	switch {
 	case errors.Is(err, ErrUnimplemented):
-		code = http.StatusNotImplemented
+		status = http.StatusNotImplemented
+		if plain {
+			m.Code = report.ControlUnimplemented
+		}
 	case errors.Is(err, ErrRequestEnded):
-		code, body.Ended = http.StatusConflict, true
+		status, ext["ended"] = http.StatusConflict, true
+		if plain {
+			m.Code = report.ControlRequestEnded
+		}
 	case errors.Is(err, ErrNotFound):
-		code = http.StatusNotFound
+		// The client tells the core's not found by this code.
+		status, m.Code = http.StatusNotFound, report.ControlNotFound
 	}
-	reply(w, code, body)
+	if status == 0 {
+		status = http.StatusInternalServerError
+		if e, ok := report.Lookup(m.Code); ok && e.Status >= 400 && e.Status <= 599 {
+			status = e.Status
+		}
+	}
+	report.WriteProblemExt(w, m, status, ext, nil)
 }
 
-// answerFailed is an error that reads as the core's text, and is
-// ErrRequestEnded when ended is set and ErrAllowNotSaved when notSaved is.
+// answerFailed marks a message from the core as ErrRequestEnded when ended
+// is set and as ErrAllowNotSaved when notSaved is. It is the message's
+// cause, and reads as its title, so a renderer does not show it again.
 type answerFailed struct {
 	msg             string
 	ended, notSaved bool
@@ -338,31 +367,78 @@ func (e *answerFailed) Is(target error) bool {
 	return (target == ErrRequestEnded && e.ended) || (target == ErrAllowNotSaved && e.notSaved)
 }
 
-// notFoundError is likewise ErrNotFound.
+// notFoundError likewise marks a message as ErrNotFound.
 type notFoundError struct{ msg string }
 
 func (e *notFoundError) Error() string        { return e.msg }
 func (e *notFoundError) Is(target error) bool { return target == ErrNotFound }
 
+// unimplementedError likewise marks a message as ErrUnimplemented.
+type unimplementedError struct{ msg string }
+
+func (e *unimplementedError) Error() string        { return e.msg }
+func (e *unimplementedError) Is(target error) bool { return target == ErrUnimplemented }
+
+// decodeProblem returns the message in a failed request's body: problem
+// details, or the {"error": …} of a core from before them, read as an
+// error with the code Unexpected. It returns nil for a body that holds
+// neither, such as an empty one.
+func decodeProblem(body []byte) *report.Message {
+	var head struct {
+		Error string          `json:"error"`
+		Title string          `json:"title"`
+		Level json.RawMessage `json:"level"`
+	}
+	if json.Unmarshal(body, &head) != nil {
+		return nil
+	}
+	var m report.Message
+	if json.Unmarshal(body, &m) != nil {
+		// A level or a field this client does not know: keep the words.
+		m = report.Message{Title: head.Title}
+	}
+	if m.Title == "" {
+		m.Title = head.Error
+	}
+	if m.Title == "" {
+		return nil
+	}
+	if m.Code == "" {
+		m.Code = report.Unexpected
+	}
+	if len(head.Level) == 0 || m.Level < report.Info || m.Level > report.Error {
+		m.Level = report.Error
+	}
+	return &m
+}
+
 // actionError is the error for an answer of code with the body body that an
-// action did not want.
+// action did not want: the core's message, marked as the sentinel the core
+// answered for, so errors.Is and report.As both see it.
 func actionError(code int, body []byte) error {
-	var e actionErrorBody
-	if json.Unmarshal(body, &e) != nil || e.Error == "" {
+	m := decodeProblem(body)
+	if m == nil {
 		if code == http.StatusNotFound {
 			return ErrNotFound
 		}
-		return fmt.Errorf("the core answered %d", code)
+		return report.Errorf(report.Unexpected, "The core answered %d.", code)
 	}
+	var flags struct {
+		Ended         bool `json:"ended"`
+		AllowNotSaved bool `json:"allowNotSaved"`
+	}
+	json.Unmarshal(body, &flags)
+	// An older core sends no code, so a message of its is Unexpected.
+	plain := m.Code == report.Unexpected
 	switch {
-	case e.Ended || e.AllowNotSaved:
-		return &answerFailed{msg: e.Error, ended: e.Ended, notSaved: e.AllowNotSaved}
-	case code == http.StatusNotFound:
-		return &notFoundError{e.Error}
-	case code == http.StatusNotImplemented:
-		return ErrUnimplemented
+	case flags.Ended || flags.AllowNotSaved:
+		m.Cause = &answerFailed{msg: m.Title, ended: flags.Ended, notSaved: flags.AllowNotSaved}
+	case code == http.StatusNotFound && (plain || m.Code == report.ControlNotFound || m.Code == report.ControlNoRoute):
+		m.Cause = &notFoundError{m.Title}
+	case code == http.StatusNotImplemented && (plain || m.Code == report.ControlUnimplemented):
+		m.Cause = &unimplementedError{m.Title}
 	}
-	return errors.New(e.Error)
+	return m
 }
 
 // act makes a POST for an action, with in as its JSON body unless that is nil.

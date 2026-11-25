@@ -148,7 +148,12 @@ func (m *mirror) documents(server string) []documents.Tree {
 func (m *mirror) grants(server string) ([]grants.Grant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.state.GrantsProblem != nil {
+		p := *m.state.GrantsProblem
+		return nil, &p
+	}
 	if m.state.GrantsError != "" {
+		// A core from before messages in the state.
 		return nil, errors.New(m.state.GrantsError)
 	}
 	var out []grants.Grant

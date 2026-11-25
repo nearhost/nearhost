@@ -588,10 +588,10 @@ func (a *agents) pruneTrees(keep []string) {
 // nil when they can.
 func (a *agents) grantsErr() error {
 	if a != nil && a.grantsOff != "" {
-		return errors.New("grants are off: " + a.grantsOff)
+		return report.Errorf(report.AgentsGrantsOff, "Grants are off: %s.", a.grantsOff)
 	}
 	if a == nil || a.grants == nil {
-		return errors.New("Nearhost isn't serving coding agents in this run, so grants can't be changed here")
+		return report.Errorf(report.AgentsGrantsOff, "Nearhost isn't serving coding agents in this run, so grants can't be changed here.")
 	}
 	return nil
 }
