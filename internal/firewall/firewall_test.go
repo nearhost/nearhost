@@ -53,10 +53,12 @@ func TestHasProgram(t *testing.T) {
 }
 
 // fakeNetsh answers show with out (an error when out is ""), records every
-// call, and fails the calls whose verb is in fail.
+// call, and fails the calls whose verb is in fail. An add that succeeds
+// makes show print the added rule, unless lost is set; a delete empties it.
 type fakeNetsh struct {
 	out   string
 	fail  map[string]bool
+	lost  bool
 	calls []string
 }
 
@@ -66,11 +68,22 @@ func (f *fakeNetsh) run(args ...string) ([]byte, error) {
 	if f.fail[verb] {
 		return []byte("netsh failed"), errors.New("exit status 1")
 	}
-	if verb == "show" {
+	switch verb {
+	case "show":
 		if f.out == "" {
 			return []byte("No rules match the specified criteria."), errors.New("exit status 1")
 		}
 		return []byte(f.out), nil
+	case "delete":
+		f.out = ""
+	case "add":
+		if !f.lost {
+			for _, a := range args {
+				if p, ok := strings.CutPrefix(a, "program="); ok {
+					f.out = showOutput(strings.Trim(p, `"`))
+				}
+			}
+		}
 	}
 	return []byte("Ok."), nil
 }
@@ -101,11 +114,16 @@ func TestApplyWith(t *testing.T) {
 		want  []string
 		fails bool
 	}{
-		{"no rule yet", &fakeNetsh{}, []string{show, add}, false},
+		// netsh exits 1 both when there is no rule and when show itself
+		// fails, in words of the system's language: a rule left by show's
+		// failure is deleted too, so no second rule is added beside it.
+		{"no rule yet", &fakeNetsh{}, []string{show, del, add, show}, false},
+		{"show fails", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`), fail: map[string]bool{"show": true}}, []string{show, del, add, show}, true},
 		{"already in place", &fakeNetsh{out: showOutput(testProgram)}, []string{show}, false},
-		{"an old program's rule is deleted first", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`)}, []string{show, del, add}, false},
-		{"add fails", &fakeNetsh{fail: map[string]bool{"add": true}}, []string{show, add}, true},
-		{"delete fails", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`), fail: map[string]bool{"delete": true}}, []string{show, del}, true},
+		{"an old program's rule is deleted first", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`)}, []string{show, del, add, show}, false},
+		{"add fails", &fakeNetsh{fail: map[string]bool{"add": true}}, []string{show, del, add}, true},
+		{"delete of an old rule fails", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`), fail: map[string]bool{"delete": true}}, []string{show, del}, true},
+		{"the added rule doesn't show", &fakeNetsh{lost: true}, []string{show, del, add, show}, true},
 	} {
 		err := ApplyWith(c.f.run, testProgram)
 		if (err != nil) != c.fails {

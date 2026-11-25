@@ -93,23 +93,29 @@ func ReadyWith(run Runner, program string) bool {
 }
 
 // ApplyWith makes Nearhost's rule, through run, the one for program: it does
-// nothing when the rule is there already, deletes a rule of that name for
-// another program, as left by an earlier install, and adds the rule.
+// nothing when the rule is there already, and otherwise deletes every rule
+// of that name before it adds the rule, then checks that netsh shows it.
+// netsh exits 1 both when there is no rule and when show itself fails, in
+// the system's language, so the delete runs either way: no second rule is
+// added beside one show missed. Its failure counts only when show listed a
+// rule, as with none there is nothing to delete.
 func ApplyWith(run Runner, program string) error {
 	if program == "" || strings.ContainsAny(program, "\"\r\n") {
 		return errors.New("the program's path can't be given to netsh")
 	}
 	out, err := run(ShowCommand()...)
-	if err == nil {
-		if HasProgram(out, program) {
-			return nil
-		}
-		if out, err := run(DeleteCommand()...); err != nil {
-			return netshError("delete the old firewall rule", out, err)
-		}
+	listed := err == nil
+	if listed && HasProgram(out, program) {
+		return nil
+	}
+	if out, err := run(DeleteCommand()...); err != nil && listed {
+		return netshError("delete the old firewall rule", out, err)
 	}
 	if out, err := run(AddCommand(program)...); err != nil {
 		return netshError("add the firewall rule", out, err)
+	}
+	if !ReadyWith(run, program) {
+		return fmt.Errorf("netsh added the firewall rule, but doesn't show it for %s", program)
 	}
 	return nil
 }

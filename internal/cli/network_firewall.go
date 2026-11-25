@@ -144,16 +144,23 @@ type networkRechecker interface {
 	RecheckNetwork(ctx context.Context) error
 }
 
-// firewallWatch is what a core on Windows knows of the firewall rule. Ready
-// is the engine's Firewall option: the answer it holds, never netsh, which
-// must not run under the engine's locks. run looks for the rule while the
-// core is networked and the rule is missing.
+// firewallWatch is what a core on Windows knows of the firewall rule.
+// engineReady is the engine's Firewall option: the answer the watch holds,
+// never netsh, which must not run under the engine's locks. run looks for
+// the rule while the core is networked and the rule is missing.
 type firewallWatch struct {
 	ready atomic.Bool
 	// check runs netsh: firewall.Ready.
 	check func() bool
+	// wake asks run to look at once; nil never does.
+	wake chan struct{}
 	// publish says that the rule has come; nil says nothing.
 	publish func(engine.Event)
+}
+
+// makeFirewallWatch is a watch that looks for the rule with check.
+func makeFirewallWatch(check func() bool) *firewallWatch {
+	return &firewallWatch{check: check, wake: make(chan struct{}, 1)}
 }
 
 // newFirewallWatch is the core's watch, or nil where no rule is needed. A
@@ -163,7 +170,7 @@ func newFirewallWatch(networked bool) *firewallWatch {
 	if !firewall.Needed {
 		return nil
 	}
-	w := &firewallWatch{check: firewall.Ready}
+	w := makeFirewallWatch(firewall.Ready)
 	if networked {
 		w.ready.Store(w.check())
 	}
@@ -173,18 +180,38 @@ func newFirewallWatch(networked bool) *firewallWatch {
 // Ready reports whether the rule was there when last looked for.
 func (w *firewallWatch) Ready() bool { return w.ready.Load() }
 
-// run looks for the rule at each tick while eng is networked, until it is
-// there or ctx ends. When it comes, eng applies its network again, so it
-// listens on the network, and run ends: once the rule is there it is not
-// looked for again.
+// engineReady is Ready, for the engine, which asks only while networked: a
+// no also wakes run, so the rule is looked for at once, outside the
+// engine's locks, when networked mode turns on, not at the next tick.
+func (w *firewallWatch) engineReady() bool {
+	if w.ready.Load() {
+		return true
+	}
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+	return false
+}
+
+// run looks for the rule at each tick while eng is networked, and when the
+// engine has asked, until it is there or ctx ends. When it comes, eng
+// applies its network again, so it listens on the network, and run ends:
+// once the rule is there it is not looked for again.
 func (w *firewallWatch) run(ctx context.Context, eng networkRechecker, tick <-chan time.Time) {
 	for !w.ready.Load() {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick:
+			if !eng.NetworkState().On {
+				continue
+			}
+		case <-w.wake:
+			// The engine asks only while networked, and may not have said
+			// so in its state yet.
 		}
-		if !eng.NetworkState().On || !w.check() {
+		if !w.check() {
 			continue
 		}
 		w.ready.Store(true)

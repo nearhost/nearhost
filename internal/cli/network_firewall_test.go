@@ -25,10 +25,17 @@ func fakeFirewall(t *testing.T) *[]string {
 	isElevated = func() bool { return false } // CI's Windows runner is elevated
 	firewallExecutable = func() (string, error) { return firewallTestExe, nil }
 	var calls []string
+	added := false
 	netshRun = func(args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
-		if args[2] == "show" {
-			return []byte("No rules match the specified criteria."), io.ErrUnexpectedEOF
+		switch args[2] {
+		case "show":
+			if !added {
+				return []byte("No rules match the specified criteria."), io.ErrUnexpectedEOF
+			}
+			return []byte("Program:     " + firewallTestExe + "\r\n"), nil
+		case "add":
+			added = true
 		}
 		return []byte("Ok."), nil
 	}
@@ -65,8 +72,8 @@ func TestApplyAddsRuleForThisProgram(t *testing.T) {
 	if err := execFirewallApply(strings.ToLower(firewallTestExe)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if n := len(*calls); n != 2 || !strings.Contains((*calls)[1], "add rule") {
-		t.Errorf("netsh calls = %q, want show then add", *calls)
+	if n := len(*calls); n != 4 || !strings.Contains((*calls)[2], "add rule") {
+		t.Errorf("netsh calls = %q, want show, delete, add and show", *calls)
 	}
 }
 
@@ -162,5 +169,29 @@ func TestFirewallWatchEndsWithContext(t *testing.T) {
 	case <-finished:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the watch went on after its context ended")
+	}
+}
+
+// When the engine first asks while networked, which it does as networked
+// mode turns on, the watch looks for the rule at once, not at the next tick.
+func TestFirewallWatchChecksWhenNetworkTurnsOn(t *testing.T) {
+	w := makeFirewallWatch(func() bool { return true })
+	eng := &fakeNetEngine{on: true, done: make(chan struct{})}
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		w.run(context.Background(), eng, make(chan time.Time)) // never ticks
+	}()
+	if w.engineReady() {
+		t.Fatal("the engine was told ready before the rule was looked for")
+	}
+	select {
+	case <-eng.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the rule was not looked for when the engine asked")
+	}
+	<-finished
+	if !w.Ready() {
+		t.Error("not ready once the rule was found")
 	}
 }

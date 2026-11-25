@@ -108,7 +108,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// the rule outside the engine's locks.
 	fw := newFirewallWatch(cfg.NetworkOn())
 	if fw != nil {
-		opts.Firewall = fw.Ready
+		opts.Firewall = fw.engineReady
 	}
 	// Each start re-reads the project's .nearhostrc. A change that needs no
 	// approval is saved to the config and served at once; one that does
