@@ -14,6 +14,8 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
+	"github.com/nearhost/nearhost/internal/report/htmlview"
 	"github.com/nearhost/nearhost/internal/safetext"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -44,9 +46,10 @@ type approveView struct {
 	// Advice follows the lines: what to do instead of answering here.
 	Advice  string
 	Buttons []button
-	// Error is why the answer given failed. With Gone set, it is why the
-	// answer ended the request.
-	Error string
+	// Problem is why the answer given failed. With Gone set, it is why the
+	// request waits no longer: the answer ended it, or it was answered
+	// elsewhere.
+	Problem *htmlview.Data
 	// Answered is the answer given, once it has been, and Gone is set when
 	// the request waits no longer: either replaces the request.
 	Answered string
@@ -82,7 +85,7 @@ func (p *page) approval(w http.ResponseWriter, r *http.Request) {
 
 // gone answers with the view that says the request waits no longer.
 func (p *page) gone(w http.ResponseWriter, r *http.Request, status int) {
-	render(w, r, "approve", status, approveView{base: p.base("Nothing to answer"), Gone: true})
+	render(w, r, "approve", status, approveView{base: p.base("Nothing to answer"), Gone: true, Problem: ended()})
 }
 
 // answer serves POST /approve/{id}: it gives the core the answer in the
@@ -102,10 +105,12 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 	}
 	if !slices.Contains(offered(a), ans) {
 		if a.Proposal != nil {
-			http.Error(w, "A proposal can only be declined here. Run nearhost on this machine to review it.", http.StatusBadRequest)
+			htmlview.Write(w, r, report.Errorf(report.PageProposalDeclineOnly, "A proposal can only be declined here").
+				Because("Run nearhost on this machine to review it."), http.StatusBadRequest, pageName)
 			return
 		}
-		http.Error(w, "That answer is not one this request offers. Open the request again and choose one of its buttons.", http.StatusBadRequest)
+		htmlview.Write(w, r, report.Errorf(report.PageAnswerNotOffered, "That answer is not one this request offers").
+			Because("Open the request again and choose one of its buttons."), http.StatusBadRequest, pageName)
 		return
 	}
 	// The browser going away does not cancel an open midway, which would
@@ -127,7 +132,7 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		// The answer ended the request, as what it asked for could not be
 		// opened: say why, with nothing left to answer.
 		v := p.approveView(a, false)
-		v.Gone, v.Error = true, safetext.Line(err.Error())
+		v.Gone, v.Problem = true, problemFor(report.PageNotOpened, "It could not be opened", err)
 		render(w, r, "approve", http.StatusBadGateway, v)
 		return
 	case errors.Is(err, control.ErrRequestEnded), errors.Is(err, agentapi.ErrBeingAnswered):
@@ -139,7 +144,7 @@ func (p *page) answer(w http.ResponseWriter, r *http.Request) {
 		// it can be answered again.
 		_, still := p.pending(id)
 		v := p.approveView(a, still)
-		v.Error = safetext.Line(err.Error())
+		v.Problem = problemFor(report.PageAnswerFailed, "Nearhost could not take that answer", err)
 		render(w, r, "approve", http.StatusBadGateway, v)
 		return
 	}
@@ -254,9 +259,11 @@ type changeView struct {
 	// Items are what needs approval, each with why.
 	Items []changeItem
 	// Moves say what is served now that the change moves or removes.
-	Moves    []string
-	Buttons  []button
-	Error    string
+	Moves   []string
+	Buttons []button
+	// Problem is why the answer given failed, or why the change waits no
+	// longer.
+	Problem  *htmlview.Data
 	Answered string
 	Gone     bool
 }
@@ -284,7 +291,7 @@ func (p *page) change(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pending == nil {
-		render(w, r, "change", http.StatusNotFound, changeView{base: p.base("Nothing to review"), Gone: true})
+		render(w, r, "change", http.StatusNotFound, changeView{base: p.base("Nothing to review"), Gone: true, Problem: ended()})
 		return
 	}
 	render(w, r, "change", http.StatusOK, p.changeView(name, pending))
@@ -326,7 +333,8 @@ func (p *page) changeView(name string, c *engine.Change) changeView {
 func (p *page) answerChange(w http.ResponseWriter, r *http.Request) {
 	name, ans, sha := r.PathValue("name"), r.PostFormValue("answer"), r.PostFormValue("sha")
 	if _, ok := changeLabels[ans]; !ok || sha == "" {
-		http.Error(w, "The answer must be approve or decline, for the change shown. Open the change again and choose one of its buttons.", http.StatusBadRequest)
+		htmlview.Write(w, r, report.Errorf(report.PageChangeAnswerInvalid, "The answer must be approve or decline, for the change shown").
+			Because("Open the change again and choose one of its buttons."), http.StatusBadRequest, pageName)
 		return
 	}
 	var err error
@@ -334,17 +342,17 @@ func (p *page) answerChange(w http.ResponseWriter, r *http.Request) {
 	case ans == "approve":
 		err = p.o.Core.AcceptChange(name, sha)
 	case pending == nil || pending.SHA256 != sha:
-		err = fmt.Errorf("the %s changed again; review it again", nearhostrc.FileName)
+		err = report.Errorf(report.PageChangeChanged, "The %s changed again; review it again", nearhostrc.FileName)
 	default:
 		p.o.Core.DeclineChange(name, sha)
 	}
 	if err != nil {
 		// With no change waiting, another answer has ended it; otherwise
 		// the one that waits now is shown, with why this answer failed.
-		v := changeView{base: p.base("Review " + nearhostrc.FileName + " for " + safetext.Line(name)), Gone: true}
+		v := changeView{base: p.base("Review " + nearhostrc.FileName + " for " + safetext.Line(name)), Gone: true, Problem: ended()}
 		if now := p.o.Core.State().Projects[name].Pending; now != nil {
 			v = p.changeView(name, now)
-			v.Error = safetext.Line(err.Error())
+			v.Problem = problemFor(report.PageAnswerFailed, "Nearhost could not take that answer", err)
 		}
 		render(w, r, "change", http.StatusConflict, v)
 		return
@@ -364,4 +372,25 @@ func sortedNames[V any](m map[string]V) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// pageName is the tab title of the pages the page's refusals show.
+const pageName = "Nearhost"
+
+// ended is the message of a request that waits no longer.
+func ended() *htmlview.Data {
+	d := htmlview.Prepare(report.Warnf(report.PageRequestEnded, "This request has been answered or has ended."))
+	return &d
+}
+
+// problemFor is why an answer failed, for the view: err's own message with
+// its fix steps when it holds one, else a message with the given code and
+// title whose explanation is err's text. It stays on the page.
+func problemFor(code report.Code, title string, err error) *htmlview.Data {
+	m := report.From(err)
+	if _, ok := report.As(err); !ok {
+		m = report.Errorf(code, "%s", title).Because("%s", err)
+	}
+	d := htmlview.Prepare(m).Stayed()
+	return &d
 }

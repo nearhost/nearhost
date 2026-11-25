@@ -399,7 +399,7 @@ func TestThePageRefusesAForeignPost(t *testing.T) {
 func TestTheLinkWithoutTheCookie(t *testing.T) {
 	sb, ag, asked := pageWithARequest(t)
 	got := sb.do(sb.browser(), http.MethodGet, asked.approveURL, nil, nil)
-	if got.status != http.StatusForbidden || !strings.Contains(got.body, "Open Nearhost's page from this machine first") {
+	if got.status != http.StatusForbidden || !strings.Contains(got.body, "Open Nearhost&#39;s page from this machine first") {
 		t.Errorf("the link without the cookie answered %d:\n%s", got.status, got.body)
 	}
 	for _, detail := range []string{asked.id, asked.doc, "Claude Code", "/approve/", fmt.Sprint(sb.web), fmt.Sprint(sb.https)} {

@@ -283,11 +283,11 @@ func TestJunkBelowFileIsMissing(t *testing.T) {
 	f := newFixture(t)
 	f.write(t, "plan.md", "x")
 	rec := f.do(t, "GET", "plan.md/anything")
-	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Errorf("got %d %q", rec.Code, rec.Body.String())
 	}
 	rec = f.do(t, "GET", "nowhere/deeper/x.md")
-	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Errorf("missing folder: got %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -320,7 +320,7 @@ func TestSymlinkedRoot(t *testing.T) {
 	if rec := get(resolved); rec.Code != 200 || rec.Body.String() != "# P" {
 		t.Fatalf("resolved root: got %d %q", rec.Code, rec.Body.String())
 	}
-	if rec := get(filepath.ToSlash(link)); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") {
+	if rec := get(filepath.ToSlash(link)); rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") {
 		t.Fatalf("symlink root: got %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -357,7 +357,7 @@ func TestSwappedRootServesNothing(t *testing.T) {
 			swapRoot(t, f, target)
 			for _, p := range []string{tc.file, tc.file + "?raw", "notes/a.md", ""} {
 				rec := f.do(t, "GET", p)
-				if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+				if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") || strings.Contains(rec.Body.String(), "SECRET") {
 					t.Errorf("%q after the swap: %d %q", p, rec.Code, rec.Body.String())
 				}
 			}
@@ -451,7 +451,7 @@ func TestLiveReads(t *testing.T) {
 		t.Fatalf("after delete: status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"isn't there any more", "local", path.Join(f.root, "p.md")} {
+	for _, want := range []string{"isn&#39;t there any more", "local", path.Join(f.root, "p.md")} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing page lacks %q:\n%s", want, body)
 		}
@@ -473,7 +473,7 @@ func TestNotConnectedPage(t *testing.T) {
 	if rec.Code != 503 {
 		t.Fatalf("status %d", rec.Code)
 	}
-	for _, want := range []string{"Nearhost isn't connected to apollo", "press c"} {
+	for _, want := range []string{"Nearhost isn&#39;t connected to apollo", "press c"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("page lacks %q:\n%s", want, rec.Body.String())
 		}
@@ -486,7 +486,7 @@ func TestNotConnectedPage(t *testing.T) {
 	})
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/d/"+tr.ID+"/plan.md", nil))
-	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "Nearhost isn't connected to apollo") {
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "Nearhost isn&#39;t connected to apollo") {
 		t.Errorf("dropped connection: %d %q", rec.Code, rec.Body.String())
 	}
 }
@@ -825,7 +825,7 @@ func TestHiddenTreeIndexSymlinkToAKeyIsMissing(t *testing.T) {
 	testutil.Symlink(t, filepath.Join(f.root, "id_ed25519"), filepath.Join(f.root, "sub", "index.html"))
 	for _, p := range []string{"", "sub/"} {
 		rec := f.do(t, "GET", p)
-		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn't there any more") || strings.Contains(rec.Body.String(), "SECRET") {
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "isn&#39;t there any more") || strings.Contains(rec.Body.String(), "SECRET") {
 			t.Errorf("%q: %d %q", p, rec.Code, rec.Body.String())
 		}
 	}
@@ -858,6 +858,25 @@ func TestDocumentsStaySandboxed(t *testing.T) {
 			if strings.Contains(csp, bad) {
 				t.Errorf("%s %q allows %s", name, csp, bad)
 			}
+		}
+	}
+}
+
+// A file that is gone gets the page that says so, with today's copy and
+// status, as the documents.missing message.
+func TestDocumentMissingPage(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do(t, "GET", "gone.md")
+	body := rec.Body.String()
+	if rec.Code != 404 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	for _, want := range []string{
+		"<h1>This file isn&#39;t there any more</h1>", "isn&#39;t there any more. It may have been moved, renamed or deleted.",
+		`data-code="documents.missing"`, "message--error", path.Join(f.root, "gone.md") + " on local",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing page lacks %q:\n%s", want, body)
 		}
 	}
 }

@@ -108,7 +108,7 @@ func Render(w io.Writer, m *report.Message, o Options) {
 	case report.Warning:
 		label, labelStyle = "Warning:", warningLabel
 	}
-	title := wrap(label+" "+headline(m), width)
+	title := wrap(label+" "+report.Headline(m), width)
 	title[0] = style(labelStyle, label) + strings.TrimPrefix(title[0], label)
 	first := strings.Join(title, "\n")
 	if o.Verbose && m.Code != "" {
@@ -143,15 +143,6 @@ func Render(w io.Writer, m *report.Message, o Options) {
 		}
 	}
 	io.WriteString(w, strings.Join(paras, "\n\n")+"\n")
-}
-
-// headline returns the context, if any, and the title, made printable.
-func headline(m *report.Message) string {
-	title := safetext.Line(m.Title)
-	if c := safetext.Line(m.Context); c != "" {
-		return c + ": " + title
-	}
-	return title
 }
 
 // prose returns s made printable as wrapped paragraphs. Paragraphs are

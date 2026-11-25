@@ -13,7 +13,7 @@
     <h2>Servers</h2>
     <ul>
       {{- range .Servers}}
-      <li>{{.Name}} <span>is {{.Health}}.{{if .Message}} {{.Message}}{{end}}</span></li>
+      <li>{{.Name}} <span>is {{.Health}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}</li>
       {{- end}}
     </ul>
   </section>
@@ -22,7 +22,7 @@
     {{- if .Projects}}
     <ul>
       {{- range .Projects}}
-      <li>{{.Name}} <span>is {{.State}}.{{if .Message}} {{.Message}}{{end}}</span>{{if .URL}}<br><a href="{{.URL}}">{{.URL}}</a>{{end}}</li>
+      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}{{if .URL}}<br><a href="{{.URL}}">{{.URL}}</a>{{end}}</li>
       {{- end}}
     </ul>
     {{- else}}

@@ -151,6 +151,26 @@ const (
 	CoreDockerUnreachable      Code = "core.docker-unreachable"
 	CoreSSHMissing             Code = "core.ssh-missing"
 	CoreRunDirFailed           Code = "core.run-dir-failed"
+	PageRenderFailed           Code = "page.render-failed"
+	PageRequestEnded           Code = "page.request-ended"
+	PageProposalDeclineOnly    Code = "page.proposal-decline-only"
+	PageAnswerNotOffered       Code = "page.answer-not-offered"
+	PageChangeAnswerInvalid    Code = "page.change-answer-invalid"
+	PageNotOpened              Code = "page.not-opened"
+	PageAnswerFailed           Code = "page.answer-failed"
+	PageChangeChanged          Code = "page.change-changed"
+	ProxyAppNotAnswering       Code = "proxy.app-not-answering"
+	ProxyForwardReconnecting   Code = "proxy.forward-reconnecting"
+	ProxyLocked                Code = "proxy.locked"
+	ProxyNotFound              Code = "proxy.not-found"
+	ProxyMethodNotAllowed      Code = "proxy.method-not-allowed"
+	ProxyForbidden             Code = "proxy.forbidden"
+	DocumentsMissing           Code = "documents.missing"
+	DocumentsChanging          Code = "documents.changing"
+	DocumentsNotConnected      Code = "documents.not-connected"
+	DocumentsNotFound          Code = "documents.not-found"
+	DocumentsMethodNotAllowed  Code = "documents.method-not-allowed"
+	DocumentsUnreadable        Code = "documents.unreadable"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -298,6 +318,26 @@ var catalog = []Entry{
 	{CoreDockerMissing, Info, 0, "docker is not on the PATH of Nearhost in the background; only Docker projects need it."},
 	{CoreDockerUnreachable, Warning, 0, "Docker does not answer Nearhost in the background."},
 	{CoreSSHMissing, Error, 503, "ssh is not on the PATH of Nearhost in the background, so it cannot reach servers."},
+	{PageRenderFailed, Error, 500, "Nearhost's page could not be drawn."},
+	{PageRequestEnded, Warning, 409, "The request on the page has been answered or has ended."},
+	{PageProposalDeclineOnly, Error, 400, "A proposal can only be declined on the page; reviewing it needs Nearhost on this machine."},
+	{PageAnswerNotOffered, Error, 400, "The answer sent is not one the request offers."},
+	{PageChangeAnswerInvalid, Error, 400, "The answer sent for a .nearhostrc change is not approve or decline for the change shown."},
+	{PageNotOpened, Error, 502, "The answer ended the request, as what it asked for could not be opened."},
+	{PageAnswerFailed, Error, 502, "The core could not take the answer given on the page."},
+	{PageChangeChanged, Error, 409, "The .nearhostrc change changed again, so the answer was not for the change now waiting."},
+	{ProxyAppNotAnswering, Error, 502, "Nothing answered on the port a project's app listens on."},
+	{ProxyForwardReconnecting, Error, 502, "The forward to a project's server is down while Nearhost reconnects it."},
+	{ProxyLocked, Error, 403, "Nearhost's page must be opened from this machine first, to get its cookie."},
+	{ProxyNotFound, Error, 404, "Nearhost's page at a project's domain has nothing at the path asked for."},
+	{ProxyMethodNotAllowed, Error, 405, "A path of Nearhost's page was asked with a method it does not take."},
+	{ProxyForbidden, Error, 403, "A request to Nearhost's page was refused."},
+	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
+	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},
+	{DocumentsNotConnected, Error, 503, "Nearhost is not connected to the server that holds the document."},
+	{DocumentsNotFound, Error, 404, "The document server has nothing at the path asked for."},
+	{DocumentsMethodNotAllowed, Error, 405, "The document server was asked with a method it does not take."},
+	{DocumentsUnreadable, Error, 502, "The document could not be read."},
 
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},

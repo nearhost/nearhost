@@ -28,7 +28,7 @@ func LogText(m *Message) string {
 	var b strings.Builder
 	b.WriteString(m.Level.String())
 	b.WriteString(" [" + safetext.Line(string(m.Code)) + "] ")
-	b.WriteString(headline(m))
+	b.WriteString(Headline(m))
 	more := func(s string) {
 		b.WriteString("\n  " + s)
 	}
@@ -56,8 +56,9 @@ func LogText(m *Message) string {
 	return b.String()
 }
 
-// headline returns the context, if any, and the title, made printable.
-func headline(m *Message) string {
+// Headline returns the context, if any, and the title, made printable: the
+// one line every renderer leads a message with.
+func Headline(m *Message) string {
 	title := safetext.Line(m.Title)
 	if c := safetext.Line(m.Context); c != "" {
 		return c + ": " + title

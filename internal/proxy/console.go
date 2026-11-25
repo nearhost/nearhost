@@ -10,6 +10,9 @@ import (
 	"regexp"
 	"strconv"
 	"sync/atomic"
+
+	"github.com/nearhost/nearhost/internal/report"
+	"github.com/nearhost/nearhost/internal/report/htmlview"
 )
 
 // consoleCSP is the policy of every response of the console: the page's
@@ -91,8 +94,9 @@ func consoleRoute(path string) (ok, post bool) {
 	return false, false
 }
 
-//go:embed home/locked.html
-var lockedHTML []byte
+// lockedHTML is the page that says how to get the cookie.
+var lockedHTML = htmlview.Render(report.Errorf(report.ProxyLocked, "Open Nearhost's page from this machine first").
+	Because("Run nearhost status here and open the page address it prints, or click the page address in nearhost. Then open this link again."), "Nearhost")
 
 // serveLocked answers a request for a console path that did not pass the
 // gate. A GET or HEAD gets the page that says how to get the cookie, the
@@ -100,7 +104,7 @@ var lockedHTML []byte
 // else gets a plain 403.
 func serveLocked(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		forbid(w)
+		forbid(w, r)
 		return
 	}
 	hdr := w.Header()
@@ -118,9 +122,9 @@ func serveLocked(w http.ResponseWriter, r *http.Request) {
 }
 
 // forbid answers a plain 403.
-func forbid(w http.ResponseWriter) {
+func forbid(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	refuse(w, r, report.ProxyForbidden, http.StatusForbidden)
 }
 
 // sameOrigin reports whether r, a POST, comes from the page itself: its
@@ -167,7 +171,7 @@ func serveConsole(h http.Handler, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && (!sameOrigin(r) || !tokenMatches(w, r)) {
-		forbid(w)
+		forbid(w, r)
 		return
 	}
 	hdr := w.Header()
