@@ -115,7 +115,7 @@ func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
 		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Open the interface to approve them; nearhost up cannot:\n        nearhost\n"},
 		{"pending", true, func(p *upPrinter) {
 			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
-		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Nearhost in the background cannot approve them. Stop it:\n        nearhost stop\n  fix: Then open the interface to approve them:\n        nearhost\n"},
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Nearhost in the background cannot approve them.\n  fix: Stop it:\n        nearhost stop\n  fix: Then open the interface to approve them:\n        nearhost\n"},
 	} {
 		var out bytes.Buffer
 		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
@@ -169,4 +169,22 @@ func TestUpPrintsEachBlockInOneWrite(t *testing.T) {
 // state st, for reason, whose problem is problem.
 func fixFor(p *upPrinter, name string, st engine.State, reason string, problem *report.Message) {
 	p.writeSteps(p.steps(name, st, reason, problem))
+}
+
+// In the core's log, a change that waits for approval says why the core
+// cannot approve it before the commands that do: the log shows a step's
+// command alone, so the reason is a step of its own.
+func TestCoreLogPendingSaysWhy(t *testing.T) {
+	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("web")}}
+	var out bytes.Buffer
+	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: true, stamped: true}
+	msg := engine.PendingPrefix + "routes"
+	p.event(engine.Event{Time: time.Now(), Project: "web", Message: msg, Report: report.Warnf(report.NearhostrcPending, "%s", msg)})
+	want := "warning [nearhostrc.pending] web: " + msg + "\n" +
+		"  Nearhost in the background cannot approve them.\n" +
+		"  Fix: nearhost stop\n" +
+		"  Fix: nearhost\n"
+	if out.String() != want {
+		t.Errorf("log:\n%s\nwant:\n%s", out.String(), want)
+	}
 }

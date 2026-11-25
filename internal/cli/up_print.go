@@ -246,11 +246,13 @@ func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
 // approveSteps say how to approve changes that wait for approval.
 // Approving takes the interface, which shows each change and why it needs
 // approval; up only says where to go. The interface cannot start while a
-// core in the background runs.
+// core in the background runs. Why is a step of its own, as the core's log
+// shows a step with a command as the command alone.
 func (p *upPrinter) approveSteps() []report.Step {
 	if p.keepRunning {
 		return []report.Step{
-			{Text: "Nearhost in the background cannot approve them. Stop it:", Command: "nearhost stop"},
+			{Text: "Nearhost in the background cannot approve them."},
+			{Text: "Stop it:", Command: "nearhost stop"},
 			{Text: "Then open the interface to approve them:", Command: "nearhost"},
 		}
 	}
