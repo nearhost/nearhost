@@ -680,6 +680,10 @@ func TestDaemonLogsAMessageBlockOnce(t *testing.T) {
 // When the folder is already there, the CA migration finds it first and
 // reports it without the proxy's context; each folder is said once.
 func TestDaemonLogsACAFolderNotPrivate(t *testing.T) {
+	// A data folder of its own: the package's is shared, and on Windows an
+	// earlier test's core has made its CA folder private already, which
+	// privateStorage does once a process.
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
 	t.Cleanup(proxy.SetRestrictStorage(func(string) error { return errors.New("not supported") }))
 	u := newUpRun(t, &config.Config{})
 	u.noHosts = true
