@@ -181,13 +181,16 @@ func TestUpdateCheckCodes(t *testing.T) {
 	t.Run("newer release exits 1", func(t *testing.T) {
 		_, err := runUpdate(t, &fakeUpdate{latest: "0.6.0", exe: exe}, "0.5.0", "", "--check")
 		m := messageIn(t, err)
-		if m.Code != report.UpdateAvailable || m.Level != report.Error || exitCode(err, &strings.Builder{}) != 1 {
+		if m.Code != report.UpdateAvailable || m.Level != report.Info || exitCode(err, &strings.Builder{}) != 1 {
 			t.Errorf("code %q, level %v", m.Code, m.Level)
 		}
 		if m.Title != "nearhost 0.6.0 is available; this is 0.5.0, installed with Homebrew." {
 			t.Errorf("title %q", m.Title)
 		}
 		wantSteps(t, m, report.Step{Text: "Update it:", Command: "nearhost update"})
+		if out := rendered(err); !strings.HasPrefix(out, "Note: nearhost 0.6.0 is available") {
+			t.Errorf("rendered %q, want a note", out)
+		}
 		noNearhostPrefix(t, rendered(err))
 	})
 	t.Run("up to date exits 0", func(t *testing.T) {

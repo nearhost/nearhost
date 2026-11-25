@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // upNoBackend is an up that fails the test if it reaches anything past the
@@ -109,9 +111,18 @@ func TestUpShowsWhereARelativeConfigWasLookedFor(t *testing.T) {
 func TestUpKeepsTheNoProjectsErrorForAMissingDefaultConfig(t *testing.T) {
 	configHome(t)
 	_, err := execute(t, newUpCmd(upNoBackend(t)), "up")
-	if err == nil || !strings.Contains(err.Error(), "no projects to start; add one with `nearhost add <path>`") {
-		t.Fatalf("up failed with %v", err)
+	wantNoProjects(t, err)
+}
+
+// wantNoProjects fails the test unless err is core.no-projects, which says
+// how to add one.
+func wantNoProjects(t *testing.T, err error) {
+	t.Helper()
+	m := messageIn(t, err)
+	if m.Code != report.CoreNoProjects || m.Title != "There are no projects to start." {
+		t.Fatalf("up failed with %v (%q)", err, m.Code)
 	}
+	wantSteps(t, m, report.Step{Text: "Add the project in a directory:", Command: "nearhost add <path>"})
 }
 
 func TestUpKeepsTheNoProjectsErrorForAnExistingEmptyConfig(t *testing.T) {
@@ -120,7 +131,5 @@ func TestUpKeepsTheNoProjectsErrorForAnExistingEmptyConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := execute(t, newUpCmd(upNoBackend(t)), "--config", path, "up")
-	if err == nil || !strings.Contains(err.Error(), "no projects to start; add one with `nearhost add <path>`") {
-		t.Fatalf("up failed with %v", err)
-	}
+	wantNoProjects(t, err)
 }

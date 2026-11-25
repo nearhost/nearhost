@@ -331,7 +331,7 @@ func TestUpHintsForAProjectTheReloadAdds(t *testing.T) {
 	cfg.Projects = append(cfg.Projects, localProject("c", testutil.Upstream(t, "c"), true))
 	saveConfig(t, u.cfgPath, cfg)
 	u.waitFor("[c] state: stopped: ")
-	u.waitFor("  fix: Run `nearhost up` again and " + hostsApprove)
+	u.waitFor("  fix: Start it again and " + hostsApprove + ":\n        nearhost up\n")
 	if err := u.stop(); err != nil {
 		t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 	}

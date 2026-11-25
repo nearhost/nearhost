@@ -96,7 +96,7 @@ func TestAddTablesPrintWithoutControlCharacters(t *testing.T) {
 // without its control characters, since the name is printed and saved.
 func TestNewProjectCleansANameFromTheDirectory(t *testing.T) {
 	cfg := &config.Config{Servers: mini}
-	p, err := newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/app" + osc52})
+	p, err := newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/app" + osc52}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestNewProjectCleansANameFromTheDirectory(t *testing.T) {
 		t.Errorf("defaultName = %q, want no ESC or BEL", got)
 	}
 	// A directory named with nothing but control characters gives no name.
-	_, err = newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/\x1b\a\x01"})
+	_, err = newProject(cfg, "config.yaml", mini[0], addFlags{alias: "app.test"}, []string{"/srv/\x1b\a\x01"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "cannot name a project after") || !strings.Contains(err.Error(), "pass --name") {
 		t.Errorf("err = %v, want the refusal to name it", err)
 	}

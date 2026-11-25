@@ -60,8 +60,8 @@ var guardAllowed = map[string]string{
 	allowKey("internal/cli/update.go", ruleStderr, "runAside"):                "the Windows installer's own output passes through as it is",
 	allowKey("internal/proxy/plainlog.go", ruleErrorBody, "proxyLine"):        "reads Caddy's JSON log lines, whose error key is Caddy's",
 	// The one path's outlets, and progress that is not a message.
-	allowKey("internal/cli/root.go", ruleStderr, "Main"):                     "renders the command's final error and the update notice with the term renderer",
-	allowKey("internal/cli/root.go", ruleStderr, "commandSink"):              "the sink every command reports to: the term renderer on cmd's standard error",
+	allowKey("internal/cli/root.go", ruleStderr, "Main"):                     "writes the command's final error and the update notice through the command's messageOut: the term renderer, or JSON lines with --json",
+	allowKey("internal/cli/root.go", ruleStderr, "commandSink"):              "the sink every command reports to: a messageOut on cmd's standard error",
 	allowKey("internal/cli/doctor_stream.go", ruleStderr, "newDoctorStream"): "doctor's \"checking …\" progress line for a slow check, not a message",
 	allowKey("internal/cli/doctor.go", ruleAdviceText, "check"):              "a doctor row's one-line fix, which fixSteps makes the message's step",
 	allowKey("internal/cli/doctor_projects.go", ruleAdviceText, "jsonCheck"): "doctor --json's released fix key, beside the message's code and steps",

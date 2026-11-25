@@ -276,7 +276,7 @@ func runAdd(cmd *cobra.Command, b addBackend, flags addFlags, args []string) err
 	if !known {
 		srv = config.Server{Name: flags.server}
 	}
-	project, err := newProject(cfg, cfgPath, srv, flags, args)
+	project, err := newProject(cfg, cfgPath, srv, flags, args, func(set ...string) string { return addAgain(cmd, set...) })
 	if err != nil {
 		return err
 	}
@@ -1016,7 +1016,12 @@ func askToAddServer(answers *bufio.Reader, out io.Writer, name string) (string, 
 
 // newProject works out the project's path, name and alias on srv, and
 // refuses what the config could not hold. Its routes are still to be found.
-func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags addFlags, args []string) (config.Project, error) {
+// again is the command that adds it again with the flags given changed (see
+// addAgain), for a refusal's step; nil is `nearhost add <path>` with them.
+func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags addFlags, args []string, again func(set ...string) string) (config.Project, error) {
+	if again == nil {
+		again = func(set ...string) string { return "nearhost add <path> " + strings.Join(set, " ") }
+	}
 	fail := func(format string, a ...any) (config.Project, error) {
 		return config.Project{}, fmt.Errorf(format, a...)
 	}
@@ -1049,7 +1054,10 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 	var taken *nameTakenError
 	switch err := nameProblem(cfg, name); {
 	case errors.As(err, &taken):
-		return fail("project %q already exists (%s:%s); pass --name to add this one under another name, or remove the old one from %s", name, taken.other.Server, taken.other.Path, cfgPath)
+		return config.Project{}, report.Errorf(report.AddNameTaken, "A project called %q already exists.", name).
+			Because("It is %s on %s, in %s.", taken.other.Path, taken.other.Server, cfgPath).
+			Step("Add this one under another name:", again("--name", "<name>")).
+			With("project", name).Wrap(err)
 	case err != nil:
 		return fail("cannot name a project after %s; pass --name", projectPath)
 	}
@@ -1062,7 +1070,9 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 	var aliasTaken *aliasTakenError
 	switch err := aliasProblem(cfg, alias); {
 	case errors.As(err, &aliasTaken):
-		return fail("alias %s is already used by project %q; pass another --alias", alias, aliasTaken.other.Name)
+		return config.Project{}, report.Errorf(report.AddAliasTaken, "Alias %s is already used by project %q.", alias, aliasTaken.other.Name).
+			Step("Pass another domain to serve it at:", again("--alias", "<domain>")).
+			With("alias", alias).Wrap(err)
 	case err != nil:
 		return fail("%w; pass another --alias", err)
 	}
@@ -1077,13 +1087,17 @@ func openProject(ctx context.Context, b addBackend, srv config.Server, projectPa
 	}
 	info, err := os.Stat(projectPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", nil, fmt.Errorf("no directory at %s", projectPath)
+		return nil, "", nil, report.Errorf(report.AddNoDirectory, "There is no directory at %s.", projectPath).
+			Step("Add the project in its directory:", "nearhost add <path>").
+			With("path", projectPath).Wrap(err)
 	}
 	if err != nil {
 		return nil, "", nil, err
 	}
 	if !info.IsDir() {
-		return nil, "", nil, fmt.Errorf("%s is not a directory", projectPath)
+		return nil, "", nil, report.Errorf(report.AddNoDirectory, "%s is not a directory.", projectPath).
+			Step("Add the project in its directory:", "nearhost add <path>").
+			With("path", projectPath)
 	}
 	return discovery.DirReader{Root: projectPath}, projectPath, func() error { return nil }, nil
 }

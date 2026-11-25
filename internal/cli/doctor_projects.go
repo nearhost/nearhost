@@ -170,7 +170,7 @@ func adviceResult(res *discovery.Result, routes []config.Route) *discovery.Resul
 // .nearhostrc merged in when it parses and the alias kept off routes other
 // than the primary, as add keeps it.
 func draftProject(cfg *config.Config, cfgPath string, srv config.Server, dir string, files discovery.FileReader) config.Project {
-	p, err := newProject(cfg, cfgPath, srv, addFlags{}, []string{dir})
+	p, err := newProject(cfg, cfgPath, srv, addFlags{}, []string{dir}, nil)
 	if err != nil {
 		// add refuses a name or an alias another project has. The draft is
 		// still checked, under the name and alias add would have tried.

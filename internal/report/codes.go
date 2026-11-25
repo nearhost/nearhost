@@ -87,6 +87,9 @@ const (
 	CoreOutdated               Code = "core.outdated"
 	CoreNoReload               Code = "core.no-reload"
 	CoreLogUnavailable         Code = "core.log-unavailable"
+	CoreNoProjects             Code = "core.no-projects"
+	CoreUnknownProject         Code = "core.unknown-project"
+	CoreNoEnabledProjects      Code = "core.no-enabled-projects"
 	CANotPrivate               Code = "ca.not-private"
 	TrustNoSudo                Code = "trust.no-sudo"
 	TrustNotRemoved            Code = "trust.not-removed"
@@ -116,6 +119,8 @@ const (
 	AddNoWebPort               Code = "add.no-web-port"
 	AddBadName                 Code = "add.bad-name"
 	AddAliasTaken              Code = "add.alias-taken"
+	AddNameTaken               Code = "add.name-taken"
+	AddNoDirectory             Code = "add.no-directory"
 	AddServerChanged           Code = "add.server-changed"
 	AddUnknownServer           Code = "add.unknown-server"
 	AddNeedsApproval           Code = "add.needs-approval"
@@ -317,6 +322,9 @@ var catalogRows = []catalogRow{
 	{CoreOutdated, Info, 0, "The running Nearhost is an older release than this copy, and runs it once restarted."},
 	{CoreNoReload, Info, 0, "The running Nearhost serves the projects it was started with and does not reload the config."},
 	{CoreLogUnavailable, Warning, 0, "The core could not send its standard error to its log, so a crash may not be logged."},
+	{CoreNoProjects, Error, 404, "The config has no projects, so there is nothing to start."},
+	{CoreUnknownProject, Error, 404, "No project in the config has the name given."},
+	{CoreNoEnabledProjects, Error, 409, "Every project in the config is disabled, and none was named to start."},
 	{CANotPrivate, Warning, 0, "Nearhost could not make the folder that holds its local CA private to the user."},
 	{TrustNoSudo, Error, 500, "sudo, which trusting or untrusting the local CA needs, is not installed."},
 	{TrustNotRemoved, Error, 409, "The local CA was not removed from a trust store, and running untrust again can finish it."},
@@ -347,6 +355,8 @@ var catalogRows = []catalogRow{
 	{AddNoWebPort, Error, 400, "nearhost add could not tell which port serves the project, so nothing was saved."},
 	{AddBadName, Error, 400, "The project's name holds characters a .test name cannot use."},
 	{AddAliasTaken, Error, 409, "The name the project asks to be served at is already another project's."},
+	{AddNameTaken, Error, 409, "Another project already has the name the project would be added under."},
+	{AddNoDirectory, Error, 404, "There is no directory at the path given to nearhost add."},
 	{AddServerChanged, Error, 409, "The server was added meanwhile and is reached another way, so nothing was saved."},
 	{AddUnknownServer, Error, 404, "The server named is not in the config."},
 	{AddNeedsApproval, Error, 409, "The project asks for things that need approval, and there is nobody to ask."},

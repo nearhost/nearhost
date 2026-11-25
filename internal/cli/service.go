@@ -77,7 +77,6 @@ func newServiceCmd(b serviceBackend) *cobra.Command {
 		Long: "Install or remove the Nearhost service: the background Nearhost that starts\n" +
 			"when you log in (a launchd agent on macOS, a systemd user service on Linux,\n" +
 			"a logon task on Windows).",
-		Args: cobra.NoArgs,
 		RunE: groupRun,
 	}
 	var yes bool

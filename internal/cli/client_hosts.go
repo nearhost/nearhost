@@ -79,7 +79,7 @@ func (b *clientBackend) hostsFixer() {
 // hosts file lacks its names.
 func (b *clientBackend) waitsOnHosts(name string) bool {
 	st := b.mirror.status(name)
-	return st.State == engine.StateStopped && strings.Contains(st.Message, errHostsNeedTerminal.Error())
+	return st.State == engine.StateStopped && strings.Contains(st.Message, errHostsNeedTerminal.Title)
 }
 
 // fixHosts brings the hosts block up to date for the projects the core says
@@ -221,7 +221,7 @@ func servedConfig(cfg *config.Config, started string, running func(string) bool)
 // it, as it was while the interface's own engine asked, and says why it waits
 // once that was refused, in place of the core's advice to run a command.
 func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) engine.ProjectStatus {
-	if st.State != engine.StateStopped || !strings.Contains(st.Message, errHostsNeedTerminal.Error()) {
+	if st.State != engine.StateStopped || !strings.Contains(st.Message, errHostsNeedTerminal.Title) {
 		return st
 	}
 	h := b.hosts
@@ -233,7 +233,7 @@ func (b *clientBackend) hostsStatus(project string, st engine.ProjectStatus) eng
 	case fixing:
 		st.State, st.Message, st.Problem = engine.StateStarting, "", nil
 	case refused:
-		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Error(), engine.HostsCause(r.err), 1)
+		st.Message = strings.Replace(st.Message, errHostsNeedTerminal.Title, engine.HostsCause(r.err), 1)
 		// The core's message says to run a command; the refusal says why
 		// the project waits, with its own fix.
 		problem := hostsNotFixed(project, r.err)

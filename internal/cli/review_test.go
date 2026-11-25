@@ -160,7 +160,7 @@ func TestUpPrintsWhereToApproveAPendingChange(t *testing.T) {
 	at := time.Date(2026, 10, 16, 9, 30, 0, 0, time.Local)
 	p.event(engine.Event{Time: at, Project: "app", Message: engine.PendingPrefix + "app.example.com, *.example.com"})
 	want := "09:30:00 [app] .nearhostrc asks for changes that need approval: app.example.com, *.example.com\n" +
-		"  open nearhost to approve them; nearhost up cannot\n"
+		"  fix: Open the interface to approve them; nearhost up cannot:\n        nearhost\n"
 	if out.String() != want {
 		t.Fatalf("printed:\n%s\nwant:\n%s", out.String(), want)
 	}

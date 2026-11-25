@@ -120,7 +120,7 @@ func TestBareNearhostRefusesWhatUpRefuses(t *testing.T) {
 	if _, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "--https-port", "80", "--http-port", "80"); err == nil || ran {
 		t.Fatalf("same ports: err %v, ran %v", err, ran)
 	}
-	if _, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "nosuchcommand"); err == nil || !strings.Contains(err.Error(), "unknown command") {
+	if _, err := runRoot(t, uiRoot(fakeUI(t, true, &ran)), "nosuchcommand"); err == nil || !strings.Contains(err.Error(), `Unknown command "nosuchcommand" for "nearhost".`) {
 		t.Fatalf("unknown command: %v", err)
 	}
 }
