@@ -57,6 +57,9 @@ func TestNetworkValidate(t *testing.T) {
 		{"too wide v4", "network: {domain: lab.example.dev, allow: [10.0.0.0/7]}", "network.allow"},
 		{"all v6", "network: {domain: lab.example.dev, allow: ['::/0']}", "network.allow"},
 		{"too wide v6", "network: {domain: lab.example.dev, allow: ['fc00::/6']}", "network.allow"},
+		{"v6 over mapped v4", "network: {domain: lab.example.dev, allow: ['::/8']}", "network.allow"},
+		{"all mapped v4", "network: {domain: lab.example.dev, allow: ['::ffff:0:0/96']}", "network.allow"},
+		{"too wide mapped v4", "network: {domain: lab.example.dev, allow: ['::ffff:10.0.0.0/103']}", "network.allow"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +76,9 @@ func TestNetworkValidate(t *testing.T) {
 	ok := "network: {domain: lab.example.dev, certificates: acme, acme: {dns: cloudflare}, allow: [10.0.0.0/8, 'fc00::/7', 192.168.1.0/24]}\n"
 	if err := parseNet(t, ok).Validate(); err != nil {
 		t.Errorf("a valid section: %v", err)
+	}
+	if err := parseNet(t, "network: {domain: lab.example.dev, allow: ['::ffff:10.0.0.0/104']}\n").Validate(); err != nil {
+		t.Errorf("a mapped /8: %v", err)
 	}
 	if err := parseNet(t, "network: {domain: '', enabled: false}\n").Validate(); err != nil {
 		t.Errorf("a disabled section is not checked for a domain: %v", err)

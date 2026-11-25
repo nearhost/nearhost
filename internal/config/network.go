@@ -66,6 +66,9 @@ func NetworkLabel(project string) string {
 	return strings.TrimSuffix(AliasFor(project), ".test")
 }
 
+// mappedIPv4 is the IPv6 range of the IPv4-mapped addresses.
+var mappedIPv4 = netip.MustParsePrefix("::ffff:0:0/96")
+
 func (n *Network) validate() error {
 	if n.Enabled != nil && !*n.Enabled {
 		return nil
@@ -99,8 +102,18 @@ func (n *Network) validate() error {
 		if err != nil {
 			return invalid("network.allow", fmt.Errorf("allow entry %q is not a CIDR range such as 192.168.0.0/16", s))
 		}
+		// An IPv4-mapped range is checked as the IPv4 range it maps, and
+		// an IPv6 range wider than that holds every mapped IPv4 address,
+		// so ::ffff:0:0/96 and ::/8 are as wide as 0.0.0.0/0.
+		p = p.Masked()
 		min := 8
-		if p.Addr().Is6() && !p.Addr().Is4In6() {
+		switch {
+		case !p.Addr().Is6():
+		case p.Overlaps(mappedIPv4) && p.Bits() < 96:
+			return invalid("network.allow", fmt.Errorf("allow entry %q is too wide: it holds every IPv4-mapped address, so a core would be open to the whole internet", s))
+		case p.Overlaps(mappedIPv4):
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		default:
 			min = 7
 		}
 		if p.Bits() < min {
