@@ -19,7 +19,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.6.0
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/miekg/dns v1.1.73
 	github.com/pkg/sftp v1.13.12
 	github.com/smallstep/truststore v0.13.0
