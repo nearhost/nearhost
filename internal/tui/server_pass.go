@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
@@ -49,17 +50,52 @@ func kindOrder(kind string) int {
 	return 2
 }
 
-// passRows are the rows of the server called name: its open passthroughs,
-// sorted by remote port, then its served trees, newest first, then its
-// grants, sorted by requester and kind. They are read from the backend
-// each time, so what the engine closes is gone at once. The
-// error is why the grants could not be read, when they could not. The grants
-// are those fetchGrants last read, since reading them blocks. The
-// focus on the rows ends when none are left. The selected row is found
-// again by its key, so a row opened or closed meanwhile does not move the
-// selection onto another; when it is gone, the selection stays at its place
-// within the rows.
-func (m *Model) passRows(name string) ([]passRow, error) {
+// panelRows are the rows of the selected row's panel, and the error that
+// kept its grants from being read, when one did. A server's panel has its
+// open passthroughs, sorted by remote port, then its served trees, newest
+// first, then its grants, sorted by requester and kind. The passthroughs
+// row has every server's passthroughs and the documents row every server's
+// trees. They are read from the backend each time, so what the engine
+// closes is gone at once. The grants are those fetchGrants last read, since
+// reading them blocks. The focus on the rows ends when none are left. The
+// selected row is found again by its key, so a row opened or closed
+// meanwhile does not move the selection onto another; when it is gone, the
+// selection stays at its place within the rows.
+func (m *Model) panelRows() ([]passRow, error) {
+	kind, name := m.selected()
+	return m.follow(m.rowsOf(kind, name))
+}
+
+// rowsOf are the rows of the panel of the row of kind and name, as they are
+// now, and the grants' error.
+func (m *Model) rowsOf(kind rowKind, name string) ([]passRow, error) {
+	var rows []passRow
+	switch kind {
+	case rowPasses:
+		passes := slices.Clone(m.b.Passthroughs(""))
+		sort.SliceStable(passes, func(i, j int) bool {
+			if a, b := serverRank(m.cfg, passes[i].Server), serverRank(m.cfg, passes[j].Server); a != b {
+				return a < b
+			}
+			return passes[i].Remote < passes[j].Remote
+		})
+		for i := range passes {
+			rows = append(rows, passRow{pass: &passes[i]})
+		}
+		return rows, nil
+	case rowDocs:
+		trees := slices.Clone(m.b.Documents(""))
+		sort.SliceStable(trees, func(i, j int) bool {
+			return serverRank(m.cfg, trees[i].Server) < serverRank(m.cfg, trees[j].Server)
+		})
+		for i := range trees {
+			rows = append(rows, passRow{tree: &trees[i]})
+		}
+		return rows, nil
+	case rowServer:
+	default:
+		return nil, nil
+	}
 	passes := slices.Clone(m.b.Passthroughs(name))
 	sort.SliceStable(passes, func(i, j int) bool { return passes[i].Remote < passes[j].Remote })
 	var gs []grants.Grant
@@ -74,7 +110,6 @@ func (m *Model) passRows(name string) ([]passRow, error) {
 		return kindOrder(gs[i].Kind) < kindOrder(gs[j].Kind)
 	})
 	trees := m.b.Documents(name)
-	var rows []passRow
 	for i := range passes {
 		rows = append(rows, passRow{pass: &passes[i]})
 	}
@@ -84,6 +119,12 @@ func (m *Model) passRows(name string) ([]passRow, error) {
 	for i := range gs {
 		rows = append(rows, passRow{grant: &gs[i]})
 	}
+	return rows, err
+}
+
+// follow moves the selection to where its row now is among rows, as the
+// focus on the rows needs.
+func (m *Model) follow(rows []passRow, err error) ([]passRow, error) {
 	if m.passFocus {
 		if i := slices.IndexFunc(rows, func(r passRow) bool { return r.key() == m.passSel }); i >= 0 {
 			m.passRow = i
@@ -96,6 +137,20 @@ func (m *Model) passRows(name string) ([]passRow, error) {
 		}
 	}
 	return rows, err
+}
+
+// serverRank orders servers: this machine first, then the config's order,
+// and a server the config lacks last.
+func serverRank(cfg *config.Config, server string) int {
+	if server == config.LocalServer {
+		return 0
+	}
+	for i, s := range cfg.Servers {
+		if s.Name == server {
+			return i + 1
+		}
+	}
+	return len(cfg.Servers) + 1
 }
 
 // age is how long ago t was, as a short word: "12m".
@@ -141,7 +196,7 @@ func (m *Model) rowText(r passRow) string {
 // fit and at least the selected one, and a dim "+N more" line says how many
 // are hidden above it, under the first row's label, and below it.
 func (m *Model) passLines(name string, width, room int) []string {
-	rows, err := m.passRows(name)
+	rows, err := m.follow(m.rowsOf(rowServer, name))
 	// A grants error is news only beside passthroughs or trees, or with
 	// the rows selected; otherwise every server panel of a run without
 	// agents would carry it.
@@ -264,12 +319,12 @@ func (m *Model) passWindow(drawn [][]string, room int) (int, int) {
 // focus, and reports whether it was one of theirs.
 func (m *Model) passKey(s string) (tea.Cmd, bool) {
 	kind, name := m.selected()
-	if kind != rowServer {
+	if kind != rowServer && kind != rowPasses && kind != rowDocs {
 		m.passFocus = false
 		return nil, false
 	}
 	sel := m.passSel
-	rows, _ := m.passRows(name)
+	rows, _ := m.panelRows()
 	if !m.passFocus {
 		return nil, false // the rows were all closed
 	}
@@ -293,7 +348,7 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		if moved {
 			return nil, true // the next draw shows the tree enter would open
 		}
-		return m.openTree(name, *tr), true
+		return m.openTree(*tr), true
 	case "x":
 		if moved {
 			return nil, true // the next draw shows the row x would close
@@ -301,7 +356,34 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		if p := rows[m.passRow].pass; p != nil && m.passClosing[p.ID] {
 			return nil, true // its close is running
 		}
-		return m.closeRow(name, rows[m.passRow]), true
+		r := rows[m.passRow]
+		server := name
+		switch {
+		case r.pass != nil:
+			server = r.pass.Server
+		case r.tree != nil:
+			server = r.tree.Server
+		}
+		return m.closeRow(server, r), true
+	case "o":
+		p := rows[m.passRow].pass
+		if p == nil || kind != rowPasses {
+			return nil, false
+		}
+		if moved {
+			return nil, true
+		}
+		url, key := passURL(*p), m.sel
+		return func() tea.Msg { return openedMsg{key, url, m.b.Open(url)} }, true
+	case "y":
+		p := rows[m.passRow].pass
+		if p == nil || kind != rowPasses {
+			return nil, false
+		}
+		if moved {
+			return nil, true
+		}
+		return copyText(m.sel, passURL(*p)), true
 	default:
 		return nil, false
 	}
@@ -320,7 +402,7 @@ func (m *Model) closeRow(server string, r passRow) tea.Cmd {
 		m.form = &treeForm{b: m.b, w: m.work, server: server, id: tr.ID, root: m.treeRoot(*tr)}
 		return nil
 	}
-	b, p, key := m.b, *r.pass, rowKey(rowServer, server)
+	b, p, key := m.b, *r.pass, m.sel
 	if m.passClosing == nil {
 		m.passClosing = map[string]bool{}
 	}
