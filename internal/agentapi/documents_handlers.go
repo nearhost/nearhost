@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // maxDocPath bounds the path and root of a document request.
@@ -97,8 +98,8 @@ func (s *Server) machine(origin string) string {
 
 // notConnected is the reply for a server Nearhost isn't connected to.
 func (s *Server) notConnected(w http.ResponseWriter, origin string) {
-	fail(w, http.StatusConflict, fmt.Sprintf(
-		"Nearhost isn't connected to %s. On %s, select %s in Nearhost and press c, then ask again", origin, s.laptop(), origin))
+	fail(w, http.StatusConflict, report.Errorf(report.AgentNotConnected,
+		"Nearhost isn't connected to %s. On %s, select %s in Nearhost and press c, then ask again", origin, s.laptop(), origin).With("server", origin))
 }
 
 // docRequest asks to show a document: at once with a valid token whose
@@ -114,23 +115,23 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Path, req.Root = plainDrivePath(req.Path), plainDrivePath(req.Root)
 	if msg := cmp.Or(badDocPath("path", req.Path), badDocPath("root", req.Root)); msg != "" {
-		fail(w, http.StatusBadRequest, msg)
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadPath, "%s", msg))
 		return
 	}
 	switch {
 	case !validRequester(req.Requester):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("requester must be 1 to 32 lowercase letters, digits and -, such as claude-code, not %q", req.Requester))
+		fail(w, http.StatusBadRequest, badRequester(req.Requester))
 		return
 	case !validSession(req.Session):
-		fail(w, http.StatusBadRequest, "session must be at most 128 printable characters")
+		fail(w, http.StatusBadRequest, badSession())
 		return
 	case !plainName(req.Label):
-		fail(w, http.StatusBadRequest, "label must be at most 64 printable characters on one line")
+		fail(w, http.StatusBadRequest, badLabel())
 		return
 	}
 	o := origin(r)
 	if msg := cmp.Or(remoteDrivePath(o, "path", req.Path), remoteDrivePath(o, "root", req.Root)); msg != "" {
-		fail(w, http.StatusBadRequest, msg)
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadPath, "%s", msg))
 		return
 	}
 	doc := path.Clean(req.Path)
@@ -143,13 +144,13 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		s.notConnected(w, o)
 		return
 	case errors.Is(err, fs.ErrNotExist):
-		fail(w, http.StatusNotFound, fmt.Sprintf("%s isn't there on %s", doc, s.machine(o)))
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentDocumentNotThere, "%s isn't there on %s", doc, s.machine(o)).With("path", doc).Wrap(err))
 		return
 	case errors.Is(err, ErrBadDocument):
-		fail(w, http.StatusBadRequest, err.Error())
+		fail(w, http.StatusBadRequest, failed(report.AgentNotADocument, err))
 		return
 	case err != nil:
-		fail(w, http.StatusBadGateway, err.Error())
+		fail(w, http.StatusBadGateway, failed(report.AgentDocumentFailed, err))
 		return
 	}
 
@@ -160,12 +161,11 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 	if req.Token != "" {
 		ok, covered, err := s.opts.DocGrants.Check(o, req.Requester, req.Token, res.Root)
 		if err != nil {
-			fail(w, http.StatusInternalServerError, err.Error())
+			fail(w, http.StatusInternalServerError, failed(report.AgentGrantsFailed, err))
 			return
 		}
 		if !ok {
-			fail(w, http.StatusUnauthorized, fmt.Sprintf(
-				"the token for %s on %s was revoked or never existed; drop it and ask again without it", req.Requester, o))
+			fail(w, http.StatusUnauthorized, revokedToken(req.Requester, o))
 			return
 		}
 		allowed, granted, newRoot = covered, req.Token, !covered
@@ -237,7 +237,7 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if n := s.docPromptsLocked(o); n >= maxPending {
 			s.mu.Unlock()
-			fail(w, http.StatusTooManyRequests, fmt.Sprintf("%d document requests are already waiting for approval; wait for them first", n))
+			fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentTooManyWaiting, "%d document requests are already waiting for approval; wait for them first", n))
 			return
 		}
 	}
@@ -278,11 +278,11 @@ func (s *Server) docRequest(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		switch {
 		case errors.Is(err, ErrNoPage):
-			fail(w, http.StatusConflict, err.Error())
+			fail(w, http.StatusConflict, failed(report.AgentNoPage, err))
 		case errors.Is(err, ErrNotConnected):
 			s.notConnected(w, o)
 		default:
-			fail(w, http.StatusBadGateway, err.Error())
+			fail(w, http.StatusBadGateway, failed(report.AgentDocumentFailed, err))
 		}
 		return
 	}
@@ -394,7 +394,7 @@ func (s *Server) docGet(w http.ResponseWriter, r *http.Request) {
 	rec := s.docs[r.PathValue("id")]
 	if rec == nil || rec.Origin != o {
 		s.mu.Unlock()
-		fail(w, http.StatusNotFound, "no such document request; it may have ended over 10 minutes ago")
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentRequestGone, "no such document request; it may have ended over 10 minutes ago"))
 		return
 	}
 	pending, done, left := rec.state == StatePending, rec.done, rec.Expires.Sub(s.opts.Now())

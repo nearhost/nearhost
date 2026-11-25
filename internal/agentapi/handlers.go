@@ -18,6 +18,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func (s *Server) routes() http.Handler {
@@ -37,27 +38,17 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/documents", s.docList)
 	mux.HandleFunc("GET /v1/documents/{id}", s.docGet)
 	mux.HandleFunc("/", noSuchCall)
-	return mux
+	return collecting(mux)
 }
 
 // noSuchCall answers a call this server doesn't have.
 func noSuchCall(w http.ResponseWriter, _ *http.Request) {
-	fail(w, http.StatusNotFound, "no such call; GET /v1 says which API this is")
+	fail(w, http.StatusNotFound, report.Errorf(report.AgentNoSuchCall, "no such call; GET /v1 says which API this is"))
 }
 
 func origin(r *http.Request) string {
 	o, _ := r.Context().Value(originKey{}).(string)
 	return o
-}
-
-func reply(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func fail(w http.ResponseWriter, status int, msg string) {
-	reply(w, status, map[string]string{"error": msg})
 }
 
 func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +101,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	found, ok := holdingEither(all, p, real)
 	if !ok {
-		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s", cleanPath(p)))
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentNoProject, "no project holds %s", cleanPath(p)).With("path", cleanPath(p)))
 		return
 	}
 	reply(w, http.StatusOK, found)
@@ -127,14 +118,14 @@ func pathQuery(w http.ResponseWriter, r *http.Request) (p, real string, ok bool)
 // real too when given, on origin's machine.
 func absolutePaths(w http.ResponseWriter, origin, p, real string) bool {
 	if msg := badPath(origin, "path", p); msg != "" {
-		fail(w, http.StatusBadRequest, msg)
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadPath, "%s", msg))
 		return false
 	}
 	if real == "" {
 		return true
 	}
 	if msg := badPath(origin, "real", real); msg != "" {
-		fail(w, http.StatusBadRequest, msg)
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadPath, "%s", msg))
 		return false
 	}
 	return true
@@ -229,7 +220,7 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if s.doctoring[o] {
 		s.mu.Unlock()
-		fail(w, http.StatusTooManyRequests, doctorBusy)
+		fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentDoctorBusy, "%s", doctorBusy))
 		return
 	}
 	now := s.opts.Now()
@@ -237,7 +228,8 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 		secs := int((at.Add(doctorGap).Sub(now) + time.Second - 1) / time.Second)
 		s.mu.Unlock()
 		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		fail(w, http.StatusTooManyRequests, fmt.Sprintf("a doctor run for this server started moments ago; ask again in %d s", secs))
+		fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentDoctorBusy, "a doctor run for this server started moments ago; ask again in %d s", secs).
+			With("seconds", secs))
 		return
 	}
 	s.doctoring[o], s.doctored[o] = true, now
@@ -251,11 +243,11 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	findings, err := s.opts.Doctor.Doctor(ctx, o, name, dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		fail(w, http.StatusNotFound, fmt.Sprintf("%s is not a directory on %s", dir, s.machine(o)))
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentNotADirectory, "%s is not a directory on %s", dir, s.machine(o)).With("path", dir).Wrap(err))
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusBadGateway, err.Error())
+		fail(w, http.StatusBadGateway, failed(report.AgentDoctorFailed, err))
 		return
 	}
 	if findings == nil {
@@ -305,10 +297,10 @@ func readBody(w http.ResponseWriter, r *http.Request, v any) (ok bool) {
 	if err := dec.Decode(v); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			fail(w, http.StatusBadRequest, "the request is over 4 KiB")
+			fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "the request is over 4 KiB").Wrap(err))
 			return false
 		}
-		fail(w, http.StatusBadRequest, "the body must be JSON like {\"path\": \"/abs/dir\"}: "+err.Error())
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "the body must be JSON like {\"path\": \"/abs/dir\"}: %s", err).Wrap(err))
 		return false
 	}
 	return true
@@ -324,10 +316,10 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case req.Web < 0 || req.Web > 65535:
-		fail(w, http.StatusBadRequest, fmt.Sprintf("web must be a port between 1 and 65535, not %d", req.Web))
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "web must be a port between 1 and 65535, not %d", req.Web))
 		return
 	case !plainName(req.Name):
-		fail(w, http.StatusBadRequest, "name must be at most 64 printable characters on one line")
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "name must be at most 64 printable characters on one line"))
 		return
 	}
 	o := origin(r)
@@ -353,7 +345,7 @@ func (s *Server) propose(w http.ResponseWriter, r *http.Request) {
 	}
 	if pending >= maxPending {
 		s.mu.Unlock()
-		fail(w, http.StatusTooManyRequests, fmt.Sprintf("%d proposals are already waiting for review; wait for them first", pending))
+		fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentTooManyWaiting, "%d proposals are already waiting for review; wait for them first", pending))
 		return
 	}
 	p := &proposal{
@@ -400,7 +392,7 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	o := origin(r)
 	found, ok := holdingEither(s.opts.Source.Projects(o), req.Path, req.Real)
 	if !ok {
-		fail(w, http.StatusNotFound, fmt.Sprintf("no project holds %s; add it first", cleanPath(req.Path)))
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentNoProject, "no project holds %s; add it first", cleanPath(req.Path)).With("path", cleanPath(req.Path)))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), reloadTimeout)
@@ -408,10 +400,10 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	got, err := s.opts.Reload.Reload(ctx, found.Name)
 	switch {
 	case err != nil:
-		fail(w, http.StatusBadGateway, err.Error())
+		fail(w, http.StatusBadGateway, failed(report.AgentReloadFailed, err))
 		return
 	case got.Problem != "":
-		fail(w, http.StatusUnprocessableEntity, got.Problem)
+		fail(w, http.StatusUnprocessableEntity, report.Errorf(report.AgentNearhostrcUnread, "%s", got.Problem))
 		return
 	case got.Declined:
 		reply(w, http.StatusOK, map[string]any{"state": StateDeclined, "reason": declinedReason})
@@ -432,7 +424,7 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 	s.sweepLocked()
 	if s.reviewer == nil {
 		s.mu.Unlock()
-		reply(w, http.StatusConflict, map[string]any{"error": s.noReviewer(), "items": got.Items})
+		failWith(w, http.StatusConflict, s.noReviewer(), map[string]any{"items": got.Items})
 		return
 	}
 	// Agents reload in a loop: the same change waits on one record, and a
@@ -499,7 +491,7 @@ func waitQuery(w http.ResponseWriter, r *http.Request) (wait time.Duration, ok b
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(v, "s"))
 	if err != nil || n < 0 {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("wait must be a number of seconds, not %q", v))
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "wait must be a number of seconds, not %q", v))
 		return 0, false
 	}
 	// The cap comes before the multiply, which a huge n would overflow.
@@ -517,7 +509,7 @@ func (s *Server) proposal(w http.ResponseWriter, r *http.Request) {
 	p := s.proposals[r.PathValue("id")]
 	if p == nil || p.Origin != o {
 		s.mu.Unlock()
-		fail(w, http.StatusNotFound, "no such proposal; it may have ended over 10 minutes ago")
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentRequestGone, "no such proposal; it may have ended over 10 minutes ago"))
 		return
 	}
 	s.expireLocked(p)

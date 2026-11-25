@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // passing reports whether this server has passthroughs.
@@ -88,19 +89,19 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	o := origin(r)
 	switch {
 	case o == config.LocalServer:
-		fail(w, http.StatusBadRequest, "a passthrough forwards a server's port to "+s.laptop()+"; this socket is the laptop's own")
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentLocalPassthrough, "a passthrough forwards a server's port to %s; this socket is the laptop's own", s.laptop()))
 		return
 	case req.Port < 1 || req.Port > 65535:
-		fail(w, http.StatusBadRequest, fmt.Sprintf("port must be between 1 and 65535, not %d", req.Port))
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "port must be between 1 and 65535, not %d", req.Port))
 		return
 	case !validRequester(req.Requester):
-		fail(w, http.StatusBadRequest, fmt.Sprintf("requester must be 1 to 32 lowercase letters, digits and -, such as claude-code, not %q", req.Requester))
+		fail(w, http.StatusBadRequest, badRequester(req.Requester))
 		return
 	case !validSession(req.Session):
-		fail(w, http.StatusBadRequest, "session must be at most 128 printable characters")
+		fail(w, http.StatusBadRequest, badSession())
 		return
 	case !plainName(req.Label):
-		fail(w, http.StatusBadRequest, "label must be at most 64 printable characters on one line")
+		fail(w, http.StatusBadRequest, badLabel())
 		return
 	}
 	if s.coveredByProject(o, req.Port) {
@@ -112,12 +113,11 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	if req.Token != "" {
 		ok, err := s.opts.Grants.Check(o, req.Requester, req.Token)
 		if err != nil {
-			fail(w, http.StatusInternalServerError, err.Error())
+			fail(w, http.StatusInternalServerError, failed(report.AgentGrantsFailed, err))
 			return
 		}
 		if !ok {
-			fail(w, http.StatusUnauthorized, fmt.Sprintf(
-				"the token for %s on %s was revoked or never existed; drop it and ask again without it", req.Requester, o))
+			fail(w, http.StatusUnauthorized, revokedToken(req.Requester, o))
 			return
 		}
 		allowed = true
@@ -138,7 +138,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.passCountLocked(o) >= maxPassthroughs {
 		s.mu.Unlock()
-		fail(w, http.StatusTooManyRequests, tooManyPasses)
+		fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentTooManyPassthroughs, "%s", tooManyPasses))
 		return
 	}
 	reviewer := s.reviewer
@@ -154,7 +154,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if n := s.promptsLocked(o); n >= maxPending {
 			s.mu.Unlock()
-			fail(w, http.StatusTooManyRequests, fmt.Sprintf("%d passthrough requests are already waiting for approval; wait for them first", n))
+			fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentTooManyWaiting, "%d passthrough requests are already waiting for approval; wait for them first", n))
 			return
 		}
 	}
@@ -194,7 +194,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 			s.notConnected(w, o)
 			return
 		}
-		fail(w, http.StatusBadGateway, err.Error())
+		fail(w, http.StatusBadGateway, failed(report.AgentPassthroughFailed, err))
 		return
 	}
 	if rec.state != StatePending {
@@ -205,7 +205,7 @@ func (s *Server) passRequest(w http.ResponseWriter, r *http.Request) {
 		if closeErr != nil {
 			status = http.StatusBadGateway
 		}
-		fail(w, status, closedWhileOpening(rec, closeErr).Error())
+		fail(w, status, failed(report.AgentClosedWhileOpening, closedWhileOpening(rec, closeErr)))
 		return
 	}
 	s.openPassLocked(rec, local, "")
@@ -250,8 +250,8 @@ func (s *Server) heldLocked(w http.ResponseWriter, origin string, req passBody, 
 			if r.state == StatePending {
 				what = "waiting for approval"
 			}
-			fail(w, http.StatusConflict, fmt.Sprintf("port %d on %s is already %s for %s (%s); ask for another port, or close that one first",
-				req.Port, origin, what, r.Requester, sessionName(r.Session)))
+			fail(w, http.StatusConflict, report.Errorf(report.AgentPortHeld, "port %d on %s is already %s for %s (%s); ask for another port, or close that one first",
+				req.Port, origin, what, r.Requester, sessionName(r.Session)).With("port", req.Port))
 		case r.state == StateOpen:
 			reply(w, http.StatusOK, s.viewLocked(r, false))
 		default:
@@ -325,7 +325,7 @@ func (s *Server) passGet(w http.ResponseWriter, r *http.Request) {
 	rec := s.passes[r.PathValue("id")]
 	if rec == nil || rec.Origin != o {
 		s.mu.Unlock()
-		fail(w, http.StatusNotFound, "no such passthrough; it may have ended over 10 minutes ago")
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentRequestGone, "no such passthrough; it may have ended over 10 minutes ago"))
 		return
 	}
 	pending, done, left := rec.state == StatePending, rec.done, rec.Expires.Sub(s.opts.Now())
@@ -391,7 +391,7 @@ func (s *Server) passDelete(w http.ResponseWriter, r *http.Request) {
 	rec := s.passes[r.PathValue("id")]
 	if rec == nil || rec.Origin != o {
 		s.mu.Unlock()
-		fail(w, http.StatusNotFound, "no such passthrough; it may have ended over 10 minutes ago")
+		fail(w, http.StatusNotFound, report.Errorf(report.AgentRequestGone, "no such passthrough; it may have ended over 10 minutes ago"))
 		return
 	}
 	s.endPassLocked(rec, StateClosed, "")
@@ -399,7 +399,7 @@ func (s *Server) passDelete(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if open {
 		if err := s.closePasses(r, []*passRecord{rec}); err != nil {
-			fail(w, http.StatusBadGateway, err.Error())
+			fail(w, http.StatusBadGateway, failed(report.AgentPassthroughFailed, err))
 			return
 		}
 	}
@@ -414,7 +414,7 @@ func (s *Server) passDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	session := r.URL.Query().Get("session")
 	if session == "" || !validSession(session) {
-		fail(w, http.StatusBadRequest, "say which session: DELETE /v1/passthroughs?session=<id>, or close one with DELETE /v1/passthroughs/<id>")
+		fail(w, http.StatusBadRequest, report.Errorf(report.AgentBadRequest, "say which session: DELETE /v1/passthroughs?session=<id>, or close one with DELETE /v1/passthroughs/<id>"))
 		return
 	}
 	o := origin(r)
@@ -432,7 +432,7 @@ func (s *Server) passDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	if err := s.closePasses(r, open); err != nil {
-		fail(w, http.StatusBadGateway, err.Error())
+		fail(w, http.StatusBadGateway, failed(report.AgentPassthroughFailed, err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

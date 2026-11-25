@@ -34,12 +34,17 @@ type fakePasser struct {
 	// closes so far including this one. An error it returns fails that
 	// Close, leaving the forward open.
 	onClose func(ctx context.Context, n int) error
+	// onOpen, when set, runs as each Open is called, before it opens.
+	onOpen func()
 }
 
 func (f *fakePasser) Open(ctx context.Context, p Passthrough) (int, error) {
 	f.mu.Lock()
-	block, started := f.block, f.started
+	block, started, hook := f.block, f.started, f.onOpen
 	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if block != nil {
 		started <- struct{}{}
 		<-block

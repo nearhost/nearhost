@@ -878,7 +878,7 @@ func agentProject(p config.Project, st engine.ProjectStatus, httpsPort int) agen
 		URLs: []string{}, Routes: []agentapi.Route{},
 	}
 	if st.State == engine.StateError || st.State == engine.StateDegraded {
-		ap.Error = st.Message
+		ap.Error, ap.Problem = st.Message, st.Problem
 	}
 	web := p.Web()
 	for _, w := range web {
