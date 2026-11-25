@@ -259,6 +259,31 @@ func (p *upPrinter) approveSteps() []report.Step {
 	return []report.Step{{Text: "Open the interface to approve them; nearhost up cannot:", Command: "nearhost"}}
 }
 
+// readOnlySteps are the steps of a read-only hosts file's message, worded
+// for up: once the file is writable, up starts the project again, and a
+// core in the background is told by `hosts update`, which leaves no
+// alternative worth restarting it for.
+func (p *upPrinter) readOnlySteps(fix []report.Step) []report.Step {
+	var out []report.Step
+	for _, s := range fix {
+		switch {
+		case s.Command == "" && (s.Text == engine.RetryText || s.Text == engine.RetryThenText):
+			if p.keepRunning {
+				s = report.Step{Text: "Then update the hosts file from a terminal, and Nearhost starts the project:", Command: engine.HostsUpdateCommand}
+			} else {
+				s = report.Step{Text: "Then start it again:", Command: "nearhost up"}
+			}
+		case s.Command == "nearhost --no-hosts":
+			if p.keepRunning {
+				continue
+			}
+			s.Command = "nearhost up --no-hosts"
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // restartSteps say how to start Nearhost again: a core in the background
 // is stopped and started in the background, not with up.
 func (p *upPrinter) restartSteps() []report.Step {
@@ -320,14 +345,17 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry; one
 		// without was simply stopped.
-		// A read-only hosts file's reason already says how to clear it, and
-		// approving again would fail the same way. Without a terminal no
-		// prompt can appear, and up has already said what to do instead. A
-		// core in the background asks for no prompt: `hosts update`
-		// updates the file in a terminal and has the core try again.
+		// The elevated helper's reason for a read-only hosts file says how
+		// to clear it already, and approving again would fail the same way.
+		// Without a terminal no prompt can appear, and up has already said
+		// what to do instead. A core in the background asks for no prompt:
+		// `hosts update` updates the file in a terminal and has the core
+		// try again.
 		switch {
-		case reason == "" || code == report.HostsReadOnly ||
+		case reason == "" || strings.Contains(reason, "attrib -r ") ||
 			problem != nil && (errors.Is(problem, errNoTerminal) || errors.Is(problem, errHostsNeedTerminal)):
+		case code == report.HostsReadOnly:
+			return p.readOnlySteps(problem.Fix)
 		case p.keepRunning:
 			return []report.Step{{Text: "Update the hosts file from a terminal, and Nearhost starts the project:", Command: engine.HostsUpdateCommand}}
 		default:

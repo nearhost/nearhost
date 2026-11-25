@@ -69,14 +69,40 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	}
 }
 
-// A stopped project refused for a read-only hosts file gets no fix line: its
-// reason says how to clear the file, and approving again would fail the same.
-func TestUpPrintsNoFixForAReadOnlyHostsFile(t *testing.T) {
+// A stopped project refused for a read-only hosts file shows the message's
+// own steps, the retry worded for up, when Nearhost wrote the file itself
+// and the reason is the title alone. The elevated helper's reason is the
+// old text, which says how to clear the file already: it gets no fix line,
+// and approving again would fail the same.
+func TestUpPrintsAReadOnlyHostsFilesSteps(t *testing.T) {
 	cfg := &config.Config{Servers: mini, Projects: []config.Project{remoteProject("api")}}
+	readOnly := report.Errorf(report.HostsReadOnly, `C:\hosts is read-only.`).
+		Step("Clear the read-only attribute in an administrator terminal:", `attrib -r "C:\hosts"`).
+		Step("Or serve without updating it:", "nearhost --no-hosts")
+	direct := engine.HostsProblem("api", readOnly)
+	for _, tc := range []struct {
+		background bool
+		want       string
+	}{
+		{false, "  fix: Clear the read-only attribute in an administrator terminal:\n        attrib -r \"C:\\hosts\"\n" +
+			"  fix: Then start it again:\n        nearhost up\n" +
+			"  fix: Or serve without updating it:\n        nearhost up --no-hosts\n"},
+		{true, "  fix: Clear the read-only attribute in an administrator terminal:\n        attrib -r \"C:\\hosts\"\n" +
+			"  fix: Then update the hosts file from a terminal, and Nearhost starts the project:\n        nearhost hosts update\n"},
+	} {
+		var out bytes.Buffer
+		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
+		fixFor(p, "api", engine.StateStopped, direct.Title, direct)
+		if out.String() != tc.want {
+			t.Errorf("background %v:\n%s\nwant:\n%s", tc.background, out.String(), tc.want)
+		}
+	}
+
 	var out bytes.Buffer
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
-	readOnly := `C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`
-	fixFor(p, "api", engine.StateStopped, readOnly, report.Errorf(report.HostsReadOnly, "%s", readOnly))
+	said := `hosts apply as administrator: C:\hosts is read-only. Clear it with: attrib -r "C:\hosts" (in an administrator terminal), or run with --no-hosts.`
+	helper := engine.HostsProblem("api", errors.New(said))
+	fixFor(p, "api", engine.StateStopped, helper.Title, helper)
 	if out.Len() != 0 {
 		t.Fatalf("output = %q, want none", out.String())
 	}
