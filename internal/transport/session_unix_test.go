@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -553,6 +554,9 @@ func TestPreflightRefusesALongRunDir(t *testing.T) {
 	}
 	if took := time.Since(begin); took > 2*time.Second {
 		t.Fatalf("the failure took %s", took)
+	}
+	if h := s.Health(); h.Problem == nil || h.Problem.Code != report.SSHSocketPathTooLong || h.Problem.Title != h.LastError {
+		t.Fatalf("Health = %+v, want the socket path problem titled with its last error", h)
 	}
 	if log := readLog(t, logPath); log != "" {
 		t.Fatalf("ssh was run although its socket path cannot work:\n%s", log)

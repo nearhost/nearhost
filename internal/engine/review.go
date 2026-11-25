@@ -10,6 +10,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -84,9 +85,10 @@ func (e *Engine) noteReviewLocked(run *projectRun, r Review) {
 		for i, it := range r.Pending.Items {
 			names[i] = it.Name()
 		}
-		e.logProject(run, "%s%s", PendingPrefix, strings.Join(names, ", "))
+		e.reportProject(run, report.Warnf(report.NearhostrcPending, "%s%s", PendingPrefix, strings.Join(names, ", ")).With("items", names))
 	case r.Problem != "":
-		e.logProject(run, "%s", r.Problem)
+		e.reportProject(run, report.Warnf(report.NearhostrcInvalid, "%s", r.Problem).
+			Because("Nearhost serves what was approved until it can read the file."))
 	default:
 		run.declined = ""
 	}

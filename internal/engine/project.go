@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -43,20 +47,23 @@ type projectRun struct {
 
 	state     State
 	message   string
-	announced State              // effective state last published
-	shownMsg  string             // its message
-	tearing   bool               // a teardown has begun; cleared by the state change that follows it
-	web       []config.WebHosts  // the web routes of the published site and their hosts; nil when none
-	webLocals []int              // local port the proxy sends each of web to, aligned with it; nil when none
-	site      bool               // the site is published to the proxy
-	docker    bool               // the published site is served to the Docker networks too (docker_clients)
-	forwards  []forward          // forwards this project added to its server's session
-	cancel    context.CancelFunc // interrupts a start in progress; nil otherwise
-	gone      bool               // Apply replaced or removed the project; this run is never started again
-	holders   map[int]heldPort   // local port of each lost forward that was announced -> what is known of its holder
-	pending   *Change            // what the project's .nearhostrc asks for that waits for approval; nil when nothing does
-	notice    string             // why the .nearhostrc could not be taken into account; empty when it could
-	declined  string             // hash of a .nearhostrc whose change the user declined; empty when none
+	problem   *report.Message // message as a message (see problemOf); nil when message is empty
+	announced State           // effective state last published
+	shownMsg  string          // its message
+	// shownProblem is the problem published with it.
+	shownProblem *report.Message
+	tearing      bool               // a teardown has begun; cleared by the state change that follows it
+	web          []config.WebHosts  // the web routes of the published site and their hosts; nil when none
+	webLocals    []int              // local port the proxy sends each of web to, aligned with it; nil when none
+	site         bool               // the site is published to the proxy
+	docker       bool               // the published site is served to the Docker networks too (docker_clients)
+	forwards     []forward          // forwards this project added to its server's session
+	cancel       context.CancelFunc // interrupts a start in progress; nil otherwise
+	gone         bool               // Apply replaced or removed the project; this run is never started again
+	holders      map[int]heldPort   // local port of each lost forward that was announced -> what is known of its holder
+	pending      *Change            // what the project's .nearhostrc asks for that waits for approval; nil when nothing does
+	notice       string             // why the .nearhostrc could not be taken into account; empty when it could
+	declined     string             // hash of a .nearhostrc whose change the user declined; empty when none
 	// waiting is set while a start whose server did not connect in time
 	// waits on for it: the project is recorded starting and shows what
 	// waitingLocked says, until the session connects and the start runs
@@ -220,7 +227,7 @@ func (e *Engine) startProject(ctx context.Context, name string, resume bool) err
 	}
 	run.cancel = cancel
 	run.waiting, run.resuming = false, false
-	e.setStateLocked(run, StateStarting, "")
+	e.setStateLocked(run, StateStarting, nil)
 	e.mu.Unlock()
 
 	st, err := e.bringUp(ctx, cfg, p, run)
@@ -236,29 +243,25 @@ func (e *Engine) startProject(ctx context.Context, name string, resume bool) err
 		// nothing may wait now. The stop records the state it leads to.
 		st, err = StateError, ctx.Err()
 	}
-	msg := ""
-	if err != nil {
-		msg = err.Error()
-	}
 	if st == StateStarting {
 		// The server did not connect in time: the start waits on for it.
 		// The review announces what that shows, and hands the start over
 		// at once if the session connected since the wait ran out.
 		run.waiting = true
-		e.changeLocked(run, StateStarting, "")
+		e.changeLocked(run, StateStarting, nil)
 		e.reviewServerLocked(run.server)
-		if _, why := e.effectiveLocked(run); why != "" {
-			return errors.New(why)
+		if _, why, problem := e.effectiveLocked(run); why != "" {
+			return reasonErr(why, problem)
 		}
 		return fmt.Errorf("waiting for %s", run.server)
 	}
 	// Announce through the review: the forwards may have been queued on a
 	// session that dropped, or lost again since.
-	e.changeLocked(run, st, msg)
+	e.changeLocked(run, st, err)
 	e.reviewServerLocked(run.server)
 	if err == nil {
-		if shown, why := e.effectiveLocked(run); shown == StateError {
-			err = errors.New(why)
+		if shown, why, problem := e.effectiveLocked(run); shown == StateError {
+			err = reasonErr(why, problem)
 		}
 	}
 	return err
@@ -287,7 +290,7 @@ func (e *Engine) busyLocked(run *projectRun) bool {
 		if run.tearing {
 			return false // only a stop tears down a running project
 		}
-		shown, _ := e.effectiveLocked(run)
+		shown, _, _ := e.effectiveLocked(run)
 		return shown != StateError
 	}
 	return false
@@ -355,7 +358,7 @@ func (e *Engine) bringUp(ctx context.Context, cfg *config.Config, p *config.Proj
 		return StateError, err
 	}
 	if err := e.ensureHosts(ctx, web); err != nil {
-		return StateStopped, fmt.Errorf("project %q's hosts are not resolvable: the hosts file was not updated (%w); start the project again to retry", p.Name, err)
+		return StateStopped, hostsProblem(p.Name, err)
 	}
 	// Validate refuses docker_clients on a remote project; checking the
 	// server here too means a config that skipped it still never serves a
@@ -582,7 +585,7 @@ func (e *Engine) forwardLoopbacks(ctx context.Context, sess transport.Transport,
 		done[r.Port] = true
 		if err := e.forwardLoopback(ctx, sess, run, r.Port); err != nil {
 			problems = append(problems, err.Error())
-			e.logProject(run, "%v", err)
+			e.reportProject(run, forwardProblem(err))
 		}
 	}
 	return problems
@@ -672,7 +675,7 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		run.web, run.webLocals, run.docker = nil, nil, false
 		e.mu.Unlock()
 		// The proxy's errors already say they are the proxy's.
-		return err
+		return e.bindProblem(err)
 	}
 	if docker {
 		e.mu.Lock()
@@ -680,6 +683,48 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		e.mu.Unlock()
 	}
 	return nil
+}
+
+// hostsProblem is why the hosts of the project called name could not be
+// made to resolve, err being the hosts file's refusal: the message err
+// holds, such as hosts.read-only, or hosts.needs-update.
+func hostsProblem(name string, err error) error {
+	text := fmt.Sprintf("project %q's hosts are not resolvable: the hosts file was not updated (%v); start the project again to retry", name, err)
+	if m, ok := report.As(err); ok {
+		return retitle(m, text, report.Error).Wrap(err)
+	}
+	return report.Errorf(report.HostsNeedsUpdate, "%s", text).
+		Then(fmt.Sprintf("Start the project again to retry, or add its hosts to %s yourself and run nearhost with --no-hosts.", hosts.DefaultPath)).
+		Wrap(err)
+}
+
+// bindPort finds the port in a bind error as Caddy words it, such as
+// "listen tcp :443: bind: permission denied".
+var bindPort = regexp.MustCompile(`(?:tcp|udp)[46]? \S*:(\d+): bind: `)
+
+// bindProblem is err, the proxy failing to take a site, as a message when
+// it could not listen on a port: port.needs-permission or port.in-use, as
+// portProblem says, for the port the error names (the HTTPS port when it
+// names none). Its title is err's text. Any other error is err.
+func (e *Engine) bindProblem(err error) error {
+	text := err.Error()
+	if !strings.Contains(text, "bind: ") && !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	port := e.opts.HTTPSPort
+	if port == 0 {
+		port = 443
+	}
+	if m := bindPort.FindAllStringSubmatch(text, -1); m != nil {
+		if n, perr := strconv.Atoi(m[len(m)-1][1]); perr == nil {
+			port = n
+		}
+	}
+	what := "HTTPS"
+	if port == e.opts.HTTPPort || e.opts.HTTPPort == 0 && port == 80 {
+		what = "HTTP"
+	}
+	return portProblem(text, what, port, err, "")
 }
 
 // hostClash is hostClashLocked for a caller that does not hold mu.

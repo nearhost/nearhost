@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -65,6 +66,9 @@ type passthrough struct {
 	// reason given by its first close, or that it was closed while it opened.
 	// A retry publishes it.
 	closeReason string
+	// closeWarn is set when the engine itself closes it, for a reason that
+	// is a warning: its server or its port went away.
+	closeWarn bool
 	// checked is when a check last found the server connected, or when the
 	// passthrough opened.
 	checked time.Time
@@ -282,6 +286,13 @@ func (e *Engine) tryLocalPort(owner string, port int) error {
 // it refuses with an error wrapping errShutDown, and Shutdown lets go of the
 // passthrough itself.
 func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error {
+	return e.closePassthrough(ctx, id, reason, false)
+}
+
+// closePassthrough is ClosePassthrough, which the engine calls with warn set
+// when it closes the passthrough itself, as its server or port went away:
+// the event that says so then carries a passthrough.closed warning.
+func (e *Engine) closePassthrough(ctx context.Context, id, reason string, warn bool) error {
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
@@ -299,8 +310,9 @@ func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error 
 	}
 	p.closing = true
 	if p.closeReason == "" {
-		p.closeReason = reason // a retry keeps the first reason
+		p.closeReason, p.closeWarn = reason, warn // a retry keeps the first reason
 	}
+	warn = p.closeWarn
 	reason = p.closeReason
 	p.cancelling = true
 	e.passOps.Add(1) // under mu and before closed is set, so before Shutdown waits
@@ -322,7 +334,12 @@ func (e *Engine) ClosePassthrough(ctx context.Context, id, reason string) error 
 	if e.afterClose != nil {
 		e.afterClose(id)
 	}
-	e.bus.Publish(Event{Server: p.Server, Message: fmt.Sprintf("closed port %d for %s: %s", p.Remote, p.Requester, reason)})
+	ev := Event{Server: p.Server, Message: fmt.Sprintf("closed port %d for %s: %s", p.Remote, p.Requester, reason)}
+	if warn {
+		ev.Report = report.Warnf(report.PassthroughClosed, "%s", ev.Message).
+			With("server", p.Server).With("port", p.Remote).With("requester", p.Requester)
+	}
+	e.bus.Publish(ev)
 	return nil
 }
 
@@ -413,6 +430,8 @@ func probePassthroughPort(ctx context.Context, local int) bool {
 // passClose is a passthrough to close and why.
 type passClose struct {
 	id, reason string
+	// warn says the engine closes it, as a warning (see closePassthrough).
+	warn bool
 }
 
 // checkPassthroughs checks every open passthrough once, at e.now. Those of a
@@ -442,13 +461,13 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 			// A close could not cancel the forward, so it is tried again: a
 			// close of its own, or one that arrived while it opened and
 			// whose undo failed.
-			closes = append(closes, passClose{id, p.closeReason})
+			closes = append(closes, passClose{id, p.closeReason, p.closeWarn})
 			continue
 		}
 		if c := e.servers[p.Server]; c == nil || c.sess != p.sess {
 			// dropServer closes these as it drops the session. One whose
 			// close failed is closed again here.
-			closes = append(closes, passClose{id, e.droppedReasonLocked(p.Server)})
+			closes = append(closes, passClose{id, e.droppedReasonLocked(p.Server), true})
 			continue
 		}
 		status, states := p.sess.ForwardStates()
@@ -466,18 +485,18 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 			}
 			p.checked = now
 			if !forwardApplied(states, p.Local, p.Remote) {
-				closes = append(closes, passClose{id, fmt.Sprintf("laptop port %d was taken while %s was away", p.Local, p.Server)})
+				closes = append(closes, passClose{id, fmt.Sprintf("laptop port %d was taken while %s was away", p.Local, p.Server), true})
 				continue
 			}
 			probes = append(probes, p)
 		case transport.StatusAuthFailed:
-			closes = append(closes, passClose{id, failedReason(p.Server, p.sess)})
+			closes = append(closes, passClose{id, failedReason(p.Server, p.sess), true})
 		default:
 			if p.awaySince.IsZero() {
 				p.awaySince = now
 			}
 			if now.Sub(p.awaySince) >= passGoneFor {
-				closes = append(closes, passClose{id, fmt.Sprintf("%s was disconnected for 10 minutes", p.Server)})
+				closes = append(closes, passClose{id, fmt.Sprintf("%s was disconnected for 10 minutes", p.Server), true})
 			}
 		}
 	}
@@ -503,7 +522,7 @@ func (e *Engine) checkPassthroughs(ctx context.Context) {
 		case p.failingSince.IsZero():
 			p.failingSince = now
 		case now.Sub(p.failingSince) >= passFailFor:
-			closes = []passClose{{p.ID, fmt.Sprintf("nothing answered on port %d for 5 minutes", p.Remote)}}
+			closes = []passClose{{p.ID, fmt.Sprintf("nothing answered on port %d for 5 minutes", p.Remote), true}}
 		}
 		e.mu.Unlock()
 		if len(closes) > 0 {
@@ -544,7 +563,7 @@ func (e *Engine) droppedReasonLocked(server string) string {
 // stays closing, and a later check tries again.
 func (e *Engine) closePassthroughs(ctx context.Context, closes []passClose) {
 	for _, c := range closes {
-		_ = e.ClosePassthrough(ctx, c.id, c.reason)
+		_ = e.closePassthrough(ctx, c.id, c.reason, c.warn)
 	}
 }
 
@@ -554,7 +573,7 @@ func (e *Engine) sessionPassthroughsLocked(sess transport.Transport, reason stri
 	var out []passClose
 	for id, p := range e.passthroughs {
 		if p.sess == sess {
-			out = append(out, passClose{id, reason})
+			out = append(out, passClose{id, reason, true})
 		}
 	}
 	slices.SortFunc(out, func(a, b passClose) int { return strings.Compare(a.id, b.id) })

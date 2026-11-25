@@ -17,6 +17,7 @@ import (
 	"github.com/nearhost/nearhost/internal/elevate"
 	"github.com/nearhost/nearhost/internal/fsretry"
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 const (
@@ -34,16 +35,30 @@ var ErrReadOnly = errors.New("hosts file is read-only")
 
 // readOnlyError is the error for a hosts file that is read-only. Its message
 // says how to clear the attribute; Nearhost does not clear it, because a
-// read-only hosts file is often deliberate.
+// read-only hosts file is often deliberate. It unwraps to its report
+// message, hosts.read-only.
 type readOnlyError struct{ path string }
 
 // readOnlyMarker is the fixed part of the read-only message.
 const readOnlyMarker = " is read-only. Clear it with: attrib -r "
 
-// Error returns the message shown to the user.
+// Error returns the message shown to the user: the report's title, then its
+// step.
 func (e *readOnlyError) Error() string {
-	return fmt.Sprintf("%s%s\"%s\" (in an administrator terminal), or run with --no-hosts.", e.path, readOnlyMarker, e.path)
+	m := e.Report()
+	return m.Title + " " + m.Fix[0].Text
 }
+
+// Report is the message for the read-only file: what it is, and how to
+// clear the attribute.
+func (e *readOnlyError) Report() *report.Message {
+	return report.Errorf(report.HostsReadOnly, "%s is read-only.", e.path).
+		Then(fmt.Sprintf("Clear it with: attrib -r \"%s\" (in an administrator terminal), or run with --no-hosts.", e.path)).
+		With("path", e.path)
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *readOnlyError) Unwrap() error { return e.Report() }
 
 // IsReadOnlyMessage reports whether s is the read-only message, for code that
 // only has an error's text, such as a project's status reason.

@@ -57,11 +57,19 @@ const (
 	SSHUnreachable           Code = "ssh.unreachable"
 	SSHAuthFailed            Code = "ssh.auth-failed"
 	SSHSocketPathTooLong     Code = "ssh.socket-path-too-long"
+	SSHConfigConflict        Code = "ssh.config-conflict"
+	SSHStaleMaster           Code = "ssh.stale-master"
+	ForwardFailed            Code = "forward.failed"
+	ForwardReconnecting      Code = "forward.reconnecting"
+	DockerUnreachable        Code = "docker.unreachable"
+	DockerNetworksFailed     Code = "docker.networks-failed"
+	PassthroughClosed        Code = "passthrough.closed"
 	AgentsNotReady           Code = "agents.not-ready"
 	AgentsRefused            Code = "agents.refused"
 	AgentsPathTooLong        Code = "agents.path-too-long"
 	ConfigInvalid            Code = "config.invalid"
 	ConfigUnknownKeys        Code = "config.unknown-keys"
+	CAMoveFailed             Code = "ca.move-failed"
 	ServiceUnsupported       Code = "service.unsupported"
 	ServiceNoUserManager     Code = "service.no-user-manager"
 	ServiceCopy              Code = "service.copy"
@@ -123,11 +131,19 @@ var catalog = []Entry{
 	{SSHUnreachable, Error, 503, "A server cannot be reached over SSH."},
 	{SSHAuthFailed, Error, 403, "SSH refused to log in to a server."},
 	{SSHSocketPathTooLong, Error, 400, "The path of an SSH socket is longer than the system allows."},
+	{SSHConfigConflict, Error, 409, "The user's SSH configuration for a server sets options Nearhost cannot keep out of its own connections."},
+	{SSHStaleMaster, Warning, 0, "An SSH connection left by an earlier run could not be ended."},
+	{ForwardFailed, Error, 500, "A port could not be forwarded to or from a server."},
+	{ForwardReconnecting, Warning, 0, "A forwarded port is being connected again, and serves nothing until it is."},
+	{DockerUnreachable, Warning, 0, "Docker did not answer, so requests from containers are not accepted yet."},
+	{DockerNetworksFailed, Warning, 0, "Nearhost could not start accepting requests from new Docker networks."},
+	{PassthroughClosed, Warning, 0, "Nearhost closed a port it had opened for a coding agent, as the server or the port went away."},
 	{AgentsNotReady, Error, 503, "Coding agents on a server cannot reach Nearhost yet."},
 	{AgentsRefused, Error, 403, "The server's SSH daemon refused to forward the socket coding agents use."},
 	{AgentsPathTooLong, Error, 400, "The socket coding agents use would have a path longer than the server allows."},
 	{ConfigInvalid, Error, 400, "The config file has a value Nearhost cannot use."},
 	{ConfigUnknownKeys, Error, 400, "The config file has keys Nearhost does not know, so saving it would lose them."},
+	{CAMoveFailed, Warning, 0, "Nearhost could not move its local CA to the data directory, or could not delete the old copy."},
 	{ServiceUnsupported, Error, 501, "The Nearhost service is not supported on this system."},
 	{ServiceNoUserManager, Error, 503, "There is no user service manager to run the Nearhost service."},
 	{ServiceCopy, Error, 409, "This copy of nearhost cannot be run by a service later, such as a one-run copy."},

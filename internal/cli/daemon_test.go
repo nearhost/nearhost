@@ -19,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -247,8 +248,9 @@ func TestDaemonRefusesASecondCore(t *testing.T) {
 		t.Fatalf("the second daemon returned %v", err)
 	}
 	// It says how to stop the other, which runs in the background.
-	if msg := err.Error(); !strings.HasSuffix(msg, ". Stop it with `nearhost stop`, or see it with `nearhost status`.") || strings.Contains(msg, "Stop it first") {
-		t.Errorf("the refusal reads %q", msg)
+	if m, ok := report.As(err); !ok || m.Code != report.CoreAlreadyRunning || len(m.Fix) != 1 ||
+		m.Fix[0].Text != "Stop it with `nearhost stop`, or see it with `nearhost status`." || strings.Contains(err.Error(), "Stop it first") {
+		t.Errorf("the refusal reads %q, with the message %+v", err, m)
 	}
 	if code := exitCode(err, io.Discard); code != 1 {
 		t.Errorf("exit code %d, want 1", code)

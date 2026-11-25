@@ -78,7 +78,7 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 		if err := c.sess.CancelForward(ctx, f.local, f.remote); err != nil {
 			kept = append(kept, f)
 			errs = append(errs, err)
-			e.logProject(run, "cancel forward: %v", err)
+			e.reportProject(run, forwardProblem(fmt.Errorf("cancel forward: %w", err)))
 			continue
 		}
 		e.releasePort(f.local)
@@ -143,9 +143,9 @@ func (e *Engine) StopProject(ctx context.Context, name string) error {
 	run.waiting, run.resuming, run.stopping = false, false, false
 	if err != nil {
 		err = fmt.Errorf("stop %s: %w", name, err)
-		e.setStateLocked(run, StateError, err.Error())
+		e.setStateLocked(run, StateError, err)
 		return err
 	}
-	e.setStateLocked(run, StateStopped, "")
+	e.setStateLocked(run, StateStopped, nil)
 	return nil
 }

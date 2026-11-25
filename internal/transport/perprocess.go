@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nearhost/nearhost/internal/netbind"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // perProcess is a Transport that keeps no ControlMaster, for an ssh that has
@@ -99,10 +100,23 @@ type ConfigError struct {
 	Options []string
 }
 
+// Error is the report's title, then its step.
 func (e *ConfigError) Error() string {
-	return fmt.Sprintf("%s's ssh configuration sets %s, which Nearhost can't keep out of its own connections on this system. "+
-		"Move them to a Host entry Nearhost doesn't use.", e.Host, strings.Join(e.Options, ", "))
+	m := e.Report()
+	return m.Title + " " + m.Fix[0].Text
 }
+
+// Report is the message for the configuration, ssh.config-conflict: the
+// options it sets, and where to move them.
+func (e *ConfigError) Report() *report.Message {
+	return report.Errorf(report.SSHConfigConflict, "%s's ssh configuration sets %s, which Nearhost can't keep out of its own connections on this system.",
+		e.Host, strings.Join(e.Options, ", ")).
+		Then("Move them to a Host entry Nearhost doesn't use.").
+		With("host", e.Host).With("options", slices.Clone(e.Options))
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *ConfigError) Unwrap() error { return e.Report() }
 
 // configConflicts reads `ssh -G` output for host and returns a *ConfigError
 // naming the options in it that a per-process connection cannot override:
@@ -390,7 +404,8 @@ func (p *perProcess) connect(ctx context.Context, withAgent bool) (end linkEnd, 
 		return linkEnd{msg: err.Error(), fatal: fatal}, true
 	}
 	if conflict != nil {
-		p.giveUp(conflict.Error())
+		m, _ := report.As(conflict)
+		p.giveUpWith(conflict.Error(), m)
 		return linkEnd{}, false
 	}
 

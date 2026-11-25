@@ -3,10 +3,14 @@ package transport
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // startSSH starts cmd, an ssh, and on Windows puts it in the job that ends
@@ -104,6 +108,10 @@ type supervision struct {
 	mu      sync.Mutex
 	status  Status
 	lastErr string
+	// lastProblem is lastErr as a message, when what set it knew more than
+	// its text (the ssh configuration, the socket path); nil means Health
+	// builds one from the status (see ConnectionProblem).
+	lastProblem *report.Message
 	// failures counts the attempts that failed since the connection last
 	// connected or was started; nextAttempt is when the supervisor tries
 	// again, zero unless it is waiting to.
@@ -161,16 +169,57 @@ func (v *supervision) LastError() string {
 func (v *supervision) Health() Health {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return Health{Status: v.status, LastError: v.lastErr, Failures: v.failures, NextAttempt: v.nextAttempt,
+	h := Health{Status: v.status, LastError: v.lastErr, Failures: v.failures, NextAttempt: v.nextAttempt,
 		Refused:   v.refusals >= v.maxAuthFailures,
 		AgentPath: v.agentPath, AgentErr: v.agentErr, AgentProblem: v.agentProblem}
+	if v.status != StatusConnected && v.lastErr != "" {
+		if v.lastProblem != nil {
+			h.Problem = copyMessage(v.lastProblem)
+		} else {
+			h.Problem = ConnectionProblem(v.status, v.lastErr, v.Name, v.host)
+		}
+	}
+	if v.agentErr != "" {
+		h.AgentReport = (&AgentError{Problem: v.agentProblem, Msg: v.agentErr}).Report()
+	}
+	return h
+}
+
+// ConnectionProblem is the message for a connection to host, the server
+// called server, that is in state st with lastErr its last error:
+// ssh.auth-failed once it has given up, ssh.unreachable otherwise. Its
+// title is lastErr, and its step says how to fix access.
+func ConnectionProblem(st Status, lastErr, server, host string) *report.Message {
+	code := report.SSHUnreachable
+	if st == StatusAuthFailed {
+		code = report.SSHAuthFailed
+	}
+	m := report.Errorf(code, "%s", lastErr).With("server", server).With("host", host)
+	if st == StatusReconnecting {
+		m.Because("Nearhost tries again by itself.")
+	}
+	return m.Then("Run `ssh " + host + "` once in a terminal to fix access, then press r.")
+}
+
+// copyMessage is a copy of m that a caller may change without changing m.
+func copyMessage(m *report.Message) *report.Message {
+	c := *m
+	c.Fix = slices.Clone(m.Fix)
+	c.Data = maps.Clone(m.Data)
+	return &c
 }
 
 func (v *supervision) setStatus(st Status, errText string) {
+	v.setStatusWith(st, errText, nil)
+}
+
+// setStatusWith is setStatus with the message errText comes from, nil when
+// there is none.
+func (v *supervision) setStatusWith(st Status, errText string, problem *report.Message) {
 	v.mu.Lock()
 	v.status = st
 	if errText != "" {
-		v.lastErr = errText
+		v.lastErr, v.lastProblem = errText, problem
 	}
 	v.nextAttempt = time.Time{}
 	if st == StatusConnected {
@@ -195,7 +244,7 @@ func (v *supervision) dropped() {
 	v.mu.Lock()
 	was := v.status == StatusConnected
 	if was {
-		v.status, v.lastErr = StatusReconnecting, "ssh exited"
+		v.status, v.lastErr, v.lastProblem = StatusReconnecting, "ssh exited", nil
 	}
 	v.mu.Unlock()
 	if was {
@@ -208,7 +257,7 @@ func (v *supervision) dropped() {
 // log tells sees them.
 func (v *supervision) retrying(msg string, d time.Duration) {
 	v.mu.Lock()
-	v.status, v.lastErr = StatusReconnecting, msg
+	v.status, v.lastErr, v.lastProblem = StatusReconnecting, msg, nil
 	v.failures++
 	v.nextAttempt = v.clock.Now().Add(d)
 	v.mu.Unlock()
@@ -217,11 +266,14 @@ func (v *supervision) retrying(msg string, d time.Duration) {
 
 // giveUp notes a failed attempt and stops trying: the error is one that
 // trying again will not fix.
-func (v *supervision) giveUp(msg string) {
+func (v *supervision) giveUp(msg string) { v.giveUpWith(msg, nil) }
+
+// giveUpWith is giveUp with the message msg comes from.
+func (v *supervision) giveUpWith(msg string, problem *report.Message) {
 	v.mu.Lock()
 	v.failures++
 	v.mu.Unlock()
-	v.setStatus(StatusAuthFailed, msg)
+	v.setStatusWith(StatusAuthFailed, msg, problem)
 }
 
 // giveUpForNow notes a failed attempt and that the supervisor waits
@@ -236,7 +288,7 @@ func (v *supervision) giveUpForNow(msg string) <-chan struct{} {
 	msg += " Nearhost tries again at " + next.In(v.clock.Zone).Format("15:04") + "."
 	retryNow := make(chan struct{})
 	v.mu.Lock()
-	v.status, v.lastErr = StatusAuthFailed, msg
+	v.status, v.lastErr, v.lastProblem = StatusAuthFailed, msg, nil
 	v.failures++
 	v.nextAttempt = next
 	v.retryNow = retryNow

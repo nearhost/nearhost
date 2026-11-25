@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/nearhost/nearhost/internal/hostname"
+	"github.com/nearhost/nearhost/internal/report"
 	"gopkg.in/yaml.v3"
 )
 
@@ -575,6 +576,35 @@ func (e *UnknownKeysError) Error() string {
 	return strings.Join(lines, "\n")
 }
 
+// Report is the message for the keys, config.unknown-keys: where each is,
+// that saving would delete them, and to fix or remove them. Its data holds
+// the file and each key with its line.
+func (e *UnknownKeysError) Report() *report.Message {
+	keys := make([]map[string]any, len(e.Keys))
+	for i, u := range e.Keys {
+		keys[i] = map[string]any{"key": u.Key, "line": u.Line}
+	}
+	var m *report.Message
+	if len(e.Keys) == 1 {
+		m = report.Errorf(report.ConfigUnknownKeys, "%s", e.Keys[0].Describe(e.Path)).
+			Because("Saving now would delete it.").
+			Then("Fix or remove it.")
+	} else {
+		named := make([]string, len(e.Keys))
+		for i, u := range e.Keys {
+			named[i] = fmt.Sprintf("%q on line %d", u.Key, u.Line)
+		}
+		list := strings.Join(named[:len(named)-1], ", ") + " and " + named[len(named)-1]
+		m = report.Errorf(report.ConfigUnknownKeys, "%s has keys Nearhost does not know: %s.", e.Path, list).
+			Because("Saving now would delete them.").
+			Then("Fix or remove them.")
+	}
+	return m.With("path", e.Path).With("keys", keys)
+}
+
+// Unwrap is the report message, so report.As finds it.
+func (e *UnknownKeysError) Unwrap() error { return e.Report() }
+
 // UnknownKeys reads the config at path again and returns, in file order,
 // every key Nearhost does not know: one the structs have no field for, such
 // as host: written for hosts:, or one a newer Nearhost wrote. A missing file
@@ -789,13 +819,13 @@ func (c *Config) validateChange(before *Config) error {
 			continue
 		}
 		if err := ValidProjectAlias(p.Alias); err != nil {
-			return fmt.Errorf("project %q: %w", p.Name, err)
+			return invalid("projects.alias", fmt.Errorf("project %q: %w", p.Name, err))
 		}
 	}
 	had := patternPairs(before.PatternConflicts())
 	for _, hc := range c.PatternConflicts() {
 		if !had[hc.pair()] {
-			return hc
+			return invalid("projects.routes.hosts", hc)
 		}
 	}
 	return nil
@@ -806,16 +836,20 @@ func (c *Config) Validate() error {
 	serverNames := map[string]bool{LocalServer: true}
 	for _, s := range c.Servers {
 		if s.Name == LocalServer {
-			return fmt.Errorf("server name %q is reserved", LocalServer)
+			return invalid("servers.name", fmt.Errorf("server name %q is reserved", LocalServer))
 		}
 		if s.Name == "" || s.SSHHost == "" {
-			return fmt.Errorf("server %q needs a name and ssh_host", s.Name)
+			field := "servers.ssh_host"
+			if s.Name == "" {
+				field = "servers.name"
+			}
+			return invalid(field, fmt.Errorf("server %q needs a name and ssh_host", s.Name))
 		}
 		if strings.HasPrefix(s.SSHHost, "-") {
-			return fmt.Errorf("server %q: ssh_host must not start with %q, ssh would read it as an option", s.Name, "-")
+			return invalid("servers.ssh_host", fmt.Errorf("server %q: ssh_host must not start with %q, ssh would read it as an option", s.Name, "-"))
 		}
 		if serverNames[s.Name] {
-			return fmt.Errorf("duplicate server name %q", s.Name)
+			return invalid("servers.name", fmt.Errorf("duplicate server name %q", s.Name))
 		}
 		serverNames[s.Name] = true
 	}
@@ -825,36 +859,36 @@ func (c *Config) Validate() error {
 	loopbacks := map[int]string{}
 	for _, p := range c.Projects {
 		if p.Name == "" {
-			return errors.New("project with empty name")
+			return invalid("projects.name", errors.New("project with empty name"))
 		}
 		if names[p.Name] {
-			return fmt.Errorf("duplicate project name %q", p.Name)
+			return invalid("projects.name", fmt.Errorf("duplicate project name %q", p.Name))
 		}
 		names[p.Name] = true
 		if !serverNames[p.Server] {
-			return fmt.Errorf("project %q uses unknown server %q", p.Name, p.Server)
+			return invalid("projects.server", fmt.Errorf("project %q uses unknown server %q", p.Name, p.Server))
 		}
 		if p.Alias == "" {
-			return fmt.Errorf("project %q has no alias", p.Name)
+			return invalid("projects.alias", fmt.Errorf("project %q has no alias", p.Name))
 		}
 		aliasKey := strings.ToLower(p.Alias) // hostnames are case-insensitive
 		if other, dup := aliases[aliasKey]; dup {
-			return fmt.Errorf("alias %q used by both %q and %q", p.Alias, other, p.Name)
+			return invalid("projects.alias", fmt.Errorf("alias %q used by both %q and %q", p.Alias, other, p.Name))
 		}
 		aliases[aliasKey] = p.Name
 		if strings.EqualFold(p.Alias, hostname.PageHost) {
-			return fmt.Errorf("project %q: %w", p.Name, errPageHost)
+			return invalid("projects.alias", fmt.Errorf("project %q: %w", p.Name, errPageHost))
 		}
 
 		if p.DockerClients() && p.Server != LocalServer {
 			// Containers can only reach Nearhost on this machine.
-			return fmt.Errorf("project %q: docker_clients works only for projects on this machine", p.Name)
+			return invalid("projects.docker_clients", fmt.Errorf("project %q: docker_clients works only for projects on this machine", p.Name))
 		}
 		if p.Nearhostrc != nil {
 			for _, r := range p.Nearhostrc.Routes {
 				for _, h := range r.Hosts {
 					if err := ValidProjectHost(h); err != nil {
-						return fmt.Errorf("project %q approved .nearhostrc port %d: %w", p.Name, r.Port, err)
+						return invalid("projects.nearhostrc.routes.hosts", fmt.Errorf("project %q approved .nearhostrc port %d: %w", p.Name, r.Port, err))
 					}
 				}
 			}
@@ -864,23 +898,23 @@ func (c *Config) Validate() error {
 		hosts := map[string]bool{strings.ToLower(p.Alias): true}
 		for _, r := range p.Routes {
 			if !r.Role.Valid() {
-				return fmt.Errorf("project %q port %d has unknown role %q", p.Name, r.Port, r.Role)
+				return invalid("projects.routes.role", fmt.Errorf("project %q port %d has unknown role %q", p.Name, r.Port, r.Role))
 			}
 			if r.Port < 1 || r.Port > 65535 {
-				return fmt.Errorf("project %q has invalid port %d", p.Name, r.Port)
+				return invalid("projects.routes.port", fmt.Errorf("project %q has invalid port %d", p.Name, r.Port))
 			}
 			if r.Role != RoleWeb && len(r.Hosts) > 0 {
-				return fmt.Errorf("project %q port %d: only web routes have hosts", p.Name, r.Port)
+				return invalid("projects.routes.hosts", fmt.Errorf("project %q port %d: only web routes have hosts", p.Name, r.Port))
 			}
 			switch r.Role {
 			case RoleWeb:
 				webCount++
 				if webCount > 1 && len(r.Hosts) == 0 {
-					return fmt.Errorf("project %q: web route on port %d needs at least one host; only the first web route is served at the alias", p.Name, r.Port)
+					return invalid("projects.routes.hosts", fmt.Errorf("project %q: web route on port %d needs at least one host; only the first web route is served at the alias", p.Name, r.Port))
 				}
 				for _, h := range r.Hosts {
 					if err := ValidProjectHost(h); err != nil {
-						return fmt.Errorf("project %q port %d: %w", p.Name, r.Port, err)
+						return invalid("projects.routes.hosts", fmt.Errorf("project %q port %d: %w", p.Name, r.Port, err))
 					}
 					// Web() drops the alias from the primary route's own
 					// hosts, so only there is it harmless.
@@ -888,21 +922,21 @@ func (c *Config) Validate() error {
 						continue
 					}
 					if hosts[strings.ToLower(h)] {
-						return fmt.Errorf("project %q serves host %q twice", p.Name, h)
+						return invalid("projects.routes.hosts", fmt.Errorf("project %q serves host %q twice", p.Name, h))
 					}
 					hosts[strings.ToLower(h)] = true
 				}
 			case RoleLoopback:
 				if p.Enabled {
 					if other, clash := loopbacks[r.Port]; clash {
-						return fmt.Errorf("loopback port %d used by both %q and %q", r.Port, other, p.Name)
+						return invalid("projects.routes.port", fmt.Errorf("loopback port %d used by both %q and %q", r.Port, other, p.Name))
 					}
 					loopbacks[r.Port] = p.Name
 				}
 			}
 		}
 		if webCount == 0 {
-			return fmt.Errorf("project %q must have at least one web route", p.Name)
+			return invalid("projects.routes", fmt.Errorf("project %q must have at least one web route", p.Name))
 		}
 	}
 
@@ -911,18 +945,18 @@ func (c *Config) Validate() error {
 	for _, r := range c.Registries {
 		// The alias becomes a directory name, so it must be a plain word.
 		if !ValidAlias(r.Alias) {
-			return fmt.Errorf("registry alias %q must be lowercase letters and digits, with single hyphens between words", r.Alias)
+			return invalid("registries.alias", fmt.Errorf("registry alias %q must be lowercase letters and digits, with single hyphens between words", r.Alias))
 		}
 		if !ValidRepo(r.Repo) {
-			return fmt.Errorf("registry %s: repo %q is not a GitHub repository written owner/name", r.Alias, r.Repo)
+			return invalid("registries.repo", fmt.Errorf("registry %s: repo %q is not a GitHub repository written owner/name", r.Alias, r.Repo))
 		}
 		if trusted[r.Alias] {
-			return fmt.Errorf("duplicate registry alias %q", r.Alias)
+			return invalid("registries.alias", fmt.Errorf("duplicate registry alias %q", r.Alias))
 		}
 		trusted[r.Alias] = true
 		repo := strings.ToLower(r.Repo) // GitHub names are case-insensitive
 		if other, dup := repos[repo]; dup {
-			return fmt.Errorf("repo %s is trusted twice, as %q and %q", r.Repo, other, r.Alias)
+			return invalid("registries.repo", fmt.Errorf("repo %s is trusted twice, as %q and %q", r.Repo, other, r.Alias))
 		}
 		repos[repo] = r.Alias
 	}
@@ -931,23 +965,30 @@ func (c *Config) Validate() error {
 	for _, p := range c.Presets {
 		// The name becomes a file path, so it must be one or two plain words.
 		if !ValidPresetName(p.Name) {
-			return fmt.Errorf("preset name %q must be lowercase letters, digits and hyphens, or <registry>/<name>", p.Name)
+			return invalid("presets.name", fmt.Errorf("preset name %q must be lowercase letters, digits and hyphens, or <registry>/<name>", p.Name))
 		}
 		alias, _ := SplitPreset(p.Name)
 		switch {
 		case alias != "" && !trusted[alias]:
-			return fmt.Errorf("preset %q comes from registry %q, which is not in registries; add the registry back under registries or remove the preset from presets", p.Name, alias)
+			return invalid("presets.name", fmt.Errorf("preset %q comes from registry %q, which is not in registries; add the registry back under registries or remove the preset from presets", p.Name, alias))
 		case alias != "" && (p.Ref == "" || p.SHA256 == ""):
-			return fmt.Errorf("preset %q comes from a registry, so it needs a ref and a sha256", p.Name)
+			return invalid("presets.ref", fmt.Errorf("preset %q comes from a registry, so it needs a ref and a sha256", p.Name))
 		case alias == "" && (p.Ref != "" || p.SHA256 != ""):
-			return fmt.Errorf("preset %q is a local file, so it has no ref or sha256; a preset from a registry is named <registry>/<name>", p.Name)
+			return invalid("presets.ref", fmt.Errorf("preset %q is a local file, so it has no ref or sha256; a preset from a registry is named <registry>/<name>", p.Name))
 		}
 		if presets[p.Name] {
-			return fmt.Errorf("duplicate preset %q", p.Name)
+			return invalid("presets.name", fmt.Errorf("duplicate preset %q", p.Name))
 		}
 		presets[p.Name] = true
 	}
 	return nil
+}
+
+// invalid is a Validate error, config.invalid: err's text, with the key it
+// is about (such as "projects.alias") as the field in its data. Its cause is
+// err, so errors.Is and errors.As see what err wraps.
+func invalid(field string, err error) error {
+	return report.Errorf(report.ConfigInvalid, "%s", err).With("field", field).Wrap(err)
 }
 
 var (

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // TestInstanceLockLeavesThePidReadable checks that the LockFileEx lock sits
@@ -26,8 +28,8 @@ func TestInstanceLockLeavesThePidReadable(t *testing.T) {
 		t.Fatalf("lock file holds %q, want %d", got, os.Getpid())
 	}
 	_, err = lockInstance(dir)
-	var ie *instanceError
-	if !errors.As(err, &ie) || ie.pid != os.Getpid() {
+	m, ok := report.As(err)
+	if !ok || !errors.Is(err, ErrAlreadyRunning) || m.Data["pid"] != os.Getpid() {
 		t.Fatalf("second lock = %v, want an instance error naming pid %d", err, os.Getpid())
 	}
 	release()

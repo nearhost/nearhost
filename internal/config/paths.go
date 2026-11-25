@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/nearhost/nearhost/internal/oserr"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Dir is the nearhost configuration directory: $XDG_CONFIG_HOME/nearhost
@@ -176,8 +177,23 @@ func (e *MigrateError) Error() string {
 	return fmt.Sprintf("move the local CA from %s to %s: %v", e.Old, e.New, e.Err)
 }
 
-// Unwrap returns the underlying error.
-func (e *MigrateError) Unwrap() error { return e.Err }
+// Report is the warning for the failure, ca.move-failed: where the CA is
+// now, and what to delete when a copy of its key is left behind. Its cause
+// is Err.
+func (e *MigrateError) Report() *report.Message {
+	if e.Moved {
+		return report.Warnf(report.CAMoveFailed, "Nearhost moved its local CA to %s but could not delete %s (%v).", e.New, e.Old, e.Err).
+			Because("That directory still holds a copy of the CA's private key.").
+			Then("Delete "+e.Old+".").
+			With("from", e.Old).With("to", e.New).Wrap(e.Err)
+	}
+	return report.Warnf(report.CAMoveFailed, "Nearhost could not move its local CA from %s to %s (%v), so it keeps using %s.", e.Old, e.New, e.Err, e.Old).
+		With("from", e.Old).With("to", e.New).Wrap(e.Err)
+}
+
+// Unwrap is the report message, whose cause is the underlying error, so
+// both report.As and errors.Is see through it.
+func (e *MigrateError) Unwrap() error { return e.Report() }
 
 // LeftoverCaddyDir returns the Caddy storage older versions kept in Dir when
 // it is still there beside the one in DataDir, which is the one in use. It

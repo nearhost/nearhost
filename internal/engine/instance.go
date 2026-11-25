@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // instanceLockName is the file in the run directory that a started engine
@@ -21,30 +23,30 @@ import (
 // opens it after hold the lock at once.
 const instanceLockName = "nearhost.lock"
 
-// instanceError is a start refused because another engine holds the run
-// directory.
-type instanceError struct {
-	pid int // the holder's pid, 0 when the file does not say
-}
-
-// Error says that another Nearhost runs, and what to do about it.
-func (e *instanceError) Error() string {
+// alreadyRunning is a start refused because another engine holds the run
+// directory: core.already-running, naming the holder's pid when the
+// instance file says it (pid > 0). It matches ErrAlreadyRunning.
+//
+// It names no way to run a second one: a second Nearhost with its own
+// config folder would still share the data folder, and so the local CA and
+// the certificates, which the proxy takes to be its own.
+func alreadyRunning(pid int) *report.Message {
 	running := "Another Nearhost is already running"
-	if e.pid > 0 {
-		running += fmt.Sprintf(" (pid %d)", e.pid)
+	if pid > 0 {
+		running += fmt.Sprintf(" (pid %d)", pid)
 	}
-	// It names no way to run a second one: a second Nearhost with its own
-	// config folder would still share the data folder, and so the local CA
-	// and the certificates, which the proxy takes to be its own.
-	return running + ". Stop it first."
+	m := report.Errorf(report.CoreAlreadyRunning, "%s.", running).
+		Then("Stop it with `nearhost stop`, or see it with `nearhost status`.").
+		Wrap(ErrAlreadyRunning)
+	if pid > 0 {
+		m.With("pid", pid)
+	}
+	return m
 }
 
 // ErrAlreadyRunning is what Start's refusal matches, with errors.Is, when
 // another Nearhost holds the run directory.
 var ErrAlreadyRunning = errors.New("another Nearhost is already running")
-
-// Is reports whether target is ErrAlreadyRunning.
-func (e *instanceError) Is(target error) bool { return target == ErrAlreadyRunning }
 
 // IsAlreadyRunning reports whether err is Start refusing because another
 // Nearhost holds the run directory. Its message already says what to do.
@@ -52,8 +54,8 @@ func IsAlreadyRunning(err error) bool { return errors.Is(err, ErrAlreadyRunning)
 
 // lockInstance takes the lock on the instance file in dir without waiting,
 // writes this process's pid in it and returns what releases the lock. When
-// another holder has it, in this process or another, it returns an
-// *instanceError naming that holder's pid. A file left by a process that has
+// another holder has it, in this process or another, it returns the
+// alreadyRunning message naming that holder's pid. A file left by a process that has
 // exited holds no lock and does not stand in the way.
 func lockInstance(dir string) (release func(), err error) {
 	path := filepath.Join(dir, instanceLockName)
@@ -69,7 +71,7 @@ func lockInstance(dir string) (release func(), err error) {
 	if held {
 		pid := readPid(path)
 		f.Close()
-		return nil, &instanceError{pid: pid}
+		return nil, alreadyRunning(pid)
 	}
 	release = func() {
 		unlockFile(f)
