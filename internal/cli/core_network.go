@@ -78,7 +78,7 @@ func (o *coreOps) networkInfo() *control.NetworkInfo {
 	if !ns.On && ns.Problem == "" {
 		return nil
 	}
-	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem}
+	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
 }
 
 // networkProjectURL is the address of a project on the network.

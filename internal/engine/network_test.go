@@ -257,12 +257,13 @@ func TestACMEWithoutTokenIsAProblem(t *testing.T) {
 		name    string
 		token   func() (string, error)
 		problem string
+		kind    NetworkProblem
 	}{
-		{"missing", func() (string, error) { return "", errors.New("no token file") }, "no DNS token"},
-		{"empty", func() (string, error) { return "", nil }, "no DNS token"},
-		{"none asked", nil, "no DNS token"},
-		{"implausible", func() (string, error) { return "not a token\n", nil }, "DNS token looks wrong"},
-		{"short", func() (string, error) { return "abc", nil }, "DNS token looks wrong"},
+		{"missing", func() (string, error) { return "", errors.New("no token file") }, "no DNS token", NetworkNoToken},
+		{"empty", func() (string, error) { return "", nil }, "no DNS token", NetworkNoToken},
+		{"none asked", nil, "no DNS token", NetworkNoToken},
+		{"implausible", func() (string, error) { return "not a token\n", nil }, "DNS token looks wrong", NetworkBadToken},
+		{"short", func() (string, error) { return "abc", nil }, "DNS token looks wrong", NetworkBadToken},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := buildHarness(t, &config.Config{}, func(o *Options) {
@@ -277,7 +278,7 @@ func TestACMEWithoutTokenIsAProblem(t *testing.T) {
 				t.Fatalf("Apply: %v", err)
 			}
 			st := h.eng.NetworkState()
-			if st.Problem != c.problem || st.Certificates != "ca" || !st.On {
+			if st.Problem != c.problem || st.ProblemKind != c.kind || st.Certificates != "ca" || !st.On {
 				t.Errorf("NetworkState = %+v, want problem %q with ca", st, c.problem)
 			}
 			n := ops.network()
@@ -368,7 +369,7 @@ func TestNetworkWithoutPageHoldsListen(t *testing.T) {
 	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if st := h.eng.NetworkState(); st.Problem != "the page isn't served" || st.URL != "" {
+	if st := h.eng.NetworkState(); st.Problem != "the page isn't served" || st.ProblemKind != NetworkNoPage || st.URL != "" {
 		t.Errorf("NetworkState = %+v", st)
 	}
 	if n := ops.network(); n == nil || n.Listen {
@@ -390,7 +391,7 @@ func TestFirewallNotReadyHoldsListen(t *testing.T) {
 	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if st := h.eng.NetworkState(); st.Problem != "waiting for the firewall rule" {
+	if st := h.eng.NetworkState(); st.Problem != "waiting for the firewall rule" || st.ProblemKind != NetworkNoFirewall {
 		t.Errorf("NetworkState = %+v", st)
 	}
 	if n := ops.network(); n == nil || n.Listen {
@@ -457,7 +458,7 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 			if got, want := ops.list(), []string{"network " + testDomain, "apply", "network nil"}; !slices.Equal(got, want) {
 				t.Errorf("proxy saw %v, want %v", got, want)
 			}
-			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") {
+			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") || st.ProblemKind != NetworkApplyFailed {
 				t.Errorf("NetworkState = %+v", st)
 			}
 			unsubscribe()
@@ -480,7 +481,7 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 			if got, want := ops.list()[3:], []string{"network " + testDomain, "apply"}; !slices.Equal(got, want) {
 				t.Errorf("the retry: proxy saw %v, want %v", got, want)
 			}
-			if st := h.eng.NetworkState(); st.Problem != "" || !st.On {
+			if st := h.eng.NetworkState(); st.Problem != "" || st.ProblemKind != "" || !st.On {
 				t.Errorf("NetworkState after the retry = %+v", st)
 			}
 		})

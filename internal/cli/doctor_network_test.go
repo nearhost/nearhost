@@ -12,6 +12,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
@@ -144,5 +145,50 @@ func TestNetworkFirewallOnWindowsOnly(t *testing.T) {
 	b.firewallReady = func() bool { return true }
 	if c := byName(checkNetwork(context.Background(), b, netCfg("ca"), control.Status{}))["Network firewall"]; c.level != levelOK {
 		t.Errorf("%+v", c)
+	}
+}
+
+// Only certificate problems make the certificate row fail: a page that
+// isn't served gets its own row and fix, and waiting for the firewall rule
+// is the firewall row's.
+func TestNetworkProblemsGoToTheirOwnRows(t *testing.T) {
+	st := func(url string, kind engine.NetworkProblem, problem string) control.Status {
+		return control.Status{Network: &control.NetworkInfo{On: true, URL: url, Certificates: "acme", Problem: problem, ProblemKind: string(kind)}}
+	}
+	const url = "https://nearhost.lab.example.dev:8443"
+	b := netBackend("192.168.77.5")
+	b.servedCert = leaf("R11")
+	run := func(s control.Status) map[string]check {
+		return byName(checkNetwork(context.Background(), b, netCfg("acme"), s))
+	}
+
+	rows := run(st(url, engine.NetworkNoFirewall, "waiting for the firewall rule"))
+	if c := rows["Network certificate"]; c.level != levelOK {
+		t.Errorf("firewall: certificate row %+v, want the certificate checked", c)
+	}
+
+	rows = run(st("", engine.NetworkNoPage, "the page isn't served"))
+	if c := rows["Network certificate"]; c.code == report.NetworkCert {
+		t.Errorf("no page: certificate row %+v, want no certificate failure", c)
+	}
+	if c := rows["Network page"]; c.level != levelFail || c.code != report.NetworkNoPage || !strings.Contains(c.fix, "--web-port") {
+		t.Errorf("no page: page row %+v", c)
+	}
+
+	for _, c := range []struct {
+		kind    engine.NetworkProblem
+		problem string
+	}{
+		{engine.NetworkNoToken, "no DNS token"},
+		{engine.NetworkBadToken, "DNS token looks wrong"},
+		{engine.NetworkApplyFailed, "networked mode couldn't start: boom"},
+	} {
+		rows := run(st(url, c.kind, c.problem))
+		if row := rows["Network certificate"]; row.level != levelFail || row.code != report.NetworkCert || !strings.Contains(row.detail, c.problem) {
+			t.Errorf("%s: certificate row %+v", c.kind, row)
+		}
+		if _, has := rows["Network page"]; has {
+			t.Errorf("%s: a page row", c.kind)
+		}
 	}
 }
