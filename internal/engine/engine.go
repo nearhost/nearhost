@@ -322,11 +322,16 @@ type Engine struct {
 // New creates an engine for a snapshot of cfg: later changes to cfg are not
 // seen until they are given to Apply. Call Start before starting projects.
 func New(cfg *config.Config, opts Options) *Engine {
+	bus := NewBus()
+	// The proxy's own warnings, as a CA folder that cannot be made
+	// private, are events like the engine's.
+	proxyReports := report.SinkFunc(func(m *report.Message) { bus.Publish(Event{Message: m.Title, Report: m}) })
 	e := &Engine{
-		opts:         opts,
-		webPort:      opts.WebPort,
-		bus:          NewBus(),
-		proxy:        proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort, Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true}),
+		opts:    opts,
+		webPort: opts.WebPort,
+		bus:     bus,
+		proxy: proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort,
+			Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true, Reports: proxyReports}),
 		connectWait:  30 * time.Second,
 		holderOf:     PortHolder,
 		listen:       netbind.Listen,

@@ -16,7 +16,7 @@ func runHelper(what string) int {
 	dir := os.Getenv("NEARHOST_PROXY_DIR")
 	switch what {
 	case "ensure-ca":
-		if _, err := EnsureCA(dir); err != nil {
+		if _, err := EnsureCA(dir, nil); err != nil {
 			fmt.Println(err)
 			return 1
 		}

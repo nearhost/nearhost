@@ -61,7 +61,7 @@ type fakeTrust struct {
 
 func (f *fakeTrust) backend() trustBackend {
 	return trustBackend{
-		ensureCA: func(dir string) (*x509.Certificate, error) {
+		ensureCA: func(dir string, _ report.Sink) (*x509.Certificate, error) {
 			f.ensured = append(f.ensured, dir)
 			return f.cert, f.ensureErr
 		},
@@ -617,12 +617,12 @@ func recordPrivate(t *testing.T, fail ...string) *[]string {
 	t.Helper()
 	var dirs []string
 	saved := makeStoragePrivate
-	makeStoragePrivate = func(dir string) string {
+	makeStoragePrivate = func(dir string) *report.Message {
 		dirs = append(dirs, dir)
 		if slices.Contains(fail, dir) {
-			return "Warning: could not make " + dir + " private."
+			return report.Warnf(report.CANotPrivate, "Nearhost could not make its CA folder %s private.", dir)
 		}
-		return ""
+		return nil
 	}
 	t.Cleanup(func() { makeStoragePrivate = saved })
 	return &dirs
@@ -671,7 +671,7 @@ func TestMigrateCAMakesTheLeftoverCopyPrivate(t *testing.T) {
 	if want := []string{current, old}; !slices.Equal(*dirs, want) {
 		t.Fatalf("made private %q, want %q", *dirs, want)
 	}
-	if want := "could not make " + old + " private."; len(notes) != 1 || notes[0].Code != report.CANotPrivate || notes[0].Title != want {
+	if want := "Nearhost could not make its CA folder " + old + " private."; len(notes) != 1 || notes[0].Code != report.CANotPrivate || notes[0].Title != want {
 		t.Fatalf("notes = %v, want %q", notes, want)
 	}
 }

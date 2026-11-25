@@ -15,6 +15,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/netbind"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // CAName is the display name of the local certificate authority.
@@ -151,6 +152,9 @@ type Options struct {
 	// localhost on the https port belongs to projects. 0 means none, and
 	// then the page is not served.
 	WebPort int
+	// Reports receives the proxy's own warnings, such as a CA folder that
+	// cannot be made private. nil writes them to the log sink as log text.
+	Reports report.Sink
 }
 
 // listens reports whether the config for sites declares listeners: with

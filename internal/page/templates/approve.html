@@ -18,9 +18,6 @@
     {{- range .Lines}}
     <p>{{.}}</p>
     {{- end}}
-    {{- if .Advice}}
-    <p>{{.Advice}}</p>
-    {{- end}}
   </div>
   {{- if .Problem}}
   {{template "message" .Problem}}

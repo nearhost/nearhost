@@ -1,0 +1,1215 @@
+{
+  "docsBase": "https://nearhost.dev/docs/reference/errors/",
+  "codes": [
+    {
+      "code": "unexpected",
+      "level": "error",
+      "status": 500,
+      "summary": "Something failed that Nearhost has no explanation for; the message holds the error as it came."
+    },
+    {
+      "code": "crash",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost stopped unexpectedly; the details are in a crash file."
+    },
+    {
+      "code": "interrupted",
+      "level": "error",
+      "status": 500,
+      "summary": "The command was interrupted before it finished."
+    },
+    {
+      "code": "cli.usage",
+      "level": "error",
+      "status": 400,
+      "summary": "A command was given arguments or flags it does not take."
+    },
+    {
+      "code": "port.needs-permission",
+      "level": "error",
+      "status": 403,
+      "summary": "Nearhost may not listen on a port below 1024, such as 443 or 80, without permission."
+    },
+    {
+      "code": "port.in-use",
+      "level": "error",
+      "status": 409,
+      "summary": "Another program is already listening on a port Nearhost needs."
+    },
+    {
+      "code": "core.already-running",
+      "level": "error",
+      "status": 409,
+      "summary": "Nearhost is already running for this config."
+    },
+    {
+      "code": "core.not-running",
+      "level": "error",
+      "status": 503,
+      "summary": "Nearhost is not running.",
+      "steps": [
+        {
+          "text": "Start it in the background:",
+          "command": "nearhost -d"
+        },
+        {
+          "text": "Or open its interface:",
+          "command": "nearhost"
+        }
+      ]
+    },
+    {
+      "code": "core.stopped-while-starting",
+      "level": "error",
+      "status": 503,
+      "summary": "Nearhost stopped while it was starting in the background."
+    },
+    {
+      "code": "core.still-starting",
+      "level": "error",
+      "status": 503,
+      "summary": "Nearhost is still starting in the background."
+    },
+    {
+      "code": "core.lost",
+      "level": "error",
+      "status": 503,
+      "summary": "The connection to the running Nearhost was lost."
+    },
+    {
+      "code": "core.api-mismatch",
+      "level": "error",
+      "status": 409,
+      "summary": "The running Nearhost is a different version that this copy cannot talk to."
+    },
+    {
+      "code": "core.other-config",
+      "level": "error",
+      "status": 409,
+      "summary": "The running Nearhost uses a different config file."
+    },
+    {
+      "code": "hosts.needs-update",
+      "level": "warning",
+      "status": 409,
+      "summary": "The hosts file does not yet list the names Nearhost serves."
+    },
+    {
+      "code": "hosts.read-only",
+      "level": "error",
+      "status": 403,
+      "summary": "The hosts file is read-only, so Nearhost cannot update it."
+    },
+    {
+      "code": "ssh.unreachable",
+      "level": "error",
+      "status": 503,
+      "summary": "A server cannot be reached over SSH."
+    },
+    {
+      "code": "ssh.auth-failed",
+      "level": "error",
+      "status": 403,
+      "summary": "SSH refused to log in to a server."
+    },
+    {
+      "code": "ssh.socket-path-too-long",
+      "level": "error",
+      "status": 400,
+      "summary": "The path of an SSH socket is longer than the system allows."
+    },
+    {
+      "code": "ssh.config-conflict",
+      "level": "error",
+      "status": 409,
+      "summary": "The user's SSH configuration for a server sets options Nearhost cannot keep out of its own connections."
+    },
+    {
+      "code": "ssh.stale-master",
+      "level": "warning",
+      "summary": "An SSH connection left by an earlier run could not be ended."
+    },
+    {
+      "code": "forward.failed",
+      "level": "error",
+      "status": 500,
+      "summary": "A port could not be forwarded to or from a server."
+    },
+    {
+      "code": "forward.reconnecting",
+      "level": "warning",
+      "summary": "A forwarded port is being connected again, and serves nothing until it is."
+    },
+    {
+      "code": "docker.unreachable",
+      "level": "warning",
+      "summary": "Docker did not answer, so requests from containers are not accepted yet."
+    },
+    {
+      "code": "docker.networks-failed",
+      "level": "warning",
+      "summary": "Nearhost could not start accepting requests from new Docker networks."
+    },
+    {
+      "code": "passthrough.closed",
+      "level": "warning",
+      "summary": "Nearhost closed a port it had opened for a coding agent, as the server or the port went away."
+    },
+    {
+      "code": "agents.not-ready",
+      "level": "error",
+      "status": 503,
+      "summary": "Coding agents on a server cannot reach Nearhost yet."
+    },
+    {
+      "code": "agents.refused",
+      "level": "error",
+      "status": 403,
+      "summary": "The server's SSH daemon refused to forward the socket coding agents use."
+    },
+    {
+      "code": "agents.path-too-long",
+      "level": "error",
+      "status": 400,
+      "summary": "The socket coding agents use would have a path longer than the server allows."
+    },
+    {
+      "code": "config.invalid",
+      "level": "error",
+      "status": 400,
+      "summary": "The config file has a value Nearhost cannot use."
+    },
+    {
+      "code": "config.unknown-keys",
+      "level": "error",
+      "status": 400,
+      "summary": "The config file has keys Nearhost does not know, so saving it would lose them."
+    },
+    {
+      "code": "ca.move-failed",
+      "level": "warning",
+      "summary": "Nearhost could not move its local CA to the data directory, or could not delete the old copy."
+    },
+    {
+      "code": "service.unsupported",
+      "level": "error",
+      "status": 501,
+      "summary": "The Nearhost service is not supported on this system."
+    },
+    {
+      "code": "service.no-user-manager",
+      "level": "error",
+      "status": 503,
+      "summary": "There is no user service manager to run the Nearhost service."
+    },
+    {
+      "code": "service.copy",
+      "level": "error",
+      "status": 409,
+      "summary": "This copy of nearhost cannot be run by a service later, such as a one-run copy."
+    },
+    {
+      "code": "service.as-root",
+      "level": "error",
+      "status": 403,
+      "summary": "The service must be installed as the user who runs it, not as root."
+    },
+    {
+      "code": "service.cannot-bind",
+      "level": "error",
+      "status": 409,
+      "summary": "The service cannot run this copy of nearhost, as it lacks permission to use ports 443 and 80."
+    },
+    {
+      "code": "update.check-failed",
+      "level": "error",
+      "status": 503,
+      "summary": "Nearhost could not find out whether a newer release exists."
+    },
+    {
+      "code": "update.available",
+      "level": "info",
+      "summary": "A newer release of Nearhost is available.",
+      "steps": [
+        {
+          "text": "Update it:",
+          "command": "nearhost update"
+        }
+      ]
+    },
+    {
+      "code": "interface.no-terminal",
+      "level": "error",
+      "status": 400,
+      "summary": "The interface needs a terminal, and there is none.",
+      "steps": [
+        {
+          "text": "Run it in the background:",
+          "command": "nearhost -d"
+        },
+        {
+          "text": "Or serve without the interface:",
+          "command": "nearhost up"
+        }
+      ]
+    },
+    {
+      "code": "core.nothing-to-serve",
+      "level": "error",
+      "status": 409,
+      "summary": "nearhost up found no project it can serve, and none still starting, so it stopped."
+    },
+    {
+      "code": "core.stop-timeout",
+      "level": "error",
+      "status": 504,
+      "summary": "Nearhost was asked to stop and had not stopped in time."
+    },
+    {
+      "code": "core.outdated",
+      "level": "info",
+      "summary": "The running Nearhost is an older release than this copy, and runs it once restarted."
+    },
+    {
+      "code": "core.no-reload",
+      "level": "info",
+      "summary": "The running Nearhost serves the projects it was started with and does not reload the config."
+    },
+    {
+      "code": "core.log-unavailable",
+      "level": "warning",
+      "summary": "The core could not send its standard error to its log, so a crash may not be logged."
+    },
+    {
+      "code": "ca.not-private",
+      "level": "warning",
+      "summary": "Nearhost could not make the folder that holds its local CA private to the user."
+    },
+    {
+      "code": "trust.no-sudo",
+      "level": "error",
+      "status": 500,
+      "summary": "sudo, which trusting or untrusting the local CA needs, is not installed."
+    },
+    {
+      "code": "trust.not-removed",
+      "level": "error",
+      "status": 409,
+      "summary": "The local CA was not removed from a trust store, and running untrust again can finish it."
+    },
+    {
+      "code": "trust.remains",
+      "level": "error",
+      "status": 409,
+      "summary": "Something Nearhost cannot change still trusts the local CA."
+    },
+    {
+      "code": "service.start-failed",
+      "level": "warning",
+      "summary": "Starting Nearhost through its service failed, so it was started directly."
+    },
+    {
+      "code": "service.own-settings",
+      "level": "info",
+      "summary": "A service is installed, but it runs with its own settings, so Nearhost was started directly with the ones given."
+    },
+    {
+      "code": "hosts.helper-refused",
+      "level": "error",
+      "status": 400,
+      "summary": "The elevated hosts helper refused its input or report file."
+    },
+    {
+      "code": "update.failed",
+      "level": "error",
+      "status": 500,
+      "summary": "The update ran, but the installed nearhost is not the new release."
+    },
+    {
+      "code": "discovery.incomplete",
+      "level": "warning",
+      "summary": "Something discovery reads, such as a preset or a project file, could not be read, so it went on without it."
+    },
+    {
+      "code": "doctor.checks-failed",
+      "level": "error",
+      "status": 409,
+      "summary": "One or more of nearhost doctor's checks failed."
+    },
+    {
+      "code": "interface.flags-ignored",
+      "level": "info",
+      "summary": "Serve flags given to the interface do nothing to the Nearhost already running, which keeps its settings."
+    },
+    {
+      "code": "interface.password-cancelled",
+      "level": "error",
+      "status": 403,
+      "summary": "The password was cancelled, so what needed it was not done."
+    },
+    {
+      "code": "interface.prompt-declined",
+      "level": "error",
+      "status": 403,
+      "summary": "The Windows prompt was declined, so what needed it was not done."
+    },
+    {
+      "code": "interface.log-missed",
+      "level": "info",
+      "summary": "The interface fell behind the running Nearhost, so some log lines were missed."
+    },
+    {
+      "code": "core.run-dir-failed",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost could not create its run directory, which holds its sockets and its lock."
+    },
+    {
+      "code": "interface.open-failed",
+      "level": "warning",
+      "summary": "The interface could not open a link in the browser."
+    },
+    {
+      "code": "interface.copy-failed",
+      "level": "warning",
+      "summary": "The system's clipboard tool failed on a copy; the terminal may still have copied it."
+    },
+    {
+      "code": "interface.nothing-to-copy",
+      "level": "warning",
+      "summary": "What the interface was asked to copy has nothing it can copy."
+    },
+    {
+      "code": "interface.address-too-long",
+      "level": "warning",
+      "summary": "An address in the log is too long to show, so a click does not open it."
+    },
+    {
+      "code": "interface.answer-not-saved",
+      "level": "warning",
+      "summary": "The quit box's answer could not be saved, so it asks again next time."
+    },
+    {
+      "code": "interface.change-ignored",
+      "level": "warning",
+      "summary": "A change to the config file could not be applied and was ignored."
+    },
+    {
+      "code": "service.unreadable",
+      "level": "warning",
+      "summary": "The installed service's definition cannot be read, as one edited by hand, so it is removed as it is."
+    },
+    {
+      "code": "service.manager-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "The system's service manager refused to install, start or remove the Nearhost service."
+    },
+    {
+      "code": "service.node-version",
+      "level": "info",
+      "summary": "The service runs nearhost from a Node version's folder, so changing the default Node version needs a new install."
+    },
+    {
+      "code": "service.ssh-agent-unset",
+      "level": "info",
+      "summary": "SSH_AUTH_SOCK is not set, so the service uses the agent the login session provides."
+    },
+    {
+      "code": "service.ssh-agent-changes",
+      "level": "warning",
+      "summary": "SSH_AUTH_SOCK points at an agent socket that changes at each login, so the service cannot use it."
+    },
+    {
+      "code": "add.lone-port",
+      "level": "warning",
+      "summary": "Discovery found one port only, so nearhost add made it the web route."
+    },
+    {
+      "code": "add.no-web-port",
+      "level": "error",
+      "status": 400,
+      "summary": "nearhost add could not tell which port serves the project, so nothing was saved."
+    },
+    {
+      "code": "add.bad-name",
+      "level": "error",
+      "status": 400,
+      "summary": "The project's name holds characters a .test name cannot use."
+    },
+    {
+      "code": "add.alias-taken",
+      "level": "error",
+      "status": 409,
+      "summary": "The name the project asks to be served at is already another project's."
+    },
+    {
+      "code": "add.server-changed",
+      "level": "error",
+      "status": 409,
+      "summary": "The server was added meanwhile and is reached another way, so nothing was saved."
+    },
+    {
+      "code": "add.unknown-server",
+      "level": "error",
+      "status": 404,
+      "summary": "The server named is not in the config."
+    },
+    {
+      "code": "add.needs-approval",
+      "level": "error",
+      "status": 409,
+      "summary": "The project asks for things that need approval, and there is nobody to ask."
+    },
+    {
+      "code": "add.host-taken",
+      "level": "info",
+      "summary": "A name the project would be served at is already another project's, so it is left out."
+    },
+    {
+      "code": "add.bad-config",
+      "level": "error",
+      "status": 400,
+      "summary": "The config file cannot be read, so nothing is added to it."
+    },
+    {
+      "code": "preset.registry-unreadable",
+      "level": "warning",
+      "summary": "A trusted registry of presets cannot be read, so its presets are left out."
+    },
+    {
+      "code": "preset.not-updated",
+      "level": "warning",
+      "summary": "A preset could not be updated from its registry."
+    },
+    {
+      "code": "preset.not-enabled",
+      "level": "error",
+      "status": 404,
+      "summary": "The preset named is not enabled."
+    },
+    {
+      "code": "preset.unknown",
+      "level": "error",
+      "status": 404,
+      "summary": "No preset or registry has the name given."
+    },
+    {
+      "code": "preset.local-file",
+      "level": "error",
+      "status": 409,
+      "summary": "The preset is a local file, so there is no registry to update it from."
+    },
+    {
+      "code": "preset.registry-unknown",
+      "level": "error",
+      "status": 404,
+      "summary": "No registry is trusted under the name given."
+    },
+    {
+      "code": "preset.registry-not-trusted",
+      "level": "error",
+      "status": 502,
+      "summary": "A registry's index could not be fetched or checked, so it was not trusted and nothing was saved."
+    },
+    {
+      "code": "preset.updates-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "Some of the presets asked for could not be updated from their registries."
+    },
+    {
+      "code": "preset.registry-in-use",
+      "level": "error",
+      "status": 409,
+      "summary": "Presets from the registry are enabled, so it cannot be removed."
+    },
+    {
+      "code": "export.exists",
+      "level": "error",
+      "status": 409,
+      "summary": "The project already has a .nearhostrc, and export does not replace one unasked."
+    },
+    {
+      "code": "export.changed",
+      "level": "error",
+      "status": 409,
+      "summary": "The project changed while it was exported, so the file written is not approved."
+    },
+    {
+      "code": "export.no-project",
+      "level": "error",
+      "status": 404,
+      "summary": "No Nearhost project contains the folder, or none has the name given."
+    },
+    {
+      "code": "export.replaced-pending",
+      "level": "info",
+      "summary": "The .nearhostrc change that waited for approval was replaced with what is served now."
+    },
+    {
+      "code": "hosts.core-not-told",
+      "level": "warning",
+      "summary": "The hosts file is updated, but the running Nearhost could not be told."
+    },
+    {
+      "code": "documents.open-failed",
+      "level": "warning",
+      "summary": "A document could not be opened in the browser; its address still works."
+    },
+    {
+      "code": "agents.unavailable",
+      "level": "warning",
+      "summary": "Coding agents on a server cannot reach Nearhost."
+    },
+    {
+      "code": "agents.approval-waiting",
+      "level": "info",
+      "summary": "A coding agent asks for something that waits for approval in the interface."
+    },
+    {
+      "code": "agents.grants-pruned",
+      "level": "info",
+      "summary": "Grants of projects that are gone were removed."
+    },
+    {
+      "code": "agents.grants-off",
+      "level": "error",
+      "status": 503,
+      "summary": "Grants cannot be read or changed, as the grants file cannot be read or Nearhost does not serve coding agents in this run."
+    },
+    {
+      "code": "agents.allow-not-saved",
+      "level": "error",
+      "status": 500,
+      "summary": "A request was answered, but its Always allow could not be saved, so the agent is asked again next time."
+    },
+    {
+      "code": "control.no-route",
+      "level": "error",
+      "status": 404,
+      "summary": "The control API has no route at the path asked for; the running Nearhost may be an older release."
+    },
+    {
+      "code": "control.method-not-allowed",
+      "level": "error",
+      "status": 405,
+      "summary": "A route of the control API was asked with a method it does not take."
+    },
+    {
+      "code": "control.bad-request",
+      "level": "error",
+      "status": 400,
+      "summary": "A request to the control API is not what the route takes."
+    },
+    {
+      "code": "control.not-found",
+      "level": "error",
+      "status": 404,
+      "summary": "The running Nearhost does not have what was asked for, such as a request it no longer keeps."
+    },
+    {
+      "code": "control.unimplemented",
+      "level": "error",
+      "status": 501,
+      "summary": "The running Nearhost cannot do what was asked yet."
+    },
+    {
+      "code": "control.request-ended",
+      "level": "error",
+      "status": 409,
+      "summary": "The request to answer has ended: the agent gave up on it, it expired, or someone answered it first."
+    },
+    {
+      "code": "core.no-desktop",
+      "level": "warning",
+      "summary": "Nearhost in the background runs outside the desktop session, so it cannot open links."
+    },
+    {
+      "code": "core.session-unchecked",
+      "level": "info",
+      "summary": "Nearhost in the background could not tell whether it runs in the sign-in session, so it may not open links."
+    },
+    {
+      "code": "core.ssh-agent-unset",
+      "level": "info",
+      "summary": "SSH_AUTH_SOCK is not set for Nearhost in the background, so ssh uses the agent in the SSH config, if any."
+    },
+    {
+      "code": "core.ssh-agent-unreachable",
+      "level": "warning",
+      "summary": "The SSH agent Nearhost in the background was given does not answer."
+    },
+    {
+      "code": "core.docker-missing",
+      "level": "info",
+      "summary": "docker is not on the PATH of Nearhost in the background; only Docker projects need it."
+    },
+    {
+      "code": "core.docker-unreachable",
+      "level": "warning",
+      "summary": "Docker does not answer Nearhost in the background."
+    },
+    {
+      "code": "page.render-failed",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost's page could not be drawn."
+    },
+    {
+      "code": "page.request-ended",
+      "level": "warning",
+      "status": 409,
+      "summary": "The request on the page has been answered or has ended."
+    },
+    {
+      "code": "page.proposal-decline-only",
+      "level": "error",
+      "status": 400,
+      "summary": "A proposal can only be declined on the page; reviewing it needs Nearhost on this machine."
+    },
+    {
+      "code": "page.answer-not-offered",
+      "level": "error",
+      "status": 400,
+      "summary": "The answer sent is not one the request offers."
+    },
+    {
+      "code": "page.change-answer-invalid",
+      "level": "error",
+      "status": 400,
+      "summary": "The answer sent for a .nearhostrc change is not approve or decline for the change shown."
+    },
+    {
+      "code": "page.not-opened",
+      "level": "error",
+      "status": 502,
+      "summary": "The answer ended the request, as what it asked for could not be opened."
+    },
+    {
+      "code": "page.answer-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "The core could not take the answer given on the page."
+    },
+    {
+      "code": "page.change-changed",
+      "level": "error",
+      "status": 409,
+      "summary": "The .nearhostrc change changed again, so the answer was not for the change now waiting."
+    },
+    {
+      "code": "proxy.app-not-answering",
+      "level": "error",
+      "status": 502,
+      "summary": "Nothing answered on the port a project's app listens on."
+    },
+    {
+      "code": "proxy.forward-reconnecting",
+      "level": "error",
+      "status": 502,
+      "summary": "The forward to a project's server is down while Nearhost reconnects it."
+    },
+    {
+      "code": "proxy.locked",
+      "level": "error",
+      "status": 403,
+      "summary": "Nearhost's page must be opened from this machine first, to get its cookie."
+    },
+    {
+      "code": "proxy.not-found",
+      "level": "error",
+      "status": 404,
+      "summary": "Nearhost's page at a project's domain has nothing at the path asked for."
+    },
+    {
+      "code": "proxy.method-not-allowed",
+      "level": "error",
+      "status": 405,
+      "summary": "A path of Nearhost's page was asked with a method it does not take."
+    },
+    {
+      "code": "proxy.forbidden",
+      "level": "error",
+      "status": 403,
+      "summary": "A request to Nearhost's page was refused."
+    },
+    {
+      "code": "documents.missing",
+      "level": "error",
+      "status": 404,
+      "summary": "The document asked for is not there any more."
+    },
+    {
+      "code": "documents.changing",
+      "level": "error",
+      "status": 503,
+      "summary": "The document's folder kept changing while Nearhost checked it."
+    },
+    {
+      "code": "documents.not-connected",
+      "level": "error",
+      "status": 503,
+      "summary": "Nearhost is not connected to the server that holds the document."
+    },
+    {
+      "code": "documents.not-found",
+      "level": "error",
+      "status": 404,
+      "summary": "The document server has nothing at the path asked for."
+    },
+    {
+      "code": "documents.method-not-allowed",
+      "level": "error",
+      "status": 405,
+      "summary": "The document server was asked with a method it does not take."
+    },
+    {
+      "code": "documents.unreadable",
+      "level": "error",
+      "status": 502,
+      "summary": "The document could not be read."
+    },
+    {
+      "code": "agent.no-such-call",
+      "level": "error",
+      "status": 404,
+      "summary": "The agent API has no call at the path asked for, or this Nearhost does not have that call."
+    },
+    {
+      "code": "agent.no-token",
+      "level": "error",
+      "status": 401,
+      "summary": "A request to the agent API's loopback port came without its token, as from an older copy of the skill."
+    },
+    {
+      "code": "agent.refused",
+      "level": "error",
+      "status": 429,
+      "summary": "The user said No to a request of the same kind from the agent's machine moments ago, so this one is refused for now."
+    },
+    {
+      "code": "agent.no-project",
+      "level": "error",
+      "status": 404,
+      "summary": "No project in Nearhost holds the path the agent asked about."
+    },
+    {
+      "code": "agent.bad-path",
+      "level": "error",
+      "status": 400,
+      "summary": "A path in an agent's request is not one Nearhost takes, such as a relative or network path."
+    },
+    {
+      "code": "agent.bad-request",
+      "level": "error",
+      "status": 400,
+      "summary": "An agent's request, or a value in it, is not what the call takes."
+    },
+    {
+      "code": "agent.doctor-busy",
+      "level": "error",
+      "status": 429,
+      "summary": "A doctor run for the agent's server is already going, or started moments ago."
+    },
+    {
+      "code": "agent.not-a-directory",
+      "level": "error",
+      "status": 404,
+      "summary": "The directory an agent asked the doctor about is not there."
+    },
+    {
+      "code": "agent.doctor-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "The doctor could not check what an agent asked about."
+    },
+    {
+      "code": "agent.no-reviewer",
+      "level": "error",
+      "status": 409,
+      "summary": "An agent's request needs the user's answer, and Nearhost has no page or window open to ask in."
+    },
+    {
+      "code": "agent.too-many-waiting",
+      "level": "error",
+      "status": 429,
+      "summary": "The agent's machine has as many requests waiting for the user as it may."
+    },
+    {
+      "code": "agent.reload-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "Nearhost could not read a project's .nearhostrc again for an agent."
+    },
+    {
+      "code": "agent.nearhostrc-unread",
+      "level": "error",
+      "status": 422,
+      "summary": "A project's .nearhostrc could not be taken into account when an agent asked to reload it."
+    },
+    {
+      "code": "agent.request-gone",
+      "level": "error",
+      "status": 404,
+      "summary": "The proposal, passthrough or document request an agent asked about is not known; it may have ended long ago."
+    },
+    {
+      "code": "agent.local-passthrough",
+      "level": "error",
+      "status": 400,
+      "summary": "A passthrough was asked for on the laptop's own socket, and passthroughs forward a server's port."
+    },
+    {
+      "code": "agent.grants-failed",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost could not read the grants that let an agent's requests open without asking."
+    },
+    {
+      "code": "agent.token-revoked",
+      "level": "error",
+      "status": 401,
+      "summary": "The token an agent sent was revoked or never existed."
+    },
+    {
+      "code": "agent.too-many-passthroughs",
+      "level": "error",
+      "status": 429,
+      "summary": "The agent's server has as many passthroughs open as it may."
+    },
+    {
+      "code": "agent.not-connected",
+      "level": "error",
+      "status": 409,
+      "summary": "Nearhost is not connected to the agent's server."
+    },
+    {
+      "code": "agent.passthrough-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "A passthrough's forward could not be opened or closed."
+    },
+    {
+      "code": "agent.closed-while-opening",
+      "level": "error",
+      "status": 409,
+      "summary": "The agent's session closed while its passthrough opened, so the passthrough was closed again."
+    },
+    {
+      "code": "agent.port-held",
+      "level": "error",
+      "status": 409,
+      "summary": "Another agent or session has the port passed through, or waiting for approval."
+    },
+    {
+      "code": "agent.document-not-there",
+      "level": "error",
+      "status": 404,
+      "summary": "The document an agent asked to show is not there."
+    },
+    {
+      "code": "agent.not-a-document",
+      "level": "error",
+      "status": 400,
+      "summary": "What an agent asked to show is not a document Nearhost can show."
+    },
+    {
+      "code": "agent.document-failed",
+      "level": "error",
+      "status": 502,
+      "summary": "Nearhost could not read or show the document an agent asked to show."
+    },
+    {
+      "code": "agent.no-page",
+      "level": "error",
+      "status": 409,
+      "summary": "Nearhost's page is not served, so it cannot show an agent's document."
+    },
+    {
+      "code": "doctor.not-checked",
+      "level": "info",
+      "summary": "nearhost doctor could not run a check, and says what it did not check."
+    },
+    {
+      "code": "core.other-version",
+      "level": "warning",
+      "summary": "The running Nearhost is another release than this copy."
+    },
+    {
+      "code": "service.not-installed",
+      "level": "info",
+      "summary": "The Nearhost service is not installed, so Nearhost does not start at login.",
+      "steps": [
+        {
+          "text": "To start Nearhost at login, install the service:",
+          "command": "nearhost service install"
+        }
+      ]
+    },
+    {
+      "code": "service.other-copy",
+      "level": "warning",
+      "summary": "The installed service runs another copy of nearhost than this one."
+    },
+    {
+      "code": "service.log-folder-missing",
+      "level": "warning",
+      "summary": "The folder of the service's log is missing, so the service cannot start again."
+    },
+    {
+      "code": "service.not-running",
+      "level": "warning",
+      "summary": "The Nearhost service is installed but not running.",
+      "steps": [
+        {
+          "text": "Start it:",
+          "command": "nearhost -d"
+        }
+      ]
+    },
+    {
+      "code": "service.takes-over",
+      "level": "info",
+      "summary": "Nearhost runs, started another way, and the installed service takes over at the next login."
+    },
+    {
+      "code": "config.no-home",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost cannot tell where its files are, as HOME (or XDG_CONFIG_HOME) is not set."
+    },
+    {
+      "code": "config.missing",
+      "level": "warning",
+      "summary": "The config file named with --config does not exist yet."
+    },
+    {
+      "code": "config.bad-alias",
+      "level": "error",
+      "status": 400,
+      "summary": "A project's main name is not a valid domain, so nearhost up does not start it."
+    },
+    {
+      "code": "config.pattern-conflict",
+      "level": "warning",
+      "summary": "A project serves a host under another project's pattern, and gets its requests."
+    },
+    {
+      "code": "config.loopback-own-port",
+      "level": "error",
+      "status": 409,
+      "summary": "A project's loopback route is on a port Nearhost itself listens on, so it is not forwarded."
+    },
+    {
+      "code": "ca.not-created",
+      "level": "error",
+      "status": 409,
+      "summary": "The local CA has not been created yet.",
+      "steps": [
+        {
+          "text": "Create the local CA and trust it:",
+          "command": "nearhost trust"
+        }
+      ]
+    },
+    {
+      "code": "ca.unreadable",
+      "level": "error",
+      "status": 500,
+      "summary": "The local CA's certificate cannot be read."
+    },
+    {
+      "code": "ca.not-trusted",
+      "level": "error",
+      "status": 409,
+      "summary": "The system trust store does not trust the local CA.",
+      "steps": [
+        {
+          "text": "Trust the local CA:",
+          "command": "nearhost trust"
+        }
+      ]
+    },
+    {
+      "code": "ca.old-copy",
+      "level": "warning",
+      "summary": "An old folder still holds a copy of the local CA's private key."
+    },
+    {
+      "code": "ca.browsers-not-trusted",
+      "level": "warning",
+      "summary": "The browser trust stores (NSS) do not trust the local CA."
+    },
+    {
+      "code": "ca.firefox-roots-off",
+      "level": "warning",
+      "summary": "Firefox is set not to read Windows' trusted roots, where the local CA is trusted."
+    },
+    {
+      "code": "hosts.unreadable",
+      "level": "error",
+      "status": 500,
+      "summary": "The hosts file cannot be read."
+    },
+    {
+      "code": "ssh.agent-missing",
+      "level": "info",
+      "summary": "The OpenSSH Authentication Agent is not installed on Windows."
+    },
+    {
+      "code": "ssh.agent-stopped",
+      "level": "info",
+      "summary": "The OpenSSH Authentication Agent service on Windows is not running."
+    },
+    {
+      "code": "ssh.not-found",
+      "level": "error",
+      "status": 503,
+      "summary": "ssh cannot be run, from this shell's PATH or that of Nearhost in the background, so Nearhost cannot reach servers."
+    },
+    {
+      "code": "ssh.too-old",
+      "level": "warning",
+      "summary": "The ssh on PATH is older than the one Nearhost needs."
+    },
+    {
+      "code": "ssh.version-unknown",
+      "level": "info",
+      "summary": "Nearhost could not read the version of the ssh on PATH."
+    },
+    {
+      "code": "ssh.other-vendor",
+      "level": "warning",
+      "summary": "The ssh Nearhost runs on Windows is not Microsoft's OpenSSH."
+    },
+    {
+      "code": "nearhostrc.pending",
+      "level": "warning",
+      "summary": "The project's .nearhostrc has changes that wait for approval."
+    },
+    {
+      "code": "nearhostrc.not-applied",
+      "level": "warning",
+      "summary": "The project's .nearhostrc has changed since Nearhost last read it."
+    },
+    {
+      "code": "nearhostrc.gone",
+      "level": "warning",
+      "summary": "The project's .nearhostrc is gone or cannot be read, and Nearhost still serves what it last said."
+    },
+    {
+      "code": "nearhostrc.version",
+      "level": "error",
+      "status": 409,
+      "summary": "The project's .nearhostrc needs a newer Nearhost."
+    },
+    {
+      "code": "nearhostrc.unset-variable",
+      "level": "error",
+      "status": 400,
+      "summary": "The project's .nearhostrc uses a variable that is not set."
+    },
+    {
+      "code": "nearhostrc.invalid",
+      "level": "error",
+      "status": 400,
+      "summary": "The project's .nearhostrc cannot be read."
+    },
+    {
+      "code": "routes.unserved-port",
+      "level": "warning",
+      "summary": "A port in the project's files looks like a web server, but the project has no route for it."
+    },
+    {
+      "code": "routes.stale-port",
+      "level": "info",
+      "summary": "A web route's port matches nothing in the project's files any more."
+    },
+    {
+      "code": "routes.unserved-host",
+      "level": "warning",
+      "summary": "The project's settings name a host that Nearhost does not serve."
+    },
+    {
+      "code": "routes.not-listening",
+      "level": "warning",
+      "summary": "Nothing listens on a port Nearhost serves for the project."
+    },
+    {
+      "code": "presets.note",
+      "level": "info",
+      "summary": "A note from the preset that matched the project."
+    },
+    {
+      "code": "hosts.dns-unchecked",
+      "level": "info",
+      "summary": "Nearhost could not ask DNS directly, so it did not check whether real-domain names resolve elsewhere."
+    },
+    {
+      "code": "hosts.unresolved",
+      "level": "error",
+      "status": 409,
+      "summary": "A name the project is served at does not resolve to this machine and is not in the hosts file."
+    },
+    {
+      "code": "hosts.public",
+      "level": "warning",
+      "summary": "A name the project is served at is a real name, so the real site is out of reach while the project is enabled."
+    },
+    {
+      "code": "hosts.unresolved-pattern",
+      "level": "error",
+      "status": 409,
+      "summary": "A pattern the project is served at does not resolve to this machine."
+    },
+    {
+      "code": "hosts.overlap",
+      "level": "warning",
+      "summary": "Two host patterns overlap; a name both match goes to the more specific."
+    },
+    {
+      "code": "docker.compose-depth",
+      "level": "warning",
+      "summary": "The Compose file nests or repeats merges too much to check."
+    },
+    {
+      "code": "docker.host-gateway",
+      "level": "warning",
+      "summary": "A container calls a name that resolves to itself or to the internet, not to Nearhost."
+    },
+    {
+      "code": "docker.compose-parse",
+      "level": "warning",
+      "summary": "The Compose file is not valid YAML, so its services were not checked."
+    },
+    {
+      "code": "docker.compose-file",
+      "level": "info",
+      "summary": "COMPOSE_FILE is set, and Nearhost checks only the Compose files Compose reads by default."
+    },
+    {
+      "code": "docker.clients",
+      "level": "warning",
+      "summary": "A container calls a name Nearhost serves, and Nearhost does not accept requests from Docker's network."
+    },
+    {
+      "code": "docker.ca",
+      "level": "warning",
+      "summary": "A container calls a name Nearhost serves and does not trust Nearhost's root certificate."
+    },
+    {
+      "code": "projects.unchecked",
+      "level": "info",
+      "summary": "Nearhost could not run the project's checks, for example because its server is not reachable."
+    }
+  ],
+  "families": [
+    {
+      "prefix": "advice.",
+      "level": "warning",
+      "summary": "Advice from the preset that matched the project."
+    }
+  ]
+}

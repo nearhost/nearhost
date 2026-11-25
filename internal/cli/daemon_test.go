@@ -19,6 +19,7 @@ import (
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/hosts"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
@@ -667,6 +668,30 @@ func TestDaemonLogsAMessageBlockOnce(t *testing.T) {
 			}
 		}
 		noNearhostPrefix(t, stderr.String())
+	}
+	if err := u.stop(); err != nil {
+		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+	}
+}
+
+// A CA folder that cannot be made private on the core's first start is a
+// ca.not-private block in the core log: the proxy reports it while the
+// engine starts, and the printer follows the engine's events from before.
+// When the folder is already there, the CA migration finds it first and
+// reports it without the proxy's context; each folder is said once.
+func TestDaemonLogsACAFolderNotPrivate(t *testing.T) {
+	// A data folder of its own: the package's is shared, and on Windows an
+	// earlier test's core has made its CA folder private already, which
+	// privateStorage does once a process.
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	t.Cleanup(proxy.SetRestrictStorage(func(string) error { return errors.New("not supported") }))
+	u := newUpRun(t, &config.Config{})
+	u.noHosts = true
+	u.startDaemon()
+	u.waitForLog("Nothing is being served.\n")
+	log := u.coreLog()
+	if !regexp.MustCompile(`(?m)^\S+ warning \[ca\.not-private\] (proxy: )?Nearhost could not make its CA folder .+ private\.\n\S+   Not supported\.`).MatchString(log) {
+		t.Errorf("the log has no ca.not-private block:\n%s", log)
 	}
 	if err := u.stop(); err != nil {
 		t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())

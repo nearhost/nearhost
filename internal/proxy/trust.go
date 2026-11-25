@@ -4,14 +4,16 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/smallstep/truststore"
 )
 
@@ -25,10 +27,11 @@ import (
 //
 // The storage directory is made private (see privateStorage) before
 // anything is read or written in it, so the key never sits under a wider
-// access list; a failure is a warning on storageWarnings.
-func EnsureCA(storageRoot string) (*x509.Certificate, error) {
+// access list; a failure is a ca.not-private warning reported to warnings,
+// which may be nil.
+func EnsureCA(storageRoot string, warnings report.Sink) (*x509.Certificate, error) {
 	if _, err := os.Stat(storageRoot); err == nil {
-		warnStorage(storageRoot)
+		warnStorage(storageRoot, warnings)
 	}
 	if cert, err := RootCert(storageRoot); err == nil {
 		return cert, nil
@@ -49,7 +52,7 @@ func EnsureCA(storageRoot string) (*x509.Certificate, error) {
 	if err := os.MkdirAll(storageRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("create storage: %w", err)
 	}
-	warnStorage(storageRoot)
+	warnStorage(storageRoot, warnings)
 	cfg, err := BuildConfig(nil, Options{StorageRoot: storageRoot})
 	if err != nil {
 		return nil, err
@@ -64,15 +67,11 @@ func EnsureCA(storageRoot string) (*x509.Certificate, error) {
 	return RootCert(storageRoot)
 }
 
-// storageWarnings is where EnsureCA writes a warning, the terminal of the
-// command that called it. Tests replace it.
-var storageWarnings io.Writer = os.Stderr
-
-// warnStorage is privateStorage for EnsureCA, which writes its warning to
-// storageWarnings.
-func warnStorage(root string) {
-	if msg := privateStorage(root); msg != "" {
-		fmt.Fprintln(storageWarnings, msg)
+// warnStorage is privateStorage for EnsureCA, which reports its warning to
+// warnings, unless that is nil.
+func warnStorage(root string, warnings report.Sink) {
+	if m := privateStorage(root); m != nil && warnings != nil {
+		warnings.Report(m)
 	}
 }
 
@@ -85,28 +84,28 @@ var (
 
 // MakeStoragePrivate makes dir, a folder that holds or will hold a copy of
 // the local CA's private key, private as privateStorage does, and returns
-// the warning for the user when that fails, "" otherwise.
-func MakeStoragePrivate(dir string) string { return privateStorage(dir) }
+// the ca.not-private warning when that fails, nil otherwise.
+func MakeStoragePrivate(dir string) *report.Message { return privateStorage(dir) }
 
 // privateStorage makes the storage directory root, which holds the local
 // CA's private key, private with restrictStorage, once a process for each
-// root, so each start sets it again and a reload does not. It returns a
-// warning for the user when that fails, "" otherwise, worded by
+// root, so each start sets it again and a reload does not. It returns the
+// ca.not-private warning when that fails, nil otherwise, worded by
 // storageWarning; the proxy works all the same.
-func privateStorage(root string) string {
+func privateStorage(root string) *report.Message {
 	if restrictStorage == nil {
-		return ""
+		return nil
 	}
 	privateMu.Lock()
 	defer privateMu.Unlock()
 	if privateDone[root] {
-		return ""
+		return nil
 	}
 	privateDone[root] = true
 	if err := restrictStorage(root); err != nil {
 		return storageWarning(root, err)
 	}
-	return ""
+	return nil
 }
 
 // storageFailure is why restrictStorage failed, which decides what the user
@@ -140,30 +139,48 @@ func (e *restrictError) Error() string { return e.err.Error() }
 // Unwrap returns the underlying error.
 func (e *restrictError) Unwrap() error { return e.err }
 
-// storageWarning words restrictStorage's failure err on root for the user.
-func storageWarning(root string, err error) string {
+// storageWarning is the ca.not-private warning for restrictStorage's
+// failure err on root, with what to do for its kind.
+func storageWarning(root string, err error) *report.Message {
 	kind := failedOther
 	if re := (*restrictError)(nil); errors.As(err, &re) {
 		kind = re.kind
 	}
+	cause := err
 	// The message names root already.
 	if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
 		err = pe.Err
 	}
+	var m *report.Message
 	switch kind {
 	case failedDenied:
-		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: %s cannot be changed by this account. "+
-			"Run `nearhost trust` once, as the same user, from an administrator terminal.", root)
+		m = report.Warnf(report.CANotPrivate, "Nearhost could not make its CA folder private.").
+			Because("%s cannot be changed by this account.", root).
+			Step("Run this once, as the same user, from an administrator terminal:", "nearhost trust")
 	case failedShared:
-		return fmt.Sprintf("Warning: Nearhost could not make its CA folder private: its data folder is set to %s, a location Nearhost will not change. "+
-			"Point XDG_DATA_HOME at a folder of its own.", root)
+		m = report.Warnf(report.CANotPrivate, "Nearhost could not make its CA folder private.").
+			Because("Its data folder is set to %s, a location Nearhost will not change.", root).
+			Then("Point XDG_DATA_HOME at a folder of its own.")
 	case failedNoACLs:
-		return fmt.Sprintf("Warning: Nearhost could not make its CA folder %s private (%v), so other users of this computer may be able to read the CA's private key. "+
-			"Keep Nearhost's data folder (%%LOCALAPPDATA%%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.", root, err)
+		m = report.Warnf(report.CANotPrivate, "Nearhost could not make its CA folder %s private.", root).
+			Because("%s, so other users of this computer may be able to read the CA's private key.", upperFirst(err.Error())).
+			Then("Keep Nearhost's data folder (%LOCALAPPDATA%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.")
 	default:
 		// Windows' messages end in a full stop already.
-		return fmt.Sprintf("Warning: Nearhost could not make its CA folder %s private: %s.", root, strings.TrimSuffix(err.Error(), "."))
+		m = report.Warnf(report.CANotPrivate, "Nearhost could not make its CA folder %s private.", root).
+			Because("%s.", upperFirst(strings.TrimSuffix(err.Error(), ".")))
 	}
+	return m.Wrap(cause)
+}
+
+// upperFirst returns s with its first letter in upper case, whatever its
+// script: Windows words its messages in the system's language.
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, n := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[n:]
 }
 
 // trustInstall and trustUninstall are the trust store library's calls. Tests
