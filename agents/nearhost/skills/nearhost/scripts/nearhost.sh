@@ -166,6 +166,7 @@ find_socket() {
 	else
 		found=0
 		list=""
+		names=""
 		# denied holds the answer of a socket that wants a token this
 		# machine lacks. It is the one to report only when no other
 		# socket answers.
@@ -182,6 +183,8 @@ find_socket() {
 			found=$((found + 1))
 			list="$list  NEARHOST_SOCKET=$s  ($(field laptop "$BODY"))
 "
+			names="$names  $(field laptop "$BODY")
+"
 			SOCK=$s
 			HELLO=$BODY
 		done
@@ -195,7 +198,14 @@ find_socket() {
 			;;
 		1) ;;
 		*)
-			printf 'Nearhost answers here from %s laptops. Ask which one, then set NEARHOST_SOCKET:\n%s' "$found" "$list" >&2
+			if [ -n "${REMOTE:-}" ]; then
+				# NEARHOST_SOCKET set on the agent's machine does not cross SSH.
+				here=$(hostname 2>/dev/null | cut -d. -f1)
+				printf 'Nearhost answers on %s from %s laptops, and --on cannot choose between them. Ask the user which laptop to use, and to drop %s in Nearhost on the others:\n%s' \
+					"${here:-this server}" "$found" "${here:-this server}" "$names" >&2
+			else
+				printf 'Nearhost answers here from %s laptops. Ask which one, then set NEARHOST_SOCKET:\n%s' "$found" "$list" >&2
+			fi
 			[ -n "${SOFT:-}" ] && exit 0
 			exit 4
 			;;
@@ -234,16 +244,23 @@ resolved() {
 }
 
 # quote STRING prints STRING as a JSON string. awk reads it from the
-# environment, which leaves backslashes as they are.
+# environment, which leaves backslashes as they are, and escapes it a
+# character at a time: awks disagree on backslashes in gsub's replacement,
+# and mawk 1.3.4 20200120, Debian 12's and Ubuntu 22.04's, gets them wrong.
 quote() {
 	QUOTE=$1 awk 'BEGIN {
 		s = ENVIRON["QUOTE"]
-		gsub(/\\/, "\\\\", s)
-		gsub(/"/, "\\\"", s)
-		gsub(/\t/, "\\t", s)
-		gsub(/\n/, "\\n", s)
-		gsub(/\r/, "\\r", s)
-		printf "\"%s\"", s
+		out = ""
+		for (i = 1; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if (c == "\\") c = "\\\\"
+			else if (c == "\"") c = "\\\""
+			else if (c == "\t") c = "\\t"
+			else if (c == "\n") c = "\\n"
+			else if (c == "\r") c = "\\r"
+			out = out c
+		}
+		printf "\"%s\"", out
 	}'
 }
 
@@ -497,7 +514,8 @@ show_body() {
 # asked for, at TARGET, so that passthrough-close --session can find it
 # without looking. The marker has a line per target: the socket of a
 # Nearhost here, SOCK by default, or "ssh <ssh> <host>" for one opened on
-# host with --on. A target already in it is not added again.
+# host with --on. A target already in it is not added again. Each target
+# is appended, the first too, so two saves at once both stay.
 save_session() {
 	# Run by --on, the session ends on the agent's machine, not here.
 	[ -z "${REMOTE:-}" ] || return 0
@@ -505,12 +523,10 @@ save_session() {
 	target=${1:-$SOCK}
 	private_dir "$(state_dir)" "$(state_dir)/sessions" || return 0
 	sm="$(state_dir)/sessions/$SESSION"
-	if [ -f "$sm" ]; then
-		grep -Fqx -- "$target" "$sm" 2>/dev/null && return 0
-		printf '%s\n' "$target" >>"$sm"
-	else
-		private_file "$sm" "$target"
+	if [ -f "$sm" ] && grep -Fqx -- "$target" "$sm" 2>/dev/null; then
+		return 0
 	fi
+	(umask 077 && printf '%s\n' "$target" >>"$sm")
 }
 
 # close_socket SOCK SESSION closes SESSION's passthroughs on the Nearhost at
@@ -528,13 +544,35 @@ close_socket() {
 	call "$1" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$2" && [ "$STATUS" = 204 ]
 }
 
+# runnable PATH prints PATH as this shell runs it. One from a drive letter,
+# as nearhost.ps1 writes C:\Windows\System32\OpenSSH\ssh.exe, has no / for
+# Git Bash, which runs the hook on Windows, so Git Bash would look for it on
+# PATH: it gets its Unix form from cygpath, or its \ turned to /. Spaces in
+# it stay; the caller keeps it one word.
+runnable() {
+	case $1 in
+	[A-Za-z]:[\\/]*)
+		if command -v cygpath >/dev/null 2>&1; then
+			up=$(cygpath -u "$1" 2>/dev/null) || up=""
+			if [ -n "$up" ]; then
+				printf '%s' "$up"
+				return
+			fi
+		fi
+		printf '%s\n' "$1" | sed 's|\\|/|g'
+		;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
 # close_ssh SSH HOST SESSION closes SESSION's passthroughs on HOST, running
 # this script there with SSH, and fails unless it confirms that. Sent TERM,
 # it ends the ssh too.
 close_ssh() {
 	cs=""
 	trap 'if [ -n "$cs" ]; then kill "$cs" 2>/dev/null; fi; exit 1' TERM
-	remote_input passthrough-close --session "$3" | "$1" -o BatchMode=yes -o ConnectTimeout=2 -- "$2" 'sh -s' &
+	ssh_bin=$(runnable "$1")
+	remote_input passthrough-close --session "$3" | "$ssh_bin" -o BatchMode=yes -o ConnectTimeout=2 -- "$2" 'sh -s' &
 	cs=$!
 	wait "$cs"
 }

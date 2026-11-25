@@ -55,7 +55,7 @@ Do not edit Nearhost's config file yourself.
 
 ## passthrough
 
-Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev server's port in the user's browser on the laptop.
+Use this to open a dev server's port in the user's browser on the laptop: on a server reached over SSH (`SSH_CONNECTION` is set), or on the laptop when the app runs on another machine you reach over SSH.
 
 1. If the dev server runs on another machine you reach over SSH, do not forward its port yourself. Run `<script> passthrough <port> --on <host>`, and use `--on <host>` for `passthrough-wait` too. If it says no Nearhost reaches that machine, forward the port here yourself, run `passthrough` here, and put where the app runs in the label, e.g. `--label "preflash on apollo"`. If it says SSH could not reach the host, pass that on to the user and stop: forwarding it yourself would fail the same way.
 2. Before you give the user a `localhost:<port>` URL, run `<script> passthrough <port> --label "browser preview"`. Do not ask the user in chat first: Nearhost asks them.
@@ -89,7 +89,7 @@ When the user picks "Always allow" in Nearhost, the script keeps the token it is
   - On the laptop, if it says the `nearhost` command is here and nothing was proposed yet: `nearhost add` writes the user's config with no review, so ask first: "Nearhost is not answering. Shall I run `nearhost add <path>` to add this project?", with `<path>` the project's absolute path. End your turn and wait for the answer. Run it only if the user answers yes in plain words, such as "yes" or "go ahead". If that asks which port is the web port, ask the user, then run `nearhost add --web <port> <path>`. Then tell them to start `nearhost` to serve it. On anything else, run nothing: tell them to run `nearhost add <path>` themselves, then start `nearhost`.
 - **Exit status 2 and the script printed `curl is needed`**: this machine has no curl, so nothing was asked of Nearhost. Tell the user to install curl. Do not run `nearhost add` instead.
 - **Exit status 3**: Nearhost on the laptop has no page or window to ask in. Tell the user to open `nearhost` there, then try again.
-- **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run.
+- **Exit status 4**: Nearhost answers from more than one laptop. Ask the user which, then set `NEARHOST_SOCKET` to that socket, as the script printed, for each later run. With `--on`, the script cannot choose: pass on what it printed and ask the user which laptop to use.
 - **Exit status 5**: this skill and Nearhost speak different versions of the API, or this Nearhost is too old for `doctor` or `reload`. Pass on which one to update.
 - **Exit status 8 from `wait`**: the change of `.nearhostrc` that waited no longer does, as a newer one replaced it or the file changed back. Run `reload .` again.
 - **Exit status 1**: Nearhost refused. Pass on its `error`.

@@ -16,9 +16,10 @@ import (
 	"github.com/nearhost/nearhost/internal/grants"
 )
 
-// passRow is a row of a server panel's agent sections: an open
-// passthrough, a served tree of documents or an Always allow grant, one of
-// the three.
+// passRow is a row of the agent rows a panel lists, one of three: an open
+// passthrough on the pinned passthroughs row's panel, a served tree of
+// documents on the pinned documents row's, or an Always allow grant in a
+// server panel's always allowed section.
 type passRow struct {
 	pass  *engine.Passthrough
 	tree  *documents.Tree
@@ -297,8 +298,9 @@ func (m *Model) passWindow(drawn [][]string, room int) (int, int) {
 	return top, end
 }
 
-// passKey handles a key while the server panel's passthroughs have the
-// focus, and reports whether it was one of theirs.
+// passKey handles a key while a panel's rows have the focus: a server's
+// always allowed grants, or the passthroughs or documents of a pinned row.
+// It reports whether the key was one of theirs.
 func (m *Model) passKey(s string) (tea.Cmd, bool) {
 	kind, name := m.selected()
 	if kind != rowServer && kind != rowPasses && kind != rowDocs {

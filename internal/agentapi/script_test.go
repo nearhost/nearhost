@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -335,6 +336,27 @@ func TestScriptAsksWhichLaptopWhenSeveralAnswer(t *testing.T) {
 		chosen := filepath.Join(home, ".nearhost", "bbbbbb.sock")
 		if r := shell.run(t, home, []string{"NEARHOST_SOCKET=" + chosen}, "socket"); r.code != 0 || !strings.Contains(r.stdout, `"laptop":"dev@bbbbbb"`) {
 			t.Fatalf("with NEARHOST_SOCKET: %+v", r)
+		}
+	})
+}
+
+// Run by --on, the script cannot be given NEARHOST_SOCKET, which does not
+// cross SSH, so with several laptops answering it says the agent must ask
+// the user which one, and still exits 4.
+func TestScriptOnSaysItCannotChooseALaptop(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		scriptServer(t, home, "aaaaaa", "mini", true)
+		scriptServer(t, home, "bbbbbb", "mini", true)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
+		if r.code != 4 || !strings.Contains(r.stderr, "--on cannot choose between them") || !strings.Contains(r.stderr, "Ask the user which laptop") ||
+			!strings.Contains(r.stderr, "dev@aaaaaa") || !strings.Contains(r.stderr, "dev@bbbbbb") || strings.Contains(r.stderr, "NEARHOST_SOCKET") {
+			t.Fatalf("%+v", r)
+		}
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker written for a passthrough that was not asked for: %v", err)
 		}
 	})
 }
@@ -866,6 +888,28 @@ func TestScriptPassthroughOpen(t *testing.T) {
 	})
 }
 
+// A label reaches Nearhost byte for byte, backslashes and quotes too, in
+// every awk the script may meet: mawk on Debian and Ubuntu servers once
+// read "\\\\" in gsub's replacement as one backslash.
+func TestScriptPassthroughLabelEscapes(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		labels := []string{`a\b`, `a\"b`, `a\\b`, `"q"`, `end\`}
+		for i, label := range labels {
+			r := shell.run(t, home, claudeEnv, "passthrough", strconv.Itoa(3000+i), "--label", label)
+			if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+				t.Fatalf("label %q: %+v", label, r)
+			}
+			if opens := p.opened(); len(opens) != i+1 || opens[i].Label != label {
+				t.Fatalf("label %q: opened %+v", label, opens)
+			}
+		}
+	})
+}
+
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
@@ -1383,10 +1427,7 @@ func fakeSSHPath(dir string) string {
 // no sh, the test skips rather than fake the server.
 func gitSh(t *testing.T, home string) (sh, dirs string) {
 	t.Helper()
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("no sh (Git for Windows) here to run nearhost.sh on the fake ssh's server")
-	}
+	sh = needSh(t, "to run nearhost.sh on the fake ssh's server")
 	list := []string{filepath.Dir(sh)}
 	if usr := filepath.Join(filepath.Dir(sh), "..", "usr", "bin"); dirExists(usr) {
 		list = append(list, filepath.Clean(usr))
@@ -1401,6 +1442,21 @@ func gitSh(t *testing.T, home string) (sh, dirs string) {
 		}
 	}
 	return sh, dirs
+}
+
+// needSh finds sh, Git for Windows' on Windows, which the test needs for
+// why. With none it skips, but in CI, where Windows runners have Git for
+// Windows, it fails: those cases must not pass by not running.
+func needSh(t *testing.T, why string) string {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("no sh (Git for Windows) here %s", why)
+		}
+		t.Skipf("no sh (Git for Windows) here %s", why)
+	}
+	return sh
 }
 
 // dirExists reports whether dir is a directory.
@@ -1421,6 +1477,7 @@ func TestScriptPassthroughOnAnotherHost(t *testing.T) {
 		labels := []string{
 			`it's "x" $(id) ` + "`id` \\ ;",
 			`a\b`,
+			`a\"b`,
 			`x\' ; echo INJECTED #`,
 		}
 		for i, label := range labels {
@@ -1597,6 +1654,87 @@ func TestScriptSessionMarkerKeepsEveryTarget(t *testing.T) {
 			t.Fatalf("marker after repeats %q, want %q: %v", data, want, err)
 		}
 	})
+}
+
+// Two passthroughs a session asks for at once, with no marker yet, both
+// land in it: the first save of one must not write over the other's.
+func TestScriptSessionMarkerKeepsParallelFirstSaves(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		real := filepath.Join(home, ".nearhost", "k3f9q2.sock")
+		fronts := []string{filepath.Join(home, "a.sock"), filepath.Join(home, "b.sock")}
+		for _, f := range fronts {
+			unixRelay(t, f, real)
+		}
+		// Nearhost opens at most 16 passthroughs for a server.
+		rounds := 7
+		if shell.powerShell() {
+			rounds = 3
+		}
+		for i := range rounds {
+			sid := fmt.Sprintf("p%d", i)
+			var wg sync.WaitGroup
+			results := make([]scriptResult, len(fronts))
+			for j, f := range fronts {
+				wg.Go(func() {
+					env := []string{"NEARHOST_SOCKET=" + f, "CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=" + sid}
+					results[j] = shell.run(t, home, env, "passthrough", strconv.Itoa(3000+2*i+j))
+				})
+			}
+			wg.Wait()
+			for _, r := range results {
+				if r.code != 0 {
+					t.Fatalf("round %d: %+v", i, r)
+				}
+			}
+			marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", sid)
+			data, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+			slices.Sort(lines)
+			if !slices.Equal(lines, fronts) {
+				t.Fatalf("round %d: marker %q, want both of %q", i, data, fronts)
+			}
+			testutil.WantPerm(t, marker, 0o600)
+		}
+	})
+}
+
+// unixRelay passes each connection to the socket path on to the socket
+// real, as another socket for the same Nearhost.
+func unixRelay(t *testing.T, path, real string) {
+	t.Helper()
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			in, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer in.Close()
+				out, err := net.Dial("unix", real)
+				if err != nil {
+					return
+				}
+				defer out.Close()
+				go func() {
+					io.Copy(out, in)
+					out.(*net.UnixConn).CloseWrite()
+				}()
+				io.Copy(in, out)
+			}()
+		}
+	}()
 }
 
 func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {
@@ -1841,6 +1979,106 @@ func TestScriptCloseSessionTakesAnSSHPathWithSpaces(t *testing.T) {
 	})
 }
 
+// On Windows the SessionEnd hook runs nearhost.sh in Git Bash, and the
+// marker names the ssh nearhost.ps1 ran as Get-Command gave it: a drive
+// letter, backslashes and perhaps a space, as in C:\Program Files. Git Bash
+// searches PATH for a command name without a slash, so the close must run
+// that ssh by a path it reads as one, still as a single word.
+func TestScriptCloseSessionRunsADriveLetterSSH(t *testing.T) {
+	home := shortDir(t)
+	shell := shScript
+	var line, dir string
+	env := []string{}
+	if runtime.GOOS == "windows" {
+		sh := needSh(t, ", which runs the SessionEnd hook")
+		shell = scriptShell{"git-sh", []string{sh}, script}
+		_, dirs := gitSh(t, home)
+		dir = filepath.Join(home, "Open SSH")
+		ssh := buildFakeSSHExe(t, dir)
+		line = "ssh " + ssh + " apollo"
+		if !regexp.MustCompile(`^ssh [A-Za-z]:\\.* .*\\ssh\.exe apollo$`).MatchString(line) {
+			t.Fatalf("line %q does not name a drive-letter ssh with a space", line)
+		}
+		for _, kv := range scriptEnv(t, shell, home) {
+			if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "PATH") {
+				env = append(env, "PATH="+dirs+";"+v)
+			}
+		}
+	} else {
+		// Elsewhere no path starts with a drive letter, but a relative one,
+		// from home, where the script runs, can look like it.
+		dir = filepath.Join(home, "C:", "fake ssh")
+		buildFakeSSHExe(t, dir)
+		line = `ssh C:\fake ssh\ssh.exe apollo`
+	}
+	marker := writeMarker(t, home, "s1", line)
+	r := shell.run(t, home, env, "passthrough-close", "--session", "s1")
+	if r.code != 0 || r.stdout != "" || r.stderr != "" {
+		t.Fatalf("close: %+v", r)
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "ssh-args"))
+	if err != nil {
+		t.Fatalf("the ssh at %q did not run: %v", line, err)
+	}
+	if want := "-o\nBatchMode=yes\n-o\nConnectTimeout=2\n--\napollo\nsh -s\n"; string(args) != want {
+		t.Fatalf("ssh ran with %q, want %q", args, want)
+	}
+	stdin, err := os.ReadFile(filepath.Join(dir, "ssh-stdin"))
+	first, _, _ := strings.Cut(string(stdin), "\n")
+	if err != nil || !strings.HasPrefix(first, "set -- --remote ") || !strings.HasSuffix(first, " 'passthrough-close' '--session' 's1'") {
+		t.Fatalf("ssh was sent %.200q: %v", stdin, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed after the close: %v", err)
+	}
+}
+
+// buildFakeSSHExe builds dir/ssh.exe, a program that answers as an ssh
+// that ran the close: it notes its arguments in dir/ssh-args and what it was
+// sent in dir/ssh-stdin, and exits 0. It returns its path.
+func buildFakeSSHExe(t *testing.T, dir string) string {
+	t.Helper()
+	src := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module fakessh\n\ngo 1.21\n",
+		"main.go": `package main
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	exe, err := os.Executable()
+	if err != nil {
+		os.Exit(3)
+	}
+	in, _ := io.ReadAll(os.Stdin)
+	dir := filepath.Dir(exe)
+	os.WriteFile(filepath.Join(dir, "ssh-stdin"), in, 0o644)
+	os.WriteFile(filepath.Join(dir, "ssh-args"), []byte(strings.Join(os.Args[1:], "\n")+"\n"), 0o644)
+}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "ssh.exe")
+	build := exec.Command("go", "build", "-o", exe, ".")
+	build.Dir = src
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	return exe
+}
+
 // writeMarker writes a session marker for session sid naming sock, the way
 // the skill does, and returns its path.
 func writeMarker(t *testing.T, home, sid, sock string) string {
@@ -1947,10 +2185,7 @@ func TestScriptCloseSessionClosesADriveLetterSocket(t *testing.T) {
 	home := shortDir(t)
 	var line string
 	if runtime.GOOS == "windows" {
-		sh, err := exec.LookPath("sh")
-		if err != nil {
-			t.Skip("no sh (Git for Windows) here, which runs the SessionEnd hook")
-		}
+		sh := needSh(t, ", which runs the SessionEnd hook")
 		shell = scriptShell{"git-sh", []string{sh}, script}
 		sock, deletes := answerDelete(t, home, http.StatusNoContent)
 		line = sock
