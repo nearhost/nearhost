@@ -507,13 +507,14 @@ func TestAnExitWaitsForTheLastOutput(t *testing.T) {
 	}
 
 	term := late()
-	go func() {
+	// The goroutine draws on its own copy: term is reassigned below.
+	go func(term *terminal) {
 		time.Sleep(200 * time.Millisecond)
 		term.mu.Lock()
 		_, _ = term.emu.Write([]byte("\x1b[?1049l"))
 		term.mu.Unlock()
 		close(term.drawn)
-	}()
+	}(term)
 	if s, exited, _ := term.await(left(term), stepWait); exited {
 		t.Errorf("the exit failed the wait before the last output was drawn; the screen:\n%s", s)
 	}
