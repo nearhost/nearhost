@@ -72,8 +72,10 @@ func (c sshClient) config(ctx context.Context, host string) (string, error) {
 	return string(out), err
 }
 
-// sshHint says how to repair access to host; then is what to do afterwards.
-// It is a doctor row's fix and up's; elsewhere sshFailure's steps say it.
+// sshHint says how to repair access to host, in one line; then is what to
+// do afterwards. It is a doctor row's one-line fix, the `fix` of doctor's
+// JSON, and the text of sshFailure, which clients have always shown; the
+// steps (sshStep) put the command on a line of its own.
 func sshHint(host, then string) string {
 	return fmt.Sprintf("run `ssh %s` once in a terminal to fix access, then %s", host, then)
 }

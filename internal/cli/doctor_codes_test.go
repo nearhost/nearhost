@@ -100,8 +100,13 @@ func TestDoctorRowCodes(t *testing.T) {
 			t.Errorf("%s: code %q, want %q", name, got, want)
 		}
 	}
-	if got := steps(t, rows["server mini"]["steps"]); len(got) != 2 || got[0] != sshStep("mini.lan") {
+	if got := steps(t, rows["server mini"]["steps"]); len(got) != 2 || got[0] != sshStep("mini.lan") ||
+		got[1] != (report.Step{Text: "Then run doctor again:", Command: "nearhost doctor"}) {
 		t.Errorf("server steps %+v", got)
+	}
+	// The one-line fix agents read stays as it was.
+	if want := "Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost doctor` again"; rows["server mini"]["fix"] != want {
+		t.Errorf("server fix %q, want %q", rows["server mini"]["fix"], want)
 	}
 
 	for _, tc := range []struct {
@@ -275,11 +280,12 @@ func TestDoctorVerboseShowsCodes(t *testing.T) {
 func TestDoctorVerboseCodeAfterSteps(t *testing.T) {
 	var out strings.Builder
 	printCheck(&out, check{name: "server mini", level: levelFail, detail: "refused", code: report.SSHUnreachable,
-		steps: []report.Step{sshStep("mini.lan"), {Text: "Then run `nearhost doctor` again."}}}, true)
+		steps: []report.Step{sshStep("mini.lan"), {Text: "Then run doctor again:", Command: "nearhost doctor"}}}, true)
 	want := "FAIL  server mini      refused\n" +
 		"      fix: Fix access by running ssh once in a terminal:\n" +
 		"             ssh mini.lan\n" +
-		"           Then run `nearhost doctor` again.\n" +
+		"           Then run doctor again:\n" +
+		"             nearhost doctor\n" +
 		"      code: ssh.unreachable\n"
 	if out.String() != want {
 		t.Errorf("printed:\n%s\nwant:\n%s", out.String(), want)

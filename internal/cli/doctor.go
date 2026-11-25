@@ -899,7 +899,7 @@ func checkServer(ctx context.Context, b doctorBackend, srv config.Server) check 
 	}
 	// The code and steps of up's error for a server ssh does not reach.
 	c := problem(name, levelFail, report.SSHUnreachable, detail, sshHint(srv.SSHHost, "run `nearhost doctor` again"))
-	c.steps = []report.Step{sshStep(srv.SSHHost), {Text: "Then run `nearhost doctor` again."}}
+	c.steps = []report.Step{sshStep(srv.SSHHost), {Text: "Then run doctor again:", Command: "nearhost doctor"}}
 	return c
 }
 
