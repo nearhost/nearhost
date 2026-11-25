@@ -125,6 +125,14 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 // and sets nothing, / never lists, and the console's paths are locked.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
+		// From the network, a document link alone is not enough: the
+		// browser must be a paired device's.
+		if atNetworkHost(r) {
+			if _, ok := pairedDevice(r); !ok {
+				serveLocked(w, r)
+				return nil
+			}
+		}
 		serveDocument(&cookieOnSuccess{ResponseWriter: w, r: r}, r)
 		return nil
 	}

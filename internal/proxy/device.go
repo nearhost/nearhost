@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -329,8 +330,10 @@ func stripSiteCookie(r *http.Request) {
 	for _, line := range lines {
 		var parts []string
 		for _, part := range strings.Split(line, ";") {
-			name, _, _ := strings.Cut(strings.TrimSpace(part), "=")
-			if strings.TrimSpace(part) == "" || name == siteCookie {
+			// Trimmed as net/http trims a cookie's name, so whatever
+			// CookiesNamed read as the site cookie is stripped.
+			name, _, _ := strings.Cut(part, "=")
+			if strings.TrimSpace(part) == "" || textproto.TrimString(name) == siteCookie {
 				continue
 			}
 			parts = append(parts, strings.TrimSpace(part))

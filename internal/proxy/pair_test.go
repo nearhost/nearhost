@@ -341,3 +341,67 @@ func TestProfileServedForLocalCA(t *testing.T) {
 		t.Errorf("acme: %d, want 404", w.Code)
 	}
 }
+
+// At the network host the page secret is never given or honoured: it can't
+// be revoked, so only a paired device's cookie counts there.
+func TestNetworkHostNeverGivesOrHonoursPageSecret(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeDevices(t)
+	fake := setFakeConsole(t)
+	docs := 0
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		docs++
+		w.Write([]byte("doc"))
+	}), nil)
+
+	// A document read by a paired device sets no page cookie.
+	w := serveNet(t, netHome(), withDevice(netRequest("GET", "/d/abc123/x", nil), "good-token"))
+	if w.Code != http.StatusOK || docs != 1 {
+		t.Fatalf("paired device's document: %d, docs %d", w.Code, docs)
+	}
+	if sc := w.Header().Values("Set-Cookie"); len(sc) != 0 {
+		t.Errorf("document at the network host set %q", sc)
+	}
+
+	// Without a device, a document link alone reads nothing.
+	for name, r := range map[string]*http.Request{
+		"no cookie":    netRequest("GET", "/d/abc123/x", nil),
+		"wrong device": withDevice(netRequest("GET", "/d/abc123/x", nil), "bad"),
+		"page secret":  netRequest("GET", "/d/abc123/x", nil),
+	} {
+		if name == "page secret" {
+			r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
+		}
+		w := serveNet(t, netHome(), r)
+		if docs != 1 || w.Code != http.StatusForbidden || len(w.Header().Values("Set-Cookie")) != 0 {
+			t.Errorf("%s: %d, docs %d, Set-Cookie %q", name, w.Code, docs, w.Header().Values("Set-Cookie"))
+		}
+	}
+
+	// /?k= with the right secret sets nothing.
+	w = serveNet(t, netHome(), netRequest("GET", "/?k="+secret, nil))
+	if sc := w.Header().Values("Set-Cookie"); len(sc) != 0 {
+		t.Errorf("/?k= at the network host set %q", sc)
+	}
+
+	// The page secret alone gets the locked page, not the console.
+	r := netRequest("GET", "/approve/abc", nil)
+	r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
+	if w := serveNet(t, netHome(), r); w.Code != http.StatusForbidden {
+		t.Errorf("page secret at /approve/abc: %d, want 403", w.Code)
+	}
+	r = netRequest("GET", "/", nil)
+	r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
+	if w := serveNet(t, netHome(), r); w.Body.String() == "console" {
+		t.Error("the page secret reached the console at the network host")
+	}
+	if len(fake.called()) != 0 {
+		t.Errorf("console calls %v", fake.called())
+	}
+
+	// At nearhost.localhost the page secret works as before.
+	if w := serveNet(t, netHome(), withCookie("/approve/abc", secret)); w.Code != http.StatusOK {
+		t.Errorf("page secret at the page host: %d, want 200", w.Code)
+	}
+}

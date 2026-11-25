@@ -242,19 +242,29 @@ func currentNetworkHost() string {
 }
 
 // atPageHost reports whether r is for Nearhost's page at its own host,
-// hostname.PageHost, or at its host on the network while the core is
-// networked, with the port stripped and case ignored. The page cookie is
-// given and honoured there alone: a cookie is sent to every port of the
-// host it was set at, and at localhost that would hand it to any dev
+// hostname.PageHost, with the port stripped and case ignored. The page
+// cookie is given and honoured there alone: a cookie is sent to every port
+// of the host it was set at, and at localhost that would hand it to any dev
 // server the user browses there. Cookies ignore ports at nearhost.localhost
 // too, so a server the user opens there on another port would receive the
 // cookie; SameSite=Strict keeps cross-site navigations from carrying it.
+// Never at the network host: the page secret can't be revoked, so only a
+// paired device's cookie counts there (see pairedDevice).
 func atPageHost(r *http.Request) bool {
-	host := requestHost(r)
-	if nh := currentNetworkHost(); nh != "" && host == nh {
-		return true
-	}
-	return strings.EqualFold(host, hostname.PageHost)
+	return strings.EqualFold(requestHost(r), hostname.PageHost)
+}
+
+// atNetworkHost reports whether r is for the page's host on the network,
+// nearhost.<domain>, while the core is networked.
+func atNetworkHost(r *http.Request) bool {
+	nh := currentNetworkHost()
+	return nh != "" && requestHost(r) == nh
+}
+
+// atPairingHost reports whether r is at a host where devices pair and
+// their cookie counts: the page's own host or its network host.
+func atPairingHost(r *http.Request) bool {
+	return atPageHost(r) || atNetworkHost(r)
 }
 
 // hasPageCookie reports whether r, a request at the page's host, carries
@@ -287,7 +297,7 @@ func hasPageCookie(r *http.Request) bool {
 // page's host, while devices are set.
 func pairedDevice(r *http.Request) (devices.Device, bool) {
 	d := currentDevices()
-	if d == nil || !atPageHost(r) {
+	if d == nil || !atPairingHost(r) {
 		return devices.Device{}, false
 	}
 	for _, c := range r.CookiesNamed(deviceCookie) {
@@ -299,7 +309,8 @@ func pairedDevice(r *http.Request) (devices.Device, bool) {
 }
 
 // pageAuthorized reports whether r may see the page's console and
-// documents: it carries the page cookie, or a paired device's cookie.
+// documents: it carries the page cookie at hostname.PageHost, or a paired
+// device's cookie at either page host.
 func pageAuthorized(r *http.Request) bool {
 	if hasPageCookie(r) {
 		return true
@@ -309,8 +320,8 @@ func pageAuthorized(r *http.Request) bool {
 }
 
 // setPageCookie adds the page cookie to the response headers h for the
-// request r. It sets nothing for a request at a host other than the
-// page's (see atPageHost), or when the secret can't be read.
+// request r. It sets nothing for a request at a host other than
+// hostname.PageHost (see atPageHost), or when the secret can't be read.
 func setPageCookie(h http.Header, r *http.Request) {
 	if !atPageHost(r) {
 		return

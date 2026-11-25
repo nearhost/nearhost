@@ -265,6 +265,23 @@ func TestDeviceGuardStripsSiteCookie(t *testing.T) {
 	if next.cookies[0] != "session=1" {
 		t.Errorf("site saw Cookie %q, want session=1", next.cookies[0])
 	}
+	// Spaces or a tab before the = still name the site cookie to net/http,
+	// so they must be stripped too.
+	for _, c := range []string{
+		"__Host-nearhost-site =dev1.app.lab.example.dev; session=1",
+		"__Host-nearhost-site\t=dev1.app.lab.example.dev; session=1",
+		"session=1;  __Host-nearhost-site =dev1.app.lab.example.dev",
+	} {
+		r := guardRequest("/", "100.79.1.1:1")
+		r.Header.Set("Cookie", c)
+		if len(r.CookiesNamed("__Host-nearhost-site")) != 1 {
+			t.Fatalf("%q: net/http does not read the site cookie", c)
+		}
+		_, next := serveGuard(t, &DeviceGuard{Page: testPage}, r)
+		if next.calls != 1 || next.cookies[0] != "session=1" {
+			t.Errorf("%q: next %d, site saw Cookie %q", c, next.calls, next.cookies)
+		}
+	}
 	// A cookie for another host, or of a device no longer paired, does
 	// not pass.
 	for _, v := range []string{"dev1.other.lab.example.dev", "gone.app.lab.example.dev"} {

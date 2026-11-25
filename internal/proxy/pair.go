@@ -58,7 +58,7 @@ type pairForm struct {
 func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.EscapedPath()
 	if path == "/profile.mobileconfig" {
-		if h.NetworkHost == "" || h.Certificates != "ca" || !atPageHost(r) {
+		if h.NetworkHost == "" || h.Certificates != "ca" || !atPairingHost(r) {
 			return false
 		}
 		if allowMethods(w, r, false) {
@@ -71,7 +71,7 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	d := currentDevices()
-	if d == nil || !atPageHost(r) {
+	if d == nil || !atPairingHost(r) {
 		return false
 	}
 	switch {
