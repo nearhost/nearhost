@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -28,6 +29,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/report"
 	rterm "github.com/nearhost/nearhost/internal/report/term"
+	"github.com/nearhost/nearhost/internal/safetext"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -424,14 +426,14 @@ func (o *messageOut) Report(m *report.Message) {
 	defer o.mu.Unlock()
 	w := o.writer()
 	if o.json {
-		b, err := json.Marshal(m)
+		c := terminalSafe(m)
+		b, err := json.Marshal(c)
 		if err != nil {
 			// Data that does not marshal is left out, not the message.
-			c := *m
 			c.Data = nil
-			b, _ = json.Marshal(&c)
+			b, _ = json.Marshal(c)
 		}
-		w.Write(append(b, '\n'))
+		w.Write(append(escapeUnprintable(b), '\n'))
 		return
 	}
 	if o.wrote {
@@ -439,6 +441,56 @@ func (o *messageOut) Report(m *report.Message) {
 	}
 	rterm.Render(w, m, termOptions(w, o.verbose))
 	o.wrote = true
+}
+
+// terminalSafe is a copy of m with its text cleaned as doctor's JSON is,
+// for a JSON line written to what is usually a terminal: the title,
+// context, steps and code on one line, the explanation and each verbatim
+// line keeping their line breaks.
+func terminalSafe(m *report.Message) *report.Message {
+	c := *m
+	c.Code = report.Code(safetext.Line(string(m.Code)))
+	c.Title = safetext.Line(m.Title)
+	c.Context = safetext.Line(m.Context)
+	c.Why = safetext.Lines(m.Why)
+	c.Verbatim = nil
+	for _, l := range m.Verbatim {
+		c.Verbatim = append(c.Verbatim, safetext.Lines(l))
+	}
+	c.Fix = nil
+	for _, s := range m.Fix {
+		c.Fix = append(c.Fix, report.Step{Text: safetext.Lines(s.Text), Command: safetext.Line(s.Command)})
+	}
+	return &c
+}
+
+// escapeUnprintable returns the JSON b with every character a terminal
+// would not print as itself (DEL, a C1 control, a bidi override) written
+// as a \uXXXX escape, which decodes to the same text. It catches what
+// terminalSafe does not clean, such as a value in Data. Outside its
+// strings, JSON from encoding/json is printable ASCII, so only string
+// contents change.
+func escapeUnprintable(b []byte) []byte {
+	var out strings.Builder
+	for _, r := range string(b) {
+		if !unprintable(r) {
+			out.WriteRune(r)
+			continue
+		}
+		if r > 0xffff {
+			hi, lo := utf16.EncodeRune(r)
+			fmt.Fprintf(&out, `\u%04x\u%04x`, hi, lo)
+			continue
+		}
+		fmt.Fprintf(&out, `\u%04x`, r)
+	}
+	return []byte(out.String())
+}
+
+// unprintable reports whether r is a character safetext would drop. JSON
+// has already escaped the ASCII controls.
+func unprintable(r rune) bool {
+	return r >= 0x7f && safetext.Line(string(r)) == ""
 }
 
 // exit is the exit code for the error a command returned, which is 0 for

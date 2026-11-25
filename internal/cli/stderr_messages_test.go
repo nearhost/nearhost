@@ -233,3 +233,37 @@ func TestAddTakenAndMissingAreMessages(t *testing.T) {
 		t.Errorf("code %q, title %q", m.Code, m.Title)
 	}
 }
+
+// With --json, a message on standard error, which is usually a terminal,
+// carries no escape sequence, C1 control, DEL or bidi override, raw or
+// decoded, in any of its text, and keeps the lines of its explanation.
+func TestJSONStderrMessagesWithoutControlCharacters(t *testing.T) {
+	const hostile = "a\x1b[31mb\x7fc\u009b31md‮e"
+	m := report.Errorf(report.Unexpected, "Title %s", hostile)
+	m.Context = "start " + hostile
+	m.Why = "first\n" + hostile
+	m.Verbatim = []string{"log " + hostile}
+	m.Fix = []report.Step{report.Step{Text: "Do " + hostile, Command: "nearhost " + hostile}}
+	m.Data = map[string]any{"name": hostile, "list": []any{hostile}}
+	var b bytes.Buffer
+	o := &messageOut{writer: func() io.Writer { return &b }, json: true}
+	o.Report(m)
+	raw := b.String()
+	if strings.ContainsAny(raw, "\x1b\x7f\u009b‮") {
+		t.Errorf("the JSON line carries control characters: %q", raw)
+	}
+	var got report.Message
+	if err := json.Unmarshal(b.Bytes(), &got); err != nil {
+		t.Fatalf("%v: %q", err, raw)
+	}
+	decoded := got.Title + got.Context + got.Why + strings.Join(got.Verbatim, "") + got.Fix[0].Text + got.Fix[0].Command
+	if strings.ContainsAny(decoded, "\x1b\x7f\u009b‮") {
+		t.Errorf("the decoded message carries control characters: %q", decoded)
+	}
+	if !strings.HasPrefix(got.Why, "first\n") {
+		t.Errorf("the explanation lost its lines: %q", got.Why)
+	}
+	if got.Title != "Title a[31mbc31mde" {
+		t.Errorf("title %q", got.Title)
+	}
+}
