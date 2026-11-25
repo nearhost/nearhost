@@ -1411,6 +1411,13 @@ func TestScriptPassthroughWaitOnAnotherHost(t *testing.T) {
 		if got := rv.prompts(); len(got) != 1 || got[0].Requester != "claude-code" {
 			t.Fatalf("prompts %+v", got)
 		}
+		// A request the user is asked about is in the marker too, so the
+		// session's end withdraws it.
+		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+		want := "ssh " + filepath.Join(home, "bin", "ssh") + " apollo\n"
+		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
+			t.Fatalf("marker %q, want %q: %v", data, want, err)
+		}
 		if err := s.AnswerPassthrough(context.Background(), m[1], AnswerYes); err != nil {
 			t.Fatal(err)
 		}
@@ -1475,6 +1482,216 @@ func TestScriptRefusesRemoteFromATerminal(t *testing.T) {
 		r = shell.run(t, home, []string{"SSH_CONNECTION=fake"}, "--remote", "../x", "s1", "passthrough", "3000")
 		if r.code != 1 || r.stdout != "" {
 			t.Fatalf("--remote with a bad requester: %+v", r)
+		}
+	})
+}
+
+// fakeSSHFailing is fakeSSH, but for the host fail, which it cannot reach:
+// it says so and exits 255, as ssh does.
+func fakeSSHFailing(t *testing.T, home, fail string) string {
+	t.Helper()
+	return fakeSSHWith(t, home, `while [ $# -gt 0 ]; do
+	case $1 in
+	-o) shift 2 ;;
+	--) shift; break ;;
+	-*) shift ;;
+	*) break ;;
+	esac
+done
+if [ "$1" = '`+fail+`' ]; then
+	echo "ssh: connect to host $1 port 22: No route to host" >&2
+	exit 255
+fi
+shift
+SSH_CONNECTION=fake exec sh -c "$*"
+`)
+}
+
+// sessionTargets opens three passthroughs for session s1: one here and one
+// on each of apollo and leto, all on the same fake Nearhost, reached through
+// a front socket that counts the DELETEs. It returns the passer, the count,
+// the environment that reaches the front socket with the fake ssh, the
+// marker's path and the lines it should hold.
+func sessionTargets(t *testing.T, shell scriptShell, home string) (*fakePasser, func() int, []string, string, string) {
+	t.Helper()
+	_, p, g, _ := passScript(t, home, "mini", false)
+	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+	storeToken(t, home, "claude-code", "tok-x")
+	deletes, front := countCalls(t, home, http.MethodDelete, "/v1/passthroughs")
+	env := []string{fakeSSH(t, home), "NEARHOST_SOCKET=" + front}
+	agent := append(append([]string{}, env...), claudeEnv...)
+	for i, on := range []string{"", "apollo", "leto"} {
+		args := []string{"passthrough", strconv.Itoa(3000 + i)}
+		if on != "" {
+			args = append(args, "--on", on)
+		}
+		if r := shell.run(t, home, agent, args...); r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+			t.Fatalf("%q: %+v", args, r)
+		}
+	}
+	ssh := filepath.Join(home, "bin", "ssh")
+	want := front + "\nssh " + ssh + " apollo\nssh " + ssh + " leto\n"
+	return p, deletes, env, filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1"), want
+}
+
+func TestScriptSessionMarkerKeepsEveryTarget(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, _, env, marker, want := sessionTargets(t, shell, home)
+		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
+			t.Fatalf("marker %q, want %q: %v", data, want, err)
+		}
+		testutil.WantPerm(t, marker, 0o600)
+		// Opening another one where the session has one already adds
+		// nothing, here or on another host.
+		agent := append(append([]string{}, env...), claudeEnv...)
+		for _, args := range [][]string{{"passthrough", "3010", "--on", "apollo"}, {"passthrough", "3011"}} {
+			if r := shell.run(t, home, agent, args...); r.code != 0 {
+				t.Fatalf("%q: %+v", args, r)
+			}
+		}
+		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
+			t.Fatalf("marker after repeats %q, want %q: %v", data, want, err)
+		}
+	})
+}
+
+func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		p, deletes, env, marker, _ := sessionTargets(t, shell, home)
+		r := shell.run(t, home, append(env, "CLAUDE_CODE_SESSION_ID=s1"), "passthrough-close", "--session", "s1")
+		if r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Fatalf("close: %+v", r)
+		}
+		if n := deletes(); n != 3 {
+			t.Fatalf("%d DELETEs, want 3", n)
+		}
+		if got := p.closed(); len(got) != 3 {
+			t.Fatalf("closed %v", got)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed: %v", err)
+		}
+		if cmd, err := os.ReadFile(filepath.Join(home, "ssh-cmd")); err != nil || string(cmd) != "sh -s\n" {
+			t.Fatalf("ssh ran %q: %v", cmd, err)
+		}
+	})
+}
+
+func TestScriptCloseSessionKeepsWhatFailed(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, deletes, env, marker, _ := sessionTargets(t, shell, home)
+		env[0] = fakeSSHFailing(t, home, "leto")
+		r := shell.run(t, home, env, "passthrough-close", "--session", "s1")
+		if r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Fatalf("close: %+v", r)
+		}
+		if n := deletes(); n != 2 {
+			t.Fatalf("%d DELETEs, want 2", n)
+		}
+		want := "ssh " + filepath.Join(home, "bin", "ssh") + " leto\n"
+		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
+			t.Fatalf("marker %q, want %q: %v", data, want, err)
+		}
+	})
+}
+
+func TestScriptCloseSessionIsCutOff(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		pidFile := filepath.Join(home, "ssh-pid")
+		path := fakeSSHWith(t, home, "echo $$ >'"+pidFile+"'\nexec sleep 10\n")
+		t.Cleanup(func() {
+			if b, err := os.ReadFile(pidFile); err == nil {
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+					if proc, err := os.FindProcess(pid); err == nil {
+						proc.Kill()
+					}
+				}
+			}
+		})
+		line := "ssh " + filepath.Join(home, "bin", "ssh") + " apollo"
+		gone := filepath.Join(home, "gone.sock")
+		marker := writeMarker(t, home, "s1", gone+"\n"+line)
+		start := time.Now()
+		r := shell.run(t, home, []string{path}, "passthrough-close", "--session", "s1")
+		took := time.Since(start)
+		if r.code != 0 || took > 3*time.Second {
+			t.Fatalf("close: %+v after %v", r, took)
+		}
+		if took < 2*time.Second {
+			t.Fatalf("close returned after %v, before the ssh was cut off", took)
+		}
+		// The ssh that was cut off stays to be tried again; the socket that
+		// is gone does not.
+		if data, err := os.ReadFile(marker); err != nil || string(data) != line+"\n" {
+			t.Fatalf("marker %q: %v", data, err)
+		}
+		// The ssh that was cut off was ended, not left running.
+		b, err := os.ReadFile(pidFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		deadline := time.Now().Add(time.Second)
+		for {
+			if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err != nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the ssh %d still runs", pid)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+}
+
+func TestScriptCloseSessionDropsMalformedLines(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		path := fakeSSH(t, home)
+		bad := []string{
+			"ssh relative/ssh apollo",
+			"ssh " + filepath.Join(home, "bin", "ssh") + " -oProxyCommand=x",
+			"ssh " + filepath.Join(home, "bin", "ssh"),
+			"relative.sock",
+			"",
+		}
+		marker := writeMarker(t, home, "s1", strings.Join(bad, "\n"))
+		r := shell.run(t, home, []string{path}, "passthrough-close", "--session", "s1")
+		if r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Fatalf("close: %+v", r)
+		}
+		if _, err := os.Stat(filepath.Join(home, "ssh-ran")); !os.IsNotExist(err) {
+			t.Fatalf("ran ssh for a malformed line: %v", err)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed: %v", err)
+		}
+	})
+}
+
+func TestScriptCloseOneOnAnotherHost(t *testing.T) {
+	eachShShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
+		m := proposalID.FindStringSubmatch(r.stdout)
+		if r.code != 0 || m == nil {
+			t.Fatalf("passthrough --on: %+v", r)
+		}
+		os.Remove(filepath.Join(home, "ssh-cmd"))
+		r = shell.run(t, home, env, "passthrough-close", m[1], "--on", "apollo")
+		if r.code != 0 || len(p.closed()) != 1 || p.closed()[0] != m[1] {
+			t.Fatalf("close --on: %+v, closed %v", r, p.closed())
+		}
+		if cmd, err := os.ReadFile(filepath.Join(home, "ssh-cmd")); err != nil || string(cmd) != "sh -s\n" {
+			t.Fatalf("ssh ran %q: %v", cmd, err)
 		}
 	})
 }

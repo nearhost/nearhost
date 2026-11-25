@@ -11,7 +11,8 @@
 #   nearhost.sh reload [path]                           make Nearhost re-read .nearhostrc
 #   nearhost.sh passthrough <port> [--label X] [--on H] open a server's port on the laptop
 #   nearhost.sh passthrough-wait <id> [--on H]          wait up to 50s for the answer
-#   nearhost.sh passthrough-close --session <id> | <id> close a session's passthroughs, or one
+#   nearhost.sh passthrough-close --session <id> | <id> [--on H]
+#                                                       close a session's passthroughs, or one
 #   nearhost.sh open <path> [--label X]                 open a document in the user's browser
 #   nearhost.sh open-wait <id>                          wait up to 50s for the answer
 #
@@ -114,6 +115,9 @@ call() {
 
 # no_nearhost says what to do when no Nearhost answers here.
 no_nearhost() {
+	# A session's close run by --on: with no Nearhost here, its passthroughs
+	# ended with that Nearhost's connection, so there is nothing to close.
+	[ -n "${NONE_OK:-}" ] && exit 0
 	if [ -n "${SSH_CONNECTION:-}" ]; then
 		host=$(hostname 2>/dev/null | cut -d. -f1)
 		if [ -n "${PASSPORT:-}" ]; then
@@ -346,36 +350,66 @@ sq() {
 	printf "'%s%s'" "$done_" "$rest"
 }
 
-# check_host HOST exits 1 unless HOST is an SSH host name that ssh cannot
-# read as an option: letters, digits, dot, underscore, @ and dash, not
-# starting with a dash.
-check_host() {
+# good_host HOST succeeds when HOST is an SSH host name that ssh cannot read
+# as an option: letters, digits, dot, underscore, @ and dash, not starting
+# with a dash.
+good_host() {
 	case $1 in
-	'' | -* | *[!A-Za-z0-9._@-]*) die 1 "--on needs the SSH host the dev server runs on, such as: --on apollo" ;;
+	'' | -* | *[!A-Za-z0-9._@-]*) return 1 ;;
 	esac
+}
+
+# check_host HOST exits 1 unless HOST is a good_host.
+check_host() {
+	good_host "$1" || die 1 "--on needs the SSH host the dev server runs on, such as: --on apollo"
 	[ -z "${REMOTE:-}" ] || die 1 "--on cannot be used on a host reached with --on"
 }
 
 # run_on HOST CMD ARGS... runs this script's CMD ARGS on HOST over SSH, with
 # the requester and session from here, and exits with its status. Its
-# output passes through, but for an SSH failure, which exits 2.
+# output passes through, but for an SSH failure, which exits 2. When CMD
+# opened a passthrough there, or asked for one, the session's marker here
+# gains HOST, so the session's end closes it.
 run_on() {
 	host=$1
 	shift
 	check_host "$host"
 	[ -f "$0" ] && [ -r "$0" ] || die 1 "--on needs this script as a file to send, not $0"
-	command -v ssh >/dev/null 2>&1 || die 2 "ssh is needed for --on and is not installed here."
+	ssh=$(command -v ssh 2>/dev/null) || ssh=""
+	[ -n "$ssh" ] || die 2 "ssh is needed for --on and is not installed here."
+	# The marker names the ssh that opened the passthrough, to close it the
+	# same way; a path it can run from anywhere.
+	case $ssh in
+	/*) ;;
+	*) die 2 "ssh is needed for --on and is not installed here." ;;
+	esac
 	# sshd runs the command through the user's login shell, which may not be
 	# POSIX (fish, csh), so it is the constant sh -s and nothing else. The
 	# arguments go on stdin ahead of the script, where sh reads them. ssh's
-	# stderr is caught to tell its own failure apart; stdout passes through.
+	# stderr is caught to tell its own failure apart, and its stdout to see
+	# what the command did; both are passed on.
 	rc=0
-	{ err=$(remote_input "$@" 3>&- | ssh -o BatchMode=yes -o ConnectTimeout=5 -- "$host" 'sh -s' 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
-	if [ "$rc" -eq 255 ]; then
-		first=$(printf '%s\n' "$err" | sed -n '1p')
-		die 2 "SSH could not reach $host: ${first:-ssh exited with status 255}"
+	out=$(
+		rc=0
+		{ err=$(remote_input "$@" 3>&- | "$ssh" -o BatchMode=yes -o ConnectTimeout=5 -- "$host" 'sh -s' 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+		if [ "$rc" -eq 255 ]; then
+			first=$(printf '%s\n' "$err" | sed -n '1p')
+			die 2 "SSH could not reach $host: ${first:-ssh exited with status 255}"
+		fi
+		[ -n "$err" ] && printf '%s\n' "$err" >&2
+		exit "$rc"
+	) || rc=$?
+	[ -n "$out" ] && printf '%s\n' "$out"
+	if [ "$rc" -eq 0 ]; then
+		# As here: a passthrough that opened, or one the user is asked about,
+		# whose answer, a 202's, has no state.
+		case $1:$(field state "$out") in
+		passthrough:open | passthrough: | passthrough-wait:open)
+			SESSION=$(session)
+			save_session "ssh $ssh $host"
+			;;
+		esac
 	fi
-	[ -n "$err" ] && printf '%s\n' "$err" >&2
 	exit "$rc"
 }
 
@@ -459,14 +493,125 @@ show_body() {
 	printf '%s\n' "$BODY" | sed 's/"token":"[^"]*",\{0,1\}//; s/,}/}/'
 }
 
-# save_session notes that this session has an open passthrough, and on which
-# socket, so that passthrough-close --session can find it without looking.
+# save_session [TARGET] notes that this session has a passthrough open, or
+# asked for, at TARGET, so that passthrough-close --session can find it
+# without looking. The marker has a line per target: the socket of a
+# Nearhost here, SOCK by default, or "ssh <ssh> <host>" for one opened on
+# host with --on. A target already in it is not added again.
 save_session() {
 	# Run by --on, the session ends on the agent's machine, not here.
 	[ -z "${REMOTE:-}" ] || return 0
 	plain_word "${SESSION:-}" || return 0
+	target=${1:-$SOCK}
 	private_dir "$(state_dir)" "$(state_dir)/sessions" || return 0
-	private_file "$(state_dir)/sessions/$SESSION" "$SOCK"
+	sm="$(state_dir)/sessions/$SESSION"
+	if [ -f "$sm" ]; then
+		grep -Fqx -- "$target" "$sm" 2>/dev/null && return 0
+		printf '%s\n' "$target" >>"$sm"
+	else
+		private_file "$sm" "$target"
+	fi
+}
+
+# close_socket SOCK SESSION closes SESSION's passthroughs on the Nearhost at
+# SOCK, and fails unless that Nearhost confirms it. A socket that is gone
+# succeeds: that Nearhost is not running, and its passthroughs ended with it.
+close_socket() {
+	[ -S "$1" ] || return 0
+	command -v curl >/dev/null 2>&1 || return 1
+	call "$1" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$2" && [ "$STATUS" = 204 ]
+}
+
+# close_ssh SSH HOST SESSION closes SESSION's passthroughs on HOST, running
+# this script there with SSH, and fails unless it confirms that. Sent TERM,
+# it ends the ssh too.
+close_ssh() {
+	cs=""
+	trap 'if [ -n "$cs" ]; then kill "$cs" 2>/dev/null; fi; exit 1' TERM
+	remote_input passthrough-close --session "$3" | "$1" -o BatchMode=yes -o ConnectTimeout=2 -- "$2" 'sh -s' &
+	cs=$!
+	wait "$cs"
+}
+
+# close_session SESSION closes SESSION's passthroughs at every target in its
+# marker at once, cutting off what has not finished after 2.5 seconds, and
+# keeps in the marker only the targets that did not close.
+close_session() {
+	marker="$(state_dir)/sessions/$1"
+	[ -f "$marker" ] || return 0
+	# plan holds a word per line of the marker: the pid closing it, or - for
+	# a line that names no target and is dropped.
+	plan=""
+	running=""
+	while IFS= read -r line || [ -n "$line" ]; do
+		job=-
+		case $line in
+		/*)
+			(close_socket "$line" "$1") </dev/null >/dev/null 2>&1 &
+			job=$!
+			;;
+		"ssh "*)
+			rest=${line#ssh }
+			host=${rest##* }
+			bin=${rest% *}
+			if [ "$bin" != "$rest" ] && good_host "$host"; then
+				# An absolute path, or on Windows, where Git Bash runs the
+				# hook, one with a drive letter as nearhost.ps1 writes it.
+				case $bin in
+				/* | [A-Za-z]:[\\/]*)
+					if [ -f "$0" ] && [ -r "$0" ]; then
+						(close_ssh "$bin" "$host" "$1") </dev/null >/dev/null 2>&1 &
+					else
+						(exit 1) &
+					fi
+					job=$!
+					;;
+				esac
+			fi
+			;;
+		esac
+		plan="$plan $job"
+		[ "$job" = - ] || running="$running $job"
+	done <"$marker"
+	if [ -n "$running" ]; then
+		# The hook has 3 seconds. A sleep that takes no fraction fails at
+		# once, and the cut-off falls back to 2 seconds.
+		(
+			wd=""
+			trap 'if [ -n "$wd" ]; then kill "$wd" 2>/dev/null; fi; exit 0' TERM
+			sleep 2.5 2>/dev/null &
+			wd=$!
+			if ! wait "$wd"; then
+				sleep 2 &
+				wd=$!
+				wait "$wd"
+			fi
+			# shellcheck disable=SC2086 # running is a list of pids.
+			kill $running 2>/dev/null
+		) </dev/null >/dev/null 2>&1 &
+		watchdog=$!
+	fi
+	keep=""
+	# shellcheck disable=SC2086 # plan is a list of words.
+	set -- $plan
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ $# -gt 0 ] || break
+		job=$1
+		shift
+		[ "$job" = - ] && continue
+		wait "$job" && continue
+		keep="$keep$line
+"
+	done <"$marker"
+	if [ -n "$running" ]; then
+		kill "$watchdog" 2>/dev/null
+		wait "$watchdog"
+	fi
+	if [ -n "$keep" ]; then
+		private_file "$marker" "${keep%?}"
+	else
+		rm -f "$marker"
+	fi
 }
 
 # pass_find finds Nearhost and checks that it has passthroughs. PORT is the
@@ -805,27 +950,41 @@ passthrough-close)
 	if [ "${1:-}" = --session ]; then
 		sid=${2:-}
 		plain_word "$sid" || exit 0
-		marker="$(state_dir)/sessions/$sid"
-		[ -f "$marker" ] || exit 0
-		IFS= read -r SOCK <"$marker" || :
-		# With its socket gone, that Nearhost is not running, and its
-		# passthroughs ended with it, so there is nothing left to close.
-		if [ ! -S "$SOCK" ]; then
-			rm -f "$marker"
+		if [ -n "$REMOTE" ]; then
+			# Run by --on from the agent's machine, which keeps the marker:
+			# the exit status says whether the close needs trying again.
+			# No Nearhost here means there is nothing left to close.
+			SOFT=""
+			NONE_OK=1
+			find_socket
+			call "$SOCK" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$sid" || exit 1
+			[ "$STATUS" = 204 ] || exit 1
 			exit 0
 		fi
-		command -v curl >/dev/null 2>&1 || exit 0
-		# Otherwise the marker stays until Nearhost confirms the close, so a
-		# later attempt can still find the socket.
-		if call "$SOCK" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$sid" && [ "$STATUS" = 204 ]; then
-			rm -f "$marker"
-		fi
+		close_session "$sid"
 		exit 0
 	fi
-	id=${1:-}
+	id=""
+	on=""
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--on)
+			[ $# -ge 2 ] || die 1 "--on needs the SSH host the dev server runs on"
+			check_host "$2"
+			on=$2
+			shift 2
+			;;
+		*)
+			[ -z "$id" ] || die 1 "passthrough-close takes one id"
+			id=$1
+			shift
+			;;
+		esac
+	done
 	case $id in
-	'' | *[!0-9a-f]*) die 1 "usage: passthrough-close --session <id> | <id>" ;;
+	'' | *[!0-9a-f]*) die 1 "usage: passthrough-close --session <id> | <id> [--on host]" ;;
 	esac
+	[ -z "$on" ] || run_on "$on" passthrough-close "$id"
 	find_socket
 	call "$SOCK" 20 -X DELETE "http://nearhost/v1/passthroughs/$id" || exit 0
 	[ "$STATUS" = 204 ] || printf '%s\n' "$BODY"
@@ -913,6 +1072,6 @@ open-wait)
 	esac
 	;;
 *)
-	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] [--on host] | passthrough-wait <id> [--on host] | passthrough-close --session <id> | <id> | open <path> [--label X] | open-wait <id>"
+	die 1 "usage: nearhost.sh socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] [--on host] | passthrough-wait <id> [--on host] | passthrough-close --session <id> | <id> [--on host] | open <path> [--label X] | open-wait <id>"
 	;;
 esac
