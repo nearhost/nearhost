@@ -153,24 +153,25 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 
 // updateNetwork works out the network options for the engine's config and
 // page as they are now, and gives them to the proxy when they changed,
-// which it reports. They take effect at the proxy's next apply. The caller
+// which it reports, with the options and state it had before. They take
+// effect at the proxy's next apply. The caller
 // holds lifeMu, so the config does not change meanwhile, and applyMu, so
 // no site is applied between the change and the caller's own apply.
-func (e *Engine) updateNetwork() (prev *proxy.NetworkOptions, changed bool) {
+func (e *Engine) updateNetwork() (prev *proxy.NetworkOptions, prevState NetworkState, changed bool) {
 	e.mu.Lock()
 	cfg, port := e.cfg, e.webPort
 	e.mu.Unlock()
 	opts, state := e.networkFor(cfg, port)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.netState = state
+	prevState, e.netState = e.netState, state
 	if reflect.DeepEqual(opts, e.netOpts) {
-		return e.netOpts, false
+		return e.netOpts, prevState, false
 	}
 	prev, e.netOpts = e.netOpts, opts
 	e.rememberTokenLocked(opts)
 	e.setNetwork(opts)
-	return prev, true
+	return prev, prevState, true
 }
 
 // rememberTokenLocked notes the DNS token of opts, so it is redacted from
@@ -196,7 +197,7 @@ func (e *Engine) rememberTokenLocked(opts *proxy.NetworkOptions) {
 func (e *Engine) applyNetwork() {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
-	prev, changed := e.updateNetwork()
+	prev, prevState, changed := e.updateNetwork()
 	if !changed {
 		return
 	}
@@ -217,8 +218,12 @@ func (e *Engine) applyNetwork() {
 	if e.netOpts == nil {
 		what = "stop"
 	}
+	// The state goes back with the options, so status says what the
+	// proxy serves: still networked after a failed stop, not after a
+	// failed start.
 	e.netOpts = prev
 	e.setNetwork(prev)
+	e.netState = prevState
 	e.netState.Problem = "networked mode couldn't " + what + ": " + err.Error()
 	e.netState.ProblemKind = NetworkApplyFailed
 	e.mu.Unlock()

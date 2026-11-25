@@ -461,8 +461,9 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 			if got, want := ops.list(), []string{"network " + testDomain, "apply", "network nil"}; !slices.Equal(got, want) {
 				t.Errorf("proxy saw %v, want %v", got, want)
 			}
-			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") || st.ProblemKind != NetworkApplyFailed {
-				t.Errorf("NetworkState = %+v", st)
+			// The core serves as it did, not networked, and says so.
+			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") || st.ProblemKind != NetworkApplyFailed || st.On || st.URL != "" || st.Certificates != "" {
+				t.Errorf("NetworkState = %+v, want off with the problem", st)
 			}
 			unsubscribe()
 			said := false
@@ -539,5 +540,36 @@ func TestRecheckNetworkAfterShutdown(t *testing.T) {
 	}
 	if err := h.eng.RecheckNetwork(bg); err == nil {
 		t.Error("RecheckNetwork after Shutdown succeeded")
+	}
+}
+
+// A failed stop leaves the core networked, and its state says so: on, at
+// its address, with the problem.
+func TestFailedNetworkStopKeepsTheState(t *testing.T) {
+	web := testutil.ProxyPort(t)
+	h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = web })
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	ops := watchProxy(h, false)
+	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	on := h.eng.NetworkState()
+	if !on.On || on.URL == "" || on.Problem != "" {
+		t.Fatalf("NetworkState on = %+v", on)
+	}
+	h.eng.applySites = func([]proxy.Site) error {
+		ops.mu.Lock()
+		ops.ops = append(ops.ops, "apply")
+		ops.mu.Unlock()
+		return errors.New("load proxy config: boom; the previous config serves again")
+	}
+	if err := h.eng.Apply(bg, &config.Config{}); err != nil {
+		t.Fatalf("Apply off: %v", err)
+	}
+	st := h.eng.NetworkState()
+	if !st.On || st.URL != on.URL || st.Certificates != on.Certificates || st.ProblemKind != NetworkApplyFailed || !strings.HasPrefix(st.Problem, "networked mode couldn't stop: ") {
+		t.Errorf("NetworkState after a failed stop = %+v, want %+v with the problem", st, on)
 	}
 }
