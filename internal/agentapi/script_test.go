@@ -866,6 +866,28 @@ func TestScriptPassthroughOpen(t *testing.T) {
 	})
 }
 
+// A label reaches Nearhost byte for byte, backslashes and quotes too, in
+// every awk the script may meet: mawk on Debian and Ubuntu servers once
+// read "\\\\" in gsub's replacement as one backslash.
+func TestScriptPassthroughLabelEscapes(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		_, p, g, _ := passScript(t, home, "mini", false)
+		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
+		storeToken(t, home, "claude-code", "tok-x")
+		labels := []string{`a\b`, `a\"b`, `a\\b`, `"q"`, `end\`}
+		for i, label := range labels {
+			r := shell.run(t, home, claudeEnv, "passthrough", strconv.Itoa(3000+i), "--label", label)
+			if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
+				t.Fatalf("label %q: %+v", label, r)
+			}
+			if opens := p.opened(); len(opens) != i+1 || opens[i].Label != label {
+				t.Fatalf("label %q: opened %+v", label, opens)
+			}
+		}
+	})
+}
+
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
@@ -1433,6 +1455,7 @@ func TestScriptPassthroughOnAnotherHost(t *testing.T) {
 		labels := []string{
 			`it's "x" $(id) ` + "`id` \\ ;",
 			`a\b`,
+			`a\"b`,
 			`x\' ; echo INJECTED #`,
 		}
 		for i, label := range labels {

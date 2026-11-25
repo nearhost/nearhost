@@ -234,16 +234,23 @@ resolved() {
 }
 
 # quote STRING prints STRING as a JSON string. awk reads it from the
-# environment, which leaves backslashes as they are.
+# environment, which leaves backslashes as they are, and escapes it a
+# character at a time: awks disagree on backslashes in gsub's replacement,
+# and mawk 1.3.4 20200120, Debian 12's and Ubuntu 22.04's, gets them wrong.
 quote() {
 	QUOTE=$1 awk 'BEGIN {
 		s = ENVIRON["QUOTE"]
-		gsub(/\\/, "\\\\", s)
-		gsub(/"/, "\\\"", s)
-		gsub(/\t/, "\\t", s)
-		gsub(/\n/, "\\n", s)
-		gsub(/\r/, "\\r", s)
-		printf "\"%s\"", s
+		out = ""
+		for (i = 1; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if (c == "\\") c = "\\\\"
+			else if (c == "\"") c = "\\\""
+			else if (c == "\t") c = "\\t"
+			else if (c == "\n") c = "\\n"
+			else if (c == "\r") c = "\\r"
+			out = out c
+		}
+		printf "\"%s\"", out
 	}'
 }
 
