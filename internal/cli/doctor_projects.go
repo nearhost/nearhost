@@ -344,7 +344,7 @@ func printProjects(out io.Writer, projects []projectReport) {
 	}
 	printProjectsHeading(out)
 	for _, p := range projects {
-		printProject(out, p)
+		printProject(out, p, false)
 	}
 }
 
@@ -354,8 +354,9 @@ func printProjectsHeading(out io.Writer) {
 	fmt.Fprintln(out, "Projects")
 }
 
-// printProject prints one project's findings, or its one line.
-func printProject(out io.Writer, p projectReport) {
+// printProject prints one project's findings, or its one line. With
+// verbose, as --verbose asks, each finding ends with its code.
+func printProject(out io.Writer, p projectReport, verbose bool) {
 	p.name = printable(p.name) // a project's name can come from a remote directory
 	if len(p.findings) == 0 {
 		fmt.Fprintf(out, "%-4s  %-16s %s\n", levelOK, p.name, "no problems found")
@@ -369,6 +370,9 @@ func printProject(out io.Writer, p projectReport) {
 			for _, line := range strings.Split(strings.TrimRight(printableLines(f.Fix.Snippet), "\n"), "\n") {
 				fmt.Fprintf(out, "          %s\n", line)
 			}
+		}
+		if code := f.Complete().Code; verbose && code != "" {
+			printCode(out, code)
 		}
 	}
 }

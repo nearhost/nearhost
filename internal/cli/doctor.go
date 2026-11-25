@@ -484,8 +484,14 @@ func failure(failed int) error {
 
 // printCheck prints one check: its line, and its fix under it. A check
 // whose fix takes several steps prints them in its place, each command on
-// a line of its own under its step's text, so that it can be copied.
-func printCheck(out io.Writer, c check) {
+// a line of its own under its step's text, so that it can be copied. With
+// verbose, as --verbose asks, a check that did not pass ends with its code.
+func printCheck(out io.Writer, c check, verbose bool) {
+	defer func() {
+		if m := c.message(); verbose && m != nil && m.Code != "" {
+			printCode(out, m.Code)
+		}
+	}()
 	// A detail of several lines (ssh can print more than one) keeps its
 	// lines, aligned under the first. What ssh printed comes from the
 	// server too, and a check's name can hold a server's, so neither
@@ -510,6 +516,11 @@ func printCheck(out io.Writer, c check) {
 	if c.fix != "" {
 		fmt.Fprintf(out, "      fix: %s\n", upperFirst(printable(c.fix)))
 	}
+}
+
+// printCode prints a row's code under it, for --verbose.
+func printCode(out io.Writer, code report.Code) {
+	fmt.Fprintf(out, "      code: %s\n", printable(string(code)))
 }
 
 // printSummary prints the blank line and the closing sentence, and returns

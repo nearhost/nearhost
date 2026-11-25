@@ -56,33 +56,78 @@ func TestFindingIDsUnchanged(t *testing.T) {
 
 	// The IDs this package sets are the catalog's constants, so a finding's
 	// ID can't drift from its code: no string literal is an ID.
-	ids := map[string]bool{}
+	ids := map[string]int{}
 	for _, name := range []string{"rc.go", "hosts.go", "docker.go"} {
 		src, err := os.ReadFile(filepath.Join(".", name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
-		if err != nil {
-			t.Fatal(err)
+		for _, v := range literalIDs(t, name, src, ids) {
+			t.Error(v)
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			kv, ok := n.(*ast.KeyValueExpr)
-			if !ok {
-				return true
-			}
-			if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "ID" {
-				if lit, ok := kv.Value.(*ast.BasicLit); ok {
-					s, _ := strconv.Unquote(lit.Value)
-					t.Errorf("%s: ID %q is a string literal; use the code's constant", name, s)
-				}
-				ids[name] = true
-			}
-			return true
-		})
 	}
-	if len(ids) != 3 {
-		t.Errorf("found IDs in %v, want rc.go, hosts.go and docker.go", ids)
+	if len(ids) != 3 || ids["rc.go"] < 9 {
+		t.Errorf("found IDs set in %v, want rc.go (with its assignments), hosts.go and docker.go", ids)
+	}
+}
+
+// literalIDs parses one Go file and returns each place it sets a field
+// named ID to a string literal: as a key in a composite literal, or by an
+// assignment to x.ID. It counts in ids every place the file sets an ID.
+func literalIDs(t *testing.T, name string, src []byte, ids map[string]int) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	check := func(v ast.Expr) {
+		ids[name]++
+		for p, ok := v.(*ast.ParenExpr); ok; p, ok = v.(*ast.ParenExpr) {
+			v = p.X
+		}
+		if lit, ok := v.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			s, _ := strconv.Unquote(lit.Value)
+			out = append(out, name+": ID "+strconv.Quote(s)+" is a string literal; use the code's constant")
+		} else if b, ok := v.(*ast.BinaryExpr); ok && b.Op == token.ADD {
+			if lit, ok := b.X.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				out = append(out, name+": an ID is built from the string literal "+lit.Value+"; use the code's constant")
+			}
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.KeyValueExpr:
+			if k, ok := x.Key.(*ast.Ident); ok && k.Name == "ID" {
+				check(x.Value)
+			}
+		case *ast.AssignStmt:
+			for i, l := range x.Lhs {
+				if s, ok := l.(*ast.SelectorExpr); ok && s.Sel.Name == "ID" && i < len(x.Rhs) {
+					check(x.Rhs[i])
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// The guard finds a literal ID however it is set.
+func TestLiteralIDsGuard(t *testing.T) {
+	const src = `package doctor
+func f() {
+	_ = Finding{ID: "nearhostrc.x"}
+	var fd Finding
+	fd.ID = "nearhostrc.y"
+	fd.ID = ("nearhostrc.z")
+	fd.ID = "advice." + code
+	fd.ID = string(report.NearhostrcInvalid)
+}`
+	ids := map[string]int{}
+	got := literalIDs(t, "x.go", []byte(src), ids)
+	if len(got) != 4 || ids["x.go"] != 5 {
+		t.Errorf("found %d of 4 (%d IDs set): %v", len(got), ids["x.go"], got)
 	}
 }
 

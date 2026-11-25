@@ -149,7 +149,6 @@ const (
 	CoreSSHAgentUnreachable    Code = "core.ssh-agent-unreachable"
 	CoreDockerMissing          Code = "core.docker-missing"
 	CoreDockerUnreachable      Code = "core.docker-unreachable"
-	CoreSSHMissing             Code = "core.ssh-missing"
 	CoreRunDirFailed           Code = "core.run-dir-failed"
 	PageRenderFailed           Code = "page.render-failed"
 	PageRequestEnded           Code = "page.request-ended"
@@ -372,7 +371,6 @@ var catalog = []Entry{
 	{CoreSSHAgentUnreachable, Warning, 0, "The SSH agent Nearhost in the background was given does not answer."},
 	{CoreDockerMissing, Info, 0, "docker is not on the PATH of Nearhost in the background; only Docker projects need it."},
 	{CoreDockerUnreachable, Warning, 0, "Docker does not answer Nearhost in the background."},
-	{CoreSSHMissing, Error, 503, "ssh is not on the PATH of Nearhost in the background, so it cannot reach servers."},
 	{PageRenderFailed, Error, 500, "Nearhost's page could not be drawn."},
 	{PageRequestEnded, Warning, 409, "The request on the page has been answered or has ended."},
 	{PageProposalDeclineOnly, Error, 400, "A proposal can only be declined on the page; reviewing it needs Nearhost on this machine."},
@@ -441,7 +439,7 @@ var catalog = []Entry{
 	{HostsUnreadable, Error, 500, "The hosts file cannot be read."},
 	{SSHAgentMissing, Info, 0, "The OpenSSH Authentication Agent is not installed on Windows."},
 	{SSHAgentStopped, Info, 0, "The OpenSSH Authentication Agent service on Windows is not running."},
-	{SSHNotFound, Error, 503, "ssh cannot be run, so Nearhost cannot reach servers."},
+	{SSHNotFound, Error, 503, "ssh cannot be run, from this shell's PATH or that of Nearhost in the background, so Nearhost cannot reach servers."},
 	{SSHTooOld, Warning, 0, "The ssh on PATH is older than the one Nearhost needs."},
 	{SSHVersionUnknown, Info, 0, "Nearhost could not read the version of the ssh on PATH."},
 	{SSHOtherVendor, Warning, 0, "The ssh Nearhost runs on Windows is not Microsoft's OpenSSH."},

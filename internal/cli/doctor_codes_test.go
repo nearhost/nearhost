@@ -246,3 +246,42 @@ func TestDoctorJSONKeepsOldFields(t *testing.T) {
 		}
 	}
 }
+
+// --verbose shows each row's code under its fix, and each finding's, as it
+// shows an error's; without it no code is printed.
+func TestDoctorVerboseShowsCodes(t *testing.T) {
+	shopAndBlog(t)
+	f := healthy()
+	f.hosts = shopAndBlogHosts
+	f.portErr = map[string]error{"tcp 80": syscall.EADDRINUSE}
+	var opened []string
+	b := withProjects(f.backend(), nil, &opened)
+	out, _, _ := runSplit(t, b, "doctor", "--verbose")
+	wantContains(t, out,
+		"FAIL  port 80          address already in use\n"+
+			"      fix: Stop the process using it (expected while `nearhost up` is running), or give `nearhost up` another --http-port\n"+
+			"      code: port.in-use\n",
+		"      fix: Correct .nearhostrc.\n      code: nearhostrc.invalid\n")
+	if strings.Count(out, "code: ") != 2 {
+		t.Errorf("a passing row shows a code:\n%s", out)
+	}
+	out, _, _ = runSplit(t, b, "doctor")
+	if strings.Contains(out, "code: ") {
+		t.Errorf("codes without --verbose:\n%s", out)
+	}
+}
+
+// A row of several steps shows its code after them.
+func TestDoctorVerboseCodeAfterSteps(t *testing.T) {
+	var out strings.Builder
+	printCheck(&out, check{name: "server mini", level: levelFail, detail: "refused", code: report.SSHUnreachable,
+		steps: []report.Step{sshStep("mini.lan"), {Text: "Then run `nearhost doctor` again."}}}, true)
+	want := "FAIL  server mini      refused\n" +
+		"      fix: Fix access by running ssh once in a terminal:\n" +
+		"             ssh mini.lan\n" +
+		"           Then run `nearhost doctor` again.\n" +
+		"      code: ssh.unreachable\n"
+	if out.String() != want {
+		t.Errorf("printed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
