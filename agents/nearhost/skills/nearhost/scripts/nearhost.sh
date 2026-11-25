@@ -330,7 +330,7 @@ session() {
 }
 
 # sq STRING prints STRING single-quoted for a POSIX shell, each ' in it
-# written as '\'', so the shell on the other end of ssh reads it byte for byte.
+# written as '\'', so sh -s on the other end of ssh reads it byte for byte.
 sq() {
 	rest=$1
 	done_=""
@@ -365,20 +365,30 @@ run_on() {
 	check_host "$host"
 	[ -f "$0" ] && [ -r "$0" ] || die 1 "--on needs this script as a file to send, not $0"
 	command -v ssh >/dev/null 2>&1 || die 2 "ssh is needed for --on and is not installed here."
-	rcmd="sh -s -- --remote $(sq "$(requester)") $(sq "$(session)")"
-	for arg in "$@"; do
-		rcmd="$rcmd $(sq "$arg")"
-	done
-	# The script goes on stdin for sh -s. ssh's stderr is caught to tell
-	# its own failure apart; stdout passes straight through.
+	# sshd runs the command through the user's login shell, which may not be
+	# POSIX (fish, csh), so it is the constant sh -s and nothing else. The
+	# arguments go on stdin ahead of the script, where sh reads them. ssh's
+	# stderr is caught to tell its own failure apart; stdout passes through.
 	rc=0
-	{ err=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -- "$host" "$rcmd" <"$0" 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
+	{ err=$(remote_input "$@" 3>&- | ssh -o BatchMode=yes -o ConnectTimeout=5 -- "$host" 'sh -s' 2>&1 1>&3 3>&-) || rc=$?; } 3>&1
 	if [ "$rc" -eq 255 ]; then
 		first=$(printf '%s\n' "$err" | sed -n '1p')
 		die 2 "SSH could not reach $host: ${first:-ssh exited with status 255}"
 	fi
 	[ -n "$err" ] && printf '%s\n' "$err" >&2
 	exit "$rc"
+}
+
+# remote_input ARGS... prints what run_on sends to sh -s: a line setting the
+# arguments to --remote, the requester, the session and ARGS, each one
+# single-quoted, then this script.
+remote_input() {
+	printf 'set -- --remote %s %s' "$(sq "$(requester)")" "$(sq "$(session)")"
+	for arg in "$@"; do
+		printf ' %s' "$(sq "$arg")"
+	done
+	printf '\n'
+	cat "$0"
 }
 
 # state_dir prints where the skill keeps tokens and session markers.
@@ -556,7 +566,8 @@ EOF
 }
 
 # --remote REQUESTER SESSION comes first when run_on runs the script on
-# another host: sh -s reads it from stdin, over SSH. Nothing else may use it.
+# another host: sh -s reads the arguments and the script from stdin, over
+# SSH. Nothing else may use it.
 REMOTE=""
 if [ "${1:-}" = --remote ]; then
 	if [ -t 0 ] || [ -z "${SSH_CONNECTION:-}" ]; then

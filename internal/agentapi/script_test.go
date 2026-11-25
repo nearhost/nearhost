@@ -1333,7 +1333,8 @@ func eachShShell(t *testing.T, f func(t *testing.T, shell scriptShell)) {
 // fakeSSH puts an ssh in home/bin, which drops its options, -- and the host,
 // then runs the rest with sh -c under SSH_CONNECTION=fake, stdin passed
 // through, as ssh runs a command on a server. It leaves home/ssh-ran when it
-// runs. It returns the PATH to run the script with.
+// runs, and the command it was given in home/ssh-cmd. It returns the PATH to
+// run the script with.
 func fakeSSH(t *testing.T, home string) string {
 	t.Helper()
 	return fakeSSHWith(t, home, `while [ $# -gt 0 ]; do
@@ -1345,6 +1346,7 @@ func fakeSSH(t *testing.T, home string) string {
 	esac
 done
 shift
+printf '%s\n' "$@" >'`+filepath.Join(home, "ssh-cmd")+`'
 SSH_CONNECTION=fake exec sh -c "$*"
 `)
 }
@@ -1370,15 +1372,28 @@ func TestScriptPassthroughOnAnotherHost(t *testing.T) {
 		_, p, g, _ := passScript(t, home, "mini", false)
 		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
 		storeToken(t, home, "claude-code", "tok-x")
-		label := `it's "x" $(id) ` + "`id` \\ ;"
 		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
-		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo", "--label", label)
-		if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) {
-			t.Fatalf("passthrough --on: %+v", r)
+		// Labels come from text the agent read: none may reach a shell on
+		// the host as anything but its bytes, whatever that shell is.
+		labels := []string{
+			`it's "x" $(id) ` + "`id` \\ ;",
+			`a\b`,
+			`x\' ; echo INJECTED #`,
 		}
-		opens := p.opened()
-		if len(opens) != 1 || opens[0].Requester != "claude-code" || opens[0].Session != "s1" || opens[0].Remote != 3000 || opens[0].Label != label {
-			t.Fatalf("opened %+v", opens)
+		for i, label := range labels {
+			r := shell.run(t, home, env, "passthrough", strconv.Itoa(3000+i), "--on", "apollo", "--label", label)
+			if r.code != 0 || !strings.Contains(r.stdout, `"state":"open"`) || strings.Contains(r.stdout+r.stderr, "INJECTED\n") {
+				t.Fatalf("passthrough --on %q: %+v", label, r)
+			}
+			opens := p.opened()
+			if len(opens) != i+1 || opens[i].Requester != "claude-code" || opens[i].Session != "s1" || opens[i].Remote != 3000+i || opens[i].Label != label {
+				t.Fatalf("label %q: opened %+v", label, opens)
+			}
+			// The command ssh runs on the host is a constant: the login
+			// shell there, POSIX or not, sees no argument.
+			if cmd, err := os.ReadFile(filepath.Join(home, "ssh-cmd")); err != nil || string(cmd) != "sh -s\n" {
+				t.Fatalf("ssh ran %q: %v", cmd, err)
+			}
 		}
 	})
 }
