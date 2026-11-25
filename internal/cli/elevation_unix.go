@@ -25,7 +25,7 @@ const (
 	// trustDeclined is how a trust or untrust error names a refusal.
 	trustDeclined = "if you declined the password prompt or the OS refused"
 	// hostsFix is doctor's fix for a stale hosts block.
-	hostsFix = "run `nearhost up`; it updates the block and asks for your password"
+	hostsFix = "run `nearhost hosts update`; it updates the block and asks for your password"
 	// hostsApprove is what up's fix tells the user to do when it next asks
 	// to update the hosts file.
 	hostsApprove = "approve the password prompt"

@@ -78,9 +78,13 @@ Then ask the agent to add the project, with `/nearhost add` in Claude Code. Near
 | Command | What it does |
 | --- | --- |
 | `nearhost` | Open the interface, which serves every enabled project |
+| `nearhost -d` | Start Nearhost in the background, with no interface |
+| `nearhost stop` / `status` | Stop the background Nearhost, or show what it serves |
+| `nearhost service install` / `uninstall` | Start Nearhost at login as a service, or remove it |
 | `nearhost add [path]` | Add a project, discovering its ports from its files |
 | `nearhost ls` | List the configured projects and their routes |
 | `nearhost up [project...]` | Serve the named projects, or every enabled one, without the interface |
+| `nearhost update` | Update Nearhost the way you installed it, which for npm is `npm install -g` |
 | `nearhost doctor` | Check ports, the certificate authority, the hosts block and server access |
 | `nearhost trust` / `untrust` | Add or remove the local certificate authority in the system trust store |
 | `nearhost hosts clean` | Remove the Nearhost block from `/etc/hosts` |
