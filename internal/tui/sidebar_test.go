@@ -128,3 +128,100 @@ func TestSidebarCutsLongNames(t *testing.T) {
 		t.Errorf("row %q", got)
 	}
 }
+
+// The passthroughs and documents rows are pinned to the bottom, under a
+// blank line, counting what agents opened on every server.
+func TestSidebarPinsAgentRows(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := sized(f)
+	f.passes = append(f.passes, passModelPass(m))
+	got := sideText(m)
+	n := len(got)
+	if got[n-3] != strings.Repeat(" ", wideSidebar) ||
+		got[n-2] != " passthroughs           ● 1 " || got[n-1] != " documents             none " {
+		t.Errorf("pinned lines %q", got[n-3:])
+	}
+}
+
+// The list scrolls above the pinned rows, which stay.
+func TestSidebarPinnedRowsStayWhileListScrolls(t *testing.T) {
+	m := New(newFake(t, manyProjects(30)), "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.sel = rowKey(rowProject, "p29")
+	got := sideText(m)
+	if !strings.Contains(strings.Join(got, "\n"), "p29") {
+		t.Errorf("the selected project is not drawn: %q", got)
+	}
+	n := len(got)
+	if !strings.HasPrefix(got[n-2], " passthroughs") || !strings.HasPrefix(got[n-1], " documents") {
+		t.Errorf("last lines %q", got[n-2:])
+	}
+}
+
+// A sidebar too short for the pinned rows draws the list alone.
+func TestSidebarTooShortForPinnedRows(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.sel = rowKey(rowProject, "old")
+	side, _ := m.sidebar(m.sideWidth(), 3)
+	joined := ansi.Strip(strings.Join(side, "\n"))
+	if !strings.Contains(joined, "old") || strings.Contains(joined, "passthroughs") || strings.Contains(joined, "documents") {
+		t.Errorf("sidebar %q", joined)
+	}
+}
+
+// A narrow sidebar shows the counts alone.
+func TestNarrowSidebarPinnedCounts(t *testing.T) {
+	f := newFake(t, sampleConfig())
+	m := New(f, "/work/here")
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	f.passes = append(f.passes, passModelPass(m))
+	got := sideText(m)
+	n := len(got)
+	if !strings.HasPrefix(got[n-2], " passthroughs") || !strings.HasSuffix(got[n-2], " 1 ") ||
+		!strings.HasPrefix(got[n-1], " documents") || !strings.HasSuffix(got[n-1], " 0 ") {
+		t.Errorf("pinned lines %q", got[n-2:])
+	}
+}
+
+// A filter hides the pinned rows.
+func TestSidebarFilterHidesPinnedRows(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.filter.SetValue("x")
+	for _, r := range m.rows() {
+		if r.kind == rowPasses || r.kind == rowDocs {
+			t.Errorf("row %q while filtered", r.key())
+		}
+	}
+	if joined := strings.Join(sideText(m), "\n"); strings.Contains(joined, "passthroughs") || strings.Contains(joined, "documents") {
+		t.Errorf("sidebar %q", joined)
+	}
+}
+
+// down moves from the last project into the pinned rows and stops at the
+// last.
+func TestMoveIntoPinnedRows(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	m.sel = rowKey(rowProject, "old")
+	for _, want := range []string{"passthroughs", "documents", "documents"} {
+		m.move(1)
+		if m.sel != want {
+			t.Errorf("selected %q, want %q", m.sel, want)
+		}
+	}
+}
+
+// A click on a pinned row selects it.
+func TestClickPinnedRow(t *testing.T) {
+	m := sized(newFake(t, sampleConfig()))
+	y := m.bodyHeight() - 1
+	if got := m.sidebarKeyAt(y); got != "documents" {
+		t.Fatalf("line %d maps to %q", y, got)
+	}
+	if got := m.sidebarKeyAt(y - 2); got != "" {
+		t.Errorf("the blank line maps to %q", got)
+	}
+	click(m, 3, bodyTop+y)
+	if m.sel != "documents" {
+		t.Errorf("selected %q", m.sel)
+	}
+}

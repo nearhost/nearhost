@@ -750,6 +750,8 @@ func (m *Model) main(width, height int) ([]string, []string) {
 		details = m.serverPanel(name, width, height-3)
 	case rowProject:
 		details = m.projectPanel(name, width)
+	case rowPasses, rowDocs:
+		details = m.agentsPanel(kind, width, height-3)
 	default:
 		details = m.home(width)
 	}

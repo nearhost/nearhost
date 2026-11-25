@@ -186,7 +186,7 @@ func TestMovingAndEnter(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		press(m, "down")
 	}
-	if m.sel != rowKey(rowProject, "old") {
+	if m.sel != rowKey(rowDocs, "") { // the pinned rows come last
 		t.Errorf("moved past the end to %q", m.sel)
 	}
 	press(m, "h")
@@ -571,10 +571,10 @@ func TestSidebarKeepsTheSelectionInView(t *testing.T) {
 		t.Fatalf("selected %q", m.sel)
 	}
 	lines := strings.Split(screen(m), "\n")
-	if !strings.Contains(lines[bodyTop+m.bodyHeight()-1], "p39") {
-		t.Errorf("the selected row is not on the last sidebar line:\n%s", screen(m))
+	if !strings.Contains(lines[bodyTop+m.bodyHeight()-4], "p39") {
+		t.Errorf("the selected row is not on the last list line:\n%s", screen(m))
 	}
-	click(m, 3, bodyTop+m.bodyHeight()-2)
+	click(m, 3, bodyTop+m.bodyHeight()-5)
 	if m.sel != rowKey(rowProject, "p38") {
 		t.Errorf("click selected %q, want the row drawn there", m.sel)
 	}

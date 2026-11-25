@@ -74,6 +74,8 @@ func (m *Model) footerItems() []footerItem {
 				break
 			}
 		}
+	case rowPasses, rowDocs:
+		// Nothing to do on the panel yet; the global items follow.
 	case rowServer:
 		items = []footerItem{{"enter", "collapse"}}
 		if name != config.LocalServer {

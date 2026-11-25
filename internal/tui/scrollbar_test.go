@@ -38,7 +38,8 @@ func TestSidebarScrollbar(t *testing.T) {
 		press(m, "down")
 	}
 	border = []rune(column(m, m.sideWidth()))
-	if border[0] != '│' || border[len(border)-1] != '┃' {
+	// The pinned rows are below the list, so the thumb ends above them.
+	if border[0] != '│' || border[len(border)-4] != '┃' {
 		t.Errorf("at the bottom, the border is %q, want the thumb at its bottom", string(border))
 	}
 }
