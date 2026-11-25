@@ -39,18 +39,19 @@ var ErrReadOnly = errors.New("hosts file is read-only")
 // message, hosts.read-only.
 type readOnlyError struct{ path string }
 
-// Error returns the message shown to the user: the report's title, then its
-// step.
+// Error returns the text the error has always had, which callers match:
+// the report's title, then how to clear the attribute, in one line.
 func (e *readOnlyError) Error() string {
-	m := e.Report()
-	return m.Title + " " + m.Fix[0].Text
+	return fmt.Sprintf("%s is read-only. Clear it with: attrib -r \"%s\" (in an administrator terminal), or run with --no-hosts.", e.path, e.path)
 }
 
-// Report is the message for the read-only file: what it is, and how to
-// clear the attribute.
+// Report is the message for the read-only file: what it is, how to clear
+// the attribute, and how to serve without the hosts file. Only Windows
+// has the attribute (see readOnly), so the command is Windows's.
 func (e *readOnlyError) Report() *report.Message {
 	return report.Errorf(report.HostsReadOnly, "%s is read-only.", e.path).
-		Then(fmt.Sprintf("Clear it with: attrib -r \"%s\" (in an administrator terminal), or run with --no-hosts.", e.path)).
+		Step("Clear the read-only attribute in an administrator terminal:", fmt.Sprintf("attrib -r \"%s\"", e.path)).
+		Step("Or serve without updating it:", "nearhost --no-hosts").
 		With("path", e.path)
 }
 

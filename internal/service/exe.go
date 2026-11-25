@@ -13,7 +13,7 @@ import (
 func copyError(how string) error {
 	return report.Errorf(report.ServiceCopy, "A service cannot run this copy of nearhost.").
 		Because("This copy was %s, so it will not be there at the next login.", how).
-		Step("Install nearhost as https://nearhost.dev/docs/install/ says, then from that copy run:", "nearhost service install")
+		Step("Install nearhost as https://nearhost.dev/docs/getting-started/install/ says, then from that copy run:", "nearhost service install")
 }
 
 // ServiceExe returns the path the service should run for the running

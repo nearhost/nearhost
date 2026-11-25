@@ -528,3 +528,15 @@ func TestMain(m *testing.M) {
 	report.Fallback = report.SinkFunc(func(*report.Message) {})
 	os.Exit(m.Run())
 }
+
+// A notice reported while a request is handled is not one of its warnings.
+func TestRepliesLeaveOutNotices(t *testing.T) {
+	note := report.Notef(report.AddHostTaken, "a name is left out")
+	s := New(Options{Laptop: "dev@laptop", Source: fakeSource{"mini": mini}, Doctor: warningDoctor{note, nil}})
+	t.Cleanup(s.Close)
+	w := httptest.NewRecorder()
+	s.handler.ServeHTTP(w, request("mini", "GET", "/v1/doctor"+query("path", "/home/dev/code/myapp"), ""))
+	if w.Code != 200 || strings.Contains(w.Body.String(), "warnings") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
