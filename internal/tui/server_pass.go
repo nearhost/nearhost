@@ -86,7 +86,10 @@ func (m *Model) rowsOf(kind rowKind, name string) ([]passRow, error) {
 	case rowDocs:
 		trees := slices.Clone(m.b.Documents(""))
 		sort.SliceStable(trees, func(i, j int) bool {
-			return serverRank(m.cfg, trees[i].Server) < serverRank(m.cfg, trees[j].Server)
+			if a, b := serverRank(m.cfg, trees[i].Server), serverRank(m.cfg, trees[j].Server); a != b {
+				return a < b
+			}
+			return trees[i].Opened.After(trees[j].Opened)
 		})
 		for i := range trees {
 			rows = append(rows, passRow{tree: &trees[i]})
@@ -366,6 +369,12 @@ func (m *Model) passKey(s string) (tea.Cmd, bool) {
 		}
 		return m.closeRow(server, r), true
 	case "o":
+		if tr := rows[m.passRow].tree; tr != nil && kind == rowDocs {
+			if moved {
+				return nil, true
+			}
+			return m.openTree(*tr), true
+		}
 		p := rows[m.passRow].pass
 		if p == nil || kind != rowPasses {
 			return nil, false

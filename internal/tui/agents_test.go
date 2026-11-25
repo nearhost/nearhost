@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 )
 
@@ -154,5 +155,78 @@ func TestPassPanelSessionShownWhenAmbiguous(t *testing.T) {
 	got := strings.Join(panelText(m), "\n")
 	if !strings.Contains(got, "Codex · 1a2b3c4d · <1m") || !strings.Contains(got, "Codex · 99887766 · <1m") {
 		t.Errorf("sessions not shown:\n%s", got)
+	}
+}
+
+// docsPanelModel has trees on this machine and on leto and apollo, with the
+// documents row selected.
+func docsPanelModel(t *testing.T) (*Model, *fakeBackend) {
+	t.Helper()
+	cfg := sampleConfig()
+	cfg.Servers = []config.Server{{Name: "leto", SSHHost: "leto.lan"}, {Name: "apollo", SSHHost: "apollo.lan"}}
+	f := newFake(t, cfg)
+	m := sized(f)
+	m.homeDir = func() (string, error) { return "/Users/dev", nil }
+	now := m.now()
+	f.trees = []documents.Tree{
+		{ID: "a1", Server: "apollo", Root: "/srv/site", Requester: "codex", Opened: now.Add(-3 * time.Hour),
+			Docs: []documents.Doc{{Path: "index.html", Opened: now.Add(-3 * time.Hour)}}},
+		{ID: "l1", Server: "leto", Root: "/home/dev/old", Requester: "claude-code", Opened: now.Add(-2 * time.Hour),
+			Docs: []documents.Doc{{Path: "old.md", Opened: now.Add(-2 * time.Hour)}}},
+		{ID: "l2", Server: "leto", Root: "/home/dev/app", Requester: "claude-code", Opened: now.Add(-12 * time.Minute),
+			Docs: []documents.Doc{{Path: "plans/x.md", Opened: now.Add(-12 * time.Minute)}}},
+		{ID: "x1", Server: config.LocalServer, Root: "/Users/dev/code/app", Requester: "claude-code", Opened: now.Add(-5 * time.Minute),
+			Docs: []documents.Doc{{Path: "plans/y.md", Opened: now.Add(-5 * time.Minute)}}},
+	}
+	m.selectRow("documents")
+	return m, f
+}
+
+func TestDocsPanelListsEveryServer(t *testing.T) {
+	m, _ := docsPanelModel(t)
+	var rest []string
+	for _, l := range m.agentsPanel(rowDocs, 70, 30) {
+		if l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ansi.Strip(l)), "▌")); l != "" {
+			rest = append(rest, l)
+		}
+	}
+	want := []string{
+		"documents",
+		"~/code/app · Claude Code · plans/y.md · 5m",
+		"from local · Claude Code · 5m",
+		"/home/dev/app · Claude Code · plans/x.md · 12m",
+		"from leto · Claude Code · 12m",
+		"/home/dev/old · Claude Code · old.md · 2h",
+		"from leto · Claude Code · 2h",
+		"/srv/site · Codex · index.html · 3h",
+		"from apollo · Codex · 3h",
+	}
+	if !slices.Equal(rest, want) {
+		t.Errorf("lines %q, want %q", rest, want)
+	}
+}
+
+func TestDocsPanelKeys(t *testing.T) {
+	m, f := docsPanelModel(t)
+	press(m, "tab")
+	if !m.passFocus {
+		t.Fatal("tab did not focus the first row")
+	}
+	if got := footer(m); got != "↑↓ select · enter open · x remove · esc done" {
+		t.Errorf("footer %q", got)
+	}
+	press(m, "down") // leto's newest
+	run(m, press(m, "enter"))
+	run(m, press(m, "o"))
+	if got := f.documentTreeCalls(); !slices.Equal(got, []string{"open l2", "open l2"}) {
+		t.Errorf("calls %q", got)
+	}
+	if cmd := press(m, "y"); cmd != nil {
+		t.Errorf("y returned a command: %q", clipboardOf(cmd))
+	}
+	press(m, "x")
+	tf, ok := m.form.(*treeForm)
+	if !ok || tf.id != "l2" || tf.server != "leto" {
+		t.Errorf("x opened %#v", m.form)
 	}
 }

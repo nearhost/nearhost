@@ -44,7 +44,11 @@ func (m *Model) footerItems() []footerItem {
 			case r.grant != nil:
 				return []footerItem{{"↑↓", "select"}, {"x", "revoke"}, {"tab", "done"}}
 			case r.tree != nil:
-				return []footerItem{{"↑↓", "select"}, {"enter", "open"}, {"x", "remove"}, {"tab", "done"}}
+				done := footerItem{"tab", "done"}
+				if kind, _ := m.selected(); kind == rowDocs {
+					done = footerItem{"esc", "done"}
+				}
+				return []footerItem{{"↑↓", "select"}, {"enter", "open"}, {"x", "remove"}, done}
 			}
 			if kind, _ := m.selected(); kind == rowPasses {
 				return []footerItem{{"↑↓", "select"}, {"o", "open"}, {"y", "copy"}, {"x", "close"}, {"esc", "done"}}
