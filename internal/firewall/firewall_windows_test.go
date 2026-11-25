@@ -55,3 +55,19 @@ func TestNetshHasNoWindow(t *testing.T) {
 		t.Errorf("CmdLine = %q, want %q", cmd.SysProcAttr.CmdLine, want)
 	}
 }
+
+// netsh on Windows 11 writes UTF-8 into a pipe, whatever the OEM code page:
+// valid UTF-8 is kept as it is, and only other bytes are read in the OEM
+// code page, as older builds write.
+func TestDecodeNetsh(t *testing.T) {
+	const want = "Program: C:\\Users\\René\\nearhost.exe\r\n"
+	if got := decodeNetsh(850, []byte(want)); string(got) != want {
+		t.Errorf("UTF-8: decodeNetsh = %q, want %q", got, want)
+	}
+	if got := decodeNetsh(850, []byte("Program: C:\\Users\\Ren\x82\\nearhost.exe\r\n")); string(got) != want {
+		t.Errorf("CP850: decodeNetsh = %q, want %q", got, want)
+	}
+	if got := decodeNetsh(850, nil); len(got) != 0 {
+		t.Errorf("decodeNetsh(nil) = %q", got)
+	}
+}

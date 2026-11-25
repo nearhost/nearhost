@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"golang.org/x/sys/windows"
 )
@@ -57,16 +58,27 @@ func netshCmd(ctx context.Context, args []string) *exec.Cmd {
 }
 
 // Netsh runs netsh with args, as written, gives up after netshTimeout, and
-// returns what it printed as UTF-8: into a pipe netsh writes in the OEM
-// code page, so a path with a letter outside ASCII would not match.
+// returns what it printed as UTF-8 (see decodeNetsh), so a path with a
+// letter outside ASCII matches.
 func Netsh(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), netshTimeout)
 	defer cancel()
 	out, err := netshCmd(ctx, args).CombinedOutput()
-	if text, derr := decodeOEM(oemCP(), out); derr == nil {
-		out = text
+	return decodeNetsh(oemCP(), out), err
+}
+
+// decodeNetsh is what netsh printed, b, as UTF-8. Windows 11 netsh writes
+// UTF-8 into a pipe whatever the OEM code page, and that is kept as it is;
+// bytes that are not valid UTF-8, as older builds write, are read in the
+// OEM code page cp. Bytes that are neither are kept as they are.
+func decodeNetsh(cp uint32, b []byte) []byte {
+	if utf8.Valid(b) {
+		return b
 	}
-	return out, err
+	if text, err := decodeOEM(cp, b); err == nil {
+		return text
+	}
+	return b
 }
 
 // getOEMCP is kernel32's GetOEMCP, which x/sys/windows does not wrap.
