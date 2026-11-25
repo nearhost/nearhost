@@ -528,13 +528,35 @@ close_socket() {
 	call "$1" 1 -X DELETE "http://nearhost/v1/passthroughs?session=$2" && [ "$STATUS" = 204 ]
 }
 
+# runnable PATH prints PATH as this shell runs it. One from a drive letter,
+# as nearhost.ps1 writes C:\Windows\System32\OpenSSH\ssh.exe, has no / for
+# Git Bash, which runs the hook on Windows, so Git Bash would look for it on
+# PATH: it gets its Unix form from cygpath, or its \ turned to /. Spaces in
+# it stay; the caller keeps it one word.
+runnable() {
+	case $1 in
+	[A-Za-z]:[\\/]*)
+		if command -v cygpath >/dev/null 2>&1; then
+			up=$(cygpath -u "$1" 2>/dev/null) || up=""
+			if [ -n "$up" ]; then
+				printf '%s' "$up"
+				return
+			fi
+		fi
+		printf '%s\n' "$1" | sed 's|\\|/|g'
+		;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
 # close_ssh SSH HOST SESSION closes SESSION's passthroughs on HOST, running
 # this script there with SSH, and fails unless it confirms that. Sent TERM,
 # it ends the ssh too.
 close_ssh() {
 	cs=""
 	trap 'if [ -n "$cs" ]; then kill "$cs" 2>/dev/null; fi; exit 1' TERM
-	remote_input passthrough-close --session "$3" | "$1" -o BatchMode=yes -o ConnectTimeout=2 -- "$2" 'sh -s' &
+	ssh_bin=$(runnable "$1")
+	remote_input passthrough-close --session "$3" | "$ssh_bin" -o BatchMode=yes -o ConnectTimeout=2 -- "$2" 'sh -s' &
 	cs=$!
 	wait "$cs"
 }
