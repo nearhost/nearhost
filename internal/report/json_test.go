@@ -189,3 +189,26 @@ func TestWriteProblemStatus(t *testing.T) {
 		t.Fatalf("headers = %v", w.Header())
 	}
 }
+
+// Extension members go after the problem's own keys and before the
+// warnings, and never replace a key the problem has.
+func TestWriteProblemExt(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteProblemExt(w, Errorf(Unexpected, "the request has ended"), 409,
+		map[string]any{"ended": true, "allowNotSaved": true, "error": "replaced", "bad": func() {}},
+		[]*Message{Warnf(HostsPublic, "First.")})
+	if w.Code != 409 {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	body := w.Body.String()
+	got := bodyOf(t, w, "the request has ended")
+	if got["ended"] != true || got["allowNotSaved"] != true {
+		t.Errorf("body = %s, want both extension members", body)
+	}
+	if _, ok := got["bad"]; ok {
+		t.Errorf("body = %s, holds a value that does not marshal", body)
+	}
+	if i, j, k := strings.Index(body, `"level"`), strings.Index(body, `"allowNotSaved"`), strings.Index(body, `"warnings"`); !(i < j && j < k) {
+		t.Errorf("body = %s, want the extensions after the problem and before the warnings", body)
+	}
+}

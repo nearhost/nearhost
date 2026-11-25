@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/service"
 	"github.com/nearhost/nearhost/internal/transport"
 	"golang.org/x/crypto/ssh/agent"
@@ -122,15 +123,25 @@ func envBrowser(ctx context.Context, p envProbe) control.EnvCheck {
 			c.Level = "warn"
 			c.Detail = "the core runs outside your desktop session, so it cannot open links"
 			c.Fix = "run nearhost service install from Terminal on the Mac's desktop, then nearhost stop and nearhost -d"
+			c.Problem = report.Warnf(report.CoreNoDesktop, "Nearhost in the background cannot open links.").
+				Because("It runs outside your desktop session.").
+				Step("Install the service from Terminal on the Mac's desktop:", "nearhost service install").
+				Step("Then stop Nearhost:", "nearhost stop").
+				Step("And start it again:", "nearhost -d")
 		}
 	case "windows":
 		interactive, err := p.session()
 		switch {
 		case err != nil:
 			c.Level, c.Detail = "info", err.Error()
+			c.Problem = report.Notef(report.CoreSessionUnchecked, "Nearhost in the background could not tell whether it can open links.").
+				Because("Windows did not say which session it runs in: %s", err).
+				Wrap(err)
 		case !interactive:
 			c.Level = "warn"
 			c.Detail = "the core runs outside your sign-in session, so it cannot open links"
+			c.Problem = report.Warnf(report.CoreNoDesktop, "Nearhost in the background cannot open links.").
+				Because("It runs outside your sign-in session.")
 		}
 	default:
 		_, err := p.lookPath("xdg-open")
@@ -138,6 +149,9 @@ func envBrowser(ctx context.Context, p envProbe) control.EnvCheck {
 			c.Level = "warn"
 			c.Detail = "no desktop session (DISPLAY and WAYLAND_DISPLAY are unset) or no xdg-open, so the core cannot open links"
 			c.Fix = "run nearhost service install from a terminal in your desktop session"
+			c.Problem = report.Warnf(report.CoreNoDesktop, "Nearhost in the background cannot open links.").
+				Because("It has no desktop session (DISPLAY and WAYLAND_DISPLAY are unset) or no xdg-open.").
+				Step("Install the service from a terminal in your desktop session:", "nearhost service install")
 		}
 	}
 	return c
@@ -147,13 +161,21 @@ func envSSHAgent(p envProbe) control.EnvCheck {
 	sock := p.getenv("SSH_AUTH_SOCK")
 	if sock == "" {
 		return control.EnvCheck{Name: "ssh agent", Level: "info",
-			Detail: "SSH_AUTH_SOCK is not set for the core; ssh uses IdentityAgent from ~/.ssh/config, if set"}
+			Detail: "SSH_AUTH_SOCK is not set for the core; ssh uses IdentityAgent from ~/.ssh/config, if set",
+			Problem: report.Notef(report.CoreSSHAgentUnset, "SSH_AUTH_SOCK is not set for Nearhost in the background.").
+				Because("ssh uses IdentityAgent from ~/.ssh/config, if it is set.")}
 	}
 	n, err := p.agentKeys(sock)
 	if err != nil {
 		return control.EnvCheck{Name: "ssh agent", Level: "warn",
 			Detail: fmt.Sprintf("%s does not answer as an SSH agent: %v", sock, err),
-			Fix:    "run nearhost service install again from a shell whose agent works, or set IdentityAgent in ~/.ssh/config"}
+			Fix:    "run nearhost service install again from a shell whose agent works, or set IdentityAgent in ~/.ssh/config",
+			Problem: report.Warnf(report.CoreSSHAgentUnreachable, "The SSH agent of Nearhost in the background does not answer.").
+				Because("%s does not answer as an SSH agent: %v", sock, err).
+				Step("Install the service again from a shell whose agent works:", "nearhost service install").
+				Then("Or set IdentityAgent in ~/.ssh/config.").
+				With("socket", sock).
+				Wrap(err)}
 	}
 	return control.EnvCheck{Name: "ssh agent", Level: "ok",
 		Detail: fmt.Sprintf("%s (%s)", sock, plural(n, "key"))}
@@ -164,7 +186,10 @@ func envDocker(ctx context.Context, p envProbe) control.EnvCheck {
 	if err != nil {
 		return control.EnvCheck{Name: "docker", Level: "info",
 			Detail: "docker is not on the core's PATH; only Docker projects need it",
-			Fix:    "run nearhost service install from a shell where docker works"}
+			Fix:    "run nearhost service install from a shell where docker works",
+			Problem: report.Notef(report.CoreDockerMissing, "docker is not on the PATH of Nearhost in the background.").
+				Because("Only Docker projects need it.").
+				Step("Install the service from a shell where docker works:", "nearhost service install")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, dockerProbeTimeout)
 	defer cancel()
@@ -182,7 +207,12 @@ func envDocker(ctx context.Context, p envProbe) control.EnvCheck {
 			}
 		}
 		return control.EnvCheck{Name: "docker", Level: "warn", Detail: detail,
-			Fix: "start Docker, or set DOCKER_HOST before nearhost service install"}
+			Fix: "start Docker, or set DOCKER_HOST before nearhost service install",
+			Problem: report.Warnf(report.CoreDockerUnreachable, "Docker does not answer Nearhost in the background.").
+				Quote(cleanDetail(detail)).
+				Then("Start Docker.").
+				Step("Or set DOCKER_HOST, then install the service again:", "nearhost service install").
+				Wrap(err)}
 	}
 	return control.EnvCheck{Name: "docker", Level: "ok", Detail: "Docker " + cleanDetail(stdout)}
 }
@@ -192,7 +222,12 @@ func envSSH(p envProbe) control.EnvCheck {
 	if err != nil {
 		return control.EnvCheck{Name: "ssh", Level: "fail",
 			Detail: "ssh not found on the core's PATH",
-			Fix:    "install OpenSSH, then nearhost service install again"}
+			Fix:    "install OpenSSH, then nearhost service install again",
+			Problem: report.Errorf(report.CoreSSHMissing, "ssh is not on the PATH of Nearhost in the background.").
+				Because("Nearhost needs it to reach servers.").
+				Then("Install OpenSSH.").
+				Step("Then install the service again:", "nearhost service install").
+				Wrap(err)}
 	}
 	return control.EnvCheck{Name: "ssh", Level: "ok", Detail: path}
 }

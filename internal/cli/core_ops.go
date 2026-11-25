@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -379,8 +380,9 @@ func (o *coreOps) State() control.State {
 		st.Projects[p.Name] = o.eng.Status(p.Name)
 	}
 	for _, name := range serverNames(cfg) {
-		status, msg := o.eng.ServerStatus(name)
-		st.Servers[name] = control.ServerState{Health: o.eng.ServerHealth(name), Status: status, Message: msg}
+		// One look at the server, so its state, text and problem agree.
+		h := o.eng.ServerHealth(name)
+		st.Servers[name] = control.ServerState{Health: h, Status: h.Status, Message: h.LastError, Problem: h.Problem}
 	}
 	if st.Passthroughs == nil {
 		st.Passthroughs = []engine.Passthrough{}
@@ -392,13 +394,15 @@ func (o *coreOps) State() control.State {
 		st.Approvals = []control.Approval{}
 	}
 	if err := o.agents.grantsErr(); err != nil {
-		st.GrantsError = err.Error()
+		st.GrantsProblem = report.From(err)
+		st.GrantsError = st.GrantsProblem.Title
 		return st
 	}
 	for _, name := range serverNames(cfg) {
 		gs, err := o.agents.grantsOf(name)
 		if err != nil {
-			st.GrantsError = err.Error()
+			st.GrantsProblem = report.From(err)
+			st.GrantsError = st.GrantsProblem.Title
 			break
 		}
 		st.Grants = append(st.Grants, gs...)
@@ -407,23 +411,85 @@ func (o *coreOps) State() control.State {
 }
 
 // maxEventMessage is the longest event message the core streams to its
-// clients. A client reads an envelope of 1 MiB at most, and one longer
-// would break every client's stream; engine messages are far shorter.
+// clients, and the longest of each text of an event's report. A client reads
+// an envelope of 1 MiB at most, and one longer would break every client's
+// stream; engine messages are far shorter.
 const maxEventMessage = 64 << 10
 
+// maxEventReport is the most an event's report may take as JSON. With the
+// message, which JSON may make six times as long by escaping, it keeps an
+// envelope under what a client reads.
+const maxEventReport = 512 << 10
+
 // cutMessage is ev with a message longer than maxEventMessage cut to it,
-// ending in an ellipsis, and never inside a character.
+// ending in an ellipsis, and never inside a character, and with its report
+// cut by cutReport.
 func cutMessage(ev engine.Event) engine.Event {
-	if len(ev.Message) <= maxEventMessage {
-		return ev
+	ev.Message = cutText(ev.Message, maxEventMessage)
+	ev.Report = cutReport(ev.Report)
+	return ev
+}
+
+// cutText is s cut to n bytes at most, ending in an ellipsis, and never
+// inside a character; s when it fits, and "" when n leaves no room for the
+// ellipsis.
+func cutText(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
 	const ellipsis = "…"
-	end := maxEventMessage - len(ellipsis)
-	for end > 0 && !utf8.RuneStart(ev.Message[end]) {
+	if n < len(ellipsis) {
+		return ""
+	}
+	end := n - len(ellipsis)
+	for end > 0 && !utf8.RuneStart(s[end]) {
 		end--
 	}
-	ev.Message = ev.Message[:end] + ellipsis
-	return ev
+	return s[:end] + ellipsis
+}
+
+// cutReport is m as the stream can carry it: m itself when it is short and
+// marshals, and otherwise a copy with each text cut to maxEventMessage, the
+// quoted lines to as much in all, and data that does not marshal left out.
+// A copy still over maxEventReport keeps only its title and why, cut short,
+// and a report that cannot marshal at all is left out, rather than break
+// the stream.
+func cutReport(m *report.Message) *report.Message {
+	if m == nil {
+		return nil
+	}
+	if data, err := json.Marshal(m); err == nil && len(data) <= maxEventMessage {
+		return m
+	}
+	c := *m
+	c.Title = cutText(m.Title, maxEventMessage)
+	c.Why = cutText(m.Why, maxEventMessage)
+	c.Verbatim = nil
+	left := maxEventMessage
+	for _, line := range m.Verbatim {
+		if line = cutText(line, left); line == "" && left < len("…") {
+			break
+		}
+		c.Verbatim = append(c.Verbatim, line)
+		left -= len(line)
+	}
+	c.Fix = nil
+	for _, s := range m.Fix {
+		c.Fix = append(c.Fix, report.Step{Text: cutText(s.Text, maxEventMessage), Command: cutText(s.Command, maxEventMessage)})
+	}
+	if _, err := json.Marshal(c.Data); err != nil {
+		c.Data = nil
+	}
+	data, err := json.Marshal(&c)
+	if err != nil {
+		return nil
+	}
+	if len(data) > maxEventReport {
+		const short = 4 << 10
+		c.Title, c.Why = cutText(c.Title, short), cutText(c.Why, short)
+		c.Verbatim, c.Fix, c.Data = nil, nil, nil
+	}
+	return &c
 }
 
 // forwardEvents publishes each event of the engine's bus to hub, until stop

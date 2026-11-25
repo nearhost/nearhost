@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -394,5 +396,60 @@ func TestCoreStatusListsWhatWaits(t *testing.T) {
 	}
 	if got, want := st.Approvals[1].URL, "https://nearhost.localhost:6327/change/two"; got != want {
 		t.Errorf("change link = %q, want %q", got, want)
+	}
+}
+
+// A report too long for the stream is cut as its message is, and one whose
+// data does not marshal still goes out, so no client's stream breaks.
+func TestCutMessageCutsTheReport(t *testing.T) {
+	long := strings.Repeat("\x01", 4*maxEventMessage) // escaped to six bytes each
+	r := report.Warnf(report.DockerUnreachable, "%s", long).Because("%s", long).
+		Quote(long, long).Step(long, long).With("bad", func() {})
+	ev := cutMessage(engine.Event{Project: "web", Message: long, Report: r})
+	if ev.Report == nil {
+		t.Fatal("the report was dropped")
+	}
+	if ev.Report == r || len(r.Title) != 4*maxEventMessage {
+		t.Error("the engine's report was changed in place")
+	}
+	if len(ev.Report.Title) > maxEventMessage || !strings.HasSuffix(ev.Report.Title, "…") {
+		t.Errorf("title cut to %d bytes", len(ev.Report.Title))
+	}
+	if len(ev.Report.Why) > maxEventMessage {
+		t.Errorf("why cut to %d bytes", len(ev.Report.Why))
+	}
+	data, err := json.Marshal(control.Envelope{Seq: 1, Kind: control.KindEvent, Event: &ev})
+	if err != nil {
+		t.Fatalf("the envelope does not marshal: %v", err)
+	}
+	if len(data) > 1<<20 {
+		t.Errorf("the envelope is %d bytes, over what a client reads", len(data))
+	}
+	short := report.Warnf(report.DockerUnreachable, "Docker did not answer.").With("project", "web")
+	if got := cutMessage(engine.Event{Message: "x", Report: short}); got.Report != short {
+		t.Errorf("a short report changed: %+v", got.Report)
+	}
+}
+
+// Why grants cannot be read is a message.
+func TestGrantsErrIsAMessage(t *testing.T) {
+	err := (*agents)(nil).grantsErr()
+	m, ok := report.As(err)
+	if !ok || m.Code != report.AgentsGrantsOff {
+		t.Fatalf("grantsErr = %#v, want an agents.grants-off message", err)
+	}
+}
+
+// A cut to fewer bytes than the ellipsis takes gives nothing, not a panic.
+func TestCutTextShort(t *testing.T) {
+	for n, want := range []string{"", "", "", "…", "h…"} {
+		if got := cutText("hello", n); got != want {
+			t.Errorf("cutText(hello, %d) = %q, want %q", n, got, want)
+		}
+	}
+	lines := report.Warnf(report.DockerUnreachable, "x").Quote(strings.Repeat("a", maxEventMessage-1), "bc", "d")
+	r := cutReport(lines)
+	if r == nil || len(strings.Join(r.Verbatim, "")) > maxEventMessage {
+		t.Errorf("quoted lines = %d bytes", len(strings.Join(r.Verbatim, "")))
 	}
 }

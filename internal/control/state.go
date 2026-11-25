@@ -5,6 +5,7 @@ import (
 	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -25,7 +26,8 @@ const (
 	KindReset = "reset"
 )
 
-// Envelope is one item on the stream.
+// Envelope is one item on the stream. An event that carries a warning or an
+// error has it in Event.Report, with its code and fix, beside its text.
 type Envelope struct {
 	Seq      uint64                `json:"seq"`
 	Kind     string                `json:"kind"`
@@ -58,6 +60,9 @@ type ServerState struct {
 	Health  engine.ServerHealth `json:"health"`
 	Status  transport.Status    `json:"status"`
 	Message string              `json:"message"`
+	// Problem is why the server is not connected, as a message whose
+	// title is Message; nil when there is none.
+	Problem *report.Message `json:"problem,omitempty"`
 }
 
 // State is what GET /v1/state answers: everything a client mirrors.
@@ -85,8 +90,11 @@ type State struct {
 	Documents    []documents.Tree                `json:"documents"` // newest first
 	Grants       []grants.Grant                  `json:"grants"`
 	GrantsError  string                          `json:"grantsError,omitempty"`
-	Approvals    []Approval                      `json:"approvals"` // pending, oldest first
-	Clients      int                             `json:"clients"`   // attached to the stream, the asker's own included
+	// GrantsProblem is GrantsError as a message, with its code; nil when
+	// the grants could be read.
+	GrantsProblem *report.Message `json:"grantsProblem,omitempty"`
+	Approvals     []Approval      `json:"approvals"` // pending, oldest first
+	Clients       int             `json:"clients"`   // attached to the stream, the asker's own included
 	// Update is the newer release the core has found, without "v", or ""
 	// when none is known, as in Status. The core said it on the stream when
 	// it found it, before an interface that opens later follows that.

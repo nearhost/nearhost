@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // ErrNotRunning is returned when nothing answers on the control socket.
@@ -125,14 +127,16 @@ func (c *Client) call(ctx context.Context, method, path string, want int, out an
 	return nil
 }
 
-// answerError describes an answer with the status code code and the body
-// body that the caller did not want.
+// answerError is the error for an answer with the status code code and
+// the body body that the caller did not want: the core's message, said to
+// be its answer, or one that says the status when the body holds none.
 func answerError(code int, body []byte) error {
-	var e errorBody
-	if json.Unmarshal(body, &e) == nil && e.Error != "" {
-		return fmt.Errorf("the core answered %d: %s", code, e.Error)
+	m := decodeProblem(body)
+	if m == nil {
+		return report.Errorf(report.Unexpected, "The core answered %d.", code)
 	}
-	return fmt.Errorf("the core answered %d", code)
+	m.Context = fmt.Sprintf("the core answered %d", code)
+	return m
 }
 
 // Info returns what the core says it is.

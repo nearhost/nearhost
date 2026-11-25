@@ -129,6 +129,21 @@ const (
 	AgentsUnavailable          Code = "agents.unavailable"
 	AgentsApprovalWaiting      Code = "agents.approval-waiting"
 	AgentsGrantsPruned         Code = "agents.grants-pruned"
+	AgentsGrantsOff            Code = "agents.grants-off"
+	AgentsAllowNotSaved        Code = "agents.allow-not-saved"
+	ControlNoRoute             Code = "control.no-route"
+	ControlMethodNotAllowed    Code = "control.method-not-allowed"
+	ControlBadRequest          Code = "control.bad-request"
+	ControlNotFound            Code = "control.not-found"
+	ControlUnimplemented       Code = "control.unimplemented"
+	ControlRequestEnded        Code = "control.request-ended"
+	CoreNoDesktop              Code = "core.no-desktop"
+	CoreSessionUnchecked       Code = "core.session-unchecked"
+	CoreSSHAgentUnset          Code = "core.ssh-agent-unset"
+	CoreSSHAgentUnreachable    Code = "core.ssh-agent-unreachable"
+	CoreDockerMissing          Code = "core.docker-missing"
+	CoreDockerUnreachable      Code = "core.docker-unreachable"
+	CoreSSHMissing             Code = "core.ssh-missing"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -254,6 +269,21 @@ var catalog = []Entry{
 	{AgentsUnavailable, Warning, 0, "Coding agents on a server cannot reach Nearhost."},
 	{AgentsApprovalWaiting, Info, 0, "A coding agent asks for something that waits for approval in the interface."},
 	{AgentsGrantsPruned, Info, 0, "Grants of projects that are gone were removed."},
+	{AgentsGrantsOff, Error, 503, "Grants cannot be read or changed, as the grants file cannot be read or Nearhost does not serve coding agents in this run."},
+	{AgentsAllowNotSaved, Error, 500, "A request was answered, but its Always allow could not be saved, so the agent is asked again next time."},
+	{ControlNoRoute, Error, 404, "The control API has no route at the path asked for; the running Nearhost may be an older release."},
+	{ControlMethodNotAllowed, Error, 405, "A route of the control API was asked with a method it does not take."},
+	{ControlBadRequest, Error, 400, "A request to the control API is not what the route takes."},
+	{ControlNotFound, Error, 404, "The running Nearhost does not have what was asked for, such as a request it no longer keeps."},
+	{ControlUnimplemented, Error, 501, "The running Nearhost cannot do what was asked yet."},
+	{ControlRequestEnded, Error, 409, "The request to answer has ended: the agent gave up on it, it expired, or someone answered it first."},
+	{CoreNoDesktop, Warning, 0, "Nearhost in the background runs outside the desktop session, so it cannot open links."},
+	{CoreSessionUnchecked, Info, 0, "Nearhost in the background could not tell whether it runs in the sign-in session, so it may not open links."},
+	{CoreSSHAgentUnset, Info, 0, "SSH_AUTH_SOCK is not set for Nearhost in the background, so ssh uses the agent in the SSH config, if any."},
+	{CoreSSHAgentUnreachable, Warning, 0, "The SSH agent Nearhost in the background was given does not answer."},
+	{CoreDockerMissing, Info, 0, "docker is not on the PATH of Nearhost in the background; only Docker projects need it."},
+	{CoreDockerUnreachable, Warning, 0, "Docker does not answer Nearhost in the background."},
+	{CoreSSHMissing, Error, 503, "ssh is not on the PATH of Nearhost in the background, so it cannot reach servers."},
 
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},

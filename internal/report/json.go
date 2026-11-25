@@ -3,7 +3,9 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
 )
 
 // wire is a message as JSON. A nested message (in a `warnings` list, an
@@ -97,12 +99,21 @@ func WriteProblem(w http.ResponseWriter, m *Message, warnings []*Message) {
 // WriteProblemStatus is WriteProblem with the HTTP status given, for an
 // API that must keep the status it has always answered with.
 func WriteProblemStatus(w http.ResponseWriter, m *Message, status int, warnings []*Message) {
+	WriteProblemExt(w, m, status, nil, warnings)
+}
+
+// WriteProblemExt is WriteProblemStatus with extension members: keys an API
+// has always sent beside its error, such as the control API's "ended". They
+// follow the problem's own keys, in order of name, before the warnings; a
+// key the problem has already is left out, as is one whose value does not
+// marshal.
+func WriteProblemExt(w http.ResponseWriter, m *Message, status int, ext map[string]any, warnings []*Message) {
 	if m == nil {
 		m = Errorf(Unexpected, "Something went wrong.")
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	w.Write(safeProblemBody(m, status, warnings))
+	w.Write(safeProblemBody(m, status, ext, warnings))
 }
 
 // safeProblemBody returns m and warnings as a problem body that always has
@@ -110,8 +121,20 @@ func WriteProblemStatus(w http.ResponseWriter, m *Message, status int, warnings 
 // warning with a level outside the three, would fail the body, so it is
 // tried again without any message's data, then without the warnings, and
 // at last as the error and title alone.
-func safeProblemBody(m *Message, status int, warnings []*Message) []byte {
-	if body, err := problemBody(Problem(m, status, DocsBase), warnings); err == nil {
+func safeProblemBody(m *Message, status int, ext map[string]any, warnings []*Message) []byte {
+	problem := func(m *Message) map[string]any {
+		p := Problem(m, status, DocsBase)
+		for _, k := range slices.Sorted(maps.Keys(ext)) {
+			if _, taken := p[k]; taken || k == "warnings" {
+				continue
+			}
+			if _, err := json.Marshal(ext[k]); err == nil {
+				p[k] = ext[k]
+			}
+		}
+		return p
+	}
+	if body, err := problemBody(problem(m), warnings); err == nil {
 		return body
 	}
 	bare := *m
@@ -125,17 +148,18 @@ func safeProblemBody(m *Message, status int, warnings []*Message) []byte {
 		c.Data = nil
 		plain = append(plain, &c)
 	}
-	if body, err := problemBody(Problem(&bare, status, DocsBase), plain); err == nil {
+	if body, err := problemBody(problem(&bare), plain); err == nil {
 		return body
 	}
-	if body, err := problemBody(Problem(&bare, status, DocsBase), nil); err == nil {
+	if body, err := problemBody(problem(&bare), nil); err == nil {
 		return body
 	}
 	title, _ := json.Marshal(m.Title)
 	return []byte(`{"error":` + string(title) + `,"title":` + string(title) + "}\n")
 }
 
-// problemBody writes p's keys in problemOrder, then warnings.
+// problemBody writes p's keys in problemOrder, then any others in order of
+// name, then warnings.
 func problemBody(p map[string]any, warnings []*Message) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteByte('{')
@@ -161,6 +185,14 @@ func problemBody(p map[string]any, warnings []*Message) ([]byte, error) {
 			continue
 		}
 		if err := field(k, v); err != nil {
+			return nil, err
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(p)) {
+		if slices.Contains(problemOrder, k) {
+			continue
+		}
+		if err := field(k, p[k]); err != nil {
 			return nil, err
 		}
 	}
