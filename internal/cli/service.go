@@ -37,6 +37,11 @@ type serviceBackend struct {
 	interactive func() bool
 	// home is the user's home directory.
 	home string
+	// mayNotBind reports whether a core run from exe would surely be
+	// refused the proxy's ports below 1024, as a Linux binary without
+	// cap_net_bind_service is. Nil, or false when it cannot be told, lets
+	// the install go on.
+	mayNotBind func(exe string) bool
 }
 
 // systemService is the production backend.
@@ -53,6 +58,9 @@ func systemService() serviceBackend {
 			return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 		},
 		home: home,
+	}
+	if runtime.GOOS == "linux" {
+		b.mayNotBind = linuxMayNotBind
 	}
 	b.manager = func() service.Manager {
 		if home == "" {
@@ -159,6 +167,13 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		return exitError{code: 1, msg: msg}
 	}
+	// A service whose core cannot bind its ports fails at every login, so
+	// none is installed until the binary may.
+	if b.mayNotBind != nil && b.mayNotBind(exe) {
+		msg := "The service cannot run Nearhost from this copy yet.\n\n" + setcapAdvice(exe, true, "run nearhost service install again")
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
+		return exitError{code: 1, msg: msg}
+	}
 	logPath, err := config.LogPath()
 	if err != nil {
 		return err
@@ -227,6 +242,17 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 		fmt.Fprintln(out, installed+handedOver(info))
 	}
 	return nil
+}
+
+// linuxMayNotBind is mayNotBind on Linux: the service's core serves on ports
+// 443 and 80, which a binary may bind with cap_net_bind_service, or any
+// binary may when the system's first unprivileged port is 80 or lower.
+func linuxMayNotBind(exe string) bool {
+	if first, ok := readUnprivilegedPortStart(); ok && first <= 80 {
+		return false
+	}
+	has, known := fileNetBindCap(exe)
+	return known && !has
 }
 
 // makeLogFolder creates the folder of the log at logPath, which only its

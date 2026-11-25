@@ -550,3 +550,44 @@ func TestAskYesNoUnansweredIsNo(t *testing.T) {
 		}
 	}
 }
+
+// On Linux, a binary that may not bind ports 443 and 80 would fail at every
+// login: install refuses it, saying why in plain words and how to fix it.
+func TestInstallRefusesABinaryThatMayNotBind(t *testing.T) {
+	x := newServiceFixture(t)
+	var asked string
+	x.b.mayNotBind = func(exe string) bool { asked = exe; return true }
+	out, err := x.run(t, "", "service", "install")
+	if err == nil {
+		t.Fatal("install succeeded")
+	}
+	for _, want := range []string{
+		"The service cannot run Nearhost from this copy yet.",
+		"On Linux, a program may use ports below 1024",
+		"sudo setcap cap_net_bind_service=+ep '/usr/bin/nearhost'",
+		"Then run nearhost service install again.",
+		"`nearhost doctor`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("out %q, want it to contain %q", out, want)
+		}
+	}
+	if asked != "/usr/bin/nearhost" {
+		t.Errorf("asked about %q", asked)
+	}
+	if got := x.m.log(); got != "" {
+		t.Errorf("manager was asked: %s", got)
+	}
+}
+
+func TestInstallGoesOnForABinaryThatMayBind(t *testing.T) {
+	x := newServiceFixture(t)
+	x.b.mayNotBind = func(string) bool { return false }
+	x.m.onStart = func() { x.f.answer(control.Info{API: 1, PID: 4343, StartedBy: control.StartedService}) }
+	if _, err := x.run(t, "", "service", "install"); err != nil {
+		t.Fatal(err)
+	}
+	if got := x.m.log(); got != "install,start" {
+		t.Errorf("calls %q", got)
+	}
+}
