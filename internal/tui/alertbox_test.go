@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
@@ -80,4 +84,56 @@ func TestAlertCopiesCommand(t *testing.T) {
 	if strings.Contains(screen(m), "copy command") {
 		t.Errorf("an alert without a command offers to copy one:\n%s", screen(m))
 	}
+}
+
+// hostile is a message whose text came from outside: ssh's stderr with
+// escapes, a file name with a line break, a project name with markup.
+func hostile() *report.Message {
+	m := report.Errorf(report.PortInUse, "<script>alert(1)</script> \x1b[31mfailed\x1b[0m").
+		Because("ssh said \x1b]0;owned\x07 no").
+		Step("Remove the file:", "rm '/tmp/a\nb.sock'").
+		With("project", "<script>")
+	m.Context = "start <b>\x1b[2Jweb"
+	return m
+}
+
+// Hostile text keeps its words through the message's JSON, the context
+// included, and the alert and the panel draw it inert: no escape reaches
+// the screen, a line break in a command does not break the line, and
+// markup is shown as text.
+func TestHostileTextRoundTripsAndRendersInert(t *testing.T) {
+	data, err := json.Marshal(hostile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back report.Message
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	want := hostile()
+	if back.Title != want.Title || back.Context != want.Context || back.Why != want.Why ||
+		len(back.Fix) != 1 || back.Fix[0] != want.Fix[0] || back.Data["project"] != "<script>" {
+		t.Fatalf("round trip = %+v, want %+v", back, want)
+	}
+	f := newFake(t, sampleConfig())
+	f.setState("website", engine.ProjectStatus{State: engine.StateError, Message: back.Title, Problem: &back})
+	m := sized(f)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	check := func(where string) {
+		t.Helper()
+		s := m.View().Content
+		for _, bad := range []string{"\x1b[31m", "\x1b]0;owned", "\x1b[2J"} {
+			if strings.Contains(s, bad) {
+				t.Errorf("%s: %q reached the screen", where, bad)
+			}
+		}
+		if !strings.Contains(screen(m), "<script>alert(1)</script>") || !strings.Contains(screen(m), "rm '/tmp/a b.sock'") {
+			t.Errorf("%s: the text is not shown as text:\n%s", where, screen(m))
+		}
+	}
+	m.sel = rowKey(rowProject, "website")
+	check("the panel")
+	m.showAlert(m.sel, &back)
+	check("the alert")
+	wantText(t, m, "start <b>web: <script>alert(1)</script> failed")
 }

@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"io/fs"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -155,6 +157,13 @@ func TestProblemsComeFromMessages(t *testing.T) {
 		}, want: []string{"✕ proxy down", "HTTPS port 443 needs permission to bind.",
 			"Give this copy of nearhost permission to use ports below 1024, such as 443 and 80:",
 			doctor.SetcapFix("/usr/bin/nearhost"), "Do not run nearhost with sudo.", "r tries again"}},
+		{name: "run directory not creatable", setup: func(m *Model, f *fakeBackend) {
+			m.Update(startedMsg{engine.RunDirProblem(&fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.EACCES})})
+		}, want: []string{"✕ proxy down", "create run directory: mkdir /run/nearhost: permission denied",
+			"Check that this user can create /run/nearhost."}},
+		{name: "run directory not a directory", setup: func(m *Model, f *fakeBackend) {
+			m.Update(startedMsg{engine.RunDirProblem(&fs.PathError{Op: "mkdir", Path: "/run/nearhost", Err: syscall.ENOTDIR})})
+		}, want: []string{"✕ proxy down", "Fix /run/nearhost: " + syscall.ENOTDIR.Error() + "."}},
 		{name: "agents refused", setup: func(m *Model, f *fakeBackend) {
 			f.health["mini"] = engine.ServerHealth{Health: transport.Health{AgentErr: refused.Title, AgentReport: refused}}
 		}, want: []string{"mini agents unavailable", "the server refused the agent socket",

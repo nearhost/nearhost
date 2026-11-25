@@ -170,11 +170,11 @@ func TestEnterAsksForThePasswordAgainAfterARefusal(t *testing.T) {
 		}
 	}
 	term.waitGone("the password box to close", "Password needed")
-	// The start the user asked for was refused: the alert says why.
-	term.waitFor("the refusal in the alert", "Something went wrong", "three wrong")
-	term.press(keyEscape)
-	term.waitGone("the alert to close", "Something went wrong")
+	// The box said it already: no alert repeats it.
 	term.waitFor("the project stopped again", "○ shop", "three wrong", "enter start")
+	if strings.Contains(term.screen(), "Something went wrong") {
+		t.Errorf("an alert repeats the refused password:\n%s", term.screen())
+	}
 	if got := sb.hostsFile(); got != untouched {
 		t.Errorf("the hosts file changed:\n%s", got)
 	}

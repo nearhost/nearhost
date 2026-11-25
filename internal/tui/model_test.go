@@ -740,3 +740,26 @@ func TestBackgroundProblemDoesNotOpenAlert(t *testing.T) {
 		t.Errorf("the same problem toasted again: %q", m.toast.text)
 	}
 }
+
+// A start refused because the user cancelled the password, declined the
+// Windows prompt or gave three wrong passwords opens no alert: they did it
+// in a box, and the log and the project's panel say what to do.
+func TestAnswerInABoxOpensNoAlert(t *testing.T) {
+	for _, err := range []error{
+		report.Errorf(report.InterfacePasswordCancelled, "You cancelled the password, so website.test was not added.").Wrap(ErrPasswordCancelled),
+		report.Errorf(report.InterfacePromptDeclined, "You declined the Windows prompt, so website.test was not added."),
+		fmt.Errorf("hosts: %w", ErrThreeWrong),
+	} {
+		f := newFake(t, sampleConfig())
+		f.startErr2 = err
+		m := sized(f)
+		m.sel = rowKey(rowProject, "website")
+		run(m, press(m, "enter"))
+		if m.alertBox != nil {
+			t.Errorf("%v opened the alert", err)
+		}
+		if log := logText(m, rowKey(rowProject, "website")); !strings.Contains(log, strings.TrimSuffix(report.From(err).Title, ".")) {
+			t.Errorf("%v: the log lacks it:\n%s", err, log)
+		}
+	}
+}

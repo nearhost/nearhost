@@ -269,3 +269,23 @@ func TestDecodeProblemOfOlderCores(t *testing.T) {
 		t.Errorf("answerError = %#v, want the decoded message", err)
 	}
 }
+
+// Hostile text in an action's message, the context its wrapper added among
+// it, reaches the client as data: every field as the core had it, no
+// escape lost or interpreted on the way.
+func TestHostileActionErrorRoundTrips(t *testing.T) {
+	b := newActionFake()
+	c := dial(t, serve(t, b))
+	inner := report.Errorf(report.PortInUse, "<script>alert(1)</script> \x1b[31mfailed\x1b[0m").
+		Because("ssh said \x1b]0;owned\x07 no").
+		Step("Remove the file:", "rm '/tmp/a\nb.sock'")
+	b.err = fmt.Errorf("start <b>\x1b[2Jweb: %w", inner)
+	m, ok := report.As(c.StartProject(context.Background(), "shop"))
+	if !ok {
+		t.Fatal("no message")
+	}
+	if m.Title != inner.Title || m.Why != inner.Why || !reflect.DeepEqual(m.Fix, inner.Fix) ||
+		m.Context != "start <b>\x1b[2Jweb" {
+		t.Errorf("message = %+v, want %+v with its context", m, inner)
+	}
+}

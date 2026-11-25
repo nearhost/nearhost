@@ -150,6 +150,7 @@ const (
 	CoreDockerMissing          Code = "core.docker-missing"
 	CoreDockerUnreachable      Code = "core.docker-unreachable"
 	CoreSSHMissing             Code = "core.ssh-missing"
+	CoreRunDirFailed           Code = "core.run-dir-failed"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -243,6 +244,7 @@ var catalog = []Entry{
 	{InterfacePasswordCancelled, Error, 403, "The password was cancelled, so what needed it was not done."},
 	{InterfacePromptDeclined, Error, 403, "The Windows prompt was declined, so what needed it was not done."},
 	{InterfaceLogMissed, Info, 0, "The interface fell behind the running Nearhost, so some log lines were missed."},
+	{CoreRunDirFailed, Error, 500, "Nearhost could not create its run directory, which holds its sockets and its lock."},
 	{InterfaceOpenFailed, Warning, 0, "The interface could not open a link in the browser."},
 	{InterfaceCopyFailed, Warning, 0, "The system's clipboard tool failed on a copy; the terminal may still have copied it."},
 	{InterfaceNothingToCopy, Warning, 0, "What the interface was asked to copy has nothing it can copy."},

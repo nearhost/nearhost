@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -417,7 +418,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			problem := report.From(msg.err)
 			m.logs.project(msg.name, time.Now(), messageLine(problem))
-			m.alertBox = &alertBox{msg: problem}
+			if !answeredInBox(msg.err, problem) {
+				m.alertBox = &alertBox{msg: problem}
+			}
 		}
 	case appliedMsg:
 		m.applying, m.endApply = false, nil
@@ -629,6 +632,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// answeredInBox reports whether err, a refused start, comes of what the
+// user answered in the password box or the Windows prompt: a cancel, a
+// decline, or three wrong passwords. They know already, the project's panel
+// says what to do, and an alert would only repeat it.
+func answeredInBox(err error, problem *report.Message) bool {
+	switch problem.Code {
+	case report.InterfacePasswordCancelled, report.InterfacePromptDeclined:
+		return true
+	}
+	return errors.Is(err, ErrPasswordCancelled) || errors.Is(err, ErrThreeWrong)
 }
 
 // setConfig takes in the engine's configuration after a change, keeping the

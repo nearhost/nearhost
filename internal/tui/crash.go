@@ -63,9 +63,10 @@ func (c *Crashes) Crash() *report.Message {
 }
 
 // caught records a panic with value v as a crash, with the stack of the
-// goroutine that panicked.
+// goroutine that panicked, and ends the program at once, as Report does:
+// a panic in View returns no command that could.
 func (c *Crashes) caught(v any) {
-	c.keep(report.Crashed(v, debug.Stack()))
+	c.Report(report.Crashed(v, debug.Stack()))
 }
 
 // Guard returns m with its panics caught: one in Init, Update or View, or
@@ -109,8 +110,7 @@ func (g guarded) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 }
 
 // View draws m, or nothing once there has been a crash. A panic while
-// drawing is a crash too; the next message, the clock's at the latest,
-// ends the program.
+// drawing is a crash too, which ends the program.
 func (g guarded) View() (v tea.View) {
 	if g.c.Crash() != nil {
 		return tea.NewView("")
