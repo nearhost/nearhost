@@ -10,9 +10,10 @@
 #   nearhost.ps1 wait <id>                               wait up to 50s for the answer
 #   nearhost.ps1 doctor [path]                           check how the project is served
 #   nearhost.ps1 reload [path]                           make Nearhost re-read .nearhostrc
-#   nearhost.ps1 passthrough <port> [--label X]          open a server's port on the laptop
-#   nearhost.ps1 passthrough-wait <id>                   wait up to 50s for the answer
-#   nearhost.ps1 passthrough-close --session <id> | <id> close a session's passthroughs, or one
+#   nearhost.ps1 passthrough <port> [--label X] [--on H] open a server's port on the laptop
+#   nearhost.ps1 passthrough-wait <id> [--on H]          wait up to 50s for the answer
+#   nearhost.ps1 passthrough-close --session <id> | <id> [--on H]
+#                                                        close a session's passthroughs, or one
 #   nearhost.ps1 open <path> [--label X]                 open a document in the user's browser
 #   nearhost.ps1 open-wait <id>                          wait up to 50s for the answer
 #
@@ -21,6 +22,12 @@
 # laptops answer, 5 API mismatch or a call this Nearhost lacks, 6 declined
 # by the user, or refused as the user declined one moments ago, 7 expired, 8 superseded: the change waited on no longer waits.
 # passthrough-close always exits 0: it runs when a session ends.
+#
+# --on H runs the command on H, an SSH host this machine reaches, where the
+# dev server runs: the script sends nearhost.sh, which sits beside it, to
+# sh -s there with the system's ssh, and Nearhost lists the passthrough
+# under that server. When SSH cannot reach H, it exits 2. H is a POSIX
+# server: a Windows host is not one --on can reach.
 #
 # The file stays ASCII, as Windows PowerShell 5.1 reads a file without a byte
 # order mark in the system's code page.
@@ -62,6 +69,9 @@ $script:Status = ''
 $script:Body = ''
 $script:Requester = 'agent'
 $script:Session = ''
+
+# ShScript is nearhost.sh, which --on runs on the host.
+$script:ShScript = Join-Path $PSScriptRoot 'nearhost.sh'
 
 $found = Get-Command $CurlName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $script:Curl = if ($found) { $found.Path } else { '' }
@@ -499,17 +509,290 @@ function Write-Body {
 	Write-Out (([regex]',}').Replace($s, '}', 1))
 }
 
-# Save-Session notes that this session has an open passthrough, and on which
-# socket, so that passthrough-close --session can find it without looking.
-function Save-Session {
+# Get-SessionMarker prints the path of session Id's marker.
+function Get-SessionMarker([string]$Id) {
+	return Join-Path (Join-Path (Get-StateDirectory) 'sessions') $Id
+}
+
+# Read-Marker gives the lines of the marker at Path, which ends each in a
+# newline.
+function Read-Marker([string]$Path) {
+	$text = [IO.File]::ReadAllText($Path)
+	if ($text.EndsWith("`n")) {
+		$text = $text.Substring(0, $text.Length - 1)
+	}
+	if ($text -eq '') {
+		return , @()
+	}
+	return , $text.Split([char]10)
+}
+
+# Save-Session notes that this session has a passthrough open, or asked for,
+# at Target, so that passthrough-close --session can find it without
+# looking: save_session in nearhost.sh. The marker has a line per target:
+# the socket of a Nearhost here, Sock by default, or "ssh <ssh> <host>" for
+# one opened on host with --on. A target already in it is not added again.
+function Save-Session([string]$Target = '') {
 	if (-not (Test-PlainWord $script:Session)) {
 		return
+	}
+	if (-not $Target) {
+		$Target = $script:Sock
 	}
 	$state = Get-StateDirectory
 	if (-not (Initialize-PrivateDirectory @($state, (Join-Path $state 'sessions')))) {
 		return
 	}
-	Write-PrivateFile (Join-Path (Join-Path $state 'sessions') $script:Session) $script:Sock
+	$marker = Get-SessionMarker $script:Session
+	if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+		Write-PrivateFile $marker $Target
+		return
+	}
+	try {
+		$text = [IO.File]::ReadAllText($marker)
+		if ((Read-Marker $marker) -ccontains $Target) {
+			return
+		}
+		$add = "$Target`n"
+		if ($text -and -not $text.EndsWith("`n")) {
+			$add = "`n$add"
+		}
+		[IO.File]::AppendAllText($marker, $add)
+	} catch {
+		$null = $_
+	}
+}
+
+# ConvertTo-ShellWord prints Word single-quoted for a POSIX shell, each ' in
+# it written as '\'', so sh -s on the host reads it byte for byte: sq in
+# nearhost.sh.
+function ConvertTo-ShellWord([string]$Word) {
+	return "'" + $Word.Replace("'", "'\''") + "'"
+}
+
+# Test-OnHost says whether Name is an SSH host name that ssh cannot read as
+# an option: letters, digits, dot, underscore, @ and dash, not starting with
+# a dash.
+function Test-OnHost([string]$Name) {
+	return $Name -cmatch '^[A-Za-z0-9._@][A-Za-z0-9._@-]*\z'
+}
+
+# Assert-OnHost exits 1 unless Name passes Test-OnHost.
+function Assert-OnHost([string]$Name) {
+	if (-not (Test-OnHost $Name)) {
+		Exit-Script 1 '--on needs the SSH host the dev server runs on, such as: --on apollo'
+	}
+}
+
+# Test-AbsolutePath says whether Path is one nearhost.sh can run from the
+# marker, in Git Bash too: from / or a drive letter.
+function Test-AbsolutePath([string]$Path) {
+	return $Path -cmatch '^(/|[A-Za-z]:[\\/])'
+}
+
+# Find-SSH prints the full path of the ssh to run, as Get-Command finds it,
+# or exits 2.
+function Find-SSH {
+	$ssh = Get-Command ssh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+	if (-not $ssh -or -not (Test-AbsolutePath $ssh.Path)) {
+		Exit-Script 2 'ssh is needed for --on and is not installed here.'
+	}
+	return $ssh.Path
+}
+
+# Get-RemoteInput gives what goes to sh -s on the host, as bytes: a line
+# setting the arguments to --remote, the requester, the session and
+# Arguments, each single-quoted, then nearhost.sh as it is, with its LF line
+# endings: remote_input in nearhost.sh.
+function Get-RemoteInput([string[]]$Arguments) {
+	$line = 'set -- --remote ' + (ConvertTo-ShellWord (Get-Requester)) + ' ' + (ConvertTo-ShellWord ([string]$env:CLAUDE_CODE_SESSION_ID))
+	foreach ($a in $Arguments) {
+		$line += ' ' + (ConvertTo-ShellWord $a)
+	}
+	$head = $Utf8.GetBytes("$line`n")
+	$body = [IO.File]::ReadAllBytes($script:ShScript)
+	$all = New-Object byte[] ($head.Length + $body.Length)
+	[Array]::Copy($head, 0, $all, 0, $head.Length)
+	[Array]::Copy($body, 0, $all, $head.Length, $body.Length)
+	return , $all
+}
+
+# Invoke-SSH starts Ssh to run sh -s on OnHost, giving up connecting after
+# Timeout seconds, and writes Data to its stdin. It gives the process and
+# the tasks reading its stdout and stderr. The command is the constant sh -s,
+# as sshd runs it through the login shell there, which may not be POSIX;
+# OnHost passed Test-OnHost, so it needs no quoting. Data is written as
+# bytes, so no encoding adds a byte order mark or a CR.
+function Invoke-SSH([string]$Ssh, [string]$OnHost, [int]$Timeout, [byte[]]$Data) {
+	$psi = New-Object System.Diagnostics.ProcessStartInfo
+	$psi.FileName = $Ssh
+	$psi.Arguments = "-o BatchMode=yes -o ConnectTimeout=$Timeout -- $OnHost `"sh -s`""
+	$psi.UseShellExecute = $false
+	$psi.RedirectStandardInput = $true
+	$psi.RedirectStandardOutput = $true
+	$psi.RedirectStandardError = $true
+	$psi.StandardOutputEncoding = $Utf8
+	$psi.StandardErrorEncoding = $Utf8
+	# PowerShell 7 has this; Windows PowerShell 5.1 writes stdin in the
+	# console's input encoding, set to UTF-8 without a byte order mark above.
+	if ($psi.PSObject.Properties['StandardInputEncoding']) {
+		$psi.StandardInputEncoding = $Utf8
+	}
+	$p = [Diagnostics.Process]::Start($psi)
+	# Both are read from the start, so a full pipe cannot stall the ssh while
+	# its stdin is written.
+	$out = $p.StandardOutput.ReadToEndAsync()
+	$err = $p.StandardError.ReadToEndAsync()
+	try {
+		$p.StandardInput.BaseStream.Write($Data, 0, $Data.Length)
+	} catch {
+		# An ssh that fails before it connects reads none of it.
+		$null = $_
+	}
+	try {
+		$p.StandardInput.Close()
+	} catch {
+		$null = $_
+	}
+	return @{ Process = $p; Out = $out; Err = $err }
+}
+
+# Invoke-On runs nearhost.sh's Arguments on OnHost over SSH, with the
+# requester and session from here, and exits with its status: run_on in
+# nearhost.sh. Its output passes through, but for an SSH failure, which
+# exits 2. When Arguments opened a passthrough there, or asked for one, the
+# session's marker here gains "ssh <ssh> <host>", so the session's end
+# closes it with the same ssh.
+function Invoke-On([string]$OnHost, [string[]]$Arguments) {
+	Assert-OnHost $OnHost
+	if (-not (Test-Path -LiteralPath $script:ShScript -PathType Leaf)) {
+		Exit-Script 1 "--on needs nearhost.sh beside this script, at $($script:ShScript)"
+	}
+	$ssh = Find-SSH
+	try {
+		$run = Invoke-SSH -Ssh $ssh -OnHost $OnHost -Timeout 5 -Data (Get-RemoteInput $Arguments)
+	} catch {
+		Exit-Script 2 "ssh is needed for --on and could not be run: $($_.Exception.Message)"
+	}
+	$run.Process.WaitForExit()
+	$out = $run.Out.Result
+	$err = $run.Err.Result
+	$rc = $run.Process.ExitCode
+	if ($rc -eq 255) {
+		$first = ($err -split "`n")[0].TrimEnd("`r")
+		if (-not $first) {
+			$first = 'ssh exited with status 255'
+		}
+		Exit-Script 2 "SSH could not reach ${OnHost}: $first"
+	}
+	if ($out) {
+		[Console]::Out.Write($out)
+	}
+	if ($err) {
+		[Console]::Error.Write($err)
+	}
+	if ($rc -eq 0) {
+		# As here: a passthrough that opened, or one the user is asked about,
+		# whose answer, a 202's, has no state.
+		$state = Get-Field state $out
+		if (($Arguments[0] -ceq 'passthrough' -and ($state -ceq 'open' -or $state -eq '')) -or ($Arguments[0] -ceq 'passthrough-wait' -and $state -ceq 'open')) {
+			$script:Session = [string]$env:CLAUDE_CODE_SESSION_ID
+			Save-Session "ssh $ssh $OnHost"
+		}
+	}
+	exit $rc
+}
+
+# Close-Socket closes session Id's passthroughs on the Nearhost at Sock, and
+# gives $false unless that Nearhost confirms it. A socket that is gone gives
+# $true: that Nearhost is not running, and its passthroughs ended with it.
+function Close-Socket([string]$Sock, [string]$Id) {
+	if (-not (Test-Path -LiteralPath $Sock)) {
+		return $true
+	}
+	if (-not $script:Curl) {
+		return $false
+	}
+	return (Invoke-Api -Sock $Sock -Limit 1 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs?session=$Id")) -and $script:Status -eq '204'
+}
+
+# Close-Session closes session Id's passthroughs at every target in its
+# marker, the ssh ones at once, cutting off what has not finished after 2.5
+# seconds, and keeps in the marker only the targets that did not close:
+# close_session in nearhost.sh.
+function Close-Session([string]$Id) {
+	$marker = Get-SessionMarker $Id
+	if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+		return
+	}
+	try {
+		$lines = Read-Marker $marker
+	} catch {
+		return
+	}
+	$deadline = [DateTime]::UtcNow.AddMilliseconds(2500)
+	# keep holds, for each line, whether it stays: $null for one that names
+	# no target and is dropped, or the run closing it over ssh.
+	$keep = New-Object object[] $lines.Count
+	$data = $null
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$line = $lines[$i]
+		if (-not $line.StartsWith('ssh ')) {
+			continue
+		}
+		$rest = $line.Substring(4)
+		$at = $rest.LastIndexOf(' ')
+		if ($at -lt 0) {
+			continue
+		}
+		$bin = $rest.Substring(0, $at)
+		$onHost = $rest.Substring($at + 1)
+		if (-not (Test-OnHost $onHost) -or -not (Test-AbsolutePath $bin)) {
+			continue
+		}
+		$keep[$i] = $true
+		try {
+			if ($null -eq $data) {
+				$data = Get-RemoteInput @('passthrough-close', '--session', $Id)
+			}
+			$keep[$i] = Invoke-SSH -Ssh $bin -OnHost $onHost -Timeout 2 -Data $data
+		} catch {
+			$null = $_
+		}
+	}
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		if ((Test-AbsolutePath $lines[$i]) -and -not $lines[$i].StartsWith('ssh ')) {
+			$keep[$i] = -not (Close-Socket $lines[$i] $Id)
+		}
+	}
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$run = $keep[$i]
+		if ($run -isnot [hashtable]) {
+			continue
+		}
+		$ms = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+		if ($run.Process.WaitForExit($ms)) {
+			$keep[$i] = $run.Process.ExitCode -ne 0
+		} else {
+			try {
+				$run.Process.Kill()
+			} catch {
+				$null = $_
+			}
+			$keep[$i] = $true
+		}
+	}
+	$left = @()
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		if ($keep[$i] -eq $true) {
+			$left += $lines[$i]
+		}
+	}
+	if ($left.Count -gt 0) {
+		Write-PrivateFile $marker ($left -join "`n")
+	} else {
+		Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+	}
 }
 
 # Get-ShortHostName prints this machine's name up to its first dot.
@@ -601,6 +884,33 @@ function Invoke-PathCall([string]$Url, [int]$Limit, [string]$Dir) {
 	if (-not (Invoke-Api -Sock $script:Sock -Limit $Limit -Arguments @("${Url}?$query"))) {
 		Exit-Script 2 'Nearhost stopped answering.'
 	}
+}
+
+# Read-IdAndOn reads the arguments after the command as an id and an
+# optional --on host, checking the host, and gives both. More than one id
+# exits 1 with TooMany.
+function Read-IdAndOn([string]$TooMany) {
+	$id = ''
+	$on = ''
+	$i = 0
+	while ($i -lt $argv.Count) {
+		$a = [string]$argv[$i]
+		if ($a -ceq '--on') {
+			if ($i + 1 -ge $argv.Count) {
+				Exit-Script 1 '--on needs the SSH host the dev server runs on'
+			}
+			$on = [string]$argv[$i + 1]
+			Assert-OnHost $on
+			$i += 2
+		} else {
+			if ($id) {
+				Exit-Script 1 $TooMany
+			}
+			$id = $a
+			$i++
+		}
+	}
+	return $id, $on
 }
 
 $argv = @($args)
@@ -744,6 +1054,7 @@ switch -CaseSensitive ($cmd) {
 	'passthrough' {
 		$port = ''
 		$label = ''
+		$on = ''
 		$i = 0
 		while ($i -lt $argv.Count) {
 			$a = [string]$argv[$i]
@@ -752,6 +1063,13 @@ switch -CaseSensitive ($cmd) {
 					Exit-Script 1 '--label needs a name'
 				}
 				$label = [string]$argv[$i + 1]
+				$i += 2
+			} elseif ($a -ceq '--on') {
+				if ($i + 1 -ge $argv.Count) {
+					Exit-Script 1 '--on needs the SSH host the dev server runs on'
+				}
+				$on = [string]$argv[$i + 1]
+				Assert-OnHost $on
 				$i += 2
 			} else {
 				if ($port) {
@@ -766,6 +1084,12 @@ switch -CaseSensitive ($cmd) {
 		}
 		if ($port.Length -gt 5 -or [int]$port -gt 65535) {
 			Exit-Script 1 "port must be between 1 and 65535, not $port"
+		}
+		if ($on) {
+			if ($label) {
+				Invoke-On $on @('passthrough', $port, '--label', $label)
+			}
+			Invoke-On $on @('passthrough', $port)
 		}
 		Find-Passthrough $port
 		$fields = [ordered]@{ port = [int]$port; requester = $script:Requester; session = $script:Session }
@@ -805,11 +1129,15 @@ switch -CaseSensitive ($cmd) {
 		exit 1
 	}
 	'passthrough-wait' {
-		if (-not (Test-Id $first)) {
+		$id, $on = Read-IdAndOn 'passthrough-wait takes one id'
+		if (-not (Test-Id $id)) {
 			Exit-Script 1 'passthrough-wait needs the id passthrough printed'
 		}
+		if ($on) {
+			Invoke-On $on @('passthrough-wait', $id)
+		}
 		Find-Passthrough ''
-		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @("http://nearhost/v1/passthroughs/${first}?wait=50"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 60 -Arguments @("http://nearhost/v1/passthroughs/${id}?wait=50"))) {
 			Exit-Script 2 'Nearhost stopped answering: it may have quit.'
 		}
 		if ($script:Status -ne '200') {
@@ -851,32 +1179,18 @@ switch -CaseSensitive ($cmd) {
 			if (-not (Test-PlainWord $sid)) {
 				exit 0
 			}
-			$marker = Join-Path (Join-Path (Get-StateDirectory) 'sessions') $sid
-			if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-				exit 0
-			}
-			$script:Sock = [string](Get-Content -LiteralPath $marker -TotalCount 1 -ErrorAction SilentlyContinue)
-			# With its socket gone, that Nearhost is not running, and its
-			# passthroughs ended with it, so there is nothing left to close.
-			if (-not $script:Sock -or -not (Test-Path -LiteralPath $script:Sock)) {
-				Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-				exit 0
-			}
-			if (-not $script:Curl) {
-				exit 0
-			}
-			# Otherwise the marker stays until Nearhost confirms the close, so a
-			# later attempt can still find the socket.
-			if ((Invoke-Api -Sock $script:Sock -Limit 1 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs?session=$sid")) -and $script:Status -eq '204') {
-				Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-			}
+			Close-Session $sid
 			exit 0
 		}
-		if (-not (Test-Id $first)) {
-			Exit-Script 1 'usage: passthrough-close --session <id> | <id>'
+		$id, $on = Read-IdAndOn 'passthrough-close takes one id'
+		if (-not (Test-Id $id)) {
+			Exit-Script 1 'usage: passthrough-close --session <id> | <id> [--on host]'
+		}
+		if ($on) {
+			Invoke-On $on @('passthrough-close', $id)
 		}
 		Find-Socket
-		if (-not (Invoke-Api -Sock $script:Sock -Limit 20 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs/$first"))) {
+		if (-not (Invoke-Api -Sock $script:Sock -Limit 20 -Arguments @('-X', 'DELETE', "http://nearhost/v1/passthroughs/$id"))) {
 			exit 0
 		}
 		if ($script:Status -ne '204') {
@@ -1000,4 +1314,4 @@ switch -CaseSensitive ($cmd) {
 		exit 0
 	}
 }
-Exit-Script 1 'usage: nearhost.ps1 socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] | passthrough-wait <id> | passthrough-close --session <id> | <id> | open <path> [--label X] | open-wait <id>'
+Exit-Script 1 'usage: nearhost.ps1 socket | status [--all] [path] | propose [--web N] [--name X] [path] | wait <id> | doctor [path] | reload [path] | passthrough <port> [--label X] [--on host] | passthrough-wait <id> [--on host] | passthrough-close --session <id> | <id> [--on host] | open <path> [--label X] | open-wait <id>'

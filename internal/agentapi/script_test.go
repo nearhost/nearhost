@@ -1306,38 +1306,14 @@ func TestScriptPassthroughBadPort(t *testing.T) {
 	})
 }
 
-// shShells are scriptShells that run nearhost.sh: the cases for --on, which
-// nearhost.ps1 does not take yet. On Windows there are none, so they skip.
-func shShells(t *testing.T) []scriptShell {
-	t.Helper()
-	var shells []scriptShell
-	for _, shell := range scriptShells(t) {
-		if !shell.powerShell() {
-			shells = append(shells, shell)
-		}
-	}
-	if len(shells) == 0 {
-		t.Skip("--on is in nearhost.sh only for now")
-	}
-	return shells
-}
-
-// eachShShell runs f as a subtest in each of shShells.
-func eachShShell(t *testing.T, f func(t *testing.T, shell scriptShell)) {
-	t.Helper()
-	for _, shell := range shShells(t) {
-		t.Run(shell.name, func(t *testing.T) { f(t, shell) })
-	}
-}
-
 // fakeSSH puts an ssh in home/bin, which drops its options, -- and the host,
 // then runs the rest with sh -c under SSH_CONNECTION=fake, stdin passed
 // through, as ssh runs a command on a server. It leaves home/ssh-ran when it
 // runs, and the command it was given in home/ssh-cmd. It returns the PATH to
-// run the script with.
-func fakeSSH(t *testing.T, home string) string {
+// run shell's script with.
+func fakeSSH(t *testing.T, shell scriptShell, home string) string {
 	t.Helper()
-	return fakeSSHWith(t, home, `while [ $# -gt 0 ]; do
+	return fakeSSHWith(t, shell, home, `while [ $# -gt 0 ]; do
 	case $1 in
 	-o) shift 2 ;;
 	--) shift; break ;;
@@ -1352,27 +1328,94 @@ SSH_CONNECTION=fake exec sh -c "$*"
 }
 
 // fakeSSHWith is fakeSSH with body as what the ssh does after noting it ran.
-func fakeSSHWith(t *testing.T, home, body string) string {
+func fakeSSHWith(t *testing.T, shell scriptShell, home, body string) string {
 	t.Helper()
-	bin := filepath.Join(home, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
+	return fakeSSHIn(t, shell, home, filepath.Join(home, "bin"), body)
+}
+
+// fakeSSHIn is fakeSSHWith with the ssh in dir. On Windows, where
+// nearhost.ps1 runs ssh.exe, it is dir\ssh.cmd, which runs body with Git for
+// Windows' sh, as the server's sh; with no sh, or one that cannot reach the
+// test's Nearhost when it has one, the test skips.
+func fakeSSHIn(t *testing.T, shell scriptShell, home, dir, body string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ran := filepath.Join(home, "ssh-ran")
-	src := "#!/bin/sh\n: >'" + ran + "'\n" + body
-	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(src), 0o755); err != nil {
+	src := ": >'" + filepath.Join(home, "ssh-ran") + "'\n" + body
+	if runtime.GOOS != "windows" {
+		if err := os.WriteFile(fakeSSHPath(dir), []byte("#!/bin/sh\n"+src), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return "PATH=" + dir + ":/usr/bin:/bin"
+	}
+	sh, dirs := gitSh(t, home)
+	script := filepath.Join(dir, "ssh.sh")
+	if err := os.WriteFile(script, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return "PATH=" + bin + ":/usr/bin:/bin"
+	cmd := "@set \"PATH=" + dirs + ";%PATH%\"\r\n@\"" + sh + "\" \"" + script + "\" %*\r\n@exit %ERRORLEVEL%\r\n"
+	if err := os.WriteFile(fakeSSHPath(dir), []byte(cmd), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := ""
+	for _, kv := range scriptEnv(t, shell, home) {
+		if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "PATH") {
+			path = v
+		}
+	}
+	return "PATH=" + dir + ";" + path
+}
+
+// fakeSSHPath is the fake ssh fakeSSHIn puts in dir, as Get-Command ssh
+// finds it.
+func fakeSSHPath(dir string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(dir, "ssh.cmd")
+	}
+	return filepath.Join(dir, "ssh")
+}
+
+// gitSh finds Git for Windows' sh, before the scripts' PATH drops it, and
+// the folders it needs on PATH, for the fake ssh to run nearhost.sh with as
+// the server would. When home has a Nearhost socket, that sh must reach it
+// as nearhost.sh does, with [ -S ] and curl --unix-socket; otherwise, or with
+// no sh, the test skips rather than fake the server.
+func gitSh(t *testing.T, home string) (sh, dirs string) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh (Git for Windows) here to run nearhost.sh on the fake ssh's server")
+	}
+	list := []string{filepath.Dir(sh)}
+	if usr := filepath.Join(filepath.Dir(sh), "..", "usr", "bin"); dirExists(usr) {
+		list = append(list, filepath.Clean(usr))
+	}
+	dirs = strings.Join(list, ";")
+	socks, _ := filepath.Glob(filepath.Join(home, ".nearhost", "*.sock"))
+	if len(socks) > 0 {
+		probe := exec.Command(sh, "-c", `[ -S "$1" ] && curl -s --max-time 2 --unix-socket "$1" http://nearhost/v1 >/dev/null`, "sh", socks[0])
+		probe.Env = append(os.Environ(), "PATH="+dirs+";"+os.Getenv("PATH"))
+		if out, err := probe.CombinedOutput(); err != nil {
+			t.Skipf("Git for Windows' sh cannot reach a Windows socket as nearhost.sh does ([ -S ] and curl --unix-socket: %v %s), so it cannot play the server", err, out)
+		}
+	}
+	return sh, dirs
+}
+
+// dirExists reports whether dir is a directory.
+func dirExists(dir string) bool {
+	fi, err := os.Stat(dir)
+	return err == nil && fi.IsDir()
 }
 
 func TestScriptPassthroughOnAnotherHost(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		_, p, g, _ := passScript(t, home, "mini", false)
 		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
 		storeToken(t, home, "claude-code", "tok-x")
-		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
 		// Labels come from text the agent read: none may reach a shell on
 		// the host as anything but its bytes, whatever that shell is.
 		labels := []string{
@@ -1399,10 +1442,10 @@ func TestScriptPassthroughOnAnotherHost(t *testing.T) {
 }
 
 func TestScriptPassthroughWaitOnAnotherHost(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		s, _, _, rv := passScript(t, home, "mini", true)
-		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
 		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
 		m := proposalID.FindStringSubmatch(r.stdout)
 		if r.code != 0 || m == nil {
@@ -1414,7 +1457,7 @@ func TestScriptPassthroughWaitOnAnotherHost(t *testing.T) {
 		// A request the user is asked about is in the marker too, so the
 		// session's end withdraws it.
 		marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
-		want := "ssh " + filepath.Join(home, "bin", "ssh") + " apollo\n"
+		want := "ssh " + fakeSSHPath(filepath.Join(home, "bin")) + " apollo\n"
 		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
 			t.Fatalf("marker %q, want %q: %v", data, want, err)
 		}
@@ -1429,10 +1472,10 @@ func TestScriptPassthroughWaitOnAnotherHost(t *testing.T) {
 }
 
 func TestScriptOnRefusesAnOptionLikeHost(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		passScript(t, home, "mini", false)
-		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
 		for _, host := range []string{"-oProxyCommand=x", "a b", "", "a;b", "a'b"} {
 			for _, args := range [][]string{{"passthrough", "3000", "--on", host}, {"passthrough-wait", "abc123", "--on", host}} {
 				r := shell.run(t, home, env, args...)
@@ -1448,9 +1491,9 @@ func TestScriptOnRefusesAnOptionLikeHost(t *testing.T) {
 }
 
 func TestScriptOnSaysWhenSSHFails(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
-		path := fakeSSHWith(t, home, "echo 'ssh: Could not resolve hostname apollo' >&2\necho 'second line' >&2\nexit 255\n")
+		path := fakeSSHWith(t, shell, home, "echo 'ssh: Could not resolve hostname apollo' >&2\necho 'second line' >&2\nexit 255\n")
 		r := shell.run(t, home, append([]string{path}, claudeEnv...), "passthrough", "3000", "--on", "apollo")
 		want := "SSH could not reach apollo: ssh: Could not resolve hostname apollo\n"
 		if r.code != 2 || r.stderr != want || r.stdout != "" {
@@ -1460,9 +1503,9 @@ func TestScriptOnSaysWhenSSHFails(t *testing.T) {
 }
 
 func TestScriptOnPassesTheRemoteAnswerThrough(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
-		path := fakeSSHWith(t, home, "echo '{\"error\":\"x\"}'\necho 'No Nearhost reaches this server.' >&2\nexit 2\n")
+		path := fakeSSHWith(t, shell, home, "echo '{\"error\":\"x\"}'\necho 'No Nearhost reaches this server.' >&2\nexit 2\n")
 		r := shell.run(t, home, append([]string{path}, claudeEnv...), "passthrough", "3000", "--on", "apollo")
 		if r.code != 2 || r.stdout != "{\"error\":\"x\"}\n" || r.stderr != "No Nearhost reaches this server.\n" {
 			t.Fatalf("%+v", r)
@@ -1471,7 +1514,7 @@ func TestScriptOnPassesTheRemoteAnswerThrough(t *testing.T) {
 }
 
 func TestScriptRefusesRemoteFromATerminal(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		passScript(t, home, "mini", false)
 		r := shell.run(t, home, nil, "--remote", "x", "y", "status")
@@ -1488,9 +1531,9 @@ func TestScriptRefusesRemoteFromATerminal(t *testing.T) {
 
 // fakeSSHFailing is fakeSSH, but for the host fail, which it cannot reach:
 // it says so and exits 255, as ssh does.
-func fakeSSHFailing(t *testing.T, home, fail string) string {
+func fakeSSHFailing(t *testing.T, shell scriptShell, home, fail string) string {
 	t.Helper()
-	return fakeSSHWith(t, home, `while [ $# -gt 0 ]; do
+	return fakeSSHWith(t, shell, home, `while [ $# -gt 0 ]; do
 	case $1 in
 	-o) shift 2 ;;
 	--) shift; break ;;
@@ -1518,7 +1561,7 @@ func sessionTargets(t *testing.T, shell scriptShell, home string) (*fakePasser, 
 	g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
 	storeToken(t, home, "claude-code", "tok-x")
 	deletes, front := countCalls(t, home, http.MethodDelete, "/v1/passthroughs")
-	env := []string{fakeSSH(t, home), "NEARHOST_SOCKET=" + front}
+	env := []string{fakeSSH(t, shell, home), "NEARHOST_SOCKET=" + front}
 	agent := append(append([]string{}, env...), claudeEnv...)
 	for i, on := range []string{"", "apollo", "leto"} {
 		args := []string{"passthrough", strconv.Itoa(3000 + i)}
@@ -1529,13 +1572,13 @@ func sessionTargets(t *testing.T, shell scriptShell, home string) (*fakePasser, 
 			t.Fatalf("%q: %+v", args, r)
 		}
 	}
-	ssh := filepath.Join(home, "bin", "ssh")
+	ssh := fakeSSHPath(filepath.Join(home, "bin"))
 	want := front + "\nssh " + ssh + " apollo\nssh " + ssh + " leto\n"
 	return p, deletes, env, filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1"), want
 }
 
 func TestScriptSessionMarkerKeepsEveryTarget(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		_, _, env, marker, want := sessionTargets(t, shell, home)
 		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
@@ -1557,7 +1600,7 @@ func TestScriptSessionMarkerKeepsEveryTarget(t *testing.T) {
 }
 
 func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		p, deletes, env, marker, _ := sessionTargets(t, shell, home)
 		r := shell.run(t, home, append(env, "CLAUDE_CODE_SESSION_ID=s1"), "passthrough-close", "--session", "s1")
@@ -1567,8 +1610,14 @@ func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {
 		if n := deletes(); n != 3 {
 			t.Fatalf("%d DELETEs, want 3", n)
 		}
-		if got := p.closed(); len(got) != 3 {
-			t.Fatalf("closed %v", got)
+		// Every target here is the one Nearhost, which the closes reach at
+		// once, so one may close what another just closed too.
+		seen := map[string]bool{}
+		for _, id := range p.closed() {
+			seen[id] = true
+		}
+		if len(seen) != 3 {
+			t.Fatalf("closed %v", p.closed())
 		}
 		if _, err := os.Stat(marker); !os.IsNotExist(err) {
 			t.Fatalf("marker stayed: %v", err)
@@ -1580,10 +1629,10 @@ func TestScriptCloseSessionClosesEveryTarget(t *testing.T) {
 }
 
 func TestScriptCloseSessionKeepsWhatFailed(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		_, deletes, env, marker, _ := sessionTargets(t, shell, home)
-		env[0] = fakeSSHFailing(t, home, "leto")
+		env[0] = fakeSSHFailing(t, shell, home, "leto")
 		r := shell.run(t, home, env, "passthrough-close", "--session", "s1")
 		if r.code != 0 || r.stdout != "" || r.stderr != "" {
 			t.Fatalf("close: %+v", r)
@@ -1591,7 +1640,7 @@ func TestScriptCloseSessionKeepsWhatFailed(t *testing.T) {
 		if n := deletes(); n != 2 {
 			t.Fatalf("%d DELETEs, want 2", n)
 		}
-		want := "ssh " + filepath.Join(home, "bin", "ssh") + " leto\n"
+		want := "ssh " + fakeSSHPath(filepath.Join(home, "bin")) + " leto\n"
 		if data, err := os.ReadFile(marker); err != nil || string(data) != want {
 			t.Fatalf("marker %q, want %q: %v", data, want, err)
 		}
@@ -1599,10 +1648,15 @@ func TestScriptCloseSessionKeepsWhatFailed(t *testing.T) {
 }
 
 func TestScriptCloseSessionIsCutOff(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if runtime.GOOS == "windows" {
+			// The fake is ssh.cmd running sh: ending cmd.exe at the cut-off
+			// leaves its sh running, which a real ssh.exe does not.
+			t.Skip("the fake ssh on Windows cannot be cut off as ssh.exe is")
+		}
 		home := shortDir(t)
 		pidFile := filepath.Join(home, "ssh-pid")
-		path := fakeSSHWith(t, home, "echo $$ >'"+pidFile+"'\nexec sleep 10\n")
+		path := fakeSSHWith(t, shell, home, "echo $$ >'"+pidFile+"'\nexec sleep 10\n")
 		t.Cleanup(func() {
 			if b, err := os.ReadFile(pidFile); err == nil {
 				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
@@ -1612,13 +1666,19 @@ func TestScriptCloseSessionIsCutOff(t *testing.T) {
 				}
 			}
 		})
-		line := "ssh " + filepath.Join(home, "bin", "ssh") + " apollo"
+		line := "ssh " + fakeSSHPath(filepath.Join(home, "bin")) + " apollo"
 		gone := filepath.Join(home, "gone.sock")
 		marker := writeMarker(t, home, "s1", gone+"\n"+line)
 		start := time.Now()
 		r := shell.run(t, home, []string{path}, "passthrough-close", "--session", "s1")
 		took := time.Since(start)
-		if r.code != 0 || took > 3*time.Second {
+		// The SessionEnd hook runs nearhost.sh, within its 3 seconds;
+		// PowerShell takes up to a second more to start.
+		limit := 3 * time.Second
+		if shell.powerShell() {
+			limit += 2 * time.Second
+		}
+		if r.code != 0 || took > limit {
 			t.Fatalf("close: %+v after %v", r, took)
 		}
 		if took < 2*time.Second {
@@ -1649,13 +1709,13 @@ func TestScriptCloseSessionIsCutOff(t *testing.T) {
 }
 
 func TestScriptCloseSessionDropsMalformedLines(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
-		path := fakeSSH(t, home)
+		path := fakeSSH(t, shell, home)
 		bad := []string{
 			"ssh relative/ssh apollo",
-			"ssh " + filepath.Join(home, "bin", "ssh") + " -oProxyCommand=x",
-			"ssh " + filepath.Join(home, "bin", "ssh"),
+			"ssh " + fakeSSHPath(filepath.Join(home, "bin")) + " -oProxyCommand=x",
+			"ssh " + fakeSSHPath(filepath.Join(home, "bin")),
 			"relative.sock",
 			"",
 		}
@@ -1674,12 +1734,12 @@ func TestScriptCloseSessionDropsMalformedLines(t *testing.T) {
 }
 
 func TestScriptCloseOneOnAnotherHost(t *testing.T) {
-	eachShShell(t, func(t *testing.T, shell scriptShell) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
 		_, p, g, _ := passScript(t, home, "mini", false)
 		g.tokens[[2]string{"mini", "claude-code"}] = "tok-x"
 		storeToken(t, home, "claude-code", "tok-x")
-		env := append([]string{fakeSSH(t, home)}, claudeEnv...)
+		env := append([]string{fakeSSH(t, shell, home)}, claudeEnv...)
 		r := shell.run(t, home, env, "passthrough", "3000", "--on", "apollo")
 		m := proposalID.FindStringSubmatch(r.stdout)
 		if r.code != 0 || m == nil {
@@ -1692,6 +1752,91 @@ func TestScriptCloseOneOnAnotherHost(t *testing.T) {
 		}
 		if cmd, err := os.ReadFile(filepath.Join(home, "ssh-cmd")); err != nil || string(cmd) != "sh -s\n" {
 			t.Fatalf("ssh ran %q: %v", cmd, err)
+		}
+	})
+}
+
+// nearhost.ps1 names in the marker the ssh it ran, by the full path
+// Get-Command ssh gives, so the SessionEnd hook's nearhost.sh, in Git Bash,
+// closes with the same ssh.exe, keys and known hosts.
+func TestScriptPs1MarkerNamesItsSSH(t *testing.T) {
+	for _, shell := range powerShells(t) {
+		t.Run(shell.name, func(t *testing.T) {
+			home := shortDir(t)
+			// ssh.exe may be under C:\Program Files. On Windows the fake is a
+			// .cmd, which cmd.exe runs, and its quoting rules are not ssh.exe's,
+			// so that one has no space.
+			dir := filepath.Join(home, "Open SSH")
+			if runtime.GOOS == "windows" {
+				dir = filepath.Join(home, "OpenSSH")
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// It answers as a passthrough the user is asked about, without
+			// reading what it is sent, as an ssh that fails early does not.
+			src, sep := "#!/bin/sh\necho '{\"id\":\"ab12\"}'\n", ":"
+			if runtime.GOOS == "windows" {
+				src, sep = "@echo {\"id\":\"ab12\"}\r\n", ";"
+			}
+			if err := os.WriteFile(fakeSSHPath(dir), []byte(src), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := "PATH=" + dir + sep + "/usr/bin" + sep + "/bin"
+			if runtime.GOOS == "windows" {
+				for _, kv := range scriptEnv(t, shell, home) {
+					if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "PATH") {
+						path = "PATH=" + dir + ";" + v
+					}
+				}
+			}
+			probe := exec.Command(shell.argv[0], "-NoProfile", "-Command", "(Get-Command ssh -CommandType Application | Select-Object -First 1).Path")
+			probe.Env = append(scriptEnv(t, shell, home), path)
+			out, err := probe.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := strings.TrimSpace(string(out))
+			if got != fakeSSHPath(dir) {
+				t.Fatalf("Get-Command ssh gave %q, want %q", got, fakeSSHPath(dir))
+			}
+			r := shell.run(t, home, append([]string{path}, claudeEnv...), "passthrough", "3000", "--on", "apollo")
+			if r.code != 0 || !strings.Contains(r.stdout, `"id":"ab12"`) {
+				t.Fatalf("passthrough --on: %+v", r)
+			}
+			marker := filepath.Join(home, ".local", "state", "nearhost", "sessions", "s1")
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "ssh "+got+" apollo\n" {
+				t.Fatalf("marker %q, want %q: %v", data, "ssh "+got+" apollo\n", err)
+			}
+		})
+	}
+}
+
+// A marker's ssh line names the ssh by its full path, which may hold
+// spaces, as C:\Program Files does: the host is its last field.
+func TestScriptCloseSessionTakesAnSSHPathWithSpaces(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		if runtime.GOOS == "windows" {
+			t.Skip("the fake ssh on Windows is a .cmd, which cmd.exe cannot run from a path with a space as it runs ssh.exe")
+		}
+		home := shortDir(t)
+		dir := filepath.Join(home, "Program Files", "Open SSH")
+		args := filepath.Join(home, "ssh-args")
+		path := fakeSSHIn(t, shell, home, dir, "printf '%s\\n' \"$@\" >'"+args+"'\ncat >/dev/null\n")
+		marker := writeMarker(t, home, "s1", "ssh "+fakeSSHPath(dir)+" apollo")
+		r := shell.run(t, home, []string{path}, "passthrough-close", "--session", "s1")
+		if r.code != 0 || r.stdout != "" || r.stderr != "" {
+			t.Fatalf("close: %+v", r)
+		}
+		data, err := os.ReadFile(args)
+		if err != nil {
+			t.Fatalf("the ssh at a path with spaces did not run: %v", err)
+		}
+		if want := "-o\nBatchMode=yes\n-o\nConnectTimeout=2\n--\napollo\nsh -s\n"; string(data) != want {
+			t.Fatalf("ssh ran with %q, want %q", data, want)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("marker stayed after the close: %v", err)
 		}
 	})
 }
@@ -1714,7 +1859,12 @@ func writeMarker(t *testing.T, home, sid, sock string) string {
 // returns the socket's path and a count of the DELETE requests served.
 func answerDelete(t *testing.T, home string, status int) (string, *atomic.Int32) {
 	t.Helper()
-	sock := filepath.Join(home, "d.sock")
+	return answerDeleteAt(t, filepath.Join(home, "d.sock"), status)
+}
+
+// answerDeleteAt is answerDelete on the socket sock.
+func answerDeleteAt(t *testing.T, sock string, status int) (string, *atomic.Int32) {
+	t.Helper()
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -1784,6 +1934,57 @@ func TestScriptCloseRemovesMarkerOnSuccess(t *testing.T) {
 			t.Fatalf("marker stayed after a close: %v", err)
 		}
 	})
+}
+
+// On Windows the SessionEnd hook runs nearhost.sh in Git Bash, and the
+// marker names the laptop's socket as nearhost.ps1 writes it, from a drive
+// letter: the close must reach that Nearhost, not drop the line.
+func TestScriptCloseSessionClosesADriveLetterSocket(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	shell := shScript
+	home := shortDir(t)
+	var line string
+	if runtime.GOOS == "windows" {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			t.Skip("no sh (Git for Windows) here, which runs the SessionEnd hook")
+		}
+		shell = scriptShell{"git-sh", []string{sh}, script}
+		sock, deletes := answerDelete(t, home, http.StatusNoContent)
+		line = sock
+		if !regexp.MustCompile(`^[A-Za-z]:\\`).MatchString(line) {
+			t.Fatalf("socket %q is not a drive-letter path", line)
+		}
+		checkDriveClose(t, shell, home, line, deletes)
+		return
+	}
+	// Elsewhere no path starts with a drive letter, but a relative one can
+	// look like it: C:/d.sock, from home, where the script runs.
+	dir := filepath.Join(home, "C:")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, deletes := answerDeleteAt(t, filepath.Join(dir, "d.sock"), http.StatusNoContent)
+	checkDriveClose(t, shell, home, "C:/d.sock", deletes)
+}
+
+// checkDriveClose writes line as session s1's marker, runs shell's close,
+// and checks the Nearhost on line was asked once and the marker went.
+func checkDriveClose(t *testing.T, shell scriptShell, home, line string, deletes *atomic.Int32) {
+	t.Helper()
+	marker := writeMarker(t, home, "s1", line)
+	r := shell.run(t, home, nil, "passthrough-close", "--session", "s1")
+	if r.code != 0 || r.stdout != "" || r.stderr != "" {
+		t.Fatalf("close: %+v", r)
+	}
+	if n := deletes.Load(); n != 1 {
+		t.Fatalf("%d DELETE requests for %s, want 1", n, line)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker stayed after the close: %v", err)
+	}
 }
 
 func TestScriptDecodesHTMLEscapes(t *testing.T) {

@@ -63,7 +63,7 @@ Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev s
 4. On `"state":"open"`, give the user the returned `url` with the path of the page appended, not the `localhost` URL you started with. It is the laptop's port, which may differ from the server's. On `"state":"closed"`, tell the user the passthrough is closed, so no preview is available.
 5. Exit status 6 means the user said No: do not ask again for that port in this session. When the script says the user said No to a passthrough or to another one, Nearhost did not ask the user about this one: pass on what the script printed, and ask again only if the user asks you to. Exit status 1 with `Nearhost could not open the port: <reason>` means the user said yes but opening it failed: pass the reason on to the user, and ask again only once it is fixed. Exit status 7 means nobody answered within 10 minutes.
 6. On exit status 2 and 5, pass on the message the script printed as it is. On exit status 3, Nearhost on the laptop has no page or window to ask in: ask the user to open `nearhost` there, then try again.
-7. Never run `passthrough-close` yourself, unless the user asks you to close one. Nearhost closes a session's passthroughs when the session ends.
+7. Never run `passthrough-close` yourself, unless the user asks you to close one: then run `<script> passthrough-close <id>`, and for one you opened with `--on <host>`, `<script> passthrough-close <id> --on <host>`. Nearhost closes a session's passthroughs when the session ends.
 
 When the user picks "Always allow" in Nearhost, the script keeps the token it is given under `$XDG_STATE_HOME/nearhost/tokens` (by default `~/.local/state/nearhost`) and later asks without a prompt. Do not read, print or edit those files.
 
