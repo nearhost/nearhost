@@ -466,3 +466,31 @@ func TestNetworkSiteURLUsesTheHTTPSPort(t *testing.T) {
 		t.Errorf("a project with no site: %q", got)
 	}
 }
+
+// Status reads the sites once, and only while the core serves to the
+// network: a core that is not networked does no extra work per project.
+func TestNetworkSiteURLsReadSitesOnlyWhenOn(t *testing.T) {
+	calls := 0
+	sites := func() []proxy.Site {
+		calls++
+		return []proxy.Site{{Project: "demo", Hosts: []string{"demo.homelab.ecs.dev"}}}
+	}
+	url := networkSiteURLs(engine.NetworkState{}, sites, 9443)
+	for _, p := range []string{"demo", "other", "third"} {
+		if got := url(p); got != "" {
+			t.Errorf("off: %s = %q", p, got)
+		}
+	}
+	if calls != 0 {
+		t.Errorf("off: sites read %d times, want none", calls)
+	}
+	url = networkSiteURLs(engine.NetworkState{On: true, URL: "https://nearhost.homelab.ecs.dev:9444"}, sites, 9443)
+	if got := url("demo"); got != "https://demo.homelab.ecs.dev:9443" {
+		t.Errorf("on: demo = %q", got)
+	}
+	url("other")
+	url("third")
+	if calls != 1 {
+		t.Errorf("on: sites read %d times, want once", calls)
+	}
+}

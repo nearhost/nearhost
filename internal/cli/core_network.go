@@ -101,10 +101,15 @@ func (o *coreOps) networkInfo() *control.NetworkInfo {
 	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
 }
 
-// networkProjectURL is the address of a project on the network.
-func (o *coreOps) networkProjectURL(project string) string {
-	ns := o.eng.NetworkState()
-	return networkSiteURL(ns, o.eng.Sites(), project, o.httpsPort)
+// networkSiteURLs returns the address of each project on the network, for
+// status. It reads the sites once, and not at all while the core does not
+// serve to the network, so status does no extra work then.
+func networkSiteURLs(ns engine.NetworkState, sites func() []proxy.Site, httpsPort int) func(project string) string {
+	if !ns.On || ns.URL == "" {
+		return func(string) string { return "" }
+	}
+	list := sites()
+	return func(project string) string { return networkSiteURL(ns, list, project, httpsPort) }
 }
 
 // networkSiteURL is the address of a project on the network: the first of

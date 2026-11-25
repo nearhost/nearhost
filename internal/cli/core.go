@@ -471,6 +471,7 @@ func (c *coreBackend) Status() control.Status {
 		h := c.eng.ServerHealth(name)
 		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(h.Status), Message: h.LastError, Problem: h.Problem})
 	}
+	networkURL := networkSiteURLs(c.eng.NetworkState(), c.eng.Sites, c.httpsPort)
 	for _, p := range cfg.Projects {
 		ps := c.eng.Status(p.Name)
 		if !p.Enabled && ps.State == engine.StateStopped {
@@ -478,7 +479,7 @@ func (c *coreBackend) Status() control.Status {
 		}
 		st.Projects = append(st.Projects, control.ProjectInfo{
 			Name: p.Name, State: string(ps.State), Message: ps.Message, URL: siteURL(p.Alias, c.httpsPort),
-			Problem: ps.Problem, NetworkURL: c.networkProjectURL(p.Name),
+			Problem: ps.Problem, NetworkURL: networkURL(p.Name),
 		})
 	}
 	for _, a := range c.approvals.Pending() {
