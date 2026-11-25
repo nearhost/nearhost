@@ -454,7 +454,7 @@
       "code": "add.bad-name",
       "level": "error",
       "status": 400,
-      "summary": "The project's name holds characters a .test name cannot use."
+      "summary": "The project's name is not one Nearhost can use."
     },
     {
       "code": "add.alias-taken",

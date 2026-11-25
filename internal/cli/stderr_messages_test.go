@@ -318,3 +318,16 @@ func TestAddPathNameAndAliasRefusalsAreMessages(t *testing.T) {
 		}
 	}
 }
+
+// A name given with --name that no project can have is blamed, not the
+// path, which was never asked to name the project.
+func TestAddBadNameFromTheFlagNamesTheName(t *testing.T) {
+	cfg := &config.Config{Servers: mini}
+	again := func(set ...string) string { return "nearhost add /srv/app " + strings.Join(set, " ") }
+	_, err := newProject(cfg, "config.yaml", mini[0], addFlags{name: "a/b", alias: "app.test"}, []string{"/srv/app"}, again)
+	m, ok := report.As(err)
+	if !ok || m.Code != report.AddBadName || m.Title != `The name "a/b" is not one a project can have.` || m.Data["name"] != "a/b" {
+		t.Fatalf("%v, message %+v", err, m)
+	}
+	wantSteps(t, m, report.Step{Text: "Pass another name:", Command: "nearhost add /srv/app --name <name>"})
+}

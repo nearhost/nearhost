@@ -355,7 +355,7 @@ var catalogRows = []catalogRow{
 	{ServiceAgentChanges, Warning, 0, "SSH_AUTH_SOCK points at an agent socket that changes at each login, so the service cannot use it."},
 	{AddLonePort, Warning, 0, "Discovery found one port only, so nearhost add made it the web route."},
 	{AddNoWebPort, Error, 400, "nearhost add could not tell which port serves the project, so nothing was saved."},
-	{AddBadName, Error, 400, "The project's name holds characters a .test name cannot use."},
+	{AddBadName, Error, 400, "The project's name is not one Nearhost can use."},
 	{AddAliasTaken, Error, 409, "The name the project asks to be served at is already another project's."},
 	{AddNameTaken, Error, 409, "Another project already has the name the project would be added under."},
 	{AddNoDirectory, Error, 404, "There is no directory at the path given to nearhost add."},

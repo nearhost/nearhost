@@ -1060,6 +1060,11 @@ func newProject(cfg *config.Config, cfgPath string, srv config.Server, flags add
 			Because("It is %s on %s, in %s.", taken.other.Path, taken.other.Server, cfgPath).
 			Step("Add this one under another name:", again("--name", "<name>")).
 			With("project", name).Wrap(err)
+	case err != nil && flags.name != "":
+		return config.Project{}, report.Errorf(report.AddBadName, "The name %q is not one a project can have.", name).
+			Because("%s.", upperFirst(err.Error())).
+			Step("Pass another name:", again("--name", "<name>")).
+			With("name", name).Wrap(err)
 	case err != nil:
 		return config.Project{}, report.Errorf(report.AddBadName, "Nearhost cannot name a project after %s.", projectPath).
 			Because("%s.", upperFirst(err.Error())).
