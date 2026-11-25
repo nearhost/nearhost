@@ -59,9 +59,7 @@ func systemService() serviceBackend {
 		},
 		home: home,
 	}
-	if runtime.GOOS == "linux" {
-		b.mayNotBind = linuxMayNotBind
-	}
+	b.mayNotBind = linuxMayNotBind
 	b.manager = func() service.Manager {
 		if home == "" {
 			return nil
@@ -244,9 +242,11 @@ func runServiceInstall(cmd *cobra.Command, b serviceBackend, yes bool) error {
 	return nil
 }
 
-// linuxMayNotBind is mayNotBind on Linux: the service's core serves on ports
-// 443 and 80, which a binary may bind with cap_net_bind_service, or any
-// binary may when the system's first unprivileged port is 80 or lower.
+// linuxMayNotBind is the production mayNotBind. On Linux, the service's core
+// serves on ports 443 and 80, which a binary may bind with
+// cap_net_bind_service, or any binary may when the system's first
+// unprivileged port is 80 or lower. Elsewhere file capabilities cannot be
+// told, so it is false.
 func linuxMayNotBind(exe string) bool {
 	if first, ok := readUnprivilegedPortStart(); ok && first <= 80 {
 		return false
