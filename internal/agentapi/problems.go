@@ -96,7 +96,7 @@ func collecting(next http.Handler) http.Handler {
 }
 
 // warnings are the warnings reported so far for the reply w writes, as
-// agents are sent them.
+// agents are sent them: a notice (level Info) is not one.
 func warnings(w http.ResponseWriter) []*report.Message {
 	ww, ok := w.(*warningsWriter)
 	if !ok {
@@ -104,7 +104,7 @@ func warnings(w http.ResponseWriter) []*report.Message {
 	}
 	var out []*report.Message
 	for _, m := range ww.c.Messages() {
-		if m != nil {
+		if m != nil && m.Level >= report.Warning {
 			out = append(out, forAgents(m))
 		}
 	}

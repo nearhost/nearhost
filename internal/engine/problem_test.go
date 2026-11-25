@@ -201,3 +201,40 @@ func (f *fakeTransport) ForwardStates() (transport.Status, []transport.ForwardSt
 	return f.status, nil
 }
 func (f *fakeTransport) Forwards() [][2]int { return nil }
+
+// Only an error of listening on a port is a port problem: a permission
+// refused on a file the proxy reads is the proxy's own error.
+func TestBindProblemOnlyForListening(t *testing.T) {
+	e := &Engine{opts: Options{HTTPSPort: 443, HTTPPort: 80}}
+	listen := &net.OpError{Op: "listen", Net: "tcp", Addr: &net.TCPAddr{Port: 80}, Err: os.NewSyscallError("listen", syscall.EACCES)}
+	for _, tc := range []struct {
+		err  error
+		port bool
+	}{
+		{errors.New("loading new config: listen tcp :443: bind: permission denied"), true},
+		{fmt.Errorf("start: %w", listen), true},
+		{fmt.Errorf("open /var/lib/caddy/cert.pem: %w", os.ErrPermission), false},
+		{&os.PathError{Op: "open", Path: "/etc/key", Err: syscall.EACCES}, false},
+		{&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, false},
+	} {
+		_, isMessage := report.As(e.bindProblem(tc.err))
+		if isMessage != tc.port {
+			t.Errorf("bindProblem(%v) is a port message: %v, want %v", tc.err, isMessage, tc.port)
+		}
+	}
+}
+
+// A hosts refusal whose fix updates the hosts file from a terminal needs no
+// step to start the project again: the core starts it once that is done.
+func TestHostsProblemNoRetryAfterHostsUpdate(t *testing.T) {
+	refusal := report.Errorf(report.HostsNeedsUpdate, "the hosts file needs updating.").
+		Step("Update it from a terminal:", HostsUpdateCommand)
+	m := HostsProblem("web", refusal)
+	if len(m.Fix) != 1 || m.Fix[0].Command != HostsUpdateCommand {
+		t.Errorf("steps %+v, want only the hosts update", m.Fix)
+	}
+	other := report.Errorf(report.HostsReadOnly, "read-only.").Step("Clear it:", "attrib -r hosts")
+	if m := HostsProblem("web", other); m.Fix[len(m.Fix)-1].Text != RetryThenText {
+		t.Errorf("steps %+v, want the retry last", m.Fix)
+	}
+}

@@ -88,20 +88,13 @@ func (p *upPrinter) writeEvent(ev engine.Event) {
 		p.shown[ev.Project] = msg
 	}
 	pending := ev.State == "" && ev.Project != "" && strings.HasPrefix(ev.Message, engine.PendingPrefix)
-	// Approving takes the interface, which shows each change and why it
-	// needs approval; up only says where to go. The interface cannot
-	// start while a core in the background runs.
-	approve := "open nearhost to approve them; nearhost up cannot"
-	if p.keepRunning {
-		approve = "run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot"
-	}
 	if p.stamped && ev.State == "" && ev.Report != nil {
 		// A warning or an error said as it happens, as a block with its
 		// level, code and what to do.
 		m := *ev.Report
 		m.Context, m.Fix = source, slices.Clone(m.Fix)
 		if pending {
-			m.Then(upperFirst(approve) + ".")
+			m.Fix = append(m.Fix, p.approveSteps()...)
 		}
 		fmt.Fprintln(p.out, report.LogText(&m))
 		return
@@ -115,7 +108,7 @@ func (p *upPrinter) writeEvent(ev engine.Event) {
 	}
 	fmt.Fprintln(p.out, line)
 	if pending {
-		fmt.Fprintln(p.out, "  "+approve)
+		p.writeSteps(p.approveSteps())
 	} else if ev.State == "" && ev.Report != nil {
 		// In a terminal, a warning or an error is an event line like any
 		// other, which keeps its time, with what to do under it.
@@ -250,13 +243,43 @@ func waiting(st engine.ProjectStatus, health engine.ServerHealth) bool {
 	return health.Status != transport.StatusAuthFailed || !health.NextAttempt.IsZero()
 }
 
-// restart is how a fix says to start Nearhost again: a core in the
-// background is stopped and started in the background, not with up.
-func (p *upPrinter) restart() string {
+// approveSteps say how to approve changes that wait for approval.
+// Approving takes the interface, which shows each change and why it needs
+// approval; up only says where to go. The interface cannot start while a
+// core in the background runs.
+func (p *upPrinter) approveSteps() []report.Step {
 	if p.keepRunning {
-		return "run `nearhost stop` and `nearhost -d`"
+		return []report.Step{
+			{Text: "Nearhost in the background cannot approve them. Stop it:", Command: "nearhost stop"},
+			{Text: "Then open the interface to approve them:", Command: "nearhost"},
+		}
 	}
-	return "run `nearhost up` again"
+	return []report.Step{{Text: "Open the interface to approve them; nearhost up cannot:", Command: "nearhost"}}
+}
+
+// restartSteps say how to start Nearhost again: a core in the background
+// is stopped and started in the background, not with up.
+func (p *upPrinter) restartSteps() []report.Step {
+	if p.keepRunning {
+		return []report.Step{
+			{Text: "Then stop Nearhost:", Command: "nearhost stop"},
+			{Text: "And start it again in the background:", Command: "nearhost -d"},
+		}
+	}
+	return []report.Step{{Text: "Then start it again:", Command: "nearhost up"}}
+}
+
+// sshFixStep is how to fix access to host: the ssh step of problem, the
+// server's own, when it has one, and the same step worded here when not.
+func sshFixStep(host string, problem *report.Message) report.Step {
+	if problem != nil {
+		for _, s := range problem.Fix {
+			if strings.HasPrefix(s.Command, "ssh ") {
+				return s
+			}
+		}
+	}
+	return sshStep(host)
 }
 
 // steps is what to do about the project called name in the state st, for
@@ -264,7 +287,8 @@ func (p *upPrinter) restart() string {
 // nil when there is nothing to do. Most problems carry their own steps.
 // Those about a server's access, the hosts file and the run directory are
 // worded here for up and a core in the background, which start again
-// differently from the interface the engine words them for.
+// differently from the interface the engine words them for. Every command
+// is a step's own, on a line of its own.
 func (p *upPrinter) steps(name string, st engine.State, reason string, problem *report.Message) []report.Step {
 	cfg := p.eng.Config()
 	proj, ok := cfg.Project(name)
@@ -279,16 +303,17 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 	if problem != nil {
 		code = problem.Code
 	}
-	fix := ""
 	switch st {
 	case engine.StateDegraded:
-		fix = fmt.Sprintf("none needed while nearhost reconnects; if the project stays degraded, run `ssh %s` once in a terminal to fix access", host)
+		ssh := sshFixStep(host, problem)
+		return []report.Step{{Text: "Nothing is needed while Nearhost reconnects. If the project stays degraded, fix access by running ssh once in a terminal:", Command: ssh.Command}}
 	case engine.StateStarting:
 		// A start that waits for its server runs by itself once it connects.
 		// The reason is the event's own, read when it happened: a start
 		// that runs as the session connects has none, and needs no hint.
 		if reason != "" && p.eng.Status(name).Waiting != "" {
-			fix = fmt.Sprintf("none needed: the project starts once nearhost connects to its server; if it keeps waiting, run `ssh %s` once in a terminal to fix access", host)
+			ssh := sshFixStep(host, problem)
+			return []report.Step{{Text: "Nothing is needed: the project starts once Nearhost connects to its server. If it keeps waiting, fix access by running ssh once in a terminal:", Command: ssh.Command}}
 		}
 	case engine.StateStopped:
 		// A stopped project with a reason was refused its hosts entry; one
@@ -302,9 +327,12 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 		case reason == "" || code == report.HostsReadOnly ||
 			problem != nil && (errors.Is(problem, errNoTerminal) || errors.Is(problem, errHostsNeedTerminal)):
 		case p.keepRunning:
-			fix = "run `nearhost hosts update` in a terminal, and Nearhost starts the project"
+			return []report.Step{{Text: "Update the hosts file from a terminal, and Nearhost starts the project:", Command: engine.HostsUpdateCommand}}
 		default:
-			fix = "run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts"
+			return []report.Step{
+				{Text: "Start it again and " + hostsApprove + ":", Command: "nearhost up"},
+				{Text: "Or add the project's hosts to " + hosts.DefaultPath + " yourself, then serve without updating it:", Command: "nearhost up --no-hosts"},
+			}
 		}
 	case engine.StateError:
 		status, _ := p.eng.ServerStatus(proj.Server)
@@ -314,23 +342,22 @@ func (p *upPrinter) steps(name string, st engine.State, reason string, problem *
 			// directory is shorter: ssh by hand would work and fix nothing.
 			// XDG_CONFIG_HOME also says where the config is read from, so
 			// the folder goes with it.
-			fix = "set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then " + p.restart()
+			return append([]report.Step{{Text: "Set XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there."}}, p.restartSteps()...)
 		case status != transport.StatusConnected:
-			fix = sshHint(host, p.restart())
-			// A session with a next attempt tries by itself, and the
-			// project waits for it and starts once it connects. One that
-			// gave up for good (it cannot run at all) has none.
+			steps := []report.Step{sshFixStep(host, problem)}
+			// A session with a next attempt tries by itself, as the reason
+			// says, and the project waits for it and starts once it
+			// connects. One that gave up for good (it cannot run at all)
+			// has none.
 			if !p.eng.ServerHealth(proj.Server).NextAttempt.IsZero() {
-				fix = fmt.Sprintf("run `ssh %s` once in a terminal to fix access; nearhost tries again by itself", host)
+				return steps
 			}
+			return append(steps, p.restartSteps()...)
 		case problem != nil && code != report.Unexpected && len(problem.Fix) > 0:
 			return problem.Fix
 		default:
-			fix = "resolve what is named above (a port in use: stop the process holding it), then " + p.restart()
+			return append([]report.Step{{Text: "Resolve what is named above (a port in use: stop the process holding it)."}}, p.restartSteps()...)
 		}
 	}
-	if fix == "" {
-		return nil
-	}
-	return []report.Step{{Text: upperFirst(fix)}}
+	return nil
 }

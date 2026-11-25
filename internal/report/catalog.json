@@ -282,6 +282,24 @@
       "summary": "The core could not send its standard error to its log, so a crash may not be logged."
     },
     {
+      "code": "core.no-projects",
+      "level": "error",
+      "status": 404,
+      "summary": "The config has no projects, so there is nothing to start."
+    },
+    {
+      "code": "core.unknown-project",
+      "level": "error",
+      "status": 404,
+      "summary": "No project in the config has the name given."
+    },
+    {
+      "code": "core.no-enabled-projects",
+      "level": "error",
+      "status": 409,
+      "summary": "Every project in the config is disabled, and none was named to start."
+    },
+    {
       "code": "ca.not-private",
       "level": "warning",
       "summary": "Nearhost could not make the folder that holds its local CA private to the user."
@@ -443,6 +461,18 @@
       "level": "error",
       "status": 409,
       "summary": "The name the project asks to be served at is already another project's."
+    },
+    {
+      "code": "add.name-taken",
+      "level": "error",
+      "status": 409,
+      "summary": "Another project already has the name the project would be added under."
+    },
+    {
+      "code": "add.no-directory",
+      "level": "error",
+      "status": 404,
+      "summary": "There is no directory at the path given to nearhost add."
     },
     {
       "code": "add.server-changed",

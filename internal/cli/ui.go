@@ -211,15 +211,13 @@ func noTerminal() error {
 		Step("Or serve without the interface:", "nearhost up")
 }
 
-// rootArgs is cobra.NoArgs, except that a single argument that looks like a
-// mistyped command is answered with the commands it may have meant.
+// rootArgs refuses any argument to bare nearhost as an unknown command,
+// with the commands the first may have meant.
 func rootArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 1 {
-		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-			return unknownCommand(cmd, args[0], s)
-		}
+	if len(args) > 0 {
+		return unknownCommand(cmd, args[0], cmd.SuggestionsFor(args[0]))
 	}
-	return cobra.NoArgs(cmd, args)
+	return nil
 }
 
 // runUI is bare `nearhost`: it opens the interface as a client of the core,

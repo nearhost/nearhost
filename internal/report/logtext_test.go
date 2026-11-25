@@ -79,3 +79,28 @@ func TestVerbatimInLogAndJSON(t *testing.T) {
 		t.Error("From shares the verbatim lines")
 	}
 }
+
+// A cause that only repeats the title, the explanation or the cause line
+// before it, ignoring case and a closing full stop, is left out.
+func TestCausesSkipRepeats(t *testing.T) {
+	running := errors.New("another Nearhost is already running")
+	m := Errorf(CoreAlreadyRunning, "Another Nearhost is already running (pid 5).").Wrap(running)
+	if got := LogText(m); got != "error [core.already-running] Another Nearhost is already running (pid 5)." {
+		t.Errorf("the already-running block repeats its cause:\n%s", got)
+	}
+	inner := errors.New("connection refused")
+	for _, tc := range []struct {
+		m    *Message
+		want []string
+	}{
+		{Errorf(CoreNotRunning, "Nearhost is not running.").Wrap(errors.New("Nearhost is not running")), nil},
+		{Errorf(Unexpected, "Start failed.").Because("The port is taken.").Wrap(errors.New("the port is taken")), nil},
+		{Errorf(Unexpected, "Start failed.").Wrap(fmt.Errorf("dial web: %w", inner)), []string{"dial web: connection refused"}},
+		{Errorf(Unexpected, "Start failed.").Wrap(fmt.Errorf("dial web: %w", fmt.Errorf("lookup: %w", inner))), []string{"dial web: lookup: connection refused"}},
+		{Errorf(Unexpected, "Start failed.").Wrap(errors.Join(errors.New("one"), errors.New("two"))), []string{"one two"}},
+	} {
+		if got := Causes(tc.m); strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("Causes(%q) = %q, want %q", tc.m.Title, got, tc.want)
+		}
+	}
+}

@@ -437,7 +437,7 @@ func TestDraftProjectForADirectoryNotAdded(t *testing.T) {
 	reader := localFiles{}.reader(dir)
 	p := draftProject(cfg, cfgPath, local, dir, reader)
 
-	added, err := newProject(cfg, cfgPath, local, addFlags{}, []string{dir})
+	added, err := newProject(cfg, cfgPath, local, addFlags{}, []string{dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,8 +34,8 @@ func TestUpPrintsAStateAgainOnlyWhenItsReasonChanges(t *testing.T) {
 	p.event(engine.Event{Time: at, Project: "api", Message: "bind: address already in use"})
 	p.event(engine.Event{Time: at, Project: "api", Message: "bind: address already in use"})
 
-	const degradedFix = "  fix: None needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n"
-	const errorFix = "  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"
+	const degradedFix = "  fix: Nothing is needed while Nearhost reconnects. If the project stays degraded, fix access by running ssh once in a terminal:\n        ssh mini.lan\n"
+	const errorFix = "  fix: Fix access by running ssh once in a terminal:\n        ssh mini.lan\n  fix: Then start it again:\n        nearhost up\n"
 	want := "" +
 		"09:30:00 [api] state: degraded: server mini is reconnecting: connection refused\n" + degradedFix +
 		"09:30:00 [api] state: degraded: server mini is reconnecting: no route to host\n" + degradedFix +
@@ -59,12 +59,12 @@ func TestUpPrintsTheRunDirectoryFixNotSSH(t *testing.T) {
 	p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{})}
 	reason := "control socket path /very/long/run/mini.sock is too long for ssh: it is 120 bytes and at most 86 bytes fit; the run directory /very/long/run is too long, set a shorter XDG_CONFIG_HOME"
 	fixFor(p, "api", engine.StateError, reason, report.Errorf(report.SSHSocketPathTooLong, "%s", reason))
-	if got := out.String(); !strings.Contains(got, "XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there, then run `nearhost up` again") || strings.Contains(got, "`ssh") {
+	if got := out.String(); !strings.Contains(got, "XDG_CONFIG_HOME to a shorter path and move the nearhost folder that holds your config there.\n  fix: Then start it again:\n        nearhost up\n") || strings.Contains(got, "ssh") {
 		t.Fatalf("printed %q", got)
 	}
 	out.Reset()
 	fixFor(p, "api", engine.StateError, "ssh mini: Permission denied (publickey).", nil)
-	if got := out.String(); !strings.Contains(got, "`ssh mini.lan` once") {
+	if got := out.String(); !strings.Contains(got, "\n        ssh mini.lan\n") {
 		t.Fatalf("another reason lost the ssh advice: %q", got)
 	}
 }
@@ -99,23 +99,23 @@ func TestBackgroundFixesSayHowToRestartInTheBackground(t *testing.T) {
 		want       string
 	}{
 		{"ssh", false, func(p *upPrinter) { fixFor(p, "api", engine.StateError, "server mini is unreachable", nil) },
-			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost up` again\n"},
+			"  fix: Fix access by running ssh once in a terminal:\n        ssh mini.lan\n  fix: Then start it again:\n        nearhost up\n"},
 		{"ssh", true, func(p *upPrinter) { fixFor(p, "api", engine.StateError, "server mini is unreachable", nil) },
-			"  fix: Run `ssh mini.lan` once in a terminal to fix access, then run `nearhost stop` and `nearhost -d`\n"},
+			"  fix: Fix access by running ssh once in a terminal:\n        ssh mini.lan\n  fix: Then stop Nearhost:\n        nearhost stop\n  fix: And start it again in the background:\n        nearhost -d\n"},
 		{"port", false, func(p *upPrinter) { fixFor(p, "web", engine.StateError, "port 5173 is in use", nil) },
-			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost up` again\n"},
+			"  fix: Resolve what is named above (a port in use: stop the process holding it).\n  fix: Then start it again:\n        nearhost up\n"},
 		{"port", true, func(p *upPrinter) { fixFor(p, "web", engine.StateError, "port 5173 is in use", nil) },
-			"  fix: Resolve what is named above (a port in use: stop the process holding it), then run `nearhost stop` and `nearhost -d`\n"},
+			"  fix: Resolve what is named above (a port in use: stop the process holding it).\n  fix: Then stop Nearhost:\n        nearhost stop\n  fix: And start it again in the background:\n        nearhost -d\n"},
 		{"hosts", false, func(p *upPrinter) { fixFor(p, "web", engine.StateStopped, "hosts update failed", nil) },
-			"  fix: Run `nearhost up` again and " + hostsApprove + ", or add the project's hosts to " + hosts.DefaultPath + " yourself and pass --no-hosts\n"},
+			"  fix: Start it again and " + hostsApprove + ":\n        nearhost up\n  fix: Or add the project's hosts to " + hosts.DefaultPath + " yourself, then serve without updating it:\n        nearhost up --no-hosts\n"},
 		{"hosts", true, func(p *upPrinter) { fixFor(p, "web", engine.StateStopped, "hosts update failed", nil) },
-			"  fix: Run `nearhost hosts update` in a terminal, and Nearhost starts the project\n"},
+			"  fix: Update the hosts file from a terminal, and Nearhost starts the project:\n        nearhost hosts update\n"},
 		{"pending", false, func(p *upPrinter) {
 			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
-		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  open nearhost to approve them; nearhost up cannot\n"},
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Open the interface to approve them; nearhost up cannot:\n        nearhost\n"},
 		{"pending", true, func(p *upPrinter) {
 			p.event(engine.Event{Time: at, Project: "web", Message: engine.PendingPrefix + "routes"})
-		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  run `nearhost stop` and open nearhost to approve them; Nearhost in the background cannot\n"},
+		}, "09:30:00 [web] " + engine.PendingPrefix + "routes\n  fix: Nearhost in the background cannot approve them. Stop it:\n        nearhost stop\n  fix: Then open the interface to approve them:\n        nearhost\n"},
 	} {
 		var out bytes.Buffer
 		p := &upPrinter{out: &out, eng: engine.New(cfg, engine.Options{}), keepRunning: tc.background}
@@ -149,7 +149,7 @@ func TestUpPrintsEachBlockInOneWrite(t *testing.T) {
 	}
 	out.writes = nil
 	p.event(engine.Event{Time: at, Project: "api", Message: engine.PendingPrefix + "routes"})
-	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "open nearhost to approve them") {
+	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "Open the interface to approve them") {
 		t.Errorf("a pending change and its note took %d writes: %q", len(out.writes), out.writes)
 	}
 	out.writes = nil

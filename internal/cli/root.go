@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -98,9 +99,44 @@ func NewRoot() *cobra.Command {
 	// Cobra adds completion, a group of its own, when the command runs.
 	root.InitDefaultCompletionCmd()
 	if c, _, err := root.Find([]string{"completion"}); err == nil && c != root {
-		c.RunE = groupRun
+		c.RunE, c.Args = groupRun, nil
 	}
+	usageArgs(root)
 	return root
+}
+
+// usageArgs makes every command in cmd's tree refuse arguments it does not
+// take with a cli.usage message, as its flags are (see newRootCmd): an
+// argument where none is taken is an unknown command, with the commands it
+// may have meant, and a wrong count says so with how to see what it takes.
+func usageArgs(cmd *cobra.Command) {
+	if check := cmd.Args; check != nil {
+		cmd.Args = func(c *cobra.Command, args []string) error {
+			err := check(c, args)
+			if err == nil {
+				return nil
+			}
+			if _, ok := report.As(err); ok {
+				return err
+			}
+			if none := cobra.NoArgs(c, args); none != nil && none.Error() == err.Error() {
+				return unknownCommand(c, args[0], c.SuggestionsFor(args[0]))
+			}
+			return usageError(c, err)
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		usageArgs(sub)
+	}
+}
+
+// usageError is the cli.usage error of err, cobra's refusal of the flags or
+// the arguments cmd was given, with how to see what cmd takes.
+func usageError(cmd *cobra.Command, err error) error {
+	text := strings.TrimSuffix(upperFirst(strings.TrimSpace(err.Error())), ".") + "."
+	return report.Errorf(report.CLIUsage, "%s", text).
+		Step("See what it takes:", cmd.CommandPath()+" --help").
+		Wrap(err)
 }
 
 // newRootCmd is the root command with its shared flags and no subcommands.
@@ -134,7 +170,7 @@ needs one and exits 1; use nearhost -d or nearhost up there.`,
 				return rootArgs(cmd, args)
 			}
 		}
-		return err
+		return usageError(cmd, err)
 	})
 	root.SetVersionTemplate("nearhost {{.Version}}\n")
 	root.PersistentFlags().String("config", "", configFlagUsage)
@@ -183,22 +219,25 @@ func (f *serveFlags) bindCapture(cmd *cobra.Command) {
 }
 
 func (f *serveFlags) validate() error {
+	usage := func(format string, a ...any) error {
+		return report.Errorf(report.CLIUsage, format, a...)
+	}
 	for _, p := range []struct {
 		flag string
 		port int
 	}{{"--https-port", f.httpsPort}, {"--http-port", f.httpPort}} {
 		if p.port < 1 || p.port > 65535 {
-			return fmt.Errorf("%s must be between 1 and 65535, not %d", p.flag, p.port)
+			return usage("%s must be between 1 and 65535, not %d.", p.flag, p.port)
 		}
 	}
 	if f.httpsPort == f.httpPort {
-		return fmt.Errorf("--https-port and --http-port must differ (both are %d)", f.httpPort)
+		return usage("--https-port and --http-port must differ (both are %d).", f.httpPort)
 	}
 	if f.webPort < 0 || f.webPort > 65535 {
-		return fmt.Errorf("--web-port must be between 1 and 65535, or 0 for none, not %d", f.webPort)
+		return usage("--web-port must be between 1 and 65535, or 0 for none, not %d.", f.webPort)
 	}
 	if f.webPort == f.httpsPort || f.webPort == f.httpPort {
-		return fmt.Errorf("--web-port must differ from --https-port and --http-port (it is %d)", f.webPort)
+		return usage("--web-port must differ from --https-port and --http-port (it is %d).", f.webPort)
 	}
 	return nil
 }
@@ -264,10 +303,21 @@ func Main(args []string) int {
 		updates = startBackgroundCheck(Version, cachedLatest)
 	}
 	root.SetArgs(args)
-	verbose := func() bool { v, _ := root.PersistentFlags().GetBool("verbose"); return v }
-	code := exitCodeVerbose(root.Execute(), os.Stderr, verbose())
+	cmd, err := root.ExecuteC()
+	if cmd == nil {
+		cmd = root
+	}
+	// The error and the update notice follow what the command reported on
+	// standard error, as JSON lines with --json, and with a blank line
+	// between messages for a terminal. A command whose standard error is
+	// elsewhere, as a core in the background's is its log, has its own.
+	out, ok := sinkIn(cmd).(*messageOut)
+	if !ok || out.writer() != io.Writer(os.Stderr) {
+		out = newMessageOut(func() io.Writer { return os.Stderr }, cmd)
+	}
+	code := out.exit(err)
 	if n := updates.notice(updateGrace); n != nil {
-		rterm.Render(os.Stderr, n, rterm.For(os.Stderr, verbose()))
+		out.Report(n)
 	}
 	return code
 }
@@ -322,28 +372,101 @@ func setSink(cmd *cobra.Command, s report.Sink) {
 // without the root's PersistentPreRun, as some tests run them, its
 // commandSink.
 func sinkOf(cmd *cobra.Command) report.Sink {
+	if s := sinkIn(cmd); s != nil {
+		return s
+	}
+	return commandSink(cmd)
+}
+
+// sinkIn is the sink in cmd's context, or nil.
+func sinkIn(cmd *cobra.Command) report.Sink {
 	if ctx := cmd.Context(); ctx != nil {
 		if s, ok := ctx.Value(sinkKey{}).(report.Sink); ok {
 			return s
 		}
 	}
-	return commandSink(cmd)
+	return nil
 }
 
-// commandSink renders what it is given for a terminal on cmd's standard
-// error, as it is when the message is reported: a core in the background
-// points that at its log. --verbose adds codes and causes.
+// commandSink writes what it is given to cmd's standard error, as it is
+// when the message is reported: a core in the background points that at
+// its log. See messageOut for how.
 func commandSink(cmd *cobra.Command) report.Sink {
-	return report.SinkFunc(func(m *report.Message) {
-		w := cmd.ErrOrStderr()
-		rterm.Render(w, m, termOptions(w, verboseFlag(cmd)))
-	})
+	return newMessageOut(func() io.Writer { return cmd.ErrOrStderr() }, cmd)
+}
+
+// messageOut writes messages to a command's standard error: with the
+// command's --json, each as a JSON object on a line of its own, in the
+// shape the APIs nest messages in; otherwise rendered for a terminal, with
+// its code and causes under --verbose, and a blank line between one
+// message and the next.
+type messageOut struct {
+	writer  func() io.Writer
+	json    bool
+	verbose bool
+
+	mu    sync.Mutex
+	wrote bool
+}
+
+// newMessageOut is a messageOut to the writer w returns, with cmd's
+// --json and --verbose.
+func newMessageOut(w func() io.Writer, cmd *cobra.Command) *messageOut {
+	return &messageOut{writer: w, json: boolFlag(cmd, "json"), verbose: boolFlag(cmd, "verbose")}
+}
+
+// Report writes m.
+func (o *messageOut) Report(m *report.Message) {
+	if m == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	w := o.writer()
+	if o.json {
+		b, err := json.Marshal(m)
+		if err != nil {
+			// Data that does not marshal is left out, not the message.
+			c := *m
+			c.Data = nil
+			b, _ = json.Marshal(&c)
+		}
+		w.Write(append(b, '\n'))
+		return
+	}
+	if o.wrote {
+		io.WriteString(w, "\n")
+	}
+	rterm.Render(w, m, termOptions(w, o.verbose))
+	o.wrote = true
+}
+
+// exit is the exit code for the error a command returned, which is 0 for
+// nil: the status its message sets, or 1. It writes the error, unless it
+// was already said (see alreadySaid).
+func (o *messageOut) exit(err error) int {
+	if err == nil {
+		return 0
+	}
+	m := messageOf(err)
+	var said alreadySaid
+	if !errors.As(err, &said) {
+		o.Report(m)
+	}
+	if m.Exit != 0 {
+		return m.Exit
+	}
+	return 1
 }
 
 // verboseFlag reports whether --verbose was given to cmd.
-func verboseFlag(cmd *cobra.Command) bool {
-	f := cmd.Flag("verbose")
-	if f == nil {
+func verboseFlag(cmd *cobra.Command) bool { return boolFlag(cmd, "verbose") }
+
+// boolFlag reports whether the bool flag called name, cmd's own or one it
+// inherits, was given to cmd. A command without it has it false.
+func boolFlag(cmd *cobra.Command, name string) bool {
+	f := cmd.Flag(name)
+	if f == nil || f.Value.Type() != "bool" {
 		return false
 	}
 	v, _ := strconv.ParseBool(f.Value.String())
@@ -377,18 +500,7 @@ func exitCode(err error, stderr io.Writer) int { return exitCodeVerbose(err, std
 // it was already said (see alreadySaid). Every text in it is made printable
 // by the renderer: an error can quote a project's file, a server or ssh.
 func exitCodeVerbose(err error, stderr io.Writer, verbose bool) int {
-	if err == nil {
-		return 0
-	}
-	m := messageOf(err)
-	var said alreadySaid
-	if !errors.As(err, &said) {
-		rterm.Render(stderr, m, termOptions(stderr, verbose))
-	}
-	if m.Exit != 0 {
-		return m.Exit
-	}
-	return 1
+	return (&messageOut{writer: func() io.Writer { return stderr }, verbose: verbose}).exit(err)
 }
 
 // messageOf is report.From, except that an error with no message whose

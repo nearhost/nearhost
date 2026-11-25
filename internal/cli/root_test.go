@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/elevate"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func TestVersionCommandPrintsVersion(t *testing.T) {
@@ -193,8 +195,11 @@ func TestUnknownFlagWithoutACommandIsAFlagError(t *testing.T) {
 		root.SetErr(&bytes.Buffer{})
 		root.SetArgs(args)
 		err := root.Execute()
-		if err == nil || !strings.Contains(err.Error(), "unknown flag: --foo") || strings.Contains(err.Error(), "Did you mean") {
+		if err == nil || !strings.Contains(err.Error(), "Unknown flag: --foo.") || strings.Contains(rendered(err), "Did you mean") {
 			t.Errorf("%v: err = %v", args, err)
+		}
+		if m := messageIn(t, err); m.Code != report.CLIUsage || !errors.Is(err, m.Cause) || m.Cause == nil {
+			t.Errorf("%v: code %q, cause %v", args, m.Code, m.Cause)
 		}
 	}
 }

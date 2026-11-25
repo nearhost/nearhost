@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
+	"net"
 	"regexp"
 	"slices"
 	"strconv"
@@ -691,9 +691,11 @@ func hostsProblem(name string, err error) error { return HostsProblem(name, err)
 // HostsProblem is why the hosts of the project called name could not be
 // made to resolve, err being the hosts file's refusal: the message err
 // holds, such as hosts.read-only, with its code and fix, or
-// hosts.needs-update. Either way its last steps say how to retry; its
-// title says only what happened. The interface's own hosts fixer uses it
-// too, so a refusal reads the same wherever it happens.
+// hosts.needs-update. Either way its last steps say how to retry, unless
+// a step of err's runs HostsUpdateCommand, after which Nearhost starts the
+// project by itself; its title says only what happened. The interface's
+// own hosts fixer uses it too, so a refusal reads the same wherever it
+// happens.
 func HostsProblem(name string, err error) *report.Message {
 	text := fmt.Sprintf("project %q's hosts are not resolvable: the hosts file was not updated (%s)", name, HostsCause(err))
 	var m *report.Message
@@ -705,13 +707,20 @@ func HostsProblem(name string, err error) *report.Message {
 		m.Fix = append([]report.Step{{Text: RetryText}}, m.Fix...)
 		return m.Wrap(err)
 	}
-	if len(m.Fix) > 0 {
+	switch {
+	case slices.ContainsFunc(m.Fix, func(s report.Step) bool { return s.Command == HostsUpdateCommand }):
+	case len(m.Fix) > 0:
 		m.Then(RetryThenText)
-	} else {
+	default:
 		m.Then(RetryText)
 	}
 	return m.Wrap(err)
 }
+
+// HostsUpdateCommand updates the hosts file from a terminal and has the
+// running Nearhost start the projects that waited on it: a refusal whose
+// fix runs it needs no step to start the project again.
+const HostsUpdateCommand = "nearhost hosts update"
 
 // RetryText and RetryThenText are the step that says to start the project
 // again: the first step of a fix, or one that follows another. An interface
@@ -744,10 +753,13 @@ var bindPort = regexp.MustCompile(`(?:tcp|udp)[46]? \S*:(\d+): bind: `)
 // bindProblem is err, the proxy failing to take a site, as a message when
 // it could not listen on a port: port.needs-permission or port.in-use, as
 // portProblem says, for the port the error names (the HTTPS port when it
-// names none). Its title is err's text. Any other error is err.
+// names none). Its title is err's text. An error is about a port when its
+// text has "bind: " or it is a *net.OpError of listening; any other error,
+// a permission refused on a file among them, is err.
 func (e *Engine) bindProblem(err error) error {
 	text := err.Error()
-	if !strings.Contains(text, "bind: ") && !errors.Is(err, fs.ErrPermission) {
+	var op *net.OpError
+	if !strings.Contains(text, "bind: ") && !(errors.As(err, &op) && op.Op == "listen") {
 		return err
 	}
 	port := e.opts.HTTPSPort

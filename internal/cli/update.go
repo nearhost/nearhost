@@ -338,9 +338,11 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		m = m.Pinned(latest)
 	}
 	if check {
-		// An error, so a script sees a newer release as exit status 1.
-		return report.Errorf(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind).
-			Step("Update it:", "nearhost update")
+		// A notice, returned as the command's error with exit status 1,
+		// so a script sees a newer release.
+		return report.Notef(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind).
+			Step("Update it:", "nearhost update").
+			ExitCode(1)
 	}
 	fmt.Fprintf(out, "nearhost %s → %s is available. This copy was installed with %s.\n", current, latest, m.Kind)
 

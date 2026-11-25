@@ -217,7 +217,7 @@ func TestAddRefusesWhatWouldNotValidateAndSavesNothing(t *testing.T) {
 		args []string
 		want []string // substrings of the error
 	}{
-		{"duplicate name", []string{"add", dir, "--name", "shop", "--web", "9000"}, []string{`project "shop" already exists`, "--name"}},
+		{"duplicate name", []string{"add", dir, "--name", "shop", "--web", "9000"}, []string{`A project called "shop" already exists.`, "Add this one under another name:", "--name <name>"}},
 		{"duplicate alias", []string{"add", dir, "--name", "Shop", "--web", "9000"}, []string{"shop.test", `"shop"`, "--alias"}},
 		{"duplicate alias given", []string{"add", dir, "--name", "other", "--alias", "shop.test", "--web", "9000"}, []string{"shop.test", "--alias"}},
 		{"invalid alias", []string{"add", dir, "--name", "other", "--alias", "Other.example", "--web", "9000"}, []string{"Other.example", "lowercase domain name"}},

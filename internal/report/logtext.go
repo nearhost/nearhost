@@ -98,20 +98,24 @@ func textLines(s string) []string {
 
 // Causes returns the texts of m's cause chain, made printable, outermost
 // first: one line for each error in the chain whose text says something
-// new, skipping one that repeats the title or the line before it. An error
-// that joins several (errors.Join) has each of its errors listed.
+// new. A cause is skipped when its text, compared without case or a
+// closing full stop, is already part of the title, the explanation or the
+// line before it, as the text of an error a message wraps often is. An
+// error that joins several (errors.Join) has each of its errors listed.
 func Causes(m *Message) []string {
 	if m == nil {
 		return nil
 	}
 	var out []string
-	last := safetext.Line(m.Title)
+	title, why := sameText(m.Title), sameText(m.Why)
+	last := ""
 	var walk func(err error)
 	walk = func(err error) {
 		for err != nil {
-			if t := safetext.Line(err.Error()); t != "" && t != last {
+			t := safetext.Line(err.Error())
+			if n := sameText(t); n != "" && !strings.Contains(title, n) && !strings.Contains(why, n) && !strings.Contains(last, n) {
 				out = append(out, t)
-				last = t
+				last = n
 			}
 			switch u := err.(type) {
 			case interface{ Unwrap() []error }:
@@ -126,4 +130,11 @@ func Causes(m *Message) []string {
 	}
 	walk(m.Cause)
 	return out
+}
+
+// sameText is s as Causes compares it: printable, in lower case, its
+// blanks run together, without a closing full stop.
+func sameText(s string) string {
+	s = strings.Join(strings.Fields(strings.ToLower(safetext.Lines(s))), " ")
+	return strings.TrimSuffix(s, ".")
 }

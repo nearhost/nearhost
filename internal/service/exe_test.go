@@ -122,7 +122,7 @@ func TestServiceExeRefusalIsAMessage(t *testing.T) {
 	if m.Title != "A service cannot run this copy of nearhost." || m.Why != "This copy was built by go run, so it will not be there at the next login." {
 		t.Errorf("title %q, why %q", m.Title, m.Why)
 	}
-	if len(m.Fix) != 1 || m.Fix[0].Command != "nearhost service install" {
+	if len(m.Fix) != 1 || m.Fix[0].Command != "nearhost service install" || !strings.Contains(m.Fix[0].Text, "https://nearhost.dev/docs/getting-started/install/") {
 		t.Errorf("steps %+v", m.Fix)
 	}
 }

@@ -295,13 +295,16 @@ func disabledClash(cfg *config.Config, names []string) error {
 // serve, as it did before such pairs were refused.
 func upTargets(cfg *config.Config, args []string) ([]string, error) {
 	if len(cfg.Projects) == 0 {
-		return nil, errors.New("no projects to start; add one with `nearhost add <path>`")
+		return nil, report.Errorf(report.CoreNoProjects, "There are no projects to start.").
+			Step("Add the project in a directory:", "nearhost add <path>")
 	}
 	var names []string
 	seen := map[string]bool{}
 	for _, name := range args {
 		if _, ok := cfg.Project(name); !ok {
-			return nil, fmt.Errorf("unknown project %q; `nearhost ls` lists the configured projects", name)
+			return nil, report.Errorf(report.CoreUnknownProject, "There is no project called %q.", name).
+				Step("List the projects in the config:", "nearhost ls").
+				With("project", name)
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -317,7 +320,8 @@ func upTargets(cfg *config.Config, args []string) ([]string, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no enabled projects to start; name one, like `%s`", config.UpCommand(cfg.Projects[0].Name))
+		return nil, report.Errorf(report.CoreNoEnabledProjects, "There are no enabled projects to start.").
+			Step("Start one by naming it:", config.UpCommand(cfg.Projects[0].Name))
 	}
 	return names, nil
 }

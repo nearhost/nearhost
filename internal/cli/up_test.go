@@ -172,12 +172,12 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{"no projects", &config.Config{}, "", nil, []string{"no projects to start", "nearhost add <path>"}},
-		{"none enabled", &config.Config{Projects: []config.Project{localProject("off", 8000, false)}}, "", nil, []string{"no enabled projects", "nearhost up off"}},
+		{"no projects", &config.Config{}, "", nil, []string{"There are no projects to start.", "nearhost add <path>"}},
+		{"none enabled", &config.Config{Projects: []config.Project{localProject("off", 8000, false)}}, "", nil, []string{"There are no enabled projects to start.", "Start one by naming it: nearhost up off"}},
 		{"none enabled, a name of two words", &config.Config{Projects: []config.Project{{
 			Name: "my app", Server: config.LocalServer, Path: "/tmp/my app", Alias: "my-app.test", Routes: []config.Route{{Port: 8000, Role: config.RoleWeb}},
-		}}}, "", nil, []string{"no enabled projects", "`nearhost up 'my app'`"}},
-		{"unknown name", &config.Config{Projects: []config.Project{web}}, "", []string{"web", "nope"}, []string{`unknown project "nope"`, "nearhost ls"}},
+		}}}, "", nil, []string{"There are no enabled projects to start.", "nearhost up 'my app'"}},
+		{"unknown name", &config.Config{Projects: []config.Project{web}}, "", []string{"web", "nope"}, []string{`There is no project called "nope".`, "List the projects in the config: nearhost ls"}},
 		{"invalid yaml", nil, "projects: [oops\n", nil, []string{"parse", "config.yaml"}},
 		{"invalid config", &config.Config{Projects: []config.Project{web, dup}}, "", nil, []string{"config.yaml", "alias", `"web"`, `"dup"`}},
 		{"bad port", &config.Config{Projects: []config.Project{web}}, "", []string{"--https-port", "70000"}, []string{"--https-port"}},
@@ -213,8 +213,8 @@ func TestUpRefusesBeforeStartingAnything(t *testing.T) {
 				t.Fatalf("up succeeded:\n%s", out)
 			}
 			for _, want := range tc.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error %q lacks %q", err, want)
+				if !strings.Contains(errText(err), want) {
+					t.Errorf("error %q lacks %q", errText(err), want)
 				}
 			}
 			if out != "" {
@@ -263,7 +263,7 @@ func TestUpReportsAFailedProjectAndKeepsServingTheOthers(t *testing.T) {
 	for _, want := range []string{
 		`\[server mini\] auth failed: ` + refused,
 		`\napi: error: ssh mini\.lan: ` + refused +
-			"  fix: Run `ssh mini\\.lan` once in a terminal to fix access; nearhost tries again by itself\n" +
+			"  fix: To fix access, run ssh once in a terminal:\n        ssh mini\\.lan\n" +
 			`web: running at https://web\.test\n` +
 			`\nServing until interrupted\. Press Ctrl-C to stop\.\n`,
 	} {
@@ -486,7 +486,7 @@ func TestUpReportsAHostsFailureAndAsksOnlyOnce(t *testing.T) {
 			"\n"+name+": stopped: project \""+name+"\"'s hosts are not resolvable: the hosts file was not updated (",
 			"sudo hosts apply: exit status 1")
 	}
-	if n := strings.Count(out, "  fix: Run `nearhost up` again and "+hostsApprove+", or add the project's hosts to "+hosts.DefaultPath+" yourself and pass --no-hosts\n"); n != 2 {
+	if n := strings.Count(out, "  fix: Start it again and "+hostsApprove+":\n        nearhost up\n  fix: Or add the project's hosts to "+hosts.DefaultPath+" yourself, then serve without updating it:\n        nearhost up --no-hosts\n"); n != 2 {
 		t.Errorf("expected the fix once under each project, found %d:\n%s", n, out)
 	}
 	if calls := u.ensureCalls(); len(calls) != 1 {
@@ -506,7 +506,7 @@ func TestUpFollowsARemoteProjectThroughAReconnect(t *testing.T) {
 	before := strings.Count(u.out.String(), "[api] state: running\n")
 	u.dropLink()
 	u.waitFor("[api] state: degraded: server mini is reconnecting")
-	u.waitFor("  fix: None needed while nearhost reconnects; if the project stays degraded, run `ssh mini.lan` once in a terminal to fix access\n")
+	u.waitFor("  fix: Nothing is needed while Nearhost reconnects. If the project stays degraded, fix access by running ssh once in a terminal:\n        ssh mini.lan\n")
 	testutil.WaitUntil(t, 30*time.Second, func() bool {
 		return strings.Count(u.out.String(), "[api] state: running\n") > before
 	}, "the project to return to running")
