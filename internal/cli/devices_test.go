@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +9,7 @@ import (
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/devices"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 type fakeDevices struct {
@@ -79,8 +78,7 @@ func TestDevicesRevokeWithoutCore(t *testing.T) {
 		t.Fatalf("after revoke: %v, %v, want none", list, err)
 	}
 	_, err = execute(t, newDevicesCmd(dial), "devices", "revoke", "iPad")
-	if err == nil || !errors.Is(err, devices.ErrNoDevice) && !strings.Contains(err.Error(), "iPad") {
-		t.Fatalf("revoking a device twice: %v, want one that names it", err)
+	if m, ok := report.As(err); !ok || m.Code != report.DeviceUnknown {
+		t.Fatalf("revoking a device twice: %v, want code %s", err, report.DeviceUnknown)
 	}
-	_ = filepath.Join
 }

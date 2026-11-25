@@ -215,7 +215,7 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 // problem is the core's own word for why it serves less than the config
 // asks, and it is shown whatever else is known, as it is the newer.
 func networkLine(n *control.NetworkInfo) string {
-	if n.URL == "" && n.Certificates == "" {
+	if !n.On {
 		return "Network: off (" + printable(n.Problem) + ")"
 	}
 	where := printable(n.URL)

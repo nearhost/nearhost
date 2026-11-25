@@ -7,6 +7,8 @@ import (
 
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/devices"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
@@ -76,15 +78,20 @@ func (o *coreOps) networkInfo() *control.NetworkInfo {
 	if !ns.On && ns.Problem == "" {
 		return nil
 	}
-	return &control.NetworkInfo{URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem}
+	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem}
 }
 
-// networkProjectURL is the address of a project on the network: the first
-// of its sites' hosts under the network domain, at the page's port. It is ""
-// when the core does not serve to the network or the project has no host
-// there.
+// networkProjectURL is the address of a project on the network.
 func (o *coreOps) networkProjectURL(project string) string {
 	ns := o.eng.NetworkState()
+	return networkSiteURL(ns, o.eng.Sites(), project, o.httpsPort)
+}
+
+// networkSiteURL is the address of a project on the network: the first of
+// its sites' hosts under the network domain, on the https port, where sites
+// are served (the page's own port is the web port). It is "" when the core
+// does not serve to the network or the project has no host there.
+func networkSiteURL(ns engine.NetworkState, sites []proxy.Site, project string, httpsPort int) string {
 	if !ns.On || ns.URL == "" {
 		return ""
 	}
@@ -93,19 +100,14 @@ func (o *coreOps) networkProjectURL(project string) string {
 		return ""
 	}
 	domain := strings.TrimPrefix(page.Hostname(), "nearhost.")
-	for _, s := range o.eng.Sites() {
+	for _, s := range sites {
 		if s.Project != project {
 			continue
 		}
 		for _, h := range s.Hosts {
 			h = strings.ToLower(h)
 			if h == domain || strings.HasSuffix(h, "."+domain) {
-				u := *page
-				u.Host = h
-				if p := page.Port(); p != "" {
-					u.Host = h + ":" + p
-				}
-				return u.String()
+				return siteURL(h, httpsPort)
 			}
 		}
 	}

@@ -14,6 +14,8 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/proxy"
 )
 
 // statusCore is a control backend that answers with a fixed status.
@@ -415,7 +417,7 @@ func TestPrintStatusShowsNetwork(t *testing.T) {
 	st := control.Status{
 		Info:     testStatus.Info,
 		Projects: []control.ProjectInfo{{Name: "web", State: "running", URL: "https://web.test", NetworkURL: "https://web.lab.example.dev"}},
-		Network:  &control.NetworkInfo{URL: "https://nearhost.x", Certificates: "acme"},
+		Network:  &control.NetworkInfo{On: true, URL: "https://nearhost.x", Certificates: "acme"},
 	}
 	if err := printStatus(&out, st, "", &report.Collector{}); err != nil {
 		t.Fatal(err)
@@ -430,7 +432,7 @@ func TestPrintStatusShowsNetwork(t *testing.T) {
 		n    control.NetworkInfo
 		want string
 	}{
-		{control.NetworkInfo{URL: "https://nearhost.x", Certificates: "ca", Problem: "no DNS token"}, "Network: https://nearhost.x (local CA) (warning: no DNS token)\n"},
+		{control.NetworkInfo{On: true, URL: "https://nearhost.x", Certificates: "ca", Problem: "no DNS token"}, "Network: https://nearhost.x (local CA) (warning: no DNS token)\n"},
 		{control.NetworkInfo{Problem: "networked mode couldn't stop: boom"}, "Network: off (networked mode couldn't stop: boom)\n"},
 	} {
 		out.Reset()
@@ -447,5 +449,20 @@ func TestPrintStatusShowsNetwork(t *testing.T) {
 	printStatus(&out, st, "", &report.Collector{})
 	if strings.Contains(out.String(), "Network:") {
 		t.Errorf("a network line without a network:\n%s", out.String())
+	}
+}
+
+// Sites are served on the https port, not the page's web port.
+func TestNetworkSiteURLUsesTheHTTPSPort(t *testing.T) {
+	ns := engine.NetworkState{On: true, URL: "https://nearhost.homelab.ecs.dev:9444", Certificates: "acme"}
+	sites := []proxy.Site{{Project: "demo", Hosts: []string{"demo.test", "demo.homelab.ecs.dev"}}}
+	if got, want := networkSiteURL(ns, sites, "demo", 9443), "https://demo.homelab.ecs.dev:9443"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got, want := networkSiteURL(ns, sites, "demo", 443), "https://demo.homelab.ecs.dev"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := networkSiteURL(ns, sites, "other", 9443); got != "" {
+		t.Errorf("a project with no site: %q", got)
 	}
 }

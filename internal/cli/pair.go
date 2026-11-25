@@ -87,9 +87,9 @@ func runPair(cmd *cobra.Command, dial func() (pairAPI, error), showQR bool) erro
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Open this on the device:\n  %s\n\nOr go to the page and type the code: %s\n", printable(info.URL), printable(info.Code))
-	if showQR || stdoutIsTerminal() {
+	if tty := stdoutIsTerminal(); showQR || tty {
 		fmt.Fprintln(out)
-		if err := renderQR(out, info.URL); err != nil {
+		if err := renderQR(out, info.URL, tty); err != nil {
 			return err
 		}
 	}

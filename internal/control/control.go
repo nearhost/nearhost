@@ -119,6 +119,8 @@ type Status struct {
 
 // NetworkInfo is how the core serves to the network.
 type NetworkInfo struct {
+	// On is whether the config turns networked mode on.
+	On bool `json:"on"`
 	// URL is the page's address on the network, or "" when it is not served.
 	URL string `json:"url"`
 	// Certificates is "acme" or "ca".
