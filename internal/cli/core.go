@@ -16,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/devices"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
 	"github.com/nearhost/nearhost/internal/page"
@@ -192,6 +193,15 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// stops, and its event streams end with it.
 	closePage := func() {}
 	if eng.WebPort() != 0 {
+		// Devices pair on the page, and the sites of a networked core
+		// check them, for as long as the page is served.
+		if store, err := openDevices(); err != nil {
+			m := report.Warnf(report.NetworkDevicesUnavailable, "Paired devices can't be used: %s", err).Wrap(err)
+			eng.Events().Publish(engine.Event{Message: m.Title, Report: m})
+		} else {
+			proxy.SetDevices(store)
+			defer proxy.SetDevices(nil)
+		}
 		pageDone := make(chan struct{})
 		proxy.SetConsole(page.New(page.Options{
 			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
@@ -527,4 +537,27 @@ func (c *coreBackend) HostsChanged(context.Context) {
 			c.eng.StartProject(c.ctx, p.Name)
 		}()
 	}
+}
+
+// openDevices opens the paired devices' store, whose site cookies are
+// signed with proxy.SiteCookieKey. A key shorter than 32 bytes is refused,
+// as cookies signed with it could be forged.
+func openDevices() (*devices.Store, error) {
+	path, err := config.DevicesPath()
+	if err != nil {
+		return nil, err
+	}
+	key, err := proxy.SiteCookieKey()
+	if err != nil {
+		return nil, err
+	}
+	return devicesWithKey(path, key)
+}
+
+// devicesWithKey is devices.Open, refusing a key shorter than 32 bytes.
+func devicesWithKey(path string, key []byte) (*devices.Store, error) {
+	if len(key) < 32 {
+		return nil, fmt.Errorf("the site cookie key is %d bytes, fewer than 32", len(key))
+	}
+	return devices.Open(path, key), nil
 }

@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -344,4 +346,22 @@ func PageKeyURL(base string) (string, error) {
 		return "", err
 	}
 	return base + "/?" + url.Values{pageKeyParam: {secret}}.Encode(), nil
+}
+
+// siteCookieLabel is what the page secret signs to make the site cookies'
+// key, so that key is the secret's alone and never the secret itself.
+const siteCookieLabel = "nearhost site cookie"
+
+// SiteCookieKey is the key that signs paired devices' site cookies:
+// HMAC-SHA256 of siteCookieLabel under the page secret, 32 bytes. It stays
+// the same while the secret does, so site cookies outlive a restart. Its
+// errors never hold the secret.
+func SiteCookieKey() ([]byte, error) {
+	secret, err := pageSecret()
+	if err != nil {
+		return nil, err
+	}
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(siteCookieLabel))
+	return m.Sum(nil), nil
 }

@@ -174,6 +174,9 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config) error {
 	e.setConfigLocked(next, plan.replace)
 	e.starts.Add(len(plan.start)) // under lifeMu, so before Shutdown can wait
 	e.mu.Unlock()
+	// A network: section turned on, off or changed reaches the proxy now,
+	// even when no project changed, and before the starts below publish.
+	e.applyNetwork()
 	e.bus.Publish(Event{Message: "config applied"})
 	for _, name := range plan.start {
 		go func() {

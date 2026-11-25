@@ -1,0 +1,71 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/testutil"
+)
+
+// The DNS token comes from its file in the data directory, trimmed, and
+// otherwise from $NEARHOST_DNS_TOKEN; with neither there is none, and the
+// error says where it looked without holding a token.
+func TestDNSToken(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	t.Setenv(dnsTokenEnv, "")
+	if token, err := dnsToken(); err == nil || token != "" {
+		t.Errorf("dnsToken with none = %q, %v", token, err)
+	}
+	t.Setenv(dnsTokenEnv, "from-the-environment-0123456789")
+	if token, err := dnsToken(); err != nil || token != "from-the-environment-0123456789" {
+		t.Errorf("dnsToken from env = %q, %v", token, err)
+	}
+	path, err := config.DNSTokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := dnsToken(); err != nil || token != "from-the-environment-0123456789" {
+		t.Errorf("dnsToken with an empty file = %q, %v; want the env's", token, err)
+	}
+	if err := os.WriteFile(path, []byte("from-the-file-0123456789abc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := dnsToken(); err != nil || token != "from-the-file-0123456789abc" {
+		t.Errorf("dnsToken from file = %q, %v", token, err)
+	}
+	t.Setenv(dnsTokenEnv, "")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dnsToken(); err == nil || !strings.Contains(err.Error(), dnsTokenEnv) {
+		t.Errorf("dnsToken with an empty file and no env: %v", err)
+	}
+}
+
+// The devices' store refuses a site cookie key too short to sign with.
+func TestDevicesWithKeyRefusesShortKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devices.json")
+	if _, err := devicesWithKey(path, make([]byte, 16)); err == nil {
+		t.Error("a 16-byte key was taken")
+	}
+	if s, err := devicesWithKey(path, make([]byte, 32)); err != nil || s == nil {
+		t.Errorf("a 32-byte key: %v", err)
+	}
+}
+
+// The core opens the devices with the key derived from the page secret.
+func TestOpenDevices(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	if s, err := openDevices(); err != nil || s == nil {
+		t.Errorf("openDevices: %v", err)
+	}
+}

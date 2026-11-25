@@ -419,7 +419,8 @@ func (e *Engine) waitConnected(ctx context.Context, sess transport.Transport) er
 // ensureHosts asks for every hosts file name of the configuration (see
 // config.HostsFileNames) to resolve, plus the exact hosts of web, the routes
 // of the project being started, leaving out the names DNS already sends to
-// this machine (see hosts.Wanted). The configuration's list holds only the
+// this machine (see hosts.Wanted) and those under the network domain of a
+// networked core. The configuration's list holds only the
 // route hosts of enabled projects, so a disabled project started by hand
 // brings its own; without them its real-domain hosts would not resolve here.
 // Calls are serialised so two starting projects never prompt for a password
@@ -437,11 +438,15 @@ func (e *Engine) ensureHosts(ctx context.Context, web []config.WebHosts) error {
 	defer func() { <-e.hostsTurn }()
 	e.mu.Lock()
 	names := append([]string(nil), e.hostNames...)
+	cfg := e.cfg
 	e.mu.Unlock()
 	for _, w := range web {
 		for _, h := range w.Hosts {
 			h = strings.ToLower(h)
-			if h != "localhost" && !hostname.IsPattern(h) {
+			// A name under the network domain resolves through the
+			// network's DNS: a hosts entry would send it to loopback, and a
+			// headless core would wait for sudo forever.
+			if h != "localhost" && !hostname.IsPattern(h) && !cfg.UnderNetworkDomain(h) {
 				names = append(names, h)
 			}
 		}
@@ -667,7 +672,7 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 	e.syncGatesLocked(run)
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
-	if err := e.applySites(sites); err != nil {
+	if err := e.redactErr(e.applySites(sites)); err != nil {
 		// The proxy keeps its previous configuration, which lacks this site.
 		e.mu.Lock()
 		run.site = false
