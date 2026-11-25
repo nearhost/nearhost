@@ -24,6 +24,7 @@ import (
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/grants"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/transport"
 	"github.com/nearhost/nearhost/internal/tui"
 )
@@ -259,6 +260,23 @@ func TestAgentProjectsListEveryURL(t *testing.T) {
 	st.WebLocalPorts = map[int]int{8220: 8220}
 	if got := agentProject(p, st, 18443); got.Routes[1].Applied || got.URLs[3] != "https://ws.local.dd.io:18443" {
 		t.Fatalf("%+v %v", got.Routes, got.URLs)
+	}
+}
+
+// A project in error carries its problem as a message beside the error
+// text older skills read; a running one carries neither.
+func TestAgentProjectCarriesItsProblem(t *testing.T) {
+	p := config.Project{Name: "web", Server: config.LocalServer, Path: "/code/web", Alias: "web.test", Enabled: true,
+		Routes: []config.Route{{Port: 8080, Role: config.RoleWeb}}}
+	problem := report.Errorf(report.PortInUse, "port 8080 is in use").Because("Another program listens on it.").With("port", 8080)
+	st := engine.ProjectStatus{State: engine.StateError, Message: "port 8080 is in use", Problem: problem}
+	got := agentProject(p, st, 443)
+	if got.Error != "port 8080 is in use" || got.Problem == nil || got.Problem.Code != report.PortInUse || got.Problem.Why != "Another program listens on it." {
+		t.Fatalf("error %q problem %+v", got.Error, got.Problem)
+	}
+	st = engine.ProjectStatus{State: engine.StateRunning, WebLocalPort: 8080, WebLocalPorts: map[int]int{8080: 8080}}
+	if got := agentProject(p, st, 443); got.Error != "" || got.Problem != nil {
+		t.Fatalf("running: error %q problem %+v", got.Error, got.Problem)
 	}
 }
 

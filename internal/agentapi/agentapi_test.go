@@ -707,8 +707,9 @@ func TestDoctorRunsStartApart(t *testing.T) {
 	}
 	data, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	want := `{"error":"a doctor run for this server started moments ago; ask again in 3 s"}`
-	if resp.StatusCode != http.StatusTooManyRequests || strings.TrimSpace(string(data)) != want || resp.Header.Get("Retry-After") != "3" {
+	// The skill reads the first "error" in the body.
+	want := `{"error":"a doctor run for this server started moments ago; ask again in 3 s",`
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.HasPrefix(string(data), want) || resp.Header.Get("Retry-After") != "3" {
 		t.Fatalf("at 2 s: %d %s, Retry-After %q", resp.StatusCode, data, resp.Header.Get("Retry-After"))
 	}
 	if n := len(d.all()); n != 1 {

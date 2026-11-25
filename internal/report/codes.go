@@ -171,6 +171,32 @@ const (
 	DocumentsNotFound          Code = "documents.not-found"
 	DocumentsMethodNotAllowed  Code = "documents.method-not-allowed"
 	DocumentsUnreadable        Code = "documents.unreadable"
+	AgentNoSuchCall            Code = "agent.no-such-call"
+	AgentNoToken               Code = "agent.no-token"
+	AgentRefused               Code = "agent.refused"
+	AgentNoProject             Code = "agent.no-project"
+	AgentBadPath               Code = "agent.bad-path"
+	AgentBadRequest            Code = "agent.bad-request"
+	AgentDoctorBusy            Code = "agent.doctor-busy"
+	AgentNotADirectory         Code = "agent.not-a-directory"
+	AgentDoctorFailed          Code = "agent.doctor-failed"
+	AgentNoReviewer            Code = "agent.no-reviewer"
+	AgentTooManyWaiting        Code = "agent.too-many-waiting"
+	AgentReloadFailed          Code = "agent.reload-failed"
+	AgentNearhostrcUnread      Code = "agent.nearhostrc-unread"
+	AgentRequestGone           Code = "agent.request-gone"
+	AgentLocalPassthrough      Code = "agent.local-passthrough"
+	AgentGrantsFailed          Code = "agent.grants-failed"
+	AgentTokenRevoked          Code = "agent.token-revoked"
+	AgentTooManyPassthroughs   Code = "agent.too-many-passthroughs"
+	AgentNotConnected          Code = "agent.not-connected"
+	AgentPassthroughFailed     Code = "agent.passthrough-failed"
+	AgentClosedWhileOpening    Code = "agent.closed-while-opening"
+	AgentPortHeld              Code = "agent.port-held"
+	AgentDocumentNotThere      Code = "agent.document-not-there"
+	AgentNotADocument          Code = "agent.not-a-document"
+	AgentDocumentFailed        Code = "agent.document-failed"
+	AgentNoPage                Code = "agent.no-page"
 )
 
 // Nearhost doctor's finding IDs, as released.
@@ -338,6 +364,32 @@ var catalog = []Entry{
 	{DocumentsNotFound, Error, 404, "The document server has nothing at the path asked for."},
 	{DocumentsMethodNotAllowed, Error, 405, "The document server was asked with a method it does not take."},
 	{DocumentsUnreadable, Error, 502, "The document could not be read."},
+	{AgentNoSuchCall, Error, 404, "The agent API has no call at the path asked for, or this Nearhost does not have that call."},
+	{AgentNoToken, Error, 401, "A request to the agent API's loopback port came without its token, as from an older copy of the skill."},
+	{AgentRefused, Error, 429, "The user said No to a request of the same kind from the agent's machine moments ago, so this one is refused for now."},
+	{AgentNoProject, Error, 404, "No project in Nearhost holds the path the agent asked about."},
+	{AgentBadPath, Error, 400, "A path in an agent's request is not one Nearhost takes, such as a relative or network path."},
+	{AgentBadRequest, Error, 400, "An agent's request, or a value in it, is not what the call takes."},
+	{AgentDoctorBusy, Error, 429, "A doctor run for the agent's server is already going, or started moments ago."},
+	{AgentNotADirectory, Error, 404, "The directory an agent asked the doctor about is not there."},
+	{AgentDoctorFailed, Error, 502, "The doctor could not check what an agent asked about."},
+	{AgentNoReviewer, Error, 409, "An agent's request needs the user's answer, and Nearhost has no page or window open to ask in."},
+	{AgentTooManyWaiting, Error, 429, "The agent's machine has as many requests waiting for the user as it may."},
+	{AgentReloadFailed, Error, 502, "Nearhost could not read a project's .nearhostrc again for an agent."},
+	{AgentNearhostrcUnread, Error, 422, "A project's .nearhostrc could not be taken into account when an agent asked to reload it."},
+	{AgentRequestGone, Error, 404, "The proposal, passthrough or document request an agent asked about is not known; it may have ended long ago."},
+	{AgentLocalPassthrough, Error, 400, "A passthrough was asked for on the laptop's own socket, and passthroughs forward a server's port."},
+	{AgentGrantsFailed, Error, 500, "Nearhost could not read the grants that let an agent's requests open without asking."},
+	{AgentTokenRevoked, Error, 401, "The token an agent sent was revoked or never existed."},
+	{AgentTooManyPassthroughs, Error, 429, "The agent's server has as many passthroughs open as it may."},
+	{AgentNotConnected, Error, 409, "Nearhost is not connected to the agent's server."},
+	{AgentPassthroughFailed, Error, 502, "A passthrough's forward could not be opened or closed."},
+	{AgentClosedWhileOpening, Error, 409, "The agent's session closed while its passthrough opened, so the passthrough was closed again."},
+	{AgentPortHeld, Error, 409, "Another agent or session has the port passed through, or waiting for approval."},
+	{AgentDocumentNotThere, Error, 404, "The document an agent asked to show is not there."},
+	{AgentNotADocument, Error, 400, "What an agent asked to show is not a document Nearhost can show."},
+	{AgentDocumentFailed, Error, 502, "Nearhost could not read or show the document an agent asked to show."},
+	{AgentNoPage, Error, 409, "Nearhost's page is not served, so it cannot show an agent's document."},
 
 	{NearhostrcPending, Warning, 0, "The project's .nearhostrc has changes that wait for approval."},
 	{NearhostrcNotApplied, Warning, 0, "The project's .nearhostrc has changed since Nearhost last read it."},

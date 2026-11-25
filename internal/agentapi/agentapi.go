@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/doctor"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // Version is the API version, reported by GET /v1.
@@ -104,11 +105,12 @@ type Project struct {
 	URL  string `json:"url"`
 	// URLs is every URL the project's web routes are served at, the alias
 	// URL first, so an agent can tell a user where each service lives.
-	URLs   []string `json:"urls"`
-	State  string   `json:"state"`
-	Web    int      `json:"web"`
-	Routes []Route  `json:"routes"`
-	Error  string   `json:"error,omitempty"`
+	URLs    []string        `json:"urls"`
+	State   string          `json:"state"`
+	Web     int             `json:"web"`
+	Routes  []Route         `json:"routes"`
+	Error   string          `json:"error,omitempty"`
+	Problem *report.Message `json:"problem,omitempty"`
 }
 
 // Source answers the status calls.
@@ -327,7 +329,7 @@ func (s *Server) backingOffLocked(w http.ResponseWriter, origin, kind string) bo
 		return false
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	fail(w, http.StatusTooManyRequests, fmt.Sprintf("refused; ask again in %d s", secs))
+	fail(w, http.StatusTooManyRequests, report.Errorf(report.AgentRefused, "refused; ask again in %d s", secs).With("seconds", secs))
 	return true
 }
 
@@ -380,9 +382,10 @@ func (s *Server) endedLocked(shown *bool, id string) {
 }
 
 // noReviewer is the error for a request that needs the user's answer when
-// nothing can ask for it.
-func (s *Server) noReviewer() string {
-	return "Nearhost on " + s.laptop() + " has no page or window to ask you in; open nearhost there, then ask again."
+// nothing can ask for it. The skill matches "has no page or window to ask
+// you in" in it.
+func (s *Server) noReviewer() *report.Message {
+	return report.Errorf(report.AgentNoReviewer, "Nearhost on %s has no page or window to ask you in; open nearhost there, then ask again.", s.laptop())
 }
 
 // pageURL is the address of Nearhost's page, or "" when it has none. It is
@@ -482,7 +485,7 @@ func requireToken(token string, next http.Handler) http.Handler {
 	want := []byte(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get(tokenHeader)), want) != 1 {
-			fail(w, http.StatusUnauthorized, noToken)
+			fail(w, http.StatusUnauthorized, report.Errorf(report.AgentNoToken, "%s", noToken))
 			return
 		}
 		next.ServeHTTP(w, r)
