@@ -114,6 +114,12 @@ func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy stri
 	}
 	if err != nil {
 		fmt.Fprintln(log, "nearhost:", printableLines(err.Error()))
+		var ee exitError
+		if by != control.StartedForeground && !errors.As(err, &ee) {
+			// The standard error of a core started any other way is the
+			// log too, where Main would print the same error again.
+			return exitError{code: 1, msg: err.Error(), cause: err}
+		}
 	}
 	return err
 }

@@ -48,9 +48,14 @@ func TestUpPrintsTheSetcapCommandForAPortItMayNotBind(t *testing.T) {
 	if err == nil {
 		t.Fatal("up succeeded")
 	}
-	want := perm.Error() + "\n\nsudo setcap cap_net_bind_service=+ep '" + exe + "'\nDo not run nearhost with sudo."
-	if err.Error() != want {
-		t.Errorf("error %q, want %q", err, want)
+	for _, want := range []string{
+		perm.Error() + "\n\nOn Linux, a program may use ports below 1024",
+		"\n\n  sudo setcap cap_net_bind_service=+ep '" + exe + "'\n\nThen start Nearhost again. Do not run nearhost with sudo.",
+		"`nearhost doctor`",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q, want it to contain %q", err, want)
+		}
 	}
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Error("the advice hides the cause")

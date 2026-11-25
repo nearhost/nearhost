@@ -232,9 +232,9 @@ func TestDetachChildFailsShowsOnlyItsOwnLog(t *testing.T) {
 			ui := fakeUI(t, true, new(bool))
 			ui.detach = b
 			_, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
-			want := "Nearhost stopped while starting (exit status 1), before it wrote to " + logPath + ".\n"
+			want := "Nearhost stopped while starting (exit status 1), before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
 			if wrote != "" {
-				want = "Nearhost stopped while starting. The end of " + logPath + ":\nthis run's line\n"
+				want = "Nearhost stopped while starting. The end of " + logPath + ":\nthis run's line" + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
 			}
 			if code != 1 || stderr != want {
 				t.Errorf("code %d, stderr %q, want %q", code, stderr, want)
@@ -266,7 +266,7 @@ func TestDetachChildFails(t *testing.T) {
 	if code != 1 || stdout != "" {
 		t.Fatalf("code %d, stdout %q", code, stdout)
 	}
-	want := "Nearhost stopped while starting. The end of " + logPath + ":\n" + strings.Join(lines[5:], "\n") + "\n"
+	want := "Nearhost stopped while starting. The end of " + logPath + ":\n" + strings.Join(lines[5:], "\n") + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"
 	if asked != 20 || stderr != want {
 		t.Errorf("asked for %d lines; stderr %q, want %q", asked, stderr, want)
 	}
@@ -282,7 +282,7 @@ func TestDetachChildFailsWithNothingLogged(t *testing.T) {
 	ui := fakeUI(t, true, new(bool))
 	ui.detach = b
 	_, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
-	if want := "Nearhost stopped while starting (exit status 2), before it wrote to " + logPath + ".\n"; code != 1 || stderr != want {
+	if want := "Nearhost stopped while starting (exit status 2), before it wrote to " + logPath + "." + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"; code != 1 || stderr != want {
 		t.Errorf("code %d, stderr %q, want %q", code, stderr, want)
 	}
 }
@@ -684,7 +684,7 @@ func TestServiceStartStops(t *testing.T) {
 	if code != 1 || stdout != "" {
 		t.Fatalf("code %d, stdout %q", code, stdout)
 	}
-	if want := "Nearhost stopped while starting. The end of " + logPath + ":\nthe service's last line\n"; stderr != want {
+	if want := "Nearhost stopped while starting. The end of " + logPath + ":\nthe service's last line" + "\n\nRun `nearhost doctor` to see what is wrong and how to fix it.\n"; stderr != want {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if took < serviceGrace || took > 8*time.Second {
