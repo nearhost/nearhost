@@ -33,7 +33,7 @@ import (
 // trustBackend is the seam between the trust commands and the machine: the
 // real one touches the system trust store, tests substitute a fake.
 type trustBackend struct {
-	ensureCA  func(storageRoot string) (*x509.Certificate, error)
+	ensureCA  func(storageRoot string, warnings report.Sink) (*x509.Certificate, error)
 	rootCert  func(storageRoot string) (*x509.Certificate, error)
 	isTrusted func(*x509.Certificate) bool
 	install   func(*x509.Certificate) error
@@ -155,22 +155,13 @@ func migrateCANotes() []*report.Message {
 		dirs = append(dirs, old)
 	}
 	for _, dir := range dirs {
-		notes = append(notes, notPrivate(makeStoragePrivate(dir)))
+		notes = append(notes, makeStoragePrivate(dir))
 	}
 	return slices.DeleteFunc(notes, func(n *report.Message) bool { return n == nil })
 }
 
 // makeStoragePrivate is proxy.MakeStoragePrivate. Tests replace it.
 var makeStoragePrivate = proxy.MakeStoragePrivate
-
-// notPrivate is the ca.not-private warning for makeStoragePrivate's
-// warning text, nil for none.
-func notPrivate(warning string) *report.Message {
-	if warning == "" {
-		return nil
-	}
-	return report.Warnf(report.CANotPrivate, "%s", strings.TrimPrefix(warning, "Warning: "))
-}
 
 // migrateWarning is the ca.move-failed warning for a
 // config.MigrateCaddyDir error, nil for none.
@@ -197,7 +188,7 @@ func newTrustCmd(b trustBackend) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cert, err := b.ensureCA(dir)
+			cert, err := b.ensureCA(dir, sinkOf(cmd))
 			if err != nil {
 				return err
 			}

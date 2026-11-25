@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestCatalogCodesAreUniqueAndWellFormed(t *testing.T) {
 		if strings.TrimSpace(e.Summary) == "" || strings.Contains(e.Summary, "\n") {
 			t.Errorf("%q needs a one-line summary", e.Code)
 		}
-		if got, ok := Lookup(e.Code); !ok || got != e {
+		if got, ok := Lookup(e.Code); !ok || !reflect.DeepEqual(got, e) {
 			t.Errorf("Lookup(%q) = %+v, %v", e.Code, got, ok)
 		}
 	}
@@ -166,12 +167,15 @@ func TestAdviceCode(t *testing.T) {
 	}
 }
 
-// TestCodesOnlyFromCatalog walks the repository: outside codes.go, code
+// TestCodesOnlyFromCatalog checks the repository: outside codes.go, code
 // must use the catalog's constants (or AdviceCode), never make a Code from
-// a string.
+// a string. The module's packages for this platform are type-checked, so a
+// string literal or untyped constant given as a report.Code anywhere is
+// found; the files of other platforms and build tags, which are not, are
+// read for the shapes the syntax shows.
 func TestCodesOnlyFromCatalog(t *testing.T) {
 	root := moduleRoot(t)
-	var bad []string
+	bad, typed := checkModuleCodes(t, root)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -188,7 +192,7 @@ func TestCodesOnlyFromCatalog(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
-		if rel == "internal/report/codes.go" {
+		if rel == "internal/report/codes.go" || typed[rel] {
 			return nil
 		}
 		src, err := os.ReadFile(path)
@@ -204,6 +208,9 @@ func TestCodesOnlyFromCatalog(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(typed) == 0 {
+		t.Fatal("the type-checked pass read no files")
 	}
 	for _, b := range bad {
 		t.Errorf("%s", b)

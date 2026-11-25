@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func TestEnsureCACreatesRootUnderStorage(t *testing.T) {
 	storage := t.TempDir()
-	cert, err := EnsureCA(storage)
+	cert, err := EnsureCA(storage, nil)
 	if err != nil {
 		t.Fatalf("EnsureCA: %v", err)
 	}
@@ -41,11 +43,11 @@ func TestEnsureCACreatesRootUnderStorage(t *testing.T) {
 
 func TestEnsureCATwiceReturnsSameRoot(t *testing.T) {
 	storage := t.TempDir()
-	first, err := EnsureCA(storage)
+	first, err := EnsureCA(storage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := EnsureCA(storage)
+	second, err := EnsureCA(storage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +57,7 @@ func TestEnsureCATwiceReturnsSameRoot(t *testing.T) {
 }
 
 func TestEnsureCALeavesNoCaddyRunning(t *testing.T) {
-	if _, err := EnsureCA(t.TempDir()); err != nil {
+	if _, err := EnsureCA(t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
 	caddyMu.Lock()
@@ -95,7 +97,7 @@ func TestEnsureCAWhileProxyRunningKeepsItServing(t *testing.T) {
 	h.getEventually(h.client("a.test", false), "a.test", "/hello")
 
 	// The running proxy already created the root in its own storage.
-	cert, err := EnsureCA(h.p.opts.StorageRoot)
+	cert, err := EnsureCA(h.p.opts.StorageRoot, nil)
 	if err != nil {
 		t.Fatalf("EnsureCA while proxy running: %v", err)
 	}
@@ -110,7 +112,7 @@ func TestEnsureCAWhileProxyRunningKeepsItServing(t *testing.T) {
 	// Even with a different storage that has no root yet, a running proxy
 	// must not be replaced.
 	other := t.TempDir()
-	_, err = EnsureCA(other)
+	_, err = EnsureCA(other, nil)
 	if err == nil {
 		t.Fatal("expected an error: cannot create a CA elsewhere while a proxy owns Caddy")
 	}
@@ -145,10 +147,10 @@ func recordRestrict(t *testing.T, err error) *[]string {
 func TestEnsureCAMakesStoragePrivateBeforeTheKey(t *testing.T) {
 	calls := recordRestrict(t, nil)
 	storage := filepath.Join(t.TempDir(), "caddy")
-	if _, err := EnsureCA(storage); err != nil {
+	if _, err := EnsureCA(storage, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureCA(storage); err != nil {
+	if _, err := EnsureCA(storage, nil); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{storage}; !slices.Equal(*calls, want) {
@@ -160,21 +162,21 @@ func TestEnsureCAMakesStoragePrivateBeforeTheKey(t *testing.T) {
 // it, and the CA is still made.
 func TestEnsureCAWarnsWhenStorageCannotBeMadePrivate(t *testing.T) {
 	recordRestrict(t, errors.New("not supported"))
-	var out strings.Builder
-	saved := storageWarnings
-	storageWarnings = &out
-	t.Cleanup(func() { storageWarnings = saved })
+	var got report.Collector
 	storage := filepath.Join(t.TempDir(), "caddy")
-	if _, err := EnsureCA(storage); err != nil {
+	if _, err := EnsureCA(storage, &got); err != nil {
 		t.Fatalf("EnsureCA: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "could not make its CA folder "+storage+" private") || !strings.Contains(got, "not supported") {
-		t.Fatalf("warning = %q", got)
+	ms := got.Messages()
+	if len(ms) != 1 || ms[0].Code != report.CANotPrivate || ms[0].Level != report.Warning ||
+		!strings.Contains(ms[0].Title, "could not make its CA folder "+storage+" private") || !strings.Contains(ms[0].Why, "Not supported") {
+		t.Fatalf("warnings = %+v", ms)
 	}
 }
 
 // A proxy makes its storage directory private once, before Caddy loads, and
-// a failure is a line in the log.
+// a failure is a line in the log, or a message to its Reports when it has
+// them.
 func TestProxyMakesStoragePrivateOnceAndLogsAFailure(t *testing.T) {
 	calls := recordRestrict(t, errors.New("not supported"))
 	var lines []string
@@ -193,13 +195,25 @@ func TestProxyMakesStoragePrivateOnceAndLogsAFailure(t *testing.T) {
 		t.Fatalf("restrictStorage calls = %q, want %q", *calls, want)
 	}
 	if !slices.ContainsFunc(lines, func(l string) bool {
-		return strings.Contains(l, "could not make its CA folder "+storage+" private")
+		return strings.HasPrefix(l, "warning [ca.not-private] ") && strings.Contains(l, "could not make its CA folder "+storage+" private")
 	}) {
 		t.Fatalf("no warning in the log: %q", lines)
 	}
+	p.Stop()
+
+	var got report.Collector
+	storage = filepath.Join(t.TempDir(), "caddy")
+	p2 := New(Options{StorageRoot: storage, HTTPSPort: freePort(t), HTTPPort: freePort(t), Reports: &got})
+	if err := p2.Apply(nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p2.Stop() })
+	if ms := got.Messages(); len(ms) != 1 || ms[0].Code != report.CANotPrivate {
+		t.Fatalf("reports = %+v", ms)
+	}
 }
 
-// Each kind of failure gets its own advice, naming the folder.
+// Each kind of failure gets its own advice, naming the folder once.
 func TestStorageWarningAdvisesByKind(t *testing.T) {
 	const root = "/data/nearhost/caddy"
 	// The shapes winsys.RestrictToOwner returns: an *fs.PathError naming
@@ -208,26 +222,40 @@ func TestStorageWarningAdvisesByKind(t *testing.T) {
 		return &restrictError{kind: kind, err: &fs.PathError{Op: op, Path: root, Err: errors.New(msg)}}
 	}
 	for _, c := range []struct {
-		err  error
-		want string
+		err             error
+		title, why      string
+		stepText, stepC string
 	}{
 		{pathErr(failedDenied, "set the access list of", "Access is denied."),
-			"Warning: Nearhost could not make its CA folder private: " + root + " cannot be changed by this account. Run `nearhost trust` once, as the same user, from an administrator terminal."},
+			"Nearhost could not make its CA folder private.", root + " cannot be changed by this account.",
+			"Run this once, as the same user, from an administrator terminal:", "nearhost trust"},
 		{pathErr(failedShared, "restrict", "a folder other programs use too; its access list is left alone"),
-			"Warning: Nearhost could not make its CA folder private: its data folder is set to " + root + ", a location Nearhost will not change. Point XDG_DATA_HOME at a folder of its own."},
+			"Nearhost could not make its CA folder private.", "Its data folder is set to " + root + ", a location Nearhost will not change.",
+			"Point XDG_DATA_HOME at a folder of its own.", ""},
 		{pathErr(failedNoACLs, "restrict", "the drive's file system keeps no access lists"),
-			"Warning: Nearhost could not make its CA folder " + root + " private (the drive's file system keeps no access lists), so other users of this computer may be able to read the CA's private key. " +
-				"Keep Nearhost's data folder (%LOCALAPPDATA%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive."},
+			"Nearhost could not make its CA folder " + root + " private.",
+			"The drive's file system keeps no access lists, so other users of this computer may be able to read the CA's private key.",
+			"Keep Nearhost's data folder (%LOCALAPPDATA%\\nearhost, or nearhost in XDG_DATA_HOME when that is set) on a local NTFS drive.", ""},
 		{pathErr(failedOther, "set the owner of", "The system cannot find the file specified."),
-			"Warning: Nearhost could not make its CA folder " + root + " private: The system cannot find the file specified."},
-		{errors.New("plain"), "Warning: Nearhost could not make its CA folder " + root + " private: plain."},
+			"Nearhost could not make its CA folder " + root + " private.", "The system cannot find the file specified.", "", ""},
+		{errors.New("plain"), "Nearhost could not make its CA folder " + root + " private.", "Plain.", "", ""},
 	} {
-		got := storageWarning(root, c.err)
-		if got != c.want {
-			t.Errorf("storageWarning(%v):\n got %q\nwant %q", c.err, got, c.want)
+		m := storageWarning(root, c.err)
+		if m.Code != report.CANotPrivate || m.Level != report.Warning || m.Title != c.title || m.Why != c.why {
+			t.Errorf("storageWarning(%v) = %q / %q, want %q / %q", c.err, m.Title, m.Why, c.title, c.why)
 		}
-		if n := strings.Count(got, root); n != 1 {
-			t.Errorf("storageWarning(%v) names the folder %d times: %q", c.err, n, got)
+		var step report.Step
+		if len(m.Fix) > 0 {
+			step = m.Fix[0]
+		}
+		if len(m.Fix) > 1 || step.Text != c.stepText || step.Command != c.stepC {
+			t.Errorf("storageWarning(%v) steps = %+v, want %q %q", c.err, m.Fix, c.stepText, c.stepC)
+		}
+		if !errors.Is(m, c.err) {
+			t.Errorf("storageWarning(%v) does not wrap its error", c.err)
+		}
+		if n := strings.Count(m.Title+m.Why, root); n != 1 {
+			t.Errorf("storageWarning(%v) names the folder %d times", c.err, n)
 		}
 	}
 }

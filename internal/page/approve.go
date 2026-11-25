@@ -41,10 +41,9 @@ type button struct {
 // approveView is what /approve/{id} shows.
 type approveView struct {
 	base
-	// Lines say what is asked, in full.
-	Lines []string
-	// Advice follows the lines: what to do instead of answering here.
-	Advice  string
+	// Lines say what is asked, in full, and for a proposal, what to do
+	// instead of answering here.
+	Lines   []string
 	Buttons []button
 	// Problem is why the answer given failed. With Gone set, it is why the
 	// request waits no longer: the answer ended it, or it was answered
@@ -173,8 +172,8 @@ func (p *page) approveView(a control.Approval, withButtons bool) approveView {
 	case a.Doc != nil:
 		v = approveView{base: p.base("Show a document"), Lines: docLines(a.Doc)}
 	case a.Proposal != nil:
-		v = approveView{base: p.base("Add a project"), Lines: proposalLines(a.Proposal),
-			Advice: "Run nearhost on this machine to review it."}
+		v = approveView{base: p.base("Add a project"),
+			Lines: append(proposalLines(a.Proposal), "Run nearhost on this machine to review it.")}
 	}
 	if !withButtons {
 		return v

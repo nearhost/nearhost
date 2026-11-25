@@ -71,7 +71,7 @@ func TestBuildConfigCertificateLifetimes(t *testing.T) {
 // site's certificate lasts a week and verifies against the same root.
 func TestApplyReplacesAnIntermediateTooShortForAWeek(t *testing.T) {
 	storage := testutil.TempDir(t, "nh-caddy-")
-	root, err := EnsureCA(storage)
+	root, err := EnsureCA(storage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

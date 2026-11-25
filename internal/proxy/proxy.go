@@ -14,6 +14,7 @@ import (
 	_ "github.com/caddyserver/caddy/v2/modules/standard" // register Caddy's standard modules
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/oserr"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 // caddyMu serialises every call into Caddy's process-global Load/Stop, and
@@ -81,8 +82,12 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	if err := os.MkdirAll(p.opts.StorageRoot, 0o700); err != nil {
 		return false, fmt.Errorf("create proxy storage: %w", err)
 	}
-	if msg := privateStorage(p.opts.StorageRoot); msg != "" {
-		emit("", msg)
+	if m := privateStorage(p.opts.StorageRoot); m != nil {
+		if p.opts.Reports != nil {
+			p.opts.Reports.Report(m)
+		} else {
+			emit("", report.LogText(m))
+		}
 	}
 	if owner == nil {
 		// Caddy is not running, so nothing has a certificate's files open

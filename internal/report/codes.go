@@ -28,6 +28,10 @@ type Entry struct {
 	Status int
 	// Summary says in one line what the code means.
 	Summary string
+	// Steps are what to do, for a code whose fix never varies; nil for
+	// one whose fix depends on the case. The errors reference page shows
+	// them.
+	Steps []Step
 }
 
 // DocsBase is the errors reference page; a code's entry is its anchor.
@@ -258,7 +262,16 @@ const (
 // whose IDs come from the presets.
 const adviceFamily = "advice."
 
-var catalog = []Entry{
+// catalogRow is an entry as this file lists it; the steps are in
+// fixedSteps.
+type catalogRow struct {
+	Code    Code
+	Level   Level
+	Status  int
+	Summary string
+}
+
+var catalogRows = []catalogRow{
 	{Unexpected, Error, 500, "Something failed that Nearhost has no explanation for; the message holds the error as it came."},
 	{Crash, Error, 500, "Nearhost stopped unexpectedly; the details are in a crash file."},
 	{Interrupted, Error, 500, "The command was interrupted before it finished."},
@@ -469,6 +482,50 @@ var catalog = []Entry{
 	{ProjectsUnchecked, Info, 0, "Nearhost could not run the project's checks, for example because its server is not reachable."},
 }
 
+// fixedSteps are the steps of the codes whose fix never varies, which the
+// catalog's entries carry.
+var fixedSteps = map[Code][]Step{
+	CoreNotRunning: {
+		{Text: "Start it in the background:", Command: "nearhost -d"},
+		{Text: "Or open its interface:", Command: "nearhost"},
+	},
+	CoreOutdated: {
+		{Text: "Stop it:", Command: "nearhost stop"},
+		{Text: "Then start it again:", Command: "nearhost -d"},
+	},
+	UpdateAvailable: {
+		{Text: "To update, run:", Command: "nearhost update"},
+	},
+	HostsNeedsUpdate: {
+		{Text: "Update it in a terminal:", Command: "nearhost hosts update"},
+	},
+	InterfaceNoTerminal: {
+		{Text: "Run it in the background:", Command: "nearhost -d"},
+		{Text: "Or serve without the interface:", Command: "nearhost up"},
+	},
+	CANotCreated: {
+		{Text: "Create the local CA and trust it:", Command: "nearhost trust"},
+	},
+	CANotTrusted: {
+		{Text: "Trust the local CA:", Command: "nearhost trust"},
+	},
+	ServiceNotInstalled: {
+		{Text: "To start Nearhost at login, install the service:", Command: "nearhost service install"},
+	},
+	ServiceNotRunning: {
+		{Text: "Start it:", Command: "nearhost -d"},
+	},
+}
+
+// catalog is every entry, in the order of catalogRows, with its steps.
+var catalog = func() []Entry {
+	out := make([]Entry, len(catalogRows))
+	for i, r := range catalogRows {
+		out[i] = Entry{Code: r.Code, Level: r.Level, Status: r.Status, Summary: r.Summary, Steps: fixedSteps[r.Code]}
+	}
+	return out
+}()
+
 var byCode = func() map[Code]Entry {
 	m := make(map[Code]Entry, len(catalog))
 	for _, e := range catalog {
@@ -479,12 +536,19 @@ var byCode = func() map[Code]Entry {
 
 // Catalog returns every code with a fixed name, in the order of this file.
 // The advice family (AdviceCode) is not listed.
-func Catalog() []Entry { return slices.Clone(catalog) }
+func Catalog() []Entry {
+	out := slices.Clone(catalog)
+	for i := range out {
+		out[i].Steps = slices.Clone(out[i].Steps)
+	}
+	return out
+}
 
 // Lookup returns a code's catalog entry. A code of the advice family is
 // found too, as a warning.
 func Lookup(c Code) (Entry, bool) {
 	if e, ok := byCode[c]; ok {
+		e.Steps = slices.Clone(e.Steps)
 		return e, true
 	}
 	if id, ok := strings.CutPrefix(string(c), adviceFamily); ok && id != "" {
