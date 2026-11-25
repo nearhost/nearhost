@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/transport"
 )
 
@@ -320,5 +321,25 @@ func TestFirstRunScreenKeysActAsHomeWhateverIsSelected(t *testing.T) {
 	}
 	if got := clipboardOf(press(m, "y")); got != "ssh deploy@vps.example" {
 		t.Errorf("copied %q", got)
+	}
+}
+
+// An agent that has opened something needs the sidebar's passthroughs and
+// documents rows, so the first-run screen gives way until it closes.
+func TestFirstRunGivesWayWhileAgentsHaveSomethingOpen(t *testing.T) {
+	f := newFake(t, &config.Config{})
+	m := sized(f)
+	if !m.empty() {
+		t.Fatal("the first-run screen is not drawn with nothing open")
+	}
+	f.passes = []engine.Passthrough{{PassthroughSpec: engine.PassthroughSpec{ID: "p1", Server: config.LocalServer, Requester: "codex", Remote: 5173},
+		Local: 5173, Opened: m.now()}}
+	if m.empty() {
+		t.Fatal("the first-run screen hides an open passthrough")
+	}
+	wantScreen(t, m, "home", "passthroughs", "documents")
+	f.passes = nil
+	if !m.empty() {
+		t.Fatal("the first-run screen does not return when the passthrough closes")
 	}
 }

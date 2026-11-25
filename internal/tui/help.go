@@ -41,13 +41,13 @@ type helpGroup struct {
 
 // helpGroups are every key of the main screen, in four columns.
 var helpGroups = []helpGroup{
-	{"move · mouse", bindings([]footerItem{{"j/k", "up and down"}, {"h", "home"}, {"tab", "routes"}, {"/", "filter by name"}, {"esc", "clear filter"},
+	{"move · mouse", bindings([]footerItem{{"j/k", "up and down"}, {"h", "home"}, {"tab", "routes, rows"}, {"/", "filter by name"}, {"esc", "clear filter"},
 		{"drag", "copy text"}, {"2click", "copy a word"}, {"click", "open an address"}})},
 	{"project", bindings([]footerItem{{"enter", "start or stop"}, {"o", "open in browser"}, {"e", "edit"}, {"d", "remove"}, {"y", "copy advice"},
 		{"i", "show or hide ignored ports"},
 		{"r", "re-read .nearhostrc"}, {"a", "review .nearhostrc"}})},
 	{"server", bindings([]footerItem{{"s", "add server"}, {"r", "reconnect"}, {"c", "connect or drop"}, {"e", "edit"}, {"d", "remove"},
-		{"tab", "passthroughs, documents, grants"}, {"enter", "collapse, or open a document"}, {"x", "close, revoke or remove"}})},
+		{"tab", "grants"}, {"enter", "collapse"}, {"x", "revoke or remove"}})},
 	{"nearhost", bindings([]footerItem{{"n", "add project"}, {"p", "review request"}, {"A", "always allow"}, {"l", "full-screen log"}, {"?", "close help"}, {"q", "quit"}})},
 }
 

@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -52,12 +51,11 @@ func kindOrder(kind string) int {
 
 // panelRows are the rows of the selected row's panel, and the error that
 // kept its grants from being read, when one did. A server's panel has its
-// open passthroughs, sorted by remote port, then its served trees, newest
-// first, then its grants, sorted by requester and kind. The passthroughs
-// row has every server's passthroughs and the documents row every server's
-// trees. They are read from the backend each time, so what the engine
-// closes is gone at once. The grants are those fetchGrants last read, since
-// reading them blocks. The focus on the rows ends when none are left. The
+// grants, sorted by requester and kind. The passthroughs row has every
+// server's passthroughs and the documents row every server's trees. They
+// are read from the backend each time, so what the engine closes is gone at
+// once. The grants are those fetchGrants last read, since reading them
+// blocks. The focus on the rows ends when none are left. The
 // selected row is found again by its key, so a row opened or closed
 // meanwhile does not move the selection onto another; when it is gone, the
 // selection stays at its place within the rows.
@@ -99,8 +97,6 @@ func (m *Model) rowsOf(kind rowKind, name string) ([]passRow, error) {
 	default:
 		return nil, nil
 	}
-	passes := slices.Clone(m.b.Passthroughs(name))
-	sort.SliceStable(passes, func(i, j int) bool { return passes[i].Remote < passes[j].Remote })
 	var gs []grants.Grant
 	var err error
 	if e := m.grantCache[name]; e != nil {
@@ -112,13 +108,6 @@ func (m *Model) rowsOf(kind rowKind, name string) ([]passRow, error) {
 		}
 		return kindOrder(gs[i].Kind) < kindOrder(gs[j].Kind)
 	})
-	trees := m.b.Documents(name)
-	for i := range passes {
-		rows = append(rows, passRow{pass: &passes[i]})
-	}
-	for i := range trees {
-		rows = append(rows, passRow{tree: &trees[i]})
-	}
 	for i := range gs {
 		rows = append(rows, passRow{grant: &gs[i]})
 	}
@@ -190,37 +179,27 @@ func (m *Model) rowText(r passRow) string {
 	return strings.Join(append(parts, age(now, p.Opened)), " · ")
 }
 
-// passLines draws the server's passthroughs, trees and grants for its
-// panel, in at most room lines where it can: a label line, then a line a
-// row, the
-// selected one filled while the rows have the focus. The labels are longer
+// passLines draws the server's grants for its panel, in at most room lines
+// where it can: a label line, then a line a row, the selected one filled while the rows have the focus. The labels are longer
 // than a field's, so they have lines of their own. When the rows do not
 // fit, a window of them that holds the selection is shown, as many rows as
 // fit and at least the selected one, and a dim "+N more" line says how many
 // are hidden above it, under the first row's label, and below it.
 func (m *Model) passLines(name string, width, room int) []string {
 	rows, err := m.follow(m.rowsOf(rowServer, name))
-	// A grants error is news only beside passthroughs or trees, or with
+	// A grants error is news only beside what agents have open, or with
 	// the rows selected; otherwise every server panel of a run without
 	// agents would carry it.
 	var errLines []string
-	if err != nil && (m.passFocus || slices.ContainsFunc(rows, func(r passRow) bool { return r.pass != nil || r.tree != nil })) {
-		if !slices.ContainsFunc(rows, func(r passRow) bool { return r.grant != nil }) {
+	if err != nil && (m.passFocus || m.openCounts(name) != "") {
+		if len(rows) == 0 {
 			errLines = append(errLines, styleLabel.UnsetWidth().Render("always allowed"))
 		}
 		for _, l := range wrap(sentence(clean(err.Error())), width-2) {
 			errLines = append(errLines, "  "+styleAmber.Render(l))
 		}
 	}
-	label := func(r passRow) string {
-		switch {
-		case r.grant != nil:
-			return "always allowed"
-		case r.tree != nil:
-			return "documents"
-		}
-		return "passthroughs"
-	}
+	label := func(passRow) string { return "always allowed" }
 	drawn := make([][]string, len(rows))
 	labels, total := map[string]bool{}, len(errLines)
 	for i, r := range rows {
@@ -545,34 +524,17 @@ func (m *Model) revoked(msg revokedMsg) {
 	m.logs.noteOn(rowKey(rowServer, msg.server), fmt.Sprintf("Stopped always allowing %s%s.", RequesterName(msg.requester), grantWhat(msg.kind)))
 }
 
-// agentCounts are the lines of Home's agents: how many passthroughs are
-// open and trees served on each server, by name; none when there are none.
-func (m *Model) agentCounts(width int) []string {
-	passes, trees := map[string]int{}, map[string]int{}
-	names := map[string]bool{}
-	for _, p := range m.b.Passthroughs("") {
-		passes[p.Server]++
-		names[p.Server] = true
+// openCounts says what is open on the server for agents, as the open field
+// shows it: "1 passthrough, 2 documents", and "" when nothing is.
+func (m *Model) openCounts(server string) string {
+	var counts []string
+	if n := len(m.b.Passthroughs(server)); n > 0 {
+		counts = append(counts, plural(n, "passthrough"))
 	}
-	for _, tr := range m.b.Documents("") {
-		trees[tr.Server]++
-		names[tr.Server] = true
+	if n := len(m.b.Documents(server)); n > 0 {
+		counts = append(counts, plural(n, "document"))
 	}
-	var parts []string
-	for _, s := range slices.Sorted(maps.Keys(names)) {
-		var counts []string
-		if n := passes[s]; n > 0 {
-			counts = append(counts, plural(n, "passthrough"))
-		}
-		if n := trees[s]; n > 0 {
-			counts = append(counts, plural(n, "document"))
-		}
-		parts = append(parts, clean(s)+" "+strings.Join(counts, ", "))
-	}
-	if len(parts) == 0 {
-		return nil
-	}
-	return field("agents", strings.Join(parts, " · "), width)
+	return strings.Join(counts, ", ")
 }
 
 // grantsEvery is how long the grants read for a server are fresh.

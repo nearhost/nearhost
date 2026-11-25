@@ -41,9 +41,12 @@ func cellsTall(w, h int) bool {
 const emptyWidth = 56
 
 // empty reports whether the first-run screen is drawn: there is nothing to
-// serve, and no server was connected from that screen. A form opens over it.
+// serve, no server was connected from that screen, and no agent has anything
+// open, which the sidebar's passthroughs and documents rows are there to
+// show. A form opens over it.
 func (m *Model) empty() bool {
-	return len(m.cfg.Projects) == 0 && !m.leftEmpty
+	return len(m.cfg.Projects) == 0 && !m.leftEmpty &&
+		len(m.b.Passthroughs("")) == 0 && len(m.b.Documents("")) == 0
 }
 
 // emptyKeys are the keys that work on the first-run screen: c only once
