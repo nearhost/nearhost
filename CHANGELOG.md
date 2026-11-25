@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.15.0](https://github.com/nearhost/nearhost/compare/v0.14.1...v0.15.0) (2026-11-25)
+
+
+### Features
+
+* **agentapi:** tell the reviewer when a request ends, and link to its approval ([#550](https://github.com/nearhost/nearhost/issues/550)) ([c5b65ce](https://github.com/nearhost/nearhost/commit/c5b65ce2eceb3464c1e0b82fae33c356dd12ed67))
+* **cli:** a backend for the interface that talks to the core ([#546](https://github.com/nearhost/nearhost/issues/546)) ([53fdce6](https://github.com/nearhost/nearhost/commit/53fdce61af977016d425e9c16ab6d60d7a9beafa))
+* **cli:** nearhost -d starts the core in the background ([#524](https://github.com/nearhost/nearhost/issues/524)) ([92481fe](https://github.com/nearhost/nearhost/commit/92481fe773acc8fc9fc3d883df326d8c59f8c00e))
+* **cli:** nearhost daemon runs the core in the background with a log and no elevation ([#522](https://github.com/nearhost/nearhost/issues/522)) ([4506f2c](https://github.com/nearhost/nearhost/commit/4506f2c1856f828356545a59e1289463092b0f6a))
+* **cli:** nearhost doctor reports the running core, what it can reach, and the service ([#573](https://github.com/nearhost/nearhost/issues/573)) ([f12c248](https://github.com/nearhost/nearhost/commit/f12c2486f9f5d9c407ebd058dc396f37a8db064a))
+* **cli:** nearhost hosts update fixes the hosts block for a background core ([#523](https://github.com/nearhost/nearhost/issues/523)) ([acbb17b](https://github.com/nearhost/nearhost/commit/acbb17bcad674d778dbc668ef98542d1092f66e1))
+* **cli:** nearhost opens the interface as a client of the core ([#548](https://github.com/nearhost/nearhost/issues/548)) ([4f162ad](https://github.com/nearhost/nearhost/commit/4f162adfcc8517b9728fdcf17ae821ed3ecc8068))
+* **cli:** nearhost service install and uninstall ([#567](https://github.com/nearhost/nearhost/issues/567)) ([6f56b40](https://github.com/nearhost/nearhost/commit/6f56b40dbfd361140205cf5b7efc64d8d601a06c))
+* **cli:** nearhost status lists the requests waiting and the page's address ([#556](https://github.com/nearhost/nearhost/issues/556)) ([f881f2f](https://github.com/nearhost/nearhost/commit/f881f2f50a154aa4d0f21b333f12b92a486db05b))
+* **cli:** nearhost stop and nearhost status talk to the running core ([#525](https://github.com/nearhost/nearhost/issues/525)) ([09e3eea](https://github.com/nearhost/nearhost/commit/09e3eeaee449a31301a95f1dfb0bd30db1db408a))
+* **cli:** nearhost update restarts the running core on the new binary ([#576](https://github.com/nearhost/nearhost/issues/576)) ([2c3148e](https://github.com/nearhost/nearhost/commit/2c3148e2c905dd333192dfccb753a3e361253c28))
+* **cli:** start the core through its service when one is installed ([#566](https://github.com/nearhost/nearhost/issues/566)) ([408739e](https://github.com/nearhost/nearhost/commit/408739e96523c74a83471e01d7527c728d8fc595))
+* **cli:** the core answers agents whenever its page is served ([#551](https://github.com/nearhost/nearhost/issues/551)) ([38987b4](https://github.com/nearhost/nearhost/commit/38987b4787b9194aaf1cf1d7e6f5205839e83e53))
+* **cli:** the core keeps the agents' requests and streams them to its clients ([#545](https://github.com/nearhost/nearhost/issues/545)) ([8ce071b](https://github.com/nearhost/nearhost/commit/8ce071bebbb8dd892629755d7141654e47beb6b9))
+* **cli:** the core reports whether it can open links and reach ssh, its agent and Docker ([#572](https://github.com/nearhost/nearhost/issues/572)) ([2978c8d](https://github.com/nearhost/nearhost/commit/2978c8ddf3dfc5ea245e8b638645e90bf16b39c6))
+* **cli:** the core says when a new release is out, to the interface, the page and nearhost status ([#575](https://github.com/nearhost/nearhost/issues/575)) ([591f937](https://github.com/nearhost/nearhost/commit/591f937a423bce2c79f33d9913ea55844514458a))
+* **cli:** the core's log is set aside while it runs, not only at start ([#568](https://github.com/nearhost/nearhost/issues/568)) ([4bed0fb](https://github.com/nearhost/nearhost/commit/4bed0fb46876ac9ff2432bdd551fb26d48f16862))
+* **config:** Watch polls the config and applies settled changes ([#519](https://github.com/nearhost/nearhost/issues/519)) ([e8f2f2f](https://github.com/nearhost/nearhost/commit/e8f2f2f06d0217aa0ef82da3cf9d1ffdbe77729c))
+* **control:** a local control API on &lt;run dir&gt;/control.sock ([#518](https://github.com/nearhost/nearhost/issues/518)) ([069a5b3](https://github.com/nearhost/nearhost/commit/069a5b33368a90083b087b233b4902e360ed7aad))
+* **control:** a state snapshot and a numbered event stream ([#541](https://github.com/nearhost/nearhost/issues/541)) ([1186fea](https://github.com/nearhost/nearhost/commit/1186fea7e0d8d23f3e4e91bf386850cdb0b6fffc))
+* **control:** routes for the actions the interface takes ([#542](https://github.com/nearhost/nearhost/issues/542)) ([8630516](https://github.com/nearhost/nearhost/commit/863051671e221e8aa84d81e78fcce410582d135c))
+* **page:** status and approvals on Nearhost's page ([#555](https://github.com/nearhost/nearhost/issues/555)) ([8802106](https://github.com/nearhost/nearhost/commit/88021065212fac95b67d348ef39a59486711ef82))
+* **proxy:** a gate for the page's status and approvals ([#553](https://github.com/nearhost/nearhost/issues/553)) ([ef221cd](https://github.com/nearhost/nearhost/commit/ef221cd527164530281089c37404439ac1ebc0cd))
+* **service:** install, start and remove the service with launchd, systemd and Task Scheduler ([#564](https://github.com/nearhost/nearhost/issues/564)) ([c68c8a5](https://github.com/nearhost/nearhost/commit/c68c8a5dbc4db6c714babb61321d61358538882b))
+* **service:** what a service runs, in launchd, systemd and Task Scheduler form ([#563](https://github.com/nearhost/nearhost/issues/563)) ([6e38c27](https://github.com/nearhost/nearhost/commit/6e38c27fd42b8679d9531edfad38c337f47152bf))
+* **skill:** pass on the link to answer a request on Nearhost's page ([#557](https://github.com/nearhost/nearhost/issues/557)) ([dddb025](https://github.com/nearhost/nearhost/commit/dddb025442c8cf6858f3c5fbf60db5237bad0546))
+* **tui:** reload through the backend, and ask whether quitting stops Nearhost ([#547](https://github.com/nearhost/nearhost/issues/547)) ([c1949e9](https://github.com/nearhost/nearhost/commit/c1949e92e7a69c58664fab79e30e368d03110ac7))
+
+
+### Bug Fixes
+
+* a run directory too long for ssh gets advice that fixes it ([#515](https://github.com/nearhost/nearhost/issues/515)) ([c51182b](https://github.com/nearhost/nearhost/commit/c51182bcc5376888e41f5f97fb45e4e322a04bc8))
+* **cli:** approval lines never split up's blocks, and say missed lines at once ([#560](https://github.com/nearhost/nearhost/issues/560)) ([d18d336](https://github.com/nearhost/nearhost/commit/d18d336123ec46fecc54ad010919437c80e756f5))
+* **cli:** enter asks for the password again after a refused hosts update ([#531](https://github.com/nearhost/nearhost/issues/531)) ([0622a76](https://github.com/nearhost/nearhost/commit/0622a76da417c89fec606d2d27938736e6e7c3b9))
+* **cli:** final review fixes for the background core ([#527](https://github.com/nearhost/nearhost/issues/527)) ([a5a0aa0](https://github.com/nearhost/nearhost/commit/a5a0aa0b9365aae03cde403f3d21380b17d47797))
+* **cli:** the core applies a config change saved while it starts ([#562](https://github.com/nearhost/nearhost/issues/562)) ([1140ca8](https://github.com/nearhost/nearhost/commit/1140ca8fc3201403df104a81329f191ed3dbdb3e))
+* **config:** a read of the id file waits out a sharing violation on Windows ([#536](https://github.com/nearhost/nearhost/issues/536)) ([7c05203](https://github.com/nearhost/nearhost/commit/7c05203ba3616365465a9f0c9882094bb90c7283))
+* **doctor:** a stale hosts block is fixed with nearhost hosts update, and the READMEs cover the background Nearhost ([#581](https://github.com/nearhost/nearhost/issues/581)) ([22c9763](https://github.com/nearhost/nearhost/commit/22c97638692e3cac395da54ec3cccfd3e63ef22b))
+* **e2e, control:** two flakes — an exit waits for the last output, and the answer-cap test has room ([#578](https://github.com/nearhost/nearhost/issues/578)) ([fbd167a](https://github.com/nearhost/nearhost/commit/fbd167ab8b0c70ee5ee1e01c458417e77ae453a7))
+* **engine:** a passthrough leaves the loopback routes' ports alone ([#514](https://github.com/nearhost/nearhost/issues/514)) ([dada512](https://github.com/nearhost/nearhost/commit/dada512fe4878b0402d16c716c9f8d4a0b7b3164))
+* **engine:** a start that Shutdown interrupts never begins a hosts update ([#539](https://github.com/nearhost/nearhost/issues/539)) ([1c8257a](https://github.com/nearhost/nearhost/commit/1c8257a4eb53a3ca8a6387db028ff8a96361c6bf))
+* final review fixes for the interface as a client of the core ([#549](https://github.com/nearhost/nearhost/issues/549)) ([857d1b2](https://github.com/nearhost/nearhost/commit/857d1b27c44fc89700697701f7741b9ad75fc8cc))
+* **page:** final review fixes for approvals on the page ([#559](https://github.com/nearhost/nearhost/issues/559)) ([24c3700](https://github.com/nearhost/nearhost/commit/24c3700cb8ef3806f85271ea8658777472b5227f))
+* **proxy:** a load waits for the certificates of the hosts it adds ([#529](https://github.com/nearhost/nearhost/issues/529)) ([46b34d6](https://github.com/nearhost/nearhost/commit/46b34d69d4deeb4c9af7217a11572d4dc4707f67))
+* **proxy:** a stop waits for its listeners to close ([#516](https://github.com/nearhost/nearhost/issues/516)) ([2846ea4](https://github.com/nearhost/nearhost/commit/2846ea4d0ce69f01fe3dd23926fbdad86a71cbec))
+* **service:** a retry limit, Windows output noise, a starting launchd job, and a clear message when Windows blocks nearhost ([#577](https://github.com/nearhost/nearhost/issues/577)) ([3339d61](https://github.com/nearhost/nearhost/commit/3339d61f2625151afefaa0e32a4b3946822330d9))
+* **service:** answers to the review threads on the services stack ([#571](https://github.com/nearhost/nearhost/issues/571)) ([351fe85](https://github.com/nearhost/nearhost/commit/351fe85e3c794ef857af2f2897c26444637f41e7))
+* **service:** final review fixes for services ([#570](https://github.com/nearhost/nearhost/issues/570)) ([159bd17](https://github.com/nearhost/nearhost/commit/159bd1789299c107b4cda91a9e6b784f063649d2))
+* **service:** final review fixes for updates, doctor and the service ([#580](https://github.com/nearhost/nearhost/issues/580)) ([cd9a306](https://github.com/nearhost/nearhost/commit/cd9a30644ec5d2f1374132558092028a1eb2bee8))
+
 ## [0.14.1](https://github.com/nearhost/nearhost/compare/v0.14.0...v0.14.1) (2026-11-20)
 
 
