@@ -55,7 +55,7 @@ Do not edit Nearhost's config file yourself.
 
 ## passthrough
 
-Use this on a server reached over SSH (`SSH_CONNECTION` is set), to open a dev server's port in the user's browser on the laptop.
+Use this to open a dev server's port in the user's browser on the laptop: on a server reached over SSH (`SSH_CONNECTION` is set), or on the laptop when the app runs on another machine you reach over SSH.
 
 1. If the dev server runs on another machine you reach over SSH, do not forward its port yourself. Run `<script> passthrough <port> --on <host>`, and use `--on <host>` for `passthrough-wait` too. If it says no Nearhost reaches that machine, forward the port here yourself, run `passthrough` here, and put where the app runs in the label, e.g. `--label "preflash on apollo"`. If it says SSH could not reach the host, pass that on to the user and stop: forwarding it yourself would fail the same way.
 2. Before you give the user a `localhost:<port>` URL, run `<script> passthrough <port> --label "browser preview"`. Do not ask the user in chat first: Nearhost asks them.
