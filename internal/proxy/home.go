@@ -126,8 +126,9 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
 		// From the network, a document link alone is not enough: the
-		// browser must be a paired device's.
-		if atNetworkHost(r) {
+		// browser must be a paired device's. Nor from a client off
+		// loopback at the local hosts, where no device cookie counts.
+		if atNetworkHost(r) || !loopbackClient(r) {
 			if _, ok := pairedDevice(r); !ok {
 				serveLocked(w, r)
 				return nil

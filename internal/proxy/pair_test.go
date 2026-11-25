@@ -405,3 +405,55 @@ func TestNetworkHostNeverGivesOrHonoursPageSecret(t *testing.T) {
 		t.Errorf("page secret at the page host: %d, want 200", w.Code)
 	}
 }
+
+// lanAtPageHost is a request at nearhost.localhost from a LAN client, as an
+// unpaired device could send by naming that host in its SNI and Host.
+func lanAtPageHost(method, target string) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	r.Host = "nearhost.localhost:7443"
+	r.RemoteAddr = "100.79.1.1:1"
+	return r
+}
+
+// A client that is not loopback gets no document, no page cookie and no
+// console at nearhost.localhost or localhost, networked or not: the page
+// secret is for this machine's browsers alone.
+func TestPageHostRefusesClientsOffLoopback(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeDevices(t)
+	fake := setFakeConsole(t)
+	docs := 0
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		docs++
+		w.Write([]byte("doc"))
+	}), nil)
+	for name, h := range map[string]func() *Home{
+		"networked": netHome,
+		"local":     func() *Home { return &Home{Version: "1.2.3", WebPort: 7443} },
+	} {
+		for _, host := range []string{"nearhost.localhost:7443", "localhost:7443"} {
+			r := lanAtPageHost("GET", "/d/abc123/x")
+			r.Host = host
+			w := serveNet(t, h(), r)
+			if w.Code == http.StatusOK || len(w.Header().Values("Set-Cookie")) != 0 {
+				t.Errorf("%s %s /d/: %d, Set-Cookie %q, want no document and no cookie", name, host, w.Code, w.Header().Values("Set-Cookie"))
+			}
+		}
+		w := serveNet(t, h(), lanAtPageHost("GET", "/?k="+secret))
+		if sc := w.Header().Values("Set-Cookie"); len(sc) != 0 {
+			t.Errorf("%s /?k= from the LAN set %q", name, sc)
+		}
+		r := lanAtPageHost("GET", "/approve/abc")
+		r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
+		if w := serveNet(t, h(), r); w.Code != http.StatusForbidden {
+			t.Errorf("%s page cookie from the LAN at /approve/abc: %d, want 403", name, w.Code)
+		}
+	}
+	if docs != 0 {
+		t.Errorf("%d documents served off loopback", docs)
+	}
+	if len(fake.called()) != 0 {
+		t.Errorf("console calls %v", fake.called())
+	}
+}

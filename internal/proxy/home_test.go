@@ -18,6 +18,7 @@ import (
 func pageRequest(method, target string) *http.Request {
 	r := httptest.NewRequest(method, target, nil)
 	r.Host = hostname.PageHost + ":6327"
+	r.RemoteAddr = "127.0.0.1:1234"
 	return r
 }
 
@@ -25,6 +26,7 @@ func pageRequest(method, target string) *http.Request {
 func localhostRequest(method, target string) *http.Request {
 	r := httptest.NewRequest(method, target, nil)
 	r.Host = "localhost:6327"
+	r.RemoteAddr = "127.0.0.1:1234"
 	return r
 }
 

@@ -251,9 +251,19 @@ func currentNetworkHost() string {
 // too, so a server the user opens there on another port would receive the
 // cookie; SameSite=Strict keeps cross-site navigations from carrying it.
 // Never at the network host: the page secret can't be revoked, so only a
-// paired device's cookie counts there (see pairedDevice).
+// paired device's cookie counts there (see pairedDevice). And never for a
+// client that is not loopback, whatever host it names: a LAN client can
+// send nearhost.localhost in its SNI and Host, but only this machine's
+// browsers reach that host honestly.
 func atPageHost(r *http.Request) bool {
-	return strings.EqualFold(requestHost(r), hostname.PageHost)
+	return strings.EqualFold(requestHost(r), hostname.PageHost) && loopbackClient(r)
+}
+
+// loopbackClient reports whether r's client address, as Caddy saw the
+// connection, is a loopback address.
+func loopbackClient(r *http.Request) bool {
+	a, ok := clientAddr(r)
+	return ok && a.IsLoopback()
 }
 
 // atNetworkHost reports whether r is for the page's host on the network,

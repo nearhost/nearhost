@@ -64,6 +64,7 @@ func consolePost(path, secret string, form url.Values) *http.Request {
 func pageRequestWith(method, target string, body io.Reader) *http.Request {
 	r := httptest.NewRequest(method, target, body)
 	r.Host = hostname.PageHost + ":6327"
+	r.RemoteAddr = "127.0.0.1:1234"
 	return r
 }
 
