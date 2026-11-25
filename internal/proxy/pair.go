@@ -51,14 +51,19 @@ type pairForm struct {
 	Error *htmlview.Data
 }
 
-// servePairing answers pairing's paths at the page's host while devices
-// are set, and reports whether it did: /pair and /pair/{code} (the form,
+// servePairing answers pairing's paths at the page's host while the core is
+// networked and devices are set, and reports whether it did: /pair and /pair/{code} (the form,
 // and its POST), /pair.js, /auth, and, with certificates from the local
 // CA, /profile.mobileconfig. Anything else is left to the page.
 func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
+	// A core that is not networked has no pairing: its page answers as it
+	// always did, though the store may stay open for networking to start.
+	if h.NetworkHost == "" {
+		return false
+	}
 	path := r.URL.EscapedPath()
 	if path == "/profile.mobileconfig" {
-		if h.NetworkHost == "" || h.Certificates != "ca" || !h.atPairingHost(r) {
+		if h.Certificates != "ca" || !h.atPairingHost(r) {
 			return false
 		}
 		if allowMethods(w, r, false) {

@@ -508,3 +508,17 @@ func TestHomeDecidesByItsOwnNetworkHost(t *testing.T) {
 		}
 	}
 }
+
+// A page with no network host serves none of pairing's paths, even with
+// devices set: a core that is not networked looks as it always did.
+func TestPairingNeedsANetworkHost(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	for _, path := range []string{"/pair", "/pair/ABCD2345", "/pair.js", "/auth?to=https%3A%2F%2Fapp.lab.example.dev%2F", "/profile.mobileconfig"} {
+		h := &Home{Version: "1.2.3", WebPort: 7443, Certificates: "ca"}
+		w := serveNet(t, h, pageRequest("GET", path))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s with no network host: %d, want 404", path, w.Code)
+		}
+	}
+}

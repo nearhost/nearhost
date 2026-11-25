@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 )
 
@@ -119,5 +121,28 @@ func TestNetworkTokenRefusesEmpty(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "nearhost", "dns-token")); !os.IsNotExist(err) {
 		t.Errorf("a file was written: %v", err)
+	}
+}
+
+// A store that can't be opened is a warning on a networked core only: a
+// core that is not networked has no use for devices, so it says nothing.
+func TestOpenPageDevicesWarnsOnlyWhenNetworked(t *testing.T) {
+	blocked := filepath.Join(testutil.TempDir(t, "nh"), "file")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The data directory is a file, so the page secret can't be made.
+	t.Setenv("XDG_DATA_HOME", blocked)
+	for _, networked := range []bool{false, true} {
+		var got []engine.Event
+		if s := openPageDevices(networked, func(e engine.Event) { got = append(got, e) }); s != nil {
+			t.Errorf("networked %v: a store opened", networked)
+		}
+		if networked && (len(got) != 1 || got[0].Report == nil || got[0].Report.Code != report.NetworkDevicesUnavailable) {
+			t.Errorf("networked: events %+v, want the devices warning", got)
+		}
+		if !networked && len(got) != 0 {
+			t.Errorf("not networked: events %+v, want none", got)
+		}
 	}
 }
