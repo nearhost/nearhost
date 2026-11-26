@@ -203,7 +203,7 @@ func TestNetworkSitesAdmitAllowAndRunDeviceGuard(t *testing.T) {
 			if got, want := strs(dig(t, r, "match", 0, "remote_ip", "ranges")), joinRanges(t, s.Clients, true); !reflect.DeepEqual(got, want) {
 				t.Errorf("%s ranges = %v, want %v", h, got, want)
 			}
-			if got, want := handlerNames(t, r), []string{tagModule, deviceModule, "headers", "reverse_proxy"}; !reflect.DeepEqual(got, want) {
+			if got, want := handlerNames(t, r), []string{tagModule, deviceModule, frameModule, "headers", "reverse_proxy"}; !reflect.DeepEqual(got, want) {
 				t.Errorf("%s handlers = %v, want %v", h, got, want)
 			}
 			if got := dig(t, r, "handle", 1, "page"); got != page {
@@ -213,7 +213,7 @@ func TestNetworkSitesAdmitAllowAndRunDeviceGuard(t *testing.T) {
 				t.Errorf("%s device local = %v, want %v", h, got, want)
 			}
 			down := routeFor(t, dig(t, srv, "errors", "routes"), h)
-			if got, want := handlerNames(t, down), []string{deviceModule, downModule}; !reflect.DeepEqual(got, want) {
+			if got, want := handlerNames(t, down), []string{deviceModule, frameModule, downModule}; !reflect.DeepEqual(got, want) {
 				t.Errorf("%s error handlers = %v, want %v", h, got, want)
 			}
 			if got, want := strs(dig(t, down, "match", 0, "remote_ip", "ranges")), joinRanges(t, s.Clients, true); !reflect.DeepEqual(got, want) {
