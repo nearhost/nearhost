@@ -15,6 +15,7 @@ func TestSocketMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTraffic(t, s)
 	defer s.Close()
 	fi, err := os.Stat(SocketPath(dir))
 	if err != nil {

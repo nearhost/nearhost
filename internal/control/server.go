@@ -71,6 +71,10 @@ func (s *Server) Patterns() []string {
 // neither end takes it for dead. Tests shorten it before Listen.
 var keepaliveEvery = 15 * time.Second
 
+// wrapHandler, when set, wraps the handler of every server Listen starts.
+// Tests set it to check each request and answer against the API's schema.
+var wrapHandler func(http.Handler) http.Handler
+
 // Listen starts serving the control API for b on a Unix socket at path,
 // streaming what is published to hub. When hub is nil, Listen makes a hub
 // of its own, to which nothing publishes. It makes the socket's directory,
@@ -100,8 +104,12 @@ func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 		hub = NewHub()
 	}
 	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
+	h := s.routes()
+	if wrapHandler != nil {
+		h = wrapHandler(h)
+	}
 	s.srv = &http.Server{
-		Handler:           s.routes(),
+		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go s.srv.Serve(l)

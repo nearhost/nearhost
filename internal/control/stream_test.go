@@ -30,7 +30,7 @@ func serveHub(t *testing.T, b Backend) (*Hub, *Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	checkTraffic(t, s)
 	return hub, dial(t, dir)
 }
 
@@ -196,6 +196,7 @@ func TestEventsEndWithServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTraffic(t, s)
 	ch, errf, _ := openEvents(t, dial(t, dir), 0)
 	s.Close()
 	for range ch {
@@ -212,7 +213,7 @@ func TestListenWithoutHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	checkTraffic(t, s)
 	c := dial(t, dir)
 	openEvents(t, c, 0)
 	st, err := c.State(context.Background())
@@ -230,6 +231,7 @@ func TestEventsNotRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTraffic(t, s)
 	c := dial(t, dir)
 	s.Close()
 	if _, _, err := c.Events(context.Background(), 0); !errors.Is(err, ErrNotRunning) {

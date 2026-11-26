@@ -152,6 +152,7 @@ func TestStateCarriesProblems(t *testing.T) {
 	b.status.Servers = []ServerInfo{{Name: "leto", State: "reconnecting", Message: p.Title, Problem: p}}
 	b.status.Projects = []ProjectInfo{{Name: "blog", State: "error", Message: p.Title, Problem: p}}
 	b.state = State{
+		Info: b.info,
 		Servers: map[string]ServerState{"leto": {
 			Health:  engine.ServerHealth{Health: transport.Health{Status: transport.StatusReconnecting, LastError: p.Title, Problem: p}},
 			Status:  transport.StatusReconnecting,
