@@ -30,6 +30,7 @@ const coreLogLimit = 5 << 20
 func newDaemonCmd(b upBackend) *cobra.Command {
 	var flags serveFlags
 	var startedBy string
+	var noSupervisor bool
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the core with no interface, logging to a file",
@@ -40,7 +41,7 @@ func newDaemonCmd(b upBackend) *cobra.Command {
 			"service runs.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDaemon(cmd, b, flags, startedBy)
+			return runDaemon(cmd, b, flags, startedBy, noSupervisor)
 		},
 	}
 	flags.bind(cmd)
@@ -49,6 +50,10 @@ func newDaemonCmd(b upBackend) *cobra.Command {
 	// service say. Run by hand, it is the default.
 	cmd.Flags().StringVar(&startedBy, "started-by", string(control.StartedForeground), "what started the core: foreground, detached, service or tui")
 	cmd.Flags().MarkHidden("started-by")
+	// The service's core on Windows, run by the service's own process, which
+	// supervises it.
+	cmd.Flags().BoolVar(&noSupervisor, "no-supervisor", false, "run the core itself, not a supervisor that restarts it")
+	cmd.Flags().MarkHidden("no-supervisor")
 	return cmd
 }
 
@@ -62,12 +67,18 @@ func newDaemonCmd(b upBackend) *cobra.Command {
 // again; a core run in a terminal has Main print it there as well. A panic
 // in the core's own goroutine is logged as a crash, with the details in a
 // crash file beside the log.
-func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy string) (err error) {
+func runDaemon(cmd *cobra.Command, b upBackend, flags serveFlags, startedBy string, noSupervisor bool) (err error) {
 	by := control.StartedBy(startedBy)
 	switch by {
 	case control.StartedForeground, control.StartedDetached, control.StartedService, control.StartedTUI:
 	default:
 		return errors.New("--started-by must be foreground, detached, service or tui")
+	}
+	// Where the service manager does not restart a core that fails, the
+	// service's process supervises one instead of being it. It hands off
+	// before the log is opened: only the core opens and rotates it.
+	if by == control.StartedService && !noSupervisor && b.supervise != nil {
+		return b.supervise(cmd)
 	}
 	path, err := config.LogPath()
 	if err != nil {
