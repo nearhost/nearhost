@@ -265,7 +265,7 @@ func makeLogFolder(logPath string) error {
 
 // handedOver is what install adds when a core that is not the service's runs.
 func handedOver(info control.Info) string {
-	return fmt.Sprintf(" Nearhost is already running (started by %s), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.", printable(string(info.StartedBy)))
+	return fmt.Sprintf(" Nearhost is already running (started %s), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.", startedHow(info.StartedBy))
 }
 
 // stopCore asks the core c to stop and waits until it has gone.

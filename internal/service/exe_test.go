@@ -59,6 +59,12 @@ func TestServiceExe(t *testing.T) {
 			"", "", "Homebrew's versioned folder"},
 		{"nvm", "linux", "/home/u/.nvm/versions/node/v26.13.0/bin/nearhost", missing,
 			"/home/u/.nvm/versions/node/v26.13.0/bin/nearhost", "Node v26.13.0's folder", ""},
+		{"fnm on windows", "windows", `C:\Users\ecs\AppData\Roaming\fnm\node-versions\v26.13.0\installation\node_modules\@nearhost\cli\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`, missing,
+			`C:\Users\ecs\AppData\Roaming\fnm\node-versions\v26.13.0\installation\node_modules\@nearhost\cli\node_modules\@nearhost\cli-win32-x64\bin\nearhost.exe`, "Node v26.13.0's folder", ""},
+		{"fnm on linux", "linux", "/home/u/.local/share/fnm/node-versions/v26.13.0/installation/bin/nearhost", missing,
+			"/home/u/.local/share/fnm/node-versions/v26.13.0/installation/bin/nearhost", "Node v26.13.0's folder", ""},
+		{"fnm in its old home", "darwin", "/Users/u/.fnm/node-versions/v26.13.0/installation/bin/nearhost", missing,
+			"/Users/u/.fnm/node-versions/v26.13.0/installation/bin/nearhost", "Node v26.13.0's folder", ""},
 		{"windows", "windows", `C:\Users\Ed Smith\AppData\Local\nearhost\nearhost.exe`, missing,
 			`C:\Users\Ed Smith\AppData\Local\nearhost\nearhost.exe`, "", ""},
 		{"plain", "linux", "/usr/local/bin/nearhost", missing, "/usr/local/bin/nearhost", "", ""},
@@ -97,6 +103,18 @@ func TestServiceExeNotesNodeUnderNVMDir(t *testing.T) {
 	got, note, err := ServiceExe("linux", exe, getenv, func(string) (string, error) { return "", errors.New("not found") })
 	if err != nil || got != exe || note == nil || !strings.Contains(note.Error(), "Node v26.13.0's folder") {
 		t.Errorf("ServiceExe = %q, %q, %v; want the path and a note on Node v26.13.0", got, note, err)
+	}
+}
+
+// fnm keeps Node's versions under $FNM_DIR when it is set.
+func TestServiceExeNotesNodeUnderFNMDir(t *testing.T) {
+	getenv := func(n string) string {
+		return map[string]string{"FNM_DIR": "/opt/node"}[n]
+	}
+	exe := "/opt/node/node-versions/v24.1.0/installation/bin/nearhost"
+	_, note, err := ServiceExe("linux", exe, getenv, func(string) (string, error) { return "", errors.New("none") })
+	if err != nil || note == nil || !strings.Contains(note.Error(), "Node v24.1.0's folder") {
+		t.Fatalf("ServiceExe = %v, %v; want the Node version note", note, err)
 	}
 }
 

@@ -99,7 +99,7 @@ func TestDoctorCoreRunning(t *testing.T) {
 		t.Fatalf("doctor: %v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"ok    core             " + Version + ", started by detached (pid 4242)\n",
+		"ok    core             " + Version + ", started with nearhost -d (pid 4242)\n",
 		"ok    core: browser    xdg-open\n",
 		"warn  core: ssh agent  no agent\n      fix: Start one\n",
 		"info  core: docker     not installed\n",
@@ -226,7 +226,7 @@ func TestDoctorService(t *testing.T) {
 		{"log folder missing", &fakeManager{installed: true, def: withGoneLog}, "", "warn  service          its log folder " + gone + " is missing, so the service cannot start again\n", "Run nearhost service install"},
 		{"inactive, no core", &fakeManager{installed: true, def: mine}, "", "warn  service          installed but not running\n", "Start it with nearhost -d"},
 		{"inactive beside a detached core", &fakeManager{installed: true, def: mine}, control.StartedDetached,
-			"info  service          installed; the running Nearhost was started by detached, so the service takes over at your next login\n", ""},
+			"info  service          installed; the running Nearhost was started with nearhost -d, so the service takes over at your next login\n", ""},
 		{"no user manager", &fakeManager{instErr: service.ErrNoUserManager}, "", "info  service          " + messageOf(service.ErrNoUserManager).Title + "\n", ""},
 		{"unsupported", &fakeManager{instErr: service.ErrUnsupported}, "", "", ""},
 	}

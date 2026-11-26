@@ -36,21 +36,34 @@ func ServiceExe(goos, exe string, getenv func(string) string, lookPath func(stri
 			Because("This copy is inside Homebrew's versioned folder, which the next upgrade removes.").
 			Step("Run it as plain nearhost from Homebrew's bin folder:", "nearhost service install")
 	}
-	if after, ok := cutPath(goos, slashed, nodeVersions(getenv)); ok {
-		v, _, _ := strings.Cut(after, "/")
-		return exe, report.Notef(report.ServiceNodeVersion, "The service runs nearhost from Node %s's folder.", v).
-			Step("If you change your default Node version, install the service again:", "nearhost service install"), nil
+	for _, dir := range nodeVersions(getenv) {
+		if after, ok := cutPath(goos, slashed, dir); ok {
+			v, _, _ := strings.Cut(after, "/")
+			return exe, report.Notef(report.ServiceNodeVersion, "The service runs nearhost from Node %s's folder.", v).
+				Step("If you change your default Node version, install the service again:", "nearhost service install"), nil
+		}
 	}
 	return exe, nil, nil
 }
 
-// nodeVersions is the slash-separated part of a path that nvm keeps Node's
-// versions under: $NVM_DIR/versions/node/, or ~/.nvm's.
-func nodeVersions(getenv func(string) string) string {
-	if d := strings.TrimRight(strings.ReplaceAll(getenv("NVM_DIR"), `\`, "/"), "/"); d != "" {
-		return d + "/versions/node/"
+// nodeVersions are the slash-separated parts of a path that a Node version
+// manager keeps Node's versions under, each followed by the version's
+// folder: nvm's $NVM_DIR/versions/node/, or ~/.nvm's, and fnm's
+// $FNM_DIR/node-versions/, or that of fnm's folder in the user's data folder
+// (%APPDATA%\fnm, ~/.local/share/fnm, ~/Library/Application Support/fnm) or
+// its older ~/.fnm.
+func nodeVersions(getenv func(string) string) []string {
+	dir := func(name string) string {
+		return strings.TrimRight(strings.ReplaceAll(getenv(name), `\`, "/"), "/")
 	}
-	return "/.nvm/versions/node/"
+	nvm := "/.nvm/versions/node/"
+	if d := dir("NVM_DIR"); d != "" {
+		nvm = d + "/versions/node/"
+	}
+	if d := dir("FNM_DIR"); d != "" {
+		return []string{nvm, d + "/node-versions/"}
+	}
+	return []string{nvm, "/fnm/node-versions/", "/.fnm/node-versions/"}
 }
 
 // cutPath returns what follows the first sep in p, ignoring case on Windows,

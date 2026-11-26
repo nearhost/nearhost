@@ -98,6 +98,7 @@ const (
 	TrustNotRemoved            Code = "trust.not-removed"
 	TrustRemains               Code = "trust.remains"
 	ServiceStartFailed         Code = "service.start-failed"
+	ServiceNotSignedIn         Code = "service.not-signed-in"
 	ServiceOwnSettings         Code = "service.own-settings"
 	HostsHelperRefused         Code = "hosts.helper-refused"
 	UpdateFailed               Code = "update.failed"
@@ -355,6 +356,7 @@ var catalogRows = []catalogRow{
 	{TrustNotRemoved, Error, 409, "The local CA was not removed from a trust store, and running untrust again can finish it."},
 	{TrustRemains, Error, 409, "Something Nearhost cannot change still trusts the local CA."},
 	{ServiceStartFailed, Warning, 0, "Starting Nearhost through its service failed, so it was started directly."},
+	{ServiceNotSignedIn, Info, 0, "You are not signed in to Windows, so the service could not start Nearhost, and it was started directly."},
 	{ServiceOwnSettings, Info, 0, "A service is installed, but it runs with its own settings, so Nearhost was started directly with the ones given."},
 	{HostsHelperRefused, Error, 400, "The elevated hosts helper refused its input or report file."},
 	{UpdateFailed, Error, 500, "The update ran, but the installed nearhost is not the new release."},

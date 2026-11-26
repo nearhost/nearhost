@@ -344,6 +344,11 @@
       "summary": "Starting Nearhost through its service failed, so it was started directly."
     },
     {
+      "code": "service.not-signed-in",
+      "level": "info",
+      "summary": "You are not signed in to Windows, so the service could not start Nearhost, and it was started directly."
+    },
+    {
       "code": "service.own-settings",
       "level": "info",
       "summary": "A service is installed, but it runs with its own settings, so Nearhost was started directly with the ones given."

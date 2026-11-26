@@ -122,6 +122,24 @@ func serviceInstalled(ctx context.Context, manager func() service.Manager) bool 
 // page's key may be shown. Tests replace it.
 var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 
+// startedHow is how the core came to run, in words that follow "started":
+// "by its service", "with nearhost -d", "by the interface" or "in a
+// terminal". A value this copy does not know, from a newer core, is shown
+// as it is.
+func startedHow(by control.StartedBy) string {
+	switch by {
+	case control.StartedService:
+		return "by its service"
+	case control.StartedDetached:
+		return "with nearhost -d"
+	case control.StartedTUI:
+		return "by the interface"
+	case control.StartedForeground:
+		return "in a terminal"
+	}
+	return "by " + printable(string(by))
+}
+
 // printStatus writes st as a line about the core, then a table of its
 // servers and one of its projects, aligned as `ls` aligns its own, then what
 // waits for an answer and the page's address: keyed, the address with the
@@ -132,8 +150,8 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 	// The first write that fails is the error, as for a closed pipe.
 	w := &stickyWriter{w: out}
 	info := st.Info
-	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started by %s at %s).\n",
-		printable(info.Version), info.PID, printable(string(info.StartedBy)), info.Started.Local().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(w, "Nearhost %s is running (pid %d, started %s at %s).\n",
+		printable(info.Version), info.PID, startedHow(info.StartedBy), info.Started.Local().Format("2006-01-02 15:04:05"))
 	if this := strings.TrimPrefix(Version, "v"); st.Update != "" && update.IsRelease(this) && !update.Newer(this, st.Update) {
 		// This copy is already that release, as after brew upgrade: the
 		// core is what is out of date.
