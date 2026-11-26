@@ -622,3 +622,33 @@ func TestFirewallProblemComesFirst(t *testing.T) {
 		t.Errorf("NetworkState = %+v, want waiting for the firewall rule, on the local CA", st)
 	}
 }
+
+// After a failed change left the proxy serving nothing, a project that
+// starts loads the previous network options again, and the core listens
+// once more, though the failed change is still reported.
+func TestServingAgainAfterNotServing(t *testing.T) {
+	p := localProject("app", upstream(t, "app"))
+	h := buildHarness(t, &config.Config{Projects: []config.Project{p}}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+	if err := h.eng.Start(bg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cfg := &config.Config{Projects: []config.Project{p}, Network: networkSection("ca")}
+	if err := h.eng.Apply(bg, cfg); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	real := h.eng.applySites
+	h.eng.applySites = func([]proxy.Site) error { return fmt.Errorf("load proxy config: boom: %w", proxy.ErrNotServing) }
+	narrower := &config.Config{Projects: []config.Project{p}, Network: networkSection("ca")}
+	narrower.Network.Allow = []string{"192.168.77.0/24"}
+	if err := h.eng.Apply(bg, narrower); err != nil {
+		t.Fatalf("Apply narrower: %v", err)
+	}
+	if st := h.eng.NetworkState(); st.Listening {
+		t.Fatalf("NetworkState after not serving = %+v, want not listening", st)
+	}
+	h.eng.applySites = real
+	mustStart(t, h, "app")
+	if st := h.eng.NetworkState(); !st.Listening || st.ProblemKind != NetworkApplyFailed {
+		t.Errorf("NetworkState after the project started = %+v, want listening, the failure still reported", st)
+	}
+}

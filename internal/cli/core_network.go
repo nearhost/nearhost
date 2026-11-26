@@ -19,6 +19,10 @@ func (o *coreOps) Pair() (control.PairInfo, error) {
 	if err := pairRefusal(ns); err != nil {
 		return control.PairInfo{}, err
 	}
+	if ns.URL != "" && o.devices == nil && o.devicesErr != nil {
+		return control.PairInfo{}, report.Errorf(report.PairUnavailable, "Paired devices can't be used, so no device can pair: %s", o.devicesErr).
+			Because("Nearhost couldn't open its list of paired devices when it started. Fix what the error names, then restart Nearhost.").Wrap(o.devicesErr)
+	}
 	if ns.URL == "" || o.devices == nil {
 		return control.PairInfo{}, report.Errorf(report.PairUnavailable, "Nearhost's page isn't served, so no device can pair.")
 	}
@@ -118,7 +122,7 @@ func (o *coreOps) networkInfo() *control.NetworkInfo {
 	if !ns.On && ns.Problem == "" {
 		return nil
 	}
-	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
+	return &control.NetworkInfo{On: ns.On, Listening: ns.Listening, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
 }
 
 // networkSiteURLs returns the address of each project on the network, for

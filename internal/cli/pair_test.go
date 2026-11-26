@@ -95,8 +95,9 @@ func TestPairCommandStopsAtItsDeadline(t *testing.T) {
 func TestPairCommandNetworkOff(t *testing.T) {
 	f := &fakePair{pairErr: control.ErrNetworkOff}
 	_, err := execute(t, newPairCmd(pairCmd(f)), "pair")
-	if err == nil {
-		t.Fatal("pair succeeded with the network off")
+	m, ok := report.As(err)
+	if !ok || m.Code != report.NetworkOff || !strings.Contains(m.Why, "network: section") || !strings.Contains(m.Why, networkDocs) {
+		t.Fatalf("error = %#v, want %s saying how to turn it on", err, report.NetworkOff)
 	}
 }
 

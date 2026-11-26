@@ -76,6 +76,21 @@ func TestPairRefusal(t *testing.T) {
 	}
 }
 
+// A networked core whose devices store couldn't be opened, as when it
+// started un-networked, says so when asked to pair, rather than that the
+// page isn't served.
+func TestPairSaysWhyDevicesAreUnavailable(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	cfg := &config.Config{Network: &config.Network{Domain: "lab.example.dev", Certificates: "ca"}}
+	eng := engine.New(cfg, engine.Options{WebPort: 6327})
+	o := &coreOps{eng: eng, devicesErr: errors.New("the data directory is a file")}
+	_, err := o.Pair()
+	m, ok := report.As(err)
+	if !ok || m.Code != report.PairUnavailable || !strings.Contains(m.Error(), "the data directory is a file") {
+		t.Fatalf("Pair = %v, want %s naming the store's error", err, report.PairUnavailable)
+	}
+}
+
 // A core with no store open lists and revokes the devices in devices.json,
 // as the CLI does with no core running.
 func TestDevicesWithoutStoreReadTheFile(t *testing.T) {

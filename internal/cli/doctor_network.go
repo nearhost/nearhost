@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,12 @@ func checkNetworkCert(ctx context.Context, b doctorBackend, n *config.Network, p
 	if info != nil && certProblem(info) {
 		return problem(name, levelFail, report.NetworkCert, printable(info.Problem), certFix(mode)), true
 	}
+	// A DNS token problem may sit behind another, such as the firewall's:
+	// the core then says it fell back to the local CA only here.
+	if info != nil && mode == "acme" && info.Certificates == "ca" {
+		return problem(name, levelFail, report.NetworkCert,
+			"Nearhost uses the local CA, as it has no DNS token it can use", certFix(mode)), true
+	}
 	port := 0
 	if info != nil {
 		port = urlPort(info.URL)
@@ -173,8 +180,8 @@ func urlPort(u string) int {
 		return 0
 	}
 	if s := p.Port(); s != "" {
-		var port int
-		if _, err := fmt.Sscan(s, &port); err != nil {
+		port, err := strconv.Atoi(s)
+		if err != nil || port < 1 || port > 65535 {
 			return 0
 		}
 		return port

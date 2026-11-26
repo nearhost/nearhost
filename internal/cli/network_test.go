@@ -135,8 +135,8 @@ func TestOpenPageDevicesWarnsOnlyWhenNetworked(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", blocked)
 	for _, networked := range []bool{false, true} {
 		var got []engine.Event
-		if s := openPageDevices(networked, func(e engine.Event) { got = append(got, e) }); s != nil {
-			t.Errorf("networked %v: a store opened", networked)
+		if s, err := openPageDevices(networked, func(e engine.Event) { got = append(got, e) }); s != nil || err == nil {
+			t.Errorf("networked %v: a store opened, or no error: %v", networked, err)
 		}
 		if networked && (len(got) != 1 || got[0].Report == nil || got[0].Report.Code != report.NetworkDevicesUnavailable) {
 			t.Errorf("networked: events %+v, want the devices warning", got)

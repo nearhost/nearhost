@@ -167,6 +167,14 @@ func TestNetworkProblemsGoToTheirOwnRows(t *testing.T) {
 		t.Errorf("firewall: certificate row %+v, want the certificate checked", c)
 	}
 
+	// A token problem behind the firewall's still fails the certificate
+	// row: the core fell back to the local CA.
+	ca := st(url, engine.NetworkNoFirewall, "waiting for the firewall rule")
+	ca.Network.Certificates = "ca"
+	if c := run(ca)["Network certificate"]; c.level != levelFail || c.code != report.NetworkCert || !strings.Contains(c.detail, "local CA") {
+		t.Errorf("firewall, on the local CA: certificate row %+v, want a failure", c)
+	}
+
 	rows = run(st("", engine.NetworkNoPage, "the page isn't served"))
 	if c := rows["Network certificate"]; c.code == report.NetworkCert {
 		t.Errorf("no page: certificate row %+v, want no certificate failure", c)
@@ -189,6 +197,23 @@ func TestNetworkProblemsGoToTheirOwnRows(t *testing.T) {
 		}
 		if _, has := rows["Network page"]; has {
 			t.Errorf("%s: a page row", c.kind)
+		}
+	}
+}
+
+// urlPort is 443 for an https URL with no port, and 0 for a port out of
+// range or a string that isn't a URL.
+func TestURLPort(t *testing.T) {
+	for u, want := range map[string]int{
+		"https://nearhost.lab.example.dev":       443,
+		"https://nearhost.lab.example.dev:6327":  6327,
+		"https://nearhost.lab.example.dev:70000": 0,
+		"https://nearhost.lab.example.dev:0":     0,
+		"https://nearhost.lab.example.dev:12ab":  0,
+		"nearhost.lab.example.dev":               0,
+	} {
+		if got := urlPort(u); got != want {
+			t.Errorf("urlPort(%q) = %d, want %d", u, got, want)
 		}
 	}
 }

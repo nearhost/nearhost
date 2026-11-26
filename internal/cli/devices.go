@@ -90,11 +90,8 @@ func runRevoke(cmd *cobra.Command, dial func() (devicesAPI, error), name string)
 		err = revokeOffline(name)
 	}
 	if err != nil {
-		if m, ok := report.As(err); ok && m.Code == report.DeviceUnknown {
-			return report.Errorf(report.DeviceUnknown, "No paired device is called %q.", printable(name)).
-				Step("List the paired devices:", "nearhost devices").Wrap(err)
-		}
-		if errors.Is(err, control.ErrDeviceUnknown) || errors.Is(err, devices.ErrNoDevice) {
+		m, isReport := report.As(err)
+		if (isReport && m.Code == report.DeviceUnknown) || errors.Is(err, control.ErrDeviceUnknown) || errors.Is(err, devices.ErrNoDevice) {
 			return report.Errorf(report.DeviceUnknown, "No paired device is called %q.", printable(name)).
 				Step("List the paired devices:", "nearhost devices").Wrap(err)
 		}

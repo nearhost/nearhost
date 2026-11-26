@@ -82,6 +82,10 @@ func runPair(cmd *cobra.Command, dial func() (pairAPI, error), showQR bool) erro
 	if errors.Is(err, control.ErrNotRunning) {
 		return coreNotRunning(err)
 	}
+	if m, ok := report.As(err); (ok && m.Code == report.NetworkOff) || errors.Is(err, control.ErrNetworkOff) {
+		return report.Errorf(report.NetworkOff, "Networked mode is off, so no device can pair.").
+			Because("Turn it on with a network: section in the config, which names the domain devices reach Nearhost at. See %s", networkDocs).Wrap(err)
+	}
 	if err != nil {
 		return err
 	}
