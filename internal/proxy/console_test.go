@@ -411,3 +411,89 @@ func TestConsoleRoutePreview(t *testing.T) {
 		t.Errorf("POST /preview/app: status %d, want 405", w.Code)
 	}
 }
+
+func TestConsoleRouteDevices(t *testing.T) {
+	if ok, post := consoleRoute("/devices"); !ok || post {
+		t.Errorf("consoleRoute(/devices) = %v, %v; want true, false", ok, post)
+	}
+	if ok, post := consoleRoute("/devices/iPad/revoke"); !ok || !post {
+		t.Errorf("consoleRoute(/devices/iPad/revoke) = %v, %v; want true, true", ok, post)
+	}
+	for _, p := range []string{"/devices/", "/devices/a/b/revoke", "/devices//revoke", "/devices/iPad", "/devices/iPad/revoke/x"} {
+		if ok, _ := consoleRoute(p); ok {
+			t.Errorf("consoleRoute(%q) is a route", p)
+		}
+	}
+}
+
+func TestDevicesNeedsGateAndToken(t *testing.T) {
+	fake := setFakeConsole(t)
+	// Without the cookie, a GET gets the locked page.
+	w := serveHomeRequest(t, pageRequest("GET", "/devices"))
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "from this machine first") {
+		t.Errorf("GET without the cookie: status %d:\n%s", w.Code, w.Body.String())
+	}
+	secret := freshSecret(t)
+	token := mustToken(t)
+	const host = "https://nearhost.localhost:6327"
+	path := "/devices/iPad/revoke"
+
+	noToken := consolePost(path, secret, url.Values{})
+	noToken.Header.Set("Origin", host)
+	foreign := consolePost(path, secret, url.Values{"csrf": {token}})
+	foreign.Header.Set("Origin", "https://app.test")
+	noCookie := pageRequestWith("POST", path, strings.NewReader(url.Values{"csrf": {token}}.Encode()))
+	noCookie.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	noCookie.Header.Set("Origin", host)
+	for name, r := range map[string]*http.Request{"no token": noToken, "foreign origin": foreign, "no cookie": noCookie} {
+		if w := serveHomeRequest(t, r); w.Code != http.StatusForbidden {
+			t.Errorf("%s: status %d, want 403", name, w.Code)
+		}
+	}
+	if calls := fake.called(); len(calls) != 0 {
+		t.Fatalf("the console was called: %v", calls)
+	}
+	ok := consolePost(path, secret, url.Values{"csrf": {token}})
+	ok.Header.Set("Origin", host)
+	if w := serveHomeRequest(t, ok); w.Code != 200 {
+		t.Errorf("matching origin and token: status %d", w.Code)
+	}
+	if got := fake.called(); len(got) != 1 || got[0] != "POST /devices/iPad/revoke" {
+		t.Errorf("console calls %v", got)
+	}
+}
+
+func TestRevokeOwnDeviceThenLocked(t *testing.T) {
+	freshSecret(t)
+	devs := setFakeDevices(t)
+	token := mustToken(t)
+	// A console that revokes the requesting device, as the page's does.
+	t.Cleanup(func() { SetConsole(nil) })
+	SetConsole(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			devs.mu.Lock()
+			delete(devs.devices, "good-token")
+			devs.mu.Unlock()
+			http.Redirect(w, r, "/devices", http.StatusSeeOther)
+			return
+		}
+		w.Write([]byte("console"))
+	}))
+	if w := serveNet(t, netHome(), withDevice(netRequest("GET", "/", nil), "good-token")); strings.Contains(w.Body.String(), "isn't paired") || strings.Contains(w.Body.String(), "isn&#39;t paired") {
+		t.Fatalf("the paired device is told it is not paired:\n%s", w.Body.String())
+	}
+	r := withDevice(netRequest("POST", "/devices/iPad/revoke", strings.NewReader(url.Values{"csrf": {token}}.Encode())), "good-token")
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", "https://"+netPageHost+":7443")
+	if w := serveNet(t, netHome(), r); w.Code != http.StatusSeeOther {
+		t.Fatalf("revoke: status %d, body %q", w.Code, w.Body.String())
+	}
+	w := serveNet(t, netHome(), withDevice(netRequest("GET", "/", nil), "good-token"))
+	body := w.Body.String()
+	if !strings.Contains(body, "This device isn&#39;t paired") && !strings.Contains(body, "This device isn't paired") {
+		t.Errorf("after revoking itself the device should see the notice:\n%s", body)
+	}
+	if strings.Contains(body, "console") {
+		t.Errorf("the console was served to a revoked device:\n%s", body)
+	}
+}

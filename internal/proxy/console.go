@@ -47,8 +47,9 @@ var console atomic.Pointer[consoleHandler]
 
 // SetConsole sets the handler for the page's status and approvals, or
 // clears it with nil. Home sends it, after the gate, GET and HEAD for /,
-// /approve/{id}, /change/{name}, /events and /page.js, and POST for
-// /approve/{id} and /change/{name}.
+// /approve/{id}, /change/{name}, /preview/{name}, /devices, /events and
+// /page.js, and POST for /approve/{id}, /change/{name} and
+// /devices/{name}/revoke.
 func SetConsole(h http.Handler) {
 	if h == nil {
 		console.Store(nil)
@@ -79,8 +80,9 @@ func CSRFToken() (string, error) {
 }
 
 // consoleActionPath matches the console's paths that take a POST: one
-// approval or one project's change, a single path segment each.
-var consoleActionPath = regexp.MustCompile(`^/(approve|change)/[^/]+$`)
+// approval or one project's change, or one device to revoke, a single path
+// segment each.
+var consoleActionPath = regexp.MustCompile(`^/((approve|change)/[^/]+|devices/[^/]+/revoke)$`)
 
 // consolePreviewPath matches the preview view of one project, a single path
 // segment, which takes GET and HEAD only.
@@ -96,7 +98,7 @@ func consoleRoute(path string) (ok, post bool) {
 	switch {
 	case consoleActionPath.MatchString(path):
 		return true, true
-	case path == "/events", path == "/page.js", consolePreviewPath.MatchString(path):
+	case path == "/events", path == "/page.js", path == "/devices", consolePreviewPath.MatchString(path):
 		return true, false
 	}
 	return false, false
