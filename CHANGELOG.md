@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.16.0](https://github.com/nearhost/nearhost/compare/v0.15.0...v0.16.0) (2026-11-26)
+
+
+### Features
+
+* **agentapi:** problem details that older skills still read ([#600](https://github.com/nearhost/nearhost/issues/600)) ([1f4c91f](https://github.com/nearhost/nearhost/commit/1f4c91fe841d1f6af5040821b50fdf6202f8167b))
+* **cli:** commands and the core report through messages ([#594](https://github.com/nearhost/nearhost/issues/594)) ([705aff0](https://github.com/nearhost/nearhost/commit/705aff06bced07866228d7f4623ee7b42f730775))
+* **cli:** every command reports through messages ([#596](https://github.com/nearhost/nearhost/issues/596)) ([4907b80](https://github.com/nearhost/nearhost/commit/4907b80bb3cb6f1c955c36d141e0223eaadb1d0b))
+* **cli:** nearhost pair, devices and network token ([#620](https://github.com/nearhost/nearhost/issues/620)) ([09c073f](https://github.com/nearhost/nearhost/commit/09c073ff17f25c127e41facdcca40d108b04bddf))
+* **cli:** nearhost update --next moves to the newest beta ([#643](https://github.com/nearhost/nearhost/issues/643)) ([bd6b8e8](https://github.com/nearhost/nearhost/commit/bd6b8e833759178c8f184c57c8c49502d1b29c0c))
+* **config:** a network section for serving to other devices ([#614](https://github.com/nearhost/nearhost/issues/614)) ([c14837f](https://github.com/nearhost/nearhost/commit/c14837f1bd6b6a4d5fb7011bc1cc10681f1f752a))
+* **control:** problem details, problems in the state, reports on the stream ([#597](https://github.com/nearhost/nearhost/issues/597)) ([0e58b6c](https://github.com/nearhost/nearhost/commit/0e58b6c113f8e2a37062c94a12a3cf59737a1c6b))
+* **devices:** paired devices, pair codes and site cookies ([#615](https://github.com/nearhost/nearhost/issues/615)) ([c53281b](https://github.com/nearhost/nearhost/commit/c53281b8d21c6ab85ff10f39b986cfc5dff1e6f1))
+* **doctor:** checks and findings are messages with shared codes ([#601](https://github.com/nearhost/nearhost/issues/601)) ([30f3780](https://github.com/nearhost/nearhost/commit/30f378028f1bb6f89a88637b14e42bcf848e897d))
+* **doctor:** networked mode's token, name, certificate and firewall ([#621](https://github.com/nearhost/nearhost/issues/621)) ([47ec346](https://github.com/nearhost/nearhost/commit/47ec3460c618b70c91a710e46adadd0613d7c3f7))
+* **engine:** errors and lasting problems carry messages ([#585](https://github.com/nearhost/nearhost/issues/585)) ([ed787cf](https://github.com/nearhost/nearhost/commit/ed787cfec31d2eb5c55460d53801d514d8c987e9))
+* **engine:** networked mode follows the config, with generated aliases ([#619](https://github.com/nearhost/nearhost/issues/619)) ([3f5abea](https://github.com/nearhost/nearhost/commit/3f5abeaa2cc6ed706d5ec587121fde07e5fad9dc))
+* **network:** a firewall rule for networked mode on Windows ([#622](https://github.com/nearhost/nearhost/issues/622)) ([45df98c](https://github.com/nearhost/nearhost/commit/45df98ce7856b364ebe0c5f1094f43bdf5d2e01d))
+* **page:** an iPad layout, and projects with Preview and Open ([#637](https://github.com/nearhost/nearhost/issues/637)) ([8d75f7d](https://github.com/nearhost/nearhost/commit/8d75f7d09ab3bcefe371db9ce3c8d6ebd653df2c))
+* **page:** install Nearhost's page as an app, with an offline fallback ([#636](https://github.com/nearhost/nearhost/issues/636)) ([8ab3478](https://github.com/nearhost/nearhost/commit/8ab3478f8b1f94ab93548346e94e70a9fdab44a1))
+* **page:** list paired devices and revoke them ([#641](https://github.com/nearhost/nearhost/issues/641)) ([fa1784d](https://github.com/nearhost/nearhost/commit/fa1784ddc0ef5725b1e0a16222512d281c570269))
+* **page:** pages show messages ([#599](https://github.com/nearhost/nearhost/issues/599)) ([cebf631](https://github.com/nearhost/nearhost/commit/cebf631b93cdd0ab990956970af4a8230e64e3e4))
+* **page:** preview a project in a frame, with Back, Reload and Open ([#639](https://github.com/nearhost/nearhost/issues/639)) ([c4cd01d](https://github.com/nearhost/nearhost/commit/c4cd01dd54bdef83e5c5889d47a63ab6d93e9895))
+* **proxy:** let the page frame a networked core's sites ([#640](https://github.com/nearhost/nearhost/issues/640)) ([a726ec4](https://github.com/nearhost/nearhost/commit/a726ec4ffb56938a5e1d843bff9829656e0fe258))
+* **proxy:** pairing on the page and sites behind pairing ([#618](https://github.com/nearhost/nearhost/issues/618)) ([642b003](https://github.com/nearhost/nearhost/commit/642b003ba68d17489f337d79080306c6cb5af20f))
+* **proxy:** serve the page and sites to the network when networked ([#617](https://github.com/nearhost/nearhost/issues/617)) ([cd568d2](https://github.com/nearhost/nearhost/commit/cd568d2897c3fb42e5a399ac2edece65a5bb767f))
+* **report:** one message type for errors, warnings and notices ([#584](https://github.com/nearhost/nearhost/issues/584)) ([f4036ac](https://github.com/nearhost/nearhost/commit/f4036ac6e592932511b1e4a2d2fc9fc3b77a486a))
+* sign the Windows binaries with Azure Artifact Signing ([#648](https://github.com/nearhost/nearhost/issues/648)) ([10ff086](https://github.com/nearhost/nearhost/commit/10ff086ca54106555fe862859c775d4d608bfd99))
+* **skill:** --on in nearhost.ps1 ([#612](https://github.com/nearhost/nearhost/issues/612)) ([6ded269](https://github.com/nearhost/nearhost/commit/6ded2691784a6b2bf6aa9faf210aba1f7b6ce229))
+* **skill:** a session closes its passthroughs everywhere it opened them ([#610](https://github.com/nearhost/nearhost/issues/610)) ([d2d092d](https://github.com/nearhost/nearhost/commit/d2d092d542d12fe5140e4e21f9e64c7872c1c2c1))
+* **skill:** open a passthrough on the machine the app runs on with --on ([#609](https://github.com/nearhost/nearhost/issues/609)) ([37a0027](https://github.com/nearhost/nearhost/commit/37a0027844cb0d1028eed31ef8101c0ebbc077a8))
+* **tui:** alerts, toasts and the problems panel from messages; crashes report cleanly ([#598](https://github.com/nearhost/nearhost/issues/598)) ([28c568c](https://github.com/nearhost/nearhost/commit/28c568c505e0cd6edb213ed38fcb6e8941ddd8e4))
+* **tui:** pin passthroughs and documents rows to the sidebar ([#604](https://github.com/nearhost/nearhost/issues/604)) ([7123225](https://github.com/nearhost/nearhost/commit/7123225b95b019462451876ec15b0cd065d2a73f))
+* **tui:** server panels count what agents opened; Home and the first run make way for the new rows ([#608](https://github.com/nearhost/nearhost/issues/608)) ([a0da030](https://github.com/nearhost/nearhost/commit/a0da0302300c01926ff821982c36a441e6ecf103))
+* **tui:** the documents panel lists every server's documents ([#607](https://github.com/nearhost/nearhost/issues/607)) ([991b770](https://github.com/nearhost/nearhost/commit/991b770c4bfe243086d16eaf018d07cb90ed6715))
+* **tui:** the passthroughs panel lists every server's passthroughs ([#605](https://github.com/nearhost/nearhost/issues/605)) ([97ba86f](https://github.com/nearhost/nearhost/commit/97ba86f0b4485781e437b9ead2852e371bccb246))
+* **update:** let a check read the beta line on request ([#642](https://github.com/nearhost/nearhost/issues/642)) ([b51b4bf](https://github.com/nearhost/nearhost/commit/b51b4bf952bd9115829ce40c512381bb480478bc))
+
+
+### Bug Fixes
+
+* check the Windows signature's timestamp and accept osslsigncode 2.13's subject format ([#650](https://github.com/nearhost/nearhost/issues/650)) ([49f2a1b](https://github.com/nearhost/nearhost/commit/49f2a1b0d75f51b259fe2ac33fa3d9480742f1c2))
+* **cli:** order a refusal and a later start even within one clock tick ([#652](https://github.com/nearhost/nearhost/issues/652)) ([506ca5b](https://github.com/nearhost/nearhost/commit/506ca5bc286ffc0ca1e702bab08e56ba6d6deb62))
+* **cli:** say the last inline commands as steps ([#626](https://github.com/nearhost/nearhost/issues/626)) ([d6b0ae8](https://github.com/nearhost/nearhost/commit/d6b0ae8500eafd616f8fdbf47ce2387cbe8c3b52))
+* **cli:** tidy update --next wording and restart an older core from a beta copy ([#647](https://github.com/nearhost/nearhost/issues/647)) ([901722f](https://github.com/nearhost/nearhost/commit/901722f16f740972ea377bd54b3d906fc98c5645))
+* **cli:** update --next on Homebrew upgrades to a release ([#644](https://github.com/nearhost/nearhost/issues/644)) ([4898c60](https://github.com/nearhost/nearhost/commit/4898c6092c254e523a1b5a5597ffd0b10c6c856d))
+* final-review fixes for the messages stack ([#603](https://github.com/nearhost/nearhost/issues/603)) ([84b61ea](https://github.com/nearhost/nearhost/commit/84b61ea602744403a64794d2d017c872cc06eb55))
+* **firewall:** a disabled rule isn't ready, and the core looks at once ([#628](https://github.com/nearhost/nearhost/issues/628)) ([278e91a](https://github.com/nearhost/nearhost/commit/278e91a3d131e5e169da864be3f5d88e3731b39c))
+* follow-ups to the messages stack ([#611](https://github.com/nearhost/nearhost/issues/611)) ([3d51ab0](https://github.com/nearhost/nearhost/commit/3d51ab01fbf6902c584174a99e5c5f2606e841c7))
+* **network:** local page hosts are loopback only, and review fixes ([#623](https://github.com/nearhost/nearhost/issues/623)) ([aae2ee0](https://github.com/nearhost/nearhost/commit/aae2ee0d290e4e3d4219b86f491c60c2d3a364ed))
+* **network:** pair while the core listens, whatever else is wrong ([#627](https://github.com/nearhost/nearhost/issues/627)) ([9679da3](https://github.com/nearhost/nearhost/commit/9679da3a5104490bd887a74cd1b4a2615731bc56))
+* **pairing:** tighter /auth targets, clearer pair errors, and review fixes ([#629](https://github.com/nearhost/nearhost/issues/629)) ([3ea1a8a](https://github.com/nearhost/nearhost/commit/3ea1a8aeacab5775c2320aa7b73a4cc58900d567))
+* **proxy:** first sign-in inside the preview frame, and review fixes ([#646](https://github.com/nearhost/nearhost/issues/646)) ([b144cc9](https://github.com/nearhost/nearhost/commit/b144cc9c350831c48c9ee3d822ee49dfb53da8e7))
+* service install refuses a binary that can't bind 443, and plainer start errors ([#582](https://github.com/nearhost/nearhost/issues/582)) ([3eef5e9](https://github.com/nearhost/nearhost/commit/3eef5e97ffcef113beba235c381b6ef7a52b530b))
+* **service:** restart a Windows service core that stops with an error ([#654](https://github.com/nearhost/nearhost/issues/654)) ([1126a05](https://github.com/nearhost/nearhost/commit/1126a05f5e806fd1b03e085c8e9f46eee05651d3))
+* **service:** start Nearhost directly when nobody is signed in to Windows ([#653](https://github.com/nearhost/nearhost/issues/653)) ([6819c63](https://github.com/nearhost/nearhost/commit/6819c633c2e355e644b96f5d70c378c599c54058))
+* **service:** tidy the Windows supervisor's restarts, logs and doctor row ([#655](https://github.com/nearhost/nearhost/issues/655)) ([e54fc75](https://github.com/nearhost/nearhost/commit/e54fc75a79e6d3720d1275e590b2b35db1939de0))
+* **skill,tui:** final review fixes for the agent sidebar ([#613](https://github.com/nearhost/nearhost/issues/613)) ([35dea8f](https://github.com/nearhost/nearhost/commit/35dea8f2b8f3a1b6118ef900a74bb5d263428763))
+* **skill:** escape every control character in the script's JSON ([#624](https://github.com/nearhost/nearhost/issues/624)) ([9733c22](https://github.com/nearhost/nearhost/commit/9733c227cfb935f357dd65e044f19c92ae425a0b))
+
 ## [0.15.0](https://github.com/nearhost/nearhost/compare/v0.14.1...v0.15.0) (2026-11-25)
 
 
