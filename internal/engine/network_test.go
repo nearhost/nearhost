@@ -223,7 +223,7 @@ func TestApplyNetworkOffNarrowsListeners(t *testing.T) {
 	if err := h.eng.Start(bg); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if st := h.eng.NetworkState(); !st.On || st.Problem != "" || st.URL != fmt.Sprintf("https://nearhost.%s:%d", testDomain, web) {
+	if st := h.eng.NetworkState(); !st.On || !st.Listening || st.Problem != "" || st.URL != fmt.Sprintf("https://nearhost.%s:%d", testDomain, web) {
 		t.Fatalf("NetworkState = %+v", st)
 	}
 	lan := lanAddr()
@@ -372,7 +372,7 @@ func TestNetworkWithoutPageHoldsListen(t *testing.T) {
 	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if st := h.eng.NetworkState(); st.Problem != "the page isn't served" || st.ProblemKind != NetworkNoPage || st.URL != "" {
+	if st := h.eng.NetworkState(); st.Problem != "the page isn't served" || st.ProblemKind != NetworkNoPage || st.URL != "" || st.Listening {
 		t.Errorf("NetworkState = %+v", st)
 	}
 	if n := ops.network(); n == nil || n.Listen {
@@ -394,7 +394,7 @@ func TestFirewallNotReadyHoldsListen(t *testing.T) {
 	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if st := h.eng.NetworkState(); st.Problem != "waiting for the firewall rule" || st.ProblemKind != NetworkNoFirewall {
+	if st := h.eng.NetworkState(); st.Problem != "waiting for the firewall rule" || st.ProblemKind != NetworkNoFirewall || st.Listening {
 		t.Errorf("NetworkState = %+v", st)
 	}
 	if n := ops.network(); n == nil || n.Listen {
@@ -462,7 +462,7 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 				t.Errorf("proxy saw %v, want %v", got, want)
 			}
 			// The core serves as it did, not networked, and says so.
-			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") || st.ProblemKind != NetworkApplyFailed || st.On || st.URL != "" || st.Certificates != "" {
+			if st := h.eng.NetworkState(); !strings.HasPrefix(st.Problem, "networked mode couldn't start: ") || st.ProblemKind != NetworkApplyFailed || st.On || st.Listening || st.URL != "" || st.Certificates != "" {
 				t.Errorf("NetworkState = %+v, want off with the problem", st)
 			}
 			unsubscribe()
@@ -485,7 +485,7 @@ func TestFailedNetworkStartKeepsServingAndRetries(t *testing.T) {
 			if got, want := ops.list()[3:], []string{"network " + testDomain, "apply"}; !slices.Equal(got, want) {
 				t.Errorf("the retry: proxy saw %v, want %v", got, want)
 			}
-			if st := h.eng.NetworkState(); st.Problem != "" || st.ProblemKind != "" || !st.On {
+			if st := h.eng.NetworkState(); st.Problem != "" || st.ProblemKind != "" || !st.On || !st.Listening {
 				t.Errorf("NetworkState after the retry = %+v", st)
 			}
 		})
@@ -569,7 +569,56 @@ func TestFailedNetworkStopKeepsTheState(t *testing.T) {
 		t.Fatalf("Apply off: %v", err)
 	}
 	st := h.eng.NetworkState()
-	if !st.On || st.URL != on.URL || st.Certificates != on.Certificates || st.ProblemKind != NetworkApplyFailed || !strings.HasPrefix(st.Problem, "networked mode couldn't stop: ") {
+	if !st.On || !st.Listening || st.URL != on.URL || st.Certificates != on.Certificates || st.ProblemKind != NetworkApplyFailed || !strings.HasPrefix(st.Problem, "networked mode couldn't stop: ") {
 		t.Errorf("NetworkState after a failed stop = %+v, want %+v with the problem", st, on)
+	}
+}
+
+// A change to a networked core that the proxy couldn't load says it
+// couldn't change, not start, and leaves the core listening when the
+// previous config serves again, but not when nothing serves.
+func TestFailedNetworkChangeKeepsListening(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		err       error
+		listening bool
+	}{
+		{"restored", errors.New("load proxy config: boom; the previous config serves again"), true},
+		{"not serving", fmt.Errorf("load proxy config: boom: %w", proxy.ErrNotServing), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := buildHarness(t, &config.Config{}, func(o *Options) { o.WebPort = testutil.ProxyPort(t) })
+			if err := h.eng.Start(bg); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if err := h.eng.Apply(bg, &config.Config{Network: networkSection("ca")}); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			h.eng.applySites = func([]proxy.Site) error { return c.err }
+			narrower := networkSection("ca")
+			narrower.Allow = []string{"192.168.77.0/24"}
+			if err := h.eng.Apply(bg, &config.Config{Network: narrower}); err != nil {
+				t.Fatalf("Apply narrower: %v", err)
+			}
+			st := h.eng.NetworkState()
+			if !st.On || st.Listening != c.listening || st.ProblemKind != NetworkApplyFailed || !strings.HasPrefix(st.Problem, "networked mode couldn't change: ") {
+				t.Errorf("NetworkState = %+v, want on, listening %v, couldn't change", st, c.listening)
+			}
+		})
+	}
+}
+
+// A core that waits for the firewall rule says so first, before a DNS
+// token problem, as that is what keeps devices from reaching it.
+func TestFirewallProblemComesFirst(t *testing.T) {
+	h := buildHarness(t, &config.Config{}, func(o *Options) {
+		o.WebPort = testutil.ProxyPort(t)
+		o.Firewall = func() bool { return false }
+	})
+	if err := h.eng.Apply(bg, &config.Config{Network: networkSection("acme")}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if st := h.eng.NetworkState(); st.ProblemKind != NetworkNoFirewall || st.Certificates != "ca" || st.Listening {
+		t.Errorf("NetworkState = %+v, want waiting for the firewall rule, on the local CA", st)
 	}
 }

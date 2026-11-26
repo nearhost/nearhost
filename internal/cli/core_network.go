@@ -16,22 +16,34 @@ import (
 // device types it.
 func (o *coreOps) Pair() (control.PairInfo, error) {
 	ns := o.eng.NetworkState()
-	// A core that does not listen on the network gives no code a device
-	// could never use. A DNS token problem leaves it listening, with the
-	// local CA's certificates, so pairing goes on.
-	switch ns.ProblemKind {
-	case engine.NetworkNoFirewall, engine.NetworkApplyFailed:
-		return control.PairInfo{}, report.Errorf(report.NetworkNotListening, "Nearhost isn't serving to the network: %s.", ns.Problem).
-			Step("See what networked mode needs:", "nearhost doctor")
-	}
-	if !ns.On {
-		return control.PairInfo{}, control.ErrNetworkOff
+	if err := pairRefusal(ns); err != nil {
+		return control.PairInfo{}, err
 	}
 	if ns.URL == "" || o.devices == nil {
 		return control.PairInfo{}, report.Errorf(report.PairUnavailable, "Nearhost's page isn't served, so no device can pair.")
 	}
 	pc := o.devices.NewPairCode()
 	return control.PairInfo{Code: pc.Code, URL: ns.URL + "/pair/" + pc.Code, Expires: pc.Expires}, nil
+}
+
+// pairRefusal is why a core in state ns gives no pairing code, or nil when
+// it may. A core that does not listen on the network gives none, as no
+// device could use it. A DNS token problem leaves it listening, with the
+// local CA's certificates, and a change the proxy couldn't load leaves it
+// listening when it was before, so pairing goes on.
+func pairRefusal(ns engine.NetworkState) error {
+	if ns.Listening {
+		return nil
+	}
+	if !ns.On && ns.Problem == "" {
+		return control.ErrNetworkOff
+	}
+	why := ns.Problem
+	if why == "" {
+		why = "it doesn't listen on the network yet"
+	}
+	return report.Errorf(report.NetworkNotListening, "Nearhost isn't serving to the network: %s.", why).
+		Step("See what networked mode needs:", "nearhost doctor")
 }
 
 // PairStatus says what became of a pairing code.

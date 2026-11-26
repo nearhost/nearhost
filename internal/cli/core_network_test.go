@@ -37,6 +37,45 @@ func TestPairRefusesWhileNotListening(t *testing.T) {
 	}
 }
 
+// Pairing goes on while the core listens on the network, whatever else is
+// wrong, and is refused, naming why, while it does not.
+func TestPairRefusal(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ns   engine.NetworkState
+		code report.Code
+		says string
+	}{
+		{"listening", engine.NetworkState{On: true, Listening: true}, "", ""},
+		{"no DNS token", engine.NetworkState{On: true, Listening: true, Problem: "no DNS token", ProblemKind: engine.NetworkNoToken}, "", ""},
+		{"a failed change, still listening", engine.NetworkState{On: true, Listening: true, Problem: "networked mode couldn't change: boom", ProblemKind: engine.NetworkApplyFailed}, "", ""},
+		{"off", engine.NetworkState{}, report.NetworkOff, ""},
+		{"a failed start", engine.NetworkState{Problem: "networked mode couldn't start: boom", ProblemKind: engine.NetworkApplyFailed}, report.NetworkNotListening, "couldn't start: boom"},
+		{"waiting for the firewall", engine.NetworkState{On: true, Problem: "waiting for the firewall rule", ProblemKind: engine.NetworkNoFirewall}, report.NetworkNotListening, "waiting for the firewall rule"},
+		{"not listening, no problem", engine.NetworkState{On: true}, report.NetworkNotListening, "doesn't listen"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := pairRefusal(c.ns)
+			if c.code == "" {
+				if err != nil {
+					t.Fatalf("pairRefusal = %v, want none", err)
+				}
+				return
+			}
+			if c.code == report.NetworkOff {
+				if !errors.Is(err, control.ErrNetworkOff) {
+					t.Fatalf("pairRefusal = %v, want ErrNetworkOff", err)
+				}
+				return
+			}
+			m, ok := report.As(err)
+			if !ok || m.Code != c.code || !strings.Contains(m.Error(), c.says) {
+				t.Fatalf("pairRefusal = %v, want %s saying %q", err, c.code, c.says)
+			}
+		})
+	}
+}
+
 // A core with no store open lists and revokes the devices in devices.json,
 // as the CLI does with no core running.
 func TestDevicesWithoutStoreReadTheFile(t *testing.T) {
