@@ -183,6 +183,8 @@ const (
 	PairUnavailable            Code = "pair.unavailable"
 	NetworkApplyFailed         Code = "network.apply-failed"
 	NetworkDevicesUnavailable  Code = "network.devices-unavailable"
+	NetworkOff                 Code = "network.off"
+	DeviceUnknown              Code = "devices.unknown"
 	DocumentsMissing           Code = "documents.missing"
 	DocumentsChanging          Code = "documents.changing"
 	DocumentsNotConnected      Code = "documents.not-connected"
@@ -428,6 +430,8 @@ var catalogRows = []catalogRow{
 	{PairUnavailable, Error, 503, "A site on the network domain needs a paired device, and Nearhost's page, where devices pair, is not served."},
 	{NetworkApplyFailed, Error, 500, "Nearhost could not change how it serves to other devices on the network after the config changed."},
 	{NetworkDevicesUnavailable, Warning, 0, "Nearhost could not open its list of paired devices, so no other device can pair or sign in."},
+	{NetworkOff, Error, 409, "Something was asked that needs networked mode, and the config does not turn it on."},
+	{DeviceUnknown, Error, 404, "No paired device has the name asked for."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
 	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},
 	{DocumentsNotConnected, Error, 503, "Nearhost is not connected to the server that holds the document."},

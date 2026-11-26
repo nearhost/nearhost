@@ -411,3 +411,89 @@ func TestEnvironmentOlderCore(t *testing.T) {
 		})
 	}
 }
+
+// pairFake is a backend that pairs and lists devices.
+type pairFake struct {
+	*fakeBackend
+	offErr  error
+	devices []DeviceInfo
+	revoked []string
+}
+
+func (f *pairFake) Pair() (PairInfo, error) {
+	if f.offErr != nil {
+		return PairInfo{}, f.offErr
+	}
+	return PairInfo{Code: "ABCD2345", URL: "https://nearhost.x/pair/ABCD2345", Expires: time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)}, nil
+}
+func (f *pairFake) PairStatus(code string) (PairState, error) {
+	if code == "DONE2345" {
+		return PairState{Device: "iPad", Paired: true}, nil
+	}
+	return PairState{Expired: code == "OLD23456"}, nil
+}
+func (f *pairFake) Devices() ([]DeviceInfo, error) { return f.devices, nil }
+func (f *pairFake) RevokeDevice(name string) error {
+	if name != "iPad" {
+		return ErrDeviceUnknown
+	}
+	f.revoked = append(f.revoked, name)
+	return nil
+}
+
+func TestPairRoutes(t *testing.T) {
+	ctx := context.Background()
+	b := &pairFake{fakeBackend: newFake()}
+	c := dial(t, serve(t, b))
+	got, err := c.Pair(ctx)
+	if err != nil || got.Code != "ABCD2345" || got.URL != "https://nearhost.x/pair/ABCD2345" || got.Expires.IsZero() {
+		t.Fatalf("Pair = %+v, %v", got, err)
+	}
+	code, _, rerr := c.send(ctx, http.MethodPost, "/v1/pair", nil, true)
+	if rerr != nil || code != http.StatusCreated {
+		t.Fatalf("POST /v1/pair = %d, %v, want 201", code, rerr)
+	}
+	st, err := c.PairStatus(ctx, "DONE2345")
+	if err != nil || st.Device != "iPad" || !st.Paired || st.Expired {
+		t.Fatalf("PairStatus = %+v, %v", st, err)
+	}
+	st, err = c.PairStatus(ctx, "OLD23456")
+	if err != nil || st.Paired || !st.Expired {
+		t.Fatalf("PairStatus expired = %+v, %v", st, err)
+	}
+	b.offErr = ErrNetworkOff
+	_, err = c.Pair(ctx)
+	if m, ok := report.As(err); !ok || m.Code != report.NetworkOff {
+		t.Fatalf("Pair on a core with no network = %v, want code %s", err, report.NetworkOff)
+	}
+	code, _, _ = c.send(ctx, http.MethodPost, "/v1/pair", nil, true)
+	if code != http.StatusConflict {
+		t.Fatalf("POST /v1/pair with network off = %d, want 409", code)
+	}
+}
+
+func TestDevicesRoutes(t *testing.T) {
+	ctx := context.Background()
+	seen := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
+	b := &pairFake{fakeBackend: newFake(), devices: []DeviceInfo{{Name: "iPad", Paired: seen, LastSeen: seen, LastAddr: "192.168.77.9"}}}
+	c := dial(t, serve(t, b))
+	got, err := c.Devices(ctx)
+	if err != nil || len(got) != 1 || got[0].Name != "iPad" || got[0].LastAddr != "192.168.77.9" || !got[0].LastSeen.Equal(seen) {
+		t.Fatalf("Devices = %+v, %v", got, err)
+	}
+	if err := c.RevokeDevice(ctx, "iPad"); err != nil || len(b.revoked) != 1 {
+		t.Fatalf("RevokeDevice = %v, revoked %v", err, b.revoked)
+	}
+	err = c.RevokeDevice(ctx, "Nope")
+	if m, ok := report.As(err); !ok || m.Code != report.DeviceUnknown {
+		t.Fatalf("RevokeDevice unknown = %v, want code %s", err, report.DeviceUnknown)
+	}
+	code, _, _ := c.send(ctx, http.MethodDelete, "/v1/devices/Nope", nil, true)
+	if code != http.StatusNotFound {
+		t.Fatalf("DELETE unknown = %d, want 404", code)
+	}
+	b.devices = nil
+	if got, err := c.Devices(ctx); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("no devices = %+v, %v, want an empty list", got, err)
+	}
+}

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -67,5 +68,56 @@ func TestOpenDevices(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
 	if s, err := openDevices(); err != nil || s == nil {
 		t.Errorf("openDevices: %v", err)
+	}
+}
+
+func TestNetworkTokenWritesSecretFile(t *testing.T) {
+	configHome(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	path, err := config.DNSTokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeWithInput(t, "tok\n", newNetworkCmd(), "network", "token"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "tok" {
+		t.Fatalf("token file = %q, %v, want tok", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+			t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
+		}
+	}
+	// A longer line, a CRLF and spaces around it are trimmed.
+	if _, err := executeWithInput(t, "  tok2 \r\n", newNetworkCmd(), "network", "token"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "tok2" {
+		t.Errorf("token file = %q, want tok2", got)
+	}
+	if _, err := executeWithInput(t, "", newNetworkCmd(), "network", "token", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("after --clear the file is there: %v", err)
+	}
+	// Clearing what is not there is no failure.
+	if _, err := executeWithInput(t, "", newNetworkCmd(), "network", "token", "--clear"); err != nil {
+		t.Errorf("--clear with no token: %v", err)
+	}
+}
+
+func TestNetworkTokenRefusesEmpty(t *testing.T) {
+	configHome(t)
+	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dir)
+	out, err := executeWithInput(t, " \n", newNetworkCmd(), "network", "token")
+	if err == nil {
+		t.Fatalf("an empty token was taken: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nearhost", "dns-token")); !os.IsNotExist(err) {
+		t.Errorf("a file was written: %v", err)
 	}
 }

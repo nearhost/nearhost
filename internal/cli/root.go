@@ -96,6 +96,9 @@ func NewRoot() *cobra.Command {
 		newPresetCmd(systemPresets()),
 		newDoctorCmd(systemDoctor(lookup)),
 		newUpdateCmd(systemUpdate()),
+		newPairCmd(dialPair),
+		newDevicesCmd(dialDevices),
+		newNetworkCmd(),
 	)
 	bindUI(root, systemUI(lookup))
 	// Cobra adds completion, a group of its own, when the command runs.

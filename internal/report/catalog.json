@@ -831,6 +831,18 @@
       "summary": "Nearhost could not open its list of paired devices, so no other device can pair or sign in."
     },
     {
+      "code": "network.off",
+      "level": "error",
+      "status": 409,
+      "summary": "Something was asked that needs networked mode, and the config does not turn it on."
+    },
+    {
+      "code": "devices.unknown",
+      "level": "error",
+      "status": 404,
+      "summary": "No paired device has the name asked for."
+    },
+    {
       "code": "documents.missing",
       "level": "error",
       "status": 404,

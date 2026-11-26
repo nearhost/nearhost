@@ -90,6 +90,9 @@ type ProjectInfo struct {
 	State   string `json:"state"`
 	Message string `json:"message"`
 	URL     string `json:"url"`
+	// NetworkURL is the project's address on the network, or "" when the
+	// core does not serve it there.
+	NetworkURL string `json:"network_url,omitempty"`
 	// Problem is Message as a message, with its code and fix; nil when the
 	// state needs nothing.
 	Problem *report.Message `json:"problem,omitempty"`
@@ -109,6 +112,21 @@ type Status struct {
 	// Update is the newer release the core has found, without "v", or ""
 	// when none is known.
 	Update string `json:"update,omitempty"`
+	// Network is how the core serves to other devices; nil when the config
+	// does not turn networked mode on.
+	Network *NetworkInfo `json:"network,omitempty"`
+}
+
+// NetworkInfo is how the core serves to the network.
+type NetworkInfo struct {
+	// On is whether the config turns networked mode on.
+	On bool `json:"on"`
+	// URL is the page's address on the network, or "" when it is not served.
+	URL string `json:"url"`
+	// Certificates is "acme" or "ca".
+	Certificates string `json:"certificates"`
+	// Problem is why the core serves less than the config asks, or "".
+	Problem string `json:"problem,omitempty"`
 }
 
 // ApprovalInfo is one request that waits for an answer, as status lists it.

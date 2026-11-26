@@ -200,6 +200,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 			eng.Events().Publish(engine.Event{Message: m.Title, Report: m})
 		} else {
 			proxy.SetDevices(store)
+			ops.devices = store
 			defer proxy.SetDevices(nil)
 		}
 		pageDone := make(chan struct{})
@@ -446,6 +447,7 @@ func (c *coreBackend) Status() control.Status {
 	st := control.Status{Info: c.info, Servers: []control.ServerInfo{}, Projects: []control.ProjectInfo{}, Approvals: []control.ApprovalInfo{}}
 	st.Page, _ = c.eng.PageURL() // "" when the page is not served
 	st.Update = c.updates.latestNewer()
+	st.Network = c.networkInfo()
 	for _, name := range serverNames(cfg) {
 		h := c.eng.ServerHealth(name)
 		st.Servers = append(st.Servers, control.ServerInfo{Name: name, State: string(h.Status), Message: h.LastError, Problem: h.Problem})
@@ -457,7 +459,7 @@ func (c *coreBackend) Status() control.Status {
 		}
 		st.Projects = append(st.Projects, control.ProjectInfo{
 			Name: p.Name, State: string(ps.State), Message: ps.Message, URL: siteURL(p.Alias, c.httpsPort),
-			Problem: ps.Problem,
+			Problem: ps.Problem, NetworkURL: c.networkProjectURL(p.Name),
 		})
 	}
 	for _, a := range c.approvals.Pending() {
