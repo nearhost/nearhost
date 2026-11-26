@@ -243,7 +243,10 @@ func (v *validator) check(r *http.Request, body []byte, rec *recorder) {
 		Options: &openapi3filter.Options{
 			IncludeResponseStatus: true,
 			// The stream's events are checked one by one as written.
-			ExcludeResponseBody: rec.stream,
+			// The filter decodes a YAML body into an object, which a
+			// schema of type string rejects; TestSchemaIsServed holds the
+			// body to the embedded bytes instead.
+			ExcludeResponseBody: rec.stream || rec.Header().Get("Content-Type") == "application/yaml",
 			AuthenticationFunc:  openapi3filter.NoopAuthenticationFunc,
 		},
 	}
