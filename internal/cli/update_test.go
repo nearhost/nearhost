@@ -1391,7 +1391,7 @@ func TestUpdateNextHomebrewRefuses(t *testing.T) {
 	if code := exitCode(err, io.Discard); code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
-	for _, want := range []string{"brew uninstall --cask nearhost", "npm install -g @nearhost/cli@next", "NEARHOST_VERSION=v0.16.0-beta.2"} {
+	for _, want := range []string{"brew uninstall --cask nearhost", "npm install -g @nearhost/cli@next", "NEARHOST_VERSION=v0.16.0-beta.2", "nearhost service install"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("out lacks %q:\n%s", want, out)
 		}
@@ -1468,5 +1468,30 @@ func TestUpdateNextCheckOnHomebrewNamesAWayThatWorks(t *testing.T) {
 	m, ok := report.As(err)
 	if !ok || len(m.Fix) == 0 || m.Fix[0].Command == "nearhost update --next" || !strings.Contains(m.Fix[len(m.Fix)-1].Command, "@nearhost/cli@next") {
 		t.Fatalf("err %v, fix %+v", err, m.Fix)
+	}
+}
+
+// On a beta copy --next is plain update, down to the words.
+func TestUpdateNextOnABetaCopySaysWhatPlainUpdateSays(t *testing.T) {
+	f := &fakeUpdate{latestNext: "0.16.0-beta.2", exe: npmExe}
+	out, err := runUpdate(t, f, "0.16.0-beta.2", "", "--next")
+	if err != nil || out != "nearhost 0.16.0-beta.2 is the latest.\n" {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestUpdateNextOnADevBuildNamesTheBetaLine(t *testing.T) {
+	f := &fakeUpdate{latestNext: "0.16.0-beta.2", exe: npmExe}
+	out, err := runUpdate(t, f, "dev", "", "--next")
+	if err != nil || !strings.Contains(out, "The newest beta or release is 0.16.0-beta.2.") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+}
+
+func TestUpdateNextCheckFailureNamesTheBetaLine(t *testing.T) {
+	f := &fakeUpdate{err: errors.New("offline"), exe: npmExe}
+	_, err := runUpdate(t, f, "0.15.0", "", "--next")
+	if err == nil || !strings.Contains(err.Error(), "whether a newer beta or release is out") {
+		t.Fatalf("err %v", err)
 	}
 }

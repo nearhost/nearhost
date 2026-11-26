@@ -271,8 +271,12 @@ var (
 
 // checkFailed is the update.check-failed error of a check for a newer
 // release that failed with err, which says why.
-func checkFailed(err error) *report.Message {
-	return report.Errorf(report.UpdateCheckFailed, "Nearhost could not find out whether a newer release is out.").
+func checkFailed(err error, next bool) *report.Message {
+	what := "release"
+	if next {
+		what = "beta or release"
+	}
+	return report.Errorf(report.UpdateCheckFailed, "Nearhost could not find out whether a newer %s is out.", what).
 		Because("%s", err).Wrap(err)
 }
 
@@ -322,14 +326,15 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) er
 		if check {
 			// A script tells "could not check" (2) from "a newer release is
 			// out" (1).
-			return checkFailed(err).ExitCode(updateCheckFailedCode)
+			return checkFailed(err, next).ExitCode(updateCheckFailedCode)
 		}
-		return checkFailed(err)
+		return checkFailed(err, next)
 	}
 	current := strings.TrimPrefix(Version, "v")
 	if !newer(current, latest) {
 		if update.IsRelease(current) {
-			if next {
+			// A beta copy follows betas anyway, so --next adds nothing to say.
+			if next && !update.IsPrerelease(current) {
 				fmt.Fprintf(out, "nearhost %s is the latest, and no beta is newer.\n", current)
 			} else {
 				fmt.Fprintf(out, "nearhost %s is the latest.\n", current)
@@ -342,7 +347,11 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) er
 		} else {
 			// On a development build nothing checked that latest, which is
 			// GitHub's text, is a version.
-			fmt.Fprintf(out, "This is a development build of nearhost (%s). The latest release is %s.\n", Version, printable(latest))
+			what := "latest release"
+			if next {
+				what = "newest beta or release"
+			}
+			fmt.Fprintf(out, "This is a development build of nearhost (%s). The %s is %s.\n", Version, what, printable(latest))
 		}
 		return nil
 	}
@@ -375,7 +384,8 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) er
 		return report.Errorf(report.UpdateNextHomebrew, "Betas are not published to Homebrew, so this copy cannot update to %s.", latest).
 			Step("Remove the Homebrew copy:", "brew uninstall --cask nearhost").
 			Step("Then install the beta with npm:", "npm install -g @nearhost/cli@next").
-			Step("Or with the install script:", "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=v"+latest+" sh")
+			Step("Or with the install script:", "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=v"+latest+" sh").
+			Step("If a service runs Nearhost, point it at the new copy:", "nearhost service install")
 	case m.Kind == update.Ephemeral:
 		tag := "latest"
 		switch {
@@ -465,7 +475,9 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) er
 // before current, this copy's, as after an update: this copy may have been
 // updated another way, as by brew upgrade, with the old core left running.
 // The restart asks and refuses as restartAfterUpdate does. A core of this
-// release or a later one, or none, is left be.
+// release or a later one, or none, is left be. A beta copy counts as later
+// than the release before it, so after update --next a core still on that
+// release is restarted too.
 func restartOlderCore(cmd *cobra.Command, b updateBackend, yes bool, current string) error {
 	if b.detach.dial == nil {
 		return nil
@@ -474,7 +486,7 @@ func restartOlderCore(cmd *cobra.Command, b updateBackend, yes bool, current str
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if _, info, ok := detachInfo(ctx, b.detach); !ok || !update.Newer(info.Version, current) {
+	if _, info, ok := detachInfo(ctx, b.detach); !ok || !update.NewerNext(info.Version, current) {
 		return nil
 	}
 	exe := b.exe()

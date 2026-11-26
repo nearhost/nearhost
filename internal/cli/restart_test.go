@@ -557,6 +557,20 @@ func TestUpdateLatestRestartsAnOlderCore(t *testing.T) {
 			t.Errorf("err %v, out %q, stopped %v", err, out, rig.stopped())
 		}
 	})
+	// After update --next, a beta copy, where the core still runs the release
+	// before, as when the restart was declined.
+	t.Run("a beta copy", func(t *testing.T) {
+		rig := newRestartRig(t, control.StartedDetached)
+		rig.version = "0.6.0-beta.1"
+		rig.old.st.Passthroughs = nil
+		rig.old.serve()
+		f := updateFor(rig, false)
+		f.latest = "0.6.0-beta.1"
+		out, err := runUpdate(t, f, "0.6.0-beta.1", "")
+		if err != nil || !strings.Contains(out, "it now runs 0.6.0-beta.1") || len(rig.spawns()) != 1 {
+			t.Errorf("err %v, out %q, spawned %q", err, out, rig.spawns())
+		}
+	})
 	t.Run("a newer core", func(t *testing.T) {
 		rig := newRestartRig(t, control.StartedDetached)
 		rig.old.info.Version = "0.7.0"
