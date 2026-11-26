@@ -246,7 +246,7 @@ func (h *Home) underNetworkDomain(host string) bool {
 		return false
 	}
 	host = strings.ToLower(host)
-	if hostname.Valid(host) != nil {
+	if hostname.Valid(host) != nil || hostname.IsPattern(host) {
 		return false
 	}
 	return host == domain || strings.HasSuffix(host, "."+domain)

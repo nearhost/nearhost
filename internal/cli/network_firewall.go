@@ -61,8 +61,8 @@ func newNetworkFirewallCmd() *cobra.Command {
 		Short: "Let other devices reach Nearhost through Windows Firewall",
 		Long: "Add a Windows Firewall rule that lets other devices on private networks reach\n" +
 			"this Nearhost, so networked mode can listen on the network. Windows asks once\n" +
-			"for an administrator's consent, and a running Nearhost then listens on the\n" +
-			"network. Only Windows needs this.",
+			"for an administrator's consent. A running, networked Nearhost then listens\n" +
+			"on the network. Only Windows needs this.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runNetworkFirewall(cmd)
@@ -118,8 +118,8 @@ func runNetworkFirewall(cmd *cobra.Command) error {
 		return report.Errorf(report.NetworkFirewall, "The firewall rule couldn't be added: %s", err).Wrap(err)
 	}
 	firewallNudge(orBackground(cmd.Context()))
-	_, err = fmt.Fprintln(out, "Added the firewall rule. Other devices on private networks can reach Nearhost,\n"+
-		"and a running Nearhost listens on the network.")
+	_, err = fmt.Fprintln(out, "Added the firewall rule. Once networked mode is on, other devices on private\n"+
+		"networks can reach Nearhost.")
 	return err
 }
 
@@ -193,7 +193,7 @@ func newFirewallWatch(networked bool) *firewallWatch {
 // nudge asks run to look for the rule at once. It does nothing once the
 // rule has been found, or when run is already asked.
 func (w *firewallWatch) nudge() {
-	if w.wake == nil {
+	if w.wake == nil || w.ready.Load() {
 		return
 	}
 	select {
@@ -237,7 +237,9 @@ func (w *firewallWatch) run(ctx context.Context, eng networkRechecker, tick <-ch
 			continue
 		}
 		w.ready.Store(true)
-		if eng.RecheckNetwork(ctx) == nil && w.publish != nil {
+		// A nudge may come before networked mode is on: then the rule is
+		// noted, and nothing is said until the core listens.
+		if eng.RecheckNetwork(ctx) == nil && w.publish != nil && eng.NetworkState().Listening {
 			w.publish(engine.Event{Message: "The firewall rule is in place, so other devices can reach Nearhost."})
 		}
 	}

@@ -67,7 +67,7 @@ func pairPost(form url.Values) *http.Request {
 func TestAuthRefusesForeignTo(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)
-	for _, to := range []string{"https://evil.example/", "https://xlab.example.dev/", "http://app.lab.example.dev/", "//app.lab.example.dev/", "https://user@evil.example\\@app.lab.example.dev/", "https://[fe80::1%25eth0.lab.example.dev]/", ""} {
+	for _, to := range []string{"https://evil.example/", "https://xlab.example.dev/", "http://app.lab.example.dev/", "//app.lab.example.dev/", "https://user@evil.example\\@app.lab.example.dev/", "https://[fe80::1%25eth0.lab.example.dev]/", "https://*.lab.example.dev/", ""} {
 		r := withDevice(netRequest("GET", "/auth?"+url.Values{"to": {to}}.Encode(), nil), "good-token")
 		w := serveNet(t, netHome(), r)
 		if w.Code != http.StatusBadRequest {

@@ -122,7 +122,7 @@ func (o *coreOps) networkInfo() *control.NetworkInfo {
 	if !ns.On && ns.Problem == "" {
 		return nil
 	}
-	return &control.NetworkInfo{On: ns.On, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
+	return &control.NetworkInfo{On: ns.On, Listening: ns.Listening, URL: ns.URL, Certificates: ns.Certificates, Problem: ns.Problem, ProblemKind: string(ns.ProblemKind)}
 }
 
 // networkSiteURLs returns the address of each project on the network, for

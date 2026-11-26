@@ -132,7 +132,7 @@ type fakeNetEngine struct {
 func (f *fakeNetEngine) NetworkState() engine.NetworkState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return engine.NetworkState{On: f.on}
+	return engine.NetworkState{On: f.on, Listening: f.on}
 }
 
 func (f *fakeNetEngine) RecheckNetwork(context.Context) error {
@@ -237,5 +237,26 @@ func TestFirewallWatchChecksWhenNetworkTurnsOn(t *testing.T) {
 	<-finished
 	if !w.Ready() {
 		t.Error("not ready once the rule was found")
+	}
+}
+
+// A nudge before networked mode is on notes the rule, and says nothing:
+// the core does not listen on the network yet.
+func TestNudgeBeforeNetworkedSaysNothing(t *testing.T) {
+	w := makeFirewallWatch(func() bool { return true })
+	eng := &fakeNetEngine{done: make(chan struct{})}
+	var published []string
+	w.publish = func(ev engine.Event) { published = append(published, ev.Message) }
+	w.nudge()
+	w.run(context.Background(), eng, nil)
+	if !w.Ready() || eng.rechecks != 1 {
+		t.Errorf("ready %v, rechecks %d; want the rule noted and the network rechecked", w.Ready(), eng.rechecks)
+	}
+	if len(published) != 0 {
+		t.Errorf("published %q while not networked", published)
+	}
+	w.nudge()
+	if len(w.wake) != 0 {
+		t.Error("a nudge after the rule was found woke the watch")
 	}
 }

@@ -167,6 +167,14 @@ func TestNetworkProblemsGoToTheirOwnRows(t *testing.T) {
 		t.Errorf("firewall: certificate row %+v, want the certificate checked", c)
 	}
 
+	// A token problem behind the firewall's still fails the certificate
+	// row: the core fell back to the local CA.
+	ca := st(url, engine.NetworkNoFirewall, "waiting for the firewall rule")
+	ca.Network.Certificates = "ca"
+	if c := run(ca)["Network certificate"]; c.level != levelFail || c.code != report.NetworkCert || !strings.Contains(c.detail, "local CA") {
+		t.Errorf("firewall, on the local CA: certificate row %+v, want a failure", c)
+	}
+
 	rows = run(st("", engine.NetworkNoPage, "the page isn't served"))
 	if c := rows["Network certificate"]; c.code == report.NetworkCert {
 		t.Errorf("no page: certificate row %+v, want no certificate failure", c)

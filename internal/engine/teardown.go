@@ -58,6 +58,7 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 			e.mu.Lock()
 			run.site, run.docker = false, false
 			e.dockerIdleLocked()
+			e.servingAgainLocked()
 			e.mu.Unlock()
 		}
 	}

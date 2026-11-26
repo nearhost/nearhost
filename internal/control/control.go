@@ -121,6 +121,9 @@ type Status struct {
 type NetworkInfo struct {
 	// On is whether the config turns networked mode on.
 	On bool `json:"on"`
+	// Listening is whether the core listens on the network, so a device
+	// can reach it.
+	Listening bool `json:"listening"`
 	// URL is the page's address on the network, or "" when it is not served.
 	URL string `json:"url"`
 	// Certificates is "acme" or "ca".

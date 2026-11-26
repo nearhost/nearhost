@@ -682,11 +682,12 @@ func (e *Engine) publishSite(run *projectRun, web []config.WebHosts, webLocals [
 		// The proxy's errors already say they are the proxy's.
 		return e.bindProblem(err)
 	}
+	e.mu.Lock()
+	e.servingAgainLocked()
 	if docker {
-		e.mu.Lock()
 		e.startDockerLoopLocked()
-		e.mu.Unlock()
 	}
+	e.mu.Unlock()
 	return nil
 }
 

@@ -25,7 +25,7 @@ type NetworkState struct {
 	// Listening is whether the core listens on the network, so a device
 	// can reach it: networked, with the page served and the firewall
 	// letting it through, and not undone by a change the proxy couldn't
-	// load.
+	// load. Before Start it says whether the core will.
 	Listening bool
 	// URL is the page's address on the network,
 	// https://nearhost.<domain>[:<web port>] with the port left out when it
@@ -246,6 +246,18 @@ func (e *Engine) applyNetwork() {
 	}
 	m := report.Errorf(report.NetworkApplyFailed, "Nearhost could not change how it serves to the network: %s", err).Because("%s", why)
 	e.bus.Publish(Event{Message: m.Title, Report: m})
+}
+
+// servingAgainLocked notes that the proxy loaded the sites with the network
+// options it holds: after a failed change left it serving nothing, it
+// serves again, so the core listens on the network if those options say
+// so. The problem stays, as the change asked for is still not applied.
+// The caller holds mu, after a successful apply.
+func (e *Engine) servingAgainLocked() {
+	if e.netState.ProblemKind != NetworkApplyFailed || e.netState.Listening || e.netOpts == nil {
+		return
+	}
+	e.netState.Listening = e.netOpts.Listen
 }
 
 // RecheckNetwork works out the network options again and applies them when
