@@ -140,7 +140,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// clients.
 	queue := newApprovals(hub, time.Now)
 	defer queue.close()
-	ops := &coreOps{eng: eng, agents: ag, approvals: queue, path: cfgPath, httpsPort: flags.httpsPort}
+	ops := &coreOps{eng: eng, agents: ag, approvals: queue, path: cfgPath, httpsPort: flags.httpsPort, firewall: fw}
 
 	events, unsubscribe := eng.Events().Subscribe(eventBuffer)
 	defer unsubscribe()

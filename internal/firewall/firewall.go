@@ -64,15 +64,52 @@ func SameProgram(a, b string) bool {
 }
 
 // HasProgram reports whether out, what netsh printed for ShowCommand, has a
-// rule for program. Its labels are in the system's language, so it looks
-// for a line that ends in the program's path, after a space or a colon,
-// whatever the label before it.
+// rule for program that lets it in. Its labels are in the system's
+// language, so it looks for a line that ends in the program's path, after a
+// space or a colon, whatever the label before it. Where the labels are
+// English, as on most systems, the rule must also be enabled, inbound, allow
+// and on a private or domain network: one turned off or changed in Windows
+// Defender Firewall lets nothing in. In another language those are not
+// checked.
 func HasProgram(out []byte, program string) bool {
 	want := normPath(program)
 	if want == "" {
 		return false
 	}
-	for line := range strings.Lines(string(out)) {
+	for _, block := range ruleBlocks(string(out)) {
+		if blockHasProgram(block, want) && !blockRefuses(block) {
+			return true
+		}
+	}
+	return false
+}
+
+// ruleBlocks is out split into one block of lines per rule: netsh prints a
+// blank line between rules.
+func ruleBlocks(out string) [][]string {
+	var blocks [][]string
+	var cur []string
+	for line := range strings.Lines(out) {
+		line = strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(line) == "" {
+			if len(cur) > 0 {
+				blocks = append(blocks, cur)
+				cur = nil
+			}
+			continue
+		}
+		cur = append(cur, line)
+	}
+	if len(cur) > 0 {
+		blocks = append(blocks, cur)
+	}
+	return blocks
+}
+
+// blockHasProgram reports whether a rule's lines name want, a normalised
+// path.
+func blockHasProgram(block []string, want string) bool {
+	for _, line := range block {
 		got := normPath(line)
 		if !strings.HasSuffix(got, want) {
 			continue
@@ -80,6 +117,38 @@ func HasProgram(out []byte, program string) bool {
 		rest := got[:len(got)-len(want)]
 		if rest == "" || strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") || strings.HasSuffix(rest, ":") {
 			return true
+		}
+	}
+	return false
+}
+
+// blockRefuses reports whether a rule's English labels say it lets nothing
+// in: not enabled, not inbound, not allow, or only on public networks. A
+// label it doesn't find, as in another language, refuses nothing.
+func blockRefuses(block []string) bool {
+	for _, line := range block {
+		label, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		value = strings.ToLower(strings.TrimSpace(value))
+		switch strings.TrimSpace(label) {
+		case "Enabled":
+			if value != "yes" {
+				return true
+			}
+		case "Direction":
+			if value != "in" {
+				return true
+			}
+		case "Action":
+			if value != "allow" {
+				return true
+			}
+		case "Profiles":
+			if !strings.Contains(value, "private") && !strings.Contains(value, "domain") && value != "any" {
+				return true
+			}
 		}
 	}
 	return false
@@ -114,8 +183,12 @@ func ApplyWith(run Runner, program string) error {
 	if out, err := run(AddCommand(program)...); err != nil {
 		return netshError("add the firewall rule", out, err)
 	}
-	if !ReadyWith(run, program) {
-		return fmt.Errorf("netsh added the firewall rule, but doesn't show it for %s", program)
+	out, err = run(ShowCommand()...)
+	if err != nil {
+		return netshError("check the firewall rule netsh added", out, err)
+	}
+	if !HasProgram(out, program) {
+		return fmt.Errorf("netsh added the firewall rule, but doesn't show it letting %s in", program)
 	}
 	return nil
 }

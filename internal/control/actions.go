@@ -114,6 +114,10 @@ type Actions interface {
 	Devices() ([]DeviceInfo, error)
 	// RevokeDevice unpairs a device, or returns ErrDeviceUnknown.
 	RevokeDevice(name string) error
+	// RecheckFirewall asks the core to look for the Windows firewall rule
+	// now, rather than at its next look. It does nothing where no rule is
+	// needed or none is waited for.
+	RecheckFirewall() error
 }
 
 // UnimplementedActions is an Actions that can do none of them: each action
@@ -168,6 +172,7 @@ func (UnimplementedActions) PairStatus(string) (PairState, error) {
 }
 func (UnimplementedActions) Devices() ([]DeviceInfo, error) { return nil, ErrUnimplemented }
 func (UnimplementedActions) RevokeDevice(string) error      { return ErrUnimplemented }
+func (UnimplementedActions) RecheckFirewall() error         { return ErrUnimplemented }
 
 // maxActionBody is the longest request body an action route reads.
 const maxActionBody = 64 << 10
@@ -377,6 +382,9 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("DELETE /v1/devices/{name}", noContent(func(r *http.Request) error {
 		return b.RevokeDevice(r.PathValue("name"))
+	}))
+	post("/v1/network/firewall/recheck", noContent(func(r *http.Request) error {
+		return b.RecheckFirewall()
 	}))
 	mux.HandleFunc("GET /v1/page", func(w http.ResponseWriter, r *http.Request) {
 		u, err := b.PageKeyURL()
@@ -720,6 +728,11 @@ func (c *Client) Devices(ctx context.Context) ([]DeviceInfo, error) {
 	var out []DeviceInfo
 	err := c.actMethod(ctx, http.MethodGet, "/v1/devices", nil, &out, false)
 	return out, err
+}
+
+// RecheckFirewall asks the core to look for the Windows firewall rule now.
+func (c *Client) RecheckFirewall(ctx context.Context) error {
+	return c.act(ctx, "/v1/network/firewall/recheck", nil, nil, false)
 }
 
 // RevokeDevice unpairs a device.
