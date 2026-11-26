@@ -546,7 +546,7 @@ func (b *clientBackend) Reload(ctx context.Context) error { return b.acted(ctx, 
 // waiting on the hosts file, the hosts file is fixed here, asking for the
 // password again even after a refusal: the user asked for this start.
 func (b *clientBackend) StartProject(ctx context.Context, name string) error {
-	asked := askClock()
+	asked := askTime()
 	err := b.acted(ctx, b.c.StartProject(ctx, name))
 	if !b.waitsOnHosts(name) {
 		return err
