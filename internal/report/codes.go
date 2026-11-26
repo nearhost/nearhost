@@ -86,6 +86,8 @@ const (
 	CoreStopTimeout            Code = "core.stop-timeout"
 	CoreOutdated               Code = "core.outdated"
 	CoreNoReload               Code = "core.no-reload"
+	CoreInTerminal             Code = "core.in-terminal"
+	ProjectsNone               Code = "projects.none"
 	CoreLogUnavailable         Code = "core.log-unavailable"
 	CoreNoProjects             Code = "core.no-projects"
 	CoreUnknownProject         Code = "core.unknown-project"
@@ -340,6 +342,8 @@ var catalogRows = []catalogRow{
 	{CoreStopTimeout, Error, 504, "Nearhost was asked to stop and had not stopped in time."},
 	{CoreOutdated, Info, 0, "The running Nearhost is an older release than this copy, and runs it once restarted."},
 	{CoreNoReload, Info, 0, "The running Nearhost serves the projects it was started with and does not reload the config."},
+	{CoreInTerminal, Info, 0, "Nearhost is already running in a terminal, so nearhost -d leaves it there rather than start another in the background."},
+	{ProjectsNone, Info, 0, "There are no projects to list or serve yet."},
 	{CoreLogUnavailable, Warning, 0, "The core could not send its standard error to its log, so a crash may not be logged."},
 	{CoreNoProjects, Error, 404, "The config has no projects, so there is nothing to start."},
 	{CoreUnknownProject, Error, 404, "No project in the config has the name given."},

@@ -163,7 +163,8 @@ func printStatus(out io.Writer, st control.Status, keyed string, notes report.Si
 	}
 	fmt.Fprintln(w)
 	if len(st.Projects) == 0 {
-		fmt.Fprintln(w, "No projects are being served. Enable one in the config, or add one with `nearhost add <path>`.")
+		notes.Report(report.Notef(report.ProjectsNone, "No projects are being served.").
+			Step("Enable one in the config, or add one:", "nearhost add <path>"))
 	} else {
 		// The network address has a column only when a project has one.
 		networked := false
