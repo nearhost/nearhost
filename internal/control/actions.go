@@ -190,8 +190,8 @@ type actionErrorBody struct {
 // validAnswers are the answers a passthrough or document request takes.
 var validAnswers = map[string]bool{"yes": true, "no": true, "always": true, "close": true}
 
-// registerActions adds the action routes to mux.
-func (s *Server) registerActions(mux *http.ServeMux) {
+// registerActions adds the action routes to the server's mux.
+func (s *Server) registerActions() {
 	noContent := func(f func(r *http.Request) error) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if err := f(r); err != nil {
@@ -210,7 +210,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		return true
 	}
-	post := func(pattern string, h http.HandlerFunc) { mux.HandleFunc("POST "+pattern, h) }
+	post := func(pattern string, h http.HandlerFunc) { s.handle("POST "+pattern, h) }
 	b := s.b
 
 	post("/v1/projects/{name}/start", noContent(func(r *http.Request) error {
@@ -322,7 +322,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("GET /v1/captured/{id}", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/captured/{id}", func(w http.ResponseWriter, r *http.Request) {
 		ex, ok := b.Captured(r.PathValue("id"))
 		if !ok {
 			fail(w, http.StatusNotFound, report.Errorf(report.ControlNotFound, "that request is no longer kept"))
@@ -340,7 +340,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 			Status int `json:"status"`
 		}{status})
 	})
-	mux.HandleFunc("GET /v1/environment", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/environment", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), environmentTimeout)
 		defer cancel()
 		checks, err := b.Environment(ctx)
@@ -361,7 +361,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		reply(w, http.StatusCreated, info)
 	})
-	mux.HandleFunc("GET /v1/pair/{code}", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/pair/{code}", func(w http.ResponseWriter, r *http.Request) {
 		st, err := b.PairStatus(r.PathValue("code"))
 		if err != nil {
 			failAction(w, err)
@@ -369,7 +369,7 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		reply(w, http.StatusOK, st)
 	})
-	mux.HandleFunc("GET /v1/devices", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/devices", func(w http.ResponseWriter, r *http.Request) {
 		list, err := b.Devices()
 		if err != nil {
 			failAction(w, err)
@@ -380,13 +380,13 @@ func (s *Server) registerActions(mux *http.ServeMux) {
 		}
 		reply(w, http.StatusOK, list)
 	})
-	mux.HandleFunc("DELETE /v1/devices/{name}", noContent(func(r *http.Request) error {
+	s.handle("DELETE /v1/devices/{name}", noContent(func(r *http.Request) error {
 		return b.RevokeDevice(r.PathValue("name"))
 	}))
 	post("/v1/network/firewall/recheck", noContent(func(r *http.Request) error {
 		return b.RecheckFirewall()
 	}))
-	mux.HandleFunc("GET /v1/page", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/page", func(w http.ResponseWriter, r *http.Request) {
 		u, err := b.PageKeyURL()
 		if err != nil {
 			failAction(w, err)
