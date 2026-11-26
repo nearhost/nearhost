@@ -166,7 +166,7 @@ func tokenMatches(w http.ResponseWriter, r *http.Request) bool {
 // hostname.PageHost; a POST needs the page's own origin and the form token
 // too. What passes gets the console's headers, which h may add to.
 func serveConsole(h http.Handler, w http.ResponseWriter, r *http.Request) {
-	if !hasPageCookie(r) {
+	if !pageAuthorized(r) {
 		serveLocked(w, r)
 		return
 	}

@@ -778,6 +778,48 @@
       "summary": "A request to Nearhost's page was refused."
     },
     {
+      "code": "pair.code-invalid",
+      "level": "error",
+      "status": 400,
+      "summary": "The pairing code typed on a device is wrong, has been used or has expired.",
+      "steps": [
+        {
+          "text": "Get a new code on the machine Nearhost runs on:",
+          "command": "nearhost pair"
+        }
+      ]
+    },
+    {
+      "code": "pair.link-used",
+      "level": "error",
+      "status": 403,
+      "summary": "The link that signs a paired device in to a site has been used or has expired."
+    },
+    {
+      "code": "pair.bad-target",
+      "level": "error",
+      "status": 400,
+      "summary": "A device asked to be signed in to an address outside the network domain."
+    },
+    {
+      "code": "pair.too-many-tries",
+      "level": "error",
+      "status": 429,
+      "summary": "A device made too many wrong attempts to pair or sign in, so it must wait."
+    },
+    {
+      "code": "pair.needed",
+      "level": "error",
+      "status": 401,
+      "summary": "A site on the network domain was asked for by a device that is not paired."
+    },
+    {
+      "code": "pair.unavailable",
+      "level": "error",
+      "status": 503,
+      "summary": "A site on the network domain needs a paired device, and Nearhost's page, where devices pair, is not served."
+    },
+    {
       "code": "documents.missing",
       "level": "error",
       "status": 404,

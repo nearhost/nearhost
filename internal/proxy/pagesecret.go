@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/devices"
 	"github.com/nearhost/nearhost/internal/hostname"
 )
 
@@ -223,6 +223,24 @@ func secretMatches(got, secret string) bool {
 	return secret != "" && subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
 }
 
+// networkHost is the page's host on the network, nearhost.<domain>, as
+// the Home provisioned last holds it: "" while the core is not networked.
+var networkHost atomic.Pointer[string]
+
+// setNetworkHost sets networkHost, lower-cased.
+func setNetworkHost(host string) {
+	host = strings.ToLower(host)
+	networkHost.Store(&host)
+}
+
+// currentNetworkHost returns networkHost, "" when unset.
+func currentNetworkHost() string {
+	if h := networkHost.Load(); h != nil {
+		return *h
+	}
+	return ""
+}
+
 // atPageHost reports whether r is for Nearhost's page at its own host,
 // hostname.PageHost, with the port stripped and case ignored. The page
 // cookie is given and honoured there alone: a cookie is sent to every port
@@ -230,19 +248,30 @@ func secretMatches(got, secret string) bool {
 // server the user browses there. Cookies ignore ports at nearhost.localhost
 // too, so a server the user opens there on another port would receive the
 // cookie; SameSite=Strict keeps cross-site navigations from carrying it.
+// Never at the network host: the page secret can't be revoked, so only a
+// paired device's cookie counts there (see pairedDevice).
 func atPageHost(r *http.Request) bool {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	return strings.EqualFold(host, hostname.PageHost)
+	return strings.EqualFold(requestHost(r), hostname.PageHost)
 }
 
-// hasPageCookie reports whether r, a request at hostname.PageHost, carries
+// atNetworkHost reports whether r is for the page's host on the network,
+// nearhost.<domain>, while the core is networked.
+func atNetworkHost(r *http.Request) bool {
+	nh := currentNetworkHost()
+	return nh != "" && requestHost(r) == nh
+}
+
+// atPairingHost reports whether r is at a host where devices pair and
+// their cookie counts: the page's own host or its network host.
+func atPairingHost(r *http.Request) bool {
+	return atPageHost(r) || atNetworkHost(r)
+}
+
+// hasPageCookie reports whether r, a request at the page's host, carries
 // the page cookie with the right value. A request at any other host has no
 // page cookie, whatever it sends: one there could only have been set by
 // another server on that host. Every cookie of that name counts, as another
-// server on a port of hostname.PageHost may have set one of its own.
+// server on a port of the page's host may have set one of its own.
 func hasPageCookie(r *http.Request) bool {
 	if !atPageHost(r) {
 		return false
@@ -264,9 +293,35 @@ func hasPageCookie(r *http.Request) bool {
 	return ok
 }
 
+// pairedDevice returns the paired device whose cookie r carries, at the
+// page's host, while devices are set.
+func pairedDevice(r *http.Request) (devices.Device, bool) {
+	d := currentDevices()
+	if d == nil || !atPairingHost(r) {
+		return devices.Device{}, false
+	}
+	for _, c := range r.CookiesNamed(deviceCookie) {
+		if dev, ok := d.Device(c.Value); ok {
+			return dev, true
+		}
+	}
+	return devices.Device{}, false
+}
+
+// pageAuthorized reports whether r may see the page's console and
+// documents: it carries the page cookie at hostname.PageHost, or a paired
+// device's cookie at either page host.
+func pageAuthorized(r *http.Request) bool {
+	if hasPageCookie(r) {
+		return true
+	}
+	_, ok := pairedDevice(r)
+	return ok
+}
+
 // setPageCookie adds the page cookie to the response headers h for the
 // request r. It sets nothing for a request at a host other than
-// hostname.PageHost, or when the secret can't be read.
+// hostname.PageHost (see atPageHost), or when the secret can't be read.
 func setPageCookie(h http.Header, r *http.Request) {
 	if !atPageHost(r) {
 		return

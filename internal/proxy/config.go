@@ -418,6 +418,8 @@ func homeRoute(opts Options) map[string]any {
 	handler := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
 	if n := opts.network(); n != nil {
 		handler["network_host"] = networkPageHost(n)
+		handler["certificates"] = n.Certificates
+		handler["storage_root"] = opts.StorageRoot
 	}
 	return map[string]any{
 		"match": []any{map[string]any{
