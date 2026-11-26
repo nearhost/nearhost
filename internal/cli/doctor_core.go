@@ -130,6 +130,10 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 		return noUserManagerRow(err)
 	case err != nil:
 		return problem("service", levelWarn, report.DoctorNotChecked, "not checked: "+err.Error(), "run `nearhost doctor` again")
+	case active && !coreRunning:
+		// Windows' supervisor keeps the task running while it waits to
+		// start a core that stopped.
+		return problem("service", levelWarn, report.ServiceRestarting, "installed; it is starting Nearhost again after it stopped", "see why it stopped in core.log; if it does not come back, start it with nearhost -d")
 	case active:
 		return check{name: "service", detail: "installed and running"}
 	case !coreRunning:
