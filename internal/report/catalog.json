@@ -277,6 +277,16 @@
       "summary": "The running Nearhost serves the projects it was started with and does not reload the config."
     },
     {
+      "code": "core.in-terminal",
+      "level": "info",
+      "summary": "Nearhost is already running in a terminal, so nearhost -d leaves it there rather than start another in the background."
+    },
+    {
+      "code": "projects.none",
+      "level": "info",
+      "summary": "There are no projects to list or serve yet."
+    },
+    {
       "code": "core.log-unavailable",
       "level": "warning",
       "summary": "The core could not send its standard error to its log, so a crash may not be logged."

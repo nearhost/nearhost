@@ -194,11 +194,15 @@ func TestDetachAlreadyRunningInATerminal(t *testing.T) {
 	ui := fakeUI(t, true, new(bool))
 	ui.detach = b
 	stdout, stderr, code := runRootSplit(t, uiRoot(ui), "-d")
-	if code != 0 || stderr != "" {
+	if code != 0 {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "Nearhost is already running in a terminal (pid 98). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n"; stdout != want {
+	if want := "Nearhost is already running in a terminal (pid 98).\n"; stdout != want {
 		t.Errorf("stdout %q, want %q", stdout, want)
+	}
+	// The way out is a note's steps, each command on a line of its own.
+	if want := "Note: Nearhost stays in that terminal.\n\nTo run it in the background instead, stop it:\n\n  nearhost stop\n\nThen start it again:\n\n  nearhost -d\n"; stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 }
 

@@ -55,7 +55,7 @@ func TestLsKeepsTheNoProjectsTextForAMissingDefaultConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "No projects yet. Add one with `nearhost add <path>`.\n"; out != want {
+	if want := "Note: No projects yet.\n\nAdd one:\n\n  nearhost add <path>\n"; out != want {
 		t.Fatalf("ls printed %q, want %q", out, want)
 	}
 }
@@ -69,7 +69,7 @@ func TestLsKeepsTheNoProjectsTextForAnExistingEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "No projects yet. Add one with `nearhost add <path>`.\n"; out != want {
+	if want := "Note: No projects yet.\n\nAdd one:\n\n  nearhost add <path>\n"; out != want {
 		t.Fatalf("ls printed %q, want %q", out, want)
 	}
 }

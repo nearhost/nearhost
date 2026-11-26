@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/report"
 )
 
 func newLsCmd() *cobra.Command {
@@ -30,8 +31,9 @@ func newLsCmd() *cobra.Command {
 					_, err := fmt.Fprintln(out, msg)
 					return err
 				}
-				_, err := fmt.Fprintln(out, "No projects yet. Add one with `nearhost add <path>`.")
-				return err
+				sinkOf(cmd).Report(report.Notef(report.ProjectsNone, "No projects yet.").
+					Step("Add one:", "nearhost add <path>"))
+				return nil
 			}
 			tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(tw, "NAME\tSERVER\tALIAS\tSTATE\tROUTES")

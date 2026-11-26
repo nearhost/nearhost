@@ -154,7 +154,10 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 		fmt.Fprintf(out, "Nearhost is running in the background (pid %d). Stop it with nearhost stop.\n", info.PID)
 	case info.StartedBy == control.StartedForeground:
 		// `nearhost up`, or a daemon run by hand, in a terminal.
-		fmt.Fprintf(out, "Nearhost is already running in a terminal (pid %d). To run it in the background instead, stop it with `nearhost stop` and run `nearhost -d` again.\n", info.PID)
+		fmt.Fprintf(out, "Nearhost is already running in a terminal (pid %d).\n", info.PID)
+		sinkOf(cmd).Report(report.Notef(report.CoreInTerminal, "Nearhost stays in that terminal.").
+			Step("To run it in the background instead, stop it:", "nearhost stop").
+			Step("Then start it again:", "nearhost -d"))
 	default:
 		fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, printable(string(info.StartedBy)))
 	}

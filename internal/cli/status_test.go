@@ -103,10 +103,10 @@ func TestStatusSaysWhenItDoesNotReload(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	wantContains(t, out, "started by foreground", "\nNo projects are being served.")
-	// A note, not the output.
-	if want := "Note: Nearhost serves the projects it was started with and does not reload the config."; flat(stderr) != want || strings.Contains(out, "reload") {
-		t.Errorf("stderr %q, want %q", stderr, want)
+	wantContains(t, out, "started by foreground")
+	// Notes, not the output: no reload, then no projects with how to add one.
+	if want := "Note: Nearhost serves the projects it was started with and does not reload the config. Note: No projects are being served. Enable one in the config, or add one: nearhost add <path>"; flat(stderr) != want || strings.Contains(out, "reload") || strings.Contains(out, "No projects") {
+		t.Errorf("stderr %q, want %q", flat(stderr), want)
 	}
 }
 
@@ -278,14 +278,11 @@ func (f failingWriter) Write(b []byte) (int, error) {
 // A write that fails, as to a closed pipe, is printStatus's error wherever
 // it falls.
 func TestPrintStatusReturnsAFailedWrite(t *testing.T) {
-	noProjects := testStatus
-	noProjects.Projects = nil
 	for _, c := range []struct {
 		name string
 		st   control.Status
 		bad  string
 	}{
-		{"no projects", noProjects, "No projects"},
 		{"approvals", waitingStatus(), "Waiting"},
 		{"page", waitingStatus(), "Page:"},
 	} {
