@@ -545,6 +545,21 @@ func TestPairingNeedsANetworkHost(t *testing.T) {
 
 // The pair page says what is being paired, Nearhost on the machine named,
 // and fills in the design's default device name.
+// The pair form's response lets the browser send its own Origin with the
+// form's POST: under no-referrer Safari sends Origin: null, which the POST's
+// same-origin check refuses. The code in the path still goes to no other
+// site.
+func TestPairFormLetsTheBrowserSendOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	for _, path := range []string{"/pair", "/pair/ABCD2345"} {
+		w := serveNet(t, netHome(), netRequest("GET", path, nil))
+		if got := w.Header().Get("Referrer-Policy"); got != "same-origin" {
+			t.Errorf("GET %s: Referrer-Policy = %q, want same-origin", path, got)
+		}
+	}
+}
+
 func TestPairFormNamesTheMachine(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)

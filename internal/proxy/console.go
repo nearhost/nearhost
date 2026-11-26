@@ -218,7 +218,10 @@ func (h *Home) serveConsole(con http.Handler, w http.ResponseWriter, r *http.Req
 	hdr.Set("Content-Security-Policy", consoleCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Cache-Control", "no-store")
-	hdr.Set("Referrer-Policy", "no-referrer")
+	// The page's addresses go to no other site as a referrer. Not
+	// no-referrer: under it a browser sends Origin: null with the page's
+	// own form POSTs, which sameOrigin refuses.
+	hdr.Set("Referrer-Policy", "same-origin")
 	hdr.Set("Vary", "Cookie")
 	con.ServeHTTP(w, r)
 }

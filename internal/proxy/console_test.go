@@ -248,7 +248,10 @@ func TestConsoleHeaders(t *testing.T) {
 			"Content-Security-Policy": consoleCSP,
 			"X-Content-Type-Options":  "nosniff",
 			"Cache-Control":           "no-store",
-			"Referrer-Policy":         "no-referrer",
+			// same-origin, not no-referrer: under no-referrer a browser
+			// sends Origin: null with the page's own form POSTs, which
+			// sameOrigin refuses.
+			"Referrer-Policy":         "same-origin",
 			"Vary":                    "Cookie",
 		} {
 			if got := w.Header().Get(k); got != v {
