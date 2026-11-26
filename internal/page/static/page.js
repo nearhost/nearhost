@@ -11,9 +11,21 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 (function () {
   var main = document.querySelector("main");
   if (!main) return;
+  // The preview keeps its frame: nothing refreshes it. Back steps the
+  // joint session history, the frame's pages first. A frame from another
+  // origin gives up its location, so Reload loads the project's start again.
+  var frame = document.getElementById("preview-frame");
+  if (frame) {
+    var start = frame.getAttribute("src");
+    var back = document.getElementById("preview-back");
+    var reload = document.getElementById("preview-reload");
+    if (back) back.addEventListener("click", function () { history.back(); });
+    if (reload) reload.addEventListener("click", function () { frame.src = start; });
+    return;
+  }
   var busy = false, again = false;
   function refresh() {
-    if (main.querySelector("[data-stay]")) return;
+    if (main.hasAttribute("data-stay") || main.querySelector("[data-stay]")) return;
     if (busy) { again = true; return; }
     busy = true;
     fetch(location.pathname + location.search, {

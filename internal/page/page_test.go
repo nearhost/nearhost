@@ -272,8 +272,8 @@ func TestPageScript(t *testing.T) {
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/javascript" || !strings.Contains(body, "EventSource") {
 		t.Fatalf("GET /page.js: %d %s\n%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
-	if n := strings.Count(body, "\n"); n >= 60 {
-		t.Errorf("page.js has %d lines, want under 60", n)
+	if n := strings.Count(body, "\n"); n >= 80 {
+		t.Errorf("page.js has %d lines, want under 80", n)
 	}
 	if strings.Contains(body, "eval(") {
 		t.Error("page.js calls eval")
@@ -478,5 +478,95 @@ func TestStatusNamesTheAddressAsked(t *testing.T) {
 	}
 	if got := pageAt(t, c, "nearhost.localhost:6327"); !strings.Contains(got, "answers at nearhost.localhost:6327") {
 		t.Errorf("the local page should name nearhost.localhost:\n%s", got)
+	}
+}
+
+// previewCore serves "app" at a same-site network address and "solo" only
+// locally.
+func previewCore() *fakeCore {
+	c := newCore()
+	c.status.Network = &control.NetworkInfo{On: true, Listening: true, URL: "https://nearhost.lab.example.dev:6327"}
+	c.status.Projects = []control.ProjectInfo{
+		{Name: "app", State: "running", URL: "https://app.test", NetworkURL: "https://app.lab.example.dev:8443"},
+		{Name: "solo", State: "running", URL: "https://solo.test"},
+	}
+	return c
+}
+
+func previewAt(c Core, host, path string, header ...string) *http.Response {
+	r := httptest.NewRequest("GET", path, nil)
+	r.Host = host
+	for i := 0; i+1 < len(header); i += 2 {
+		r.Header.Set(header[i], header[i+1])
+	}
+	w := httptest.NewRecorder()
+	newPage(c).ServeHTTP(w, r)
+	return w.Result()
+}
+
+func TestPreviewFramesTheProject(t *testing.T) {
+	resp := previewAt(previewCore(), "nearhost.lab.example.dev:6327", "/preview/app")
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if got, want := resp.Header.Get("Content-Security-Policy"), proxy.ConsoleCSP+"; frame-src https://app.lab.example.dev:8443"; got != want {
+		t.Errorf("CSP %q, want %q", got, want)
+	}
+	body := bodyOf(t, resp)
+	for _, want := range []string{
+		`<iframe id="preview-frame" src="https://app.lab.example.dev:8443" referrerpolicy="origin" allow="fullscreen; clipboard-read; clipboard-write"`,
+		`<a href="https://app.lab.example.dev:8443" target="_blank" rel="noopener">Open</a>`,
+		`<a href="/">`,
+		`id="preview-back"`, `id="preview-reload"`,
+		`<link rel="manifest" href="/manifest.webmanifest">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "sandbox") {
+		t.Errorf("the frame must not be sandboxed:\n%s", body)
+	}
+}
+
+func TestPreviewStays(t *testing.T) {
+	c := previewCore()
+	body := bodyOf(t, previewAt(c, "nearhost.lab.example.dev:6327", "/preview/app"))
+	if !strings.Contains(body, `<main id="preview" data-stay>`) {
+		t.Errorf("main lacks data-stay:\n%s", body)
+	}
+	resp := previewAt(c, "nearhost.lab.example.dev:6327", "/preview/app", partHeader, "main")
+	if resp.Header.Get(partHeader) != "main" {
+		t.Errorf("not the main part")
+	}
+	if part := bodyOf(t, resp); !strings.Contains(part, "data-stay") {
+		t.Errorf("the main part lacks data-stay:\n%s", part)
+	}
+}
+
+func TestPreviewOtherSiteRedirects(t *testing.T) {
+	resp := previewAt(previewCore(), "nearhost.localhost:6327", "/preview/app")
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "https://app.test" {
+		t.Errorf("status %d, Location %q; want 303 to https://app.test", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestPreviewUnknown(t *testing.T) {
+	c := previewCore()
+	for name, path := range map[string]string{"unknown": "/preview/nope", "no network address": "/preview/solo"} {
+		resp := previewAt(c, "nearhost.lab.example.dev:6327", path, "Accept", "text/html")
+		body := bodyOf(t, resp)
+		if resp.StatusCode != 404 || !strings.Contains(body, string(report.ProxyNotFound)) {
+			t.Errorf("%s: status %d, body:\n%s", name, resp.StatusCode, body)
+		}
+	}
+}
+
+func TestPreviewScript(t *testing.T) {
+	js := string(pageJS)
+	for _, want := range []string{"preview-frame", "preview-back", "preview-reload", "history.back()"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("page.js lacks %q", want)
+		}
 	}
 }

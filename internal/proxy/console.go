@@ -15,6 +15,10 @@ import (
 	"github.com/nearhost/nearhost/internal/report/htmlview"
 )
 
+// ConsoleCSP is consoleCSP for the page, which adds to it for the views that
+// need more.
+const ConsoleCSP = consoleCSP
+
 // consoleCSP is the policy of every response of the console: the page's
 // own policy, plus its own scripts and event stream, and forms that post
 // back to it alone.
@@ -78,6 +82,10 @@ func CSRFToken() (string, error) {
 // approval or one project's change, a single path segment each.
 var consoleActionPath = regexp.MustCompile(`^/(approve|change)/[^/]+$`)
 
+// consolePreviewPath matches the preview view of one project, a single path
+// segment, which takes GET and HEAD only.
+var consolePreviewPath = regexp.MustCompile(`^/preview/[^/]+$`)
+
 // keyNext matches the next parameter of /?k=: the only places the keyed
 // address sends the browser on to, other than /.
 var keyNext = regexp.MustCompile(`^/(approve|change)/[^/?#]+$`)
@@ -88,7 +96,7 @@ func consoleRoute(path string) (ok, post bool) {
 	switch {
 	case consoleActionPath.MatchString(path):
 		return true, true
-	case path == "/events", path == "/page.js":
+	case path == "/events", path == "/page.js", consolePreviewPath.MatchString(path):
 		return true, false
 	}
 	return false, false
