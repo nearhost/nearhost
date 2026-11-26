@@ -52,7 +52,7 @@ Nearhost serves HTTPS on port 443 and redirects port 80, and a normal user canno
 
 ### On Windows
 
-Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. From 0.16.0 the binary is code signed, with ECS Software Consulting Ltd. as the publisher, so Smart App Control runs it. SmartScreen may still ask you to confirm the first run: choose More info, then Run anyway. Earlier releases are unsigned, and Smart App Control blocks them.
+Nearhost needs Windows 11 and Windows Terminal. It runs Microsoft's OpenSSH client (`ssh.exe`), so your `~/.ssh/config` applies. A key with a passphrase needs the `ssh-agent` service, which Windows leaves disabled by default; `nearhost doctor` checks it. From 0.16.0 the binary is code signed, with ECS Software Consulting Ltd. as the publisher, so Smart App Control runs it. A zip downloaded in a browser may still meet SmartScreen on its first run: choose More info, then Run anyway. Earlier releases are unsigned, and Smart App Control blocks them.
 
 ## Quick start
 
