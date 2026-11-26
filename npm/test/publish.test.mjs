@@ -159,6 +159,23 @@ test('next moves only to a newer version than next and latest', unix, () => {
   assert.equal(nextAfter('0.13.0', { latest: '0.13.0', next: '0.13.0' }), '0.13.0');
 });
 
+// A failed api publish must not leave the CLI's next behind: the CLI is
+// already on the registry. The run still fails, and api's own next stays put.
+test('a failed api publish still moves the CLI\'s next, then fails the run', unix, () => {
+  const r = run('api', 'npm error code E404\nnpm error 404 Not Found - PUT https://registry.npmjs.org/@nearhost%2fapi', { version: '0.17.0-beta.1' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /E404/);
+  assert.match(r.stdout, /^\+ cli$/m);
+  assert.match(r.stdout, /^dist-tag add @nearhost\/cli@0\.17\.0-beta\.1 next$/m);
+  assert.doesNotMatch(r.stdout, /dist-tag add @nearhost\/api/);
+});
+
+test('a failed CLI publish stops before any publish of api or move of next', unix, () => {
+  const r = run('cli', 'npm error code E403', { version: '0.17.0-beta.1' });
+  assert.notEqual(r.status, 0);
+  assert.doesNotMatch(r.stdout, /^\+ api$|dist-tag/m);
+});
+
 // @nearhost/api has its own tags, and the same forward-only rule applies to it.
 test('next of @nearhost/api moves forward only, on its own tags', unix, () => {
   const move = (version, apiDistTags) => {

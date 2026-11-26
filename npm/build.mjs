@@ -6,9 +6,10 @@
 //   node npm/build.mjs <version> [out dir]
 //
 // Each binary comes from the release's tarball, checked against its
-// checksums.txt. The api package's files come from this checkout (api/openapi.yaml,
-// api/ts/index.d.ts, api/ts/README.md), so run it on the release's tag. The packages land in the out dir, npm/dist by default,
-// ready for npm/publish.mjs.
+// checksums.txt. The api package's files come from this checkout
+// (api/openapi.yaml, api/ts/index.d.ts, api/ts/README.md), so run it on the
+// release's tag. The packages land in the out dir, npm/dist by default, ready
+// for npm/publish.mjs.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

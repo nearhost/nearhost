@@ -9,13 +9,18 @@
 //
 // A version with a prerelease part (0.16.0-beta.1) is published under the
 // `prerelease` tag, so it never becomes what `npm install` picks. Then, for
-// any version, the `next` tag of @nearhost/cli and of @nearhost/api moves to the highest of itself,
-// `latest` and this version, so `next` only ever moves forward: release runs
-// go in parallel and finish in any order, and a beta that finishes after its
-// release, or a rerun of an old release, must not move it back. Of the CLI
-// packages only the launcher is tagged: it pins its platform packages exactly. npm allows
-// dist-tag over trusted publishing once the package's trusted publisher has
-// "Allow npm dist-tag" on (npm 11.21.0 or later).
+// any version, the `next` tag of @nearhost/cli and of @nearhost/api moves to
+// the highest of itself, `latest` and this version, so `next` only ever moves
+// forward: release runs go in parallel and finish in any order, and a beta
+// that finishes after its release, or a rerun of an old release, must not
+// move it back. Of the CLI packages only the launcher is tagged: it pins its
+// platform packages exactly. npm allows dist-tag over trusted publishing once
+// the package's trusted publisher has "Allow npm dist-tag" on (npm 11.21.0 or
+// later).
+//
+// @nearhost/api is published last and does not hold the CLI back: if its
+// publish fails, @nearhost/cli's `next` still moves, @nearhost/api's does not,
+// and the run then exits with npm's status.
 //
 //   node npm/publish.mjs [out dir] [--dry-run] [-- extra npm publish flags]
 //
@@ -41,6 +46,7 @@ const dirs = readdirSync(out)
   .concat('cli', 'api')
   .map((d) => join(out, d));
 
+let apiFailed = 0;
 for (const dir of dirs) {
   const { name, version } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   const publish = [dir, '--access', 'public', ...(version.includes('-') ? ['--tag', 'prerelease'] : []), ...extra];
@@ -67,7 +73,8 @@ for (const dir of dirs) {
     console.log(`${name}@${version} is already with npm, which is still processing it; skipping`);
     continue;
   }
-  process.exit(res.status ?? 1);
+  if (dir !== join(out, 'api')) process.exit(res.status ?? 1);
+  apiFailed = res.status ?? 1;
 }
 
 // Compares two versions by SemVer precedence: below 0, 0 or above 0.
@@ -92,7 +99,7 @@ function parse(v) {
   return [core.split('.').map(Number), pre.length ? pre.join('-').split('.') : []];
 }
 
-for (const dir of ['cli', 'api']) {
+for (const dir of apiFailed ? ['cli'] : ['cli', 'api']) {
   const pkg = JSON.parse(readFileSync(join(out, dir, 'package.json'), 'utf8'));
   moveNext(pkg.name, pkg.version);
 }
@@ -114,3 +121,4 @@ function moveNext(name, version) {
   if (res.error) throw res.error;
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
+if (apiFailed) process.exit(apiFailed);
