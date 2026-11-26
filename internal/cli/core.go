@@ -225,8 +225,9 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		}
 		ops.devicesErr = err
 		pageDone := make(chan struct{})
+		machine, _ := os.Hostname() // "" when it can't be read: the page names none
 		proxy.SetConsole(page.New(page.Options{
-			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
+			Core: core, Machine: machine, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
 		}))
 		closePage = sync.OnceFunc(func() {
 			proxy.SetConsole(nil)

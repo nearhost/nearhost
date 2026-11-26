@@ -1,0 +1,17 @@
+{{define "content"}}
+  <h1>Paired devices</h1>
+  <p>Devices paired with Nearhost{{if .Machine}} on {{.Machine}}{{end}}. Revoking one signs it out of the page and every project at once.</p>
+  {{- if .Devices}}
+  <section class="status devices">
+    <ul>
+      {{- range .Devices}}
+      <li>{{.Name}} <span>{{if .Paired}}paired {{.Paired}}{{end}}{{if .LastSeen}}, last seen {{.LastSeen}}{{if .LastAddr}} from {{.LastAddr}}{{end}}{{else}}, not seen yet{{end}}.</span>
+        {{template "buttons" .Revoke}}</li>
+      {{- end}}
+    </ul>
+  </section>
+  {{- else}}
+  <p>No device is paired.</p>
+  {{- end}}
+  <p><a href="/">Back to Nearhost's page</a></p>
+{{end}}

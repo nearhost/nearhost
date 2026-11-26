@@ -36,6 +36,10 @@ type Core interface {
 	DeclineProposal(id, reason string)
 	AcceptChange(project, sha string) error
 	DeclineChange(project, sha string)
+	// Devices lists the devices paired with a networked core.
+	Devices() ([]control.DeviceInfo, error)
+	// RevokeDevice unpairs one, or returns control.ErrDeviceUnknown.
+	RevokeDevice(name string) error
 }
 
 // Options are what New serves the page from.
@@ -47,6 +51,9 @@ type Options struct {
 	// Trees lists the documents' trees, as / lists them without the page.
 	// nil lists none.
 	Trees func() []proxy.HomeTree
+	// Machine is this machine's name, which the devices view names; "" says
+	// nothing of it.
+	Machine string
 	// Now is the clock ages are told by; nil is time.Now.
 	Now func() time.Time
 	// Done, once closed, ends every event stream, so a page no longer set
@@ -72,7 +79,7 @@ var views = map[string]*template.Template{}
 
 func init() {
 	layout := template.Must(template.New("").ParseFS(templateFiles, "templates/layout.html"))
-	for _, name := range []string{"status", "approve", "change"} {
+	for _, name := range []string{"status", "approve", "change", "devices"} {
 		v := template.Must(template.Must(layout.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 		for _, part := range htmlview.Template().Templates() {
 			template.Must(v.AddParseTree(part.Name(), part.Tree))
@@ -90,8 +97,9 @@ type page struct {
 }
 
 // New returns the handler of the page's routes: GET and HEAD for /,
-// /approve/{id}, /change/{name}, /events and /page.js, and POST for
-// /approve/{id} and /change/{name}. It expects the gate in front of it.
+// /approve/{id}, /change/{name}, /preview/{name}, /devices, /events and
+// /page.js, and POST for /approve/{id}, /change/{name} and
+// /devices/{name}/revoke. It expects the gate in front of it.
 func New(o Options) http.Handler {
 	if o.Now == nil {
 		o.Now = time.Now
@@ -103,6 +111,8 @@ func New(o Options) http.Handler {
 	p.mux.HandleFunc("GET /change/{name}", p.change)
 	p.mux.HandleFunc("POST /change/{name}", p.answerChange)
 	p.mux.HandleFunc("GET /preview/{name}", p.preview)
+	p.mux.HandleFunc("GET /devices", p.devices)
+	p.mux.HandleFunc("POST /devices/{name}/revoke", p.revoke)
 	p.mux.HandleFunc("GET /events", p.events)
 	p.mux.HandleFunc("GET /page.js", script)
 	return p.mux
@@ -182,7 +192,10 @@ type statusView struct {
 	Address string
 	// AtNetwork is whether the page was asked at its network host, where
 	// projects come first.
-	AtNetwork    bool
+	AtNetwork bool
+	// Networked is whether the core serves to the network, so the page
+	// has paired devices to show.
+	Networked    bool
 	Servers      []serverRow
 	Projects     []projectRow
 	Passthroughs []passRow
@@ -235,6 +248,7 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 	}
 	netPage := networkOf(st)
 	v.AtNetwork = netPage.at(r)
+	v.Networked = st.Network != nil && st.Network.On
 	v.Address = "nearhost.localhost:" + strconv.Itoa(state.WebPort)
 	if v.AtNetwork {
 		v.Address = netPage.authority

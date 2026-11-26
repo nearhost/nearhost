@@ -8,6 +8,9 @@
     <a href="https://nearhost.dev">Website</a>
     <a href="https://nearhost.dev/docs/">Docs</a>
     <a href="https://github.com/nearhost/nearhost">GitHub</a>
+    {{- if .Networked}}
+    <a href="/devices">Paired devices</a>
+    {{- end}}
   </nav>
 {{if .AtNetwork}}{{template "projects" .}}{{end}}
 {{template "servers" .}}

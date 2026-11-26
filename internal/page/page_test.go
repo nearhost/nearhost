@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,11 @@ type fakeCore struct {
 	state  control.State
 	err    error
 	calls  []string
+	// devices are the paired devices; devicesErr is what listing them gives.
+	devices    []control.DeviceInfo
+	devicesErr error
+	// revokeErr, when set, is what revoking a device gives.
+	revokeErr error
 }
 
 func (f *fakeCore) Status() control.Status { return f.status }
@@ -81,6 +87,28 @@ func (f *fakeCore) AcceptChange(project, sha string) error {
 
 func (f *fakeCore) DeclineChange(project, sha string) {
 	f.record("DeclineChange " + project + " " + sha)
+}
+
+func (f *fakeCore) Devices() ([]control.DeviceInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]control.DeviceInfo(nil), f.devices...), f.devicesErr
+}
+
+func (f *fakeCore) RevokeDevice(name string) error {
+	f.record("RevokeDevice " + name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
+	for i, d := range f.devices {
+		if d.Name == name {
+			f.devices = append(f.devices[:i:i], f.devices[i+1:]...)
+			return nil
+		}
+	}
+	return control.ErrDeviceUnknown
 }
 
 // newCore is a core started an hour before now by the login service, with
@@ -568,5 +596,118 @@ func TestPreviewScript(t *testing.T) {
 		if !strings.Contains(js, want) {
 			t.Errorf("page.js lacks %q", want)
 		}
+	}
+}
+
+// devicesCore is a networked core with two paired devices.
+func devicesCore() *fakeCore {
+	c := newCore()
+	c.status.Network = &control.NetworkInfo{On: true, Listening: true, URL: "https://nearhost.lab.example.dev:6327"}
+	c.devices = []control.DeviceInfo{
+		{Name: "iPad", Paired: now.Add(-3 * 24 * time.Hour), LastSeen: now.Add(-5 * time.Minute), LastAddr: "100.79.1.1"},
+		{Name: "Sam's <phone>", Paired: now.Add(-2 * time.Hour)},
+	}
+	return c
+}
+
+func TestDevicesList(t *testing.T) {
+	c := devicesCore()
+	h := New(Options{Core: c, Machine: "leto", Now: func() time.Time { return now }})
+	resp := do(h, "GET", "/devices", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	body := bodyOf(t, resp)
+	for _, want := range []string{
+		"Devices paired with Nearhost on leto. Revoking one signs it out of the page and every project at once.",
+		"iPad", "paired 3 days ago", "last seen 5 min ago", "100.79.1.1",
+		"Sam&#39;s &lt;phone&gt;", "paired 2 hours ago",
+		`action="/devices/iPad/revoke"`,
+		`action="/devices/Sam%27s%20%3Cphone%3E/revoke"`,
+		`name="csrf" value="` + testToken + `"`,
+		`>Revoke</button>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if n := strings.Count(body, ">Revoke</button>"); n != 2 {
+		t.Errorf("%d Revoke buttons, want 2", n)
+	}
+	c.devices = nil
+	if body := bodyOf(t, do(h, "GET", "/devices", nil)); !strings.Contains(body, "No device is paired.") {
+		t.Errorf("an empty list should say so:\n%s", body)
+	}
+}
+
+func TestDevicesWithoutMachineName(t *testing.T) {
+	body := bodyOf(t, do(newPage(devicesCore()), "GET", "/devices", nil))
+	if !strings.Contains(body, "Devices paired with Nearhost. Revoking one") {
+		t.Errorf("copy without the machine name:\n%s", body)
+	}
+}
+
+func TestDevicesNotNetworked(t *testing.T) {
+	c := newCore()
+	resp := do(newPage(c), "GET", "/devices", nil, "Accept", "text/html")
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(bodyOf(t, resp), "proxy.not-found") {
+		t.Errorf("status %d; a core that is not networked has no devices view", resp.StatusCode)
+	}
+}
+
+func TestDevicesListFails(t *testing.T) {
+	c := devicesCore()
+	c.devicesErr = errors.New("disk on fire")
+	resp := do(newPage(c), "GET", "/devices", nil)
+	body := bodyOf(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(body, "disk on fire") {
+		t.Errorf("status %d:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestRevokeDevice(t *testing.T) {
+	c := devicesCore()
+	h := newPage(c)
+	resp := do(h, "POST", "/devices/iPad/revoke", url.Values{"csrf": {testToken}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/devices" {
+		t.Fatalf("status %d, Location %q; want 303 to /devices", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if got := c.called(); len(got) != 1 || got[0] != "RevokeDevice iPad" {
+		t.Errorf("calls %v", got)
+	}
+	// An escaped name reaches the core whole.
+	resp = do(h, "POST", "/devices/Sam%27s%20%3Cphone%3E/revoke", url.Values{})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("escaped name: status %d", resp.StatusCode)
+	}
+	resp = do(h, "POST", "/devices/iPad/revoke", url.Values{}, "Accept", "text/html")
+	body := bodyOf(t, resp)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "devices.unknown") {
+		t.Errorf("unknown name: status %d:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestRevokeDeviceFails(t *testing.T) {
+	c := devicesCore()
+	c.revokeErr = errors.New("cannot write devices.json")
+	resp := do(newPage(c), "POST", "/devices/iPad/revoke", url.Values{})
+	body := bodyOf(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(body, "cannot write devices.json") {
+		t.Errorf("status %d:\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestDevicesLinkOnlyWhenNetworked(t *testing.T) {
+	if body := pageAt(t, newCore(), "nearhost.localhost:6327"); strings.Contains(body, `href="/devices"`) {
+		t.Errorf("a core that is not networked links to devices:\n%s", body)
+	}
+	c := devicesCore()
+	c.status.Network.On = false
+	c.status.Network.Problem = "no token"
+	if body := pageAt(t, c, "nearhost.localhost:6327"); strings.Contains(body, `href="/devices"`) {
+		t.Errorf("a network that is off links to devices:\n%s", body)
+	}
+	if body := pageAt(t, devicesCore(), "nearhost.localhost:6327"); !strings.Contains(body, `<a href="/devices">Paired devices</a>`) {
+		t.Errorf("a networked core should link to devices:\n%s", body)
 	}
 }
