@@ -30,9 +30,9 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 48px 16px;
+  padding: max(48px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: var(--ground);
   color: var(--text);
   font-family: var(--body);
@@ -94,6 +94,11 @@ main a {
   text-decoration-thickness: 1px;
 }
 main a:hover { text-decoration: underline; }
+@media (min-width: 900px) { main { max-width: 48rem; } }
+.projects li { padding: 4px 0; }
+.projects .address { display: block; color: var(--muted); font-size: 15px; user-select: text; -webkit-user-select: text; }
+.projects .actions { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.projects .actions a, .waiting li a, .docs li a { display: inline-flex; align-items: center; min-height: 44px; }
 main a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .asks p:first-child { color: var(--text); }
 .answers { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 12px; }

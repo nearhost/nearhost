@@ -30,9 +30,9 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 48px 16px;
+  padding: max(48px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: var(--ground);
   color: var(--text);
   font-family: var(--body);
@@ -70,7 +70,10 @@ nav a, .docs a {
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
 }
-nav a:hover, .docs a:hover { text-decoration: underline; }
+nav a:hover, .docs a:hover, p a:hover { text-decoration: underline; }
+p a { color: var(--accent); font-weight: 500; text-decoration: none; text-underline-offset: 4px; }
+@media (min-width: 900px) { main { max-width: 48rem; } }
+nav a, .docs li a { display: inline-flex; align-items: center; min-height: 44px; }
 nav a:focus-visible, .docs a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 h2 { margin: 40px 0 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
 h2 + p { margin-top: 4px; font-size: 14px; }
@@ -97,6 +100,9 @@ footer {
   </div>
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
   <p>Nearhost is running on this machine. Your projects are served at their own names; this page answers at nearhost.localhost:{{.WebPort}}.</p>
+  {{- if .NotPaired}}
+  <p>This device isn't paired. <a href="/pair">Pair it</a> to see your projects.</p>
+  {{- end}}
   <nav aria-label="Nearhost links">
     <a href="https://nearhost.dev">Website</a>
     <a href="https://nearhost.dev/docs/">Docs</a>

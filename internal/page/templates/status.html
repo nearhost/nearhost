@@ -1,6 +1,6 @@
 {{define "content"}}
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
-  <p>{{if .Started}}Nearhost started {{.Started}}, by {{.StartedBy}}.{{else}}Nearhost was started by {{.StartedBy}}.{{end}} This page answers at nearhost.localhost:{{.WebPort}}.</p>
+  <p>{{if .Started}}Nearhost started {{.Started}}, by {{.StartedBy}}.{{else}}Nearhost was started by {{.StartedBy}}.{{end}} This page answers at {{.Address}}.</p>
   {{- if .Update}}
   <p>Nearhost {{.Update}} is available. Run nearhost update.</p>
   {{- end}}
@@ -9,6 +9,46 @@
     <a href="https://nearhost.dev/docs/">Docs</a>
     <a href="https://github.com/nearhost/nearhost">GitHub</a>
   </nav>
+{{if not .AtNetwork}}  <section class="status">
+    <h2>Servers</h2>
+    <ul>
+      {{- range .Servers}}
+      <li>{{.Name}} <span>is {{.Health}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}</li>
+      {{- end}}
+    </ul>
+  </section>
+  <section class="status projects">
+    <h2>Projects</h2>
+    {{- if .Projects}}
+    <ul>
+      {{- range .Projects}}
+      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}
+        {{- if .URL}}
+        <span class="address">{{.URL}}</span>
+        <span class="actions">{{if .Preview}}<a href="{{.Preview}}">Preview</a>{{end}}<a href="{{.URL}}" target="_blank" rel="noopener">Open</a></span>
+        {{- end}}</li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p>No project is served. Add one with nearhost add in its folder.</p>
+    {{- end}}
+  </section>
+{{else}}  <section class="status projects">
+    <h2>Projects</h2>
+    {{- if .Projects}}
+    <ul>
+      {{- range .Projects}}
+      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}
+        {{- if .URL}}
+        <span class="address">{{.URL}}</span>
+        <span class="actions">{{if .Preview}}<a href="{{.Preview}}">Preview</a>{{end}}<a href="{{.URL}}" target="_blank" rel="noopener">Open</a></span>
+        {{- end}}</li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p>No project is served. Add one with nearhost add in its folder.</p>
+    {{- end}}
+  </section>
   <section class="status">
     <h2>Servers</h2>
     <ul>
@@ -17,19 +57,7 @@
       {{- end}}
     </ul>
   </section>
-  <section class="status">
-    <h2>Projects</h2>
-    {{- if .Projects}}
-    <ul>
-      {{- range .Projects}}
-      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}{{if .URL}}<br><a href="{{.URL}}">{{.URL}}</a>{{end}}</li>
-      {{- end}}
-    </ul>
-    {{- else}}
-    <p>No project is served. Add one with nearhost add in its folder.</p>
-    {{- end}}
-  </section>
-  {{- if .Passthroughs}}
+{{end}}  {{- if .Passthroughs}}
   <section class="status">
     <h2>Passthroughs</h2>
     <ul>

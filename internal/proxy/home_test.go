@@ -162,3 +162,23 @@ func TestHomeListEscapes(t *testing.T) {
 		}
 	}
 }
+
+func TestHomeSaysNotPaired(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	h := netHome()
+	w := serveNet(t, h, netRequest("GET", "/", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "This device isn&#39;t paired") && !strings.Contains(body, "This device isn't paired") {
+		t.Errorf("an unpaired device should be told so:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/pair"`) {
+		t.Errorf("the notice should link to /pair:\n%s", body)
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "nearhost.localhost:7443"
+	r.RemoteAddr = "127.0.0.1:1"
+	if body := serveNet(t, netHome(), r).Body.String(); strings.Contains(body, "isn't paired") || strings.Contains(body, "isn&#39;t paired") {
+		t.Errorf("the local page should not say so:\n%s", body)
+	}
+}

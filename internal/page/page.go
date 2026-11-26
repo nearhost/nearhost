@@ -10,9 +10,11 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -22,6 +24,7 @@ import (
 	"github.com/nearhost/nearhost/internal/report/htmlview"
 	"github.com/nearhost/nearhost/internal/safetext"
 	"github.com/nearhost/nearhost/internal/tui"
+	"golang.org/x/net/publicsuffix"
 )
 
 // Core is what the page asks of the core.
@@ -167,10 +170,16 @@ func script(w http.ResponseWriter, r *http.Request) {
 // statusView is what / shows.
 type statusView struct {
 	base
-	Update       string // a newer release, without "v"; "" when none is known
-	Started      string // an age: "3 min ago"
-	StartedBy    string
-	WebPort      int
+	Update    string // a newer release, without "v"; "" when none is known
+	Started   string // an age: "3 min ago"
+	StartedBy string
+	WebPort   int
+	// Address is where the page was asked: host and port, as the intro
+	// names them.
+	Address string
+	// AtNetwork is whether the page was asked at its network host, where
+	// projects come first.
+	AtNetwork    bool
 	Servers      []serverRow
 	Projects     []projectRow
 	Passthroughs []passRow
@@ -185,9 +194,13 @@ type serverRow struct {
 	Problem *htmlview.Data
 }
 
+// projectRow is a project in the list. URL is the address for the host the
+// page was asked at; Preview is the page's own view of it, set only when URL
+// is same-site with that host.
 type projectRow struct {
 	Name, State, URL, Message string
 	Problem                   *htmlview.Data
+	Preview                   string
 }
 
 type passRow struct {
@@ -217,8 +230,17 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		}
 		v.Servers = append(v.Servers, row)
 	}
+	v.AtNetwork = atNetworkHost(r, st)
+	v.Address = "nearhost.localhost:" + strconv.Itoa(state.WebPort)
+	if v.AtNetwork {
+		v.Address = networkAuthority(st)
+	}
 	for _, pr := range st.Projects {
-		v.Projects = append(v.Projects, projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: pr.URL, Message: safetext.Line(pr.Message), Problem: problemData(pr.Problem)})
+		row := projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: addressFor(r, st, pr), Message: safetext.Line(pr.Message), Problem: problemData(pr.Problem)}
+		if row.URL != "" && sameSite(row.URL, r.Host) {
+			row.Preview = "/preview/" + url.PathEscape(pr.Name)
+		}
+		v.Projects = append(v.Projects, row)
 	}
 	for _, pt := range state.Passthroughs {
 		v.Passthroughs = append(v.Passthroughs, passRow{
@@ -243,6 +265,77 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		v.Trees = p.o.Trees()
 	}
 	render(w, r, "status", http.StatusOK, v)
+}
+
+// networkAuthority is the host and port of the page's network address.
+func networkAuthority(st control.Status) string {
+	if st.Network == nil {
+		return ""
+	}
+	u, err := url.Parse(st.Network.URL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// atNetworkHost reports whether r was asked at the page's network host.
+func atNetworkHost(r *http.Request, st control.Status) bool {
+	if st.Network == nil || st.Network.URL == "" {
+		return false
+	}
+	u, err := url.Parse(st.Network.URL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), hostOnly(r.Host))
+}
+
+// addressFor is the address of p to show for the host r was asked at: its
+// network address at the page's network host, and its local one everywhere
+// else. A project the core does not serve on the network has none there.
+func addressFor(r *http.Request, st control.Status, p control.ProjectInfo) string {
+	if atNetworkHost(r, st) {
+		return p.NetworkURL
+	}
+	return p.URL
+}
+
+// hostOnly is s as a host without its port: s may be a host, a host and
+// port, or an address with a scheme.
+func hostOnly(s string) string {
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil {
+			s = u.Host
+		}
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		s = h
+	}
+	return strings.ToLower(strings.Trim(s, "[]"))
+}
+
+// sameSite reports whether hosts a and b, with or without ports (or a
+// scheme), share a registrable domain, compared without regard to case.
+// Addresses and hosts with no registrable domain are the same site only when
+// they are the same host.
+func sameSite(a, b string) bool {
+	a, b = hostOnly(a), hostOnly(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if net.ParseIP(a) != nil || net.ParseIP(b) != nil {
+		return false
+	}
+	da, err := publicsuffix.EffectiveTLDPlusOne(a)
+	if err != nil {
+		return false
+	}
+	db, err := publicsuffix.EffectiveTLDPlusOne(b)
+	return err == nil && da == db
 }
 
 // problemData is m ready for the page; nil for no message.
