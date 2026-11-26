@@ -90,6 +90,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # Moving npm's `next` tag over trusted publishing, which publish.mjs
+      # does after a normal release, needs npm 11.21.0 or later.
+      - run: npm install -g npm@11.21.0
       - run: node npm/build.mjs "$TAG"
         env:
           TAG: ${{ github.event.release.tag_name }}
