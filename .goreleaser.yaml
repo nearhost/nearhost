@@ -70,9 +70,9 @@ sboms:
   - artifacts: archive
 
 # release-please writes the notes; keep them and only add the assets.
-# prerelease: auto marks a tag with a prerelease part (v1.0.0-rc.1) as a
+# prerelease: auto marks a tag with a prerelease part (v1.0.0-beta.1) as a
 # prerelease and never "latest" when GoReleaser updates the release, so the
-# prerelease that prerelease.yml created stays one.
+# beta that beta.yml created stays one.
 changelog:
   disable: true
 release:
