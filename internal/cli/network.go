@@ -38,7 +38,7 @@ func newNetworkCmd() *cobra.Command {
 		},
 	}
 	token.Flags().BoolVar(&clearToken, "clear", false, "remove the saved token")
-	cmd.AddCommand(token)
+	cmd.AddCommand(token, newNetworkFirewallCmd())
 	return cmd
 }
 

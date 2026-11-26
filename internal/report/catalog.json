@@ -854,6 +854,12 @@
       "summary": "The firewall does not let other devices reach Nearhost."
     },
     {
+      "code": "network.firewall-refused",
+      "level": "error",
+      "status": 400,
+      "summary": "The elevated firewall helper refused a program other than the one running, or its input or report file."
+    },
+    {
       "code": "network.cert",
       "level": "error",
       "status": 503,
