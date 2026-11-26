@@ -14,6 +14,11 @@ const (
 	superviseDelay  = 5 * time.Second
 	superviseBurst  = 5
 	superviseWindow = 60 * time.Second
+	// superviseStartGrace is how soon a stop after the task's start is a
+	// failure to start, which is reported, not restarted: within
+	// detachTimeout, so nearhost -d and install see the task stop and say
+	// why rather than "still starting".
+	superviseStartGrace = 10 * time.Second
 )
 
 // superviseDeps are supervise's seams.
@@ -31,18 +36,30 @@ type superviseDeps struct {
 // is a stop on purpose (nearhost stop, an update's restart, another core
 // holding the lock). A core that exits non-zero, is killed or cannot be
 // started is started again after superviseDelay, until superviseBurst starts
-// have happened within superviseWindow; then it says so and returns 1.
+// have happened within superviseWindow; then it says so and returns 1. The
+// first run stopping within superviseStartGrace is not restarted either: the
+// core failed to start (port 443 taken, say), which restarting does not mend,
+// and ending here lets whoever started the task report it at once.
 //
 // It is what Windows' Task Scheduler lacks: its restart on failure never
 // reruns a task whose program exits with an error, and conhost, which runs
 // the service's nearhost, always exits 0.
 func supervise(d superviseDeps) int {
 	var starts []time.Time
-	for {
-		starts = append(starts, d.now())
+	for first := true; ; first = false {
+		started := d.now()
+		starts = append(starts, started)
 		code, err := d.run()
 		if err == nil && code == 0 {
 			return 0
+		}
+		if first && d.now().Sub(started) < superviseStartGrace {
+			if err != nil {
+				d.note(fmt.Sprintf("The core could not be started (%v), so the service does not restart it.", err))
+			} else {
+				d.note(fmt.Sprintf("The core stopped as it started (exit status %d), so the service does not restart it.", code))
+			}
+			return 1
 		}
 		cutoff := d.now().Add(-superviseWindow)
 		recent := starts[:0]
