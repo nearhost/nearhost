@@ -103,6 +103,26 @@ func PageSecretPath() (string, error) {
 	return filepath.Join(d, "page-secret"), nil
 }
 
+// DevicesPath is the file of paired devices, which holds token hashes only.
+// It is in DataDir, mode 0600.
+func DevicesPath() (string, error) {
+	d, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "devices.json"), nil
+}
+
+// DNSTokenPath is the file holding the DNS provider token used to get the
+// network certificate. It is in DataDir, mode 0600, never in config.yaml.
+func DNSTokenPath() (string, error) {
+	d, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "dns-token"), nil
+}
+
 // caddyDirs are where Caddy's storage lives now, in DataDir, and where
 // Nearhost 0.7 and earlier kept it, in Dir.
 func caddyDirs() (current, old string, err error) {
