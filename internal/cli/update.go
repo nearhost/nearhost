@@ -353,18 +353,25 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) er
 		// "latest" never means a pre-release, so name the version.
 		m = m.Pinned(latest)
 	}
+	// The tap never gets a beta, so brew has no beta to install; a release
+	// it has, and --next then upgrades as plain update does.
+	betaOnBrew := next && m.Kind == update.Homebrew && update.IsPrerelease(latest)
 	if check {
 		// A notice, returned as the command's error with exit status 1,
 		// so a script sees a newer release.
-		return report.Notef(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind).
-			Step("Update it:", again).
-			ExitCode(1)
+		n := report.Notef(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind)
+		if betaOnBrew {
+			n = n.Step("Betas are not on Homebrew. Remove the Homebrew copy:", "brew uninstall --cask nearhost").
+				Step("Then install the beta with npm:", "npm install -g @nearhost/cli@next")
+		} else {
+			n = n.Step("Update it:", again)
+		}
+		return n.ExitCode(1)
 	}
 	fmt.Fprintf(out, "nearhost %s → %s is available. This copy was installed with %s.\n", current, latest, m.Kind)
 
 	switch {
-	case next && m.Kind == update.Homebrew:
-		// The tap never gets a beta, so brew has nothing to install.
+	case betaOnBrew:
 		return report.Errorf(report.UpdateNextHomebrew, "Betas are not published to Homebrew, so this copy cannot update to %s.", latest).
 			Step("Remove the Homebrew copy:", "brew uninstall --cask nearhost").
 			Step("Then install the beta with npm:", "npm install -g @nearhost/cli@next").

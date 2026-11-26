@@ -1402,7 +1402,7 @@ func TestUpdateNextCheckOnHomebrewReports(t *testing.T) {
 	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/opt/homebrew/Caskroom/nearhost/0.15.0/nearhost"}
 	out, err := runUpdate(t, f, "0.15.0", "", "--check", "--next")
 	m, ok := report.As(err)
-	if !ok || m.Code != report.UpdateAvailable || len(m.Fix) != 1 || m.Fix[0].Command != "nearhost update --next" || len(f.ran) != 0 {
+	if !ok || m.Code != report.UpdateAvailable || len(f.ran) != 0 {
 		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
 	}
 	if code := exitCode(err, io.Discard); code != 1 {
@@ -1447,5 +1447,26 @@ func TestUpdateWithoutNextNeverAsksTheBetaLine(t *testing.T) {
 	}
 	if args := f.ran[0].Args; args[len(args)-1] != "@nearhost/cli@latest" {
 		t.Fatalf("ran %v", args)
+	}
+}
+
+// When the newest version is a release, Homebrew has it: --next upgrades as
+// plain update does.
+func TestUpdateNextHomebrewWhenTheReleaseIsNewest(t *testing.T) {
+	f := &fakeUpdate{latest: "0.16.0", latestNext: "0.16.0", exe: "/opt/homebrew/Caskroom/nearhost/0.15.0/nearhost"}
+	_, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	if err != nil || len(f.ran) != 1 || !slices.Equal(f.ran[0].Args, []string{"brew", "upgrade", "--cask", "nearhost/tap/nearhost"}) {
+		t.Fatalf("err %v, ran %v; want brew upgrade", err, f.ran)
+	}
+}
+
+// On Homebrew, --check --next names a way to get the beta that works, not
+// the command that would refuse.
+func TestUpdateNextCheckOnHomebrewNamesAWayThatWorks(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/opt/homebrew/Caskroom/nearhost/0.15.0/nearhost"}
+	_, err := runUpdate(t, f, "0.15.0", "", "--check", "--next")
+	m, ok := report.As(err)
+	if !ok || len(m.Fix) == 0 || m.Fix[0].Command == "nearhost update --next" || !strings.Contains(m.Fix[len(m.Fix)-1].Command, "@nearhost/cli@next") {
+		t.Fatalf("err %v, fix %+v", err, m.Fix)
 	}
 }
