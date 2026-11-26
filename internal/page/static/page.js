@@ -7,6 +7,7 @@
 // user moves on, and the timed refresh waits while a form's button has the
 // focus.
 "use strict";
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
 (function () {
   var main = document.querySelector("main");
   if (!main) return;

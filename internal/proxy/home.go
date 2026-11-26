@@ -31,7 +31,7 @@ func pageHosts() []string {
 // homeCSP lets the page use its own inline styles and data: images and
 // nothing else, so it can never make a request that leaves the machine,
 // even if a later version of the page forgets.
-const homeCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const homeCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 //go:embed home/index.html
 var homeHTML string
@@ -70,6 +70,10 @@ type Home struct {
 
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte
+
+	// sw, offline and manifest are the shell's files that depend on the
+	// version and the machine, rendered in Provision (see serveShell).
+	sw, offline, manifest []byte
 }
 
 // CaddyModule implements caddy.Module.
@@ -89,7 +93,7 @@ func (h *Home) Provision(caddy.Context) error {
 		return err
 	}
 	h.page = page
-	return nil
+	return h.renderShell()
 }
 
 // render renders the page with trees listed under its links.
@@ -125,6 +129,9 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 // hostname.PageHost alone (see setPageCookie): at localhost, /?k= redirects
 // and sets nothing, / never lists, and the console's paths are locked.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	if h.serveShell(w, r) {
+		return nil
+	}
 	if isDocumentPath(r.URL.Path) {
 		// From the network, a document link alone is not enough: the
 		// browser must be a paired device's. Nor from a client off

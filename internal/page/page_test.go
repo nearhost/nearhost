@@ -385,3 +385,15 @@ func TestStatusPageShowsProblemSteps(t *testing.T) {
 		t.Errorf("the problem's text is not escaped:\n%s", body)
 	}
 }
+
+func TestHeadTags(t *testing.T) {
+	body := bodyOf(t, do(newPage(newCore()), "GET", "/", nil))
+	for _, want := range []string{
+		`rel="manifest"`, `rel="apple-touch-icon"`, "viewport-fit=cover",
+		`name="theme-color" content="#0F1210"`, `name="apple-mobile-web-app-title" content="Nearhost"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+}
