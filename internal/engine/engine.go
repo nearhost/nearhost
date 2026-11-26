@@ -607,7 +607,7 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	e.applyMu.Lock()
 	// The network options follow the page: without it the core does not
 	// listen on the network.
-	_, _ = e.updateNetwork()
+	_, _, _ = e.updateNetwork()
 	err = e.redactErr(e.proxy.Apply(nil))
 	e.applyMu.Unlock()
 	if err != nil {

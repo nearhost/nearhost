@@ -157,6 +157,9 @@ type NetworkOptions struct {
 	// address and admit Allow. Without it only the page host and the
 	// certificates change, as on Windows until the firewall rule exists.
 	Listen bool
+	// Machine is this machine's name, which the pair page shows so the
+	// person pairing knows which Nearhost it is.
+	Machine string
 }
 
 // networkPageHost is the page's host on the network: nearhost.<domain>.
@@ -406,29 +409,45 @@ func viaReplace(version string) map[string]any {
 	}}}
 }
 
-// homeRoute is the web server's route serving Nearhost's own page at
-// pageHosts to loopback clients. It has no tag: the page is no project's. A
-// networked core also serves it at networkPageHost, and, while it listens on
-// the network, to the allowed clients.
-func homeRoute(opts Options) map[string]any {
+// pageRoutes are the web server's routes serving Nearhost's own page. They
+// have no tag: the page is no project's. The first serves it at pageHosts
+// to loopback clients alone, networked or not: a LAN client that names
+// nearhost.localhost in its SNI and Host must never reach the page there,
+// where documents need no device. A networked core adds a second serving it
+// at networkPageHost to pageRanges: loopback and, while it listens, the
+// allowed clients.
+func pageRoutes(opts Options) []any {
 	version := opts.Version
 	if version == "" {
 		version = "dev"
 	}
-	handler := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
+	handler := func() map[string]any {
+		h := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
+		if n := opts.network(); n != nil {
+			h["network_host"] = networkPageHost(n)
+			h["certificates"] = n.Certificates
+			h["storage_root"] = opts.StorageRoot
+			if n.Machine != "" {
+				h["machine"] = n.Machine
+			}
+		}
+		return h
+	}
+	route := func(hosts, ranges []string) map[string]any {
+		return map[string]any{
+			"match": []any{map[string]any{
+				"host":      hosts,
+				"remote_ip": map[string]any{"ranges": ranges},
+			}},
+			"handle":   []any{handler()},
+			"terminal": true,
+		}
+	}
+	routes := []any{route(pageHosts(), slices.Clone(loopbackRanges))}
 	if n := opts.network(); n != nil {
-		handler["network_host"] = networkPageHost(n)
-		handler["certificates"] = n.Certificates
-		handler["storage_root"] = opts.StorageRoot
+		routes = append(routes, route([]string{networkPageHost(n)}, pageRanges(opts)))
 	}
-	return map[string]any{
-		"match": []any{map[string]any{
-			"host":      webHosts(opts),
-			"remote_ip": map[string]any{"ranges": pageRanges(opts)},
-		}},
-		"handle":   []any{handler},
-		"terminal": true,
-	}
+	return routes
 }
 
 // pageAddrs is netbind.PageAddrs; tests stand in a machine without the IPv6
@@ -470,16 +489,17 @@ func webAddrs(opts Options) []string {
 // The https server never serves the page: localhost there is a project's,
 // or is not served. It has no HTTP/3, so it needs no UDP port, and no
 // redirects of its own. A networked core that listens serves it on every
-// address to loopback and the allowed clients (see homeRoute).
+// address, and its network host to loopback and the allowed clients (see
+// pageRoutes).
 func webServer(opts Options) map[string]any {
 	return map[string]any{
 		"listen": listenAddrs(webAddrs(opts)),
 		"tls_connection_policies": []any{map[string]any{
 			"match": map[string]any{"remote_ip": map[string]any{"ranges": pageRanges(opts)}},
 		}},
-		"routes": []any{homeRoute(opts), map[string]any{
+		"routes": append(pageRoutes(opts), map[string]any{
 			"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
-		}},
+		}),
 		"automatic_https": map[string]any{"disable_redirects": true},
 		"protocols":       []string{"h1", "h2"},
 	}

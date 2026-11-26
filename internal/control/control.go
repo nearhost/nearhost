@@ -127,6 +127,10 @@ type NetworkInfo struct {
 	Certificates string `json:"certificates"`
 	// Problem is why the core serves less than the config asks, or "".
 	Problem string `json:"problem,omitempty"`
+	// ProblemKind is which problem it is: "no-page", "no-token",
+	// "bad-token", "no-firewall" or "apply-failed"; "" for none, or from a
+	// core that does not say.
+	ProblemKind string `json:"problem_kind,omitempty"`
 }
 
 // ApprovalInfo is one request that waits for an answer, as status lists it.

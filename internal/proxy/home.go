@@ -65,6 +65,8 @@ type Home struct {
 	Certificates string `json:"certificates,omitempty"`
 	// StorageRoot is Caddy's storage directory, which holds the local CA.
 	StorageRoot string `json:"storage_root,omitempty"`
+	// Machine is this machine's name, shown on the pair page.
+	Machine string `json:"machine,omitempty"`
 
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte
@@ -82,7 +84,6 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 // depends only on the version and the web port, so it is rendered once per
 // config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
-	setNetworkHost(h.NetworkHost)
 	page, err := h.render(nil)
 	if err != nil {
 		return err
@@ -126,9 +127,10 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if isDocumentPath(r.URL.Path) {
 		// From the network, a document link alone is not enough: the
-		// browser must be a paired device's.
-		if atNetworkHost(r) {
-			if _, ok := pairedDevice(r); !ok {
+		// browser must be a paired device's. Nor from a client off
+		// loopback at the local hosts, where no device cookie counts.
+		if h.atNetworkHost(r) || !loopbackClient(r) {
+			if _, ok := h.pairedDevice(r); !ok {
 				serveLocked(w, r)
 				return nil
 			}
@@ -147,7 +149,7 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		case !ok || con == nil:
 			refuse(w, r, report.ProxyNotFound, http.StatusNotFound)
 		case r.Method == http.MethodGet || r.Method == http.MethodHead || (post && r.Method == http.MethodPost):
-			serveConsole(con, w, r)
+			h.serveConsole(con, w, r)
 		default:
 			if post {
 				w.Header().Set("Allow", "GET, HEAD, POST")
@@ -178,12 +180,12 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	}
 	// With the cookie, / is the console's when one is set; without, it is
 	// the page as it always was, which shows nothing of the console.
-	if con != nil && pageAuthorized(r) {
-		serveConsole(con, w, r)
+	if con != nil && h.pageAuthorized(r) {
+		h.serveConsole(con, w, r)
 		return nil
 	}
 	page := h.page
-	if pageAuthorized(r) {
+	if h.pageAuthorized(r) {
 		if trees := homeTrees(); len(trees) > 0 {
 			var err error
 			if page, err = h.render(trees); err != nil {

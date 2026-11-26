@@ -104,14 +104,24 @@ func runRevoke(cmd *cobra.Command, dial func() (devicesAPI, error), name string)
 	return err
 }
 
-// revokeOffline edits devices.json when no core runs to do it. Revoking
-// needs no cookie key, so the store gets a fixed one that signs nothing.
+// revokeOffline edits devices.json when no core runs to do it.
 func revokeOffline(name string) error {
-	path, err := config.DevicesPath()
+	store, err := offlineDevices()
 	if err != nil {
 		return err
 	}
-	return devices.Open(path, []byte(strings.Repeat("-", 32))).Revoke(name)
+	return store.Revoke(name)
+}
+
+// offlineDevices is devices.json opened to list or revoke devices, not to
+// sign: that needs no cookie key, so the store gets a fixed one that signs
+// nothing.
+func offlineDevices() (*devices.Store, error) {
+	path, err := config.DevicesPath()
+	if err != nil {
+		return nil, err
+	}
+	return devices.Open(path, []byte(strings.Repeat("-", 32))), nil
 }
 
 // deviceAgo says when t was, to the day for an old time.

@@ -33,7 +33,6 @@ func netHome() *Home {
 // serveNet provisions h and sends it r.
 func serveNet(t *testing.T, h *Home, r *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
-	t.Cleanup(func() { setNetworkHost("") })
 	if err := h.Provision(caddy.Context{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -403,5 +402,145 @@ func TestNetworkHostNeverGivesOrHonoursPageSecret(t *testing.T) {
 	// At nearhost.localhost the page secret works as before.
 	if w := serveNet(t, netHome(), withCookie("/approve/abc", secret)); w.Code != http.StatusOK {
 		t.Errorf("page secret at the page host: %d, want 200", w.Code)
+	}
+}
+
+// lanAtPageHost is a request at nearhost.localhost from a LAN client, as an
+// unpaired device could send by naming that host in its SNI and Host.
+func lanAtPageHost(method, target string) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	r.Host = "nearhost.localhost:7443"
+	r.RemoteAddr = "100.79.1.1:1"
+	return r
+}
+
+// A client that is not loopback gets no document, no page cookie and no
+// console at nearhost.localhost or localhost, networked or not: the page
+// secret is for this machine's browsers alone.
+func TestPageHostRefusesClientsOffLoopback(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeDevices(t)
+	fake := setFakeConsole(t)
+	docs := 0
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		docs++
+		w.Write([]byte("doc"))
+	}), nil)
+	for name, h := range map[string]func() *Home{
+		"networked": netHome,
+		"local":     func() *Home { return &Home{Version: "1.2.3", WebPort: 7443} },
+	} {
+		for _, host := range []string{"nearhost.localhost:7443", "localhost:7443"} {
+			r := lanAtPageHost("GET", "/d/abc123/x")
+			r.Host = host
+			w := serveNet(t, h(), r)
+			if w.Code == http.StatusOK || len(w.Header().Values("Set-Cookie")) != 0 {
+				t.Errorf("%s %s /d/: %d, Set-Cookie %q, want no document and no cookie", name, host, w.Code, w.Header().Values("Set-Cookie"))
+			}
+		}
+		w := serveNet(t, h(), lanAtPageHost("GET", "/?k="+secret))
+		if sc := w.Header().Values("Set-Cookie"); len(sc) != 0 {
+			t.Errorf("%s /?k= from the LAN set %q", name, sc)
+		}
+		r := lanAtPageHost("GET", "/approve/abc")
+		r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
+		if w := serveNet(t, h(), r); w.Code != http.StatusForbidden {
+			t.Errorf("%s page cookie from the LAN at /approve/abc: %d, want 403", name, w.Code)
+		}
+	}
+	if docs != 0 {
+		t.Errorf("%d documents served off loopback", docs)
+	}
+	if len(fake.called()) != 0 {
+		t.Errorf("console calls %v", fake.called())
+	}
+}
+
+// Each page decides by its own network host, not the one provisioned last:
+// a config that failed to load leaves the old page serving while a newer
+// Home was provisioned for another domain.
+func TestHomeDecidesByItsOwnNetworkHost(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	t.Cleanup(func() { SetDocuments(nil, nil) })
+	SetDocuments(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("doc"))
+	}), nil)
+	old := &Home{Version: "1.2.3", WebPort: 7443, NetworkHost: "nearhost.old.example.dev"}
+	newer := &Home{Version: "1.2.3", WebPort: 7443, NetworkHost: "nearhost.new.example.dev"}
+	for _, h := range []*Home{old, newer} {
+		if err := h.Provision(caddy.Context{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serve := func(h *Home, r *http.Request) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		if err := h.ServeHTTP(w, r, nil); err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	at := func(host, method, target string) *http.Request {
+		r := httptest.NewRequest(method, target, nil)
+		r.Host = host + ":7443"
+		r.RemoteAddr = "127.0.0.1:1"
+		return r
+	}
+	for _, c := range []struct {
+		h    *Home
+		host string
+	}{{old, "nearhost.old.example.dev"}, {newer, "nearhost.new.example.dev"}} {
+		// A document at the page's network host needs a device, even from
+		// this machine.
+		if w := serve(c.h, at(c.host, "GET", "/d/abc123/x")); w.Code == http.StatusOK {
+			t.Errorf("%s: a document without a device: %d", c.host, w.Code)
+		}
+		// Pairing answers at its own network host.
+		if w := serve(c.h, at(c.host, "GET", "/pair")); w.Code != http.StatusOK {
+			t.Errorf("%s: /pair %d, want 200", c.host, w.Code)
+		}
+		// /auth signs in to sites under its own domain.
+		domain := strings.TrimPrefix(c.host, "nearhost.")
+		r := withDevice(at(c.host, "GET", "/auth?"+url.Values{"to": {"https://app." + domain + "/"}}.Encode()), "good-token")
+		if w := serve(c.h, r); w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "https://app."+domain+"/.nearhost/auth?t=") {
+			t.Errorf("%s: /auth %d %q", c.host, w.Code, w.Header().Get("Location"))
+		}
+	}
+}
+
+// A page with no network host serves none of pairing's paths, even with
+// devices set: a core that is not networked looks as it always did.
+func TestPairingNeedsANetworkHost(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	for _, path := range []string{"/pair", "/pair/ABCD2345", "/pair.js", "/auth?to=https%3A%2F%2Fapp.lab.example.dev%2F", "/profile.mobileconfig"} {
+		h := &Home{Version: "1.2.3", WebPort: 7443, Certificates: "ca"}
+		w := serveNet(t, h, pageRequest("GET", path))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s with no network host: %d, want 404", path, w.Code)
+		}
+	}
+}
+
+// The pair page says what is being paired, Nearhost on the machine named,
+// and fills in the design's default device name.
+func TestPairFormNamesTheMachine(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	h := netHome()
+	h.Machine = "leto<b>"
+	for _, path := range []string{"/pair", "/pair/ABCD2345"} {
+		body := serveNet(t, h, netRequest("GET", path, nil)).Body.String()
+		for _, want := range []string{"Nearhost on <strong>leto&lt;b&gt;</strong>", `name="name" maxlength="64" value="iPad"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s lacks %q", path, want)
+			}
+		}
+	}
+	// A bad code's form says it too.
+	body := serveNet(t, h, pairPost(url.Values{"code": {"WRONG234"}, "name": {"iPad"}})).Body.String()
+	if !strings.Contains(body, "Nearhost on <strong>leto&lt;b&gt;</strong>") {
+		t.Errorf("the bad code's form does not name the machine:\n%s", body)
 	}
 }

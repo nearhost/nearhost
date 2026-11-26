@@ -866,6 +866,18 @@
       "summary": "The certificate for Nearhost's page on the network is missing or not the one the config asks for."
     },
     {
+      "code": "network.no-page",
+      "level": "error",
+      "status": 503,
+      "summary": "Networked mode needs Nearhost's page, where devices pair, and the page is not served."
+    },
+    {
+      "code": "network.not-listening",
+      "level": "error",
+      "status": 503,
+      "summary": "Networked mode is on, but Nearhost does not serve to the network yet, so no device could reach it."
+    },
+    {
       "code": "devices.unknown",
       "level": "error",
       "status": 404,

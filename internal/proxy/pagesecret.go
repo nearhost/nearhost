@@ -225,24 +225,6 @@ func secretMatches(got, secret string) bool {
 	return secret != "" && subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
 }
 
-// networkHost is the page's host on the network, nearhost.<domain>, as
-// the Home provisioned last holds it: "" while the core is not networked.
-var networkHost atomic.Pointer[string]
-
-// setNetworkHost sets networkHost, lower-cased.
-func setNetworkHost(host string) {
-	host = strings.ToLower(host)
-	networkHost.Store(&host)
-}
-
-// currentNetworkHost returns networkHost, "" when unset.
-func currentNetworkHost() string {
-	if h := networkHost.Load(); h != nil {
-		return *h
-	}
-	return ""
-}
-
 // atPageHost reports whether r is for Nearhost's page at its own host,
 // hostname.PageHost, with the port stripped and case ignored. The page
 // cookie is given and honoured there alone: a cookie is sent to every port
@@ -251,22 +233,33 @@ func currentNetworkHost() string {
 // too, so a server the user opens there on another port would receive the
 // cookie; SameSite=Strict keeps cross-site navigations from carrying it.
 // Never at the network host: the page secret can't be revoked, so only a
-// paired device's cookie counts there (see pairedDevice).
+// paired device's cookie counts there (see pairedDevice). And never for a
+// client that is not loopback, whatever host it names: a LAN client can
+// send nearhost.localhost in its SNI and Host, but only this machine's
+// browsers reach that host honestly.
 func atPageHost(r *http.Request) bool {
-	return strings.EqualFold(requestHost(r), hostname.PageHost)
+	return strings.EqualFold(requestHost(r), hostname.PageHost) && loopbackClient(r)
 }
 
-// atNetworkHost reports whether r is for the page's host on the network,
-// nearhost.<domain>, while the core is networked.
-func atNetworkHost(r *http.Request) bool {
-	nh := currentNetworkHost()
-	return nh != "" && requestHost(r) == nh
+// loopbackClient reports whether r's client address, as Caddy saw the
+// connection, is a loopback address.
+func loopbackClient(r *http.Request) bool {
+	a, ok := clientAddr(r)
+	return ok && a.IsLoopback()
+}
+
+// atNetworkHost reports whether r is for this page's host on the network,
+// h.NetworkHost, while the core is networked. Each page decides by its own:
+// after a config fails to load, the old page still serves while a newer one
+// was provisioned for another domain.
+func (h *Home) atNetworkHost(r *http.Request) bool {
+	return h.NetworkHost != "" && requestHost(r) == strings.ToLower(h.NetworkHost)
 }
 
 // atPairingHost reports whether r is at a host where devices pair and
 // their cookie counts: the page's own host or its network host.
-func atPairingHost(r *http.Request) bool {
-	return atPageHost(r) || atNetworkHost(r)
+func (h *Home) atPairingHost(r *http.Request) bool {
+	return atPageHost(r) || h.atNetworkHost(r)
 }
 
 // hasPageCookie reports whether r, a request at the page's host, carries
@@ -297,9 +290,9 @@ func hasPageCookie(r *http.Request) bool {
 
 // pairedDevice returns the paired device whose cookie r carries, at the
 // page's host, while devices are set.
-func pairedDevice(r *http.Request) (devices.Device, bool) {
+func (h *Home) pairedDevice(r *http.Request) (devices.Device, bool) {
 	d := currentDevices()
-	if d == nil || !atPairingHost(r) {
+	if d == nil || !h.atPairingHost(r) {
 		return devices.Device{}, false
 	}
 	for _, c := range r.CookiesNamed(deviceCookie) {
@@ -313,11 +306,11 @@ func pairedDevice(r *http.Request) (devices.Device, bool) {
 // pageAuthorized reports whether r may see the page's console and
 // documents: it carries the page cookie at hostname.PageHost, or a paired
 // device's cookie at either page host.
-func pageAuthorized(r *http.Request) bool {
+func (h *Home) pageAuthorized(r *http.Request) bool {
 	if hasPageCookie(r) {
 		return true
 	}
-	_, ok := pairedDevice(r)
+	_, ok := h.pairedDevice(r)
 	return ok
 }
 

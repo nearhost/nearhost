@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -30,9 +31,33 @@ type NetworkState struct {
 	Certificates string
 	// Problem is why the core serves less than the config asks: "the page
 	// isn't served", "no DNS token", "DNS token looks wrong" or "waiting
-	// for the firewall rule". Empty when nothing is wrong.
+	// for the firewall rule", or why the last change couldn't be applied.
+	// Empty when nothing is wrong.
 	Problem string
+	// ProblemKind says which of those Problem is, for a caller that acts
+	// on it; empty when nothing is wrong.
+	ProblemKind NetworkProblem
 }
+
+// NetworkProblem is the kind of a NetworkState's problem.
+type NetworkProblem string
+
+// The kinds of NetworkState's problem.
+const (
+	// NetworkNoPage is a networked core whose page isn't served.
+	NetworkNoPage NetworkProblem = "no-page"
+	// NetworkNoToken is ACME with no DNS token.
+	NetworkNoToken NetworkProblem = "no-token"
+	// NetworkBadToken is ACME with a DNS token of the wrong shape.
+	NetworkBadToken NetworkProblem = "bad-token"
+	// NetworkNoFirewall is waiting for the Windows firewall rule.
+	NetworkNoFirewall NetworkProblem = "no-firewall"
+	// NetworkApplyFailed is a change the proxy couldn't load.
+	NetworkApplyFailed NetworkProblem = "apply-failed"
+)
+
+// machineName is os.Hostname; tests stand in a name.
+var machineName = os.Hostname
 
 // The problems of NetworkState.
 const (
@@ -84,10 +109,17 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 		Allow:        append([]string(nil), n.AllowRanges()...),
 		Listen:       true,
 	}
-	var problems []string
+	if name, err := machineName(); err == nil {
+		opts.Machine = name
+	}
+	type problem struct {
+		text string
+		kind NetworkProblem
+	}
+	var problems []problem
 	if webPort == 0 {
 		opts.Listen = false
-		problems = append(problems, problemNoPage)
+		problems = append(problems, problem{problemNoPage, NetworkNoPage})
 	}
 	if opts.Certificates == "acme" {
 		token, err := "", errors.New("no DNS token option")
@@ -97,48 +129,49 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 		switch {
 		case err != nil || token == "":
 			opts.Certificates = "ca"
-			problems = append(problems, problemNoToken)
+			problems = append(problems, problem{problemNoToken, NetworkNoToken})
 		case !plausibleToken.MatchString(token):
 			opts.Certificates = "ca"
-			problems = append(problems, problemBadToken)
+			problems = append(problems, problem{problemBadToken, NetworkBadToken})
 		default:
 			opts.DNSToken = token
 		}
 	}
 	if e.opts.Firewall != nil && !e.opts.Firewall() {
 		opts.Listen = false
-		problems = append(problems, problemNoFirewall)
+		problems = append(problems, problem{problemNoFirewall, NetworkNoFirewall})
 	}
 	state := NetworkState{On: true, Certificates: opts.Certificates}
 	if webPort != 0 {
 		state.URL = networkURL(n.Domain, webPort)
 	}
 	if len(problems) > 0 {
-		state.Problem = problems[0]
+		state.Problem, state.ProblemKind = problems[0].text, problems[0].kind
 	}
 	return opts, state
 }
 
 // updateNetwork works out the network options for the engine's config and
 // page as they are now, and gives them to the proxy when they changed,
-// which it reports. They take effect at the proxy's next apply. The caller
+// which it reports, with the options and state it had before. They take
+// effect at the proxy's next apply. The caller
 // holds lifeMu, so the config does not change meanwhile, and applyMu, so
 // no site is applied between the change and the caller's own apply.
-func (e *Engine) updateNetwork() (prev *proxy.NetworkOptions, changed bool) {
+func (e *Engine) updateNetwork() (prev *proxy.NetworkOptions, prevState NetworkState, changed bool) {
 	e.mu.Lock()
 	cfg, port := e.cfg, e.webPort
 	e.mu.Unlock()
 	opts, state := e.networkFor(cfg, port)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.netState = state
+	prevState, e.netState = e.netState, state
 	if reflect.DeepEqual(opts, e.netOpts) {
-		return e.netOpts, false
+		return e.netOpts, prevState, false
 	}
 	prev, e.netOpts = e.netOpts, opts
 	e.rememberTokenLocked(opts)
 	e.setNetwork(opts)
-	return prev, true
+	return prev, prevState, true
 }
 
 // rememberTokenLocked notes the DNS token of opts, so it is redacted from
@@ -164,7 +197,7 @@ func (e *Engine) rememberTokenLocked(opts *proxy.NetworkOptions) {
 func (e *Engine) applyNetwork() {
 	e.applyMu.Lock()
 	defer e.applyMu.Unlock()
-	prev, changed := e.updateNetwork()
+	prev, prevState, changed := e.updateNetwork()
 	if !changed {
 		return
 	}
@@ -185,9 +218,14 @@ func (e *Engine) applyNetwork() {
 	if e.netOpts == nil {
 		what = "stop"
 	}
+	// The state goes back with the options, so status says what the
+	// proxy serves: still networked after a failed stop, not after a
+	// failed start.
 	e.netOpts = prev
 	e.setNetwork(prev)
+	e.netState = prevState
 	e.netState.Problem = "networked mode couldn't " + what + ": " + err.Error()
+	e.netState.ProblemKind = NetworkApplyFailed
 	e.mu.Unlock()
 	why := "Nearhost serves as it did before the change. Save the config again to try again."
 	if errors.Is(raw, proxy.ErrNotServing) {

@@ -1,0 +1,66 @@
+package cli
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/nearhost/nearhost/internal/config"
+	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/devices"
+	"github.com/nearhost/nearhost/internal/engine"
+	"github.com/nearhost/nearhost/internal/report"
+	"github.com/nearhost/nearhost/internal/testutil"
+)
+
+// A networked core that does not listen on the network yet refuses to give
+// a pairing code, saying why, rather than a code no device could use.
+func TestPairRefusesWhileNotListening(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	cfg := &config.Config{Network: &config.Network{Domain: "lab.example.dev", Certificates: "ca"}}
+	eng := engine.New(cfg, engine.Options{WebPort: 6327, Firewall: func() bool { return false }})
+	if ns := eng.NetworkState(); ns.ProblemKind != engine.NetworkNoFirewall {
+		t.Fatalf("NetworkState = %+v, want waiting for the firewall rule", ns)
+	}
+	store, err := openDevices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &coreOps{eng: eng, devices: store}
+	info, err := o.Pair()
+	m, ok := report.As(err)
+	if !ok || m.Code != report.NetworkNotListening || !strings.Contains(m.Error(), "waiting for the firewall rule") {
+		t.Fatalf("Pair = %+v, %v, want %s naming the problem", info, err, report.NetworkNotListening)
+	}
+	if info.Code != "" {
+		t.Errorf("a code was given: %+v", info)
+	}
+}
+
+// A core with no store open lists and revokes the devices in devices.json,
+// as the CLI does with no core running.
+func TestDevicesWithoutStoreReadTheFile(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", testutil.TempDir(t, "nh"))
+	path, err := config.DevicesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := devices.Open(path, []byte(strings.Repeat("k", 32)))
+	if _, err := store.Pair(store.NewPairCode().Code, "iPad", "192.168.77.9"); err != nil {
+		t.Fatal(err)
+	}
+	o := &coreOps{}
+	list, err := o.Devices()
+	if err != nil || len(list) != 1 || list[0].Name != "iPad" {
+		t.Fatalf("Devices = %+v, %v, want the iPad", list, err)
+	}
+	if err := o.RevokeDevice("iPad"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if list, err := o.Devices(); err != nil || len(list) != 0 {
+		t.Errorf("after revoke: %+v, %v, want none", list, err)
+	}
+	if err := o.RevokeDevice("iPad"); !errors.Is(err, control.ErrDeviceUnknown) {
+		t.Errorf("revoking again: %v, want ErrDeviceUnknown", err)
+	}
+}

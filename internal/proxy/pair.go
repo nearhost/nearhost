@@ -49,16 +49,24 @@ type pairForm struct {
 	Code string
 	// Error is the error the form shows, nil for none.
 	Error *htmlview.Data
+	// Machine is the name of the machine Nearhost runs on, "" when it is
+	// not known.
+	Machine string
 }
 
-// servePairing answers pairing's paths at the page's host while devices
-// are set, and reports whether it did: /pair and /pair/{code} (the form,
+// servePairing answers pairing's paths at the page's host while the core is
+// networked and devices are set, and reports whether it did: /pair and /pair/{code} (the form,
 // and its POST), /pair.js, /auth, and, with certificates from the local
 // CA, /profile.mobileconfig. Anything else is left to the page.
 func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
+	// A core that is not networked has no pairing: its page answers as it
+	// always did, though the store may stay open for networking to start.
+	if h.NetworkHost == "" {
+		return false
+	}
 	path := r.URL.EscapedPath()
 	if path == "/profile.mobileconfig" {
-		if h.NetworkHost == "" || h.Certificates != "ca" || !atPairingHost(r) {
+		if h.Certificates != "ca" || !h.atPairingHost(r) {
 			return false
 		}
 		if allowMethods(w, r, false) {
@@ -71,19 +79,19 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	d := currentDevices()
-	if d == nil || !atPairingHost(r) {
+	if d == nil || !h.atPairingHost(r) {
 		return false
 	}
 	switch {
 	case path == "/pair" && r.Method == http.MethodPost:
-		servePairPost(w, r, d)
+		h.servePairPost(w, r, d)
 	case !allowMethods(w, r, path == "/pair"):
 	case isPair:
 		code := ""
 		if path != "/pair" {
 			code = strings.TrimPrefix(r.URL.Path, "/pair/")
 		}
-		servePairForm(w, r, pairForm{Code: code}, http.StatusOK)
+		servePairForm(w, r, pairForm{Code: code, Machine: h.Machine}, http.StatusOK)
 	case path == "/pair.js":
 		hdr := w.Header()
 		hdr.Set("Content-Type", "text/javascript; charset=utf-8")
@@ -95,7 +103,7 @@ func (h *Home) servePairing(w http.ResponseWriter, r *http.Request) bool {
 			w.Write(pairJS)
 		}
 	default:
-		serveAuth(w, r, d)
+		h.serveAuth(w, r, d)
 	}
 	return true
 }
@@ -139,7 +147,7 @@ func servePairForm(w http.ResponseWriter, r *http.Request, f pairForm, status in
 // servePairPost pairs the device that sent the form: from the page's own
 // origin, by a client Allow admits, with a good code. It gets the device
 // cookie and is sent to /. A bad code gets the form again, saying so.
-func servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
+func (h *Home) servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	if !sameOrigin(r) {
 		forbid(w, r)
 		return
@@ -163,7 +171,7 @@ func servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	token, err := d.Pair(r.PostForm.Get("code"), deviceName(r.PostForm.Get("name")), client)
 	switch {
 	case errors.Is(err, devices.ErrCodeInvalid):
-		servePairForm(w, r, pairForm{Error: pairCodeInvalid()}, http.StatusOK)
+		servePairForm(w, r, pairForm{Error: pairCodeInvalid(), Machine: h.Machine}, http.StatusOK)
 		return
 	case err != nil:
 		emit("", "A device could not be paired: "+err.Error())
@@ -205,18 +213,18 @@ func deviceName(name string) string {
 // https address under the network domain, and the device is sent there
 // with a one-time token for that host, at /.nearhost/auth. A browser with
 // no paired device is sent to /pair.
-func serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
+func (h *Home) serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	hdr := w.Header()
 	hdr.Set("Cache-Control", "no-store")
 	hdr.Set("Referrer-Policy", "no-referrer")
-	dev, ok := pairedDevice(r)
+	dev, ok := h.pairedDevice(r)
 	if !ok {
 		hdr.Set("Location", "/pair")
 		w.WriteHeader(http.StatusFound)
 		return
 	}
 	to, err := url.Parse(r.URL.Query().Get("to"))
-	if err != nil || to.Scheme != "https" || to.User != nil || to.Opaque != "" || !underNetworkDomain(to.Hostname()) {
+	if err != nil || to.Scheme != "https" || to.User != nil || to.Opaque != "" || !h.underNetworkDomain(to.Hostname()) {
 		htmlview.Write(w, r, report.Errorf(report.PairBadTarget, "Nearhost signs devices in to sites under its own domain only").
 			Because("The address asked for is not one of Nearhost's sites. Open the site from its own address instead."), http.StatusBadRequest, "Nearhost")
 		return
@@ -226,11 +234,11 @@ func serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 	w.WriteHeader(http.StatusFound)
 }
 
-// underNetworkDomain reports whether host is the network domain, the page's
-// network host without its "nearhost.", or a name beneath it, ignoring
-// case. It is false while the core is not networked.
-func underNetworkDomain(host string) bool {
-	domain, ok := strings.CutPrefix(currentNetworkHost(), "nearhost.")
+// underNetworkDomain reports whether host is the network domain, this
+// page's network host without its "nearhost.", or a name beneath it,
+// ignoring case. It is false while the core is not networked.
+func (h *Home) underNetworkDomain(host string) bool {
+	domain, ok := strings.CutPrefix(strings.ToLower(h.NetworkHost), "nearhost.")
 	if !ok || domain == "" {
 		return false
 	}

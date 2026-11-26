@@ -38,6 +38,7 @@ func netOptions(t *testing.T) Options {
 			Certificates: "ca",
 			Allow:        config.DefaultNetworkAllow,
 			Listen:       true,
+			Machine:      "leto",
 		},
 	}
 }
@@ -150,23 +151,39 @@ func TestNetworkPageServesNetworkHostToAllowedClients(t *testing.T) {
 		t.Errorf("page listen = %v, want %v", got, want)
 	}
 	ranges := joinRanges(t, nil, true)
-	if got, want := strs(dig(t, web, "routes", 0, "match", 0, "host")), append(pageHosts(), "nearhost."+netDomain); !reflect.DeepEqual(got, want) {
-		t.Errorf("page hosts = %v, want %v", got, want)
+	// The local hosts admit loopback alone: a LAN client naming
+	// nearhost.localhost must not reach the page there.
+	if got := strs(dig(t, web, "routes", 0, "match", 0, "host")); !reflect.DeepEqual(got, pageHosts()) {
+		t.Errorf("local page hosts = %v, want %v", got, pageHosts())
 	}
-	if got := strs(dig(t, web, "routes", 0, "match", 0, "remote_ip", "ranges")); !reflect.DeepEqual(got, ranges) {
-		t.Errorf("page ranges = %v, want %v", got, ranges)
+	if got := strs(dig(t, web, "routes", 0, "match", 0, "remote_ip", "ranges")); !reflect.DeepEqual(got, loopbackRanges) {
+		t.Errorf("local page ranges = %v, want loopback %v", got, loopbackRanges)
+	}
+	if got, want := strs(dig(t, web, "routes", 1, "match", 0, "host")), []string{"nearhost." + netDomain}; !reflect.DeepEqual(got, want) {
+		t.Errorf("network page hosts = %v, want %v", got, want)
+	}
+	if got := strs(dig(t, web, "routes", 1, "match", 0, "remote_ip", "ranges")); !reflect.DeepEqual(got, ranges) {
+		t.Errorf("network page ranges = %v, want %v", got, ranges)
 	}
 	if got := strs(dig(t, web, "tls_connection_policies", 0, "match", "remote_ip", "ranges")); !reflect.DeepEqual(got, ranges) {
 		t.Errorf("page TLS ranges = %v, want %v", got, ranges)
 	}
-	if got := dig(t, web, "routes", 0, "handle", 0, "network_host"); got != "nearhost."+netDomain {
-		t.Errorf("home network_host = %v", got)
+	for i := range 2 {
+		if got := dig(t, web, "routes", i, "handle", 0, "machine"); got != "leto" {
+			t.Errorf("route %d home machine = %v, want leto", i, got)
+		}
+		if got := dig(t, web, "routes", i, "handle", 0, "network_host"); got != "nearhost."+netDomain {
+			t.Errorf("route %d home network_host = %v", i, got)
+		}
+		if got := dig(t, web, "routes", i, "handle", 0, "certificates"); got != "ca" {
+			t.Errorf("route %d home certificates = %v", i, got)
+		}
+		if got, _ := dig(t, web, "routes", i, "handle", 0, "storage_root").(string); got == "" {
+			t.Errorf("route %d home has no storage_root", i)
+		}
 	}
-	if got := dig(t, web, "routes", 0, "handle", 0, "certificates"); got != "ca" {
-		t.Errorf("home certificates = %v", got)
-	}
-	if got, _ := dig(t, web, "routes", 0, "handle", 0, "storage_root").(string); got == "" {
-		t.Error("home has no storage_root")
+	if got := dig(t, web, "routes", 2, "handle", 0, "abort"); got != true {
+		t.Errorf("last page route = %v, want the abort", dig(t, web, "routes", 2))
 	}
 	if got := networkPageHost(netOptions(t).Network); got != "nearhost."+netDomain {
 		t.Errorf("networkPageHost = %q", got)
@@ -319,11 +336,13 @@ func TestNetworkListenFalseKeepsLoopback(t *testing.T) {
 		}
 	}
 	web := dig(t, got, "apps", "http", "servers", "nearhost_web")
-	if got, want := strs(dig(t, web, "routes", 0, "match", 0, "host")), append(pageHosts(), "nearhost."+netDomain); !reflect.DeepEqual(got, want) {
-		t.Errorf("page hosts = %v, want %v", got, want)
-	}
-	if got := strs(dig(t, web, "routes", 0, "match", 0, "remote_ip", "ranges")); !reflect.DeepEqual(got, loopbackRanges) {
-		t.Errorf("page ranges = %v, want loopback", got)
+	for i, want := range [][]string{pageHosts(), {"nearhost." + netDomain}} {
+		if got := strs(dig(t, web, "routes", i, "match", 0, "host")); !reflect.DeepEqual(got, want) {
+			t.Errorf("route %d page hosts = %v, want %v", i, got, want)
+		}
+		if got := strs(dig(t, web, "routes", i, "match", 0, "remote_ip", "ranges")); !reflect.DeepEqual(got, loopbackRanges) {
+			t.Errorf("route %d page ranges = %v, want loopback", i, got)
+		}
 	}
 	listening := netJSON(t, netSites, netOptions(t))
 	if !reflect.DeepEqual(dig(t, got, "apps", "tls"), dig(t, listening, "apps", "tls")) {

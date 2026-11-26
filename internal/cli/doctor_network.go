@@ -16,6 +16,7 @@ import (
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
@@ -45,7 +46,11 @@ func checkNetwork(ctx context.Context, b doctorBackend, cfg *config.Config, st c
 	if c, ok := checkNetworkName(ctx, b, n.Domain, page); ok {
 		checks = append(checks, c)
 	}
-	if c, ok := checkNetworkCert(ctx, b, n, page, st.Network); ok {
+	if info := st.Network; info != nil && info.ProblemKind == string(engine.NetworkNoPage) {
+		checks = append(checks, problem("Network page", levelFail, report.NetworkNoPage,
+			"Nearhost's page isn't served, so no device can pair and nothing is served to the network",
+			"start Nearhost with its page: leave out `--web-port 0`, or pass `--web-port` with a port"))
+	} else if c, ok := checkNetworkCert(ctx, b, n, page, st.Network); ok {
 		checks = append(checks, c)
 	}
 	if b.goos == "windows" && b.firewallReady != nil {
@@ -94,7 +99,7 @@ func checkNetworkName(ctx context.Context, b doctorBackend, domain, page string)
 func checkNetworkCert(ctx context.Context, b doctorBackend, n *config.Network, page string, info *control.NetworkInfo) (check, bool) {
 	const name = "Network certificate"
 	mode := n.CertSource()
-	if info != nil && info.Problem != "" {
+	if info != nil && certProblem(info) {
 		return problem(name, levelFail, report.NetworkCert, printable(info.Problem), certFix(mode)), true
 	}
 	port := 0
@@ -122,6 +127,22 @@ func checkNetworkCert(ctx context.Context, b doctorBackend, n *config.Network, p
 		issuer = printable(issuerName(leaf))
 	}
 	return check{name: name, detail: issuer + ", expires " + leaf.NotAfter.Format("2006-01-02")}, true
+}
+
+// certProblem reports whether info's problem is one the certificate row
+// reports: no DNS token, one that looks wrong, or a change the proxy
+// couldn't load. Waiting for the firewall rule is the firewall row's, and a
+// page that isn't served has a row of its own. A core that gives no kind
+// is older, and its problem is reported here as before.
+func certProblem(info *control.NetworkInfo) bool {
+	if info.Problem == "" {
+		return false
+	}
+	switch engine.NetworkProblem(info.ProblemKind) {
+	case engine.NetworkNoToken, engine.NetworkBadToken, engine.NetworkApplyFailed, "":
+		return true
+	}
+	return false
 }
 
 func certFix(mode string) string {

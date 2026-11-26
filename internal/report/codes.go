@@ -189,6 +189,8 @@ const (
 	NetworkFirewall            Code = "network.firewall"
 	NetworkFirewallRefused     Code = "network.firewall-refused"
 	NetworkCert                Code = "network.cert"
+	NetworkNoPage              Code = "network.no-page"
+	NetworkNotListening        Code = "network.not-listening"
 	DeviceUnknown              Code = "devices.unknown"
 	DocumentsMissing           Code = "documents.missing"
 	DocumentsChanging          Code = "documents.changing"
@@ -441,6 +443,8 @@ var catalogRows = []catalogRow{
 	{NetworkFirewall, Error, 503, "The firewall does not let other devices reach Nearhost."},
 	{NetworkFirewallRefused, Error, 400, "The elevated firewall helper refused a program other than the one running, or its input or report file."},
 	{NetworkCert, Error, 503, "The certificate for Nearhost's page on the network is missing or not the one the config asks for."},
+	{NetworkNoPage, Error, 503, "Networked mode needs Nearhost's page, where devices pair, and the page is not served."},
+	{NetworkNotListening, Error, 503, "Networked mode is on, but Nearhost does not serve to the network yet, so no device could reach it."},
 	{DeviceUnknown, Error, 404, "No paired device has the name asked for."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
 	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},
