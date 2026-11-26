@@ -22,6 +22,11 @@ import (
 type NetworkState struct {
 	// On is whether the config turns networked mode on.
 	On bool
+	// Listening is whether the core listens on the network, so a device
+	// can reach it: networked, with the page served and the firewall
+	// letting it through, and not undone by a change the proxy couldn't
+	// load.
+	Listening bool
 	// URL is the page's address on the network,
 	// https://nearhost.<domain>[:<web port>] with the port left out when it
 	// is 443; empty while the page is not served.
@@ -30,9 +35,11 @@ type NetworkState struct {
 	// or "ca", which it falls back to when ACME has no usable DNS token.
 	Certificates string
 	// Problem is why the core serves less than the config asks: "the page
-	// isn't served", "no DNS token", "DNS token looks wrong" or "waiting
-	// for the firewall rule", or why the last change couldn't be applied.
-	// Empty when nothing is wrong.
+	// isn't served", "waiting for the firewall rule", "no DNS token" or
+	// "DNS token looks wrong", or why the last change couldn't be applied.
+	// When there are several, it is the first of those, so one that keeps
+	// the core from listening comes before one that only changes its
+	// certificates. Empty when nothing is wrong.
 	Problem string
 	// ProblemKind says which of those Problem is, for a caller that acts
 	// on it; empty when nothing is wrong.
@@ -121,6 +128,10 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 		opts.Listen = false
 		problems = append(problems, problem{problemNoPage, NetworkNoPage})
 	}
+	if e.opts.Firewall != nil && !e.opts.Firewall() {
+		opts.Listen = false
+		problems = append(problems, problem{problemNoFirewall, NetworkNoFirewall})
+	}
 	if opts.Certificates == "acme" {
 		token, err := "", errors.New("no DNS token option")
 		if e.opts.DNSToken != nil {
@@ -137,11 +148,7 @@ func (e *Engine) networkFor(cfg *config.Config, webPort int) (*proxy.NetworkOpti
 			opts.DNSToken = token
 		}
 	}
-	if e.opts.Firewall != nil && !e.opts.Firewall() {
-		opts.Listen = false
-		problems = append(problems, problem{problemNoFirewall, NetworkNoFirewall})
-	}
-	state := NetworkState{On: true, Certificates: opts.Certificates}
+	state := NetworkState{On: true, Listening: opts.Listen, Certificates: opts.Certificates}
 	if webPort != 0 {
 		state.URL = networkURL(n.Domain, webPort)
 	}
@@ -214,8 +221,11 @@ func (e *Engine) applyNetwork() {
 	}
 	err := e.redactErr(raw)
 	e.mu.Lock()
-	what := "start"
-	if e.netOpts == nil {
+	what := "change"
+	switch {
+	case prev == nil:
+		what = "start"
+	case e.netOpts == nil:
 		what = "stop"
 	}
 	// The state goes back with the options, so status says what the
@@ -226,6 +236,9 @@ func (e *Engine) applyNetwork() {
 	e.netState = prevState
 	e.netState.Problem = "networked mode couldn't " + what + ": " + err.Error()
 	e.netState.ProblemKind = NetworkApplyFailed
+	if errors.Is(raw, proxy.ErrNotServing) {
+		e.netState.Listening = false
+	}
 	e.mu.Unlock()
 	why := "Nearhost serves as it did before the change. Save the config again to try again."
 	if errors.Is(raw, proxy.ErrNotServing) {
