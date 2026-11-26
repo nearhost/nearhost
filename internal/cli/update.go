@@ -35,6 +35,9 @@ type updateBackend struct {
 	detach detachBackend
 	// latest returns the latest released version.
 	latest func(ctx context.Context) (string, error)
+	// latestNext returns the highest version of any kind, beta or release,
+	// for --next.
+	latestNext func(ctx context.Context) (string, error)
 	// exe is the running binary's path with symlinks resolved.
 	exe    func() string
 	getenv func(string) string
@@ -106,10 +109,11 @@ func readUnprivilegedPortStart() (int, bool) {
 // systemUpdate is the production backend. Only NewRoot wires it in.
 func systemUpdate() updateBackend {
 	return updateBackend{
-		detach: systemDetach(),
-		latest: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
-		exe:    realExecutable,
-		getenv: os.Getenv,
+		detach:     systemDetach(),
+		latest:     update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
+		latestNext: update.Checker{HTTP: updateHTTP(), Current: strings.TrimPrefix(Version, "v"), Next: true, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}.Latest,
+		exe:        realExecutable,
+		getenv:     os.Getenv,
 		writable: func(dir string) bool {
 			f, err := os.CreateTemp(dir, ".nearhost-update-*")
 			if err != nil {
@@ -278,7 +282,7 @@ func checkFailed(err error) *report.Message {
 const updateCheckFailedCode = 2
 
 func newUpdateCmd(b updateBackend) *cobra.Command {
-	var check, yes bool
+	var check, yes, next bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update nearhost to the latest release",
@@ -287,25 +291,33 @@ func newUpdateCmd(b updateBackend) *cobra.Command {
 			"Windows, a copy from the PowerShell installer or a zip is replaced with\n" +
 			"the release's nearhost.exe, downloaded from GitHub and checked against\n" +
 			"the release's checksums.\n\n" +
+			"With --next it updates to the newest beta instead, or the newest release\n" +
+			"if no beta is newer, pinned to that version. Homebrew has no betas.\n\n" +
 			"nearhost also checks for a new release at most once a day and says so\n" +
 			"when one is out. Set NEARHOST_NO_UPDATE_CHECK=1 to turn that off.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUpdateCmd(cmd, b, check, yes)
+			return runUpdateCmd(cmd, b, check, yes, next)
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "only report whether an update is available; exits 0 when up to date, 1 when a newer release is out, 2 when the check failed")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "update without asking")
+	cmd.Flags().BoolVar(&next, "next", false, "update to the newest beta, or the newest release if no beta is newer")
 	return cmd
 }
 
-func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
+func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes, next bool) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	latest, err := b.latest(ctx)
+	// --next reads the beta line, and may move a release copy onto it.
+	ask, newer, again := b.latest, update.Newer, "nearhost update"
+	if next {
+		ask, newer, again = b.latestNext, update.NewerNext, "nearhost update --next"
+	}
+	latest, err := ask(ctx)
 	if err != nil {
 		if check {
 			// A script tells "could not check" (2) from "a newer release is
@@ -315,9 +327,13 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		return checkFailed(err)
 	}
 	current := strings.TrimPrefix(Version, "v")
-	if !update.Newer(current, latest) {
+	if !newer(current, latest) {
 		if update.IsRelease(current) {
-			fmt.Fprintf(out, "nearhost %s is the latest.\n", current)
+			if next {
+				fmt.Fprintf(out, "nearhost %s is the latest, and no beta is newer.\n", current)
+			} else {
+				fmt.Fprintf(out, "nearhost %s is the latest.\n", current)
+			}
 			if !check {
 				return restartOlderCore(cmd, b, yes, current)
 			}
@@ -333,7 +349,7 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 	exe := b.exe()
 	m := update.DetectOn(b.goos, exe, b.getenv)
 	prerelease := update.IsPrerelease(current)
-	if prerelease {
+	if prerelease || next {
 		// "latest" never means a pre-release, so name the version.
 		m = m.Pinned(latest)
 	}
@@ -341,15 +357,24 @@ func runUpdateCmd(cmd *cobra.Command, b updateBackend, check, yes bool) error {
 		// A notice, returned as the command's error with exit status 1,
 		// so a script sees a newer release.
 		return report.Notef(report.UpdateAvailable, "nearhost %s is available; this is %s, installed with %s.", latest, current, m.Kind).
-			Step("Update it:", "nearhost update").
+			Step("Update it:", again).
 			ExitCode(1)
 	}
 	fmt.Fprintf(out, "nearhost %s → %s is available. This copy was installed with %s.\n", current, latest, m.Kind)
 
 	switch {
+	case next && m.Kind == update.Homebrew:
+		// The tap never gets a beta, so brew has nothing to install.
+		return report.Errorf(report.UpdateNextHomebrew, "Betas are not published to Homebrew, so this copy cannot update to %s.", latest).
+			Step("Remove the Homebrew copy:", "brew uninstall --cask nearhost").
+			Step("Then install the beta with npm:", "npm install -g @nearhost/cli@next").
+			Step("Or with the install script:", "curl -fsSL https://nearhost.dev/install.sh | NEARHOST_VERSION=v"+latest+" sh")
 	case m.Kind == update.Ephemeral:
 		tag := "latest"
-		if prerelease {
+		switch {
+		case next:
+			tag = "next"
+		case prerelease:
 			tag = latest
 		}
 		fmt.Fprintf(out, "npx fetched this copy for one run. Run `npx @nearhost/cli@%s` to use the latest.\n", tag)

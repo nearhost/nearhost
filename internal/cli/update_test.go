@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/update"
 )
 
@@ -81,6 +82,10 @@ type fakeUpdate struct {
 	lowUnreadable bool
 	// detach reaches the running core; nil is none running.
 	detach *detachBackend
+	// latestNext is the beta line's answer, for --next; nextAsked counts
+	// the times it was asked.
+	latestNext string
+	nextAsked  int
 }
 
 func (f *fakeUpdate) backend() updateBackend {
@@ -96,7 +101,11 @@ func (f *fakeUpdate) backend() updateBackend {
 	return updateBackend{
 		detach: det,
 		latest: func(context.Context) (string, error) { return f.latest, f.err },
-		exe:    func() string { return f.exe },
+		latestNext: func(context.Context) (string, error) {
+			f.nextAsked++
+			return f.latestNext, f.err
+		},
+		exe: func() string { return f.exe },
 		// Go's default GOPATH is under USERPROFILE on Windows.
 		getenv: func(k string) string {
 			if v, ok := f.env[k]; ok {
@@ -156,6 +165,9 @@ func (f *fakeUpdate) backend() updateBackend {
 			}
 			if f.installed != "" {
 				return f.installed, nil
+			}
+			if f.nextAsked > 0 {
+				return f.latestNext, nil
 			}
 			return f.latest, nil
 		},
@@ -1320,5 +1332,120 @@ func TestUpdatePromptReadErrorIsNo(t *testing.T) {
 	cmd.SetArgs(nil)
 	if err := cmd.Execute(); err != nil || len(f.ran) != 0 || !strings.Contains(out.String(), "Nothing was changed") {
 		t.Fatalf("out %q, err %v, ran %v", out.String(), err, f.ran)
+	}
+}
+
+const npmExe = "/usr/lib/node_modules/@nearhost/cli-linux-x64/bin/nearhost"
+
+func TestUpdateNextInstallsTheBetaWithNpm(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: npmExe}
+	out, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	if err != nil || len(f.ran) != 1 || !strings.Contains(out, "Updated to 0.16.0-beta.2") {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+	if args := f.ran[0].Args; args[len(args)-1] != "@nearhost/cli@0.16.0-beta.2" {
+		t.Fatalf("ran %v, want the beta pinned", args)
+	}
+}
+
+func TestUpdateNextPinsTheInstallScript(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/usr/local/bin/nearhost", writable: true,
+		env: map[string]string{"NEARHOST_VERSION": "v0.14.0"}}
+	_, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	if err != nil || len(f.ran) != 1 {
+		t.Fatalf("err %v, ran %v", err, f.ran)
+	}
+	if !slices.Contains(f.ran[0].Env, "NEARHOST_VERSION=v0.16.0-beta.2") {
+		t.Fatalf("env %v, want NEARHOST_VERSION=v0.16.0-beta.2", f.ran[0].Env)
+	}
+}
+
+func TestUpdateNextOnWindowsDownloadsTheBeta(t *testing.T) {
+	exe := `C:\Users\me\bin\nearhost.exe`
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: exe, goos: "windows", writable: true}
+	out, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	if err != nil || !strings.Contains(out, "Updated to 0.16.0-beta.2") {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if want := []string{"0.16.0-beta.2 " + exe + ".new"}; !slices.Equal(f.downloaded, want) {
+		t.Fatalf("downloaded %q, want %q", f.downloaded, want)
+	}
+}
+
+func TestUpdateNextNpx(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/Users/me/.npm/_npx/abc/node_modules/@nearhost/cli-darwin-arm64/bin/nearhost"}
+	out, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	if err != nil || len(f.ran) != 0 || !strings.Contains(out, "npx @nearhost/cli@next") {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+}
+
+// Homebrew has no betas: --next runs nothing and says how to get one.
+func TestUpdateNextHomebrewRefuses(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/opt/homebrew/Caskroom/nearhost/0.15.0/nearhost"}
+	out, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes")
+	m, ok := report.As(err)
+	if !ok || m.Code != report.UpdateNextHomebrew || len(f.ran) != 0 {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+	if code := exitCode(err, io.Discard); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	for _, want := range []string{"brew uninstall --cask nearhost", "npm install -g @nearhost/cli@next", "NEARHOST_VERSION=v0.16.0-beta.2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("out lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdateNextCheckOnHomebrewReports(t *testing.T) {
+	f := &fakeUpdate{latest: "0.15.0", latestNext: "0.16.0-beta.2", exe: "/opt/homebrew/Caskroom/nearhost/0.15.0/nearhost"}
+	out, err := runUpdate(t, f, "0.15.0", "", "--check", "--next")
+	m, ok := report.As(err)
+	if !ok || m.Code != report.UpdateAvailable || len(m.Fix) != 1 || m.Fix[0].Command != "nearhost update --next" || len(f.ran) != 0 {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+	if code := exitCode(err, io.Discard); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+}
+
+// Right after a release no beta is ahead of it, and --next takes the release.
+func TestUpdateNextWhenTheReleaseIsNewest(t *testing.T) {
+	f := &fakeUpdate{latest: "0.16.0", latestNext: "0.16.0", exe: npmExe}
+	if _, err := runUpdate(t, f, "0.15.0", "", "--next", "--yes"); err != nil || len(f.ran) != 1 {
+		t.Fatalf("err %v, ran %v", err, f.ran)
+	}
+	if args := f.ran[0].Args; args[len(args)-1] != "@nearhost/cli@0.16.0" {
+		t.Fatalf("ran %v, want 0.16.0", args)
+	}
+	f = &fakeUpdate{latest: "0.16.0", latestNext: "0.16.0", exe: npmExe}
+	out, err := runUpdate(t, f, "0.16.0", "", "--next")
+	if err != nil || !strings.Contains(out, "nearhost 0.16.0 is the latest, and no beta is newer.") || len(f.ran) != 0 {
+		t.Fatalf("out %q, err %v, ran %v", out, err, f.ran)
+	}
+}
+
+func TestUpdateNextOnABetaCopyMatchesPlainUpdate(t *testing.T) {
+	plain := &fakeUpdate{latest: "0.16.0-beta.2", exe: npmExe}
+	if _, err := runUpdate(t, plain, "0.16.0-beta.1", "", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	next := &fakeUpdate{latestNext: "0.16.0-beta.2", exe: npmExe}
+	if _, err := runUpdate(t, next, "0.16.0-beta.1", "", "--next", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.ran) != 1 || len(next.ran) != 1 || !slices.Equal(plain.ran[0].Args, next.ran[0].Args) {
+		t.Fatalf("plain ran %v, --next ran %v", plain.ran, next.ran)
+	}
+}
+
+func TestUpdateWithoutNextNeverAsksTheBetaLine(t *testing.T) {
+	f := &fakeUpdate{latest: "0.16.0", latestNext: "0.17.0-beta.1", exe: npmExe}
+	if _, err := runUpdate(t, f, "0.15.0", "", "--yes"); err != nil || f.nextAsked != 0 {
+		t.Fatalf("err %v, beta line asked %d times", err, f.nextAsked)
+	}
+	if args := f.ran[0].Args; args[len(args)-1] != "@nearhost/cli@latest" {
+		t.Fatalf("ran %v", args)
 	}
 }
