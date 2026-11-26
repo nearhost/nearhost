@@ -536,8 +536,8 @@ save_session() {
 # SOCK, and fails unless that Nearhost confirms it. A socket that is gone
 # succeeds: that Nearhost is not running, and its passthroughs ended with it.
 # One from a drive letter, as nearhost.ps1 writes it on Windows, is only
-# looked for: Git Bash, which runs the hook there, may not see a Windows
-# socket as one.
+# looked for: Git Bash, which runs the hook there, sees a Windows socket as
+# a plain file.
 close_socket() {
 	case $1 in
 	[A-Za-z]:[\\/]*) [ -e "$1" ] || return 0 ;;
