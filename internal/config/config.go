@@ -949,6 +949,9 @@ func (c *Config) Validate() error {
 		if webCount == 0 {
 			return invalid("projects.routes", fmt.Errorf("project %q must have at least one web route", p.Name))
 		}
+		if err := c.checkPageHost(p); err != nil {
+			return err
+		}
 	}
 
 	trusted := map[string]bool{}
@@ -998,6 +1001,28 @@ func (c *Config) Validate() error {
 // invalid is a Validate error, config.invalid: err's text, with the key it
 // is about (such as "projects.alias") as the field in its data. Its cause is
 // err, so errors.Is and errors.As see what err wraps.
+// checkPageHost refuses a project that takes nearhost.<domain>, the page's
+// own host on the network, as its alias or a route host while the network
+// section names a domain: the page's device cookie would reach the app.
+func (c *Config) checkPageHost(p Project) error {
+	if c.Network == nil || c.Network.Domain == "" {
+		return nil
+	}
+	page := "nearhost." + strings.ToLower(c.Network.Domain)
+	reserved := fmt.Errorf("project %q: %s is Nearhost's own page on the network; choose another name", p.Name, page)
+	if strings.EqualFold(p.Alias, page) {
+		return invalid("projects.alias", reserved)
+	}
+	for _, r := range p.Routes {
+		for _, h := range r.Hosts {
+			if strings.EqualFold(h, page) {
+				return invalid("projects.routes.hosts", reserved)
+			}
+		}
+	}
+	return nil
+}
+
 func invalid(field string, err error) error {
 	return report.Errorf(report.ConfigInvalid, "%s", err).With("field", field).Wrap(err)
 }

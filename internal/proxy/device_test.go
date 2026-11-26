@@ -360,3 +360,17 @@ func TestClientAddr(t *testing.T) {
 		t.Error("garbage parsed")
 	}
 }
+
+// The page's device cookie never reaches a site either, should a site be
+// served at the page's host (a pattern under the domain can match it).
+func TestDeviceGuardStripsDeviceCookie(t *testing.T) {
+	setFakeDevices(t)
+	for _, client := range []string{"100.79.1.1:1", "127.0.0.1:1"} {
+		r := guardRequest("/", client)
+		r.Header.Set("Cookie", "__Host-nearhost-site=dev1.app.lab.example.dev; __Host-nearhost-device=secret; session=1")
+		_, next := serveGuard(t, &DeviceGuard{Page: testPage}, r)
+		if next.calls != 1 || next.cookies[0] != "session=1" {
+			t.Errorf("%s: next %d, site saw Cookie %q", client, next.calls, next.cookies)
+		}
+	}
+}

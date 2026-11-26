@@ -102,6 +102,15 @@ type Options struct {
 	// that opts in runs, so a network created later is served too. 0 means
 	// 30s.
 	DockerRefresh time.Duration
+	// DNSToken gives the DNS provider's API token for a networked core
+	// whose certificates come from ACME. It is asked each time the network
+	// options are worked out, with no engine lock held. An error or an
+	// empty token makes the core fall back to the local CA, as does nil.
+	DNSToken func() (string, error)
+	// Firewall reports whether the system's firewall lets other devices
+	// reach the core, so a networked core may listen on the network. nil
+	// means ready.
+	Firewall func() bool
 }
 
 // ProjectStatus is a snapshot of one project.
@@ -225,6 +234,17 @@ type Engine struct {
 	// refreshSites gives the proxy the sites again when the Docker networks
 	// change, unless another engine has taken the proxy over. Tests wrap it.
 	refreshSites func(sites []proxy.Site) error
+	// setNetwork gives the proxy its network options, for its next apply.
+	// It is the proxy's SetNetwork, called under mu; tests wrap it.
+	setNetwork func(n *proxy.NetworkOptions)
+	// netOpts are the network options the proxy has last been given, nil
+	// while the core is not networked, and netState what NetworkState
+	// says. Both are guarded by mu.
+	netOpts  *proxy.NetworkOptions
+	netState NetworkState
+	// dnsTokens are every DNS token the proxy has been given, which
+	// errors and log lines never show. Guarded by mu.
+	dnsTokens map[string]bool
 	// ctx ends at Shutdown; the lookups started for lost forwards run under
 	// it and are counted in lookups.
 	ctx     context.Context
@@ -327,11 +347,9 @@ func New(cfg *config.Config, opts Options) *Engine {
 	// private, are events like the engine's.
 	proxyReports := report.SinkFunc(func(m *report.Message) { bus.Publish(Event{Message: m.Title, Report: m}) })
 	e := &Engine{
-		opts:    opts,
-		webPort: opts.WebPort,
-		bus:     bus,
-		proxy: proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort,
-			Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true, Reports: proxyReports}),
+		opts:         opts,
+		webPort:      opts.WebPort,
+		bus:          bus,
 		connectWait:  30 * time.Second,
 		holderOf:     PortHolder,
 		listen:       netbind.Listen,
@@ -348,6 +366,12 @@ func New(cfg *config.Config, opts Options) *Engine {
 		probePass:    probePassthroughPort,
 		passEvery:    passCheckEvery,
 	}
+	snapshot := cloneConfig(cfg)
+	e.netOpts, e.netState = e.networkFor(snapshot, opts.WebPort)
+	e.rememberTokenLocked(e.netOpts)
+	e.proxy = proxy.New(proxy.Options{StorageRoot: opts.StorageRoot, HTTPSPort: opts.HTTPSPort, HTTPPort: opts.HTTPPort, WebPort: opts.WebPort,
+		Capture: opts.Capture, Version: opts.Version, HomeWithNoSites: true, Reports: proxyReports, Network: e.netOpts})
+	e.setNetwork = e.proxy.SetNetwork
 	e.applySites = e.proxy.Apply
 	e.refreshSites = func(sites []proxy.Site) error {
 		_, err := e.proxy.ApplyIfRunning(sites)
@@ -355,7 +379,7 @@ func New(cfg *config.Config, opts Options) *Engine {
 	}
 	e.docker.source = &dockernet.Source{Logf: e.logDocker}
 	e.ctx, e.stop = context.WithCancel(context.Background())
-	e.setConfigLocked(cloneConfig(cfg), nil)
+	e.setConfigLocked(snapshot, nil)
 	return e
 }
 
@@ -581,7 +605,10 @@ func (e *Engine) Start(ctx context.Context) (err error) {
 	}
 	proxy.SetSink(proxy.LogFunc(e.proxyLog))
 	e.applyMu.Lock()
-	err = e.proxy.Apply(nil)
+	// The network options follow the page: without it the core does not
+	// listen on the network.
+	_, _ = e.updateNetwork()
+	err = e.redactErr(e.proxy.Apply(nil))
 	e.applyMu.Unlock()
 	if err != nil {
 		proxy.SetSink(nil)
@@ -782,7 +809,7 @@ func (e *Engine) proxyLog(alias, line string) {
 		project = name
 	}
 	e.mu.Unlock()
-	e.bus.Publish(Event{Project: project, Message: line})
+	e.bus.Publish(Event{Project: project, Message: e.redactText(line)})
 }
 
 // Shutdown stops every project, ends every SSH master and stops the proxy. If
@@ -913,6 +940,20 @@ func (e *Engine) Sites() []proxy.Site {
 // proxy's gate decides each request (see gate.go).
 func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 	var sites []proxy.Site
+	// On a networked core, a project with no host under the network domain
+	// is served there too, at a generated name no published site has.
+	taken := map[string]bool{}
+	if e.netOpts != nil {
+		for _, name := range e.order {
+			if run := e.runs[name]; run != skip && run.site {
+				for _, w := range run.web {
+					for _, h := range w.Hosts {
+						taken[strings.ToLower(h)] = true
+					}
+				}
+			}
+		}
+	}
 	for _, name := range e.order {
 		run := e.runs[name]
 		if run == skip || !run.site {
@@ -935,9 +976,17 @@ func (e *Engine) sitesLocked(skip *projectRun) []proxy.Site {
 		if run.docker {
 			clients = e.dockerClientsLocked()
 		}
+		generated := e.generatedHostLocked(run, taken)
+		if generated != "" {
+			taken[generated] = true
+		}
 		for i, w := range run.web {
+			hosts := w.Hosts
+			if i == 0 && generated != "" {
+				hosts = append(slices.Clone(w.Hosts), generated)
+			}
 			sites = append(sites, proxy.Site{
-				Alias: run.alias, Hosts: w.Hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
+				Alias: run.alias, Hosts: hosts, Upstream: fmt.Sprintf("%s:%d", host, run.webLocals[i]), Clients: slices.Clone(clients),
 				Forwarded: server != "", Project: run.name, Port: w.Port, Server: server,
 			})
 		}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -27,7 +28,27 @@ var (
 	// listening reports whether the running config has listeners, which
 	// Stop waits to be released.
 	listening bool
+	// runningPorts are the ports, with their addresses, the running config
+	// listens on while listening. The waits for their release probe these,
+	// not the proxy's options, which SetNetwork may have changed since: a
+	// core taken off the network would otherwise probe the page's port on
+	// loopback while the wildcard still held it, and on macOS that bind
+	// can succeed beside the wildcard holder.
+	runningPorts []listenPort
+	// runningConfig is the config Caddy runs, as last loaded, nil while it
+	// runs none. A load that fails after a stop to move ports loads it
+	// again, so the core keeps serving what it did.
+	runningConfig []byte
 )
+
+// ErrNotServing is wrapped in the error of an apply that stopped Caddy to
+// move its ports, failed to load the new config, and could not load the
+// previous one again either: Caddy then serves nothing until the next
+// apply that succeeds.
+var ErrNotServing = errors.New("the proxy serves nothing until a config loads")
+
+// loadCaddy is caddy.Load; tests make it fail.
+var loadCaddy = caddy.Load
 
 // Proxy is the embedded Caddy instance. Caddy is process-global, so only one
 // Proxy can own it at a time: Apply on a second Proxy takes ownership, after
@@ -109,6 +130,18 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 			emit("", report.LogText(m))
 		}
 	}
+	var moved *movedFrom
+	if owner != nil && listening && listens(sites, opts) && portsMove(runningPorts, portsFor(opts)) {
+		// A port moves between the wildcard and other addresses, as when
+		// the core goes onto the network or off it. The new config cannot
+		// bind the port at its new addresses while the old one holds it at
+		// the others, so the old one stops first. Connections to it end,
+		// as at a restart; it is rare.
+		moved = &movedFrom{owner: owner, config: runningConfig, ports: runningPorts}
+		if err := p.stopForMove(); err != nil {
+			return false, err
+		}
+	}
 	if owner == nil {
 		// Caddy is not running, so nothing has a certificate's files open
 		// and its cache of them is gone: this load starts it. The caller
@@ -129,7 +162,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// The servers this load starts are given connections only once Caddy
 	// has started all of it (see Handoff).
 	handoffs.beginLoad()
-	err = caddy.Load(cfg, force)
+	err = loadCaddy(cfg, force)
 	handoffs.endLoad(err == nil)
 	if err != nil {
 		// Caddy closes the listeners the failed configuration had opened in
@@ -137,9 +170,13 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// tries again at once does not find a port held by its own failed
 		// start. A port another program holds is not waited for.
 		retiring.settle(retiring.since(before), "a load that failed")
+		if moved != nil {
+			return false, moved.restore(err)
+		}
 		return false, fmt.Errorf("load proxy config: %w", err)
 	}
 	owner = p
+	runningConfig = cfg
 	// A reload starts the new servers, and Caddy then closes the old ones'
 	// listeners in goroutines it does not wait for. Wait for them, so that
 	// once a reload has returned no listener of the old configuration is
@@ -148,8 +185,12 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 	// already, opens no listener and closes none; one that takes the last
 	// site away opens none and closes the old ones, and with them the
 	// sockets.
-	was := listening
+	was, wasPorts := listening, runningPorts
 	listening = listens(sites, opts)
+	runningPorts = nil
+	if listening {
+		runningPorts = portsFor(opts)
+	}
 	if len(retiring.since(before)) > 0 || was && !listening {
 		retiring.settle(before, "a reload")
 	}
@@ -159,7 +200,7 @@ func (p *Proxy) apply(sites []Site, onlyIfOwner bool) (bool, error) {
 		// for released a port Caddy still holds, and Stop, which waits only
 		// while something listens, is not left to race it. The config is
 		// applied either way; a port someone else took meanwhile is theirs.
-		_ = releasePorts(p.ports(), releaseWait)
+		_ = releasePorts(wasPorts, releaseWait)
 	}
 	p.awaitCertificates(sites, opts)
 	return true, nil
@@ -225,9 +266,67 @@ func (p *Proxy) Stop() error {
 		return nil
 	}
 	listening = false
+	ports := runningPorts
+	runningPorts, runningConfig = nil, nil
 	// Then wait for the ports themselves, which a listener that did not
 	// close in time still holds, and which the caller is about to bind.
-	return releasePorts(p.ports(), releaseWait)
+	return releasePorts(ports, releaseWait)
+}
+
+// stopForMove stops Caddy, whichever proxy owns it, and waits for its
+// listeners and ports, so a config whose ports listen at other addresses
+// can bind them. Call it with caddyMu held.
+func (p *Proxy) stopForMove() error {
+	before := retiring.snapshot()
+	if err := stopCaddy(); err != nil {
+		return fmt.Errorf("stop the proxy to move its ports: %w", err)
+	}
+	owner = nil
+	retiring.settle(before, "a stop to move ports")
+	ports := runningPorts
+	listening, runningPorts, runningConfig = false, nil, nil
+	_ = releasePorts(ports, releaseWait)
+	return nil
+}
+
+// movedFrom is what Caddy ran before a stop to move ports.
+type movedFrom struct {
+	owner  *Proxy
+	config []byte
+	ports  []listenPort
+}
+
+// restore loads the config Caddy ran before a stop to move ports, after
+// the new one failed to load with err, so it serves what it did. It returns
+// the error of the apply: err, and ErrNotServing as well if the old config
+// failed to load too. Call it with caddyMu held.
+func (m *movedFrom) restore(err error) error {
+	before := retiring.snapshot()
+	handoffs.beginLoad()
+	rerr := errors.New("there was none")
+	if len(m.config) > 0 {
+		rerr = loadCaddy(m.config, true)
+	}
+	handoffs.endLoad(rerr == nil)
+	if rerr != nil {
+		retiring.settle(retiring.since(before), "a load that failed")
+		return fmt.Errorf("load proxy config: %w; loading the previous config again failed too (%v): %w", err, rerr, ErrNotServing)
+	}
+	owner, listening, runningPorts, runningConfig = m.owner, true, m.ports, m.config
+	return fmt.Errorf("load proxy config: %w; the previous config serves again", err)
+}
+
+// portsMove reports whether a port of both from and to listens at other
+// addresses in to.
+func portsMove(from, to []listenPort) bool {
+	for _, f := range from {
+		for _, t := range to {
+			if f.port == t.port && !slices.Equal(f.addrs, t.addrs) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // stopCaddy is caddy.Stop; tests make it fail. Caddy 2.11's Stop drops its
@@ -250,7 +349,11 @@ type listenPort struct {
 // netbind.ServeAddrs, and the page's on netbind.PageAddrs, or all three on
 // netbind.NetworkAddrs on a networked core that listens.
 func (p *Proxy) ports() []listenPort {
-	opts := p.options()
+	return portsFor(p.options())
+}
+
+// portsFor is ports for the options opts.
+func portsFor(opts Options) []listenPort {
 	https, http := opts.HTTPSPort, opts.HTTPPort
 	if https == 0 {
 		https = 443

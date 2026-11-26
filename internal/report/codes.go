@@ -181,6 +181,8 @@ const (
 	PairTooManyTries           Code = "pair.too-many-tries"
 	PairNeeded                 Code = "pair.needed"
 	PairUnavailable            Code = "pair.unavailable"
+	NetworkApplyFailed         Code = "network.apply-failed"
+	NetworkDevicesUnavailable  Code = "network.devices-unavailable"
 	DocumentsMissing           Code = "documents.missing"
 	DocumentsChanging          Code = "documents.changing"
 	DocumentsNotConnected      Code = "documents.not-connected"
@@ -424,6 +426,8 @@ var catalogRows = []catalogRow{
 	{PairTooManyTries, Error, 429, "A device made too many wrong attempts to pair or sign in, so it must wait."},
 	{PairNeeded, Error, 401, "A site on the network domain was asked for by a device that is not paired."},
 	{PairUnavailable, Error, 503, "A site on the network domain needs a paired device, and Nearhost's page, where devices pair, is not served."},
+	{NetworkApplyFailed, Error, 500, "Nearhost could not change how it serves to other devices on the network after the config changed."},
+	{NetworkDevicesUnavailable, Warning, 0, "Nearhost could not open its list of paired devices, so no other device can pair or sign in."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
 	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},
 	{DocumentsNotConnected, Error, 503, "Nearhost is not connected to the server that holds the document."},

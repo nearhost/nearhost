@@ -820,6 +820,17 @@
       "summary": "A site on the network domain needs a paired device, and Nearhost's page, where devices pair, is not served."
     },
     {
+      "code": "network.apply-failed",
+      "level": "error",
+      "status": 500,
+      "summary": "Nearhost could not change how it serves to other devices on the network after the config changed."
+    },
+    {
+      "code": "network.devices-unavailable",
+      "level": "warning",
+      "summary": "Nearhost could not open its list of paired devices, so no other device can pair or sign in."
+    },
+    {
       "code": "documents.missing",
       "level": "error",
       "status": 404,

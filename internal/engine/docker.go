@@ -155,7 +155,7 @@ func (e *Engine) useDockerRanges(ctx context.Context, ranges []string) {
 	}
 	sites := e.sitesLocked(nil)
 	e.mu.Unlock()
-	if err := e.refreshSites(sites); err != nil {
+	if err := e.redactErr(e.refreshSites(sites)); err != nil {
 		e.mu.Lock()
 		e.docker.ranges, e.docker.answered = prev.ranges, prev.answered
 		e.mu.Unlock()

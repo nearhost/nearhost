@@ -53,7 +53,7 @@ func (e *Engine) tearDown(ctx context.Context, run *projectRun) error {
 		// here would take it back from that engine: then there is nothing to
 		// remove, and ApplyIfRunning does nothing.
 		if _, err := e.proxy.ApplyIfRunning(sites); err != nil {
-			errs = append(errs, fmt.Errorf("remove site: %w", err))
+			errs = append(errs, fmt.Errorf("remove site: %w", e.redactErr(err)))
 		} else {
 			e.mu.Lock()
 			run.site, run.docker = false, false

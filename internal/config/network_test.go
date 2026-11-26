@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/nearhost/nearhost/internal/report"
@@ -113,5 +114,42 @@ func TestUnknownKeysSeesNetwork(t *testing.T) {
 func TestNetworkLabel(t *testing.T) {
 	if got := NetworkLabel("My App"); got != "my-app" {
 		t.Errorf("NetworkLabel = %q", got)
+	}
+}
+
+// nearhost.<domain> is the page's own host on the network: no project may
+// take it, by alias or route host, in any case, while the section is there.
+func TestNetworkPageHostIsReserved(t *testing.T) {
+	project := func(alias, host string) string {
+		y := "projects:\n- name: app\n  server: local\n  path: /p/app\n  alias: " + alias + "\n  routes:\n  - port: 3000\n    role: web\n"
+		if host != "" {
+			y += "    hosts: [" + host + "]\n"
+		}
+		return y
+	}
+	cases := []struct{ name, yaml, field string }{
+		{"alias", project("nearhost.lab.example.dev", ""), "projects.alias"},
+		{"alias in capitals", project("Nearhost.Lab.Example.Dev", ""), "projects.alias"},
+		{"route host", project("app.test", "nearhost.lab.example.dev"), "projects.routes.hosts"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, section := range []string{"network: {domain: lab.example.dev}\n", "network: {domain: lab.example.dev, enabled: false}\n"} {
+				err := parseNet(t, section+tc.yaml).Validate()
+				m, ok := report.As(err)
+				if !ok || m.Code != report.ConfigInvalid {
+					t.Fatalf("Validate = %v, want %q", err, report.ConfigInvalid)
+				}
+				if m.Data["field"] != tc.field {
+					t.Errorf("field = %v, want %s (%v)", m.Data["field"], tc.field, err)
+				}
+				if want := "nearhost.lab.example.dev is Nearhost's own page on the network; choose another name"; !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not say %q", err, want)
+				}
+			}
+			if err := parseNet(t, tc.yaml).Validate(); err != nil {
+				t.Errorf("without a network section: %v", err)
+			}
+		})
 	}
 }

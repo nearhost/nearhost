@@ -344,6 +344,10 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		HTTPSPort: f.httpsPort, HTTPPort: f.httpPort, WebPort: f.webPort,
 		Capture: !f.noCapture,
 		Version: Version,
+		// A networked core with ACME certificates reads the DNS token
+		// each time its network options are worked out, so a token saved
+		// later is taken at the next config change.
+		DNSToken: dnsToken,
 	}
 	if !f.noHosts {
 		opts.EnsureHosts = askOnce(ensureHosts)
@@ -352,6 +356,30 @@ func engineOptions(ssh sshClient, f serveFlags, ensureHosts func(context.Context
 		opts.Lookup = lookup
 	}
 	return opts, nil
+}
+
+// dnsTokenEnv is the environment variable that gives the DNS token when
+// its file does not.
+const dnsTokenEnv = "NEARHOST_DNS_TOKEN"
+
+// dnsToken is the DNS provider's API token of a networked core: what the
+// file at config.DNSTokenPath holds, trimmed, or else $NEARHOST_DNS_TOKEN.
+// It is never logged, and its errors never hold it.
+func dnsToken() (string, error) {
+	path, err := config.DNSTokenPath()
+	if err == nil {
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil {
+			if token := strings.TrimSpace(string(data)); token != "" {
+				return token, nil
+			}
+			err = fmt.Errorf("%s is empty", path)
+		}
+	}
+	if token := strings.TrimSpace(os.Getenv(dnsTokenEnv)); token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf("no DNS token in the dns-token file or $%s: %w", dnsTokenEnv, err)
 }
 
 // errNoTerminal is the error of a hosts update that needs sudo's password
