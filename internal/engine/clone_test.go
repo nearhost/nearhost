@@ -22,6 +22,8 @@ func TestCloneConfigCopiesEveryField(t *testing.T) {
 		Presets:        []config.PresetRef{{Name: "official/laravel", Ref: "abc", SHA256: "def"}},
 		Notifications:  &yes,
 		KeepRunning:    &keep,
+		Network: &config.Network{Enabled: &yes, Domain: "lab.example.dev", Certificates: "acme",
+			ACME: &config.NetworkACME{DNS: "cloudflare"}, Allow: []string{"10.0.0.0/8"}},
 	}
 	orig := reflect.ValueOf(cfg).Elem()
 	for i := 0; i < orig.NumField(); i++ {
@@ -58,9 +60,13 @@ func TestCloneConfigCopiesEveryField(t *testing.T) {
 	cfg.Presets[0].Name = "changed"
 	cfg.Servers[0].Name = "changed"
 	cfg.Projects[0].Routes[0].Hosts[0] = "changed"
+	*cfg.Network.Enabled = false
+	cfg.Network.ACME.DNS = "changed"
+	cfg.Network.Allow[0] = "changed"
 	if !*out.KeepRunning || !*out.Notifications || *out.RegistryPrompt ||
 		out.Registries[0].Alias != "official" || out.Presets[0].Name != "official/laravel" ||
-		out.Servers[0].Name != "box" || out.Projects[0].Routes[0].Hosts[0] != "p.test" {
+		out.Servers[0].Name != "box" || out.Projects[0].Routes[0].Hosts[0] != "p.test" ||
+		!*out.Network.Enabled || out.Network.ACME.DNS != "cloudflare" || out.Network.Allow[0] != "10.0.0.0/8" {
 		t.Fatalf("the copy changed with the original: %+v", out)
 	}
 }
