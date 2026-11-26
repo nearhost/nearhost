@@ -33,6 +33,20 @@ func showOutput(program string) string {
 		"OK.\r\n"
 }
 
+// englishOutput is what netsh prints, in English, for one rule of program,
+// as on hera.
+func englishOutput(program, enabled, direction, profiles, action string) string {
+	return "\r\nRule Name:                            Nearhost\r\n" +
+		"----------------------------------------------------------------------\r\n" +
+		"Enabled:                              " + enabled + "\r\n" +
+		"Direction:                            " + direction + "\r\n" +
+		"Profiles:                             " + profiles + "\r\n" +
+		"Grouping:                             \r\n" +
+		"LocalIP:                              Any\r\n" +
+		"Program:                              " + program + "\r\n" +
+		"Action:                               " + action + "\r\n"
+}
+
 func TestHasProgram(t *testing.T) {
 	for _, c := range []struct {
 		name, out, program string
@@ -45,6 +59,15 @@ func TestHasProgram(t *testing.T) {
 		{"a longer path ending the same", showOutput(`D:\x` + testProgram), testProgram, false},
 		{"no rule", "No rules match the specified criteria.\r\n", testProgram, false},
 		{"empty program", showOutput(testProgram), "", false},
+		{"English, enabled", englishOutput(testProgram, "Yes", "In", "Private,Domain", "Allow"), testProgram, true},
+		{"English, all profiles", englishOutput(testProgram, "Yes", "In", "Domain,Private,Public", "Allow"), testProgram, true},
+		{"English, any profile", englishOutput(testProgram, "Yes", "In", "Any", "Allow"), testProgram, true},
+		{"English, disabled", englishOutput(testProgram, "No", "In", "Private,Domain", "Allow"), testProgram, false},
+		{"English, outbound", englishOutput(testProgram, "Yes", "Out", "Private,Domain", "Allow"), testProgram, false},
+		{"English, block", englishOutput(testProgram, "Yes", "In", "Private,Domain", "Block"), testProgram, false},
+		{"English, public only", englishOutput(testProgram, "Yes", "In", "Public", "Allow"), testProgram, false},
+		{"English, a disabled rule beside an enabled one", englishOutput(testProgram, "No", "In", "Private", "Allow") + englishOutput(testProgram, "Yes", "In", "Private", "Allow"), testProgram, true},
+		{"English, the enabled rule is another program's", englishOutput(testProgram, "No", "In", "Private", "Allow") + englishOutput(`C:\old\nearhost.exe`, "Yes", "In", "Private", "Allow"), testProgram, false},
 	} {
 		if got := HasProgram([]byte(c.out), c.program); got != c.want {
 			t.Errorf("%s: HasProgram = %v, want %v", c.name, got, c.want)
@@ -124,6 +147,7 @@ func TestApplyWith(t *testing.T) {
 		{"add fails", &fakeNetsh{fail: map[string]bool{"add": true}}, []string{show, del, add}, true},
 		{"delete of an old rule fails", &fakeNetsh{out: showOutput(`C:\old\nearhost.exe`), fail: map[string]bool{"delete": true}}, []string{show, del}, true},
 		{"the added rule doesn't show", &fakeNetsh{lost: true}, []string{show, del, add, show}, true},
+		{"a disabled rule is replaced", &fakeNetsh{out: englishOutput(testProgram, "No", "In", "Private,Domain", "Allow")}, []string{show, del, add, show}, false},
 	} {
 		err := ApplyWith(c.f.run, testProgram)
 		if (err != nil) != c.fails {

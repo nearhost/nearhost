@@ -27,6 +27,17 @@ var firewallExecutable = os.Executable
 // netshRun runs netsh; tests replace it.
 var netshRun firewall.Runner = firewall.Netsh
 
+// firewallNudge asks a running core to look for the rule now; tests
+// replace it. A core that isn't running, or is too old to know the route,
+// finds the rule at its next look, so its error is not reported.
+var firewallNudge = func(ctx context.Context) {
+	c, err := dialCore()
+	if err != nil {
+		return
+	}
+	_ = c.RecheckFirewall(ctx)
+}
+
 // firewallRecheck is how often a networked core that waits for the firewall
 // rule looks for it.
 const firewallRecheck = 30 * time.Second
@@ -50,8 +61,8 @@ func newNetworkFirewallCmd() *cobra.Command {
 		Short: "Let other devices reach Nearhost through Windows Firewall",
 		Long: "Add a Windows Firewall rule that lets other devices on private networks reach\n" +
 			"this Nearhost, so networked mode can listen on the network. Windows asks once\n" +
-			"for an administrator's consent. A running Nearhost finds the rule within 30\n" +
-			"seconds. Only Windows needs this.",
+			"for an administrator's consent, and a running Nearhost then listens on the\n" +
+			"network. Only Windows needs this.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runNetworkFirewall(cmd)
@@ -87,6 +98,7 @@ func runNetworkFirewall(cmd *cobra.Command) error {
 		return err
 	}
 	if firewall.ReadyWith(netshRun, exe) {
+		firewallNudge(orBackground(cmd.Context()))
 		_, err := fmt.Fprintln(out, "The firewall rule is already in place.")
 		return err
 	}
@@ -105,8 +117,9 @@ func runNetworkFirewall(cmd *cobra.Command) error {
 	if err != nil {
 		return report.Errorf(report.NetworkFirewall, "The firewall rule couldn't be added: %s", err).Wrap(err)
 	}
+	firewallNudge(orBackground(cmd.Context()))
 	_, err = fmt.Fprintln(out, "Added the firewall rule. Other devices on private networks can reach Nearhost,\n"+
-		"and a running Nearhost starts listening on the network within 30 seconds.")
+		"and a running Nearhost listens on the network.")
 	return err
 }
 
@@ -177,6 +190,18 @@ func newFirewallWatch(networked bool) *firewallWatch {
 	return w
 }
 
+// nudge asks run to look for the rule at once. It does nothing once the
+// rule has been found, or when run is already asked.
+func (w *firewallWatch) nudge() {
+	if w.wake == nil {
+		return
+	}
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
 // Ready reports whether the rule was there when last looked for.
 func (w *firewallWatch) Ready() bool { return w.ready.Load() }
 
@@ -187,10 +212,7 @@ func (w *firewallWatch) engineReady() bool {
 	if w.ready.Load() {
 		return true
 	}
-	select {
-	case w.wake <- struct{}{}:
-	default:
-	}
+	w.nudge()
 	return false
 }
 

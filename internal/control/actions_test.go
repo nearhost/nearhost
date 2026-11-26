@@ -415,9 +415,10 @@ func TestEnvironmentOlderCore(t *testing.T) {
 // pairFake is a backend that pairs and lists devices.
 type pairFake struct {
 	*fakeBackend
-	offErr  error
-	devices []DeviceInfo
-	revoked []string
+	offErr   error
+	devices  []DeviceInfo
+	revoked  []string
+	rechecks int
 }
 
 func (f *pairFake) Pair() (PairInfo, error) {
@@ -439,6 +440,20 @@ func (f *pairFake) RevokeDevice(name string) error {
 	}
 	f.revoked = append(f.revoked, name)
 	return nil
+}
+
+func (f *pairFake) RecheckFirewall() error {
+	f.rechecks++
+	return nil
+}
+
+// The firewall recheck route asks the backend to look for the rule.
+func TestRecheckFirewallRoute(t *testing.T) {
+	b := &pairFake{fakeBackend: newFake()}
+	c := dial(t, serve(t, b))
+	if err := c.RecheckFirewall(context.Background()); err != nil || b.rechecks != 1 {
+		t.Fatalf("RecheckFirewall = %v, rechecks %d, want 1", err, b.rechecks)
+	}
 }
 
 func TestPairRoutes(t *testing.T) {

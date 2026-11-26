@@ -36,6 +36,9 @@ type coreOps struct {
 	httpsPort int
 	// devices holds the paired devices; nil while the page is not served.
 	devices *devices.Store
+	// firewall looks for the Windows firewall rule; nil where none is
+	// needed.
+	firewall *firewallWatch
 	// reload lets one Apply run at a time, the watcher's included.
 	reload sync.Mutex
 	// acceptSaving, when set, runs inside AcceptChange's save. Tests use it

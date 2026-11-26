@@ -77,6 +77,50 @@ func TestApplyAddsRuleForThisProgram(t *testing.T) {
 	}
 }
 
+// When the rule is in place, `network firewall` asks a running core to
+// look for it now, as one that waits would otherwise find it only at its
+// next look.
+func TestNetworkFirewallNudgesTheCore(t *testing.T) {
+	fakeFirewall(t)
+	origGOOS, origNudge := firewallGOOS, firewallNudge
+	t.Cleanup(func() { firewallGOOS, firewallNudge = origGOOS, origNudge })
+	firewallGOOS = "windows"
+	nudged := 0
+	firewallNudge = func(context.Context) { nudged++ }
+	if err := execFirewallApply(firewallTestExe); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	root := NewRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"network", "firewall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("network firewall: %v", err)
+	}
+	if nudged != 1 || !strings.Contains(out.String(), "already in place") {
+		t.Errorf("nudged %d times, said %q; want once, already in place", nudged, out.String())
+	}
+}
+
+// The core's RecheckFirewall wakes the watch, which then looks at once.
+func TestRecheckFirewallWakesTheWatch(t *testing.T) {
+	w := makeFirewallWatch(func() bool { return false })
+	o := &coreOps{firewall: w}
+	if err := o.RecheckFirewall(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.RecheckFirewall(); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.wake) != 1 {
+		t.Errorf("the watch was woken %d times, want once", len(w.wake))
+	}
+	if err := (&coreOps{}).RecheckFirewall(); err != nil {
+		t.Errorf("RecheckFirewall with no watch = %v", err)
+	}
+}
+
 // fakeNetEngine is the engine as the firewall watch sees it.
 type fakeNetEngine struct {
 	mu       sync.Mutex

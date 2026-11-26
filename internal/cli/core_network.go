@@ -26,6 +26,14 @@ func (o *coreOps) Pair() (control.PairInfo, error) {
 	return control.PairInfo{Code: pc.Code, URL: ns.URL + "/pair/" + pc.Code, Expires: pc.Expires}, nil
 }
 
+// RecheckFirewall asks the firewall watch to look for the rule now.
+func (o *coreOps) RecheckFirewall() error {
+	if o.firewall != nil {
+		o.firewall.nudge()
+	}
+	return nil
+}
+
 // pairRefusal is why a core in state ns gives no pairing code, or nil when
 // it may. A core that does not listen on the network gives none, as no
 // device could use it. A DNS token problem leaves it listening, with the
