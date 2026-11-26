@@ -231,11 +231,26 @@ func deviceGuard(s Site, opts Options) map[string]any {
 		return nil
 	}
 	local, _ := siteRanges(s, nil) // already checked by BuildConfig
+	return map[string]any{"handler": deviceModule, "page": networkPageOrigin(opts), "local": local}
+}
+
+// networkPageOrigin is the page's network origin, https://nearhost.<domain>
+// with :<WebPort> when the page has a port of its own.
+func networkPageOrigin(opts Options) string {
 	page := "https://" + networkPageHost(opts.Network)
 	if opts.WebPort != 0 {
 		page += ":" + strconv.Itoa(opts.WebPort)
 	}
-	return map[string]any{"handler": deviceModule, "page": page, "local": local}
+	return page
+}
+
+// frameHandler is the frame rule handler of a site's routes on a networked
+// core that listens, and nil otherwise: it lets the page frame the site.
+func frameHandler(opts Options) map[string]any {
+	if !opts.networkListens() {
+		return nil
+	}
+	return map[string]any{"handler": frameModule, "page": networkPageOrigin(opts)}
 }
 
 // Options configures the embedded Caddy instance.
@@ -308,6 +323,9 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
 	if guard := deviceGuard(s, opts); guard != nil {
 		handle = append(handle, guard)
+		if fr := frameHandler(opts); fr != nil {
+			handle = append(handle, fr)
+		}
 	}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
 	match := []any{map[string]any{
@@ -384,6 +402,9 @@ func downRoute(s Site, host string, ranges []string, opts Options) map[string]an
 	handle := []any{handler}
 	if guard := deviceGuard(s, opts); guard != nil {
 		handle = []any{guard, handler}
+		if fr := frameHandler(opts); fr != nil {
+			handle = []any{guard, fr, handler}
+		}
 	}
 	return map[string]any{
 		"match": []any{map[string]any{
