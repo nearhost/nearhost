@@ -447,3 +447,53 @@ func TestCachedPrereleaseAnswerIsNeverShownToANormalBuild(t *testing.T) {
 		t.Error("a normal build would be offered the cached prerelease")
 	}
 }
+
+// A release build asked for the beta line reads the list of releases, as a
+// pre-release build does.
+func TestLatestWithNextReadsTheList(t *testing.T) {
+	var hits atomic.Int32
+	c := Checker{Current: "0.12.0", Next: true, URL: listServer(t, releaseList, &hits, nil).URL, GOOS: "linux", GOARCH: "amd64"}
+	got, err := c.Latest(context.Background())
+	if err != nil || got != "0.13.0-rc.2" {
+		t.Fatalf("Latest = %q, %v; want 0.13.0-rc.2", got, err)
+	}
+	if (Checker{Current: "1.0.0", Next: true}).url() != ReleasesListURL {
+		t.Error("a Next check does not default to the list of releases")
+	}
+}
+
+func TestNextAnswerIsNeverShownToANormalBuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "update.json")
+	var hits atomic.Int32
+	next := Checker{Current: "0.12.0", Next: true, URL: listServer(t, releaseList, &hits, nil).URL, CachePath: path, GOOS: "linux", GOARCH: "amd64"}
+	if got, err := next.Cached(context.Background()); err != nil || got != "0.13.0-rc.2" {
+		t.Fatalf("Cached = %q, %v", got, err)
+	}
+	var normalHits atomic.Int32
+	normal := Checker{Current: "0.12.0", URL: releaseServer(t, "v0.12.0", &normalHits).URL, CachePath: path}
+	got, err := normal.Cached(context.Background())
+	if err != nil || got != "0.12.0" || normalHits.Load() != 1 {
+		t.Fatalf("normal build got %q, %v (asked GitHub %d times); the beta line's cache must not serve it", got, err, normalHits.Load())
+	}
+}
+
+func TestNewerNext(t *testing.T) {
+	for _, tc := range []struct {
+		current, latest string
+		want            bool
+	}{
+		{"0.15.0", "0.16.0-beta.1", true},
+		{"0.16.0-beta.1", "0.16.0-beta.2", true},
+		{"0.16.0-beta.10", "0.16.0-beta.9", false},
+		{"0.16.0-beta.9", "0.16.0-beta.10", true},
+		{"0.16.0", "0.16.0-beta.3", false},
+		{"0.16.0", "0.16.0", false},
+		{"0.15.0", "0.16.0", true},
+		{"dev", "0.16.0", false},
+		{"0.15.0", "", false},
+	} {
+		if got := NewerNext(tc.current, tc.latest); got != tc.want {
+			t.Errorf("NewerNext(%q, %q) = %v, want %v", tc.current, tc.latest, got, tc.want)
+		}
+	}
+}

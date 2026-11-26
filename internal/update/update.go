@@ -50,6 +50,19 @@ func Newer(current, latest string) bool {
 	return l.GreaterThan(c)
 }
 
+// NewerNext reports whether latest is a later version than current, of any
+// kind: unlike Newer, a release build may be offered a pre-release, as
+// `nearhost update --next` asks for. A current or latest that is not a
+// version is never newer.
+func NewerNext(current, latest string) bool {
+	c, err := semver.NewVersion(current)
+	if err != nil {
+		return false
+	}
+	l, err := semver.NewVersion(latest)
+	return err == nil && l.GreaterThan(c)
+}
+
 // IsPrerelease reports whether v is a version with a pre-release part, such
 // as 0.13.0-rc.1.
 func IsPrerelease(v string) bool {
@@ -65,8 +78,12 @@ type Checker struct {
 	// Current is the running version. When it is a pre-release, Latest is
 	// the highest version of any kind, not only GitHub's latest release.
 	Current string
+	// Next asks for the beta line whatever Current is, as `nearhost update
+	// --next` does: Latest is then the highest version of any kind, as for a
+	// pre-release build, and is cached on that line.
+	Next bool
 	// URL is the releases endpoint; empty means ReleasesURL, or
-	// ReleasesListURL when Current is a pre-release.
+	// ReleasesListURL when Current is a pre-release or Next is set.
 	URL string
 	// CachePath is where the last check is kept; empty means no cache.
 	CachePath string
@@ -99,7 +116,7 @@ func (c Checker) url() string {
 	switch {
 	case c.URL != "":
 		return c.URL
-	case IsPrerelease(strings.TrimPrefix(c.Current, "v")):
+	case c.Next || IsPrerelease(strings.TrimPrefix(c.Current, "v")):
 		return ReleasesListURL
 	}
 	return ReleasesURL
@@ -108,7 +125,7 @@ func (c Checker) url() string {
 // line names the line of releases the checker follows, kept in the cache so
 // one line's answer is never read as the other's.
 func (c Checker) line() string {
-	if IsPrerelease(strings.TrimPrefix(c.Current, "v")) {
+	if c.Next || IsPrerelease(strings.TrimPrefix(c.Current, "v")) {
 		return "pre"
 	}
 	return ""
