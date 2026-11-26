@@ -7,7 +7,12 @@
 // "previously staged version"): that version is skipped too.
 //
 // A version with a prerelease part (0.13.0-rc.1) is published under the
-// `next` tag, so it never becomes what `npm install` picks.
+// `next` tag, so it never becomes what `npm install` picks. A normal version
+// then moves `next` to itself on @nearhost/cli, so `@next` is never older than
+// `latest` (only the launcher: it pins its platform packages exactly). That
+// runs on a rerun too, and npm allows it over trusted publishing once the
+// package's trusted publisher has "Allow npm dist-tag" on (npm 11.21.0 or
+// later).
 //
 //   node npm/publish.mjs [out dir] [--dry-run] [-- extra npm publish flags]
 //
@@ -59,4 +64,16 @@ for (const dir of dirs) {
     continue;
   }
   process.exit(res.status ?? 1);
+}
+
+const launcher = JSON.parse(readFileSync(join(out, 'cli', 'package.json'), 'utf8'));
+if (!launcher.version.includes('-')) {
+  const tag = ['dist-tag', 'add', `${launcher.name}@${launcher.version}`, 'next'];
+  if (dryRun) {
+    console.log(['npm', ...tag].join(' '));
+  } else {
+    const res = spawnSync('npm', tag, { stdio: 'inherit' });
+    if (res.error) throw res.error;
+    if (res.status !== 0) process.exit(res.status ?? 1);
+  }
 }
