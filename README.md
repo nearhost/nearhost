@@ -103,6 +103,8 @@ updates Nearhost the way you installed it: `brew upgrade`, `npm install -g`, `pn
 
 If a Nearhost is running in the background, `nearhost update` offers to restart it on the new version.
 
+To try the next release before it ships, run `nearhost update --next`, or install a beta with `npm install -g @nearhost/cli@next`. Homebrew has no betas. A new beta is published each time a change lands for the next release. On a beta, `nearhost update` moves to newer betas and then to the release, and stays on releases from there.
+
 Nearhost also asks GitHub for the latest release at most once a day and says so when one is out: in the interface, on Nearhost's page, in `nearhost status`, and as a line from other commands. Set `NEARHOST_NO_UPDATE_CHECK=1` to turn that off.
 
 ## Quick start

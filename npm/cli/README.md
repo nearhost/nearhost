@@ -44,6 +44,8 @@ nearhost
 
 pnpm (`pnpm add -g @nearhost/cli`) and bun (`bun add -g @nearhost/cli`) work too. Nearhost runs on macOS, Linux and Windows 11, on Apple silicon, Intel and ARM.
 
+To try the next release before it ships, install `@nearhost/cli@next`, or run `nearhost update --next`. A new beta is published each time a change lands for the next release.
+
 The binary also ships through Homebrew (`brew install nearhost/tap/nearhost`) and a shell installer (`curl -fsSL https://nearhost.dev/install.sh | sh`). On Windows there is a PowerShell installer (`irm https://nearhost.dev/install.ps1 | iex`). The [install guide](https://nearhost.dev/docs/getting-started/install/) covers each one.
 
 ### On Linux
