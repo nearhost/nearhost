@@ -19,6 +19,10 @@ func (o *coreOps) Pair() (control.PairInfo, error) {
 	if err := pairRefusal(ns); err != nil {
 		return control.PairInfo{}, err
 	}
+	if ns.URL != "" && o.devices == nil && o.devicesErr != nil {
+		return control.PairInfo{}, report.Errorf(report.PairUnavailable, "Paired devices can't be used, so no device can pair: %s", o.devicesErr).
+			Because("Nearhost couldn't open its list of paired devices when it started. Fix what the error names, then restart Nearhost.").Wrap(o.devicesErr)
+	}
 	if ns.URL == "" || o.devices == nil {
 		return control.PairInfo{}, report.Errorf(report.PairUnavailable, "Nearhost's page isn't served, so no device can pair.")
 	}

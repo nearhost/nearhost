@@ -97,7 +97,9 @@ button {
   <h1>Pair this device</h1>
   <p id="what">{{if .Machine}}With Nearhost on <strong>{{.Machine}}</strong>.{{else}}With Nearhost on this machine.{{end}}</p>
   <p id="in-tab">Pair here, then add Nearhost to your Home Screen. It stays paired.</p>
-  {{- if not .Code}}
+  {{- if .Code}}
+  <p id="standalone" hidden>Pair here, and Nearhost on this Home Screen stays paired.</p>
+  {{- else}}
   <p id="standalone" hidden>Type the code <code>nearhost pair</code> printed.</p>
   {{- end}}
   {{- if .Error}}

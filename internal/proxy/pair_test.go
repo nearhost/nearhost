@@ -67,7 +67,7 @@ func pairPost(form url.Values) *http.Request {
 func TestAuthRefusesForeignTo(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)
-	for _, to := range []string{"https://evil.example/", "https://xlab.example.dev/", "http://app.lab.example.dev/", "//app.lab.example.dev/", "https://user@evil.example\\@app.lab.example.dev/", ""} {
+	for _, to := range []string{"https://evil.example/", "https://xlab.example.dev/", "http://app.lab.example.dev/", "//app.lab.example.dev/", "https://user@evil.example\\@app.lab.example.dev/", "https://[fe80::1%25eth0.lab.example.dev]/", ""} {
 		r := withDevice(netRequest("GET", "/auth?"+url.Values{"to": {to}}.Encode(), nil), "good-token")
 		w := serveNet(t, netHome(), r)
 		if w.Code != http.StatusBadRequest {
@@ -128,7 +128,7 @@ func TestPairSetsDeviceCookie(t *testing.T) {
 	}
 
 	w = serveNet(t, netHome(), pairPost(url.Values{"code": {"ABCD2345"}, "name": {"iPad"}}))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "That pairing code has been used or has expired") || !strings.Contains(w.Body.String(), "<code>nearhost pair</code>") {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "That pairing code is wrong, or has been used or has expired") || !strings.Contains(w.Body.String(), "Get a new code") || !strings.Contains(w.Body.String(), "<code>nearhost pair</code>") {
 		t.Errorf("used code: %d %s", w.Code, w.Body.String())
 	}
 	if w.Header().Get("Set-Cookie") != "" {
@@ -203,6 +203,11 @@ func TestPairForm(t *testing.T) {
 	w = serveNet(t, netHome(), netRequest("GET", "/pair/ABCD2345", nil))
 	if body := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(body, `type="hidden" name="code" value="ABCD2345"`) {
 		t.Errorf("GET /pair/ABCD2345: %d %s", w.Code, body)
+	}
+	// Opened from the Home Screen with the code in its address, the page
+	// doesn't say to add it to the Home Screen.
+	if body := w.Body.String(); !strings.Contains(body, `<p id="standalone" hidden>Pair here, and Nearhost on this Home Screen stays paired.</p>`) {
+		t.Errorf("GET /pair/ABCD2345 has no Home Screen wording: %s", body)
 	}
 
 	w = serveNet(t, netHome(), netRequest("GET", "/pair.js", nil))

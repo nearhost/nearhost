@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,8 +174,8 @@ func urlPort(u string) int {
 		return 0
 	}
 	if s := p.Port(); s != "" {
-		var port int
-		if _, err := fmt.Sscan(s, &port); err != nil {
+		port, err := strconv.Atoi(s)
+		if err != nil || port < 1 || port > 65535 {
 			return 0
 		}
 		return port

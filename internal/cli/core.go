@@ -217,11 +217,13 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		// check them, for as long as the page is served. The store stays
 		// open on a core that is not networked, so networking turned on
 		// later finds it; the page serves pairing only while networked.
-		if store := openPageDevices(cfg.NetworkOn(), eng.Events().Publish); store != nil {
+		store, err := openPageDevices(cfg.NetworkOn(), eng.Events().Publish)
+		if store != nil {
 			proxy.SetDevices(store)
 			ops.devices = store
 			defer proxy.SetDevices(nil)
 		}
+		ops.devicesErr = err
 		pageDone := make(chan struct{})
 		proxy.SetConsole(page.New(page.Options{
 			Core: core, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
@@ -562,18 +564,19 @@ func (c *coreBackend) HostsChanged(context.Context) {
 }
 
 // openPageDevices opens the paired devices' store for the page, or returns
-// nil when it can't. The failure is published as a warning only on a
-// networked core: one that is not has no use for devices, and is not told.
-func openPageDevices(networked bool, publish func(engine.Event)) *devices.Store {
+// why it can't. The failure is published as a warning only on a networked
+// core: one that is not has no use for devices, and is not told, though
+// pairing says why when networking is turned on later.
+func openPageDevices(networked bool, publish func(engine.Event)) (*devices.Store, error) {
 	store, err := openDevices()
 	if err != nil {
 		if networked {
 			m := report.Warnf(report.NetworkDevicesUnavailable, "Paired devices can't be used: %s", err).Wrap(err)
 			publish(engine.Event{Message: m.Title, Report: m})
 		}
-		return nil
+		return nil, err
 	}
-	return store
+	return store, nil
 }
 
 // openDevices opens the paired devices' store, whose site cookies are

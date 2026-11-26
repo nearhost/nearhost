@@ -34,8 +34,10 @@ type coreOps struct {
 	// path is the config file.
 	path      string
 	httpsPort int
-	// devices holds the paired devices; nil while the page is not served.
-	devices *devices.Store
+	// devices holds the paired devices; nil while the page is not served,
+	// or when devicesErr says why the store couldn't be opened.
+	devices    *devices.Store
+	devicesErr error
 	// firewall looks for the Windows firewall rule; nil where none is
 	// needed.
 	firewall *firewallWatch

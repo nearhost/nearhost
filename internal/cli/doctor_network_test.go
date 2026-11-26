@@ -192,3 +192,20 @@ func TestNetworkProblemsGoToTheirOwnRows(t *testing.T) {
 		}
 	}
 }
+
+// urlPort is 443 for an https URL with no port, and 0 for a port out of
+// range or a string that isn't a URL.
+func TestURLPort(t *testing.T) {
+	for u, want := range map[string]int{
+		"https://nearhost.lab.example.dev":       443,
+		"https://nearhost.lab.example.dev:6327":  6327,
+		"https://nearhost.lab.example.dev:70000": 0,
+		"https://nearhost.lab.example.dev:0":     0,
+		"https://nearhost.lab.example.dev:12ab":  0,
+		"nearhost.lab.example.dev":               0,
+	} {
+		if got := urlPort(u); got != want {
+			t.Errorf("urlPort(%q) = %d, want %d", u, got, want)
+		}
+	}
+}

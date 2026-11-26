@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nearhost/nearhost/internal/devices"
+	"github.com/nearhost/nearhost/internal/hostname"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/report/htmlview"
 )
@@ -37,8 +38,8 @@ const maxDeviceName = 64
 // pairCodeInvalid is the pair form's error, for a code that is wrong, used
 // or expired.
 func pairCodeInvalid() *htmlview.Data {
-	d := htmlview.Prepare(report.Errorf(report.PairCodeInvalid, "That pairing code has been used or has expired").
-		Step("Get a new one on the machine Nearhost runs on:", "nearhost pair"))
+	d := htmlview.Prepare(report.Errorf(report.PairCodeInvalid, "That pairing code is wrong, or has been used or has expired").
+		Step("Get a new code on the machine Nearhost runs on:", "nearhost pair"))
 	return &d
 }
 
@@ -171,7 +172,7 @@ func (h *Home) servePairPost(w http.ResponseWriter, r *http.Request, d DeviceAut
 	token, err := d.Pair(r.PostForm.Get("code"), deviceName(r.PostForm.Get("name")), client)
 	switch {
 	case errors.Is(err, devices.ErrCodeInvalid):
-		servePairForm(w, r, pairForm{Error: pairCodeInvalid(), Machine: h.Machine}, http.StatusOK)
+		servePairForm(w, r, pairForm{Error: pairCodeInvalid(), Machine: h.Machine}, http.StatusBadRequest)
 		return
 	case err != nil:
 		emit("", "A device could not be paired: "+err.Error())
@@ -236,13 +237,18 @@ func (h *Home) serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 
 // underNetworkDomain reports whether host is the network domain, this
 // page's network host without its "nearhost.", or a name beneath it,
-// ignoring case. It is false while the core is not networked.
+// ignoring case. It is false while the core is not networked, and for a
+// host that is not a valid name, such as an IPv6 address with a zone that
+// ends in the domain.
 func (h *Home) underNetworkDomain(host string) bool {
 	domain, ok := strings.CutPrefix(strings.ToLower(h.NetworkHost), "nearhost.")
 	if !ok || domain == "" {
 		return false
 	}
 	host = strings.ToLower(host)
+	if hostname.Valid(host) != nil {
+		return false
+	}
 	return host == domain || strings.HasSuffix(host, "."+domain)
 }
 
