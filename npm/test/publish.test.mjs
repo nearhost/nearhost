@@ -34,10 +34,13 @@ test('a normal version publishes with no --tag, then moves next to it', () => {
   assert.equal(lines[2], 'npm dist-tag add @nearhost/cli@0.13.0 next');
 });
 
-test('a prerelease publishes with --tag next', () => {
+// A prerelease is published under a holding tag, and `next` moves to it only
+// if it is newer, so builds that finish out of order never move it back.
+test('a prerelease publishes with --tag prerelease, then may move next to it', () => {
   const lines = dryRun('0.13.0-rc.1');
-  assert.equal(lines.length, 2);
-  for (const l of lines) assert.match(l, / --tag next$/);
+  assert.equal(lines.length, 3);
+  for (const l of lines.slice(0, 2)) assert.match(l, / --tag prerelease$/);
+  assert.equal(lines[2], 'npm dist-tag add @nearhost/cli@0.13.0-rc.1 next');
 });
 
 test('extra flags after -- are passed on', () => {
@@ -49,8 +52,9 @@ test('extra flags after -- are passed on', () => {
 // nothing (or, with `published`, every version) and `npm publish` of the
 // package named by `failing` prints `stderr` and exits 1. Every other publish
 // prints "+ <dir name>". `npm dist-tag` prints its arguments, or fails with
-// `stderr` when `failing` is "dist-tag".
-function run(failing, stderr, { version = '0.13.0-rc.1', published = false } = {}) {
+// `stderr` when `failing` is "dist-tag". `npm view <pkg> dist-tags --json`
+// prints `distTags`.
+function run(failing, stderr, { version = '0.13.0-rc.1', published = false, distTags = { latest: '0.12.0' } } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'nearhost-publish-test-'));
   try {
     const out = join(root, 'out');
@@ -63,6 +67,7 @@ function run(failing, stderr, { version = '0.13.0-rc.1', published = false } = {
     writeFileSync(
       join(bin, 'npm'),
       `#!/bin/sh
+if [ "$1" = view ] && [ "$3" = dist-tags ]; then printf '%s\\n' "$FAKE_NPM_DIST_TAGS"; exit 0; fi
 if [ "$1" = view ]; then [ -n "$FAKE_NPM_PUBLISHED" ] && exit 0; exit 1; fi
 if [ "$1" = dist-tag ]; then
   if [ "$FAKE_NPM_FAILING" = dist-tag ]; then printf '%s\\n' "$FAKE_NPM_STDERR" >&2; exit 1; fi
@@ -76,7 +81,7 @@ echo "+ $name"
     chmodSync(join(bin, 'npm'), 0o755);
     return spawnSync(process.execPath, [publish, out], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_NPM_FAILING: failing, FAKE_NPM_STDERR: stderr, FAKE_NPM_PUBLISHED: published ? '1' : '' },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_NPM_FAILING: failing, FAKE_NPM_STDERR: stderr, FAKE_NPM_PUBLISHED: published ? '1' : '', FAKE_NPM_DIST_TAGS: JSON.stringify(distTags) },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -109,16 +114,34 @@ test('any other publish failure stops the run and shows npm\'s error', unix, () 
 // A rerun after the publishes went through, but moving `next` did not, must
 // still move it.
 test('a normal version already published still moves next to it', unix, () => {
-  const r = run('', '', { version: '0.13.0', published: true });
+  const r = run('', '', { version: '0.13.0', published: true, distTags: { latest: '0.13.0', next: '0.13.0-rc.2' } });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /@nearhost\/cli@0\.13\.0 is already published; skipping/);
   assert.match(r.stdout, /^dist-tag add @nearhost\/cli@0\.13\.0 next$/m);
 });
 
-test('a prerelease does not run npm dist-tag', unix, () => {
-  const r = run('', '');
+// Which version `next` ends on, for this version and the tags npm has.
+function nextAfter(version, distTags) {
+  const r = run('', '', { version, distTags });
   assert.equal(r.status, 0, r.stderr);
-  assert.doesNotMatch(r.stdout, /dist-tag/);
+  const moved = r.stdout.match(/^dist-tag add @nearhost\/cli@(\S+) next$/m);
+  return moved ? moved[1] : distTags.next;
+}
+
+test('next moves only to a newer version than next and latest', unix, () => {
+  assert.equal(nextAfter('0.13.0-rc.1', { latest: '0.12.0' }), '0.13.0-rc.1');
+  assert.equal(nextAfter('0.13.0-rc.2', { latest: '0.12.0', next: '0.13.0-rc.1' }), '0.13.0-rc.2');
+  assert.equal(nextAfter('0.13.0-rc.10', { latest: '0.12.0', next: '0.13.0-rc.9' }), '0.13.0-rc.10');
+  assert.equal(nextAfter('0.14.0-beta.1', { latest: '0.13.0', next: '0.13.0' }), '0.14.0-beta.1');
+  // A slower build finishing after a newer one.
+  assert.equal(nextAfter('0.13.0-rc.1', { latest: '0.12.0', next: '0.13.0-rc.2' }), '0.13.0-rc.2');
+  // A beta finishing after its release.
+  assert.equal(nextAfter('0.13.0-beta.3', { latest: '0.13.0', next: '0.13.0' }), '0.13.0');
+  assert.equal(nextAfter('0.13.0-beta.3', { latest: '0.13.0', next: '0.13.0-beta.2' }), '0.13.0');
+  // A rerun of an older release.
+  assert.equal(nextAfter('0.12.0', { latest: '0.13.0', next: '0.14.0-beta.1' }), '0.14.0-beta.1');
+  // Already there: nothing to move.
+  assert.equal(nextAfter('0.13.0', { latest: '0.13.0', next: '0.13.0' }), '0.13.0');
 });
 
 test('a failed dist-tag fails the run and shows npm\'s error', unix, () => {

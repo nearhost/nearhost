@@ -15,14 +15,14 @@
 # This workflow builds nothing. It creates a GitHub prerelease with the app's
 # token, which, unlike GITHUB_TOKEN, starts release.yml. That builds darwin,
 # linux and Windows archives, notarises the macOS ones and publishes the npm
-# packages under `next`, as for any prerelease: the release is never "latest",
+# packages, moving `next` to the beta if it is the newest, as for any prerelease: the release is never "latest",
 # npm's `latest` tag and the Homebrew tap are untouched. release-please
 # ignores the beta: it finds the last release by the version in
 # .release-please-manifest.json, and a beta's tag never equals that.
 #
 # Running it by hand from the Actions tab ("Run workflow") works only on the
-# release PR's branch, and publishes the next beta from it. Any other branch
-# is refused. It holds no signing secrets: those stay in the release
+# release PR's branch, and publishes the next beta from it, with a fixed line
+# for notes if no release PR is open. Any other branch is refused. It holds no signing secrets: those stay in the release
 # environment, which only release.yml uses.
 name: beta
 on:
@@ -58,9 +58,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # Only the branch's newest commit makes a beta: a run that waited behind
+      # another, or a rerun of an old run, would otherwise publish a stale
+      # commit as the newest beta.
       - name: Number the beta
         id: version
         run: |
+          head=$(git rev-parse "origin/$BRANCH")
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::$BRANCH has moved on to $head; no beta from the older $GITHUB_SHA"
+            echo "beta=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           version=$(jq -r '."."' .release-please-manifest.json)
           code=0
           beta=$(git tag -l | sh .github/scripts/beta-version.sh "$version") || code=$?
@@ -73,8 +82,8 @@ jobs:
               echo "beta=" >> "$GITHUB_OUTPUT" ;;
             *) exit "$code" ;;
           esac
-      # A beta's tag is made once. If it is already there, this is a rerun of
-      # a run that got that far: run the workflow again to number the next one.
+      # Each run numbers its beta from the tags it fetched, so the tag is new
+      # unless something else made it since: then run the workflow again.
       - name: Check the tag is new
         if: steps.version.outputs.beta != ''
         env:

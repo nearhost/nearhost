@@ -6,18 +6,21 @@
 // version it has accepted, and refuses a second copy meanwhile (E409,
 // "previously staged version"): that version is skipped too.
 //
-// A version with a prerelease part (0.13.0-rc.1) is published under the
-// `next` tag, so it never becomes what `npm install` picks. A normal version
-// then moves `next` to itself on @nearhost/cli, so `@next` is never older than
-// `latest` (only the launcher: it pins its platform packages exactly). That
-// runs on a rerun too, and npm allows it over trusted publishing once the
-// package's trusted publisher has "Allow npm dist-tag" on (npm 11.21.0 or
-// later).
+// A version with a prerelease part (0.16.0-beta.1) is published under the
+// `prerelease` tag, so it never becomes what `npm install` picks. Then, for
+// any version, @nearhost/cli's `next` tag moves to the highest of itself,
+// `latest` and this version, so `next` only ever moves forward: release runs
+// go in parallel and finish in any order, and a beta that finishes after its
+// release, or a rerun of an old release, must not move it back. Only the
+// launcher is tagged: it pins its platform packages exactly. npm allows
+// dist-tag over trusted publishing once the package's trusted publisher has
+// "Allow npm dist-tag" on (npm 11.21.0 or later).
 //
 //   node npm/publish.mjs [out dir] [--dry-run] [-- extra npm publish flags]
 //
-// --dry-run prints each npm publish command and touches no registry, not
-// even for npm view.
+// --dry-run prints each npm publish command, and the dist-tag command as if
+// this version were the highest, and touches no registry, not even for npm
+// view.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -39,7 +42,7 @@ const dirs = readdirSync(out)
 
 for (const dir of dirs) {
   const { name, version } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-  const publish = [dir, '--access', 'public', ...(version.includes('-') ? ['--tag', 'next'] : []), ...extra];
+  const publish = [dir, '--access', 'public', ...(version.includes('-') ? ['--tag', 'prerelease'] : []), ...extra];
   if (dryRun) {
     console.log(['npm', 'publish', ...publish].join(' '));
     continue;
@@ -66,13 +69,40 @@ for (const dir of dirs) {
   process.exit(res.status ?? 1);
 }
 
+// Compares two versions by SemVer precedence: below 0, 0 or above 0.
+function compare(a, b) {
+  const [ac, ap] = parse(a);
+  const [bc, bp] = parse(b);
+  for (let i = 0; i < 3; i++) if (ac[i] !== bc[i]) return ac[i] - bc[i];
+  if (!ap.length || !bp.length) return bp.length - ap.length;
+  for (let i = 0; i < Math.min(ap.length, bp.length); i++) {
+    const [x, y] = [ap[i], bp[i]];
+    if (x === y) continue;
+    const [xn, yn] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+    if (xn && yn) return Number(x) - Number(y);
+    if (xn !== yn) return xn ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return ap.length - bp.length;
+}
+
+function parse(v) {
+  const [core, ...pre] = v.split('+')[0].split('-');
+  return [core.split('.').map(Number), pre.length ? pre.join('-').split('.') : []];
+}
+
 const launcher = JSON.parse(readFileSync(join(out, 'cli', 'package.json'), 'utf8'));
-if (!launcher.version.includes('-')) {
-  const tag = ['dist-tag', 'add', `${launcher.name}@${launcher.version}`, 'next'];
-  if (dryRun) {
-    console.log(['npm', ...tag].join(' '));
+if (dryRun) {
+  console.log(['npm', 'dist-tag', 'add', `${launcher.name}@${launcher.version}`, 'next'].join(' '));
+} else {
+  const tags = JSON.parse(
+    execFileSync('npm', ['view', launcher.name, 'dist-tags', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }),
+  );
+  const target = [launcher.version, tags.latest, tags.next].filter(Boolean).reduce((a, b) => (compare(a, b) >= 0 ? a : b));
+  if (target === tags.next) {
+    console.log(`${launcher.name}'s next tag stays at ${tags.next}`);
   } else {
-    const res = spawnSync('npm', tag, { stdio: 'inherit' });
+    const res = spawnSync('npm', ['dist-tag', 'add', `${launcher.name}@${target}`, 'next'], { stdio: 'inherit' });
     if (res.error) throw res.error;
     if (res.status !== 0) process.exit(res.status ?? 1);
   }
