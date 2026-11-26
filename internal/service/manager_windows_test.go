@@ -92,6 +92,7 @@ func TestStartCommands(t *testing.T) {
 	f := &fakeRunner{}
 	m := New(testNames, t.TempDir(), f.run)
 	m.(*taskManager).sleep = func(context.Context, time.Duration) { t.Error("waited for a task that is not running") }
+	m.(*taskManager).signedIn = signedIn
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +128,7 @@ func TestStartWaitsForTheOldTask(t *testing.T) {
 			m := New(testNames, t.TempDir(), f.run)
 			var slept []time.Duration
 			m.(*taskManager).sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+			m.(*taskManager).signedIn = signedIn
 			if err := m.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -195,6 +197,67 @@ func TestActiveCommand(t *testing.T) {
 	}
 }
 
+// signedIn stands in for a user signed in to the desktop: CI's runner has
+// no such session, so tests of Start would otherwise not get to /Run.
+func signedIn() (bool, error) { return true, nil }
+
+// With nobody signed in, as over SSH, Task Scheduler takes /Run and runs
+// nothing, as the task runs only in the user's desktop session: Start says
+// so, and runs no command.
+func TestStartWithNobodySignedIn(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	m.(*taskManager).signedIn = func() (bool, error) { return false, nil }
+	if err := m.Start(context.Background()); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatalf("Start = %v, want ErrNotSignedIn", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("commands = %q, want none", f.calls)
+	}
+}
+
+// Sessions that cannot be read do not stop the start: the task is run as
+// before.
+func TestStartWhenSessionsCannotBeRead(t *testing.T) {
+	f := &fakeRunner{}
+	m := New(testNames, t.TempDir(), f.run)
+	m.(*taskManager).sleep = func(context.Context, time.Duration) {}
+	m.(*taskManager).signedIn = func() (bool, error) { return false, errors.New("access denied") }
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.calls[len(f.calls)-1]; last != "schtasks.exe /Run /TN NearhostTest" {
+		t.Errorf("last command %q, want /Run", last)
+	}
+}
+
+// user.Current gives DOMAIN\name, and a session its domain and name apart,
+// in either case.
+func TestSameUser(t *testing.T) {
+	for _, tc := range []struct {
+		current, domain, name string
+		want                  bool
+	}{
+		{`HERA\ecs`, "HERA", "ecs", true},
+		{`hera\ECS`, "HERA", "ecs", true},
+		{`HERA\ecs`, "", "ecs", true},
+		{`HERA\ecs`, "HERA", "other", false},
+		{`HERA\ecs`, "OFFICE", "ecs", false},
+		{`ecs`, "HERA", "ecs", true},
+	} {
+		if got := sameUser(tc.current, tc.domain, tc.name); got != tc.want {
+			t.Errorf("sameUser(%q, %q, %q) = %v, want %v", tc.current, tc.domain, tc.name, got, tc.want)
+		}
+	}
+}
+
+// The real check runs: whatever it finds on this machine, it does not fail.
+func TestSignedInToDesktopRuns(t *testing.T) {
+	if _, err := signedInToDesktop(); err != nil {
+		t.Errorf("signedInToDesktop = %v", err)
+	}
+}
+
 func TestNotFoundInAnyLanguage(t *testing.T) {
 	// The system's own text for ERROR_FILE_NOT_FOUND is whatever language Windows runs in.
 	msg := "ERROR: " + syscall.Errno(2).Error() + "\r\n"
@@ -203,6 +266,7 @@ func TestNotFoundInAnyLanguage(t *testing.T) {
 	if err := m.Uninstall(context.Background()); err != nil {
 		t.Errorf("Uninstall = %v", err)
 	}
+	m.(*taskManager).signedIn = signedIn
 	if err := m.Start(context.Background()); !errors.Is(err, errNotInstalled) {
 		t.Errorf("Start = %v, want errNotInstalled", err)
 	}

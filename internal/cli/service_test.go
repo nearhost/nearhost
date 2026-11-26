@@ -194,7 +194,7 @@ func TestInstallBesideAnotherCore(t *testing.T) {
 	if got := x.m.log(); got != "install" {
 		t.Errorf("calls %q", got)
 	}
-	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost. Nearhost is already running (started by tui), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.\n"
+	want := "Installed the Nearhost service. It starts at login and runs /usr/bin/nearhost. Nearhost is already running (started by the interface), so the service takes over from your next login. To hand over now, run nearhost stop, then nearhost -d.\n"
 	if out != want {
 		t.Errorf("out %q, want %q", out, want)
 	}
@@ -430,6 +430,32 @@ func TestInstallWhoseStartFailsSpawnsADetachedCore(t *testing.T) {
 		t.Errorf("spawned %q, want one core started detached", spawned)
 	}
 	if !strings.Contains(out, "Nearhost is running now (pid 4344).") {
+		t.Errorf("out %q", out)
+	}
+}
+
+// On Windows with nobody signed in, as over SSH, the service's task cannot
+// run: install starts the core directly and says why in a note, not as a
+// failed start.
+func TestInstallWithNobodySignedInStartsTheCoreDirectly(t *testing.T) {
+	x := newServiceFixture(t)
+	x.m.startErr = service.ErrNotSignedIn
+	var spawned [][]string
+	x.b.detach.spawn = func(exe string, args []string) (int, func() error, error) {
+		spawned = append(spawned, args)
+		x.f.answer(control.Info{API: 1, PID: 4345, StartedBy: control.StartedDetached})
+		return 0, running(), nil
+	}
+	out, err := x.run(t, "", "service", "install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spawned) != 1 || !slices.Equal(spawned[0], []string{"daemon", "--started-by", "detached"}) {
+		t.Errorf("spawned %q, want one core started detached", spawned)
+	}
+	if !strings.Contains(out, "Note: You are not signed in to Windows") || !strings.Contains(out, "it was started directly.") ||
+		strings.Contains(out, "Starting Nearhost through its service failed") ||
+		!strings.Contains(out, "Nearhost is running now (pid 4345).") {
 		t.Errorf("out %q", out)
 	}
 }

@@ -5,6 +5,7 @@
 package service
 
 import (
+	"errors"
 	"slices"
 
 	"github.com/nearhost/nearhost/internal/report"
@@ -34,6 +35,11 @@ var DefaultNames = Names{"dev.nearhost.core", "nearhost.service", "Nearhost"}
 // It is a service.unsupported message; errors.Is finds it.
 var ErrUnsupported error = report.Errorf(report.ServiceUnsupported, "Nearhost cannot be a service on this system.").
 	Because("Services are supported on macOS, on Linux with systemd, and on Windows 11.")
+
+// ErrNotSignedIn is the start of a service that cannot run until the user
+// signs in: on Windows its task runs only in the user's desktop session, and
+// there is none, as over SSH with nobody signed in at the screen.
+var ErrNotSignedIn = errors.New("you are not signed in to Windows, and the service runs only while you are")
 
 // Format is a service manager's file format.
 type Format int

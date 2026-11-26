@@ -188,13 +188,13 @@ func TestTheCoreRunsInTheBackground(t *testing.T) {
 	}
 
 	out, code := sb.nearhost("status")
-	if code != 0 || !strings.HasPrefix(out, "Nearhost ") || !strings.Contains(out, fmt.Sprintf("is running (pid %d, started by detached at ", pid)) || !strings.Contains(out, "shop") {
+	if code != 0 || !strings.HasPrefix(out, "Nearhost ") || !strings.Contains(out, fmt.Sprintf("is running (pid %d, started with nearhost -d at ", pid)) || !strings.Contains(out, "shop") {
 		t.Errorf("nearhost status: exit %d, printed:\n%s", code, out)
 	}
 
 	// A second -d finds the first core and starts no other.
 	out, code = sb.nearhost(append([]string{"-d"}, sb.serveArgs()...)...)
-	if want := fmt.Sprintf("Nearhost is already running in the background (pid %d, started by detached).\n", pid); code != 0 || out != want {
+	if want := fmt.Sprintf("Nearhost is already running in the background (pid %d, started with nearhost -d).\n", pid); code != 0 || out != want {
 		t.Errorf("a second nearhost -d: exit %d, printed %q, want %q", code, out, want)
 	}
 

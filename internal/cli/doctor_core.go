@@ -47,7 +47,7 @@ func checkCore(ctx context.Context, b doctorBackend) (checks []check, info contr
 	case info.Version != Version:
 		checks = append(checks, problem("core", levelWarn, report.CoreOtherVersion, fmt.Sprintf("%s is running; this is %s", printable(info.Version), Version), restartCoreFix))
 	default:
-		checks = append(checks, check{name: "core", detail: fmt.Sprintf("%s, started by %s (pid %d)", printable(info.Version), printable(string(info.StartedBy)), info.PID)})
+		checks = append(checks, check{name: "core", detail: fmt.Sprintf("%s, started %s (pid %d)", printable(info.Version), startedHow(info.StartedBy), info.PID)})
 	}
 	env, err := c.Environment(ctx)
 	if err != nil {
@@ -135,7 +135,7 @@ func checkService(ctx context.Context, b doctorBackend, coreRunning bool, starte
 	case !coreRunning:
 		return problem("service", levelWarn, report.ServiceNotRunning, "installed but not running", "start it with nearhost -d")
 	}
-	return problem("service", levelInfo, report.ServiceTakesOver, fmt.Sprintf("installed; the running Nearhost was started by %s, so the service takes over at your next login", printable(string(startedBy))), "")
+	return problem("service", levelInfo, report.ServiceTakesOver, fmt.Sprintf("installed; the running Nearhost was started %s, so the service takes over at your next login", startedHow(startedBy)), "")
 }
 
 // noUserManagerRow is the service row of a system with no user service

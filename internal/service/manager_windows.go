@@ -15,13 +15,14 @@ import (
 )
 
 type taskManager struct {
-	names Names
-	run   Runner
-	sleep func(context.Context, time.Duration) // tests replace it
+	names    Names
+	run      Runner
+	sleep    func(context.Context, time.Duration) // tests replace it
+	signedIn func() (bool, error)                 // tests replace it
 }
 
 func newManager(names Names, _ string, run Runner) Manager {
-	return &taskManager{names, run, sleepCtx}
+	return &taskManager{names, run, sleepCtx, signedInToDesktop}
 }
 
 // notFound reports whether schtasks said the task does not exist. schtasks
@@ -120,6 +121,13 @@ func (m *taskManager) Uninstall(ctx context.Context) error {
 }
 
 func (m *taskManager) Start(ctx context.Context) error {
+	// The task runs only in the user's desktop session. Without one, as
+	// over SSH with nobody signed in, /Run is taken and nothing runs, which
+	// would read as a core that stopped while starting. Should the sessions
+	// not be readable, the task is run as before.
+	if ok, err := m.signedIn(); err == nil && !ok {
+		return ErrNotSignedIn
+	}
 	// The old core of a restart frees its lock just before its process
 	// exits, and the task runs until it has: /Run then does nothing, as the
 	// task ignores a new instance. Wait up to 2 s for it to stop. A task

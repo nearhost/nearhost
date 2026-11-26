@@ -159,7 +159,7 @@ func runDetach(cmd *cobra.Command, b detachBackend, flags serveFlags) error {
 			Step("To run it in the background instead, stop it:", "nearhost stop").
 			Step("Then start it again:", "nearhost -d"))
 	default:
-		fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started by %s).\n", info.PID, printable(string(info.StartedBy)))
+		fmt.Fprintf(out, "Nearhost is already running in the background (pid %d, started %s).\n", info.PID, startedHow(info.StartedBy))
 	}
 	return nil
 }
@@ -274,8 +274,13 @@ func startCoreFrom(cmd *cobra.Command, b detachBackend, exe string, args []strin
 				if ctx.Err() != nil {
 					return nil, control.Info{}, false, interruptedStart{err: ctx.Err(), fate: fateLeft}
 				}
-				first, _, _ := strings.Cut(err.Error(), "\n")
-				sinkOf(cmd).Report(report.Warnf(report.ServiceStartFailed, "Starting Nearhost through its service failed (%s), so it was started directly.", first).Wrap(err))
+				if errors.Is(err, service.ErrNotSignedIn) {
+					sinkOf(cmd).Report(report.Notef(report.ServiceNotSignedIn, "You are not signed in to Windows, so the service could not start Nearhost, and it was started directly.").
+						Because("The service runs only while you are signed in, at the screen or over Remote Desktop, and starts Nearhost each time you sign in."))
+				} else {
+					first, _, _ := strings.Cut(err.Error(), "\n")
+					sinkOf(cmd).Report(report.Warnf(report.ServiceStartFailed, "Starting Nearhost through its service failed (%s), so it was started directly.", first).Wrap(err))
+				}
 			} else {
 				viaService = true
 				// Stops asking the service once this returns.

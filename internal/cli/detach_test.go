@@ -155,7 +155,7 @@ func TestDetachAlreadyRunning(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "Nearhost is already running in the background (pid 99, started by service).\n"; stdout != want {
+	if want := "Nearhost is already running in the background (pid 99, started by its service).\n"; stdout != want {
 		t.Errorf("stdout %q, want %q", stdout, want)
 	}
 }
@@ -176,7 +176,7 @@ func TestDetachAlreadyRunningStartedByTheInterface(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "Nearhost is already running in the background (pid 97, started by tui).\n"; stdout != want {
+	if want := "Nearhost is already running in the background (pid 97, started by the interface).\n"; stdout != want {
 		t.Errorf("stdout %q, want %q", stdout, want)
 	}
 }
@@ -425,7 +425,7 @@ func TestDetachLosesTheRaceToAnotherCore(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if want := "Nearhost is already running in the background (pid 77, started by tui).\n"; stdout != want {
+	if want := "Nearhost is already running in the background (pid 77, started by the interface).\n"; stdout != want {
 		t.Errorf("stdout %q, want %q", stdout, want)
 	}
 }
@@ -447,7 +447,7 @@ func TestDetachAnotherCoreAnswersFirst(t *testing.T) {
 	ui := fakeUI(t, true, new(bool))
 	ui.detach = b
 	stdout, _, code := runRootSplit(t, uiRoot(ui), "-d")
-	if want := "Nearhost is already running in the background (pid 77, started by tui).\n"; code != 0 || stdout != want {
+	if want := "Nearhost is already running in the background (pid 77, started by the interface).\n"; code != 0 || stdout != want {
 		t.Errorf("code %d, stdout %q, want %q", code, stdout, want)
 	}
 }
@@ -557,7 +557,7 @@ func TestDetachThroughService(t *testing.T) {
 	// The core now runs: -d again leaves it be, and does not look for the
 	// service.
 	stdout, _, code = runRootSplit(t, uiRoot(ui), "-d")
-	if want := "Nearhost is already running in the background (pid 4343, started by service).\n"; code != 0 || stdout != want {
+	if want := "Nearhost is already running in the background (pid 4343, started by its service).\n"; code != 0 || stdout != want {
 		t.Errorf("code %d, stdout %q, want %q", code, stdout, want)
 	}
 	if starts, lookups := svc.counts(); starts != 1 || lookups != 1 {

@@ -79,7 +79,7 @@ func TestStatusPrints(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := testStatus.Info.Started.Local().Format("2006-01-02 15:04:05")
-	want := "Nearhost 1.2.3 is running (pid 4242, started by detached at " + started + ").\n" +
+	want := "Nearhost 1.2.3 is running (pid 4242, started with nearhost -d at " + started + ").\n" +
 		"\n" +
 		"SERVER  STATE       MESSAGE\n" +
 		"local   connected\n" +
@@ -103,7 +103,7 @@ func TestStatusSaysWhenItDoesNotReload(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	wantContains(t, out, "started by foreground")
+	wantContains(t, out, "started in a terminal")
 	// Notes, not the output: no reload, then no projects with how to add one.
 	if want := "Note: Nearhost serves the projects it was started with and does not reload the config. Note: No projects are being served. Enable one in the config, or add one: nearhost add <path>"; flat(stderr) != want || strings.Contains(out, "reload") || strings.Contains(out, "No projects") {
 		t.Errorf("stderr %q, want %q", flat(stderr), want)
