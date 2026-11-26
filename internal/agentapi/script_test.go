@@ -1424,7 +1424,8 @@ func fakeSSHPath(dir string) string {
 // the folders it needs on PATH, for the fake ssh to run nearhost.sh with as
 // the server would. When home has a Nearhost socket, that sh must reach it
 // as nearhost.sh does, with [ -S ] and curl --unix-socket; otherwise, or with
-// no sh, the test skips rather than fake the server.
+// no sh, the test skips rather than fake the server. In CI it fails instead,
+// as needSh does: the --on cases must not pass on Windows by not running.
 func gitSh(t *testing.T, home string) (sh, dirs string) {
 	t.Helper()
 	sh = needSh(t, "to run nearhost.sh on the fake ssh's server")
@@ -1438,7 +1439,11 @@ func gitSh(t *testing.T, home string) (sh, dirs string) {
 		probe := exec.Command(sh, "-c", `[ -S "$1" ] && curl -s --max-time 2 --unix-socket "$1" http://nearhost/v1 >/dev/null`, "sh", socks[0])
 		probe.Env = append(os.Environ(), "PATH="+dirs+";"+os.Getenv("PATH"))
 		if out, err := probe.CombinedOutput(); err != nil {
-			t.Skipf("Git for Windows' sh cannot reach a Windows socket as nearhost.sh does ([ -S ] and curl --unix-socket: %v %s), so it cannot play the server", err, out)
+			skip := t.Skipf
+			if os.Getenv("CI") != "" {
+				skip = t.Fatalf
+			}
+			skip("Git for Windows' sh cannot reach a Windows socket as nearhost.sh does ([ -S ] and curl --unix-socket: %v %s), so it cannot play the server", err, out)
 		}
 	}
 	return sh, dirs
