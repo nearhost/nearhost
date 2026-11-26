@@ -44,17 +44,28 @@ java -jar "$JSIGN_JAR" \
   --alg SHA-256 \
   "$exe"
 
-# Artifact Signing certificates chain to Microsoft's Identity Verification
-# root, which is not in Ubuntu's CA bundle, so the root is kept beside this
-# script (SHA-256 fingerprint 53:67:F2:0C:...:29:2E:12:70, valid to 2045).
-if ! out=$(osslsigncode verify -CAfile "$here/microsoft-identity-verification-root-2020.pem" -in "$exe" 2>&1); then
+# Artifact Signing certificates, and Microsoft's timestamping certificates,
+# chain to Microsoft's Identity Verification root, which is not in Ubuntu's CA
+# bundle, so the root is kept beside this script (SHA-256 fingerprint
+# 53:67:F2:0C:...:29:2E:12:70, valid to 2045).
+#
+# osslsigncode can print "Succeeded" and exit 0 when only the timestamp fails
+# to verify, so the timestamp is checked on its own: the certificate lasts a
+# few days, and Windows trusts the signature after that only through the
+# timestamp. The subject is matched in both of osslsigncode's formats,
+# /C=GB/.../CN=name (2.8) and CN=name,O=... (2.13).
+root="$here/microsoft-identity-verification-root-2020.pem"
+if ! out=$(osslsigncode verify -CAfile "$root" -TSA-CAfile "$root" -in "$exe" 2>&1); then
   echo "$out" >&2
   echo "sign-windows.sh: the signature on $exe does not verify" >&2
   exit 1
 fi
-if ! echo "$out" | grep -q '^Succeeded$' || ! echo "$out" | grep -q 'O=ECS Software Consulting Ltd\./CN=ECS Software Consulting Ltd\.$'; then
-  echo "$out" >&2
-  echo "sign-windows.sh: $exe is not signed by ECS Software Consulting Ltd." >&2
-  exit 1
-fi
+for want in '^Succeeded$' '^Signature verification: ok$' '^Timestamp Server Signature verification: ok$' \
+  'Subject: .*CN=ECS Software Consulting Ltd\.(,|$)'; do
+  if ! echo "$out" | grep -Eq "$want"; then
+    echo "$out" >&2
+    echo "sign-windows.sh: the signature on $exe fails the check '$want'" >&2
+    exit 1
+  fi
+done
 echo "sign-windows.sh: signed and verified $exe"
