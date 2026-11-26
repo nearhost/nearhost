@@ -910,6 +910,19 @@ func TestScriptPassthroughLabelEscapes(t *testing.T) {
 	})
 }
 
+// A label with a control character in it still travels as valid JSON, so
+// Nearhost says what is wrong with it rather than that the body is broken.
+func TestScriptPassthroughLabelWithAControlCharacter(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell scriptShell) {
+		home := shortDir(t)
+		passScript(t, home, "mini", false)
+		r := shell.run(t, home, claudeEnv, "passthrough", "3000", "--label", "a\x01b\x1bc")
+		if r.code == 0 || !strings.Contains(r.stdout+r.stderr, "printable characters") {
+			t.Fatalf("passthrough: %+v", r)
+		}
+	})
+}
+
 func TestScriptPassthroughPromptThenAlways(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell scriptShell) {
 		home := shortDir(t)
