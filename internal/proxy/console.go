@@ -18,7 +18,7 @@ import (
 // consoleCSP is the policy of every response of the console: the page's
 // own policy, plus its own scripts and event stream, and forms that post
 // back to it alone.
-const consoleCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+const consoleCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 // csrfLabel is what the page secret signs to make the form token.
 const csrfLabel = "nearhost page form"
