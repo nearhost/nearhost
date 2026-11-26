@@ -79,6 +79,8 @@ func init() {
 		}
 		views[name] = v
 	}
+	// The preview is a whole document of its own: the frame fills the screen.
+	views["preview"] = template.Must(template.New("").ParseFS(templateFiles, "templates/preview.html"))
 }
 
 // page serves the page's routes.
@@ -100,6 +102,7 @@ func New(o Options) http.Handler {
 	p.mux.HandleFunc("POST /approve/{id}", p.answer)
 	p.mux.HandleFunc("GET /change/{name}", p.change)
 	p.mux.HandleFunc("POST /change/{name}", p.answerChange)
+	p.mux.HandleFunc("GET /preview/{name}", p.preview)
 	p.mux.HandleFunc("GET /events", p.events)
 	p.mux.HandleFunc("GET /page.js", script)
 	return p.mux
@@ -266,6 +269,44 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		v.Trees = p.o.Trees()
 	}
 	render(w, r, "status", http.StatusOK, v)
+}
+
+// previewView is what /preview/{name} shows: the project in a frame. URL is
+// its address at the host the page was asked at, and Origin is that
+// address's origin, which the frame is allowed to load.
+type previewView struct {
+	base
+	Name, URL, Origin string
+}
+
+// preview serves /preview/{name}: the project full-screen in a frame, with
+// Back, Reload and Open. A project at another site cannot be framed under
+// the page's rules, so it is sent to its own address. One that is unknown, or
+// has no address at this host, is not found.
+func (p *page) preview(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	st := p.o.Core.Status()
+	var addr string
+	for _, pr := range st.Projects {
+		if pr.Name == name {
+			addr = addressFor(r, st, pr)
+			break
+		}
+	}
+	u, err := url.Parse(addr)
+	if addr == "" || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		htmlview.Write(w, r, report.Errorf(report.ProxyNotFound, "Nearhost has no project to show at %s", safetext.Line(name)).
+			Because("The project is not served at this address. Open Nearhost's page and pick one from the list."), http.StatusNotFound, pageName)
+		return
+	}
+	if !sameSite(addr, r.Host) {
+		http.Redirect(w, r, addr, http.StatusSeeOther)
+		return
+	}
+	v := previewView{base: p.base(safetext.Line(name)), Name: safetext.Line(name), URL: addr, Origin: u.Scheme + "://" + u.Host}
+	// The gate's policy, with the project's origin allowed to be framed.
+	w.Header().Set("Content-Security-Policy", proxy.ConsoleCSP+"; frame-src "+v.Origin)
+	render(w, r, "preview", http.StatusOK, v)
 }
 
 // networkPage is the page's network address, parsed once: its host and

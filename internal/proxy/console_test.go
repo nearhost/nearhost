@@ -391,3 +391,23 @@ func localhostWithCookie(method, path, value string) *http.Request {
 	r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: value})
 	return r
 }
+
+func TestConsoleRoutePreview(t *testing.T) {
+	if ok, post := consoleRoute("/preview/app"); !ok || post {
+		t.Errorf("consoleRoute(/preview/app) = %v, %v; want true, false", ok, post)
+	}
+	for _, p := range []string{"/preview/a/b", "/preview/", "/preview"} {
+		if ok, _ := consoleRoute(p); ok {
+			t.Errorf("consoleRoute(%q) is a route", p)
+		}
+	}
+	setFakeConsole(t)
+	w := serveHomeRequest(t, pageRequest("GET", "/preview/app"))
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "from this machine first") {
+		t.Errorf("without the cookie: status %d, body:\n%s", w.Code, w.Body.String())
+	}
+	secret := freshSecret(t)
+	if w := serveHomeRequest(t, withCookieMethod("POST", "/preview/app", secret)); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /preview/app: status %d, want 405", w.Code)
+	}
+}
