@@ -32,8 +32,8 @@ test('a normal version publishes with no --tag, then moves next to it', () => {
     assert.ok(!l.includes('--tag'), l);
   }
   assert.match(lines[0], /cli-linux-x64 /);
-  assert.match(lines[1], /\/cli /);
-  assert.match(lines[2], /\/api /);
+  assert.match(lines[1], /[\\/]cli /);
+  assert.match(lines[2], /[\\/]api /);
   assert.equal(lines[3], 'npm dist-tag add @nearhost/cli@0.13.0 next');
   assert.equal(lines[4], 'npm dist-tag add @nearhost/api@0.13.0 next');
 });
@@ -44,14 +44,14 @@ test('a prerelease publishes with --tag prerelease, then may move next to it', (
   const lines = dryRun('0.13.0-rc.1');
   assert.equal(lines.length, 5);
   for (const l of lines.slice(0, 3)) assert.match(l, / --tag prerelease$/);
-  assert.match(lines[2], /\/api /);
+  assert.match(lines[2], /[\\/]api /);
   assert.equal(lines[3], 'npm dist-tag add @nearhost/cli@0.13.0-rc.1 next');
   assert.equal(lines[4], 'npm dist-tag add @nearhost/api@0.13.0-rc.1 next');
 });
 
 test('a beta of 0.17.0 publishes api after cli under prerelease and moves its next', () => {
   const lines = dryRun('0.17.0-beta.1');
-  assert.match(lines[2], /^npm publish .*\/api --access public --tag prerelease$/);
+  assert.match(lines[2], /^npm publish .*[\\/]api --access public --tag prerelease$/);
   assert.equal(lines[4], 'npm dist-tag add @nearhost/api@0.17.0-beta.1 next');
 });
 
