@@ -92,6 +92,27 @@ jobs:
           check v0.13.0-rc.1 false on fails
           check v0.13.0 true off fails
           check v0.13.0 true on fails
+      # The script beta.yml numbers each beta with.
+      - name: Check the beta numbering
+        run: |
+          set -u
+          check() {
+            code=0
+            got=$(printf '%s' "$2" | tr ' ' '\n' | sh .github/scripts/beta-version.sh "$1") || code=$?
+            echo "$1 tags=[$2]: $got (exit $code)"
+            if [ "$got" != "$3" ] || [ "$code" != "$4" ]; then
+              echo "::error::beta-version.sh $1 with tags [$2] gave '$got' (exit $code), want '$3' (exit $4)"
+              exit 1
+            fi
+          }
+          check 0.16.0 "v0.15.0" 0.16.0-beta.1 0
+          check 0.16.0 "v0.15.0 v0.16.0-beta.1 v0.16.0-beta.2" 0.16.0-beta.3 0
+          check 0.16.0 "v0.16.0-beta.9 v0.16.0-beta.10" 0.16.0-beta.11 0
+          check 0.16.0 "v0.15.0-beta.7 v0.16.0-rc.1 v0.16.0-beta.1x" 0.16.0-beta.1 0
+          check 0.16.0 "v0.16.0-beta.2 v0.16.0" "" 2
+          check 0.15.0 "v0.15.0" "" 2
+          check 0.16 "" "" 1
+          check 0.16.0 "" 0.16.0-beta.1 0
       - run: goreleaser check
       # No signing secrets or syft here, so notarising and SBOMs are skipped.
       - run: goreleaser release --snapshot --clean --skip=publish,notarize,sbom,homebrew
