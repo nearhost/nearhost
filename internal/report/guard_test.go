@@ -54,11 +54,12 @@ func (h guardHit) String() string {
 // format that older clients read.
 var guardAllowed = map[string]string{
 	// Passthroughs of other programs.
-	allowKey("internal/elevate/sudo_unix.go", ruleStderr, "sudoElevator.Run"): "sudo's password prompt and the command's own output go to the user's terminal as they are",
-	allowKey("internal/elevate/e2e_unix.go", ruleStderr, "e2eElevator.ask"):   "the e2e build's stand-in for sudo prompts on standard error as sudo does",
-	allowKey("internal/cli/update.go", ruleStderr, "runUpdateCmd"):            "the installer's (brew, npm, go, the script) own output passes through as it is",
-	allowKey("internal/cli/update.go", ruleStderr, "runAside"):                "the Windows installer's own output passes through as it is",
-	allowKey("internal/proxy/plainlog.go", ruleErrorBody, "proxyLine"):        "reads Caddy's JSON log lines, whose error key is Caddy's",
+	allowKey("internal/elevate/sudo_unix.go", ruleStderr, "sudoElevator.Run"):     "sudo's password prompt and the command's own output go to the user's terminal as they are",
+	allowKey("internal/elevate/e2e_unix.go", ruleStderr, "e2eElevator.ask"):       "the e2e build's stand-in for sudo prompts on standard error as sudo does",
+	allowKey("internal/cli/update.go", ruleStderr, "runUpdateCmd"):                "the installer's (brew, npm, go, the script) own output passes through as it is",
+	allowKey("internal/cli/update.go", ruleStderr, "runAside"):                    "the Windows installer's own output passes through as it is",
+	allowKey("internal/cli/supervise_windows.go", ruleStderr, "superviseService"): "the supervised core inherits the service process's standard error, which its log redirect then takes over",
+	allowKey("internal/proxy/plainlog.go", ruleErrorBody, "proxyLine"):            "reads Caddy's JSON log lines, whose error key is Caddy's",
 	// The one path's outlets, and progress that is not a message.
 	allowKey("internal/cli/root.go", ruleStderr, "Main"):                     "writes the command's final error and the update notice through the command's messageOut: the term renderer, or JSON lines with --json",
 	allowKey("internal/cli/root.go", ruleStderr, "commandSink"):              "the sink every command reports to: a messageOut on cmd's standard error",

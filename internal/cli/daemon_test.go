@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -738,5 +740,55 @@ func TestDaemonPanicIsLoggedAsCrash(t *testing.T) {
 	var stderr bytes.Buffer
 	if code := exitCode(err, &stderr); code != 1 || stderr.Len() != 0 || out.String() != "" {
 		t.Errorf("exit %d, Main printed %q, the command printed %q", code, stderr.String(), out.String())
+	}
+}
+
+// On Windows the service's process supervises the core rather than being
+// it, and hands off before it opens the core log: only the core opens,
+// rotates and writes it.
+func TestServiceDaemonHandsOffBeforeOpeningTheLog(t *testing.T) {
+	u := newUpRun(t, &config.Config{})
+	b := u.backend()
+	called := 0
+	b.supervise = func(*cobra.Command) error { called++; return nil }
+	var out syncBuffer
+	if err := executeInto(context.Background(), &out, newDaemonCmd(b), "daemon", "--no-hosts", "--started-by", "service"); err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 {
+		t.Errorf("supervise called %d times, want 1", called)
+	}
+	if _, err := os.Stat(u.logPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the core log was opened before the hand-off (stat: %v)", err)
+	}
+}
+
+// Only a service core is supervised: not one started another way, not the
+// supervised core itself (--no-supervisor), and not where the service
+// manager restarts the core (supervise is nil).
+func TestDaemonSupervisesOnlyServiceCores(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		args         []string
+		failIfCalled bool
+	}{
+		{"detached", []string{"--started-by", "detached"}, true},
+		{"the supervised core", []string{"--started-by", "service", "--no-supervisor"}, true},
+		{"no supervisor here", []string{"--started-by", "service"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := newUpRun(t, &config.Config{})
+			u.noHosts = true
+			if tc.failIfCalled {
+				u.adjust = func(b *upBackend) {
+					b.supervise = func(*cobra.Command) error { t.Error("supervise was called"); return nil }
+				}
+			}
+			u.startDaemon(tc.args...)
+			u.waitForLog("Nothing is being served.\n")
+			if err := u.stop(); err != nil {
+				t.Fatalf("daemon returned %v; log:\n%s", err, u.coreLog())
+			}
+		})
 	}
 }

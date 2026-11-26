@@ -69,6 +69,10 @@ type upBackend struct {
 	// redirectStderr points the process's standard error at the core log of
 	// a service core; tests leave it nil, so they redirect nothing.
 	redirectStderr func(f *os.File) error
+	// supervise is what the service's own process does instead of running
+	// the core: on Windows it runs the core as a child and restarts it (see
+	// supervise). Nil where the service manager restarts the core itself.
+	supervise func(cmd *cobra.Command) error
 }
 
 // bindEnv is the machine's side of the advice printed when a proxy port
@@ -116,6 +120,7 @@ func systemUp(lookup hosts.Lookup) upBackend {
 		shutdown:       (*engine.Engine).Shutdown,
 		agents:         systemAgents(),
 		redirectStderr: redirectStderr,
+		supervise:      superviseService,
 		bind: bindEnv{
 			goos: runtime.GOOS, notPermitted: engine.BindNotPermitted, elevated: isElevated, exe: realExecutable,
 			isFile: isRegularFile, unprivilegedPortStart: readUnprivilegedPortStart,
