@@ -537,7 +537,7 @@ func TestPreviewFramesTheProject(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if got, want := resp.Header.Get("Content-Security-Policy"), proxy.ConsoleCSP+"; frame-src https://app.lab.example.dev:8443"; got != want {
+	if got, want := resp.Header.Get("Content-Security-Policy"), proxy.ConsoleCSP+"; frame-src 'self' https://app.lab.example.dev:8443 https://*.lab.example.dev:*"; got != want {
 		t.Errorf("CSP %q, want %q", got, want)
 	}
 	body := bodyOf(t, resp)
@@ -554,6 +554,20 @@ func TestPreviewFramesTheProject(t *testing.T) {
 	}
 	if strings.Contains(body, "sandbox") {
 		t.Errorf("the frame must not be sandboxed:\n%s", body)
+	}
+}
+
+// Without networked mode the frame may load the page's own origin and the
+// project's, and nothing under a network domain.
+func TestPreviewFrameSrcWithoutNetwork(t *testing.T) {
+	c := newCore()
+	c.status.Projects = []control.ProjectInfo{{Name: "app", State: "running", URL: "https://app.example.dev"}}
+	resp := previewAt(c, "nearhost.example.dev", "/preview/app")
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if got, want := resp.Header.Get("Content-Security-Policy"), proxy.ConsoleCSP+"; frame-src 'self' https://app.example.dev"; got != want {
+		t.Errorf("CSP %q, want %q", got, want)
 	}
 }
 

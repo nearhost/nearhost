@@ -231,6 +231,10 @@ func (h *Home) serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 		return
 	}
 	token := d.NewAuthToken(dev.ID, strings.ToLower(to.Hostname()))
+	// The page's origin goes on as referrer, so the app's framed load after
+	// the sign-in matches the frame rule. The token is in the address, not
+	// the referrer.
+	hdr.Set("Referrer-Policy", "strict-origin")
 	hdr.Set("Location", "https://"+to.Host+siteAuthPath+"?"+url.Values{"t": {token}, "to": {to.RequestURI()}}.Encode())
 	w.WriteHeader(http.StatusFound)
 }

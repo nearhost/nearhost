@@ -221,6 +221,31 @@ func TestDeviceGuardRedirectsUnpaired(t *testing.T) {
 	}
 }
 
+// The sign-in redirects send the origin as referrer, so the app's framed
+// load after them still carries the page's origin for the frame rule.
+func TestDeviceGuardRedirectSendsOrigin(t *testing.T) {
+	setFakeDevices(t)
+	w, _ := serveGuard(t, &DeviceGuard{Page: testPage}, guardRequest("/x", "100.79.1.1:1"))
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d, want 302", w.Code)
+	}
+	if rp := w.Header().Get("Referrer-Policy"); rp != "strict-origin" {
+		t.Errorf("Referrer-Policy = %q, want strict-origin", rp)
+	}
+}
+
+func TestDeviceGuardRedeemSendsOrigin(t *testing.T) {
+	f := setFakeDevices(t)
+	tok := f.NewAuthToken("dev1", "app.lab.example.dev")
+	w, _ := serveGuard(t, &DeviceGuard{Page: testPage}, guardRequest("/.nearhost/auth?t="+tok+"&to=/a", "100.79.1.1:1"))
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d, want 302", w.Code)
+	}
+	if rp := w.Header().Get("Referrer-Policy"); rp != "strict-origin" {
+		t.Errorf("Referrer-Policy = %q, want strict-origin", rp)
+	}
+}
+
 // With no page to pair at, or no devices, an unpaired client gets 503 and
 // never the site.
 func TestDeviceGuardWithoutPageRefuses(t *testing.T) {

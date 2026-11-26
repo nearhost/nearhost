@@ -85,9 +85,24 @@ func TestAuthRefusesForeignTo(t *testing.T) {
 		if w.Code != http.StatusFound || !strings.HasPrefix(loc, c.prefix) || !strings.HasSuffix(loc, c.rest) {
 			t.Errorf("to=%q: %d %q", c.to, w.Code, loc)
 		}
-		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Referrer-Policy") != "no-referrer" {
+		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Referrer-Policy") != "strict-origin" {
 			t.Errorf("to=%q: headers %v", c.to, w.Header())
 		}
+	}
+}
+
+// /auth's redirect to the app sends the page's origin as referrer, so the
+// app's framed load after the sign-in still matches the frame rule.
+func TestAuthRedirectSendsOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	r := withDevice(netRequest("GET", "/auth?to=https%3A%2F%2Fapp.lab.example.dev%2F", nil), "good-token")
+	w := serveNet(t, netHome(), r)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d, want 302", w.Code)
+	}
+	if rp := w.Header().Get("Referrer-Policy"); rp != "strict-origin" {
+		t.Errorf("Referrer-Policy = %q, want strict-origin", rp)
 	}
 }
 

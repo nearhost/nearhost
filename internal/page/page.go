@@ -318,8 +318,15 @@ func (p *page) preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := previewView{base: p.base(safetext.Line(name)), Name: safetext.Line(name), URL: addr, Origin: u.Scheme + "://" + u.Host}
-	// The gate's policy, with the project's origin allowed to be framed.
-	w.Header().Set("Content-Security-Policy", proxy.ConsoleCSP+"; frame-src "+v.Origin)
+	// The gate's policy, with the page's own origin and the project's allowed
+	// to be framed. On a networked core, so is any host under the network
+	// domain: a first sign-in passes through the page's /auth, and a
+	// multi-host project moves between its sibling hosts.
+	frameSrc := "'self' " + v.Origin
+	if n := networkOf(st); n.host != "" {
+		frameSrc += " https://*." + strings.TrimPrefix(n.host, "nearhost.") + ":*"
+	}
+	w.Header().Set("Content-Security-Policy", proxy.ConsoleCSP+"; frame-src "+frameSrc)
 	render(w, r, "preview", http.StatusOK, v)
 }
 
