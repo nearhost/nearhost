@@ -74,30 +74,42 @@ func (f *frameWriter) fix() {
 	f.done = true
 	h := f.Header()
 	h.Del("X-Frame-Options")
-	var kept []string
+	// Each line is a policy of its own, all of them enforced, so each is
+	// rewritten alone: merged, a later line's directive would be ignored
+	// after an earlier one of the same name, loosening the app's policy.
+	lines := h.Values("Content-Security-Policy")
+	var out []string
 	changed := false
-	for _, line := range h.Values("Content-Security-Policy") {
+	for _, line := range lines {
+		var kept []string
+		dropped := false
 		for _, d := range strings.Split(line, ";") {
 			d = strings.TrimSpace(d)
 			if d == "" {
 				continue
 			}
-			name, _, _ := strings.Cut(d, " ")
-			if strings.EqualFold(name, "frame-ancestors") {
-				changed = true
+			if f := strings.Fields(d); strings.EqualFold(f[0], "frame-ancestors") {
+				dropped = true
 				continue
 			}
 			kept = append(kept, d)
 		}
+		switch {
+		case !dropped:
+			out = append(out, line)
+		case len(kept) > 0:
+			out = append(out, strings.Join(kept, "; "))
+		}
+		changed = changed || dropped
 	}
 	if !changed {
 		return
 	}
-	if len(kept) == 0 {
+	if len(out) == 0 {
 		h.Del("Content-Security-Policy")
 		return
 	}
-	h.Set("Content-Security-Policy", strings.Join(kept, "; "))
+	h["Content-Security-Policy"] = out
 }
 
 // WriteHeader implements http.ResponseWriter.

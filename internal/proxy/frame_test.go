@@ -102,6 +102,24 @@ func TestFrameRuleDropsEmptyCSP(t *testing.T) {
 	}
 }
 
+// Each Content-Security-Policy line is a policy of its own, and the browser
+// enforces them all: each is rewritten alone, so a second line's directive
+// is never folded into the first, where it would be ignored. A line left
+// empty is dropped.
+func TestFrameRuleRewritesEachCSPLine(t *testing.T) {
+	rec := serveFrame(t, frameRequest("iframe", "", framePage+"/"), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Security-Policy", "script-src 'self'; frame-ancestors 'none'")
+		w.Header().Add("Content-Security-Policy", "frame-ancestors 'self'")
+		w.Header().Add("Content-Security-Policy", "script-src 'none'; img-src *")
+		_, _ = w.Write([]byte("hi"))
+	})
+	got := rec.Header().Values("Content-Security-Policy")
+	want := []string{"script-src 'self'", "script-src 'none'; img-src *"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("CSP lines = %q, want %q", got, want)
+	}
+}
+
 func TestFrameRuleMatchesDirectiveCaseInsensitively(t *testing.T) {
 	rec := serveFrame(t, frameRequest("iframe", "", framePage+"/"), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "Frame-Ancestors 'none'; frame-src 'self'; frame-ancestors-not 'x'")
