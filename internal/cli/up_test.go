@@ -630,6 +630,30 @@ func TestAskOnceAsksAgainForAStartAskedForAfterTheRefusal(t *testing.T) {
 	}
 }
 
+// A start asked for after the refusal asks again even when the clock has not
+// moved on in between, as Windows' coarse clock often has not: the order the
+// two were read in decides, not the clock's resolution.
+func TestAskOnceAsksAgainWithinOneClockTick(t *testing.T) {
+	tick := time.Date(2026, 11, 26, 13, 24, 0, 0, time.UTC)
+	askClock = func() time.Time { return tick }
+	t.Cleanup(func() { askClock = time.Now })
+	calls := 0
+	result := errors.New("sudo: a password is required")
+	ask := askOnce(func(context.Context, []string) error { calls++; return result })
+
+	before := askedNow(context.Background())
+	if err := ask(context.Background(), nil); err == nil || calls != 1 {
+		t.Fatalf("the first call: %v after %d calls", err, calls)
+	}
+	if err := ask(before, nil); err == nil || calls != 1 {
+		t.Fatalf("a start asked for before the refusal, in the same tick: %v after %d calls", err, calls)
+	}
+	result = nil
+	if err := ask(askedNow(context.Background()), nil); err != nil || calls != 2 {
+		t.Fatalf("a start asked for after the refusal, in the same tick: %v after %d calls", err, calls)
+	}
+}
+
 // The engine filters the hosts file names through the lookup it is given,
 // the one instance the interface and doctor share, and through none with
 // --no-hosts, which writes no hosts file.

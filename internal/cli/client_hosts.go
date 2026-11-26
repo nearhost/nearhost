@@ -180,7 +180,7 @@ func (b *clientBackend) fixHostsAsked(ctx context.Context, asked time.Time, star
 	if err := hostsThrough(b.root, hosts.DefaultPath, b.b.applier)(ctx, names, block); err != nil {
 		// An update cut short by a quit or a stop is not a refusal.
 		if ctx.Err() == nil {
-			at := askClock()
+			at := askTime()
 			h.mu.Lock()
 			for _, p := range ask {
 				h.refused[p.Name] = hostsRefusal{err: err, at: at}

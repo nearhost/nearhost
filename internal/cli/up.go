@@ -436,7 +436,7 @@ func askOnce(ensure func(context.Context, []string) error) func(context.Context,
 		}
 		err := ensure(ctx, aliases)
 		if err != nil && ctx.Err() == nil {
-			refused, refusedAt = err, askClock()
+			refused, refusedAt = err, askTime()
 		}
 		return err
 	}
@@ -447,12 +447,33 @@ type askedKey struct{}
 
 // askedNow returns ctx saying its start was asked for now.
 func askedNow(ctx context.Context) context.Context {
-	return context.WithValue(ctx, askedKey{}, askClock())
+	return context.WithValue(ctx, askedKey{}, askTime())
 }
 
 // askClock is the clock a start's asking and a refusal are timed by. Tests
 // replace it.
 var askClock = time.Now
+
+var (
+	askMu   sync.Mutex
+	askLast time.Time
+)
+
+// askTime reads askClock for a start's asking or a refusal, and is always
+// later than the reading before it. What matters is which came first, and
+// two readings can be equal: Windows' clock moves on in ticks of up to
+// 15.6ms, so a start asked for just after a refusal would read the same
+// time and get the refusal instead of asking again.
+func askTime() time.Time {
+	askMu.Lock()
+	defer askMu.Unlock()
+	now := askClock()
+	if !now.After(askLast) {
+		now = askLast.Add(time.Nanosecond)
+	}
+	askLast = now
+	return now
+}
 
 // advise turns err, from Start, into the port.needs-permission message
 // that says why the binary may not bind the proxy's ports and gives the
