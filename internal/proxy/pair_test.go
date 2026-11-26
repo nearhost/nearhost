@@ -254,8 +254,8 @@ func TestPageAcceptsDeviceCookie(t *testing.T) {
 		t.Errorf("good device at /approve/abc: %d, calls %v", w.Code, fake.called())
 	}
 	w = serveNet(t, netHome(), withDevice(netRequest("GET", "/approve/abc", nil), "bad"))
-	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "Open Nearhost") {
-		t.Errorf("wrong device: %d, want the locked page", w.Code)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `<a href="/pair">`) {
+		t.Errorf("wrong device: %d, want the not-paired page", w.Code)
 	}
 	w = serveNet(t, netHome(), withDevice(netRequest("GET", "/", nil), "bad"))
 	if w.Body.String() == "console" {

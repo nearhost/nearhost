@@ -99,7 +99,7 @@ footer {
     <span class="wordmark">nearhost</span>
   </div>
   <h1>Run it anywhere. Open it <span>here</span>.</h1>
-  <p>Nearhost is running on this machine. Your projects are served at their own names; this page answers at nearhost.localhost:{{.WebPort}}.</p>
+  <p>Nearhost is running on this machine. Your projects are served at their own names; this page answers at {{.Address}}.</p>
   {{- if .NotPaired}}
   <p>This device isn't paired. <a href="/pair">Pair it</a> to see your projects.</p>
   {{- end}}

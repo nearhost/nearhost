@@ -485,15 +485,65 @@ func TestRevokeOwnDeviceThenLocked(t *testing.T) {
 	r := withDevice(netRequest("POST", "/devices/iPad/revoke", strings.NewReader(url.Values{"csrf": {token}}.Encode())), "good-token")
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", "https://"+netPageHost+":7443")
-	if w := serveNet(t, netHome(), r); w.Code != http.StatusSeeOther {
-		t.Fatalf("revoke: status %d, body %q", w.Code, w.Body.String())
+	rw := serveNet(t, netHome(), r)
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("revoke: status %d, body %q", rw.Code, rw.Body.String())
 	}
-	w := serveNet(t, netHome(), withDevice(netRequest("GET", "/", nil), "good-token"))
+	// The installed app has no address bar: where the revoke sends it must
+	// say the device isn't paired, and link to pairing.
+	loc := rw.Header().Get("Location")
+	w := serveNet(t, netHome(), withDevice(netRequest("GET", loc, nil), "good-token"))
 	body := w.Body.String()
+	if w.Code != http.StatusForbidden {
+		t.Errorf("GET %s after revoking: status %d, want 403", loc, w.Code)
+	}
 	if !strings.Contains(body, "This device isn&#39;t paired") && !strings.Contains(body, "This device isn't paired") {
-		t.Errorf("after revoking itself the device should see the notice:\n%s", body)
+		t.Errorf("GET %s after revoking itself: no not-paired notice:\n%s", loc, body)
+	}
+	if !strings.Contains(body, `<a href="/pair">`) {
+		t.Errorf("GET %s after revoking itself: no link to /pair:\n%s", loc, body)
 	}
 	if strings.Contains(body, "console") {
 		t.Errorf("the console was served to a revoked device:\n%s", body)
+	}
+}
+
+// At the network host, a console path refused by the gate shows the
+// not-paired notice, which links to /pair, with the locked page's headers.
+// A POST is still a plain 403.
+func TestNetworkConsoleUnpairedGetsNotPaired(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	setFakeConsole(t)
+	for _, method := range []string{"GET", "HEAD"} {
+		for _, p := range []string{"/devices", "/approve/abc", "/events"} {
+			w := serveNet(t, netHome(), netRequest(method, p, nil))
+			hdr := w.Header()
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s %s: status %d, want 403", method, p, w.Code)
+			}
+			if hdr.Get("Content-Security-Policy") != homeCSP || hdr.Get("Cache-Control") != "no-store" || hdr.Get("Vary") != "Cookie" {
+				t.Errorf("%s %s: headers %v", method, p, hdr)
+			}
+			body := w.Body.String()
+			if method == "HEAD" {
+				if body != "" {
+					t.Errorf("HEAD %s: a body", p)
+				}
+				continue
+			}
+			if !strings.Contains(body, "This device isn&#39;t paired") && !strings.Contains(body, "This device isn't paired") || !strings.Contains(body, `<a href="/pair">`) {
+				t.Errorf("GET %s: no not-paired notice:\n%s", p, body)
+			}
+			if strings.Contains(body, "from this machine first") {
+				t.Errorf("GET %s: the locked page's advice at the network host:\n%s", p, body)
+			}
+		}
+	}
+	r := netRequest("POST", "/approve/abc", strings.NewReader(url.Values{"csrf": {mustToken(t)}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", "https://"+netPageHost+":7443")
+	if w := serveNet(t, netHome(), r); w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != "Forbidden" {
+		t.Errorf("POST: status %d, %q", w.Code, w.Body.String())
 	}
 }
