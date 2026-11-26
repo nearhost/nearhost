@@ -225,6 +225,9 @@ func TestDoctorService(t *testing.T) {
 		{"active with its log folder", &fakeManager{installed: true, def: withLog, active: true}, control.StartedService, "ok    service          installed and running\n", ""},
 		{"log folder missing", &fakeManager{installed: true, def: withGoneLog}, "", "warn  service          its log folder " + gone + " is missing, so the service cannot start again\n", "Run nearhost service install"},
 		{"inactive, no core", &fakeManager{installed: true, def: mine}, "", "warn  service          installed but not running\n", "Start it with nearhost -d"},
+		// Windows' supervisor keeps the task running while it waits to
+		// start a core that stopped.
+		{"active, no core", &fakeManager{installed: true, def: mine, active: true}, "", "warn  service          installed; it is starting Nearhost again after it stopped\n", "See why it stopped in core.log; if it does not come back, start it with nearhost -d"},
 		{"inactive beside a detached core", &fakeManager{installed: true, def: mine}, control.StartedDetached,
 			"info  service          installed; the running Nearhost was started with nearhost -d, so the service takes over at your next login\n", ""},
 		{"no user manager", &fakeManager{instErr: service.ErrNoUserManager}, "", "info  service          " + messageOf(service.ErrNoUserManager).Title + "\n", ""},

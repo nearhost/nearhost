@@ -58,7 +58,7 @@ var guardAllowed = map[string]string{
 	allowKey("internal/elevate/e2e_unix.go", ruleStderr, "e2eElevator.ask"):       "the e2e build's stand-in for sudo prompts on standard error as sudo does",
 	allowKey("internal/cli/update.go", ruleStderr, "runUpdateCmd"):                "the installer's (brew, npm, go, the script) own output passes through as it is",
 	allowKey("internal/cli/update.go", ruleStderr, "runAside"):                    "the Windows installer's own output passes through as it is",
-	allowKey("internal/cli/supervise_windows.go", ruleStderr, "superviseService"): "the supervised core inherits the service process's standard error, which its log redirect then takes over",
+	allowKey("internal/cli/supervise_windows.go", ruleStderr, "superviseService"): "the supervised core inherits the service process's standard handles, as a console child does; the core points its own standard error handle at the log for panics",
 	allowKey("internal/proxy/plainlog.go", ruleErrorBody, "proxyLine"):            "reads Caddy's JSON log lines, whose error key is Caddy's",
 	// The one path's outlets, and progress that is not a message.
 	allowKey("internal/cli/root.go", ruleStderr, "Main"):                     "writes the command's final error and the update notice through the command's messageOut: the term renderer, or JSON lines with --json",

@@ -18,6 +18,10 @@ type superviseFake struct {
 	runs    int
 	slept   []time.Duration
 	notes   []string
+	// exes are the copies each run started.
+	exes []string
+	// installed answers the check before each restart; nil keeps "nearhost.exe".
+	installed func() (string, bool)
 }
 
 type superviseResult struct {
@@ -29,7 +33,15 @@ type superviseResult struct {
 
 func (f *superviseFake) deps() superviseDeps {
 	return superviseDeps{
-		run: func() (int, error) {
+		exe: "nearhost.exe",
+		installed: func() (string, bool) {
+			if f.installed != nil {
+				return f.installed()
+			}
+			return "nearhost.exe", true
+		},
+		run: func(exe string) (int, error) {
+			f.exes = append(f.exes, exe)
 			r := f.results[min(f.runs, len(f.results)-1)]
 			f.runs++
 			if r.dur != 0 {
@@ -146,5 +158,79 @@ func TestSuperviseDoesNotRestartAFailedFirstStart(t *testing.T) {
 				t.Errorf("notes %q", f.notes)
 			}
 		})
+	}
+}
+
+// The start limit is counted when the restart is due, after the 5 s wait,
+// as systemd counts it: a start that ages out of the minute during the wait
+// no longer counts. Starts at 0, 17, 29, 41 and 53 s, the last failing at
+// 56 s: by the restart at 61 s the first has aged out.
+func TestSuperviseCountsStartsWhenTheRestartIsDue(t *testing.T) {
+	f := newSuperviseFake(0,
+		superviseResult{1, nil, 12 * time.Second},
+		superviseResult{1, nil, 7 * time.Second},
+		superviseResult{1, nil, 7 * time.Second},
+		superviseResult{1, nil, 7 * time.Second},
+		superviseResult{1, nil, 3 * time.Second},
+		superviseResult{0, nil, time.Second})
+	if got := supervise(f.deps()); got != 0 {
+		t.Errorf("supervise = %d, want 0; notes %q", got, f.notes)
+	}
+	if f.runs != 6 {
+		t.Errorf("runs %d, want 6", f.runs)
+	}
+}
+
+// A service removed while the core was down (service uninstall in the 5 s
+// wait) is not restarted: uninstall meant it to stop.
+func TestSuperviseStopsWhenTheServiceIsRemoved(t *testing.T) {
+	f := newSuperviseFake(0, superviseResult{1, nil, time.Hour})
+	f.installed = func() (string, bool) { return "", false }
+	if got := supervise(f.deps()); got != 0 {
+		t.Errorf("supervise = %d, want 0", got)
+	}
+	if f.runs != 1 || len(f.notes) != 2 || !strings.Contains(f.notes[1], "removed") {
+		t.Errorf("runs %d, notes %q; want one run and a note that the service was removed", f.runs, f.notes)
+	}
+}
+
+// A restart runs the copy the service runs now, as after service install
+// from another copy that did not restart Nearhost.
+func TestSuperviseRestartsTheInstalledCopy(t *testing.T) {
+	f := newSuperviseFake(0, superviseResult{1, nil, time.Hour}, superviseResult{0, nil, time.Second})
+	f.installed = func() (string, bool) { return `C:\new\nearhost.exe`, true }
+	supervise(f.deps())
+	if want := []string{"nearhost.exe", `C:\new\nearhost.exe`}; !slices.Equal(f.exes, want) {
+		t.Errorf("runs started %q, want %q", f.exes, want)
+	}
+}
+
+// Windows' status codes, such as a kill's 0xFFFFFFFF or Ctrl-C's
+// 0xC000013A, read in hex; ordinary exit statuses stay decimal. The wait is
+// said from superviseDelay.
+func TestSuperviseNotes(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		want string
+	}{
+		{1, "(exit status 1)"},
+		{4294967295, "(exit status 0xFFFFFFFF)"},
+		{3221225786, "(exit status 0xC000013A)"},
+	} {
+		f := newSuperviseFake(0, superviseResult{tc.code, nil, time.Hour}, superviseResult{0, nil, time.Second})
+		supervise(f.deps())
+		if len(f.notes) != 1 || !strings.Contains(f.notes[0], tc.want) || !strings.Contains(f.notes[0], "in 5 s") {
+			t.Errorf("code %d: notes %q, want one with %q", tc.code, f.notes, tc.want)
+		}
+	}
+}
+
+// Giving up says "failed", which covers cores that stopped and copies that
+// could not be started.
+func TestSuperviseGiveUpCoversStartErrors(t *testing.T) {
+	f := newSuperviseFake(0, superviseResult{1, nil, time.Hour}, superviseResult{0, errors.New("exec: file does not exist"), 0})
+	supervise(f.deps())
+	if last := f.notes[len(f.notes)-1]; !strings.Contains(last, "failed 5 times within a minute") {
+		t.Errorf("last note %q", last)
 	}
 }
