@@ -163,6 +163,31 @@ func TestHomeListEscapes(t *testing.T) {
 	}
 }
 
+// The page names the address it was asked at: the network page's at the
+// network host, nearhost.localhost's at the local ones.
+func TestHomeNamesTheAddressAsked(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	for name, r := range map[string]*http.Request{
+		"unpaired": netRequest("GET", "/", nil),
+		"paired":   withDevice(netRequest("GET", "/", nil), "good-token"),
+	} {
+		body := serveNet(t, netHome(), r).Body.String()
+		if !strings.Contains(body, "this page answers at nearhost.lab.example.dev:7443.") {
+			t.Errorf("network host, %s: the page should name its network address:\n%s", name, body)
+		}
+		if strings.Contains(body, "nearhost.localhost") {
+			t.Errorf("network host, %s: the page names nearhost.localhost:\n%s", name, body)
+		}
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "nearhost.localhost:7443"
+	r.RemoteAddr = "127.0.0.1:1"
+	if body := serveNet(t, netHome(), r).Body.String(); !strings.Contains(body, "this page answers at nearhost.localhost:7443.") {
+		t.Errorf("the local page should name nearhost.localhost:\n%s", body)
+	}
+}
+
 func TestHomeSaysNotPaired(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)

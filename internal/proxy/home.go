@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -88,7 +89,7 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 // depends only on the version and the web port, so it is rendered once per
 // config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
-	page, err := h.render(nil, false)
+	page, err := h.render(nil, nil, false)
 	if err != nil {
 		return err
 	}
@@ -96,21 +97,32 @@ func (h *Home) Provision(caddy.Context) error {
 	return h.renderShell()
 }
 
-// render renders the page with trees listed under its links.
-func (h *Home) render(trees []HomeTree, notPaired bool) ([]byte, error) {
+// render renders the page for r with trees listed under its links. It
+// names the address r was asked at: the network page's at the network host,
+// and nearhost.localhost's everywhere else, and for a nil r.
+func (h *Home) render(r *http.Request, trees []HomeTree, notPaired bool) ([]byte, error) {
 	v := h.Version
 	if v == "" {
 		v = "dev"
 	}
+	addr := "nearhost.localhost:" + strconv.Itoa(h.WebPort)
+	if r != nil && h.atNetworkHost(r) {
+		addr = strings.ToLower(h.NetworkHost)
+		if h.WebPort != 0 {
+			addr += ":" + strconv.Itoa(h.WebPort)
+		}
+	}
 	var buf bytes.Buffer
 	if err := homePage.Execute(&buf, struct {
 		Version string
-		WebPort int
+		// Address is the page's address, host and port, at the host it
+		// was asked at.
+		Address string
 		Trees   []HomeTree
 		// NotPaired is set for a request at the network host from a
 		// device that is not paired.
 		NotPaired bool
-	}{v, h.WebPort, trees, notPaired}); err != nil {
+	}{v, addr, trees, notPaired}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -196,17 +208,16 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	}
 	page := h.page
 	if h.atNetworkHost(r) {
-		if _, ok := h.pairedDevice(r); !ok {
-			var err error
-			if page, err = h.render(nil, true); err != nil {
-				return err
-			}
+		_, paired := h.pairedDevice(r)
+		var err error
+		if page, err = h.render(r, nil, !paired); err != nil {
+			return err
 		}
 	}
 	if h.pageAuthorized(r) {
 		if trees := homeTrees(); len(trees) > 0 {
 			var err error
-			if page, err = h.render(trees, false); err != nil {
+			if page, err = h.render(r, trees, false); err != nil {
 				return err
 			}
 		}

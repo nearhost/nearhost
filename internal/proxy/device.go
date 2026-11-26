@@ -269,7 +269,9 @@ func (g *DeviceGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 		return nil
 	}
 	full := "https://" + r.Host + r.URL.RequestURI()
-	hdr.Set("Referrer-Policy", "no-referrer")
+	// Only the origin goes on as referrer, so a framed sign-in still ends
+	// with the page's origin for the frame rule; the full address does not.
+	hdr.Set("Referrer-Policy", "strict-origin")
 	hdr.Set("Location", g.Page+"/auth?to="+url.QueryEscape(full))
 	w.WriteHeader(http.StatusFound)
 	return nil
@@ -294,6 +296,9 @@ func (g *DeviceGuard) redeem(w http.ResponseWriter, r *http.Request, d DeviceAut
 		return
 	}
 	hdr.Add("Set-Cookie", pairingCookie(siteCookie, d.SiteCookie(id, host)))
+	// The redirect overrides the frame's referrer policy for the load it
+	// leads to: the page's origin must reach the app, the token never.
+	hdr.Set("Referrer-Policy", "strict-origin")
 	hdr.Set("Location", localPath(q.Get("to")))
 	w.WriteHeader(http.StatusFound)
 }

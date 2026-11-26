@@ -137,8 +137,10 @@ func servePairForm(w http.ResponseWriter, r *http.Request, f pairForm, status in
 	hdr.Set("Content-Security-Policy", consoleCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Cache-Control", "no-store")
-	// The code in the path is not sent on as a referrer.
-	hdr.Set("Referrer-Policy", "no-referrer")
+	// The code in the path goes to no other site as a referrer. Not
+	// no-referrer: under it a browser sends Origin: null with the form's
+	// POST, which sameOrigin refuses.
+	hdr.Set("Referrer-Policy", "same-origin")
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
 		w.Write(buf.Bytes())
@@ -231,6 +233,10 @@ func (h *Home) serveAuth(w http.ResponseWriter, r *http.Request, d DeviceAuth) {
 		return
 	}
 	token := d.NewAuthToken(dev.ID, strings.ToLower(to.Hostname()))
+	// The page's origin goes on as referrer, so the app's framed load after
+	// the sign-in matches the frame rule. The token is in the address, not
+	// the referrer.
+	hdr.Set("Referrer-Policy", "strict-origin")
 	hdr.Set("Location", "https://"+to.Host+siteAuthPath+"?"+url.Values{"t": {token}, "to": {to.RequestURI()}}.Encode())
 	w.WriteHeader(http.StatusFound)
 }

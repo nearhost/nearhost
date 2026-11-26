@@ -20,7 +20,10 @@ self.addEventListener('fetch', e => {
   if (e.request.mode === 'navigate') {
     // A POST (an approval answer) goes straight to the network.
     if (e.request.method !== 'GET') return;
-    e.respondWith(withTimeout(fetch(e.request)).catch(() => caches.match('/offline.html')));
+    // With the offline page evicted from the cache, a plain answer, never
+    // a blank screen.
+    e.respondWith(withTimeout(fetch(e.request)).catch(() => caches.match('/offline.html')
+      .then(r => r || new Response("Can't reach Nearhost", {headers: {'Content-Type': 'text/plain; charset=utf-8'}}))));
     return;
   }
   if (SHELL.includes(u.pathname)) {

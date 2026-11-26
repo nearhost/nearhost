@@ -185,6 +185,9 @@ func TestServiceWorkerCachesShellOnly(t *testing.T) {
 	for _, want := range []string{
 		"/offline.html", "/icon-180.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest",
 		"nearhost-shell-1.2.3", "4000",
+		// With the offline page evicted from the cache, a plain answer
+		// rather than a blank screen.
+		`new Response("Can't reach Nearhost", {headers: {'Content-Type': 'text/plain; charset=utf-8'}})`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the worker lacks %q", want)

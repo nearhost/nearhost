@@ -131,6 +131,31 @@ func serveLocked(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveNotPaired answers a GET or HEAD for a console path, at the network
+// host, that did not pass the gate: the home page's notice that this device
+// isn't paired, with its link to /pair, as the locked page's 403. An
+// installed app has no address bar, so the locked page's advice to open the
+// page on this machine would leave it nowhere to go.
+func (h *Home) serveNotPaired(w http.ResponseWriter, r *http.Request) {
+	page, err := h.render(r, nil, true)
+	if err != nil {
+		refuse(w, r, report.PageRenderFailed, http.StatusInternalServerError)
+		return
+	}
+	hdr := w.Header()
+	hdr.Set("Content-Type", "text/html; charset=utf-8")
+	hdr.Set("Content-Length", strconv.Itoa(len(page)))
+	hdr.Set("Content-Security-Policy", homeCSP)
+	hdr.Set("X-Content-Type-Options", "nosniff")
+	hdr.Set("Cache-Control", "no-store")
+	hdr.Set("Referrer-Policy", "no-referrer")
+	hdr.Set("Vary", "Cookie")
+	w.WriteHeader(http.StatusForbidden)
+	if r.Method != http.MethodHead {
+		w.Write(page)
+	}
+}
+
 // forbid answers a plain 403.
 func forbid(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -178,6 +203,10 @@ func tokenMatches(w http.ResponseWriter, r *http.Request) bool {
 // console's headers, which con may add to.
 func (h *Home) serveConsole(con http.Handler, w http.ResponseWriter, r *http.Request) {
 	if !h.pageAuthorized(r) {
+		if h.atNetworkHost(r) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			h.serveNotPaired(w, r)
+			return
+		}
 		serveLocked(w, r)
 		return
 	}
@@ -189,7 +218,10 @@ func (h *Home) serveConsole(con http.Handler, w http.ResponseWriter, r *http.Req
 	hdr.Set("Content-Security-Policy", consoleCSP)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Cache-Control", "no-store")
-	hdr.Set("Referrer-Policy", "no-referrer")
+	// The page's addresses go to no other site as a referrer. Not
+	// no-referrer: under it a browser sends Origin: null with the page's
+	// own form POSTs, which sameOrigin refuses.
+	hdr.Set("Referrer-Policy", "same-origin")
 	hdr.Set("Vary", "Cookie")
 	con.ServeHTTP(w, r)
 }

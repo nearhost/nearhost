@@ -85,9 +85,24 @@ func TestAuthRefusesForeignTo(t *testing.T) {
 		if w.Code != http.StatusFound || !strings.HasPrefix(loc, c.prefix) || !strings.HasSuffix(loc, c.rest) {
 			t.Errorf("to=%q: %d %q", c.to, w.Code, loc)
 		}
-		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Referrer-Policy") != "no-referrer" {
+		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Referrer-Policy") != "strict-origin" {
 			t.Errorf("to=%q: headers %v", c.to, w.Header())
 		}
+	}
+}
+
+// /auth's redirect to the app sends the page's origin as referrer, so the
+// app's framed load after the sign-in still matches the frame rule.
+func TestAuthRedirectSendsOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	r := withDevice(netRequest("GET", "/auth?to=https%3A%2F%2Fapp.lab.example.dev%2F", nil), "good-token")
+	w := serveNet(t, netHome(), r)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d, want 302", w.Code)
+	}
+	if rp := w.Header().Get("Referrer-Policy"); rp != "strict-origin" {
+		t.Errorf("Referrer-Policy = %q, want strict-origin", rp)
 	}
 }
 
@@ -239,8 +254,8 @@ func TestPageAcceptsDeviceCookie(t *testing.T) {
 		t.Errorf("good device at /approve/abc: %d, calls %v", w.Code, fake.called())
 	}
 	w = serveNet(t, netHome(), withDevice(netRequest("GET", "/approve/abc", nil), "bad"))
-	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "Open Nearhost") {
-		t.Errorf("wrong device: %d, want the locked page", w.Code)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `<a href="/pair">`) {
+		t.Errorf("wrong device: %d, want the not-paired page", w.Code)
 	}
 	w = serveNet(t, netHome(), withDevice(netRequest("GET", "/", nil), "bad"))
 	if w.Body.String() == "console" {
@@ -530,6 +545,21 @@ func TestPairingNeedsANetworkHost(t *testing.T) {
 
 // The pair page says what is being paired, Nearhost on the machine named,
 // and fills in the design's default device name.
+// The pair form's response lets the browser send its own Origin with the
+// form's POST: under no-referrer Safari sends Origin: null, which the POST's
+// same-origin check refuses. The code in the path still goes to no other
+// site.
+func TestPairFormLetsTheBrowserSendOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	for _, path := range []string{"/pair", "/pair/ABCD2345"} {
+		w := serveNet(t, netHome(), netRequest("GET", path, nil))
+		if got := w.Header().Get("Referrer-Policy"); got != "same-origin" {
+			t.Errorf("GET %s: Referrer-Policy = %q, want same-origin", path, got)
+		}
+	}
+}
+
 func TestPairFormNamesTheMachine(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)
