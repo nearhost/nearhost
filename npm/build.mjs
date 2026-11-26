@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Assembles the npm packages for a release that is already on GitHub:
-// @nearhost/cli and one @nearhost/cli-<os>-<arch> package per binary.
+// @nearhost/cli and one @nearhost/cli-<os>-<arch> package per binary, and
+// @nearhost/api, the control API's OpenAPI schema and TypeScript types.
 //
 //   node npm/build.mjs <version> [out dir]
 //
 // Each binary comes from the release's tarball, checked against its
-// checksums.txt. The packages land in the out dir, npm/dist by default,
+// checksums.txt. The api package's files come from this checkout (api/openapi.yaml,
+// api/ts/index.d.ts, api/ts/README.md), so run it on the release's tag. The packages land in the out dir, npm/dist by default,
 // ready for npm/publish.mjs.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -108,6 +110,30 @@ try {
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ ...launcher, version }, null, 2) + '\n');
   for (const t of built) cpSync(join(here, '..', 'LICENSE'), join(out, `cli-${t.os}-${t.cpu}`, 'LICENSE'));
   console.log(`${launcher.name}@${version}`);
+
+  const api = join(out, 'api');
+  const apiRoot = join(here, '..', 'api');
+  mkdirSync(api, { recursive: true });
+  cpSync(join(apiRoot, 'openapi.yaml'), join(api, 'openapi.yaml'));
+  for (const f of ['index.d.ts', 'README.md']) cpSync(join(apiRoot, 'ts', f), join(api, f));
+  cpSync(join(here, '..', 'LICENSE'), join(api, 'LICENSE'));
+  const apiPkg = {
+    name: '@nearhost/api',
+    description: "The Nearhost control API: its OpenAPI 3.1 schema and TypeScript types",
+    keywords: ['nearhost', 'openapi', 'typescript', 'types'],
+    ...shared,
+    repository: { ...shared.repository, directory: 'api/ts' },
+    author: launcher.author,
+    types: 'index.d.ts',
+    exports: {
+      '.': { types: './index.d.ts' },
+      './openapi.yaml': './openapi.yaml',
+      './package.json': './package.json',
+    },
+    files: ['openapi.yaml', 'index.d.ts', 'README.md'],
+  };
+  writeFileSync(join(api, 'package.json'), JSON.stringify(apiPkg, null, 2) + '\n');
+  console.log(`${apiPkg.name}@${version}`);
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

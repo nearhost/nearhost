@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Publishes the packages npm/build.mjs assembled: the platform packages
-// first, so @nearhost/cli never points at a version that is not there yet.
+// first, so @nearhost/cli never points at a version that is not there yet,
+// then @nearhost/cli, then @nearhost/api (which has no platform packages).
 // A package whose version is already on the registry is skipped, so a run
 // that failed partway can be run again. npm takes a few minutes to show a
 // version it has accepted, and refuses a second copy meanwhile (E409,
@@ -8,11 +9,11 @@
 //
 // A version with a prerelease part (0.16.0-beta.1) is published under the
 // `prerelease` tag, so it never becomes what `npm install` picks. Then, for
-// any version, @nearhost/cli's `next` tag moves to the highest of itself,
+// any version, the `next` tag of @nearhost/cli and of @nearhost/api moves to the highest of itself,
 // `latest` and this version, so `next` only ever moves forward: release runs
 // go in parallel and finish in any order, and a beta that finishes after its
-// release, or a rerun of an old release, must not move it back. Only the
-// launcher is tagged: it pins its platform packages exactly. npm allows
+// release, or a rerun of an old release, must not move it back. Of the CLI
+// packages only the launcher is tagged: it pins its platform packages exactly. npm allows
 // dist-tag over trusted publishing once the package's trusted publisher has
 // "Allow npm dist-tag" on (npm 11.21.0 or later).
 //
@@ -37,7 +38,7 @@ const out = own.find((a) => a !== '--dry-run') ?? join(here, 'dist');
 const dirs = readdirSync(out)
   .filter((d) => d.startsWith('cli-'))
   .sort()
-  .concat('cli')
+  .concat('cli', 'api')
   .map((d) => join(out, d));
 
 for (const dir of dirs) {
@@ -91,19 +92,25 @@ function parse(v) {
   return [core.split('.').map(Number), pre.length ? pre.join('-').split('.') : []];
 }
 
-const launcher = JSON.parse(readFileSync(join(out, 'cli', 'package.json'), 'utf8'));
-if (dryRun) {
-  console.log(['npm', 'dist-tag', 'add', `${launcher.name}@${launcher.version}`, 'next'].join(' '));
-} else {
-  const tags = JSON.parse(
-    execFileSync('npm', ['view', launcher.name, 'dist-tags', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }),
-  );
-  const target = [launcher.version, tags.latest, tags.next].filter(Boolean).reduce((a, b) => (compare(a, b) >= 0 ? a : b));
-  if (target === tags.next) {
-    console.log(`${launcher.name}'s next tag stays at ${tags.next}`);
-  } else {
-    const res = spawnSync('npm', ['dist-tag', 'add', `${launcher.name}@${target}`, 'next'], { stdio: 'inherit' });
-    if (res.error) throw res.error;
-    if (res.status !== 0) process.exit(res.status ?? 1);
+for (const dir of ['cli', 'api']) {
+  const pkg = JSON.parse(readFileSync(join(out, dir, 'package.json'), 'utf8'));
+  moveNext(pkg.name, pkg.version);
+}
+
+function moveNext(name, version) {
+  if (dryRun) {
+    console.log(['npm', 'dist-tag', 'add', `${name}@${version}`, 'next'].join(' '));
+    return;
   }
+  const tags = JSON.parse(
+    execFileSync('npm', ['view', name, 'dist-tags', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }),
+  );
+  const target = [version, tags.latest, tags.next].filter(Boolean).reduce((a, b) => (compare(a, b) >= 0 ? a : b));
+  if (target === tags.next) {
+    console.log(`${name}'s next tag stays at ${tags.next}`);
+    return;
+  }
+  const res = spawnSync('npm', ['dist-tag', 'add', `${name}@${target}`, 'next'], { stdio: 'inherit' });
+  if (res.error) throw res.error;
+  if (res.status !== 0) process.exit(res.status ?? 1);
 }

@@ -65,6 +65,7 @@ async function run(assets, { corrupt = [] } = {}) {
 }
 
 const unix = [['darwin', 'amd64'], ['darwin', 'arm64'], ['linux', 'amd64'], ['linux', 'arm64']];
+const repoRoot = join(dirname(build), '..');
 const windows = [['windows', 'amd64'], ['windows', 'arm64']];
 const json = (p) => JSON.parse(readFileSync(p, 'utf8'));
 
@@ -73,7 +74,7 @@ test('four Unix assets give four platform packages and a launcher that lists the
   try {
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(readdirSync(r.out).sort(), [
-      'cli', 'cli-darwin-arm64', 'cli-darwin-x64', 'cli-linux-arm64', 'cli-linux-x64',
+      'api', 'cli', 'cli-darwin-arm64', 'cli-darwin-x64', 'cli-linux-arm64', 'cli-linux-x64',
     ]);
     const deps = json(join(r.out, 'cli', 'package.json')).optionalDependencies;
     assert.deepEqual(Object.keys(deps).sort(), [
@@ -136,6 +137,35 @@ test('only one Windows asset is built when the other is not listed', { skip: zip
     assert.equal(r.status, 0, r.stderr);
     assert.ok(existsSync(join(r.out, 'cli-win32-x64')));
     assert.ok(!existsSync(join(r.out, 'cli-win32-arm64')));
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('the api package is built from the checkout with the release version', async () => {
+  const r = await run(unix);
+  try {
+    assert.equal(r.status, 0, r.stderr);
+    const dir = join(r.out, 'api');
+    const pkg = json(join(dir, 'package.json'));
+    const cli = json(join(repoRoot, 'npm', 'cli', 'package.json'));
+    assert.equal(pkg.name, '@nearhost/api');
+    assert.equal(pkg.version, VERSION);
+    assert.equal(pkg.license, 'MIT');
+    assert.equal(pkg.homepage, cli.homepage);
+    assert.deepEqual(pkg.repository, { ...cli.repository, directory: 'api/ts' });
+    assert.equal(pkg.types, 'index.d.ts');
+    assert.deepEqual(pkg.exports, {
+      '.': { types: './index.d.ts' },
+      './openapi.yaml': './openapi.yaml',
+      './package.json': './package.json',
+    });
+    assert.deepEqual(pkg.files.sort(), ['README.md', 'index.d.ts', 'openapi.yaml']);
+    for (const [name, src] of [['openapi.yaml', 'openapi.yaml'], ['index.d.ts', 'ts/index.d.ts'], ['README.md', 'ts/README.md']]) {
+      assert.equal(readFileSync(join(dir, name), 'utf8'), readFileSync(join(repoRoot, 'api', src), 'utf8'), name);
+    }
+    assert.ok(existsSync(join(dir, 'LICENSE')));
+    assert.ok(!('optionalDependencies' in pkg));
   } finally {
     r.cleanup();
   }
