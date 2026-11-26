@@ -81,6 +81,7 @@ const (
 	ServiceCannotBind          Code = "service.cannot-bind"
 	UpdateCheckFailed          Code = "update.check-failed"
 	UpdateAvailable            Code = "update.available"
+	UpdateNextHomebrew         Code = "update.next-homebrew"
 	InterfaceNoTerminal        Code = "interface.no-terminal"
 	CoreNothingToServe         Code = "core.nothing-to-serve"
 	CoreStopTimeout            Code = "core.stop-timeout"
@@ -337,6 +338,7 @@ var catalogRows = []catalogRow{
 	{ServiceCannotBind, Error, 409, "The service cannot run this copy of nearhost, as it lacks permission to use ports 443 and 80."},
 	{UpdateCheckFailed, Error, 503, "Nearhost could not find out whether a newer release exists."},
 	{UpdateAvailable, Info, 0, "A newer release of Nearhost is available."},
+	{UpdateNextHomebrew, Error, 409, "Betas are not published to Homebrew."},
 	{InterfaceNoTerminal, Error, 400, "The interface needs a terminal, and there is none."},
 	{CoreNothingToServe, Error, 409, "nearhost up found no project it can serve, and none still starting, so it stopped."},
 	{CoreStopTimeout, Error, 504, "Nearhost was asked to stop and had not stopped in time."},
