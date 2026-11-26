@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"reflect"
 	"strings"
 	"syscall"
@@ -289,5 +290,36 @@ func TestDoctorVerboseCodeAfterSteps(t *testing.T) {
 		"      code: ssh.unreachable\n"
 	if out.String() != want {
 		t.Errorf("printed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// The networked-mode rows carry their codes through doctor, and a config
+// without the section has none.
+func TestDoctorNetworkRowCodes(t *testing.T) {
+	path := configHome(t)
+	saveConfig(t, path, &config.Config{Network: &config.Network{Domain: "lab.example.dev", Certificates: "acme", ACME: &config.NetworkACME{DNS: "cloudflare"}}})
+	f := healthy()
+	f.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.9")}, nil
+	}
+	b := f.backend()
+	b.selfAddrs = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("192.168.77.5")} }
+	b.tokenPresent = func() bool { return false }
+	rows, _ := doctorRows(t, b)
+	for name, want := range map[string]report.Code{
+		"Network DNS token":   report.NetworkNoToken,
+		"Network name":        report.NetworkDNS,
+		"Network certificate": report.DoctorNotChecked,
+	} {
+		if got, _ := rows[name]["code"].(string); got != string(want) {
+			t.Errorf("%s: code %q, want %q", name, got, want)
+		}
+	}
+	saveConfig(t, path, &config.Config{})
+	rows, _ = doctorRows(t, b)
+	for name := range rows {
+		if strings.HasPrefix(name, "Network") {
+			t.Errorf("row %q with networked mode off", name)
+		}
 	}
 }

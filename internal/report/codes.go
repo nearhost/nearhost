@@ -184,6 +184,10 @@ const (
 	NetworkApplyFailed         Code = "network.apply-failed"
 	NetworkDevicesUnavailable  Code = "network.devices-unavailable"
 	NetworkOff                 Code = "network.off"
+	NetworkNoToken             Code = "network.no-token"
+	NetworkDNS                 Code = "network.dns"
+	NetworkFirewall            Code = "network.firewall"
+	NetworkCert                Code = "network.cert"
 	DeviceUnknown              Code = "devices.unknown"
 	DocumentsMissing           Code = "documents.missing"
 	DocumentsChanging          Code = "documents.changing"
@@ -431,6 +435,10 @@ var catalogRows = []catalogRow{
 	{NetworkApplyFailed, Error, 500, "Nearhost could not change how it serves to other devices on the network after the config changed."},
 	{NetworkDevicesUnavailable, Warning, 0, "Nearhost could not open its list of paired devices, so no other device can pair or sign in."},
 	{NetworkOff, Error, 409, "Something was asked that needs networked mode, and the config does not turn it on."},
+	{NetworkNoToken, Error, 503, "Networked mode gets its certificate with a DNS token, and none is set."},
+	{NetworkDNS, Warning, 0, "The name of Nearhost's page on the network does not point at this machine."},
+	{NetworkFirewall, Error, 503, "The firewall does not let other devices reach Nearhost."},
+	{NetworkCert, Error, 503, "The certificate for Nearhost's page on the network is missing or not the one the config asks for."},
 	{DeviceUnknown, Error, 404, "No paired device has the name asked for."},
 	{DocumentsMissing, Error, 404, "The document asked for is not there any more."},
 	{DocumentsChanging, Error, 503, "The document's folder kept changing while Nearhost checked it."},

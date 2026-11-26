@@ -837,6 +837,29 @@
       "summary": "Something was asked that needs networked mode, and the config does not turn it on."
     },
     {
+      "code": "network.no-token",
+      "level": "error",
+      "status": 503,
+      "summary": "Networked mode gets its certificate with a DNS token, and none is set."
+    },
+    {
+      "code": "network.dns",
+      "level": "warning",
+      "summary": "The name of Nearhost's page on the network does not point at this machine."
+    },
+    {
+      "code": "network.firewall",
+      "level": "error",
+      "status": 503,
+      "summary": "The firewall does not let other devices reach Nearhost."
+    },
+    {
+      "code": "network.cert",
+      "level": "error",
+      "status": 503,
+      "summary": "The certificate for Nearhost's page on the network is missing or not the one the config asks for."
+    },
+    {
       "code": "devices.unknown",
       "level": "error",
       "status": 404,

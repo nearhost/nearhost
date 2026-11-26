@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -174,6 +176,17 @@ type doctorBackend struct {
 	// service returns the manager of the login service, or nil when there
 	// is none to ask. nil skips the service check.
 	service func() service.Manager
+	// selfAddrs are the addresses of this machine; nil skips the network
+	// name check.
+	selfAddrs func() []netip.Addr
+	// tokenPresent reports whether a DNS token is set; nil skips the check.
+	tokenPresent func() bool
+	// servedCert reads the leaf certificate served at addr for the name sni;
+	// nil skips the certificate check.
+	servedCert func(ctx context.Context, addr, sni string) (*x509.Certificate, error)
+	// firewallReady reports whether the firewall lets other devices in;
+	// nil skips the row. Windows only.
+	firewallReady func() bool
 }
 
 // systemDoctor is the production backend. Only NewRoot wires it in, with
@@ -214,6 +227,10 @@ func systemDoctor(lookup hosts.Lookup) doctorBackend {
 		lowPorts: func(port int) (level, string) {
 			return linuxLowPorts(port, os.Geteuid(), os.ReadFile)
 		},
+		selfAddrs:     selfAddrs,
+		tokenPresent:  dnsTokenPresent,
+		servedCert:    servedCert,
+		firewallReady: func() bool { return true }, // Task 8 checks the real rule
 	}
 }
 
@@ -356,6 +373,21 @@ func runChecks(cmd *cobra.Command, b doctorBackend, flags serveFlags, st *doctor
 		add(c)
 	}
 	st.slowMany("local CA", func() []check { return checkCA(b.trust) }, add)
+	if cfg != nil && cfg.NetworkOn() {
+		st.slowMany("network", func() []check {
+			var status control.Status
+			if coreAnswered && b.dial != nil {
+				cctx, cancel := context.WithTimeout(ctx, coreCallTimeout)
+				defer cancel()
+				if c, err := b.dial(); err == nil {
+					if got, err := c.Status(cctx); err == nil {
+						status = got
+					}
+				}
+			}
+			return checkNetwork(ctx, b, cfg, status)
+		}, add)
+	}
 	if b.goos == "windows" && b.sshAgentService != nil {
 		add(checkSSHAgentService(b))
 	}
