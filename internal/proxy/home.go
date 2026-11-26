@@ -88,7 +88,7 @@ func (Home) CaddyModule() caddy.ModuleInfo {
 // depends only on the version and the web port, so it is rendered once per
 // config load, not per request.
 func (h *Home) Provision(caddy.Context) error {
-	page, err := h.render(nil)
+	page, err := h.render(nil, false)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (h *Home) Provision(caddy.Context) error {
 }
 
 // render renders the page with trees listed under its links.
-func (h *Home) render(trees []HomeTree) ([]byte, error) {
+func (h *Home) render(trees []HomeTree, notPaired bool) ([]byte, error) {
 	v := h.Version
 	if v == "" {
 		v = "dev"
@@ -107,7 +107,10 @@ func (h *Home) render(trees []HomeTree) ([]byte, error) {
 		Version string
 		WebPort int
 		Trees   []HomeTree
-	}{v, h.WebPort, trees}); err != nil {
+		// NotPaired is set for a request at the network host from a
+		// device that is not paired.
+		NotPaired bool
+	}{v, h.WebPort, trees, notPaired}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -192,10 +195,18 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 		return nil
 	}
 	page := h.page
+	if h.atNetworkHost(r) {
+		if _, ok := h.pairedDevice(r); !ok {
+			var err error
+			if page, err = h.render(nil, true); err != nil {
+				return err
+			}
+		}
+	}
 	if h.pageAuthorized(r) {
 		if trees := homeTrees(); len(trees) > 0 {
 			var err error
-			if page, err = h.render(trees); err != nil {
+			if page, err = h.render(trees, false); err != nil {
 				return err
 			}
 		}

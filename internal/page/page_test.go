@@ -155,7 +155,7 @@ func TestStatusLists(t *testing.T) {
 	for _, want := range []string{
 		"0.15.0", "3 min ago", "the login service",
 		"leto", "reconnecting", "ssh: connection refused",
-		`<a href="https://web.test">https://web.test</a>`, "running",
+		`https://web.test`, `<a href="https://web.test" target="_blank" rel="noopener">Open</a>`, "running",
 		"api", "waiting for the hosts file: run nearhost to update it",
 		"Claude Code", "5173", "5174", "vite", "opened 10 min ago",
 		`<script src="/page.js" defer></script>`,
@@ -395,5 +395,88 @@ func TestHeadTags(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %q", want)
 		}
+	}
+}
+
+// pageAt is the page asked at host, as a gate would pass it.
+func pageAt(t *testing.T, c *fakeCore, host string) string {
+	t.Helper()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = host
+	w := httptest.NewRecorder()
+	newPage(c).ServeHTTP(w, r)
+	return bodyOf(t, w.Result())
+}
+
+func TestProjectAddressFollowsHost(t *testing.T) {
+	c := newCore()
+	c.status.Network = &control.NetworkInfo{On: true, Listening: true, URL: "https://nearhost.lab.example.dev:6327"}
+	c.status.Projects = []control.ProjectInfo{
+		{Name: "web", State: "running", URL: "https://web.test", NetworkURL: "https://web.lab.example.dev:6327"},
+		{Name: "solo", State: "running", URL: "https://solo.test"},
+	}
+	net := pageAt(t, c, "nearhost.lab.example.dev:6327")
+	if !strings.Contains(net, "https://web.lab.example.dev:6327") || strings.Contains(net, "https://web.test") {
+		t.Errorf("at the network host the address should be the network one:\n%s", net)
+	}
+	if strings.Contains(net, "https://solo.test") {
+		t.Errorf("a project with no network address should show none at the network host:\n%s", net)
+	}
+	local := pageAt(t, c, "nearhost.localhost:6327")
+	if !strings.Contains(local, "https://web.test") || strings.Contains(local, "web.lab.example.dev") {
+		t.Errorf("at the local host the address should be the local one:\n%s", local)
+	}
+	if !strings.Contains(local, "https://solo.test") {
+		t.Errorf("solo's local address is missing:\n%s", local)
+	}
+}
+
+func TestPreviewOnlySameSite(t *testing.T) {
+	c := newCore()
+	c.status.Network = &control.NetworkInfo{On: true, Listening: true, URL: "https://nearhost.lab.example.dev:6327"}
+	c.status.Projects = []control.ProjectInfo{
+		{Name: "my app", State: "running", URL: "https://app.test", NetworkURL: "https://app.lab.example.dev:8443"},
+	}
+	net := pageAt(t, c, "nearhost.lab.example.dev:6327")
+	if !strings.Contains(net, `href="/preview/my%20app"`) {
+		t.Errorf("same-site project should offer Preview:\n%s", net)
+	}
+	if !strings.Contains(net, `<a href="https://app.lab.example.dev:8443" target="_blank" rel="noopener">Open</a>`) {
+		t.Errorf("the row should have an Open link:\n%s", net)
+	}
+	local := pageAt(t, c, "nearhost.localhost:6327")
+	if strings.Contains(local, "/preview/") {
+		t.Errorf("a different site should not offer Preview:\n%s", local)
+	}
+	if !strings.Contains(local, `<a href="https://app.test" target="_blank" rel="noopener">Open</a>`) {
+		t.Errorf("the row should have an Open link:\n%s", local)
+	}
+}
+
+func TestSameSite(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"app.lab.example.dev:8443", "nearhost.lab.example.dev", true},
+		{"App.Lab.Example.Dev", "NEARHOST.lab.example.dev:6327", true},
+		{"a.test", "nearhost.localhost", false},
+		{"a.example.com", "b.example.org", false},
+		{"", "nearhost.localhost", false},
+	} {
+		if got := sameSite(c.a, c.b); got != c.want {
+			t.Errorf("sameSite(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestStatusNamesTheAddressAsked(t *testing.T) {
+	c := newCore()
+	c.status.Network = &control.NetworkInfo{On: true, Listening: true, URL: "https://nearhost.lab.example.dev:6327"}
+	if got := pageAt(t, c, "nearhost.lab.example.dev:6327"); !strings.Contains(got, "answers at nearhost.lab.example.dev:6327") {
+		t.Errorf("the network page should name its network host:\n%s", got)
+	}
+	if got := pageAt(t, c, "nearhost.localhost:6327"); !strings.Contains(got, "answers at nearhost.localhost:6327") {
+		t.Errorf("the local page should name nearhost.localhost:\n%s", got)
 	}
 }
