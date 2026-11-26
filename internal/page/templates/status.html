@@ -9,55 +9,10 @@
     <a href="https://nearhost.dev/docs/">Docs</a>
     <a href="https://github.com/nearhost/nearhost">GitHub</a>
   </nav>
-{{if not .AtNetwork}}  <section class="status">
-    <h2>Servers</h2>
-    <ul>
-      {{- range .Servers}}
-      <li>{{.Name}} <span>is {{.Health}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}</li>
-      {{- end}}
-    </ul>
-  </section>
-  <section class="status projects">
-    <h2>Projects</h2>
-    {{- if .Projects}}
-    <ul>
-      {{- range .Projects}}
-      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}
-        {{- if .URL}}
-        <span class="address">{{.URL}}</span>
-        <span class="actions">{{if .Preview}}<a href="{{.Preview}}">Preview</a>{{end}}<a href="{{.URL}}" target="_blank" rel="noopener">Open</a></span>
-        {{- end}}</li>
-      {{- end}}
-    </ul>
-    {{- else}}
-    <p>No project is served. Add one with nearhost add in its folder.</p>
-    {{- end}}
-  </section>
-{{else}}  <section class="status projects">
-    <h2>Projects</h2>
-    {{- if .Projects}}
-    <ul>
-      {{- range .Projects}}
-      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}
-        {{- if .URL}}
-        <span class="address">{{.URL}}</span>
-        <span class="actions">{{if .Preview}}<a href="{{.Preview}}">Preview</a>{{end}}<a href="{{.URL}}" target="_blank" rel="noopener">Open</a></span>
-        {{- end}}</li>
-      {{- end}}
-    </ul>
-    {{- else}}
-    <p>No project is served. Add one with nearhost add in its folder.</p>
-    {{- end}}
-  </section>
-  <section class="status">
-    <h2>Servers</h2>
-    <ul>
-      {{- range .Servers}}
-      <li>{{.Name}} <span>is {{.Health}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}</li>
-      {{- end}}
-    </ul>
-  </section>
-{{end}}  {{- if .Passthroughs}}
+{{if .AtNetwork}}{{template "projects" .}}{{end}}
+{{template "servers" .}}
+{{if not .AtNetwork}}{{template "projects" .}}{{end}}
+  {{- if .Passthroughs}}
   <section class="status">
     <h2>Passthroughs</h2>
     <ul>
@@ -90,4 +45,32 @@
     </ul>
   </section>
   {{- end}}
+{{end}}
+
+{{define "servers"}}  <section class="status">
+    <h2>Servers</h2>
+    <ul>
+      {{- range .Servers}}
+      <li>{{.Name}} <span>is {{.Health}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}</li>
+      {{- end}}
+    </ul>
+  </section>
+{{end}}
+
+{{define "projects"}}  <section class="status projects">
+    <h2>Projects</h2>
+    {{- if .Projects}}
+    <ul>
+      {{- range .Projects}}
+      <li>{{.Name}} <span>is {{.State}}.{{if and .Message (not .Problem)}} {{.Message}}{{end}}</span>{{if .Problem}}{{template "message" .Problem}}{{end}}
+        {{- if .URL}}
+        <span class="address">{{.URL}}</span>
+        <span class="actions">{{if .Preview}}<a href="{{.Preview}}">Preview</a>{{end}}<a href="{{.URL}}" target="_blank" rel="noopener">Open</a></span>
+        {{- end}}</li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p>No project is served. Add one with nearhost add in its folder.</p>
+    {{- end}}
+  </section>
 {{end}}

@@ -230,13 +230,14 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 		}
 		v.Servers = append(v.Servers, row)
 	}
-	v.AtNetwork = atNetworkHost(r, st)
+	netPage := networkOf(st)
+	v.AtNetwork = netPage.at(r)
 	v.Address = "nearhost.localhost:" + strconv.Itoa(state.WebPort)
 	if v.AtNetwork {
-		v.Address = networkAuthority(st)
+		v.Address = netPage.authority
 	}
 	for _, pr := range st.Projects {
-		row := projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: addressFor(r, st, pr), Message: safetext.Line(pr.Message), Problem: problemData(pr.Problem)}
+		row := projectRow{Name: safetext.Line(pr.Name), State: pr.State, URL: netPage.addressFor(r, pr), Message: safetext.Line(pr.Message), Problem: problemData(pr.Problem)}
 		if row.URL != "" && sameSite(row.URL, r.Host) {
 			row.Preview = "/preview/" + url.PathEscape(pr.Name)
 		}
@@ -267,35 +268,36 @@ func (p *page) status(w http.ResponseWriter, r *http.Request) {
 	render(w, r, "status", http.StatusOK, v)
 }
 
-// networkAuthority is the host and port of the page's network address.
-func networkAuthority(st control.Status) string {
-	if st.Network == nil {
-		return ""
-	}
-	u, err := url.Parse(st.Network.URL)
-	if err != nil {
-		return ""
-	}
-	return u.Host
-}
+// networkPage is the page's network address, parsed once: its host and
+// port. Its zero value is no network address.
+type networkPage struct{ host, authority string }
 
-// atNetworkHost reports whether r was asked at the page's network host.
-func atNetworkHost(r *http.Request, st control.Status) bool {
+// networkOf parses the page's network address from st.
+func networkOf(st control.Status) networkPage {
 	if st.Network == nil || st.Network.URL == "" {
-		return false
+		return networkPage{}
 	}
 	u, err := url.Parse(st.Network.URL)
 	if err != nil || u.Hostname() == "" {
-		return false
+		return networkPage{}
 	}
-	return strings.EqualFold(u.Hostname(), hostOnly(r.Host))
+	return networkPage{host: strings.ToLower(u.Hostname()), authority: u.Host}
+}
+
+// at reports whether r was asked at the page's network host.
+func (n networkPage) at(r *http.Request) bool {
+	return n.host != "" && n.host == hostOnly(r.Host)
 }
 
 // addressFor is the address of p to show for the host r was asked at: its
 // network address at the page's network host, and its local one everywhere
 // else. A project the core does not serve on the network has none there.
 func addressFor(r *http.Request, st control.Status, p control.ProjectInfo) string {
-	if atNetworkHost(r, st) {
+	return networkOf(st).addressFor(r, p)
+}
+
+func (n networkPage) addressFor(r *http.Request, p control.ProjectInfo) string {
+	if n.at(r) {
 		return p.NetworkURL
 	}
 	return p.URL
