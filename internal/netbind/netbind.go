@@ -33,6 +33,14 @@ func ServeAddrs(port int) []string {
 	return joinPort(serveHosts(), port)
 }
 
+// NetworkAddrs returns the addresses a networked core serves port on: the
+// wildcard address, on every system, so devices on the local network or a
+// VPN reach it. The proxy's client ranges and device guard decide who is
+// answered.
+func NetworkAddrs(port int) []string {
+	return joinPort([]string{""}, port)
+}
+
 // LoopbackAddrs returns the loopback addresses of port: 127.0.0.1 and [::1],
 // or 127.0.0.1 alone on a machine without the IPv6 loopback, where a listen
 // on [::1] would fail and take the rest of the proxy's configuration with it.

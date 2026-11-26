@@ -55,6 +55,10 @@ type Home struct {
 	Version string `json:"version,omitempty"`
 	// WebPort is the port the page is served on.
 	WebPort int `json:"web_port,omitempty"`
+	// NetworkHost is the page's host on the network,
+	// nearhost.<domain>, while the core is networked. Empty means it
+	// is not.
+	NetworkHost string `json:"network_host,omitempty"`
 
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte

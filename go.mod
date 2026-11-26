@@ -9,6 +9,7 @@ require (
 	charm.land/lipgloss/v2 v2.1.1
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/caddy-dns/cloudflare v0.2.4
 	github.com/caddyserver/caddy/v2 v2.11.9
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/charmbracelet/colorprofile v0.4.3
@@ -105,6 +106,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
+	github.com/libdns/cloudflare v0.2.2 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/manifoldco/promptui v0.9.0 // indirect

@@ -123,13 +123,116 @@ func clientRanges(clients []string) ([]string, error) {
 }
 
 // siteRanges are the client ranges a site's hosts are served to: loopback,
-// then the site's own.
-func siteRanges(s Site) ([]string, error) {
+// then allow (a networked core's allowed clients, or none), then the site's
+// own.
+func siteRanges(s Site, allow []string) ([]string, error) {
 	extra, err := clientRanges(s.Clients)
 	if err != nil {
 		return nil, fmt.Errorf("proxy: site %s: %w", s.Alias, err)
 	}
-	return append(slices.Clone(loopbackRanges), extra...), nil
+	out := append(slices.Clone(loopbackRanges), allow...)
+	return append(out, extra...), nil
+}
+
+// NetworkOptions make a core networked: it serves its page and projects to
+// paired devices on the local network or a VPN, under Domain.
+type NetworkOptions struct {
+	// Domain is a domain the user controls, such as lab.example.dev. The
+	// page is at nearhost.<Domain> (see networkPageHost). Empty means the
+	// core is not networked, exactly as with no NetworkOptions.
+	Domain string
+	// Certificates is where certificates for names under Domain come
+	// from: "acme" (Let's Encrypt, over the DNS challenge) or "ca" (the
+	// local CA, which each device must trust).
+	Certificates string
+	// DNSToken is the Cloudflare API token of the DNS challenge, for
+	// "acme" alone. It is never logged, and never persisted: Caddy's
+	// config is not saved (see BuildConfig).
+	DNSToken string
+	// Allow are the client ranges, in CIDR form, the core is served to
+	// besides loopback, as written: BuildConfig adds their IPv4-mapped
+	// forms (see clientRanges).
+	Allow []string
+	// Listen opens the servers to the network: they listen on every
+	// address and admit Allow. Without it only the page host and the
+	// certificates change, as on Windows until the firewall rule exists.
+	Listen bool
+}
+
+// networkPageHost is the page's host on the network: nearhost.<domain>.
+func networkPageHost(n *NetworkOptions) string {
+	return "nearhost." + strings.ToLower(n.Domain)
+}
+
+// network is opts.Network when it names a domain, and otherwise nil: a core
+// without a domain is not networked.
+func (o Options) network() *NetworkOptions {
+	if o.Network == nil || o.Network.Domain == "" {
+		return nil
+	}
+	return o.Network
+}
+
+// networkListens reports whether the servers are open to the network:
+// networked, with Listen.
+func (o Options) networkListens() bool {
+	n := o.network()
+	return n != nil && n.Listen
+}
+
+// allowRanges are the networked core's allowed client ranges, with their
+// IPv4-mapped forms, while it listens on the network, and otherwise none.
+// BuildConfig checks them first, so the error is dropped here.
+func (o Options) allowRanges() []string {
+	if !o.networkListens() {
+		return nil
+	}
+	r, _ := clientRanges(o.Network.Allow)
+	return r
+}
+
+// serveAddrs are the addresses the https and http servers listen on at
+// port: every address on a networked core that listens, and otherwise
+// netbind.ServeAddrs.
+func (o Options) serveAddrs(port int) []string {
+	if o.networkListens() {
+		return netbind.NetworkAddrs(port)
+	}
+	return netbind.ServeAddrs(port)
+}
+
+// wildcardCovers reports whether a networked core's ACME certificates cover
+// host, ignoring case: it is domain or exactly one label beneath it, as
+// *.<domain> covers no name deeper. A pattern counts by its own labels, so
+// *.<domain> is covered and *.app.<domain> is not.
+func wildcardCovers(host, domain string) bool {
+	h, d := strings.ToLower(host), strings.ToLower(domain)
+	label, ok := strings.CutSuffix(h, "."+d)
+	return h == d || ok && !strings.Contains(label, ".")
+}
+
+// acmeNetwork is opts' network when its certificates come from ACME, and
+// otherwise nil.
+func acmeNetwork(opts Options) *NetworkOptions {
+	if n := opts.network(); n != nil && n.Certificates == "acme" {
+		return n
+	}
+	return nil
+}
+
+// deviceGuard is the device guard handler of s's routes on a networked core
+// that listens, and nil otherwise: clients in loopback or the site's own
+// ranges pass, others need a paired device and are sent to the page.
+func deviceGuard(s Site, opts Options) map[string]any {
+	if !opts.networkListens() {
+		return nil
+	}
+	local, _ := siteRanges(s, nil) // already checked by BuildConfig
+	page := "https://" + networkPageHost(opts.Network)
+	if opts.WebPort != 0 {
+		page += ":" + strconv.Itoa(opts.WebPort)
+	}
+	return map[string]any{"handler": deviceModule, "page": page, "local": local}
 }
 
 // Options configures the embedded Caddy instance.
@@ -155,6 +258,9 @@ type Options struct {
 	// Reports receives the proxy's own warnings, such as a CA folder that
 	// cannot be made private. nil writes them to the log sink as log text.
 	Reports report.Sink
+	// Network makes the core networked (see NetworkOptions). nil, or one
+	// without a domain, gives the config of a core that is not.
+	Network *NetworkOptions
 }
 
 // listens reports whether the config for sites declares listeners: with
@@ -193,9 +299,13 @@ func accessWriter() map[string]any {
 // siteRoute is the route serving one host of a site: it tags the request
 // with the site's alias, keeps the exchange when opts.Capture is on, and
 // proxies to the upstream, naming Nearhost in Via each way. A Forwarded
-// site's gate comes just before the proxy.
+// site's gate comes just before the proxy. On a networked core that listens
+// the device guard follows the tag.
 func siteRoute(s Site, host string, ranges []string, opts Options) map[string]any {
 	handle := []any{map[string]any{"handler": tagModule, "alias": s.Alias}}
+	if guard := deviceGuard(s, opts); guard != nil {
+		handle = append(handle, guard)
+	}
 	handle = append(handle, captureHandler(s.Alias, opts.Capture)...)
 	match := []any{map[string]any{
 		"host":      []string{host},
@@ -251,8 +361,10 @@ func siteRoute(s Site, host string, ranges []string, opts Options) map[string]an
 // downRoute is the error route for one host of a site: matched as its
 // site route is, it serves Nearhost's page to a browser while the site's
 // app does not answer (see Down). Errors are the server's, not a route's,
-// so each host has its own, naming its site's app.
-func downRoute(s Site, host string, ranges []string) map[string]any {
+// so each host has its own, naming its site's app. On a networked core that
+// listens the device guard runs first, so the page is shown to no client
+// the site's route would refuse.
+func downRoute(s Site, host string, ranges []string, opts Options) map[string]any {
 	project, port := s.Project, s.Port
 	if project == "" {
 		project = s.Alias
@@ -266,12 +378,16 @@ func downRoute(s Site, host string, ranges []string) map[string]any {
 	if s.Server != "" {
 		handler["server"] = s.Server
 	}
+	handle := []any{handler}
+	if guard := deviceGuard(s, opts); guard != nil {
+		handle = []any{guard, handler}
+	}
 	return map[string]any{
 		"match": []any{map[string]any{
 			"host":      []string{host},
 			"remote_ip": map[string]any{"ranges": ranges},
 		}},
-		"handle":   []any{handler},
+		"handle":   handle,
 		"terminal": true,
 	}
 }
@@ -291,17 +407,22 @@ func viaReplace(version string) map[string]any {
 }
 
 // homeRoute is the web server's route serving Nearhost's own page at
-// pageHosts to loopback clients. It has no tag: the page is no project's.
+// pageHosts to loopback clients. It has no tag: the page is no project's. A
+// networked core also serves it at networkPageHost, and, while it listens on
+// the network, to the allowed clients.
 func homeRoute(opts Options) map[string]any {
 	version := opts.Version
 	if version == "" {
 		version = "dev"
 	}
 	handler := map[string]any{"handler": homeModule, "version": version, "web_port": opts.WebPort}
+	if n := opts.network(); n != nil {
+		handler["network_host"] = networkPageHost(n)
+	}
 	return map[string]any{
 		"match": []any{map[string]any{
-			"host":      pageHosts(),
-			"remote_ip": map[string]any{"ranges": loopbackRanges},
+			"host":      webHosts(opts),
+			"remote_ip": map[string]any{"ranges": pageRanges(opts)},
 		}},
 		"handle":   []any{handler},
 		"terminal": true,
@@ -312,6 +433,31 @@ func homeRoute(opts Options) map[string]any {
 // loopback, or macOS with a page port below 1024.
 var pageAddrs = netbind.PageAddrs
 
+// webHosts are the hosts the page is served at: pageHosts, and
+// networkPageHost on a networked core.
+func webHosts(opts Options) []string {
+	hosts := pageHosts()
+	if n := opts.network(); n != nil {
+		hosts = append(hosts, networkPageHost(n))
+	}
+	return hosts
+}
+
+// pageRanges are the client ranges the page is served to: loopback, and
+// the allowed clients on a networked core that listens.
+func pageRanges(opts Options) []string {
+	return append(slices.Clone(loopbackRanges), opts.allowRanges()...)
+}
+
+// webAddrs are the addresses the page listens on: pageAddrs, or every
+// address on a networked core that listens.
+func webAddrs(opts Options) []string {
+	if opts.networkListens() {
+		return netbind.NetworkAddrs(opts.WebPort)
+	}
+	return pageAddrs(opts.WebPort)
+}
+
 // webServer is the server on opts.WebPort, which serves the home page at
 // pageHosts to loopback clients and drops everything else. It listens on
 // netbind.PageAddrs: the loopback addresses alone, so the kernel refuses a
@@ -321,12 +467,13 @@ var pageAddrs = netbind.PageAddrs
 // cases, and in the second they alone keep the page to loopback clients.
 // The https server never serves the page: localhost there is a project's,
 // or is not served. It has no HTTP/3, so it needs no UDP port, and no
-// redirects of its own.
+// redirects of its own. A networked core that listens serves it on every
+// address to loopback and the allowed clients (see homeRoute).
 func webServer(opts Options) map[string]any {
 	return map[string]any{
-		"listen": listenAddrs(pageAddrs(opts.WebPort)),
+		"listen": listenAddrs(webAddrs(opts)),
 		"tls_connection_policies": []any{map[string]any{
-			"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+			"match": map[string]any{"remote_ip": map[string]any{"ranges": pageRanges(opts)}},
 		}},
 		"routes": []any{homeRoute(opts), map[string]any{
 			"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
@@ -370,13 +517,14 @@ func coversAll(ranges, union []string) bool {
 }
 
 // httpServer is the server on the http port. It serves the clients each of
-// hosts is served to (loopback, and a site's extra ranges) a 307 to the same
+// hosts is served to (loopback, a networked core's allowed clients, and a
+// site's extra ranges) a 307 to the same
 // URL over https, which carries Cache-Control: no-store so that a browser
 // keeps no memory of it (a 308 is cached for good, and a host that stops
 // being served or moves to another tool would stay stuck on https), and drops every other connection without an answer, as the
 // https server does. The redirect names httpsPort, the effective https port,
 // unless it is 443; {http.request.host} is the host without its port. union
-// is the union of all those ranges.
+// is the union of all those ranges. It listens on addrs.
 //
 // Its routes are, in order: a drop for a client outside union; for each
 // host, its redirect, matched by the host and the ranges it is served to,
@@ -397,7 +545,7 @@ func coversAll(ranges, union []string) bool {
 // Caddy's catch-all after it is never reached. With no host at all there is
 // no host-matched route to keep Caddy's redirects behind ours, so
 // BuildConfig turns them off on the https server.
-func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map[string]any {
+func httpServer(hosts []hostRanges, union, addrs []string, httpsPort int) map[string]any {
 	location := "https://{http.request.host}"
 	if httpsPort != 443 {
 		location += ":" + strconv.Itoa(httpsPort)
@@ -433,7 +581,7 @@ func httpServer(hosts []hostRanges, union []string, httpPort, httpsPort int) map
 	}
 	routes = append(routes, map[string]any{"handle": abort})
 	return map[string]any{
-		"listen": listenAddrs(netbind.ServeAddrs(httpPort)),
+		"listen": listenAddrs(addrs),
 		"routes": routes,
 		// This server is plain HTTP by design. Saying so stops Caddy
 		// warning on every reload that it cannot have automatic HTTPS (it
@@ -488,6 +636,12 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	if httpPort == 0 {
 		httpPort = 80
 	}
+	if n := opts.network(); n != nil {
+		if _, err := clientRanges(n.Allow); err != nil {
+			return nil, fmt.Errorf("proxy: network allow: %w", err)
+		}
+	}
+	allow := opts.allowRanges()
 
 	// A host on two sites is reported before any host is validated, so the
 	// error names the clash, whichever way the host is spelled.
@@ -502,7 +656,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		if s.Alias == "" || s.Upstream == "" || len(s.Hosts) == 0 {
 			return nil, fmt.Errorf("proxy: site needs alias, hosts and upstream, got %+v", s)
 		}
-		ranges, err := siteRanges(s)
+		ranges, err := siteRanges(s, allow)
 		if err != nil {
 			return nil, err
 		}
@@ -536,7 +690,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	// is followed by a drop for that host alone, on both servers (see
 	// hostDrop). With none, there is nothing to fall through to and the
 	// config is as it was before sites had clients.
-	union := unionRanges(sites)
+	union := unionRanges(sites, allow)
 	anyClients := len(union) > len(loopbackRanges)
 	routes := make([]any, 0, 2*len(all)+1)
 	var downRoutes []any // the error routes, one per site host, in the order of routes
@@ -546,7 +700,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	for _, sv := range all {
 		ranges := rangesOf[strings.ToLower(sv.host)]
 		routes = append(routes, siteRoute(sv.site, sv.host, ranges, opts))
-		downRoutes = append(downRoutes, downRoute(sv.site, sv.host, ranges))
+		downRoutes = append(downRoutes, downRoute(sv.site, sv.host, ranges, opts))
 		drop := anyClients && !coversAll(ranges, union)
 		if drop {
 			routes = append(routes, hostDrop(sv.host))
@@ -579,20 +733,42 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		"handle": []any{map[string]any{"handler": "static_response", "abort": true}},
 	})
 
-	// The web port serves the home page at pageHosts, so each is a
+	// The web port serves the home page at webHosts, so each is a
 	// certificate subject whenever that port is served, unless it already
 	// is one as a project's host.
 	web := opts.WebPort != 0 && listens(sites, opts)
 	if web {
-		for _, h := range pageHosts() {
+		for _, h := range webHosts(opts) {
 			if _, claimed := siteOf[h]; !claimed {
 				subjects = append(subjects, h)
 			}
 		}
 	}
+	// On a networked core whose certificates come from ACME, the network
+	// domain and every name one label beneath it are the ACME policy's (see
+	// acmePolicy), so the local CA issues for none of them, exactly or on
+	// demand. A name deeper than that, which the wildcard does not cover,
+	// stays on the local CA. With the local CA, any name one label beneath the domain gets
+	// a certificate on demand, so a device can reach a project there before
+	// it is a subject. The https server still skips every site pattern.
+	onDemand := patterns
+	acme := acmeNetwork(opts)
+	if acme != nil {
+		subjects = slices.DeleteFunc(subjects, func(h string) bool { return wildcardCovers(h, acme.Domain) })
+		onDemand = slices.DeleteFunc(slices.Clone(patterns), func(h string) bool { return wildcardCovers(h, acme.Domain) })
+	} else if n := opts.network(); n != nil {
+		wild := "*." + strings.ToLower(n.Domain)
+		if !slices.Contains(onDemand, wild) {
+			onDemand = append(slices.Clone(onDemand), wild)
+		}
+	}
 	// An empty-subject policy would match every name, so only add one when
-	// there are exact hosts.
+	// there are exact hosts. Policies are first-match, so the ACME one,
+	// which names its subjects, comes first.
 	policies := []any{}
+	if acme != nil {
+		policies = append(policies, acmePolicy(acme))
+	}
 	if len(subjects) > 0 {
 		policies = append(policies, map[string]any{
 			"subjects": subjects,
@@ -600,7 +776,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		})
 	}
 	automation := map[string]any{"policies": policies, "renew_interval": caddyDuration(renewInterval)}
-	if len(patterns) > 0 {
+	if len(onDemand) > 0 {
 		// A certificate's wildcard can only be its leftmost label, so a
 		// pattern with * anywhere else, such as internal.*.local.example.io,
 		// cannot be a subject. Rather than treat *.example.io one way and
@@ -615,7 +791,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		})
 		automation["policies"] = policies
 		automation["on_demand"] = map[string]any{
-			"permission": map[string]any{"module": permissionModule, "patterns": patterns},
+			"permission": map[string]any{"module": permissionModule, "patterns": onDemand},
 		}
 	}
 
@@ -647,7 +823,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		}
 	}
 	connPolicies := []any{map[string]any{
-		"match": map[string]any{"remote_ip": map[string]any{"ranges": loopbackRanges}},
+		"match": map[string]any{"remote_ip": map[string]any{"ranges": pageRanges(opts)}},
 	}}
 	for _, g := range groups {
 		// Except is every host outside the group, so a pattern of the
@@ -670,8 +846,9 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	}
 
 	server := map[string]any{
-		"listen": listenAddrs(netbind.ServeAddrs(httpsPort)),
-		// Policies are first-match. The first is for loopback clients; the
+		"listen": listenAddrs(opts.serveAddrs(httpsPort)),
+		// Policies are first-match. The first is for loopback clients, and
+		// a networked core's allowed clients while it listens; the
 		// others, one per set of extra client ranges, are for those clients
 		// and the hosts of the sites that opted in. A handshake from
 		// anywhere else matches none and fails before a certificate is
@@ -708,7 +885,7 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 		// routes answer first (see httpServer).
 		server["automatic_https"] = map[string]any{"skip_certificates": patterns}
 	}
-	servers["nearhost_http"] = handedOff(httpServer(hosts, union, httpPort, httpsPort))
+	servers["nearhost_http"] = handedOff(httpServer(hosts, union, opts.serveAddrs(httpPort), httpsPort))
 	if web {
 		servers["nearhost_web"] = handedOff(webServer(opts))
 	}
@@ -744,6 +921,17 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 			},
 		},
 	}
+	if acme != nil && listens(sites, opts) {
+		// The wildcard is obtained as one certificate, and Caddy then
+		// manages no name it covers on its own (see caddytls's
+		// managingWildcardFor): a project under the domain needs no
+		// certificate of its own, and its name is not published in
+		// Certificate Transparency logs. A config that serves nothing,
+		// only to make the local CA, orders nothing.
+		cfg["apps"].(map[string]any)["tls"].(map[string]any)["certificates"] = map[string]any{
+			"automate": []string{"*." + strings.ToLower(acme.Domain)},
+		}
+	}
 	// With nothing to serve, leave the HTTP app out and Caddy opens no
 	// listeners. The PKI app still creates the local CA root, which is how
 	// EnsureCA makes the CA without binding ports 80/443.
@@ -753,10 +941,15 @@ func BuildConfig(sites []Site, opts Options) ([]byte, error) {
 	return json.Marshal(cfg)
 }
 
-// unionRanges are loopback and every site's extra client ranges, each once,
-// for the http server's first route to drop the rest.
-func unionRanges(sites []Site) []string {
+// unionRanges are loopback, allow and every site's extra client ranges,
+// each once, for the http server's first route to drop the rest.
+func unionRanges(sites []Site, allow []string) []string {
 	out := slices.Clone(loopbackRanges)
+	for _, r := range allow {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
 	for _, s := range sites {
 		extra, _ := clientRanges(s.Clients) // already checked by siteRanges
 		for _, r := range extra {
@@ -766,4 +959,20 @@ func unionRanges(sites []Site) []string {
 		}
 	}
 	return out
+}
+
+// acmePolicy is the automation policy of a networked core whose
+// certificates come from ACME: the domain and every name one label beneath
+// it, issued over the DNS challenge at Cloudflare with n.DNSToken.
+func acmePolicy(n *NetworkOptions) map[string]any {
+	d := strings.ToLower(n.Domain)
+	return map[string]any{
+		"subjects": []string{"*." + d, d},
+		"issuers": []any{map[string]any{
+			"module": "acme",
+			"challenges": map[string]any{"dns": map[string]any{
+				"provider": map[string]any{"name": "cloudflare", "api_token": n.DNSToken},
+			}},
+		}},
+	}
 }
