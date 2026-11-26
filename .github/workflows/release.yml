@@ -38,6 +38,31 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      # Windows binaries are signed through Azure Artifact Signing by
+      # .github/scripts/sign-windows.sh, which GoReleaser runs after each
+      # Windows build. The login is OIDC: the app registration trusts only
+      # this repo's release environment, and may only sign.
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.NEARHOST_WINDOWS == 'on'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # jsign signs PE files on Linux (the runner has Java); osslsigncode
+      # checks the result.
+      - name: Install jsign and osslsigncode
+        if: env.NEARHOST_WINDOWS == 'on'
+        env:
+          JSIGN_VERSION: "7.6"
+          JSIGN_SHA256: 6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5
+        run: |
+          jar="$RUNNER_TEMP/jsign.jar"
+          curl -fsSL -o "$jar" "https://github.com/ebourg/jsign/releases/download/$JSIGN_VERSION/jsign-$JSIGN_VERSION.jar"
+          echo "$JSIGN_SHA256  $jar" | sha256sum -c -
+          echo "JSIGN_JAR=$jar" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osslsigncode
+          java -version
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: tap-token
         with:
@@ -57,6 +82,8 @@ jobs:
         env:
           # Build the release's own tag, even if another tag shares its commit.
           GORELEASER_CURRENT_TAG: ${{ github.event.release.tag_name }}
+          # Every Windows build a release makes is signed.
+          NEARHOST_SIGN_WINDOWS: ${{ env.NEARHOST_WINDOWS }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}

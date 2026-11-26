@@ -34,6 +34,14 @@ builds:
       - -s -w -X github.com/nearhost/nearhost/internal/cli.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     skip: '{{ ne .Env.NEARHOST_WINDOWS "on" }}'
+    # Signs each nearhost.exe before it is archived, so Smart App Control
+    # lets it run; the npm packages are built from these archives, so they
+    # get the signed binary too. NEARHOST_SIGN_WINDOWS is "on" in release.yml
+    # and "off" in CI's snapshot; see the script.
+    hooks:
+      post:
+        - cmd: sh .github/scripts/sign-windows.sh "{{ .Path }}"
+          output: true
 
 archives:
   - formats: [tar.gz]

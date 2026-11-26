@@ -60,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NEARHOST_WINDOWS: ${{ matrix.windows }}
+      # No Azure credentials here, so the Windows binaries stay unsigned.
+      NEARHOST_SIGN_WINDOWS: "off"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
