@@ -247,8 +247,10 @@ resolved() {
 # environment, which leaves backslashes as they are, and escapes it a
 # character at a time: awks disagree on backslashes in gsub's replacement,
 # and mawk 1.3.4 20200120, Debian 12's and Ubuntu 22.04's, gets them wrong.
+# Every other control character goes as \u00XX, as JSON requires.
 quote() {
 	QUOTE=$1 awk 'BEGIN {
+		for (i = 1; i < 32; i++) ctl[sprintf("%c", i)] = sprintf("\\u%04x", i)
 		s = ENVIRON["QUOTE"]
 		out = ""
 		for (i = 1; i <= length(s); i++) {
@@ -258,6 +260,7 @@ quote() {
 			else if (c == "\t") c = "\\t"
 			else if (c == "\n") c = "\\n"
 			else if (c == "\r") c = "\\r"
+			else if (c in ctl) c = ctl[c]
 			out = out c
 		}
 		printf "\"%s\"", out
