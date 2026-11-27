@@ -17,13 +17,21 @@ import (
 	"github.com/nearhost/nearhost/internal/report"
 )
 
-// webApp is the web app SetApp stored: its files, its index.html and the
-// policy the index is sent with, worked out once when it is set.
+// webApp is the web app SetApp stored: its files, its index.html, the
+// policy the index is sent with and its documents.css, worked out once when
+// it is set.
 type webApp struct {
 	fsys  fs.FS
 	index []byte
 	csp   string
+	// documentsCSS is the stylesheet documents are themed with (see
+	// documentTheme), empty when the app has none.
+	documentsCSS []byte
 }
+
+// appDocumentsCSS is the file at the root of the app that styles themed
+// documents.
+const appDocumentsCSS = "documents.css"
 
 // app holds what SetApp stored last, nil while nothing is set. It is
 // package-level, as the console is, because Caddy builds a new Home on
@@ -47,7 +55,8 @@ func SetApp(fsys fs.FS) {
 		app.Store(nil)
 		return
 	}
-	app.Store(&webApp{fsys: fsys, index: index, csp: appCSP(index)})
+	css, _ := fs.ReadFile(fsys, appDocumentsCSS)
+	app.Store(&webApp{fsys: fsys, index: index, csp: appCSP(index), documentsCSS: css})
 }
 
 // currentApp returns the app set now, nil while there is none.
