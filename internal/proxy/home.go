@@ -143,6 +143,10 @@ func (h *Home) render(r *http.Request, trees []HomeTree, notPaired bool) ([]byte
 // not even whether any are. The cookie is given and read at
 // hostname.PageHost alone (see setPageCookie): at localhost, /?k= redirects
 // and sets nothing, / never lists, and the console's paths are locked.
+// While a web app is set (see SetApp), it answers every GET and HEAD that
+// the shell, documents, pairing, the API and /?k= leave, other than the
+// server's own paths, and any other method there is not allowed: the
+// console and today's page are not served.
 func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	if h.serveShell(w, r) {
 		return nil
@@ -166,6 +170,11 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	// Matched escaped, as the console's paths are.
 	if isAPIPath(r.URL.EscapedPath()) {
 		h.serveAPI(w, r)
+		return nil
+	}
+	// The web app, while one is set, answers what is left at the page
+	// hosts, before the console: its own routes are the console's.
+	if a := currentApp(); a != nil && h.atShellHost(r) && h.serveApp(a, w, r) {
 		return nil
 	}
 	con := currentConsole()

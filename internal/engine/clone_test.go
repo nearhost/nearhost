@@ -13,7 +13,7 @@ import (
 // config.Config, so a field added later fails it until the copy handles it.
 func TestCloneConfigCopiesEveryField(t *testing.T) {
 	yes, no := true, false
-	keep := true
+	keep, web := true, true
 	cfg := &config.Config{
 		Servers:        []config.Server{{Name: "box", SSHHost: "box"}},
 		Projects:       []config.Project{{Name: "p", Server: config.LocalServer, Alias: "p.test", Routes: []config.Route{{Port: 80, Role: config.RoleWeb, Hosts: []string{"p.test"}}}}},
@@ -22,6 +22,7 @@ func TestCloneConfigCopiesEveryField(t *testing.T) {
 		Presets:        []config.PresetRef{{Name: "official/laravel", Ref: "abc", SHA256: "def"}},
 		Notifications:  &yes,
 		KeepRunning:    &keep,
+		WebApp:         &web,
 		Network: &config.Network{Enabled: &yes, Domain: "lab.example.dev", Certificates: "acme",
 			ACME: &config.NetworkACME{DNS: "cloudflare"}, Allow: []string{"10.0.0.0/8"}},
 	}

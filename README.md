@@ -284,6 +284,19 @@ curl -k --resolve myapp.test:18443:127.0.0.1 https://myapp.test:18443/
 
 The source build makes its own CA in `.dev/data`, apart from the installed Nearhost's. To drop `-k`, run `./nearhost trust` with the same variables set, which adds that dev CA to the system trust store. When you are done, run `./nearhost untrust` with them still set, so it removes the dev CA rather than the installed one.
 
+### The web app
+
+The web app is its own repository, [nearhost/pwa](https://github.com/nearhost/pwa), built in as the Go module `github.com/nearhost/pwa` at a tagged release. Nearhost serves it at its page in place of today's page when the config has `web_app: true` at the top level. To work on both at once, check out the app beside this repository, build it, and point Go at it with a workspace:
+
+```sh
+git clone https://github.com/nearhost/pwa.git ../pwa
+(cd ../pwa && npm ci && npm run build)
+go work init . ../pwa
+make build
+```
+
+Run `npm run build` in `../pwa` again after each change to the app, then rebuild Nearhost. Without a build there, Nearhost serves today's page and says so when it starts. `go.work` and `go.work.sum` are ignored; delete them to build against the released module again.
+
 ### Test
 
 ```sh

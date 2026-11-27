@@ -550,6 +550,39 @@ func TestKeepRunningRoundTrip(t *testing.T) {
 	}
 }
 
+// web_app turns on the web app: true loads, saves and is on; false and
+// absent are off, and absent stays absent. It is no unknown key.
+func TestWebAppRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	for content, on := range map[string]bool{
+		"projects: []\n": false, "web_app: true\n": true, "web_app: false\n": false,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if unknown, err := UnknownKeys(path); err != nil || len(unknown) != 0 {
+			t.Errorf("%q: unknown keys %v, err %v", content, unknown, err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+		if cfg.WebAppOn() != on {
+			t.Errorf("%q: WebAppOn() = %v, want %v", content, cfg.WebAppOn(), on)
+		}
+		if err := Save(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(path)
+		switch {
+		case content == "projects: []\n" && strings.Contains(string(raw), "web_app"):
+			t.Errorf("%q: saved web_app when it was absent:\n%s", content, raw)
+		case on && !strings.Contains(string(raw), "web_app: true\n"):
+			t.Errorf("%q: saved without web_app: true:\n%s", content, raw)
+		}
+	}
+}
+
 func ptrTo[T any](v T) *T { return &v }
 
 func TestValidateWebRoutesAndHosts(t *testing.T) {

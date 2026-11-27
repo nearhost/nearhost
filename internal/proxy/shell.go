@@ -96,11 +96,19 @@ func (h *Home) renderShell() error {
 
 // serveShell answers a request for one of the shell's paths at a page host,
 // GET and HEAD only, and reports whether it answered. No cookie is needed,
-// given or varied on: the files are the same for everyone.
+// given or varied on: the files are the same for everyone. While a web app
+// is set, its own file at the path wins (see serveApp): its manifest and
+// icons replace these, and the worker and offline page stay the shell's
+// until the app has its own.
 func (h *Home) serveShell(w http.ResponseWriter, r *http.Request) bool {
 	asset, ok := shellAssets[r.URL.Path]
-	if !ok || !(atPageHost(r) || requestHost(r) == homeHost || h.atNetworkHost(r)) {
+	if !ok || !h.atShellHost(r) {
 		return false
+	}
+	if a := currentApp(); a != nil {
+		if _, ok := a.file(r.URL.Path); ok {
+			return false
+		}
 	}
 	hdr := w.Header()
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -125,6 +133,13 @@ func (h *Home) serveShell(w http.ResponseWriter, r *http.Request) bool {
 		w.Write(body)
 	}
 	return true
+}
+
+// atShellHost reports whether r is at one of the page's hosts, where the
+// shell and the web app are served: nearhost.localhost from loopback,
+// localhost, or the network host.
+func (h *Home) atShellHost(r *http.Request) bool {
+	return atPageHost(r) || requestHost(r) == homeHost || h.atNetworkHost(r)
 }
 
 // markPNGs holds the mark at each size, drawn once.

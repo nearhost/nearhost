@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nearhost/pwa"
 	"github.com/spf13/cobra"
 
 	"github.com/nearhost/nearhost/internal/config"
@@ -23,6 +24,17 @@ import (
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 )
+
+// webAppFS and webAppBuilt are the web app this Nearhost was built with and
+// whether its module carries a build. Tests stand in a module without one.
+var (
+	webAppFS    = pwa.FS
+	webAppBuilt = pwa.Built
+)
+
+// webAppUnbuilt is what the core says, once at start, when web_app is on
+// but this Nearhost was built without the web app.
+const webAppUnbuilt = "web_app is on, but this Nearhost was built without the web app (pwa " + pwa.Version + "); serving the page as before."
 
 // coreWatchInterval is how often the core looks at the config file, as the
 // interface does. Tests shorten it.
@@ -226,12 +238,23 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		}
 		ops.devicesErr = err
 		pageDone := make(chan struct{})
+		// The web app, when the config asks for it, is served in place of
+		// the page's own; the API it uses is the page's. Read at start:
+		// a change to web_app takes a restart.
+		if cfg.WebAppOn() {
+			if webAppBuilt() {
+				proxy.SetApp(webAppFS())
+			} else {
+				eng.Events().Publish(engine.Event{Message: webAppUnbuilt})
+			}
+		}
 		machine, _ := os.Hostname() // "" when it can't be read: the page names none
 		proxy.SetConsole(page.New(page.Options{
 			Core: core, Machine: machine, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
 		}))
 		closePage = sync.OnceFunc(func() {
 			proxy.SetAPI(nil)
+			proxy.SetApp(nil)
 			proxy.SetConsole(nil)
 			close(pageDone)
 		})

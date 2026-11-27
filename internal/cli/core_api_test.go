@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nearhost/pwa"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
@@ -151,5 +154,66 @@ func TestCoreServesTheAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("GET /api/v1/status after the core stopped = %d, want no answer or 404", resp.StatusCode)
 		}
+	}
+}
+
+// With web_app on, the page host serves the web app from the pwa module to
+// any browser, cookie or not; with it off, or with a module that carries
+// no build, the page is today's, and the latter says why once.
+func TestCoreServesTheWebApp(t *testing.T) {
+	index, err := fs.ReadFile(pwa.FS(), "index.html")
+	if err != nil {
+		t.Fatalf("the pwa module has no build: %v", err)
+	}
+	on := true
+	for _, tc := range []struct {
+		name    string
+		webApp  *bool
+		built   bool
+		wantApp bool
+	}{
+		{"on", &on, true, true},
+		{"off", nil, true, false},
+		{"unbuilt", &on, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := webAppBuilt
+			webAppBuilt = func() bool { return tc.built }
+			t.Cleanup(func() { webAppBuilt = old })
+			engines := make(chan *engine.Engine, 1)
+			u := newUpRun(t, &config.Config{WebApp: tc.webApp, Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+			u.noHosts = true
+			u.engineOf(engines)
+			u.start()
+			u.waitFor("Serving until interrupted")
+			eng := <-engines
+			base, err := eng.PageURL()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := pageBrowser(t, eng.WebPort())
+			for _, path := range []string{"/", "/approve/abc"} {
+				resp, err := c.Get(base + path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				gotApp := resp.StatusCode == http.StatusOK && string(body) == string(index)
+				if gotApp != tc.wantApp {
+					t.Errorf("GET %s = %d, the app %v, want %v\n%.300s", path, resp.StatusCode, gotApp, tc.wantApp, body)
+				}
+				if tc.wantApp && !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+					t.Errorf("GET %s: CSP %q", path, resp.Header.Get("Content-Security-Policy"))
+				}
+			}
+			const why = "built without the web app"
+			if got := strings.Count(u.out.String(), why); got != map[bool]int{true: 1}[tc.name == "unbuilt"] {
+				t.Errorf("%q said %d times; output:\n%s", why, got, u.out.String())
+			}
+			if err := u.stop(); err != nil {
+				t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
+			}
+		})
 	}
 }
