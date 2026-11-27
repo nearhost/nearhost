@@ -376,6 +376,7 @@ func (o *coreOps) State() control.State {
 		HTTPSPort:    o.httpsPort,
 		Projects:     map[string]engine.ProjectStatus{},
 		Servers:      map[string]control.ServerState{},
+		Sites:        map[string]control.Site{},
 		Passthroughs: o.eng.Passthroughs(""),
 		Documents:    o.agents.documents(""),
 		Grants:       []grants.Grant{},
@@ -384,8 +385,14 @@ func (o *coreOps) State() control.State {
 	if data, err := config.Marshal(cfg); err == nil {
 		st.Config = string(data)
 	}
+	ns := o.eng.NetworkState()
+	var sites []proxy.Site
+	if ns.On && ns.URL != "" {
+		sites = o.eng.Sites()
+	}
 	for _, p := range cfg.Projects {
 		st.Projects[p.Name] = o.eng.Status(p.Name)
+		st.Sites[p.Name] = projectSite(p, sites, ns, o.httpsPort)
 	}
 	for _, name := range serverNames(cfg) {
 		// One look at the server, so its state, text and problem agree.

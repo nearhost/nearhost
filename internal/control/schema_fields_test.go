@@ -33,6 +33,8 @@ var goTypes = map[string]reflect.Type{
 	"NetworkInfo":         reflect.TypeFor[NetworkInfo](),
 	"EnvCheck":            reflect.TypeFor[EnvCheck](),
 	"State":               reflect.TypeFor[State](),
+	"Site":                reflect.TypeFor[Site](),
+	"SiteRoute":           reflect.TypeFor[SiteRoute](),
 	"ProjectStatus":       reflect.TypeFor[engine.ProjectStatus](),
 	"Change":              reflect.TypeFor[engine.Change](),
 	"Project":             reflect.TypeFor[config.Project](),

@@ -819,6 +819,14 @@ export interface components {
             servers: {
                 [key: string]: components["schemas"]["ServerState"];
             } | null;
+            /**
+             * @description Each project's server and web addresses by project name. A
+             *     project's routes change only with the config: fetch the state
+             *     again on a reset to follow them.
+             */
+            sites: {
+                [key: string]: components["schemas"]["Site"];
+            } | null;
             passthroughs: components["schemas"]["EnginePassthrough"][] | null;
             /** @description Newest first. */
             documents: components["schemas"]["Tree"][] | null;
@@ -899,6 +907,24 @@ export interface components {
             Host: string;
             Why: string;
             Option: string;
+        };
+        /** @description Where a project runs and the addresses of its web routes. */
+        Site: {
+            /** @description The server the project runs on; absent for this machine. */
+            server?: string;
+            /** @description One per web route, the primary first. */
+            routes: components["schemas"]["SiteRoute"][] | null;
+        };
+        /** @description One web route of a project. */
+        SiteRoute: {
+            /** @description The route's main name; the alias for the primary route. */
+            host: string;
+            /** @description The port the dev server listens on. */
+            port: number;
+            /** @description The address a browser uses. */
+            url: string;
+            /** @description The address on the network; absent when the core does not serve to it. */
+            networkUrl?: string;
         };
         /** @description A server's connection, as the interface shows it. */
         ServerState: {

@@ -1006,6 +1006,7 @@ components:
         - noCapture
         - projects
         - servers
+        - sites
         - passthroughs
         - documents
         - grants
@@ -1041,6 +1042,13 @@ components:
           type: [object, "null"]
           description: Each server by name.
           additionalProperties: {$ref: "#/components/schemas/ServerState"}
+        sites:
+          type: [object, "null"]
+          description: |
+            Each project's server and web addresses by project name. A
+            project's routes change only with the config: fetch the state
+            again on a reset to follow them.
+          additionalProperties: {$ref: "#/components/schemas/Site"}
         passthroughs:
           type: [array, "null"]
           items: {$ref: "#/components/schemas/EnginePassthrough"}
@@ -1176,6 +1184,33 @@ components:
         Host: {type: string}
         Why: {type: string}
         Option: {type: string}
+
+    Site:
+      description: Where a project runs and the addresses of its web routes.
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        server:
+          type: string
+          description: The server the project runs on; absent for this machine.
+        routes:
+          type: [array, "null"]
+          description: One per web route, the primary first.
+          items: {$ref: "#/components/schemas/SiteRoute"}
+
+    SiteRoute:
+      description: One web route of a project.
+      type: object
+      additionalProperties: false
+      required: [host, port, url]
+      properties:
+        host: {type: string, description: The route's main name; the alias for the primary route.}
+        port: {type: integer, description: The port the dev server listens on.}
+        url: {type: string, description: The address a browser uses.}
+        networkUrl:
+          type: string
+          description: The address on the network; absent when the core does not serve to it.
 
     ServerState:
       description: A server's connection, as the interface shows it.

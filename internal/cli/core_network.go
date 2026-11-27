@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
 	"github.com/nearhost/nearhost/internal/devices"
 	"github.com/nearhost/nearhost/internal/engine"
@@ -161,4 +162,32 @@ func networkSiteURL(ns engine.NetworkState, sites []proxy.Site, project string, 
 		}
 	}
 	return ""
+}
+
+// projectSite is where p runs and the addresses of its web routes, the
+// primary first. A route's address is siteURL of its main name, as Status
+// gives for the primary; its network address comes from the proxy's i-th
+// site of the project, which is the i-th web route's.
+func projectSite(p config.Project, sites []proxy.Site, ns engine.NetworkState, httpsPort int) control.Site {
+	out := control.Site{Routes: []control.SiteRoute{}}
+	if p.Server != config.LocalServer {
+		out.Server = p.Server
+	}
+	var mine []proxy.Site
+	for _, s := range sites {
+		if s.Project == p.Name {
+			mine = append(mine, s)
+		}
+	}
+	for i, w := range p.Web() {
+		if len(w.Hosts) == 0 || w.Hosts[0] == "" {
+			continue
+		}
+		r := control.SiteRoute{Host: w.Hosts[0], Port: w.Port, URL: siteURL(w.Hosts[0], httpsPort)}
+		if i < len(mine) {
+			r.NetworkURL = networkSiteURL(ns, mine[i:i+1], p.Name, httpsPort)
+		}
+		out.Routes = append(out.Routes, r)
+	}
+	return out
 }

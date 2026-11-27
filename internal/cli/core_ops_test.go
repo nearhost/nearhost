@@ -20,6 +20,7 @@ import (
 	"github.com/nearhost/nearhost/internal/discovery"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/nearhostrc"
+	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/tui"
@@ -451,5 +452,54 @@ func TestCutTextShort(t *testing.T) {
 	r := cutReport(lines)
 	if r == nil || len(strings.Join(r.Verbatim, "")) > maxEventMessage {
 		t.Errorf("quoted lines = %d bytes", len(strings.Join(r.Verbatim, "")))
+	}
+}
+
+// The state gives each project's server and the addresses of its web routes,
+// the primary first, as Status gives them for the primary.
+func TestCoreStateSites(t *testing.T) {
+	two := localProject("shop", 3000, true)
+	two.Routes = append(two.Routes, config.Route{Port: 4000, Role: config.RoleWeb, Hosts: []string{"admin.shop.test"}}, config.Route{Port: 5432, Role: config.RoleLoopback})
+	none := localProject("db", 5432, true)
+	none.Routes = []config.Route{{Port: 5432, Role: config.RoleLoopback}}
+	remote := remoteProject("far")
+	cfg := &config.Config{Projects: []config.Project{two, none, remote}}
+	o := &coreOps{eng: engine.New(cfg, engine.Options{}), httpsPort: 9443}
+	st := o.State()
+	shop := st.Sites["shop"]
+	want := []control.SiteRoute{
+		{Host: "shop.test", Port: 3000, URL: "https://shop.test:9443"},
+		{Host: "admin.shop.test", Port: 4000, URL: "https://admin.shop.test:9443"},
+	}
+	if shop.Server != "" || !slices.Equal(shop.Routes, want) {
+		t.Errorf("shop = %+v, want routes %+v", shop, want)
+	}
+	if got := siteURL("shop.test", 9443); got != shop.Routes[0].URL {
+		t.Errorf("URL %q differs from Status's %q", shop.Routes[0].URL, got)
+	}
+	if s, ok := st.Sites["db"]; !ok || s.Routes == nil || len(s.Routes) != 0 {
+		t.Errorf("db = %+v, ok %v, want routes []", s, ok)
+	}
+	if s := st.Sites["far"]; s.Server != remote.Server || len(s.Routes) != 1 {
+		t.Errorf("far = %+v, want server %q and one route", s, remote.Server)
+	}
+}
+
+// On a networked core a route's network address is set, from the site the
+// proxy serves for it.
+func TestProjectSiteRoutesNetworkURL(t *testing.T) {
+	p := localProject("shop", 3000, true)
+	p.Routes = append(p.Routes, config.Route{Port: 4000, Role: config.RoleWeb, Hosts: []string{"admin.shop.lab.dev"}})
+	sites := []proxy.Site{
+		{Project: "shop", Hosts: []string{"shop.test", "shop.lab.dev"}},
+		{Project: "shop", Hosts: []string{"admin.shop.lab.dev"}},
+	}
+	ns := engine.NetworkState{On: true, URL: "https://nearhost.lab.dev:9444"}
+	got := projectSite(p, sites, ns, 9443).Routes
+	if got[0].NetworkURL != "https://shop.lab.dev:9443" || got[1].NetworkURL != "https://admin.shop.lab.dev:9443" {
+		t.Errorf("routes = %+v", got)
+	}
+	if off := projectSite(p, sites, engine.NetworkState{}, 9443).Routes; off[0].NetworkURL != "" || off[1].NetworkURL != "" {
+		t.Errorf("off: %+v", off)
 	}
 }
