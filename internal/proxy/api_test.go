@@ -223,7 +223,6 @@ func TestAPIWritesNeedOriginTokenAndJSON(t *testing.T) {
 		"no Origin, no Sec-Fetch-Site": func(r *http.Request) { r.Header.Del("Origin") },
 		"no Origin, cross-site":        func(r *http.Request) { r.Header.Del("Origin"); r.Header.Set("Sec-Fetch-Site", "cross-site") },
 		"foreign Origin":               func(r *http.Request) { r.Header.Set("Origin", "https://app.test") },
-		"sibling Origin":               func(r *http.Request) { r.Header.Set("Origin", "https://shop.lab.example.dev:7443") },
 		"other-port Origin":            func(r *http.Request) { r.Header.Set("Origin", "https://nearhost.localhost:3000") },
 		"Origin null":                  func(r *http.Request) { r.Header.Set("Origin", "null") },
 		"no token":                     func(r *http.Request) { r.Header.Del("X-Nearhost-CSRF") },
@@ -460,5 +459,50 @@ func TestSessionMatchesTheSchema(t *testing.T) {
 		if err := schema.Value.VisitJSON(v); err != nil {
 			t.Errorf("body %s does not match the schema: %v", w.Body.String(), err)
 		}
+	}
+}
+
+// netWrite is a write at the network host from a paired device, with the
+// token and JSON, and the given Origin.
+func netWrite(t *testing.T, origin string) *http.Request {
+	t.Helper()
+	r := withDevice(netRequest("POST", "/api/v1/projects/app/stop", strings.NewReader("{}")), "good-token")
+	r.Header.Set("Origin", origin)
+	r.Header.Set("X-Nearhost-CSRF", mustToken(t))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+func TestAPIWritesAtTheNetworkHostNeedItsOwnOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	fake := setFakeAPI(t)
+	for name, origin := range map[string]string{
+		"sibling site":  "https://shop.lab.example.dev:7443",
+		"other port":    "https://" + netPageHost + ":3000",
+		"no port":       "https://" + netPageHost,
+		"plain http":    "http://" + netPageHost + ":7443",
+		"the page host": "https://nearhost.localhost:7443",
+	} {
+		w := serveNet(t, netHome(), netWrite(t, origin))
+		wantProblem(t, name, w, http.StatusForbidden, "proxy.api-write-refused")
+	}
+	if calls := fake.called(); len(calls) != 0 {
+		t.Fatalf("the API was called: %v", calls)
+	}
+	if w := serveNet(t, netHome(), netWrite(t, "https://"+netPageHost+":7443")); w.Code != 200 {
+		t.Errorf("own origin: status %d, body %s", w.Code, w.Body.String())
+	}
+	if calls := fake.called(); len(calls) != 1 {
+		t.Errorf("API calls %v, want 1", calls)
+	}
+}
+
+func TestSessionHeadNeedsACredential(t *testing.T) {
+	freshSecret(t)
+	setFakeAPI(t)
+	r := pageRequest("HEAD", "/api/v1/session")
+	if w := serveHomeRequest(t, r); w.Code != http.StatusUnauthorized {
+		t.Errorf("status %d, want 401", w.Code)
 	}
 }
