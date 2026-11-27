@@ -100,7 +100,8 @@ jobs:
             dist/checksums.txt
 
   # Publishes @nearhost/cli and its platform packages from the tarballs
-  # goreleaser just attached. npm trusts this workflow for every package
+  # goreleaser just attached, and @nearhost/api from the checkout of the
+  # tag (its OpenAPI schema and TypeScript types). npm trusts this workflow for every package
   # (trusted publishing), so there is no token and each version gets
   # provenance.
   npm:
