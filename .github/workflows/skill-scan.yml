@@ -1,0 +1,30 @@
+name: skill-scan
+# Snyk Agent Scan over the agent skill: the scan skills.sh shows as "Snyk" on
+# the skill's page, run here so a warning shows up before it goes public.
+# Only pull requests that change the skill run it, as Snyk's free tier allows
+# few scans a day. Run it by hand from the Actions tab to rescan.
+on:
+  pull_request:
+    paths:
+      - agents/**
+      - .github/scripts/skill-scan.sh
+      - .github/workflows/skill-scan.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      # A pull request from a fork gets no secrets: it is left to the
+      # maintainers to scan.
+      - env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "::notice title=Skill not scanned::No SNYK_TOKEN secret here, so the skill was not scanned."
+            exit 0
+          fi
+          sh .github/scripts/skill-scan.sh
