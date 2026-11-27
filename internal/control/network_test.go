@@ -351,3 +351,23 @@ func TestNetworkEventsCountAsClients(t *testing.T) {
 	cancel()
 	testutil.WaitUntil(t, 5*time.Second, func() bool { return s.hub.Clients() == before }, "the network stream to stop counting once cancelled")
 }
+
+// Every operation served by the page host is on the network: the page host
+// serves nothing else.
+func TestPagePathsAreMarkedNetwork(t *testing.T) {
+	n := 0
+	for path, item := range loadSchema(t).Paths.Map() {
+		for method, op := range item.Operations() {
+			if page, _ := op.Extensions["x-nearhost-page"].(bool); !page {
+				continue
+			}
+			n++
+			if net, _ := op.Extensions["x-nearhost-network"].(bool); !net {
+				t.Errorf("%s %s is x-nearhost-page but not x-nearhost-network", strings.ToUpper(method), path)
+			}
+		}
+	}
+	if n == 0 {
+		t.Error("no operation is marked x-nearhost-page")
+	}
+}

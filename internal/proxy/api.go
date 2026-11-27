@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"mime"
 	"net/http"
 	"strings"
@@ -78,8 +79,10 @@ func apiSignInMessage() *report.Message {
 // or a paired device's cookie at a page host: without, 401, the same for
 // every path. Only GET and HEAD read; any other method is a write, which
 // needs the page's own origin, the form token in X-Nearhost-CSRF and a
-// JSON body, or gets 403. An OPTIONS is a write too, so a cross-site
-// preflight fails at the gate, and the answer has no CORS headers. The
+// JSON body, or gets 403. An OPTIONS is a write too, but a preflight
+// carries no credentials, so it gets the 401 first; either way the answer
+// has no CORS headers. GET /api/v1/session is answered here, not by the
+// handler (see serveSession). The
 // body is capped at apiBodyBytes; a handler that reads past the cap gets
 // an *http.MaxBytesError.
 //
@@ -106,8 +109,58 @@ func (h *Home) serveAPI(w http.ResponseWriter, r *http.Request) {
 			Because("A change through Nearhost's API must come from Nearhost's page itself, with its token, as JSON."), http.StatusForbidden, nil)
 		return
 	}
+	if r.URL.EscapedPath() == apiSessionPath {
+		h.serveSession(w, r)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, apiBodyBytes)
 	a.ServeHTTP(w, r)
+}
+
+// apiSessionPath is the one path under /api the gate answers itself.
+const apiSessionPath = apiPrefix + "/v1/session"
+
+// Session is the body of GET /api/v1/session: what the app needs to know
+// about itself, including the token its writes carry.
+type Session struct {
+	// CSRF is the form token, for X-Nearhost-CSRF.
+	CSRF string `json:"csrf"`
+	// Device is the name of the paired device making the request, empty
+	// for the page cookie.
+	Device string `json:"device"`
+	// Networked reports whether the core is in networked mode.
+	Networked bool `json:"networked"`
+	// Machine is this machine's name, empty when unknown.
+	Machine string `json:"machine"`
+}
+
+// serveSession answers GET and HEAD with the Session of r, which has
+// passed the gate; any other method is a 405 naming those two.
+func (h *Home) serveSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		report.WriteProblemStatus(w, report.Errorf(report.ProxyMethodNotAllowed, "%s does not take %s; it takes GET, HEAD", apiSessionPath, r.Method), http.StatusMethodNotAllowed, nil)
+		return
+	}
+	token, err := CSRFToken()
+	if err != nil {
+		report.WriteProblemStatus(w, report.Errorf(report.Unexpected, "The session could not be read: %v", err), http.StatusInternalServerError, nil)
+		return
+	}
+	s := Session{CSRF: token, Networked: h.NetworkHost != "", Machine: h.Machine}
+	if dev, ok := h.pairedDevice(r); ok {
+		s.Device = dev.Name
+	}
+	body, err := json.Marshal(s)
+	if err != nil {
+		report.WriteProblemStatus(w, report.Errorf(report.Unexpected, "The session could not be read: %v", err), http.StatusInternalServerError, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodGet {
+		w.Write(body)
+	}
 }
 
 // apiTokenMatches reports whether r carries the form token, once, in
