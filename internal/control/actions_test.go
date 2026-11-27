@@ -239,8 +239,10 @@ func TestNonBlockingActionsKeepTheCap(t *testing.T) {
 	callTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { callTimeout = old })
 	hang := &hangingBackend{actionFake: newActionFake(), release: make(chan struct{})}
-	t.Cleanup(func() { close(hang.release) })
 	c := dial(t, serve(t, hang))
+	// Registered after serve, so the hanging call returns before the
+	// server's cleanup waits for its answer to be checked.
+	t.Cleanup(func() { close(hang.release) })
 	if err := c.ConnectServer(context.Background(), "leto"); err == nil {
 		t.Fatal("a call that hangs came back without an error")
 	}

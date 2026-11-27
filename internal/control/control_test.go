@@ -48,16 +48,21 @@ func (f *fakeBackend) calls() (stops, changed int) {
 }
 
 func newFake() *fakeBackend {
+	// The status and state carry the info too, as the core's do: a zero
+	// Info has no StartedBy, which no core sends.
+	info := Info{
+		API:       APIVersion,
+		Version:   "1.2.3",
+		PID:       4242,
+		Started:   time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC),
+		StartedBy: StartedDetached,
+		Reloads:   true,
+	}
 	return &fakeBackend{
-		info: Info{
-			API:       APIVersion,
-			Version:   "1.2.3",
-			PID:       4242,
-			Started:   time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC),
-			StartedBy: StartedDetached,
-			Reloads:   true,
-		},
+		info:  info,
+		state: State{Info: info},
 		status: Status{
+			Info:    info,
 			Servers: []ServerInfo{{Name: "leto", State: "connected", Message: ""}},
 			Projects: []ProjectInfo{
 				{Name: "shop", State: "serving", URL: "https://shop.test"},
@@ -76,7 +81,7 @@ func serve(t *testing.T, b Backend) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	checkTraffic(t, s)
 	return dir
 }
 
@@ -146,7 +151,7 @@ func TestStopAnswersBeforeTheSocketCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.srv = s
-	t.Cleanup(func() { s.Close() })
+	checkTraffic(t, s)
 	if err := dial(t, dir).Stop(context.Background()); err != nil {
 		t.Fatalf("Stop = %v, want nil", err)
 	}
@@ -208,6 +213,7 @@ func TestListenReplacesStaleSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTraffic(t, s)
 	defer s.Close()
 	if _, err := dial(t, dir).Info(context.Background()); err != nil {
 		t.Fatal(err)
@@ -235,6 +241,7 @@ func TestCloseRemovesSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTraffic(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
