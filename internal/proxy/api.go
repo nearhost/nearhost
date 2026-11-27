@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"mime"
 	"net/http"
@@ -21,8 +24,8 @@ const apiPrefix = "/api"
 // document, so it may load nothing and be framed by nothing.
 const apiCSP = "default-src 'none'; frame-ancestors 'none'"
 
-// apiTokenHeader is the header a write to the API carries the form token
-// in (see CSRFToken). A form from another site cannot set it.
+// apiTokenHeader is the header a write to the API carries its token in
+// (see Home.apiToken). A form from another site cannot set it.
 const apiTokenHeader = "X-Nearhost-CSRF"
 
 // apiBodyBytes bounds the body of a request to the API.
@@ -89,7 +92,7 @@ func apiSignInMessage() *report.Message {
 // of the API is. Otherwise it needs the page cookie, at hostname.PageHost,
 // or a paired device's cookie at a page host: without, 401, the same for
 // every path. Only GET and HEAD read; any other method is a write, which
-// needs the page's own origin, the form token in X-Nearhost-CSRF and a
+// needs the page's own origin, its own token in X-Nearhost-CSRF and a
 // JSON body, or gets 403. An OPTIONS is a write too, but a preflight
 // carries no credentials, so it gets the 401 first; either way the answer
 // has no CORS headers. GET /api/v1/session is answered here, not by the
@@ -117,7 +120,7 @@ func (h *Home) serveAPI(w http.ResponseWriter, r *http.Request) {
 		report.WriteProblemStatus(w, apiSignInMessage(), http.StatusUnauthorized, nil)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && (!sameOrigin(r) || !apiTokenMatches(r) || !isJSON(r)) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && (!sameOrigin(r) || !h.apiTokenMatches(r) || !isJSON(r)) {
 		report.WriteProblemStatus(w, report.Errorf(report.ProxyAPIWriteRefused, "The change was refused").
 			Because("A change through Nearhost's API must come from Nearhost's page itself, with its token, as JSON."), http.StatusForbidden, nil)
 		return
@@ -172,7 +175,8 @@ const apiSessionPath = apiPrefix + "/v1/session"
 // Session is the body of GET /api/v1/session: what the app needs to know
 // about itself, including the token its writes carry.
 type Session struct {
-	// CSRF is the form token, for X-Nearhost-CSRF.
+	// CSRF is this sign-in's API token, for X-Nearhost-CSRF: each device
+	// has its own, and the page cookie another.
 	CSRF string `json:"csrf"`
 	// Device is the name of the paired device making the request, empty
 	// for the page cookie.
@@ -191,7 +195,7 @@ func (h *Home) serveSession(w http.ResponseWriter, r *http.Request) {
 		report.WriteProblemStatus(w, report.Errorf(report.ProxyMethodNotAllowed, "%s does not take %s; it takes GET, HEAD", apiSessionPath, r.Method), http.StatusMethodNotAllowed, nil)
 		return
 	}
-	token, err := CSRFToken()
+	token, err := h.apiToken(r)
 	if err != nil {
 		report.WriteProblemStatus(w, report.Errorf(report.Unexpected, "The session could not be read: %v", err), http.StatusInternalServerError, nil)
 		return
@@ -212,14 +216,38 @@ func (h *Home) serveSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// apiTokenMatches reports whether r carries the form token, once, in
-// X-Nearhost-CSRF, compared in constant time.
-func apiTokenMatches(r *http.Request) bool {
+// apiTokenLabel starts what an API token is the HMAC of; the NUL ends it,
+// so no subject can run into it.
+const apiTokenLabel = "nearhost api token\x00"
+
+// apiToken returns the token a write to the API by r must carry:
+// hex(HMAC-SHA256(page secret, "nearhost api token\x00" + subject)), where
+// the subject is "device:" and the ID of the paired device whose cookie r
+// carries, or "page" for the page cookie. A device wins if r has both. Each
+// device has its own token, and pairing it again, which gives it a new ID,
+// changes it. r must have passed the gate.
+func (h *Home) apiToken(r *http.Request) (string, error) {
+	subject := "page"
+	if dev, ok := h.pairedDevice(r); ok {
+		subject = "device:" + dev.ID
+	}
+	secret, err := pageSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(apiTokenLabel + subject))
+	return hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+// apiTokenMatches reports whether r carries its own API token (see
+// apiToken), once, in X-Nearhost-CSRF, compared in constant time.
+func (h *Home) apiTokenMatches(r *http.Request) bool {
 	got := r.Header.Values(apiTokenHeader)
 	if len(got) != 1 {
 		return false
 	}
-	want, err := CSRFToken()
+	want, err := h.apiToken(r)
 	if err != nil {
 		return false
 	}

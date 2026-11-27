@@ -34,7 +34,9 @@ info:
     code `proxy.api-sign-in` when the request carries neither the page's
     cookie nor a paired device's. A write (any method but `GET` and `HEAD`)
     also needs the page's own `Origin`, an `X-Nearhost-CSRF` header with the
-    token from `GET /api/v1/session`, and `Content-Type: application/json`
+    token for its own sign-in from `GET /api/v1/session` (each paired
+    device has its own, and the page cookie another, so one device's token is
+    refused from any other), and `Content-Type: application/json`
     even when it has no body, or it gets `403` with the code
     `proxy.api-write-refused`. A request body is capped at 1 MiB. An open
     request, such as the event stream, ends within seconds once its
@@ -117,7 +119,8 @@ paths:
       summary: Tell the app its session.
       description: |
         Answered by the page host at `/api/v1/session`, not by the control socket.
-        The `csrf` token goes in `X-Nearhost-CSRF` on every write. Answers 401
+        The `csrf` token goes in `X-Nearhost-CSRF` on every write. It belongs to
+        this device (this sign-in): another device's token is refused. Answers 401
         without a page or device credential.
       responses:
         "200":
@@ -1559,7 +1562,7 @@ components:
       additionalProperties: false
       required: [csrf, device, networked, machine]
       properties:
-        csrf: {type: string, description: The token a write carries in X-Nearhost-CSRF.}
+        csrf: {type: string, description: "The token a write carries in X-Nearhost-CSRF. It is this device's own and changes if the device is paired again."}
         device: {type: string, description: "The paired device's name; empty for the page cookie."}
         networked: {type: boolean}
         machine: {type: string, description: "This machine's name; empty when unknown."}
