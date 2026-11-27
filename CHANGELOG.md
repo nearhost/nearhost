@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.17.0](https://github.com/nearhost/nearhost/compare/v0.16.0...v0.17.0) (2026-11-27)
+
+
+### Features
+
+* **api:** add the OpenAPI schema of the control API ([#656](https://github.com/nearhost/nearhost/issues/656)) ([5fe503e](https://github.com/nearhost/nearhost/commit/5fe503e119f8b34b30e399f838a0d343df21d839))
+* **api:** choose which control routes reach the network ([#664](https://github.com/nearhost/nearhost/issues/664)) ([6b4bd69](https://github.com/nearhost/nearhost/commit/6b4bd696eb772dbcf8914cf17fa58badc2bbc4ad))
+* **api:** each project's server and addresses in the state ([#678](https://github.com/nearhost/nearhost/issues/678)) ([1d58ca7](https://github.com/nearhost/nearhost/commit/1d58ca7807c86ff51bcdf96909891ddf58d5d148))
+* **api:** serve the schema at GET /v1/openapi.yaml ([#660](https://github.com/nearhost/nearhost/issues/660)) ([edae69a](https://github.com/nearhost/nearhost/commit/edae69a91627d552cd7adc537e469e7c03c54945))
+* **api:** tell the app its session and form token ([#667](https://github.com/nearhost/nearhost/issues/667)) ([7fd1d89](https://github.com/nearhost/nearhost/commit/7fd1d89919b0b4eccd0ff13a471a7db5da773dd5))
+* **control:** serve the network's routes from one handler ([#665](https://github.com/nearhost/nearhost/issues/665)) ([b3d130c](https://github.com/nearhost/nearhost/commit/b3d130c56256a9de7016a8cb2ccd0286471857c6))
+* **core:** serve the API on the page host ([#668](https://github.com/nearhost/nearhost/issues/668)) ([f2312bb](https://github.com/nearhost/nearhost/commit/f2312bb4b65fe378dcc0d2ec5ede675355188ccd))
+* **documents:** style documents with the app's stylesheet ([#679](https://github.com/nearhost/nearhost/issues/679)) ([c4b1e6d](https://github.com/nearhost/nearhost/commit/c4b1e6dfa735353bcca7b0576d46fc61da3b2029))
+* **page:** serve the web app when web_app is on ([#675](https://github.com/nearhost/nearhost/issues/675)) ([31802fb](https://github.com/nearhost/nearhost/commit/31802fb70fe9634efb99c8d96d87a7b6c3361970))
+* **proxy:** gate the API on the page host ([#666](https://github.com/nearhost/nearhost/issues/666)) ([5e87269](https://github.com/nearhost/nearhost/commit/5e872697b807d4806cd79b6ab3d7f9f4c4b7d48a))
+* **proxy:** give each device its own API token ([#670](https://github.com/nearhost/nearhost/issues/670)) ([07ac7a0](https://github.com/nearhost/nearhost/commit/07ac7a002f6396affe1160bb6723bb2b6fd15d75))
+
+
+### Bug Fixes
+
+* **control:** name the stream's heartbeat and answer 404 for unknown projects ([#676](https://github.com/nearhost/nearhost/issues/676)) ([69087bd](https://github.com/nearhost/nearhost/commit/69087bdea2185f04c367b3622a84e57558cad7db))
+* **proxy:** end an API stream when its device is revoked ([#669](https://github.com/nearhost/nearhost/issues/669)) ([eafeda9](https://github.com/nearhost/nearhost/commit/eafeda97b5e89702cd87690b678581c1af206a20))
+* **skill:** say up front that the user approves every change ([#671](https://github.com/nearhost/nearhost/issues/671)) ([051707c](https://github.com/nearhost/nearhost/commit/051707c862864c522dba927bd7eed1e81d3fd992))
+
 ## [0.16.0](https://github.com/nearhost/nearhost/compare/v0.15.0...v0.16.0) (2026-11-26)
 
 
