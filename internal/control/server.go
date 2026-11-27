@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/nearhost/nearhost/api"
@@ -58,6 +59,12 @@ type Server struct {
 	// wrapHandler wrapped them; network serves them under /api.
 	netRoutes http.Handler
 	network   http.Handler
+	// done is closed by Close, once. It ends every event stream, on the
+	// socket and through NetworkHandler alike: a stream served through
+	// NetworkHandler runs on another server, which closing srv leaves
+	// alone.
+	done      chan struct{}
+	closeDone sync.Once
 }
 
 // handle registers h for pattern, such as "GET /v1/state", on the server's
@@ -115,7 +122,7 @@ func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	if hub == nil {
 		hub = NewHub()
 	}
-	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
+	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery, done: make(chan struct{})}
 	h := s.routes()
 	if wrapHandler != nil {
 		h = wrapHandler(h, false)
@@ -139,8 +146,10 @@ func answers(path string) bool {
 	return err == nil
 }
 
-// Close stops serving and removes the socket.
+// Close stops serving and removes the socket, and ends every event stream,
+// including those served through NetworkHandler.
 func (s *Server) Close() error {
+	s.closeDone.Do(func() { close(s.done) })
 	err := s.srv.Close()
 	// Close the listener too: if Serve has not started yet, the server's
 	// Close does not know of it and would leave the socket answering.
@@ -239,7 +248,7 @@ var streamWriteTimeout = 30 * time.Second
 
 // stream sends the envelopes after the one numbered by the query's after, 0
 // when it has none, as server-sent events, until the client goes or the
-// server closes.
+// server closes (see Close).
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	var after uint64
 	if q := r.URL.Query().Get("after"); q != "" {
@@ -274,6 +283,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.done:
 			return
 		case <-sub.ready:
 			if writeEnvelopes(w, sub.take(), deadline) != nil {
